@@ -110,10 +110,18 @@ import {
   MCP_APP_MIME_TYPE,
 } from "./viewer.js";
 
-/** Tools that produce or modify geometry and should show the 3D viewer. */
+/** Tools that produce or modify geometry and should show the 3D viewer.
+ *  Registry-driven kernel tools (create, update, delete, …) are added
+ *  dynamically in `createServer` once their names are known. */
 const GEOMETRY_TOOLS = new Set([
   "create_cad_loon",
   "import_step",
+  "open_document",
+  "get_document",
+  "place_part",
+  "set_material",
+  "dfm_apply_fix",
+  "sheet_metal_create",
 ]);
 
 /** MCP Apps UI metadata for geometry tools. */
@@ -163,6 +171,11 @@ export async function createServer(existingEngine?: Engine): Promise<Server> {
   // route by name without re-querying the registry per tool call.
   const dispatchableTools = registryDispatchableNames();
 
+  // Every geometry-mutating tool shows the inline 3D viewer: the static
+  // set plus all registry-driven kernel tools (they all mutate a session
+  // document, so a preview is always meaningful).
+  const uiTools = new Set([...GEOMETRY_TOOLS, ...dispatchableTools]);
+
   const server = new Server(
     {
       name: "vcad",
@@ -188,12 +201,14 @@ export async function createServer(existingEngine?: Engine): Promise<Server> {
         description:
           "Open an editing session for a CAD document. Returns a `document_id` to pass to subsequent tool calls (create, update, place_part, inspect_cad, …). Pass an `initial` IR to begin editing an existing document; omit it for a fresh empty document.",
         inputSchema: openDocumentSchema,
+        _meta: UI_META,
       },
       {
         name: "get_document",
         description:
           "Return the full IR Document JSON for an open session. Use after a series of mutations to capture the result, or to feed into `export_cad` / `open_in_browser`.",
         inputSchema: getDocumentSchema,
+        _meta: UI_META,
       },
       {
         name: "close_document",
@@ -213,14 +228,16 @@ export async function createServer(existingEngine?: Engine): Promise<Server> {
         description:
           "Insert a stdlib part into the session's document. Takes a `document_id`, a `path` (from `search_parts.id`), and an optional `params` map; missing params use declared defaults. The part remains parametric — end users can edit its params from the feature tree.",
         inputSchema: placePartSchema,
+        _meta: UI_META,
       },
       // ── Registry-driven kernel tools (auto-exposed) ───────────
       // The next block iterates `commandRegistry.toAnthropicTools()` so the
       // schema lives in one place — the kernel WASM. Same tools, same
       // behavior as the in-app chat surface; viewport-only tools (camera
       // and scene-evaluation tools) are filtered out via blocklists in
-      // tools/registry-dispatch.ts.
-      ...registryToolDescriptors(),
+      // tools/registry-dispatch.ts. All of them mutate a session document,
+      // so they all get the inline 3D viewer.
+      ...registryToolDescriptors().map((t) => ({ ...t, _meta: UI_META })),
       // ── Loon DSL one-shot ──────────────────────────────────────
       {
         name: "create_cad_loon",
@@ -272,6 +289,7 @@ export async function createServer(existingEngine?: Engine): Promise<Server> {
         description:
           "Apply an approved DFM fix to the session document. v1 supports `set_param` patches (raise a fillet radius, thicken a wall) — other kinds throw and require manual edits. Re-run `dfm_check` afterwards to confirm the issue cleared.",
         inputSchema: dfmApplyFixSchema,
+        _meta: UI_META,
       },
       // ── Sheet metal (AI-native manufacturability surface) ───────
       {
@@ -279,6 +297,7 @@ export async function createServer(existingEngine?: Engine): Promise<Server> {
         description:
           "Create a sheet-metal part: a rectangular base flange plus an ordered chain of edge flanges. Returns a `document_id` (usable with sheet_metal_unfold/check, inspect_cad, export_cad, open_in_browser), the panel/bend model summary, flat bbox + area, and DFM violations vs. the generic shop.",
         inputSchema: sheetMetalCreateSchema,
+        _meta: UI_META,
       },
       {
         name: "sheet_metal_unfold",
@@ -512,15 +531,19 @@ export async function createServer(existingEngine?: Engine): Promise<Server> {
     const { name, arguments: args = {} } = request.params;
 
     try {
+      let result: { content: Array<{ type: string; text: string; annotations?: unknown }>; isError?: boolean };
+
       // Registry-driven dispatch: any kernel tool from
       // `commandRegistry.toAnthropicTools()` (minus the browser-only and
       // deferred sets in tools/registry-dispatch.ts) routes through the
-      // shared planner + applyToolOutcome path.
+      // shared planner + applyToolOutcome path. Falls through to the GLB
+      // preview block below so these mutations render in the inline viewer.
       if (dispatchableTools.has(name)) {
-        return dispatchRegistryTool(name, args);
+        result = dispatchRegistryTool(name, args);
+        const irDoc = extractIrDocument(name, result, args, engine);
+        if (irDoc) appendGlbPreview(result, irDoc, engine);
+        return result;
       }
-
-      let result: { content: Array<{ type: string; text: string; annotations?: unknown }> };
 
       switch (name) {
         case "open_document":
@@ -687,7 +710,7 @@ export async function createServer(existingEngine?: Engine): Promise<Server> {
       }
 
       // ── MCP Apps: Append GLB preview for geometry tools ──────
-      if (GEOMETRY_TOOLS.has(name) && result.content.length > 0) {
+      if (uiTools.has(name) && result.content.length > 0 && !result.isError) {
         const irDoc = extractIrDocument(name, result, args, engine);
         if (irDoc) {
           appendGlbPreview(result, irDoc, engine);
@@ -711,6 +734,9 @@ export async function createServer(existingEngine?: Engine): Promise<Server> {
  * Extract an IR Document from a tool result for GLB preview generation.
  *
  * Strategy per tool:
+ * - session-backed tools (registry CRUD, place_part, dfm_apply_fix,
+ *   sheet_metal_create, …): resolve the live session doc by `document_id`
+ *   from the args or the result payload
  * - create_cad_loon: re-evaluate loon source via engine
  * - import_step: parse JSON result to extract the document field
  */
@@ -737,8 +763,20 @@ function extractIrDocument(
       if (parsed.version && parsed.nodes) {
         return parsed as Document;
       }
+
+      // Session-backed result (e.g. sheet_metal_create, open_document)
+      if (typeof parsed.document_id === "string") {
+        const doc = documents.get(parsed.document_id);
+        if (doc) return doc;
+      }
     } catch {
       // Not JSON — likely VCode format, handle below
+    }
+
+    // Session-backed args (registry CRUD tools, place_part, dfm_apply_fix)
+    if (typeof args.document_id === "string") {
+      const doc = documents.get(args.document_id);
+      if (doc) return doc;
     }
 
     // For create_cad_loon with VCode output, re-evaluate with JSON format

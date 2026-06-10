@@ -1,0 +1,22 @@
+{
+  "id": "2026-06-10-mcp-apps-inline-viewer",
+  "version": "0.9.4",
+  "date": "2026-06-10",
+  "category": "feat",
+  "title": "Inline 3D viewer in MCP hosts (MCP Apps)",
+  "summary": "Geometry tools now render an interactive 3D viewport inline in MCP Apps hosts like Cursor and Claude, using the official SEP-1865 handshake.",
+  "features": ["mcp", "viewer"],
+  "mcpTools": [
+    "create_cad_loon",
+    "import_step",
+    "sheet_metal_create",
+    "place_part",
+    "create",
+    "update",
+    "delete",
+    "set_material",
+    "dfm_apply_fix",
+    "open_document",
+    "get_document"
+  ]
+}

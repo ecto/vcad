@@ -2,11 +2,15 @@
  * Embedded MCP Apps viewer HTML for inline 3D CAD preview.
  *
  * This module exports a self-contained HTML string that renders GLB models
- * using Three.js in a sandboxed iframe. It communicates with the MCP Apps
- * host via the postMessage JSON-RPC protocol to receive tool results.
+ * using Three.js in a sandboxed iframe. Host communication uses the official
+ * `@modelcontextprotocol/ext-apps` App class (SEP-1865), which owns the
+ * `ui/initialize` → `ui/notifications/initialized` handshake — hosts MUST
+ * NOT deliver tool results before that handshake completes, so a hand-rolled
+ * protocol that gets it wrong renders nothing in spec-compliant hosts
+ * (Cursor, Claude Desktop).
  */
 
-/** CSP resource domains needed by the viewer (Three.js CDN). */
+/** CSP resource domains needed by the viewer (Three.js + ext-apps CDN). */
 export const VIEWER_CSP = {
   resourceDomains: ["https://cdn.jsdelivr.net"],
 };
@@ -33,9 +37,17 @@ export function getViewerHtml(): string {
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>vcad 3D Viewer</title>
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+  }
+}
+</script>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
-  html, body { width: 100%; height: 100%; overflow: hidden; background: #1a1a2e; }
+  html, body { width: 100%; height: 100%; min-height: 380px; overflow: hidden; background: #1a1a2e; }
   canvas { display: block; width: 100%; height: 100%; }
   #loading {
     position: absolute; inset: 0;
@@ -66,16 +78,18 @@ export function getViewerHtml(): string {
 const CDN = 'https://cdn.jsdelivr.net/npm/three@0.170.0';
 const errEl = document.getElementById('error');
 
-let THREE, OrbitControls, GLTFLoader;
+let THREE, OrbitControls, GLTFLoader, App;
 try {
   THREE = await import(CDN + '/build/three.module.js');
   const oc = await import(CDN + '/examples/jsm/controls/OrbitControls.js');
   OrbitControls = oc.OrbitControls;
   const gl = await import(CDN + '/examples/jsm/loaders/GLTFLoader.js');
   GLTFLoader = gl.GLTFLoader;
+  const ea = await import('https://cdn.jsdelivr.net/npm/@modelcontextprotocol/ext-apps@1.7.4/+esm');
+  App = ea.App;
   document.querySelector('#loading div').textContent = 'vcad 3D Viewer — waiting for model...';
 } catch (e) {
-  errEl.textContent = 'Three.js load failed: ' + e.message;
+  errEl.textContent = 'Viewer dependencies failed to load: ' + e.message;
   throw e;
 }
 
@@ -184,7 +198,6 @@ function loadGlb(base64Data) {
     controls.update();
 
     document.getElementById('loading').classList.add('hidden');
-    reportHeight(400);
     renderer.render(scene, camera);
   }, (error) => {
     console.error('GLB parse error:', error);
@@ -192,77 +205,18 @@ function loadGlb(base64Data) {
   });
 }
 
-// ── MCP Apps protocol ────────────────────────────────────────
-let messageId = 1;
+// ── MCP Apps protocol (official ext-apps App class) ──────────
+// The App owns the SEP-1865 handshake: it sends ui/initialize with
+// appCapabilities, emits ui/notifications/initialized, and dispatches
+// ui/notifications/tool-result to the handler below. It also auto-reports
+// size changes to the host via a ResizeObserver.
+const app = new App({ name: 'vcad-viewer', version: '1.0.0' });
 
-// The host iframe origin is not known until the first inbound message
-// arrives. Until then we have to fall back to '*' (the initial handshake
-// has to reach whoever embedded us), but after we learn the real origin
-// we pin postMessage to it so a second frame opened in parallel can't
-// intercept subsequent responses.
-let hostOrigin = '*';
-
-function sendToHost(message) {
-  window.parent.postMessage(message, hostOrigin);
-}
-
-// Report content height to host so iframe is properly sized
-function reportHeight(h) {
-  sendToHost({
-    jsonrpc: '2.0',
-    method: 'ui/notifications/contentHeight',
-    params: { height: h || 400 },
-  });
-}
-
-// Send ui/initialize handshake
-sendToHost({
-  jsonrpc: '2.0',
-  id: messageId++,
-  method: 'ui/initialize',
-  params: {
-    capabilities: { contentHeight: true },
-    clientInfo: { name: 'vcad-viewer', version: '1.0.0' },
-    protocolVersion: '2026-01-26',
-  },
-});
-
-// Report initial height immediately
-reportHeight(400);
-
-// Listen for ALL host messages and extract GLB data
-window.addEventListener('message', (event) => {
-  const data = event.data;
-  if (!data || typeof data !== 'object') return;
-  // Pin postMessage replies to the origin we first heard from. Once
-  // hostOrigin is set, silently drop messages from any other origin.
-  if (event.origin && event.origin !== 'null') {
-    if (hostOrigin === '*') {
-      hostOrigin = event.origin;
-    } else if (event.origin !== hostOrigin) {
-      return;
-    }
-  }
-
-  // Log all messages for debugging
-  console.log('[vcad-viewer] message:', data.method || (data.result ? 'response' : 'unknown'));
-
-  // Handle tool result notification (method-based)
-  if (data.method === 'ui/notifications/tool-result') {
-    extractGlb(data.params?.result);
-    extractGlb(data.params);
-  }
-
-  // Handle JSON-RPC response (id-based, like PostHog receives)
-  if (data.result) {
-    extractGlb(data.result);
-  }
-
-  // Handle structuredContent (PostHog-style)
-  if (data.result?.structuredContent) {
-    extractGlb(data.result.structuredContent);
-  }
-});
+// Set before connect() so the initial tool result is not missed.
+app.ontoolresult = (result) => {
+  console.log('[vcad-viewer] tool result received');
+  extractGlb(result);
+};
 
 // ── "Open in vcad.io" deep link ──────────────────────────────
 let vcodeDoc = null;
@@ -270,19 +224,10 @@ const openBtn = document.getElementById('open-btn');
 
 openBtn.addEventListener('click', () => {
   if (!vcodeDoc) return;
-  // Compress with pako (lightweight gzip) and base64url-encode
-  // For now, use uncompressed base64url as fallback
   const encoded = btoa(unescape(encodeURIComponent(vcodeDoc)))
     .replace(/\\+/g, '-').replace(/\\//g, '_').replace(/=+$/, '');
   const url = 'https://vcad.io/#/new?doc=' + encoded;
-  // Use MCP Apps openLinks capability if available, else window.open
-  sendToHost({
-    jsonrpc: '2.0',
-    id: messageId++,
-    method: 'ui/openLink',
-    params: { url },
-  });
-  window.open(url, '_blank');
+  app.openLink({ url }).catch(() => window.open(url, '_blank'));
 });
 
 function extractGlb(obj) {
@@ -319,6 +264,9 @@ function extractGlb(obj) {
     }
   }
 }
+
+await app.connect();
+console.log('[vcad-viewer] connected to host');
 </script>
 </body>
 </html>`;
