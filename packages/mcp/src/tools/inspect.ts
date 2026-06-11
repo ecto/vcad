@@ -107,6 +107,12 @@ function computeMeshProperties(mesh: TriangleMesh): {
   let cx = 0,
     cy = 0,
     cz = 0;
+  // Area-weighted surface centroid — fallback when the signed-volume
+  // integral is unreliable (open or inconsistently wound meshes, e.g.
+  // thin sheet-metal bodies). Always lands inside the bounding box.
+  let acx = 0,
+    acy = 0,
+    acz = 0;
 
   const bbox: BoundingBox = {
     min: { x: Infinity, y: Infinity, z: Infinity },
@@ -127,12 +133,18 @@ function computeMeshProperties(mesh: TriangleMesh): {
     volume += v;
 
     // Surface area
-    area += triangleArea(p1, p2, p3);
+    const a = triangleArea(p1, p2, p3);
+    area += a;
 
     // Centroid contribution (weighted by signed volume)
     cx += v * (p1[0] + p2[0] + p3[0]) / 4;
     cy += v * (p1[1] + p2[1] + p3[1]) / 4;
     cz += v * (p1[2] + p2[2] + p3[2]) / 4;
+
+    // Area-weighted centroid contribution
+    acx += (a * (p1[0] + p2[0] + p3[0])) / 3;
+    acy += (a * (p1[1] + p2[1] + p3[1])) / 3;
+    acz += (a * (p1[2] + p2[2] + p3[2])) / 3;
 
     // Bounding box
     for (const p of [p1, p2, p3]) {
@@ -145,19 +157,45 @@ function computeMeshProperties(mesh: TriangleMesh): {
     }
   }
 
-  // Normalize centroid by volume
+  // Normalize centroid by volume. The volume-weighted centroid is only
+  // valid for a closed, consistently wound mesh — on open meshes the
+  // signed-tet contributions partially cancel and the division can throw
+  // the centroid anywhere, including outside the bounding box (which is
+  // geometrically impossible for a real COM). Validate against the bbox
+  // and fall back to the area-weighted surface centroid when it fails.
   const absVolume = Math.abs(volume);
+  let centroid: { x: number; y: number; z: number } | null = null;
   if (absVolume > 1e-10) {
-    cx /= volume;
-    cy /= volume;
-    cz /= volume;
+    centroid = { x: cx / volume, y: cy / volume, z: cz / volume };
+    const eps =
+      1e-9 *
+      Math.max(
+        bbox.max.x - bbox.min.x,
+        bbox.max.y - bbox.min.y,
+        bbox.max.z - bbox.min.z,
+        1,
+      );
+    const inBbox =
+      centroid.x >= bbox.min.x - eps &&
+      centroid.x <= bbox.max.x + eps &&
+      centroid.y >= bbox.min.y - eps &&
+      centroid.y <= bbox.max.y + eps &&
+      centroid.z >= bbox.min.z - eps &&
+      centroid.z <= bbox.max.z + eps;
+    if (!inBbox) centroid = null;
+  }
+  if (centroid === null) {
+    centroid =
+      area > 0
+        ? { x: acx / area, y: acy / area, z: acz / area }
+        : { x: 0, y: 0, z: 0 };
   }
 
   return {
     volume: absVolume,
     area,
     bbox,
-    centroid: { x: cx, y: cy, z: cz },
+    centroid,
     triangles: numTriangles,
   };
 }

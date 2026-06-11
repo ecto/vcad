@@ -1,0 +1,10 @@
+{
+  "id": "2026-06-11-inspect-com-bbox-guard",
+  "version": "0.9.4",
+  "date": "2026-06-11",
+  "category": "fix",
+  "title": "inspect_cad center of mass stays inside the bounding box",
+  "summary": "Center-of-mass integration now falls back to the surface centroid when the signed-volume integral is unreliable (open meshes, e.g. sheet-metal bodies), instead of reporting a COM outside the bbox.",
+  "features": ["mcp", "inspect", "sheet-metal", "kernel"],
+  "mcpTools": ["inspect_cad"]
+}
