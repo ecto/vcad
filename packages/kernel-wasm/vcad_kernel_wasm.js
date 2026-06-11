@@ -4801,6 +4801,38 @@ export function renderBakeMesh(input_json) {
 }
 
 /**
+ * Render raw `.vcad` document JSON to a drafting-style isometric SVG.
+ *
+ * Thin wrapper over `vcad_render::render_svg_str` — the same renderer the
+ * `vcad-render` CLI and the mecheval leaderboard use, so agents and humans
+ * see identical linework. `scale` is pixels per millimetre (pass
+ * `vcad_render::DEFAULT_SCALE` = 2.0 when in doubt).
+ * @param {string} vcad_json
+ * @param {number} scale
+ * @returns {string}
+ */
+export function render_svg(vcad_json, scale) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const ptr0 = passStringToWasm0(vcad_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.render_svg(ptr0, len0, scale);
+        var ptr2 = ret[0];
+        var len2 = ret[1];
+        if (ret[3]) {
+            ptr2 = 0; len2 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred3_0 = ptr2;
+        deferred3_1 = len2;
+        return getStringFromWasm0(ptr2, len2);
+    } finally {
+        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+    }
+}
+
+/**
  * Generate a section view from a triangle mesh.
  *
  * # Arguments
@@ -7129,12 +7161,12 @@ function __wbg_get_imports() {
             arg0.writeTexture(arg1, arg2, arg3, arg4);
         },
         __wbindgen_cast_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 2258, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 2259, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 2261, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 2262, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h30743bca3150d93c, wasm_bindgen__convert__closures_____invoke__hcf7d3eaee8800b37);
             return ret;
         },
         __wbindgen_cast_0000000000000002: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 3042, function: Function { arguments: [Externref], shim_idx: 3043, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 3045, function: Function { arguments: [Externref], shim_idx: 3046, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__hfdadf281ff0f1c56, wasm_bindgen__convert__closures_____invoke__h9bdf540eb7e61590);
             return ret;
         },

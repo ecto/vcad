@@ -199,12 +199,19 @@ export function makeClaudeMcpSolver(cfg: Partial<ClaudeMcpConfig> = {}): Solver 
         });
 
         // 2. List MCP tools, translate to Anthropic tool schema.
+        // The self-grading oracle (verify_part / list_eval_tasks) is
+        // excluded during benchmark runs — letting the model grade itself
+        // against the task's own checks mid-run would contaminate the
+        // leaderboard. render_view stays: eyes are product surface.
+        const ORACLE_TOOLS = new Set(["verify_part", "list_eval_tasks"]);
         const toolList = await mcp.listTools();
-        const anthropicTools = toolList.tools.map((t) => ({
-          name: t.name,
-          description: t.description,
-          input_schema: t.inputSchema,
-        }));
+        const anthropicTools = toolList.tools
+          .filter((t) => !ORACLE_TOOLS.has(t.name))
+          .map((t) => ({
+            name: t.name,
+            description: t.description,
+            input_schema: t.inputSchema,
+          }));
 
         const userMessage = `${prompt}\n\nThe document_id for this session is "${lastDocumentId}". Use it on every tool call that requires it. Stop calling tools once you believe the document satisfies the task.`;
 

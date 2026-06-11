@@ -27,6 +27,9 @@
     "@vcad/engine": "*",
     "@vcad/ir": "*"
   },
+  "optionalDependencies": {
+    "@resvg/resvg-js": "^2.6.2"
+  },
   "devDependencies": {
     "@modelcontextprotocol/ext-apps": "^1.7.4",
     "@types/node": "^22",

@@ -1,0 +1,11 @@
+{
+  "id": "2026-06-10-verified-agent-loop",
+  "version": "0.9.4",
+  "date": "2026-06-10",
+  "category": "feat",
+  "title": "Verified agent loop: render_view + verify_part MCP tools",
+  "summary": "AI agents can now SEE the parts they build (render_view returns an isometric PNG) and grade them against mecheval benchmark tasks (verify_part runs the official deterministic graders), closing the verify-and-iterate loop.",
+  "details": "render_view renders an open session document through the same drafting-style isometric pipeline as the vcad-render CLI (now a reusable library exposed via the kernel WASM render_svg binding) and rasterizes to PNG via resvg, returning an MCP image block the model can inspect. verify_part writes the session document to a scratch file and shells out to the mecheval-grade binary — the exact grader the leaderboard uses, so there is one source of grading truth — relaying per-check pass/fail with measured-vs-expected details; list_eval_tasks browses the 64-task suite. The benchmark harness excludes the oracle tools during scored runs to keep the leaderboard honest. create_cad_loon's tool description now documents the full loon vocabulary (patterns, sketches, extrude/revolve/sweep/loft, assemblies) so agents stop living in primitives and booleans.",
+  "features": ["mcp", "ai-agents", "rendering", "benchmark"],
+  "mcpTools": ["render_view", "verify_part", "list_eval_tasks", "create_cad_loon"]
+}

@@ -1979,6 +1979,16 @@ export function recommendPrintSettings(analysis_json: string, printer_profile: s
 export function renderBakeMesh(input_json: string): string;
 
 /**
+ * Render raw `.vcad` document JSON to a drafting-style isometric SVG.
+ *
+ * Thin wrapper over `vcad_render::render_svg_str` — the same renderer the
+ * `vcad-render` CLI and the mecheval leaderboard use, so agents and humans
+ * see identical linework. `scale` is pixels per millimetre (pass
+ * `vcad_render::DEFAULT_SCALE` = 2.0 when in doubt).
+ */
+export function render_svg(vcad_json: string, scale: number): string;
+
+/**
  * Generate a section view from a triangle mesh.
  *
  * # Arguments
@@ -2229,6 +2239,7 @@ export interface InitOutput {
     readonly raytracer_setTheme: (a: number, b: number) => void;
     readonly raytracer_uploadSolid: (a: number, b: number) => [number, number];
     readonly renderBakeMesh: (a: number, b: number) => [number, number, number, number];
+    readonly render_svg: (a: number, b: number, c: number) => [number, number, number, number];
     readonly sectionMesh: (a: any, b: number, c: number, d: number, e: number) => any;
     readonly solid_boundaryEdges: (a: number, b: number) => [number, number];
     readonly solid_boundingBox: (a: number) => [number, number];

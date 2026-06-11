@@ -14,6 +14,13 @@ import { commandRegistry } from "@vcad/core";
 import type { Document } from "@vcad/ir";
 import { exportCad, exportCadSchema } from "./tools/export.js";
 import { inspectCad, inspectCadSchema } from "./tools/inspect.js";
+import { renderView, renderViewSchema } from "./tools/render.js";
+import {
+  verifyPart,
+  verifyPartSchema,
+  listEvalTasks,
+  listEvalTasksSchema,
+} from "./tools/verify.js";
 import { importStep, importStepSchema } from "./tools/import.js";
 import { openInBrowser, openInBrowserSchema } from "./tools/share.js";
 import {
@@ -261,11 +268,15 @@ export async function createServer(existingEngine?: Engine): Promise<Server> {
       {
         name: "create_cad_loon",
         description:
-          "Create a CAD document from loon source code. Loon is a Lisp-like language for parametric CAD.\n\n" +
+          "Create a CAD document from loon source code. Loon is a Lisp-like language for parametric CAD — the FULL modeling vocabulary (patterns, sketches, extrude/revolve/sweep/loft, assemblies) is available here even where no dedicated MCP tool exists.\n\n" +
           "Primitives: [cube x y z], [cylinder r h], [sphere r], [cone r-bottom r-top h]\n" +
-          "Booleans (subject-last): [difference tool subject], [union other subject]\n" +
+          "Booleans (subject-last): [difference tool subject], [union other subject], [intersection other subject]\n" +
           "Transforms (subject-last): [translate x y z s], [rotate rx ry rz s], [scale sx sy sz s]\n" +
           "Features: [fillet r s], [chamfer d s], [shell t s]\n" +
+          "Patterns (subject-last): [linear-pattern dx dy dz count spacing s], [circular-pattern ox oy oz ax ay az count angle s] — e.g. a bolt circle is [circular-pattern 0 0 0 0 0 1 6 360 bolt-hole]\n" +
+          "Sketches: [sketch ox oy oz xx xy xz yx yy yz #[segments]] with [line x1 y1 x2 y2] and [arc x1 y1 x2 y2 cx cy ccw]\n" +
+          "Sketch ops (sketch-last): [extrude dx dy dz sk], [revolve aox aoy aoz adx ady adz angle sk], [sweep-line sx sy sz ex ey ez sk], [sweep-helix radius pitch height turns sk], [loft #[sk1 sk2 …]]\n" +
+          "Assemblies: [assembly #[parts] #[instances] #[joints] ground-id] with [part name solid \"material\"], [instance name part-name x y z], [revolute-joint …], [prismatic-joint …], [fixed-joint …], [ball-joint …]\n" +
           "Pipe: [pipe [cube 50 30 5] [difference [cylinder 3 10]] [fillet 1.0]]\n" +
           "Let bindings: [let body [cube 50 30 5]]\n" +
           "Scene: [root solid \"material-name\"]",
@@ -283,6 +294,25 @@ export async function createServer(existingEngine?: Engine): Promise<Server> {
         description:
           "Inspect an open session document to get aggregate geometry properties: volume, surface area, bounding box, center of mass, triangle count, and mass (if material density is known). For per-part inspection use the chat-surface `inspect_part` / `describe_scene` tools (deferred from this MCP surface in v1).",
         inputSchema: inspectCadSchema,
+      },
+      // ── Verify-and-iterate loop: eyes + oracle ──────────────────
+      {
+        name: "render_view",
+        description:
+          "Render an open session document to an isometric PNG image so you can SEE the current geometry — silhouettes, holes, creases — not just numbers. Drafting-style line art, Z-up, same renderer as the vcad CLI. Call after mutations to visually confirm the part matches intent before declaring done.",
+        inputSchema: renderViewSchema,
+      },
+      {
+        name: "verify_part",
+        description:
+          "Grade an open session document against a mecheval benchmark task using the official deterministic graders (the exact binaries the leaderboard runs). Returns pass/fail per check — bounding box, mass properties, hole positions, STEP round-trip, … — with measured-vs-expected details so you can iterate until green. Use list_eval_tasks to browse task ids.",
+        inputSchema: verifyPartSchema,
+      },
+      {
+        name: "list_eval_tasks",
+        description:
+          "List mecheval benchmark tasks (id, suite, tier, title, prompt, check count). Suites: A authoring, B kernel, C mech/physics, D visual, F fit. Pair with verify_part for self-graded practice and verification.",
+        inputSchema: listEvalTasksSchema,
       },
       // ── DFM (Design for Manufacturing) ──────────────────────────
       {
@@ -617,6 +647,20 @@ export async function createServer(existingEngine?: Engine): Promise<Server> {
 
         case "inspect_cad":
           result = inspectCad(args, engine);
+          break;
+
+        case "render_view":
+          // Image content blocks don't fit the text-only local result
+          // type; the MCP SDK accepts them as-is.
+          result = (await renderView(args)) as unknown as typeof result;
+          break;
+
+        case "verify_part":
+          result = verifyPart(args);
+          break;
+
+        case "list_eval_tasks":
+          result = listEvalTasks(args);
           break;
 
         case "dfm_check":
