@@ -1210,6 +1210,14 @@ fn compute_center_of_mass(mesh: &TriangleMesh) -> [f64; 3] {
     let mut cy = 0.0;
     let mut cz = 0.0;
     let mut total_vol = 0.0;
+    // Area-weighted surface centroid — fallback when the signed-volume
+    // integral is unreliable (open or inconsistently wound meshes, e.g.
+    // thin sheet bodies). A convex combination of triangle centroids, so
+    // it always lands inside the bounding box.
+    let mut acx = 0.0;
+    let mut acy = 0.0;
+    let mut acz = 0.0;
+    let mut total_area = 0.0;
     for tri in indices.chunks(3) {
         let (i0, i1, i2) = (
             tri[0] as usize * 3,
@@ -1225,12 +1233,42 @@ fn compute_center_of_mass(mesh: &TriangleMesh) -> [f64; 3] {
         cx += vol * (v0[0] + v1[0] + v2[0]);
         cy += vol * (v0[1] + v1[1] + v2[1]);
         cz += vol * (v0[2] + v1[2] + v2[2]);
+
+        let e1 = Vec3::new(v1[0] - v0[0], v1[1] - v0[1], v1[2] - v0[2]);
+        let e2 = Vec3::new(v2[0] - v0[0], v2[1] - v0[1], v2[2] - v0[2]);
+        let area = e1.cross(e2).norm() / 2.0;
+        total_area += area;
+        acx += area * (v0[0] + v1[0] + v2[0]) / 3.0;
+        acy += area * (v0[1] + v1[1] + v2[1]) / 3.0;
+        acz += area * (v0[2] + v1[2] + v2[2]) / 3.0;
     }
+    let area_centroid = if total_area > 0.0 {
+        [acx / total_area, acy / total_area, acz / total_area]
+    } else {
+        [0.0; 3]
+    };
     if total_vol.abs() < 1e-15 {
-        return [0.0; 3];
+        return area_centroid;
     }
     let s = 1.0 / (4.0 * total_vol);
-    [cx * s, cy * s, cz * s]
+    let com = [cx * s, cy * s, cz * s];
+    // The volume-weighted centroid is only valid for a closed,
+    // consistently wound mesh — on open meshes the signed-tet
+    // contributions partially cancel and the division can throw the
+    // centroid outside the bounding box, which is impossible for a real
+    // COM. Fall back to the surface centroid when that happens.
+    let (min, max) = compute_bounding_box(mesh);
+    let eps = 1e-9
+        * (max[0] - min[0])
+            .max(max[1] - min[1])
+            .max(max[2] - min[2])
+            .max(1.0);
+    let in_bbox = (0..3).all(|i| com[i] >= min[i] - eps && com[i] <= max[i] + eps);
+    if in_bbox {
+        com
+    } else {
+        area_centroid
+    }
 }
 
 #[cfg(test)]
@@ -1380,6 +1418,36 @@ mod tests {
         assert!((com[0] - 5.0).abs() < 0.1, "cx: {}", com[0]);
         assert!((com[1] - 5.0).abs() < 0.1, "cy: {}", com[1]);
         assert!((com[2] - 5.0).abs() < 0.1, "cz: {}", com[2]);
+    }
+
+    #[test]
+    fn test_center_of_mass_open_mesh_stays_in_bbox() {
+        // A single triangle far from the origin: the divergence-theorem
+        // integral sees a nonzero signed volume and the naive division
+        // places the centroid at (v0+v1+v2)/4 — pulled toward the origin,
+        // outside the triangle's own bbox (z would be 7.5 vs bbox z=10).
+        // The guard must fall back to the surface centroid instead.
+        let mesh = TriangleMesh {
+            vertices: vec![4.0, 0.0, 10.0, 0.0, 4.0, 10.0, -4.0, -4.0, 10.0],
+            indices: vec![0, 1, 2],
+            normals: vec![0.0; 9],
+            face_kinds: Vec::new(),
+        };
+        let com = compute_center_of_mass(&mesh);
+        let (min, max) = compute_bounding_box(&mesh);
+        for i in 0..3 {
+            assert!(
+                com[i] >= min[i] - 1e-9 && com[i] <= max[i] + 1e-9,
+                "com[{i}] = {} outside bbox [{}, {}]",
+                com[i],
+                min[i],
+                max[i]
+            );
+        }
+        // Area centroid of the lone triangle.
+        assert!((com[0] - 0.0).abs() < 1e-9, "cx: {}", com[0]);
+        assert!((com[1] - 0.0).abs() < 1e-9, "cy: {}", com[1]);
+        assert!((com[2] - 10.0).abs() < 1e-9, "cz: {}", com[2]);
     }
 
     #[test]

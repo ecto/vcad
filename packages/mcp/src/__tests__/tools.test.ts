@@ -436,6 +436,52 @@ describe("sheet-metal tools", () => {
     ).toBe(true);
   });
 
+  it("inspect_cad center of mass stays inside the bounding box", () => {
+    // Regression: this flange chain tessellates to a non-watertight mesh
+    // whose signed-volume integral partially cancels, which used to throw
+    // the centroid below the bbox (z = -32.277 vs bbox min z = -31.439).
+    const created = JSON.parse(
+      sheetMetalCreate(
+        {
+          outline: [
+            { x: 20, y: 0 },
+            { x: 40, y: 0 },
+            { x: 60, y: 40 },
+            { x: 40, y: 80 },
+            { x: 20, y: 80 },
+            { x: 0, y: 40 },
+          ],
+          thickness: 0.5,
+          material: "Al-soft",
+          flanges: [
+            { edge_index: 0, length: 35, angle: 1.1, direction: "Up" },
+            {
+              panel_id: 1,
+              edge_index: 2,
+              length: 12,
+              angle: 2.2,
+              direction: "Down",
+            },
+            { edge_index: 2, length: 50, angle: 0.6, direction: "Up" },
+            { edge_index: 3, length: 30, angle: 0.9, direction: "Up" },
+            { edge_index: 4, length: 50, angle: 0.6, direction: "Up" },
+          ],
+        },
+        engine,
+      ).content[0].text,
+    );
+
+    const result = JSON.parse(
+      inspectCad({ document_id: created.document_id }, engine).content[0]
+        .text,
+    );
+    const { bounding_box: bbox, center_of_mass: com } = result;
+    for (const axis of ["x", "y", "z"] as const) {
+      expect(com[axis]).toBeGreaterThanOrEqual(bbox.min[axis]);
+      expect(com[axis]).toBeLessThanOrEqual(bbox.max[axis]);
+    }
+  });
+
   it("unfold on an unknown document id throws", () => {
     expect(() =>
       sheetMetalUnfold({ document_id: "nope" }, engine),
