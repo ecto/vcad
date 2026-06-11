@@ -36,7 +36,11 @@ pub mod manufacturability;
 pub mod materials;
 pub mod model;
 pub mod nesting;
+pub mod poly2d;
+pub mod relief;
 pub mod sequence;
+pub mod shop_profiles;
+pub mod silhouette;
 pub mod unfold;
 
 pub use base_flange::{
@@ -44,7 +48,9 @@ pub use base_flange::{
 };
 pub use bend_table::{BendAllowance, BendTable, KFactorSource};
 pub use cost::{estimate_cost, CostBreakdown, CostRates};
-pub use dxf::{flat_pattern_to_dxf, nested_dxf, NestedPlacement};
+pub use dxf::{
+    flat_pattern_to_dxf, flat_pattern_to_dxf_with, nested_dxf, DxfOptions, NestedPlacement,
+};
 pub use edge_flange::{add_edge_flange, EdgeFlangeError, FlangePosition};
 pub use hem::{add_hem, HemKind, HemParams};
 pub use jog::{add_jog, JogParams, JogResult};
@@ -55,5 +61,11 @@ pub use materials::{
 };
 pub use model::{Bend, BendDirection, BendId, Frame, Panel, PanelId, SheetMetalModel};
 pub use nesting::{nest_rectangles, NestingParams, NestingResult, PartFootprint, Placement};
+pub use poly2d::Poly;
+pub use relief::{apply_bend_relief, find_missing_reliefs, ReliefError, ReliefNotch, ReliefParams};
 pub use sequence::{bend_sequence, BendStep};
+pub use shop_profiles::{
+    builtin_shop_ids, shop_catalog, ShopCatalog, ShopLookupError, ShopMaterial, ShopRow,
+};
+pub use silhouette::{silhouette, BendLine, Silhouette, SilhouetteError};
 pub use unfold::{refold, unfold, FlatPattern, UnfoldError};

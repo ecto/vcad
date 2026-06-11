@@ -14,6 +14,7 @@ vcad-kernel-primitives = { workspace = true }
 vcad-kernel-tessellate = { workspace = true }
 vcad-kernel-booleans = { workspace = true }
 vcad-kernel-fillet = { workspace = true }
+vcad-kernel-sheet = { workspace = true }
 vcad-kernel-sketch = { workspace = true }
 vcad-kernel-sweep = { workspace = true }
 vcad-kernel-shell = { workspace = true }

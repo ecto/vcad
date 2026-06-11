@@ -275,7 +275,7 @@ export async function createServer(existingEngine?: Engine): Promise<Server> {
       {
         name: "export_cad",
         description:
-          "Export a CAD document to a file. Supports STL (3D printing) and GLB (visualization) formats. Format is determined by file extension.",
+          "Export a CAD document to a file. Supports STL (3D printing), GLB (visualization), and — for sheet-metal documents — STEP AP214 of the FOLDED body with true cylindrical bend faces (fab 3D pipelines like SendCutSend auto-detect bends/angles/directions; zero data entry). Format is determined by file extension.",
         inputSchema: exportCadSchema,
       },
       {
@@ -314,20 +314,20 @@ export async function createServer(existingEngine?: Engine): Promise<Server> {
       {
         name: "sheet_metal_create",
         description:
-          "Create a sheet-metal part: a rectangular base flange plus an ordered chain of edge flanges. Returns a `document_id` (usable with sheet_metal_unfold/check, inspect_cad, export_cad, open_in_browser), the panel/bend model summary, flat bbox + area, and DFM violations vs. the generic shop.",
+          "Create a sheet-metal part: a rectangular or polygon base flange plus an ordered chain of edge flanges, hems, and jogs. Supports `shop_profile` (e.g. \"sendcutsend\") to resolve bend radii/K-factors from the fab's published catalog, and `bend_relief` to cut relief notches at bend ends. Returns a `document_id` (usable with sheet_metal_unfold/check, inspect_cad, export_cad, open_in_browser), the panel/bend model summary, flat bbox + area, and DFM violations.",
         inputSchema: sheetMetalCreateSchema,
         _meta: UI_META,
       },
       {
         name: "sheet_metal_unfold",
         description:
-          "Return the flat pattern (panel outlines, holes, creases, area, bbox) for a sheet-metal session document, plus a layered DXF (CUT / BEND_UP / BEND_DOWN, millimetres) ready to send to a laser bureau.",
+          "Return the flat pattern (panel outlines, holes, creases, area, bbox) for a sheet-metal session document, plus a fab-ready merged single-silhouette DXF (millimetres): one closed exterior polyline + holes on CUT, DASHED bend centerlines on BEND_UP/BEND_DOWN. DXF carries no bend angles (entered in the fab's UI); for zero data entry export the folded body as STEP via export_cad instead.",
         inputSchema: sheetMetalUnfoldSchema,
       },
       {
         name: "sheet_metal_check",
         description:
-          "Run sheet-metal manufacturability for a session document against a shop profile (brake length, min R/t, flange height, hole→bend, bend→bend). Field-tolerant: omit keys to use generic defaults. Returns structured violations the agent can use to adjust the part and re-check.",
+          "Run sheet-metal manufacturability for a session document against a shop profile (brake length, min R/t, flange height, hole→bend, bend→bend, bend relief, fixed radius). `shop_profile` is a catalog id string (e.g. \"sendcutsend\") or a capabilities object (field-tolerant: omit keys for generic defaults). Returns structured violations the agent can use to adjust the part and re-check.",
         inputSchema: sheetMetalCheckSchema,
       },
       {
@@ -339,7 +339,7 @@ export async function createServer(existingEngine?: Engine): Promise<Server> {
       {
         name: "sheet_metal_bend_table",
         description:
-          "Read the kernel's curated bend table — `(material, thickness, radius) → K-factor` rows used to compute bend allowance. Inspect this to know what K a planned bend will use without modelling the part first.",
+          "Read the kernel's curated bend table — `(material, thickness, radius) → K-factor` rows used to compute bend allowance. Pass `shop_profile` (e.g. \"sendcutsend\") to instead read that fab service's published catalog: fixed radii, K-factors, die widths, min flange sizes, and relief depths per material/thickness.",
         inputSchema: sheetMetalBendTableSchema,
       },
       {

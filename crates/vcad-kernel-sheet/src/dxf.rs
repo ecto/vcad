@@ -1,23 +1,41 @@
-//! Layered DXF export of a [`FlatPattern`].
+//! Layered DXF export of a [`FlatPattern`] — natively compatible with
+//! SendCutSend and similar laser/bend bureaus.
 //!
-//! Emits DXF R12 (`AC1009`, the dialect SendCutSend / laser bureaus accept —
-//! matching the existing `vcad` exporter) with the manufacturing layer
-//! convention from `docs/features/sheet-metal.md`:
+//! Emits DXF R12 (`AC1009`) with `$INSUNITS = 4` (millimetres) and the
+//! manufacturing layer convention from `docs/features/sheet-metal.md`:
 //!
-//! | Layer       | Color        | Geometry                          |
-//! |-------------|--------------|-----------------------------------|
-//! | `CUT`       | red (1)      | panel outlines + holes (closed)   |
-//! | `BEND_UP`   | blue (5)     | creases that fold *up*            |
-//! | `BEND_DOWN` | cyan (4)     | creases that fold *down*          |
+//! | Layer       | Color    | Linetype   | Geometry                          |
+//! |-------------|----------|------------|-----------------------------------|
+//! | `CUT`       | red (1)  | CONTINUOUS | one exterior ring + hole rings    |
+//! | `BEND_UP`   | blue (5) | DASHED     | bend centerlines that fold *up*   |
+//! | `BEND_DOWN` | cyan (4) | DASHED     | bend centerlines that fold *down* |
 //!
-//! Only the three foundation-tier layers are written; `FORM` / `ETCH` /
-//! `GRAIN` land with the form-tool and flat-first authoring tiers when
-//! there's data to put on them.
+//! Three properties make the output upload-ready for a fab service:
+//!
+//! 1. **One closed exterior per part.** Panel outlines and bend-allowance
+//!    strips are unioned into a single silhouette (see
+//!    [`crate::silhouette`]); no disjoint per-panel regions, no
+//!    allowance-width gaps that read as "open entities".
+//! 2. **Dashed bend lines.** Services detect bend lines by *linetype =
+//!    dashed*, not by layer name or color. Every bend `LINE` carries the
+//!    `DASHED` linetype (declared in the `LTYPE` table, R12-compatible);
+//!    cut geometry stays `CONTINUOUS`. The Up/Down layers are kept for
+//!    human readability.
+//! 3. **Bend lines on the bend center.** Each line lies on the allowance
+//!    midline (parent edge + allowance/2 toward the child), which is the
+//!    actual bend centerline — not the parent edge of the strip.
+//!
+//! No text, dimensions, or annotations are ever emitted — services reject
+//! or ignore them and they pollute bend-line detection.
+//!
+//! The old per-panel output remains available behind
+//! [`DxfOptions::legacy_panel_outlines`] for debugging; default off.
 //!
 //! Output is a `String` (not a file) so the same code path serves the CLI,
 //! the WASM binding, and tests without touching the filesystem.
 
 use crate::model::BendDirection;
+use crate::silhouette::{silhouette, Silhouette, SilhouetteError};
 use crate::unfold::FlatPattern;
 use std::fmt::Write as _;
 use vcad_kernel_math::Point2;
@@ -33,37 +51,109 @@ const COLOR_CUT: i32 = 1; // red
 const COLOR_BEND_UP: i32 = 5; // blue
 const COLOR_BEND_DOWN: i32 = 4; // cyan
 
-/// Serialise a flat pattern to a layered DXF document.
+/// Linetype applied to every bend line. Fab services detect bend lines by
+/// dashed linetype — solid lines are invisible to their parsers.
+const LTYPE_DASHED: &str = "DASHED";
+const LTYPE_CONTINUOUS: &str = "CONTINUOUS";
+
+/// Export options for [`flat_pattern_to_dxf_with`].
+#[derive(Debug, Clone, Default)]
+pub struct DxfOptions {
+    /// Emit the legacy per-panel outlines (each panel its own closed
+    /// polyline, bend lines on the parent edge, no merged silhouette).
+    /// Debugging aid only — fab services reject this format. Default off.
+    pub legacy_panel_outlines: bool,
+}
+
+/// Serialise a flat pattern to a fab-ready layered DXF document.
 ///
 /// Coordinates are emitted verbatim in millimetres (the flat pattern's own
 /// global 2D frame); `$INSUNITS` is set to mm so a shop importing the file
 /// gets true-scale geometry.
-pub fn flat_pattern_to_dxf(flat: &FlatPattern) -> String {
+///
+/// Fails with [`SilhouetteError::DisconnectedIslands`] when the panel/bend
+/// graph does not merge into a single region — that part cannot be cut as
+/// one piece, and silently emitting the per-panel format would just move
+/// the failure to the fab's upload checker.
+pub fn flat_pattern_to_dxf(flat: &FlatPattern) -> Result<String, SilhouetteError> {
+    flat_pattern_to_dxf_with(flat, &DxfOptions::default())
+}
+
+/// [`flat_pattern_to_dxf`] with explicit options.
+pub fn flat_pattern_to_dxf_with(
+    flat: &FlatPattern,
+    options: &DxfOptions,
+) -> Result<String, SilhouetteError> {
     let mut s = String::new();
     write_header(&mut s);
     write_tables(&mut s);
-
     let _ = writeln!(s, "0\nSECTION\n2\nENTITIES");
+    if options.legacy_panel_outlines {
+        write_legacy_entities(&mut s, flat, &|p| p);
+    } else {
+        let sil = silhouette_or_empty(flat)?;
+        write_silhouette_entities(&mut s, &sil, &|p| p);
+    }
+    let _ = writeln!(s, "0\nENDSEC");
+    let _ = writeln!(s, "0\nEOF");
+    Ok(s)
+}
 
+/// An empty flat pattern still yields a valid (empty) DXF; only a *failed
+/// union* of real geometry is an error.
+fn silhouette_or_empty(flat: &FlatPattern) -> Result<Silhouette, SilhouetteError> {
+    match silhouette(flat) {
+        Ok(s) => Ok(s),
+        Err(SilhouetteError::Empty) => Ok(Silhouette {
+            exterior: Vec::new(),
+            holes: Vec::new(),
+            bend_lines: Vec::new(),
+        }),
+        Err(e) => Err(e),
+    }
+}
+
+fn write_silhouette_entities(s: &mut String, sil: &Silhouette, xform: &dyn Fn(Point2) -> Point2) {
+    if sil.exterior.len() >= 3 {
+        let pts: Vec<Point2> = sil.exterior.iter().map(|&p| xform(p)).collect();
+        write_polyline(s, &pts, LAYER_CUT);
+    }
+    for hole in &sil.holes {
+        let pts: Vec<Point2> = hole.iter().map(|&p| xform(p)).collect();
+        write_polyline(s, &pts, LAYER_CUT);
+    }
+    for bl in &sil.bend_lines {
+        write_bend_line(s, xform(bl.line.0), xform(bl.line.1), bl.direction);
+    }
+}
+
+fn write_legacy_entities(s: &mut String, flat: &FlatPattern, xform: &dyn Fn(Point2) -> Point2) {
     for outline in &flat.panel_outlines_2d {
-        write_polyline(&mut s, outline, LAYER_CUT);
+        let pts: Vec<Point2> = outline.iter().map(|&p| xform(p)).collect();
+        write_polyline(s, &pts, LAYER_CUT);
     }
     for panel_holes in &flat.panel_holes_2d {
         for hole in panel_holes {
-            write_polyline(&mut s, hole, LAYER_CUT);
+            let pts: Vec<Point2> = hole.iter().map(|&p| xform(p)).collect();
+            write_polyline(s, &pts, LAYER_CUT);
         }
     }
     for crease in &flat.creases {
-        let layer = match crease.direction {
-            BendDirection::Up => LAYER_BEND_UP,
-            BendDirection::Down => LAYER_BEND_DOWN,
-        };
-        write_line(&mut s, crease.line.0, crease.line.1, layer);
+        write_bend_line(
+            s,
+            xform(crease.line.0),
+            xform(crease.line.1),
+            crease.direction,
+        );
     }
+}
 
-    let _ = writeln!(s, "0\nENDSEC");
-    let _ = writeln!(s, "0\nEOF");
-    s
+fn write_bend_line(s: &mut String, a: Point2, b: Point2, direction: BendDirection) {
+    let layer = match direction {
+        BendDirection::Up => LAYER_BEND_UP,
+        BendDirection::Down => LAYER_BEND_DOWN,
+    };
+    write_line(s, a, b, layer, LTYPE_DASHED);
 }
 
 fn write_header(s: &mut String) {
@@ -76,26 +166,32 @@ fn write_header(s: &mut String) {
 fn write_tables(s: &mut String) {
     let _ = writeln!(s, "0\nSECTION\n2\nTABLES");
 
-    // Linetype table — a single CONTINUOUS entry keeps strict parsers happy.
-    let _ = writeln!(s, "0\nTABLE\n2\nLTYPE\n70\n1");
+    // Linetype table: CONTINUOUS for cuts plus DASHED for bend lines.
+    // DASHED pattern (R12, drawing units = mm): total 19.05, 12.7 dash,
+    // 6.35 gap — the stock ACAD dashed pattern fab parsers expect.
+    let _ = writeln!(s, "0\nTABLE\n2\nLTYPE\n70\n2");
     let _ = writeln!(
         s,
         "0\nLTYPE\n2\nCONTINUOUS\n70\n0\n3\nSolid line\n72\n65\n73\n0\n40\n0.0"
+    );
+    let _ = writeln!(
+        s,
+        "0\nLTYPE\n2\nDASHED\n70\n0\n3\nDashed line\n72\n65\n73\n2\n40\n19.05\n49\n12.7\n49\n-6.35"
     );
     let _ = writeln!(s, "0\nENDTAB");
 
     // Layer table.
     let _ = writeln!(s, "0\nTABLE\n2\nLAYER\n70\n3");
-    write_layer(s, LAYER_CUT, COLOR_CUT);
-    write_layer(s, LAYER_BEND_UP, COLOR_BEND_UP);
-    write_layer(s, LAYER_BEND_DOWN, COLOR_BEND_DOWN);
+    write_layer(s, LAYER_CUT, COLOR_CUT, LTYPE_CONTINUOUS);
+    write_layer(s, LAYER_BEND_UP, COLOR_BEND_UP, LTYPE_DASHED);
+    write_layer(s, LAYER_BEND_DOWN, COLOR_BEND_DOWN, LTYPE_DASHED);
     let _ = writeln!(s, "0\nENDTAB");
 
     let _ = writeln!(s, "0\nENDSEC");
 }
 
-fn write_layer(s: &mut String, name: &str, color: i32) {
-    let _ = writeln!(s, "0\nLAYER\n2\n{name}\n70\n0\n62\n{color}\n6\nCONTINUOUS");
+fn write_layer(s: &mut String, name: &str, color: i32, ltype: &str) {
+    let _ = writeln!(s, "0\nLAYER\n2\n{name}\n70\n0\n62\n{color}\n6\n{ltype}");
 }
 
 fn write_polyline(s: &mut String, pts: &[Point2], layer: &str) {
@@ -110,8 +206,8 @@ fn write_polyline(s: &mut String, pts: &[Point2], layer: &str) {
     }
 }
 
-fn write_line(s: &mut String, a: Point2, b: Point2, layer: &str) {
-    let _ = writeln!(s, "0\nLINE\n8\n{layer}");
+fn write_line(s: &mut String, a: Point2, b: Point2, layer: &str, ltype: &str) {
+    let _ = writeln!(s, "0\nLINE\n8\n{layer}\n6\n{ltype}");
     let _ = writeln!(s, "10\n{:.6}\n20\n{:.6}", a.x, a.y);
     let _ = writeln!(s, "11\n{:.6}\n21\n{:.6}", b.x, b.y);
 }
@@ -137,12 +233,10 @@ pub struct NestedPlacement<'a> {
 
 /// Serialise a set of nested placements to one DXF per sheet.
 ///
-/// Returns one DXF string per sheet (index 0 = sheet 0). Useful as the
-/// shop-facing artifact for a nested job: each sheet's DXF carries every
-/// part placed on it, on the same `CUT` / `BEND_UP` / `BEND_DOWN` layers
-/// as the single-part exporter so shop post-processors don't have to
-/// learn a new dialect.
-pub fn nested_dxf(placements: &[NestedPlacement<'_>]) -> Vec<String> {
+/// Returns one DXF string per sheet (index 0 = sheet 0). Each part is
+/// emitted as its merged silhouette + dashed bend centerlines — the same
+/// fab-ready convention as the single-part exporter.
+pub fn nested_dxf(placements: &[NestedPlacement<'_>]) -> Result<Vec<String>, SilhouetteError> {
     let mut max_sheet = 0usize;
     for p in placements {
         if p.sheet > max_sheet {
@@ -159,7 +253,10 @@ pub fn nested_dxf(placements: &[NestedPlacement<'_>]) -> Vec<String> {
         .collect()
 }
 
-fn build_sheet_dxf(sheet: usize, placements: &[NestedPlacement<'_>]) -> String {
+fn build_sheet_dxf(
+    sheet: usize,
+    placements: &[NestedPlacement<'_>],
+) -> Result<String, SilhouetteError> {
     let mut s = String::new();
     write_header(&mut s);
     write_tables(&mut s);
@@ -168,42 +265,26 @@ fn build_sheet_dxf(sheet: usize, placements: &[NestedPlacement<'_>]) -> String {
         // Translate the flat pattern. The flat coordinates are referenced
         // to the FlatPattern's own bbox; we want each placement's bbox
         // lower-left to land at (dx, dy).
-        let ((min_x, min_y), _) = p.flat.bbox();
-        let xform = |pt: Point2| -> Point2 {
+        let ((min_x, min_y), (_, max_y)) = p.flat.bbox();
+        let height = max_y - min_y;
+        let xform = move |pt: Point2| -> Point2 {
             let local = Point2::new(pt.x - min_x, pt.y - min_y);
             let rotated = if p.rotated {
                 // 90° CCW about local origin: (x, y) → (-y, x). Shift
                 // back into +x by adding the original height so the
                 // rotated bbox sits at (0, 0).
-                let (_, (_, max_y)) = p.flat.bbox();
-                let height = max_y - min_y;
                 Point2::new(-local.y + height, local.x)
             } else {
                 local
             };
             Point2::new(rotated.x + p.dx_mm, rotated.y + p.dy_mm)
         };
-        for outline in &p.flat.panel_outlines_2d {
-            let pts: Vec<Point2> = outline.iter().map(|&q| xform(q)).collect();
-            write_polyline(&mut s, &pts, LAYER_CUT);
-        }
-        for panel_holes in &p.flat.panel_holes_2d {
-            for hole in panel_holes {
-                let pts: Vec<Point2> = hole.iter().map(|&q| xform(q)).collect();
-                write_polyline(&mut s, &pts, LAYER_CUT);
-            }
-        }
-        for crease in &p.flat.creases {
-            let layer = match crease.direction {
-                crate::model::BendDirection::Up => LAYER_BEND_UP,
-                crate::model::BendDirection::Down => LAYER_BEND_DOWN,
-            };
-            write_line(&mut s, xform(crease.line.0), xform(crease.line.1), layer);
-        }
+        let sil = silhouette_or_empty(p.flat)?;
+        write_silhouette_entities(&mut s, &sil, &xform);
     }
     let _ = writeln!(s, "0\nENDSEC");
     let _ = writeln!(s, "0\nEOF");
-    s
+    Ok(s)
 }
 
 #[cfg(test)]
@@ -242,10 +323,11 @@ mod tests {
 
     #[test]
     fn emits_well_formed_layered_dxf() {
-        let dxf = flat_pattern_to_dxf(&l_bracket_flat());
+        let dxf = flat_pattern_to_dxf(&l_bracket_flat()).unwrap();
 
         // Structure.
         assert!(dxf.starts_with("0\nSECTION\n2\nHEADER"));
+        assert!(dxf.contains("$ACADVER\n1\nAC1009"));
         assert!(dxf.contains("$INSUNITS\n70\n4"), "units must be mm");
         assert!(dxf.contains("\nTABLES\n"));
         assert!(dxf.contains("\nENTITIES"));
@@ -256,10 +338,48 @@ mod tests {
         assert!(dxf.contains("0\nLAYER\n2\nBEND_UP\n"));
         assert!(dxf.contains("0\nLAYER\n2\nBEND_DOWN\n"));
 
-        // Geometry: two panel outlines on CUT, one bend-up crease.
+        // DASHED linetype declared in the LTYPE table.
+        assert!(dxf.contains("0\nLTYPE\n2\nDASHED\n"));
+        assert!(dxf.contains("40\n19.05\n49\n12.7\n49\n-6.35"));
+
+        // Geometry: ONE merged exterior on CUT (not two per-panel
+        // outlines), one dashed bend-up line.
+        assert_eq!(dxf.matches("0\nLWPOLYLINE\n8\nCUT").count(), 1);
+        assert!(dxf.contains("0\nLINE\n8\nBEND_UP\n6\nDASHED"));
+        assert!(!dxf.contains("8\nBEND_DOWN\n6")); // no down creases here
+    }
+
+    #[test]
+    fn bend_line_is_recentered_on_allowance_midline() {
+        let flat = l_bracket_flat();
+        let dxf = flat_pattern_to_dxf(&flat).unwrap();
+        let ba = crate::silhouette::crease_allowance(&flat.creases[0], flat.thickness);
+        let mid_y = -ba / 2.0;
+        // The LINE's y coordinates must be the midline, not 0 (the parent
+        // edge of the allowance strip).
+        let expect = format!("20\n{mid_y:.6}");
+        assert!(dxf.contains(&expect), "missing midline y {mid_y:.6}");
+        assert!(!dxf.contains("0\nLINE\n8\nBEND_UP\n6\nDASHED\n10\n0.000000\n20\n0.000000"));
+    }
+
+    #[test]
+    fn legacy_flag_restores_per_panel_outlines() {
+        let dxf = flat_pattern_to_dxf_with(
+            &l_bracket_flat(),
+            &DxfOptions {
+                legacy_panel_outlines: true,
+            },
+        )
+        .unwrap();
         assert_eq!(dxf.matches("0\nLWPOLYLINE\n8\nCUT").count(), 2);
-        assert!(dxf.contains("0\nLINE\n8\nBEND_UP"));
-        assert!(!dxf.contains("8\nBEND_DOWN\n10")); // no down creases here
+    }
+
+    #[test]
+    fn never_emits_text_or_dimensions() {
+        let dxf = flat_pattern_to_dxf(&l_bracket_flat()).unwrap();
+        assert!(!dxf.contains("\nTEXT"));
+        assert!(!dxf.contains("\nMTEXT"));
+        assert!(!dxf.contains("\nDIMENSION"));
     }
 
     #[test]
@@ -283,8 +403,8 @@ mod tests {
         )
         .unwrap();
         unfold(&mut m).unwrap();
-        let dxf = flat_pattern_to_dxf(&FlatPattern::from_model(&m));
-        assert!(dxf.contains("0\nLINE\n8\nBEND_DOWN"));
+        let dxf = flat_pattern_to_dxf(&FlatPattern::from_model(&m)).unwrap();
+        assert!(dxf.contains("0\nLINE\n8\nBEND_DOWN\n6\nDASHED"));
         assert!(!dxf.contains("0\nLINE\n8\nBEND_UP"));
     }
 
@@ -308,11 +428,11 @@ mod tests {
                 rotated: true,
             },
         ];
-        let dxfs = nested_dxf(&placements);
+        let dxfs = nested_dxf(&placements).unwrap();
         assert_eq!(dxfs.len(), 1);
-        // Both parts contribute outlines on CUT.
+        // Each part contributes ONE merged exterior on CUT.
         let cut_count = dxfs[0].matches("0\nLWPOLYLINE\n8\nCUT").count();
-        assert!(cut_count >= 4, "expected ≥4 outlines, got {cut_count}");
+        assert_eq!(cut_count, 2, "expected 2 merged outlines, got {cut_count}");
         // Some coordinate has been translated into the placement space.
         assert!(dxfs[0].contains("\n200.0"));
         assert!(dxfs[0].trim_end().ends_with("0\nEOF"));
@@ -344,12 +464,12 @@ mod tests {
                 rotated: false,
             },
         ];
-        let dxfs = nested_dxf(&placements);
+        let dxfs = nested_dxf(&placements).unwrap();
         assert_eq!(dxfs.len(), 2);
-        // Sheet 1 has 2 instances → ~4 outlines, sheet 0 has ~2.
         let s1 = dxfs[1].matches("0\nLWPOLYLINE\n8\nCUT").count();
         let s0 = dxfs[0].matches("0\nLWPOLYLINE\n8\nCUT").count();
-        assert!(s1 >= 2 * s0, "sheet 1 should have ≥2× the cuts of sheet 0");
+        assert_eq!(s0, 1);
+        assert_eq!(s1, 2);
     }
 
     #[test]
@@ -361,7 +481,7 @@ mod tests {
             creases: vec![],
             area_mm2: 0.0,
         };
-        let dxf = flat_pattern_to_dxf(&flat);
+        let dxf = flat_pattern_to_dxf(&flat).unwrap();
         assert!(dxf.contains("\nENTITIES"));
         assert!(dxf.trim_end().ends_with("0\nEOF"));
     }

@@ -389,6 +389,70 @@ Export options:
 - Polyline vs line segments
 - Include bend table as text block
 
+## Exporting to fab services (SendCutSend)
+
+vcad can target online sheet-metal services directly. The reference
+integration is **SendCutSend** via the built-in `sendcutsend` shop profile.
+
+### Merged-silhouette DXF
+
+The DXF returned by `sheet_metal_unfold` (the `dxf` field of chain
+evaluation) is a **fab-ready merged silhouette**, not a per-panel layered
+drawing:
+
+- One closed exterior `LWPOLYLINE` plus hole polylines on the `CUT` layer.
+- Bend centerlines as `LINE` entities with the `DASHED` linetype on
+  `BEND_UP` / `BEND_DOWN`, recentered on the bend-allowance midline.
+- No dimensions, no text, no annotations — exactly what upload-and-quote
+  services expect.
+
+If the flat pattern is disconnected (panels that don't share material),
+evaluation returns an error instead of a DXF.
+
+### Bend relief
+
+The `BendRelief` chain op (`bend_relief` in `sheet_metal_create`) cuts
+relief notches at the ends of every bend whose parent material sits in the
+deformation zone. It is parametric — the notches appear in the 3D body, the
+flat pattern, and the DXF. Defaults: width `max(1.5·t, 1 mm)`, depth
+`R + t`, or the shop's published per-thickness relief depth when a shop
+profile is active. The DFM checker reports missing reliefs as the
+auto-fixable `sheet.bend_relief` warning (`MissingBendRelief`).
+
+### The `sendcutsend` shop profile
+
+Setting `shop_profile: "sendcutsend"` on the base flange resolves every
+bend's inside radius and K-factor from SCS's published data, so vcad's flat
+pattern matches what their tooling actually forms.
+
+- **Data source:** sendcutsend.com bending calculator (per-material
+  K-factor, effective inside radius @90°, die width, min flange, relief
+  depth) and their processing min/max chart (max bend length, part size
+  limits). Retrieved 2026-06-10; source URLs and caveats are recorded in
+  the catalog itself (`getSheetMetalShopCatalog("sendcutsend")` /
+  `sheet_metal_bend_table` with `shop_profile`).
+- **Fixed radii:** SCS air-bends with fixed metric tooling — the inside
+  radius is *not* customer-selectable. Custom `radius` values are rejected
+  with an error naming the fixed radius; omit `radius` to get it
+  automatically. `sheet_metal_check` flags off-catalog radii as the
+  `sheet.bend_radius_fixed` error (`BendRadiusNotFixed`).
+- **Material coverage:** 5052 aluminum, mild/galvanized steel, 304/316
+  stainless, 4130 chromoly, brass, copper, polycarbonate, Ti grade 2.
+  **6061-T6 is not bendable** (SCS cuts it but does not offer bending) —
+  use 5052 for formed aluminum parts.
+
+### Two upload paths
+
+| | DXF (flat pattern) | STEP (folded body) |
+|---|---|---|
+| Upload | merged-silhouette DXF from `sheet_metal_unfold` | `export_cad` with a `.step` filename |
+| Bend angles | **not carried by DXF** — entered manually in the fab's UI | auto-detected from the folded geometry, zero data entry |
+| Requirement | flat pattern must use the shop's radii/K to be dimensionally right | shop profile must be set at model time so radii/K match their tooling |
+
+For SendCutSend the STEP path is the lowest-friction option: model with
+`shop_profile: "sendcutsend"`, run `sheet_metal_check`, then export the
+folded body as STEP.
+
 ## Nesting
 
 Arranging multiple flat patterns on stock sheet for minimal waste.

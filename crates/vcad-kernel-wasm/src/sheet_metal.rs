@@ -27,8 +27,8 @@
 use serde::{Deserialize, Serialize};
 use vcad_kernel_math::Point2;
 use vcad_kernel_sheet::{
-    add_edge_flange, add_hem, add_jog, base_flange_polygon_with_holes, base_flange_rect,
-    bend_sequence,
+    add_edge_flange, add_hem, add_jog, apply_bend_relief, base_flange_polygon_with_holes,
+    base_flange_rect, bend_sequence,
     bend_table::{self, BendTable},
     check_manufacturability,
     cost::{estimate_cost, CostBreakdown, CostRates},
@@ -39,8 +39,8 @@ use vcad_kernel_sheet::{
     nest_rectangles, nested_dxf,
     nesting::{NestingParams, NestingResult, PartFootprint},
     sequence::BendStep,
-    BendDirection, FlangePosition, FlatPattern, NestedPlacement, SheetMetalModel, ShopProfile,
-    Violation,
+    shop_catalog, BendDirection, FlangePosition, FlatPattern, NestedPlacement, ReliefParams,
+    SheetMetalModel, ShopCatalog, ShopProfile, Violation,
 };
 use wasm_bindgen::prelude::*;
 
@@ -56,6 +56,11 @@ enum ChainOp {
         thickness: f64,
         /// Material name for K-factor lookup (e.g. `"Al-soft"`).
         material: String,
+        /// Optional built-in shop catalog id (e.g. `"sendcutsend"`). When
+        /// set, every bend's radius and K-factor resolve through the shop's
+        /// published table — custom radii are rejected.
+        #[serde(default)]
+        shop_profile: Option<String>,
     },
     /// Initialise the model from an arbitrary CCW polygon (with optional
     /// CW hole loops) in the XY plane.
@@ -67,6 +72,9 @@ enum ChainOp {
         holes: Vec<Vec<[f64; 2]>>,
         thickness: f64,
         material: String,
+        /// Optional built-in shop catalog id (see `BaseFlangeRect`).
+        #[serde(default)]
+        shop_profile: Option<String>,
     },
     /// Add a flange off `edge_index` of `panel_id`.
     EdgeFlange {
@@ -74,10 +82,25 @@ enum ChainOp {
         edge_index: usize,
         length: f64,
         angle: f64,
-        radius: f64,
+        /// Inside bend radius (mm). Omitted → thickness, or the shop's
+        /// fixed radius when a shop profile is active.
+        #[serde(default)]
+        radius: Option<f64>,
         direction: BendDirection,
         /// Optional manual K-factor override (skips bend-table lookup).
         manual_k: Option<f64>,
+    },
+    /// Cut bend-relief notches at every bend end whose parent material
+    /// sits in the deformation zone. Applied after all other ops; sizing
+    /// defaults follow the active shop profile.
+    BendRelief {
+        /// Notch width (mm). Default `max(1.5 t, 1.0)`.
+        #[serde(default)]
+        width: Option<f64>,
+        /// Notch depth from the bend line (mm). Default `R + t` or the
+        /// shop's published per-thickness relief depth.
+        #[serde(default)]
+        depth: Option<f64>,
     },
     /// Add a hem (180° fold) off `edge_index` of `panel_id`.
     Hem {
@@ -95,7 +118,10 @@ enum ChainOp {
         edge_index: usize,
         offset: f64,
         length: f64,
-        radius: f64,
+        /// Inside bend radius (mm). Omitted → thickness, or the shop's
+        /// fixed radius when a shop profile is active.
+        #[serde(default)]
+        radius: Option<f64>,
         direction: BendDirection,
     },
 }
@@ -223,8 +249,16 @@ fn build_result(chain_json: &str) -> Result<SheetMetalEvalResult, String> {
 
     let mesh = tessellate_model(&model);
     let flat = FlatPattern::from_model(&model);
-    let dxf = flat_pattern_to_dxf(&flat);
-    let violations = check_manufacturability(&model, &ShopProfile::generic())
+    // Merged-silhouette export fails loudly on disconnected flat patterns —
+    // surface that as the result error rather than emitting a DXF the fab
+    // would reject anyway.
+    let dxf = flat_pattern_to_dxf(&flat).map_err(|e| format!("dxf: {e}"))?;
+    // Check against the chain's shop profile when one is named, else generic.
+    let shop_profile = match chain_shop(&chain)? {
+        Some(cat) => cat.shop_profile_for(&model.material, model.thickness),
+        None => ShopProfile::generic(),
+    };
+    let violations = check_manufacturability(&model, &shop_profile)
         .into_iter()
         .map(|v| ViolationDto {
             rule: v.rule(),
@@ -285,13 +319,9 @@ fn check_impl(chain_json: &str, shop_json: &str) -> Result<CheckResult, String> 
     if chain.is_empty() {
         return Err("empty op chain".to_string());
     }
-    let shop = if shop_json.trim().is_empty() {
-        ShopProfile::generic()
-    } else {
-        serde_json::from_str::<ShopProfile>(shop_json).map_err(|e| format!("shop JSON: {e}"))?
-    };
     let table = BendTable::builtin();
     let model = build_model(&chain, &table)?;
+    let shop = resolve_shop_arg(shop_json, &chain, &model)?;
     let violations = check_manufacturability(&model, &shop)
         .into_iter()
         .map(|v| ViolationDto {
@@ -306,6 +336,32 @@ fn check_impl(chain_json: &str, shop_json: &str) -> Result<CheckResult, String> 
         shop: Some(shop),
         error: None,
     })
+}
+
+/// Interpret the `shop_json` argument of [`check_sheet_metal`].
+///
+/// Accepts: empty (→ the chain's shop profile, else the generic shop), a
+/// built-in catalog id (bare or JSON-quoted, e.g. `"sendcutsend"`), or a
+/// full [`ShopProfile`] object (field-tolerant).
+fn resolve_shop_arg(
+    shop_json: &str,
+    chain: &[ChainOp],
+    model: &SheetMetalModel,
+) -> Result<ShopProfile, String> {
+    let trimmed = shop_json.trim();
+    if trimmed.is_empty() {
+        return Ok(match chain_shop(chain)? {
+            Some(cat) => cat.shop_profile_for(&model.material, model.thickness),
+            None => ShopProfile::generic(),
+        });
+    }
+    if trimmed.starts_with('{') {
+        return serde_json::from_str::<ShopProfile>(trimmed).map_err(|e| format!("shop JSON: {e}"));
+    }
+    // A catalog id — bare ("sendcutsend") or JSON string ("\"sendcutsend\"").
+    let id = serde_json::from_str::<String>(trimmed).unwrap_or_else(|_| trimmed.to_string());
+    let cat = shop_catalog(&id).map_err(|e| e.to_string())?;
+    Ok(cat.shop_profile_for(&model.material, model.thickness))
 }
 
 /// Result of [`cost_sheet_metal`].
@@ -458,7 +514,7 @@ fn nested_dxf_impl(placements_json: &str) -> Result<Vec<String>, String> {
             rotated: p.rotated,
         })
         .collect();
-    Ok(nested_dxf(&placements_ref))
+    nested_dxf(&placements_ref).map_err(|e| format!("nested dxf: {e}"))
 }
 
 fn nest_impl(parts_json: &str, params_json: &str) -> Result<NestingResult, String> {
@@ -511,6 +567,19 @@ pub fn get_sheet_metal_materials() -> String {
     serde_json::to_string(&mats).unwrap_or_else(|_| "[]".to_string())
 }
 
+/// Return a built-in shop bending catalog (per-material fixed radius,
+/// K-factor, die width, relief depth, flange minimums, max bend length) as
+/// JSON. Pass `"sendcutsend"`; unknown ids return `{"error": ...}` listing
+/// the available catalogs.
+#[wasm_bindgen(js_name = getSheetMetalShopCatalog)]
+pub fn get_sheet_metal_shop_catalog(shop_id: &str) -> String {
+    match shop_catalog(shop_id) {
+        Ok(cat) => serde_json::to_string(cat).unwrap_or_else(|_| "{}".to_string()),
+        Err(e) => serde_json::to_string(&serde_json::json!({ "error": e.to_string() }))
+            .unwrap_or_else(|_| "{}".to_string()),
+    }
+}
+
 /// Return the built-in bend-table rows as JSON.
 ///
 /// Exposes the curated `(material, t, R) → K` lookup so a shop / agent can
@@ -538,7 +607,64 @@ pub fn get_sheet_metal_bend_table() -> String {
     .unwrap_or_else(|_| "{}".to_string())
 }
 
+/// The shop catalog named by the chain's base op, if any.
+fn chain_shop(chain: &[ChainOp]) -> Result<Option<&'static ShopCatalog>, String> {
+    let shop_id = match chain.first() {
+        Some(ChainOp::BaseFlangeRect { shop_profile, .. })
+        | Some(ChainOp::BaseFlangePolygon { shop_profile, .. }) => shop_profile.clone(),
+        _ => None,
+    };
+    match shop_id {
+        None => Ok(None),
+        Some(id) => shop_catalog(&id).map(Some).map_err(|e| e.to_string()),
+    }
+}
+
+/// Resolve a bend radius (+ shop-pinned K) for one chain op.
+///
+/// No shop: omitted radius defaults to the material thickness. With a shop:
+/// the shop's fixed radius and K apply, and a conflicting explicit radius is
+/// rejected with the nearest valid radius named.
+fn resolve_radius(
+    shop: Option<&'static ShopCatalog>,
+    material: &str,
+    thickness: f64,
+    requested: Option<f64>,
+) -> Result<(f64, Option<(f64, String)>), String> {
+    match shop {
+        None => Ok((requested.unwrap_or(thickness), None)),
+        Some(cat) => {
+            let (r, k, label) = cat
+                .resolve_bend(material, thickness, requested)
+                .map_err(|e| e.to_string())?;
+            Ok((r, Some((k, label))))
+        }
+    }
+}
+
+/// Effective relief sizing for a chain: explicit op values beat the shop's
+/// published numbers beat the formula defaults.
+fn chain_relief_params(
+    shop: Option<&'static ShopCatalog>,
+    model: &SheetMetalModel,
+    width: Option<f64>,
+    depth: Option<f64>,
+) -> ReliefParams {
+    let shop_params = shop
+        .map(|cat| {
+            cat.shop_profile_for(&model.material, model.thickness)
+                .relief_params()
+        })
+        .unwrap_or_default();
+    ReliefParams {
+        width_mm: width.or(shop_params.width_mm),
+        depth_mm: depth.or(shop_params.depth_mm),
+        die_width_mm: shop_params.die_width_mm,
+    }
+}
+
 fn build_model(chain: &[ChainOp], table: &BendTable) -> Result<SheetMetalModel, String> {
+    let shop = chain_shop(chain)?;
     let mut iter = chain.iter();
     let base = iter
         .next()
@@ -549,6 +675,7 @@ fn build_model(chain: &[ChainOp], table: &BendTable) -> Result<SheetMetalModel, 
             depth,
             thickness,
             material,
+            ..
         } => {
             let mut m = base_flange_rect(*width, *depth, *thickness)
                 .map_err(|e| format!("base flange: {e}"))?;
@@ -560,6 +687,7 @@ fn build_model(chain: &[ChainOp], table: &BendTable) -> Result<SheetMetalModel, 
             holes,
             thickness,
             material,
+            ..
         } => {
             let to_pts = |loop_pts: &[[f64; 2]]| -> Vec<Point2> {
                 loop_pts.iter().map(|p| Point2::new(p[0], p[1])).collect()
@@ -571,10 +699,12 @@ fn build_model(chain: &[ChainOp], table: &BendTable) -> Result<SheetMetalModel, 
             m.material = material.clone();
             m
         }
-        ChainOp::EdgeFlange { .. } | ChainOp::Hem { .. } | ChainOp::Jog { .. } => {
+        _ => {
             return Err("first chain op must be a base flange".to_string());
         }
     };
+    let material = model.material.clone();
+    let mut relief: Option<(Option<f64>, Option<f64>)> = None;
     for (i, op) in iter.enumerate() {
         match op {
             ChainOp::BaseFlangeRect { .. } | ChainOp::BaseFlangePolygon { .. } => {
@@ -592,24 +722,27 @@ fn build_model(chain: &[ChainOp], table: &BendTable) -> Result<SheetMetalModel, 
                 direction,
                 manual_k,
             } => {
-                let material = match base {
-                    ChainOp::BaseFlangeRect { material, .. }
-                    | ChainOp::BaseFlangePolygon { material, .. } => material.clone(),
-                    _ => String::new(),
-                };
+                let (radius, shop_k) = resolve_radius(shop, &material, model.thickness, *radius)
+                    .map_err(|e| format!("edge flange #{}: {e}", i + 1))?;
                 let params = EdgeFlangeParams {
                     panel: *panel_id,
                     edge_index: *edge_index,
                     length: *length,
                     angle: *angle,
-                    radius: *radius,
+                    radius,
                     direction: *direction,
                     position: FlangePosition::MaterialInside,
-                    material,
-                    manual_k: *manual_k,
+                    material: material.clone(),
+                    manual_k: manual_k.or(shop_k.as_ref().map(|(k, _)| *k)),
                 };
-                add_edge_flange(&mut model, table, params)
+                let (_, bend_id) = add_edge_flange(&mut model, table, params)
                     .map_err(|e| format!("edge flange #{}: {e}", i + 1))?;
+                // Shop-resolved K carries shop provenance, not "manual".
+                if manual_k.is_none() {
+                    if let Some((_, label)) = shop_k {
+                        model.bends[bend_id].k_factor_source = Some(label);
+                    }
+                }
             }
             ChainOp::Hem {
                 panel_id,
@@ -637,17 +770,27 @@ fn build_model(chain: &[ChainOp], table: &BendTable) -> Result<SheetMetalModel, 
                 radius,
                 direction,
             } => {
+                let (radius, _) = resolve_radius(shop, &material, model.thickness, *radius)
+                    .map_err(|e| format!("jog #{}: {e}", i + 1))?;
                 let params = JogParams {
                     panel: *panel_id,
                     edge_index: *edge_index,
                     offset: *offset,
                     length: *length,
-                    bend_radius: *radius,
+                    bend_radius: radius,
                     direction: *direction,
                 };
                 add_jog(&mut model, table, params).map_err(|e| format!("jog #{}: {e}", i + 1))?;
             }
+            ChainOp::BendRelief { width, depth } => {
+                relief = Some((*width, *depth));
+            }
         }
+    }
+    // Relief is a model post-pass: it must see every bend in the chain.
+    if let Some((width, depth)) = relief {
+        let params = chain_relief_params(shop, &model, width, depth);
+        apply_bend_relief(&mut model, &params).map_err(|e| format!("bend relief: {e}"))?;
     }
     Ok(model)
 }
@@ -956,5 +1099,81 @@ mod tests {
         let parsed: serde_json::Value =
             serde_json::from_str(&check_sheet_metal(CLEAN_CHAIN, "{not json")).unwrap();
         assert!(parsed["error"].as_str().unwrap().contains("shop JSON"));
+    }
+}
+
+/// Result of [`sheet_metal_folded_step`]: the full ASCII STEP file text,
+/// or an error message. Exactly one of the two is meaningful.
+#[derive(Debug, Clone, Serialize, Default)]
+struct FoldedStepResult {
+    /// Full STEP AP214 file contents. Empty string on error.
+    step: String,
+    /// Error message; `null` on success.
+    error: Option<String>,
+}
+
+/// Export the **folded** sheet-metal solid as a STEP AP214 file.
+///
+/// Builds the model from the same chain JSON that
+/// [`evaluate_sheet_metal_chain`] accepts, constructs the folded B-rep via
+/// `vcad_kernel::folded_sheet_solid` (panel slabs + true cylindrical bend
+/// sectors, unioned into one body), and serialises it to STEP. The
+/// cylindrical bend faces let downstream fab pipelines (e.g. SendCutSend)
+/// auto-detect bend radii, angles, and directions.
+///
+/// Returns JSON: `{"step": "<full ASCII STEP file>", "error": null}` on
+/// success or `{"step": "", "error": "..."}` on failure. Never panics.
+#[wasm_bindgen(js_name = sheetMetalFoldedStep)]
+pub fn sheet_metal_folded_step(chain_json: &str) -> String {
+    let result = match folded_step_impl(chain_json) {
+        Ok(step) => FoldedStepResult { step, error: None },
+        Err(msg) => FoldedStepResult {
+            step: String::new(),
+            error: Some(msg),
+        },
+    };
+    serde_json::to_string(&result)
+        .unwrap_or_else(|_| r#"{"step":"","error":"serialize failed"}"#.to_string())
+}
+
+fn folded_step_impl(chain_json: &str) -> Result<String, String> {
+    let chain: Vec<ChainOp> =
+        serde_json::from_str(chain_json).map_err(|e| format!("chain JSON: {e}"))?;
+    if chain.is_empty() {
+        return Err("empty op chain".to_string());
+    }
+    let table = BendTable::builtin();
+    let model = build_model(&chain, &table)?;
+    let solid = vcad_kernel::folded_sheet_solid(&model, 32)?;
+    let buf = solid
+        .to_step_buffer()
+        .map_err(|e| format!("STEP export: {e}"))?;
+    String::from_utf8(buf).map_err(|e| format!("STEP is not valid UTF-8: {e}"))
+}
+
+#[cfg(test)]
+mod folded_step_tests {
+    use super::*;
+
+    #[test]
+    fn folded_step_exports_cylindrical_bend_faces() {
+        let chain = r#"[
+            {"type":"BaseFlangeRect","width":60,"depth":40,"thickness":2,"material":"Al-soft"},
+            {"type":"EdgeFlange","panelId":0,"edgeIndex":0,"length":30,"angle":1.5707963267948966,"radius":2.0,"direction":"Up","manualK":0.44}
+        ]"#;
+        let out = sheet_metal_folded_step(chain);
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert!(v["error"].is_null(), "unexpected error: {}", v["error"]);
+        let step = v["step"].as_str().unwrap();
+        assert!(step.starts_with("ISO-10303-21"), "not a STEP file");
+        assert!(step.contains("CYLINDRICAL_SURFACE"));
+    }
+
+    #[test]
+    fn folded_step_reports_errors_as_json() {
+        let out = sheet_metal_folded_step("not json");
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(v["step"], "");
+        assert!(v["error"].as_str().unwrap().contains("chain JSON"));
     }
 }

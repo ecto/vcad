@@ -483,6 +483,10 @@ export interface SheetMetalBaseFlangeRectOp {
   thickness: number;
   /** Material name for K-factor lookup (e.g. `"Al-soft"`). */
   material: string;
+  /** Optional built-in shop catalog id (e.g. `"sendcutsend"`). When set,
+   *  every bend's radius and K-factor resolve through the shop's published
+   *  table — custom radii are rejected by the kernel. */
+  shop_profile?: string;
 }
 
 /** Sheet-metal edge flange. Extends `parent` (must produce a sheet-metal
@@ -494,7 +498,9 @@ export interface SheetMetalEdgeFlangeOp {
   edge_index: number;
   length: number;
   angle: number;
-  radius: number;
+  /** Inside bend radius (mm). Omitted → thickness, or the shop's fixed
+   *  radius when a shop profile is active. */
+  radius?: number;
   direction: SheetMetalDirection;
   /** Optional manual K-factor override (skips bend-table lookup). */
   manual_k?: number;
@@ -510,6 +516,8 @@ export interface SheetMetalBaseFlangePolygonOp {
   thickness: number;
   /** Material name for K-factor / cost / DFM lookup. */
   material: string;
+  /** Optional built-in shop catalog id (see {@link SheetMetalBaseFlangeRectOp}). */
+  shop_profile?: string;
 }
 
 /** Sheet-metal jog — a Z-shaped offset (two opposite 90° bends). */
@@ -520,8 +528,24 @@ export interface SheetMetalJogOp {
   edge_index: number;
   offset: number;
   length: number;
-  radius: number;
+  /** Inside bend radius (mm) for both bends. Omitted → thickness, or the
+   *  shop's fixed radius when a shop profile is active. */
+  radius?: number;
   direction: SheetMetalDirection;
+}
+
+/** Sheet-metal bend relief — cuts relief notches at the ends of every bend
+ *  whose parent material sits in the deformation zone. Applied after all
+ *  other ops in the chain; affects the 3D body, the flat pattern, and the
+ *  exported DXF. */
+export interface SheetMetalBendReliefOp {
+  type: "SheetMetalBendRelief";
+  parent: NodeId;
+  /** Notch width (mm). Default `max(1.5·t, 1.0)`. */
+  width?: number;
+  /** Notch depth from the bend line (mm). Default `R + t`, or the shop's
+   *  published per-thickness relief depth when a shop profile is active. */
+  depth?: number;
 }
 
 /** Hem kind. Wire-compatible with `vcad_ir::SheetMetalHemKind`. */
@@ -571,7 +595,8 @@ export type CsgOp =
   | SheetMetalBaseFlangePolygonOp
   | SheetMetalEdgeFlangeOp
   | SheetMetalHemOp
-  | SheetMetalJogOp;
+  | SheetMetalJogOp
+  | SheetMetalBendReliefOp;
 
 /** A node in the IR graph. */
 export interface Node {

@@ -79,7 +79,8 @@ fn validate_op(doc: &Document, node_id: NodeId, op: &CsgOp) -> Result<(), EvalEr
         | CsgOp::SheetMetalBaseFlangePolygon { .. }
         | CsgOp::SheetMetalEdgeFlange { .. }
         | CsgOp::SheetMetalHem { .. }
-        | CsgOp::SheetMetalJog { .. } => {}
+        | CsgOp::SheetMetalJog { .. }
+        | CsgOp::SheetMetalBendRelief { .. } => {}
     }
 
     Ok(())
@@ -135,6 +136,7 @@ fn csg_op_name(op: &CsgOp) -> &'static str {
         CsgOp::SheetMetalHem { .. } => "SheetMetalHem",
         CsgOp::SheetMetalJog { .. } => "SheetMetalJog",
         CsgOp::SheetMetalBaseFlangePolygon { .. } => "SheetMetalBaseFlangePolygon",
+        CsgOp::SheetMetalBendRelief { .. } => "SheetMetalBendRelief",
     }
 }
 

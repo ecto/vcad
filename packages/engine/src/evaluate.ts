@@ -117,6 +117,7 @@ export function evaluateDocument(
       // doesn't tessellate (e.g. EmbroideryPattern), and route sheet-metal
       // roots through the dedicated kernel binding.
       const visibleRoots = doc.roots.filter((e) => e.visible !== false);
+      const extraFailures: { scope: string; node_id: number; error: string }[] = [];
       const parts = result.parts.map((p, i) => {
         // If the WASM evaluator returned an empty mesh, check if it's an
         // embroidery pattern and generate the mesh in TypeScript.
@@ -140,6 +141,11 @@ export function evaluateDocument(
               return { mesh, material: p.material, sheetMetal };
             } catch (e) {
               const msg = e instanceof Error ? e.message : String(e);
+              extraFailures.push({
+                scope: `root[${i}]`,
+                node_id: visibleRoots[i].root,
+                error: msg,
+              });
               console.warn(
                 `[ENGINE] sheet-metal eval failed at root[${i}] (node ${visibleRoots[i].root}): ${msg}`,
               );
@@ -173,7 +179,10 @@ export function evaluateDocument(
           transform: inst.transform,
         })),
         clashes: result.clashes.map(wasmMeshToTriangleMesh),
-        failures: result.failures,
+        failures:
+          extraFailures.length > 0
+            ? [...(result.failures ?? []), ...extraFailures]
+            : result.failures,
       };
     } catch (e) {
       console.warn("[ENGINE] WASM evaluateDocument failed, falling back to TS:", e);
@@ -916,6 +925,7 @@ function evaluateOp(
     case "SheetMetalEdgeFlange":
     case "SheetMetalHem":
     case "SheetMetalJog":
+    case "SheetMetalBendRelief":
       // Sheet-metal ops bypass the Solid pipeline — root-level detection
       // in `evaluateDocument` routes the chain to the kernel's
       // `evaluateSheetMetalChain` and attaches the result. Encountering

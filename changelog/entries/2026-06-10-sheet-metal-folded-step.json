@@ -1,0 +1,11 @@
+{
+  "id": "2026-06-10-sheet-metal-folded-step",
+  "version": "0.9.4",
+  "date": "2026-06-10",
+  "category": "feat",
+  "title": "Folded sheet-metal STEP export with real bend cylinders",
+  "summary": "Sheet-metal chains now export the folded 3D body as STEP AP214 with analytic cylindrical bend faces, so fab pipelines like SendCutSend auto-detect bend radii, angles, and directions.",
+  "details": "New kernel builder folded_sheet_solid turns a sheet-metal model into a single watertight B-rep: full-size panel slabs joined by true annular bend sectors tangent to both panels, consistent with the exported flat pattern. Exposed to the web app via the sheetMetalFoldedStep WASM binding, which takes the same chain JSON as evaluateSheetMetalChain and returns the full STEP file text.",
+  "features": ["sheet-metal", "step", "manufacturing"],
+  "mcpTools": ["sheet_metal_create", "export_cad"]
+}

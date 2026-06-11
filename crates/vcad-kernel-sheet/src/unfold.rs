@@ -216,6 +216,12 @@ pub struct FlatCrease {
     pub direction: BendDirection,
     /// Backreference: which `Bend` produced this crease.
     pub bend_id: usize,
+    /// Unit normal of the crease in global flat 2D, pointing from the
+    /// parent edge toward the child panel (the direction the allowance
+    /// strip extends). Computed from the parent's frame — the crease
+    /// line's own winding is NOT a reliable source, since chained flat
+    /// frames may be orientation-reversing in global 2D.
+    pub outward: vcad_kernel_math::Vec2,
 }
 
 impl FlatPattern {
@@ -266,6 +272,17 @@ impl FlatPattern {
             .map(|(id, bend)| {
                 let parent = &model.panels[bend.parent];
                 let (p0, p1) = bend.edge_parent;
+                // Child-pointing normal: parent-local outward (CCW outline
+                // ⇒ edge rotated 90° CW), lifted through the parent's flat
+                // frame and projected into global 2D.
+                let edge = (p1 - p0) / (p1 - p0).norm();
+                let outward_local = vcad_kernel_math::Vec2::new(edge.y, -edge.x);
+                let outward_world =
+                    direction_to_world(&parent.frame_flat, outward_local.x, outward_local.y);
+                let outward = vcad_kernel_math::Vec2::new(
+                    outward_world.dot(root_frame.x_dir),
+                    outward_world.dot(root_frame.y_dir),
+                );
                 FlatCrease {
                     line: (
                         to_global(parent.frame_flat, p0),
@@ -277,6 +294,7 @@ impl FlatPattern {
                     k_factor_source: bend.k_factor_source.clone(),
                     direction: bend.direction,
                     bend_id: id,
+                    outward,
                 }
             })
             .collect();

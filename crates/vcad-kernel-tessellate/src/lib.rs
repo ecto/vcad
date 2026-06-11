@@ -2249,9 +2249,6 @@ fn tessellate_cylindrical_face(
             u_min = 0.0;
             u_max = 2.0 * PI;
         } else {
-            let a_min = unique_angles[0];
-            let a_max = unique_angles[unique_angles.len() - 1];
-
             // Determine angular direction from loop vertex order
             let mut first_dir = 0.0;
             for i in 0..angles.len() {
@@ -2269,21 +2266,45 @@ fn tessellate_cylindrical_face(
                 }
             }
 
-            let direct_span = a_max - a_min;
-            let wrap_span = 2.0 * PI - direct_span;
+            // The face occupies the complement of the largest angular gap
+            // between consecutive unique vertex angles. Considering ALL
+            // gaps (not just the wrap-around one) handles faces that
+            // straddle the u = 0 seam with the seam point itself among
+            // the vertices — e.g. the concave (clockwise-arc) lateral
+            // face of an extruded annular sector, whose ref_dir anchors
+            // u = 0 at one end while the remaining samples descend from
+            // 2π. The previous min/max heuristic collapsed such faces to
+            // the last sliver before the seam.
+            let n_u = unique_angles.len();
+            let wrap_gap = 2.0 * PI - (unique_angles[n_u - 1] - unique_angles[0]);
+            let mut gap_idx = n_u - 1; // wrap-around gap → contiguous face
+            let mut max_gap = wrap_gap;
+            for i in 0..n_u - 1 {
+                let gap = unique_angles[i + 1] - unique_angles[i];
+                if gap > max_gap {
+                    max_gap = gap;
+                    gap_idx = i;
+                }
+            }
+            // Preserve the old ambiguity tie-break: with only two unique
+            // angles the two gaps can be indistinguishable — fall back to
+            // the loop winding direction (clockwise ⇒ crosses the seam).
+            if n_u == 2 {
+                let direct_gap = unique_angles[1] - unique_angles[0];
+                if (wrap_gap - direct_gap).abs() <= 0.1 {
+                    gap_idx = if first_dir < 0.0 { 0 } else { n_u - 1 };
+                }
+            }
 
-            // Face wraps through the seam when the wrap-around arc is
-            // clearly smaller, or when spans are ambiguous and loop
-            // winding is clockwise.
-            let wraps = (wrap_span < direct_span - 0.1)
-                || (wrap_span - direct_span).abs() <= 0.1 && first_dir < 0.0;
-
-            if wraps {
-                u_min = a_max;
-                u_max = a_min + 2.0 * PI;
+            if gap_idx == n_u - 1 {
+                // Empty region crosses the seam → face is contiguous.
+                u_min = unique_angles[0];
+                u_max = unique_angles[n_u - 1];
             } else {
-                u_min = a_min;
-                u_max = a_max;
+                // Face crosses the seam: it runs from just after the gap
+                // around through 2π to just before it.
+                u_min = unique_angles[gap_idx + 1];
+                u_max = unique_angles[gap_idx] + 2.0 * PI;
             }
         }
 

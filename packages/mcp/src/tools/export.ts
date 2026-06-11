@@ -23,7 +23,11 @@ export const exportCadSchema = {
     },
     filename: {
       type: "string" as const,
-      description: "Output filename with extension (.stl or .glb)",
+      description:
+        "Output filename with extension (.stl, .glb, or — for sheet-metal documents — .step/.stp). " +
+        "STEP exports the FOLDED sheet-metal body (AP214) with true cylindrical bend faces sized by " +
+        "the document's shop profile, so fab services with a 3D pipeline (e.g. SendCutSend) " +
+        "auto-detect bends, angles, and directions with zero data entry.",
     },
   },
   required: ["ir", "filename"],
@@ -34,6 +38,40 @@ export function exportCad(
   engine: Engine,
 ): { content: Array<{ type: "text"; text: string }> } {
   const { ir, filename } = input as ExportInput;
+
+  // STEP: only the folded sheet-metal body is exportable (mesh-evaluated
+  // documents have no B-rep to write). The folded solid carries real
+  // cylindrical bend faces, so a 3D-pipeline fab service detects bends,
+  // angles, and directions from the file itself — the zero-data-entry
+  // alternative to the DXF path (where bend angles are entered in the
+  // service's UI).
+  const stepExt = filename.toLowerCase().split(".").pop();
+  if (stepExt === "step" || stepExt === "stp") {
+    const step = engine.foldedSheetMetalStep(ir);
+    if (step === null) {
+      throw new Error(
+        "STEP export is only available for sheet-metal documents (the folded " +
+          "body needs B-rep bend geometry). Use .stl or .glb for mesh exports.",
+      );
+    }
+    const path = resolveWithinRoot(filename);
+    const bytes = new TextEncoder().encode(step);
+    writeFileSync(path, bytes);
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify({
+            path,
+            bytes: bytes.length,
+            format: stepExt,
+            parts: 1,
+            note: "Folded sheet-metal body (AP214) with cylindrical bend faces — bends/angles/directions auto-detect in 3D fab pipelines.",
+          }),
+        },
+      ],
+    };
+  }
 
   // Evaluate the document to get meshes
   const scene = engine.evaluate(ir);
@@ -54,7 +92,7 @@ export function exportCad(
       bytes = toGlbBytes(scene, filename);
       break;
     default:
-      throw new Error(`Unsupported format: .${ext}. Use .stl or .glb`);
+      throw new Error(`Unsupported format: .${ext}. Use .stl, .glb, or .step (sheet-metal only)`);
   }
 
   // Resolve against cwd and reject any path that escapes it.
