@@ -1,0 +1,681 @@
+{
+  "schema_version": 0,
+  "task_id": "a2-channel-bracket-01",
+  "task_sha256": "8a57ee77a91f87fa90ba207e9524334697e4b43bab1d516bc878440ebaf57017",
+  "checks": [
+    {
+      "n": 0,
+      "type": "valid_solid",
+      "params": {
+        "type": "valid_solid"
+      },
+      "result": "pass",
+      "details": {
+        "root_count": 1,
+        "solids_produced": 1
+      }
+    },
+    {
+      "n": 1,
+      "type": "bbox",
+      "params": {
+        "type": "bbox",
+        "min": [
+          0,
+          0,
+          0
+        ],
+        "max": [
+          30,
+          40,
+          30
+        ],
+        "tolerance_mm": 0.05
+      },
+      "result": "pass",
+      "details": {
+        "actual_max": [
+          30,
+          40,
+          30
+        ],
+        "actual_min": [
+          0,
+          0,
+          0
+        ],
+        "deviation_max": [
+          0,
+          0,
+          0
+        ],
+        "deviation_min": [
+          0,
+          0,
+          0
+        ],
+        "max_abs_deviation_mm": 0,
+        "tolerance_mm": 0.05
+      }
+    },
+    {
+      "n": 2,
+      "type": "mass_props",
+      "params": {
+        "type": "mass_props",
+        "volume_mm3": 13120,
+        "tolerance_pct": 0.1
+      },
+      "result": "pass",
+      "details": {
+        "volume": {
+          "actual_mm3": 13120,
+          "deviation_pct": 0,
+          "pass": true,
+          "spec_mm3": 13120,
+          "tolerance_pct": 0.1
+        }
+      }
+    },
+    {
+      "n": 3,
+      "type": "step_roundtrip",
+      "params": {
+        "type": "step_roundtrip",
+        "tolerance_pct": 0.1
+      },
+      "result": "pass",
+      "details": {
+        "per_solid": [
+          {
+            "bbox": {
+              "max_abs_deviation_mm": 0,
+              "original_max": [
+                30,
+                40,
+                30
+              ],
+              "original_min": [
+                0,
+                0,
+                0
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                30,
+                40,
+                30
+              ],
+              "roundtripped_min": [
+                0,
+                0,
+                0
+              ],
+              "tolerance_mm": 0.05830951894845301
+            },
+            "index": 0,
+            "pass": true,
+            "volume": {
+              "deviation_pct": 0,
+              "original_mm3": 13120,
+              "pass": true,
+              "roundtripped_mm3": 13120
+            }
+          }
+        ],
+        "tolerance_pct": 0.1
+      }
+    }
+  ],
+  "summary": {
+    "passed": true,
+    "checks_passed": 4,
+    "checks_total": 4,
+    "score": 1,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260611T172516Z-3c7e",
+  "model": {
+    "id": "claude-mcp-claude-opus-4-7",
+    "name": "Claude (MCP, claude-opus-4-7)",
+    "provider": "anthropic",
+    "params": {
+      "mode": "mcp",
+      "model": "claude-opus-4-7",
+      "max_tokens": 8000,
+      "max_iterations": 30
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "a2-channel-bracket-01",
+    "rendered": "Make a U-shaped channel bracket built from three rectangular plates fused into a single solid. Bottom plate: x in [0, 30], y in [0, 40], z in [0, 4]. Left wall standing on top of the bottom: x in [0, 4], y in [0, 40], z in [4, 30]. Right wall standing on top of the bottom: x in [26, 30], y in [0, 40], z in [4, 30]. Output a single solid.",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "open_document",
+        "args": {},
+        "result_kind": "ok",
+        "wallclock_ms": 1.9841669999999851
+      },
+      {
+        "n": 1,
+        "tool": "create_cad_loon",
+        "args": {
+          "source": "[union\n  [translate 0 0 4 [cube 4 40 26]]\n  [union\n    [translate 26 0 4 [cube 4 40 26]]\n    [cube 30 40 4]]]",
+          "format": "json"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 10.32229099999995
+      },
+      {
+        "n": 2,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781198716967_1",
+          "type": "cube",
+          "name": "Bottom",
+          "params": {
+            "size": {
+              "x": 30,
+              "y": 40,
+              "z": 4
+            }
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 6.799457999999504
+      },
+      {
+        "n": 3,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781198716967_1",
+          "type": "cube",
+          "name": "LeftWallRaw",
+          "params": {
+            "size": {
+              "x": 4,
+              "y": 40,
+              "z": 26
+            }
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.3961660000004485
+      },
+      {
+        "n": 4,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781198716967_1",
+          "type": "cube",
+          "name": "RightWallRaw",
+          "params": {
+            "size": {
+              "x": 4,
+              "y": 40,
+              "z": 26
+            }
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.753500000000713
+      },
+      {
+        "n": 5,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781198716967_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.9252080000005662
+      },
+      {
+        "n": 6,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781198716967_1",
+          "part_id": "1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.7155000000002474
+      },
+      {
+        "n": 7,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781198716967_1",
+          "part_id": "2"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.0227080000004207
+      },
+      {
+        "n": 8,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781198716967_1",
+          "part_id": "3"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.028667000000496
+      },
+      {
+        "n": 9,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781198716967_1",
+          "type": "cube",
+          "name": "Bottom",
+          "params": {
+            "size": {
+              "x": 30,
+              "y": 40,
+              "z": 4
+            }
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.877916000001278
+      },
+      {
+        "n": 10,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781198716967_1",
+          "type": "union",
+          "name": "AddLeftWall",
+          "parent_part_id": "1",
+          "params": {
+            "other": {
+              "type": "translate",
+              "params": {
+                "offset": {
+                  "x": 0,
+                  "y": 0,
+                  "z": 4
+                },
+                "child": {
+                  "type": "cube",
+                  "params": {
+                    "size": {
+                      "x": 4,
+                      "y": 40,
+                      "z": 26
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 4.726625000002969
+      },
+      {
+        "n": 11,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781198716967_1",
+          "type": "union",
+          "name": "AddLeftWall",
+          "parent_part_id": "1",
+          "params": {
+            "right": {
+              "type": "translate",
+              "params": {
+                "offset": {
+                  "x": 0,
+                  "y": 0,
+                  "z": 4
+                },
+                "child": {
+                  "type": "cube",
+                  "params": {
+                    "size": {
+                      "x": 4,
+                      "y": 40,
+                      "z": 26
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 3.507917000002635
+      },
+      {
+        "n": 12,
+        "tool": "get_document",
+        "args": {
+          "document_id": "doc_1781198716967_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.4162910000013653
+      },
+      {
+        "n": 13,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781198716967_1",
+          "part_id": "1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.4797919999982696
+      },
+      {
+        "n": 14,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781198716967_1",
+          "type": "cube",
+          "name": "Bottom",
+          "params": {
+            "size": {
+              "x": 30,
+              "y": 40,
+              "z": 4
+            }
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.6929999999993015
+      },
+      {
+        "n": 15,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781198716967_1",
+          "type": "cube",
+          "name": "LeftWallRaw",
+          "params": {
+            "size": {
+              "x": 4,
+              "y": 40,
+              "z": 26
+            }
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.4336249999978463
+      },
+      {
+        "n": 16,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781198716967_1",
+          "type": "cube",
+          "name": "RightWallRaw",
+          "params": {
+            "size": {
+              "x": 4,
+              "y": 40,
+              "z": 26
+            }
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.36170799999672454
+      },
+      {
+        "n": 17,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781198716967_1",
+          "type": "translate",
+          "name": "LeftWall",
+          "parent_part_id": "2",
+          "params": {
+            "offset": {
+              "x": 0,
+              "y": 0,
+              "z": 4
+            }
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 0.9350420000046142
+      },
+      {
+        "n": 18,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781198716967_1",
+          "type": "translate",
+          "name": "RightWall",
+          "parent_part_id": "3",
+          "params": {
+            "offset": {
+              "x": 26,
+              "y": 0,
+              "z": 4
+            }
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 0.4366660000014235
+      },
+      {
+        "n": 19,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781198716967_1",
+          "type": "translate",
+          "name": "LeftWall",
+          "parent_part_id": "2",
+          "params": {
+            "offset": {
+              "x": 0,
+              "y": 0,
+              "z": 4
+            },
+            "child": 2
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.8107919999965816
+      },
+      {
+        "n": 20,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781198716967_1",
+          "type": "translate",
+          "name": "RightWall",
+          "parent_part_id": "3",
+          "params": {
+            "offset": {
+              "x": 26,
+              "y": 0,
+              "z": 4
+            },
+            "child": 3
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.033167000001413
+      },
+      {
+        "n": 21,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781198716967_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.863416000000143
+      },
+      {
+        "n": 22,
+        "tool": "get_document",
+        "args": {
+          "document_id": "doc_1781198716967_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.5571249999993597
+      },
+      {
+        "n": 23,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781198716967_1",
+          "type": "union",
+          "name": "BottomLeft",
+          "parent_part_id": "1",
+          "params": {
+            "left": 1,
+            "right": 4
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.9214169999977457
+      },
+      {
+        "n": 24,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781198716967_1",
+          "type": "union",
+          "name": "UBracket",
+          "parent_part_id": "6",
+          "params": {
+            "left": 6,
+            "right": 5
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.9396659999983967
+      },
+      {
+        "n": 25,
+        "tool": "get_document",
+        "args": {
+          "document_id": "doc_1781198716967_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.7867919999989681
+      },
+      {
+        "n": 26,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781198716967_1",
+          "part_id": "1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.441500000000815
+      },
+      {
+        "n": 27,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781198716967_1",
+          "part_id": "2"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.0606249999982538
+      },
+      {
+        "n": 28,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781198716967_1",
+          "part_id": "3"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.5780830000003334
+      },
+      {
+        "n": 29,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781198716967_1",
+          "part_id": "4"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.4993339999928139
+      },
+      {
+        "n": 30,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781198716967_1",
+          "part_id": "5"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.4355000000068685
+      },
+      {
+        "n": 31,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781198716967_1",
+          "part_id": "6"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.6099169999943115
+      },
+      {
+        "n": 32,
+        "tool": "get_document",
+        "args": {
+          "document_id": "doc_1781198716967_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.5604590000002645
+      },
+      {
+        "n": 33,
+        "tool": "inspect_cad",
+        "args": {
+          "document_id": "doc_1781198716967_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 23.219292000008863
+      },
+      {
+        "n": 34,
+        "tool": "get_document",
+        "args": {
+          "document_id": "doc_1781198716967_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.727167000004556
+      }
+    ],
+    "tokens": {
+      "input": 403609,
+      "output": 4780,
+      "total": 408389
+    },
+    "wallclock_sec": 81.810048459
+  },
+  "output": {
+    "vcad_path": "20260611T172516Z-3c7e.vcad",
+    "vcad_sha256": "e7e7349f0ae9b8f6a7f29c408d1251039d2a8fb3a3f8d2e6653661fbfca59d4f",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-06-11T17:25:16.781Z",
+    "ended_at": "2026-06-11T17:26:38.608Z"
+  },
+  "signature": null
+}

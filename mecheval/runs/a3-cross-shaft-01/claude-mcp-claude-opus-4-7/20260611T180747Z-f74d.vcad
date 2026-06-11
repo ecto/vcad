@@ -1,0 +1,81 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "Vertical",
+      "op": {
+        "type": "Cylinder",
+        "radius": 10,
+        "height": 40,
+        "segments": 64
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": "Horiz raw",
+      "op": {
+        "type": "Cylinder",
+        "radius": 10,
+        "height": 40,
+        "segments": 64
+      }
+    },
+    "3": {
+      "id": 3,
+      "name": "center horiz",
+      "op": {
+        "type": "Translate",
+        "child": 2,
+        "offset": {
+          "x": 0,
+          "y": 0,
+          "z": -20
+        }
+      }
+    },
+    "4": {
+      "id": 4,
+      "name": "rotate to X axis",
+      "op": {
+        "type": "Rotate",
+        "child": 3,
+        "angles": {
+          "x": 0,
+          "y": 90,
+          "z": 0
+        }
+      }
+    },
+    "5": {
+      "id": 5,
+      "name": "lift horizontal to z=20",
+      "op": {
+        "type": "Translate",
+        "child": 4,
+        "offset": {
+          "x": 0,
+          "y": 0,
+          "z": 20
+        }
+      }
+    },
+    "6": {
+      "id": 6,
+      "name": "Cross Union",
+      "op": {
+        "type": "Union",
+        "left": 1,
+        "right": 5
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 6,
+      "material": "default"
+    }
+  ]
+}

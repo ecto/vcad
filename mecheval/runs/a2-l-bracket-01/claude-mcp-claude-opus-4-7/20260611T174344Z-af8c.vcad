@@ -1,0 +1,123 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "Base",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 50,
+          "y": 30,
+          "z": 4
+        }
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": "WallRaw",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 4,
+          "y": 30,
+          "z": 30
+        }
+      }
+    },
+    "3": {
+      "id": 3,
+      "name": "Wall",
+      "op": {
+        "type": "Translate",
+        "child": 2,
+        "offset": {
+          "x": 46,
+          "y": 0,
+          "z": 0
+        }
+      }
+    },
+    "4": {
+      "id": 4,
+      "name": "Body",
+      "op": {
+        "type": "Union",
+        "left": 1,
+        "right": 3
+      }
+    },
+    "5": {
+      "id": 5,
+      "name": "Hole1Raw",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 6,
+        "segments": 64
+      }
+    },
+    "6": {
+      "id": 6,
+      "name": "Hole2Raw",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 6,
+        "segments": 64
+      }
+    },
+    "7": {
+      "id": 7,
+      "name": "Hole1",
+      "op": {
+        "type": "Translate",
+        "child": 5,
+        "offset": {
+          "x": 10,
+          "y": 15,
+          "z": -1
+        }
+      }
+    },
+    "8": {
+      "id": 8,
+      "name": "Hole2",
+      "op": {
+        "type": "Translate",
+        "child": 6,
+        "offset": {
+          "x": 35,
+          "y": 15,
+          "z": -1
+        }
+      }
+    },
+    "9": {
+      "id": 9,
+      "name": "Holes",
+      "op": {
+        "type": "Union",
+        "left": 7,
+        "right": 8
+      }
+    },
+    "10": {
+      "id": 10,
+      "name": "L-Bracket",
+      "op": {
+        "type": "Difference",
+        "left": 4,
+        "right": 9
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 10,
+      "material": "default"
+    }
+  ]
+}

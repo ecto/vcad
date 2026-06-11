@@ -1,0 +1,42 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "Outer",
+      "op": {
+        "type": "Cylinder",
+        "radius": 15,
+        "height": 40,
+        "segments": 64
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": "Bore",
+      "op": {
+        "type": "Cylinder",
+        "radius": 10,
+        "height": 40,
+        "segments": 64
+      }
+    },
+    "3": {
+      "id": 3,
+      "name": "Pipe",
+      "op": {
+        "type": "Difference",
+        "left": 1,
+        "right": 2
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 3,
+      "material": "default"
+    }
+  ]
+}

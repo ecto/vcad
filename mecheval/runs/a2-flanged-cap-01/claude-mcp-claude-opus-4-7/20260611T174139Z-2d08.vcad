@@ -1,0 +1,50 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "Outer",
+      "op": {
+        "type": "Cylinder",
+        "radius": 30,
+        "height": 8,
+        "segments": 64
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": "tmp",
+      "op": {
+        "type": "Cylinder",
+        "radius": 20,
+        "height": 10,
+        "segments": 64
+      }
+    },
+    "3": {
+      "id": 3,
+      "name": "SubCenter",
+      "op": {
+        "type": "Difference",
+        "left": 1,
+        "right": 2
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 1,
+      "material": "default"
+    },
+    {
+      "root": 2,
+      "material": "default"
+    },
+    {
+      "root": 3,
+      "material": "default"
+    }
+  ]
+}

@@ -1,0 +1,833 @@
+{
+  "schema_version": 0,
+  "task_id": "a2-finned-block-01",
+  "task_sha256": "279a65e8e81b3007e126e2a4707d2a246b1a3c607f2b81e4382cc98d5cf09855",
+  "checks": [
+    {
+      "n": 0,
+      "type": "valid_solid",
+      "params": {
+        "type": "valid_solid"
+      },
+      "result": "pass",
+      "details": {
+        "root_count": 1,
+        "solids_produced": 1
+      }
+    },
+    {
+      "n": 1,
+      "type": "bbox",
+      "params": {
+        "type": "bbox",
+        "min": [
+          -25,
+          -15,
+          0
+        ],
+        "max": [
+          25,
+          15,
+          20
+        ],
+        "tolerance_mm": 0.1
+      },
+      "result": "pass",
+      "details": {
+        "actual_max": [
+          25,
+          15,
+          20
+        ],
+        "actual_min": [
+          -25,
+          -15,
+          0
+        ],
+        "deviation_max": [
+          0,
+          0,
+          0
+        ],
+        "deviation_min": [
+          0,
+          0,
+          0
+        ],
+        "max_abs_deviation_mm": 0,
+        "tolerance_mm": 0.1
+      }
+    },
+    {
+      "n": 2,
+      "type": "mass_props",
+      "params": {
+        "type": "mass_props",
+        "volume_mm3": 14250,
+        "tolerance_pct": 0.5
+      },
+      "result": "pass",
+      "details": {
+        "volume": {
+          "actual_mm3": 14250,
+          "deviation_pct": 0,
+          "pass": true,
+          "spec_mm3": 14250,
+          "tolerance_pct": 0.5
+        }
+      }
+    },
+    {
+      "n": 3,
+      "type": "step_roundtrip",
+      "params": {
+        "type": "step_roundtrip",
+        "tolerance_pct": 0.5
+      },
+      "result": "pass",
+      "details": {
+        "per_solid": [
+          {
+            "bbox": {
+              "max_abs_deviation_mm": 0,
+              "original_max": [
+                25,
+                15,
+                20
+              ],
+              "original_min": [
+                -25,
+                -15,
+                0
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                25,
+                15,
+                20
+              ],
+              "roundtripped_min": [
+                -25,
+                -15,
+                0
+              ],
+              "tolerance_mm": 0.3082207001484488
+            },
+            "index": 0,
+            "pass": true,
+            "volume": {
+              "deviation_pct": 0,
+              "original_mm3": 14250,
+              "pass": true,
+              "roundtripped_mm3": 14250
+            }
+          }
+        ],
+        "tolerance_pct": 0.5
+      }
+    }
+  ],
+  "summary": {
+    "passed": true,
+    "checks_passed": 4,
+    "checks_total": 4,
+    "score": 1,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260611T173817Z-b143",
+  "model": {
+    "id": "claude-mcp-claude-opus-4-7",
+    "name": "Claude (MCP, claude-opus-4-7)",
+    "provider": "anthropic",
+    "params": {
+      "mode": "mcp",
+      "model": "claude-opus-4-7",
+      "max_tokens": 8000,
+      "max_iterations": 30
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "a2-finned-block-01",
+    "rendered": "Make a finned block. Base: a rectangular plate 50mm long (X) × 30mm wide (Y) × 5mm thick (Z), centered in X and Y, with the bottom face on the XY plane (z = 0 to z = 5). Three rectangular fins stand on top of the base, each 50mm long in X, 3mm thick in Y, and 15mm tall in Z (z = 5 to z = 20). The fins are centered on y = -10, y = 0, and y = 10 (each fin spans 1.5mm to either side of its centerline). Output a single solid.",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "open_document",
+        "args": {},
+        "result_kind": "ok",
+        "wallclock_ms": 1.814832999999993
+      },
+      {
+        "n": 1,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781199498170_1",
+          "type": "union",
+          "name": "Finned Block",
+          "params": {
+            "children": [
+              {
+                "type": "translate",
+                "params": {
+                  "x": -25,
+                  "y": -15,
+                  "z": 0,
+                  "child": {
+                    "type": "cube",
+                    "params": {
+                      "x": 50,
+                      "y": 30,
+                      "z": 5
+                    }
+                  }
+                }
+              },
+              {
+                "type": "translate",
+                "params": {
+                  "x": -25,
+                  "y": -11.5,
+                  "z": 5,
+                  "child": {
+                    "type": "cube",
+                    "params": {
+                      "x": 50,
+                      "y": 3,
+                      "z": 15
+                    }
+                  }
+                }
+              },
+              {
+                "type": "translate",
+                "params": {
+                  "x": -25,
+                  "y": -1.5,
+                  "z": 5,
+                  "child": {
+                    "type": "cube",
+                    "params": {
+                      "x": 50,
+                      "y": 3,
+                      "z": 15
+                    }
+                  }
+                }
+              },
+              {
+                "type": "translate",
+                "params": {
+                  "x": -25,
+                  "y": 8.5,
+                  "z": 5,
+                  "child": {
+                    "type": "cube",
+                    "params": {
+                      "x": 50,
+                      "y": 3,
+                      "z": 15
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 6.385374999998021
+      },
+      {
+        "n": 2,
+        "tool": "create_cad_loon",
+        "args": {
+          "source": "[root\n  [union\n    [translate -25 -15 0 [cube 50 30 5]]\n    [union\n      [translate -25 -11.5 5 [cube 50 3 15]]\n      [union\n        [translate -25 -1.5 5 [cube 50 3 15]]\n        [translate -25 8.5 5 [cube 50 3 15]]]]]\n  \"steel\"]",
+          "format": "json"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 14.514875000000757
+      },
+      {
+        "n": 3,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781199498170_1",
+          "type": "cube",
+          "name": "base_cube",
+          "params": {
+            "size": {
+              "x": 50,
+              "y": 30,
+              "z": 5
+            }
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.603167000001122
+      },
+      {
+        "n": 4,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781199498170_1",
+          "type": "cube",
+          "name": "fin1_cube",
+          "params": {
+            "size": {
+              "x": 50,
+              "y": 3,
+              "z": 15
+            }
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.7877079999962007
+      },
+      {
+        "n": 5,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781199498170_1",
+          "type": "cube",
+          "name": "fin2_cube",
+          "params": {
+            "size": {
+              "x": 50,
+              "y": 3,
+              "z": 15
+            }
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.2278330000044662
+      },
+      {
+        "n": 6,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781199498170_1",
+          "type": "cube",
+          "name": "fin3_cube",
+          "params": {
+            "size": {
+              "x": 50,
+              "y": 3,
+              "z": 15
+            }
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.4167089999973541
+      },
+      {
+        "n": 7,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781199498170_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.8496250000025611
+      },
+      {
+        "n": 8,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781199498170_1",
+          "part_id": "1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 5.367874999996275
+      },
+      {
+        "n": 9,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781199498170_1",
+          "part_id": "2"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.4483750000072177
+      },
+      {
+        "n": 10,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781199498170_1",
+          "part_id": "3"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.996832999997423
+      },
+      {
+        "n": 11,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781199498170_1",
+          "part_id": "4"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.6086669999931473
+      },
+      {
+        "n": 12,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781199498170_1",
+          "type": "cube",
+          "name": "FinnedBlock",
+          "params": {
+            "size": {
+              "x": 50,
+              "y": 30,
+              "z": 5
+            }
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.268624999996973
+      },
+      {
+        "n": 13,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781199498170_1",
+          "type": "translate",
+          "parent_part_id": "1",
+          "params": {
+            "offset": {
+              "x": -25,
+              "y": -15,
+              "z": 0
+            }
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 3.181416999999783
+      },
+      {
+        "n": 14,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781199498170_1",
+          "part_id": "1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.917249999998603
+      },
+      {
+        "n": 15,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781199498170_1",
+          "type": "cube",
+          "name": "base_raw",
+          "params": {
+            "size": {
+              "x": 50,
+              "y": 30,
+              "z": 5
+            }
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.636167000004207
+      },
+      {
+        "n": 16,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781199498170_1",
+          "type": "translate",
+          "parent_part_id": "1",
+          "params": {
+            "child": 1,
+            "offset": {
+              "x": -25,
+              "y": -15,
+              "z": 0
+            }
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.91120800000499
+      },
+      {
+        "n": 17,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781199498170_1",
+          "type": "cube",
+          "params": {
+            "size": {
+              "x": 50,
+              "y": 3,
+              "z": 15
+            }
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.5197909999988042
+      },
+      {
+        "n": 18,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781199498170_1",
+          "type": "translate",
+          "parent_part_id": "3",
+          "params": {
+            "child": 3,
+            "offset": {
+              "x": -25,
+              "y": -11.5,
+              "z": 5
+            }
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.857416999991983
+      },
+      {
+        "n": 19,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781199498170_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.225124999997206
+      },
+      {
+        "n": 20,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781199498170_1",
+          "part_id": "2"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.412625000011758
+      },
+      {
+        "n": 21,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781199498170_1",
+          "type": "union",
+          "parent_part_id": "2",
+          "params": {
+            "left": 2,
+            "right": 4
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.937792000011541
+      },
+      {
+        "n": 22,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781199498170_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.764082999987295
+      },
+      {
+        "n": 23,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781199498170_1",
+          "part_id": "5"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.4825830000045244
+      },
+      {
+        "n": 24,
+        "tool": "get_document",
+        "args": {
+          "document_id": "doc_1781199498170_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.398125000006985
+      },
+      {
+        "n": 25,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781199498170_1",
+          "part_id": "1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.9794159999873955
+      },
+      {
+        "n": 26,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781199498170_1",
+          "part_id": "2"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.2741249999962747
+      },
+      {
+        "n": 27,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781199498170_1",
+          "part_id": "3"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.2116659999883268
+      },
+      {
+        "n": 28,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781199498170_1",
+          "part_id": "4"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.4530419999791775
+      },
+      {
+        "n": 29,
+        "tool": "get_document",
+        "args": {
+          "document_id": "doc_1781199498170_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.5817920000117738
+      },
+      {
+        "n": 30,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781199498170_1",
+          "type": "cube",
+          "params": {
+            "size": {
+              "x": 50,
+              "y": 3,
+              "z": 15
+            }
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.0907920000026934
+      },
+      {
+        "n": 31,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781199498170_1",
+          "type": "translate",
+          "parent_part_id": "6",
+          "params": {
+            "child": 6,
+            "offset": {
+              "x": -25,
+              "y": -1.5,
+              "z": 5
+            }
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.9617919999873266
+      },
+      {
+        "n": 32,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781199498170_1",
+          "type": "union",
+          "parent_part_id": "5",
+          "params": {
+            "left": 5,
+            "right": 7
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.428542000008747
+      },
+      {
+        "n": 33,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781199498170_1",
+          "type": "cube",
+          "params": {
+            "size": {
+              "x": 50,
+              "y": 3,
+              "z": 15
+            }
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.1742080000112765
+      },
+      {
+        "n": 34,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781199498170_1",
+          "type": "translate",
+          "parent_part_id": "9",
+          "params": {
+            "child": 9,
+            "offset": {
+              "x": -25,
+              "y": 8.5,
+              "z": 5
+            }
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.3179999999993015
+      },
+      {
+        "n": 35,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781199498170_1",
+          "type": "union",
+          "parent_part_id": "8",
+          "params": {
+            "left": 8,
+            "right": 10
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.208875000011176
+      },
+      {
+        "n": 36,
+        "tool": "get_document",
+        "args": {
+          "document_id": "doc_1781199498170_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.2535419999912847
+      },
+      {
+        "n": 37,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781199498170_1",
+          "part_id": "5"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.4801670000015292
+      },
+      {
+        "n": 38,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781199498170_1",
+          "part_id": "6"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.703957999998238
+      },
+      {
+        "n": 39,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781199498170_1",
+          "part_id": "7"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.0623330000089481
+      },
+      {
+        "n": 40,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781199498170_1",
+          "part_id": "8"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.496292000025278
+      },
+      {
+        "n": 41,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781199498170_1",
+          "part_id": "9"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.1861249999783468
+      },
+      {
+        "n": 42,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781199498170_1",
+          "part_id": "10"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.6762499999895226
+      },
+      {
+        "n": 43,
+        "tool": "get_document",
+        "args": {
+          "document_id": "doc_1781199498170_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.6881669999856967
+      },
+      {
+        "n": 44,
+        "tool": "render_view",
+        "args": {
+          "document_id": "doc_1781199498170_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 100.46395800000755
+      },
+      {
+        "n": 45,
+        "tool": "get_document",
+        "args": {
+          "document_id": "doc_1781199498170_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.26900000000023283
+      }
+    ],
+    "tokens": {
+      "input": 628319,
+      "output": 6108,
+      "total": 634427
+    },
+    "wallclock_sec": 185.83905437500002
+  },
+  "output": {
+    "vcad_path": "20260611T173817Z-b143.vcad",
+    "vcad_sha256": "016604477ca655c2b1bc17e7167a1682428029d4329fdf18bbcd507c70a8b8dc",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-06-11T17:38:17.988Z",
+    "ended_at": "2026-06-11T17:41:23.843Z"
+  },
+  "signature": null
+}

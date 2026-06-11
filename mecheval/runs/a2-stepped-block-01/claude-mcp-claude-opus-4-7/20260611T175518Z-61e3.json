@@ -1,0 +1,596 @@
+{
+  "schema_version": 0,
+  "task_id": "a2-stepped-block-01",
+  "task_sha256": "f89fc615a163d859bef73f8aac7159cfa4ae682ee5421dc55aaec6d523499a8e",
+  "checks": [
+    {
+      "n": 0,
+      "type": "valid_solid",
+      "params": {
+        "type": "valid_solid"
+      },
+      "result": "pass",
+      "details": {
+        "root_count": 1,
+        "solids_produced": 1
+      }
+    },
+    {
+      "n": 1,
+      "type": "bbox",
+      "params": {
+        "type": "bbox",
+        "min": [
+          -25,
+          -15,
+          0
+        ],
+        "max": [
+          25,
+          15,
+          20
+        ],
+        "tolerance_mm": 0.05
+      },
+      "result": "pass",
+      "details": {
+        "actual_max": [
+          25,
+          15,
+          20
+        ],
+        "actual_min": [
+          -25,
+          -15,
+          0
+        ],
+        "deviation_max": [
+          0,
+          0,
+          0
+        ],
+        "deviation_min": [
+          0,
+          0,
+          0
+        ],
+        "max_abs_deviation_mm": 0,
+        "tolerance_mm": 0.05
+      }
+    },
+    {
+      "n": 2,
+      "type": "mass_props",
+      "params": {
+        "type": "mass_props",
+        "volume_mm3": 22500,
+        "tolerance_pct": 0.1
+      },
+      "result": "pass",
+      "details": {
+        "volume": {
+          "actual_mm3": 22500,
+          "deviation_pct": 0,
+          "pass": true,
+          "spec_mm3": 22500,
+          "tolerance_pct": 0.1
+        }
+      }
+    },
+    {
+      "n": 3,
+      "type": "step_roundtrip",
+      "params": {
+        "type": "step_roundtrip",
+        "tolerance_pct": 0.1
+      },
+      "result": "pass",
+      "details": {
+        "per_solid": [
+          {
+            "bbox": {
+              "max_abs_deviation_mm": 0,
+              "original_max": [
+                25,
+                15,
+                20
+              ],
+              "original_min": [
+                -25,
+                -15,
+                0
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                25,
+                15,
+                20
+              ],
+              "roundtripped_min": [
+                -25,
+                -15,
+                0
+              ],
+              "tolerance_mm": 0.061644140029689765
+            },
+            "index": 0,
+            "pass": true,
+            "volume": {
+              "deviation_pct": 0,
+              "original_mm3": 22500,
+              "pass": true,
+              "roundtripped_mm3": 22500
+            }
+          }
+        ],
+        "tolerance_pct": 0.1
+      }
+    }
+  ],
+  "summary": {
+    "passed": true,
+    "checks_passed": 4,
+    "checks_total": 4,
+    "score": 1,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260611T175518Z-61e3",
+  "model": {
+    "id": "claude-mcp-claude-opus-4-7",
+    "name": "Claude (MCP, claude-opus-4-7)",
+    "provider": "anthropic",
+    "params": {
+      "mode": "mcp",
+      "model": "claude-opus-4-7",
+      "max_tokens": 8000,
+      "max_iterations": 30
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "a2-stepped-block-01",
+    "rendered": "Start with a rectangular block 50mm long (X) × 30mm wide (Y) × 20mm tall (Z), centered in X and Y with the bottom face on the XY plane (so it spans x in [-25, 25], y in [-15, 15], z in [0, 20]). Cut away the upper +X corner: remove material in the region x in [0, 25], y in [-15, 15], z in [10, 20]. The result has an L-shape when viewed from +Y. Output a single solid.",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "open_document",
+        "args": {},
+        "result_kind": "ok",
+        "wallclock_ms": 1.5370410000000163
+      },
+      {
+        "n": 1,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781200518365_1",
+          "type": "difference",
+          "name": "L-Block",
+          "params": {
+            "a": {
+              "type": "translate",
+              "params": {
+                "x": -25,
+                "y": -15,
+                "z": 0,
+                "child": {
+                  "type": "cube",
+                  "params": {
+                    "x": 50,
+                    "y": 30,
+                    "z": 20
+                  }
+                }
+              }
+            },
+            "b": {
+              "type": "translate",
+              "params": {
+                "x": 0,
+                "y": -15,
+                "z": 10,
+                "child": {
+                  "type": "cube",
+                  "params": {
+                    "x": 25,
+                    "y": 30,
+                    "z": 10
+                  }
+                }
+              }
+            }
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 5.664958000000297
+      },
+      {
+        "n": 2,
+        "tool": "create_cad_loon",
+        "args": {
+          "source": "[difference\n  [translate 0 -15 10 [cube 25 30 10]]\n  [translate -25 -15 0 [cube 50 30 20]]]",
+          "format": "json"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 10.165500000002794
+      },
+      {
+        "n": 3,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781200518365_1",
+          "type": "cube",
+          "name": "Block",
+          "params": {
+            "size": {
+              "x": 50,
+              "y": 30,
+              "z": 20
+            }
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 4.808333000008133
+      },
+      {
+        "n": 4,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781200518365_1",
+          "type": "translate",
+          "name": "BlockPos",
+          "parent_part_id": "1",
+          "params": {
+            "offset": {
+              "x": -25,
+              "y": -15,
+              "z": 0
+            },
+            "child": 1
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 6.036916999990353
+      },
+      {
+        "n": 5,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781200518365_1",
+          "type": "cube",
+          "name": "Cutter",
+          "parent_part_id": "1",
+          "params": {
+            "size": {
+              "x": 25,
+              "y": 30,
+              "z": 10
+            }
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.955958999998984
+      },
+      {
+        "n": 6,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781200518365_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 4.6614169999957085
+      },
+      {
+        "n": 7,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781200518365_1",
+          "part_id": "1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.2548339999921154
+      },
+      {
+        "n": 8,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781200518365_1",
+          "part_id": "2"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.9309159999975236
+      },
+      {
+        "n": 9,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781200518365_1",
+          "part_id": "3"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.6515000000072177
+      },
+      {
+        "n": 10,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781200518365_1",
+          "type": "difference",
+          "name": "L-Block",
+          "params": {
+            "left": {
+              "type": "translate",
+              "offset": {
+                "x": -25,
+                "y": -15,
+                "z": 0
+              },
+              "child": {
+                "type": "cube",
+                "size": {
+                  "x": 50,
+                  "y": 30,
+                  "z": 20
+                }
+              }
+            },
+            "right": {
+              "type": "translate",
+              "offset": {
+                "x": 0,
+                "y": -15,
+                "z": 10
+              },
+              "child": {
+                "type": "cube",
+                "size": {
+                  "x": 25,
+                  "y": 30,
+                  "z": 10
+                }
+              }
+            }
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 3.651957999987644
+      },
+      {
+        "n": 11,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781200518365_1",
+          "type": "cube",
+          "name": "BlockCube",
+          "params": {
+            "size": {
+              "x": 50,
+              "y": 30,
+              "z": 20
+            }
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 5.237957999997889
+      },
+      {
+        "n": 12,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781200518365_1",
+          "type": "translate",
+          "name": "BlockPos",
+          "parent_part_id": "1",
+          "params": {
+            "offset": {
+              "x": -25,
+              "y": -15,
+              "z": 0
+            }
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 3.2241249999933643
+      },
+      {
+        "n": 13,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781200518365_1",
+          "type": "translate",
+          "name": "BlockPos",
+          "parent_part_id": "1",
+          "params": {
+            "offset": {
+              "x": -25,
+              "y": -15,
+              "z": 0
+            },
+            "child": 1
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.990124999996624
+      },
+      {
+        "n": 14,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781200518365_1",
+          "type": "cube",
+          "name": "CutCube",
+          "params": {
+            "size": {
+              "x": 25,
+              "y": 30,
+              "z": 10
+            }
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 5.154540999996243
+      },
+      {
+        "n": 15,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781200518365_1",
+          "type": "translate",
+          "name": "CutPos",
+          "parent_part_id": "3",
+          "params": {
+            "offset": {
+              "x": 0,
+              "y": -15,
+              "z": 10
+            },
+            "child": 3
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.86637500001234
+      },
+      {
+        "n": 16,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781200518365_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.6480000000010477
+      },
+      {
+        "n": 17,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781200518365_1",
+          "type": "difference",
+          "name": "L-Block",
+          "parent_part_id": "2",
+          "params": {
+            "left": 2,
+            "right": 4
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.4474999999947613
+      },
+      {
+        "n": 18,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781200518365_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.7974169999943115
+      },
+      {
+        "n": 19,
+        "tool": "get_document",
+        "args": {
+          "document_id": "doc_1781200518365_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.0254169999971054
+      },
+      {
+        "n": 20,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781200518365_1",
+          "part_id": "1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.99608400001307
+      },
+      {
+        "n": 21,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781200518365_1",
+          "part_id": "2"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.59375
+      },
+      {
+        "n": 22,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781200518365_1",
+          "part_id": "3"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.2423330000019632
+      },
+      {
+        "n": 23,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781200518365_1",
+          "part_id": "4"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.5899159999971744
+      },
+      {
+        "n": 24,
+        "tool": "get_document",
+        "args": {
+          "document_id": "doc_1781200518365_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.750499999994645
+      },
+      {
+        "n": 25,
+        "tool": "render_view",
+        "args": {
+          "document_id": "doc_1781200518365_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 94.02904199999466
+      },
+      {
+        "n": 26,
+        "tool": "get_document",
+        "args": {
+          "document_id": "doc_1781200518365_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.0920420000038575
+      }
+    ],
+    "tokens": {
+      "input": 364858,
+      "output": 3614,
+      "total": 368472
+    },
+    "wallclock_sec": 131.422098458
+  },
+  "output": {
+    "vcad_path": "20260611T175518Z-61e3.vcad",
+    "vcad_sha256": "8d24df1f8548e3174e31fcd176e8adfa5b63fd1150a2074a1279ecd8fe43a316",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-06-11T17:55:18.195Z",
+    "ended_at": "2026-06-11T17:57:29.643Z"
+  },
+  "signature": null
+}

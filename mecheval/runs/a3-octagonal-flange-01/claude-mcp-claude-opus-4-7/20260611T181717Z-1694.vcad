@@ -1,0 +1,193 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "Octagon",
+      "op": {
+        "type": "Sketch2D",
+        "origin": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "x_dir": {
+          "x": 1,
+          "y": 0,
+          "z": 0
+        },
+        "y_dir": {
+          "x": 0,
+          "y": 1,
+          "z": 0
+        },
+        "segments": [
+          {
+            "type": "Line",
+            "start": {
+              "x": 20,
+              "y": -8.284271247461902
+            },
+            "end": {
+              "x": 20,
+              "y": 8.284271247461902
+            }
+          },
+          {
+            "type": "Line",
+            "start": {
+              "x": 20,
+              "y": 8.284271247461902
+            },
+            "end": {
+              "x": 8.284271247461902,
+              "y": 20
+            }
+          },
+          {
+            "type": "Line",
+            "start": {
+              "x": 8.284271247461902,
+              "y": 20
+            },
+            "end": {
+              "x": -8.284271247461902,
+              "y": 20
+            }
+          },
+          {
+            "type": "Line",
+            "start": {
+              "x": -8.284271247461902,
+              "y": 20
+            },
+            "end": {
+              "x": -20,
+              "y": 8.284271247461902
+            }
+          },
+          {
+            "type": "Line",
+            "start": {
+              "x": -20,
+              "y": 8.284271247461902
+            },
+            "end": {
+              "x": -20,
+              "y": -8.284271247461902
+            }
+          },
+          {
+            "type": "Line",
+            "start": {
+              "x": -20,
+              "y": -8.284271247461902
+            },
+            "end": {
+              "x": -8.284271247461902,
+              "y": -20
+            }
+          },
+          {
+            "type": "Line",
+            "start": {
+              "x": -8.284271247461902,
+              "y": -20
+            },
+            "end": {
+              "x": 8.284271247461902,
+              "y": -20
+            }
+          },
+          {
+            "type": "Line",
+            "start": {
+              "x": 8.284271247461902,
+              "y": -20
+            },
+            "end": {
+              "x": 20,
+              "y": -8.284271247461902
+            }
+          }
+        ]
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": "Body",
+      "op": {
+        "type": "Extrude",
+        "sketch": 1,
+        "direction": {
+          "x": 0,
+          "y": 0,
+          "z": 8
+        }
+      }
+    },
+    "3": {
+      "id": 3,
+      "name": "HoleCyl",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 8,
+        "segments": 64
+      }
+    },
+    "4": {
+      "id": 4,
+      "name": "HoleTranslate",
+      "op": {
+        "type": "Translate",
+        "child": 3,
+        "offset": {
+          "x": 15,
+          "y": 0,
+          "z": 0
+        }
+      }
+    },
+    "5": {
+      "id": 5,
+      "name": "HolePattern",
+      "op": {
+        "type": "CircularPattern",
+        "child": 4,
+        "axis_origin": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "axis_dir": {
+          "x": 0,
+          "y": 0,
+          "z": 1
+        },
+        "count": 8,
+        "angle_deg": 360
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 2,
+      "material": "default"
+    },
+    {
+      "root": 3,
+      "material": "default"
+    },
+    {
+      "root": 4,
+      "material": "default"
+    },
+    {
+      "root": 5,
+      "material": "default"
+    }
+  ]
+}

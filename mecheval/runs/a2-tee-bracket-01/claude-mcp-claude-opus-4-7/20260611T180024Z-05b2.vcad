@@ -1,0 +1,72 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "hbar",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 60,
+          "y": 20,
+          "z": 5
+        }
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": null,
+      "op": {
+        "type": "Translate",
+        "child": 1,
+        "offset": {
+          "x": -30,
+          "y": 0,
+          "z": 0
+        }
+      }
+    },
+    "3": {
+      "id": 3,
+      "name": "stem",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 20,
+          "y": 30,
+          "z": 5
+        }
+      }
+    },
+    "4": {
+      "id": 4,
+      "name": null,
+      "op": {
+        "type": "Translate",
+        "child": 3,
+        "offset": {
+          "x": -10,
+          "y": 20,
+          "z": 0
+        }
+      }
+    },
+    "5": {
+      "id": 5,
+      "name": "body",
+      "op": {
+        "type": "Union",
+        "left": 2,
+        "right": 4
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 5,
+      "material": "default"
+    }
+  ]
+}

@@ -1,0 +1,166 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "Plate base",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 50,
+          "y": 30,
+          "z": 10
+        }
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": "Hole1",
+      "op": {
+        "type": "Cylinder",
+        "radius": 1.5,
+        "height": 12,
+        "segments": 64
+      }
+    },
+    "3": {
+      "id": 3,
+      "name": "Hole2",
+      "op": {
+        "type": "Cylinder",
+        "radius": 1.5,
+        "height": 12,
+        "segments": 64
+      }
+    },
+    "4": {
+      "id": 4,
+      "name": "Hole3",
+      "op": {
+        "type": "Cylinder",
+        "radius": 1.5,
+        "height": 12,
+        "segments": 64
+      }
+    },
+    "5": {
+      "id": 5,
+      "name": "Hole4",
+      "op": {
+        "type": "Cylinder",
+        "radius": 1.5,
+        "height": 12,
+        "segments": 64
+      }
+    },
+    "6": {
+      "id": 6,
+      "name": null,
+      "op": {
+        "type": "Translate",
+        "child": 1,
+        "offset": {
+          "x": -25,
+          "y": -15,
+          "z": 0
+        }
+      }
+    },
+    "7": {
+      "id": 7,
+      "name": null,
+      "op": {
+        "type": "Translate",
+        "child": 2,
+        "offset": {
+          "x": -20,
+          "y": -10,
+          "z": -1
+        }
+      }
+    },
+    "8": {
+      "id": 8,
+      "name": null,
+      "op": {
+        "type": "Translate",
+        "child": 3,
+        "offset": {
+          "x": 20,
+          "y": -10,
+          "z": -1
+        }
+      }
+    },
+    "9": {
+      "id": 9,
+      "name": null,
+      "op": {
+        "type": "Translate",
+        "child": 4,
+        "offset": {
+          "x": -20,
+          "y": 10,
+          "z": -1
+        }
+      }
+    },
+    "10": {
+      "id": 10,
+      "name": null,
+      "op": {
+        "type": "Translate",
+        "child": 5,
+        "offset": {
+          "x": 20,
+          "y": 10,
+          "z": -1
+        }
+      }
+    },
+    "11": {
+      "id": 11,
+      "name": "Holes 7+8",
+      "op": {
+        "type": "Union",
+        "left": 7,
+        "right": 8
+      }
+    },
+    "12": {
+      "id": 12,
+      "name": "Holes +9",
+      "op": {
+        "type": "Union",
+        "left": 11,
+        "right": 9
+      }
+    },
+    "13": {
+      "id": 13,
+      "name": "All holes",
+      "op": {
+        "type": "Union",
+        "left": 12,
+        "right": 10
+      }
+    },
+    "14": {
+      "id": 14,
+      "name": "Plate with holes",
+      "op": {
+        "type": "Difference",
+        "left": 6,
+        "right": 13
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 14,
+      "material": "default"
+    }
+  ]
+}

@@ -1,0 +1,137 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "Pentagon Sketch",
+      "op": {
+        "type": "Sketch2D",
+        "origin": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "x_dir": {
+          "x": 1,
+          "y": 0,
+          "z": 0
+        },
+        "y_dir": {
+          "x": 0,
+          "y": 1,
+          "z": 0
+        },
+        "segments": [
+          {
+            "type": "Line",
+            "start": {
+              "x": 0,
+              "y": 15
+            },
+            "end": {
+              "x": -14.2658,
+              "y": 4.6353
+            }
+          },
+          {
+            "type": "Line",
+            "start": {
+              "x": -14.2658,
+              "y": 4.6353
+            },
+            "end": {
+              "x": -8.8168,
+              "y": -12.1353
+            }
+          },
+          {
+            "type": "Line",
+            "start": {
+              "x": -8.8168,
+              "y": -12.1353
+            },
+            "end": {
+              "x": 8.8168,
+              "y": -12.1353
+            }
+          },
+          {
+            "type": "Line",
+            "start": {
+              "x": 8.8168,
+              "y": -12.1353
+            },
+            "end": {
+              "x": 14.2658,
+              "y": 4.6353
+            }
+          },
+          {
+            "type": "Line",
+            "start": {
+              "x": 14.2658,
+              "y": 4.6353
+            },
+            "end": {
+              "x": 0,
+              "y": 15
+            }
+          }
+        ]
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": "Pentagon Prism",
+      "op": {
+        "type": "Extrude",
+        "sketch": 1,
+        "direction": {
+          "x": 0,
+          "y": 0,
+          "z": 25
+        }
+      }
+    },
+    "3": {
+      "id": 3,
+      "name": "Hole Cyl",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 27,
+        "segments": 64
+      }
+    },
+    "4": {
+      "id": 4,
+      "name": "Hole Position",
+      "op": {
+        "type": "Translate",
+        "child": 3,
+        "offset": {
+          "x": 5,
+          "y": 0,
+          "z": -1
+        }
+      }
+    },
+    "5": {
+      "id": 5,
+      "name": "Pentagonal Prism with Hole",
+      "op": {
+        "type": "Difference",
+        "left": 2,
+        "right": 4
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 5,
+      "material": "default"
+    }
+  ]
+}

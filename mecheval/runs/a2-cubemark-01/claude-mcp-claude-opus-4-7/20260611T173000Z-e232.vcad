@@ -1,0 +1,103 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "Block",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 30,
+          "y": 30,
+          "z": 30
+        }
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": "HoleProto",
+      "op": {
+        "type": "Cylinder",
+        "radius": 1.5,
+        "height": 30,
+        "segments": 32
+      }
+    },
+    "3": {
+      "id": 3,
+      "name": "CenterBlock",
+      "op": {
+        "type": "Translate",
+        "child": 1,
+        "offset": {
+          "x": -15,
+          "y": -15,
+          "z": 0
+        }
+      }
+    },
+    "4": {
+      "id": 4,
+      "name": "HoleStart",
+      "op": {
+        "type": "Translate",
+        "child": 2,
+        "offset": {
+          "x": -8,
+          "y": -8,
+          "z": 0
+        }
+      }
+    },
+    "5": {
+      "id": 5,
+      "name": "HolesRowY",
+      "op": {
+        "type": "LinearPattern",
+        "child": 4,
+        "direction": {
+          "x": 0,
+          "y": 1,
+          "z": 0
+        },
+        "count": 3,
+        "spacing": 8
+      }
+    },
+    "6": {
+      "id": 6,
+      "name": "HolesGrid",
+      "op": {
+        "type": "LinearPattern",
+        "child": 5,
+        "direction": {
+          "x": 1,
+          "y": 0,
+          "z": 0
+        },
+        "count": 3,
+        "spacing": 8
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 3,
+      "material": "default"
+    },
+    {
+      "root": 4,
+      "material": "default"
+    },
+    {
+      "root": 5,
+      "material": "default"
+    },
+    {
+      "root": 6,
+      "material": "default"
+    }
+  ]
+}

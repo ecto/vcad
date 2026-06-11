@@ -1,0 +1,198 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "Plate blank",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 80,
+          "y": 80,
+          "z": 6
+        }
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": "Center plate",
+      "op": {
+        "type": "Translate",
+        "child": 1,
+        "offset": {
+          "x": -40,
+          "y": -40,
+          "z": 0
+        }
+      }
+    },
+    "3": {
+      "id": 3,
+      "name": "Center hole cyl",
+      "op": {
+        "type": "Cylinder",
+        "radius": 6,
+        "height": 8,
+        "segments": 64
+      }
+    },
+    "4": {
+      "id": 4,
+      "name": "Corner hole cyl 1",
+      "op": {
+        "type": "Cylinder",
+        "radius": 3,
+        "height": 8,
+        "segments": 48
+      }
+    },
+    "5": {
+      "id": 5,
+      "name": "Corner hole cyl 2",
+      "op": {
+        "type": "Cylinder",
+        "radius": 3,
+        "height": 8,
+        "segments": 48
+      }
+    },
+    "6": {
+      "id": 6,
+      "name": "Corner hole cyl 3",
+      "op": {
+        "type": "Cylinder",
+        "radius": 3,
+        "height": 8,
+        "segments": 48
+      }
+    },
+    "7": {
+      "id": 7,
+      "name": "Corner hole cyl 4",
+      "op": {
+        "type": "Cylinder",
+        "radius": 3,
+        "height": 8,
+        "segments": 48
+      }
+    },
+    "8": {
+      "id": 8,
+      "name": "Pos center",
+      "op": {
+        "type": "Translate",
+        "child": 3,
+        "offset": {
+          "x": 0,
+          "y": 0,
+          "z": -1
+        }
+      }
+    },
+    "9": {
+      "id": 9,
+      "name": "Pos c1",
+      "op": {
+        "type": "Translate",
+        "child": 4,
+        "offset": {
+          "x": -30,
+          "y": -30,
+          "z": -1
+        }
+      }
+    },
+    "10": {
+      "id": 10,
+      "name": "Pos c2",
+      "op": {
+        "type": "Translate",
+        "child": 5,
+        "offset": {
+          "x": 30,
+          "y": -30,
+          "z": -1
+        }
+      }
+    },
+    "11": {
+      "id": 11,
+      "name": "Pos c3",
+      "op": {
+        "type": "Translate",
+        "child": 6,
+        "offset": {
+          "x": -30,
+          "y": 30,
+          "z": -1
+        }
+      }
+    },
+    "12": {
+      "id": 12,
+      "name": "Pos c4",
+      "op": {
+        "type": "Translate",
+        "child": 7,
+        "offset": {
+          "x": 30,
+          "y": 30,
+          "z": -1
+        }
+      }
+    },
+    "13": {
+      "id": 13,
+      "name": "Drill center",
+      "op": {
+        "type": "Difference",
+        "left": 2,
+        "right": 8
+      }
+    },
+    "14": {
+      "id": 14,
+      "name": "Drill c1",
+      "op": {
+        "type": "Difference",
+        "left": 13,
+        "right": 9
+      }
+    },
+    "15": {
+      "id": 15,
+      "name": "Drill c2",
+      "op": {
+        "type": "Difference",
+        "left": 14,
+        "right": 10
+      }
+    },
+    "16": {
+      "id": 16,
+      "name": "Drill c3",
+      "op": {
+        "type": "Difference",
+        "left": 15,
+        "right": 11
+      }
+    },
+    "17": {
+      "id": 17,
+      "name": "Plate with holes",
+      "op": {
+        "type": "Difference",
+        "left": 16,
+        "right": 12
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 17,
+      "material": "default"
+    }
+  ]
+}

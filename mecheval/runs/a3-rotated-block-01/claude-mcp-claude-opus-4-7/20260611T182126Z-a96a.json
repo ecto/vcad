@@ -1,0 +1,440 @@
+{
+  "schema_version": 0,
+  "task_id": "a3-rotated-block-01",
+  "task_sha256": "3fcbc632c20f9b4ba3a0a840a433e819eeac34f519272073adfc8e8be402d856",
+  "checks": [
+    {
+      "n": 0,
+      "type": "valid_solid",
+      "params": {
+        "type": "valid_solid"
+      },
+      "result": "pass",
+      "details": {
+        "root_count": 1,
+        "solids_produced": 1
+      }
+    },
+    {
+      "n": 1,
+      "type": "bbox",
+      "params": {
+        "type": "bbox",
+        "min": [
+          -24.82,
+          -24.81,
+          -15.62
+        ],
+        "max": [
+          24.82,
+          24.81,
+          15.62
+        ],
+        "tolerance_mm": 0.5
+      },
+      "result": "fail",
+      "details": {
+        "actual_max": [
+          20.136240810817647,
+          15.227675534580882,
+          10.06926653991608
+        ],
+        "actual_min": [
+          -20.13624081081765,
+          -15.227675534580882,
+          -10.06926653991608
+        ],
+        "deviation_max": [
+          -4.683759189182354,
+          -9.582324465419116,
+          -5.550733460083919
+        ],
+        "deviation_min": [
+          4.68375918918235,
+          9.582324465419116,
+          5.550733460083919
+        ],
+        "max_abs_deviation_mm": 9.582324465419116,
+        "tolerance_mm": 0.5
+      }
+    },
+    {
+      "n": 2,
+      "type": "mass_props",
+      "params": {
+        "type": "mass_props",
+        "volume_mm3": 24000,
+        "center_of_mass": [
+          0,
+          0,
+          0
+        ],
+        "tolerance_pct": 0.5
+      },
+      "result": "pass",
+      "details": {
+        "center_of_mass": {
+          "actual": [
+            2.0210993819146292e-16,
+            -2.0210993819146292e-16,
+            -5.052748454786573e-17
+          ],
+          "bbox_diagonal_mm": 54.359559410634844,
+          "deviation": [
+            2.0210993819146292e-16,
+            -2.0210993819146292e-16,
+            -5.052748454786573e-17
+          ],
+          "max_abs_deviation_mm": 2.0210993819146292e-16,
+          "pass": true,
+          "spec": [
+            0,
+            0,
+            0
+          ],
+          "tolerance_mm": 0.27179779705317425
+        },
+        "volume": {
+          "actual_mm3": 23999.999469894978,
+          "deviation_pct": 0.0000022087709263966343,
+          "pass": true,
+          "spec_mm3": 24000,
+          "tolerance_pct": 0.5
+        }
+      }
+    },
+    {
+      "n": 3,
+      "type": "step_roundtrip",
+      "params": {
+        "type": "step_roundtrip",
+        "tolerance_pct": 0.5
+      },
+      "result": "pass",
+      "details": {
+        "per_solid": [
+          {
+            "bbox": {
+              "max_abs_deviation_mm": 3.552713678800501e-15,
+              "original_max": [
+                20.136240810817647,
+                15.227675534580882,
+                10.06926653991608
+              ],
+              "original_min": [
+                -20.13624081081765,
+                -15.227675534580882,
+                -10.06926653991608
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                20.13624081081765,
+                15.22767553458088,
+                10.06926653991608
+              ],
+              "roundtripped_min": [
+                -20.13624081081765,
+                -15.22767553458088,
+                -10.06926653991608
+              ],
+              "tolerance_mm": 0.27179779705317425
+            },
+            "index": 0,
+            "pass": true,
+            "volume": {
+              "deviation_pct": 0,
+              "original_mm3": 23999.999469894978,
+              "pass": true,
+              "roundtripped_mm3": 23999.999469894978
+            }
+          }
+        ],
+        "tolerance_pct": 0.5
+      }
+    }
+  ],
+  "summary": {
+    "passed": false,
+    "checks_passed": 3,
+    "checks_total": 4,
+    "score": 0.75,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260611T182126Z-a96a",
+  "model": {
+    "id": "claude-mcp-claude-opus-4-7",
+    "name": "Claude (MCP, claude-opus-4-7)",
+    "provider": "anthropic",
+    "params": {
+      "mode": "mcp",
+      "model": "claude-opus-4-7",
+      "max_tokens": 8000,
+      "max_iterations": 30
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "a3-rotated-block-01",
+    "rendered": "Make a rectangular block 40mm long (X) × 30mm wide (Y) × 20mm tall (Z), centered at the origin BEFORE any rotation. Then rotate the block about its center by 30 degrees around the Z axis (the rotation matrix Rz(30°)), and after that rotate again by 15 degrees around the X axis (Rx(15°)). Both rotations are about the origin, which is the block's center. Output a single solid.",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "open_document",
+        "args": {},
+        "result_kind": "ok",
+        "wallclock_ms": 1.6558749999999804
+      },
+      {
+        "n": 1,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781202086630_1",
+          "type": "cube",
+          "params": {
+            "x": 40,
+            "y": 30,
+            "z": 20
+          },
+          "name": "Block"
+        },
+        "result_kind": "err",
+        "wallclock_ms": 5.804082999999991
+      },
+      {
+        "n": 2,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781202086630_1",
+          "type": "cube",
+          "params": {
+            "size": [
+              40,
+              30,
+              20
+            ]
+          },
+          "name": "Block"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.0677919999998267
+      },
+      {
+        "n": 3,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781202086630_1",
+          "part_id": "1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.7233329999999114
+      },
+      {
+        "n": 4,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781202086630_1",
+          "type": "translate",
+          "params": {
+            "offset": [
+              -20,
+              -15,
+              -10
+            ],
+            "child": 1
+          },
+          "name": "Center",
+          "parent_part_id": "1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 4.302750000002561
+      },
+      {
+        "n": 5,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781202086630_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.0317920000015874
+      },
+      {
+        "n": 6,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781202086630_1",
+          "part_id": "2"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.242833000003884
+      },
+      {
+        "n": 7,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781202086630_1",
+          "type": "rotate",
+          "params": {
+            "euler": [
+              0,
+              0,
+              0.5235987755982988
+            ],
+            "child": 2
+          },
+          "name": "Rz30",
+          "parent_part_id": "2"
+        },
+        "result_kind": "err",
+        "wallclock_ms": 3.112833999999566
+      },
+      {
+        "n": 8,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781202086630_1",
+          "type": "rotate",
+          "params": {
+            "angles": [
+              0,
+              0,
+              0.5235987755982988
+            ],
+            "child": 2
+          },
+          "name": "Rz30",
+          "parent_part_id": "2"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.2374170000039157
+      },
+      {
+        "n": 9,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781202086630_1",
+          "type": "rotate",
+          "params": {
+            "angles": [
+              0.2617993877991494,
+              0,
+              0
+            ],
+            "child": 3
+          },
+          "name": "Rx15",
+          "parent_part_id": "3"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.0831659999967087
+      },
+      {
+        "n": 10,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781202086630_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.7855420000123559
+      },
+      {
+        "n": 11,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781202086630_1",
+          "part_id": "4"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.9544170000008307
+      },
+      {
+        "n": 12,
+        "tool": "get_document",
+        "args": {
+          "document_id": "doc_1781202086630_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.3857090000092285
+      },
+      {
+        "n": 13,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781202086630_1",
+          "part_id": "1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.143792000002577
+      },
+      {
+        "n": 14,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781202086630_1",
+          "part_id": "2"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.45891699999629054
+      },
+      {
+        "n": 15,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781202086630_1",
+          "part_id": "3"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.39504099999612663
+      },
+      {
+        "n": 16,
+        "tool": "get_document",
+        "args": {
+          "document_id": "doc_1781202086630_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.1925829999963753
+      },
+      {
+        "n": 17,
+        "tool": "get_document",
+        "args": {
+          "document_id": "doc_1781202086630_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.1745419999933802
+      }
+    ],
+    "tokens": {
+      "input": 250776,
+      "output": 2456,
+      "total": 253232
+    },
+    "wallclock_sec": 112.165305084
+  },
+  "output": {
+    "vcad_path": "20260611T182126Z-a96a.vcad",
+    "vcad_sha256": "9b6fe054e651f51c6c06b3d32bfeb8b0535708fc9878c6ebae24560af4d845bd",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-06-11T18:21:26.449Z",
+    "ended_at": "2026-06-11T18:23:18.632Z"
+  },
+  "signature": null
+}

@@ -1,0 +1,148 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "Hex Outline",
+      "op": {
+        "type": "Sketch2D",
+        "origin": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "x_dir": {
+          "x": 1,
+          "y": 0,
+          "z": 0
+        },
+        "y_dir": {
+          "x": 0,
+          "y": 1,
+          "z": 0
+        },
+        "segments": [
+          {
+            "end": [
+              5.4848,
+              9.5
+            ],
+            "start": [
+              10.9697,
+              0
+            ],
+            "type": "Line"
+          },
+          {
+            "end": [
+              -5.4848,
+              9.5
+            ],
+            "start": [
+              5.4848,
+              9.5
+            ],
+            "type": "Line"
+          },
+          {
+            "end": [
+              -10.9697,
+              0
+            ],
+            "start": [
+              -5.4848,
+              9.5
+            ],
+            "type": "Line"
+          },
+          {
+            "end": [
+              -5.4848,
+              -9.5
+            ],
+            "start": [
+              -10.9697,
+              0
+            ],
+            "type": "Line"
+          },
+          {
+            "end": [
+              5.4848,
+              -9.5
+            ],
+            "start": [
+              -5.4848,
+              -9.5
+            ],
+            "type": "Line"
+          },
+          {
+            "end": [
+              10.9697,
+              0
+            ],
+            "start": [
+              5.4848,
+              -9.5
+            ],
+            "type": "Line"
+          }
+        ]
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": "Hex Body",
+      "op": {
+        "type": "Extrude",
+        "sketch": 1,
+        "direction": [
+          0,
+          0,
+          8
+        ]
+      }
+    },
+    "3": {
+      "id": 3,
+      "name": "Hole",
+      "op": {
+        "type": "Cylinder",
+        "radius": 5,
+        "height": 10,
+        "segments": 64
+      }
+    },
+    "4": {
+      "id": 4,
+      "name": "Hole Position",
+      "op": {
+        "type": "Translate",
+        "child": 3,
+        "offset": {
+          "x": 0,
+          "y": 0,
+          "z": -1
+        }
+      }
+    },
+    "5": {
+      "id": 5,
+      "name": "Nut",
+      "op": {
+        "type": "Difference",
+        "left": 2,
+        "right": 4
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 5,
+      "material": "default"
+    }
+  ]
+}

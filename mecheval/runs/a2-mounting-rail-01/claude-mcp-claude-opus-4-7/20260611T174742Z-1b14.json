@@ -1,0 +1,1061 @@
+{
+  "schema_version": 0,
+  "task_id": "a2-mounting-rail-01",
+  "task_sha256": "e375cec77275714a18d10d9c88594fb0ae9f43f8219f01063480b2467d8705a3",
+  "checks": [
+    {
+      "n": 0,
+      "type": "valid_solid",
+      "params": {
+        "type": "valid_solid"
+      },
+      "result": "pass",
+      "details": {
+        "root_count": 10,
+        "solids_produced": 10
+      }
+    },
+    {
+      "n": 1,
+      "type": "bbox",
+      "params": {
+        "type": "bbox",
+        "min": [
+          -50,
+          -10,
+          0
+        ],
+        "max": [
+          50,
+          10,
+          8
+        ],
+        "tolerance_mm": 0.1
+      },
+      "result": "pass",
+      "details": {
+        "actual_max": [
+          50,
+          10,
+          8
+        ],
+        "actual_min": [
+          -50,
+          -10,
+          0
+        ],
+        "deviation_max": [
+          0,
+          0,
+          0
+        ],
+        "deviation_min": [
+          0,
+          0,
+          0
+        ],
+        "max_abs_deviation_mm": 0,
+        "tolerance_mm": 0.1
+      }
+    },
+    {
+      "n": 2,
+      "type": "mass_props",
+      "params": {
+        "type": "mass_props",
+        "volume_mm3": 15321.42,
+        "tolerance_pct": 0.5
+      },
+      "result": "fail",
+      "details": {
+        "volume": {
+          "actual_mm3": 33806.65180054394,
+          "deviation_pct": 120.64959906160098,
+          "pass": false,
+          "spec_mm3": 15321.42,
+          "tolerance_pct": 0.5
+        }
+      }
+    },
+    {
+      "n": 3,
+      "type": "hole_count",
+      "params": {
+        "type": "hole_count",
+        "diameter_mm": 6,
+        "expected": 3,
+        "diameter_tolerance_mm": 0.05
+      },
+      "result": "pass",
+      "details": {
+        "actual": 3,
+        "diameter_mm": 6,
+        "diameter_tolerance_mm": 0.05,
+        "expected": 3,
+        "found": [
+          [
+            -40,
+            0,
+            6
+          ],
+          [
+            0,
+            0,
+            6
+          ],
+          [
+            40,
+            0,
+            6
+          ]
+        ]
+      }
+    },
+    {
+      "n": 4,
+      "type": "hole_positions",
+      "params": {
+        "type": "hole_positions",
+        "diameter_mm": 6,
+        "positions": [
+          [
+            -40,
+            0,
+            0
+          ],
+          [
+            0,
+            0,
+            0
+          ],
+          [
+            40,
+            0,
+            0
+          ]
+        ],
+        "tolerance_mm": 0.15
+      },
+      "result": "pass",
+      "details": {
+        "diameter_mm": 6,
+        "per_expected": [
+          {
+            "distance_mm": 0,
+            "matched_hole": [
+              -40,
+              0
+            ],
+            "pass": true,
+            "spec_xy": [
+              -40,
+              0
+            ]
+          },
+          {
+            "distance_mm": 0,
+            "matched_hole": [
+              0,
+              0
+            ],
+            "pass": true,
+            "spec_xy": [
+              0,
+              0
+            ]
+          },
+          {
+            "distance_mm": 0,
+            "matched_hole": [
+              40,
+              0
+            ],
+            "pass": true,
+            "spec_xy": [
+              40,
+              0
+            ]
+          }
+        ],
+        "tolerance_mm": 0.15,
+        "unmatched_extras": []
+      }
+    },
+    {
+      "n": 5,
+      "type": "step_roundtrip",
+      "params": {
+        "type": "step_roundtrip",
+        "tolerance_pct": 0.5
+      },
+      "result": "pass",
+      "details": {
+        "per_solid": [
+          {
+            "bbox": {
+              "max_abs_deviation_mm": 0,
+              "original_max": [
+                50,
+                10,
+                8
+              ],
+              "original_min": [
+                -50,
+                -10,
+                0
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                50,
+                10,
+                8
+              ],
+              "roundtripped_min": [
+                -50,
+                -10,
+                0
+              ],
+              "tolerance_mm": 0.5114684741017769
+            },
+            "index": 0,
+            "pass": true,
+            "volume": {
+              "deviation_pct": 0,
+              "original_mm3": 16000,
+              "pass": true,
+              "roundtripped_mm3": 16000
+            }
+          },
+          {
+            "bbox": {
+              "max_abs_deviation_mm": 0,
+              "original_max": [
+                3,
+                3,
+                8
+              ],
+              "original_min": [
+                -3,
+                -3,
+                0
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                3,
+                3,
+                8
+              ],
+              "roundtripped_min": [
+                -3,
+                -3,
+                0
+              ],
+              "tolerance_mm": 0.05830951894845301
+            },
+            "index": 1,
+            "pass": true,
+            "volume": {
+              "deviation_pct": 0.48152874411967655,
+              "original_mm3": 225.83149526689886,
+              "pass": true,
+              "roundtripped_mm3": 224.74405170391347
+            }
+          },
+          {
+            "bbox": {
+              "max_abs_deviation_mm": 0,
+              "original_max": [
+                -37,
+                3,
+                8
+              ],
+              "original_min": [
+                -43,
+                -3,
+                0
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                -37,
+                3,
+                8
+              ],
+              "roundtripped_min": [
+                -43,
+                -3,
+                0
+              ],
+              "tolerance_mm": 0.05830951894845301
+            },
+            "index": 2,
+            "pass": true,
+            "volume": {
+              "deviation_pct": 0.48154400202363506,
+              "original_mm3": 225.83144140317745,
+              "pass": true,
+              "roundtripped_mm3": 224.74396364241693
+            }
+          },
+          {
+            "bbox": {
+              "max_abs_deviation_mm": 0,
+              "original_max": [
+                3,
+                3,
+                8
+              ],
+              "original_min": [
+                -3,
+                -3,
+                0
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                3,
+                3,
+                8
+              ],
+              "roundtripped_min": [
+                -3,
+                -3,
+                0
+              ],
+              "tolerance_mm": 0.05830951894845301
+            },
+            "index": 3,
+            "pass": true,
+            "volume": {
+              "deviation_pct": 0.48152874411967655,
+              "original_mm3": 225.83149526689886,
+              "pass": true,
+              "roundtripped_mm3": 224.74405170391347
+            }
+          },
+          {
+            "bbox": {
+              "max_abs_deviation_mm": 0,
+              "original_max": [
+                3,
+                3,
+                8
+              ],
+              "original_min": [
+                -3,
+                -3,
+                0
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                3,
+                3,
+                8
+              ],
+              "roundtripped_min": [
+                -3,
+                -3,
+                0
+              ],
+              "tolerance_mm": 0.05830951894845301
+            },
+            "index": 4,
+            "pass": true,
+            "volume": {
+              "deviation_pct": 0.48152874411967655,
+              "original_mm3": 225.83149526689886,
+              "pass": true,
+              "roundtripped_mm3": 224.74405170391347
+            }
+          },
+          {
+            "bbox": {
+              "max_abs_deviation_mm": 0,
+              "original_max": [
+                3,
+                3,
+                8
+              ],
+              "original_min": [
+                -3,
+                -3,
+                0
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                3,
+                3,
+                8
+              ],
+              "roundtripped_min": [
+                -3,
+                -3,
+                0
+              ],
+              "tolerance_mm": 0.05830951894845301
+            },
+            "index": 5,
+            "pass": true,
+            "volume": {
+              "deviation_pct": 0.48152874411967655,
+              "original_mm3": 225.83149526689886,
+              "pass": true,
+              "roundtripped_mm3": 224.74405170391347
+            }
+          },
+          {
+            "bbox": {
+              "max_abs_deviation_mm": 0,
+              "original_max": [
+                43,
+                3,
+                8
+              ],
+              "original_min": [
+                37,
+                -3,
+                0
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                43,
+                3,
+                8
+              ],
+              "roundtripped_min": [
+                37,
+                -3,
+                0
+              ],
+              "tolerance_mm": 0.05830951894845301
+            },
+            "index": 6,
+            "pass": true,
+            "volume": {
+              "deviation_pct": 0.48154400202363506,
+              "original_mm3": 225.83144140317745,
+              "pass": true,
+              "roundtripped_mm3": 224.74396364241693
+            }
+          },
+          {
+            "bbox": {
+              "max_abs_deviation_mm": 0,
+              "original_max": [
+                3,
+                3,
+                8
+              ],
+              "original_min": [
+                -43,
+                -3,
+                0
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                3,
+                3,
+                8
+              ],
+              "roundtripped_min": [
+                -43,
+                -3,
+                0
+              ],
+              "tolerance_mm": 0.2353720459187964
+            },
+            "index": 7,
+            "pass": true,
+            "volume": {
+              "deviation_pct": 0.4815363730709285,
+              "original_mm3": 451.6629366700763,
+              "pass": true,
+              "roundtripped_mm3": 449.4880153463296
+            }
+          },
+          {
+            "bbox": {
+              "max_abs_deviation_mm": 0,
+              "original_max": [
+                43,
+                3,
+                8
+              ],
+              "original_min": [
+                -43,
+                -3,
+                0
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                43,
+                3,
+                8
+              ],
+              "roundtripped_min": [
+                -43,
+                -3,
+                0
+              ],
+              "tolerance_mm": 0.43289721643826723
+            },
+            "index": 8,
+            "pass": true,
+            "volume": {
+              "deviation_pct": 0.48153891605496185,
+              "original_mm3": 677.4943780732538,
+              "pass": true,
+              "roundtripped_mm3": 674.2319789887465
+            }
+          },
+          {
+            "bbox": {
+              "max_abs_deviation_mm": 0,
+              "original_max": [
+                50,
+                10,
+                8
+              ],
+              "original_min": [
+                -50,
+                -10,
+                0
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                50,
+                10,
+                8
+              ],
+              "roundtripped_min": [
+                -50,
+                -10,
+                0
+              ],
+              "tolerance_mm": 0.5114684741017769
+            },
+            "index": 9,
+            "pass": true,
+            "volume": {
+              "deviation_pct": 0.01419436727060555,
+              "original_mm3": 15322.505621926664,
+              "pass": true,
+              "roundtripped_mm3": 15324.6805546497
+            }
+          }
+        ],
+        "tolerance_pct": 0.5
+      }
+    }
+  ],
+  "summary": {
+    "passed": false,
+    "checks_passed": 5,
+    "checks_total": 6,
+    "score": 0.8333333333333334,
+    "anti_cheese_violated": true,
+    "limits_exceeded": []
+  },
+  "run_id": "20260611T174742Z-1b14",
+  "model": {
+    "id": "claude-mcp-claude-opus-4-7",
+    "name": "Claude (MCP, claude-opus-4-7)",
+    "provider": "anthropic",
+    "params": {
+      "mode": "mcp",
+      "model": "claude-opus-4-7",
+      "max_tokens": 8000,
+      "max_iterations": 30
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "a2-mounting-rail-01",
+    "rendered": "Make a long rectangular mounting rail 100mm long (X) × 20mm wide (Y) × 8mm thick (Z). Center it in X and Y, with the bottom face on the XY plane (z = 0 to z = 8). Drill three through-holes of diameter 6mm, axes parallel to Z, evenly spaced along the centerline (y = 0) at x = -40, x = 0, and x = 40. Output a single solid.",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "open_document",
+        "args": {},
+        "result_kind": "ok",
+        "wallclock_ms": 1.735874999999993
+      },
+      {
+        "n": 1,
+        "tool": "create_cad_loon",
+        "args": {
+          "source": "[difference\n  [translate 40 0 0 [cylinder 3 8]]\n  [difference\n    [translate 0 0 0 [cylinder 3 8]]\n    [difference\n      [translate -40 0 0 [cylinder 3 8]]\n      [translate -50 -10 0 [cube 100 20 8]]]]]"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 12.792249999999967
+      },
+      {
+        "n": 2,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781200062342_1",
+          "type": "cube",
+          "name": "Rail Block",
+          "params": {
+            "size_x": 100,
+            "size_y": 20,
+            "size_z": 8
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 7.522624999999607
+      },
+      {
+        "n": 3,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781200062342_1",
+          "type": "cube",
+          "name": "Rail Block",
+          "params": {
+            "size": [
+              100,
+              20,
+              8
+            ]
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 4.188792000000831
+      },
+      {
+        "n": 4,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781200062342_1",
+          "part_id": "1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 5.102749999998196
+      },
+      {
+        "n": 5,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781200062342_1",
+          "part_id": "1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.762332999998762
+      },
+      {
+        "n": 6,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781200062342_1",
+          "type": "cube",
+          "name": "Rail Raw",
+          "params": {
+            "size": [
+              100,
+              20,
+              8
+            ]
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 5.758499999996275
+      },
+      {
+        "n": 7,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781200062342_1",
+          "type": "translate",
+          "name": "Center Rail",
+          "parent_part_id": "1",
+          "params": {
+            "offset": [
+              -50,
+              -10,
+              0
+            ],
+            "input": 1
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 5.404916999992565
+      },
+      {
+        "n": 8,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781200062342_1",
+          "type": "translate",
+          "name": "Center Rail",
+          "parent_part_id": "1",
+          "params": {
+            "offset": [
+              -50,
+              -10,
+              0
+            ],
+            "child": 1
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.491041999994195
+      },
+      {
+        "n": 9,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781200062342_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.0182500000082655
+      },
+      {
+        "n": 10,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781200062342_1",
+          "part_id": "2"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 4.367874999996275
+      },
+      {
+        "n": 11,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781200062342_1",
+          "part_id": "1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.5393329999933485
+      },
+      {
+        "n": 12,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781200062342_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.7730000000155997
+      },
+      {
+        "n": 13,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781200062342_1",
+          "part_id": "2"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.6345000000146683
+      },
+      {
+        "n": 14,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781200062342_1",
+          "type": "cylinder",
+          "name": "Hole1 Raw",
+          "parent_part_id": "2",
+          "params": {
+            "radius": 3,
+            "height": 8
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 4.323833000002196
+      },
+      {
+        "n": 15,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781200062342_1",
+          "type": "cylinder",
+          "name": "Hole1 Raw",
+          "parent_part_id": "2",
+          "params": {
+            "radius": 3,
+            "height": 8,
+            "segments": 64
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.707165999978315
+      },
+      {
+        "n": 16,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781200062342_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.6911249999830034
+      },
+      {
+        "n": 17,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781200062342_1",
+          "part_id": "3"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.4514579999959096
+      },
+      {
+        "n": 18,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781200062342_1",
+          "part_id": "3"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.110707999992883
+      },
+      {
+        "n": 19,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781200062342_1",
+          "type": "cylinder",
+          "name": "Hole Raw",
+          "params": {
+            "radius": 3,
+            "height": 8,
+            "segments": 64
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.7436670000024606
+      },
+      {
+        "n": 20,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781200062342_1",
+          "type": "translate",
+          "name": "Hole1 Place",
+          "parent_part_id": "3",
+          "params": {
+            "offset": [
+              -40,
+              0,
+              0
+            ],
+            "child": 3
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.5903330000001006
+      },
+      {
+        "n": 21,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781200062342_1",
+          "type": "cylinder",
+          "name": "Hole2 Raw",
+          "params": {
+            "radius": 3,
+            "height": 8,
+            "segments": 64
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.56950000001234
+      },
+      {
+        "n": 22,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781200062342_1",
+          "type": "translate",
+          "name": "Hole2 Place",
+          "parent_part_id": "5",
+          "params": {
+            "offset": [
+              0,
+              0,
+              0
+            ],
+            "child": 5
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.816458999994211
+      },
+      {
+        "n": 23,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781200062342_1",
+          "type": "cylinder",
+          "name": "Hole3 Raw",
+          "params": {
+            "radius": 3,
+            "height": 8,
+            "segments": 64
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.452208000002429
+      },
+      {
+        "n": 24,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781200062342_1",
+          "type": "translate",
+          "name": "Hole3 Place",
+          "parent_part_id": "7",
+          "params": {
+            "offset": [
+              40,
+              0,
+              0
+            ],
+            "child": 7
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.6002079999889247
+      },
+      {
+        "n": 25,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781200062342_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.0984999999927823
+      },
+      {
+        "n": 26,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781200062342_1",
+          "type": "union",
+          "name": "Holes12",
+          "params": {
+            "children": [
+              4,
+              6
+            ]
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 3.3894580000196584
+      },
+      {
+        "n": 27,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781200062342_1",
+          "type": "union",
+          "name": "Holes12",
+          "params": {
+            "left": 4,
+            "right": 6
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.935957999987295
+      },
+      {
+        "n": 28,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781200062342_1",
+          "part_id": "9"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.45783400000073
+      },
+      {
+        "n": 29,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781200062342_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.6703750000160653
+      },
+      {
+        "n": 30,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781200062342_1",
+          "type": "union",
+          "name": "AllHoles",
+          "params": {
+            "left": 9,
+            "right": 8
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.661000000021886
+      },
+      {
+        "n": 31,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781200062342_1",
+          "type": "difference",
+          "name": "Mounting Rail",
+          "params": {
+            "left": 2,
+            "right": 10
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 4.058499999984633
+      },
+      {
+        "n": 32,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781200062342_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.035291000007419
+      },
+      {
+        "n": 33,
+        "tool": "get_document",
+        "args": {
+          "document_id": "doc_1781200062342_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.7806250000139698
+      }
+    ],
+    "tokens": {
+      "input": 555429,
+      "output": 4916,
+      "total": 560345
+    },
+    "wallclock_sec": 227.141180709
+  },
+  "output": {
+    "vcad_path": "20260611T174742Z-1b14.vcad",
+    "vcad_sha256": "a658e540bf0c03194d8ce333221f4f1dd77010ba84f09fad53ea7ed77d99714e",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-06-11T17:47:42.167Z",
+    "ended_at": "2026-06-11T17:51:29.331Z"
+  },
+  "signature": null
+}

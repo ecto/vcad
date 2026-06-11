@@ -1,0 +1,609 @@
+{
+  "schema_version": 0,
+  "task_id": "a3-spherical-dome-block-01",
+  "task_sha256": "c684f817f90fd823cb95d7d5f3d1f0a259bf340445f19b4069a2007a6e62bdaa",
+  "checks": [
+    {
+      "n": 0,
+      "type": "valid_solid",
+      "params": {
+        "type": "valid_solid"
+      },
+      "result": "pass",
+      "details": {
+        "root_count": 1,
+        "solids_produced": 1
+      }
+    },
+    {
+      "n": 1,
+      "type": "bbox",
+      "params": {
+        "type": "bbox",
+        "min": [
+          -20,
+          -20,
+          0
+        ],
+        "max": [
+          20,
+          20,
+          55
+        ],
+        "tolerance_mm": 0.2
+      },
+      "result": "pass",
+      "details": {
+        "actual_max": [
+          20,
+          20,
+          55
+        ],
+        "actual_min": [
+          -20,
+          -20,
+          0
+        ],
+        "deviation_max": [
+          0,
+          0,
+          0
+        ],
+        "deviation_min": [
+          0,
+          0,
+          0
+        ],
+        "max_abs_deviation_mm": 0,
+        "tolerance_mm": 0.2
+      }
+    },
+    {
+      "n": 2,
+      "type": "mass_props",
+      "params": {
+        "type": "mass_props",
+        "volume_mm3": 71068.58,
+        "tolerance_pct": 2
+      },
+      "result": "pass",
+      "details": {
+        "volume": {
+          "actual_mm3": 71022.40407932254,
+          "deviation_pct": 0.06497374884577493,
+          "pass": true,
+          "spec_mm3": 71068.58,
+          "tolerance_pct": 2
+        }
+      }
+    },
+    {
+      "n": 3,
+      "type": "step_roundtrip",
+      "params": {
+        "type": "step_roundtrip",
+        "tolerance_pct": 2
+      },
+      "result": "pass",
+      "details": {
+        "per_solid": [
+          {
+            "bbox": {
+              "max_abs_deviation_mm": 0,
+              "original_max": [
+                20,
+                20,
+                55
+              ],
+              "original_min": [
+                -20,
+                -20,
+                0
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                20,
+                20,
+                55
+              ],
+              "roundtripped_min": [
+                -20,
+                -20,
+                0
+              ],
+              "tolerance_mm": 1.57797338380595
+            },
+            "index": 0,
+            "pass": true,
+            "volume": {
+              "deviation_pct": 0.010436150552189983,
+              "original_mm3": 71010.10990628829,
+              "pass": true,
+              "roundtripped_mm3": 71017.52062826538
+            }
+          }
+        ],
+        "tolerance_pct": 2
+      }
+    }
+  ],
+  "summary": {
+    "passed": true,
+    "checks_passed": 4,
+    "checks_total": 4,
+    "score": 1,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260611T182446Z-59e4",
+  "model": {
+    "id": "claude-mcp-claude-opus-4-7",
+    "name": "Claude (MCP, claude-opus-4-7)",
+    "provider": "anthropic",
+    "params": {
+      "mode": "mcp",
+      "model": "claude-opus-4-7",
+      "max_tokens": 8000,
+      "max_iterations": 30
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "a3-spherical-dome-block-01",
+    "rendered": "Make a single solid consisting of a cube with a hemispherical dome fused onto its top face. Cube: 40mm × 40mm × 40mm, centered in X and Y with the bottom face on the XY plane (so it spans x in [-20, 20], y in [-20, 20], z in [0, 40]). Dome: a hemisphere of radius 15mm sitting on top of the cube, centered on the Z axis. The flat (circular) face of the hemisphere is flush with the top face of the cube at z = 40, and the dome extends upward from there. The two parts are joined into a single solid (their shared circular interface is internal, not a face). Note: the kernel only has a full Sphere primitive — to get a hemisphere you must boolean a sphere with a half-space (e.g. intersect a sphere with a large cube positioned at z ≥ 40).",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "open_document",
+        "args": {},
+        "result_kind": "ok",
+        "wallclock_ms": 1.5952090000000112
+      },
+      {
+        "n": 1,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781202287122_1",
+          "type": "union",
+          "name": "CubeWithDome",
+          "params": {
+            "children": [
+              {
+                "type": "translate",
+                "params": {
+                  "x": -20,
+                  "y": -20,
+                  "z": 0,
+                  "child": {
+                    "type": "cube",
+                    "params": {
+                      "x": 40,
+                      "y": 40,
+                      "z": 40
+                    }
+                  }
+                }
+              },
+              {
+                "type": "intersection",
+                "params": {
+                  "children": [
+                    {
+                      "type": "translate",
+                      "params": {
+                        "x": 0,
+                        "y": 0,
+                        "z": 40,
+                        "child": {
+                          "type": "sphere",
+                          "params": {
+                            "r": 15
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "type": "translate",
+                      "params": {
+                        "x": -50,
+                        "y": -50,
+                        "z": 40,
+                        "child": {
+                          "type": "cube",
+                          "params": {
+                            "x": 100,
+                            "y": 100,
+                            "z": 100
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 5.531041000002006
+      },
+      {
+        "n": 2,
+        "tool": "create_cad_loon",
+        "args": {
+          "source": "[union\n  [translate -20 -20 0 [cube 40 40 40]]\n  [intersection\n    [translate -50 -50 40 [cube 100 100 100]]\n    [translate 0 0 40 [sphere 15]]]]",
+          "format": "json"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 12.336957999999868
+      },
+      {
+        "n": 3,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781202287122_1",
+          "type": "cube",
+          "name": "CubeBase",
+          "params": {
+            "size": {
+              "x": 40,
+              "y": 40,
+              "z": 40
+            }
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.44795900000463
+      },
+      {
+        "n": 4,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781202287122_1",
+          "type": "translate",
+          "parent_part_id": "1",
+          "params": {
+            "offset": {
+              "x": -20,
+              "y": -20,
+              "z": 0
+            }
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 1.8172080000003916
+      },
+      {
+        "n": 5,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781202287122_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.4661249999990105
+      },
+      {
+        "n": 6,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781202287122_1",
+          "part_id": "1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.89983399999619
+      },
+      {
+        "n": 7,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781202287122_1",
+          "type": "cube",
+          "name": "cube_raw",
+          "params": {
+            "size": {
+              "x": 40,
+              "y": 40,
+              "z": 40
+            }
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.211874999993597
+      },
+      {
+        "n": 8,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781202287122_1",
+          "type": "translate",
+          "parent_part_id": "1",
+          "name": "cube_centered",
+          "params": {
+            "offset": {
+              "x": -20,
+              "y": -20,
+              "z": 0
+            },
+            "child": 1
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.307333999997354
+      },
+      {
+        "n": 9,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781202287122_1",
+          "type": "sphere",
+          "name": "sphere_raw",
+          "params": {
+            "radius": 15
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 3.7068749999962165
+      },
+      {
+        "n": 10,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781202287122_1",
+          "type": "cube",
+          "name": "halfspace_raw",
+          "params": {
+            "size": {
+              "x": 100,
+              "y": 100,
+              "z": 100
+            }
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.7229170000064187
+      },
+      {
+        "n": 11,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781202287122_1",
+          "type": "sphere",
+          "name": "sphere_raw",
+          "params": {
+            "radius": 15,
+            "segments": 0
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.8541669999976875
+      },
+      {
+        "n": 12,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781202287122_1",
+          "type": "translate",
+          "parent_part_id": "3",
+          "name": "halfspace",
+          "params": {
+            "offset": {
+              "x": -50,
+              "y": -50,
+              "z": 40
+            },
+            "child": 3
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 5.044916999991983
+      },
+      {
+        "n": 13,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781202287122_1",
+          "type": "translate",
+          "parent_part_id": "4",
+          "name": "sphere_at_top",
+          "params": {
+            "offset": {
+              "x": 0,
+              "y": 0,
+              "z": 40
+            },
+            "child": 4
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.8604170000035083
+      },
+      {
+        "n": 14,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781202287122_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.58820799998648
+      },
+      {
+        "n": 15,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781202287122_1",
+          "type": "intersection",
+          "parent_part_id": "6",
+          "name": "hemisphere",
+          "params": {
+            "left": 6,
+            "right": 5
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.2320829999953276
+      },
+      {
+        "n": 16,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781202287122_1",
+          "type": "union",
+          "parent_part_id": "7",
+          "name": "CubeWithDome",
+          "params": {
+            "left": 2,
+            "right": 7
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.223666999998386
+      },
+      {
+        "n": 17,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781202287122_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 4.142666999992798
+      },
+      {
+        "n": 18,
+        "tool": "get_document",
+        "args": {
+          "document_id": "doc_1781202287122_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.5112910000025295
+      },
+      {
+        "n": 19,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781202287122_1",
+          "part_id": "1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.185124999989057
+      },
+      {
+        "n": 20,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781202287122_1",
+          "part_id": "2"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.0801249999931315
+      },
+      {
+        "n": 21,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781202287122_1",
+          "part_id": "3"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.2796669999952428
+      },
+      {
+        "n": 22,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781202287122_1",
+          "part_id": "4"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.9561249999969732
+      },
+      {
+        "n": 23,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781202287122_1",
+          "part_id": "5"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.6135420000064187
+      },
+      {
+        "n": 24,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781202287122_1",
+          "part_id": "6"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.8768750000017462
+      },
+      {
+        "n": 25,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781202287122_1",
+          "part_id": "7"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.5118749999965075
+      },
+      {
+        "n": 26,
+        "tool": "get_document",
+        "args": {
+          "document_id": "doc_1781202287122_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.707750000001397
+      },
+      {
+        "n": 27,
+        "tool": "render_view",
+        "args": {
+          "document_id": "doc_1781202287122_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 113.48912499999278
+      },
+      {
+        "n": 28,
+        "tool": "get_document",
+        "args": {
+          "document_id": "doc_1781202287122_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.6372080000001006
+      }
+    ],
+    "tokens": {
+      "input": 372169,
+      "output": 3936,
+      "total": 376105
+    },
+    "wallclock_sec": 133.549677917
+  },
+  "output": {
+    "vcad_path": "20260611T182446Z-59e4.vcad",
+    "vcad_sha256": "8e0ff29ded594126d615ff8ceb435b6c18d94dae82b9dc718b378f735ff39c51",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-06-11T18:24:46.943Z",
+    "ended_at": "2026-06-11T18:27:00.529Z"
+  },
+  "signature": null
+}

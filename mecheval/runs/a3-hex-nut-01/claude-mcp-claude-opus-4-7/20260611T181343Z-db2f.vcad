@@ -1,0 +1,135 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "Hex Profile",
+      "op": {
+        "type": "Sketch2D",
+        "origin": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "x_dir": {
+          "x": 1,
+          "y": 0,
+          "z": 0
+        },
+        "y_dir": {
+          "x": 0,
+          "y": 1,
+          "z": 0
+        },
+        "segments": [
+          {
+            "type": "Line",
+            "start": {
+              "x": 9.5,
+              "y": -5.484828
+            },
+            "end": {
+              "x": 9.5,
+              "y": 5.484828
+            }
+          },
+          {
+            "type": "Line",
+            "start": {
+              "x": 9.5,
+              "y": 5.484828
+            },
+            "end": {
+              "x": 0,
+              "y": 10.969655
+            }
+          },
+          {
+            "type": "Line",
+            "start": {
+              "x": 0,
+              "y": 10.969655
+            },
+            "end": {
+              "x": -9.5,
+              "y": 5.484828
+            }
+          },
+          {
+            "type": "Line",
+            "start": {
+              "x": -9.5,
+              "y": 5.484828
+            },
+            "end": {
+              "x": -9.5,
+              "y": -5.484828
+            }
+          },
+          {
+            "type": "Line",
+            "start": {
+              "x": -9.5,
+              "y": -5.484828
+            },
+            "end": {
+              "x": 0,
+              "y": -10.969655
+            }
+          },
+          {
+            "type": "Line",
+            "start": {
+              "x": 0,
+              "y": -10.969655
+            },
+            "end": {
+              "x": 9.5,
+              "y": -5.484828
+            }
+          }
+        ]
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": "Hex Body",
+      "op": {
+        "type": "Extrude",
+        "sketch": 1,
+        "direction": {
+          "x": 0,
+          "y": 0,
+          "z": 8
+        }
+      }
+    },
+    "3": {
+      "id": 3,
+      "name": "Hole",
+      "op": {
+        "type": "Cylinder",
+        "radius": 5,
+        "height": 8,
+        "segments": 64
+      }
+    },
+    "4": {
+      "id": 4,
+      "name": "Nut",
+      "op": {
+        "type": "Difference",
+        "left": 2,
+        "right": 3
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 4,
+      "material": "default"
+    }
+  ]
+}

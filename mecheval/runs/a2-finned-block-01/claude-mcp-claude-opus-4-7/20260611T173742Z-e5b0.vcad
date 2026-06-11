@@ -1,0 +1,140 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "BaseCube",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 50,
+          "y": 30,
+          "z": 5
+        }
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": "Fin1Cube",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 50,
+          "y": 3,
+          "z": 15
+        }
+      }
+    },
+    "3": {
+      "id": 3,
+      "name": "Fin2Cube",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 50,
+          "y": 3,
+          "z": 15
+        }
+      }
+    },
+    "4": {
+      "id": 4,
+      "name": "Fin3Cube",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 50,
+          "y": 3,
+          "z": 15
+        }
+      }
+    },
+    "5": {
+      "id": 5,
+      "name": "Base",
+      "op": {
+        "type": "Translate",
+        "child": 1,
+        "offset": {
+          "x": -25,
+          "y": -15,
+          "z": 0
+        }
+      }
+    },
+    "6": {
+      "id": 6,
+      "name": "Fin1",
+      "op": {
+        "type": "Translate",
+        "child": 2,
+        "offset": {
+          "x": -25,
+          "y": -11.5,
+          "z": 5
+        }
+      }
+    },
+    "7": {
+      "id": 7,
+      "name": "Fin2",
+      "op": {
+        "type": "Translate",
+        "child": 3,
+        "offset": {
+          "x": -25,
+          "y": -1.5,
+          "z": 5
+        }
+      }
+    },
+    "8": {
+      "id": 8,
+      "name": "Fin3",
+      "op": {
+        "type": "Translate",
+        "child": 4,
+        "offset": {
+          "x": -25,
+          "y": 8.5,
+          "z": 5
+        }
+      }
+    },
+    "9": {
+      "id": 9,
+      "name": null,
+      "op": {
+        "type": "Union",
+        "left": 5,
+        "right": 6
+      }
+    },
+    "10": {
+      "id": 10,
+      "name": null,
+      "op": {
+        "type": "Union",
+        "left": 9,
+        "right": 7
+      }
+    },
+    "11": {
+      "id": 11,
+      "name": "FinnedBlock",
+      "op": {
+        "type": "Union",
+        "left": 10,
+        "right": 8
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 11,
+      "material": "default"
+    }
+  ]
+}
