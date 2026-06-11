@@ -44,3 +44,6 @@ tasks/
 # scripts/build-changelog.mjs (postinstall + @vcad/core build).
 # Keeping it out of git eliminates merge conflicts on concurrent PRs.
 /CHANGELOG.json
+
+# Golden test fixtures are checked in despite *.dxf above
+!crates/vcad-kernel-sheet/tests/golden/*.dxf

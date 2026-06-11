@@ -808,7 +808,8 @@ fn evaluate_op_timed(
         | CsgOp::SheetMetalBaseFlangePolygon { .. }
         | CsgOp::SheetMetalEdgeFlange { .. }
         | CsgOp::SheetMetalHem { .. }
-        | CsgOp::SheetMetalJog { .. } => {
+        | CsgOp::SheetMetalJog { .. }
+        | CsgOp::SheetMetalBendRelief { .. } => {
             // Sheet-metal ops bypass the BRep Solid pipeline — the engine
             // detects them at root level and routes the chain to the
             // sheet-metal kernel. Returning `None` here is safe: it just
@@ -1143,6 +1144,7 @@ fn op_name(op: &CsgOp) -> String {
         CsgOp::SheetMetalHem { .. } => "SheetMetalHem",
         CsgOp::SheetMetalJog { .. } => "SheetMetalJog",
         CsgOp::SheetMetalBaseFlangePolygon { .. } => "SheetMetalBaseFlangePolygon",
+        CsgOp::SheetMetalBendRelief { .. } => "SheetMetalBendRelief",
     }
     .to_string()
 }

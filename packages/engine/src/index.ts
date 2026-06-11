@@ -17,6 +17,8 @@ import {
   nestSheetMetalParts as runNestSheetMetalParts,
   getSheetMetalMaterials as readSheetMetalMaterials,
   getSheetMetalBendTable as readSheetMetalBendTable,
+  getSheetMetalShopCatalog as readSheetMetalShopCatalog,
+  foldedSheetMetalStep as buildFoldedSheetMetalStep,
 } from "./sheet-metal.js";
 import type {
   SheetMetalShopProfile,
@@ -29,6 +31,7 @@ import type {
   SheetMetalPartFootprint,
   SheetMetalNestingParams,
   SheetMetalNestingResult,
+  SheetMetalShopCatalog,
 } from "./sheet-metal.js";
 
 export type {
@@ -111,6 +114,9 @@ export type {
   SheetMetalNestingParams,
   SheetMetalNestingResult,
   SheetMetalPlacement,
+  SheetMetalShopCatalog,
+  SheetMetalShopCatalogMaterial,
+  SheetMetalShopCatalogRow,
 } from "./sheet-metal.js";
 export {
   DEFAULT_SHOP_PROFILE,
@@ -279,6 +285,10 @@ export interface KernelModule {
   getSheetMetalMaterials?: () => string;
   /** Built-in bend table → JSON `{id, rows}`. */
   getSheetMetalBendTable?: () => string;
+  /** Built-in shop catalog (e.g. `"sendcutsend"`) → JSON or `{error}`. */
+  getSheetMetalShopCatalog?: (shopId: string) => string;
+  /** Folded sheet-metal solid as STEP AP214 → JSON `{step, error}`. */
+  sheetMetalFoldedStep?: (chainJson: string) => string;
 }
 
 /** Rendered dimension types from the annotation layer */
@@ -480,6 +490,8 @@ export class Engine {
       nestSheetMetalParts: (wasmModule as Record<string, unknown>).nestSheetMetalParts as KernelModule["nestSheetMetalParts"],
       getSheetMetalMaterials: (wasmModule as Record<string, unknown>).getSheetMetalMaterials as KernelModule["getSheetMetalMaterials"],
       getSheetMetalBendTable: (wasmModule as Record<string, unknown>).getSheetMetalBendTable as KernelModule["getSheetMetalBendTable"],
+      getSheetMetalShopCatalog: (wasmModule as Record<string, unknown>).getSheetMetalShopCatalog as KernelModule["getSheetMetalShopCatalog"],
+      sheetMetalFoldedStep: (wasmModule as Record<string, unknown>).sheetMetalFoldedStep as KernelModule["sheetMetalFoldedStep"],
     }, compiledWasmModule);
   }
 
@@ -787,17 +799,29 @@ export class Engine {
     );
   }
 
+  /** Return a built-in fab-service bending catalog (e.g. `"sendcutsend"`):
+   *  per-material/thickness fixed radii, K-factors, die widths, min flange
+   *  sizes, and relief depths. Throws on unknown ids. */
+  getSheetMetalShopCatalog(shopId: string): SheetMetalShopCatalog {
+    return readSheetMetalShopCatalog(
+      this.kernel as unknown as Parameters<typeof readSheetMetalShopCatalog>[0],
+      shopId,
+    );
+  }
+
   /**
    * Run sheet-metal manufacturability against a shop profile.
    *
    * Finds the first sheet-metal root in `doc`, rebuilds its op chain, and
-   * asks the kernel for structured violations vs. `shop` (or the generic
-   * shop when omitted). Returns `null` if the document has no sheet-metal
-   * part. Pure query — does not evaluate meshes or touch the scene cache.
+   * asks the kernel for structured violations vs. `shop`. `shop` is a
+   * profile object, a built-in catalog id string (e.g. `"sendcutsend"`),
+   * or omitted (→ the chain's own shop profile if set, else generic).
+   * Returns `null` if the document has no sheet-metal part. Pure query —
+   * does not evaluate meshes or touch the scene cache.
    */
   checkSheetMetal(
     doc: Document,
-    shop?: SheetMetalShopProfile,
+    shop?: SheetMetalShopProfile | string,
   ): SheetMetalCheckResult | null {
     for (const entry of doc.roots) {
       if (entry.visible === false) continue;
@@ -809,6 +833,32 @@ export class Engine {
             typeof checkSheetMetalManufacturability
           >[1],
           shop,
+        );
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Export the document's FOLDED sheet-metal body as a STEP AP214 string.
+   *
+   * Finds the first sheet-metal root, rebuilds its op chain, and asks the
+   * kernel for the folded solid with true cylindrical bend faces (radii/K
+   * from the chain's shop profile when one is set) — the zero-data-entry
+   * upload path for fab services with a 3D pipeline. Returns `null` when
+   * the document has no sheet-metal part; throws on kernel errors (e.g.
+   * hems/closed folds, which the folded body cannot represent).
+   */
+  foldedSheetMetalStep(doc: Document): string | null {
+    for (const entry of doc.roots) {
+      if (entry.visible === false) continue;
+      const chain = buildSheetMetalChain(entry.root, doc.nodes);
+      if (chain) {
+        return buildFoldedSheetMetalStep(
+          chain,
+          this.kernel as unknown as Parameters<
+            typeof buildFoldedSheetMetalStep
+          >[1],
         );
       }
     }

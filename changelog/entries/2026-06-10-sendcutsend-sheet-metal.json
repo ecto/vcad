@@ -1,0 +1,18 @@
+{
+  "id": "2026-06-10-sendcutsend-sheet-metal",
+  "version": "0.9.4",
+  "date": "2026-06-10",
+  "category": "feat",
+  "title": "SendCutSend-ready sheet metal: merged DXF, bend relief",
+  "summary": "Flat patterns export as a merged single-silhouette DXF with dashed bend centerlines, bends get parametric relief notches, and the sendcutsend shop profile locks radii/K to SCS tooling.",
+  "details": "sheet_metal_unfold now emits a fab-ready merged DXF: one closed exterior polyline plus holes on CUT and DASHED bend centerlines on the allowance midline. New bend_relief option cuts relief notches at bend ends (3D, flat, and DXF). shop_profile: \"sendcutsend\" resolves every bend's radius and K-factor from SCS's published bending calculator — custom radii are rejected, omitted radii resolve automatically — and sheet_metal_bend_table can return the full catalog. For zero data entry, export the folded body as STEP via export_cad and let the shop auto-detect bends.",
+  "features": ["sheet-metal", "dxf", "manufacturing", "dfm"],
+  "mcpTools": [
+    "sheet_metal_unfold",
+    "sheet_metal_check",
+    "sheet_metal_create",
+    "sheet_metal_suggest_fix",
+    "sheet_metal_bend_table",
+    "export_cad"
+  ]
+}

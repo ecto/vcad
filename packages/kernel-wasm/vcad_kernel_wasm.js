@@ -4042,6 +4042,29 @@ export function getSheetMetalMaterials() {
 }
 
 /**
+ * Return a built-in shop bending catalog (per-material fixed radius,
+ * K-factor, die width, relief depth, flange minimums, max bend length) as
+ * JSON. Pass `"sendcutsend"`; unknown ids return `{"error": ...}` listing
+ * the available catalogs.
+ * @param {string} shop_id
+ * @returns {string}
+ */
+export function getSheetMetalShopCatalog(shop_id) {
+    let deferred2_0;
+    let deferred2_1;
+    try {
+        const ptr0 = passStringToWasm0(shop_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.getSheetMetalShopCatalog(ptr0, len0);
+        deferred2_0 = ret[0];
+        deferred2_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+    }
+}
+
+/**
  * Get available printer profiles.
  * @returns {any}
  */
@@ -4799,6 +4822,36 @@ export function sectionMesh(mesh_js, plane_json, hatch_json) {
     var len1 = WASM_VECTOR_LEN;
     const ret = wasm.sectionMesh(mesh_js, ptr0, len0, ptr1, len1);
     return ret;
+}
+
+/**
+ * Export the **folded** sheet-metal solid as a STEP AP214 file.
+ *
+ * Builds the model from the same chain JSON that
+ * [`evaluate_sheet_metal_chain`] accepts, constructs the folded B-rep via
+ * `vcad_kernel::folded_sheet_solid` (panel slabs + true cylindrical bend
+ * sectors, unioned into one body), and serialises it to STEP. The
+ * cylindrical bend faces let downstream fab pipelines (e.g. SendCutSend)
+ * auto-detect bend radii, angles, and directions.
+ *
+ * Returns JSON: `{"step": "<full ASCII STEP file>", "error": null}` on
+ * success or `{"step": "", "error": "..."}` on failure. Never panics.
+ * @param {string} chain_json
+ * @returns {string}
+ */
+export function sheetMetalFoldedStep(chain_json) {
+    let deferred2_0;
+    let deferred2_1;
+    try {
+        const ptr0 = passStringToWasm0(chain_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.sheetMetalFoldedStep(ptr0, len0);
+        deferred2_0 = ret[0];
+        deferred2_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+    }
 }
 
 /**
@@ -7076,12 +7129,12 @@ function __wbg_get_imports() {
             arg0.writeTexture(arg1, arg2, arg3, arg4);
         },
         __wbindgen_cast_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 2223, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 2224, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 2258, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 2259, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h30743bca3150d93c, wasm_bindgen__convert__closures_____invoke__hcf7d3eaee8800b37);
             return ret;
         },
         __wbindgen_cast_0000000000000002: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 3007, function: Function { arguments: [Externref], shim_idx: 3008, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 3042, function: Function { arguments: [Externref], shim_idx: 3043, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__hfdadf281ff0f1c56, wasm_bindgen__convert__closures_____invoke__h9bdf540eb7e61590);
             return ret;
         },

@@ -58,6 +58,18 @@ pub struct ShopProfile {
     /// Minimum flat length between two parallel bends on the same panel
     /// (mm); the back-gauge needs a flat to register against.
     pub min_distance_between_bends_mm: f64,
+    /// Brake die width (mm). Sets the bend deformation half-width
+    /// (`die/2`) used by the bend-relief rule. `None` → `8 × t`.
+    pub die_width_mm: Option<f64>,
+    /// Relief notch width (mm). `None` → `max(1.5 t, 1.0)`.
+    pub relief_width_mm: Option<f64>,
+    /// Relief notch depth from the bend line (mm). `None` → `R + t`.
+    /// Shops publish per-thickness values (SendCutSend does).
+    pub relief_depth_mm: Option<f64>,
+    /// Fixed inside bend radius (mm) for shops with fixed tooling
+    /// (SendCutSend). When set, every bend must use exactly this radius;
+    /// deviations are flagged as [`Violation::BendRadiusNotFixed`].
+    pub fixed_bend_radius_mm: Option<f64>,
 }
 
 impl ShopProfile {
@@ -72,6 +84,20 @@ impl ShopProfile {
             min_flange_height_mm: 5.0,
             min_hole_to_bend_mm: 3.0,
             min_distance_between_bends_mm: 6.0,
+            die_width_mm: None,
+            relief_width_mm: None,
+            relief_depth_mm: None,
+            fixed_bend_radius_mm: None,
+        }
+    }
+
+    /// Relief sizing this shop implies (formula defaults where the profile
+    /// doesn't specify).
+    pub fn relief_params(&self) -> crate::relief::ReliefParams {
+        crate::relief::ReliefParams {
+            width_mm: self.relief_width_mm,
+            depth_mm: self.relief_depth_mm,
+            die_width_mm: self.die_width_mm,
         }
     }
 }
@@ -157,6 +183,30 @@ pub enum Violation {
         /// Required clearance (mm).
         required_mm: f64,
     },
+    /// A bend end has parent material in the deformation zone but no
+    /// relief notch. Auto-fixable: apply [`crate::relief::apply_bend_relief`].
+    MissingBendRelief {
+        /// The bend.
+        bend_id: BendId,
+        /// Parent panel the notch belongs on.
+        panel_id: PanelId,
+        /// Which hinge end: 0 = `edge_parent.0`, 1 = `edge_parent.1`.
+        end: usize,
+        /// Notch width the fix would cut (mm).
+        required_width_mm: f64,
+        /// Notch depth the fix would cut (mm).
+        required_depth_mm: f64,
+    },
+    /// The shop bends a fixed radius for this stock and the modelled bend
+    /// uses a different one.
+    BendRadiusNotFixed {
+        /// The bend.
+        bend_id: BendId,
+        /// Modelled inside radius (mm).
+        actual_mm: f64,
+        /// The only radius the shop bends for this stock (mm).
+        required_mm: f64,
+    },
     /// Two parallel bends on the same panel are too close to form.
     BendsTooClose {
         /// First bend.
@@ -176,10 +226,11 @@ impl Violation {
         match self {
             Violation::BendRadiusBelowMinimum { .. }
             | Violation::BendExceedsBrakeCapacity { .. }
-            | Violation::FlangeBelowMinHeight { .. } => Severity::Error,
-            Violation::HoleTooCloseToBend { .. } | Violation::BendsTooClose { .. } => {
-                Severity::Warning
-            }
+            | Violation::FlangeBelowMinHeight { .. }
+            | Violation::BendRadiusNotFixed { .. } => Severity::Error,
+            Violation::HoleTooCloseToBend { .. }
+            | Violation::BendsTooClose { .. }
+            | Violation::MissingBendRelief { .. } => Severity::Warning,
         }
     }
 
@@ -192,6 +243,8 @@ impl Violation {
             Violation::FlangeBelowMinHeight { .. } => "sheet.flange_height",
             Violation::HoleTooCloseToBend { .. } => "sheet.hole_to_bend",
             Violation::BendsTooClose { .. } => "sheet.bend_to_bend",
+            Violation::MissingBendRelief { .. } => "sheet.bend_relief",
+            Violation::BendRadiusNotFixed { .. } => "sheet.bend_radius_fixed",
         }
     }
 
@@ -247,6 +300,27 @@ impl Violation {
             } => format!(
                 "Bends #{bend_id_a} and #{bend_id_b} are {actual_mm:.2} mm apart, need {required_mm:.2} mm"
             ),
+            Violation::MissingBendRelief {
+                bend_id,
+                end,
+                required_width_mm,
+                required_depth_mm,
+                ..
+            } => {
+                let which = if *end == 0 { "start" } else { "end" };
+                format!(
+                    "Bend #{bend_id} needs relief at its {which}: material in the deformation \
+                     zone will tear — cut a {required_width_mm:.2} × {required_depth_mm:.2} mm notch"
+                )
+            }
+            Violation::BendRadiusNotFixed {
+                bend_id,
+                actual_mm,
+                required_mm,
+            } => format!(
+                "Bend #{bend_id} radius {actual_mm:.2} mm — this shop bends a fixed \
+                 {required_mm:.2} mm radius for this stock (custom radii unavailable)"
+            ),
         }
     }
 }
@@ -279,8 +353,22 @@ pub fn check_manufacturability(model: &SheetMetalModel, shop: &ShopProfile) -> V
         .unwrap_or_default();
 
     for (bend_id, bend) in model.bends.iter().enumerate() {
-        // Bend radius vs (material ∨ shop) minimum.
-        if bend.radius + 1e-9 < min_radius {
+        // Fixed-tooling shops: radius must match the catalog exactly.
+        if let Some(fixed) = shop.fixed_bend_radius_mm {
+            if (bend.radius - fixed).abs() > 0.02 {
+                out.push(Violation::BendRadiusNotFixed {
+                    bend_id,
+                    actual_mm: bend.radius,
+                    required_mm: fixed,
+                });
+            }
+        }
+
+        // Bend radius vs (material ∨ shop) minimum. Skipped for
+        // fixed-tooling shops: their published radius IS the process —
+        // the material-ratio heuristic must not second-guess a catalog
+        // value (SendCutSend bends 1.6 mm 5052 at 0.89 mm, R/t ≈ 0.56).
+        if shop.fixed_bend_radius_mm.is_none() && bend.radius + 1e-9 < min_radius {
             out.push(Violation::BendRadiusBelowMinimum {
                 bend_id,
                 actual_mm: bend.radius,
@@ -336,6 +424,18 @@ pub fn check_manufacturability(model: &SheetMetalModel, shop: &ShopProfile) -> V
                 }
             }
         }
+    }
+
+    // Bend ends with parent material in the deformation zone but no relief
+    // notch. Auto-fixable via `relief::apply_bend_relief`.
+    for notch in crate::relief::find_missing_reliefs(model, &shop.relief_params()) {
+        out.push(Violation::MissingBendRelief {
+            bend_id: notch.bend_id,
+            panel_id: notch.panel_id,
+            end: notch.end,
+            required_width_mm: notch.width_mm,
+            required_depth_mm: notch.depth_mm,
+        });
     }
 
     // Pairs of bends sharing a parent panel: need a flat between them.

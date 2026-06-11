@@ -531,6 +531,10 @@ fn op_to_loon(op: &CsgOp, doc: &Document) -> OpResult {
             "SheetMetalBaseFlangePolygon".to_string(),
             "; SheetMetalBaseFlangePolygon — not yet supported in loon".to_string(),
         ),
+        CsgOp::SheetMetalBendRelief { .. } => OpResult::Unsupported(
+            "SheetMetalBendRelief".to_string(),
+            "; SheetMetalBendRelief — not yet supported in loon".to_string(),
+        ),
     }
 }
 

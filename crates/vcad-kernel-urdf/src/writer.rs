@@ -352,7 +352,8 @@ impl<'a> UrdfWriter<'a> {
             | CsgOp::SheetMetalBaseFlangePolygon { .. }
             | CsgOp::SheetMetalEdgeFlange { .. }
             | CsgOp::SheetMetalHem { .. }
-            | CsgOp::SheetMetalJog { .. } => {
+            | CsgOp::SheetMetalJog { .. }
+            | CsgOp::SheetMetalBendRelief { .. } => {
                 // Sketch-based / imported / PCB / embroidery / library parts / sheet-metal
                 // cannot export to URDF directly
                 Err(UrdfError::Conversion(

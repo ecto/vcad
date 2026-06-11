@@ -1,0 +1,149 @@
+{
+  "id": "sendcutsend",
+  "name": "SendCutSend",
+  "sources": [
+    "https://sendcutsend.com/bending-calculator/ (per-material spec table: K-factor, effective inside radius @90, die width, min formed flange, corner-relief distance, relief depth)",
+    "https://sendcutsend.com/materials/processing-min-max/ (Bending (CNC, Press Brake) table: max bend length, min/max part size, min flat-pattern flange)",
+    "https://sendcutsend.com/blog/guide-to-designing-bend-reliefs/ (relief width >= 0.5 x thickness; relief depth >= thickness + bend radius + 0.020in)",
+    "https://sendcutsend.com/guidelines/bend-deformation/ (cut features must sit >= half the die width from the bend centerline)",
+    "https://sendcutsend.com/guidelines/bending/ (air bending, fixed tooling, max bend angle 130deg, part size limits)"
+  ],
+  "retrieved": "2026-06-10",
+  "notes": [
+    "SendCutSend air-bends with fixed tooling: inside radius and K-factor are set per material/thickness and are NOT customer-selectable.",
+    "Dies are metric tooling: 12 / 16 / 25 / 40 mm.",
+    "min_flange_flat_mm is the minimum flange in the flat pattern (before bending); min_flange_formed_mm is the minimum formed flange at 90deg.",
+    "relief_depth_mm is SCS's published per-row value (~ thickness + effective radius + 0.5 mm), measured from the bend line.",
+    "Known source conflict: 5052 at 0.080in lists radius .038in on the calculator and .045in on the min/max chart; the calculator value (0.97 mm) is used here.",
+    "6061-T6, 7075, MIC-6, Ti Grade 5 and spring steel are cut but NOT offered for bending; they are intentionally absent.",
+    "Inch values converted at 25.4 mm/in, rounded to 0.01 mm."
+  ],
+  "min_part_bend_mm": [9.53, 38.1],
+  "max_part_bend_mm": [762.0, 1117.6],
+  "max_bend_angle_deg": 130.0,
+  "relief_width_min_factor": 0.5,
+  "materials": [
+    {
+      "key": "al-5052",
+      "display": "5052 H32 Aluminum",
+      "aliases": ["al-soft", "aluminum", "al", "5052", "5052-h32"],
+      "rows": [
+        { "thickness_mm": 1.02, "k_factor": 0.45, "inside_radius_mm": 0.61, "die_width_mm": 12.0, "min_flange_formed_mm": 7.26, "min_flange_flat_mm": 6.48, "relief_depth_mm": 2.13, "corner_relief_clearance_mm": 0.61, "max_bend_length_mm": 1117.6 },
+        { "thickness_mm": 1.6,  "k_factor": 0.42, "inside_radius_mm": 0.89, "die_width_mm": 12.0, "min_flange_formed_mm": 7.7,  "min_flange_flat_mm": 6.48, "relief_depth_mm": 3.0,  "corner_relief_clearance_mm": 0.76, "max_bend_length_mm": 1117.6 },
+        { "thickness_mm": 2.03, "k_factor": 0.48, "inside_radius_mm": 0.97, "die_width_mm": 12.0, "min_flange_formed_mm": 7.95, "min_flange_flat_mm": 6.48, "relief_depth_mm": 3.51, "corner_relief_clearance_mm": 0.94, "max_bend_length_mm": 1117.6 },
+        { "thickness_mm": 2.29, "k_factor": 0.37, "inside_radius_mm": 0.81, "die_width_mm": 12.0, "min_flange_formed_mm": 8.28, "min_flange_flat_mm": 6.48, "relief_depth_mm": 3.61, "corner_relief_clearance_mm": 0.86, "max_bend_length_mm": 1117.6 },
+        { "thickness_mm": 2.54, "k_factor": 0.4,  "inside_radius_mm": 3.18, "die_width_mm": 16.0, "min_flange_formed_mm": 11.76, "min_flange_flat_mm": 9.35, "relief_depth_mm": 6.22, "corner_relief_clearance_mm": 0.51, "max_bend_length_mm": 1117.6 },
+        { "thickness_mm": 3.18, "k_factor": 0.44, "inside_radius_mm": 3.18, "die_width_mm": 16.0, "min_flange_formed_mm": 12.09, "min_flange_flat_mm": 9.35, "relief_depth_mm": 6.86, "corner_relief_clearance_mm": 0.81, "max_bend_length_mm": 1117.6 },
+        { "thickness_mm": 4.75, "k_factor": 0.43, "inside_radius_mm": 6.35, "die_width_mm": 25.0, "min_flange_formed_mm": 20.27, "min_flange_flat_mm": 15.75, "relief_depth_mm": 11.61, "corner_relief_clearance_mm": 0.61, "max_bend_length_mm": 1117.6 },
+        { "thickness_mm": 6.35, "k_factor": 0.42, "inside_radius_mm": 6.35, "die_width_mm": 40.0, "min_flange_formed_mm": 34.82, "min_flange_flat_mm": 29.21, "relief_depth_mm": 13.21, "corner_relief_clearance_mm": 1.12, "max_bend_length_mm": 1117.6 }
+      ]
+    },
+    {
+      "key": "steel-mild",
+      "display": "Mild Steel (CRS)",
+      "aliases": ["crs", "mild-steel", "steel", "mild"],
+      "rows": [
+        { "thickness_mm": 0.76, "k_factor": 0.38, "inside_radius_mm": 1.14, "die_width_mm": 12.0, "min_flange_formed_mm": 7.26, "min_flange_flat_mm": 6.48, "relief_depth_mm": 2.41, "corner_relief_clearance_mm": 0.38, "max_bend_length_mm": 1117.6 },
+        { "thickness_mm": 1.22, "k_factor": 0.38, "inside_radius_mm": 1.14, "die_width_mm": 12.0, "min_flange_formed_mm": 7.57, "min_flange_flat_mm": 6.48, "relief_depth_mm": 2.87, "corner_relief_clearance_mm": 0.51, "max_bend_length_mm": 1117.6 },
+        { "thickness_mm": 1.5,  "k_factor": 0.4,  "inside_radius_mm": 1.6,  "die_width_mm": 12.0, "min_flange_formed_mm": 7.85, "min_flange_flat_mm": 6.48, "relief_depth_mm": 3.61, "corner_relief_clearance_mm": 0.51, "max_bend_length_mm": 1117.6 },
+        { "thickness_mm": 1.88, "k_factor": 0.4,  "inside_radius_mm": 1.6,  "die_width_mm": 12.0, "min_flange_formed_mm": 8.13, "min_flange_flat_mm": 6.48, "relief_depth_mm": 3.99, "corner_relief_clearance_mm": 0.64, "max_bend_length_mm": 1117.6 },
+        { "thickness_mm": 2.64, "k_factor": 0.34, "inside_radius_mm": 1.6,  "die_width_mm": 16.0, "min_flange_formed_mm": 11.66, "min_flange_flat_mm": 9.35, "relief_depth_mm": 4.75, "corner_relief_clearance_mm": 0.71, "max_bend_length_mm": 1117.6 },
+        { "thickness_mm": 3.02, "k_factor": 0.38, "inside_radius_mm": 1.6,  "die_width_mm": 16.0, "min_flange_formed_mm": 11.84, "min_flange_flat_mm": 9.35, "relief_depth_mm": 5.13, "corner_relief_clearance_mm": 0.91, "max_bend_length_mm": 1117.6 },
+        { "thickness_mm": 3.43, "k_factor": 0.32, "inside_radius_mm": 2.54, "die_width_mm": 25.0, "min_flange_formed_mm": 18.85, "min_flange_flat_mm": 15.75, "relief_depth_mm": 6.48, "corner_relief_clearance_mm": 0.71, "max_bend_length_mm": 1117.6 },
+        { "thickness_mm": 4.75, "k_factor": 0.36, "inside_radius_mm": 3.18, "die_width_mm": 25.0, "min_flange_formed_mm": 19.84, "min_flange_flat_mm": 15.75, "relief_depth_mm": 8.43, "corner_relief_clearance_mm": 1.04, "max_bend_length_mm": 558.8 },
+        { "thickness_mm": 6.35, "k_factor": 0.36, "inside_radius_mm": 3.81, "die_width_mm": 40.0, "min_flange_formed_mm": 34.57, "min_flange_flat_mm": 29.21, "relief_depth_mm": 10.67, "corner_relief_clearance_mm": 1.37, "max_bend_length_mm": 508.0 }
+      ]
+    },
+    {
+      "key": "ss-304",
+      "display": "304 Stainless Steel",
+      "aliases": ["stainless", "304", "ss304"],
+      "rows": [
+        { "thickness_mm": 0.76, "k_factor": 0.36, "inside_radius_mm": 2.03, "die_width_mm": 12.0, "min_flange_formed_mm": 7.47, "min_flange_flat_mm": 6.48, "relief_depth_mm": 3.3,  "corner_relief_clearance_mm": 0.15, "max_bend_length_mm": 1117.6 },
+        { "thickness_mm": 1.22, "k_factor": 0.36, "inside_radius_mm": 2.03, "die_width_mm": 12.0, "min_flange_formed_mm": 7.8,  "min_flange_flat_mm": 6.48, "relief_depth_mm": 3.76, "corner_relief_clearance_mm": 0.28, "max_bend_length_mm": 1117.6 },
+        { "thickness_mm": 1.52, "k_factor": 0.34, "inside_radius_mm": 1.78, "die_width_mm": 12.0, "min_flange_formed_mm": 7.98, "min_flange_flat_mm": 6.48, "relief_depth_mm": 3.81, "corner_relief_clearance_mm": 0.41, "max_bend_length_mm": 1117.6 },
+        { "thickness_mm": 1.88, "k_factor": 0.36, "inside_radius_mm": 1.91, "die_width_mm": 12.0, "min_flange_formed_mm": 8.23, "min_flange_flat_mm": 6.48, "relief_depth_mm": 4.29, "corner_relief_clearance_mm": 0.53, "max_bend_length_mm": 1117.6 },
+        { "thickness_mm": 2.54, "k_factor": 0.36, "inside_radius_mm": 4.75, "die_width_mm": 25.0, "min_flange_formed_mm": 18.59, "min_flange_flat_mm": 15.75, "relief_depth_mm": 7.8,  "corner_relief_clearance_mm": 0.1,  "max_bend_length_mm": 889.0 },
+        { "thickness_mm": 3.18, "k_factor": 0.38, "inside_radius_mm": 3.81, "die_width_mm": 25.0, "min_flange_formed_mm": 18.8,  "min_flange_flat_mm": 15.75, "relief_depth_mm": 7.49, "corner_relief_clearance_mm": 0.51, "max_bend_length_mm": 1016.0 },
+        { "thickness_mm": 4.75, "k_factor": 0.35, "inside_radius_mm": 3.3,  "die_width_mm": 25.0, "min_flange_formed_mm": 19.91, "min_flange_flat_mm": 15.75, "relief_depth_mm": 8.56, "corner_relief_clearance_mm": 0.97, "max_bend_length_mm": 914.4 },
+        { "thickness_mm": 6.35, "k_factor": 0.34, "inside_radius_mm": 5.72, "die_width_mm": 40.0, "min_flange_formed_mm": 35.08, "min_flange_flat_mm": 29.21, "relief_depth_mm": 12.57, "corner_relief_clearance_mm": 0.86, "max_bend_length_mm": 457.2 }
+      ]
+    },
+    {
+      "key": "ss-316",
+      "display": "316 Stainless Steel",
+      "aliases": ["316", "ss316"],
+      "rows": [
+        { "thickness_mm": 1.52, "k_factor": 0.34, "inside_radius_mm": 1.78, "die_width_mm": 12.0, "min_flange_formed_mm": 7.98, "min_flange_flat_mm": 6.48, "relief_depth_mm": 3.81, "corner_relief_clearance_mm": 0.41, "max_bend_length_mm": 1117.6 },
+        { "thickness_mm": 3.18, "k_factor": 0.38, "inside_radius_mm": 3.81, "die_width_mm": 25.0, "min_flange_formed_mm": 18.8,  "min_flange_flat_mm": 15.75, "relief_depth_mm": 7.49, "corner_relief_clearance_mm": 0.51, "max_bend_length_mm": 457.2 },
+        { "thickness_mm": 4.75, "k_factor": 0.35, "inside_radius_mm": 3.3,  "die_width_mm": 25.0, "min_flange_formed_mm": 19.91, "min_flange_flat_mm": 15.75, "relief_depth_mm": 8.56, "corner_relief_clearance_mm": 0.97, "max_bend_length_mm": 457.2 },
+        { "thickness_mm": 6.35, "k_factor": 0.34, "inside_radius_mm": 5.72, "die_width_mm": 40.0, "min_flange_formed_mm": 35.08, "min_flange_flat_mm": 29.21, "relief_depth_mm": 12.57, "corner_relief_clearance_mm": 0.86, "max_bend_length_mm": 457.2 }
+      ]
+    },
+    {
+      "key": "chromoly-4130",
+      "display": "4130 Chromoly",
+      "aliases": ["4130", "chromoly"],
+      "rows": [
+        { "thickness_mm": 1.27, "k_factor": 0.38, "inside_radius_mm": 1.27, "die_width_mm": 12.0, "min_flange_formed_mm": 7.67, "min_flange_flat_mm": 6.48, "relief_depth_mm": 3.05, "corner_relief_clearance_mm": 0.46, "max_bend_length_mm": 1117.6 },
+        { "thickness_mm": 1.6,  "k_factor": 0.41, "inside_radius_mm": 1.27, "die_width_mm": 12.0, "min_flange_formed_mm": 7.82, "min_flange_flat_mm": 6.48, "relief_depth_mm": 3.38, "corner_relief_clearance_mm": 0.64, "max_bend_length_mm": 1117.6 },
+        { "thickness_mm": 3.18, "k_factor": 0.43, "inside_radius_mm": 2.29, "die_width_mm": 25.0, "min_flange_formed_mm": 18.36, "min_flange_flat_mm": 15.75, "relief_depth_mm": 5.97, "corner_relief_clearance_mm": 0.97, "max_bend_length_mm": 762.0 },
+        { "thickness_mm": 4.83, "k_factor": 0.37, "inside_radius_mm": 3.18, "die_width_mm": 25.0, "min_flange_formed_mm": 19.86, "min_flange_flat_mm": 15.75, "relief_depth_mm": 8.51, "corner_relief_clearance_mm": 1.09, "max_bend_length_mm": 457.2 },
+        { "thickness_mm": 6.35, "k_factor": 0.36, "inside_radius_mm": 4.32, "die_width_mm": 40.0, "min_flange_formed_mm": 34.72, "min_flange_flat_mm": 29.21, "relief_depth_mm": 11.18, "corner_relief_clearance_mm": 1.22, "max_bend_length_mm": 406.4 }
+      ]
+    },
+    {
+      "key": "steel-galvanized",
+      "display": "G90 Galvanized Steel",
+      "aliases": ["g90", "galvanized", "galvanneal"],
+      "rows": [
+        { "thickness_mm": 0.76, "k_factor": 0.38, "inside_radius_mm": 1.14, "die_width_mm": 12.0, "min_flange_formed_mm": 7.26, "min_flange_flat_mm": 6.48, "relief_depth_mm": 2.41, "corner_relief_clearance_mm": 0.38, "max_bend_length_mm": 1117.6 },
+        { "thickness_mm": 1.22, "k_factor": 0.38, "inside_radius_mm": 1.14, "die_width_mm": 12.0, "min_flange_formed_mm": 7.57, "min_flange_flat_mm": 6.48, "relief_depth_mm": 2.87, "corner_relief_clearance_mm": 0.51, "max_bend_length_mm": 1117.6 },
+        { "thickness_mm": 1.5,  "k_factor": 0.36, "inside_radius_mm": 1.6,  "die_width_mm": 12.0, "min_flange_formed_mm": 7.9,  "min_flange_flat_mm": 6.48, "relief_depth_mm": 3.61, "corner_relief_clearance_mm": 0.46, "max_bend_length_mm": 1117.6 },
+        { "thickness_mm": 1.88, "k_factor": 0.4,  "inside_radius_mm": 1.6,  "die_width_mm": 12.0, "min_flange_formed_mm": 8.13, "min_flange_flat_mm": 6.48, "relief_depth_mm": 3.99, "corner_relief_clearance_mm": 0.64, "max_bend_length_mm": 1117.6 }
+      ]
+    },
+    {
+      "key": "brass",
+      "display": "Brass",
+      "aliases": ["c260"],
+      "rows": [
+        { "thickness_mm": 1.02, "k_factor": 0.38, "inside_radius_mm": 1.02, "die_width_mm": 12.0, "min_flange_formed_mm": 7.42, "min_flange_flat_mm": 6.48, "relief_depth_mm": 2.54, "corner_relief_clearance_mm": 0.46, "max_bend_length_mm": 1117.6 },
+        { "thickness_mm": 1.6,  "k_factor": 0.38, "inside_radius_mm": 1.02, "die_width_mm": 12.0, "min_flange_formed_mm": 7.82, "min_flange_flat_mm": 6.48, "relief_depth_mm": 3.12, "corner_relief_clearance_mm": 0.66, "max_bend_length_mm": 1117.6 },
+        { "thickness_mm": 3.18, "k_factor": 0.36, "inside_radius_mm": 1.52, "die_width_mm": 16.0, "min_flange_formed_mm": 11.96, "min_flange_flat_mm": 9.35, "relief_depth_mm": 5.21, "corner_relief_clearance_mm": 0.97, "max_bend_length_mm": 838.2 },
+        { "thickness_mm": 4.75, "k_factor": 0.38, "inside_radius_mm": 2.41, "die_width_mm": 25.0, "min_flange_formed_mm": 19.86, "min_flange_flat_mm": 15.75, "relief_depth_mm": 7.67, "corner_relief_clearance_mm": 1.02, "max_bend_length_mm": 457.2 },
+        { "thickness_mm": 6.35, "k_factor": 0.38, "inside_radius_mm": 3.3,  "die_width_mm": 40.0, "min_flange_formed_mm": 34.59, "min_flange_flat_mm": 29.21, "relief_depth_mm": 10.16, "corner_relief_clearance_mm": 1.35, "max_bend_length_mm": 635.0 }
+      ]
+    },
+    {
+      "key": "copper",
+      "display": "Copper",
+      "aliases": ["c110"],
+      "rows": [
+        { "thickness_mm": 1.02, "k_factor": 0.34, "inside_radius_mm": 1.32, "die_width_mm": 12.0, "min_flange_formed_mm": 7.52, "min_flange_flat_mm": 6.48, "relief_depth_mm": 2.84, "corner_relief_clearance_mm": 0.38, "max_bend_length_mm": 1117.6 },
+        { "thickness_mm": 1.6,  "k_factor": 0.36, "inside_radius_mm": 0.61, "die_width_mm": 12.0, "min_flange_formed_mm": 7.75, "min_flange_flat_mm": 6.48, "relief_depth_mm": 2.72, "corner_relief_clearance_mm": 0.74, "max_bend_length_mm": 1117.6 },
+        { "thickness_mm": 3.18, "k_factor": 0.34, "inside_radius_mm": 1.27, "die_width_mm": 16.0, "min_flange_formed_mm": 11.96, "min_flange_flat_mm": 9.35, "relief_depth_mm": 4.95, "corner_relief_clearance_mm": 0.97, "max_bend_length_mm": 1117.6 },
+        { "thickness_mm": 4.75, "k_factor": 0.36, "inside_radius_mm": 3.0,  "die_width_mm": 25.0, "min_flange_formed_mm": 19.81, "min_flange_flat_mm": 15.75, "relief_depth_mm": 8.26, "corner_relief_clearance_mm": 1.07, "max_bend_length_mm": 1117.6 },
+        { "thickness_mm": 6.35, "k_factor": 0.33, "inside_radius_mm": 3.56, "die_width_mm": 40.0, "min_flange_formed_mm": 34.67, "min_flange_flat_mm": 29.21, "relief_depth_mm": 10.41, "corner_relief_clearance_mm": 1.27, "max_bend_length_mm": 1117.6 }
+      ]
+    },
+    {
+      "key": "polycarbonate",
+      "display": "Polycarbonate",
+      "aliases": ["pc", "lexan"],
+      "rows": [
+        { "thickness_mm": 3.0,  "k_factor": 0.33, "inside_radius_mm": 1.02, "die_width_mm": 12.0, "min_flange_formed_mm": 9.8,   "min_flange_flat_mm": 7.32,  "relief_depth_mm": 4.52, "corner_relief_clearance_mm": 2.11, "max_bend_length_mm": 1117.6 },
+        { "thickness_mm": 4.5,  "k_factor": 0.33, "inside_radius_mm": 2.16, "die_width_mm": 25.0, "min_flange_formed_mm": 21.54, "min_flange_flat_mm": 17.78, "relief_depth_mm": 7.16, "corner_relief_clearance_mm": 5.44, "max_bend_length_mm": 1117.6 },
+        { "thickness_mm": 5.59, "k_factor": 0.33, "inside_radius_mm": 2.54, "die_width_mm": 25.0, "min_flange_formed_mm": 22.45, "min_flange_flat_mm": 17.78, "relief_depth_mm": 8.64, "corner_relief_clearance_mm": 5.97, "max_bend_length_mm": 1117.6 }
+      ]
+    },
+    {
+      "key": "ti-grade2",
+      "display": "Titanium Grade 2",
+      "aliases": ["titanium", "ti", "grade2"],
+      "rows": [
+        { "thickness_mm": 1.02, "k_factor": 0.38, "inside_radius_mm": 1.14, "die_width_mm": 12.0, "min_flange_formed_mm": 7.49, "min_flange_flat_mm": 6.48, "relief_depth_mm": 2.67, "corner_relief_clearance_mm": 0.41, "max_bend_length_mm": 1117.6 }
+      ]
+    }
+  ]
+}

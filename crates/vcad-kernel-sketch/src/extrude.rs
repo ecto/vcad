@@ -551,7 +551,15 @@ fn extrude_with_arcs(profile: &SketchProfile, direction: Vec3, arc_segs: usize) 
         };
 
         let loop_id = topo.add_loop(&loop_hes);
-        let face_id = topo.add_face(loop_id, surf_idx, Orientation::Forward);
+        // A clockwise arc in a CCW profile is concave: the solid material
+        // lies *outside* its cylinder, so the face normal (which
+        // CylinderSurface always evaluates radially outward) must be
+        // flipped for the face to point out of the solid.
+        let orientation = match seg {
+            SketchSegment::Arc { ccw: false, .. } => Orientation::Reversed,
+            _ => Orientation::Forward,
+        };
+        let face_id = topo.add_face(loop_id, surf_idx, orientation);
         all_faces.push(face_id);
 
         // Record half-edges for twin pairing

@@ -87,6 +87,10 @@ export interface SheetMetalFlatPattern {
   panel_outlines_2d: [number, number][][];
   /** Hole loops per panel. */
   panel_holes_2d: [number, number][][][];
+  /** Merged cut profile (panels ∪ allowance strips): first ring is the CCW
+   *  exterior, the rest are CW holes — what the DXF CUT layer carries.
+   *  Empty when the flat pattern is empty or disconnected. */
+  silhouette_2d: [number, number][][];
   creases: SheetMetalFlatCrease[];
   area_mm2: number;
   /** `[min_x, min_y, max_x, max_y]`. */
@@ -124,6 +128,17 @@ export interface SheetMetalShopProfile {
   min_hole_to_bend_mm: number;
   /** Minimum flat between two parallel bends on a panel (mm). */
   min_distance_between_bends_mm: number;
+  /** Die width (mm) used for min-flange checks, when known. */
+  die_width_mm?: number;
+  /** Required bend-relief notch width (mm), when the shop publishes one. */
+  relief_width_mm?: number;
+  /** Required bend-relief notch depth (mm), when the shop publishes one. */
+  relief_depth_mm?: number;
+  /** Fixed inside bend radius (mm) — set for catalog shops (e.g.
+   *  SendCutSend) whose tooling forms exactly one radius per
+   *  material/thickness. Bends at any other radius are flagged
+   *  `BendRadiusNotFixed`. */
+  fixed_bend_radius_mm?: number;
 }
 
 /** The kernel's `ShopProfile::generic()` — keep in sync with Rust. */
@@ -229,6 +244,8 @@ interface ChainOpBase {
   depth: number;
   thickness: number;
   material: string;
+  /** Optional built-in shop catalog id (e.g. `"sendcutsend"`). */
+  shopProfile?: string;
 }
 
 interface ChainOpBasePolygon {
@@ -237,6 +254,8 @@ interface ChainOpBasePolygon {
   holes?: [number, number][][];
   thickness: number;
   material: string;
+  /** Optional built-in shop catalog id (e.g. `"sendcutsend"`). */
+  shopProfile?: string;
 }
 
 interface ChainOpEdge {
@@ -245,7 +264,8 @@ interface ChainOpEdge {
   edgeIndex: number;
   length: number;
   angle: number;
-  radius: number;
+  /** Omitted → thickness, or the shop's fixed radius under a shop profile. */
+  radius?: number;
   direction: SheetMetalDirection;
   manualK?: number;
 }
@@ -266,8 +286,17 @@ interface ChainOpJog {
   edgeIndex: number;
   offset: number;
   length: number;
-  radius: number;
+  /** Omitted → thickness, or the shop's fixed radius under a shop profile. */
+  radius?: number;
   direction: SheetMetalDirection;
+}
+
+interface ChainOpBendRelief {
+  type: "BendRelief";
+  /** Notch width (mm). Default `max(1.5·t, 1.0)`. */
+  width?: number;
+  /** Notch depth (mm). Default `R + t` or the shop's published depth. */
+  depth?: number;
 }
 
 type ChainOp =
@@ -275,7 +304,8 @@ type ChainOp =
   | ChainOpBasePolygon
   | ChainOpEdge
   | ChainOpHem
-  | ChainOpJog;
+  | ChainOpJog
+  | ChainOpBendRelief;
 
 /**
  * Walk back from `rootId` through any chain of sheet-metal ops, returning
@@ -293,7 +323,8 @@ export function buildSheetMetalChain(
     root.op.type !== "SheetMetalBaseFlangePolygon" &&
     root.op.type !== "SheetMetalEdgeFlange" &&
     root.op.type !== "SheetMetalHem" &&
-    root.op.type !== "SheetMetalJog"
+    root.op.type !== "SheetMetalJog" &&
+    root.op.type !== "SheetMetalBendRelief"
   ) {
     return null;
   }
@@ -311,6 +342,9 @@ export function buildSheetMetalChain(
         depth: op.depth,
         thickness: op.thickness,
         material: op.material,
+        ...(op.shop_profile !== undefined
+          ? { shopProfile: op.shop_profile }
+          : {}),
       });
       material = op.material;
       break;
@@ -321,6 +355,9 @@ export function buildSheetMetalChain(
         holes: op.holes?.map((h) => h.map((p) => [p.x, p.y])),
         thickness: op.thickness,
         material: op.material,
+        ...(op.shop_profile !== undefined
+          ? { shopProfile: op.shop_profile }
+          : {}),
       });
       material = op.material;
       break;
@@ -331,7 +368,7 @@ export function buildSheetMetalChain(
         edgeIndex: op.edge_index,
         length: op.length,
         angle: op.angle,
-        radius: op.radius,
+        ...(op.radius !== undefined ? { radius: op.radius } : {}),
         direction: op.direction,
         manualK: op.manual_k,
       });
@@ -354,8 +391,15 @@ export function buildSheetMetalChain(
         edgeIndex: op.edge_index,
         offset: op.offset,
         length: op.length,
-        radius: op.radius,
+        ...(op.radius !== undefined ? { radius: op.radius } : {}),
         direction: op.direction,
+      });
+      cursor = nodes[String(op.parent)];
+    } else if (op.type === "SheetMetalBendRelief") {
+      tipToBase.push({
+        type: "BendRelief",
+        ...(op.width !== undefined ? { width: op.width } : {}),
+        ...(op.depth !== undefined ? { depth: op.depth } : {}),
       });
       cursor = nodes[String(op.parent)];
     } else {
@@ -375,6 +419,8 @@ interface SheetMetalKernel {
   nestSheetMetalParts?(partsJson: string, paramsJson: string): string;
   getSheetMetalMaterials?(): string;
   getSheetMetalBendTable?(): string;
+  getSheetMetalShopCatalog?(shopId: string): string;
+  sheetMetalFoldedStep?(chainJson: string): string;
 }
 
 /**
@@ -423,13 +469,16 @@ export function evaluateSheetMetalChain(
  * saved shop so the findings reflect their real brake / die / grain rules.
  * Pure query — no mesh, no document re-eval.
  *
- * Pass `shop` omitted/undefined for the generic shop. Throws on kernel
- * error.
+ * `shop` is either a {@link SheetMetalShopProfile} object, a built-in shop
+ * catalog id string (e.g. `"sendcutsend"` — the kernel resolves it to the
+ * catalog's per-material/thickness profile), or omitted. When omitted, the
+ * kernel uses the chain's own shop profile if the base op carries one,
+ * otherwise the generic shop. Throws on kernel error.
  */
 export function checkSheetMetalManufacturability(
   chain: ChainOp[],
   kernel: SheetMetalKernel,
-  shop?: SheetMetalShopProfile,
+  shop?: SheetMetalShopProfile | string,
 ): SheetMetalCheckResult {
   if (!kernel.checkSheetMetal) {
     throw new Error(
@@ -438,7 +487,7 @@ export function checkSheetMetalManufacturability(
   }
   const json = kernel.checkSheetMetal(
     JSON.stringify(chain),
-    shop ? JSON.stringify(shop) : "",
+    shop !== undefined ? JSON.stringify(shop) : "",
   );
   const parsed = JSON.parse(json) as RawCheckResult;
   if (parsed.error) {
@@ -585,6 +634,106 @@ export function getSheetMetalBendTable(
   } catch {
     return { id: "", rows: [] };
   }
+}
+
+/** One thickness row of a shop catalog material. */
+export interface SheetMetalShopCatalogRow {
+  thickness_mm: number;
+  k_factor: number;
+  /** The shop's fixed inside bend radius for this material/thickness. */
+  inside_radius_mm: number;
+  die_width_mm: number;
+  min_flange_formed_mm: number;
+  min_flange_flat_mm: number;
+  relief_depth_mm: number;
+  corner_relief_clearance_mm: number;
+  max_bend_length_mm: number;
+}
+
+/** One material entry of a shop catalog. */
+export interface SheetMetalShopCatalogMaterial {
+  /** Canonical material key (e.g. `"al-5052"`). */
+  key: string;
+  display: string;
+  aliases: string[];
+  rows: SheetMetalShopCatalogRow[];
+}
+
+/** A fab service's published bending catalog (e.g. SendCutSend). Mirrors
+ *  the kernel's `ShopCatalog` JSON. */
+export interface SheetMetalShopCatalog {
+  id: string;
+  name: string;
+  /** Source URLs the data was transcribed from. */
+  sources: string[];
+  /** Retrieval date of the published data (YYYY-MM-DD). */
+  retrieved: string;
+  /** Free-form caveats. */
+  notes: string[];
+  /** Minimum flat part size for bending `[short, long]` (mm). */
+  min_part_bend_mm: [number, number];
+  /** Maximum flat part size for bending `[short, long]` (mm). */
+  max_part_bend_mm: [number, number];
+  /** Maximum bend angle the shop forms (degrees from flat). */
+  max_bend_angle_deg: number;
+  /** Published minimum relief width as a multiple of thickness. */
+  relief_width_min_factor: number;
+  materials: SheetMetalShopCatalogMaterial[];
+}
+
+/**
+ * Read a built-in shop catalog (e.g. `"sendcutsend"`) — the fab service's
+ * published per-material/thickness bending data: fixed inside radii,
+ * K-factors, die widths, min flange sizes, and relief depths. Throws when
+ * the id is unknown or the binding is missing.
+ */
+export function getSheetMetalShopCatalog(
+  kernel: SheetMetalKernel,
+  shopId: string,
+): SheetMetalShopCatalog {
+  if (!kernel.getSheetMetalShopCatalog) {
+    throw new Error(
+      "kernel.getSheetMetalShopCatalog not available — rebuild @vcad/kernel-wasm",
+    );
+  }
+  const parsed = JSON.parse(kernel.getSheetMetalShopCatalog(shopId)) as
+    | SheetMetalShopCatalog
+    | { error: string };
+  if ("error" in parsed && parsed.error) {
+    throw new Error(`sheet-metal shop catalog: ${parsed.error}`);
+  }
+  return parsed as SheetMetalShopCatalog;
+}
+
+/**
+ * Build the FOLDED sheet-metal solid for a chain and return it as a STEP
+ * AP214 file (ASCII). The body carries true cylindrical bend faces sized by
+ * the chain's radii/K (shop-profile resolved when the chain names one), so
+ * fab services with a 3D pipeline (SendCutSend) auto-detect bends, angles,
+ * and directions from the upload. Throws on kernel error — including
+ * disconnected models and ≥170° folds (hems), which the folded-body
+ * construction cannot represent.
+ */
+export function foldedSheetMetalStep(
+  chain: ChainOp[],
+  kernel: SheetMetalKernel,
+): string {
+  if (!kernel.sheetMetalFoldedStep) {
+    throw new Error(
+      "kernel.sheetMetalFoldedStep not available — rebuild @vcad/kernel-wasm",
+    );
+  }
+  const parsed = JSON.parse(kernel.sheetMetalFoldedStep(JSON.stringify(chain))) as {
+    step: string;
+    error: string | null;
+  };
+  if (parsed.error) {
+    throw new Error(`sheet-metal folded STEP: ${parsed.error}`);
+  }
+  if (!parsed.step) {
+    throw new Error("sheet-metal folded STEP: kernel returned empty file");
+  }
+  return parsed.step;
 }
 
 /**

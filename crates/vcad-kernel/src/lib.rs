@@ -25,6 +25,7 @@ pub use vcad_kernel_fillet;
 pub use vcad_kernel_geom;
 pub use vcad_kernel_math;
 pub use vcad_kernel_primitives;
+pub use vcad_kernel_sheet;
 pub use vcad_kernel_shell;
 pub use vcad_kernel_sketch;
 pub use vcad_kernel_step;
@@ -32,6 +33,9 @@ pub use vcad_kernel_sweep;
 pub use vcad_kernel_tessellate;
 pub use vcad_kernel_text;
 pub use vcad_kernel_topo;
+
+pub mod sheet_fold;
+pub use sheet_fold::folded_sheet_solid;
 
 use vcad_kernel_booleans::{boolean_op, BooleanOp, BooleanResult};
 use vcad_kernel_math::{Point3, Transform, Vec3};

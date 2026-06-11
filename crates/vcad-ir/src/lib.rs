@@ -884,6 +884,11 @@ pub enum CsgOp {
         thickness: f64,
         /// Material name for K-factor lookup (e.g. `"Al-soft"`).
         material: String,
+        /// Optional built-in shop catalog id (e.g. `"sendcutsend"`). When
+        /// set, every bend's radius and K-factor resolve through the shop's
+        /// published table — custom radii are rejected.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        shop_profile: Option<String>,
     },
 
     #[tool(hidden)]
@@ -900,6 +905,9 @@ pub enum CsgOp {
         thickness: f64,
         /// Material name for K-factor / cost / DFM lookup.
         material: String,
+        /// Optional built-in shop catalog id (see `SheetMetalBaseFlangeRect`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        shop_profile: Option<String>,
     },
 
     #[tool(hidden)]
@@ -917,8 +925,10 @@ pub enum CsgOp {
         length: f64,
         /// Bend angle (radians, 0 < angle ≤ π).
         angle: f64,
-        /// Inside bend radius (mm).
-        radius: f64,
+        /// Inside bend radius (mm). Omitted → thickness, or the shop's
+        /// fixed radius when a shop profile is active.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        radius: Option<f64>,
         /// Bend direction (`Up` rises out of the outside face).
         direction: SheetMetalDirection,
         /// Optional K-factor override (skips bend-table lookup).
@@ -941,8 +951,10 @@ pub enum CsgOp {
         offset: f64,
         /// Tail panel length (mm).
         length: f64,
-        /// Inside bend radius for both bends (mm).
-        radius: f64,
+        /// Inside bend radius for both bends (mm). Omitted → thickness, or
+        /// the shop's fixed radius when a shop profile is active.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        radius: Option<f64>,
         /// Direction of the first fold.
         direction: SheetMetalDirection,
     },
@@ -969,6 +981,23 @@ pub enum CsgOp {
         gap: f64,
         /// Fold direction (`Up` folds toward the outside face).
         direction: SheetMetalDirection,
+    },
+
+    #[tool(hidden)]
+    /// Sheet-metal bend relief — cuts relief notches at the ends of every
+    /// bend whose parent material sits in the deformation zone. Applied
+    /// after all other ops in the chain; affects the 3D body, the flat
+    /// pattern, and the exported DXF.
+    SheetMetalBendRelief {
+        /// Parent node (must produce a sheet-metal model).
+        parent: NodeId,
+        /// Notch width (mm). Default `max(1.5·t, 1.0)`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        width: Option<f64>,
+        /// Notch depth from the bend line (mm). Default `R + t`, or the
+        /// shop's published per-thickness relief depth.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        depth: Option<f64>,
     },
 }
 

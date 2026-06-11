@@ -64,6 +64,11 @@ interface JogSpec {
   panel_id?: number;
 }
 
+interface BendReliefSpec {
+  width_mm?: number;
+  depth_mm?: number;
+}
+
 /** Build a sheet-metal IR document: base flange node + ordered edge
  *  flanges and hems, each parented to the previous. */
 function buildSheetMetalDoc(
@@ -74,13 +79,17 @@ function buildSheetMetalDoc(
     material: string;
     outline?: { x: number; y: number }[];
     holes?: { x: number; y: number }[][];
+    shop_profile?: string;
   },
   flanges: FlangeSpec[],
   hems: HemSpec[],
   jogs: JogSpec[],
+  bendRelief?: BendReliefSpec,
 ): Document {
   const doc = createDocument();
   const nodes: Record<string, Node> = {};
+  const shopProfile =
+    base.shop_profile !== undefined ? { shop_profile: base.shop_profile } : {};
   const baseNode: Node =
     base.outline !== undefined
       ? {
@@ -92,6 +101,7 @@ function buildSheetMetalDoc(
             holes: base.holes,
             thickness: base.thickness,
             material: base.material,
+            ...shopProfile,
           },
         }
       : {
@@ -103,6 +113,7 @@ function buildSheetMetalDoc(
             depth: base.depth ?? 0,
             thickness: base.thickness,
             material: base.material,
+            ...shopProfile,
           },
         };
   nodes["0"] = baseNode;
@@ -120,7 +131,9 @@ function buildSheetMetalDoc(
         edge_index: f.edge_index,
         length: f.length,
         angle: f.angle ?? Math.PI / 2,
-        radius: f.radius ?? base.thickness,
+        // Omit radius when unspecified — the kernel defaults to thickness,
+        // or the shop's fixed radius under a shop profile.
+        ...(f.radius !== undefined ? { radius: f.radius } : {}),
         direction: f.direction ?? "Up",
         ...(f.manual_k !== undefined ? { manual_k: f.manual_k } : {}),
       },
@@ -157,12 +170,30 @@ function buildSheetMetalDoc(
         edge_index: j.edge_index,
         offset: j.offset,
         length: j.length,
-        radius: j.radius ?? base.thickness,
+        ...(j.radius !== undefined ? { radius: j.radius } : {}),
         direction: j.direction ?? "Up",
       },
     };
     parent = id;
   });
+  if (bendRelief) {
+    const id = nextId++;
+    nodes[String(id)] = {
+      id,
+      name: "Bend relief",
+      op: {
+        type: "SheetMetalBendRelief",
+        parent,
+        ...(bendRelief.width_mm !== undefined
+          ? { width: bendRelief.width_mm }
+          : {}),
+        ...(bendRelief.depth_mm !== undefined
+          ? { depth: bendRelief.depth_mm }
+          : {}),
+      },
+    };
+    parent = id;
+  }
   doc.nodes = nodes;
   doc.roots = [{ root: parent, material: "default" }];
   return doc;
@@ -172,6 +203,12 @@ function renderedOf(engine: Engine, doc: Document): SheetMetalRendered {
   const scene = engine.evaluate(doc);
   for (const part of scene.parts) {
     if (part.sheetMetal) return part.sheetMetal as SheetMetalRendered;
+  }
+  // Surface the real evaluation failure (e.g. a custom radius rejected by a
+  // fixed-tooling shop profile) instead of a generic "no sheet-metal part".
+  const failure = scene.failures?.[0];
+  if (failure) {
+    throw new Error(failure.error);
   }
   throw new Error(
     "document has no sheet-metal part (evaluation produced no sheetMetal bundle)",
@@ -222,6 +259,15 @@ export const sheetMetalCreateSchema = {
       description:
         'Material key for K-factor lookup, e.g. "Al-soft", "steel-mild". Default "Al-soft".',
     },
+    shop_profile: {
+      type: "string" as const,
+      description:
+        'Optional fab-service catalog id, e.g. "sendcutsend". When set, every bend\'s inside radius and K-factor resolve from the shop\'s published bending calculator for the chosen material/thickness, so the flat pattern matches their tooling exactly. Custom `radius` values are REJECTED with an error naming the shop\'s fixed radius — omit `radius` on flanges/jogs to get it automatically. The material/thickness must exist in the shop\'s catalog (see sheet_metal_bend_table with shop_profile).',
+    },
+    bend_relief: {
+      description:
+        "Cut bend-relief notches at the ends of every bend. Pass `true` for defaults (width = max(1.5·t, 1 mm), depth = R + t, or the shop's published relief depth under a shop profile), or `{width_mm?, depth_mm?}` to size them explicitly. Parametric: affects the 3D body, flat pattern, and DXF.",
+    },
     flanges: {
       type: "array" as const,
       description:
@@ -244,7 +290,8 @@ export const sheetMetalCreateSchema = {
           },
           radius: {
             type: "number" as const,
-            description: "Inside bend radius (mm). Default = thickness.",
+            description:
+              "Inside bend radius (mm). Omit for the default: thickness, or the shop's fixed radius under a shop_profile (custom radii are rejected there).",
           },
           direction: {
             type: "string" as const,
@@ -284,7 +331,8 @@ export const sheetMetalCreateSchema = {
           },
           radius: {
             type: "number" as const,
-            description: "Inside bend radius for both bends. Default = thickness.",
+            description:
+              "Inside bend radius for both bends (mm). Omit for the default: thickness, or the shop's fixed radius under a shop_profile.",
           },
           direction: {
             type: "string" as const,
@@ -379,13 +427,23 @@ export function sheetMetalCreate(
     material: typeof a.material === "string" ? a.material : "al-soft",
     outline,
     holes,
+    ...(typeof a.shop_profile === "string" && a.shop_profile.length > 0
+      ? { shop_profile: a.shop_profile }
+      : {}),
   };
   const flanges = Array.isArray(a.flanges)
     ? (a.flanges as FlangeSpec[])
     : [];
   const hems = Array.isArray(a.hems) ? (a.hems as HemSpec[]) : [];
   const jogs = Array.isArray(a.jogs) ? (a.jogs as JogSpec[]) : [];
-  const doc = buildSheetMetalDoc(base, flanges, hems, jogs);
+  // `bend_relief: true` → default sizing; an object → explicit sizing.
+  const bendRelief: BendReliefSpec | undefined =
+    a.bend_relief === true
+      ? {}
+      : a.bend_relief && typeof a.bend_relief === "object"
+        ? (a.bend_relief as BendReliefSpec)
+        : undefined;
+  const doc = buildSheetMetalDoc(base, flanges, hems, jogs, bendRelief);
   const rendered = renderedOf(engine, doc);
   const documentId = registerSession(doc);
   const errors = rendered.violations.filter(
@@ -415,7 +473,7 @@ export const sheetMetalUnfoldSchema = {
     include_dxf: {
       type: "boolean" as const,
       description:
-        "Include the layered DXF (CUT / BEND_UP / BEND_DOWN) string. Default true.",
+        "Include the merged single-silhouette DXF string. Default true.",
     },
   },
   required: ["document_id"],
@@ -432,6 +490,7 @@ export function sheetMetalUnfold(
   return textResult({
     flat_pattern: rendered.flatPattern,
     ...(includeDxf ? { dxf: rendered.dxf } : {}),
+    note: "The DXF is a fab-ready merged silhouette: one closed exterior LWPOLYLINE plus hole loops on CUT, and DASHED bend centerlines (on the allowance midline) on BEND_UP/BEND_DOWN. DXF carries no bend angles — you enter those in the fab's UI. For zero data entry, export the folded body as STEP instead (export_cad with a .step filename); bends are auto-detected by the shop, but radii/K must match their tooling at model time (use shop_profile in sheet_metal_create).",
   });
 }
 
@@ -457,13 +516,27 @@ export function sheetMetalMaterials(
 
 export const sheetMetalBendTableSchema = {
   type: "object" as const,
-  properties: {},
+  properties: {
+    shop_profile: {
+      type: "string" as const,
+      description:
+        'Optional fab-service catalog id (e.g. "sendcutsend"). Returns that shop\'s published catalog — per-material/thickness fixed inside radii, K-factors, die widths, min flange sizes, relief depths, and max bend lengths — instead of the built-in generic table.',
+    },
+  },
 };
 
 export function sheetMetalBendTable(
-  _input: unknown,
+  input: unknown,
   engine: Engine,
 ): { content: Array<{ type: "text"; text: string }> } {
+  const a = (input ?? {}) as Record<string, unknown>;
+  if (typeof a.shop_profile === "string" && a.shop_profile.length > 0) {
+    const catalog = engine.getSheetMetalShopCatalog(a.shop_profile);
+    return textResult({
+      catalog,
+      note: `Published catalog for ${catalog.name} (retrieved ${catalog.retrieved}). inside_radius_mm is FIXED per material/thickness — pass shop_profile: "${catalog.id}" to sheet_metal_create and omit per-bend radius to use it.`,
+    });
+  }
   const table = engine.getSheetMetalBendTable();
   return textResult({
     table,
@@ -481,13 +554,22 @@ export const sheetMetalCheckSchema = {
       description: "Session id from sheet_metal_create.",
     },
     shop_profile: {
-      type: "object" as const,
       description:
-        "Optional shop capabilities. Field-tolerant: omitted keys fall back to the generic shop. Keys: name, max_bend_length_mm, min_bend_radius_ratio, min_flange_height_mm, min_hole_to_bend_mm, min_distance_between_bends_mm.",
+        'Optional shop capabilities. Either a catalog id string (e.g. "sendcutsend" — resolves the shop\'s published limits for the part\'s material/thickness, including fixed bend radius and relief depth) or a capabilities object. Object form is field-tolerant: omitted keys fall back to the generic shop. Keys: name, max_bend_length_mm, min_bend_radius_ratio, min_flange_height_mm, min_hole_to_bend_mm, min_distance_between_bends_mm, die_width_mm, relief_width_mm, relief_depth_mm, fixed_bend_radius_mm. Omit entirely to use the part\'s own shop_profile (if created with one), else generic.',
     },
   },
   required: ["document_id"],
 };
+
+/** Parse a `shop_profile` arg that may be a catalog id string or an object. */
+function parseShopArg(
+  raw: unknown,
+): SheetMetalShopProfile | string | undefined {
+  if (typeof raw === "string" && raw.length > 0) return raw;
+  if (raw && typeof raw === "object")
+    return raw as Partial<SheetMetalShopProfile> as SheetMetalShopProfile;
+  return undefined;
+}
 
 export function sheetMetalCheck(
   input: unknown,
@@ -495,14 +577,8 @@ export function sheetMetalCheck(
 ): { content: Array<{ type: "text"; text: string }> } {
   const a = (input ?? {}) as Record<string, unknown>;
   const doc = getSession(String(a.document_id ?? ""));
-  const shop =
-    a.shop_profile && typeof a.shop_profile === "object"
-      ? (a.shop_profile as Partial<SheetMetalShopProfile>)
-      : undefined;
-  const result = engine.checkSheetMetal(
-    doc,
-    shop as SheetMetalShopProfile | undefined,
-  );
+  const shop = parseShopArg(a.shop_profile);
+  const result = engine.checkSheetMetal(doc, shop);
   if (!result) {
     throw new Error("document has no sheet-metal part");
   }
@@ -645,9 +721,8 @@ export const sheetMetalSuggestFixSchema = {
       description: "Session id from sheet_metal_create.",
     },
     shop_profile: {
-      type: "object" as const,
       description:
-        "Optional shop profile (same shape as sheet_metal_check). Defaults to generic.",
+        'Optional shop profile — a catalog id string (e.g. "sendcutsend") or a capabilities object, same as sheet_metal_check. Defaults to the part\'s own shop profile, else generic.',
     },
     violation_index: {
       type: "number" as const,
@@ -671,14 +746,8 @@ export function sheetMetalSuggestFix(
 ): { content: Array<{ type: "text"; text: string }> } {
   const a = (input ?? {}) as Record<string, unknown>;
   const doc = getSession(String(a.document_id ?? ""));
-  const shop =
-    a.shop_profile && typeof a.shop_profile === "object"
-      ? (a.shop_profile as Partial<SheetMetalShopProfile>)
-      : undefined;
-  const result = engine.checkSheetMetal(
-    doc,
-    shop as SheetMetalShopProfile | undefined,
-  );
+  const shop = parseShopArg(a.shop_profile);
+  const result = engine.checkSheetMetal(doc, shop);
   if (!result) {
     throw new Error("document has no sheet-metal part");
   }
@@ -698,7 +767,7 @@ export function sheetMetalSuggestFix(
     shop: result.shop,
     count: suggestions.length,
     suggestions,
-    note: "Apply by re-issuing sheet_metal_create with the adjusted spec (parameters indicated by each `fix.action` + `fix.value`). Then call sheet_metal_check to verify.",
+    note: "Apply by re-issuing sheet_metal_create with the adjusted spec (parameters indicated by each fix's structured fields): `add_bend_relief` → pass `bend_relief: true` (or the suggested width/depth); `use_fixed_radius` → omit the bend's `radius` or set it to `new_radius_mm`. Then call sheet_metal_check to verify.",
   });
 }
 
@@ -708,6 +777,8 @@ type FixAction =
   | "shorten_or_split_bend"
   | "move_hole_or_clearance"
   | "separate_bends"
+  | "add_bend_relief"
+  | "use_fixed_radius"
   | "manual";
 
 interface Fix {
@@ -774,6 +845,28 @@ function suggestFix(v: SheetMetalViolationLike): Fix {
         bend_id_b: d.bend_id_b,
         required_distance_mm: required,
         description: `Move bends #${d.bend_id_a} and #${d.bend_id_b} to at least ${required.toFixed(2)} mm apart (currently ${Number(d.actual_mm).toFixed(2)} mm) so the back-gauge can register.`,
+      };
+    }
+    case "MissingBendRelief": {
+      const width = Number(d.required_width_mm);
+      const depth = Number(d.required_depth_mm);
+      return {
+        action: "add_bend_relief",
+        bend_id: d.bend_id,
+        panel_id: d.panel_id,
+        end: d.end,
+        width_mm: width,
+        depth_mm: depth,
+        description: `Bend #${d.bend_id} end ${d.end} needs a relief notch (≥ ${width.toFixed(2)} × ${depth.toFixed(2)} mm) so the material doesn't tear at the bend boundary. Re-run sheet_metal_create with \`bend_relief: true\` (auto-sizes every bend end), or \`bend_relief: {width_mm: ${width.toFixed(2)}, depth_mm: ${depth.toFixed(2)}}\`.`,
+      };
+    }
+    case "BendRadiusNotFixed": {
+      const required = Number(d.required_mm);
+      return {
+        action: "use_fixed_radius",
+        bend_id: d.bend_id,
+        new_radius_mm: required,
+        description: `Bend #${d.bend_id} requests ${Number(d.actual_mm).toFixed(2)} mm but the shop only bends a fixed ${required.toFixed(2)} mm radius for this material/thickness. Omit \`radius\` on that flange/jog (it resolves to the shop's radius automatically) or set it to ${required.toFixed(2)}.`,
       };
     }
     default:
