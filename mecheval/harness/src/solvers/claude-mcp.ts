@@ -135,17 +135,47 @@ function mcpResultToAnthropicContent(
   return blocks;
 }
 
-function extractDocumentId(openResult: {
-  content?: Array<{ type: string; text?: string }>;
-}): string {
-  const text = mcpResultToText(openResult);
-  try {
-    const parsed = JSON.parse(text);
-    if (typeof parsed.document_id === "string") return parsed.document_id;
-  } catch {
-    // fall through
+/** Find the session id in an open_document result. Parses each text
+ *  block independently — the server may append preview-handle blocks
+ *  for MCP Apps hosts, so the joined text is not valid JSON. */
+export function extractDocumentId(openResult: McpToolResult): string {
+  for (const c of openResult.content ?? []) {
+    if (c.type !== "text" || c.text == null) continue;
+    try {
+      const parsed = JSON.parse(c.text);
+      if (typeof parsed.document_id === "string") return parsed.document_id;
+    } catch {
+      // try next block
+    }
   }
-  throw new Error(`open_document did not return a JSON document_id; got: ${text}`);
+  throw new Error(
+    `open_document did not return a JSON document_id; got: ${mcpResultToText(openResult)}`,
+  );
+}
+
+/** Extract the Document IR JSON from a get_document result. Each text
+ *  block is tried independently for the same reason as above — naively
+ *  joining blocks corrupts the .vcad with trailing characters (this
+ *  exact failure took down the first post-viewer matrix run). */
+export function extractVcadJson(result: McpToolResult): string {
+  for (const c of result.content ?? []) {
+    if (c.type !== "text" || c.text == null) continue;
+    try {
+      const parsed = JSON.parse(c.text);
+      if (
+        parsed &&
+        typeof parsed === "object" &&
+        "nodes" in parsed &&
+        "roots" in parsed
+      ) {
+        // Pretty-print so the run blob's persisted .vcad is readable.
+        return JSON.stringify(parsed, null, 2);
+      }
+    } catch {
+      // try next block
+    }
+  }
+  throw new Error("get_document returned no parseable Document JSON block");
 }
 
 interface AnthropicLite {
@@ -241,10 +271,11 @@ export function makeClaudeMcpSolver(cfg: Partial<ClaudeMcpConfig> = {}): Solver 
 
       try {
         // 1. Open a document for the agent to edit.
-        const openText = await recordTool("open_document", {});
-        lastDocumentId = extractDocumentId({
-          content: [{ type: "text", text: openText.replace(/^ERROR: /, "") }],
-        });
+        const openRaw = await recordToolRaw("open_document", {});
+        if ("error" in openRaw) {
+          throw new Error(`open_document failed: ${openRaw.error}`);
+        }
+        lastDocumentId = extractDocumentId(openRaw.result);
 
         // 2. List MCP tools, translate to Anthropic tool schema.
         // ORACLE_TOOLS (module scope) is excluded here AND at execution
@@ -349,18 +380,18 @@ export function makeClaudeMcpSolver(cfg: Partial<ClaudeMcpConfig> = {}): Solver 
         }
 
         // 4. Read the final document from the session.
-        const docText = await recordTool("get_document", {
+        const docRaw = await recordToolRaw("get_document", {
           document_id: lastDocumentId,
         });
-        let vcadJson: string;
-        try {
-          // get_document returns the IR as JSON-text. Pretty-print it so the
-          // run blob's persisted .vcad is readable.
-          const parsed = JSON.parse(docText);
-          vcadJson = JSON.stringify(parsed, null, 2);
-        } catch {
-          vcadJson = docText;
+        if ("error" in docRaw) {
+          throw new Error(`get_document failed: ${docRaw.error}`);
         }
+        if (docRaw.result.isError) {
+          throw new Error(
+            `get_document failed: ${mcpResultToText(docRaw.result)}`,
+          );
+        }
+        const vcadJson = extractVcadJson(docRaw.result);
 
         const wallclockSec = (performance.now() - start) / 1000;
         return {
@@ -387,8 +418,9 @@ export function makeClaudeMcpSolver(cfg: Partial<ClaudeMcpConfig> = {}): Solver 
 
 export const claudeMcpSolver = makeClaudeMcpSolver();
 
-// Test seam: re-export for unit tests.
-export { mcpResultToText, extractDocumentId };
+// Test seam: re-export for unit tests. (extractDocumentId and
+// extractVcadJson are exported at their declarations.)
+export { mcpResultToText };
 // Suppress unused-import warning for the type-only Anthropic import
 // (kept for future direct typing).
 export type _Anthropic = typeof Anthropic;

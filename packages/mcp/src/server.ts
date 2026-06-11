@@ -606,7 +606,7 @@ export async function createServer(existingEngine?: Engine): Promise<Server> {
         result = dispatchRegistryTool(name, args);
         const docId = resolvePreviewDocumentId(name, result, args, engine);
         if (docId) {
-          attachPreviewHandle(result, docId);
+          attachPreviewHandle(result, docId, name);
           slimPreviewForInlineUi(result, docId, name, clientHasInlineUi());
         }
         return result;
@@ -800,7 +800,7 @@ export async function createServer(existingEngine?: Engine): Promise<Server> {
       if (uiTools.has(name) && result.content.length > 0 && !result.isError) {
         const docId = resolvePreviewDocumentId(name, result, args, engine);
         if (docId) {
-          attachPreviewHandle(result, docId);
+          attachPreviewHandle(result, docId, name);
           slimPreviewForInlineUi(result, docId, name, clientHasInlineUi());
         }
       }
@@ -858,17 +858,25 @@ function slimPreviewForInlineUi(
   ];
 }
 
+/** Tools whose text body is a machine-parseable document that consumers
+ *  JSON.parse verbatim — appending a handle block would corrupt it with
+ *  trailing characters (this broke the mecheval harness's .vcad
+ *  extraction). They get structuredContent only. */
+const PURE_JSON_RESULT_TOOLS = new Set(["get_document"]);
+
 function attachPreviewHandle(
   result: {
     content: Array<{ type: string; text: string; annotations?: unknown }>;
     structuredContent?: Record<string, unknown>;
   },
   docId: string,
+  toolName?: string,
 ): void {
   result.structuredContent = {
     ...result.structuredContent,
     document_id: docId,
   };
+  if (toolName && PURE_JSON_RESULT_TOOLS.has(toolName)) return;
   const mentioned = result.content.some(
     (c) => c.type === "text" && c.text.includes(docId),
   );
