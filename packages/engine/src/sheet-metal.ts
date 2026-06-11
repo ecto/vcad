@@ -87,6 +87,10 @@ export interface SheetMetalFlatPattern {
   panel_outlines_2d: [number, number][][];
   /** Hole loops per panel. */
   panel_holes_2d: [number, number][][][];
+  /** Merged cut profile (panels ∪ allowance strips): first ring is the CCW
+   *  exterior, the rest are CW holes — what the DXF CUT layer carries.
+   *  Empty when the flat pattern is empty or disconnected. */
+  silhouette_2d: [number, number][][];
   creases: SheetMetalFlatCrease[];
   area_mm2: number;
   /** `[min_x, min_y, max_x, max_y]`. */

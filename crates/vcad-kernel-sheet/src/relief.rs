@@ -367,6 +367,67 @@ mod tests {
         assert!((missing[0].depth_mm - 4.5).abs() < 1e-9);
     }
 
+    /// A hinge ending at a 45° chamfer: the chamfer material sits in the
+    /// deformation zone past the bend end and must get a notch.
+    #[test]
+    fn chamfered_corner_needs_relief() {
+        // Rectangle with the bottom-right corner chamfered; flange on the
+        // bottom edge, whose end (60, 0) meets the chamfer.
+        let outline = vec![
+            Point2::new(0.0, 0.0),
+            Point2::new(60.0, 0.0),  // edge 0 = (0,0)→(60,0): the flange edge
+            Point2::new(80.0, 20.0), // 45° chamfer
+            Point2::new(80.0, 50.0),
+            Point2::new(0.0, 50.0),
+        ];
+        let mut m = base_flange_polygon(outline, 1.0).unwrap();
+        m.material = "al-soft".into();
+        let table = BendTable::builtin();
+        add_edge_flange(&mut m, &table, flange(0, 0)).unwrap();
+        let missing = find_missing_reliefs(&m, &ReliefParams::default());
+        // Only the chamfer end (end 1); the (0,0) corner has no material
+        // beyond it.
+        assert_eq!(missing.len(), 1, "got {missing:?}");
+        assert_eq!(missing[0].end, 1);
+        let n = apply_bend_relief(&mut m, &ReliefParams::default()).unwrap();
+        assert_eq!(n, 1);
+        assert!(find_missing_reliefs(&m, &ReliefParams::default()).is_empty());
+    }
+
+    /// Two hinges whose ends meet at a shared chamfer corner — the case
+    /// where naively inserted slots would overlap into invalid geometry.
+    /// The boolean difference merges the overlapping cuts into one valid
+    /// notch region and the panel stays a single piece.
+    #[test]
+    fn shared_corner_notches_merge_cleanly() {
+        // Bottom edge and right edge flanged, separated by a small 45°
+        // chamfer whose material sits in both bends' deformation zones.
+        let outline = vec![
+            Point2::new(0.0, 0.0),
+            Point2::new(57.0, 0.0),  // edge 1: bottom flange hinge
+            Point2::new(60.0, 3.0),  // 3 mm chamfer (within both die zones)
+            Point2::new(60.0, 50.0), // edge 2 start → right flange hinge
+            Point2::new(0.0, 50.0),
+        ];
+        let mut m = base_flange_polygon(outline, 1.0).unwrap();
+        m.material = "al-soft".into();
+        let table = BendTable::builtin();
+        add_edge_flange(&mut m, &table, flange(0, 0)).unwrap(); // bottom
+        add_edge_flange(&mut m, &table, flange(0, 2)).unwrap(); // right
+        let missing = find_missing_reliefs(&m, &ReliefParams::default());
+        // Bottom hinge end 1 and right hinge end 0 both abut the chamfer.
+        assert_eq!(missing.len(), 2, "got {missing:?}");
+        let n = apply_bend_relief(&mut m, &ReliefParams::default()).unwrap();
+        assert_eq!(n, 2, "both notches applied in one pass");
+        // Panel still one piece (PanelSplit would have errored), check
+        // converges, and the flat pattern still merges to one silhouette.
+        assert!(find_missing_reliefs(&m, &ReliefParams::default()).is_empty());
+        crate::unfold::unfold(&mut m).unwrap();
+        let flat = crate::unfold::FlatPattern::from_model(&m);
+        let sil = crate::silhouette::silhouette(&flat).unwrap();
+        assert!(sil.exterior.len() >= 8, "merged notch visible in outline");
+    }
+
     #[test]
     fn unfold_still_works_after_relief() {
         let mut m = partial_edge_model();

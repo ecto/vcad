@@ -164,6 +164,12 @@ struct FlatPatternDto {
     thickness: f64,
     panel_outlines_2d: Vec<Vec<[f64; 2]>>,
     panel_holes_2d: Vec<Vec<Vec<[f64; 2]>>>,
+    /// Merged cut profile (panels ∪ allowance strips) — the closed
+    /// silhouette a laser bureau cuts; what the DXF CUT layer carries.
+    /// First ring is the CCW exterior, the rest are CW holes. Empty when
+    /// the flat pattern is empty or disconnected (the `error` field
+    /// explains the latter when the DXF fails).
+    silhouette_2d: Vec<Vec<[f64; 2]>>,
     creases: Vec<FlatCreaseDto>,
     area_mm2: f64,
     /// `[min_x, min_y, max_x, max_y]`.
@@ -939,6 +945,18 @@ fn flat_pattern_to_dto(flat: FlatPattern) -> FlatPatternDto {
                 .collect()
         })
         .collect();
+    // Merged silhouette: exterior first, then holes. Best-effort — a
+    // disconnected pattern already fails the DXF with a diagnostic, so the
+    // DTO just carries an empty list here.
+    let silhouette_2d = match vcad_kernel_sheet::silhouette(&flat) {
+        Ok(s) => {
+            let ring = |r: &[Point2]| r.iter().map(|p| [p.x, p.y]).collect::<Vec<[f64; 2]>>();
+            std::iter::once(ring(&s.exterior))
+                .chain(s.holes.iter().map(|h| ring(h)))
+                .collect()
+        }
+        Err(_) => Vec::new(),
+    };
     let creases = flat
         .creases
         .iter()
@@ -956,6 +974,7 @@ fn flat_pattern_to_dto(flat: FlatPattern) -> FlatPatternDto {
         thickness: flat.thickness,
         panel_outlines_2d,
         panel_holes_2d,
+        silhouette_2d,
         creases,
         area_mm2: flat.area_mm2,
         bbox: [bbox.0 .0, bbox.0 .1, bbox.1 .0, bbox.1 .1],
