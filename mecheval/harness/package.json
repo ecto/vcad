@@ -7,6 +7,7 @@
   "main": "dist/index.js",
   "bin": {
     "mecheval-run": "dist/cli.js",
+    "mecheval-matrix": "dist/matrix-cli.js",
     "mecheval-leaderboard": "dist/leaderboard-cli.js"
   },
   "exports": {
