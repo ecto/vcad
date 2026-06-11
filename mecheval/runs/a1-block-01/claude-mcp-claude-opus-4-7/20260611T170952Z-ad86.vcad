@@ -1,0 +1,25 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "Block",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 60,
+          "y": 40,
+          "z": 20
+        }
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 1,
+      "material": "default"
+    }
+  ]
+}

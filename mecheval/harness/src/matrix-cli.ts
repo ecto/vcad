@@ -24,6 +24,7 @@ interface CliArgs {
   attempts: number | null;
   concurrency: number;
   graderBin: string | null;
+  since: string | null;
   dryRun: boolean;
   help: boolean;
 }
@@ -36,6 +37,7 @@ function parseArgs(argv: string[]): CliArgs {
     attempts: null,
     concurrency: 4,
     graderBin: null,
+    since: null,
     dryRun: false,
     help: false,
   };
@@ -49,6 +51,7 @@ function parseArgs(argv: string[]): CliArgs {
       case "--attempts": out.attempts = Number(next()); break;
       case "--concurrency": out.concurrency = Number(next()); break;
       case "--grader-bin": out.graderBin = next(); break;
+      case "--since": out.since = next(); break;
       case "--dry-run": out.dryRun = true; break;
       case "-h":
       case "--help": out.help = true; break;
@@ -70,6 +73,9 @@ Args:
   --attempts     fresh attempts per task (default: each task's pass_k, usually 5)
   --concurrency  parallel attempts (default 4)
   --grader-bin   path to mecheval-grade (default: target/release then target/debug)
+  --since        top-up mode: count existing run blobs with run_id >= this
+                 stamp (e.g. 20260611T170000Z) toward each task's attempts
+                 and only schedule the shortfall — resume an interrupted batch
   --dry-run      print the run plan and cost surface, run nothing
 `);
 }
@@ -134,9 +140,19 @@ interface JobResult {
 }
 
 /** Patterns in stderr that warrant a backoff-and-retry rather than a
- *  recorded error (API rate limits, transient overload). */
-const RETRYABLE = /429|rate.?limit|overloaded|529|ECONNRESET|ETIMEDOUT/i;
+ *  recorded error (API rate limits, transient overload, network flaps —
+ *  the Anthropic SDK reports slow/refused connects as "Connection
+ *  error", which burned a whole queue once when it wasn't listed). */
+const RETRYABLE =
+  /429|rate.?limit|overloaded|529|ECONNRESET|ETIMEDOUT|connection error|fetch failed|socket hang up/i;
 const MAX_RETRIES = 2;
+
+/** Circuit breaker: after this many consecutive errored attempts the
+ *  whole matrix pauses to let the API recover, instead of converting
+ *  the remaining queue into instant failures. */
+const BREAKER_THRESHOLD = 6;
+const BREAKER_COOLDOWN_MS = 5 * 60_000;
+const BREAKER_MAX_TRIPS = 3;
 
 function runJob(
   job: Job,
@@ -187,6 +203,7 @@ async function main(): Promise<number> {
   }
 
   if (
+    !args.dryRun &&
     /^(claude|openai)/.test(args.solver) &&
     !process.env.ANTHROPIC_API_KEY &&
     !process.env.OPENAI_API_KEY
@@ -214,9 +231,25 @@ async function main(): Promise<number> {
   const jobs: Job[] = [];
   for (const task of metas) {
     const attempts = args.attempts ?? task.passK;
-    for (let attempt = 1; attempt <= attempts; attempt++) {
+    let have = 0;
+    if (args.since) {
+      // Top-up mode: blobs from this batch (run_id is a sortable
+      // timestamp prefix) already count toward the attempt target.
+      const dir = join(repoRoot, "mecheval", "runs", task.id, args.solver!);
+      if (existsSync(dir)) {
+        have = readdirSync(dir).filter(
+          (f) => f.endsWith(".json") && f >= args.since!,
+        ).length;
+      }
+    }
+    for (let attempt = have + 1; attempt <= attempts; attempt++) {
       jobs.push({ task, attempt });
     }
+  }
+  if (args.since) {
+    console.log(
+      `top-up since ${args.since}: ${jobs.length} attempts still needed`,
+    );
   }
 
   const serialBudgetMin = Math.round(
@@ -241,8 +274,20 @@ async function main(): Promise<number> {
   const queue = [...jobs];
   let done = 0;
 
+  // Shared circuit-breaker state across workers.
+  let consecutiveErrors = 0;
+  let breakerTrips = 0;
+  let pausedUntil = 0;
+  let aborted = false;
+
   async function worker(): Promise<void> {
     for (;;) {
+      if (aborted) return;
+      const now = Date.now();
+      if (now < pausedUntil) {
+        await new Promise((r) => setTimeout(r, pausedUntil - now));
+        continue;
+      }
       const job = queue.shift();
       if (!job) return;
       let result = await runJob(job, args.solver!, graderBin!);
@@ -271,6 +316,24 @@ async function main(): Promise<number> {
       );
       if (result.status === "error") {
         console.log(`    ${result.detail?.split("\n").slice(-2).join(" | ")}`);
+        consecutiveErrors++;
+        if (consecutiveErrors >= BREAKER_THRESHOLD) {
+          consecutiveErrors = 0;
+          breakerTrips++;
+          if (breakerTrips >= BREAKER_MAX_TRIPS) {
+            aborted = true;
+            console.log(
+              `breaker tripped ${breakerTrips}× — aborting. Rerun with --since to top up the remaining attempts.`,
+            );
+            return;
+          }
+          pausedUntil = Date.now() + BREAKER_COOLDOWN_MS;
+          console.log(
+            `breaker tripped (${BREAKER_THRESHOLD} consecutive errors) — pausing all workers ${BREAKER_COOLDOWN_MS / 60_000} min`,
+          );
+        }
+      } else {
+        consecutiveErrors = 0;
       }
     }
   }
@@ -291,10 +354,14 @@ async function main(): Promise<number> {
   console.log("\n── matrix summary ──");
   for (const meta of metas) {
     const rs = byTask.get(meta.id) ?? [];
+    if (rs.length === 0) {
+      console.log(`  · ${meta.id}: not attempted`);
+      continue;
+    }
     const passes = rs.filter((r) => r.status === "pass").length;
     const errors = rs.filter((r) => r.status === "error").length;
     if (errors > 0) anyError = true;
-    const allPassed = rs.length > 0 && passes === rs.length;
+    const allPassed = passes === rs.length;
     if (allPassed) fullPass++;
     console.log(
       `  ${allPassed ? "✓" : "✗"} ${meta.id}: ${passes}/${rs.length} passed${errors ? ` (${errors} errors)` : ""}`,
