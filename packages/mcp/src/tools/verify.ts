@@ -15,7 +15,7 @@
  * overrides the repo-root search).
  */
 
-import { execFileSync } from "child_process";
+import { execFile } from "child_process";
 import {
   existsSync,
   mkdtempSync,
@@ -27,7 +27,10 @@ import {
 import { tmpdir } from "os";
 import { dirname, join } from "path";
 import { fileURLToPath } from "url";
+import { promisify } from "util";
 import { getSession } from "./session.js";
+
+const execFileAsync = promisify(execFile);
 
 export const verifyPartSchema = {
   type: "object" as const,
@@ -163,7 +166,9 @@ interface GraderBlob {
   summary?: Record<string, unknown>;
 }
 
-export function verifyPart(args: Record<string, unknown>): TextResult {
+export async function verifyPart(
+  args: Record<string, unknown>,
+): Promise<TextResult> {
   const documentId = String(args.document_id ?? "");
   const taskId = String(args.task_id ?? "");
   const doc = getSession(documentId);
@@ -212,15 +217,17 @@ export function verifyPart(args: Record<string, unknown>): TextResult {
 
     let stdout: string;
     try {
-      stdout = execFileSync(graderBin, [taskPath, vcadPath], {
+      // Async so a long grade doesn't freeze the MCP server's event loop
+      // (other sessions, pings, and concurrent tool calls keep flowing).
+      ({ stdout } = await execFileAsync(graderBin, [taskPath, vcadPath], {
         encoding: "utf8",
         timeout: 180_000,
         maxBuffer: 64 * 1024 * 1024,
-      });
+      }));
     } catch (e) {
-      const err = e as { status?: number; stdout?: string; stderr?: string };
+      const err = e as { code?: number | string; stdout?: string; stderr?: string };
       // Exit 1 = graded but failed; the blob is still on stdout.
-      if (err.status === 1 && err.stdout) {
+      if (err.code === 1 && err.stdout) {
         stdout = err.stdout;
       } else {
         return textResult(

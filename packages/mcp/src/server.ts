@@ -656,7 +656,7 @@ export async function createServer(existingEngine?: Engine): Promise<Server> {
           break;
 
         case "verify_part":
-          result = verifyPart(args);
+          result = await verifyPart(args);
           break;
 
         case "list_eval_tasks":

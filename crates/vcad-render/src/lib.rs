@@ -64,6 +64,12 @@ const STROKE: &str = "#0e3960";
 
 fn evaluate_vcad(raw_vcad: &str) -> Result<Vec<Solid>, String> {
     let parsed = parse_vcad_file(raw_vcad).map_err(|e| format!("parse: {}", e))?;
+    // NOTE: catch_unwind only works on native targets. On
+    // wasm32-unknown-unknown a panic compiles to an `unreachable` trap —
+    // it never unwinds, this guard never fires, and the WASM instance is
+    // left in an undefined state. The JS caller is responsible for
+    // catching the trap (WebAssembly.RuntimeError) and poisoning the
+    // shared instance; see packages/mcp/src/tools/render.ts.
     let scene = catch_unwind(AssertUnwindSafe(|| {
         evaluate_document(&parsed.document, &EvalOptions::default())
     }))

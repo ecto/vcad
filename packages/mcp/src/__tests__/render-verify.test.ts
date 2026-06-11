@@ -159,9 +159,9 @@ describe("list_eval_tasks", () => {
 });
 
 describe("verify_part", () => {
-  it("rejects path-traversal task ids", () => {
+  it("rejects path-traversal task ids", async () => {
     const documentId = openWith(makeCubeDoc());
-    const out = verifyPart({
+    const out = await verifyPart({
       document_id: documentId,
       task_id: "../runs/evil",
     });
@@ -169,9 +169,9 @@ describe("verify_part", () => {
     expect(out.content[0].text).toContain("invalid task_id");
   });
 
-  it("errors helpfully on unknown task ids", () => {
+  it("errors helpfully on unknown task ids", async () => {
     const documentId = openWith(makeCubeDoc());
-    const out = verifyPart({
+    const out = await verifyPart({
       document_id: documentId,
       task_id: "no-such-task-9999",
     });
@@ -181,9 +181,9 @@ describe("verify_part", () => {
 
   it.skipIf(!graderAvailable)(
     "passes a correct a1-block-01 solution",
-    () => {
+    async () => {
       const documentId = openWith(makeBlockDoc());
-      const out = verifyPart({
+      const out = await verifyPart({
         document_id: documentId,
         task_id: "a1-block-01",
       });
@@ -200,9 +200,9 @@ describe("verify_part", () => {
 
   it.skipIf(!graderAvailable)(
     "fails a wrong part with per-check feedback",
-    () => {
+    async () => {
       const documentId = openWith(makeCubeDoc()); // 10mm cube ≠ 60×40×20 block
-      const out = verifyPart({
+      const out = await verifyPart({
         document_id: documentId,
         task_id: "a1-block-01",
       });

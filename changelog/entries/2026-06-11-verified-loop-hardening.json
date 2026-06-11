@@ -1,0 +1,10 @@
+{
+  "id": "2026-06-11-verified-loop-hardening",
+  "version": "0.9.4",
+  "date": "2026-06-11",
+  "category": "fix",
+  "title": "Harden render_view and verify_part",
+  "summary": "render_view now reports honest rasterizer failures, refuses runaway documents, and poisons the kernel after a WASM trap; verify_part no longer blocks the server; benchmark agents receive real images.",
+  "features": ["mcp", "agents", "mecheval"],
+  "mcpTools": ["render_view", "verify_part"]
+}
