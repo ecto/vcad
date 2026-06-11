@@ -192,6 +192,11 @@ pub struct FlatPattern {
     pub panel_outlines_2d: Vec<Vec<Point2>>,
     /// Hole loops per panel.
     pub panel_holes_2d: Vec<Vec<Vec<Point2>>>,
+    /// Bend-allowance strips in global flat 2D coords, one CCW quad per
+    /// bend (in bend-id order). Each strip bridges the gap between a
+    /// parent panel's hinge edge and its child panel's near edge; together
+    /// with `panel_outlines_2d` they tile the full blank.
+    pub allowance_strips_2d: Vec<Vec<Point2>>,
     /// Crease lines.
     pub creases: Vec<FlatCrease>,
     /// Total flat-pattern area (mm²) — sum of panel areas + bend-allowance
@@ -202,7 +207,10 @@ pub struct FlatPattern {
 /// A crease in the flat pattern (one bend = one crease).
 #[derive(Debug, Clone, PartialEq)]
 pub struct FlatCrease {
-    /// Crease line in global flat 2D coords (start, end).
+    /// Bend centerline in global flat 2D coords (start, end) — the
+    /// **midline** of the bend-allowance strip, which is where fab
+    /// services expect the bend line (the brake's die centers here).
+    /// The parent hinge edge sits half an allowance to one side.
     pub line: (Point2, Point2),
     /// Bend angle (radians).
     pub angle: f64,
@@ -259,27 +267,42 @@ impl FlatPattern {
             })
             .collect();
 
-        let creases: Vec<FlatCrease> = model
-            .bends
-            .iter()
-            .enumerate()
-            .map(|(id, bend)| {
-                let parent = &model.panels[bend.parent];
-                let (p0, p1) = bend.edge_parent;
-                FlatCrease {
-                    line: (
-                        to_global(parent.frame_flat, p0),
-                        to_global(parent.frame_flat, p1),
-                    ),
-                    angle: bend.angle,
-                    radius: bend.radius,
-                    k_factor: bend.k_factor,
-                    k_factor_source: bend.k_factor_source.clone(),
-                    direction: bend.direction,
-                    bend_id: id,
-                }
-            })
-            .collect();
+        let mut allowance_strips_2d: Vec<Vec<Point2>> = Vec::with_capacity(model.bends.len());
+        let mut creases: Vec<FlatCrease> = Vec::with_capacity(model.bends.len());
+        for (id, bend) in model.bends.iter().enumerate() {
+            let parent = &model.panels[bend.parent];
+            let child = &model.panels[bend.child];
+            let (p0, p1) = bend.edge_parent;
+            let a = to_global(parent.frame_flat, p0);
+            let b = to_global(parent.frame_flat, p1);
+            // The child's flat origin sits at hinge start + outward·BA by
+            // construction (see `child_flat_frame`), so the offset across
+            // the allowance strip is recoverable without recomputing BA.
+            let child_origin = to_global(child.frame_flat, Point2::new(0.0, 0.0));
+            let v = child_origin - a;
+
+            let strip = vec![
+                a,
+                b,
+                Point2::new(b.x + v.x, b.y + v.y),
+                Point2::new(a.x + v.x, a.y + v.y),
+            ];
+            allowance_strips_2d.push(strip);
+
+            let half = Point2::new(v.x * 0.5, v.y * 0.5);
+            creases.push(FlatCrease {
+                line: (
+                    Point2::new(a.x + half.x, a.y + half.y),
+                    Point2::new(b.x + half.x, b.y + half.y),
+                ),
+                angle: bend.angle,
+                radius: bend.radius,
+                k_factor: bend.k_factor,
+                k_factor_source: bend.k_factor_source.clone(),
+                direction: bend.direction,
+                bend_id: id,
+            });
+        }
 
         let area_mm2 =
             polygon_area_sum(&panel_outlines_2d, &panel_holes_2d) + bend_strip_area(model);
@@ -288,9 +311,22 @@ impl FlatPattern {
             thickness: model.thickness,
             panel_outlines_2d,
             panel_holes_2d,
+            allowance_strips_2d,
             creases,
             area_mm2,
         }
+    }
+
+    /// Merged cut profile: boundary loops of the union of all panel
+    /// outlines and allowance strips. For a well-formed single-blank part
+    /// this is one closed exterior loop — the silhouette a laser bureau
+    /// cuts. See [`crate::silhouette::merged_silhouette`].
+    pub fn merged_silhouette(&self) -> Vec<Vec<Point2>> {
+        let mut rings: Vec<Vec<Point2>> =
+            Vec::with_capacity(self.panel_outlines_2d.len() + self.allowance_strips_2d.len());
+        rings.extend(self.panel_outlines_2d.iter().cloned());
+        rings.extend(self.allowance_strips_2d.iter().cloned());
+        crate::silhouette::merged_silhouette(&rings)
     }
 
     /// 2D bounding box `((min_x, min_y), (max_x, max_y))` of the flat

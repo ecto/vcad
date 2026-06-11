@@ -58,6 +58,12 @@ pub struct ShopProfile {
     /// Minimum flat length between two parallel bends on the same panel
     /// (mm); the back-gauge needs a flat to register against.
     pub min_distance_between_bends_mm: f64,
+    /// Required bend-relief depth (mm) past the bend centerline, where a
+    /// bend end meets adjacent material. `0.0` (the default) means
+    /// "auto": use `inside radius + thickness` per bend — the common rule
+    /// of thumb. Shops that publish per-material relief tables
+    /// (SendCutSend et al.) set this explicitly.
+    pub relief_depth_mm: f64,
 }
 
 impl ShopProfile {
@@ -72,6 +78,7 @@ impl ShopProfile {
             min_flange_height_mm: 5.0,
             min_hole_to_bend_mm: 3.0,
             min_distance_between_bends_mm: 6.0,
+            relief_depth_mm: 0.0, // auto: R + t per bend
         }
     }
 }
@@ -168,6 +175,21 @@ pub enum Violation {
         /// Minimum flat the back-gauge needs (mm).
         required_mm: f64,
     },
+    /// A bend line's end meets adjacent material without a relief notch —
+    /// the die's deformation zone will drag and ripple the corner.
+    BendEndNeedsRelief {
+        /// The bend.
+        bend_id: BendId,
+        /// Parent panel carrying the adjacent material.
+        panel_id: PanelId,
+        /// Which hinge end (the `edge_parent.0` or `.1` side).
+        end: crate::relief::HingeEnd,
+        /// Required notch width along the hinge (mm) — the material
+        /// thickness.
+        required_width_mm: f64,
+        /// Required notch reach past the bend centerline (mm).
+        required_depth_mm: f64,
+    },
 }
 
 impl Violation {
@@ -177,9 +199,9 @@ impl Violation {
             Violation::BendRadiusBelowMinimum { .. }
             | Violation::BendExceedsBrakeCapacity { .. }
             | Violation::FlangeBelowMinHeight { .. } => Severity::Error,
-            Violation::HoleTooCloseToBend { .. } | Violation::BendsTooClose { .. } => {
-                Severity::Warning
-            }
+            Violation::HoleTooCloseToBend { .. }
+            | Violation::BendsTooClose { .. }
+            | Violation::BendEndNeedsRelief { .. } => Severity::Warning,
         }
     }
 
@@ -192,6 +214,7 @@ impl Violation {
             Violation::FlangeBelowMinHeight { .. } => "sheet.flange_height",
             Violation::HoleTooCloseToBend { .. } => "sheet.hole_to_bend",
             Violation::BendsTooClose { .. } => "sheet.bend_to_bend",
+            Violation::BendEndNeedsRelief { .. } => "sheet.bend_relief",
         }
     }
 
@@ -247,6 +270,21 @@ impl Violation {
             } => format!(
                 "Bends #{bend_id_a} and #{bend_id_b} are {actual_mm:.2} mm apart, need {required_mm:.2} mm"
             ),
+            Violation::BendEndNeedsRelief {
+                bend_id,
+                end,
+                required_width_mm,
+                required_depth_mm,
+                ..
+            } => {
+                let side = match end {
+                    crate::relief::HingeEnd::Start => "start",
+                    crate::relief::HingeEnd::End => "end",
+                };
+                format!(
+                    "Bend #{bend_id} {side} meets adjacent material without relief — needs a ≥{required_width_mm:.1}×{required_depth_mm:.1} mm notch"
+                )
+            }
         }
     }
 }
@@ -313,6 +351,27 @@ pub fn check_manufacturability(model: &SheetMetalModel, shop: &ShopProfile) -> V
                     panel_id: bend.child,
                     actual_mm: height,
                     required_mm: shop.min_flange_height_mm,
+                });
+            }
+        }
+
+        // Un-relieved bend ends: the hinge endpoint meets adjacent parent
+        // material (chamfered corner, edge continuation) with no notch.
+        // Same predicate the fix uses — `crate::relief::add_bend_relief`
+        // clears exactly what this flags.
+        for end in crate::relief::HingeEnd::BOTH {
+            if crate::relief::relief_needed(model, bend_id, end) {
+                let required_depth = if shop.relief_depth_mm > 0.0 {
+                    shop.relief_depth_mm
+                } else {
+                    bend.radius + t
+                };
+                out.push(Violation::BendEndNeedsRelief {
+                    bend_id,
+                    panel_id: bend.parent,
+                    end,
+                    required_width_mm: t,
+                    required_depth_mm: required_depth,
                 });
             }
         }
@@ -575,6 +634,82 @@ mod tests {
             .expect("R below shop floor");
         if let Violation::BendRadiusBelowMinimum { source, .. } = r {
             assert_eq!(*source, BendRadiusSource::Shop);
+        }
+    }
+
+    #[test]
+    fn flags_unrelieved_bend_ends_and_clears_after_fix() {
+        use crate::base_flange::base_flange_polygon;
+        use crate::relief::{add_all_bend_reliefs, ReliefParams};
+        // Hexagonal body, neck flange off the front edge: both hinge ends
+        // meet chamfered corners.
+        let outline = vec![
+            Point2::new(20.0, 0.0),
+            Point2::new(40.0, 0.0),
+            Point2::new(60.0, 40.0),
+            Point2::new(40.0, 80.0),
+            Point2::new(20.0, 80.0),
+            Point2::new(0.0, 40.0),
+        ];
+        let mut m = base_flange_polygon(outline, 0.5).unwrap();
+        m.material = "Al-soft".into();
+        let table = BendTable::builtin();
+        let mut p = flange(0, 0, 35.0, 0.5);
+        p.angle = 1.1;
+        add_edge_flange(&mut m, &table, p).unwrap();
+
+        let v = check_manufacturability(&m, &ShopProfile::generic());
+        let reliefs: Vec<_> = v
+            .iter()
+            .filter(|x| matches!(x, Violation::BendEndNeedsRelief { .. }))
+            .collect();
+        assert_eq!(reliefs.len(), 2, "both hinge ends flagged: {v:?}");
+        assert_eq!(reliefs[0].severity(), Severity::Warning);
+        assert_eq!(reliefs[0].rule(), "sheet.bend_relief");
+        // Auto depth = R + t.
+        if let Violation::BendEndNeedsRelief {
+            required_depth_mm, ..
+        } = reliefs[0]
+        {
+            assert!((required_depth_mm - 1.0).abs() < 1e-9);
+        }
+
+        // The fix clears exactly what the rule flags.
+        add_all_bend_reliefs(&mut m, ReliefParams::default()).unwrap();
+        let v = check_manufacturability(&m, &ShopProfile::generic());
+        assert!(
+            !v.iter()
+                .any(|x| matches!(x, Violation::BendEndNeedsRelief { .. })),
+            "relief violations persist after fix: {v:?}"
+        );
+    }
+
+    #[test]
+    fn shop_relief_depth_overrides_auto() {
+        use crate::base_flange::base_flange_polygon;
+        let outline = vec![
+            Point2::new(20.0, 0.0),
+            Point2::new(40.0, 0.0),
+            Point2::new(60.0, 40.0),
+            Point2::new(40.0, 80.0),
+            Point2::new(20.0, 80.0),
+            Point2::new(0.0, 40.0),
+        ];
+        let mut m = base_flange_polygon(outline, 0.5).unwrap();
+        let table = BendTable::builtin();
+        add_edge_flange(&mut m, &table, flange(0, 0, 35.0, 0.5)).unwrap();
+        let mut shop = ShopProfile::generic();
+        shop.relief_depth_mm = 2.5;
+        let v = check_manufacturability(&m, &shop);
+        let r = v
+            .iter()
+            .find(|x| matches!(x, Violation::BendEndNeedsRelief { .. }))
+            .expect("relief violation");
+        if let Violation::BendEndNeedsRelief {
+            required_depth_mm, ..
+        } = r
+        {
+            assert!((required_depth_mm - 2.5).abs() < 1e-9);
         }
     }
 

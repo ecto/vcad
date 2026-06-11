@@ -138,6 +138,9 @@ struct FlatPatternDto {
     thickness: f64,
     panel_outlines_2d: Vec<Vec<[f64; 2]>>,
     panel_holes_2d: Vec<Vec<Vec<[f64; 2]>>>,
+    /// Merged cut profile (panels ∪ allowance strips) — the closed
+    /// silhouette(s) a laser bureau cuts; what the DXF CUT layer carries.
+    silhouette_2d: Vec<Vec<[f64; 2]>>,
     creases: Vec<FlatCreaseDto>,
     area_mm2: f64,
     /// `[min_x, min_y, max_x, max_y]`.
@@ -796,6 +799,11 @@ fn flat_pattern_to_dto(flat: FlatPattern) -> FlatPatternDto {
                 .collect()
         })
         .collect();
+    let silhouette_2d = flat
+        .merged_silhouette()
+        .iter()
+        .map(|ring| ring.iter().map(|p| [p.x, p.y]).collect::<Vec<[f64; 2]>>())
+        .collect();
     let creases = flat
         .creases
         .iter()
@@ -813,6 +821,7 @@ fn flat_pattern_to_dto(flat: FlatPattern) -> FlatPatternDto {
         thickness: flat.thickness,
         panel_outlines_2d,
         panel_holes_2d,
+        silhouette_2d,
         creases,
         area_mm2: flat.area_mm2,
         bbox: [bbox.0 .0, bbox.0 .1, bbox.1 .0, bbox.1 .1],

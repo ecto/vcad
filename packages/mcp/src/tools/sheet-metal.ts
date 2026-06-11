@@ -483,7 +483,7 @@ export const sheetMetalCheckSchema = {
     shop_profile: {
       type: "object" as const,
       description:
-        "Optional shop capabilities. Field-tolerant: omitted keys fall back to the generic shop. Keys: name, max_bend_length_mm, min_bend_radius_ratio, min_flange_height_mm, min_hole_to_bend_mm, min_distance_between_bends_mm.",
+        "Optional shop capabilities. Field-tolerant: omitted keys fall back to the generic shop. Keys: name, max_bend_length_mm, min_bend_radius_ratio, min_flange_height_mm, min_hole_to_bend_mm, min_distance_between_bends_mm, relief_depth_mm (0 = auto R+t).",
     },
   },
   required: ["document_id"],
@@ -708,6 +708,7 @@ type FixAction =
   | "shorten_or_split_bend"
   | "move_hole_or_clearance"
   | "separate_bends"
+  | "add_bend_relief"
   | "manual";
 
 interface Fix {
@@ -774,6 +775,18 @@ function suggestFix(v: SheetMetalViolationLike): Fix {
         bend_id_b: d.bend_id_b,
         required_distance_mm: required,
         description: `Move bends #${d.bend_id_a} and #${d.bend_id_b} to at least ${required.toFixed(2)} mm apart (currently ${Number(d.actual_mm).toFixed(2)} mm) so the back-gauge can register.`,
+      };
+    }
+    case "BendEndNeedsRelief": {
+      const w = Number(d.required_width_mm);
+      const depth = Number(d.required_depth_mm);
+      return {
+        action: "add_bend_relief",
+        bend_id: d.bend_id,
+        end: d.end,
+        required_width_mm: w,
+        required_depth_mm: depth,
+        description: `Bend #${d.bend_id} (${String(d.end).toLowerCase()} end) meets adjacent material — it needs a relief notch ≥${w.toFixed(1)} mm wide reaching ${depth.toFixed(1)} mm past the bend centerline (the kernel's add_bend_relief cut). Until relief is exposed on sheet_metal_create, either reshape the base outline so the hinge ends at a free corner, or accept localized rippling at this corner.`,
       };
     }
     default:

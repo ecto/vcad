@@ -1,0 +1,10 @@
+{
+  "id": "2026-06-10-scs-ready-dxf",
+  "version": "0.9.4",
+  "date": "2026-06-10",
+  "category": "fix",
+  "title": "Fab-ready sheet metal DXF export",
+  "summary": "Flat-pattern DXF now emits one merged cut silhouette and dashed bend centerlines on the allowance midline, so uploads pass SendCutSend-style bend detection without manual repair.",
+  "features": ["sheet-metal", "dxf", "manufacturing"],
+  "mcpTools": ["sheet_metal_unfold", "sheet_metal_create"]
+}

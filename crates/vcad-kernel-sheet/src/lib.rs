@@ -36,7 +36,9 @@ pub mod manufacturability;
 pub mod materials;
 pub mod model;
 pub mod nesting;
+pub mod relief;
 pub mod sequence;
+pub mod silhouette;
 pub mod unfold;
 
 pub use base_flange::{
@@ -55,5 +57,9 @@ pub use materials::{
 };
 pub use model::{Bend, BendDirection, BendId, Frame, Panel, PanelId, SheetMetalModel};
 pub use nesting::{nest_rectangles, NestingParams, NestingResult, PartFootprint, Placement};
+pub use relief::{
+    add_all_bend_reliefs, add_bend_relief, relief_needed, AppliedRelief, HingeEnd, ReliefError,
+    ReliefParams,
+};
 pub use sequence::{bend_sequence, BendStep};
 pub use unfold::{refold, unfold, FlatPattern, UnfoldError};

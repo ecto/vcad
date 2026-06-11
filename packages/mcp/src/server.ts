@@ -321,13 +321,13 @@ export async function createServer(existingEngine?: Engine): Promise<Server> {
       {
         name: "sheet_metal_unfold",
         description:
-          "Return the flat pattern (panel outlines, holes, creases, area, bbox) for a sheet-metal session document, plus a layered DXF (CUT / BEND_UP / BEND_DOWN, millimetres) ready to send to a laser bureau.",
+          "Return the flat pattern (panel outlines, merged cut silhouette, holes, creases, area, bbox) for a sheet-metal session document, plus a fab-ready layered DXF (millimetres): one closed profile on CUT, dashed bend centerlines on BEND_UP / BEND_DOWN — uploads directly to SendCutSend-style services.",
         inputSchema: sheetMetalUnfoldSchema,
       },
       {
         name: "sheet_metal_check",
         description:
-          "Run sheet-metal manufacturability for a session document against a shop profile (brake length, min R/t, flange height, hole→bend, bend→bend). Field-tolerant: omit keys to use generic defaults. Returns structured violations the agent can use to adjust the part and re-check.",
+          "Run sheet-metal manufacturability for a session document against a shop profile (brake length, min R/t, flange height, hole→bend, bend→bend, bend-end relief). Field-tolerant: omit keys to use generic defaults (relief_depth_mm 0 = auto R+t). Returns structured violations the agent can use to adjust the part and re-check.",
         inputSchema: sheetMetalCheckSchema,
       },
       {
@@ -545,6 +545,17 @@ export async function createServer(existingEngine?: Engine): Promise<Server> {
     throw new Error(`Unknown resource: ${uri}`);
   });
 
+  // True when the connected client declared the MCP Apps UI extension at
+  // initialize — only then is there a viewer iframe that can stand in for
+  // slimmed-out tool-result text.
+  const clientHasInlineUi = (): boolean => {
+    const caps = server.getClientCapabilities() as
+      | Record<string, unknown>
+      | undefined;
+    const ext = caps?.extensions as Record<string, unknown> | undefined;
+    return Boolean(ext && ext["io.modelcontextprotocol/ui"]);
+  };
+
   // Handle tool calls
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args = {} } = request.params;
@@ -566,7 +577,7 @@ export async function createServer(existingEngine?: Engine): Promise<Server> {
         const docId = resolvePreviewDocumentId(name, result, args, engine);
         if (docId) {
           attachPreviewHandle(result, docId);
-          slimPreviewForInlineUi(result, docId, name);
+          slimPreviewForInlineUi(result, docId, name, clientHasInlineUi());
         }
         return result;
       }
@@ -746,7 +757,7 @@ export async function createServer(existingEngine?: Engine): Promise<Server> {
         const docId = resolvePreviewDocumentId(name, result, args, engine);
         if (docId) {
           attachPreviewHandle(result, docId);
-          slimPreviewForInlineUi(result, docId, name);
+          slimPreviewForInlineUi(result, docId, name, clientHasInlineUi());
         }
       }
 
@@ -774,12 +785,19 @@ export async function createServer(existingEngine?: Engine): Promise<Server> {
  * Replace bulky tool-result text (full VCode, large JSON IR, …) with a short
  * summary. Cursor suppresses inline MCP App UI when tool results are huge —
  * the same spill behavior we hit with inlined GLB payloads.
+ *
+ * Only applies when the client declared MCP Apps support at initialize.
+ * On hosts with no inline viewer (Claude Code, plain CLI agents) the
+ * summary's "see the inline 3D viewer" points at nothing and the agent
+ * loses the entire payload — it must keep the full text result.
  */
 function slimPreviewForInlineUi(
   result: { content: Array<{ type: string; text: string }> },
   docId: string,
   toolName: string,
+  clientHasInlineUi: boolean,
 ): void {
+  if (!clientHasInlineUi) return;
   const alwaysSlim = toolName === "create_cad_loon";
   const totalChars = result.content.reduce(
     (n, c) => n + (c.type === "text" ? c.text.length : 0),
