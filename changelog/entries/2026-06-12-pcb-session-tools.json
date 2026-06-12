@@ -1,0 +1,10 @@
+{
+  "id": "2026-06-12-pcb-session-tools",
+  "version": "0.9.4",
+  "date": "2026-06-12",
+  "category": "feat",
+  "title": "Session-based PCB tools with netlist-as-data",
+  "summary": "PCB tools now take a document_id and mutate server-side state; create_schematic accepts an explicit nets map, merges global labels by name, and supports circular/polygon board outlines with radial placement.",
+  "features": ["ecad", "pcb", "schematic", "netlist", "mcp"],
+  "mcpTools": ["create_schematic", "place_components", "route_nets", "run_drc", "run_erc", "export_gerber"]
+}

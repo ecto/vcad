@@ -89,6 +89,22 @@ pub fn value_to_document(value: &Value) -> Result<Document, String> {
 /// Process a single item from a Vec (can be SceneEntry, Material, or bare Solid).
 fn merge_value_into_doc(ctx: &mut ConvertCtx, value: &Value) -> Result<(), String> {
     match value {
+        // Top-level effects (print → Unit) and stray scalars (docstrings,
+        // numbers) contribute nothing to the scene — same as when they were
+        // non-final expressions before the multi-value rewrite.
+        Value::Unit
+        | Value::Str(_)
+        | Value::Int(_)
+        | Value::Float(_)
+        | Value::Bool(_)
+        | Value::Keyword(_) => {}
+        // Nested vectors of entries (e.g. a top-level #[...] scene vector
+        // alongside other roots) merge recursively.
+        Value::Vec(items) => {
+            for item in items {
+                merge_value_into_doc(ctx, item)?;
+            }
+        }
         Value::Adt(tag, fields) if tag == "SceneEntry" && fields.len() == 2 => {
             let root_id = ctx.convert_solid(&fields[0])?;
             let mat_name = match &fields[1] {
@@ -394,6 +410,7 @@ fn convert_ecad_value(ctx: &mut ConvertCtx, value: &Value) -> Result<(), String>
     let ensure_schematic = |ctx: &mut ConvertCtx| {
         if ctx.doc.schematic.is_none() {
             ctx.doc.schematic = Some(ecad::SchematicSheet {
+                nets: None,
                 title: None,
                 components: vec![],
                 wires: vec![],

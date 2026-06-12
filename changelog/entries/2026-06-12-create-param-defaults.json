@@ -1,0 +1,10 @@
+{
+  "id": "2026-06-12-create-param-defaults",
+  "version": "0.9.4",
+  "date": "2026-06-12",
+  "category": "fix",
+  "title": "create: segment defaults and schema hints in errors",
+  "summary": "Cylinder/sphere/cone get default tessellation segments, and planner parse errors now append the expected parameter shape for the requested type instead of bare serde messages.",
+  "features": ["mcp", "dx"],
+  "mcpTools": ["create", "update"]
+}

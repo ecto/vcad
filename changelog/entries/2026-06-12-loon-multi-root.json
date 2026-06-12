@@ -1,0 +1,10 @@
+{
+  "id": "2026-06-12-loon-multi-root",
+  "version": "0.9.4",
+  "date": "2026-06-12",
+  "category": "fix",
+  "title": "Loon: multiple top-level [root] statements all survive",
+  "summary": "Programs with several top-level value forms previously kept only the last one; all top-level roots, solids, and materials now merge into the document.",
+  "features": ["loon", "parser"],
+  "mcpTools": ["create_cad_loon"]
+}

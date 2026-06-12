@@ -79,6 +79,10 @@ import {
   exportGerberSchema,
   calcImpedance,
   calcImpedanceSchema,
+  addCoil,
+  addCoilSchema,
+  boardFromSolid,
+  boardFromSolidSchema,
 } from "./tools/ecad.js";
 import { createCadLoon, createCadLoonSchema } from "./tools/loon.js";
 import {
@@ -134,6 +138,10 @@ const GEOMETRY_TOOLS = new Set([
   // Doesn't mutate, but its result carries the flat pattern the viewer
   // renders as a 2D drawing (cut profile + bend lines).
   "sheet_metal_unfold",
+  // PCB session mutators — the board (PcbBoard node) renders in the viewer.
+  "place_components",
+  "route_nets",
+  "add_coil",
 ]);
 
 /** MCP Apps UI metadata for geometry tools. */
@@ -183,6 +191,8 @@ const TOOL_PACKS: Record<string, readonly string[]> = {
     "create_schematic",
     "place_components",
     "route_nets",
+    "add_coil",
+    "board_from_solid",
     "run_drc",
     "run_erc",
     "export_gerber",
@@ -222,6 +232,8 @@ function buildInstructions(kernelPrompt: string | null): string {
     "- See your work with `render_view` (isometric PNG); measure with `inspect_cad` (volume, area, bbox, center of mass).",
     "- Ship with `export_cad` (STL/GLB/STEP) or `open_in_browser` (vcad.io deep link).",
     "- Fix in place: when geometry is wrong, prefer `update` on the offending node over deleting parts and starting over.",
+    "",
+    "PCB workflow: `create_schematic` (declare connectivity as data via `nets`) → `place_components` → `route_nets` / `add_coil` → `run_drc` → `export_gerber`. All take the `document_id` from create_schematic and mutate that session — never re-send the document. `board_from_solid` turns a solid part (e.g. an enclosure or stator disc in a CAD session) into an outline polygon for `place_components`.",
   ].join("\n");
   if (!kernelPrompt) return header;
   const sections = new Map<string, string>();
@@ -601,25 +613,52 @@ export async function createServer(existingEngine?: Engine): Promise<Server> {
       {
         name: "create_schematic",
         description:
-          "Create a schematic from component and wire definitions. " +
-          "Returns a vcad document with schematic data that can be used for PCB layout.",
+          "Create a schematic from components plus connectivity, and open it " +
+          "as a server-side session. Declare connectivity as data with `nets` " +
+          '({"PHA": ["L1.1", "J1.1"]}) — more reliable than wire/label ' +
+          "coordinates. Returns a document_id for place_components / " +
+          "route_nets / export_gerber, plus the resolved netlist so broken " +
+          "connectivity is visible immediately.",
         inputSchema: createSchematicSchema,
       },
       {
         name: "place_components",
         description:
-          "Place components on a PCB from schematic data. " +
-          "Creates board outline, stackup, and positions footprints. " +
-          "Requires a document with schematic data.",
+          "Create the board and place schematic components on it. Mutates the " +
+          "session document (pass document_id). Outline: rectangle " +
+          "(board_width/height), circle with optional center bore " +
+          "(board_shape — e.g. a motor stator), or any polygon (outline, e.g. " +
+          "from board_from_solid). strategy=radial rings components for " +
+          "annular boards.",
         inputSchema: placeComponentsSchema,
       },
       {
         name: "route_nets",
         description:
-          "Route electrical nets on a PCB with copper traces. " +
-          "Connects pads belonging to the same net. " +
-          "Requires a document with PCB and placed footprints.",
+          "Route electrical nets on the PCB with copper traces. " +
+          "Connects pads belonging to the same net. Mutates the session " +
+          "document (pass document_id).",
         inputSchema: routeNetsSchema,
+      },
+      {
+        name: "add_coil",
+        description:
+          "Add a spiral copper coil (Archimedean) to the PCB — the primitive " +
+          "for PCB-motor stators and planar inductors. Generates the trace " +
+          "geometry on a layer, assigns it to a net, validates turn-to-turn " +
+          "clearance, and optionally drops a via at the (otherwise trapped) " +
+          "inner endpoint. Returns endpoints, copper length, and a DC " +
+          "resistance estimate.",
+        inputSchema: addCoilSchema,
+      },
+      {
+        name: "board_from_solid",
+        description:
+          "Derive a PCB outline polygon (with cutouts, e.g. a center bore) " +
+          "from a solid part in a CAD session by projecting its geometry onto " +
+          "the XY plane. Bridges solid modeling and PCB layout: feed the " +
+          "returned `outline` to place_components.",
+        inputSchema: boardFromSolidSchema,
       },
       {
         name: "run_drc",
@@ -893,7 +932,7 @@ export async function createServer(existingEngine?: Engine): Promise<Server> {
           break;
 
         case "create_schematic":
-          result = createSchematic(args);
+          result = await createSchematic(args);
           break;
 
         case "place_components":
@@ -904,12 +943,20 @@ export async function createServer(existingEngine?: Engine): Promise<Server> {
           result = await routeNets(args);
           break;
 
+        case "add_coil":
+          result = addCoil(args);
+          break;
+
+        case "board_from_solid":
+          result = boardFromSolid(args, engine);
+          break;
+
         case "run_drc":
           result = await runDrc(args);
           break;
 
         case "run_erc":
-          result = runErc(args);
+          result = await runErc(args);
           break;
 
         case "export_gerber":

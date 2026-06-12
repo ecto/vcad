@@ -934,6 +934,11 @@ export interface SchematicSheet {
   wires: SchematicWire[];
   junctions: SchematicJunction[];
   labels: SchematicLabel[];
+  /** Explicit netlist: net name → pin refs ("R1.2"). Merged with (and
+   *  taking name precedence over) wire/label-derived connectivity, so
+   *  callers can declare nets as data instead of relying on coordinate
+   *  coincidence. */
+  nets?: Record<string, string[]>;
 }
 
 /** PCB layer identifiers. */

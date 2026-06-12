@@ -153,6 +153,12 @@ pub struct SchematicSheet {
     /// Net labels.
     #[serde(default)]
     pub labels: Vec<SchematicLabel>,
+    /// Explicit netlist: net name → pin refs (`"R1.2"`). Merged with (and
+    /// taking name precedence over) wire/label-derived connectivity, so
+    /// callers can declare nets as data instead of relying on coordinate
+    /// coincidence.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nets: Option<std::collections::BTreeMap<String, Vec<String>>>,
 }
 
 // ============================================================================
@@ -938,6 +944,7 @@ mod tests {
     #[test]
     fn schematic_roundtrip() {
         let sheet = SchematicSheet {
+            nets: None,
             title: Some("Test Schematic".to_string()),
             components: vec![SchematicComponent {
                 reference: "R1".to_string(),
