@@ -1,0 +1,10 @@
+{
+  "id": "2026-06-12-board-from-solid",
+  "version": "0.9.4",
+  "date": "2026-06-12",
+  "category": "feat",
+  "title": "board_from_solid: solid model to PCB outline",
+  "summary": "New MCP tool projects a solid part onto the XY plane and traces its outline polygon including interior cutouts (e.g. a stator bore), ready to feed into place_components.",
+  "features": ["ecad", "pcb", "outline", "round-trip", "mcp"],
+  "mcpTools": ["board_from_solid", "place_components"]
+}

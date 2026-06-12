@@ -11,23 +11,17 @@ import type {
   SchematicComponent,
   SchematicWire,
   SchematicLabel,
-  SchematicJunction,
   SchematicPin,
   Pcb,
   BoardOutline,
   LayerStackup,
-  StackupLayer,
   Net,
   DesignRules,
   NetClassRules,
   Footprint,
   Pad,
-  PadShape,
   PadType,
   PcbLayer,
-  Trace,
-  Via,
-  Zone,
   Vec2,
 } from "@vcad/ir";
 import { createDocument } from "@vcad/ir";
@@ -42,13 +36,301 @@ import {
   routeNetShove,
   runDrc as kernelRunDrc,
 } from "@vcad/engine";
-import type { NetlistResult } from "@vcad/engine";
+import type { Engine, NetlistResult, TriangleMesh } from "@vcad/engine";
+import { registerSession, getSession } from "./session.js";
 
 /** Get PCB data from a document — checks PcbBoard nodes first, falls back to legacy doc.pcb */
 function getDocPcb(doc: Document): Pcb | null {
   const nodeIds = getPcbNodeIds(doc);
   if (nodeIds.length > 0) return getNodePcb(doc, nodeIds[0]!);
   return (doc as Document & { pcb?: Pcb }).pcb ?? null;
+}
+
+// ============================================================================
+// Document resolution — session-based (document_id) with inline fallback
+// ============================================================================
+
+/** A resolved document input: session-backed (preferred) or inline (legacy). */
+interface EcadDocCtx {
+  doc: Document;
+  /** Set when the doc came from (or was registered as) a server session. */
+  documentId?: string;
+}
+
+/**
+ * Resolve the document argument for ECAD tools. `document_id` (a session
+ * from create_schematic / open_document) is preferred; an inline `document`
+ * object is still accepted for backward compatibility and is mutated and
+ * echoed back like the pre-session API did.
+ */
+function resolveDocInput(args: Record<string, unknown>): EcadDocCtx {
+  const id = args.document_id ? String(args.document_id) : "";
+  if (id) return { doc: getSession(id), documentId: id };
+  const doc = args.document as Document | undefined;
+  if (doc && typeof doc === "object") return { doc };
+  throw new Error(
+    "Pass `document_id` (from create_schematic or open_document) — or an inline `document` for the legacy stateless flow.",
+  );
+}
+
+/**
+ * The document part of a mutating tool's response. Session docs are mutated
+ * server-side, so only the id is echoed; inline docs get the full mutated
+ * document back (the caller has no other way to retrieve it).
+ */
+function docResultPayload(ctx: EcadDocCtx): Record<string, unknown> {
+  return ctx.documentId
+    ? { document_id: ctx.documentId }
+    : { document: ctx.doc };
+}
+
+// ============================================================================
+// Netlist derivation — wires/labels (kernel) merged with explicit nets
+// ============================================================================
+
+/** Position coincidence tolerance, mirrors the kernel netlist extractor. */
+const POSITION_TOLERANCE = 0.01;
+
+/** Pin position on the sheet (component rotation applied). */
+function pinWorldPosition(comp: SchematicComponent, pin: SchematicPin): Vec2 {
+  const rot = (((comp.rotation as number) || 0) * Math.PI) / 180;
+  const cos = Math.cos(rot);
+  const sin = Math.sin(rot);
+  return {
+    x: comp.position.x + pin.position.x * cos - pin.position.y * sin,
+    y: comp.position.y + pin.position.x * sin + pin.position.y * cos,
+  };
+}
+
+/** Separator for pin map keys — NUL cannot appear in refs or pin numbers,
+ *  so keys never collide (a space could: "R1 2" + "3" vs "R1" + "2 3"). */
+const PIN_SEP = String.fromCharCode(0);
+const pinKey = (ref: string, pinNumber: string) => `${ref}${PIN_SEP}${pinNumber}`;
+
+/**
+ * Validate an explicit netlist (`net name → ["R1.2", ...]`) against the
+ * sheet's components. Returns normalized entries or throws with every
+ * unknown ref/pin listed.
+ */
+function validateExplicitNets(
+  sheet: SchematicSheet,
+  nets: Record<string, string[]>,
+): Array<{ name: string; pins: Array<{ ref: string; pin: string }> }> {
+  const byRef = new Map(sheet.components.map((c) => [c.ref, c]));
+  const problems: string[] = [];
+  const out: Array<{ name: string; pins: Array<{ ref: string; pin: string }> }> = [];
+  for (const [name, pinRefs] of Object.entries(nets)) {
+    const pins: Array<{ ref: string; pin: string }> = [];
+    for (const pinRef of pinRefs) {
+      const dot = pinRef.indexOf(".");
+      if (dot <= 0 || dot === pinRef.length - 1) {
+        problems.push(`net "${name}": "${pinRef}" is not of the form "REF.PIN" (e.g. "R1.2")`);
+        continue;
+      }
+      const ref = pinRef.slice(0, dot);
+      const pin = pinRef.slice(dot + 1);
+      const comp = byRef.get(ref);
+      if (!comp) {
+        problems.push(
+          `net "${name}": unknown component "${ref}" (have: ${[...byRef.keys()].join(", ")})`,
+        );
+        continue;
+      }
+      if (!comp.pins.some((p) => p.number === pin)) {
+        problems.push(
+          `net "${name}": component "${ref}" has no pin "${pin}" (pins: ${comp.pins.map((p) => p.number).join(", ")})`,
+        );
+        continue;
+      }
+      pins.push({ ref, pin });
+    }
+    out.push({ name, pins });
+  }
+  if (problems.length > 0) {
+    throw new Error(`Invalid nets:\n- ${problems.join("\n- ")}`);
+  }
+  return out;
+}
+
+/** Result of merging wire/label connectivity with the explicit netlist. */
+interface DerivedNets {
+  /** pinKey(ref, pin) → net name */
+  netByPin: Map<string, string>;
+  /** net name → pin refs ("R1.2"), for reporting back to the agent. */
+  nets: Map<string, string[]>;
+  warnings: string[];
+}
+
+/** One source group of electrically-connected pins. */
+interface NetGroup {
+  name?: string;
+  /** True when the name itself denotes a single net wherever it appears
+   *  (explicit nets, non-Local labels) — such groups merge by name. Local
+   *  labels and auto NET-xxx names are scoped to their own group. */
+  mergeByName: boolean;
+  explicit: boolean;
+  pins: Array<{ ref: string; pin: string }>;
+}
+
+/**
+ * Derive per-pin net assignments for a sheet. Three sources, merged with
+ * union-find:
+ *  1. kernel netlist from wires/junctions/labels (coordinate coincidence),
+ *     with same-named non-Local labels bridged first so a label names a net
+ *     wherever it appears (KiCad global-label semantics);
+ *  2. the sheet's explicit `nets` map (net name → pin refs);
+ *  3. name precedence: explicit > label-derived > auto NET-xxx. Disjoint
+ *     nets that would collide on a non-mergeable name are renamed apart.
+ */
+async function deriveNets(sheet: SchematicSheet): Promise<DerivedNets> {
+  const warnings: string[] = [];
+  const groups: NetGroup[] = [];
+
+  // Names that mean "one net wherever this name appears".
+  const globalNames = new Set<string>();
+  for (const label of sheet.labels) {
+    if (label.scope !== "Local") globalNames.add(label.name);
+  }
+  for (const name of Object.keys(sheet.nets ?? {})) globalNames.add(name);
+
+  if (sheet.wires.length > 0 || sheet.labels.length > 0) {
+    // Bridge same-named global labels with synthetic wires so the kernel's
+    // position-based union-find merges them into one net.
+    const bridged: SchematicSheet = { ...sheet, wires: [...sheet.wires] };
+    const labelPositions = new Map<string, Vec2[]>();
+    for (const label of sheet.labels) {
+      if (label.scope === "Local") continue;
+      const arr = labelPositions.get(label.name) ?? [];
+      arr.push(label.position);
+      labelPositions.set(label.name, arr);
+    }
+    for (const positions of labelPositions.values()) {
+      for (let i = 0; i + 1 < positions.length; i++) {
+        bridged.wires.push({ start: positions[i], end: positions[i + 1] });
+      }
+    }
+    const netlist = await generateNetlist(bridged);
+    for (const net of netlist.nets) {
+      if (net.connections.length === 0) continue;
+      // Anonymous single-pin groups are just unconnected pins — skip. A
+      // label-named single-pin group survives (the name was intentional).
+      if (net.connections.length < 2 && /^NET-\d+$/.test(net.name)) continue;
+      groups.push({
+        name: net.name,
+        mergeByName: globalNames.has(net.name),
+        explicit: false,
+        pins: net.connections.map((c) => ({ ref: c.component_ref, pin: c.pin_number })),
+      });
+    }
+  }
+
+  if (sheet.nets && Object.keys(sheet.nets).length > 0) {
+    for (const entry of validateExplicitNets(sheet, sheet.nets)) {
+      groups.push({
+        name: entry.name,
+        mergeByName: true,
+        explicit: true,
+        pins: entry.pins,
+      });
+    }
+  }
+
+  // Union-find over pins: groups sharing a pin merge into one net.
+  const parent = new Map<string, string>();
+  const pinByKey = new Map<string, { ref: string; pin: string }>();
+  const find = (k: string): string => {
+    let root = k;
+    while (parent.get(root) !== undefined && parent.get(root) !== root) {
+      root = parent.get(root)!;
+    }
+    // Path compression
+    let cur = k;
+    while (cur !== root) {
+      const next = parent.get(cur)!;
+      parent.set(cur, root);
+      cur = next;
+    }
+    return root;
+  };
+  const union = (a: string, b: string) => {
+    const ra = find(a);
+    const rb = find(b);
+    if (ra !== rb) parent.set(ra, rb);
+  };
+  for (const g of groups) {
+    for (const p of g.pins) {
+      const k = pinKey(p.ref, p.pin);
+      pinByKey.set(k, p);
+      if (!parent.has(k)) parent.set(k, k);
+    }
+    const first = g.pins[0];
+    for (let i = 1; i < g.pins.length; i++) {
+      union(pinKey(first.ref, first.pin), pinKey(g.pins[i].ref, g.pins[i].pin));
+    }
+  }
+  // Groups carrying a "global" name (explicit net or non-Local label) are
+  // one net wherever the name appears — union them by name too.
+  const firstPinForName = new Map<string, string>();
+  for (const g of groups) {
+    if (!g.name || !g.mergeByName || g.pins.length === 0) continue;
+    const k = pinKey(g.pins[0].ref, g.pins[0].pin);
+    const prior = firstPinForName.get(g.name);
+    if (prior) union(prior, k);
+    else firstPinForName.set(g.name, k);
+  }
+
+  // Collect merged components and resolve names.
+  const byRoot = new Map<string, { pins: Set<string>; explicitNames: Set<string>; otherNames: Set<string> }>();
+  for (const g of groups) {
+    if (g.pins.length === 0) continue;
+    const root = find(pinKey(g.pins[0].ref, g.pins[0].pin));
+    let entry = byRoot.get(root);
+    if (!entry) {
+      entry = { pins: new Set(), explicitNames: new Set(), otherNames: new Set() };
+      byRoot.set(root, entry);
+    }
+    for (const p of g.pins) entry.pins.add(pinKey(p.ref, p.pin));
+    if (g.name) {
+      (g.explicit ? entry.explicitNames : entry.otherNames).add(g.name);
+    }
+  }
+
+  const netByPin = new Map<string, string>();
+  const nets = new Map<string, string[]>();
+  const usedNames = new Map<string, number>();
+  for (const entry of byRoot.values()) {
+    const explicitNames = [...entry.explicitNames].sort();
+    const labelNames = [...entry.otherNames].filter((n) => !/^NET-\d+$/.test(n)).sort();
+    const autoNames = [...entry.otherNames].filter((n) => /^NET-\d+$/.test(n)).sort();
+    let name = explicitNames[0] ?? labelNames[0] ?? autoNames[0] ?? "NET-???";
+    const distinct = [...new Set([...explicitNames, ...labelNames])];
+    if (distinct.length > 1) {
+      warnings.push(
+        `Nets ${distinct.map((n) => `"${n}"`).join(" and ")} are connected together (merged by shared pins/wires) — using "${name}". If that's not intended, check the netlist.`,
+      );
+    }
+    // Two electrically disjoint nets must never share a pad net id — that
+    // would short them at routing time. Local-label collisions land here.
+    const taken = usedNames.get(name);
+    if (taken !== undefined) {
+      const renamed = `${name}_${taken + 1}`;
+      usedNames.set(name, taken + 1);
+      warnings.push(
+        `Two disjoint nets both resolve to "${name}" — the second was renamed "${renamed}". If they should be one net, use a Global label or declare it in \`nets\`.`,
+      );
+      name = renamed;
+    }
+    usedNames.set(name, usedNames.get(name) ?? 1);
+    const pinRefs: string[] = [];
+    for (const key of entry.pins) {
+      netByPin.set(key, name);
+      const p = pinByKey.get(key)!;
+      pinRefs.push(`${p.ref}.${p.pin}`);
+    }
+    nets.set(name, pinRefs.sort());
+  }
+
+  return { netByPin, nets, warnings };
 }
 
 // ============================================================================
@@ -122,25 +404,97 @@ export const createSchematicSchema = {
         required: ["name", "x", "y"],
       },
     },
+    nets: {
+      type: "object" as const,
+      description:
+        'Explicit netlist: net name → array of pin refs ("REF.PIN"), e.g. ' +
+        '{"PHA": ["L1.1", "J1.1"], "GND": ["C1.2", "U1.4"]}. The most reliable ' +
+        "way to declare connectivity — no wire/label coordinates needed. Merged " +
+        "with any wire-derived connectivity; explicit names win.",
+      additionalProperties: {
+        type: "array" as const,
+        items: { type: "string" as const },
+      },
+    },
   },
   required: ["components"],
+};
+
+/** Shared document input properties for session-based ECAD tools. */
+const docInputProperties = {
+  document_id: {
+    type: "string" as const,
+    description:
+      "Session id from create_schematic or open_document. Preferred — the " +
+      "tool mutates the server-side session, so the full document never " +
+      "crosses the wire.",
+  },
+  document: {
+    type: "object" as const,
+    description:
+      "Inline vcad IR Document (legacy stateless flow). Prefer document_id.",
+  },
 };
 
 /** JSON Schema for place_components tool. */
 export const placeComponentsSchema = {
   type: "object" as const,
   properties: {
-    document: {
-      type: "object" as const,
-      description: "vcad IR Document with schematic",
-    },
+    ...docInputProperties,
     board_width: {
       type: "number" as const,
-      description: "Board width in mm",
+      description: "Board width in mm (rectangular outline)",
     },
     board_height: {
       type: "number" as const,
-      description: "Board height in mm",
+      description: "Board height in mm (rectangular outline)",
+    },
+    board_shape: {
+      type: "object" as const,
+      description:
+        "Non-rectangular outline shorthand. Circle: {type: 'circle', " +
+        "outer_diameter, inner_diameter?} — inner_diameter > 0 adds a " +
+        "center bore cutout (e.g. a motor stator). Centered at " +
+        "(outer_diameter/2, outer_diameter/2) unless `center` is given.",
+      properties: {
+        type: { type: "string" as const, description: "'circle'" },
+        outer_diameter: { type: "number" as const },
+        inner_diameter: { type: "number" as const, description: "Center bore diameter (0 = none)" },
+        center: {
+          type: "object" as const,
+          properties: { x: { type: "number" as const }, y: { type: "number" as const } },
+        },
+        segments: { type: "number" as const, description: "Polygon segments per circle (default 64)" },
+      },
+    },
+    outline: {
+      type: "object" as const,
+      description:
+        "Explicit board outline polygon: {vertices: [{x,y}, ...], cutouts?: " +
+        "[[{x,y}, ...], ...]}. Use the output of board_from_solid to match an " +
+        "existing enclosure or solid part.",
+      properties: {
+        vertices: {
+          type: "array" as const,
+          items: {
+            type: "object" as const,
+            properties: { x: { type: "number" as const }, y: { type: "number" as const } },
+            required: ["x", "y"],
+          },
+        },
+        cutouts: {
+          type: "array" as const,
+          items: {
+            type: "array" as const,
+            items: {
+              type: "object" as const,
+              properties: { x: { type: "number" as const }, y: { type: "number" as const } },
+              required: ["x", "y"],
+            },
+          },
+        },
+      },
+      required: ["vertices"],
     },
     board_thickness: {
       type: "number" as const,
@@ -148,20 +502,30 @@ export const placeComponentsSchema = {
     },
     strategy: {
       type: "string" as const,
-      description: "Placement strategy: grid, force_directed (default: grid)",
+      description:
+        "Placement strategy: grid, force_directed, radial (default: grid). " +
+        "radial places components evenly on a ring — natural for circular " +
+        "boards like motor stators.",
+    },
+    radial_radius: {
+      type: "number" as const,
+      description:
+        "Ring radius for strategy=radial (default: midway between bore and " +
+        "rim for circular boards).",
+    },
+    radial_start_angle_deg: {
+      type: "number" as const,
+      description: "Angle of the first component for strategy=radial (default 0 = +X).",
     },
   },
-  required: ["document", "board_width", "board_height"],
+  required: [],
 };
 
 /** JSON Schema for route_nets tool. */
 export const routeNetsSchema = {
   type: "object" as const,
   properties: {
-    document: {
-      type: "object" as const,
-      description: "vcad IR Document with PCB and placed footprints",
-    },
+    ...docInputProperties,
     nets: {
       type: "array" as const,
       items: { type: "string" as const },
@@ -172,41 +536,32 @@ export const routeNetsSchema = {
       description: "Trace width in mm (default from design rules)",
     },
   },
-  required: ["document"],
+  required: [],
 };
 
 /** JSON Schema for run_drc tool. */
 export const runDrcSchema = {
   type: "object" as const,
   properties: {
-    document: {
-      type: "object" as const,
-      description: "vcad IR Document with PCB",
-    },
+    ...docInputProperties,
   },
-  required: ["document"],
+  required: [],
 };
 
 /** JSON Schema for run_erc tool. */
 export const runErcSchema = {
   type: "object" as const,
   properties: {
-    document: {
-      type: "object" as const,
-      description: "vcad IR Document with schematic",
-    },
+    ...docInputProperties,
   },
-  required: ["document"],
+  required: [],
 };
 
 /** JSON Schema for export_gerber tool. */
 export const exportGerberSchema = {
   type: "object" as const,
   properties: {
-    document: {
-      type: "object" as const,
-      description: "vcad IR Document with PCB",
-    },
+    ...docInputProperties,
     output_dir: {
       type: "string" as const,
       description:
@@ -216,7 +571,85 @@ export const exportGerberSchema = {
         "instead. When omitted, file contents are always returned inline.",
     },
   },
-  required: ["document"],
+  required: [],
+};
+
+/** JSON Schema for add_coil tool. */
+export const addCoilSchema = {
+  type: "object" as const,
+  properties: {
+    ...docInputProperties,
+    center: {
+      type: "object" as const,
+      description: "Spiral center on the board, mm",
+      properties: { x: { type: "number" as const }, y: { type: "number" as const } },
+      required: ["x", "y"],
+    },
+    turns: { type: "number" as const, description: "Number of turns (fractional allowed)" },
+    inner_radius: { type: "number" as const, description: "Innermost turn radius, mm" },
+    outer_radius: { type: "number" as const, description: "Outermost turn radius, mm" },
+    trace_width: { type: "number" as const, description: "Copper trace width, mm" },
+    clearance: {
+      type: "number" as const,
+      description:
+        "Minimum gap between adjacent turns, mm (default: design-rule clearance). " +
+        "The radial pitch (outer-inner)/turns must be >= trace_width + clearance.",
+    },
+    net: { type: "string" as const, description: "Net name for the coil copper (e.g. 'PHA')" },
+    layer: { type: "string" as const, description: "Copper layer (default 'FCu')" },
+    direction: {
+      type: "string" as const,
+      description: "'ccw' (default) or 'cw', looking at the front of the board",
+    },
+    start_angle_deg: {
+      type: "number" as const,
+      description: "Angle of the inner endpoint (default 0 = +X from center)",
+    },
+    segments_per_turn: {
+      type: "number" as const,
+      description: "Polyline resolution (default 48)",
+    },
+    inner_via: {
+      type: "boolean" as const,
+      description:
+        "Place a via at the inner endpoint to escape on another layer " +
+        "(default false). A spiral's inner end is otherwise trapped.",
+    },
+    via_to_layer: {
+      type: "string" as const,
+      description: "Layer the inner via connects to (default 'BCu')",
+    },
+  },
+  required: ["center", "turns", "inner_radius", "outer_radius", "trace_width", "net"],
+};
+
+/** JSON Schema for board_from_solid tool. */
+export const boardFromSolidSchema = {
+  type: "object" as const,
+  properties: {
+    document_id: {
+      type: "string" as const,
+      description: "CAD session id (open_document / create_cad_loon) holding the solid",
+    },
+    part_id: {
+      type: "string" as const,
+      description:
+        "Root id of the part to trace (from `read`). Defaults to the only " +
+        "solid part; errors with a list if the document has several.",
+    },
+    thickness: { type: "number" as const, description: "Board thickness in mm (default 1.6)" },
+    resolution: {
+      type: "number" as const,
+      description:
+        "Projection grid cell size in mm (default: auto, ~1/400 of the part " +
+        "extent). Smaller = more outline detail.",
+    },
+    simplify_tolerance: {
+      type: "number" as const,
+      description: "Polygon simplification tolerance in mm (default: 1.5 × cell size)",
+    },
+  },
+  required: ["document_id"],
 };
 
 /** JSON Schema for calc_impedance tool. */
@@ -255,12 +688,13 @@ export const calcImpedanceSchema = {
 // Tool implementations
 // ============================================================================
 
-/** Create a schematic from component and wire definitions. */
-export function createSchematic(args: Record<string, unknown>) {
+/** Create a schematic from component, wire, and netlist definitions. */
+export async function createSchematic(args: Record<string, unknown>) {
   const title = (args.title as string) || undefined;
   const componentsInput = (args.components as Array<Record<string, unknown>>) || [];
   const wiresInput = (args.wires as Array<Record<string, unknown>>) || [];
   const labelsInput = (args.labels as Array<Record<string, unknown>>) || [];
+  const netsInput = (args.nets as Record<string, string[]>) || undefined;
 
   const components: SchematicComponent[] = componentsInput.map((c) => ({
     ref: c.ref as string,
@@ -293,10 +727,63 @@ export function createSchematic(args: Record<string, unknown>) {
     wires,
     junctions: [],
     labels,
+    ...(netsInput ? { nets: netsInput } : {}),
   };
+
+  // Validate the explicit netlist eagerly so bad pin refs fail this call,
+  // not place_components three steps later.
+  if (netsInput) validateExplicitNets(schematic, netsInput);
+
+  const warnings: string[] = [];
+
+  // A label only joins a net when it sits exactly on a pin or wire endpoint
+  // (within tolerance). A label that touches nothing silently names nothing —
+  // the classic way netlists break — so say it out loud.
+  for (const label of labels) {
+    const touchesWire = wires.some(
+      (w) =>
+        (Math.abs(w.start.x - label.position.x) < POSITION_TOLERANCE &&
+          Math.abs(w.start.y - label.position.y) < POSITION_TOLERANCE) ||
+        (Math.abs(w.end.x - label.position.x) < POSITION_TOLERANCE &&
+          Math.abs(w.end.y - label.position.y) < POSITION_TOLERANCE),
+    );
+    const touchesPin = components.some((comp) =>
+      comp.pins.some((pin) => {
+        const world = pinWorldPosition(comp, pin);
+        return (
+          Math.abs(world.x - label.position.x) < POSITION_TOLERANCE &&
+          Math.abs(world.y - label.position.y) < POSITION_TOLERANCE
+        );
+      }),
+    );
+    if (!touchesWire && !touchesPin) {
+      warnings.push(
+        `Label "${label.name}" at (${label.position.x}, ${label.position.y}) doesn't touch any pin or wire endpoint — it names nothing. Move it onto a pin/wire, or declare the net in \`nets\` instead.`,
+      );
+    }
+  }
 
   const doc = createDocument();
   doc.schematic = schematic;
+  const documentId = registerSession(doc);
+
+  // Resolve connectivity now and echo it back, so a broken netlist is
+  // visible immediately instead of after placement.
+  const derived = await deriveNets(schematic);
+  warnings.push(...derived.warnings);
+  const netsPreview: Record<string, string[]> = {};
+  for (const [name, pins] of derived.nets) netsPreview[name] = pins;
+
+  const connectedPins = new Set(derived.netByPin.keys());
+  const unconnected: string[] = [];
+  for (const comp of components) {
+    for (const pin of comp.pins) {
+      if (pin.pin_type === "NotConnected") continue;
+      if (!connectedPins.has(pinKey(comp.ref, pin.number))) {
+        unconnected.push(`${comp.ref}.${pin.number}`);
+      }
+    }
+  }
 
   return {
     content: [
@@ -304,10 +791,13 @@ export function createSchematic(args: Record<string, unknown>) {
         type: "text" as const,
         text: JSON.stringify({
           success: true,
+          document_id: documentId,
           components: components.length,
           wires: wires.length,
           labels: labels.length,
-          document: doc,
+          nets: netsPreview,
+          ...(unconnected.length > 0 ? { unconnected_pins: unconnected } : {}),
+          ...(warnings.length > 0 ? { warnings } : {}),
         }),
       },
     ],
@@ -332,7 +822,7 @@ function forceDirectedRefine(
     const seen = new Set<string>();
     for (const pin of comp.pins) {
       const netId = useConnectivity
-        ? netByPin.get(`${comp.ref}\u0000${pin.number}`)
+        ? netByPin.get(pinKey(comp.ref, pin.number))
         : pin.name && pin.name !== "~"
           ? pin.name
           : undefined;
@@ -389,11 +879,28 @@ function forceDirectedRefine(
   }
 }
 
+/** Return the polygon wound counter-clockwise (kernel extrusion convention). */
+function ensureCcw(poly: Vec2[]): Vec2[] {
+  return loopSignedArea(poly) < 0 ? [...poly].reverse() : poly;
+}
+
+/** Regular polygon approximation of a circle, counter-clockwise. */
+function circlePolygon(center: Vec2, radius: number, segments: number): Vec2[] {
+  const pts: Vec2[] = [];
+  for (let i = 0; i < segments; i++) {
+    const a = (i / segments) * 2 * Math.PI;
+    pts.push({
+      x: Math.round((center.x + radius * Math.cos(a)) * 1000) / 1000,
+      y: Math.round((center.y + radius * Math.sin(a)) * 1000) / 1000,
+    });
+  }
+  return pts;
+}
+
 /** Place components on a PCB from schematic data. */
 export async function placeComponents(args: Record<string, unknown>) {
-  const doc = args.document as Document;
-  const boardWidth = args.board_width as number;
-  const boardHeight = args.board_height as number;
+  const ctx = resolveDocInput(args);
+  const doc = ctx.doc;
   const boardThickness = (args.board_thickness as number) || 1.6;
 
   if (!doc.schematic) {
@@ -403,32 +910,109 @@ export async function placeComponents(args: Record<string, unknown>) {
     };
   }
 
-  // Derive pad nets from schematic connectivity (wires + junctions + labels)
-  // using the kernel netlist extractor. Pin names only serve as net ids as a
-  // fallback when the schematic has no wires or the kernel is unavailable.
-  const netByPin = new Map<string, string>();
-  if (doc.schematic.wires.length > 0) {
-    const netlist = await generateNetlist(doc.schematic);
-    for (const net of netlist.nets) {
-      // Single-connection groups are unconnected pins, not real nets.
-      if (net.connections.length < 2) continue;
-      for (const conn of net.connections) {
-        netByPin.set(`${conn.component_ref}\u0000${conn.pin_number}`, net.name);
-      }
-    }
-  }
+  // Derive pad nets from schematic connectivity (wires + junctions + labels
+  // + the explicit `nets` map) — see deriveNets. Pin names only serve as net
+  // ids as a fallback when there's no connectivity at all.
+  const derived = await deriveNets(doc.schematic);
+  const netByPin = derived.netByPin;
   const useConnectivity = netByPin.size > 0;
+  const warnings: string[] = [...derived.warnings];
 
-  // Create PCB structure
-  const outline: BoardOutline = {
-    vertices: [
+  // Resolve the board outline: explicit polygon > circle shorthand > rectangle.
+  const outlineArg = args.outline as
+    | { vertices: Vec2[]; cutouts?: Vec2[][] }
+    | undefined;
+  const shapeArg = args.board_shape as
+    | {
+        type?: string;
+        outer_diameter?: number;
+        inner_diameter?: number;
+        center?: Vec2;
+        segments?: number;
+      }
+    | undefined;
+  const boardWidth = args.board_width as number | undefined;
+  const boardHeight = args.board_height as number | undefined;
+
+  let vertices: Vec2[];
+  let cutouts: Vec2[][] | undefined;
+  // Circle metadata for radial placement defaults.
+  let circleCenter: Vec2 | undefined;
+  let circleOuterR: number | undefined;
+  let circleInnerR = 0;
+
+  if (outlineArg) {
+    if (!Array.isArray(outlineArg.vertices) || outlineArg.vertices.length < 3) {
+      return {
+        content: [{ type: "text" as const, text: "Error: outline.vertices needs at least 3 points" }],
+        isError: true,
+      };
+    }
+    vertices = outlineArg.vertices;
+    cutouts = outlineArg.cutouts;
+  } else if (shapeArg) {
+    const od = shapeArg.outer_diameter;
+    if (!od || od <= 0) {
+      return {
+        content: [{ type: "text" as const, text: "Error: board_shape.outer_diameter must be > 0" }],
+        isError: true,
+      };
+    }
+    const id = shapeArg.inner_diameter ?? 0;
+    if (id < 0 || id >= od) {
+      return {
+        content: [
+          { type: "text" as const, text: "Error: board_shape.inner_diameter must be >= 0 and < outer_diameter" },
+        ],
+        isError: true,
+      };
+    }
+    const segments = Math.max(16, Math.round(shapeArg.segments ?? 64));
+    circleCenter = shapeArg.center ?? { x: od / 2, y: od / 2 };
+    circleOuterR = od / 2;
+    circleInnerR = id / 2;
+    vertices = circlePolygon(circleCenter, circleOuterR, segments);
+    cutouts = id > 0 ? [circlePolygon(circleCenter, circleInnerR, segments)] : undefined;
+  } else if (boardWidth && boardHeight) {
+    vertices = [
       { x: 0, y: 0 },
       { x: boardWidth, y: 0 },
       { x: boardWidth, y: boardHeight },
       { x: 0, y: boardHeight },
-    ],
+    ];
+  } else {
+    return {
+      content: [
+        {
+          type: "text" as const,
+          text:
+            "Error: specify the board outline — board_width + board_height (rectangle), " +
+            "board_shape ({type:'circle', outer_diameter, inner_diameter?}), or " +
+            "outline ({vertices, cutouts?}, e.g. from board_from_solid)",
+        },
+      ],
+      isError: true,
+    };
+  }
+
+  // Normalize winding to CCW — the kernel extruder expects it, and
+  // agent-supplied polygons arrive in either orientation.
+  vertices = ensureCcw(vertices);
+  cutouts = cutouts?.map(ensureCcw);
+
+  const outline: BoardOutline = {
+    vertices,
+    ...(cutouts && cutouts.length > 0 ? { cutouts } : {}),
     thickness: boardThickness,
   };
+
+  // Placement bounds from the outline's bounding box.
+  const bboxMinX = Math.min(...vertices.map((v) => v.x));
+  const bboxMaxX = Math.max(...vertices.map((v) => v.x));
+  const bboxMinY = Math.min(...vertices.map((v) => v.y));
+  const bboxMaxY = Math.max(...vertices.map((v) => v.y));
+  const extentW = bboxMaxX - bboxMinX;
+  const extentH = bboxMaxY - bboxMinY;
 
   const stackup: LayerStackup = {
     layers: [
@@ -453,13 +1037,13 @@ export async function placeComponents(args: Record<string, unknown>) {
     minDrill: 0.2,
   };
 
-  // Grid placement sized to the board: split the usable area into cells so
-  // every component lands inside the outline regardless of board size.
+  // Grid placement sized to the outline's bounding box: split the usable
+  // area into cells so every component lands inside it regardless of size.
   const components = doc.schematic.components;
   const strategy = (args.strategy as string) || "grid";
-  const margin = Math.min(5, boardWidth / 8, boardHeight / 8);
-  const usableW = boardWidth - 2 * margin;
-  const usableH = boardHeight - 2 * margin;
+  const margin = Math.min(5, extentW / 8, extentH / 8);
+  const usableW = extentW - 2 * margin;
+  const usableH = extentH - 2 * margin;
   if (usableW <= 0 || usableH <= 0) {
     return {
       content: [{ type: "text" as const, text: "Error: Board too small for placement" }],
@@ -473,26 +1057,56 @@ export async function placeComponents(args: Record<string, unknown>) {
   const cellW = usableW / cols;
   const cellH = usableH / Math.max(rows, 1);
 
-  const warnings: string[] = [];
-  if (n > 1 && Math.min(cellW, cellH) < 4) {
+  if (n > 1 && strategy !== "radial" && Math.min(cellW, cellH) < 4) {
     warnings.push(
       `Placement cells are ${Math.min(cellW, cellH).toFixed(1)}mm — components may overlap; consider a larger board`,
     );
   }
 
-  const positions: Vec2[] = components.map((_, i) => ({
-    x: margin + ((i % cols) + 0.5) * cellW,
-    y: margin + (Math.floor(i / cols) + 0.5) * cellH,
-  }));
-
-  if (strategy === "force_directed") {
-    forceDirectedRefine(components, positions, netByPin, useConnectivity, {
-      minX: margin,
-      minY: margin,
-      maxX: boardWidth - margin,
-      maxY: boardHeight - margin,
-      minSep: Math.min(cellW, cellH),
+  let positions: Vec2[];
+  if (strategy === "radial") {
+    // Even angular spacing on a ring — the natural layout for annular
+    // boards (motor stators, LED rings). Components keep input order.
+    const center = circleCenter ?? {
+      x: (bboxMinX + bboxMaxX) / 2,
+      y: (bboxMinY + bboxMaxY) / 2,
+    };
+    const defaultRadius =
+      circleOuterR !== undefined
+        ? (circleInnerR + circleOuterR) / 2
+        : 0.35 * Math.min(extentW, extentH);
+    const radius = (args.radial_radius as number) || defaultRadius;
+    const startAngle = (((args.radial_start_angle_deg as number) || 0) * Math.PI) / 180;
+    positions = components.map((_, i) => {
+      const a = startAngle + (i / Math.max(n, 1)) * 2 * Math.PI;
+      return {
+        x: center.x + radius * Math.cos(a),
+        y: center.y + radius * Math.sin(a),
+      };
     });
+    if (n > 1) {
+      const arcSep = (2 * Math.PI * radius) / n;
+      if (arcSep < 4) {
+        warnings.push(
+          `Radial spacing is ${arcSep.toFixed(1)}mm between components — they may overlap; increase radial_radius or the board size`,
+        );
+      }
+    }
+  } else {
+    positions = components.map((_, i) => ({
+      x: bboxMinX + margin + ((i % cols) + 0.5) * cellW,
+      y: bboxMinY + margin + (Math.floor(i / cols) + 0.5) * cellH,
+    }));
+
+    if (strategy === "force_directed") {
+      forceDirectedRefine(components, positions, netByPin, useConnectivity, {
+        minX: bboxMinX + margin,
+        minY: bboxMinY + margin,
+        maxX: bboxMaxX - margin,
+        maxY: bboxMaxY - margin,
+        minSep: Math.min(cellW, cellH),
+      });
+    }
   }
 
   const nets: Net[] = [];
@@ -501,7 +1115,7 @@ export async function placeComponents(args: Record<string, unknown>) {
   const netIdForPin = (comp: SchematicComponent, pin: SchematicPin): string | undefined => {
     // Net from schematic connectivity; pin-name fallback for wireless docs.
     const netId = useConnectivity
-      ? netByPin.get(`${comp.ref}\u0000${pin.number}`)
+      ? netByPin.get(pinKey(comp.ref, pin.number))
       : pin.name && pin.name !== "~"
         ? pin.name
         : undefined;
@@ -569,15 +1183,26 @@ export async function placeComponents(args: Record<string, unknown>) {
     zones: [],
   };
 
-  // Create a PcbBoard DAG node instead of legacy doc.pcb
-  const existingIds = Object.keys(doc.nodes).map(Number);
-  const nid = existingIds.length > 0 ? Math.max(...existingIds) + 1 : 1;
-  doc.nodes[String(nid)] = {
-    id: nid,
-    name: "PCB Board",
-    op: { type: "PcbBoard", board: pcb } as any,
-  };
-  doc.roots.push({ root: nid, material: "__pcb_fr4__" });
+  // Create (or replace) the PcbBoard DAG node instead of legacy doc.pcb.
+  // Re-running place_components on a session re-lays-out the same board
+  // rather than stacking a second one.
+  const existingPcbIds = getPcbNodeIds(doc);
+  if (existingPcbIds.length > 0) {
+    const nid = existingPcbIds[0]!;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    doc.nodes[String(nid)]!.op = { type: "PcbBoard", board: pcb } as any;
+    warnings.push("Document already had a PCB — its board was replaced");
+  } else {
+    const existingIds = Object.keys(doc.nodes).map(Number);
+    const nid = existingIds.length > 0 ? Math.max(...existingIds) + 1 : 1;
+    doc.nodes[String(nid)] = {
+      id: nid,
+      name: "PCB Board",
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      op: { type: "PcbBoard", board: pcb } as any,
+    };
+    doc.roots.push({ root: nid, material: "__pcb_fr4__" });
+  }
   if (!doc.materials["__pcb_fr4__"]) {
     doc.materials["__pcb_fr4__"] = {
       name: "__pcb_fr4__",
@@ -586,6 +1211,9 @@ export async function placeComponents(args: Record<string, unknown>) {
       metallic: 0.0,
     };
   }
+
+  const netsSummary: Record<string, string[]> = {};
+  for (const [name, pins] of derived.nets) netsSummary[name] = pins;
 
   return {
     content: [
@@ -596,8 +1224,15 @@ export async function placeComponents(args: Record<string, unknown>) {
           footprints_placed: footprints.length,
           strategy,
           ...(warnings.length > 0 ? { warnings } : {}),
-          board: { width: boardWidth, height: boardHeight, thickness: boardThickness },
-          document: doc,
+          board: {
+            width: extentW,
+            height: extentH,
+            thickness: boardThickness,
+            shape: outlineArg ? "polygon" : shapeArg ? "circle" : "rect",
+            ...(cutouts && cutouts.length > 0 ? { cutouts: cutouts.length } : {}),
+          },
+          nets: netsSummary,
+          ...docResultPayload(ctx),
         }),
       },
     ],
@@ -606,7 +1241,8 @@ export async function placeComponents(args: Record<string, unknown>) {
 
 /** Route nets on a PCB with the kernel autorouter (obstacle-avoiding). */
 export async function routeNets(args: Record<string, unknown>) {
-  const doc = args.document as Document;
+  const ctx = resolveDocInput(args);
+  const doc = ctx.doc;
   const traceWidth = (args.trace_width as number) || undefined;
   const netsFilter = (args.nets as string[]) || [];
 
@@ -733,7 +1369,7 @@ export async function routeNets(args: Record<string, unknown>) {
                 ],
               }
             : {}),
-          document: doc,
+          ...docResultPayload(ctx),
         }),
       },
     ],
@@ -742,7 +1378,7 @@ export async function routeNets(args: Record<string, unknown>) {
 
 /** Run DRC checks on a PCB. */
 export async function runDrc(args: Record<string, unknown>) {
-  const doc = args.document as Document;
+  const { doc } = resolveDocInput(args);
   const pcb = getDocPcb(doc);
 
   if (!pcb) {
@@ -856,8 +1492,8 @@ export async function runDrc(args: Record<string, unknown>) {
 }
 
 /** Run ERC checks on a schematic. */
-export function runErc(args: Record<string, unknown>) {
-  const doc = args.document as Document;
+export async function runErc(args: Record<string, unknown>) {
+  const { doc } = resolveDocInput(args);
 
   if (!doc.schematic) {
     return {
@@ -887,25 +1523,19 @@ export function runErc(args: Record<string, unknown>) {
     }
   }
 
-  // Check for unconnected pins (pins at positions with no wires)
+  // Unconnected pins, judged from the same connectivity model the rest of
+  // the pipeline uses (wires + labels + explicit nets, rotation-aware) —
+  // so run_erc can never contradict the netlist create_schematic reported.
+  const derived = await deriveNets(sheet);
   for (const comp of sheet.components) {
     for (const pin of comp.pins) {
       if (pin.pin_type === "NotConnected") continue;
-      const pinX = comp.position.x + pin.position.x;
-      const pinY = comp.position.y + pin.position.y;
-
-      const connected = sheet.wires.some(w =>
-        (Math.abs(w.start.x - pinX) < 0.01 && Math.abs(w.start.y - pinY) < 0.01) ||
-        (Math.abs(w.end.x - pinX) < 0.01 && Math.abs(w.end.y - pinY) < 0.01)
-      );
-
-      if (!connected) {
-        violations.push({
-          severity: pin.pin_type === "PowerInput" ? "Error" : "Warning",
-          message: `Unconnected pin: ${comp.ref} pin ${pin.number} (${pin.name})`,
-          position: { x: pinX, y: pinY },
-        });
-      }
+      if (derived.netByPin.has(pinKey(comp.ref, pin.number))) continue;
+      violations.push({
+        severity: pin.pin_type === "PowerInput" ? "Error" : "Warning",
+        message: `Unconnected pin: ${comp.ref} pin ${pin.number} (${pin.name})`,
+        position: pinWorldPosition(comp, pin),
+      });
     }
   }
 
@@ -927,7 +1557,7 @@ export function runErc(args: Record<string, unknown>) {
 
 /** Export Gerber files for a PCB. */
 export async function exportGerber(args: Record<string, unknown>) {
-  const doc = args.document as Document;
+  const { doc } = resolveDocInput(args);
   const outputDir = args.output_dir as string | undefined;
   const pcb = getDocPcb(doc);
 
@@ -1077,6 +1707,533 @@ export function calcImpedance(args: Record<string, unknown>) {
       {
         type: "text" as const,
         text: JSON.stringify(result),
+      },
+    ],
+  };
+}
+
+// ============================================================================
+// add_coil — first-class spiral trace primitive
+// ============================================================================
+
+const round3 = (v: number) => Math.round(v * 1000) / 1000;
+
+/**
+ * Generate an Archimedean spiral of copper traces — the primitive a PCB
+ * motor stator or planar inductor is actually made of. Validates the
+ * turn-to-turn gap against clearance, assigns every segment to a net, and
+ * can drop a via at the inner endpoint (which is otherwise trapped).
+ */
+export function addCoil(args: Record<string, unknown>) {
+  const ctx = resolveDocInput(args);
+  const pcb = getDocPcb(ctx.doc);
+  if (!pcb) {
+    return {
+      content: [
+        {
+          type: "text" as const,
+          text: "Error: Document has no PCB — run place_components first (or open a document that has a board)",
+        },
+      ],
+      isError: true,
+    };
+  }
+
+  const center = args.center as Vec2;
+  const turns = args.turns as number;
+  const innerR = args.inner_radius as number;
+  const outerR = args.outer_radius as number;
+  const traceWidth = args.trace_width as number;
+  const net = String(args.net ?? "");
+  const layer = ((args.layer as string) || "FCu") as PcbLayer;
+  const direction = (args.direction as string) || "ccw";
+  const startAngleDeg = (args.start_angle_deg as number) || 0;
+  const segmentsPerTurn = Math.min(
+    720,
+    Math.max(12, Math.round((args.segments_per_turn as number) || 48)),
+  );
+  const clearance = (args.clearance as number) ?? pcb.rules.defaultRules.clearance;
+
+  const fail = (text: string) => ({
+    content: [{ type: "text" as const, text: `Error: ${text}` }],
+    isError: true as const,
+  });
+
+  if (!center || typeof center.x !== "number" || typeof center.y !== "number") {
+    return fail("center must be {x, y} in mm");
+  }
+  if (!(turns > 0)) return fail("turns must be > 0");
+  if (!(innerR >= 0)) return fail("inner_radius must be >= 0");
+  if (!(outerR > innerR)) return fail("outer_radius must be > inner_radius");
+  if (!(traceWidth > 0)) return fail("trace_width must be > 0");
+  if (!net) return fail("net is required — coil copper must belong to a net");
+  if (!/Cu$/.test(layer)) {
+    return fail(`layer "${layer}" is not a copper layer (use FCu, BCu, In1Cu, ...)`);
+  }
+  if (direction !== "ccw" && direction !== "cw") {
+    return fail(`direction must be "ccw" or "cw", got "${direction}"`);
+  }
+
+  // The radial pitch must fit the trace plus the turn-to-turn gap.
+  const pitch = (outerR - innerR) / turns;
+  const gap = pitch - traceWidth;
+  if (gap + 1e-9 < clearance) {
+    const maxTurns = Math.floor((outerR - innerR) / (traceWidth + clearance));
+    return fail(
+      `coil doesn't fit: radial pitch ${pitch.toFixed(3)}mm leaves a ${gap.toFixed(3)}mm gap between turns, ` +
+        `below the ${clearance}mm clearance. With trace_width ${traceWidth}mm the annulus ` +
+        `${innerR}–${outerR}mm fits at most ${maxTurns} turn(s) — reduce turns, narrow the trace, ` +
+        `or widen the annulus.`,
+    );
+  }
+
+  // Sample the spiral: r grows linearly with angle (Archimedean). Samples
+  // that round to the previous point are dropped — no zero-length traces.
+  const sign = direction === "cw" ? -1 : 1;
+  const theta0 = (startAngleDeg * Math.PI) / 180;
+  const steps = Math.max(2, Math.ceil(turns * segmentsPerTurn));
+  const pts: Vec2[] = [];
+  for (let s = 0; s <= steps; s++) {
+    const t = s / steps;
+    const theta = theta0 + sign * t * turns * 2 * Math.PI;
+    const r = innerR + t * (outerR - innerR);
+    const p = {
+      x: round3(center.x + r * Math.cos(theta)),
+      y: round3(center.y + r * Math.sin(theta)),
+    };
+    const prev = pts[pts.length - 1];
+    if (!prev || prev.x !== p.x || prev.y !== p.y) pts.push(p);
+  }
+
+  let lengthMm = 0;
+  let tracesAdded = 0;
+  for (let i = 0; i + 1 < pts.length; i++) {
+    pcb.traces.push({
+      start: pts[i],
+      end: pts[i + 1],
+      width: traceWidth,
+      layer,
+      net,
+    });
+    tracesAdded++;
+    lengthMm += Math.hypot(pts[i + 1].x - pts[i].x, pts[i + 1].y - pts[i].y);
+  }
+
+  if (!pcb.nets.some((n) => n.id === net)) {
+    pcb.nets.push({ id: net, name: net });
+  }
+
+  let via: { position: Vec2; startLayer: PcbLayer; endLayer: PcbLayer } | undefined;
+  if (args.inner_via) {
+    const viaTo = ((args.via_to_layer as string) || "BCu") as PcbLayer;
+    const v = {
+      position: pts[0],
+      diameter: pcb.rules.defaultRules.viaDiameter,
+      drill: pcb.rules.defaultRules.viaDrill,
+      startLayer: layer,
+      endLayer: viaTo,
+      net,
+    };
+    pcb.vias.push(v);
+    via = { position: v.position, startLayer: layer, endLayer: viaTo };
+  }
+
+  // DC resistance estimate: ρ_cu = 1.68e-5 Ω·mm, cross-section = width × copper thickness.
+  const copperT =
+    pcb.stackup.layers.find((l) => l.layer === layer)?.copperThickness ?? 0.035;
+  const resistance = (1.68e-5 * lengthMm) / (traceWidth * copperT);
+
+  return {
+    content: [
+      {
+        type: "text" as const,
+        text: JSON.stringify({
+          success: true,
+          net,
+          layer,
+          turns,
+          direction,
+          traces_added: tracesAdded,
+          length_mm: Math.round(lengthMm * 100) / 100,
+          estimated_dc_resistance_ohms: Math.round(resistance * 1000) / 1000,
+          inner_endpoint: pts[0],
+          outer_endpoint: pts[pts.length - 1],
+          ...(via ? { via } : {}),
+          ...docResultPayload(ctx),
+        }),
+      },
+    ],
+  };
+}
+
+// ============================================================================
+// board_from_solid — derive a board outline from solid-model geometry
+// ============================================================================
+
+/** Point-in-triangle test (2D, inclusive of edges). */
+function pointInTriangle2D(
+  px: number,
+  py: number,
+  ax: number,
+  ay: number,
+  bx: number,
+  by: number,
+  cx: number,
+  cy: number,
+): boolean {
+  const d1 = (px - bx) * (ay - by) - (ax - bx) * (py - by);
+  const d2 = (px - cx) * (by - cy) - (bx - cx) * (py - cy);
+  const d3 = (px - ax) * (cy - ay) - (cx - ax) * (py - ay);
+  const hasNeg = d1 < 0 || d2 < 0 || d3 < 0;
+  const hasPos = d1 > 0 || d2 > 0 || d3 > 0;
+  return !(hasNeg && hasPos);
+}
+
+/** Perpendicular distance from p to segment ab. */
+function pointSegDist(p: Vec2, a: Vec2, b: Vec2): number {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const lenSq = dx * dx + dy * dy;
+  if (lenSq === 0) return Math.hypot(p.x - a.x, p.y - a.y);
+  let t = ((p.x - a.x) * dx + (p.y - a.y) * dy) / lenSq;
+  t = Math.max(0, Math.min(1, t));
+  return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
+}
+
+/** Ramer–Douglas–Peucker simplification of an open polyline. */
+function rdpSimplify(points: Vec2[], eps: number): Vec2[] {
+  if (points.length < 3) return points;
+  const a = points[0];
+  const b = points[points.length - 1];
+  let maxD = 0;
+  let idx = 0;
+  for (let i = 1; i < points.length - 1; i++) {
+    const d = pointSegDist(points[i], a, b);
+    if (d > maxD) {
+      maxD = d;
+      idx = i;
+    }
+  }
+  if (maxD <= eps) return [a, b];
+  const left = rdpSimplify(points.slice(0, idx + 1), eps);
+  const right = rdpSimplify(points.slice(idx), eps);
+  return [...left.slice(0, -1), ...right];
+}
+
+/** Simplify a closed loop: split at the vertex farthest from v0, RDP both halves. */
+function simplifyLoop(loop: Vec2[], eps: number): Vec2[] {
+  if (loop.length < 8) return loop;
+  let far = 1;
+  let maxD = 0;
+  for (let i = 1; i < loop.length; i++) {
+    const d = Math.hypot(loop[i].x - loop[0].x, loop[i].y - loop[0].y);
+    if (d > maxD) {
+      maxD = d;
+      far = i;
+    }
+  }
+  const chain1 = rdpSimplify(loop.slice(0, far + 1), eps);
+  const chain2 = rdpSimplify([...loop.slice(far), loop[0]], eps);
+  // Drop the duplicated junction vertices when re-joining.
+  return [...chain1.slice(0, -1), ...chain2.slice(0, -1)];
+}
+
+/** Shoelace signed area of a closed loop (CCW positive). */
+function loopSignedArea(loop: Vec2[]): number {
+  let area = 0;
+  for (let i = 0; i < loop.length; i++) {
+    const a = loop[i];
+    const b = loop[(i + 1) % loop.length];
+    area += a.x * b.y - b.x * a.y;
+  }
+  return area / 2;
+}
+
+/** Even-odd point-in-polygon test. */
+function pointInPolygon(p: Vec2, poly: Vec2[]): boolean {
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const a = poly[i];
+    const b = poly[j];
+    if (
+      a.y > p.y !== b.y > p.y &&
+      p.x < ((b.x - a.x) * (p.y - a.y)) / (b.y - a.y) + a.x
+    ) {
+      inside = !inside;
+    }
+  }
+  return inside;
+}
+
+/**
+ * Trace the boundary loops of a binary occupancy grid. Emits directed
+ * segments along cell edges with the filled region on the left, then stitches
+ * them into closed loops (outer boundaries CCW, holes CW). At saddle corners
+ * the leftmost turn is taken; loops that still touch themselves there are
+ * pinched apart afterwards by splitAtRepeatedVertices.
+ */
+function traceGridBoundaries(
+  grid: Uint8Array,
+  gw: number,
+  gh: number,
+): Array<Array<{ x: number; y: number }>> {
+  const filled = (i: number, j: number) =>
+    i >= 0 && j >= 0 && i < gw && j < gh && grid[j * gw + i] === 1;
+
+  // Directed boundary segments keyed by start corner.
+  const segs = new Map<string, Array<{ tx: number; ty: number; used: boolean }>>();
+  const key = (x: number, y: number) => `${x},${y}`;
+  const addSeg = (sx: number, sy: number, tx: number, ty: number) => {
+    const k = key(sx, sy);
+    const arr = segs.get(k) ?? [];
+    arr.push({ tx, ty, used: false });
+    segs.set(k, arr);
+  };
+
+  for (let j = 0; j < gh; j++) {
+    for (let i = 0; i < gw; i++) {
+      if (grid[j * gw + i] !== 1) continue;
+      if (!filled(i, j - 1)) addSeg(i, j, i + 1, j); // bottom, heading +X
+      if (!filled(i + 1, j)) addSeg(i + 1, j, i + 1, j + 1); // right, heading +Y
+      if (!filled(i, j + 1)) addSeg(i + 1, j + 1, i, j + 1); // top, heading -X
+      if (!filled(i - 1, j)) addSeg(i, j + 1, i, j); // left, heading -Y
+    }
+  }
+
+  const loops: Array<Array<{ x: number; y: number }>> = [];
+  for (const [startKey, startArr] of segs) {
+    for (const startSeg of startArr) {
+      if (startSeg.used) continue;
+      const [sx, sy] = startKey.split(",").map(Number);
+      const loop: Array<{ x: number; y: number }> = [{ x: sx, y: sy }];
+      let cx = sx;
+      let cy = sy;
+      let seg = startSeg;
+      for (;;) {
+        seg.used = true;
+        const dirX = seg.tx - cx;
+        const dirY = seg.ty - cy;
+        cx = seg.tx;
+        cy = seg.ty;
+        if (cx === sx && cy === sy) break;
+        loop.push({ x: cx, y: cy });
+        const candidates = (segs.get(key(cx, cy)) ?? []).filter((s) => !s.used);
+        if (candidates.length === 0) break; // degenerate — shouldn't happen
+        // Leftmost turn first: cross(dir, cand) descending, then dot descending.
+        candidates.sort((a, b) => {
+          const crossA = dirX * (a.ty - cy) - dirY * (a.tx - cx);
+          const crossB = dirX * (b.ty - cy) - dirY * (b.tx - cx);
+          if (crossA !== crossB) return crossB - crossA;
+          const dotA = dirX * (a.tx - cx) + dirY * (a.ty - cy);
+          const dotB = dirX * (b.tx - cx) + dirY * (b.ty - cy);
+          return dotB - dotA;
+        });
+        seg = candidates[0];
+      }
+      if (loop.length >= 4) loops.push(loop);
+    }
+  }
+  return loops;
+}
+
+/**
+ * Split a traced loop at repeated vertices into simple loops. The boundary
+ * walker can route two holes (or two lobes) that touch diagonally through
+ * the same corner, producing one self-touching polygon — pinch it apart.
+ */
+function splitAtRepeatedVertices(
+  loop: Array<{ x: number; y: number }>,
+): Array<Array<{ x: number; y: number }>> {
+  const out: Array<Array<{ x: number; y: number }>> = [];
+  const stack: Array<Array<{ x: number; y: number }>> = [loop];
+  while (stack.length > 0) {
+    const cur = stack.pop()!;
+    const seen = new Map<string, number>();
+    let split = false;
+    for (let i = 0; i < cur.length; i++) {
+      const k = `${cur[i].x},${cur[i].y}`;
+      const prev = seen.get(k);
+      if (prev !== undefined) {
+        const inner = cur.slice(prev, i);
+        const rest = [...cur.slice(0, prev), ...cur.slice(i)];
+        if (inner.length >= 4) stack.push(inner);
+        if (rest.length >= 4) stack.push(rest);
+        split = true;
+        break;
+      }
+      seen.set(k, i);
+    }
+    if (!split && cur.length >= 4) out.push(cur);
+  }
+  return out;
+}
+
+/**
+ * Derive a PCB board outline from a solid part's geometry: evaluate the CAD
+ * session, project the part's mesh onto the XY plane, rasterize it to an
+ * occupancy grid, and trace the boundary — outer outline plus interior
+ * cutouts (e.g. a stator's center bore). The result plugs straight into
+ * place_components' `outline` parameter.
+ */
+export function boardFromSolid(args: Record<string, unknown>, engine: Engine) {
+  const documentId = String(args.document_id ?? "");
+  const doc = getSession(documentId);
+  const thickness = (args.thickness as number) || 1.6;
+
+  const scene = engine.evaluate(doc);
+  const visibleRoots = doc.roots.filter((e) => e.visible !== false);
+
+  const candidates: Array<{ rootId: number; name?: string; mesh: TriangleMesh }> = [];
+  for (let i = 0; i < scene.parts.length && i < visibleRoots.length; i++) {
+    const rootId = visibleRoots[i].root;
+    const node = doc.nodes[String(rootId)];
+    const opType = (node?.op as { type?: string } | undefined)?.type;
+    if (opType === "PcbBoard") continue;
+    const mesh = scene.parts[i].mesh;
+    if (!mesh || mesh.positions.length === 0) continue;
+    candidates.push({ rootId, name: node?.name ?? undefined, mesh });
+  }
+
+  if (candidates.length === 0) {
+    throw new Error("Document has no solid parts to trace (PcbBoard parts are excluded)");
+  }
+
+  const partId = args.part_id ? String(args.part_id) : undefined;
+  let part: { rootId: number; name?: string; mesh: TriangleMesh };
+  if (partId) {
+    const found = candidates.find((c) => String(c.rootId) === partId);
+    if (!found) {
+      throw new Error(
+        `No part with id "${partId}". Available: ${candidates
+          .map((c) => `${c.rootId}${c.name ? ` (${c.name})` : ""}`)
+          .join(", ")}`,
+      );
+    }
+    part = found;
+  } else if (candidates.length === 1) {
+    part = candidates[0];
+  } else {
+    throw new Error(
+      `Document has ${candidates.length} parts — pass part_id. Available: ${candidates
+        .map((c) => `${c.rootId}${c.name ? ` (${c.name})` : ""}`)
+        .join(", ")}`,
+    );
+  }
+
+  // Project to XY (Z-up: the board plane) and rasterize.
+  const pos = part.mesh.positions;
+  const idx = part.mesh.indices;
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (let i = 0; i < pos.length; i += 3) {
+    if (pos[i] < minX) minX = pos[i];
+    if (pos[i] > maxX) maxX = pos[i];
+    if (pos[i + 1] < minY) minY = pos[i + 1];
+    if (pos[i + 1] > maxY) maxY = pos[i + 1];
+  }
+  const extent = Math.max(maxX - minX, maxY - minY);
+  if (!(extent > 0)) throw new Error("Part has no XY extent to trace");
+
+  // Floor the cell size so the grid can never exceed ~4M cells, whatever
+  // `resolution` the caller asks for on however large a part.
+  const cell = Math.min(
+    Math.max((args.resolution as number) || extent / 400, 0.02, extent / 2000),
+    extent / 8,
+  );
+  // One padding cell on every side so the outer boundary always closes.
+  const ox = minX - cell;
+  const oy = minY - cell;
+  const gw = Math.ceil((maxX - minX) / cell) + 2;
+  const gh = Math.ceil((maxY - minY) / cell) + 2;
+  const grid = new Uint8Array(gw * gh);
+
+  const triCount = idx.length / 3;
+  for (let t = 0; t < triCount; t++) {
+    const i0 = idx[t * 3] * 3;
+    const i1 = idx[t * 3 + 1] * 3;
+    const i2 = idx[t * 3 + 2] * 3;
+    const ax = pos[i0];
+    const ay = pos[i0 + 1];
+    const bx = pos[i1];
+    const by = pos[i1 + 1];
+    const cx = pos[i2];
+    const cy = pos[i2 + 1];
+    const tMinI = Math.max(0, Math.floor((Math.min(ax, bx, cx) - ox) / cell));
+    const tMaxI = Math.min(gw - 1, Math.ceil((Math.max(ax, bx, cx) - ox) / cell));
+    const tMinJ = Math.max(0, Math.floor((Math.min(ay, by, cy) - oy) / cell));
+    const tMaxJ = Math.min(gh - 1, Math.ceil((Math.max(ay, by, cy) - oy) / cell));
+    for (let j = tMinJ; j <= tMaxJ; j++) {
+      for (let i = tMinI; i <= tMaxI; i++) {
+        if (grid[j * gw + i] === 1) continue;
+        const px = ox + (i + 0.5) * cell;
+        const py = oy + (j + 0.5) * cell;
+        if (pointInTriangle2D(px, py, ax, ay, bx, by, cx, cy)) {
+          grid[j * gw + i] = 1;
+        }
+      }
+    }
+  }
+
+  const rawLoops = traceGridBoundaries(grid, gw, gh).flatMap(splitAtRepeatedVertices);
+  if (rawLoops.length === 0) {
+    throw new Error("Projection produced no boundary — try a smaller `resolution`");
+  }
+
+  const eps = (args.simplify_tolerance as number) || cell * 1.5;
+  const loops = rawLoops
+    .map((loop) => {
+      const mm = loop.map((p) => ({
+        x: round3(ox + p.x * cell),
+        y: round3(oy + p.y * cell),
+      }));
+      // A thin loop can collapse under simplification — keep the raw
+      // polygon rather than emit a degenerate 2-point "outline".
+      const simplified = simplifyLoop(mm, eps);
+      return { points: simplified.length >= 3 ? simplified : mm, area: loopSignedArea(mm) };
+    })
+    .filter((l) => l.points.length >= 3 && Math.abs(l.area) > 1e-9);
+
+  // Largest positive-area loop = the board outline; negative-area loops
+  // inside it are cutouts; any other positive loops are disjoint islands.
+  const outers = loops.filter((l) => l.area > 0).sort((a, b) => b.area - a.area);
+  const outer = outers[0];
+  if (!outer) throw new Error("No outer boundary found in projection");
+  const warnings: string[] = [];
+  if (outers.length > 1) {
+    warnings.push(
+      `Part projects to ${outers.length} disjoint regions — using the largest (${Math.round(outers[0].area)}mm²); a PCB outline must be one piece`,
+    );
+  }
+  // Holes come out of the boundary trace wound CW (negative area); the
+  // kernel extruder expects CCW polygons, so reverse them.
+  const cutouts = loops
+    .filter((l) => l.area < 0 && pointInPolygon(l.points[0], outer.points))
+    .map((l) => [...l.points].reverse());
+
+  const outline: BoardOutline = {
+    vertices: outer.points,
+    ...(cutouts.length > 0 ? { cutouts } : {}),
+    thickness,
+  };
+
+  return {
+    content: [
+      {
+        type: "text" as const,
+        text: JSON.stringify({
+          success: true,
+          part: { root_id: part.rootId, ...(part.name ? { name: part.name } : {}) },
+          outline,
+          outline_vertices: outer.points.length,
+          cutouts: cutouts.length,
+          area_mm2: Math.round(outer.area * 10) / 10,
+          bbox: { min: { x: round3(minX), y: round3(minY) }, max: { x: round3(maxX), y: round3(maxY) } },
+          cell_size_mm: round3(cell),
+          ...(warnings.length > 0 ? { warnings } : {}),
+          hint: "Pass `outline` to place_components to lay out a board with this shape",
+        }),
       },
     ],
   };

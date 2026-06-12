@@ -81,8 +81,22 @@ fn check_duplicate_references(sheet: &SchematicSheet, violations: &mut Vec<ErcVi
 }
 
 /// Check for unconnected pins: pins that have no wire endpoint or junction
-/// at their world position.
+/// at their world position, and aren't claimed by the explicit netlist.
 fn check_unconnected_pins(sheet: &SchematicSheet, violations: &mut Vec<ErcViolation>) {
+    // Pins declared in the sheet's explicit `nets` map are connected by
+    // definition — connectivity as data, no coordinates involved.
+    let mut explicit_pins: std::collections::HashSet<(&str, &str)> =
+        std::collections::HashSet::new();
+    if let Some(explicit) = &sheet.nets {
+        for pin_refs in explicit.values() {
+            for pin_ref in pin_refs {
+                if let Some(dot) = pin_ref.find('.') {
+                    explicit_pins.insert((&pin_ref[..dot], &pin_ref[dot + 1..]));
+                }
+            }
+        }
+    }
+
     // Collect all wire endpoints.
     let mut wire_points: Vec<Vec2> = Vec::new();
     for wire in &sheet.wires {
@@ -112,6 +126,11 @@ fn check_unconnected_pins(sheet: &SchematicSheet, violations: &mut Vec<ErcViolat
         for pin in &comp.pins {
             // Skip NotConnected pins — they are intentionally unconnected.
             if pin.pin_type == PinType::NotConnected {
+                continue;
+            }
+
+            // Explicitly netted pins are connected, wherever they sit.
+            if explicit_pins.contains(&(comp.reference.as_str(), pin.number.as_str())) {
                 continue;
             }
 
@@ -280,6 +299,7 @@ mod tests {
     fn clean_schematic_no_violations() {
         // R1 and R2 connected by a wire, with VCC and GND labels.
         let sheet = SchematicSheet {
+            nets: None,
             title: None,
             components: vec![
                 make_simple_component(
@@ -364,6 +384,7 @@ mod tests {
     #[test]
     fn detect_duplicate_reference() {
         let sheet = SchematicSheet {
+            nets: None,
             title: None,
             components: vec![
                 make_simple_component(
@@ -407,6 +428,7 @@ mod tests {
     fn detect_unconnected_pin() {
         // R1 with two pins, only pin 1 is wired.
         let sheet = SchematicSheet {
+            nets: None,
             title: None,
             components: vec![make_simple_component(
                 "R1",
@@ -448,6 +470,7 @@ mod tests {
     fn not_connected_pin_type_skipped() {
         // A pin explicitly marked NotConnected should not trigger a warning.
         let sheet = SchematicSheet {
+            nets: None,
             title: None,
             components: vec![make_simple_component(
                 "U1",
@@ -478,6 +501,7 @@ mod tests {
     fn detect_output_driving_output() {
         // Two output pins on the same net.
         let sheet = SchematicSheet {
+            nets: None,
             title: None,
             components: vec![
                 make_simple_component(
@@ -522,6 +546,7 @@ mod tests {
         // IC with a PowerInput pin on a net that has no power source and
         // no power-related label.
         let sheet = SchematicSheet {
+            nets: None,
             title: None,
             components: vec![make_simple_component(
                 "U1",
@@ -558,6 +583,7 @@ mod tests {
     fn power_pin_on_vcc_net_is_ok() {
         // Power input pin on a net labeled "VCC" — should be fine.
         let sheet = SchematicSheet {
+            nets: None,
             title: None,
             components: vec![make_simple_component(
                 "U1",
@@ -593,6 +619,7 @@ mod tests {
     fn power_pin_with_power_output_is_ok() {
         // Power input pin on a net with a power output pin — should be fine.
         let sheet = SchematicSheet {
+            nets: None,
             title: None,
             components: vec![
                 make_simple_component(
@@ -637,6 +664,7 @@ mod tests {
     #[test]
     fn empty_schematic_no_violations() {
         let sheet = SchematicSheet {
+            nets: None,
             title: None,
             components: vec![],
             wires: vec![],
@@ -651,6 +679,7 @@ mod tests {
     fn violations_sorted_errors_first() {
         // Create a schematic with both errors and warnings.
         let sheet = SchematicSheet {
+            nets: None,
             title: None,
             components: vec![
                 // Duplicate ref (error)
@@ -693,5 +722,38 @@ mod tests {
                 panic!("Error appeared after warning — sorting is broken");
             }
         }
+    }
+
+    #[test]
+    fn explicit_net_pins_count_as_connected() {
+        // Pin claimed by the sheet's explicit netlist — not flagged as
+        // unconnected even with no wires anywhere near it.
+        let mut nets = std::collections::BTreeMap::new();
+        nets.insert("PHA".to_string(), vec!["R1.1".to_string()]);
+        let sheet = SchematicSheet {
+            nets: Some(nets),
+            title: None,
+            components: vec![make_simple_component(
+                "R1",
+                Vec2::new(0.0, 0.0),
+                vec![SchematicPin {
+                    number: "1".to_string(),
+                    name: "~".to_string(),
+                    pin_type: PinType::PowerInput,
+                    position: Vec2::new(0.0, 0.0),
+                }],
+            )],
+            wires: vec![],
+            junctions: vec![],
+            labels: vec![],
+        };
+
+        let violations = check_erc(&sheet);
+        assert!(
+            !violations
+                .iter()
+                .any(|v| v.message.contains("Unconnected pin")),
+            "explicit-net pin flagged unconnected: {violations:?}"
+        );
     }
 }

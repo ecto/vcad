@@ -70,6 +70,66 @@ const MCP_DESCRIPTIONS: Record<string, string> = {
     "Set a part's material preset. Keys — metals: aluminum, steel, brass, copper, titanium, chrome, gold, silver; plastics: abs-white, abs-black, abs-red, abs-blue, pla, petg, nylon, resin, acrylic, rubber; organic: oak, walnut, leather, cork, bamboo; glass: glass, glass-tinted; composite: carbon-fiber, fiberglass, kevlar; other: concrete, ceramic, foam.",
 };
 
+/**
+ * Defaults injected into `create`/`update` params before they reach the
+ * Rust planner, so agents aren't forced to learn required-but-defaultable
+ * fields (tessellation segment counts) by parse failure.
+ */
+const CREATE_PARAM_DEFAULTS: Record<string, Record<string, unknown>> = {
+  cylinder: { segments: 64 },
+  cone: { segments: 64 },
+  sphere: { segments: 32 },
+};
+
+/**
+ * Expected parameter shapes per `create` type, appended to planner parse
+ * errors. serde errors like "missing field `left`" are accurate but say
+ * nothing about the full shape — this does.
+ */
+const CREATE_PARAM_HINTS: Record<string, string> = {
+  cube: "{size: {x, y, z}}",
+  cylinder: "{radius, height, segments? (default 64)} — axis along Z",
+  sphere: "{radius, segments? (default 32)}",
+  cone: "{radius_bottom, radius_top, height, segments? (default 64)} — axis along Z",
+  union:
+    "{left, right} — numeric node ids of existing nodes. Create both children first, then combine; inline child definitions are not supported.",
+  difference:
+    "{left, right} — numeric node ids of existing nodes (left minus right). Create both children first; inline child definitions are not supported.",
+  intersection:
+    "{left, right} — numeric node ids of existing nodes. Create both children first; inline child definitions are not supported.",
+  translate: "{child: nodeId, offset: {x, y, z}}",
+  rotate: "{child: nodeId, angles: {x, y, z}} — degrees",
+  scale: "{child: nodeId, factor: {x, y, z}}",
+  extrude: "{sketch: nodeId, direction: {x, y, z}, twist_angle?, scale_end?}",
+  revolve: "{sketch: nodeId, axis_origin: {x, y, z}, axis_dir: {x, y, z}, angle_deg}",
+  shell: "{child: nodeId, thickness}",
+  fillet: "{child: nodeId, radius}",
+  chamfer: "{child: nodeId, distance}",
+};
+
+/** Fill defaultable fields into create/update params in place. */
+function applyParamDefaults(args: Record<string, unknown>): Record<string, unknown> {
+  const type = String(args.type ?? "").toLowerCase();
+  const defaults = CREATE_PARAM_DEFAULTS[type];
+  const params = args.params;
+  if (!defaults || !params || typeof params !== "object") return args;
+  return {
+    ...args,
+    params: { ...defaults, ...(params as Record<string, unknown>) },
+  };
+}
+
+/** Append the expected-shape hint for the requested type to a planner error. */
+function enrichPlannerError(toolName: string, args: Record<string, unknown>, message: string): string {
+  if (toolName !== "create" && toolName !== "update") return message;
+  const type = String(args.type ?? "").toLowerCase();
+  const hint = CREATE_PARAM_HINTS[type];
+  if (hint) {
+    return `${message}\nExpected params for "${type}": ${hint}`;
+  }
+  return `${message}\nPer-type param shapes are listed in the Type Catalog in this server's instructions.`;
+}
+
 /** All tool names this dispatcher will handle. */
 export function registryDispatchableNames(): Set<string> {
   const all = commandRegistry.toAnthropicTools().map((t) => t.name);
@@ -324,9 +384,11 @@ function runMutation(
     };
   }
 
+  const plannerArgs =
+    toolName === "create" ? applyParamDefaults(toolArgs) : toolArgs;
   const planned = commandRegistry.planCrud(
     toolName,
-    toolArgs,
+    plannerArgs,
     JSON.stringify(doc),
   );
   if (!planned) {
@@ -335,7 +397,7 @@ function runMutation(
     );
   }
   if (planned.status === "error") {
-    throw new Error(planned.result);
+    throw new Error(enrichPlannerError(toolName, plannerArgs, planned.result));
   }
   if (!planned.outcome) {
     return {

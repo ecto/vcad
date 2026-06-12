@@ -1,0 +1,10 @@
+{
+  "id": "2026-06-12-add-coil",
+  "version": "0.9.4",
+  "date": "2026-06-12",
+  "category": "feat",
+  "title": "add_coil: spiral trace primitive for PCB motors",
+  "summary": "New MCP tool generates Archimedean spiral copper on any layer with net assignment, turn-to-turn clearance validation, optional inner via, and copper length + DC resistance estimates.",
+  "features": ["ecad", "pcb", "coil", "pcb-motor", "mcp"],
+  "mcpTools": ["add_coil"]
+}

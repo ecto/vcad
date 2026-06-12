@@ -233,10 +233,48 @@ pub fn generate_netlist(sheet: &SchematicSheet) -> Netlist {
         }
     }
 
+    // Merge pins claimed by the sheet's explicit netlist (`nets` map:
+    // net name -> ["REF.PIN", ...]). Connectivity declared as data — no
+    // coordinate coincidence involved. Unknown refs/pins are skipped here;
+    // input validation is the capture surface's job.
+    let pin_lookup: HashMap<(&str, &str), usize> = pin_indices
+        .iter()
+        .map(|(r, p, idx)| ((r.as_str(), p.as_str()), *idx))
+        .collect();
+    let mut explicit_groups: Vec<(String, Vec<usize>)> = Vec::new();
+    if let Some(explicit) = &sheet.nets {
+        for (name, pin_refs) in explicit {
+            let mut indices = Vec::new();
+            for pin_ref in pin_refs {
+                let Some(dot) = pin_ref.find('.') else {
+                    continue;
+                };
+                let (reference, pin) = (&pin_ref[..dot], &pin_ref[dot + 1..]);
+                if let Some(&idx) = pin_lookup.get(&(reference, pin)) {
+                    indices.push(idx);
+                }
+            }
+            for w in indices.windows(2) {
+                uf.union(w[0], w[1]);
+            }
+            explicit_groups.push((name.clone(), indices));
+        }
+    }
+
     // Phase 3: Group into nets.
     // Map root -> set of pin connections and labels.
     let mut net_pins: HashMap<usize, Vec<NetConnection>> = HashMap::new();
     let mut net_labels: HashMap<usize, HashSet<String>> = HashMap::new();
+    let mut net_explicit_names: HashMap<usize, HashSet<String>> = HashMap::new();
+    for (name, indices) in &explicit_groups {
+        if let Some(&first) = indices.first() {
+            let root = uf.find(first);
+            net_explicit_names
+                .entry(root)
+                .or_default()
+                .insert(name.clone());
+        }
+    }
 
     for &(ref comp_ref, ref pin_num, idx) in &pin_indices {
         let root = uf.find(idx);
@@ -262,7 +300,12 @@ pub fn generate_netlist(sheet: &SchematicSheet) -> Netlist {
     sorted_roots.sort();
 
     for root in sorted_roots {
-        let name = if let Some(labels) = net_labels.get(&root) {
+        // Name precedence: explicit net name > label > auto NET-xxx.
+        let name = if let Some(names) = net_explicit_names.get(&root) {
+            let mut sorted: Vec<&String> = names.iter().collect();
+            sorted.sort();
+            sorted[0].clone()
+        } else if let Some(labels) = net_labels.get(&root) {
             // Pick first label alphabetically for determinism.
             let mut sorted: Vec<&String> = labels.iter().collect();
             sorted.sort();
@@ -325,6 +368,7 @@ mod tests {
     #[test]
     fn empty_schematic_produces_empty_netlist() {
         let sheet = SchematicSheet {
+            nets: None,
             title: None,
             components: vec![],
             wires: vec![],
@@ -341,6 +385,7 @@ mod tests {
         // R2 at (25, 0) with pins at (-5,0) and (5,0) => world (20,0) and (30,0)
         // Wire from (15,0) to (20,0) connects R1 pin 2 to R2 pin 1
         let sheet = SchematicSheet {
+            nets: None,
             title: None,
             components: vec![
                 make_resistor("R1", Vec2::new(10.0, 0.0)),
@@ -387,6 +432,7 @@ mod tests {
         // Wire from (5,0) to (0,0)
         // Label "VCC" at (0,0)
         let sheet = SchematicSheet {
+            nets: None,
             title: None,
             components: vec![make_resistor("R1", Vec2::new(10.0, 0.0))],
             wires: vec![SchematicWire {
@@ -418,6 +464,7 @@ mod tests {
     fn auto_naming_when_no_label() {
         // Two resistors connected by a wire, no labels
         let sheet = SchematicSheet {
+            nets: None,
             title: None,
             components: vec![
                 make_resistor("R1", Vec2::new(10.0, 0.0)),
@@ -451,6 +498,7 @@ mod tests {
         // R1 at (0,0) with pin offsets, but let's place pins directly:
         // Use components with pin at (0,0), (20,0), (10,10)
         let sheet = SchematicSheet {
+            nets: None,
             title: None,
             components: vec![
                 SchematicComponent {
@@ -536,6 +584,7 @@ mod tests {
 
         // Wire from (10, 5) to (0, 5) connecting pin 1 to a label
         let sheet = SchematicSheet {
+            nets: None,
             title: None,
             components: vec![r1],
             wires: vec![SchematicWire {
@@ -569,6 +618,7 @@ mod tests {
         r1.mirror = true;
 
         let sheet = SchematicSheet {
+            nets: None,
             title: None,
             components: vec![r1],
             wires: vec![SchematicWire {
@@ -599,6 +649,7 @@ mod tests {
     fn multiple_labels_same_net_picks_alphabetical() {
         // Two labels at the same position
         let sheet = SchematicSheet {
+            nets: None,
             title: None,
             components: vec![SchematicComponent {
                 reference: "R1".to_string(),
@@ -638,5 +689,98 @@ mod tests {
         let net = netlist.nets.iter().find(|n| n.connections.len() == 1);
         assert!(net.is_some());
         assert_eq!(net.unwrap().name, "ALPHA");
+    }
+
+    #[test]
+    fn explicit_nets_merge_pins_without_coordinates() {
+        // R1 and R2 nowhere near each other, no wires — connectivity comes
+        // purely from the explicit nets map.
+        let mut nets = std::collections::BTreeMap::new();
+        nets.insert(
+            "PHA".to_string(),
+            vec!["R1.1".to_string(), "R2.2".to_string()],
+        );
+        let sheet = SchematicSheet {
+            nets: Some(nets),
+            title: None,
+            components: vec![
+                make_resistor("R1", Vec2::new(0.0, 0.0)),
+                make_resistor("R2", Vec2::new(100.0, 100.0)),
+            ],
+            wires: vec![],
+            junctions: vec![],
+            labels: vec![],
+        };
+
+        let netlist = generate_netlist(&sheet);
+        let pha = netlist.nets.iter().find(|n| n.name == "PHA").unwrap();
+        assert_eq!(pha.connections.len(), 2);
+        assert!(pha
+            .connections
+            .iter()
+            .any(|c| c.component_ref == "R1" && c.pin_number == "1"));
+        assert!(pha
+            .connections
+            .iter()
+            .any(|c| c.component_ref == "R2" && c.pin_number == "2"));
+    }
+
+    #[test]
+    fn explicit_net_name_wins_over_label() {
+        // A wire net labeled "AAA" whose pin is also claimed by explicit
+        // net "PHB" — the explicit name takes precedence.
+        let mut nets = std::collections::BTreeMap::new();
+        nets.insert("PHB".to_string(), vec!["R1.2".to_string()]);
+        let sheet = SchematicSheet {
+            nets: Some(nets),
+            title: None,
+            components: vec![
+                make_resistor("R1", Vec2::new(10.0, 0.0)),
+                make_resistor("R2", Vec2::new(25.0, 0.0)),
+            ],
+            wires: vec![SchematicWire {
+                start: Vec2::new(15.0, 0.0),
+                end: Vec2::new(20.0, 0.0),
+            }],
+            junctions: vec![],
+            labels: vec![SchematicLabel {
+                name: "AAA".to_string(),
+                position: Vec2::new(15.0, 0.0),
+                rotation: 0.0,
+                scope: LabelScope::Global,
+            }],
+        };
+
+        let netlist = generate_netlist(&sheet);
+        let net = netlist
+            .nets
+            .iter()
+            .find(|n| n.connections.len() == 2)
+            .unwrap();
+        assert_eq!(net.name, "PHB");
+    }
+
+    #[test]
+    fn explicit_nets_ignore_unknown_pins() {
+        let mut nets = std::collections::BTreeMap::new();
+        nets.insert(
+            "X".to_string(),
+            vec![
+                "R9.7".to_string(),
+                "garbage".to_string(),
+                "R1.1".to_string(),
+            ],
+        );
+        let sheet = SchematicSheet {
+            nets: Some(nets),
+            title: None,
+            components: vec![make_resistor("R1", Vec2::new(0.0, 0.0))],
+            wires: vec![],
+            junctions: vec![],
+            labels: vec![],
+        };
+        let netlist = generate_netlist(&sheet);
+        let x = netlist.nets.iter().find(|n| n.name == "X").unwrap();
+        assert_eq!(x.connections.len(), 1);
     }
 }
