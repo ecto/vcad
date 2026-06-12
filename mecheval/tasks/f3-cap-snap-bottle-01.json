@@ -10,33 +10,21 @@
       "path": "assets/f3-cap-snap-bottle-01/front.jpg",
       "agent_visible": true,
       "view": "front",
-      "image_kind": "photo",
-      "scale_fiducial": {
-        "type": "aruco_4x4_50mm",
-        "marker_id": 0
-      }
+      "image_kind": "render"
     },
     {
       "kind": "reference_image",
       "path": "assets/f3-cap-snap-bottle-01/side.jpg",
       "agent_visible": true,
       "view": "side",
-      "image_kind": "photo",
-      "scale_fiducial": {
-        "type": "aruco_4x4_50mm",
-        "marker_id": 0
-      }
+      "image_kind": "render"
     },
     {
       "kind": "reference_image",
       "path": "assets/f3-cap-snap-bottle-01/top.jpg",
       "agent_visible": true,
       "view": "top",
-      "image_kind": "photo",
-      "scale_fiducial": {
-        "type": "aruco_4x4_50mm",
-        "marker_id": 0
-      }
+      "image_kind": "render"
     },
     {
       "kind": "host_geometry",

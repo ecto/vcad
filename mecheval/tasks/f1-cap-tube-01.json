@@ -3,31 +3,28 @@
   "suite": "F",
   "tier": "F1",
   "title": "Two-feature cap for a thin-walled tube",
-  "prompt": "Reference images of a thin-walled open tube are attached. Design a cap with two coaxial features that mates with the open top of the tube: a flange that overhangs and rests on the rim, plus a register (locating cylinder) that drops into the bore.\n\nRequirements:\n- Single solid, single-root .vcad. Both features are part of one body — emit one Union.\n- The flange must overhang the tube's outer diameter and have a thickness ≥ 1.5mm. Flange OD ≤ 35mm.\n- The register must enter the bore with 0.1–0.4mm radial clearance and have a length of 4–6mm.\n- Wall thicknesses ≥ 1.5mm (printability).\n- The tube bore is 24mm in diameter; the outer diameter is 30mm; the wall is 3mm; height is 30mm. (These follow from the stated dimension and what you can see in the photos.)\n\nOutput the cap in the host's coordinate frame: the tube axis is +Z, the tube base sits at z = 0, the rim is at z = 30. Place the cap so its register drops into the bore from above (register at z ∈ ~[25, 30]) and its flange sits on top of the rim (flange at z ∈ ~[30, 32]).",
+  "prompt": "Reference images of a thin-walled open tube are attached. Design a cap with two coaxial features that mates with the open top of the tube: a flange that overhangs and rests on the rim, plus a register (locating cylinder) that drops into the bore.\n\nRequirements:\n- Single solid, single-root .vcad. Both features are part of one body — emit one Union.\n- The flange must overhang the tube's outer diameter and have a thickness ≥ 1.5mm. Flange OD ≤ 35mm.\n- The register must enter the bore with 0.1–0.4mm radial clearance and have a length of 4–6mm.\n- Wall thicknesses ≥ 1.5mm (printability).\n- The tube bore is 24mm in diameter; the outer diameter is 30mm; the wall is 3mm; height is 30mm. (These follow from the stated dimension and what you can see in the images.)\n\nOutput the cap in the host's coordinate frame: the tube axis is +Z, the tube base sits at z = 0, the rim is at z = 30. Place the cap so its register drops into the bore from above (register at z ∈ ~[25, 30]) and its flange sits on top of the rim (flange at z ∈ ~[30, 32]).",
   "inputs": [
     {
       "kind": "reference_image",
       "path": "assets/f1-cap-tube-01/front.jpg",
       "agent_visible": true,
       "view": "front",
-      "image_kind": "photo",
-      "scale_fiducial": { "type": "aruco_4x4_50mm", "marker_id": 0 }
+      "image_kind": "render"
     },
     {
       "kind": "reference_image",
       "path": "assets/f1-cap-tube-01/side.jpg",
       "agent_visible": true,
       "view": "side",
-      "image_kind": "photo",
-      "scale_fiducial": { "type": "aruco_4x4_50mm", "marker_id": 0 }
+      "image_kind": "render"
     },
     {
       "kind": "reference_image",
       "path": "assets/f1-cap-tube-01/top.jpg",
       "agent_visible": true,
       "view": "top",
-      "image_kind": "photo",
-      "scale_fiducial": { "type": "aruco_4x4_50mm", "marker_id": 0 }
+      "image_kind": "render"
     },
     {
       "kind": "host_geometry",
