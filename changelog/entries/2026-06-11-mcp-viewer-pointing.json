@@ -1,0 +1,10 @@
+{
+  "id": "2026-06-11-mcp-viewer-pointing",
+  "version": "0.9.4",
+  "date": "2026-06-11",
+  "category": "feat",
+  "title": "Click-to-select parts in the MCP viewer — \"make this taller\"",
+  "summary": "Select a part in the inline viewer and the agent knows what \"this\" means via ui/update-model-context; an Ask button sends part-grounded messages into the chat via ui/message.",
+  "features": ["mcp", "viewer", "agents", "selection"],
+  "mcpTools": ["get_preview_glb"]
+}

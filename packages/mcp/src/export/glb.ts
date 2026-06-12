@@ -5,6 +5,23 @@
  */
 
 import type { EvaluatedScene, TriangleMesh } from "@vcad/engine";
+import type { Document } from "@vcad/ir";
+
+/**
+ * Build `"<part_id>:<name>"` labels for every visible root, index-aligned
+ * with `EvaluatedScene.parts` (the evaluator maps visible roots 1:1 onto
+ * parts, padding failures with empty meshes — so the alignment holds even
+ * when a root fails to evaluate). The viewer parses these node names back
+ * into part identity for click-to-select.
+ */
+export function buildPartLabels(doc: Document): string[] {
+  return doc.roots
+    .filter((entry) => entry.visible !== false)
+    .map((entry) => {
+      const name = doc.nodes[String(entry.root)]?.name;
+      return `${entry.root}:${name ?? ""}`;
+    });
+}
 
 /** Default material for parts without material assignment. */
 const DEFAULT_MATERIAL = {
@@ -14,8 +31,17 @@ const DEFAULT_MATERIAL = {
   roughness: 0.5,
 };
 
-/** Convert evaluated scene to binary GLB bytes. */
-export function toGlbBytes(scene: EvaluatedScene, name: string): Uint8Array {
+/** Convert evaluated scene to binary GLB bytes.
+ *
+ * `partLabels` (index-aligned with `scene.parts`) become glTF node names —
+ * the viewer parses them back into part identity for click-to-select, so
+ * they follow the `"<part_id>:<name>"` convention from
+ * {@link buildPartLabels}. Omitted entries fall back to `part_<idx>`. */
+export function toGlbBytes(
+  scene: EvaluatedScene,
+  name: string,
+  partLabels?: string[],
+): Uint8Array {
   // Collect unique materials
   const materialMap = new Map<string, number>();
   const materials: Array<{
@@ -148,10 +174,10 @@ export function toGlbBytes(scene: EvaluatedScene, name: string): Uint8Array {
       ],
     });
 
-    // Node
+    // Node — named with part identity when the caller provides it.
     nodes.push({
       mesh: meshIdx,
-      name: `part_${meshIdx}`,
+      name: partLabels?.[meshIdx] ?? `part_${meshIdx}`,
     });
   }
 

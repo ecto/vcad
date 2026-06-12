@@ -31,6 +31,18 @@ const statsEl = document.getElementById("stats")!;
 const pulseEl = document.getElementById("pulse")!;
 const openBtn = document.getElementById("open-btn") as HTMLButtonElement;
 const fullscreenBtn = document.getElementById("fullscreen-btn") as HTMLButtonElement;
+const selChipEl = document.getElementById("sel-chip")!;
+const selLabelEl = document.getElementById("sel-label")!;
+const selClearBtn = document.getElementById("sel-clear") as HTMLButtonElement;
+const askBtn = document.getElementById("ask-btn") as HTMLButtonElement;
+const askBarEl = document.getElementById("ask-bar")!;
+const askPrefixEl = document.getElementById("ask-prefix")!;
+const askInput = document.getElementById("ask-input") as HTMLInputElement;
+const askSendBtn = document.getElementById("ask-send") as HTMLButtonElement;
+
+// Hostless dev harness (`#dev*`): selection affordances stay active but
+// protocol calls are logged instead of sent.
+const devMode = location.hash.startsWith("#dev");
 
 type PulseState = "idle" | "busy" | "ready" | "error";
 
@@ -335,6 +347,9 @@ function updateStats(model: THREE.Object3D, size: THREE.Vector3): void {
 
 function clearModel(): void {
   if (!currentModel) return;
+  // Restore selection highlights before disposal so we never dispose a
+  // clone while the original is detached.
+  select(null);
   modelGroup.remove(currentModel);
   currentModel.traverse((child) => {
     const mesh = child as THREE.Mesh;
@@ -403,6 +418,228 @@ function loadGlb(base64Data: string): void {
     },
   );
 }
+
+// ── Part selection — pointing for CAD ────────────────────────
+// GLB nodes are named "<part_id>:<name>" by the server (buildPartLabels),
+// so a raycast hit maps back to real part identity. Selection drives:
+//  1. a local inspector chip (name, id, dims) — works on every host
+//  2. ui/update-model-context — silent deixis, so "make this taller"
+//     typed in the host chat resolves to the selected part
+//  3. an "Ask" composer that sends a part-grounded ui/message
+// Both protocol calls are capability-gated via getHostCapabilities().
+
+interface SelectedPart {
+  partId: string;
+  name: string;
+  object: THREE.Object3D;
+}
+
+let selected: SelectedPart | null = null;
+let lastPushedContext = "";
+const SELECT_EMISSIVE = 0xf92672; // --brand
+
+/** Walk up from a raycast hit to the nearest part-labeled ancestor. */
+function partInfoFor(object: THREE.Object3D): SelectedPart | null {
+  let o: THREE.Object3D | null = object;
+  while (o) {
+    const m = /^(\d+):(.*)$/.exec(o.name);
+    if (m) {
+      return { partId: m[1], name: m[2] || `part ${m[1]}`, object: o };
+    }
+    o = o.parent;
+  }
+  return null;
+}
+
+/** Brand-pink emissive highlight. Materials are cloned per-mesh on
+ *  select (GLB materials are shared between same-material parts) and
+ *  restored + disposed on deselect. */
+function setHighlight(root: THREE.Object3D, on: boolean): void {
+  root.traverse((child) => {
+    const mesh = child as THREE.Mesh;
+    if (!mesh.isMesh) return;
+    if (on) {
+      const orig = mesh.material as THREE.MeshStandardMaterial;
+      if (!orig?.clone) return;
+      const highlighted = orig.clone();
+      highlighted.emissive = new THREE.Color(SELECT_EMISSIVE);
+      highlighted.emissiveIntensity = 0.28;
+      mesh.userData.origMaterial = orig;
+      mesh.material = highlighted;
+    } else if (mesh.userData.origMaterial) {
+      (mesh.material as THREE.Material).dispose();
+      mesh.material = mesh.userData.origMaterial as THREE.Material;
+      delete mesh.userData.origMaterial;
+    }
+  });
+}
+
+/** Selected part's bbox in kernel Z-up mm (world Y-up → kernel swap). */
+function selectedDims(): { x: number; y: number; z: number } | null {
+  if (!selected) return null;
+  const size = new THREE.Box3().setFromObject(selected.object).getSize(new THREE.Vector3());
+  return { x: size.x, y: size.z, z: size.y };
+}
+
+function select(info: SelectedPart | null): void {
+  if (selected?.object === info?.object) return;
+  if (selected) setHighlight(selected.object, false);
+  selected = info;
+  if (selected) {
+    setHighlight(selected.object, true);
+    const d = selectedDims();
+    const dims = d ? ` · ${formatDim(d.x)} × ${formatDim(d.y)} × ${formatDim(d.z)}` : "";
+    selLabelEl.innerHTML = "";
+    const b = document.createElement("b");
+    b.textContent = selected.name;
+    selLabelEl.append(b, ` #${selected.partId}${dims}`);
+    selChipEl.classList.add("visible");
+  } else {
+    selChipEl.classList.remove("visible");
+    askBarEl.classList.remove("visible");
+  }
+  void pushSelectionContext();
+}
+
+/** Silent ui/update-model-context push: the host delivers the latest
+ *  snapshot alongside the user's next chat message, so bare "this"
+ *  references resolve to the selected part. Overwrite semantics mean
+ *  deselection must push too (clears the stale pointer). */
+async function pushSelectionContext(): Promise<void> {
+  const d = selectedDims();
+  const payload = {
+    document_id: lastDocumentId,
+    viewer_selection: selected
+      ? {
+          part_id: selected.partId,
+          name: selected.name,
+          bbox_mm: d ? { x: +d.x.toFixed(2), y: +d.y.toFixed(2), z: +d.z.toFixed(2) } : undefined,
+        }
+      : null,
+  };
+  const serialized = JSON.stringify(payload);
+  if (serialized === lastPushedContext) return;
+  lastPushedContext = serialized;
+
+  const sentence = selected
+    ? `The user has selected part "${selected.name}" (part_id ${selected.partId})` +
+      `${lastDocumentId ? ` of document ${lastDocumentId}` : ""} in the vcad 3D viewer` +
+      `${d ? `; its bounding box is ${formatDim(d.x)} × ${formatDim(d.y)} × ${formatDim(d.z)} mm` : ""}. ` +
+      `Unqualified references like "this part" mean this selection.`
+    : "The user has cleared the part selection in the vcad 3D viewer.";
+
+  if (devMode) {
+    console.log("[vcad-viewer:dev] updateModelContext:", payload, sentence);
+    return;
+  }
+  const caps = app.getHostCapabilities();
+  if (!caps?.updateModelContext) return;
+  try {
+    await app.updateModelContext({
+      content: [{ type: "text", text: sentence }],
+      ...(caps.updateModelContext.structuredContent
+        ? { structuredContent: payload }
+        : {}),
+    });
+  } catch (e) {
+    console.warn("[vcad-viewer] updateModelContext failed:", e);
+  }
+}
+
+/** Show capability-gated affordances. Called after connect (and in dev). */
+function updateAffordances(): void {
+  const caps = devMode ? null : app.getHostCapabilities();
+  askBtn.classList.toggle("visible", devMode || Boolean(caps?.message));
+}
+
+// Click-to-pick: distinguish a click from an orbit via pointer travel.
+const raycaster = new THREE.Raycaster();
+const pointerNdc = new THREE.Vector2();
+let pointerDown: { x: number; y: number } | null = null;
+
+renderer.domElement.addEventListener("pointerdown", (e) => {
+  if (e.button === 0) pointerDown = { x: e.clientX, y: e.clientY };
+});
+
+renderer.domElement.addEventListener("pointerup", (e) => {
+  if (!pointerDown || e.button !== 0) return;
+  const travel = Math.hypot(e.clientX - pointerDown.x, e.clientY - pointerDown.y);
+  pointerDown = null;
+  if (travel > 5) return; // it was an orbit, not a click
+
+  const rect = renderer.domElement.getBoundingClientRect();
+  pointerNdc.set(
+    ((e.clientX - rect.left) / rect.width) * 2 - 1,
+    -((e.clientY - rect.top) / rect.height) * 2 + 1,
+  );
+  raycaster.setFromCamera(pointerNdc, camera);
+  for (const hit of raycaster.intersectObject(modelGroup, true)) {
+    const info = partInfoFor(hit.object);
+    if (info) {
+      select(info);
+      return;
+    }
+  }
+  select(null);
+});
+
+window.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape") return;
+  if (askBarEl.classList.contains("visible")) {
+    askBarEl.classList.remove("visible");
+  } else {
+    select(null);
+  }
+});
+
+selClearBtn.addEventListener("click", () => select(null));
+
+// ── Ask composer — part-grounded ui/message ──────────────────
+askBtn.addEventListener("click", () => {
+  if (!selected) return;
+  askPrefixEl.textContent = `${selected.name} ▸`;
+  askBarEl.classList.add("visible");
+  askInput.focus();
+});
+
+async function sendAsk(): Promise<void> {
+  if (!selected) return;
+  const text = askInput.value.trim();
+  if (!text) return;
+  const grounded =
+    `About part "${selected.name}" (part_id ${selected.partId}` +
+    `${lastDocumentId ? `, document ${lastDocumentId}` : ""}) in the vcad viewer: ${text}`;
+  askSendBtn.disabled = true;
+  try {
+    if (devMode) {
+      console.log("[vcad-viewer:dev] sendMessage:", grounded);
+    } else {
+      const result = await app.sendMessage({
+        role: "user",
+        content: [{ type: "text", text: grounded }],
+      });
+      if (result.isError) {
+        setTicker("host declined the message", "error");
+        return;
+      }
+    }
+    askInput.value = "";
+    askBarEl.classList.remove("visible");
+    setTicker("sent to chat", "ready");
+  } catch (e) {
+    console.warn("[vcad-viewer] sendMessage failed:", e);
+    setTicker("message failed", "error");
+  } finally {
+    askSendBtn.disabled = false;
+  }
+}
+
+askSendBtn.addEventListener("click", () => void sendAsk());
+askInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") void sendAsk();
+  if (e.key === "Escape") askBarEl.classList.remove("visible");
+  e.stopPropagation(); // keep Escape-in-input from also clearing the selection
+});
 
 // ── Flat pattern rendering (sheet_metal_unfold) ──────────────
 // Drafting-table view: the cut silhouette and dashed bend centerlines
@@ -727,13 +964,18 @@ if (location.hash.startsWith("#dev")) {
     const steel = new THREE.MeshStandardMaterial({ color: 0x9da3ab, metalness: 0.9, roughness: 0.35 });
     const plastic = new THREE.MeshStandardMaterial({ color: 0xf92672, metalness: 0.0, roughness: 0.55 });
     // Kernel space is Z-up: flange disc + boss along Z, pink cap on top.
+    // Names follow the server's "<part_id>:<name>" GLB convention so
+    // click-to-select can be exercised hostless.
     const flange = new THREE.Mesh(new THREE.CylinderGeometry(30, 30, 8, 64), steel);
+    flange.name = "1:Flange";
     flange.rotation.x = Math.PI / 2;
     flange.position.z = 4;
     const boss = new THREE.Mesh(new THREE.CylinderGeometry(12, 12, 30, 48), steel);
+    boss.name = "2:Boss";
     boss.rotation.x = Math.PI / 2;
     boss.position.z = 23;
     const cap = new THREE.Mesh(new THREE.CylinderGeometry(13, 13, 4, 48), plastic);
+    cap.name = "3:Cap";
     cap.rotation.x = Math.PI / 2;
     cap.position.z = 40;
     sample.add(flange, boss, cap);
@@ -760,14 +1002,21 @@ if (location.hash.startsWith("#dev")) {
   }
   openBtn.style.display = "inline-flex";
   fullscreenBtn.style.display = "inline-flex";
+  lastDocumentId = "doc_dev";
+  updateAffordances();
   // Debug handle for poking the scene from the console.
   (window as unknown as Record<string, unknown>).__vcad = {
     scene, camera, controls, grid, gridUniforms, contactShadow, renderer,
+    select, partInfoFor, modelGroup,
   };
 } else {
   // ── Connect (handlers are all registered above) ────────────
   setStatus("waiting for model…");
   await app.connect();
   applyHostContext(app.getHostContext());
-  console.log("[vcad-viewer] connected to host");
+  updateAffordances();
+  console.log(
+    "[vcad-viewer] connected to host; capabilities:",
+    JSON.stringify(app.getHostCapabilities() ?? {}),
+  );
 }

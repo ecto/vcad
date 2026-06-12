@@ -47,6 +47,14 @@ focused workflows.
 - **Inline viewer** — geometry tools render in an embedded vcad viewport
   (MCP Apps hosts); `sheet_metal_unfold` draws its flat pattern as a 2D
   drawing with cut and bend-line layers.
+- **Pointing** — click a part in the viewer to select it (brand-pink
+  highlight + a chip with name, id, and bbox). Selection is pushed
+  silently via `ui/update-model-context`, so typing "make this 5 mm
+  taller" in the chat resolves to the selected part; the chip's **Ask**
+  button sends a part-grounded `ui/message` into the conversation. Both
+  are capability-gated via `getHostCapabilities()` and degrade to a
+  local inspector on hosts without them. GLB nodes carry
+  `"<part_id>:<name>"` names (`buildPartLabels`) to make the mapping.
 
 ## Tools
 

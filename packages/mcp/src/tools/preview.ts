@@ -7,7 +7,7 @@
 
 import type { Document } from "@vcad/ir";
 import type { Engine } from "@vcad/engine";
-import { toGlbBytes } from "../export/glb.js";
+import { buildPartLabels, toGlbBytes } from "../export/glb.js";
 
 /**
  * Generate a base64-encoded GLB preview from an IR document.
@@ -21,7 +21,9 @@ export function generateGlbPreview(
     const scene = engine.evaluate(doc);
     if (!scene || scene.parts.length === 0) return null;
 
-    const glbBytes = toGlbBytes(scene, "preview");
+    // Part-identity node names let the viewer map a click back to a
+    // part_id for selection context and "ask about this part".
+    const glbBytes = toGlbBytes(scene, "preview", buildPartLabels(doc));
     return uint8ArrayToBase64(glbBytes);
   } catch {
     // Evaluation failures should not break tool responses
