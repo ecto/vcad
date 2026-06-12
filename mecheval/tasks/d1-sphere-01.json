@@ -5,9 +5,9 @@
   "title": "Match a 30mm sphere within 1mm chamfer",
   "prompt": "Reference images of a 30mm-diameter spherical bead are attached. Design a .vcad that reproduces this shape as closely as possible. The grader will compare your output's tessellated mesh against the target sphere via bidirectional Chamfer distance, in millimetres; a symmetric average of 1mm or less passes.\n\nRequirements:\n- Single solid, single-root .vcad.\n- Centred on the origin (the target is centred at the origin).\n- Aim for smooth surface (use ≥ 32 segments on curved primitives).\n- The simplest correct answer is a 15mm-radius Sphere primitive at the origin.",
   "inputs": [
-    { "kind": "reference_image", "path": "assets/d1-sphere-01/front.jpg", "agent_visible": true, "view": "front", "image_kind": "photo", "scale_fiducial": { "type": "aruco_4x4_50mm", "marker_id": 0 } },
-    { "kind": "reference_image", "path": "assets/d1-sphere-01/side.jpg", "agent_visible": true, "view": "side", "image_kind": "photo", "scale_fiducial": { "type": "aruco_4x4_50mm", "marker_id": 0 } },
-    { "kind": "reference_image", "path": "assets/d1-sphere-01/top.jpg", "agent_visible": true, "view": "top", "image_kind": "photo", "scale_fiducial": { "type": "aruco_4x4_50mm", "marker_id": 0 } },
+    { "kind": "reference_image", "path": "assets/d1-sphere-01/front.jpg", "agent_visible": true, "view": "front", "image_kind": "render" },
+    { "kind": "reference_image", "path": "assets/d1-sphere-01/side.jpg", "agent_visible": true, "view": "side", "image_kind": "render" },
+    { "kind": "reference_image", "path": "assets/d1-sphere-01/top.jpg", "agent_visible": true, "view": "top", "image_kind": "render" },
     { "kind": "target_mesh", "path": "assets/d1-sphere-01/target.vcad", "agent_visible": false, "frame": { "origin": [0, 0, 0], "axis": [0, 0, 1] } },
     { "kind": "known_dimensions", "agent_visible": true, "text": "The sphere is 30mm in diameter." }
   ],
