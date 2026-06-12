@@ -187,13 +187,22 @@ export function extractVcadJson(result: McpToolResult): string {
   throw new Error("get_document returned no parseable Document JSON block");
 }
 
+type CacheControl = { type: "ephemeral" };
+
 interface AnthropicLite {
   messages: {
     create(req: {
       model: string;
       max_tokens: number;
-      system: string;
-      tools: Array<{ name: string; description?: string; input_schema: unknown }>;
+      system:
+        | string
+        | Array<{ type: "text"; text: string; cache_control?: CacheControl }>;
+      tools: Array<{
+        name: string;
+        description?: string;
+        input_schema: unknown;
+        cache_control?: CacheControl;
+      }>;
       messages: Array<{ role: "user" | "assistant"; content: unknown }>;
     }): Promise<{
       stop_reason: string | null;
@@ -202,9 +211,48 @@ interface AnthropicLite {
         | { type: "tool_use"; id: string; name: string; input: Record<string, unknown> }
         | { type: string; [k: string]: unknown }
       >;
-      usage: { input_tokens: number; output_tokens: number };
+      usage: {
+        input_tokens: number;
+        output_tokens: number;
+        cache_creation_input_tokens?: number | null;
+        cache_read_input_tokens?: number | null;
+      };
     }>;
   };
+}
+
+/** Mark the conversation for prompt caching: strip stale message-level
+ *  breakpoints, then mark the last content block of the two most recent
+ *  user messages. Two sliding breakpoints (plus one on tools and one on
+ *  system = the 4-breakpoint API max) keep a reachable cache entry within
+ *  the API's 20-block lookback even when a turn fans out into many
+ *  parallel tool_use/tool_result blocks. Without caching every iteration
+ *  re-reads the full history + ~45 tool schemas at full price (~178k
+ *  input tokens for even a simple a1-tier task). */
+export function applyConversationCacheBreakpoints(
+  messages: Array<{ role: string; content: unknown }>,
+): void {
+  for (const message of messages) {
+    if (!Array.isArray(message.content)) continue;
+    for (const block of message.content as Array<Record<string, unknown>>) {
+      if (block && typeof block === "object" && "cache_control" in block) {
+        delete block.cache_control;
+      }
+    }
+  }
+  let marked = 0;
+  for (let i = messages.length - 1; i >= 0 && marked < 2; i--) {
+    const message = messages[i];
+    if (message.role !== "user" || !Array.isArray(message.content)) continue;
+    if (message.content.length === 0) continue;
+    const last = message.content[message.content.length - 1] as Record<
+      string,
+      unknown
+    >;
+    if (!last || typeof last !== "object") continue;
+    last.cache_control = { type: "ephemeral" } satisfies CacheControl;
+    marked++;
+  }
 }
 
 async function makeAnthropic(): Promise<AnthropicLite> {
@@ -237,6 +285,8 @@ export function makeClaudeMcpSolver(cfg: Partial<ClaudeMcpConfig> = {}): Solver 
       let nextN = 0;
       let totalIn = 0;
       let totalOut = 0;
+      let totalCacheCreate = 0;
+      let totalCacheRead = 0;
       let lastDocumentId: string | null = null;
 
       const recordToolRaw = async (
@@ -296,15 +346,40 @@ export function makeClaudeMcpSolver(cfg: Partial<ClaudeMcpConfig> = {}): Solver 
             name: t.name,
             description: t.description,
             input_schema: t.inputSchema,
-          }));
+          })) as Array<{
+          name: string;
+          description?: string;
+          input_schema: unknown;
+          cache_control?: CacheControl;
+        }>;
+        // Prompt-caching breakpoint on the last tool caches the entire
+        // (deterministically ordered) tool block — the largest stable
+        // prefix in every request.
+        if (anthropicTools.length > 0) {
+          anthropicTools[anthropicTools.length - 1].cache_control = {
+            type: "ephemeral",
+          };
+        }
+        const system: Array<{
+          type: "text";
+          text: string;
+          cache_control?: CacheControl;
+        }> = [
+          {
+            type: "text",
+            text: SYSTEM_PROMPT,
+            cache_control: { type: "ephemeral" },
+          },
+        ];
 
         const userMessage = `${prompt}\n\nThe document_id for this session is "${lastDocumentId}". Use it on every tool call that requires it. Stop calling tools once you believe the document satisfies the task.`;
 
-        // 3. Agentic loop.
+        // 3. Agentic loop. The kickoff message uses block form so the
+        // cache-breakpoint helper can mark its last content block.
         const messages: Array<{
           role: "user" | "assistant";
           content: unknown;
-        }> = [{ role: "user", content: userMessage }];
+        }> = [{ role: "user", content: [{ type: "text", text: userMessage }] }];
 
         if (config.fakeReplyForTests !== undefined) {
           // Test-only: skip the real loop, persist a hand-baked .vcad via MCP.
@@ -314,14 +389,22 @@ export function makeClaudeMcpSolver(cfg: Partial<ClaudeMcpConfig> = {}): Solver 
         } else {
           const anthropic = await makeAnthropic();
           for (let iter = 0; iter < config.maxIterations; iter++) {
+            applyConversationCacheBreakpoints(messages);
             const resp = await anthropic.messages.create({
               model: config.model,
               max_tokens: config.maxOutputTokens,
-              system: SYSTEM_PROMPT,
+              system,
               tools: anthropicTools,
               messages,
             });
-            totalIn += resp.usage.input_tokens;
+            const cacheCreate = resp.usage.cache_creation_input_tokens ?? 0;
+            const cacheRead = resp.usage.cache_read_input_tokens ?? 0;
+            // `input_tokens` is only the uncached remainder — keep `totalIn`
+            // meaning "full prompt tokens processed" so task token limits
+            // stay comparable with pre-caching runs.
+            totalIn += resp.usage.input_tokens + cacheCreate + cacheRead;
+            totalCacheCreate += cacheCreate;
+            totalCacheRead += cacheRead;
             totalOut += resp.usage.output_tokens;
 
             messages.push({ role: "assistant", content: resp.content });
@@ -411,6 +494,8 @@ export function makeClaudeMcpSolver(cfg: Partial<ClaudeMcpConfig> = {}): Solver 
             input: totalIn,
             output: totalOut,
             total: totalIn + totalOut,
+            cache_creation_input: totalCacheCreate,
+            cache_read_input: totalCacheRead,
           },
           wallclockSec,
         };

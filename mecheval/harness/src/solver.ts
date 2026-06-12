@@ -44,7 +44,20 @@ export interface SolverOutput {
   vcadJson: string;
   controlPolicy: string | null;
   toolCalls: ToolCall[];
-  tokens: { input: number; output: number; total: number };
+  tokens: {
+    /** Full prompt tokens processed, INCLUDING cached reads/writes — same
+     *  semantics as before prompt caching, so task token limits stay
+     *  comparable across runs. */
+    input: number;
+    output: number;
+    total: number;
+    /** Tokens written to the prompt cache (billed ~1.25x input rate).
+     *  Included in `input`; broken out for cost analysis. */
+    cache_creation_input?: number;
+    /** Tokens served from the prompt cache (billed ~0.1x input rate).
+     *  Included in `input`; broken out for cost analysis. */
+    cache_read_input?: number;
+  };
   wallclockSec: number;
 }
 
