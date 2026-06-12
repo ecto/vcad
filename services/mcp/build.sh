@@ -24,17 +24,29 @@ echo "[vcad-mcp] Bundling with esbuild..."
 # ── 3. Bundle entry.ts with esbuild ─────────────────────────
 # Uses npx esbuild@latest because the repo's esbuild (0.14) is too
 # old for `import ... with { type: "json" }` (needs 0.21+).
+# @resvg/resvg-js ships native .node binaries that esbuild cannot
+# bundle; keep it external and ship the package alongside the bundle.
 npx esbuild@latest entry.ts \
   --bundle \
   --platform=node \
   --target=node20 \
   --format=esm \
+  --external:@resvg/resvg-js \
   --outfile="$OUT/functions/mcp.func/index.mjs" \
   --banner:js="import { createRequire } from 'module'; const require = createRequire(import.meta.url);"
 
 # ── 4. Copy WASM binary next to the bundle ───────────────────
 cp "$REPO_ROOT/packages/kernel-wasm/vcad_kernel_wasm_bg.wasm" \
    "$OUT/functions/mcp.func/"
+
+# ── 4b. Ship resvg (native PNG rasterizer) next to the bundle ─
+# render.ts degrades to raw SVG if the import fails, so a missing
+# package is non-fatal — but include it when installed.
+if [ -d "$REPO_ROOT/node_modules/@resvg" ]; then
+  mkdir -p "$OUT/functions/mcp.func/node_modules/@resvg"
+  cp -R "$REPO_ROOT/node_modules/@resvg/." \
+        "$OUT/functions/mcp.func/node_modules/@resvg/"
+fi
 
 # ── 5. Function config ──────────────────────────────────────
 cat > "$OUT/functions/mcp.func/.vc-config.json" << 'EOF'
