@@ -53,6 +53,23 @@ const DEFERRED_TOOLS = new Set<string>([
   "place_part",
 ]);
 
+/**
+ * MCP-context description overrides. The kernel-authored descriptions
+ * assume the in-app chat surface, where a system prompt carries the type
+ * catalog and material list; over MCP that context lives in the server
+ * `instructions` instead, and agents choose between two authoring
+ * altitudes — whole-part `create_cad_loon` vs single-node CRUD — so the
+ * descriptions steer that choice explicitly.
+ */
+const MCP_DESCRIPTIONS: Record<string, string> = {
+  create:
+    "Add a single feature node to a session document: a primitive (cube/cylinder/sphere/cone), boolean (union/difference/intersection), transform (translate/rotate/scale), sketch-based feature (extrude/revolve/sweep/loft), pattern, or modifier (fillet/chamfer/shell). Per-type parameters are in the Type Catalog in this server's instructions. One node per call — for whole parts or multi-feature models prefer `create_cad_loon`.",
+  update:
+    "Update parameters on an existing node — pass only the fields to change. The surgical-edit tool: when geometry is misplaced or mis-sized, prefer this over delete + re-create. Use `read` to find node ids. The result reports a compact `changed` diff of affected parts.",
+  set_material:
+    "Set a part's material preset. Keys — metals: aluminum, steel, brass, copper, titanium, chrome, gold, silver; plastics: abs-white, abs-black, abs-red, abs-blue, pla, petg, nylon, resin, acrylic, rubber; organic: oak, walnut, leather, cork, bamboo; glass: glass, glass-tinted; composite: carbon-fiber, fiberglass, kevlar; other: concrete, ceramic, foam.",
+};
+
 /** All tool names this dispatcher will handle. */
 export function registryDispatchableNames(): Set<string> {
   const all = commandRegistry.toAnthropicTools().map((t) => t.name);
@@ -90,7 +107,7 @@ function withDocumentId(tool: AnthropicTool): {
     properties?: Record<string, unknown>;
     required?: string[];
   };
-  const properties = {
+  const properties: Record<string, unknown> = {
     document_id: {
       type: "string",
       description:
@@ -98,10 +115,19 @@ function withDocumentId(tool: AnthropicTool): {
     },
     ...(original.properties ?? {}),
   };
+  // The kernel-authored params description points at "the system prompt",
+  // which doesn't exist over MCP — redirect to the server instructions.
+  if (tool.name === "create" && properties.params) {
+    properties.params = {
+      ...(properties.params as Record<string, unknown>),
+      description:
+        "Parameters for the chosen `type` — see the Type Catalog in this server's instructions (e.g. cube: {size:{x,y,z}}, cylinder: {radius,height}).",
+    };
+  }
   const required = ["document_id", ...(original.required ?? [])];
   return {
     name: tool.name,
-    description: tool.description,
+    description: MCP_DESCRIPTIONS[tool.name] ?? tool.description,
     inputSchema: {
       ...original,
       properties,
@@ -110,10 +136,102 @@ function withDocumentId(tool: AnthropicTool): {
   };
 }
 
+/** One part's entry in a mutation diff. */
+interface PartDiffEntry {
+  part_id: string;
+  name?: string;
+}
+
+/** Compact before/after diff of a mutation, reported back to the agent. */
+interface PartsDiff {
+  added: PartDiffEntry[];
+  removed: PartDiffEntry[];
+  modified: PartDiffEntry[];
+}
+
+/**
+ * Structural snapshot of every part: id → name + a fingerprint of its
+ * subtree (node ops, names, and material). Cheap — one JSON.stringify
+ * pass over reachable nodes — and exact enough to attribute any
+ * mutation to the parts it touched.
+ */
+function snapshotParts(
+  doc: import("@vcad/ir").Document,
+): Map<string, { name?: string; fingerprint: string }> {
+  const map = new Map<string, { name?: string; fingerprint: string }>();
+  for (const root of doc.roots) {
+    const partId = String(root.root);
+    const pieces: string[] = [
+      `material:${String(root.material ?? "")}:${String(
+        (doc.part_materials as Record<string, unknown> | undefined)?.[partId] ?? "",
+      )}`,
+    ];
+    const stack = [root.root];
+    const seen = new Set<number>();
+    while (stack.length > 0) {
+      const id = stack.pop()!;
+      if (seen.has(id)) continue;
+      seen.add(id);
+      const node = doc.nodes[String(id)];
+      if (!node) continue;
+      pieces.push(`${id}:${node.name ?? ""}:${JSON.stringify(node.op)}`);
+      for (const child of childrenOf(node.op)) stack.push(child);
+    }
+    pieces.sort();
+    map.set(partId, {
+      name: doc.nodes[partId]?.name ?? undefined,
+      fingerprint: pieces.join("|"),
+    });
+  }
+  return map;
+}
+
+/** Diff two part snapshots. Returns null when nothing changed. */
+function diffParts(
+  before: ReturnType<typeof snapshotParts>,
+  after: ReturnType<typeof snapshotParts>,
+): PartsDiff | null {
+  const diff: PartsDiff = { added: [], removed: [], modified: [] };
+  for (const [id, b] of before) {
+    const a = after.get(id);
+    if (!a) diff.removed.push({ part_id: id, name: b.name });
+    else if (a.fingerprint !== b.fingerprint)
+      diff.modified.push({ part_id: id, name: a.name });
+  }
+  for (const [id, a] of after) {
+    if (!before.has(id)) diff.added.push({ part_id: id, name: a.name });
+  }
+  if (!diff.added.length && !diff.removed.length && !diff.modified.length) {
+    return null;
+  }
+  return diff;
+}
+
+/** Merge a `changed` diff into a single-JSON-text-block result. */
+function appendChanged(
+  result: { content: Array<{ type: "text"; text: string }> },
+  changed: PartsDiff,
+): void {
+  const block = result.content[0];
+  if (!block || block.type !== "text") return;
+  try {
+    const parsed = JSON.parse(block.text) as Record<string, unknown>;
+    parsed.changed = changed;
+    block.text = JSON.stringify(parsed);
+  } catch {
+    // Non-JSON result — leave it alone rather than corrupt it.
+  }
+}
+
 /**
  * Dispatch a registry-tier tool call against a session document. Returns
  * the MCP-shaped response. Throws if the tool isn't dispatchable, the
  * session doesn't exist, or the planner reports an error.
+ *
+ * Mutations close the edit feedback loop: the result carries a compact
+ * `changed: {added, removed, modified}` diff of the parts the call
+ * touched, so the agent sees what actually happened to the document
+ * without a follow-up `read`.
  */
 export function dispatchRegistryTool(
   toolName: string,
@@ -141,6 +259,20 @@ export function dispatchRegistryTool(
     return handleRead(doc, toolArgs);
   }
 
+  const before = snapshotParts(doc);
+  const result = runMutation(toolName, toolArgs, doc, documentId);
+  const changed = diffParts(before, snapshotParts(doc));
+  if (changed) appendChanged(result, changed);
+  return result;
+}
+
+/** Execute a mutating registry tool against an open session document. */
+function runMutation(
+  toolName: string,
+  toolArgs: Record<string, unknown>,
+  doc: import("@vcad/ir").Document,
+  documentId: string,
+): { content: Array<{ type: "text"; text: string }> } {
   // `delete` and `set_material` go directly to applyToolOutcome — the
   // Rust planner expects CRDT stable_ids, but the IR-direct MCP path
   // uses stringified NodeIds for part_id. The args are already

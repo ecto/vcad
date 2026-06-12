@@ -14,6 +14,40 @@ Or add to your MCP configuration directly:
 claude mcp add vcad --command "npx @vcad/mcp"
 ```
 
+## Tool packs
+
+The surface is a small always-on core — the make → see → measure → verify →
+ship loop (session lifecycle, Loon/CRUD authoring, parts library,
+`inspect_cad`, `render_view`, `export_cad`, `import_step`,
+`open_in_browser`, `get_changelog`) — plus opt-out domain packs:
+
+| Pack | Tools |
+|------|-------|
+| `dfm` | `dfm_check`, `dfm_explain`, `dfm_suggest_fix`, `dfm_apply_fix` |
+| `sheet_metal` | `sheet_metal_create/unfold/check/materials/bend_table/cost/suggest_fix/sequence/nest` |
+| `physics` | `create_robot_env`, `gym_*`, `batch_*` |
+| `ecad` | `create_schematic`, `place_components`, `route_nets`, `run_drc`, `run_erc`, `export_gerber`, `calc_impedance` |
+| `eval` | `verify_part`, `list_eval_tasks` (mecheval self-grading oracle) |
+
+Set `VCAD_MCP_PACKS` to a comma-separated list of packs to enable
+(e.g. `VCAD_MCP_PACKS=sheet_metal,dfm`), or `none` for core only.
+Unset, every pack is enabled. A smaller surface costs fewer schema
+tokens per request and measurably improves tool-selection accuracy for
+focused workflows.
+
+## Agent feedback loop
+
+- **Server instructions** — the kernel's type catalog, material preset
+  keys, Z-up orientation rules, and transform semantics are published as
+  MCP server `instructions` (extracted from the kernel registry at boot,
+  so they never drift). Hosts surface them to the agent automatically.
+- **Mutation diffs** — `create`/`update`/`delete`/`set_material` results
+  carry a compact `changed: {added, removed, modified}` part diff, so
+  agents see what a mutation actually did without a follow-up `read`.
+- **Inline viewer** — geometry tools render in an embedded vcad viewport
+  (MCP Apps hosts); `sheet_metal_unfold` draws its flat pattern as a 2D
+  drawing with cut and bend-line layers.
+
 ## Tools
 
 ### `create_cad_document`

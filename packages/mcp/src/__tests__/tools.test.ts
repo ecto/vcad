@@ -1325,3 +1325,121 @@ describe("ecad place_components → route_nets pipeline", () => {
     }
   });
 });
+
+describe("mutation diff (changed)", () => {
+  let document_id: string;
+
+  beforeEach(() => {
+    const open = openDocument({});
+    document_id = JSON.parse(open.content[0].text).document_id;
+  });
+
+  it("create reports the new part under changed.added", () => {
+    const out = dispatchRegistryTool("create", {
+      document_id,
+      type: "cube",
+      name: "Base",
+      params: { size: { x: 50, y: 30, z: 10 } },
+    });
+    const parsed = JSON.parse(out.content[0].text);
+    expect(parsed.changed.added).toEqual([{ part_id: parsed.part_id, name: "Base" }]);
+    expect(parsed.changed.removed).toEqual([]);
+    expect(parsed.changed.modified).toEqual([]);
+  });
+
+  it("update reports the touched part under changed.modified; no-ops report nothing", () => {
+    const created = JSON.parse(
+      dispatchRegistryTool("create", {
+        document_id,
+        type: "cube",
+        name: "Base",
+        params: { size: { x: 50, y: 30, z: 10 } },
+      }).content[0].text,
+    );
+    const updated = JSON.parse(
+      dispatchRegistryTool("update", {
+        document_id,
+        node_id: created.node_id,
+        params: { size: { x: 80, y: 30, z: 10 } },
+      }).content[0].text,
+    );
+    expect(updated.changed.modified).toEqual([
+      { part_id: created.part_id, name: "Base" },
+    ]);
+
+    const noop = JSON.parse(
+      dispatchRegistryTool("update", {
+        document_id,
+        node_id: created.node_id,
+        params: { size: { x: 80, y: 30, z: 10 } },
+      }).content[0].text,
+    );
+    expect(noop.changed).toBeUndefined();
+  });
+
+  it("delete reports the part under changed.removed", () => {
+    const created = JSON.parse(
+      dispatchRegistryTool("create", {
+        document_id,
+        type: "cube",
+        name: "Doomed",
+        params: { size: { x: 5, y: 5, z: 5 } },
+      }).content[0].text,
+    );
+    const out = JSON.parse(
+      dispatchRegistryTool("delete", {
+        document_id,
+        part_id: created.part_id,
+      }).content[0].text,
+    );
+    expect(out.changed.removed).toEqual([
+      { part_id: created.part_id, name: "Doomed" },
+    ]);
+  });
+});
+
+describe("MCP description steering", () => {
+  it("create steers whole-part work to create_cad_loon", () => {
+    const create = registryToolDescriptors().find((t) => t.name === "create");
+    expect(create?.description).toContain("create_cad_loon");
+    const params = (create?.inputSchema.properties as Record<string, { description?: string }>).params;
+    expect(params.description).not.toContain("system prompt");
+  });
+
+  it("set_material lists the preset keys inline", () => {
+    const tool = registryToolDescriptors().find((t) => t.name === "set_material");
+    expect(tool?.description).toContain("aluminum");
+    expect(tool?.description).toContain("carbon-fiber");
+  });
+});
+
+describe("tool packs (VCAD_MCP_PACKS)", () => {
+  it("unset env disables nothing", async () => {
+    const { disabledToolNames } = await import("../server.js");
+    delete process.env.VCAD_MCP_PACKS;
+    expect(disabledToolNames().size).toBe(0);
+  });
+
+  it("'none' disables every pack but leaves the core untouched", async () => {
+    const { disabledToolNames } = await import("../server.js");
+    process.env.VCAD_MCP_PACKS = "none";
+    const disabled = disabledToolNames();
+    delete process.env.VCAD_MCP_PACKS;
+    expect(disabled.has("sheet_metal_create")).toBe(true);
+    expect(disabled.has("run_drc")).toBe(true);
+    expect(disabled.has("gym_step")).toBe(true);
+    expect(disabled.has("verify_part")).toBe(true);
+    expect(disabled.has("create")).toBe(false);
+    expect(disabled.has("create_cad_loon")).toBe(false);
+    expect(disabled.has("render_view")).toBe(false);
+  });
+
+  it("a named pack stays enabled while others drop", async () => {
+    const { disabledToolNames } = await import("../server.js");
+    process.env.VCAD_MCP_PACKS = "sheet_metal";
+    const disabled = disabledToolNames();
+    delete process.env.VCAD_MCP_PACKS;
+    expect(disabled.has("sheet_metal_unfold")).toBe(false);
+    expect(disabled.has("run_drc")).toBe(true);
+  });
+});
