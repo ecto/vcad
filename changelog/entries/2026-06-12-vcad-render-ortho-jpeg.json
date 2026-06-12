@@ -1,0 +1,9 @@
+{
+  "id": "2026-06-12-vcad-render-ortho-jpeg",
+  "version": "0.9.4",
+  "date": "2026-06-12",
+  "category": "feat",
+  "title": "vcad-render: orthographic views and JPEG output",
+  "summary": "The vcad-render CLI gains front/side/top orthographic views and z-buffered raster JPEG output with hidden-line edge overlay, alongside the existing isometric SVG.",
+  "features": ["render", "cli", "mecheval"]
+}

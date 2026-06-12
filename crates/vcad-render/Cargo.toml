@@ -3,12 +3,18 @@ name = "vcad-render"
 version = "0.9.3"
 edition = "2021"
 publish = false
-description = "Project a .vcad document to a static isometric SVG (drafting-style line art)."
+description = "Project a .vcad document to static line art: isometric/orthographic SVG or raster JPEG."
+
+[features]
+default = ["raster"]
+# Raster (JPEG) output. Off for the WASM build, which only needs SVG.
+raster = ["dep:image"]
 
 [dependencies]
 vcad-eval = { workspace = true }
 vcad-ir = { workspace = true }
 vcad-kernel = { workspace = true }
+image = { version = "0.25", default-features = false, features = ["jpeg"], optional = true }
 
 [lib]
 name = "vcad_render"
