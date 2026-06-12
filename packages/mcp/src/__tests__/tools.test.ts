@@ -1443,3 +1443,27 @@ describe("tool packs (VCAD_MCP_PACKS)", () => {
     expect(disabled.has("run_drc")).toBe(true);
   });
 });
+
+describe("GLB part-identity node names", () => {
+  it("names glTF nodes <part_id>:<name> for the viewer's click-to-select", async () => {
+    const { generateGlbPreview } = await import("../tools/preview.js");
+    const engine = await Engine.init();
+    const b64 = generateGlbPreview(makeCubeDoc(), engine);
+    expect(b64).toBeTruthy();
+    const glb = Buffer.from(b64!, "base64");
+    expect(glb.subarray(0, 4).toString()).toBe("glTF");
+    const jsonLen = glb.readUInt32LE(12);
+    const json = JSON.parse(glb.subarray(20, 20 + jsonLen).toString());
+    expect(json.nodes[0].name).toBe("1:test_cube");
+  });
+
+  it("buildPartLabels skips hidden roots to stay aligned with scene.parts", async () => {
+    const { buildPartLabels } = await import("../export/glb.js");
+    const doc = makeCubeDoc();
+    doc.nodes["2"] = { id: 2, name: "hidden_cube", op: { type: "Cube", size: { x: 5, y: 5, z: 5 } } };
+    doc.roots.push({ root: 2, material: "default", visible: false });
+    doc.nodes["3"] = { id: 3, name: null, op: { type: "Cube", size: { x: 2, y: 2, z: 2 } } };
+    doc.roots.push({ root: 3, material: "default" });
+    expect(buildPartLabels(doc)).toEqual(["1:test_cube", "3:"]);
+  });
+});

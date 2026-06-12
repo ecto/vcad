@@ -135,6 +135,55 @@
   @keyframes pulse { 50% { opacity: 0.35; } }
   #ticker { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   #stats { flex: none; color: var(--text-tert); white-space: nowrap; }
+
+  /* ── Selection chip ────────────────────────────────────────── */
+  #sel-chip {
+    flex: none; display: none; align-items: center; gap: 6px;
+    height: 18px; padding: 0 4px 0 8px;
+    background: color-mix(in srgb, var(--brand) 12%, transparent);
+    border: var(--hairline) solid color-mix(in srgb, var(--brand) 45%, transparent);
+    border-radius: 999px;
+    color: var(--text-2);
+    white-space: nowrap;
+    max-width: 45%;
+  }
+  #sel-chip.visible { display: inline-flex; }
+  #sel-label { overflow: hidden; text-overflow: ellipsis; }
+  #sel-label b { color: var(--text); font-weight: 600; }
+  .chip-btn {
+    flex: none; display: inline-flex; align-items: center; justify-content: center;
+    height: 14px; padding: 0 5px;
+    background: transparent; border: none; border-radius: 999px;
+    font: 500 10px var(--font-ui);
+    color: var(--text-muted); cursor: pointer;
+  }
+  .chip-btn:hover { color: var(--text); background: color-mix(in srgb, var(--brand) 25%, transparent); }
+  #ask-btn { color: var(--brand); display: none; }
+  #ask-btn.visible { display: inline-flex; }
+  #ask-btn:hover { color: #fff; background: var(--brand); }
+
+  /* ── Ask bar (sendMessage composer) ────────────────────────── */
+  #ask-bar {
+    position: absolute; left: 10px; right: 10px; bottom: 10px;
+    display: none; align-items: center; gap: 6px;
+    height: 32px; padding: 0 4px 0 10px;
+    background: var(--surface);
+    border: var(--hairline) solid var(--border);
+    border-radius: var(--radius-sm);
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+  }
+  #ask-bar.visible { display: flex; }
+  #ask-prefix {
+    flex: none; font: 11px var(--font-mono); color: var(--brand);
+    max-width: 35%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  #ask-input {
+    flex: 1; height: 100%; min-width: 0;
+    background: transparent; border: none; outline: none;
+    font: 12px var(--font-ui); color: var(--text);
+  }
+  #ask-input::placeholder { color: var(--text-tert); }
+  #ask-send { display: inline-flex; }
 </style>
 </head>
 <body>
@@ -151,10 +200,20 @@
       <div id="error"></div>
     </div>
     <div id="vignette"></div>
+    <div id="ask-bar">
+      <span id="ask-prefix"></span>
+      <input id="ask-input" type="text" placeholder="ask about this part…" />
+      <button id="ask-send" class="btn btn-brand">Send</button>
+    </div>
   </div>
   <div id="statusbar">
     <span id="pulse"></span>
     <span id="ticker">connecting to host…</span>
+    <span id="sel-chip">
+      <span id="sel-label"></span>
+      <button id="ask-btn" class="chip-btn" title="Send a message about this part">Ask</button>
+      <button id="sel-clear" class="chip-btn" title="Clear selection (Esc)">✕</button>
+    </span>
     <span id="stats"></span>
   </div>
 </div>
