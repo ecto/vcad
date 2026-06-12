@@ -50,84 +50,131 @@ focused workflows.
 
 ## Tools
 
-### `create_cad_document`
+Most tools operate on an **editing session**: `open_document` returns a
+`document_id` that mutation and inspection tools take as input. The typical
+loop is open → author (`create_cad_loon`, `create`, `place_part`) → look and
+measure (`render_view`, `inspect_cad`) → fix → `get_document` →
+`export_cad` / `open_in_browser`.
 
-Create a CAD document from structured geometry input.
+### Session lifecycle
 
-**Input:**
-```json
-{
-  "parts": [{
-    "name": "plate",
-    "primitive": { "type": "cube", "size": { "x": 100, "y": 50, "z": 5 } },
-    "operations": [
-      {
-        "type": "difference",
-        "primitive": { "type": "cylinder", "radius": 3, "height": 10 },
-        "at": { "x": 10, "y": 10, "z": 0 }
-      }
-    ]
-  }]
-}
-```
+- `open_document` — open an editing session; pass an `initial` IR document
+  to edit existing geometry or omit it for an empty one. Returns the
+  `document_id` used by every session-aware tool.
+- `get_document` — dump the session's full IR Document JSON, e.g. to feed
+  `export_cad` or `open_in_browser`.
+- `close_document` — close a session and free its memory (idempotent).
 
-**Primitives:**
-- `cube` - Box shape with `size: {x, y, z}`
-- `cylinder` - Cylinder with `radius`, `height`, optional `segments`
-- `sphere` - Sphere with `radius`, optional `segments`
-- `cone` - Cone with `radius_bottom`, `radius_top`, `height`
+### Document editing (kernel CRUD)
 
-**Operations:**
-- `union` - Add geometry
-- `difference` - Subtract geometry
-- `intersection` - Keep only overlapping geometry
-- `translate` - Move with `offset: {x, y, z}`
-- `rotate` - Rotate with `angles: {x, y, z}` in degrees
-- `scale` - Scale with `factor: {x, y, z}`
-- `linear_pattern` - Repeat along `direction` with `count` and `spacing`
-- `circular_pattern` - Repeat around axis with `axis_origin`, `axis_dir`, `count`, `angle_deg`
+`create`, `read`, `update`, `delete`, `set_material` — the kernel's
+registry-driven editing tools, exposed with the exact schemas the in-app
+chat uses (they come from the kernel WASM at boot, so they never drift).
+Each takes a `document_id`. `create` adds a feature by `type` + `params`;
+`read` lists parts or returns one part's feature tree; `update` patches
+node parameters; `delete` removes a part; `set_material` assigns a preset
+material. Use these for surgical edits, `create_cad_loon` for whole parts.
 
-### `export_cad`
+### Loon authoring
 
-Export a CAD document to a file.
+- `create_cad_loon` — create a document in one shot from Loon source, a
+  Lisp-like parametric CAD DSL. This is the *full* modeling vocabulary —
+  primitives, booleans, transforms, fillet/chamfer/shell, linear/circular
+  patterns, sketches with extrude/revolve/sweep/loft, and assemblies with
+  joints — even where no dedicated MCP tool exists. Returns the document
+  (compact VCode or JSON IR) plus a `document_id` for follow-up edits.
 
-**Input:**
-```json
-{
-  "ir": { /* document from create_cad_document */ },
-  "filename": "plate.stl"
-}
-```
+### Parts library
 
-**Supported formats:**
-- `.stl` - Binary STL for 3D printing
-- `.glb` - Binary glTF for visualization
+- `search_parts` — search the stdlib parts library (fasteners, bearings, …)
+  by name, category, synonym, or catalog number (McMaster / ISO / DIN).
+- `place_part` — insert a result into a session document by its `path`,
+  with optional `params` overrides. Placed parts stay parametric.
 
-### `inspect_cad`
+### Geometry I/O
 
-Get geometry properties from a CAD document.
+- `export_cad` — write an IR document (`ir` + `filename`) to `.stl`
+  (3D printing), `.glb` (visualization), or — for sheet-metal documents —
+  `.step`/`.stp` of the folded body with true cylindrical bend faces.
+- `import_step` — import a `.step`/`.stp` file (AP203/AP214, as exported by
+  Fusion 360, SolidWorks, Onshape, …) into an IR document with
+  ImportedMesh nodes.
+- `open_in_browser` — compress a document into a shareable vcad.io URL
+  (very large documents may exceed the ~2KB URL limit).
 
-**Input:**
-```json
-{
-  "ir": { /* document from create_cad_document */ }
-}
-```
+### Inspect & verify
 
-**Output:**
-```json
-{
-  "volume_mm3": 1000,
-  "surface_area_mm2": 600,
-  "bounding_box": {
-    "min": { "x": 0, "y": 0, "z": 0 },
-    "max": { "x": 10, "y": 10, "z": 10 }
-  },
-  "center_of_mass": { "x": 5, "y": 5, "z": 5 },
-  "triangles": 12,
-  "parts": 1
-}
-```
+- `inspect_cad` — aggregate geometry properties for a session document:
+  volume, surface area, bounding box, center of mass, triangle count, and
+  mass when material density is known.
+- `render_view` — render the session document to an isometric PNG
+  (drafting-style line art, Z-up) so the agent can *see* the geometry,
+  not just numbers.
+- `verify_part` / `list_eval_tasks` — grade a session document against a
+  mecheval benchmark task with the official deterministic graders, and
+  browse the available task ids. The benchmark harness excludes these
+  during scored runs.
+
+### DFM (Design for Manufacturing)
+
+- `dfm_check` — run process-specific manufacturability checks
+  (`cnc_3axis`, `fdm`, `sla`, `injection`, `sheet_metal`, `casting_sand`,
+  `casting_investment`) against a session document; thresholds come from
+  TOML rule packs at `lib/dfm/<process>.toml`.
+- `dfm_explain` / `dfm_suggest_fix` / `dfm_apply_fix` — long-form rationale
+  for an issue, a suggested patch, and (for `set_param` patches) applying
+  it to the document. Re-run `dfm_check` to confirm the issue cleared.
+
+### Sheet metal
+
+- `sheet_metal_create` — build a part from a base flange plus a chain of
+  edge flanges, hems, and jogs; supports `shop_profile` catalogs (e.g.
+  `"sendcutsend"`) and bend relief. Returns a `document_id` plus flat-bbox
+  and DFM summary.
+- `sheet_metal_unfold` — flat pattern (outlines, holes, creases) plus a
+  fab-ready single-silhouette DXF with bend centerlines.
+- `sheet_metal_check` / `sheet_metal_suggest_fix` — manufacturability
+  violations against a shop profile, and the concrete parameter changes
+  that resolve them (the create → check → fix → re-check loop).
+- `sheet_metal_materials` / `sheet_metal_bend_table` — the built-in
+  material registry and the K-factor bend table (or a fab catalog via
+  `shop_profile`).
+- `sheet_metal_cost` — line-itemed cost estimate (material, cut, pierces,
+  bends, setup, markup).
+- `sheet_metal_sequence` — a feasible press-brake bend order with
+  springback-compensated angles.
+- `sheet_metal_nest` — pack multiple parts onto stock sheets and report
+  placements and utilization.
+
+### Physics simulation
+
+- `create_robot_env` — build a phyz physics environment from a vcad
+  assembly; returns an environment id.
+- `gym_step` / `gym_reset` / `gym_observe` / `gym_close` — gym-style RL
+  interface: step with `torque`, `position`, or `velocity` actions, read
+  joint positions/velocities and end-effector poses, reset, clean up.
+- `batch_create_envs` / `batch_step` / `batch_reset` — the same loop across
+  N parallel environments for RL training.
+
+### ECAD
+
+- `create_schematic` — schematic from component and wire definitions.
+- `place_components` — board outline, stackup, and footprint placement
+  from schematic data.
+- `route_nets` — copper traces connecting pads on the same net.
+- `run_drc` / `run_erc` — design and electrical rule checks.
+- `export_gerber` — Gerber RS-274X fabrication files, drill file,
+  pick-and-place CSV, and BOM.
+- `calc_impedance` — IPC-2141 trace impedance (microstrip, stripline,
+  differential pairs).
+
+### Other
+
+- `get_changelog` — query the vcad changelog by version, category,
+  feature, or MCP tool.
+- `get_preview_glb` — app-only (`visibility: ["app"]`): fetches the GLB
+  payload for the inline 3D viewer. Hidden from agents on spec-compliant
+  hosts; use `export_cad` for geometry exports.
 
 ## Example Usage
 
@@ -136,9 +183,10 @@ In Claude Code or another MCP-compatible assistant:
 > "Create a 50x30x5mm plate with four 3mm mounting holes at the corners, spaced 5mm from each edge. Export to mounting_plate.stl"
 
 The assistant will:
-1. Use `create_cad_document` to build the geometry
-2. Use `inspect_cad` to verify dimensions
-3. Use `export_cad` to write the STL file
+1. Use `create_cad_loon` to build the geometry (or `open_document` +
+   `create` for incremental edits)
+2. Use `render_view` and `inspect_cad` to verify shape and dimensions
+3. Use `get_document` + `export_cad` to write the STL file
 
 ## Development
 
