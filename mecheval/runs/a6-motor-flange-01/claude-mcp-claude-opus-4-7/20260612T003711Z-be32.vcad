@@ -1,0 +1,193 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "2": {
+      "id": 2,
+      "name": "Flange Disc",
+      "op": {
+        "type": "Cylinder",
+        "radius": 60,
+        "height": 12,
+        "segments": 64
+      }
+    },
+    "3": {
+      "id": 3,
+      "name": "Boss Raw",
+      "op": {
+        "type": "Cylinder",
+        "radius": 36,
+        "height": 6,
+        "segments": 64
+      }
+    },
+    "4": {
+      "id": 4,
+      "name": "Boss Placed",
+      "op": {
+        "type": "Translate",
+        "child": 3,
+        "offset": {
+          "x": 0,
+          "y": 0,
+          "z": 12
+        }
+      }
+    },
+    "5": {
+      "id": 5,
+      "name": "Disc + Boss",
+      "op": {
+        "type": "Union",
+        "left": 2,
+        "right": 4
+      }
+    },
+    "6": {
+      "id": 6,
+      "name": "Bore Tool",
+      "op": {
+        "type": "Cylinder",
+        "radius": 16,
+        "height": 18,
+        "segments": 64
+      }
+    },
+    "7": {
+      "id": 7,
+      "name": "Bored",
+      "op": {
+        "type": "Difference",
+        "left": 5,
+        "right": 6
+      }
+    },
+    "8": {
+      "id": 8,
+      "name": "Bolt Hole Raw 1",
+      "op": {
+        "type": "Cylinder",
+        "radius": 4.5,
+        "height": 12,
+        "segments": 32
+      }
+    },
+    "9": {
+      "id": 9,
+      "name": "Bolt Hole 1",
+      "op": {
+        "type": "Translate",
+        "child": 8,
+        "offset": {
+          "x": 48,
+          "y": 0,
+          "z": 0
+        }
+      }
+    },
+    "10": {
+      "id": 10,
+      "name": "After Hole 1",
+      "op": {
+        "type": "Difference",
+        "left": 7,
+        "right": 9
+      }
+    },
+    "11": {
+      "id": 11,
+      "name": "Bolt Hole Raw 2",
+      "op": {
+        "type": "Cylinder",
+        "radius": 4.5,
+        "height": 12,
+        "segments": 32
+      }
+    },
+    "12": {
+      "id": 12,
+      "name": "Bolt Hole 2",
+      "op": {
+        "type": "Translate",
+        "child": 11,
+        "offset": {
+          "x": 0,
+          "y": 48,
+          "z": 0
+        }
+      }
+    },
+    "13": {
+      "id": 13,
+      "name": "After Hole 2",
+      "op": {
+        "type": "Difference",
+        "left": 10,
+        "right": 12
+      }
+    },
+    "14": {
+      "id": 14,
+      "name": "Bolt Hole Raw 3",
+      "op": {
+        "type": "Cylinder",
+        "radius": 4.5,
+        "height": 12,
+        "segments": 32
+      }
+    },
+    "15": {
+      "id": 15,
+      "name": "Bolt Hole 3",
+      "op": {
+        "type": "Translate",
+        "child": 14,
+        "offset": {
+          "x": -48,
+          "y": 0,
+          "z": 0
+        }
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 7,
+      "material": "default"
+    },
+    {
+      "root": 8,
+      "material": "default"
+    },
+    {
+      "root": 9,
+      "material": "default"
+    },
+    {
+      "root": 10,
+      "material": "default"
+    },
+    {
+      "root": 11,
+      "material": "default"
+    },
+    {
+      "root": 12,
+      "material": "default"
+    },
+    {
+      "root": 13,
+      "material": "default"
+    },
+    {
+      "root": 14,
+      "material": "default"
+    },
+    {
+      "root": 15,
+      "material": "default"
+    }
+  ]
+}

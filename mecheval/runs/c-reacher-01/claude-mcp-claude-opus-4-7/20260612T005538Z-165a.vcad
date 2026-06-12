@@ -1,0 +1,56 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "base",
+      "op": {
+        "type": "Cylinder",
+        "radius": 30,
+        "height": 50,
+        "segments": 32
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": "link1_geom",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 20,
+          "y": 30,
+          "z": 150
+        }
+      }
+    },
+    "3": {
+      "id": 3,
+      "name": "center_link1",
+      "op": {
+        "type": "Translate",
+        "child": 2,
+        "offset": {
+          "x": -10,
+          "y": -15,
+          "z": 0
+        }
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 1,
+      "material": "default"
+    },
+    {
+      "root": 2,
+      "material": "default"
+    },
+    {
+      "root": 3,
+      "material": "default"
+    }
+  ]
+}

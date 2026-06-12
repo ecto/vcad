@@ -1,0 +1,175 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "BaseCube",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 80,
+          "y": 40,
+          "z": 12
+        }
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": "BaseT",
+      "op": {
+        "type": "Translate",
+        "child": 1,
+        "offset": {
+          "x": -40,
+          "y": -20,
+          "z": 0
+        }
+      }
+    },
+    "3": {
+      "id": 3,
+      "name": "LeftTineCube",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 14,
+          "y": 40,
+          "z": 45
+        }
+      }
+    },
+    "4": {
+      "id": 4,
+      "name": "LeftTineT",
+      "op": {
+        "type": "Translate",
+        "child": 3,
+        "offset": {
+          "x": -40,
+          "y": -20,
+          "z": 12
+        }
+      }
+    },
+    "5": {
+      "id": 5,
+      "name": "RightTineCube",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 14,
+          "y": 40,
+          "z": 45
+        }
+      }
+    },
+    "6": {
+      "id": 6,
+      "name": "BoreCyl",
+      "op": {
+        "type": "Cylinder",
+        "radius": 9,
+        "height": 80,
+        "segments": 64
+      }
+    },
+    "7": {
+      "id": 7,
+      "name": "RightTineT",
+      "op": {
+        "type": "Translate",
+        "child": 5,
+        "offset": {
+          "x": 26,
+          "y": -20,
+          "z": 12
+        }
+      }
+    },
+    "8": {
+      "id": 8,
+      "name": "BoreR",
+      "op": {
+        "type": "Rotate",
+        "child": 6,
+        "angles": {
+          "x": 0,
+          "y": 90,
+          "z": 0
+        }
+      }
+    },
+    "9": {
+      "id": 9,
+      "name": "BoreT",
+      "op": {
+        "type": "Translate",
+        "child": 8,
+        "offset": {
+          "x": -40,
+          "y": 0,
+          "z": 44.5
+        }
+      }
+    },
+    "10": {
+      "id": 10,
+      "name": "BaseLeft",
+      "op": {
+        "type": "Union",
+        "left": 2,
+        "right": 4
+      }
+    },
+    "11": {
+      "id": 11,
+      "name": "Body",
+      "op": {
+        "type": "Union",
+        "left": 10,
+        "right": 7
+      }
+    },
+    "12": {
+      "id": 12,
+      "name": "ForkYoke",
+      "op": {
+        "type": "Difference",
+        "left": 11,
+        "right": 9
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 2,
+      "material": "default"
+    },
+    {
+      "root": 4,
+      "material": "default"
+    },
+    {
+      "root": 7,
+      "material": "default"
+    },
+    {
+      "root": 9,
+      "material": "default"
+    },
+    {
+      "root": 10,
+      "material": "default"
+    },
+    {
+      "root": 11,
+      "material": "default"
+    },
+    {
+      "root": 12,
+      "material": "default"
+    }
+  ]
+}

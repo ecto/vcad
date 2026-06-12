@@ -1,0 +1,1100 @@
+{
+  "schema_version": 0,
+  "task_id": "a6-pulley-01",
+  "task_sha256": "58d33316e6c4cd6c5ca0025c61d3cc3f0fff4bdb5fc2890ded726b414baaeada",
+  "checks": [
+    {
+      "n": 0,
+      "type": "valid_solid",
+      "params": {
+        "type": "valid_solid"
+      },
+      "result": "pass",
+      "details": {
+        "root_count": 1,
+        "solids_produced": 1
+      }
+    },
+    {
+      "n": 1,
+      "type": "bbox",
+      "params": {
+        "type": "bbox",
+        "min": [
+          -40,
+          -40,
+          0
+        ],
+        "max": [
+          40,
+          40,
+          40
+        ],
+        "tolerance_mm": 0.1
+      },
+      "result": "pass",
+      "details": {
+        "actual_max": [
+          40,
+          40,
+          40
+        ],
+        "actual_min": [
+          -40,
+          -40,
+          0
+        ],
+        "deviation_max": [
+          0,
+          0,
+          0
+        ],
+        "deviation_min": [
+          0,
+          0,
+          0
+        ],
+        "max_abs_deviation_mm": 0,
+        "tolerance_mm": 0.1
+      }
+    },
+    {
+      "n": 2,
+      "type": "mass_props",
+      "params": {
+        "type": "mass_props",
+        "volume_mm3": 119506.19,
+        "center_of_mass": [
+          0,
+          0,
+          20
+        ],
+        "tolerance_pct": 1
+      },
+      "result": "pass",
+      "details": {
+        "center_of_mass": {
+          "actual": [
+            -3.8351606014111355e-16,
+            3.144355275691117e-17,
+            20.000000000000007
+          ],
+          "bbox_diagonal_mm": 120,
+          "deviation": [
+            -3.8351606014111355e-16,
+            3.144355275691117e-17,
+            7.105427357601002e-15
+          ],
+          "max_abs_deviation_mm": 7.105427357601002e-15,
+          "pass": true,
+          "spec": [
+            0,
+            0,
+            20
+          ],
+          "tolerance_mm": 1.2
+        },
+        "volume": {
+          "actual_mm3": 119314.30502835668,
+          "deviation_pct": 0.16056488090141427,
+          "pass": true,
+          "spec_mm3": 119506.19,
+          "tolerance_pct": 1
+        }
+      }
+    },
+    {
+      "n": 3,
+      "type": "hole_count",
+      "params": {
+        "type": "hole_count",
+        "diameter_mm": 16,
+        "expected": 1,
+        "diameter_tolerance_mm": 0.1
+      },
+      "result": "pass",
+      "details": {
+        "actual": 1,
+        "diameter_mm": 16,
+        "diameter_tolerance_mm": 0.1,
+        "expected": 1,
+        "found": [
+          [
+            0,
+            0,
+            16
+          ]
+        ]
+      }
+    },
+    {
+      "n": 4,
+      "type": "hole_positions",
+      "params": {
+        "type": "hole_positions",
+        "diameter_mm": 16,
+        "positions": [
+          [
+            0,
+            0,
+            0
+          ]
+        ],
+        "tolerance_mm": 0.2
+      },
+      "result": "pass",
+      "details": {
+        "diameter_mm": 16,
+        "per_expected": [
+          {
+            "distance_mm": 0,
+            "matched_hole": [
+              0,
+              0
+            ],
+            "pass": true,
+            "spec_xy": [
+              0,
+              0
+            ]
+          }
+        ],
+        "tolerance_mm": 0.2,
+        "unmatched_extras": []
+      }
+    },
+    {
+      "n": 5,
+      "type": "step_roundtrip",
+      "params": {
+        "type": "step_roundtrip",
+        "tolerance_pct": 1
+      },
+      "result": "pass",
+      "details": {
+        "per_solid": [
+          {
+            "bbox": {
+              "max_abs_deviation_mm": 0,
+              "original_max": [
+                40,
+                40,
+                40
+              ],
+              "original_min": [
+                -40,
+                -40,
+                0
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                40,
+                40,
+                40
+              ],
+              "roundtripped_min": [
+                -40,
+                -40,
+                0
+              ],
+              "tolerance_mm": 1.2
+            },
+            "index": 0,
+            "pass": true,
+            "volume": {
+              "deviation_pct": 0.42903631954646015,
+              "original_mm3": 119314.30502835674,
+              "pass": true,
+              "roundtripped_mm3": 118802.40332537064
+            }
+          }
+        ],
+        "tolerance_pct": 1
+      }
+    }
+  ],
+  "summary": {
+    "passed": true,
+    "checks_passed": 6,
+    "checks_total": 6,
+    "score": 1,
+    "anti_cheese_violated": false,
+    "limits_exceeded": [
+      "max_tokens: 661979 > 50000"
+    ]
+  },
+  "run_id": "20260612T004227Z-1619",
+  "model": {
+    "id": "claude-mcp-claude-opus-4-7",
+    "name": "Claude (MCP, claude-opus-4-7)",
+    "provider": "anthropic",
+    "params": {
+      "mode": "mcp",
+      "model": "claude-opus-4-7",
+      "max_tokens": 8000,
+      "max_iterations": 30
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "a6-pulley-01",
+    "rendered": "Make a flanged belt pulley as a single solid. The pulley has three coaxial sections stacked along Z, all centered on the Z axis, with the base on the XY plane. Bottom flange: a cylinder of diameter 80mm and height 8mm (z = 0 to z = 8). Belt groove section: a cylinder of diameter 50mm and height 24mm (z = 8 to z = 32). Top flange: a cylinder of diameter 80mm and height 8mm (z = 32 to z = 40). A central through-bore of diameter 16mm runs along the Z axis through the full height (z = 0 to z = 40). The three outer sections form the stepped outer profile of the pulley when unioned together; the belt rides in the groove between the two flanges. Output a single solid.",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "open_document",
+        "args": {},
+        "result_kind": "ok",
+        "wallclock_ms": 1.6330000000000098
+      },
+      {
+        "n": 1,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781224947647_1",
+          "type": "difference",
+          "name": "Pulley",
+          "params": {
+            "a": {
+              "op": "union",
+              "params": {
+                "a": {
+                  "op": "cylinder",
+                  "params": {
+                    "radius": 40,
+                    "height": 8
+                  }
+                },
+                "b": {
+                  "op": "union",
+                  "params": {
+                    "a": {
+                      "op": "translate",
+                      "params": {
+                        "x": 0,
+                        "y": 0,
+                        "z": 8,
+                        "child": {
+                          "op": "cylinder",
+                          "params": {
+                            "radius": 25,
+                            "height": 24
+                          }
+                        }
+                      }
+                    },
+                    "b": {
+                      "op": "translate",
+                      "params": {
+                        "x": 0,
+                        "y": 0,
+                        "z": 32,
+                        "child": {
+                          "op": "cylinder",
+                          "params": {
+                            "radius": 40,
+                            "height": 8
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "b": {
+              "op": "cylinder",
+              "params": {
+                "radius": 8,
+                "height": 40
+              }
+            }
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 5.269125000000713
+      },
+      {
+        "n": 2,
+        "tool": "create_cad_loon",
+        "args": {
+          "source": "[let\n  flange-bot [cylinder 40 8]\n  groove [translate 0 0 8 [cylinder 25 24]]\n  flange-top [translate 0 0 32 [cylinder 40 8]]\n  outer [union flange-bot [union groove flange-top]]\n  bore [cylinder 8 40]\n  [root [difference bore outer] \"steel\"]]",
+          "format": "json"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 12.709082999999737
+      },
+      {
+        "n": 3,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781224947647_1",
+          "type": "cylinder",
+          "name": "BottomFlange",
+          "params": {
+            "radius": 40,
+            "height": 8
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 2.9230829999996786
+      },
+      {
+        "n": 4,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781224947647_1",
+          "type": "cylinder",
+          "name": "BottomFlange",
+          "params": {
+            "radius": 40,
+            "height": 8,
+            "segments": 64
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.9857499999998254
+      },
+      {
+        "n": 5,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781224947647_1",
+          "type": "cylinder",
+          "name": "Groove",
+          "params": {
+            "radius": 25,
+            "height": 24,
+            "segments": 64
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.241374999997788
+      },
+      {
+        "n": 6,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781224947647_1",
+          "type": "cylinder",
+          "name": "TopFlange",
+          "params": {
+            "radius": 40,
+            "height": 8,
+            "segments": 64
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.3049580000006245
+      },
+      {
+        "n": 7,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781224947647_1",
+          "type": "cylinder",
+          "name": "Bore",
+          "params": {
+            "radius": 8,
+            "height": 40,
+            "segments": 64
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.0182500000009895
+      },
+      {
+        "n": 8,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781224947647_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.7599999999983993
+      },
+      {
+        "n": 9,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781224947647_1",
+          "part_id": "1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.105374999999185
+      },
+      {
+        "n": 10,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781224947647_1",
+          "part_id": "2"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.6564580000012938
+      },
+      {
+        "n": 11,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781224947647_1",
+          "part_id": "3"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.6265000000021246
+      },
+      {
+        "n": 12,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781224947647_1",
+          "part_id": "4"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.5363749999996799
+      },
+      {
+        "n": 13,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781224947647_1",
+          "type": "sketch_2_d",
+          "name": "PulleyProfile",
+          "params": {
+            "origin": [
+              0,
+              0,
+              0
+            ],
+            "x_axis": [
+              1,
+              0,
+              0
+            ],
+            "y_axis": [
+              0,
+              0,
+              1
+            ],
+            "segments": [
+              {
+                "type": "Line",
+                "x1": 8,
+                "y1": 0,
+                "x2": 40,
+                "y2": 0
+              },
+              {
+                "type": "Line",
+                "x1": 40,
+                "y1": 0,
+                "x2": 40,
+                "y2": 8
+              },
+              {
+                "type": "Line",
+                "x1": 40,
+                "y1": 8,
+                "x2": 25,
+                "y2": 8
+              },
+              {
+                "type": "Line",
+                "x1": 25,
+                "y1": 8,
+                "x2": 25,
+                "y2": 32
+              },
+              {
+                "type": "Line",
+                "x1": 25,
+                "y1": 32,
+                "x2": 40,
+                "y2": 32
+              },
+              {
+                "type": "Line",
+                "x1": 40,
+                "y1": 32,
+                "x2": 40,
+                "y2": 40
+              },
+              {
+                "type": "Line",
+                "x1": 40,
+                "y1": 40,
+                "x2": 8,
+                "y2": 40
+              },
+              {
+                "type": "Line",
+                "x1": 8,
+                "y1": 40,
+                "x2": 8,
+                "y2": 0
+              }
+            ]
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 3.836875000000873
+      },
+      {
+        "n": 14,
+        "tool": "create_cad_loon",
+        "args": {
+          "source": "[revolve 0 0 0 0 0 1 360 [sketch 0 0 0  1 0 0  0 0 1 #[\n  [line 8 0 40 0]\n  [line 40 0 40 8]\n  [line 40 8 25 8]\n  [line 25 8 25 32]\n  [line 25 32 40 32]\n  [line 40 32 40 40]\n  [line 40 40 8 40]\n  [line 8 40 8 0]\n]]]",
+          "format": "json"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.3930419999960577
+      },
+      {
+        "n": 15,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781224947647_1",
+          "type": "sketch_2_d",
+          "name": "PulleyProfile",
+          "params": {
+            "origin": {
+              "x": 0,
+              "y": 0,
+              "z": 0
+            },
+            "x_dir": {
+              "x": 1,
+              "y": 0,
+              "z": 0
+            },
+            "y_dir": {
+              "x": 0,
+              "y": 0,
+              "z": 1
+            },
+            "segments": [
+              {
+                "type": "Line",
+                "start": {
+                  "x": 8,
+                  "y": 0
+                },
+                "end": {
+                  "x": 40,
+                  "y": 0
+                }
+              },
+              {
+                "type": "Line",
+                "start": {
+                  "x": 40,
+                  "y": 0
+                },
+                "end": {
+                  "x": 40,
+                  "y": 8
+                }
+              },
+              {
+                "type": "Line",
+                "start": {
+                  "x": 40,
+                  "y": 8
+                },
+                "end": {
+                  "x": 25,
+                  "y": 8
+                }
+              },
+              {
+                "type": "Line",
+                "start": {
+                  "x": 25,
+                  "y": 8
+                },
+                "end": {
+                  "x": 25,
+                  "y": 32
+                }
+              },
+              {
+                "type": "Line",
+                "start": {
+                  "x": 25,
+                  "y": 32
+                },
+                "end": {
+                  "x": 40,
+                  "y": 32
+                }
+              },
+              {
+                "type": "Line",
+                "start": {
+                  "x": 40,
+                  "y": 32
+                },
+                "end": {
+                  "x": 40,
+                  "y": 40
+                }
+              },
+              {
+                "type": "Line",
+                "start": {
+                  "x": 40,
+                  "y": 40
+                },
+                "end": {
+                  "x": 8,
+                  "y": 40
+                }
+              },
+              {
+                "type": "Line",
+                "start": {
+                  "x": 8,
+                  "y": 40
+                },
+                "end": {
+                  "x": 8,
+                  "y": 0
+                }
+              }
+            ]
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.2258750000037253
+      },
+      {
+        "n": 16,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781224947647_1",
+          "type": "revolve",
+          "name": "Pulley",
+          "parent_part_id": "1",
+          "params": {
+            "sketch": 1,
+            "axis_origin": {
+              "x": 0,
+              "y": 0,
+              "z": 0
+            },
+            "axis_dir": {
+              "x": 0,
+              "y": 0,
+              "z": 1
+            },
+            "angle_deg": 360
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 4.497875000000931
+      },
+      {
+        "n": 17,
+        "tool": "render_view",
+        "args": {
+          "document_id": "doc_1781224947647_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 96.03725000000122
+      },
+      {
+        "n": 18,
+        "tool": "inspect_cad",
+        "args": {
+          "document_id": "doc_1781224947647_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.8439159999979893
+      },
+      {
+        "n": 19,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781224947647_1",
+          "part_id": "2"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.393458999998984
+      },
+      {
+        "n": 20,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781224947647_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.475625000006403
+      },
+      {
+        "n": 21,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781224947647_1",
+          "part_id": "1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.1953749999956926
+      },
+      {
+        "n": 22,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781224947647_1",
+          "type": "cylinder",
+          "name": "BottomFlange",
+          "params": {
+            "radius": 40,
+            "height": 8,
+            "segments": 64
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.9725000000034925
+      },
+      {
+        "n": 23,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781224947647_1",
+          "type": "cylinder",
+          "name": "GrooveRaw",
+          "params": {
+            "radius": 25,
+            "height": 24,
+            "segments": 64
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.7397090000013122
+      },
+      {
+        "n": 24,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781224947647_1",
+          "type": "translate",
+          "name": "GrooveT",
+          "parent_part_id": "2",
+          "params": {
+            "x": 0,
+            "y": 0,
+            "z": 8
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 1.8862090000038734
+      },
+      {
+        "n": 25,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781224947647_1",
+          "type": "translate",
+          "name": "GrooveT",
+          "parent_part_id": "2",
+          "params": {
+            "x": 0,
+            "y": 0,
+            "z": 8,
+            "child": 2
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 1.5420840000006137
+      },
+      {
+        "n": 26,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781224947647_1",
+          "type": "translate",
+          "name": "GrooveT",
+          "parent_part_id": "2",
+          "params": {
+            "offset": {
+              "x": 0,
+              "y": 0,
+              "z": 8
+            },
+            "child": 2
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.147499999991851
+      },
+      {
+        "n": 27,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781224947647_1",
+          "type": "cylinder",
+          "name": "TopFlangeRaw",
+          "params": {
+            "radius": 40,
+            "height": 8,
+            "segments": 64
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.776625000013155
+      },
+      {
+        "n": 28,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781224947647_1",
+          "type": "translate",
+          "name": "TopFlangeT",
+          "parent_part_id": "4",
+          "params": {
+            "offset": {
+              "x": 0,
+              "y": 0,
+              "z": 32
+            },
+            "child": 4
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.402791000000434
+      },
+      {
+        "n": 29,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781224947647_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.3103330000012647
+      },
+      {
+        "n": 30,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781224947647_1",
+          "part_id": "3"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.0532909999892581
+      },
+      {
+        "n": 31,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781224947647_1",
+          "part_id": "2"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.399916000009398
+      },
+      {
+        "n": 32,
+        "tool": "get_document",
+        "args": {
+          "document_id": "doc_1781224947647_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.3845839999994496
+      },
+      {
+        "n": 33,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781224947647_1",
+          "type": "union",
+          "name": "BotPlusGroove",
+          "parent_part_id": "1",
+          "params": {
+            "left": 1,
+            "right": 3
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.3309579999913694
+      },
+      {
+        "n": 34,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781224947647_1",
+          "type": "union",
+          "name": "Outer",
+          "parent_part_id": "6",
+          "params": {
+            "left": 6,
+            "right": 5
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.3425419999985024
+      },
+      {
+        "n": 35,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781224947647_1",
+          "type": "cylinder",
+          "name": "BoreRaw",
+          "params": {
+            "radius": 8,
+            "height": 40,
+            "segments": 64
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.5169590000004973
+      },
+      {
+        "n": 36,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781224947647_1",
+          "type": "difference",
+          "name": "Pulley",
+          "parent_part_id": "7",
+          "params": {
+            "left": 7,
+            "right": 8
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.6384169999946607
+      },
+      {
+        "n": 37,
+        "tool": "get_document",
+        "args": {
+          "document_id": "doc_1781224947647_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.3525420000078157
+      },
+      {
+        "n": 38,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781224947647_1",
+          "part_id": "1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.9025410000031115
+      },
+      {
+        "n": 39,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781224947647_1",
+          "part_id": "2"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.7474590000056196
+      },
+      {
+        "n": 40,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781224947647_1",
+          "part_id": "3"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.807583000001614
+      },
+      {
+        "n": 41,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781224947647_1",
+          "part_id": "4"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.9003749999974389
+      },
+      {
+        "n": 42,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781224947647_1",
+          "part_id": "5"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.5456659999908879
+      },
+      {
+        "n": 43,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781224947647_1",
+          "part_id": "6"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.5324580000014976
+      },
+      {
+        "n": 44,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781224947647_1",
+          "part_id": "7"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.45662500000617
+      },
+      {
+        "n": 45,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781224947647_1",
+          "part_id": "8"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.4028330000001006
+      },
+      {
+        "n": 46,
+        "tool": "get_document",
+        "args": {
+          "document_id": "doc_1781224947647_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.35749999999825377
+      }
+    ],
+    "tokens": {
+      "input": 654280,
+      "output": 7699,
+      "total": 661979,
+      "cache_creation_input": 13002,
+      "cache_read_input": 641243
+    },
+    "wallclock_sec": 126.8479815
+  },
+  "output": {
+    "vcad_path": "20260612T004227Z-1619.vcad",
+    "vcad_sha256": "8ab7758519f2eac92a388e21d14159c6ba5ac3b45f6178f93c871d4d29c42097",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-06-12T00:42:27.467Z",
+    "ended_at": "2026-06-12T00:44:34.368Z"
+  },
+  "signature": null
+}

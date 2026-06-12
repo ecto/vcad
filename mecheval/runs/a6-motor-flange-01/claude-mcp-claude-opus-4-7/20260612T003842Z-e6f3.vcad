@@ -1,0 +1,172 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "Flange Disc",
+      "op": {
+        "type": "Cylinder",
+        "radius": 60,
+        "height": 12,
+        "segments": 64
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": "Boss",
+      "op": {
+        "type": "Cylinder",
+        "radius": 36,
+        "height": 6,
+        "segments": 64
+      }
+    },
+    "3": {
+      "id": 3,
+      "name": "Boss Up",
+      "op": {
+        "type": "Translate",
+        "child": 2,
+        "offset": {
+          "x": 0,
+          "y": 0,
+          "z": 12
+        }
+      }
+    },
+    "4": {
+      "id": 4,
+      "name": "Body",
+      "op": {
+        "type": "Union",
+        "left": 1,
+        "right": 3
+      }
+    },
+    "5": {
+      "id": 5,
+      "name": "Bore",
+      "op": {
+        "type": "Cylinder",
+        "radius": 16,
+        "height": 18,
+        "segments": 64
+      }
+    },
+    "6": {
+      "id": 6,
+      "name": "Bolt Hole Raw",
+      "op": {
+        "type": "Cylinder",
+        "radius": 4.5,
+        "height": 12,
+        "segments": 32
+      }
+    },
+    "7": {
+      "id": 7,
+      "name": "Hole +X",
+      "op": {
+        "type": "Translate",
+        "child": 6,
+        "offset": {
+          "x": 48,
+          "y": 0,
+          "z": 0
+        }
+      }
+    },
+    "8": {
+      "id": 8,
+      "name": "Hole +Y",
+      "op": {
+        "type": "Translate",
+        "child": 6,
+        "offset": {
+          "x": 0,
+          "y": 48,
+          "z": 0
+        }
+      }
+    },
+    "9": {
+      "id": 9,
+      "name": "Hole -X",
+      "op": {
+        "type": "Translate",
+        "child": 6,
+        "offset": {
+          "x": -48,
+          "y": 0,
+          "z": 0
+        }
+      }
+    },
+    "10": {
+      "id": 10,
+      "name": "Hole -Y",
+      "op": {
+        "type": "Translate",
+        "child": 6,
+        "offset": {
+          "x": 0,
+          "y": -48,
+          "z": 0
+        }
+      }
+    },
+    "11": {
+      "id": 11,
+      "name": "Holes 1",
+      "op": {
+        "type": "Union",
+        "left": 7,
+        "right": 8
+      }
+    },
+    "12": {
+      "id": 12,
+      "name": "Holes 2",
+      "op": {
+        "type": "Union",
+        "left": 9,
+        "right": 10
+      }
+    },
+    "13": {
+      "id": 13,
+      "name": "All Bolt Holes",
+      "op": {
+        "type": "Union",
+        "left": 11,
+        "right": 12
+      }
+    },
+    "14": {
+      "id": 14,
+      "name": "All Tools",
+      "op": {
+        "type": "Union",
+        "left": 5,
+        "right": 13
+      }
+    },
+    "15": {
+      "id": 15,
+      "name": "Motor Flange",
+      "op": {
+        "type": "Difference",
+        "left": 4,
+        "right": 14
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 15,
+      "material": "default"
+    }
+  ]
+}

@@ -1,0 +1,226 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "base",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 80,
+          "y": 40,
+          "z": 12
+        }
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": null,
+      "op": {
+        "type": "Translate",
+        "child": 1,
+        "offset": {
+          "x": -40,
+          "y": -20,
+          "z": 0
+        }
+      }
+    },
+    "3": {
+      "id": 3,
+      "name": "left_tine_cube",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 14,
+          "y": 40,
+          "z": 45
+        }
+      }
+    },
+    "4": {
+      "id": 4,
+      "name": "bore_cyl",
+      "op": {
+        "type": "Cylinder",
+        "radius": 9,
+        "height": 14,
+        "segments": 64
+      }
+    },
+    "5": {
+      "id": 5,
+      "name": null,
+      "op": {
+        "type": "Translate",
+        "child": 3,
+        "offset": {
+          "x": -40,
+          "y": -20,
+          "z": 12
+        }
+      }
+    },
+    "6": {
+      "id": 6,
+      "name": null,
+      "op": {
+        "type": "Rotate",
+        "child": 4,
+        "angles": {
+          "x": 0,
+          "y": 90,
+          "z": 0
+        }
+      }
+    },
+    "7": {
+      "id": 7,
+      "name": null,
+      "op": {
+        "type": "Translate",
+        "child": 6,
+        "offset": {
+          "x": -40,
+          "y": 0,
+          "z": 44.5
+        }
+      }
+    },
+    "8": {
+      "id": 8,
+      "name": "left_tine_with_bore",
+      "op": {
+        "type": "Difference",
+        "left": 5,
+        "right": 7
+      }
+    },
+    "9": {
+      "id": 9,
+      "name": "right_tine_cube",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 14,
+          "y": 40,
+          "z": 45
+        }
+      }
+    },
+    "10": {
+      "id": 10,
+      "name": "right_bore_cyl",
+      "op": {
+        "type": "Cylinder",
+        "radius": 9,
+        "height": 14,
+        "segments": 64
+      }
+    },
+    "11": {
+      "id": 11,
+      "name": null,
+      "op": {
+        "type": "Translate",
+        "child": 9,
+        "offset": {
+          "x": 26,
+          "y": -20,
+          "z": 12
+        }
+      }
+    },
+    "12": {
+      "id": 12,
+      "name": null,
+      "op": {
+        "type": "Rotate",
+        "child": 10,
+        "angles": {
+          "x": 0,
+          "y": 90,
+          "z": 0
+        }
+      }
+    },
+    "13": {
+      "id": 13,
+      "name": null,
+      "op": {
+        "type": "Translate",
+        "child": 12,
+        "offset": {
+          "x": 26,
+          "y": 0,
+          "z": 44.5
+        }
+      }
+    },
+    "14": {
+      "id": 14,
+      "name": "right_tine_with_bore",
+      "op": {
+        "type": "Difference",
+        "left": 11,
+        "right": 13
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 2,
+      "material": "default"
+    },
+    {
+      "root": 3,
+      "material": "default"
+    },
+    {
+      "root": 4,
+      "material": "default"
+    },
+    {
+      "root": 5,
+      "material": "default"
+    },
+    {
+      "root": 6,
+      "material": "default"
+    },
+    {
+      "root": 7,
+      "material": "default"
+    },
+    {
+      "root": 8,
+      "material": "default"
+    },
+    {
+      "root": 9,
+      "material": "default"
+    },
+    {
+      "root": 10,
+      "material": "default"
+    },
+    {
+      "root": 11,
+      "material": "default"
+    },
+    {
+      "root": 12,
+      "material": "default"
+    },
+    {
+      "root": 13,
+      "material": "default"
+    },
+    {
+      "root": 14,
+      "material": "default"
+    }
+  ]
+}

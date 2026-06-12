@@ -1,0 +1,195 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "Flange Disc",
+      "op": {
+        "type": "Cylinder",
+        "radius": 60,
+        "height": 12,
+        "segments": 64
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": "Boss Cyl",
+      "op": {
+        "type": "Cylinder",
+        "radius": 36,
+        "height": 6,
+        "segments": 64
+      }
+    },
+    "3": {
+      "id": 3,
+      "name": "Boss Up 12",
+      "op": {
+        "type": "Translate",
+        "child": 2,
+        "offset": {
+          "x": 0,
+          "y": 0,
+          "z": 12
+        }
+      }
+    },
+    "4": {
+      "id": 4,
+      "name": "Flange+Boss",
+      "op": {
+        "type": "Union",
+        "left": 1,
+        "right": 3
+      }
+    },
+    "5": {
+      "id": 5,
+      "name": "Central Bore",
+      "op": {
+        "type": "Cylinder",
+        "radius": 16,
+        "height": 18,
+        "segments": 64
+      }
+    },
+    "6": {
+      "id": 6,
+      "name": "Bore Cut",
+      "op": {
+        "type": "Difference",
+        "left": 4,
+        "right": 5
+      }
+    },
+    "7": {
+      "id": 7,
+      "name": "Bolt Cyl A",
+      "op": {
+        "type": "Cylinder",
+        "radius": 4.5,
+        "height": 12,
+        "segments": 32
+      }
+    },
+    "8": {
+      "id": 8,
+      "name": "Bolt Cyl B",
+      "op": {
+        "type": "Cylinder",
+        "radius": 4.5,
+        "height": 12,
+        "segments": 32
+      }
+    },
+    "9": {
+      "id": 9,
+      "name": "Bolt Cyl C",
+      "op": {
+        "type": "Cylinder",
+        "radius": 4.5,
+        "height": 12,
+        "segments": 32
+      }
+    },
+    "10": {
+      "id": 10,
+      "name": "Bolt Cyl D",
+      "op": {
+        "type": "Cylinder",
+        "radius": 4.5,
+        "height": 12,
+        "segments": 32
+      }
+    },
+    "11": {
+      "id": 11,
+      "name": "Bolt A pos",
+      "op": {
+        "type": "Translate",
+        "child": 7,
+        "offset": {
+          "x": 48,
+          "y": 0,
+          "z": 0
+        }
+      }
+    },
+    "12": {
+      "id": 12,
+      "name": "Bolt B pos",
+      "op": {
+        "type": "Translate",
+        "child": 8,
+        "offset": {
+          "x": 0,
+          "y": 48,
+          "z": 0
+        }
+      }
+    },
+    "13": {
+      "id": 13,
+      "name": "Bolt C pos",
+      "op": {
+        "type": "Translate",
+        "child": 9,
+        "offset": {
+          "x": -48,
+          "y": 0,
+          "z": 0
+        }
+      }
+    },
+    "14": {
+      "id": 14,
+      "name": "Bolt D pos",
+      "op": {
+        "type": "Translate",
+        "child": 10,
+        "offset": {
+          "x": 0,
+          "y": -48,
+          "z": 0
+        }
+      }
+    },
+    "15": {
+      "id": 15,
+      "name": "Bolts AB",
+      "op": {
+        "type": "Union",
+        "left": 11,
+        "right": 12
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 6,
+      "material": "default"
+    },
+    {
+      "root": 11,
+      "material": "default"
+    },
+    {
+      "root": 12,
+      "material": "default"
+    },
+    {
+      "root": 13,
+      "material": "default"
+    },
+    {
+      "root": 14,
+      "material": "default"
+    },
+    {
+      "root": 15,
+      "material": "default"
+    }
+  ]
+}

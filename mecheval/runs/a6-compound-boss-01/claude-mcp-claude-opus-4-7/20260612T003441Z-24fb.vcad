@@ -1,0 +1,97 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "BaseCube",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 120,
+          "y": 80,
+          "z": 15
+        }
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": "BaseT",
+      "op": {
+        "type": "Translate",
+        "child": 1,
+        "offset": {
+          "x": -60,
+          "y": -40,
+          "z": 0
+        }
+      }
+    },
+    "3": {
+      "id": 3,
+      "name": "BossL_cyl",
+      "op": {
+        "type": "Cylinder",
+        "radius": 15,
+        "height": 20,
+        "segments": 64
+      }
+    },
+    "4": {
+      "id": 4,
+      "name": "BossL_T",
+      "op": {
+        "type": "Translate",
+        "child": 3,
+        "offset": {
+          "x": -30,
+          "y": 0,
+          "z": 15
+        }
+      }
+    },
+    "5": {
+      "id": 5,
+      "name": "BossR_cyl",
+      "op": {
+        "type": "Cylinder",
+        "radius": 15,
+        "height": 20,
+        "segments": 64
+      }
+    },
+    "6": {
+      "id": 6,
+      "name": "BossR_T",
+      "op": {
+        "type": "Translate",
+        "child": 5,
+        "offset": {
+          "x": 30,
+          "y": 0,
+          "z": 15
+        }
+      }
+    },
+    "7": {
+      "id": 7,
+      "name": "U1",
+      "op": {
+        "type": "Union",
+        "left": 2,
+        "right": 4
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 6,
+      "material": "default"
+    },
+    {
+      "root": 7,
+      "material": "default"
+    }
+  ]
+}

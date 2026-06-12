@@ -1,0 +1,660 @@
+{
+  "schema_version": 0,
+  "task_id": "a6-compound-bore-ring-01",
+  "task_sha256": "98e31f23f65c10806b0cadeac1aff38898d5c6476ed264311406e383576a3b40",
+  "checks": [
+    {
+      "n": 0,
+      "type": "valid_solid",
+      "params": {
+        "type": "valid_solid"
+      },
+      "result": "pass",
+      "details": {
+        "root_count": 1,
+        "solids_produced": 1
+      }
+    },
+    {
+      "n": 1,
+      "type": "bbox",
+      "params": {
+        "type": "bbox",
+        "min": [
+          -40,
+          -40,
+          0
+        ],
+        "max": [
+          40,
+          40,
+          50
+        ],
+        "tolerance_mm": 0.1
+      },
+      "result": "pass",
+      "details": {
+        "actual_max": [
+          40,
+          40,
+          50
+        ],
+        "actual_min": [
+          -40,
+          -40,
+          0
+        ],
+        "deviation_max": [
+          0,
+          0,
+          0
+        ],
+        "deviation_min": [
+          0,
+          0,
+          0
+        ],
+        "max_abs_deviation_mm": 0,
+        "tolerance_mm": 0.1
+      }
+    },
+    {
+      "n": 2,
+      "type": "mass_props",
+      "params": {
+        "type": "mass_props",
+        "volume_mm3": 184568.57,
+        "center_of_mass": [
+          0,
+          0,
+          22.87
+        ],
+        "tolerance_pct": 1
+      },
+      "result": "pass",
+      "details": {
+        "center_of_mass": {
+          "actual": [
+            7.123721562038193e-16,
+            -1.1571934535100724e-15,
+            22.872340435608024
+          ],
+          "bbox_diagonal_mm": 123.69316876852982,
+          "deviation": [
+            7.123721562038193e-16,
+            -1.1571934535100724e-15,
+            0.002340435608022773
+          ],
+          "max_abs_deviation_mm": 0.002340435608022773,
+          "pass": true,
+          "spec": [
+            0,
+            0,
+            22.87
+          ],
+          "tolerance_mm": 1.2369316876852983
+        },
+        "volume": {
+          "actual_mm3": 184272.22458472173,
+          "deviation_pct": 0.16056114823790404,
+          "pass": true,
+          "spec_mm3": 184568.57,
+          "tolerance_pct": 1
+        }
+      }
+    },
+    {
+      "n": 3,
+      "type": "step_roundtrip",
+      "params": {
+        "type": "step_roundtrip",
+        "tolerance_pct": 1
+      },
+      "result": "pass",
+      "details": {
+        "per_solid": [
+          {
+            "bbox": {
+              "max_abs_deviation_mm": 0,
+              "original_max": [
+                40,
+                40,
+                50
+              ],
+              "original_min": [
+                -40,
+                -40,
+                0
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                40,
+                40,
+                50
+              ],
+              "roundtripped_min": [
+                -40,
+                -40,
+                0
+              ],
+              "tolerance_mm": 1.2369316876852983
+            },
+            "index": 0,
+            "pass": true,
+            "volume": {
+              "deviation_pct": 0.5822730355286018,
+              "original_mm3": 184272.22458472173,
+              "pass": true,
+              "roundtripped_mm3": 183199.2571089962
+            }
+          }
+        ],
+        "tolerance_pct": 1
+      }
+    }
+  ],
+  "summary": {
+    "passed": true,
+    "checks_passed": 4,
+    "checks_total": 4,
+    "score": 1,
+    "anti_cheese_violated": false,
+    "limits_exceeded": [
+      "max_tokens: 555923 > 40000"
+    ]
+  },
+  "run_id": "20260612T003319Z-1278",
+  "model": {
+    "id": "claude-mcp-claude-opus-4-7",
+    "name": "Claude (MCP, claude-opus-4-7)",
+    "provider": "anthropic",
+    "params": {
+      "mode": "mcp",
+      "model": "claude-opus-4-7",
+      "max_tokens": 8000,
+      "max_iterations": 30
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "a6-compound-bore-ring-01",
+    "rendered": "Make a stepped-bore ring as a single solid. The outer body is a cylinder of diameter 80mm and height 50mm, base on the XY plane (z = 0 to z = 50), centered on the Z axis. From the bottom face, subtract a coaxial blind bore of diameter 30mm that extends 25mm deep (z = 0 to z = 25). From the top face, subtract a coaxial blind bore of diameter 50mm that extends 25mm deep (z = 25 to z = 50). The two bores meet exactly at z = 25, forming a stepped interior: a narrow (30mm) chamber below and a wide (50mm) chamber above, connected at the mid-plane. The outer wall is 25mm thick at the bottom half and 15mm thick at the top half. Output a single solid.",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "open_document",
+        "args": {},
+        "result_kind": "ok",
+        "wallclock_ms": 2.41549999999998
+      },
+      {
+        "n": 1,
+        "tool": "create_cad_loon",
+        "args": {
+          "source": "[let\n  [outer [translate 0 0 0 [cylinder 40 50]]]\n  [bottom-bore [translate 0 0 0 [cylinder 15 25]]]\n  [top-bore [translate 0 0 25 [cylinder 25 25]]]\n  [root [difference top-bore [difference bottom-bore outer]] \"steel\"]]"
+        },
+        "result_kind": "err",
+        "wallclock_ms": 6.642208999999639
+      },
+      {
+        "n": 2,
+        "tool": "open_document",
+        "args": {
+          "initial": {}
+        },
+        "result_kind": "err",
+        "wallclock_ms": 0.6629999999995562
+      },
+      {
+        "n": 3,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781224399591_1",
+          "type": "cylinder",
+          "name": "Outer Body",
+          "params": {
+            "radius": 40,
+            "height": 50
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 3.8170000000009168
+      },
+      {
+        "n": 4,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781224399591_1",
+          "type": "cylinder",
+          "name": "Outer Body",
+          "params": {
+            "radius": 40,
+            "height": 50,
+            "segments": 64
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.8325839999997697
+      },
+      {
+        "n": 5,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781224399591_1",
+          "type": "cylinder",
+          "name": "Bottom Bore",
+          "parent_part_id": "1",
+          "params": {
+            "radius": 15,
+            "height": 25,
+            "segments": 64,
+            "operation": "difference"
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.386833000000479
+      },
+      {
+        "n": 6,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781224399591_1",
+          "part_id": "2"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.6086250000007567
+      },
+      {
+        "n": 7,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781224399591_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.811041999997542
+      },
+      {
+        "n": 8,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781224399591_1",
+          "part_id": "1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.4041660000002594
+      },
+      {
+        "n": 9,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781224399591_1",
+          "part_id": "2"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.9741670000003069
+      },
+      {
+        "n": 10,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781224399591_1",
+          "type": "cylinder",
+          "name": "Outer",
+          "params": {
+            "radius": 40,
+            "height": 50,
+            "segments": 64
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.1822920000013255
+      },
+      {
+        "n": 11,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781224399591_1",
+          "type": "difference",
+          "name": "Cut Bottom Bore",
+          "parent_part_id": "1",
+          "params": {}
+        },
+        "result_kind": "err",
+        "wallclock_ms": 1.3925839999974414
+      },
+      {
+        "n": 12,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781224399591_1",
+          "part_id": "1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.9809999999997672
+      },
+      {
+        "n": 13,
+        "tool": "create_cad_loon",
+        "args": {
+          "source": "[root\n  [pipe\n    [cylinder 40 50]\n    [difference [cylinder 15 25]]\n    [difference [translate 0 0 25 [cylinder 25 25]]]]\n  \"steel\"]"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 6.573833999995259
+      },
+      {
+        "n": 14,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781224399591_1",
+          "type": "cylinder",
+          "name": "Outer",
+          "params": {
+            "radius": 40,
+            "height": 50,
+            "segments": 64
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.7912910000013653
+      },
+      {
+        "n": 15,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781224399591_1",
+          "type": "cylinder",
+          "name": "Bottom Bore Tool",
+          "parent_part_id": "1",
+          "params": {
+            "radius": 15,
+            "height": 25,
+            "segments": 64,
+            "operation": "Subtract"
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.1757910000014817
+      },
+      {
+        "n": 16,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781224399591_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.286707999999635
+      },
+      {
+        "n": 17,
+        "tool": "get_document",
+        "args": {
+          "document_id": "doc_1781224399591_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.9044169999979204
+      },
+      {
+        "n": 18,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781224399591_1",
+          "part_id": "1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.6799170000012964
+      },
+      {
+        "n": 19,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781224399591_1",
+          "part_id": "2"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.29741700000158744
+      },
+      {
+        "n": 20,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781224399591_1",
+          "type": "cylinder",
+          "name": "Outer",
+          "params": {
+            "radius": 40,
+            "height": 50,
+            "segments": 64
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.8741670000017621
+      },
+      {
+        "n": 21,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781224399591_1",
+          "type": "cylinder",
+          "name": "BottomBoreTool",
+          "params": {
+            "radius": 15,
+            "height": 25,
+            "segments": 64
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.1809159999975236
+      },
+      {
+        "n": 22,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781224399591_1",
+          "type": "cylinder",
+          "name": "TopBoreToolBase",
+          "params": {
+            "radius": 25,
+            "height": 25,
+            "segments": 64
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.7581669999999576
+      },
+      {
+        "n": 23,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781224399591_1",
+          "type": "translate",
+          "name": "TopBoreTool",
+          "params": {
+            "child": 3,
+            "x": 0,
+            "y": 0,
+            "z": 25
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 0.8533749999915017
+      },
+      {
+        "n": 24,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781224399591_1",
+          "type": "translate",
+          "name": "TopBoreTool",
+          "params": {
+            "child": 3,
+            "offset": {
+              "x": 0,
+              "y": 0,
+              "z": 25
+            }
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.9939159999921685
+      },
+      {
+        "n": 25,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781224399591_1",
+          "type": "difference",
+          "name": "CutBottom",
+          "params": {
+            "left": 1,
+            "right": 2
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.2684580000059213
+      },
+      {
+        "n": 26,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781224399591_1",
+          "type": "difference",
+          "name": "SteppedBoreRing",
+          "params": {
+            "left": 5,
+            "right": 4
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.365749999997206
+      },
+      {
+        "n": 27,
+        "tool": "get_document",
+        "args": {
+          "document_id": "doc_1781224399591_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.46300000000337604
+      },
+      {
+        "n": 28,
+        "tool": "inspect_cad",
+        "args": {
+          "document_id": "doc_1781224399591_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 52.20345800000359
+      },
+      {
+        "n": 29,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781224399591_1",
+          "part_id": "1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.9951250000012806
+      },
+      {
+        "n": 30,
+        "tool": "get_document",
+        "args": {
+          "document_id": "doc_1781224399591_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.5332079999934649
+      },
+      {
+        "n": 31,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781224399591_1",
+          "part_id": "2"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.2603329999983544
+      },
+      {
+        "n": 32,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781224399591_1",
+          "part_id": "3"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.162916999994195
+      },
+      {
+        "n": 33,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781224399591_1",
+          "part_id": "4"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.790166999999201
+      },
+      {
+        "n": 34,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781224399591_1",
+          "part_id": "5"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.7820000000065193
+      },
+      {
+        "n": 35,
+        "tool": "inspect_cad",
+        "args": {
+          "document_id": "doc_1781224399591_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 12.032833000004757
+      },
+      {
+        "n": 36,
+        "tool": "get_document",
+        "args": {
+          "document_id": "doc_1781224399591_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.40587499999674037
+      }
+    ],
+    "tokens": {
+      "input": 550962,
+      "output": 4961,
+      "total": 555923,
+      "cache_creation_input": 8561,
+      "cache_read_input": 542366
+    },
+    "wallclock_sec": 93.311745792
+  },
+  "output": {
+    "vcad_path": "20260612T003319Z-1278.vcad",
+    "vcad_sha256": "c17e8acf3ea0be79de11853f42d130a2731a1e9782d69b6a43c556c56ebe9539",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-06-12T00:33:19.377Z",
+    "ended_at": "2026-06-12T00:34:52.731Z"
+  },
+  "signature": null
+}
