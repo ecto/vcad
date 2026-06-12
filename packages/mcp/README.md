@@ -14,6 +14,27 @@ Or add to your MCP configuration directly:
 claude mcp add vcad --command "npx @vcad/mcp"
 ```
 
+## Tool packs
+
+The surface is a small always-on core — the make → see → measure → verify →
+ship loop (session lifecycle, Loon/CRUD authoring, parts library,
+`inspect_cad`, `render_view`, `export_cad`, `import_step`,
+`open_in_browser`, `get_changelog`) — plus opt-out domain packs:
+
+| Pack | Tools |
+|------|-------|
+| `dfm` | `dfm_check`, `dfm_explain`, `dfm_suggest_fix`, `dfm_apply_fix` |
+| `sheet_metal` | `sheet_metal_create/unfold/check/materials/bend_table/cost/suggest_fix/sequence/nest` |
+| `physics` | `create_robot_env`, `gym_*`, `batch_*` |
+| `ecad` | `create_schematic`, `place_components`, `route_nets`, `run_drc`, `run_erc`, `export_gerber`, `calc_impedance` |
+| `eval` | `verify_part`, `list_eval_tasks` (mecheval self-grading oracle) |
+
+Set `VCAD_MCP_PACKS` to a comma-separated list of packs to enable
+(e.g. `VCAD_MCP_PACKS=sheet_metal,dfm`), or `none` for core only.
+Unset, every pack is enabled. A smaller surface costs fewer schema
+tokens per request and measurably improves tool-selection accuracy for
+focused workflows.
+
 ## Tools
 
 ### `create_cad_document`

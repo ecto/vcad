@@ -1,0 +1,10 @@
+{
+  "id": "2026-06-11-vcad-branded-mcp-viewer",
+  "version": "0.9.4",
+  "date": "2026-06-11",
+  "category": "feat",
+  "title": "vcad-branded MCP viewer and tool packs",
+  "summary": "The inline MCP Apps viewer now wears official vcad chrome and renders with the app's exact rig (studio IBL, grid, contact shadow); VCAD_MCP_PACKS trims the tool surface to core + chosen domain packs.",
+  "features": ["mcp", "viewer", "agents"],
+  "mcpTools": ["open_document", "get_preview_glb", "create_cad_loon"]
+}

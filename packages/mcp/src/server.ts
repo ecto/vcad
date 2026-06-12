@@ -142,6 +142,69 @@ const UI_META = {
   "ui/resourceUri": VIEWER_RESOURCE_URI,
 };
 
+/**
+ * Domain tool packs. The surface is a small always-on core — the
+ * make → see → measure → verify → ship loop (session, loon/CRUD
+ * authoring, parts library, inspect, render, export, share) — plus
+ * these opt-out packs for specialized workflows.
+ *
+ * `VCAD_MCP_PACKS` trims what is advertised: a comma-separated list of
+ * pack names to enable (e.g. "sheet_metal,dfm"), or "none" for core
+ * only. Unset enables every pack — backward compatible. Calls to a
+ * tool in a disabled pack return an error pointing at the env var.
+ */
+const TOOL_PACKS: Record<string, readonly string[]> = {
+  dfm: ["dfm_check", "dfm_explain", "dfm_suggest_fix", "dfm_apply_fix"],
+  sheet_metal: [
+    "sheet_metal_create",
+    "sheet_metal_unfold",
+    "sheet_metal_check",
+    "sheet_metal_materials",
+    "sheet_metal_bend_table",
+    "sheet_metal_cost",
+    "sheet_metal_suggest_fix",
+    "sheet_metal_sequence",
+    "sheet_metal_nest",
+  ],
+  physics: [
+    "create_robot_env",
+    "gym_step",
+    "gym_reset",
+    "gym_observe",
+    "gym_close",
+    "batch_create_envs",
+    "batch_step",
+    "batch_reset",
+  ],
+  ecad: [
+    "create_schematic",
+    "place_components",
+    "route_nets",
+    "run_drc",
+    "run_erc",
+    "export_gerber",
+    "calc_impedance",
+  ],
+  // Mecheval self-grading oracle. The benchmark harness already excludes
+  // these during scored runs; hosts that don't want the benchmark
+  // vocabulary at all can drop the pack.
+  eval: ["verify_part", "list_eval_tasks"],
+};
+
+/** Tool names hidden by the `VCAD_MCP_PACKS` env var (empty = none). */
+function disabledToolNames(): Set<string> {
+  const env = process.env.VCAD_MCP_PACKS?.trim();
+  if (!env) return new Set();
+  const enabled = new Set(
+    env.split(",").map((s) => s.trim().toLowerCase()).filter(Boolean),
+  );
+  const disabled = new Set<string>();
+  for (const [pack, tools] of Object.entries(TOOL_PACKS)) {
+    if (!enabled.has(pack)) for (const t of tools) disabled.add(t);
+  }
+  return disabled;
+}
+
 export async function createServer(existingEngine?: Engine): Promise<Server> {
   // Initialize the WASM engine (or reuse one provided by the caller)
   const engine = existingEngine ?? await Engine.init();
@@ -184,6 +247,9 @@ export async function createServer(existingEngine?: Engine): Promise<Server> {
   // set plus all registry-driven kernel tools (they all mutate a session
   // document, so a preview is always meaningful).
   const uiTools = new Set([...GEOMETRY_TOOLS, ...dispatchableTools]);
+
+  // Tools hidden by VCAD_MCP_PACKS (resolved once at server creation).
+  const disabledTools = disabledToolNames();
 
   const server = new Server(
     {
@@ -529,7 +595,7 @@ export async function createServer(existingEngine?: Engine): Promise<Server> {
           "Returns Z0, effective Er, and propagation delay.",
         inputSchema: calcImpedanceSchema,
       },
-    ],
+    ].filter((t) => !disabledTools.has(t.name)),
   }));
 
   // ── MCP Apps: List UI resources ──────────────────────────────
@@ -589,6 +655,18 @@ export async function createServer(existingEngine?: Engine): Promise<Server> {
   // Handle tool calls
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args = {} } = request.params;
+
+    if (disabledTools.has(name)) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Tool '${name}' belongs to a pack disabled by VCAD_MCP_PACKS. Enable its pack to use it.`,
+          },
+        ],
+        isError: true,
+      };
+    }
 
     try {
       let result: {
