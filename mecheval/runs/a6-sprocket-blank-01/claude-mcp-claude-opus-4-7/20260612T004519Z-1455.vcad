@@ -1,0 +1,173 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "Disc",
+      "op": {
+        "type": "Cylinder",
+        "radius": 50,
+        "height": 20,
+        "segments": 64
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": "HubCyl",
+      "op": {
+        "type": "Cylinder",
+        "radius": 20,
+        "height": 20,
+        "segments": 64
+      }
+    },
+    "3": {
+      "id": 3,
+      "name": "Bore",
+      "op": {
+        "type": "Cylinder",
+        "radius": 10,
+        "height": 42,
+        "segments": 64
+      }
+    },
+    "4": {
+      "id": 4,
+      "name": "Keyway",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 6,
+          "y": 6,
+          "z": 42
+        }
+      }
+    },
+    "5": {
+      "id": 5,
+      "name": "Bolt",
+      "op": {
+        "type": "Cylinder",
+        "radius": 4,
+        "height": 22,
+        "segments": 32
+      }
+    },
+    "6": {
+      "id": 6,
+      "name": "HubT",
+      "op": {
+        "type": "Translate",
+        "child": 2,
+        "offset": {
+          "x": 0,
+          "y": 0,
+          "z": 20
+        }
+      }
+    },
+    "7": {
+      "id": 7,
+      "name": "BoreT",
+      "op": {
+        "type": "Translate",
+        "child": 3,
+        "offset": {
+          "x": 0,
+          "y": 0,
+          "z": -1
+        }
+      }
+    },
+    "8": {
+      "id": 8,
+      "name": "KeywayT",
+      "op": {
+        "type": "Translate",
+        "child": 4,
+        "offset": {
+          "x": -3,
+          "y": 10,
+          "z": -1
+        }
+      }
+    },
+    "9": {
+      "id": 9,
+      "name": "BoltT",
+      "op": {
+        "type": "Translate",
+        "child": 5,
+        "offset": {
+          "x": 35,
+          "y": 0,
+          "z": -1
+        }
+      }
+    },
+    "10": {
+      "id": 10,
+      "name": "BoltPattern",
+      "op": {
+        "type": "CircularPattern",
+        "child": 9,
+        "axis_origin": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "axis_dir": {
+          "x": 0,
+          "y": 0,
+          "z": 1
+        },
+        "count": 4,
+        "angle_deg": 360
+      }
+    },
+    "11": {
+      "id": 11,
+      "name": "DiscPlusHub",
+      "op": {
+        "type": "Union",
+        "left": 1,
+        "right": 6
+      }
+    },
+    "12": {
+      "id": 12,
+      "name": "CutBore",
+      "op": {
+        "type": "Difference",
+        "left": 11,
+        "right": 7
+      }
+    },
+    "13": {
+      "id": 13,
+      "name": "CutKeyway",
+      "op": {
+        "type": "Difference",
+        "left": 12,
+        "right": 8
+      }
+    },
+    "14": {
+      "id": 14,
+      "name": "SprocketBlank",
+      "op": {
+        "type": "Difference",
+        "left": 13,
+        "right": 10
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 14,
+      "material": "default"
+    }
+  ]
+}

@@ -1,0 +1,234 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "base",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 80,
+          "y": 80,
+          "z": 10
+        }
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": "base translate",
+      "op": {
+        "type": "Translate",
+        "child": 1,
+        "offset": {
+          "x": -40,
+          "y": -40,
+          "z": 0
+        }
+      }
+    },
+    "3": {
+      "id": 3,
+      "name": "mid",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 60,
+          "y": 60,
+          "z": 10
+        }
+      }
+    },
+    "4": {
+      "id": 4,
+      "name": "mid translate",
+      "op": {
+        "type": "Translate",
+        "child": 3,
+        "offset": {
+          "x": -30,
+          "y": -30,
+          "z": 10
+        }
+      }
+    },
+    "5": {
+      "id": 5,
+      "name": "top",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 40,
+          "y": 40,
+          "z": 10
+        }
+      }
+    },
+    "6": {
+      "id": 6,
+      "name": "top translate",
+      "op": {
+        "type": "Translate",
+        "child": 5,
+        "offset": {
+          "x": -20,
+          "y": -20,
+          "z": 20
+        }
+      }
+    },
+    "7": {
+      "id": 7,
+      "name": "union base+mid",
+      "op": {
+        "type": "Union",
+        "left": 2,
+        "right": 4
+      }
+    },
+    "8": {
+      "id": 8,
+      "name": "pyramid",
+      "op": {
+        "type": "Union",
+        "left": 7,
+        "right": 6
+      }
+    },
+    "9": {
+      "id": 9,
+      "name": "hole1 cyl",
+      "op": {
+        "type": "Cylinder",
+        "radius": 3,
+        "height": 10,
+        "segments": 32
+      }
+    },
+    "10": {
+      "id": 10,
+      "name": "hole1",
+      "op": {
+        "type": "Translate",
+        "child": 9,
+        "offset": {
+          "x": 30,
+          "y": 30,
+          "z": 0
+        }
+      }
+    },
+    "11": {
+      "id": 11,
+      "name": "hole2 cyl",
+      "op": {
+        "type": "Cylinder",
+        "radius": 3,
+        "height": 10,
+        "segments": 32
+      }
+    },
+    "12": {
+      "id": 12,
+      "name": "hole2",
+      "op": {
+        "type": "Translate",
+        "child": 11,
+        "offset": {
+          "x": -30,
+          "y": 30,
+          "z": 0
+        }
+      }
+    },
+    "13": {
+      "id": 13,
+      "name": "hole3 cyl",
+      "op": {
+        "type": "Cylinder",
+        "radius": 3,
+        "height": 10,
+        "segments": 32
+      }
+    },
+    "14": {
+      "id": 14,
+      "name": "hole3",
+      "op": {
+        "type": "Translate",
+        "child": 13,
+        "offset": {
+          "x": -30,
+          "y": -30,
+          "z": 0
+        }
+      }
+    },
+    "15": {
+      "id": 15,
+      "name": "hole4 cyl",
+      "op": {
+        "type": "Cylinder",
+        "radius": 3,
+        "height": 10,
+        "segments": 32
+      }
+    },
+    "16": {
+      "id": 16,
+      "name": "hole4",
+      "op": {
+        "type": "Translate",
+        "child": 15,
+        "offset": {
+          "x": 30,
+          "y": -30,
+          "z": 0
+        }
+      }
+    },
+    "17": {
+      "id": 17,
+      "name": "holes12",
+      "op": {
+        "type": "Union",
+        "left": 10,
+        "right": 12
+      }
+    },
+    "18": {
+      "id": 18,
+      "name": "holes34",
+      "op": {
+        "type": "Union",
+        "left": 14,
+        "right": 16
+      }
+    },
+    "19": {
+      "id": 19,
+      "name": "all holes",
+      "op": {
+        "type": "Union",
+        "left": 17,
+        "right": 18
+      }
+    },
+    "20": {
+      "id": 20,
+      "name": "final",
+      "op": {
+        "type": "Difference",
+        "left": 8,
+        "right": 19
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 20,
+      "material": "default"
+    }
+  ]
+}

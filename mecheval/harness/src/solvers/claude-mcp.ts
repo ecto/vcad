@@ -51,14 +51,23 @@ Conventions:
 
 When you believe the document satisfies the task, stop calling tools and reply with a one-sentence summary. Don't call \`close_document\` — the grader needs the document open to read it.`;
 
-/** Self-grading oracle tools excluded from scored benchmark runs —
- *  letting the model grade itself against the task's own checks mid-run
- *  would contaminate the leaderboard. Applied BOTH when advertising the
- *  tool list to the model and when executing tool_use blocks: the API
- *  normally constrains tool_use to declared tools, but a hallucinated
- *  oracle call must not reach MCP either. render_view stays: eyes are
- *  product surface. */
+/** Self-grading oracle tools — letting the model grade itself against
+ *  the task's own checks mid-run would contaminate the leaderboard. */
 const ORACLE_TOOLS = new Set(["verify_part", "list_eval_tasks"]);
+
+/** All tools excluded from scored benchmark runs: the oracle pair, plus
+ *  close_document — agents occasionally call it mid-run despite the
+ *  system prompt forbidding it, destroying the session before the final
+ *  get_document (~3% of attempts in the 2026-06 matrix died this way).
+ *  It serves no purpose in a scored run. Applied BOTH when advertising
+ *  the tool list to the model and when executing tool_use blocks: the
+ *  API normally constrains tool_use to declared tools, but a
+ *  hallucinated call must not reach MCP either. render_view stays: eyes
+ *  are product surface. */
+export const BENCHMARK_EXCLUDED_TOOLS = new Set([
+  ...ORACLE_TOOLS,
+  "close_document",
+]);
 
 interface McpToolResult {
   content?: Array<{ type: string; text?: string; data?: string; mimeType?: string }>;
@@ -135,26 +144,65 @@ function mcpResultToAnthropicContent(
   return blocks;
 }
 
-function extractDocumentId(openResult: {
-  content?: Array<{ type: string; text?: string }>;
-}): string {
-  const text = mcpResultToText(openResult);
-  try {
-    const parsed = JSON.parse(text);
-    if (typeof parsed.document_id === "string") return parsed.document_id;
-  } catch {
-    // fall through
+/** Find the session id in an open_document result. Parses each text
+ *  block independently — the server may append preview-handle blocks
+ *  for MCP Apps hosts, so the joined text is not valid JSON. */
+export function extractDocumentId(openResult: McpToolResult): string {
+  for (const c of openResult.content ?? []) {
+    if (c.type !== "text" || c.text == null) continue;
+    try {
+      const parsed = JSON.parse(c.text);
+      if (typeof parsed.document_id === "string") return parsed.document_id;
+    } catch {
+      // try next block
+    }
   }
-  throw new Error(`open_document did not return a JSON document_id; got: ${text}`);
+  throw new Error(
+    `open_document did not return a JSON document_id; got: ${mcpResultToText(openResult)}`,
+  );
 }
+
+/** Extract the Document IR JSON from a get_document result. Each text
+ *  block is tried independently for the same reason as above — naively
+ *  joining blocks corrupts the .vcad with trailing characters (this
+ *  exact failure took down the first post-viewer matrix run). */
+export function extractVcadJson(result: McpToolResult): string {
+  for (const c of result.content ?? []) {
+    if (c.type !== "text" || c.text == null) continue;
+    try {
+      const parsed = JSON.parse(c.text);
+      if (
+        parsed &&
+        typeof parsed === "object" &&
+        "nodes" in parsed &&
+        "roots" in parsed
+      ) {
+        // Pretty-print so the run blob's persisted .vcad is readable.
+        return JSON.stringify(parsed, null, 2);
+      }
+    } catch {
+      // try next block
+    }
+  }
+  throw new Error("get_document returned no parseable Document JSON block");
+}
+
+type CacheControl = { type: "ephemeral" };
 
 interface AnthropicLite {
   messages: {
     create(req: {
       model: string;
       max_tokens: number;
-      system: string;
-      tools: Array<{ name: string; description?: string; input_schema: unknown }>;
+      system:
+        | string
+        | Array<{ type: "text"; text: string; cache_control?: CacheControl }>;
+      tools: Array<{
+        name: string;
+        description?: string;
+        input_schema: unknown;
+        cache_control?: CacheControl;
+      }>;
       messages: Array<{ role: "user" | "assistant"; content: unknown }>;
     }): Promise<{
       stop_reason: string | null;
@@ -163,9 +211,48 @@ interface AnthropicLite {
         | { type: "tool_use"; id: string; name: string; input: Record<string, unknown> }
         | { type: string; [k: string]: unknown }
       >;
-      usage: { input_tokens: number; output_tokens: number };
+      usage: {
+        input_tokens: number;
+        output_tokens: number;
+        cache_creation_input_tokens?: number | null;
+        cache_read_input_tokens?: number | null;
+      };
     }>;
   };
+}
+
+/** Mark the conversation for prompt caching: strip stale message-level
+ *  breakpoints, then mark the last content block of the two most recent
+ *  user messages. Two sliding breakpoints (plus one on tools and one on
+ *  system = the 4-breakpoint API max) keep a reachable cache entry within
+ *  the API's 20-block lookback even when a turn fans out into many
+ *  parallel tool_use/tool_result blocks. Without caching every iteration
+ *  re-reads the full history + ~45 tool schemas at full price (~178k
+ *  input tokens for even a simple a1-tier task). */
+export function applyConversationCacheBreakpoints(
+  messages: Array<{ role: string; content: unknown }>,
+): void {
+  for (const message of messages) {
+    if (!Array.isArray(message.content)) continue;
+    for (const block of message.content as Array<Record<string, unknown>>) {
+      if (block && typeof block === "object" && "cache_control" in block) {
+        delete block.cache_control;
+      }
+    }
+  }
+  let marked = 0;
+  for (let i = messages.length - 1; i >= 0 && marked < 2; i--) {
+    const message = messages[i];
+    if (message.role !== "user" || !Array.isArray(message.content)) continue;
+    if (message.content.length === 0) continue;
+    const last = message.content[message.content.length - 1] as Record<
+      string,
+      unknown
+    >;
+    if (!last || typeof last !== "object") continue;
+    last.cache_control = { type: "ephemeral" } satisfies CacheControl;
+    marked++;
+  }
 }
 
 async function makeAnthropic(): Promise<AnthropicLite> {
@@ -198,6 +285,8 @@ export function makeClaudeMcpSolver(cfg: Partial<ClaudeMcpConfig> = {}): Solver 
       let nextN = 0;
       let totalIn = 0;
       let totalOut = 0;
+      let totalCacheCreate = 0;
+      let totalCacheRead = 0;
       let lastDocumentId: string | null = null;
 
       const recordToolRaw = async (
@@ -241,30 +330,56 @@ export function makeClaudeMcpSolver(cfg: Partial<ClaudeMcpConfig> = {}): Solver 
 
       try {
         // 1. Open a document for the agent to edit.
-        const openText = await recordTool("open_document", {});
-        lastDocumentId = extractDocumentId({
-          content: [{ type: "text", text: openText.replace(/^ERROR: /, "") }],
-        });
+        const openRaw = await recordToolRaw("open_document", {});
+        if ("error" in openRaw) {
+          throw new Error(`open_document failed: ${openRaw.error}`);
+        }
+        lastDocumentId = extractDocumentId(openRaw.result);
 
         // 2. List MCP tools, translate to Anthropic tool schema.
-        // ORACLE_TOOLS (module scope) is excluded here AND at execution
-        // time below — see its doc comment.
+        // BENCHMARK_EXCLUDED_TOOLS (module scope) is excluded here AND
+        // at execution time below — see its doc comment.
         const toolList = await mcp.listTools();
         const anthropicTools = toolList.tools
-          .filter((t) => !ORACLE_TOOLS.has(t.name))
+          .filter((t) => !BENCHMARK_EXCLUDED_TOOLS.has(t.name))
           .map((t) => ({
             name: t.name,
             description: t.description,
             input_schema: t.inputSchema,
-          }));
+          })) as Array<{
+          name: string;
+          description?: string;
+          input_schema: unknown;
+          cache_control?: CacheControl;
+        }>;
+        // Prompt-caching breakpoint on the last tool caches the entire
+        // (deterministically ordered) tool block — the largest stable
+        // prefix in every request.
+        if (anthropicTools.length > 0) {
+          anthropicTools[anthropicTools.length - 1].cache_control = {
+            type: "ephemeral",
+          };
+        }
+        const system: Array<{
+          type: "text";
+          text: string;
+          cache_control?: CacheControl;
+        }> = [
+          {
+            type: "text",
+            text: SYSTEM_PROMPT,
+            cache_control: { type: "ephemeral" },
+          },
+        ];
 
         const userMessage = `${prompt}\n\nThe document_id for this session is "${lastDocumentId}". Use it on every tool call that requires it. Stop calling tools once you believe the document satisfies the task.`;
 
-        // 3. Agentic loop.
+        // 3. Agentic loop. The kickoff message uses block form so the
+        // cache-breakpoint helper can mark its last content block.
         const messages: Array<{
           role: "user" | "assistant";
           content: unknown;
-        }> = [{ role: "user", content: userMessage }];
+        }> = [{ role: "user", content: [{ type: "text", text: userMessage }] }];
 
         if (config.fakeReplyForTests !== undefined) {
           // Test-only: skip the real loop, persist a hand-baked .vcad via MCP.
@@ -274,14 +389,22 @@ export function makeClaudeMcpSolver(cfg: Partial<ClaudeMcpConfig> = {}): Solver 
         } else {
           const anthropic = await makeAnthropic();
           for (let iter = 0; iter < config.maxIterations; iter++) {
+            applyConversationCacheBreakpoints(messages);
             const resp = await anthropic.messages.create({
               model: config.model,
               max_tokens: config.maxOutputTokens,
-              system: SYSTEM_PROMPT,
+              system,
               tools: anthropicTools,
               messages,
             });
-            totalIn += resp.usage.input_tokens;
+            const cacheCreate = resp.usage.cache_creation_input_tokens ?? 0;
+            const cacheRead = resp.usage.cache_read_input_tokens ?? 0;
+            // `input_tokens` is only the uncached remainder — keep `totalIn`
+            // meaning "full prompt tokens processed" so task token limits
+            // stay comparable with pre-caching runs.
+            totalIn += resp.usage.input_tokens + cacheCreate + cacheRead;
+            totalCacheCreate += cacheCreate;
+            totalCacheRead += cacheRead;
             totalOut += resp.usage.output_tokens;
 
             messages.push({ role: "assistant", content: resp.content });
@@ -303,10 +426,10 @@ export function makeClaudeMcpSolver(cfg: Partial<ClaudeMcpConfig> = {}): Solver 
                 name: string;
                 input: Record<string, unknown>;
               };
-              // Defense in depth: the oracle is filtered from the
+              // Defense in depth: excluded tools are filtered from the
               // advertised tool list, but a hallucinated tool_use block
               // must not reach MCP either.
-              if (ORACLE_TOOLS.has(tu.name)) {
+              if (BENCHMARK_EXCLUDED_TOOLS.has(tu.name)) {
                 trace.push({
                   n: nextN++,
                   tool: tu.name,
@@ -349,18 +472,18 @@ export function makeClaudeMcpSolver(cfg: Partial<ClaudeMcpConfig> = {}): Solver 
         }
 
         // 4. Read the final document from the session.
-        const docText = await recordTool("get_document", {
+        const docRaw = await recordToolRaw("get_document", {
           document_id: lastDocumentId,
         });
-        let vcadJson: string;
-        try {
-          // get_document returns the IR as JSON-text. Pretty-print it so the
-          // run blob's persisted .vcad is readable.
-          const parsed = JSON.parse(docText);
-          vcadJson = JSON.stringify(parsed, null, 2);
-        } catch {
-          vcadJson = docText;
+        if ("error" in docRaw) {
+          throw new Error(`get_document failed: ${docRaw.error}`);
         }
+        if (docRaw.result.isError) {
+          throw new Error(
+            `get_document failed: ${mcpResultToText(docRaw.result)}`,
+          );
+        }
+        const vcadJson = extractVcadJson(docRaw.result);
 
         const wallclockSec = (performance.now() - start) / 1000;
         return {
@@ -371,6 +494,8 @@ export function makeClaudeMcpSolver(cfg: Partial<ClaudeMcpConfig> = {}): Solver 
             input: totalIn,
             output: totalOut,
             total: totalIn + totalOut,
+            cache_creation_input: totalCacheCreate,
+            cache_read_input: totalCacheRead,
           },
           wallclockSec,
         };
@@ -387,8 +512,9 @@ export function makeClaudeMcpSolver(cfg: Partial<ClaudeMcpConfig> = {}): Solver 
 
 export const claudeMcpSolver = makeClaudeMcpSolver();
 
-// Test seam: re-export for unit tests.
-export { mcpResultToText, extractDocumentId };
+// Test seam: re-export for unit tests. (extractDocumentId and
+// extractVcadJson are exported at their declarations.)
+export { mcpResultToText };
 // Suppress unused-import warning for the type-only Anthropic import
 // (kept for future direct typing).
 export type _Anthropic = typeof Anthropic;

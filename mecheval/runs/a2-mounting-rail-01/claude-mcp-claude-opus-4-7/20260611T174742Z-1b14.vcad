@@ -1,0 +1,170 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "Rail Raw",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 100,
+          "y": 20,
+          "z": 8
+        }
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": "Center Rail",
+      "op": {
+        "type": "Translate",
+        "child": 1,
+        "offset": {
+          "x": -50,
+          "y": -10,
+          "z": 0
+        }
+      }
+    },
+    "3": {
+      "id": 3,
+      "name": "Hole Raw",
+      "op": {
+        "type": "Cylinder",
+        "radius": 3,
+        "height": 8,
+        "segments": 64
+      }
+    },
+    "4": {
+      "id": 4,
+      "name": "Hole1 Place",
+      "op": {
+        "type": "Translate",
+        "child": 3,
+        "offset": {
+          "x": -40,
+          "y": 0,
+          "z": 0
+        }
+      }
+    },
+    "5": {
+      "id": 5,
+      "name": "Hole2 Raw",
+      "op": {
+        "type": "Cylinder",
+        "radius": 3,
+        "height": 8,
+        "segments": 64
+      }
+    },
+    "6": {
+      "id": 6,
+      "name": "Hole2 Place",
+      "op": {
+        "type": "Translate",
+        "child": 5,
+        "offset": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        }
+      }
+    },
+    "7": {
+      "id": 7,
+      "name": "Hole3 Raw",
+      "op": {
+        "type": "Cylinder",
+        "radius": 3,
+        "height": 8,
+        "segments": 64
+      }
+    },
+    "8": {
+      "id": 8,
+      "name": "Hole3 Place",
+      "op": {
+        "type": "Translate",
+        "child": 7,
+        "offset": {
+          "x": 40,
+          "y": 0,
+          "z": 0
+        }
+      }
+    },
+    "9": {
+      "id": 9,
+      "name": "Holes12",
+      "op": {
+        "type": "Union",
+        "left": 4,
+        "right": 6
+      }
+    },
+    "10": {
+      "id": 10,
+      "name": "AllHoles",
+      "op": {
+        "type": "Union",
+        "left": 9,
+        "right": 8
+      }
+    },
+    "11": {
+      "id": 11,
+      "name": "Mounting Rail",
+      "op": {
+        "type": "Difference",
+        "left": 2,
+        "right": 10
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 2,
+      "material": "default"
+    },
+    {
+      "root": 3,
+      "material": "default"
+    },
+    {
+      "root": 4,
+      "material": "default"
+    },
+    {
+      "root": 5,
+      "material": "default"
+    },
+    {
+      "root": 6,
+      "material": "default"
+    },
+    {
+      "root": 7,
+      "material": "default"
+    },
+    {
+      "root": 8,
+      "material": "default"
+    },
+    {
+      "root": 9,
+      "material": "default"
+    },
+    {
+      "root": 10,
+      "material": "default"
+    },
+    {
+      "root": 11,
+      "material": "default"
+    }
+  ]
+}

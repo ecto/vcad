@@ -1,0 +1,139 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "Flange",
+      "op": {
+        "type": "Cylinder",
+        "radius": 50,
+        "height": 10,
+        "segments": 64
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": "HubRaw",
+      "op": {
+        "type": "Cylinder",
+        "radius": 20,
+        "height": 20,
+        "segments": 64
+      }
+    },
+    "3": {
+      "id": 3,
+      "name": "HubUp",
+      "op": {
+        "type": "Translate",
+        "child": 2,
+        "offset": {
+          "x": 0,
+          "y": 0,
+          "z": 10
+        }
+      }
+    },
+    "4": {
+      "id": 4,
+      "name": "Body",
+      "op": {
+        "type": "Union",
+        "left": 1,
+        "right": 3
+      }
+    },
+    "5": {
+      "id": 5,
+      "name": "BoreRaw",
+      "op": {
+        "type": "Cylinder",
+        "radius": 9,
+        "height": 32,
+        "segments": 64
+      }
+    },
+    "6": {
+      "id": 6,
+      "name": "BoltRaw",
+      "op": {
+        "type": "Cylinder",
+        "radius": 4,
+        "height": 12,
+        "segments": 32
+      }
+    },
+    "7": {
+      "id": 7,
+      "name": "BoreDown",
+      "op": {
+        "type": "Translate",
+        "child": 5,
+        "offset": {
+          "x": 0,
+          "y": 0,
+          "z": -1
+        }
+      }
+    },
+    "8": {
+      "id": 8,
+      "name": "BoltPos",
+      "op": {
+        "type": "Translate",
+        "child": 6,
+        "offset": {
+          "x": 37.5,
+          "y": 0,
+          "z": -1
+        }
+      }
+    },
+    "9": {
+      "id": 9,
+      "name": "BoltPattern",
+      "op": {
+        "type": "CircularPattern",
+        "child": 8,
+        "axis_origin": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "axis_dir": {
+          "x": 0,
+          "y": 0,
+          "z": 1
+        },
+        "count": 6,
+        "angle_deg": 360
+      }
+    },
+    "10": {
+      "id": 10,
+      "name": "Holes",
+      "op": {
+        "type": "Union",
+        "left": 7,
+        "right": 9
+      }
+    },
+    "11": {
+      "id": 11,
+      "name": "FlangedDisc",
+      "op": {
+        "type": "Difference",
+        "left": 4,
+        "right": 10
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 11,
+      "material": "default"
+    }
+  ]
+}

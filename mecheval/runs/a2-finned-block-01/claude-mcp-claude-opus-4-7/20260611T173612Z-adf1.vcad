@@ -1,0 +1,112 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "Base",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 50,
+          "y": 30,
+          "z": 5
+        }
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": "Fin -10",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 50,
+          "y": 3,
+          "z": 15
+        }
+      }
+    },
+    "3": {
+      "id": 3,
+      "name": "Fin 0",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 50,
+          "y": 3,
+          "z": 15
+        }
+      }
+    },
+    "4": {
+      "id": 4,
+      "name": "Fin +10",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 50,
+          "y": 3,
+          "z": 15
+        }
+      }
+    },
+    "5": {
+      "id": 5,
+      "name": "Base+Fin1",
+      "op": {
+        "type": "Union",
+        "left": 1,
+        "right": 2
+      }
+    },
+    "6": {
+      "id": 6,
+      "name": "+Fin2",
+      "op": {
+        "type": "Union",
+        "left": 5,
+        "right": 3
+      }
+    },
+    "7": {
+      "id": 7,
+      "name": "Finned Block",
+      "op": {
+        "type": "Union",
+        "left": 6,
+        "right": 4
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 1,
+      "material": "default"
+    },
+    {
+      "root": 2,
+      "material": "default"
+    },
+    {
+      "root": 3,
+      "material": "default"
+    },
+    {
+      "root": 4,
+      "material": "default"
+    },
+    {
+      "root": 5,
+      "material": "default"
+    },
+    {
+      "root": 6,
+      "material": "default"
+    },
+    {
+      "root": 7,
+      "material": "default"
+    }
+  ]
+}

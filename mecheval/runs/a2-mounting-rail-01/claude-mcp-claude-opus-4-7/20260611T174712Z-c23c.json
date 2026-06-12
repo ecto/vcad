@@ -1,0 +1,876 @@
+{
+  "schema_version": 0,
+  "task_id": "a2-mounting-rail-01",
+  "task_sha256": "e375cec77275714a18d10d9c88594fb0ae9f43f8219f01063480b2467d8705a3",
+  "checks": [
+    {
+      "n": 0,
+      "type": "valid_solid",
+      "params": {
+        "type": "valid_solid"
+      },
+      "result": "pass",
+      "details": {
+        "root_count": 1,
+        "solids_produced": 1
+      }
+    },
+    {
+      "n": 1,
+      "type": "bbox",
+      "params": {
+        "type": "bbox",
+        "min": [
+          -50,
+          -10,
+          0
+        ],
+        "max": [
+          50,
+          10,
+          8
+        ],
+        "tolerance_mm": 0.1
+      },
+      "result": "pass",
+      "details": {
+        "actual_max": [
+          50,
+          10,
+          8
+        ],
+        "actual_min": [
+          -50,
+          -10,
+          0
+        ],
+        "deviation_max": [
+          0,
+          0,
+          0
+        ],
+        "deviation_min": [
+          0,
+          0,
+          0
+        ],
+        "max_abs_deviation_mm": 0,
+        "tolerance_mm": 0.1
+      }
+    },
+    {
+      "n": 2,
+      "type": "mass_props",
+      "params": {
+        "type": "mass_props",
+        "volume_mm3": 15321.42,
+        "tolerance_pct": 0.5
+      },
+      "result": "pass",
+      "details": {
+        "volume": {
+          "actual_mm3": 15322.505621926664,
+          "deviation_pct": 0.007085648240595954,
+          "pass": true,
+          "spec_mm3": 15321.42,
+          "tolerance_pct": 0.5
+        }
+      }
+    },
+    {
+      "n": 3,
+      "type": "hole_count",
+      "params": {
+        "type": "hole_count",
+        "diameter_mm": 6,
+        "expected": 3,
+        "diameter_tolerance_mm": 0.05
+      },
+      "result": "pass",
+      "details": {
+        "actual": 3,
+        "diameter_mm": 6,
+        "diameter_tolerance_mm": 0.05,
+        "expected": 3,
+        "found": [
+          [
+            -40,
+            0,
+            6
+          ],
+          [
+            0,
+            0,
+            6
+          ],
+          [
+            40,
+            0,
+            6
+          ]
+        ]
+      }
+    },
+    {
+      "n": 4,
+      "type": "hole_positions",
+      "params": {
+        "type": "hole_positions",
+        "diameter_mm": 6,
+        "positions": [
+          [
+            -40,
+            0,
+            0
+          ],
+          [
+            0,
+            0,
+            0
+          ],
+          [
+            40,
+            0,
+            0
+          ]
+        ],
+        "tolerance_mm": 0.15
+      },
+      "result": "pass",
+      "details": {
+        "diameter_mm": 6,
+        "per_expected": [
+          {
+            "distance_mm": 0,
+            "matched_hole": [
+              -40,
+              0
+            ],
+            "pass": true,
+            "spec_xy": [
+              -40,
+              0
+            ]
+          },
+          {
+            "distance_mm": 0,
+            "matched_hole": [
+              0,
+              0
+            ],
+            "pass": true,
+            "spec_xy": [
+              0,
+              0
+            ]
+          },
+          {
+            "distance_mm": 0,
+            "matched_hole": [
+              40,
+              0
+            ],
+            "pass": true,
+            "spec_xy": [
+              40,
+              0
+            ]
+          }
+        ],
+        "tolerance_mm": 0.15,
+        "unmatched_extras": []
+      }
+    },
+    {
+      "n": 5,
+      "type": "step_roundtrip",
+      "params": {
+        "type": "step_roundtrip",
+        "tolerance_pct": 0.5
+      },
+      "result": "pass",
+      "details": {
+        "per_solid": [
+          {
+            "bbox": {
+              "max_abs_deviation_mm": 0,
+              "original_max": [
+                50,
+                10,
+                8
+              ],
+              "original_min": [
+                -50,
+                -10,
+                0
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                50,
+                10,
+                8
+              ],
+              "roundtripped_min": [
+                -50,
+                -10,
+                0
+              ],
+              "tolerance_mm": 0.5114684741017769
+            },
+            "index": 0,
+            "pass": true,
+            "volume": {
+              "deviation_pct": 0.01419436727060555,
+              "original_mm3": 15322.505621926664,
+              "pass": true,
+              "roundtripped_mm3": 15324.6805546497
+            }
+          }
+        ],
+        "tolerance_pct": 0.5
+      }
+    }
+  ],
+  "summary": {
+    "passed": true,
+    "checks_passed": 6,
+    "checks_total": 6,
+    "score": 1,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260611T174712Z-c23c",
+  "model": {
+    "id": "claude-mcp-claude-opus-4-7",
+    "name": "Claude (MCP, claude-opus-4-7)",
+    "provider": "anthropic",
+    "params": {
+      "mode": "mcp",
+      "model": "claude-opus-4-7",
+      "max_tokens": 8000,
+      "max_iterations": 30
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "a2-mounting-rail-01",
+    "rendered": "Make a long rectangular mounting rail 100mm long (X) × 20mm wide (Y) × 8mm thick (Z). Center it in X and Y, with the bottom face on the XY plane (z = 0 to z = 8). Drill three through-holes of diameter 6mm, axes parallel to Z, evenly spaced along the centerline (y = 0) at x = -40, x = 0, and x = 40. Output a single solid.",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "open_document",
+        "args": {},
+        "result_kind": "ok",
+        "wallclock_ms": 1.6566249999999911
+      },
+      {
+        "n": 1,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781200032876_1",
+          "type": "difference",
+          "name": "Mounting Rail",
+          "params": {
+            "subject": {
+              "type": "translate",
+              "params": {
+                "x": -50,
+                "y": -10,
+                "z": 0,
+                "subject": {
+                  "type": "cube",
+                  "params": {
+                    "x": 100,
+                    "y": 20,
+                    "z": 8
+                  }
+                }
+              }
+            },
+            "tool": {
+              "type": "union",
+              "params": {
+                "subject": {
+                  "type": "translate",
+                  "params": {
+                    "x": -40,
+                    "y": 0,
+                    "z": -1,
+                    "subject": {
+                      "type": "cylinder",
+                      "params": {
+                        "r": 3,
+                        "h": 10
+                      }
+                    }
+                  }
+                },
+                "other": {
+                  "type": "union",
+                  "params": {
+                    "subject": {
+                      "type": "translate",
+                      "params": {
+                        "x": 0,
+                        "y": 0,
+                        "z": -1,
+                        "subject": {
+                          "type": "cylinder",
+                          "params": {
+                            "r": 3,
+                            "h": 10
+                          }
+                        }
+                      }
+                    },
+                    "other": {
+                      "type": "translate",
+                      "params": {
+                        "x": 40,
+                        "y": 0,
+                        "z": -1,
+                        "subject": {
+                          "type": "cylinder",
+                          "params": {
+                            "r": 3,
+                            "h": 10
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 5.24670900000001
+      },
+      {
+        "n": 2,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781200032876_1",
+          "type": "difference",
+          "name": "Mounting Rail",
+          "params": {
+            "left": {
+              "type": "translate",
+              "params": {
+                "x": -50,
+                "y": -10,
+                "z": 0,
+                "subject": {
+                  "type": "cube",
+                  "params": {
+                    "x": 100,
+                    "y": 20,
+                    "z": 8
+                  }
+                }
+              }
+            },
+            "right": {
+              "type": "union",
+              "params": {
+                "left": {
+                  "type": "translate",
+                  "params": {
+                    "x": -40,
+                    "y": 0,
+                    "z": -1,
+                    "subject": {
+                      "type": "cylinder",
+                      "params": {
+                        "r": 3,
+                        "h": 10
+                      }
+                    }
+                  }
+                },
+                "right": {
+                  "type": "union",
+                  "params": {
+                    "left": {
+                      "type": "translate",
+                      "params": {
+                        "x": 0,
+                        "y": 0,
+                        "z": -1,
+                        "subject": {
+                          "type": "cylinder",
+                          "params": {
+                            "r": 3,
+                            "h": 10
+                          }
+                        }
+                      }
+                    },
+                    "right": {
+                      "type": "translate",
+                      "params": {
+                        "x": 40,
+                        "y": 0,
+                        "z": -1,
+                        "subject": {
+                          "type": "cylinder",
+                          "params": {
+                            "r": 3,
+                            "h": 10
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 3.0963749999991705
+      },
+      {
+        "n": 3,
+        "tool": "create_cad_loon",
+        "args": {
+          "source": "[let rail [translate -50 -10 0 [cube 100 20 8]]\n  [let hole1 [translate -40 0 -1 [cylinder 3 10]]\n    [let hole2 [translate 0 0 -1 [cylinder 3 10]]\n      [let hole3 [translate 40 0 -1 [cylinder 3 10]]\n        [difference hole1 [difference hole2 [difference hole3 rail]]]]]]]",
+          "format": "json"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 13.15820899999926
+      },
+      {
+        "n": 4,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781200032876_1",
+          "type": "cube",
+          "name": "Rail Block",
+          "params": {
+            "size": {
+              "x": 100,
+              "y": 20,
+              "z": 8
+            }
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.6630420000001322
+      },
+      {
+        "n": 5,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781200032876_1",
+          "type": "translate",
+          "name": "Center Rail",
+          "parent_part_id": "1",
+          "params": {
+            "child": 1,
+            "offset": {
+              "x": -50,
+              "y": -10,
+              "z": 0
+            }
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 5.481874999997672
+      },
+      {
+        "n": 6,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781200032876_1",
+          "type": "cylinder",
+          "name": "Hole1 Cyl",
+          "params": {
+            "radius": 3,
+            "height": 10
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 3.3049170000012964
+      },
+      {
+        "n": 7,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781200032876_1",
+          "type": "cylinder",
+          "name": "Hole2 Cyl",
+          "params": {
+            "radius": 3,
+            "height": 10
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 3.1207499999982247
+      },
+      {
+        "n": 8,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781200032876_1",
+          "type": "cylinder",
+          "name": "Hole3 Cyl",
+          "params": {
+            "radius": 3,
+            "height": 10
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 1.7078330000003916
+      },
+      {
+        "n": 9,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781200032876_1",
+          "type": "cylinder",
+          "name": "Hole1 Cyl",
+          "params": {
+            "radius": 3,
+            "height": 10,
+            "segments": 64
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.4755420000001322
+      },
+      {
+        "n": 10,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781200032876_1",
+          "type": "cylinder",
+          "name": "Hole2 Cyl",
+          "params": {
+            "radius": 3,
+            "height": 10,
+            "segments": 64
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.5025000000023283
+      },
+      {
+        "n": 11,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781200032876_1",
+          "type": "cylinder",
+          "name": "Hole3 Cyl",
+          "params": {
+            "radius": 3,
+            "height": 10,
+            "segments": 64
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.6124169999966398
+      },
+      {
+        "n": 12,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781200032876_1",
+          "type": "translate",
+          "name": "Pos Hole1",
+          "parent_part_id": "3",
+          "params": {
+            "child": 3,
+            "offset": {
+              "x": -40,
+              "y": 0,
+              "z": -1
+            }
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.841791999999259
+      },
+      {
+        "n": 13,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781200032876_1",
+          "type": "translate",
+          "name": "Pos Hole2",
+          "parent_part_id": "4",
+          "params": {
+            "child": 4,
+            "offset": {
+              "x": 0,
+              "y": 0,
+              "z": -1
+            }
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.6333339999982854
+      },
+      {
+        "n": 14,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781200032876_1",
+          "type": "translate",
+          "name": "Pos Hole3",
+          "parent_part_id": "5",
+          "params": {
+            "child": 5,
+            "offset": {
+              "x": 40,
+              "y": 0,
+              "z": -1
+            }
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.0084160000042175
+      },
+      {
+        "n": 15,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781200032876_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.0917499999995925
+      },
+      {
+        "n": 16,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781200032876_1",
+          "type": "union",
+          "name": "Holes 1+2",
+          "params": {
+            "left": 6,
+            "right": 7
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.3728330000012647
+      },
+      {
+        "n": 17,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781200032876_1",
+          "type": "union",
+          "name": "All Holes",
+          "params": {
+            "left": 9,
+            "right": 8
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 5.576875000006112
+      },
+      {
+        "n": 18,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781200032876_1",
+          "type": "difference",
+          "name": "Mounting Rail",
+          "params": {
+            "left": 2,
+            "right": 10
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 4.226792000001296
+      },
+      {
+        "n": 19,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781200032876_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 4.645416999999725
+      },
+      {
+        "n": 20,
+        "tool": "get_document",
+        "args": {
+          "document_id": "doc_1781200032876_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.092499999998836
+      },
+      {
+        "n": 21,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781200032876_1",
+          "part_id": "1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 4.96670799999265
+      },
+      {
+        "n": 22,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781200032876_1",
+          "part_id": "2"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.0332500000076834
+      },
+      {
+        "n": 23,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781200032876_1",
+          "part_id": "3"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.6594999999942956
+      },
+      {
+        "n": 24,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781200032876_1",
+          "part_id": "4"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.6494579999998678
+      },
+      {
+        "n": 25,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781200032876_1",
+          "part_id": "5"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.4722090000141179
+      },
+      {
+        "n": 26,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781200032876_1",
+          "part_id": "6"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.0679170000075828
+      },
+      {
+        "n": 27,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781200032876_1",
+          "part_id": "7"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.5949169999948936
+      },
+      {
+        "n": 28,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781200032876_1",
+          "part_id": "8"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.5881249999947613
+      },
+      {
+        "n": 29,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781200032876_1",
+          "part_id": "9"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.43712499999674037
+      },
+      {
+        "n": 30,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781200032876_1",
+          "part_id": "10"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.4057089999987511
+      },
+      {
+        "n": 31,
+        "tool": "get_document",
+        "args": {
+          "document_id": "doc_1781200032876_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.6264999999984866
+      },
+      {
+        "n": 32,
+        "tool": "render_view",
+        "args": {
+          "document_id": "doc_1781200032876_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 135.4403750000056
+      },
+      {
+        "n": 33,
+        "tool": "inspect_cad",
+        "args": {
+          "document_id": "doc_1781200032876_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 11.380875000002561
+      },
+      {
+        "n": 34,
+        "tool": "get_document",
+        "args": {
+          "document_id": "doc_1781200032876_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.042875000013737
+      }
+    ],
+    "tokens": {
+      "input": 343736,
+      "output": 5110,
+      "total": 348846
+    },
+    "wallclock_sec": 83.503829459
+  },
+  "output": {
+    "vcad_path": "20260611T174712Z-c23c.vcad",
+    "vcad_sha256": "c68f22fa7a7822996ff60453bce8a094bfd17a6f2586bb26db678cd44d1e2da3",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-06-11T17:47:12.704Z",
+    "ended_at": "2026-06-11T17:48:36.215Z"
+  },
+  "signature": null
+}

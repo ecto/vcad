@@ -1,0 +1,237 @@
+{
+  "schema_version": 0,
+  "task_id": "a1-cone-01",
+  "task_sha256": "736e216be7a1e5d85a215dba947f5f861775bb865bd6484fac01d9bbbc93c219",
+  "checks": [
+    {
+      "n": 0,
+      "type": "valid_solid",
+      "params": {
+        "type": "valid_solid"
+      },
+      "result": "pass",
+      "details": {
+        "root_count": 1,
+        "solids_produced": 1
+      }
+    },
+    {
+      "n": 1,
+      "type": "bbox",
+      "params": {
+        "type": "bbox",
+        "min": [
+          -20,
+          -20,
+          0
+        ],
+        "max": [
+          20,
+          20,
+          30
+        ],
+        "tolerance_mm": 0.1
+      },
+      "result": "pass",
+      "details": {
+        "actual_max": [
+          20,
+          20,
+          30
+        ],
+        "actual_min": [
+          -20,
+          -20,
+          0
+        ],
+        "deviation_max": [
+          0,
+          0,
+          0
+        ],
+        "deviation_min": [
+          0,
+          0,
+          0
+        ],
+        "max_abs_deviation_mm": 0,
+        "tolerance_mm": 0.1
+      }
+    },
+    {
+      "n": 2,
+      "type": "mass_props",
+      "params": {
+        "type": "mass_props",
+        "volume_mm3": 21991.15,
+        "tolerance_pct": 2
+      },
+      "result": "pass",
+      "details": {
+        "volume": {
+          "actual_mm3": 21955.839510214148,
+          "deviation_pct": 0.16056681795110242,
+          "pass": true,
+          "spec_mm3": 21991.15,
+          "tolerance_pct": 2
+        }
+      }
+    },
+    {
+      "n": 3,
+      "type": "step_roundtrip",
+      "params": {
+        "type": "step_roundtrip",
+        "tolerance_pct": 2
+      },
+      "result": "pass",
+      "details": {
+        "per_solid": [
+          {
+            "bbox": {
+              "max_abs_deviation_mm": 0,
+              "original_max": [
+                20,
+                20,
+                30
+              ],
+              "original_min": [
+                -20,
+                -20,
+                0
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                20,
+                20,
+                30
+              ],
+              "roundtripped_min": [
+                -20,
+                -20,
+                0
+              ],
+              "tolerance_mm": 1.2806248474865698
+            },
+            "index": 0,
+            "pass": true,
+            "volume": {
+              "deviation_pct": 0.48152755025712946,
+              "original_mm3": 21955.839510214148,
+              "pass": true,
+              "roundtripped_mm3": 21850.116094082226
+            }
+          }
+        ],
+        "tolerance_pct": 2
+      }
+    }
+  ],
+  "summary": {
+    "passed": true,
+    "checks_passed": 4,
+    "checks_total": 4,
+    "score": 1,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260611T171044Z-fa2f",
+  "model": {
+    "id": "claude-mcp-claude-opus-4-7",
+    "name": "Claude (MCP, claude-opus-4-7)",
+    "provider": "anthropic",
+    "params": {
+      "mode": "mcp",
+      "model": "claude-opus-4-7",
+      "max_tokens": 8000,
+      "max_iterations": 30
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "a1-cone-01",
+    "rendered": "Make a truncated cone with bottom radius 20mm, top radius 10mm, and height 30mm. Axis along Z, base on the XY plane (z = 0 to z = 30). Output a single solid.",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "open_document",
+        "args": {},
+        "result_kind": "ok",
+        "wallclock_ms": 2.0320839999999976
+      },
+      {
+        "n": 1,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781197844211_1",
+          "type": "cone",
+          "params": {
+            "radius_bottom": 20,
+            "radius_top": 10,
+            "height": 30
+          },
+          "name": "Truncated Cone"
+        },
+        "result_kind": "err",
+        "wallclock_ms": 4.53229199999987
+      },
+      {
+        "n": 2,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781197844211_1",
+          "type": "cone",
+          "params": {
+            "radius_bottom": 20,
+            "radius_top": 10,
+            "height": 30,
+            "segments": 64
+          },
+          "name": "Truncated Cone"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.7730420000007143
+      },
+      {
+        "n": 3,
+        "tool": "get_document",
+        "args": {
+          "document_id": "doc_1781197844211_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.3429579999992711
+      }
+    ],
+    "tokens": {
+      "input": 45189,
+      "output": 389,
+      "total": 45578
+    },
+    "wallclock_sec": 9.094971459
+  },
+  "output": {
+    "vcad_path": "20260611T171044Z-fa2f.vcad",
+    "vcad_sha256": "9385725c98a40899613ac449844db5be2330110765cdd46f152a1c4c127cc784",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-06-11T17:10:44.013Z",
+    "ended_at": "2026-06-11T17:10:53.121Z"
+  },
+  "signature": null
+}

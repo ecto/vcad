@@ -1,0 +1,136 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "PlateBox",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 80,
+          "y": 40,
+          "z": 8
+        }
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": "PlateTrans",
+      "op": {
+        "type": "Translate",
+        "child": 1,
+        "offset": {
+          "x": -40,
+          "y": -20,
+          "z": 0
+        }
+      }
+    },
+    "3": {
+      "id": 3,
+      "name": "SlotRect",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 40,
+          "y": 10,
+          "z": 10
+        }
+      }
+    },
+    "4": {
+      "id": 4,
+      "name": "SlotEndL",
+      "op": {
+        "type": "Cylinder",
+        "radius": 5,
+        "height": 10,
+        "segments": 64
+      }
+    },
+    "5": {
+      "id": 5,
+      "name": "SlotEndR",
+      "op": {
+        "type": "Cylinder",
+        "radius": 5,
+        "height": 10,
+        "segments": 64
+      }
+    },
+    "6": {
+      "id": 6,
+      "name": "SlotRectT",
+      "op": {
+        "type": "Translate",
+        "child": 3,
+        "offset": {
+          "x": -20,
+          "y": -5,
+          "z": -1
+        }
+      }
+    },
+    "7": {
+      "id": 7,
+      "name": "SlotEndLT",
+      "op": {
+        "type": "Translate",
+        "child": 4,
+        "offset": {
+          "x": -20,
+          "y": 0,
+          "z": -1
+        }
+      }
+    },
+    "8": {
+      "id": 8,
+      "name": "SlotEndRT",
+      "op": {
+        "type": "Translate",
+        "child": 5,
+        "offset": {
+          "x": 20,
+          "y": 0,
+          "z": -1
+        }
+      }
+    },
+    "9": {
+      "id": 9,
+      "name": "SlotEnds",
+      "op": {
+        "type": "Union",
+        "left": 7,
+        "right": 8
+      }
+    },
+    "10": {
+      "id": 10,
+      "name": "SlotShape",
+      "op": {
+        "type": "Union",
+        "left": 6,
+        "right": 9
+      }
+    },
+    "11": {
+      "id": 11,
+      "name": "PlateWithSlot",
+      "op": {
+        "type": "Difference",
+        "left": 2,
+        "right": 10
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 11,
+      "material": "default"
+    }
+  ]
+}

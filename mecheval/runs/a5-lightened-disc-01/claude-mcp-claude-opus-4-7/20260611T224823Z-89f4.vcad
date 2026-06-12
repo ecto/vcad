@@ -1,0 +1,240 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "Disc",
+      "op": {
+        "type": "Cylinder",
+        "radius": 60,
+        "height": 15,
+        "segments": 64
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": "Bore",
+      "op": {
+        "type": "Cylinder",
+        "radius": 11,
+        "height": 15,
+        "segments": 48
+      }
+    },
+    "3": {
+      "id": 3,
+      "name": "HoleProto",
+      "op": {
+        "type": "Cylinder",
+        "radius": 8,
+        "height": 15,
+        "segments": 32
+      }
+    },
+    "4": {
+      "id": 4,
+      "name": "H0",
+      "op": {
+        "type": "Translate",
+        "child": 3,
+        "offset": {
+          "x": 38,
+          "y": 0,
+          "z": 0
+        }
+      }
+    },
+    "5": {
+      "id": 5,
+      "name": "H1",
+      "op": {
+        "type": "Translate",
+        "child": 3,
+        "offset": {
+          "x": 19,
+          "y": 32.909,
+          "z": 0
+        }
+      }
+    },
+    "6": {
+      "id": 6,
+      "name": "H2",
+      "op": {
+        "type": "Translate",
+        "child": 3,
+        "offset": {
+          "x": -19,
+          "y": 32.909,
+          "z": 0
+        }
+      }
+    },
+    "7": {
+      "id": 7,
+      "name": "H3",
+      "op": {
+        "type": "Translate",
+        "child": 3,
+        "offset": {
+          "x": -38,
+          "y": 0,
+          "z": 0
+        }
+      }
+    },
+    "8": {
+      "id": 8,
+      "name": "H4",
+      "op": {
+        "type": "Translate",
+        "child": 3,
+        "offset": {
+          "x": -19,
+          "y": -32.909,
+          "z": 0
+        }
+      }
+    },
+    "9": {
+      "id": 9,
+      "name": "H5",
+      "op": {
+        "type": "Translate",
+        "child": 3,
+        "offset": {
+          "x": 19,
+          "y": -32.909,
+          "z": 0
+        }
+      }
+    },
+    "10": {
+      "id": 10,
+      "name": "U1",
+      "op": {
+        "type": "Union",
+        "left": 2,
+        "right": 4
+      }
+    },
+    "11": {
+      "id": 11,
+      "name": "U2",
+      "op": {
+        "type": "Union",
+        "left": 10,
+        "right": 5
+      }
+    },
+    "12": {
+      "id": 12,
+      "name": "U3",
+      "op": {
+        "type": "Union",
+        "left": 11,
+        "right": 6
+      }
+    },
+    "13": {
+      "id": 13,
+      "name": "U4",
+      "op": {
+        "type": "Union",
+        "left": 12,
+        "right": 7
+      }
+    },
+    "14": {
+      "id": 14,
+      "name": "U5",
+      "op": {
+        "type": "Union",
+        "left": 13,
+        "right": 8
+      }
+    },
+    "15": {
+      "id": 15,
+      "name": "AllTools",
+      "op": {
+        "type": "Union",
+        "left": 14,
+        "right": 9
+      }
+    },
+    "16": {
+      "id": 16,
+      "name": "Lightened Disc",
+      "op": {
+        "type": "Difference",
+        "left": 1,
+        "right": 15
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 1,
+      "material": "default"
+    },
+    {
+      "root": 2,
+      "material": "default"
+    },
+    {
+      "root": 3,
+      "material": "default"
+    },
+    {
+      "root": 4,
+      "material": "default"
+    },
+    {
+      "root": 5,
+      "material": "default"
+    },
+    {
+      "root": 6,
+      "material": "default"
+    },
+    {
+      "root": 7,
+      "material": "default"
+    },
+    {
+      "root": 8,
+      "material": "default"
+    },
+    {
+      "root": 9,
+      "material": "default"
+    },
+    {
+      "root": 10,
+      "material": "default"
+    },
+    {
+      "root": 11,
+      "material": "default"
+    },
+    {
+      "root": 12,
+      "material": "default"
+    },
+    {
+      "root": 13,
+      "material": "default"
+    },
+    {
+      "root": 14,
+      "material": "default"
+    },
+    {
+      "root": 16,
+      "material": "default"
+    }
+  ]
+}

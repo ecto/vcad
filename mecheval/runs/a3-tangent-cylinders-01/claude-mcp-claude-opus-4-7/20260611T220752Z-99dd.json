@@ -1,0 +1,631 @@
+{
+  "schema_version": 0,
+  "task_id": "a3-tangent-cylinders-01",
+  "task_sha256": "3c9319f74706d04c10463ebfaf7bf5e1720142b2d95e8558dda012feacc886dc",
+  "checks": [
+    {
+      "n": 0,
+      "type": "valid_solid",
+      "params": {
+        "type": "valid_solid"
+      },
+      "result": "pass",
+      "details": {
+        "root_count": 1,
+        "solids_produced": 1
+      }
+    },
+    {
+      "n": 1,
+      "type": "bbox",
+      "params": {
+        "type": "bbox",
+        "min": [
+          -25,
+          -25,
+          0
+        ],
+        "max": [
+          35,
+          25,
+          40
+        ],
+        "tolerance_mm": 0.2
+      },
+      "result": "pass",
+      "details": {
+        "actual_max": [
+          35,
+          25,
+          40
+        ],
+        "actual_min": [
+          -25,
+          -25,
+          0
+        ],
+        "deviation_max": [
+          0,
+          0,
+          0
+        ],
+        "deviation_min": [
+          0,
+          0,
+          0
+        ],
+        "max_abs_deviation_mm": 0,
+        "tolerance_mm": 0.2
+      }
+    },
+    {
+      "n": 2,
+      "type": "mass_props",
+      "params": {
+        "type": "mass_props",
+        "volume_mm3": 81681.41,
+        "tolerance_pct": 1
+      },
+      "result": "pass",
+      "details": {
+        "volume": {
+          "actual_mm3": 81550.2610428139,
+          "deviation_pct": 0.1605615735405425,
+          "pass": true,
+          "spec_mm3": 81681.41,
+          "tolerance_pct": 1
+        }
+      }
+    },
+    {
+      "n": 3,
+      "type": "step_roundtrip",
+      "params": {
+        "type": "step_roundtrip",
+        "tolerance_pct": 1
+      },
+      "result": "pass",
+      "details": {
+        "per_solid": [
+          {
+            "bbox": {
+              "max_abs_deviation_mm": 0,
+              "original_max": [
+                35,
+                25,
+                40
+              ],
+              "original_min": [
+                -25,
+                -25,
+                0
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                35,
+                25,
+                40
+              ],
+              "roundtripped_min": [
+                -25,
+                -25,
+                0
+              ],
+              "tolerance_mm": 0.8774964387392121
+            },
+            "index": 0,
+            "pass": true,
+            "volume": {
+              "deviation_pct": 0.4815248605890577,
+              "original_mm3": 81550.2610428139,
+              "pass": true,
+              "roundtripped_mm3": 81157.57626201748
+            }
+          }
+        ],
+        "tolerance_pct": 1
+      }
+    }
+  ],
+  "summary": {
+    "passed": true,
+    "checks_passed": 4,
+    "checks_total": 4,
+    "score": 1,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260611T220752Z-99dd",
+  "model": {
+    "id": "claude-mcp-claude-opus-4-7",
+    "name": "Claude (MCP, claude-opus-4-7)",
+    "provider": "anthropic",
+    "params": {
+      "mode": "mcp",
+      "model": "claude-opus-4-7",
+      "max_tokens": 8000,
+      "max_iterations": 30
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "a3-tangent-cylinders-01",
+    "rendered": "Make a single solid consisting of two cylinders fused together. Big cylinder: outside diameter 50mm, axis along Z, base on the XY plane (z = 0 to z = 40), centered on the Z axis. Small cylinder: outside diameter 10mm, axis along Z, base on the XY plane (z = 0 to z = 40), positioned so that its outer surface is externally tangent to the big cylinder's outer surface on the +X side. The two cylinders share exactly one tangent line (no overlap, no gap). Output a single solid (the union of the two cylinders).",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "open_document",
+        "args": {},
+        "result_kind": "ok",
+        "wallclock_ms": 1.8224580000000117
+      },
+      {
+        "n": 1,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781215672712_1",
+          "type": "union",
+          "name": "Tangent Cylinders",
+          "params": {
+            "a": {
+              "type": "translate",
+              "x": 0,
+              "y": 0,
+              "z": 0,
+              "child": {
+                "type": "cylinder",
+                "radius": 25,
+                "height": 40
+              }
+            },
+            "b": {
+              "type": "translate",
+              "x": 30,
+              "y": 0,
+              "z": 0,
+              "child": {
+                "type": "cylinder",
+                "radius": 5,
+                "height": 40
+              }
+            }
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 5.821125000000393
+      },
+      {
+        "n": 2,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781215672712_1",
+          "type": "union",
+          "name": "Tangent Cylinders",
+          "params": {
+            "left": {
+              "type": "cylinder",
+              "radius": 25,
+              "height": 40
+            },
+            "right": {
+              "type": "translate",
+              "x": 30,
+              "y": 0,
+              "z": 0,
+              "child": {
+                "type": "cylinder",
+                "radius": 5,
+                "height": 40
+              }
+            }
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 2.5231669999993755
+      },
+      {
+        "n": 3,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781215672712_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.8444589999999152
+      },
+      {
+        "n": 4,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781215672712_1",
+          "type": "cylinder",
+          "name": "Big Cylinder",
+          "params": {
+            "radius": 25,
+            "height": 40
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 3.44354199999907
+      },
+      {
+        "n": 5,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781215672712_1",
+          "type": "cylinder",
+          "name": "Small Cylinder",
+          "params": {
+            "radius": 5,
+            "height": 40
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 2.1657500000001164
+      },
+      {
+        "n": 6,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781215672712_1",
+          "type": "cylinder",
+          "name": "Big Cylinder",
+          "params": {
+            "radius": 25,
+            "height": 40,
+            "segments": 64
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.881541999999172
+      },
+      {
+        "n": 7,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781215672712_1",
+          "type": "cylinder",
+          "name": "Small Cylinder",
+          "params": {
+            "radius": 5,
+            "height": 40,
+            "segments": 32
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.7892080000019632
+      },
+      {
+        "n": 8,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781215672712_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.847708999997849
+      },
+      {
+        "n": 9,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781215672712_1",
+          "part_id": "1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.9420829999980924
+      },
+      {
+        "n": 10,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781215672712_1",
+          "part_id": "2"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.6178340000005846
+      },
+      {
+        "n": 11,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781215672712_1",
+          "type": "cylinder",
+          "name": "Big Cylinder",
+          "params": {
+            "radius": 25,
+            "height": 40,
+            "segments": 64
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.6826250000012806
+      },
+      {
+        "n": 12,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781215672712_1",
+          "type": "cylinder",
+          "name": "Small Cylinder Base",
+          "parent_part_id": "1",
+          "params": {
+            "radius": 5,
+            "height": 40,
+            "segments": 32
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.851582999999664
+      },
+      {
+        "n": 13,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781215672712_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 5.895583999998053
+      },
+      {
+        "n": 14,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781215672712_1",
+          "part_id": "1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.8870000000024447
+      },
+      {
+        "n": 15,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781215672712_1",
+          "part_id": "2"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.9974169999986771
+      },
+      {
+        "n": 16,
+        "tool": "create_cad_loon",
+        "args": {
+          "source": "[root [union [translate 30 0 0 [cylinder 5 40]] [cylinder 25 40]] \"steel\"]",
+          "format": "json"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 12.938207999999577
+      },
+      {
+        "n": 17,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781215672712_1",
+          "type": "cylinder",
+          "name": "Big",
+          "params": {
+            "radius": 25,
+            "height": 40,
+            "segments": 64
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.810165999995661
+      },
+      {
+        "n": 18,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781215672712_1",
+          "type": "cylinder",
+          "name": "Small",
+          "params": {
+            "radius": 5,
+            "height": 40,
+            "segments": 32
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.198541000005207
+      },
+      {
+        "n": 19,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781215672712_1",
+          "type": "translate",
+          "name": "Offset Small",
+          "parent_part_id": "2",
+          "params": {
+            "offset": {
+              "x": 30,
+              "y": 0,
+              "z": 0
+            }
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 3.3278749999954016
+      },
+      {
+        "n": 20,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781215672712_1",
+          "type": "translate",
+          "name": "Offset Small",
+          "parent_part_id": "2",
+          "params": {
+            "offset": {
+              "x": 30,
+              "y": 0,
+              "z": 0
+            },
+            "child": 2
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.668459000000439
+      },
+      {
+        "n": 21,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781215672712_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.9824579999985872
+      },
+      {
+        "n": 22,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781215672712_1",
+          "part_id": "3"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.094708000004175
+      },
+      {
+        "n": 23,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781215672712_1",
+          "part_id": "2"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.1300410000039847
+      },
+      {
+        "n": 24,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781215672712_1",
+          "type": "union",
+          "name": "Fused",
+          "parent_part_id": "1",
+          "params": {
+            "left": 1,
+            "right": 3
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.0380000000004657
+      },
+      {
+        "n": 25,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781215672712_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.4945000000006985
+      },
+      {
+        "n": 26,
+        "tool": "get_document",
+        "args": {
+          "document_id": "doc_1781215672712_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.8660000000090804
+      },
+      {
+        "n": 27,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781215672712_1",
+          "part_id": "1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.9791250000125729
+      },
+      {
+        "n": 28,
+        "tool": "get_document",
+        "args": {
+          "document_id": "doc_1781215672712_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.744458000001032
+      },
+      {
+        "n": 29,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781215672712_1",
+          "part_id": "2"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.583542000007583
+      },
+      {
+        "n": 30,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781215672712_1",
+          "part_id": "3"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.2205830000020796
+      },
+      {
+        "n": 31,
+        "tool": "get_document",
+        "args": {
+          "document_id": "doc_1781215672712_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.4112499999901047
+      },
+      {
+        "n": 32,
+        "tool": "render_view",
+        "args": {
+          "document_id": "doc_1781215672712_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 105.78625000000466
+      },
+      {
+        "n": 33,
+        "tool": "get_document",
+        "args": {
+          "document_id": "doc_1781215672712_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.756374999997206
+      }
+    ],
+    "tokens": {
+      "input": 490992,
+      "output": 4588,
+      "total": 495580
+    },
+    "wallclock_sec": 92.77893645900001
+  },
+  "output": {
+    "vcad_path": "20260611T220752Z-99dd.vcad",
+    "vcad_sha256": "22c6cb84a7d249b2c50d6ef87fb913f1d5bc032f2ffc9fec928048ae72a7ddf7",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-06-11T22:07:52.532Z",
+    "ended_at": "2026-06-11T22:09:25.338Z"
+  },
+  "signature": null
+}

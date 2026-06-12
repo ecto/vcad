@@ -1,0 +1,268 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "plate_cube",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 120,
+          "y": 80,
+          "z": 10
+        }
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": "plate",
+      "op": {
+        "type": "Translate",
+        "child": 1,
+        "offset": {
+          "x": -60,
+          "y": -40,
+          "z": 10
+        }
+      }
+    },
+    "3": {
+      "id": 3,
+      "name": "ribA_cube",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 120,
+          "y": 8,
+          "z": 10
+        }
+      }
+    },
+    "4": {
+      "id": 4,
+      "name": "ribA",
+      "op": {
+        "type": "Translate",
+        "child": 3,
+        "offset": {
+          "x": -60,
+          "y": -28,
+          "z": 0
+        }
+      }
+    },
+    "5": {
+      "id": 5,
+      "name": "ribB_cube",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 120,
+          "y": 8,
+          "z": 10
+        }
+      }
+    },
+    "6": {
+      "id": 6,
+      "name": "ribC_cube",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 120,
+          "y": 8,
+          "z": 10
+        }
+      }
+    },
+    "7": {
+      "id": 7,
+      "name": "ribB",
+      "op": {
+        "type": "Translate",
+        "child": 5,
+        "offset": {
+          "x": -60,
+          "y": -4,
+          "z": 0
+        }
+      }
+    },
+    "8": {
+      "id": 8,
+      "name": "ribC",
+      "op": {
+        "type": "Translate",
+        "child": 6,
+        "offset": {
+          "x": -60,
+          "y": 20,
+          "z": 0
+        }
+      }
+    },
+    "9": {
+      "id": 9,
+      "name": "h1_cyl",
+      "op": {
+        "type": "Cylinder",
+        "radius": 4,
+        "height": 20,
+        "segments": 64
+      }
+    },
+    "10": {
+      "id": 10,
+      "name": "h2_cyl",
+      "op": {
+        "type": "Cylinder",
+        "radius": 4,
+        "height": 20,
+        "segments": 64
+      }
+    },
+    "11": {
+      "id": 11,
+      "name": "h3_cyl",
+      "op": {
+        "type": "Cylinder",
+        "radius": 4,
+        "height": 20,
+        "segments": 64
+      }
+    },
+    "12": {
+      "id": 12,
+      "name": "h4_cyl",
+      "op": {
+        "type": "Cylinder",
+        "radius": 4,
+        "height": 20,
+        "segments": 64
+      }
+    },
+    "13": {
+      "id": 13,
+      "name": "h1",
+      "op": {
+        "type": "Translate",
+        "child": 9,
+        "offset": {
+          "x": 45,
+          "y": 30,
+          "z": 0
+        }
+      }
+    },
+    "14": {
+      "id": 14,
+      "name": "h2",
+      "op": {
+        "type": "Translate",
+        "child": 10,
+        "offset": {
+          "x": -45,
+          "y": 30,
+          "z": 0
+        }
+      }
+    },
+    "15": {
+      "id": 15,
+      "name": "h3",
+      "op": {
+        "type": "Translate",
+        "child": 11,
+        "offset": {
+          "x": -45,
+          "y": -30,
+          "z": 0
+        }
+      }
+    },
+    "16": {
+      "id": 16,
+      "name": "h4",
+      "op": {
+        "type": "Translate",
+        "child": 12,
+        "offset": {
+          "x": 45,
+          "y": -30,
+          "z": 0
+        }
+      }
+    },
+    "17": {
+      "id": 17,
+      "name": "u1",
+      "op": {
+        "type": "Union",
+        "left": 2,
+        "right": 4
+      }
+    },
+    "18": {
+      "id": 18,
+      "name": "u2",
+      "op": {
+        "type": "Union",
+        "left": 17,
+        "right": 7
+      }
+    },
+    "19": {
+      "id": 19,
+      "name": "body",
+      "op": {
+        "type": "Union",
+        "left": 18,
+        "right": 8
+      }
+    },
+    "20": {
+      "id": 20,
+      "name": "d1",
+      "op": {
+        "type": "Difference",
+        "left": 19,
+        "right": 13
+      }
+    },
+    "21": {
+      "id": 21,
+      "name": "d2",
+      "op": {
+        "type": "Difference",
+        "left": 20,
+        "right": 14
+      }
+    },
+    "22": {
+      "id": 22,
+      "name": "d3",
+      "op": {
+        "type": "Difference",
+        "left": 21,
+        "right": 15
+      }
+    },
+    "23": {
+      "id": 23,
+      "name": "final",
+      "op": {
+        "type": "Difference",
+        "left": 22,
+        "right": 16
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 23,
+      "material": "default"
+    }
+  ]
+}

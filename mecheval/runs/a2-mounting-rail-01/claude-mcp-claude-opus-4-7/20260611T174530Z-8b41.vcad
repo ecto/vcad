@@ -1,0 +1,134 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "RailBox",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 100,
+          "y": 20,
+          "z": 8
+        }
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": "Hole1Raw",
+      "op": {
+        "type": "Cylinder",
+        "radius": 3,
+        "height": 8,
+        "segments": 64
+      }
+    },
+    "3": {
+      "id": 3,
+      "name": "Hole2Raw",
+      "op": {
+        "type": "Cylinder",
+        "radius": 3,
+        "height": 8,
+        "segments": 64
+      }
+    },
+    "4": {
+      "id": 4,
+      "name": "Hole3Raw",
+      "op": {
+        "type": "Cylinder",
+        "radius": 3,
+        "height": 8,
+        "segments": 64
+      }
+    },
+    "5": {
+      "id": 5,
+      "name": "RailCentered",
+      "op": {
+        "type": "Translate",
+        "child": 1,
+        "offset": {
+          "x": -50,
+          "y": -10,
+          "z": 0
+        }
+      }
+    },
+    "6": {
+      "id": 6,
+      "name": "Hole1",
+      "op": {
+        "type": "Translate",
+        "child": 2,
+        "offset": {
+          "x": -40,
+          "y": 0,
+          "z": 0
+        }
+      }
+    },
+    "7": {
+      "id": 7,
+      "name": "Hole2",
+      "op": {
+        "type": "Translate",
+        "child": 3,
+        "offset": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        }
+      }
+    },
+    "8": {
+      "id": 8,
+      "name": "Hole3",
+      "op": {
+        "type": "Translate",
+        "child": 4,
+        "offset": {
+          "x": 40,
+          "y": 0,
+          "z": 0
+        }
+      }
+    },
+    "9": {
+      "id": 9,
+      "name": "Holes12",
+      "op": {
+        "type": "Union",
+        "left": 6,
+        "right": 7
+      }
+    },
+    "10": {
+      "id": 10,
+      "name": "HolesAll",
+      "op": {
+        "type": "Union",
+        "left": 9,
+        "right": 8
+      }
+    },
+    "11": {
+      "id": 11,
+      "name": "Rail",
+      "op": {
+        "type": "Difference",
+        "left": 5,
+        "right": 10
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 11,
+      "material": "default"
+    }
+  ]
+}

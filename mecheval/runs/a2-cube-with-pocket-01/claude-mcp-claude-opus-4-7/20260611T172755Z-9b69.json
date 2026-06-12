@@ -1,0 +1,474 @@
+{
+  "schema_version": 0,
+  "task_id": "a2-cube-with-pocket-01",
+  "task_sha256": "58a30883751efce83433de6e7ae585c30f574a7bb2e8458f252b9186582897ea",
+  "checks": [
+    {
+      "n": 0,
+      "type": "valid_solid",
+      "params": {
+        "type": "valid_solid"
+      },
+      "result": "pass",
+      "details": {
+        "root_count": 1,
+        "solids_produced": 1
+      }
+    },
+    {
+      "n": 1,
+      "type": "bbox",
+      "params": {
+        "type": "bbox",
+        "min": [
+          -20,
+          -20,
+          0
+        ],
+        "max": [
+          20,
+          20,
+          40
+        ],
+        "tolerance_mm": 0.05
+      },
+      "result": "pass",
+      "details": {
+        "actual_max": [
+          20,
+          20,
+          40
+        ],
+        "actual_min": [
+          -20,
+          -20,
+          0
+        ],
+        "deviation_max": [
+          0,
+          0,
+          0
+        ],
+        "deviation_min": [
+          0,
+          0,
+          0
+        ],
+        "max_abs_deviation_mm": 0,
+        "tolerance_mm": 0.05
+      }
+    },
+    {
+      "n": 2,
+      "type": "mass_props",
+      "params": {
+        "type": "mass_props",
+        "volume_mm3": 60000,
+        "tolerance_pct": 0.1
+      },
+      "result": "pass",
+      "details": {
+        "volume": {
+          "actual_mm3": 60000,
+          "deviation_pct": 0,
+          "pass": true,
+          "spec_mm3": 60000,
+          "tolerance_pct": 0.1
+        }
+      }
+    },
+    {
+      "n": 3,
+      "type": "step_roundtrip",
+      "params": {
+        "type": "step_roundtrip",
+        "tolerance_pct": 0.1
+      },
+      "result": "pass",
+      "details": {
+        "per_solid": [
+          {
+            "bbox": {
+              "max_abs_deviation_mm": 0,
+              "original_max": [
+                20,
+                20,
+                40
+              ],
+              "original_min": [
+                -20,
+                -20,
+                0
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                20,
+                20,
+                40
+              ],
+              "roundtripped_min": [
+                -20,
+                -20,
+                0
+              ],
+              "tolerance_mm": 0.0692820323027551
+            },
+            "index": 0,
+            "pass": true,
+            "volume": {
+              "deviation_pct": 0,
+              "original_mm3": 60000,
+              "pass": true,
+              "roundtripped_mm3": 60000
+            }
+          }
+        ],
+        "tolerance_pct": 0.1
+      }
+    }
+  ],
+  "summary": {
+    "passed": true,
+    "checks_passed": 4,
+    "checks_total": 4,
+    "score": 1,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260611T172755Z-9b69",
+  "model": {
+    "id": "claude-mcp-claude-opus-4-7",
+    "name": "Claude (MCP, claude-opus-4-7)",
+    "provider": "anthropic",
+    "params": {
+      "mode": "mcp",
+      "model": "claude-opus-4-7",
+      "max_tokens": 8000,
+      "max_iterations": 30
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "a2-cube-with-pocket-01",
+    "rendered": "Start with a 40mm cube, centered in X and Y with the bottom face on the XY plane (so it spans x in [-20, 20], y in [-20, 20], z in [0, 40]). Cut a rectangular pocket into the top face: remove material in x in [-10, 10], y in [-10, 10], z in [30, 40]. The pocket is open at the top, closed on the four sides and the bottom (10mm of cube remains underneath the pocket). Output a single solid.",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "open_document",
+        "args": {},
+        "result_kind": "ok",
+        "wallclock_ms": 1.9502920000000188
+      },
+      {
+        "n": 1,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781198875588_1",
+          "type": "difference",
+          "name": "Cube with Pocket",
+          "params": {
+            "children": [
+              {
+                "type": "translate",
+                "params": {
+                  "x": -20,
+                  "y": -20,
+                  "z": 0,
+                  "child": {
+                    "type": "cube",
+                    "params": {
+                      "x": 40,
+                      "y": 40,
+                      "z": 40
+                    }
+                  }
+                }
+              },
+              {
+                "type": "translate",
+                "params": {
+                  "x": -10,
+                  "y": -10,
+                  "z": 30,
+                  "child": {
+                    "type": "cube",
+                    "params": {
+                      "x": 20,
+                      "y": 20,
+                      "z": 11
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 3.382042000000183
+      },
+      {
+        "n": 2,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781198875588_1",
+          "type": "difference",
+          "name": "Cube with Pocket",
+          "params": {
+            "left": {
+              "type": "translate",
+              "params": {
+                "x": -20,
+                "y": -20,
+                "z": 0,
+                "child": {
+                  "type": "cube",
+                  "params": {
+                    "x": 40,
+                    "y": 40,
+                    "z": 40
+                  }
+                }
+              }
+            },
+            "right": {
+              "type": "translate",
+              "params": {
+                "x": -10,
+                "y": -10,
+                "z": 30,
+                "child": {
+                  "type": "cube",
+                  "params": {
+                    "x": 20,
+                    "y": 20,
+                    "z": 11
+                  }
+                }
+              }
+            }
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 1.133709000001545
+      },
+      {
+        "n": 3,
+        "tool": "create_cad_loon",
+        "args": {
+          "source": "[difference\n  [translate -10 -10 30 [cube 20 20 11]]\n  [translate -20 -20 0 [cube 40 40 40]]]",
+          "format": "json"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 5.500332999999955
+      },
+      {
+        "n": 4,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781198875588_1",
+          "type": "cube",
+          "name": "Base Cube",
+          "params": {
+            "size": {
+              "x": 40,
+              "y": 40,
+              "z": 40
+            }
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.2305410000008123
+      },
+      {
+        "n": 5,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781198875588_1",
+          "type": "translate",
+          "name": "Center Cube",
+          "parent_part_id": "1",
+          "params": {
+            "child": 1,
+            "offset": {
+              "x": -20,
+              "y": -20,
+              "z": 0
+            }
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.143000000000029
+      },
+      {
+        "n": 6,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781198875588_1",
+          "type": "cube",
+          "name": "Pocket Cube",
+          "params": {
+            "size": {
+              "x": 20,
+              "y": 20,
+              "z": 11
+            }
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.6553749999984575
+      },
+      {
+        "n": 7,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781198875588_1",
+          "type": "translate",
+          "name": "Position Pocket",
+          "parent_part_id": "3",
+          "params": {
+            "child": 3,
+            "offset": {
+              "x": -10,
+              "y": -10,
+              "z": 30
+            }
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.8332499999996799
+      },
+      {
+        "n": 8,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781198875588_1",
+          "type": "difference",
+          "name": "Cube with Pocket",
+          "parent_part_id": "2",
+          "params": {
+            "left": 2,
+            "right": 4
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.0853749999987485
+      },
+      {
+        "n": 9,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781198875588_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.2728750000023865
+      },
+      {
+        "n": 10,
+        "tool": "get_document",
+        "args": {
+          "document_id": "doc_1781198875588_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.3994999999995343
+      },
+      {
+        "n": 11,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781198875588_1",
+          "part_id": "1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.8216249999968568
+      },
+      {
+        "n": 12,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781198875588_1",
+          "part_id": "2"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.4662919999973383
+      },
+      {
+        "n": 13,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781198875588_1",
+          "part_id": "3"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.3952909999934491
+      },
+      {
+        "n": 14,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781198875588_1",
+          "part_id": "4"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.415541000002122
+      },
+      {
+        "n": 15,
+        "tool": "get_document",
+        "args": {
+          "document_id": "doc_1781198875588_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.9566659999982221
+      },
+      {
+        "n": 16,
+        "tool": "render_view",
+        "args": {
+          "document_id": "doc_1781198875588_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 104.94941600000311
+      },
+      {
+        "n": 17,
+        "tool": "get_document",
+        "args": {
+          "document_id": "doc_1781198875588_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.6172090000036405
+      }
+    ],
+    "tokens": {
+      "input": 242347,
+      "output": 2520,
+      "total": 244867
+    },
+    "wallclock_sec": 51.707881375
+  },
+  "output": {
+    "vcad_path": "20260611T172755Z-9b69.vcad",
+    "vcad_sha256": "c6bce667c6d5e76641675758d93320f87df024578c69af3cfeccda3a0eeec4a6",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-06-11T17:27:55.405Z",
+    "ended_at": "2026-06-11T17:28:47.131Z"
+  },
+  "signature": null
+}

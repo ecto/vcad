@@ -1,0 +1,64 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": null,
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 40,
+          "y": 30,
+          "z": 20
+        }
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": "Center",
+      "op": {
+        "type": "Translate",
+        "child": 1,
+        "offset": {
+          "x": -20,
+          "y": -15,
+          "z": -10
+        }
+      }
+    },
+    "3": {
+      "id": 3,
+      "name": "Rz30",
+      "op": {
+        "type": "Rotate",
+        "child": 2,
+        "angles": {
+          "x": 0,
+          "y": 0,
+          "z": 30
+        }
+      }
+    },
+    "4": {
+      "id": 4,
+      "name": "Rx15",
+      "op": {
+        "type": "Rotate",
+        "child": 3,
+        "angles": {
+          "x": 15,
+          "y": 0,
+          "z": 0
+        }
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 4,
+      "material": "default"
+    }
+  ]
+}

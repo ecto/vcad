@@ -1,0 +1,190 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "Octagon Sketch",
+      "op": {
+        "type": "Sketch2D",
+        "origin": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "x_dir": {
+          "x": 1,
+          "y": 0,
+          "z": 0
+        },
+        "y_dir": {
+          "x": 0,
+          "y": 1,
+          "z": 0
+        },
+        "segments": [
+          {
+            "type": "Line",
+            "start": {
+              "x": 20,
+              "y": 8.2843
+            },
+            "end": {
+              "x": 8.2843,
+              "y": 20
+            }
+          },
+          {
+            "type": "Line",
+            "start": {
+              "x": 8.2843,
+              "y": 20
+            },
+            "end": {
+              "x": -8.2843,
+              "y": 20
+            }
+          },
+          {
+            "type": "Line",
+            "start": {
+              "x": -8.2843,
+              "y": 20
+            },
+            "end": {
+              "x": -20,
+              "y": 8.2843
+            }
+          },
+          {
+            "type": "Line",
+            "start": {
+              "x": -20,
+              "y": 8.2843
+            },
+            "end": {
+              "x": -20,
+              "y": -8.2843
+            }
+          },
+          {
+            "type": "Line",
+            "start": {
+              "x": -20,
+              "y": -8.2843
+            },
+            "end": {
+              "x": -8.2843,
+              "y": -20
+            }
+          },
+          {
+            "type": "Line",
+            "start": {
+              "x": -8.2843,
+              "y": -20
+            },
+            "end": {
+              "x": 8.2843,
+              "y": -20
+            }
+          },
+          {
+            "type": "Line",
+            "start": {
+              "x": 8.2843,
+              "y": -20
+            },
+            "end": {
+              "x": 20,
+              "y": -8.2843
+            }
+          },
+          {
+            "type": "Line",
+            "start": {
+              "x": 20,
+              "y": -8.2843
+            },
+            "end": {
+              "x": 20,
+              "y": 8.2843
+            }
+          }
+        ]
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": "Octagon Body",
+      "op": {
+        "type": "Extrude",
+        "sketch": 1,
+        "direction": {
+          "x": 0,
+          "y": 0,
+          "z": 8
+        }
+      }
+    },
+    "3": {
+      "id": 3,
+      "name": "Hole",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 8,
+        "segments": 64
+      }
+    },
+    "4": {
+      "id": 4,
+      "name": "Move to Bolt Circle",
+      "op": {
+        "type": "Translate",
+        "child": 3,
+        "offset": {
+          "x": 15,
+          "y": 0,
+          "z": 0
+        }
+      }
+    },
+    "5": {
+      "id": 5,
+      "name": "Bolt Pattern",
+      "op": {
+        "type": "CircularPattern",
+        "child": 4,
+        "axis_origin": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "axis_dir": {
+          "x": 0,
+          "y": 0,
+          "z": 1
+        },
+        "count": 8,
+        "angle_deg": 360
+      }
+    },
+    "6": {
+      "id": 6,
+      "name": "Drilled Flange",
+      "op": {
+        "type": "Difference",
+        "left": 2,
+        "right": 5
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 6,
+      "material": "default"
+    }
+  ]
+}

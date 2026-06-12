@@ -1,0 +1,950 @@
+{
+  "schema_version": 0,
+  "task_id": "a5-hex-bolt-blank-01",
+  "task_sha256": "b349eb4218ce71cb8bac9c7ea456b3d6d7991caee0147367e7798a2387c3c476",
+  "checks": [
+    {
+      "n": 0,
+      "type": "valid_solid",
+      "params": {
+        "type": "valid_solid"
+      },
+      "result": "pass",
+      "details": {
+        "root_count": 1,
+        "solids_produced": 1
+      }
+    },
+    {
+      "n": 1,
+      "type": "bbox",
+      "params": {
+        "type": "bbox",
+        "min": [
+          -13.856,
+          -12,
+          0
+        ],
+        "max": [
+          13.856,
+          12,
+          60
+        ],
+        "tolerance_mm": 0.2
+      },
+      "result": "pass",
+      "details": {
+        "actual_max": [
+          13.856399536132812,
+          12,
+          60
+        ],
+        "actual_min": [
+          -13.856399536132812,
+          -12,
+          0
+        ],
+        "deviation_max": [
+          0.0003995361328126279,
+          0,
+          0
+        ],
+        "deviation_min": [
+          -0.0003995361328126279,
+          0,
+          0
+        ],
+        "max_abs_deviation_mm": 0.0003995361328126279,
+        "tolerance_mm": 0.2
+      }
+    },
+    {
+      "n": 2,
+      "type": "mass_props",
+      "params": {
+        "type": "mass_props",
+        "volume_mm3": 14068.14,
+        "center_of_mass": [
+          0,
+          0,
+          22.1
+        ],
+        "tolerance_pct": 1.5
+      },
+      "result": "fail",
+      "details": {
+        "center_of_mass": {
+          "actual": [
+            -5.75798598427172e-17,
+            -1.915156207812116e-16,
+            34.59436577486976
+          ],
+          "bbox_diagonal_mm": 70.31357786672334,
+          "deviation": [
+            -5.75798598427172e-17,
+            -1.915156207812116e-16,
+            12.494365774869756
+          ],
+          "max_abs_deviation_mm": 12.494365774869756,
+          "pass": false,
+          "spec": [
+            0,
+            0,
+            22.1
+          ],
+          "tolerance_mm": 1.05470366800085
+        },
+        "volume": {
+          "actual_mm3": 7568.610722393913,
+          "deviation_pct": 46.20034544443037,
+          "pass": false,
+          "spec_mm3": 14068.14,
+          "tolerance_pct": 1.5
+        }
+      }
+    },
+    {
+      "n": 3,
+      "type": "step_roundtrip",
+      "params": {
+        "type": "step_roundtrip",
+        "tolerance_pct": 1.5
+      },
+      "result": "pass",
+      "details": {
+        "per_solid": [
+          {
+            "bbox": {
+              "max_abs_deviation_mm": 0,
+              "original_max": [
+                13.856399536132812,
+                12,
+                60
+              ],
+              "original_min": [
+                -13.856399536132812,
+                -12,
+                0
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                13.856399536132812,
+                12,
+                60
+              ],
+              "roundtripped_min": [
+                -13.856399536132812,
+                -12,
+                0
+              ],
+              "tolerance_mm": 1.05470366800085
+            },
+            "index": 0,
+            "pass": true,
+            "volume": {
+              "deviation_pct": 0.4497892199243933,
+              "original_mm3": 7568.610722393913,
+              "pass": true,
+              "roundtripped_mm3": 7534.567927266544
+            }
+          }
+        ],
+        "tolerance_pct": 1.5
+      }
+    }
+  ],
+  "summary": {
+    "passed": false,
+    "checks_passed": 3,
+    "checks_total": 4,
+    "score": 0.75,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260611T224246Z-cd94",
+  "model": {
+    "id": "claude-mcp-claude-opus-4-7",
+    "name": "Claude (MCP, claude-opus-4-7)",
+    "provider": "anthropic",
+    "params": {
+      "mode": "mcp",
+      "model": "claude-opus-4-7",
+      "max_tokens": 8000,
+      "max_iterations": 30
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "a5-hex-bolt-blank-01",
+    "rendered": "Make a hex-head bolt blank as a single solid with no holes. The hexagonal head is a regular hexagonal prism with flat-to-flat distance 24mm and height 14mm, base on the XY plane (z = 0 to z = 14), centered on the Z axis, oriented so two flats are parallel to the X axis (flat-to-flat distance 24mm in the Y direction, so the head spans y in [-12, 12] and x in [-13.856, 13.856]). Directly above the head and concentric with it is a cylindrical shank of diameter 14mm and height 46mm (z = 14 to z = 60). The combined part is a single solid: hexagonal head at bottom, cylindrical shank extending upward. Output a single solid with no bores or holes.",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "open_document",
+        "args": {},
+        "result_kind": "ok",
+        "wallclock_ms": 1.548041999999981
+      },
+      {
+        "n": 1,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781217766783_1",
+          "type": "sketch_2_d",
+          "name": "Hex Profile",
+          "params": {
+            "origin": [
+              0,
+              0,
+              0
+            ],
+            "x_axis": [
+              1,
+              0,
+              0
+            ],
+            "y_axis": [
+              0,
+              1,
+              0
+            ],
+            "segments": [
+              {
+                "type": "line",
+                "start": [
+                  13.8564,
+                  0
+                ],
+                "end": [
+                  6.9282,
+                  12
+                ]
+              },
+              {
+                "type": "line",
+                "start": [
+                  6.9282,
+                  12
+                ],
+                "end": [
+                  -6.9282,
+                  12
+                ]
+              },
+              {
+                "type": "line",
+                "start": [
+                  -6.9282,
+                  12
+                ],
+                "end": [
+                  -13.8564,
+                  0
+                ]
+              },
+              {
+                "type": "line",
+                "start": [
+                  -13.8564,
+                  0
+                ],
+                "end": [
+                  -6.9282,
+                  -12
+                ]
+              },
+              {
+                "type": "line",
+                "start": [
+                  -6.9282,
+                  -12
+                ],
+                "end": [
+                  6.9282,
+                  -12
+                ]
+              },
+              {
+                "type": "line",
+                "start": [
+                  6.9282,
+                  -12
+                ],
+                "end": [
+                  13.8564,
+                  0
+                ]
+              }
+            ]
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 7.202167000000372
+      },
+      {
+        "n": 2,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781217766783_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.610459000001356
+      },
+      {
+        "n": 3,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781217766783_1",
+          "type": "sketch_2_d",
+          "name": "Hex Profile",
+          "params": {
+            "origin": [
+              0,
+              0,
+              0
+            ],
+            "x_axis": [
+              1,
+              0,
+              0
+            ],
+            "y_axis": [
+              0,
+              1,
+              0
+            ],
+            "segments": [
+              {
+                "Line": {
+                  "start": [
+                    13.8564,
+                    0
+                  ],
+                  "end": [
+                    6.9282,
+                    12
+                  ]
+                }
+              },
+              {
+                "Line": {
+                  "start": [
+                    6.9282,
+                    12
+                  ],
+                  "end": [
+                    -6.9282,
+                    12
+                  ]
+                }
+              },
+              {
+                "Line": {
+                  "start": [
+                    -6.9282,
+                    12
+                  ],
+                  "end": [
+                    -13.8564,
+                    0
+                  ]
+                }
+              },
+              {
+                "Line": {
+                  "start": [
+                    -13.8564,
+                    0
+                  ],
+                  "end": [
+                    -6.9282,
+                    -12
+                  ]
+                }
+              },
+              {
+                "Line": {
+                  "start": [
+                    -6.9282,
+                    -12
+                  ],
+                  "end": [
+                    6.9282,
+                    -12
+                  ]
+                }
+              },
+              {
+                "Line": {
+                  "start": [
+                    6.9282,
+                    -12
+                  ],
+                  "end": [
+                    13.8564,
+                    0
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 3.735000000000582
+      },
+      {
+        "n": 4,
+        "tool": "create_cad_loon",
+        "args": {
+          "source": "[let\n  [hex-sketch [sketch 0 0 0 1 0 0 0 1 0 #[\n    [line 13.8564 0 6.9282 12]\n    [line 6.9282 12 -6.9282 12]\n    [line -6.9282 12 -13.8564 0]\n    [line -13.8564 0 -6.9282 -12]\n    [line -6.9282 -12 6.9282 -12]\n    [line 6.9282 -12 13.8564 0]\n  ]]]\n  [hex-head [extrude 0 0 14 hex-sketch]]\n  [shank [translate 0 0 14 [cylinder 7 46]]]\n  [root [union hex-head shank] \"steel\"]\n]",
+          "format": "json"
+        },
+        "result_kind": "err",
+        "wallclock_ms": 10.264374999998836
+      },
+      {
+        "n": 5,
+        "tool": "create_cad_loon",
+        "args": {
+          "source": "[let hex-sketch [sketch 0 0 0 1 0 0 0 1 0 #[\n    [line 13.8564 0 6.9282 12]\n    [line 6.9282 12 -6.9282 12]\n    [line -6.9282 12 -13.8564 0]\n    [line -13.8564 0 -6.9282 -12]\n    [line -6.9282 -12 6.9282 -12]\n    [line 6.9282 -12 13.8564 0]\n  ]]\n  [let hex-head [extrude 0 0 14 hex-sketch]\n    [let shank [translate 0 0 14 [cylinder 7 46]]\n      [root [union hex-head shank] \"steel\"]]]]",
+          "format": "json"
+        },
+        "result_kind": "err",
+        "wallclock_ms": 7.504292000001442
+      },
+      {
+        "n": 6,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781217766783_1",
+          "type": "sketch_2_d",
+          "name": "HexProfile",
+          "params": {
+            "origin": [
+              0,
+              0,
+              0
+            ],
+            "x_axis": [
+              1,
+              0,
+              0
+            ],
+            "y_axis": [
+              0,
+              1,
+              0
+            ],
+            "segments": [
+              {
+                "type": "Line",
+                "start": [
+                  13.8564,
+                  0
+                ],
+                "end": [
+                  6.9282,
+                  12
+                ]
+              },
+              {
+                "type": "Line",
+                "start": [
+                  6.9282,
+                  12
+                ],
+                "end": [
+                  -6.9282,
+                  12
+                ]
+              },
+              {
+                "type": "Line",
+                "start": [
+                  -6.9282,
+                  12
+                ],
+                "end": [
+                  -13.8564,
+                  0
+                ]
+              },
+              {
+                "type": "Line",
+                "start": [
+                  -13.8564,
+                  0
+                ],
+                "end": [
+                  -6.9282,
+                  -12
+                ]
+              },
+              {
+                "type": "Line",
+                "start": [
+                  -6.9282,
+                  -12
+                ],
+                "end": [
+                  6.9282,
+                  -12
+                ]
+              },
+              {
+                "type": "Line",
+                "start": [
+                  6.9282,
+                  -12
+                ],
+                "end": [
+                  13.8564,
+                  0
+                ]
+              }
+            ]
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 6.599959000002855
+      },
+      {
+        "n": 7,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781217766783_1",
+          "type": "sketch_2_d",
+          "name": "HexProfile",
+          "params": {
+            "origin": [
+              0,
+              0,
+              0
+            ],
+            "x_dir": [
+              1,
+              0,
+              0
+            ],
+            "y_dir": [
+              0,
+              1,
+              0
+            ],
+            "segments": [
+              {
+                "type": "Line",
+                "start": [
+                  13.8564,
+                  0
+                ],
+                "end": [
+                  6.9282,
+                  12
+                ]
+              },
+              {
+                "type": "Line",
+                "start": [
+                  6.9282,
+                  12
+                ],
+                "end": [
+                  -6.9282,
+                  12
+                ]
+              },
+              {
+                "type": "Line",
+                "start": [
+                  -6.9282,
+                  12
+                ],
+                "end": [
+                  -13.8564,
+                  0
+                ]
+              },
+              {
+                "type": "Line",
+                "start": [
+                  -13.8564,
+                  0
+                ],
+                "end": [
+                  -6.9282,
+                  -12
+                ]
+              },
+              {
+                "type": "Line",
+                "start": [
+                  -6.9282,
+                  -12
+                ],
+                "end": [
+                  6.9282,
+                  -12
+                ]
+              },
+              {
+                "type": "Line",
+                "start": [
+                  6.9282,
+                  -12
+                ],
+                "end": [
+                  13.8564,
+                  0
+                ]
+              }
+            ]
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 4.631208999999217
+      },
+      {
+        "n": 8,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781217766783_1",
+          "type": "extrude",
+          "name": "HexHead",
+          "parent_part_id": "1",
+          "params": {
+            "sketch": 1,
+            "distance": [
+              0,
+              0,
+              14
+            ]
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 6.9661659999983385
+      },
+      {
+        "n": 9,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781217766783_1",
+          "type": "extrude",
+          "name": "HexHead",
+          "parent_part_id": "1",
+          "params": {
+            "direction": [
+              0,
+              0,
+              1
+            ],
+            "distance": 14
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 3.09824999999546
+      },
+      {
+        "n": 10,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781217766783_1",
+          "type": "extrude",
+          "name": "HexHead",
+          "parent_part_id": "1",
+          "params": {
+            "direction": [
+              0,
+              0,
+              1
+            ],
+            "distance": 14,
+            "sketch": "1"
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 6.066167000004498
+      },
+      {
+        "n": 11,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781217766783_1",
+          "type": "extrude",
+          "name": "HexHead",
+          "parent_part_id": "1",
+          "params": {
+            "direction": [
+              0,
+              0,
+              1
+            ],
+            "distance": 14,
+            "sketch": 1
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.461290999999619
+      },
+      {
+        "n": 12,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781217766783_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.5837500000052387
+      },
+      {
+        "n": 13,
+        "tool": "get_document",
+        "args": {
+          "document_id": "doc_1781217766783_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.878167000002577
+      },
+      {
+        "n": 14,
+        "tool": "update",
+        "args": {
+          "document_id": "doc_1781217766783_1",
+          "node_id": "2",
+          "params": {
+            "distance": 14
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 4.861625000005006
+      },
+      {
+        "n": 15,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781217766783_1",
+          "type": "cylinder",
+          "name": "ShankCyl",
+          "params": {
+            "radius": 7,
+            "height": 46
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 1.9732920000024023
+      },
+      {
+        "n": 16,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781217766783_1",
+          "type": "cylinder",
+          "name": "ShankCyl",
+          "params": {
+            "radius": 7,
+            "height": 46,
+            "segments": 64
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.4195829999953276
+      },
+      {
+        "n": 17,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781217766783_1",
+          "type": "translate",
+          "name": "ShankTrans",
+          "parent_part_id": "3",
+          "params": {
+            "offset": [
+              0,
+              0,
+              14
+            ]
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 3.757583999999042
+      },
+      {
+        "n": 18,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781217766783_1",
+          "type": "translate",
+          "name": "ShankTrans",
+          "parent_part_id": "3",
+          "params": {
+            "offset": [
+              0,
+              0,
+              14
+            ],
+            "child": 3
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.8825420000066515
+      },
+      {
+        "n": 19,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781217766783_1",
+          "type": "union",
+          "name": "Bolt",
+          "params": {
+            "children": [
+              2,
+              4
+            ]
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 4.947250000004715
+      },
+      {
+        "n": 20,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781217766783_1",
+          "type": "union",
+          "name": "Bolt",
+          "params": {
+            "left": 2,
+            "right": 4
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.90745899999456
+      },
+      {
+        "n": 21,
+        "tool": "get_document",
+        "args": {
+          "document_id": "doc_1781217766783_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.7598330000037095
+      },
+      {
+        "n": 22,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781217766783_1",
+          "part_id": "1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.979749999998603
+      },
+      {
+        "n": 23,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781217766783_1",
+          "part_id": "2"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.0889590000006137
+      },
+      {
+        "n": 24,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781217766783_1",
+          "part_id": "3"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.1040409999986878
+      },
+      {
+        "n": 25,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781217766783_1",
+          "part_id": "4"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.9568330000038259
+      },
+      {
+        "n": 26,
+        "tool": "get_document",
+        "args": {
+          "document_id": "doc_1781217766783_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.1231249999982538
+      },
+      {
+        "n": 27,
+        "tool": "render_view",
+        "args": {
+          "document_id": "doc_1781217766783_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 101.92254100000719
+      },
+      {
+        "n": 28,
+        "tool": "inspect_cad",
+        "args": {
+          "document_id": "doc_1781217766783_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 8.704666999998153
+      },
+      {
+        "n": 29,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781217766783_1",
+          "part_id": "5"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.043249999987893
+      },
+      {
+        "n": 30,
+        "tool": "get_document",
+        "args": {
+          "document_id": "doc_1781217766783_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.6779999999998836
+      }
+    ],
+    "tokens": {
+      "input": 515279,
+      "output": 6748,
+      "total": 522027
+    },
+    "wallclock_sec": 107.395171584
+  },
+  "output": {
+    "vcad_path": "20260611T224246Z-cd94.vcad",
+    "vcad_sha256": "3596de1ad4ddae76221cecb55c3d3df5f1abc18d97f3d97319831ed327627658",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-06-11T22:42:46.611Z",
+    "ended_at": "2026-06-11T22:44:34.037Z"
+  },
+  "signature": null
+}

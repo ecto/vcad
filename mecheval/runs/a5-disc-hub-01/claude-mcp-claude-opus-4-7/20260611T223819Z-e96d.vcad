@@ -1,0 +1,139 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "FlangeCyl",
+      "op": {
+        "type": "Cylinder",
+        "radius": 50,
+        "height": 10,
+        "segments": 64
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": "HubCyl",
+      "op": {
+        "type": "Cylinder",
+        "radius": 20,
+        "height": 20,
+        "segments": 64
+      }
+    },
+    "3": {
+      "id": 3,
+      "name": "BoreCyl",
+      "op": {
+        "type": "Cylinder",
+        "radius": 9,
+        "height": 32,
+        "segments": 64
+      }
+    },
+    "4": {
+      "id": 4,
+      "name": "BoltCyl",
+      "op": {
+        "type": "Cylinder",
+        "radius": 4,
+        "height": 12,
+        "segments": 32
+      }
+    },
+    "5": {
+      "id": 5,
+      "name": "HubUp",
+      "op": {
+        "type": "Translate",
+        "child": 2,
+        "offset": {
+          "x": 0,
+          "y": 0,
+          "z": 10
+        }
+      }
+    },
+    "6": {
+      "id": 6,
+      "name": "BoreDown",
+      "op": {
+        "type": "Translate",
+        "child": 3,
+        "offset": {
+          "x": 0,
+          "y": 0,
+          "z": -1
+        }
+      }
+    },
+    "7": {
+      "id": 7,
+      "name": "BoltAt+X",
+      "op": {
+        "type": "Translate",
+        "child": 4,
+        "offset": {
+          "x": 37.5,
+          "y": 0,
+          "z": -1
+        }
+      }
+    },
+    "8": {
+      "id": 8,
+      "name": "Body",
+      "op": {
+        "type": "Union",
+        "left": 1,
+        "right": 5
+      }
+    },
+    "9": {
+      "id": 9,
+      "name": "BoltCircle",
+      "op": {
+        "type": "CircularPattern",
+        "child": 7,
+        "axis_origin": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "axis_dir": {
+          "x": 0,
+          "y": 0,
+          "z": 1
+        },
+        "count": 6,
+        "angle_deg": 360
+      }
+    },
+    "10": {
+      "id": 10,
+      "name": "AllHoles",
+      "op": {
+        "type": "Union",
+        "left": 6,
+        "right": 9
+      }
+    },
+    "11": {
+      "id": 11,
+      "name": "FlangedDisc",
+      "op": {
+        "type": "Difference",
+        "left": 8,
+        "right": 10
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 11,
+      "material": "default"
+    }
+  ]
+}

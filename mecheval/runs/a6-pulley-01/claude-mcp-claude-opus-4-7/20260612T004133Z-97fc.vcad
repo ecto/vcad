@@ -1,0 +1,106 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "Bottom",
+      "op": {
+        "type": "Cylinder",
+        "radius": 40,
+        "height": 8,
+        "segments": 64
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": "GrooveCyl",
+      "op": {
+        "type": "Cylinder",
+        "radius": 25,
+        "height": 24,
+        "segments": 64
+      }
+    },
+    "3": {
+      "id": 3,
+      "name": "LiftGroove",
+      "op": {
+        "type": "Translate",
+        "child": 2,
+        "offset": {
+          "x": 0,
+          "y": 0,
+          "z": 8
+        }
+      }
+    },
+    "4": {
+      "id": 4,
+      "name": "BottomPlusGroove",
+      "op": {
+        "type": "Union",
+        "left": 1,
+        "right": 3
+      }
+    },
+    "5": {
+      "id": 5,
+      "name": "TopCyl",
+      "op": {
+        "type": "Cylinder",
+        "radius": 40,
+        "height": 8,
+        "segments": 64
+      }
+    },
+    "6": {
+      "id": 6,
+      "name": "LiftTop",
+      "op": {
+        "type": "Translate",
+        "child": 5,
+        "offset": {
+          "x": 0,
+          "y": 0,
+          "z": 32
+        }
+      }
+    },
+    "7": {
+      "id": 7,
+      "name": "Body",
+      "op": {
+        "type": "Union",
+        "left": 4,
+        "right": 6
+      }
+    },
+    "8": {
+      "id": 8,
+      "name": "Bore",
+      "op": {
+        "type": "Cylinder",
+        "radius": 8,
+        "height": 40,
+        "segments": 64
+      }
+    },
+    "9": {
+      "id": 9,
+      "name": "Pulley",
+      "op": {
+        "type": "Difference",
+        "left": 7,
+        "right": 8
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 9,
+      "material": "default"
+    }
+  ]
+}

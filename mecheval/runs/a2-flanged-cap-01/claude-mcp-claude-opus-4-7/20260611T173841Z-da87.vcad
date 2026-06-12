@@ -1,0 +1,107 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "Outer",
+      "op": {
+        "type": "Cylinder",
+        "radius": 30,
+        "height": 8,
+        "segments": 64
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": "CenterHoleCyl",
+      "op": {
+        "type": "Cylinder",
+        "radius": 20,
+        "height": 10,
+        "segments": 64
+      }
+    },
+    "3": {
+      "id": 3,
+      "name": "CenterHoleT",
+      "op": {
+        "type": "Translate",
+        "child": 2,
+        "offset": {
+          "x": 0,
+          "y": 0,
+          "z": -1
+        }
+      }
+    },
+    "4": {
+      "id": 4,
+      "name": "FlangeMinusCenter",
+      "op": {
+        "type": "Difference",
+        "left": 1,
+        "right": 3
+      }
+    },
+    "5": {
+      "id": 5,
+      "name": "BoltHoleCyl",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 10,
+        "segments": 32
+      }
+    },
+    "6": {
+      "id": 6,
+      "name": "BoltHoleT",
+      "op": {
+        "type": "Translate",
+        "child": 5,
+        "offset": {
+          "x": 25,
+          "y": 0,
+          "z": -1
+        }
+      }
+    },
+    "7": {
+      "id": 7,
+      "name": "BoltHolesPattern",
+      "op": {
+        "type": "CircularPattern",
+        "child": 6,
+        "axis_origin": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "axis_dir": {
+          "x": 0,
+          "y": 0,
+          "z": 1
+        },
+        "count": 6,
+        "angle_deg": 360
+      }
+    },
+    "8": {
+      "id": 8,
+      "name": "FlangedCap",
+      "op": {
+        "type": "Difference",
+        "left": 4,
+        "right": 7
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 8,
+      "material": "default"
+    }
+  ]
+}

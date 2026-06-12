@@ -1,0 +1,144 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "Rail",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 100,
+          "y": 20,
+          "z": 8
+        }
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": "Center",
+      "op": {
+        "type": "Translate",
+        "child": 1,
+        "offset": {
+          "x": -50,
+          "y": -10,
+          "z": 0
+        }
+      }
+    },
+    "3": {
+      "id": 3,
+      "name": "HoleCyl1",
+      "op": {
+        "type": "Cylinder",
+        "radius": 3,
+        "height": 10,
+        "segments": 64
+      }
+    },
+    "4": {
+      "id": 4,
+      "name": "PosHole1",
+      "op": {
+        "type": "Translate",
+        "child": 3,
+        "offset": {
+          "x": -40,
+          "y": 0,
+          "z": -1
+        }
+      }
+    },
+    "5": {
+      "id": 5,
+      "name": "Rail-Drill1",
+      "op": {
+        "type": "Difference",
+        "left": 2,
+        "right": 4
+      }
+    },
+    "6": {
+      "id": 6,
+      "name": "HoleCyl2",
+      "op": {
+        "type": "Cylinder",
+        "radius": 3,
+        "height": 10,
+        "segments": 64
+      }
+    },
+    "7": {
+      "id": 7,
+      "name": "PosHole2",
+      "op": {
+        "type": "Translate",
+        "child": 6,
+        "offset": {
+          "x": 0,
+          "y": 0,
+          "z": -1
+        }
+      }
+    },
+    "8": {
+      "id": 8,
+      "name": "Rail-Drill2",
+      "op": {
+        "type": "Difference",
+        "left": 5,
+        "right": 7
+      }
+    },
+    "9": {
+      "id": 9,
+      "name": "HoleCyl3",
+      "op": {
+        "type": "Cylinder",
+        "radius": 3,
+        "height": 10,
+        "segments": 64
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 1,
+      "material": "default"
+    },
+    {
+      "root": 2,
+      "material": "default"
+    },
+    {
+      "root": 3,
+      "material": "default"
+    },
+    {
+      "root": 4,
+      "material": "default"
+    },
+    {
+      "root": 5,
+      "material": "default"
+    },
+    {
+      "root": 6,
+      "material": "default"
+    },
+    {
+      "root": 7,
+      "material": "default"
+    },
+    {
+      "root": 8,
+      "material": "default"
+    },
+    {
+      "root": 9,
+      "material": "default"
+    }
+  ]
+}

@@ -1,0 +1,104 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "Stadium Sketch",
+      "op": {
+        "type": "Sketch2D",
+        "origin": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "x_dir": {
+          "x": 1,
+          "y": 0,
+          "z": 0
+        },
+        "y_dir": {
+          "x": 0,
+          "y": 1,
+          "z": 0
+        },
+        "segments": [
+          {
+            "type": "Line",
+            "start": {
+              "x": -30,
+              "y": -10
+            },
+            "end": {
+              "x": 30,
+              "y": -10
+            }
+          },
+          {
+            "type": "Arc",
+            "start": {
+              "x": 30,
+              "y": -10
+            },
+            "end": {
+              "x": 30,
+              "y": 10
+            },
+            "center": {
+              "x": 30,
+              "y": 0
+            },
+            "ccw": true
+          },
+          {
+            "type": "Line",
+            "start": {
+              "x": 30,
+              "y": 10
+            },
+            "end": {
+              "x": -30,
+              "y": 10
+            }
+          },
+          {
+            "type": "Arc",
+            "start": {
+              "x": -30,
+              "y": 10
+            },
+            "end": {
+              "x": -30,
+              "y": -10
+            },
+            "center": {
+              "x": -30,
+              "y": 0
+            },
+            "ccw": true
+          }
+        ]
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": "Stadium Bar",
+      "op": {
+        "type": "Extrude",
+        "sketch": 1,
+        "direction": {
+          "x": 0,
+          "y": 0,
+          "z": 10
+        }
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 2,
+      "material": "default"
+    }
+  ]
+}

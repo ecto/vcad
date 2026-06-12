@@ -1,0 +1,100 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "CubeRaw",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 30,
+          "y": 30,
+          "z": 30
+        }
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": "CenterCube",
+      "op": {
+        "type": "Translate",
+        "child": 1,
+        "offset": {
+          "x": -15,
+          "y": -15,
+          "z": 0
+        }
+      }
+    },
+    "3": {
+      "id": 3,
+      "name": "HoleCyl1",
+      "op": {
+        "type": "Cylinder",
+        "radius": 1.5,
+        "height": 32,
+        "segments": 64
+      }
+    },
+    "4": {
+      "id": 4,
+      "name": "PlaceHole1",
+      "op": {
+        "type": "Translate",
+        "child": 3,
+        "offset": {
+          "x": -8,
+          "y": -8,
+          "z": -1
+        }
+      }
+    },
+    "5": {
+      "id": 5,
+      "name": "HoleRowX",
+      "op": {
+        "type": "LinearPattern",
+        "child": 4,
+        "direction": {
+          "x": 1,
+          "y": 0,
+          "z": 0
+        },
+        "count": 3,
+        "spacing": 8
+      }
+    },
+    "6": {
+      "id": 6,
+      "name": "HoleGrid",
+      "op": {
+        "type": "LinearPattern",
+        "child": 5,
+        "direction": {
+          "x": 0,
+          "y": 1,
+          "z": 0
+        },
+        "count": 3,
+        "spacing": 8
+      }
+    },
+    "7": {
+      "id": 7,
+      "name": "CubeWithHoles",
+      "op": {
+        "type": "Difference",
+        "left": 2,
+        "right": 6
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 7,
+      "material": "default"
+    }
+  ]
+}

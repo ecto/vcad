@@ -1,0 +1,170 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "base_cube",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 100,
+          "y": 30,
+          "z": 8
+        }
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": "leg_l_cube",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 8,
+          "y": 30,
+          "z": 35
+        }
+      }
+    },
+    "3": {
+      "id": 3,
+      "name": "leg_r_cube",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 8,
+          "y": 30,
+          "z": 35
+        }
+      }
+    },
+    "4": {
+      "id": 4,
+      "name": "hole_l_cyl",
+      "op": {
+        "type": "Cylinder",
+        "radius": 3,
+        "height": 8.2,
+        "segments": 64
+      }
+    },
+    "5": {
+      "id": 5,
+      "name": "hole_r_cyl",
+      "op": {
+        "type": "Cylinder",
+        "radius": 3,
+        "height": 8.2,
+        "segments": 64
+      }
+    },
+    "6": {
+      "id": 6,
+      "name": "base_t",
+      "op": {
+        "type": "Translate",
+        "child": 1,
+        "offset": {
+          "x": -50,
+          "y": -15,
+          "z": 0
+        }
+      }
+    },
+    "7": {
+      "id": 7,
+      "name": "leg_l_t",
+      "op": {
+        "type": "Translate",
+        "child": 2,
+        "offset": {
+          "x": -50,
+          "y": -15,
+          "z": 8
+        }
+      }
+    },
+    "8": {
+      "id": 8,
+      "name": "leg_r_t",
+      "op": {
+        "type": "Translate",
+        "child": 3,
+        "offset": {
+          "x": 42,
+          "y": -15,
+          "z": 8
+        }
+      }
+    },
+    "9": {
+      "id": 9,
+      "name": "hole_l_t",
+      "op": {
+        "type": "Translate",
+        "child": 4,
+        "offset": {
+          "x": -25,
+          "y": 0,
+          "z": -0.1
+        }
+      }
+    },
+    "10": {
+      "id": 10,
+      "name": "hole_r_t",
+      "op": {
+        "type": "Translate",
+        "child": 5,
+        "offset": {
+          "x": 25,
+          "y": 0,
+          "z": -0.1
+        }
+      }
+    },
+    "11": {
+      "id": 11,
+      "name": "base_plus_legL",
+      "op": {
+        "type": "Union",
+        "left": 6,
+        "right": 7
+      }
+    },
+    "12": {
+      "id": 12,
+      "name": "bracket_solid",
+      "op": {
+        "type": "Union",
+        "left": 11,
+        "right": 8
+      }
+    },
+    "13": {
+      "id": 13,
+      "name": "holes_combined",
+      "op": {
+        "type": "Union",
+        "left": 9,
+        "right": 10
+      }
+    },
+    "14": {
+      "id": 14,
+      "name": "U-Channel Bracket",
+      "op": {
+        "type": "Difference",
+        "left": 12,
+        "right": 13
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 14,
+      "material": "default"
+    }
+  ]
+}

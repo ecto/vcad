@@ -1,0 +1,666 @@
+{
+  "schema_version": 0,
+  "task_id": "a4-rounded-bar-01",
+  "task_sha256": "7d784df0d0a2093508ecd8afc9682f361b3ac3936400a370796a57e039c78acb",
+  "checks": [
+    {
+      "n": 0,
+      "type": "valid_solid",
+      "params": {
+        "type": "valid_solid"
+      },
+      "result": "pass",
+      "details": {
+        "root_count": 1,
+        "solids_produced": 1
+      }
+    },
+    {
+      "n": 1,
+      "type": "bbox",
+      "params": {
+        "type": "bbox",
+        "min": [
+          -40,
+          -10,
+          0
+        ],
+        "max": [
+          40,
+          10,
+          10
+        ],
+        "tolerance_mm": 0.2
+      },
+      "result": "pass",
+      "details": {
+        "actual_max": [
+          40,
+          10,
+          10
+        ],
+        "actual_min": [
+          -40,
+          -10,
+          0
+        ],
+        "deviation_max": [
+          0,
+          0,
+          0
+        ],
+        "deviation_min": [
+          0,
+          0,
+          0
+        ],
+        "max_abs_deviation_mm": 0,
+        "tolerance_mm": 0.2
+      }
+    },
+    {
+      "n": 2,
+      "type": "mass_props",
+      "params": {
+        "type": "mass_props",
+        "volume_mm3": 15141.59,
+        "center_of_mass": [
+          0,
+          0,
+          5
+        ],
+        "tolerance_pct": 1
+      },
+      "result": "pass",
+      "details": {
+        "center_of_mass": {
+          "actual": [
+            9.944468081153662e-15,
+            -4.753874623593503e-17,
+            4.999999999999997
+          ],
+          "bbox_diagonal_mm": 83.06623862918075,
+          "deviation": [
+            9.944468081153662e-15,
+            -4.753874623593503e-17,
+            -2.6645352591003757e-15
+          ],
+          "max_abs_deviation_mm": 9.944468081153662e-15,
+          "pass": true,
+          "spec": [
+            0,
+            0,
+            5
+          ],
+          "tolerance_mm": 0.8306623862918074
+        },
+        "volume": {
+          "actual_mm3": 15136.548745363963,
+          "deviation_pct": 0.03329409022458463,
+          "pass": true,
+          "spec_mm3": 15141.59,
+          "tolerance_pct": 1
+        }
+      }
+    },
+    {
+      "n": 3,
+      "type": "step_roundtrip",
+      "params": {
+        "type": "step_roundtrip",
+        "tolerance_pct": 1
+      },
+      "result": "pass",
+      "details": {
+        "per_solid": [
+          {
+            "bbox": {
+              "max_abs_deviation_mm": 0,
+              "original_max": [
+                40,
+                10,
+                10
+              ],
+              "original_min": [
+                -40,
+                -10,
+                0
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                40,
+                10,
+                10
+              ],
+              "roundtripped_min": [
+                -40,
+                -10,
+                0
+              ],
+              "tolerance_mm": 0.8306623862918074
+            },
+            "index": 0,
+            "pass": true,
+            "volume": {
+              "deviation_pct": 0.2823713416216259,
+              "original_mm3": 15136.548745363963,
+              "pass": true,
+              "roundtripped_mm3": 15093.807469596468
+            }
+          }
+        ],
+        "tolerance_pct": 1
+      }
+    }
+  ],
+  "summary": {
+    "passed": true,
+    "checks_passed": 4,
+    "checks_total": 4,
+    "score": 1,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260611T222521Z-96ef",
+  "model": {
+    "id": "claude-mcp-claude-opus-4-7",
+    "name": "Claude (MCP, claude-opus-4-7)",
+    "provider": "anthropic",
+    "params": {
+      "mode": "mcp",
+      "model": "claude-opus-4-7",
+      "max_tokens": 8000,
+      "max_iterations": 30
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "a4-rounded-bar-01",
+    "rendered": "Make a flat bar with a stadium-shaped (rectangle with semicircular ends) footprint, extruded 10mm along Z. Total end-to-end length is 80mm along X; total width is 20mm along Y. The footprint is the union of a 60mm × 20mm rectangle (x in [-30, 30], y in [-10, 10]) and two semicircles of radius 10mm centered at (-30, 0) and (30, 0). The bottom face sits on the XY plane (z = 0 to z = 10). Output a single solid (no holes or other features).",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "open_document",
+        "args": {},
+        "result_kind": "ok",
+        "wallclock_ms": 1.47679100000002
+      },
+      {
+        "n": 1,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781216721623_1",
+          "type": "union",
+          "name": "Stadium Bar",
+          "params": {
+            "children": [
+              {
+                "type": "translate",
+                "params": {
+                  "x": -30,
+                  "y": -10,
+                  "z": 0,
+                  "child": {
+                    "type": "cube",
+                    "params": {
+                      "x": 60,
+                      "y": 20,
+                      "z": 10
+                    }
+                  }
+                }
+              },
+              {
+                "type": "translate",
+                "params": {
+                  "x": -30,
+                  "y": 0,
+                  "z": 0,
+                  "child": {
+                    "type": "cylinder",
+                    "params": {
+                      "r": 10,
+                      "h": 10
+                    }
+                  }
+                }
+              },
+              {
+                "type": "translate",
+                "params": {
+                  "x": 30,
+                  "y": 0,
+                  "z": 0,
+                  "child": {
+                    "type": "cylinder",
+                    "params": {
+                      "r": 10,
+                      "h": 10
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 3.3439589999998134
+      },
+      {
+        "n": 2,
+        "tool": "create_cad_loon",
+        "args": {
+          "source": "[root\n  [union\n    [translate -30 0 0 [cylinder 10 10]]\n    [union\n      [translate 30 0 0 [cylinder 10 10]]\n      [translate -30 -10 0 [cube 60 20 10]]]]\n  \"steel\"]",
+          "format": "json"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 12.545791999999892
+      },
+      {
+        "n": 3,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781216721623_1",
+          "type": "cube",
+          "name": "rect",
+          "params": {
+            "x": 60,
+            "y": 20,
+            "z": 10
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 3.569959000000381
+      },
+      {
+        "n": 4,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781216721623_1",
+          "type": "cube",
+          "name": "rect",
+          "params": {
+            "size": {
+              "x": 60,
+              "y": 20,
+              "z": 10
+            }
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 4.243625000000975
+      },
+      {
+        "n": 5,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781216721623_1",
+          "type": "translate",
+          "parent_part_id": "1",
+          "params": {
+            "offset": {
+              "x": -30,
+              "y": -10,
+              "z": 0
+            },
+            "child": 1
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.0920420000002196
+      },
+      {
+        "n": 6,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781216721623_1",
+          "type": "cylinder",
+          "name": "cap1",
+          "params": {
+            "radius": 10,
+            "height": 10
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 1.6599170000008598
+      },
+      {
+        "n": 7,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781216721623_1",
+          "type": "cylinder",
+          "name": "cap2",
+          "params": {
+            "radius": 10,
+            "height": 10
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 1.004584000002069
+      },
+      {
+        "n": 8,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781216721623_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 6.315458000000945
+      },
+      {
+        "n": 9,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781216721623_1",
+          "part_id": "2"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.9814169999990554
+      },
+      {
+        "n": 10,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781216721623_1",
+          "type": "cylinder",
+          "name": "cap1",
+          "params": {
+            "radius": 10,
+            "height": 10,
+            "segments": 64
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.2027090000010503
+      },
+      {
+        "n": 11,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781216721623_1",
+          "type": "cylinder",
+          "name": "cap2",
+          "params": {
+            "radius": 10,
+            "height": 10,
+            "segments": 64
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.9824169999992591
+      },
+      {
+        "n": 12,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781216721623_1",
+          "part_id": "1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.9555420000033337
+      },
+      {
+        "n": 13,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781216721623_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.4977920000019367
+      },
+      {
+        "n": 14,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781216721623_1",
+          "part_id": "2"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.1254159999953117
+      },
+      {
+        "n": 15,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781216721623_1",
+          "type": "translate",
+          "parent_part_id": "3",
+          "params": {
+            "offset": {
+              "x": -30,
+              "y": 0,
+              "z": 0
+            },
+            "child": 3
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.09824999999546
+      },
+      {
+        "n": 16,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781216721623_1",
+          "type": "translate",
+          "parent_part_id": "4",
+          "params": {
+            "offset": {
+              "x": 30,
+              "y": 0,
+              "z": 0
+            },
+            "child": 4
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.4994579999984126
+      },
+      {
+        "n": 17,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781216721623_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.094042000004265
+      },
+      {
+        "n": 18,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781216721623_1",
+          "part_id": "3"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.689915999995719
+      },
+      {
+        "n": 19,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781216721623_1",
+          "part_id": "4"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.2421249999970314
+      },
+      {
+        "n": 20,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781216721623_1",
+          "type": "union",
+          "name": "stadium union 1",
+          "params": {
+            "left": 2,
+            "right": 5
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.9707500000004075
+      },
+      {
+        "n": 21,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781216721623_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.190708000001905
+      },
+      {
+        "n": 22,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781216721623_1",
+          "part_id": "7"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.3053749999962747
+      },
+      {
+        "n": 23,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781216721623_1",
+          "part_id": "6"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.20808300000499
+      },
+      {
+        "n": 24,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781216721623_1",
+          "type": "union",
+          "name": "Stadium Bar",
+          "params": {
+            "left": 7,
+            "right": 6
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.982791999995243
+      },
+      {
+        "n": 25,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781216721623_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.278875000003609
+      },
+      {
+        "n": 26,
+        "tool": "get_document",
+        "args": {
+          "document_id": "doc_1781216721623_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.7905420000024606
+      },
+      {
+        "n": 27,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781216721623_1",
+          "part_id": "2"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.378415999992285
+      },
+      {
+        "n": 28,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781216721623_1",
+          "part_id": "5"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.308166999995592
+      },
+      {
+        "n": 29,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781216721623_1",
+          "part_id": "6"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.067916999993031
+      },
+      {
+        "n": 30,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781216721623_1",
+          "part_id": "7"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.6955410000082338
+      },
+      {
+        "n": 31,
+        "tool": "get_document",
+        "args": {
+          "document_id": "doc_1781216721623_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.6650829999998678
+      },
+      {
+        "n": 32,
+        "tool": "render_view",
+        "args": {
+          "document_id": "doc_1781216721623_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 129.49266699999862
+      },
+      {
+        "n": 33,
+        "tool": "get_document",
+        "args": {
+          "document_id": "doc_1781216721623_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.247749999994994
+      }
+    ],
+    "tokens": {
+      "input": 466646,
+      "output": 4356,
+      "total": 471002
+    },
+    "wallclock_sec": 81.26673958299999
+  },
+  "output": {
+    "vcad_path": "20260611T222521Z-96ef.vcad",
+    "vcad_sha256": "a6c41848f5e4a0ff9d616bcf183687a8b46dff4c0d169364ed6ba5937ecd16b3",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-06-11T22:25:21.451Z",
+    "ended_at": "2026-06-11T22:26:42.876Z"
+  },
+  "signature": null
+}

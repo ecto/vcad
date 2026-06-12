@@ -1,0 +1,192 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "PlateRaw",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 60,
+          "y": 60,
+          "z": 12
+        }
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": "Plate",
+      "op": {
+        "type": "Translate",
+        "child": 1,
+        "offset": {
+          "x": -30,
+          "y": -30,
+          "z": 0
+        }
+      }
+    },
+    "3": {
+      "id": 3,
+      "name": "C1Through",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2,
+        "height": 12,
+        "segments": 64
+      }
+    },
+    "4": {
+      "id": 4,
+      "name": "C1CboreRaw",
+      "op": {
+        "type": "Cylinder",
+        "radius": 4,
+        "height": 4,
+        "segments": 64
+      }
+    },
+    "5": {
+      "id": 5,
+      "name": "C1CboreUp",
+      "op": {
+        "type": "Translate",
+        "child": 4,
+        "offset": {
+          "x": 0,
+          "y": 0,
+          "z": 8
+        }
+      }
+    },
+    "6": {
+      "id": 6,
+      "name": "C1Feat",
+      "op": {
+        "type": "Union",
+        "left": 3,
+        "right": 5
+      }
+    },
+    "7": {
+      "id": 7,
+      "name": "C1",
+      "op": {
+        "type": "Translate",
+        "child": 6,
+        "offset": {
+          "x": 20,
+          "y": 20,
+          "z": 0
+        }
+      }
+    },
+    "8": {
+      "id": 8,
+      "name": "C2Through",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2,
+        "height": 12,
+        "segments": 64
+      }
+    },
+    "9": {
+      "id": 9,
+      "name": "C2CboreRaw",
+      "op": {
+        "type": "Cylinder",
+        "radius": 4,
+        "height": 4,
+        "segments": 64
+      }
+    },
+    "10": {
+      "id": 10,
+      "name": "C2CboreUp",
+      "op": {
+        "type": "Translate",
+        "child": 9,
+        "offset": {
+          "x": 0,
+          "y": 0,
+          "z": 8
+        }
+      }
+    },
+    "11": {
+      "id": 11,
+      "name": "C2Feat",
+      "op": {
+        "type": "Union",
+        "left": 8,
+        "right": 10
+      }
+    },
+    "12": {
+      "id": 12,
+      "name": "C2",
+      "op": {
+        "type": "Translate",
+        "child": 11,
+        "offset": {
+          "x": -20,
+          "y": 20,
+          "z": 0
+        }
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 1,
+      "material": "default"
+    },
+    {
+      "root": 2,
+      "material": "default"
+    },
+    {
+      "root": 3,
+      "material": "default"
+    },
+    {
+      "root": 4,
+      "material": "default"
+    },
+    {
+      "root": 5,
+      "material": "default"
+    },
+    {
+      "root": 6,
+      "material": "default"
+    },
+    {
+      "root": 7,
+      "material": "default"
+    },
+    {
+      "root": 8,
+      "material": "default"
+    },
+    {
+      "root": 9,
+      "material": "default"
+    },
+    {
+      "root": 10,
+      "material": "default"
+    },
+    {
+      "root": 11,
+      "material": "default"
+    },
+    {
+      "root": 12,
+      "material": "default"
+    }
+  ]
+}

@@ -1,0 +1,630 @@
+{
+  "schema_version": 0,
+  "task_id": "a3-pentagonal-prism-01",
+  "task_sha256": "1cd17baaa8bda61287e5f1ed5579c13048578eaad9ebc36cf5e2cca36c9a06a0",
+  "checks": [
+    {
+      "n": 0,
+      "type": "valid_solid",
+      "params": {
+        "type": "valid_solid"
+      },
+      "result": "pass",
+      "details": {
+        "root_count": 1,
+        "solids_produced": 1
+      }
+    },
+    {
+      "n": 1,
+      "type": "bbox",
+      "params": {
+        "type": "bbox",
+        "min": [
+          -14.27,
+          -12.13,
+          0
+        ],
+        "max": [
+          14.27,
+          15,
+          25
+        ],
+        "tolerance_mm": 0.3
+      },
+      "result": "pass",
+      "details": {
+        "actual_max": [
+          14.265848159790039,
+          15,
+          25
+        ],
+        "actual_min": [
+          -14.265848159790039,
+          -12.135254859924316,
+          0
+        ],
+        "deviation_max": [
+          -0.004151840209960511,
+          0,
+          0
+        ],
+        "deviation_min": [
+          0.004151840209960511,
+          -0.005254859924315625,
+          0
+        ],
+        "max_abs_deviation_mm": 0.005254859924315625,
+        "tolerance_mm": 0.3
+      }
+    },
+    {
+      "n": 2,
+      "type": "mass_props",
+      "params": {
+        "type": "mass_props",
+        "volume_mm3": 12884.48,
+        "tolerance_pct": 1.5
+      },
+      "result": "pass",
+      "details": {
+        "volume": {
+          "actual_mm3": 12884.146798555945,
+          "deviation_pct": 0.0025860682313511582,
+          "pass": true,
+          "spec_mm3": 12884.48,
+          "tolerance_pct": 1.5
+        }
+      }
+    },
+    {
+      "n": 3,
+      "type": "hole_count",
+      "params": {
+        "type": "hole_count",
+        "diameter_mm": 5,
+        "expected": 1,
+        "diameter_tolerance_mm": 0.05
+      },
+      "result": "pass",
+      "details": {
+        "actual": 1,
+        "diameter_mm": 5,
+        "diameter_tolerance_mm": 0.05,
+        "expected": 1,
+        "found": [
+          [
+            5,
+            0,
+            5
+          ]
+        ]
+      }
+    },
+    {
+      "n": 4,
+      "type": "hole_positions",
+      "params": {
+        "type": "hole_positions",
+        "diameter_mm": 5,
+        "positions": [
+          [
+            5,
+            0,
+            0
+          ]
+        ],
+        "tolerance_mm": 0.15
+      },
+      "result": "pass",
+      "details": {
+        "diameter_mm": 5,
+        "per_expected": [
+          {
+            "distance_mm": 0,
+            "matched_hole": [
+              5,
+              0
+            ],
+            "pass": true,
+            "spec_xy": [
+              5,
+              0
+            ]
+          }
+        ],
+        "tolerance_mm": 0.15,
+        "unmatched_extras": []
+      }
+    },
+    {
+      "n": 5,
+      "type": "step_roundtrip",
+      "params": {
+        "type": "step_roundtrip",
+        "tolerance_pct": 1.5
+      },
+      "result": "pass",
+      "details": {
+        "per_solid": [
+          {
+            "bbox": {
+              "max_abs_deviation_mm": 0,
+              "original_max": [
+                14.265848159790039,
+                15,
+                25
+              ],
+              "original_min": [
+                -14.265848159790039,
+                -12.135254859924316,
+                0
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                14.265848159790039,
+                15,
+                25
+              ],
+              "roundtripped_min": [
+                -14.265848159790039,
+                -12.135254859924316,
+                0
+              ],
+              "tolerance_mm": 0.6996144967171576
+            },
+            "index": 0,
+            "pass": true,
+            "volume": {
+              "deviation_pct": 0.012210846686901502,
+              "original_mm3": 12884.146798555945,
+              "pass": true,
+              "roundtripped_mm3": 12885.720061968432
+            }
+          }
+        ],
+        "tolerance_pct": 1.5
+      }
+    }
+  ],
+  "summary": {
+    "passed": true,
+    "checks_passed": 6,
+    "checks_total": 6,
+    "score": 1,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260611T182003Z-f957",
+  "model": {
+    "id": "claude-mcp-claude-opus-4-7",
+    "name": "Claude (MCP, claude-opus-4-7)",
+    "provider": "anthropic",
+    "params": {
+      "mode": "mcp",
+      "model": "claude-opus-4-7",
+      "max_tokens": 8000,
+      "max_iterations": 30
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "a3-pentagonal-prism-01",
+    "rendered": "Make a regular pentagonal prism. The cross-section is a regular pentagon centered on the Z axis with circumradius 15mm (distance from center to each vertex). Orient the pentagon so one vertex points in the +Y direction. Height 25mm along Z, base on the XY plane (z = 0 to z = 25). Drill one through-hole of diameter 5mm, axis parallel to Z, with its axis offset 5mm in the +X direction from the center (so hole axis is at (x=5, y=0)). Output a single solid.",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "open_document",
+        "args": {},
+        "result_kind": "ok",
+        "wallclock_ms": 1.6227090000000146
+      },
+      {
+        "n": 1,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781202004146_1",
+          "type": "sketch_2_d",
+          "name": "Pentagon Sketch",
+          "params": {
+            "origin": [
+              0,
+              0,
+              0
+            ],
+            "x_axis": [
+              1,
+              0,
+              0
+            ],
+            "y_axis": [
+              0,
+              1,
+              0
+            ],
+            "segments": [
+              {
+                "type": "line",
+                "p1": [
+                  0,
+                  15
+                ],
+                "p2": [
+                  -14.2658477,
+                  4.6352549
+                ]
+              },
+              {
+                "type": "line",
+                "p1": [
+                  -14.2658477,
+                  4.6352549
+                ],
+                "p2": [
+                  -8.8167788,
+                  -12.1352549
+                ]
+              },
+              {
+                "type": "line",
+                "p1": [
+                  -8.8167788,
+                  -12.1352549
+                ],
+                "p2": [
+                  8.8167788,
+                  -12.1352549
+                ]
+              },
+              {
+                "type": "line",
+                "p1": [
+                  8.8167788,
+                  -12.1352549
+                ],
+                "p2": [
+                  14.2658477,
+                  4.6352549
+                ]
+              },
+              {
+                "type": "line",
+                "p1": [
+                  14.2658477,
+                  4.6352549
+                ],
+                "p2": [
+                  0,
+                  15
+                ]
+              }
+            ]
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 4.251709000000119
+      },
+      {
+        "n": 2,
+        "tool": "create_cad_loon",
+        "args": {
+          "source": "\n[let pent\n  [extrude 0 0 25\n    [sketch 0 0 0  1 0 0  0 1 0\n      #[\n        [line 0 15  -14.2658477 4.6352549]\n        [line -14.2658477 4.6352549  -8.8167788 -12.1352549]\n        [line -8.8167788 -12.1352549  8.8167788 -12.1352549]\n        [line 8.8167788 -12.1352549  14.2658477 4.6352549]\n        [line 14.2658477 4.6352549  0 15]\n      ]\n    ]\n  ]\n  [root\n    [difference\n      [translate 5 0 -1 [cylinder 2.5 27]]\n      pent\n    ]\n    \"steel\"\n  ]\n]\n",
+          "format": "json"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 11.542499999999563
+      },
+      {
+        "n": 3,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781202004146_1",
+          "type": "sketch_2_d",
+          "name": "Pentagon Sketch",
+          "params": {
+            "origin": {
+              "x": 0,
+              "y": 0,
+              "z": 0
+            },
+            "x_dir": {
+              "x": 1,
+              "y": 0,
+              "z": 0
+            },
+            "y_dir": {
+              "x": 0,
+              "y": 1,
+              "z": 0
+            },
+            "segments": [
+              {
+                "type": "Line",
+                "start": {
+                  "x": 0,
+                  "y": 15
+                },
+                "end": {
+                  "x": -14.2658477,
+                  "y": 4.6352549
+                }
+              },
+              {
+                "type": "Line",
+                "start": {
+                  "x": -14.2658477,
+                  "y": 4.6352549
+                },
+                "end": {
+                  "x": -8.8167788,
+                  "y": -12.1352549
+                }
+              },
+              {
+                "type": "Line",
+                "start": {
+                  "x": -8.8167788,
+                  "y": -12.1352549
+                },
+                "end": {
+                  "x": 8.8167788,
+                  "y": -12.1352549
+                }
+              },
+              {
+                "type": "Line",
+                "start": {
+                  "x": 8.8167788,
+                  "y": -12.1352549
+                },
+                "end": {
+                  "x": 14.2658477,
+                  "y": 4.6352549
+                }
+              },
+              {
+                "type": "Line",
+                "start": {
+                  "x": 14.2658477,
+                  "y": 4.6352549
+                },
+                "end": {
+                  "x": 0,
+                  "y": 15
+                }
+              }
+            ]
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.9792080000006536
+      },
+      {
+        "n": 4,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781202004146_1",
+          "type": "extrude",
+          "name": "Pentagon Prism",
+          "params": {
+            "sketch": 1,
+            "direction": {
+              "x": 0,
+              "y": 0,
+              "z": 25
+            }
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 6.0989580000023125
+      },
+      {
+        "n": 5,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781202004146_1",
+          "type": "cylinder",
+          "name": "Hole Cyl",
+          "params": {
+            "radius": 2.5,
+            "height": 27
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 5.09912500000064
+      },
+      {
+        "n": 6,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781202004146_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.393332999999984
+      },
+      {
+        "n": 7,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781202004146_1",
+          "type": "cylinder",
+          "name": "Hole Cyl",
+          "params": {
+            "radius": 2.5,
+            "height": 27,
+            "segments": 64
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.14354099999764
+      },
+      {
+        "n": 8,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781202004146_1",
+          "type": "translate",
+          "name": "Hole Position",
+          "params": {
+            "child": 3,
+            "offset": {
+              "x": 5,
+              "y": 0,
+              "z": -1
+            }
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.215291000000434
+      },
+      {
+        "n": 9,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781202004146_1",
+          "type": "difference",
+          "name": "Prism w/ Hole",
+          "params": {
+            "base": 2,
+            "tools": [
+              4
+            ]
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 6.130666999997629
+      },
+      {
+        "n": 10,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781202004146_1",
+          "type": "difference",
+          "name": "Prism w/ Hole",
+          "params": {
+            "left": 2,
+            "right": 4
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.143624999996973
+      },
+      {
+        "n": 11,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781202004146_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.4747080000015558
+      },
+      {
+        "n": 12,
+        "tool": "get_document",
+        "args": {
+          "document_id": "doc_1781202004146_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.266542000004847
+      },
+      {
+        "n": 13,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781202004146_1",
+          "part_id": "1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.702499999999418
+      },
+      {
+        "n": 14,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781202004146_1",
+          "part_id": "2"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.8762500000011642
+      },
+      {
+        "n": 15,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781202004146_1",
+          "part_id": "3"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.2163750000036089
+      },
+      {
+        "n": 16,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781202004146_1",
+          "part_id": "4"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.6580829999948037
+      },
+      {
+        "n": 17,
+        "tool": "get_document",
+        "args": {
+          "document_id": "doc_1781202004146_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.001458000006096
+      },
+      {
+        "n": 18,
+        "tool": "render_view",
+        "args": {
+          "document_id": "doc_1781202004146_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 106.66345900000306
+      },
+      {
+        "n": 19,
+        "tool": "get_document",
+        "args": {
+          "document_id": "doc_1781202004146_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.0295830000031856
+      }
+    ],
+    "tokens": {
+      "input": 292719,
+      "output": 3141,
+      "total": 295860
+    },
+    "wallclock_sec": 64.372728666
+  },
+  "output": {
+    "vcad_path": "20260611T182003Z-f957.vcad",
+    "vcad_sha256": "9747e96e25a275877580673e0a5de155181d12e538e49accf9cbff874a2614dc",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-06-11T18:20:03.972Z",
+    "ended_at": "2026-06-11T18:21:08.376Z"
+  },
+  "signature": null
+}

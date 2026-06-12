@@ -1,0 +1,491 @@
+{
+  "schema_version": 0,
+  "task_id": "a2-washer-01",
+  "task_sha256": "fea2171898f2fccb349f8b4864b17701307f12b5cffb10dc6d59415890ec618a",
+  "checks": [
+    {
+      "n": 0,
+      "type": "valid_solid",
+      "params": {
+        "type": "valid_solid"
+      },
+      "result": "pass",
+      "details": {
+        "root_count": 3,
+        "solids_produced": 3
+      }
+    },
+    {
+      "n": 1,
+      "type": "bbox",
+      "params": {
+        "type": "bbox",
+        "min": [
+          -25,
+          -25,
+          0
+        ],
+        "max": [
+          25,
+          25,
+          5
+        ],
+        "tolerance_mm": 0.1
+      },
+      "result": "pass",
+      "details": {
+        "actual_max": [
+          25,
+          25,
+          5
+        ],
+        "actual_min": [
+          -25,
+          -25,
+          0
+        ],
+        "deviation_max": [
+          0,
+          0,
+          0
+        ],
+        "deviation_min": [
+          0,
+          0,
+          0
+        ],
+        "max_abs_deviation_mm": 0,
+        "tolerance_mm": 0.1
+      }
+    },
+    {
+      "n": 2,
+      "type": "mass_props",
+      "params": {
+        "type": "mass_props",
+        "volume_mm3": 7363.11,
+        "center_of_mass": [
+          0,
+          0,
+          2.5
+        ],
+        "tolerance_pct": 1
+      },
+      "result": "fail",
+      "details": {
+        "center_of_mass": {
+          "actual": [
+            -1.498161424581164e-17,
+            1.2359831752794605e-16,
+            2.499999999999996
+          ],
+          "bbox_diagonal_mm": 70.88723439378913,
+          "deviation": [
+            -1.498161424581164e-17,
+            1.2359831752794605e-16,
+            -3.9968028886505635e-15
+          ],
+          "max_abs_deviation_mm": 3.9968028886505635e-15,
+          "pass": true,
+          "spec": [
+            0,
+            0,
+            2.5
+          ],
+          "tolerance_mm": 0.7088723439378913
+        },
+        "volume": {
+          "actual_mm3": 19603.428083833776,
+          "deviation_pct": 166.23842484811144,
+          "pass": false,
+          "spec_mm3": 7363.11,
+          "tolerance_pct": 1
+        }
+      }
+    },
+    {
+      "n": 3,
+      "type": "hole_count",
+      "params": {
+        "type": "hole_count",
+        "diameter_mm": 25,
+        "expected": 1,
+        "diameter_tolerance_mm": 0.1
+      },
+      "result": "pass",
+      "details": {
+        "actual": 1,
+        "diameter_mm": 25,
+        "diameter_tolerance_mm": 0.1,
+        "expected": 1,
+        "found": [
+          [
+            0,
+            0,
+            25
+          ]
+        ]
+      }
+    },
+    {
+      "n": 4,
+      "type": "hole_positions",
+      "params": {
+        "type": "hole_positions",
+        "diameter_mm": 25,
+        "positions": [
+          [
+            0,
+            0,
+            0
+          ]
+        ],
+        "tolerance_mm": 0.15
+      },
+      "result": "pass",
+      "details": {
+        "diameter_mm": 25,
+        "per_expected": [
+          {
+            "distance_mm": 0,
+            "matched_hole": [
+              0,
+              0
+            ],
+            "pass": true,
+            "spec_xy": [
+              0,
+              0
+            ]
+          }
+        ],
+        "tolerance_mm": 0.15,
+        "unmatched_extras": []
+      }
+    },
+    {
+      "n": 5,
+      "type": "step_roundtrip",
+      "params": {
+        "type": "step_roundtrip",
+        "tolerance_pct": 1
+      },
+      "result": "pass",
+      "details": {
+        "per_solid": [
+          {
+            "bbox": {
+              "max_abs_deviation_mm": 0,
+              "original_max": [
+                25,
+                25,
+                5
+              ],
+              "original_min": [
+                -25,
+                -25,
+                0
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                25,
+                25,
+                5
+              ],
+              "roundtripped_min": [
+                -25,
+                -25,
+                0
+              ],
+              "tolerance_mm": 0.7088723439378913
+            },
+            "index": 0,
+            "pass": true,
+            "volume": {
+              "deviation_pct": 0.4815246536494272,
+              "original_mm3": 9801.71404191688,
+              "pass": true,
+              "roundtripped_mm3": 9754.516372324833
+            }
+          },
+          {
+            "bbox": {
+              "max_abs_deviation_mm": 0,
+              "original_max": [
+                12.5,
+                12.5,
+                5
+              ],
+              "original_min": [
+                -12.5,
+                -12.5,
+                0
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                12.5,
+                12.5,
+                5
+              ],
+              "roundtripped_min": [
+                -12.5,
+                -12.5,
+                0
+              ],
+              "tolerance_mm": 0.3570714214271425
+            },
+            "index": 1,
+            "pass": true,
+            "volume": {
+              "deviation_pct": 0.4815246536494272,
+              "original_mm3": 2450.42851047922,
+              "pass": true,
+              "roundtripped_mm3": 2438.6290930812083
+            }
+          },
+          {
+            "bbox": {
+              "max_abs_deviation_mm": 0,
+              "original_max": [
+                25,
+                25,
+                5
+              ],
+              "original_min": [
+                -25,
+                -25,
+                0
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                25,
+                25,
+                5
+              ],
+              "roundtripped_min": [
+                -25,
+                -25,
+                0
+              ],
+              "tolerance_mm": 0.7088723439378913
+            },
+            "index": 2,
+            "pass": true,
+            "volume": {
+              "deviation_pct": 0.5350273929438607,
+              "original_mm3": 7351.285531437673,
+              "pass": true,
+              "roundtripped_mm3": 7311.954140110963
+            }
+          }
+        ],
+        "tolerance_pct": 1
+      }
+    }
+  ],
+  "summary": {
+    "passed": false,
+    "checks_passed": 5,
+    "checks_total": 6,
+    "score": 0.8333333333333334,
+    "anti_cheese_violated": true,
+    "limits_exceeded": []
+  },
+  "run_id": "20260611T180529Z-18d1",
+  "model": {
+    "id": "claude-mcp-claude-opus-4-7",
+    "name": "Claude (MCP, claude-opus-4-7)",
+    "provider": "anthropic",
+    "params": {
+      "mode": "mcp",
+      "model": "claude-opus-4-7",
+      "max_tokens": 8000,
+      "max_iterations": 30
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "a2-washer-01",
+    "rendered": "Make a flat circular washer. Outer diameter 50mm, inner diameter 25mm, thickness 5mm. Axis along Z, base on the XY plane (z = 0 to z = 5). The bore is a single concentric through-hole. Output a single solid.",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "open_document",
+        "args": {},
+        "result_kind": "ok",
+        "wallclock_ms": 1.54958400000001
+      },
+      {
+        "n": 1,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781201129773_1",
+          "type": "difference",
+          "name": "Washer",
+          "params": {
+            "a": {
+              "type": "cylinder",
+              "params": {
+                "radius": 25,
+                "height": 5
+              }
+            },
+            "b": {
+              "type": "cylinder",
+              "params": {
+                "radius": 12.5,
+                "height": 5
+              }
+            }
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 4.675916999999572
+      },
+      {
+        "n": 2,
+        "tool": "create_cad_loon",
+        "args": {
+          "source": "[difference [cylinder 12.5 5] [cylinder 25 5]]"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 12.689624999999978
+      },
+      {
+        "n": 3,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781201129773_1",
+          "type": "cylinder",
+          "name": "Outer",
+          "params": {
+            "radius": 25,
+            "height": 5
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 1.8925409999992553
+      },
+      {
+        "n": 4,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781201129773_1",
+          "type": "cylinder",
+          "name": "Outer",
+          "params": {
+            "radius": 25,
+            "height": 5,
+            "segments": 64
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 4.125291999998808
+      },
+      {
+        "n": 5,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781201129773_1",
+          "type": "cylinder",
+          "name": "Bore",
+          "params": {
+            "radius": 12.5,
+            "height": 5,
+            "segments": 64
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.8063330000004498
+      },
+      {
+        "n": 6,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781201129773_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.8065419999984442
+      },
+      {
+        "n": 7,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781201129773_1",
+          "type": "difference",
+          "name": "Washer",
+          "params": {
+            "left": "1",
+            "right": "2"
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 2.562666999998328
+      },
+      {
+        "n": 8,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781201129773_1",
+          "type": "difference",
+          "name": "Washer",
+          "params": {
+            "left": 1,
+            "right": 2
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 4.939582999999402
+      },
+      {
+        "n": 9,
+        "tool": "render_view",
+        "args": {
+          "document_id": "doc_1781201129773_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 113.3338330000006
+      },
+      {
+        "n": 10,
+        "tool": "get_document",
+        "args": {
+          "document_id": "doc_1781201129773_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.8282079999989946
+      }
+    ],
+    "tokens": {
+      "input": 159069,
+      "output": 1350,
+      "total": 160419
+    },
+    "wallclock_sec": 32.197988040999995
+  },
+  "output": {
+    "vcad_path": "20260611T180529Z-18d1.vcad",
+    "vcad_sha256": "c64cbb261889cdd0220403134d19364a7ea8c46ea98ea9e7fef5b3da496b1d69",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-06-11T18:05:29.603Z",
+    "ended_at": "2026-06-11T18:06:01.842Z"
+  },
+  "signature": null
+}

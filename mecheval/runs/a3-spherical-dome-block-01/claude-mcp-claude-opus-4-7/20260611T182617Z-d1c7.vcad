@@ -1,0 +1,103 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "Base",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 40,
+          "y": 40,
+          "z": 40
+        }
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": "CenterCube",
+      "op": {
+        "type": "Translate",
+        "child": 1,
+        "offset": {
+          "x": -20,
+          "y": -20,
+          "z": 0
+        }
+      }
+    },
+    "3": {
+      "id": 3,
+      "name": "Sphere",
+      "op": {
+        "type": "Sphere",
+        "radius": 15,
+        "segments": 48
+      }
+    },
+    "4": {
+      "id": 4,
+      "name": "HalfSpace",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 200,
+          "y": 200,
+          "z": 200
+        }
+      }
+    },
+    "5": {
+      "id": 5,
+      "name": "SphereAtTop",
+      "op": {
+        "type": "Translate",
+        "child": 3,
+        "offset": {
+          "x": 0,
+          "y": 0,
+          "z": 40
+        }
+      }
+    },
+    "6": {
+      "id": 6,
+      "name": "HalfSpaceAtTop",
+      "op": {
+        "type": "Translate",
+        "child": 4,
+        "offset": {
+          "x": -100,
+          "y": -100,
+          "z": 40
+        }
+      }
+    },
+    "7": {
+      "id": 7,
+      "name": "Hemisphere",
+      "op": {
+        "type": "Intersection",
+        "left": 5,
+        "right": 6
+      }
+    },
+    "8": {
+      "id": 8,
+      "name": "CubeWithDome",
+      "op": {
+        "type": "Union",
+        "left": 2,
+        "right": 7
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 8,
+      "material": "default"
+    }
+  ]
+}

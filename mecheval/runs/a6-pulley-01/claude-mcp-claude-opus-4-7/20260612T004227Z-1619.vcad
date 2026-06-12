@@ -1,0 +1,106 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "BottomFlange",
+      "op": {
+        "type": "Cylinder",
+        "radius": 40,
+        "height": 8,
+        "segments": 64
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": "GrooveRaw",
+      "op": {
+        "type": "Cylinder",
+        "radius": 25,
+        "height": 24,
+        "segments": 64
+      }
+    },
+    "3": {
+      "id": 3,
+      "name": "GrooveT",
+      "op": {
+        "type": "Translate",
+        "child": 2,
+        "offset": {
+          "x": 0,
+          "y": 0,
+          "z": 8
+        }
+      }
+    },
+    "4": {
+      "id": 4,
+      "name": "TopFlangeRaw",
+      "op": {
+        "type": "Cylinder",
+        "radius": 40,
+        "height": 8,
+        "segments": 64
+      }
+    },
+    "5": {
+      "id": 5,
+      "name": "TopFlangeT",
+      "op": {
+        "type": "Translate",
+        "child": 4,
+        "offset": {
+          "x": 0,
+          "y": 0,
+          "z": 32
+        }
+      }
+    },
+    "6": {
+      "id": 6,
+      "name": "BotPlusGroove",
+      "op": {
+        "type": "Union",
+        "left": 1,
+        "right": 3
+      }
+    },
+    "7": {
+      "id": 7,
+      "name": "Outer",
+      "op": {
+        "type": "Union",
+        "left": 6,
+        "right": 5
+      }
+    },
+    "8": {
+      "id": 8,
+      "name": "BoreRaw",
+      "op": {
+        "type": "Cylinder",
+        "radius": 8,
+        "height": 40,
+        "segments": 64
+      }
+    },
+    "9": {
+      "id": 9,
+      "name": "Pulley",
+      "op": {
+        "type": "Difference",
+        "left": 7,
+        "right": 8
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 9,
+      "material": "default"
+    }
+  ]
+}

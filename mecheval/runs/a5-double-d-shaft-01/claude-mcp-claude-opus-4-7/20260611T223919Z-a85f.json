@@ -1,0 +1,587 @@
+{
+  "schema_version": 0,
+  "task_id": "a5-double-d-shaft-01",
+  "task_sha256": "fe39d8a3436856ee419047f122a771bc3cb13b3da664f9da658990dbdfedaf19",
+  "checks": [
+    {
+      "n": 0,
+      "type": "valid_solid",
+      "params": {
+        "type": "valid_solid"
+      },
+      "result": "pass",
+      "details": {
+        "root_count": 1,
+        "solids_produced": 1
+      }
+    },
+    {
+      "n": 1,
+      "type": "bbox",
+      "params": {
+        "type": "bbox",
+        "min": [
+          -14,
+          -20,
+          0
+        ],
+        "max": [
+          14,
+          20,
+          60
+        ],
+        "tolerance_mm": 0.15
+      },
+      "result": "pass",
+      "details": {
+        "actual_max": [
+          14,
+          20,
+          60
+        ],
+        "actual_min": [
+          -14,
+          -20,
+          0
+        ],
+        "deviation_max": [
+          0,
+          0,
+          0
+        ],
+        "deviation_min": [
+          0,
+          0,
+          0
+        ],
+        "max_abs_deviation_mm": 0,
+        "tolerance_mm": 0.15
+      }
+    },
+    {
+      "n": 2,
+      "type": "mass_props",
+      "params": {
+        "type": "mass_props",
+        "volume_mm3": 61214.28,
+        "center_of_mass": [
+          0,
+          0,
+          30
+        ],
+        "tolerance_pct": 1
+      },
+      "result": "pass",
+      "details": {
+        "center_of_mass": {
+          "actual": [
+            -0.000006513502555073269,
+            -7.931736131706966e-17,
+            29.999701349950556
+          ],
+          "bbox_diagonal_mm": 77.35631842325486,
+          "deviation": [
+            -0.000006513502555073269,
+            -7.931736131706966e-17,
+            -0.00029865004944440443
+          ],
+          "max_abs_deviation_mm": 0.00029865004944440443,
+          "pass": true,
+          "spec": [
+            0,
+            0,
+            30
+          ],
+          "tolerance_mm": 0.7735631842325487
+        },
+        "volume": {
+          "actual_mm3": 61154.813131834795,
+          "deviation_pct": 0.09714541797306736,
+          "pass": true,
+          "spec_mm3": 61214.28,
+          "tolerance_pct": 1
+        }
+      }
+    },
+    {
+      "n": 3,
+      "type": "step_roundtrip",
+      "params": {
+        "type": "step_roundtrip",
+        "tolerance_pct": 1
+      },
+      "result": "pass",
+      "details": {
+        "per_solid": [
+          {
+            "bbox": {
+              "max_abs_deviation_mm": 0,
+              "original_max": [
+                14,
+                20,
+                60
+              ],
+              "original_min": [
+                -14,
+                -20,
+                0
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                14,
+                20,
+                60
+              ],
+              "roundtripped_min": [
+                -14,
+                -20,
+                0
+              ],
+              "tolerance_mm": 0.7735631842325487
+            },
+            "index": 0,
+            "pass": true,
+            "volume": {
+              "deviation_pct": 0.1901345581683443,
+              "original_mm3": 61154.813131834795,
+              "pass": true,
+              "roundtripped_mm3": 61038.536698087904
+            }
+          }
+        ],
+        "tolerance_pct": 1
+      }
+    }
+  ],
+  "summary": {
+    "passed": true,
+    "checks_passed": 4,
+    "checks_total": 4,
+    "score": 1,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260611T223919Z-a85f",
+  "model": {
+    "id": "claude-mcp-claude-opus-4-7",
+    "name": "Claude (MCP, claude-opus-4-7)",
+    "provider": "anthropic",
+    "params": {
+      "mode": "mcp",
+      "model": "claude-opus-4-7",
+      "max_tokens": 8000,
+      "max_iterations": 30
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "a5-double-d-shaft-01",
+    "rendered": "Make a double-D profile shaft as a single solid. Start with a cylinder of diameter 40mm (radius 20mm) and height 60mm, with its base on the XY plane (z = 0 to z = 60), centered on the Z axis. Mill a flat on each side by subtracting a rectangular block from the left and from the right. The left flat is at x = -14: subtract all material at x < -14 (i.e. remove the cylindrical segment from x = -20 to x = -14, running the full height z = 0 to z = 60 and the full cylinder width in Y). The right flat is at x = +14: subtract all material at x > 14. The result is a shaft with flat-to-flat width 28mm and circular arc sections of radius 20mm on the front and back (+Y and -Y sides). Output a single solid.",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "open_document",
+        "args": {},
+        "result_kind": "ok",
+        "wallclock_ms": 1.5345829999999978
+      },
+      {
+        "n": 1,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781217559560_1",
+          "type": "difference",
+          "name": "Double-D Shaft",
+          "params": {
+            "children": [
+              {
+                "type": "translate",
+                "params": {
+                  "x": 0,
+                  "y": 0,
+                  "z": 0,
+                  "child": {
+                    "type": "cylinder",
+                    "params": {
+                      "radius": 20,
+                      "height": 60
+                    }
+                  }
+                }
+              },
+              {
+                "type": "translate",
+                "params": {
+                  "x": -25,
+                  "y": -25,
+                  "z": 0,
+                  "child": {
+                    "type": "cube",
+                    "params": {
+                      "x": 11,
+                      "y": 50,
+                      "z": 60
+                    }
+                  }
+                }
+              },
+              {
+                "type": "translate",
+                "params": {
+                  "x": 14,
+                  "y": -25,
+                  "z": 0,
+                  "child": {
+                    "type": "cube",
+                    "params": {
+                      "x": 11,
+                      "y": 50,
+                      "z": 60
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 4.870750000000044
+      },
+      {
+        "n": 2,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781217559560_1",
+          "type": "difference",
+          "name": "Double-D Shaft",
+          "params": {
+            "left": {
+              "type": "difference",
+              "params": {
+                "left": {
+                  "type": "cylinder",
+                  "params": {
+                    "radius": 20,
+                    "height": 60
+                  }
+                },
+                "right": {
+                  "type": "translate",
+                  "params": {
+                    "x": -25,
+                    "y": -25,
+                    "z": 0,
+                    "child": {
+                      "type": "cube",
+                      "params": {
+                        "x": 11,
+                        "y": 50,
+                        "z": 60
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "right": {
+              "type": "translate",
+              "params": {
+                "x": 14,
+                "y": -25,
+                "z": 0,
+                "child": {
+                  "type": "cube",
+                  "params": {
+                    "x": 11,
+                    "y": 50,
+                    "z": 60
+                  }
+                }
+              }
+            }
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 3.894625000000815
+      },
+      {
+        "n": 3,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781217559560_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.457542000000103
+      },
+      {
+        "n": 4,
+        "tool": "create_cad_loon",
+        "args": {
+          "source": "[root\n  [difference\n    [translate 14 -25 0 [cube 11 50 60]]\n    [difference\n      [translate -25 -25 0 [cube 11 50 60]]\n      [cylinder 20 60]]]\n  \"steel\"]",
+          "format": "json"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 12.985042000000249
+      },
+      {
+        "n": 5,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781217559560_1",
+          "type": "cylinder",
+          "name": "Shaft Blank",
+          "params": {
+            "radius": 20,
+            "height": 60
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 1.4607919999980368
+      },
+      {
+        "n": 6,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781217559560_1",
+          "type": "cylinder",
+          "name": "Shaft Blank",
+          "params": {
+            "radius": 20,
+            "height": 60,
+            "segments": 64
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.967125000002852
+      },
+      {
+        "n": 7,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781217559560_1",
+          "type": "cube",
+          "name": "Left Cutter",
+          "params": {
+            "size": {
+              "x": 11,
+              "y": 50,
+              "z": 60
+            }
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 5.0318330000009155
+      },
+      {
+        "n": 8,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781217559560_1",
+          "type": "cube",
+          "name": "Right Cutter",
+          "params": {
+            "size": {
+              "x": 11,
+              "y": 50,
+              "z": 60
+            }
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.4388749999998254
+      },
+      {
+        "n": 9,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781217559560_1",
+          "type": "translate",
+          "params": {
+            "child": 2,
+            "offset": {
+              "x": -25,
+              "y": -25,
+              "z": 0
+            }
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 5.590499999998428
+      },
+      {
+        "n": 10,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781217559560_1",
+          "type": "translate",
+          "params": {
+            "child": 3,
+            "offset": {
+              "x": 14,
+              "y": -25,
+              "z": 0
+            }
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.949625000001106
+      },
+      {
+        "n": 11,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781217559560_1",
+          "type": "difference",
+          "params": {
+            "left": 1,
+            "right": 4
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.9928750000035507
+      },
+      {
+        "n": 12,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781217559560_1",
+          "type": "difference",
+          "name": "Double-D Shaft",
+          "params": {
+            "left": 6,
+            "right": 5
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.2538750000021537
+      },
+      {
+        "n": 13,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781217559560_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.7356250000011642
+      },
+      {
+        "n": 14,
+        "tool": "inspect_cad",
+        "args": {
+          "document_id": "doc_1781217559560_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 57.99712499999441
+      },
+      {
+        "n": 15,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781217559560_1",
+          "part_id": "1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.5557499999995343
+      },
+      {
+        "n": 16,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781217559560_1",
+          "part_id": "2"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.342333000000508
+      },
+      {
+        "n": 17,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781217559560_1",
+          "part_id": "3"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.2867909999986296
+      },
+      {
+        "n": 18,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781217559560_1",
+          "part_id": "4"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.8194999999977881
+      },
+      {
+        "n": 19,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781217559560_1",
+          "part_id": "5"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.848416000000725
+      },
+      {
+        "n": 20,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781217559560_1",
+          "part_id": "6"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.9299169999940204
+      },
+      {
+        "n": 21,
+        "tool": "inspect_cad",
+        "args": {
+          "document_id": "doc_1781217559560_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 7.837666999999783
+      },
+      {
+        "n": 22,
+        "tool": "get_document",
+        "args": {
+          "document_id": "doc_1781217559560_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.8173339999993914
+      }
+    ],
+    "tokens": {
+      "input": 264555,
+      "output": 3088,
+      "total": 267643
+    },
+    "wallclock_sec": 57.728295166
+  },
+  "output": {
+    "vcad_path": "20260611T223919Z-a85f.vcad",
+    "vcad_sha256": "703a2d0bccdd9b161c149c5b2b02dcd79061dcfe2a810a9d4bb4507ea8d5f147",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-06-11T22:39:19.394Z",
+    "ended_at": "2026-06-11T22:40:17.146Z"
+  },
+  "signature": null
+}

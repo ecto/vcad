@@ -1,0 +1,80 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "base",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 100,
+          "y": 30,
+          "z": 8
+        }
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": "base_t",
+      "op": {
+        "type": "Translate",
+        "child": 1,
+        "offset": {
+          "x": -50,
+          "y": -15,
+          "z": 0
+        }
+      }
+    },
+    "3": {
+      "id": 3,
+      "name": "left_leg",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 8,
+          "y": 30,
+          "z": 35
+        }
+      }
+    },
+    "4": {
+      "id": 4,
+      "name": "left_leg_t",
+      "op": {
+        "type": "Translate",
+        "child": 3,
+        "offset": {
+          "x": -50,
+          "y": -15,
+          "z": 8
+        }
+      }
+    },
+    "5": {
+      "id": 5,
+      "name": "base_plus_left",
+      "op": {
+        "type": "Union",
+        "left": 2,
+        "right": 4
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 2,
+      "material": "default"
+    },
+    {
+      "root": 4,
+      "material": "default"
+    },
+    {
+      "root": 5,
+      "material": "default"
+    }
+  ]
+}

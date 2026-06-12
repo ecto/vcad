@@ -1,0 +1,1126 @@
+{
+  "schema_version": 0,
+  "task_id": "a6-pulley-01",
+  "task_sha256": "58d33316e6c4cd6c5ca0025c61d3cc3f0fff4bdb5fc2890ded726b414baaeada",
+  "checks": [
+    {
+      "n": 0,
+      "type": "valid_solid",
+      "params": {
+        "type": "valid_solid"
+      },
+      "result": "pass",
+      "details": {
+        "root_count": 1,
+        "solids_produced": 1
+      }
+    },
+    {
+      "n": 1,
+      "type": "bbox",
+      "params": {
+        "type": "bbox",
+        "min": [
+          -40,
+          -40,
+          0
+        ],
+        "max": [
+          40,
+          40,
+          40
+        ],
+        "tolerance_mm": 0.1
+      },
+      "result": "fail",
+      "details": {
+        "actual_max": [
+          40,
+          40,
+          8
+        ],
+        "actual_min": [
+          -40,
+          -40,
+          0
+        ],
+        "deviation_max": [
+          0,
+          0,
+          -32
+        ],
+        "deviation_min": [
+          0,
+          0,
+          0
+        ],
+        "max_abs_deviation_mm": 32,
+        "tolerance_mm": 0.1
+      }
+    },
+    {
+      "n": 2,
+      "type": "mass_props",
+      "params": {
+        "type": "mass_props",
+        "volume_mm3": 119506.19,
+        "center_of_mass": [
+          0,
+          0,
+          20
+        ],
+        "tolerance_pct": 1
+      },
+      "result": "fail",
+      "details": {
+        "center_of_mass": {
+          "actual": [
+            -2.5674137250552716e-16,
+            4.172047303214816e-16,
+            3.999999999999993
+          ],
+          "bbox_diagonal_mm": 113.4195750300626,
+          "deviation": [
+            -2.5674137250552716e-16,
+            4.172047303214816e-16,
+            -16.000000000000007
+          ],
+          "max_abs_deviation_mm": 16.000000000000007,
+          "pass": false,
+          "spec": [
+            0,
+            0,
+            20
+          ],
+          "tolerance_mm": 1.1341957503006261
+        },
+        "volume": {
+          "actual_mm3": 40147.820818677304,
+          "deviation_pct": 66.40523740345391,
+          "pass": false,
+          "spec_mm3": 119506.19,
+          "tolerance_pct": 1
+        }
+      }
+    },
+    {
+      "n": 3,
+      "type": "hole_count",
+      "params": {
+        "type": "hole_count",
+        "diameter_mm": 16,
+        "expected": 1,
+        "diameter_tolerance_mm": 0.1
+      },
+      "result": "fail",
+      "details": {
+        "actual": 0,
+        "diameter_mm": 16,
+        "diameter_tolerance_mm": 0.1,
+        "expected": 1,
+        "found": []
+      }
+    },
+    {
+      "n": 4,
+      "type": "hole_positions",
+      "params": {
+        "type": "hole_positions",
+        "diameter_mm": 16,
+        "positions": [
+          [
+            0,
+            0,
+            0
+          ]
+        ],
+        "tolerance_mm": 0.2
+      },
+      "result": "fail",
+      "details": {
+        "diameter_mm": 16,
+        "per_expected": [
+          {
+            "pass": false,
+            "reason": "no candidate cylindrical feature of this diameter remained unmatched",
+            "spec_xy": [
+              0,
+              0
+            ]
+          }
+        ],
+        "tolerance_mm": 0.2,
+        "unmatched_extras": []
+      }
+    },
+    {
+      "n": 5,
+      "type": "step_roundtrip",
+      "params": {
+        "type": "step_roundtrip",
+        "tolerance_pct": 1
+      },
+      "result": "pass",
+      "details": {
+        "per_solid": [
+          {
+            "bbox": {
+              "max_abs_deviation_mm": 0,
+              "original_max": [
+                40,
+                40,
+                8
+              ],
+              "original_min": [
+                -40,
+                -40,
+                0
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                40,
+                40,
+                8
+              ],
+              "roundtripped_min": [
+                -40,
+                -40,
+                0
+              ],
+              "tolerance_mm": 1.1341957503006261
+            },
+            "index": 0,
+            "pass": true,
+            "volume": {
+              "deviation_pct": 0.4815275502572024,
+              "original_mm3": 40147.820818677304,
+              "pass": true,
+              "roundtripped_mm3": 39954.49800060748
+            }
+          }
+        ],
+        "tolerance_pct": 1
+      }
+    }
+  ],
+  "summary": {
+    "passed": false,
+    "checks_passed": 2,
+    "checks_total": 6,
+    "score": 0.3333333333333333,
+    "anti_cheese_violated": false,
+    "limits_exceeded": [
+      "max_tokens: 641313 > 50000"
+    ]
+  },
+  "run_id": "20260612T004118Z-fdb8",
+  "model": {
+    "id": "claude-mcp-claude-opus-4-7",
+    "name": "Claude (MCP, claude-opus-4-7)",
+    "provider": "anthropic",
+    "params": {
+      "mode": "mcp",
+      "model": "claude-opus-4-7",
+      "max_tokens": 8000,
+      "max_iterations": 30
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "a6-pulley-01",
+    "rendered": "Make a flanged belt pulley as a single solid. The pulley has three coaxial sections stacked along Z, all centered on the Z axis, with the base on the XY plane. Bottom flange: a cylinder of diameter 80mm and height 8mm (z = 0 to z = 8). Belt groove section: a cylinder of diameter 50mm and height 24mm (z = 8 to z = 32). Top flange: a cylinder of diameter 80mm and height 8mm (z = 32 to z = 40). A central through-bore of diameter 16mm runs along the Z axis through the full height (z = 0 to z = 40). The three outer sections form the stepped outer profile of the pulley when unioned together; the belt rides in the groove between the two flanges. Output a single solid.",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "open_document",
+        "args": {},
+        "result_kind": "ok",
+        "wallclock_ms": 1.6523329999999987
+      },
+      {
+        "n": 1,
+        "tool": "create_cad_loon",
+        "args": {
+          "source": "[let\n  [let profile [sketch 0 0 0  1 0 0  0 0 1  #[\n    [line 8 0   40 0]\n    [line 40 0  40 8]\n    [line 40 8  25 8]\n    [line 25 8  25 32]\n    [line 25 32 40 32]\n    [line 40 32 40 40]\n    [line 40 40 8 40]\n    [line 8 40  8 0]\n  ]]]\n  [revolve 0 0 0  0 0 1  360 profile]]",
+          "format": "json"
+        },
+        "result_kind": "err",
+        "wallclock_ms": 7.576042000000598
+      },
+      {
+        "n": 2,
+        "tool": "open_document",
+        "args": {
+          "initial": {}
+        },
+        "result_kind": "err",
+        "wallclock_ms": 1.702249999999367
+      },
+      {
+        "n": 3,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781224879047_1",
+          "type": "sketch_2_d",
+          "name": "Pulley Profile",
+          "params": {
+            "origin": {
+              "x": 0,
+              "y": 0,
+              "z": 0
+            },
+            "x_axis": {
+              "x": 1,
+              "y": 0,
+              "z": 0
+            },
+            "y_axis": {
+              "x": 0,
+              "y": 0,
+              "z": 1
+            },
+            "segments": [
+              {
+                "type": "line",
+                "x1": 8,
+                "y1": 0,
+                "x2": 40,
+                "y2": 0
+              },
+              {
+                "type": "line",
+                "x1": 40,
+                "y1": 0,
+                "x2": 40,
+                "y2": 8
+              },
+              {
+                "type": "line",
+                "x1": 40,
+                "y1": 8,
+                "x2": 25,
+                "y2": 8
+              },
+              {
+                "type": "line",
+                "x1": 25,
+                "y1": 8,
+                "x2": 25,
+                "y2": 32
+              },
+              {
+                "type": "line",
+                "x1": 25,
+                "y1": 32,
+                "x2": 40,
+                "y2": 32
+              },
+              {
+                "type": "line",
+                "x1": 40,
+                "y1": 32,
+                "x2": 40,
+                "y2": 40
+              },
+              {
+                "type": "line",
+                "x1": 40,
+                "y1": 40,
+                "x2": 8,
+                "y2": 40
+              },
+              {
+                "type": "line",
+                "x1": 8,
+                "y1": 40,
+                "x2": 8,
+                "y2": 0
+              }
+            ]
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 8.645249999999578
+      },
+      {
+        "n": 4,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781224879047_1",
+          "type": "sketch_2_d",
+          "name": "Pulley Profile",
+          "params": {
+            "origin": {
+              "x": 0,
+              "y": 0,
+              "z": 0
+            },
+            "x_axis": {
+              "x": 1,
+              "y": 0,
+              "z": 0
+            },
+            "y_axis": {
+              "x": 0,
+              "y": 0,
+              "z": 1
+            },
+            "segments": [
+              {
+                "type": "Line",
+                "x1": 8,
+                "y1": 0,
+                "x2": 40,
+                "y2": 0
+              },
+              {
+                "type": "Line",
+                "x1": 40,
+                "y1": 0,
+                "x2": 40,
+                "y2": 8
+              },
+              {
+                "type": "Line",
+                "x1": 40,
+                "y1": 8,
+                "x2": 25,
+                "y2": 8
+              },
+              {
+                "type": "Line",
+                "x1": 25,
+                "y1": 8,
+                "x2": 25,
+                "y2": 32
+              },
+              {
+                "type": "Line",
+                "x1": 25,
+                "y1": 32,
+                "x2": 40,
+                "y2": 32
+              },
+              {
+                "type": "Line",
+                "x1": 40,
+                "y1": 32,
+                "x2": 40,
+                "y2": 40
+              },
+              {
+                "type": "Line",
+                "x1": 40,
+                "y1": 40,
+                "x2": 8,
+                "y2": 40
+              },
+              {
+                "type": "Line",
+                "x1": 8,
+                "y1": 40,
+                "x2": 8,
+                "y2": 0
+              }
+            ]
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 2.9379159999989497
+      },
+      {
+        "n": 5,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781224879047_1",
+          "type": "sketch_2_d",
+          "name": "Pulley Profile",
+          "params": {
+            "origin": {
+              "x": 0,
+              "y": 0,
+              "z": 0
+            },
+            "x_axis": {
+              "x": 1,
+              "y": 0,
+              "z": 0
+            },
+            "y_axis": {
+              "x": 0,
+              "y": 0,
+              "z": 1
+            },
+            "segments": [
+              {
+                "type": "Line",
+                "start": [
+                  8,
+                  0
+                ],
+                "end": [
+                  40,
+                  0
+                ]
+              },
+              {
+                "type": "Line",
+                "start": [
+                  40,
+                  0
+                ],
+                "end": [
+                  40,
+                  8
+                ]
+              },
+              {
+                "type": "Line",
+                "start": [
+                  40,
+                  8
+                ],
+                "end": [
+                  25,
+                  8
+                ]
+              },
+              {
+                "type": "Line",
+                "start": [
+                  25,
+                  8
+                ],
+                "end": [
+                  25,
+                  32
+                ]
+              },
+              {
+                "type": "Line",
+                "start": [
+                  25,
+                  32
+                ],
+                "end": [
+                  40,
+                  32
+                ]
+              },
+              {
+                "type": "Line",
+                "start": [
+                  40,
+                  32
+                ],
+                "end": [
+                  40,
+                  40
+                ]
+              },
+              {
+                "type": "Line",
+                "start": [
+                  40,
+                  40
+                ],
+                "end": [
+                  8,
+                  40
+                ]
+              },
+              {
+                "type": "Line",
+                "start": [
+                  8,
+                  40
+                ],
+                "end": [
+                  8,
+                  0
+                ]
+              }
+            ]
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 2.7773749999978463
+      },
+      {
+        "n": 6,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781224879047_1",
+          "type": "sketch_2_d",
+          "name": "Pulley Profile",
+          "params": {
+            "origin": {
+              "x": 0,
+              "y": 0,
+              "z": 0
+            },
+            "x_dir": {
+              "x": 1,
+              "y": 0,
+              "z": 0
+            },
+            "y_dir": {
+              "x": 0,
+              "y": 0,
+              "z": 1
+            },
+            "segments": [
+              {
+                "type": "Line",
+                "start": [
+                  8,
+                  0
+                ],
+                "end": [
+                  40,
+                  0
+                ]
+              },
+              {
+                "type": "Line",
+                "start": [
+                  40,
+                  0
+                ],
+                "end": [
+                  40,
+                  8
+                ]
+              },
+              {
+                "type": "Line",
+                "start": [
+                  40,
+                  8
+                ],
+                "end": [
+                  25,
+                  8
+                ]
+              },
+              {
+                "type": "Line",
+                "start": [
+                  25,
+                  8
+                ],
+                "end": [
+                  25,
+                  32
+                ]
+              },
+              {
+                "type": "Line",
+                "start": [
+                  25,
+                  32
+                ],
+                "end": [
+                  40,
+                  32
+                ]
+              },
+              {
+                "type": "Line",
+                "start": [
+                  40,
+                  32
+                ],
+                "end": [
+                  40,
+                  40
+                ]
+              },
+              {
+                "type": "Line",
+                "start": [
+                  40,
+                  40
+                ],
+                "end": [
+                  8,
+                  40
+                ]
+              },
+              {
+                "type": "Line",
+                "start": [
+                  8,
+                  40
+                ],
+                "end": [
+                  8,
+                  0
+                ]
+              }
+            ]
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 5.064250000003085
+      },
+      {
+        "n": 7,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781224879047_1",
+          "type": "revolve",
+          "name": "Pulley",
+          "params": {
+            "sketch_id": "1",
+            "axis_origin": {
+              "x": 0,
+              "y": 0,
+              "z": 0
+            },
+            "axis_direction": {
+              "x": 0,
+              "y": 0,
+              "z": 1
+            },
+            "angle_deg": 360
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 6.517209000001458
+      },
+      {
+        "n": 8,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781224879047_1",
+          "type": "revolve",
+          "name": "Pulley",
+          "params": {
+            "sketch": "1",
+            "axis_origin": {
+              "x": 0,
+              "y": 0,
+              "z": 0
+            },
+            "axis_direction": {
+              "x": 0,
+              "y": 0,
+              "z": 1
+            },
+            "angle_deg": 360
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 4.966583000001265
+      },
+      {
+        "n": 9,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781224879047_1",
+          "type": "revolve",
+          "name": "Pulley",
+          "params": {
+            "sketch": 1,
+            "axis_origin": {
+              "x": 0,
+              "y": 0,
+              "z": 0
+            },
+            "axis_direction": {
+              "x": 0,
+              "y": 0,
+              "z": 1
+            },
+            "angle_deg": 360
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 2.670749999997497
+      },
+      {
+        "n": 10,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781224879047_1",
+          "type": "revolve",
+          "name": "Pulley",
+          "params": {
+            "sketch": 1,
+            "axis_origin": {
+              "x": 0,
+              "y": 0,
+              "z": 0
+            },
+            "axis_dir": {
+              "x": 0,
+              "y": 0,
+              "z": 1
+            },
+            "angle": 360
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 2.7065830000065034
+      },
+      {
+        "n": 11,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781224879047_1",
+          "type": "revolve",
+          "name": "Pulley",
+          "params": {
+            "sketch": 1,
+            "axis_origin": {
+              "x": 0,
+              "y": 0,
+              "z": 0
+            },
+            "axis_dir": {
+              "x": 0,
+              "y": 0,
+              "z": 1
+            },
+            "angle_deg": 360
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.3543750000026193
+      },
+      {
+        "n": 12,
+        "tool": "render_view",
+        "args": {
+          "document_id": "doc_1781224879047_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 99.54404200000135
+      },
+      {
+        "n": 13,
+        "tool": "inspect_cad",
+        "args": {
+          "document_id": "doc_1781224879047_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.9837080000070273
+      },
+      {
+        "n": 14,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781224879047_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.3205420000012964
+      },
+      {
+        "n": 15,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781224879047_1",
+          "part_id": "2"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.7221659999995609
+      },
+      {
+        "n": 16,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781224879047_1",
+          "part_id": "1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.0134170000092126
+      },
+      {
+        "n": 17,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781224879047_1",
+          "part_id": "2"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.2397080000082497
+      },
+      {
+        "n": 18,
+        "tool": "create_cad_loon",
+        "args": {
+          "source": "[difference\n  [translate 0 0 0 [cylinder 8 40]]\n  [union\n    [translate 0 0 0 [cylinder 40 8]]\n    [union\n      [translate 0 0 8 [cylinder 25 24]]\n      [translate 0 0 32 [cylinder 40 8]]]]]",
+          "format": "json"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 9.144834000006085
+      },
+      {
+        "n": 19,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781224879047_1",
+          "type": "cylinder",
+          "name": "Bottom Flange",
+          "params": {
+            "radius": 40,
+            "height": 8
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 3.200250000008964
+      },
+      {
+        "n": 20,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781224879047_1",
+          "type": "cylinder",
+          "name": "Bottom Flange",
+          "params": {
+            "radius": 40,
+            "height": 8,
+            "segments": 64
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.1462500000052387
+      },
+      {
+        "n": 21,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781224879047_1",
+          "type": "cylinder",
+          "name": "Groove Section",
+          "parent_part_id": "1",
+          "params": {
+            "radius": 25,
+            "height": 24,
+            "segments": 64
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.868624999988242
+      },
+      {
+        "n": 22,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781224879047_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.056749999988824
+      },
+      {
+        "n": 23,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781224879047_1",
+          "part_id": "1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.9720409999863477
+      },
+      {
+        "n": 24,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781224879047_1",
+          "part_id": "1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.177125000001979
+      },
+      {
+        "n": 25,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781224879047_1",
+          "part_id": "2"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.1106250000011642
+      },
+      {
+        "n": 26,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781224879047_1",
+          "type": "cylinder",
+          "name": "Bottom Flange",
+          "params": {
+            "radius": 40,
+            "height": 8,
+            "segments": 64
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.9341659999918193
+      },
+      {
+        "n": 27,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781224879047_1",
+          "type": "cylinder",
+          "name": "Groove",
+          "params": {
+            "radius": 25,
+            "height": 24,
+            "segments": 64
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.6480420000007143
+      },
+      {
+        "n": 28,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781224879047_1",
+          "type": "translate",
+          "name": "Move Groove",
+          "parent_part_id": "2",
+          "params": {
+            "offset": {
+              "x": 0,
+              "y": 0,
+              "z": 8
+            }
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 2.49854200000118
+      },
+      {
+        "n": 29,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781224879047_1",
+          "part_id": "2"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.7849580000038259
+      },
+      {
+        "n": 30,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781224879047_1",
+          "type": "translate",
+          "name": "Move Groove",
+          "parent_part_id": "2",
+          "params": {
+            "offset": {
+              "x": 0,
+              "y": 0,
+              "z": 8
+            },
+            "child": 2
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.3087499999965075
+      },
+      {
+        "n": 31,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781224879047_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.5883749999920838
+      },
+      {
+        "n": 32,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781224879047_1",
+          "part_id": "1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.6114169999927981
+      },
+      {
+        "n": 33,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781224879047_1",
+          "part_id": "2"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.3130830000009155
+      },
+      {
+        "n": 34,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781224879047_1",
+          "part_id": "3"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.24962499999674037
+      },
+      {
+        "n": 35,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781224879047_1",
+          "type": "cylinder",
+          "name": "Body",
+          "params": {
+            "radius": 40,
+            "height": 8,
+            "segments": 64
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.636625000013737
+      },
+      {
+        "n": 36,
+        "tool": "get_document",
+        "args": {
+          "document_id": "doc_1781224879047_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.6964159999915864
+      }
+    ],
+    "tokens": {
+      "input": 633639,
+      "output": 7674,
+      "total": 641313,
+      "cache_creation_input": 12426,
+      "cache_read_input": 621178
+    },
+    "wallclock_sec": 126.987358417
+  },
+  "output": {
+    "vcad_path": "20260612T004118Z-fdb8.vcad",
+    "vcad_sha256": "4b1f804777fa12bfce354b79b2dd965b3da310425fd13d9eb1e40379ae890b83",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-06-12T00:41:18.872Z",
+    "ended_at": "2026-06-12T00:43:25.887Z"
+  },
+  "signature": null
+}

@@ -1,0 +1,851 @@
+{
+  "schema_version": 0,
+  "task_id": "a2-tee-bracket-01",
+  "task_sha256": "b0cf14433cfe8350036c835981cbffaa5cd45a2b92a43a01485990c17ba9a99c",
+  "checks": [
+    {
+      "n": 0,
+      "type": "valid_solid",
+      "params": {
+        "type": "valid_solid"
+      },
+      "result": "pass",
+      "details": {
+        "root_count": 1,
+        "solids_produced": 1
+      }
+    },
+    {
+      "n": 1,
+      "type": "bbox",
+      "params": {
+        "type": "bbox",
+        "min": [
+          -30,
+          0,
+          0
+        ],
+        "max": [
+          30,
+          50,
+          5
+        ],
+        "tolerance_mm": 0.1
+      },
+      "result": "pass",
+      "details": {
+        "actual_max": [
+          30,
+          50,
+          5
+        ],
+        "actual_min": [
+          -30,
+          0,
+          0
+        ],
+        "deviation_max": [
+          0,
+          0,
+          0
+        ],
+        "deviation_min": [
+          0,
+          0,
+          0
+        ],
+        "max_abs_deviation_mm": 0,
+        "tolerance_mm": 0.1
+      }
+    },
+    {
+      "n": 2,
+      "type": "mass_props",
+      "params": {
+        "type": "mass_props",
+        "volume_mm3": 8705.48,
+        "tolerance_pct": 0.5
+      },
+      "result": "pass",
+      "details": {
+        "volume": {
+          "actual_mm3": 8705.94856073256,
+          "deviation_pct": 0.005382365275216821,
+          "pass": true,
+          "spec_mm3": 8705.48,
+          "tolerance_pct": 0.5
+        }
+      }
+    },
+    {
+      "n": 3,
+      "type": "hole_count",
+      "params": {
+        "type": "hole_count",
+        "diameter_mm": 5,
+        "expected": 3,
+        "diameter_tolerance_mm": 0.05
+      },
+      "result": "pass",
+      "details": {
+        "actual": 3,
+        "diameter_mm": 5,
+        "diameter_tolerance_mm": 0.05,
+        "expected": 3,
+        "found": [
+          [
+            0,
+            45,
+            5
+          ],
+          [
+            -25,
+            10,
+            5
+          ],
+          [
+            25,
+            10,
+            5
+          ]
+        ]
+      }
+    },
+    {
+      "n": 4,
+      "type": "hole_positions",
+      "params": {
+        "type": "hole_positions",
+        "diameter_mm": 5,
+        "positions": [
+          [
+            0,
+            45,
+            0
+          ],
+          [
+            -25,
+            10,
+            0
+          ],
+          [
+            25,
+            10,
+            0
+          ]
+        ],
+        "tolerance_mm": 0.15
+      },
+      "result": "pass",
+      "details": {
+        "diameter_mm": 5,
+        "per_expected": [
+          {
+            "distance_mm": 0,
+            "matched_hole": [
+              0,
+              45
+            ],
+            "pass": true,
+            "spec_xy": [
+              0,
+              45
+            ]
+          },
+          {
+            "distance_mm": 0,
+            "matched_hole": [
+              -25,
+              10
+            ],
+            "pass": true,
+            "spec_xy": [
+              -25,
+              10
+            ]
+          },
+          {
+            "distance_mm": 0,
+            "matched_hole": [
+              25,
+              10
+            ],
+            "pass": true,
+            "spec_xy": [
+              25,
+              10
+            ]
+          }
+        ],
+        "tolerance_mm": 0.15,
+        "unmatched_extras": []
+      }
+    },
+    {
+      "n": 5,
+      "type": "step_roundtrip",
+      "params": {
+        "type": "step_roundtrip",
+        "tolerance_pct": 0.5
+      },
+      "result": "pass",
+      "details": {
+        "per_solid": [
+          {
+            "bbox": {
+              "max_abs_deviation_mm": 0,
+              "original_max": [
+                30,
+                50,
+                5
+              ],
+              "original_min": [
+                -30,
+                0,
+                0
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                30,
+                50,
+                5
+              ],
+              "roundtripped_min": [
+                -30,
+                0,
+                0
+              ],
+              "tolerance_mm": 0.3913118960624632
+            },
+            "index": 0,
+            "pass": true,
+            "volume": {
+              "deviation_pct": 0.010842643759196004,
+              "original_mm3": 8705.94856073256,
+              "pass": true,
+              "roundtripped_mm3": 8706.89251572086
+            }
+          }
+        ],
+        "tolerance_pct": 0.5
+      }
+    }
+  ],
+  "summary": {
+    "passed": true,
+    "checks_passed": 6,
+    "checks_total": 6,
+    "score": 1,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260611T180438Z-3f62",
+  "model": {
+    "id": "claude-mcp-claude-opus-4-7",
+    "name": "Claude (MCP, claude-opus-4-7)",
+    "provider": "anthropic",
+    "params": {
+      "mode": "mcp",
+      "model": "claude-opus-4-7",
+      "max_tokens": 8000,
+      "max_iterations": 30
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "a2-tee-bracket-01",
+    "rendered": "Make a flat T-shaped bracket lying in the XY plane, 5mm thick (z = 0 to z = 5). Horizontal bar: x in [-30, 30], y in [0, 20]. Vertical stem extending in +Y from the middle of the horizontal bar: x in [-10, 10], y in [20, 50]. Drill three through-holes of diameter 5mm, axes parallel to Z: one at (0, 45) at the top of the stem, and two on the horizontal bar at (-25, 10) and (25, 10). Output a single solid.",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "open_document",
+        "args": {},
+        "result_kind": "ok",
+        "wallclock_ms": 1.5683329999999955
+      },
+      {
+        "n": 1,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781201079087_1",
+          "type": "union",
+          "name": "T-Bracket",
+          "params": {
+            "a": {
+              "type": "translate",
+              "params": {
+                "x": -30,
+                "y": 0,
+                "z": 0,
+                "child": {
+                  "type": "cube",
+                  "params": {
+                    "x": 60,
+                    "y": 20,
+                    "z": 5
+                  }
+                }
+              }
+            },
+            "b": {
+              "type": "translate",
+              "params": {
+                "x": -10,
+                "y": 20,
+                "z": 0,
+                "child": {
+                  "type": "cube",
+                  "params": {
+                    "x": 20,
+                    "y": 30,
+                    "z": 5
+                  }
+                }
+              }
+            }
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 5.781374999999571
+      },
+      {
+        "n": 2,
+        "tool": "create_cad_loon",
+        "args": {
+          "source": "[root\n  [difference\n    [translate 0 45 -1 [cylinder 2.5 7]]\n    [difference\n      [translate -25 10 -1 [cylinder 2.5 7]]\n      [difference\n        [translate 25 10 -1 [cylinder 2.5 7]]\n        [union\n          [translate -30 0 0 [cube 60 20 5]]\n          [translate -10 20 0 [cube 20 30 5]]]]]]\n  \"steel\"]",
+          "format": "json"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 13.397333000000799
+      },
+      {
+        "n": 3,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781201079087_1",
+          "type": "cube",
+          "name": "hbar_raw",
+          "params": {
+            "size": {
+              "x": 60,
+              "y": 20,
+              "z": 5
+            }
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.3792090000006283
+      },
+      {
+        "n": 4,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781201079087_1",
+          "type": "translate",
+          "name": "hbar",
+          "parent_part_id": "1",
+          "params": {
+            "offset": {
+              "x": -30,
+              "y": 0,
+              "z": 0
+            }
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 5.933791999999812
+      },
+      {
+        "n": 5,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781201079087_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.1220829999983835
+      },
+      {
+        "n": 6,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781201079087_1",
+          "part_id": "1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.8908330000012938
+      },
+      {
+        "n": 7,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781201079087_1",
+          "type": "cube",
+          "params": {
+            "size": {
+              "x": 60,
+              "y": 20,
+              "z": 5
+            }
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 6.015458000001672
+      },
+      {
+        "n": 8,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781201079087_1",
+          "type": "cube",
+          "params": {
+            "size": {
+              "x": 20,
+              "y": 30,
+              "z": 5
+            }
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.4029999999984284
+      },
+      {
+        "n": 9,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781201079087_1",
+          "type": "translate",
+          "parent_part_id": "1",
+          "params": {
+            "child": 1,
+            "offset": {
+              "x": -30,
+              "y": 0,
+              "z": 0
+            }
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.939875000000029
+      },
+      {
+        "n": 10,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781201079087_1",
+          "type": "translate",
+          "parent_part_id": "2",
+          "params": {
+            "child": 2,
+            "offset": {
+              "x": -10,
+              "y": 20,
+              "z": 0
+            }
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.3872080000001006
+      },
+      {
+        "n": 11,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781201079087_1",
+          "type": "union",
+          "parent_part_id": "3",
+          "params": {
+            "left": 3,
+            "right": 4
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 4.0040829999998095
+      },
+      {
+        "n": 12,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781201079087_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.217709000004106
+      },
+      {
+        "n": 13,
+        "tool": "get_document",
+        "args": {
+          "document_id": "doc_1781201079087_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.8978340000030585
+      },
+      {
+        "n": 14,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781201079087_1",
+          "part_id": "1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.6537499999976717
+      },
+      {
+        "n": 15,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781201079087_1",
+          "part_id": "2"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.2735830000019632
+      },
+      {
+        "n": 16,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781201079087_1",
+          "part_id": "3"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.4590830000015558
+      },
+      {
+        "n": 17,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781201079087_1",
+          "part_id": "4"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.8123750000013388
+      },
+      {
+        "n": 18,
+        "tool": "get_document",
+        "args": {
+          "document_id": "doc_1781201079087_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.5887910000019474
+      },
+      {
+        "n": 19,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781201079087_1",
+          "type": "cylinder",
+          "params": {
+            "radius": 2.5,
+            "height": 7
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 3.6815829999977723
+      },
+      {
+        "n": 20,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781201079087_1",
+          "type": "cylinder",
+          "params": {
+            "radius": 2.5,
+            "height": 7,
+            "segments": 64
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.2906660000007832
+      },
+      {
+        "n": 21,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781201079087_1",
+          "type": "cylinder",
+          "params": {
+            "radius": 2.5,
+            "height": 7,
+            "segments": 64
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.779207999999926
+      },
+      {
+        "n": 22,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781201079087_1",
+          "type": "cylinder",
+          "params": {
+            "radius": 2.5,
+            "height": 7,
+            "segments": 64
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.5944579999995767
+      },
+      {
+        "n": 23,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781201079087_1",
+          "type": "translate",
+          "parent_part_id": "6",
+          "params": {
+            "child": 6,
+            "offset": {
+              "x": 0,
+              "y": 45,
+              "z": -1
+            }
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.6663339999940945
+      },
+      {
+        "n": 24,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781201079087_1",
+          "type": "translate",
+          "parent_part_id": "7",
+          "params": {
+            "child": 7,
+            "offset": {
+              "x": -25,
+              "y": 10,
+              "z": -1
+            }
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.31887499999720603
+      },
+      {
+        "n": 25,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781201079087_1",
+          "type": "translate",
+          "parent_part_id": "8",
+          "params": {
+            "child": 8,
+            "offset": {
+              "x": 25,
+              "y": 10,
+              "z": -1
+            }
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.3135409999958938
+      },
+      {
+        "n": 26,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781201079087_1",
+          "type": "difference",
+          "parent_part_id": "5",
+          "params": {
+            "left": 5,
+            "right": 9
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 6.136792000004789
+      },
+      {
+        "n": 27,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781201079087_1",
+          "type": "difference",
+          "parent_part_id": "12",
+          "params": {
+            "left": 12,
+            "right": 10
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.294499999996333
+      },
+      {
+        "n": 28,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781201079087_1",
+          "type": "difference",
+          "parent_part_id": "13",
+          "params": {
+            "left": 13,
+            "right": 11
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.3925000000017462
+      },
+      {
+        "n": 29,
+        "tool": "get_document",
+        "args": {
+          "document_id": "doc_1781201079087_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.49774999999499414
+      },
+      {
+        "n": 30,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781201079087_1",
+          "part_id": "5"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.4930829999939306
+      },
+      {
+        "n": 31,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781201079087_1",
+          "part_id": "6"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.0552909999969415
+      },
+      {
+        "n": 32,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781201079087_1",
+          "part_id": "7"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.6581670000014128
+      },
+      {
+        "n": 33,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781201079087_1",
+          "part_id": "8"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.5245839999988675
+      },
+      {
+        "n": 34,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781201079087_1",
+          "part_id": "9"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.49725000000034925
+      },
+      {
+        "n": 35,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781201079087_1",
+          "part_id": "10"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.5059580000088317
+      },
+      {
+        "n": 36,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781201079087_1",
+          "part_id": "11"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.942166000008001
+      },
+      {
+        "n": 37,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781201079087_1",
+          "part_id": "12"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.5095410000067204
+      },
+      {
+        "n": 38,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781201079087_1",
+          "part_id": "13"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.4601660000043921
+      },
+      {
+        "n": 39,
+        "tool": "get_document",
+        "args": {
+          "document_id": "doc_1781201079087_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.8110410000081174
+      },
+      {
+        "n": 40,
+        "tool": "render_view",
+        "args": {
+          "document_id": "doc_1781201079087_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 108.51483400000143
+      },
+      {
+        "n": 41,
+        "tool": "get_document",
+        "args": {
+          "document_id": "doc_1781201079087_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.854166000004625
+      }
+    ],
+    "tokens": {
+      "input": 479197,
+      "output": 5302,
+      "total": 484499
+    },
+    "wallclock_sec": 88.92213725
+  },
+  "output": {
+    "vcad_path": "20260611T180438Z-3f62.vcad",
+    "vcad_sha256": "c5a76eafb15f25e63df24e59e190c7ae3b4fd9cdf6fd992aac595f3ad4bef9c5",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-06-11T18:04:38.916Z",
+    "ended_at": "2026-06-11T18:06:07.877Z"
+  },
+  "signature": null
+}

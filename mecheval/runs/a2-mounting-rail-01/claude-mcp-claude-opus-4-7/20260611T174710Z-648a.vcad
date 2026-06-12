@@ -1,0 +1,23 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "3": {
+      "id": 3,
+      "name": "c1",
+      "op": {
+        "type": "Cylinder",
+        "radius": 3,
+        "height": 10,
+        "segments": 64
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 3,
+      "material": "default"
+    }
+  ]
+}

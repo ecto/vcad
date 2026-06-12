@@ -1,0 +1,859 @@
+{
+  "schema_version": 0,
+  "task_id": "a4-rounded-bar-01",
+  "task_sha256": "7d784df0d0a2093508ecd8afc9682f361b3ac3936400a370796a57e039c78acb",
+  "checks": [
+    {
+      "n": 0,
+      "type": "valid_solid",
+      "params": {
+        "type": "valid_solid"
+      },
+      "result": "pass",
+      "details": {
+        "root_count": 4,
+        "solids_produced": 4
+      }
+    },
+    {
+      "n": 1,
+      "type": "bbox",
+      "params": {
+        "type": "bbox",
+        "min": [
+          -40,
+          -10,
+          0
+        ],
+        "max": [
+          40,
+          10,
+          10
+        ],
+        "tolerance_mm": 0.2
+      },
+      "result": "pass",
+      "details": {
+        "actual_max": [
+          40,
+          10,
+          10
+        ],
+        "actual_min": [
+          -40,
+          -10,
+          0
+        ],
+        "deviation_max": [
+          0,
+          0,
+          0
+        ],
+        "deviation_min": [
+          0,
+          0,
+          0
+        ],
+        "max_abs_deviation_mm": 0,
+        "tolerance_mm": 0.2
+      }
+    },
+    {
+      "n": 2,
+      "type": "mass_props",
+      "params": {
+        "type": "mass_props",
+        "volume_mm3": 15141.59,
+        "center_of_mass": [
+          0,
+          0,
+          5
+        ],
+        "tolerance_pct": 1
+      },
+      "result": "fail",
+      "details": {
+        "center_of_mass": {
+          "actual": [
+            -1.686448959374055,
+            -4.258460985627112e-17,
+            5.000000000000001
+          ],
+          "bbox_diagonal_mm": 83.06623862918075,
+          "deviation": [
+            -1.686448959374055,
+            -4.258460985627112e-17,
+            8.881784197001252e-16
+          ],
+          "max_abs_deviation_mm": 1.686448959374055,
+          "pass": false,
+          "spec": [
+            0,
+            0,
+            5
+          ],
+          "tolerance_mm": 0.8306623862918074
+        },
+        "volume": {
+          "actual_mm3": 31841.371612546936,
+          "deviation_pct": 110.29080573801653,
+          "pass": false,
+          "spec_mm3": 15141.59,
+          "tolerance_pct": 1
+        }
+      }
+    },
+    {
+      "n": 3,
+      "type": "step_roundtrip",
+      "params": {
+        "type": "step_roundtrip",
+        "tolerance_pct": 1
+      },
+      "result": "pass",
+      "details": {
+        "per_solid": [
+          {
+            "bbox": {
+              "max_abs_deviation_mm": 0,
+              "original_max": [
+                30,
+                10,
+                10
+              ],
+              "original_min": [
+                -30,
+                -10,
+                0
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                30,
+                10,
+                10
+              ],
+              "roundtripped_min": [
+                -30,
+                -10,
+                0
+              ],
+              "tolerance_mm": 0.6403124237432849
+            },
+            "index": 0,
+            "pass": true,
+            "volume": {
+              "deviation_pct": 0,
+              "original_mm3": 12000,
+              "pass": true,
+              "roundtripped_mm3": 12000
+            }
+          },
+          {
+            "bbox": {
+              "max_abs_deviation_mm": 0,
+              "original_max": [
+                -20,
+                10,
+                10
+              ],
+              "original_min": [
+                -40,
+                -10,
+                0
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                -20,
+                10,
+                10
+              ],
+              "roundtripped_min": [
+                -40,
+                -10,
+                0
+              ],
+              "tolerance_mm": 0.3
+            },
+            "index": 1,
+            "pass": true,
+            "volume": {
+              "deviation_pct": 0.4815266787723419,
+              "original_mm3": 3136.5486199324764,
+              "pass": true,
+              "roundtripped_mm3": 3121.445301534836
+            }
+          },
+          {
+            "bbox": {
+              "max_abs_deviation_mm": 0,
+              "original_max": [
+                40,
+                10,
+                10
+              ],
+              "original_min": [
+                20,
+                -10,
+                0
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                40,
+                10,
+                10
+              ],
+              "roundtripped_min": [
+                20,
+                -10,
+                0
+              ],
+              "tolerance_mm": 0.3
+            },
+            "index": 2,
+            "pass": true,
+            "volume": {
+              "deviation_pct": 0.4815266787723419,
+              "original_mm3": 3136.5486199324764,
+              "pass": true,
+              "roundtripped_mm3": 3121.445301534836
+            }
+          },
+          {
+            "bbox": {
+              "max_abs_deviation_mm": 0,
+              "original_max": [
+                30,
+                10,
+                10
+              ],
+              "original_min": [
+                -40,
+                -10,
+                0
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                30,
+                10,
+                10
+              ],
+              "roundtripped_min": [
+                -40,
+                -10,
+                0
+              ],
+              "tolerance_mm": 0.7348469228349535
+            },
+            "index": 3,
+            "pass": true,
+            "volume": {
+              "deviation_pct": 0.27790434932945707,
+              "original_mm3": 13568.274372681984,
+              "pass": true,
+              "roundtripped_mm3": 13530.567548071347
+            }
+          }
+        ],
+        "tolerance_pct": 1
+      }
+    }
+  ],
+  "summary": {
+    "passed": false,
+    "checks_passed": 3,
+    "checks_total": 4,
+    "score": 0.75,
+    "anti_cheese_violated": true,
+    "limits_exceeded": []
+  },
+  "run_id": "20260611T222627Z-f26f",
+  "model": {
+    "id": "claude-mcp-claude-opus-4-7",
+    "name": "Claude (MCP, claude-opus-4-7)",
+    "provider": "anthropic",
+    "params": {
+      "mode": "mcp",
+      "model": "claude-opus-4-7",
+      "max_tokens": 8000,
+      "max_iterations": 30
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "a4-rounded-bar-01",
+    "rendered": "Make a flat bar with a stadium-shaped (rectangle with semicircular ends) footprint, extruded 10mm along Z. Total end-to-end length is 80mm along X; total width is 20mm along Y. The footprint is the union of a 60mm × 20mm rectangle (x in [-30, 30], y in [-10, 10]) and two semicircles of radius 10mm centered at (-30, 0) and (30, 0). The bottom face sits on the XY plane (z = 0 to z = 10). Output a single solid (no holes or other features).",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "open_document",
+        "args": {},
+        "result_kind": "ok",
+        "wallclock_ms": 1.5749580000000094
+      },
+      {
+        "n": 1,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781216787822_1",
+          "type": "cube",
+          "params": {
+            "size": [
+              60,
+              20,
+              10
+            ],
+            "center": [
+              0,
+              0,
+              5
+            ]
+          },
+          "name": "Rect"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 5.814291000000594
+      },
+      {
+        "n": 2,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781216787822_1",
+          "type": "cylinder",
+          "params": {
+            "radius": 10,
+            "height": 10,
+            "center": [
+              -30,
+              0,
+              0
+            ]
+          },
+          "name": "EndLeft"
+        },
+        "result_kind": "err",
+        "wallclock_ms": 6.010082999999213
+      },
+      {
+        "n": 3,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781216787822_1",
+          "type": "cylinder",
+          "params": {
+            "radius": 10,
+            "height": 10,
+            "center": [
+              30,
+              0,
+              0
+            ]
+          },
+          "name": "EndRight"
+        },
+        "result_kind": "err",
+        "wallclock_ms": 1.6477080000004207
+      },
+      {
+        "n": 4,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781216787822_1",
+          "part_id": "1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.9443330000012793
+      },
+      {
+        "n": 5,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781216787822_1",
+          "part_id": "1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.100916999999754
+      },
+      {
+        "n": 6,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781216787822_1",
+          "type": "cube",
+          "params": {
+            "size": [
+              60,
+              20,
+              10
+            ]
+          },
+          "name": "RectRaw"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.6472079999985
+      },
+      {
+        "n": 7,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781216787822_1",
+          "type": "translate",
+          "params": {
+            "offset": [
+              -30,
+              -10,
+              0
+            ]
+          },
+          "name": "RectMove",
+          "parent_part_id": "1"
+        },
+        "result_kind": "err",
+        "wallclock_ms": 4.800124999997934
+      },
+      {
+        "n": 8,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781216787822_1",
+          "part_id": "1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.0739160000011907
+      },
+      {
+        "n": 9,
+        "tool": "create_cad_loon",
+        "args": {
+          "source": "[root\n  [union\n    [translate -30 0 0 [cylinder 10 10]]\n    [union\n      [translate 30 0 0 [cylinder 10 10]]\n      [translate -30 -10 0 [cube 60 20 10]]]]\n  \"steel\"]",
+          "format": "json"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 13.413749999999709
+      },
+      {
+        "n": 10,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781216787822_1",
+          "type": "cube",
+          "params": {
+            "size": {
+              "x": 60,
+              "y": 20,
+              "z": 10
+            }
+          },
+          "name": "RectRaw"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.5665420000004815
+      },
+      {
+        "n": 11,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781216787822_1",
+          "type": "translate",
+          "params": {
+            "offset": {
+              "x": -30,
+              "y": -10,
+              "z": 0
+            },
+            "child": 1
+          },
+          "name": "RectMove",
+          "parent_part_id": "1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.833416000001307
+      },
+      {
+        "n": 12,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781216787822_1",
+          "type": "cylinder",
+          "params": {
+            "radius": 10,
+            "height": 10,
+            "segments": 64
+          },
+          "name": "CylL",
+          "parent_part_id": "1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.0889590000006137
+      },
+      {
+        "n": 13,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781216787822_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.355374999999185
+      },
+      {
+        "n": 14,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781216787822_1",
+          "part_id": "1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 4.227125000004889
+      },
+      {
+        "n": 15,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781216787822_1",
+          "part_id": "2"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.071790999994846
+      },
+      {
+        "n": 16,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781216787822_1",
+          "part_id": "3"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.1665419999990263
+      },
+      {
+        "n": 17,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781216787822_1",
+          "type": "cube",
+          "params": {
+            "size": {
+              "x": 60,
+              "y": 20,
+              "z": 10
+            }
+          },
+          "name": "Body"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.9799159999965923
+      },
+      {
+        "n": 18,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781216787822_1",
+          "type": "translate",
+          "params": {
+            "offset": {
+              "x": -30,
+              "y": -10,
+              "z": 0
+            },
+            "child": 1
+          },
+          "parent_part_id": "1",
+          "name": "CenterRect"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.8324999999967986
+      },
+      {
+        "n": 19,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781216787822_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 4.557084000000032
+      },
+      {
+        "n": 20,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781216787822_1",
+          "part_id": "2"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.2006249999976717
+      },
+      {
+        "n": 21,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781216787822_1",
+          "part_id": "1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.22304200000508
+      },
+      {
+        "n": 22,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781216787822_1",
+          "part_id": "1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.594666999997571
+      },
+      {
+        "n": 23,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781216787822_1",
+          "part_id": "2"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 4.369707999998354
+      },
+      {
+        "n": 24,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781216787822_1",
+          "type": "cylinder",
+          "params": {
+            "radius": 10,
+            "height": 10,
+            "segments": 64
+          },
+          "parent_part_id": "2",
+          "name": "CylLraw"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.752999999996973
+      },
+      {
+        "n": 25,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781216787822_1",
+          "part_id": "3"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.6585419999901205
+      },
+      {
+        "n": 26,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781216787822_1",
+          "part_id": "2"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.2467500000057044
+      },
+      {
+        "n": 27,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781216787822_1",
+          "part_id": "3"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.8363329999992857
+      },
+      {
+        "n": 28,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781216787822_1",
+          "type": "cube",
+          "params": {
+            "size": {
+              "x": 60,
+              "y": 20,
+              "z": 10
+            }
+          },
+          "name": "RectRaw"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.799417000001995
+      },
+      {
+        "n": 29,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781216787822_1",
+          "type": "translate",
+          "params": {
+            "offset": {
+              "x": -30,
+              "y": -10,
+              "z": 0
+            },
+            "child": 1
+          },
+          "parent_part_id": "1",
+          "name": "Rect"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.622040999995079
+      },
+      {
+        "n": 30,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781216787822_1",
+          "part_id": "1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.4714999999996508
+      },
+      {
+        "n": 31,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781216787822_1",
+          "type": "cylinder",
+          "params": {
+            "radius": 10,
+            "height": 10,
+            "segments": 64
+          },
+          "name": "CylLraw"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.5003750000032596
+      },
+      {
+        "n": 32,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781216787822_1",
+          "type": "translate",
+          "params": {
+            "offset": {
+              "x": -30,
+              "y": 0,
+              "z": 0
+            },
+            "child": 3
+          },
+          "parent_part_id": "3",
+          "name": "CylL"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 4.03125
+      },
+      {
+        "n": 33,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781216787822_1",
+          "part_id": "3"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.4332920000015292
+      },
+      {
+        "n": 34,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781216787822_1",
+          "type": "cylinder",
+          "params": {
+            "radius": 10,
+            "height": 10,
+            "segments": 64
+          },
+          "name": "CylRraw"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.6321250000037253
+      },
+      {
+        "n": 35,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781216787822_1",
+          "type": "translate",
+          "params": {
+            "offset": {
+              "x": 30,
+              "y": 0,
+              "z": 0
+            },
+            "child": 5
+          },
+          "parent_part_id": "5",
+          "name": "CylR"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.772958000001381
+      },
+      {
+        "n": 36,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781216787822_1",
+          "part_id": "5"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.577000000004773
+      },
+      {
+        "n": 37,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781216787822_1",
+          "type": "union",
+          "params": {
+            "left": 2,
+            "right": 4
+          },
+          "parent_part_id": "2",
+          "name": "U1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.7660829999949783
+      },
+      {
+        "n": 38,
+        "tool": "get_document",
+        "args": {
+          "document_id": "doc_1781216787822_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.8292919999948936
+      }
+    ],
+    "tokens": {
+      "input": 583406,
+      "output": 5637,
+      "total": 589043
+    },
+    "wallclock_sec": 107.50302633300001
+  },
+  "output": {
+    "vcad_path": "20260611T222627Z-f26f.vcad",
+    "vcad_sha256": "db9a6ea56e5d6e6b01b439d4eaa27fc83e1f84d31b8e2566ab45c9db680036fb",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-06-11T22:26:27.653Z",
+    "ended_at": "2026-06-11T22:28:15.186Z"
+  },
+  "signature": null
+}

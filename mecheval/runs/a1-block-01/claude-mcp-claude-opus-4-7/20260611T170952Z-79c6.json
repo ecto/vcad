@@ -1,0 +1,414 @@
+{
+  "schema_version": 0,
+  "task_id": "a1-block-01",
+  "task_sha256": "eb827360a11bd0254eb82fe36a174169bf9a9a7f5e9d9d062f4d5c63e4f9826a",
+  "checks": [
+    {
+      "n": 0,
+      "type": "valid_solid",
+      "params": {
+        "type": "valid_solid"
+      },
+      "result": "pass",
+      "details": {
+        "root_count": 1,
+        "solids_produced": 1
+      }
+    },
+    {
+      "n": 1,
+      "type": "bbox",
+      "params": {
+        "type": "bbox",
+        "min": [
+          -30,
+          -20,
+          0
+        ],
+        "max": [
+          30,
+          20,
+          20
+        ],
+        "tolerance_mm": 0.05
+      },
+      "result": "pass",
+      "details": {
+        "actual_max": [
+          30,
+          20,
+          20
+        ],
+        "actual_min": [
+          -30,
+          -20,
+          0
+        ],
+        "deviation_max": [
+          0,
+          0,
+          0
+        ],
+        "deviation_min": [
+          0,
+          0,
+          0
+        ],
+        "max_abs_deviation_mm": 0,
+        "tolerance_mm": 0.05
+      }
+    },
+    {
+      "n": 2,
+      "type": "mass_props",
+      "params": {
+        "type": "mass_props",
+        "volume_mm3": 48000,
+        "center_of_mass": [
+          0,
+          0,
+          10
+        ],
+        "tolerance_pct": 0.1
+      },
+      "result": "pass",
+      "details": {
+        "center_of_mass": {
+          "actual": [
+            0,
+            0,
+            10
+          ],
+          "bbox_diagonal_mm": 74.83314773547883,
+          "deviation": [
+            0,
+            0,
+            0
+          ],
+          "max_abs_deviation_mm": 0,
+          "pass": true,
+          "spec": [
+            0,
+            0,
+            10
+          ],
+          "tolerance_mm": 0.07483314773547883
+        },
+        "volume": {
+          "actual_mm3": 48000,
+          "deviation_pct": 0,
+          "pass": true,
+          "spec_mm3": 48000,
+          "tolerance_pct": 0.1
+        }
+      }
+    },
+    {
+      "n": 3,
+      "type": "step_roundtrip",
+      "params": {
+        "type": "step_roundtrip",
+        "tolerance_pct": 0.1
+      },
+      "result": "pass",
+      "details": {
+        "per_solid": [
+          {
+            "bbox": {
+              "max_abs_deviation_mm": 0,
+              "original_max": [
+                30,
+                20,
+                20
+              ],
+              "original_min": [
+                -30,
+                -20,
+                0
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                30,
+                20,
+                20
+              ],
+              "roundtripped_min": [
+                -30,
+                -20,
+                0
+              ],
+              "tolerance_mm": 0.07483314773547883
+            },
+            "index": 0,
+            "pass": true,
+            "volume": {
+              "deviation_pct": 0,
+              "original_mm3": 48000,
+              "pass": true,
+              "roundtripped_mm3": 48000
+            }
+          }
+        ],
+        "tolerance_pct": 0.1
+      }
+    }
+  ],
+  "summary": {
+    "passed": true,
+    "checks_passed": 4,
+    "checks_total": 4,
+    "score": 1,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260611T170952Z-79c6",
+  "model": {
+    "id": "claude-mcp-claude-opus-4-7",
+    "name": "Claude (MCP, claude-opus-4-7)",
+    "provider": "anthropic",
+    "params": {
+      "mode": "mcp",
+      "model": "claude-opus-4-7",
+      "max_tokens": 8000,
+      "max_iterations": 30
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "a1-block-01",
+    "rendered": "Make a rectangular block 60mm long (X) × 40mm wide (Y) × 20mm tall (Z). Center it in X and Y, with the bottom face on the XY plane (z = 0 to z = 20). Output a single solid.",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "open_document",
+        "args": {},
+        "result_kind": "ok",
+        "wallclock_ms": 2.782166999999987
+      },
+      {
+        "n": 1,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781197793105_1",
+          "type": "cube",
+          "name": "Block",
+          "params": {
+            "size": [
+              60,
+              40,
+              20
+            ],
+            "center": [
+              -30,
+              -20,
+              0
+            ]
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 5.88479099999995
+      },
+      {
+        "n": 2,
+        "tool": "inspect_cad",
+        "args": {
+          "document_id": "doc_1781197793105_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 13.191041000000041
+      },
+      {
+        "n": 3,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781197793105_1",
+          "part_id": "1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.6265000000003056
+      },
+      {
+        "n": 4,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781197793105_1",
+          "part_id": "1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.8212500000008731
+      },
+      {
+        "n": 5,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781197793105_1",
+          "type": "cube",
+          "name": "BlockRaw",
+          "params": {
+            "size": {
+              "x": 60,
+              "y": 40,
+              "z": 20
+            }
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.7124999999996362
+      },
+      {
+        "n": 6,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781197793105_1",
+          "type": "translate",
+          "name": "Center",
+          "parent_part_id": "1",
+          "params": {
+            "offset": {
+              "x": -30,
+              "y": -20,
+              "z": 0
+            }
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 2.6446669999968435
+      },
+      {
+        "n": 7,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781197793105_1",
+          "part_id": "1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.6086250000007567
+      },
+      {
+        "n": 8,
+        "tool": "create_cad_loon",
+        "args": {
+          "source": "[root [translate -30 -20 0 [cube 60 40 20]] \"default\"]",
+          "format": "json"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 6.876916999997775
+      },
+      {
+        "n": 9,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781197793105_1",
+          "type": "cube",
+          "name": "BlockRaw",
+          "params": {
+            "size": {
+              "x": 60,
+              "y": 40,
+              "z": 20
+            }
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.6695419999996375
+      },
+      {
+        "n": 10,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781197793105_1",
+          "type": "translate",
+          "name": "Center",
+          "parent_part_id": "1",
+          "params": {
+            "child": 1,
+            "offset": {
+              "x": -30,
+              "y": -20,
+              "z": 0
+            }
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.5187079999959678
+      },
+      {
+        "n": 11,
+        "tool": "inspect_cad",
+        "args": {
+          "document_id": "doc_1781197793105_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 8.433375000000524
+      },
+      {
+        "n": 12,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781197793105_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.471333000001323
+      },
+      {
+        "n": 13,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781197793105_1",
+          "part_id": "1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.767915999997058
+      },
+      {
+        "n": 14,
+        "tool": "inspect_cad",
+        "args": {
+          "document_id": "doc_1781197793105_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.61387499999546
+      },
+      {
+        "n": 15,
+        "tool": "get_document",
+        "args": {
+          "document_id": "doc_1781197793105_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.8886249999923166
+      }
+    ],
+    "tokens": {
+      "input": 247164,
+      "output": 1847,
+      "total": 249011
+    },
+    "wallclock_sec": 77.702728625
+  },
+  "output": {
+    "vcad_path": "20260611T170952Z-79c6.vcad",
+    "vcad_sha256": "bd089e8e16383018d1322d7144f5b0f25ab584d7e8289d61bab8f0d1197f6c71",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-06-11T17:09:52.893Z",
+    "ended_at": "2026-06-11T17:11:10.612Z"
+  },
+  "signature": null
+}

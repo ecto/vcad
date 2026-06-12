@@ -1,0 +1,659 @@
+{
+  "schema_version": 0,
+  "task_id": "a5-hollow-cap-01",
+  "task_sha256": "b8167e7f075d7ee2bdc967ac9d85d54c953d8c104ede6c91d2130277e2203a80",
+  "checks": [
+    {
+      "n": 0,
+      "type": "valid_solid",
+      "params": {
+        "type": "valid_solid"
+      },
+      "result": "pass",
+      "details": {
+        "root_count": 1,
+        "solids_produced": 1
+      }
+    },
+    {
+      "n": 1,
+      "type": "bbox",
+      "params": {
+        "type": "bbox",
+        "min": [
+          -30,
+          -30,
+          0
+        ],
+        "max": [
+          30,
+          30,
+          50
+        ],
+        "tolerance_mm": 0.1
+      },
+      "result": "pass",
+      "details": {
+        "actual_max": [
+          30,
+          30,
+          50
+        ],
+        "actual_min": [
+          -30,
+          -30,
+          0
+        ],
+        "deviation_max": [
+          0,
+          0,
+          0
+        ],
+        "deviation_min": [
+          0,
+          0,
+          0
+        ],
+        "max_abs_deviation_mm": 0,
+        "tolerance_mm": 0.1
+      }
+    },
+    {
+      "n": 2,
+      "type": "mass_props",
+      "params": {
+        "type": "mass_props",
+        "volume_mm3": 58904.77,
+        "center_of_mass": [
+          0,
+          0,
+          19.4
+        ],
+        "tolerance_pct": 1
+      },
+      "result": "pass",
+      "details": {
+        "center_of_mass": {
+          "actual": [
+            3.8146733663847603e-16,
+            5.715566344566357e-16,
+            19.400000035785386
+          ],
+          "bbox_diagonal_mm": 98.48857801796105,
+          "deviation": [
+            3.8146733663847603e-16,
+            5.715566344566357e-16,
+            3.5785387098030697e-8
+          ],
+          "max_abs_deviation_mm": 3.5785387098030697e-8,
+          "pass": true,
+          "spec": [
+            0,
+            0,
+            19.4
+          ],
+          "tolerance_mm": 0.9848857801796105
+        },
+        "volume": {
+          "actual_mm3": 58810.284627314126,
+          "deviation_pct": 0.16040360175563198,
+          "pass": true,
+          "spec_mm3": 58904.77,
+          "tolerance_pct": 1
+        }
+      }
+    },
+    {
+      "n": 3,
+      "type": "step_roundtrip",
+      "params": {
+        "type": "step_roundtrip",
+        "tolerance_pct": 1
+      },
+      "result": "pass",
+      "details": {
+        "per_solid": [
+          {
+            "bbox": {
+              "max_abs_deviation_mm": 0,
+              "original_max": [
+                30,
+                30,
+                50
+              ],
+              "original_min": [
+                -30,
+                -30,
+                0
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                30,
+                30,
+                50
+              ],
+              "roundtripped_min": [
+                -30,
+                -30,
+                0
+              ],
+              "tolerance_mm": 0.9848857801796105
+            },
+            "index": 0,
+            "pass": true,
+            "volume": {
+              "deviation_pct": 0.7490414273838609,
+              "original_mm3": 58810.284627314126,
+              "pass": true,
+              "roundtripped_mm3": 58369.77123189318
+            }
+          }
+        ],
+        "tolerance_pct": 1
+      }
+    }
+  ],
+  "summary": {
+    "passed": true,
+    "checks_passed": 4,
+    "checks_total": 4,
+    "score": 1,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260611T224554Z-15fc",
+  "model": {
+    "id": "claude-mcp-claude-opus-4-7",
+    "name": "Claude (MCP, claude-opus-4-7)",
+    "provider": "anthropic",
+    "params": {
+      "mode": "mcp",
+      "model": "claude-opus-4-7",
+      "max_tokens": 8000,
+      "max_iterations": 30
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "a5-hollow-cap-01",
+    "rendered": "Make a hollow cylindrical cap (like a cup or thimble) as a single solid. The outer body is a cylinder of diameter 60mm and height 50mm, base on the XY plane (z = 0 to z = 50), centered on the Z axis. The inside of the cap is hollow: subtract a coaxial inner cylinder of diameter 50mm and height 42mm that opens from the top (z = 8 to z = 50), leaving a solid base wall 8mm thick at the bottom (z = 0 to z = 8) and a cylindrical wall 5mm thick all around. The top is open. Output a single solid.",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "open_document",
+        "args": {},
+        "result_kind": "ok",
+        "wallclock_ms": 1.573207999999994
+      },
+      {
+        "n": 1,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781217954189_1",
+          "type": "difference",
+          "name": "Hollow Cap",
+          "params": {
+            "a": {
+              "type": "translate",
+              "params": {
+                "x": 0,
+                "y": 0,
+                "z": 0,
+                "a": {
+                  "type": "cylinder",
+                  "params": {
+                    "radius": 30,
+                    "height": 50
+                  }
+                }
+              }
+            },
+            "b": {
+              "type": "translate",
+              "params": {
+                "x": 0,
+                "y": 0,
+                "z": 8,
+                "a": {
+                  "type": "cylinder",
+                  "params": {
+                    "radius": 25,
+                    "height": 42
+                  }
+                }
+              }
+            }
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 6.244416000000456
+      },
+      {
+        "n": 2,
+        "tool": "create_cad_loon",
+        "args": {
+          "source": "[root [difference [translate 0 0 8 [cylinder 25 42]] [cylinder 30 50]] \"steel\"]"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 14.413167000000612
+      },
+      {
+        "n": 3,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781217954189_1",
+          "type": "cylinder",
+          "name": "Outer",
+          "params": {
+            "radius": 30,
+            "height": 50
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 2.922416000001249
+      },
+      {
+        "n": 4,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781217954189_1",
+          "type": "cylinder",
+          "name": "Outer",
+          "params": {
+            "radius": 30,
+            "height": 50,
+            "segments": 64
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.3426670000008016
+      },
+      {
+        "n": 5,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781217954189_1",
+          "type": "cylinder",
+          "name": "InnerRaw",
+          "params": {
+            "radius": 25,
+            "height": 42,
+            "segments": 64
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 4.816832999998951
+      },
+      {
+        "n": 6,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781217954189_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.3323329999984708
+      },
+      {
+        "n": 7,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781217954189_1",
+          "type": "translate",
+          "name": "InnerPos",
+          "params": {
+            "x": 0,
+            "y": 0,
+            "z": 8,
+            "child": "2"
+          },
+          "parent_part_id": "2"
+        },
+        "result_kind": "err",
+        "wallclock_ms": 1.0298750000001746
+      },
+      {
+        "n": 8,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781217954189_1",
+          "part_id": "1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 6.349457999996957
+      },
+      {
+        "n": 9,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781217954189_1",
+          "part_id": "2"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.9700000000011642
+      },
+      {
+        "n": 10,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781217954189_1",
+          "type": "cylinder",
+          "name": "Cap",
+          "params": {
+            "radius": 30,
+            "height": 50,
+            "segments": 64
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.1214579999978014
+      },
+      {
+        "n": 11,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781217954189_1",
+          "type": "cylinder",
+          "name": "InnerRaw",
+          "params": {
+            "radius": 25,
+            "height": 42,
+            "segments": 64
+          },
+          "parent_part_id": "1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.5973749999975553
+      },
+      {
+        "n": 12,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781217954189_1",
+          "part_id": "1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.0152089999974123
+      },
+      {
+        "n": 13,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781217954189_1",
+          "part_id": "1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 4.057207999998354
+      },
+      {
+        "n": 14,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781217954189_1",
+          "part_id": "2"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.1601249999948777
+      },
+      {
+        "n": 15,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781217954189_1",
+          "type": "cylinder",
+          "name": "Outer",
+          "params": {
+            "radius": 30,
+            "height": 50,
+            "segments": 64
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.8018339999980526
+      },
+      {
+        "n": 16,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781217954189_1",
+          "type": "difference",
+          "name": "Hollow",
+          "params": {
+            "left": 1,
+            "right": {
+              "type": "translate",
+              "x": 0,
+              "y": 0,
+              "z": 8,
+              "child": {
+                "type": "cylinder",
+                "radius": 25,
+                "height": 42,
+                "segments": 64
+              }
+            }
+          },
+          "parent_part_id": "1"
+        },
+        "result_kind": "err",
+        "wallclock_ms": 3.4229169999962323
+      },
+      {
+        "n": 17,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781217954189_1",
+          "type": "cylinder",
+          "name": "InnerRaw",
+          "params": {
+            "radius": 25,
+            "height": 42,
+            "segments": 64
+          },
+          "parent_part_id": "1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.9302499999976135
+      },
+      {
+        "n": 18,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781217954189_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.047792000004847
+      },
+      {
+        "n": 19,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781217954189_1",
+          "part_id": "2"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.821083999995608
+      },
+      {
+        "n": 20,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781217954189_1",
+          "type": "translate",
+          "name": "InnerPos",
+          "params": {
+            "x": 0,
+            "y": 0,
+            "z": 8,
+            "child": 2
+          },
+          "parent_part_id": "2"
+        },
+        "result_kind": "err",
+        "wallclock_ms": 3.0493330000026617
+      },
+      {
+        "n": 21,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781217954189_1",
+          "type": "translate",
+          "name": "InnerPos",
+          "params": {
+            "offset": [
+              0,
+              0,
+              8
+            ],
+            "child": 2
+          },
+          "parent_part_id": "2"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.0214169999962905
+      },
+      {
+        "n": 22,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781217954189_1",
+          "part_id": "3"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.8527500000054715
+      },
+      {
+        "n": 23,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781217954189_1",
+          "type": "difference",
+          "name": "Hollow Cap",
+          "params": {
+            "left": 1,
+            "right": 3
+          },
+          "parent_part_id": "1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.4020410000084667
+      },
+      {
+        "n": 24,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781217954189_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.7117920000018785
+      },
+      {
+        "n": 25,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781217954189_1",
+          "part_id": "4"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.390291999996407
+      },
+      {
+        "n": 26,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781217954189_1",
+          "part_id": "1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.6734589999978198
+      },
+      {
+        "n": 27,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781217954189_1",
+          "part_id": "2"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.2527919999993173
+      },
+      {
+        "n": 28,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781217954189_1",
+          "part_id": "3"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.2810829999943962
+      },
+      {
+        "n": 29,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781217954189_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.470584000009694
+      },
+      {
+        "n": 30,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781217954189_1",
+          "part_id": "4"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.0197920000064187
+      },
+      {
+        "n": 31,
+        "tool": "inspect_cad",
+        "args": {
+          "document_id": "doc_1781217954189_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 18.590165999994497
+      },
+      {
+        "n": 32,
+        "tool": "get_document",
+        "args": {
+          "document_id": "doc_1781217954189_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.053249999997206
+      }
+    ],
+    "tokens": {
+      "input": 519472,
+      "output": 4989,
+      "total": 524461
+    },
+    "wallclock_sec": 87.87193587499999
+  },
+  "output": {
+    "vcad_path": "20260611T224554Z-15fc.vcad",
+    "vcad_sha256": "8706d9e67826b4ed041bd1d017212729dd672ec1521dffed52b29f8e94d042f0",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-06-11T22:45:54.020Z",
+    "ended_at": "2026-06-11T22:47:21.920Z"
+  },
+  "signature": null
+}

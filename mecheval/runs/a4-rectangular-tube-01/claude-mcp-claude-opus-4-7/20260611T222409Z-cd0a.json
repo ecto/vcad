@@ -1,0 +1,616 @@
+{
+  "schema_version": 0,
+  "task_id": "a4-rectangular-tube-01",
+  "task_sha256": "26b7bf3bb00bfe8031a199347b2cd162efa46a3d1195cbc11957e5ccdb16aae1",
+  "checks": [
+    {
+      "n": 0,
+      "type": "valid_solid",
+      "params": {
+        "type": "valid_solid"
+      },
+      "result": "pass",
+      "details": {
+        "root_count": 1,
+        "solids_produced": 1
+      }
+    },
+    {
+      "n": 1,
+      "type": "bbox",
+      "params": {
+        "type": "bbox",
+        "min": [
+          -20,
+          -20,
+          0
+        ],
+        "max": [
+          20,
+          20,
+          80
+        ],
+        "tolerance_mm": 0.05
+      },
+      "result": "pass",
+      "details": {
+        "actual_max": [
+          20,
+          20,
+          80
+        ],
+        "actual_min": [
+          -20,
+          -20,
+          0
+        ],
+        "deviation_max": [
+          0,
+          0,
+          0
+        ],
+        "deviation_min": [
+          0,
+          0,
+          0
+        ],
+        "max_abs_deviation_mm": 0,
+        "tolerance_mm": 0.05
+      }
+    },
+    {
+      "n": 2,
+      "type": "mass_props",
+      "params": {
+        "type": "mass_props",
+        "volume_mm3": 65280,
+        "center_of_mass": [
+          0,
+          0,
+          40
+        ],
+        "tolerance_pct": 0.5
+      },
+      "result": "pass",
+      "details": {
+        "center_of_mass": {
+          "actual": [
+            0,
+            0,
+            40
+          ],
+          "bbox_diagonal_mm": 97.97958971132712,
+          "deviation": [
+            0,
+            0,
+            0
+          ],
+          "max_abs_deviation_mm": 0,
+          "pass": true,
+          "spec": [
+            0,
+            0,
+            40
+          ],
+          "tolerance_mm": 0.4898979485566356
+        },
+        "volume": {
+          "actual_mm3": 65280,
+          "deviation_pct": 0,
+          "pass": true,
+          "spec_mm3": 65280,
+          "tolerance_pct": 0.5
+        }
+      }
+    },
+    {
+      "n": 3,
+      "type": "step_roundtrip",
+      "params": {
+        "type": "step_roundtrip",
+        "tolerance_pct": 0.5
+      },
+      "result": "pass",
+      "details": {
+        "per_solid": [
+          {
+            "bbox": {
+              "max_abs_deviation_mm": 0,
+              "original_max": [
+                20,
+                20,
+                80
+              ],
+              "original_min": [
+                -20,
+                -20,
+                0
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                20,
+                20,
+                80
+              ],
+              "roundtripped_min": [
+                -20,
+                -20,
+                0
+              ],
+              "tolerance_mm": 0.4898979485566356
+            },
+            "index": 0,
+            "pass": true,
+            "volume": {
+              "deviation_pct": 0,
+              "original_mm3": 65280,
+              "pass": true,
+              "roundtripped_mm3": 65280
+            }
+          }
+        ],
+        "tolerance_pct": 0.5
+      }
+    }
+  ],
+  "summary": {
+    "passed": true,
+    "checks_passed": 4,
+    "checks_total": 4,
+    "score": 1,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260611T222409Z-cd0a",
+  "model": {
+    "id": "claude-mcp-claude-opus-4-7",
+    "name": "Claude (MCP, claude-opus-4-7)",
+    "provider": "anthropic",
+    "params": {
+      "mode": "mcp",
+      "model": "claude-opus-4-7",
+      "max_tokens": 8000,
+      "max_iterations": 30
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "a4-rectangular-tube-01",
+    "rendered": "Make a hollow square tube. The outer cross-section is a 40mm × 40mm square; the inner cavity is a 28mm × 28mm square, concentric with the outer. The cavity passes all the way through. The tube is 80mm long along Z, with the bottom face on the XY plane (so it spans x in [-20, 20], y in [-20, 20], z in [0, 80] for the outer envelope). The inner cavity spans x in [-14, 14], y in [-14, 14], z in [0, 80]. Wall thickness is 6mm uniformly. Output a single solid.",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "open_document",
+        "args": {},
+        "result_kind": "ok",
+        "wallclock_ms": 1.5682500000000061
+      },
+      {
+        "n": 1,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781216649721_1",
+          "type": "difference",
+          "name": "Hollow Square Tube",
+          "params": {
+            "a": {
+              "type": "translate",
+              "params": {
+                "x": -20,
+                "y": -20,
+                "z": 0,
+                "s": {
+                  "type": "cube",
+                  "params": {
+                    "x": 40,
+                    "y": 40,
+                    "z": 80
+                  }
+                }
+              }
+            },
+            "b": {
+              "type": "translate",
+              "params": {
+                "x": -14,
+                "y": -14,
+                "z": -1,
+                "s": {
+                  "type": "cube",
+                  "params": {
+                    "x": 28,
+                    "y": 28,
+                    "z": 82
+                  }
+                }
+              }
+            }
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 6.069249999999556
+      },
+      {
+        "n": 2,
+        "tool": "create_cad_loon",
+        "args": {
+          "source": "[difference [translate -14 -14 -1 [cube 28 28 82]] [translate -20 -20 0 [cube 40 40 80]]]"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 13.845625000000837
+      },
+      {
+        "n": 3,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781216649721_1",
+          "type": "cube",
+          "name": "Outer",
+          "params": {
+            "x": 40,
+            "y": 40,
+            "z": 80
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 2.7906659999989643
+      },
+      {
+        "n": 4,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781216649721_1",
+          "type": "cube",
+          "name": "Outer",
+          "params": {
+            "size": [
+              40,
+              40,
+              80
+            ]
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 4.397041999998692
+      },
+      {
+        "n": 5,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781216649721_1",
+          "type": "translate",
+          "name": "Outer Centered",
+          "parent_part_id": "1",
+          "params": {
+            "offset": [
+              -20,
+              -20,
+              0
+            ]
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 3.0934999999990396
+      },
+      {
+        "n": 6,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781216649721_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.280291999999463
+      },
+      {
+        "n": 7,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781216649721_1",
+          "part_id": "1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 6.046665999998368
+      },
+      {
+        "n": 8,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781216649721_1",
+          "type": "difference",
+          "name": "Hollow Square Tube",
+          "params": {
+            "left": {
+              "type": "translate",
+              "params": {
+                "offset": [
+                  -20,
+                  -20,
+                  0
+                ],
+                "child": {
+                  "type": "cube",
+                  "params": {
+                    "size": [
+                      40,
+                      40,
+                      80
+                    ]
+                  }
+                }
+              }
+            },
+            "right": {
+              "type": "translate",
+              "params": {
+                "offset": [
+                  -14,
+                  -14,
+                  -1
+                ],
+                "child": {
+                  "type": "cube",
+                  "params": {
+                    "size": [
+                      28,
+                      28,
+                      82
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 3.9385000000002037
+      },
+      {
+        "n": 9,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781216649721_1",
+          "type": "cube",
+          "name": "Outer",
+          "params": {
+            "size": [
+              40,
+              40,
+              80
+            ]
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.8487500000010186
+      },
+      {
+        "n": 10,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781216649721_1",
+          "type": "cube",
+          "name": "Inner",
+          "params": {
+            "size": [
+              28,
+              28,
+              82
+            ]
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.551500000001397
+      },
+      {
+        "n": 11,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781216649721_1",
+          "type": "translate",
+          "name": "Outer Translate",
+          "parent_part_id": "1",
+          "params": {
+            "offset": [
+              -20,
+              -20,
+              0
+            ],
+            "child": 1
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.679415999999037
+      },
+      {
+        "n": 12,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781216649721_1",
+          "type": "translate",
+          "name": "Inner Translate",
+          "parent_part_id": "2",
+          "params": {
+            "offset": [
+              -14,
+              -14,
+              -1
+            ],
+            "child": 2
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.9507919999959995
+      },
+      {
+        "n": 13,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781216649721_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.9498749999984284
+      },
+      {
+        "n": 14,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781216649721_1",
+          "part_id": "3"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.169500000003609
+      },
+      {
+        "n": 15,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781216649721_1",
+          "part_id": "4"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.7145000000018626
+      },
+      {
+        "n": 16,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781216649721_1",
+          "part_id": "1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.7720420000041486
+      },
+      {
+        "n": 17,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781216649721_1",
+          "part_id": "2"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.6890409999978147
+      },
+      {
+        "n": 18,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781216649721_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.165499999995518
+      },
+      {
+        "n": 19,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781216649721_1",
+          "part_id": "3"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.408417000006011
+      },
+      {
+        "n": 20,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781216649721_1",
+          "type": "difference",
+          "name": "Hollow Tube",
+          "params": {
+            "left": 3,
+            "right": 4
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 4.346874999995634
+      },
+      {
+        "n": 21,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781216649721_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.729957999996259
+      },
+      {
+        "n": 22,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781216649721_1",
+          "part_id": "3"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.6182079999998678
+      },
+      {
+        "n": 23,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781216649721_1",
+          "part_id": "4"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.094333999993978
+      },
+      {
+        "n": 24,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781216649721_1",
+          "part_id": "5"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.60670800000662
+      },
+      {
+        "n": 25,
+        "tool": "inspect_cad",
+        "args": {
+          "document_id": "doc_1781216649721_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 22.012000000002445
+      },
+      {
+        "n": 26,
+        "tool": "get_document",
+        "args": {
+          "document_id": "doc_1781216649721_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 4.50654200000281
+      }
+    ],
+    "tokens": {
+      "input": 391372,
+      "output": 3680,
+      "total": 395052
+    },
+    "wallclock_sec": 71.844958083
+  },
+  "output": {
+    "vcad_path": "20260611T222409Z-cd0a.vcad",
+    "vcad_sha256": "d46d7648ad9e82cc901fa39c6758cac243f91505c9d0bde6782a61baa43111b8",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-06-11T22:24:09.551Z",
+    "ended_at": "2026-06-11T22:25:21.416Z"
+  },
+  "signature": null
+}

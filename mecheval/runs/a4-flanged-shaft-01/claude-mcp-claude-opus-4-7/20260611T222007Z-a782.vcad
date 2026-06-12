@@ -1,0 +1,202 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "flange_disk",
+      "op": {
+        "type": "Cylinder",
+        "radius": 40,
+        "height": 10,
+        "segments": 64
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": "shaft_raw",
+      "op": {
+        "type": "Cylinder",
+        "radius": 15,
+        "height": 50,
+        "segments": 64
+      }
+    },
+    "3": {
+      "id": 3,
+      "name": "bore",
+      "op": {
+        "type": "Cylinder",
+        "radius": 7.5,
+        "height": 60,
+        "segments": 64
+      }
+    },
+    "4": {
+      "id": 4,
+      "name": "bolt_raw_px",
+      "op": {
+        "type": "Cylinder",
+        "radius": 3,
+        "height": 10,
+        "segments": 32
+      }
+    },
+    "5": {
+      "id": 5,
+      "name": "bolt_raw_py",
+      "op": {
+        "type": "Cylinder",
+        "radius": 3,
+        "height": 10,
+        "segments": 32
+      }
+    },
+    "6": {
+      "id": 6,
+      "name": "bolt_raw_nx",
+      "op": {
+        "type": "Cylinder",
+        "radius": 3,
+        "height": 10,
+        "segments": 32
+      }
+    },
+    "7": {
+      "id": 7,
+      "name": "bolt_raw_ny",
+      "op": {
+        "type": "Cylinder",
+        "radius": 3,
+        "height": 10,
+        "segments": 32
+      }
+    },
+    "8": {
+      "id": 8,
+      "name": "shaft",
+      "op": {
+        "type": "Translate",
+        "child": 2,
+        "offset": {
+          "x": 0,
+          "y": 0,
+          "z": 10
+        }
+      }
+    },
+    "9": {
+      "id": 9,
+      "name": "hole_px",
+      "op": {
+        "type": "Translate",
+        "child": 4,
+        "offset": {
+          "x": 30,
+          "y": 0,
+          "z": 0
+        }
+      }
+    },
+    "10": {
+      "id": 10,
+      "name": "hole_py",
+      "op": {
+        "type": "Translate",
+        "child": 5,
+        "offset": {
+          "x": 0,
+          "y": 30,
+          "z": 0
+        }
+      }
+    },
+    "11": {
+      "id": 11,
+      "name": "hole_nx",
+      "op": {
+        "type": "Translate",
+        "child": 6,
+        "offset": {
+          "x": -30,
+          "y": 0,
+          "z": 0
+        }
+      }
+    },
+    "12": {
+      "id": 12,
+      "name": "hole_ny",
+      "op": {
+        "type": "Translate",
+        "child": 7,
+        "offset": {
+          "x": 0,
+          "y": -30,
+          "z": 0
+        }
+      }
+    },
+    "13": {
+      "id": 13,
+      "name": "body",
+      "op": {
+        "type": "Union",
+        "left": 1,
+        "right": 8
+      }
+    },
+    "14": {
+      "id": 14,
+      "name": "holes_x",
+      "op": {
+        "type": "Union",
+        "left": 9,
+        "right": 11
+      }
+    },
+    "15": {
+      "id": 15,
+      "name": "holes_y",
+      "op": {
+        "type": "Union",
+        "left": 10,
+        "right": 12
+      }
+    },
+    "16": {
+      "id": 16,
+      "name": "bolt_holes",
+      "op": {
+        "type": "Union",
+        "left": 14,
+        "right": 15
+      }
+    },
+    "17": {
+      "id": 17,
+      "name": "all_holes",
+      "op": {
+        "type": "Union",
+        "left": 3,
+        "right": 16
+      }
+    },
+    "18": {
+      "id": 18,
+      "name": "FlangedShaft",
+      "op": {
+        "type": "Difference",
+        "left": 13,
+        "right": 17
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 18,
+      "material": "default"
+    }
+  ]
+}

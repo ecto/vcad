@@ -1,0 +1,94 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "Flange",
+      "op": {
+        "type": "Cylinder",
+        "radius": 50,
+        "height": 12,
+        "segments": 64
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": "Bore Tool",
+      "op": {
+        "type": "Cylinder",
+        "radius": 20,
+        "height": 12,
+        "segments": 64
+      }
+    },
+    "4": {
+      "id": 4,
+      "name": "Bolt Hole Proto",
+      "op": {
+        "type": "Cylinder",
+        "radius": 4,
+        "height": 12,
+        "segments": 32
+      }
+    },
+    "5": {
+      "id": 5,
+      "name": "Bolt Hole at +X",
+      "op": {
+        "type": "Translate",
+        "child": 4,
+        "offset": {
+          "x": 37.5,
+          "y": 0,
+          "z": 0
+        }
+      }
+    },
+    "6": {
+      "id": 6,
+      "name": "Bolt Circle",
+      "op": {
+        "type": "CircularPattern",
+        "child": 5,
+        "axis_origin": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "axis_dir": {
+          "x": 0,
+          "y": 0,
+          "z": 1
+        },
+        "count": 6,
+        "angle_deg": 360
+      }
+    },
+    "7": {
+      "id": 7,
+      "name": "Bore + Bolts",
+      "op": {
+        "type": "Union",
+        "left": 2,
+        "right": 6
+      }
+    },
+    "8": {
+      "id": 8,
+      "name": "Final Flange",
+      "op": {
+        "type": "Difference",
+        "left": 1,
+        "right": 7
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 8,
+      "material": "default"
+    }
+  ]
+}

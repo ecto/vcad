@@ -1,0 +1,601 @@
+{
+  "schema_version": 0,
+  "task_id": "a2-channel-bracket-01",
+  "task_sha256": "8a57ee77a91f87fa90ba207e9524334697e4b43bab1d516bc878440ebaf57017",
+  "checks": [
+    {
+      "n": 0,
+      "type": "valid_solid",
+      "params": {
+        "type": "valid_solid"
+      },
+      "result": "pass",
+      "details": {
+        "root_count": 7,
+        "solids_produced": 7
+      }
+    },
+    {
+      "n": 1,
+      "type": "bbox",
+      "params": {
+        "type": "bbox",
+        "min": [
+          0,
+          0,
+          0
+        ],
+        "max": [
+          30,
+          40,
+          30
+        ],
+        "tolerance_mm": 0.05
+      },
+      "result": "pass",
+      "details": {
+        "actual_max": [
+          30,
+          40,
+          30
+        ],
+        "actual_min": [
+          0,
+          0,
+          0
+        ],
+        "deviation_max": [
+          0,
+          0,
+          0
+        ],
+        "deviation_min": [
+          0,
+          0,
+          0
+        ],
+        "max_abs_deviation_mm": 0,
+        "tolerance_mm": 0.05
+      }
+    },
+    {
+      "n": 2,
+      "type": "mass_props",
+      "params": {
+        "type": "mass_props",
+        "volume_mm3": 13120,
+        "tolerance_pct": 0.1
+      },
+      "result": "fail",
+      "details": {
+        "volume": {
+          "actual_mm3": 43520,
+          "deviation_pct": 231.7073170731707,
+          "pass": false,
+          "spec_mm3": 13120,
+          "tolerance_pct": 0.1
+        }
+      }
+    },
+    {
+      "n": 3,
+      "type": "step_roundtrip",
+      "params": {
+        "type": "step_roundtrip",
+        "tolerance_pct": 0.1
+      },
+      "result": "pass",
+      "details": {
+        "per_solid": [
+          {
+            "bbox": {
+              "max_abs_deviation_mm": 0,
+              "original_max": [
+                30,
+                40,
+                4
+              ],
+              "original_min": [
+                0,
+                0,
+                0
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                30,
+                40,
+                4
+              ],
+              "roundtripped_min": [
+                0,
+                0,
+                0
+              ],
+              "tolerance_mm": 0.050159744815937816
+            },
+            "index": 0,
+            "pass": true,
+            "volume": {
+              "deviation_pct": 0,
+              "original_mm3": 4800,
+              "pass": true,
+              "roundtripped_mm3": 4800
+            }
+          },
+          {
+            "bbox": {
+              "max_abs_deviation_mm": 0,
+              "original_max": [
+                4,
+                40,
+                26
+              ],
+              "original_min": [
+                0,
+                0,
+                0
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                4,
+                40,
+                26
+              ],
+              "roundtripped_min": [
+                0,
+                0,
+                0
+              ],
+              "tolerance_mm": 0.0478748368143433
+            },
+            "index": 1,
+            "pass": true,
+            "volume": {
+              "deviation_pct": 0,
+              "original_mm3": 4160,
+              "pass": true,
+              "roundtripped_mm3": 4160
+            }
+          },
+          {
+            "bbox": {
+              "max_abs_deviation_mm": 0,
+              "original_max": [
+                4,
+                40,
+                26
+              ],
+              "original_min": [
+                0,
+                0,
+                0
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                4,
+                40,
+                26
+              ],
+              "roundtripped_min": [
+                0,
+                0,
+                0
+              ],
+              "tolerance_mm": 0.0478748368143433
+            },
+            "index": 2,
+            "pass": true,
+            "volume": {
+              "deviation_pct": 0,
+              "original_mm3": 4160,
+              "pass": true,
+              "roundtripped_mm3": 4160
+            }
+          },
+          {
+            "bbox": {
+              "max_abs_deviation_mm": 0,
+              "original_max": [
+                4,
+                40,
+                30
+              ],
+              "original_min": [
+                0,
+                0,
+                4
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                4,
+                40,
+                30
+              ],
+              "roundtripped_min": [
+                0,
+                0,
+                4
+              ],
+              "tolerance_mm": 0.0478748368143433
+            },
+            "index": 3,
+            "pass": true,
+            "volume": {
+              "deviation_pct": 0,
+              "original_mm3": 4160,
+              "pass": true,
+              "roundtripped_mm3": 4160
+            }
+          },
+          {
+            "bbox": {
+              "max_abs_deviation_mm": 0,
+              "original_max": [
+                30,
+                40,
+                30
+              ],
+              "original_min": [
+                26,
+                0,
+                4
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                30,
+                40,
+                30
+              ],
+              "roundtripped_min": [
+                26,
+                0,
+                4
+              ],
+              "tolerance_mm": 0.0478748368143433
+            },
+            "index": 4,
+            "pass": true,
+            "volume": {
+              "deviation_pct": 0,
+              "original_mm3": 4160,
+              "pass": true,
+              "roundtripped_mm3": 4160
+            }
+          },
+          {
+            "bbox": {
+              "max_abs_deviation_mm": 0,
+              "original_max": [
+                30,
+                40,
+                30
+              ],
+              "original_min": [
+                0,
+                0,
+                0
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                30,
+                40,
+                30
+              ],
+              "roundtripped_min": [
+                0,
+                0,
+                0
+              ],
+              "tolerance_mm": 0.05830951894845301
+            },
+            "index": 5,
+            "pass": true,
+            "volume": {
+              "deviation_pct": 0,
+              "original_mm3": 8960,
+              "pass": true,
+              "roundtripped_mm3": 8960
+            }
+          },
+          {
+            "bbox": {
+              "max_abs_deviation_mm": 0,
+              "original_max": [
+                30,
+                40,
+                30
+              ],
+              "original_min": [
+                0,
+                0,
+                0
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                30,
+                40,
+                30
+              ],
+              "roundtripped_min": [
+                0,
+                0,
+                0
+              ],
+              "tolerance_mm": 0.05830951894845301
+            },
+            "index": 6,
+            "pass": true,
+            "volume": {
+              "deviation_pct": 0,
+              "original_mm3": 13120,
+              "pass": true,
+              "roundtripped_mm3": 13120
+            }
+          }
+        ],
+        "tolerance_pct": 0.1
+      }
+    }
+  ],
+  "summary": {
+    "passed": false,
+    "checks_passed": 3,
+    "checks_total": 4,
+    "score": 0.75,
+    "anti_cheese_violated": true,
+    "limits_exceeded": []
+  },
+  "run_id": "20260611T172601Z-ecd4",
+  "model": {
+    "id": "claude-mcp-claude-opus-4-7",
+    "name": "Claude (MCP, claude-opus-4-7)",
+    "provider": "anthropic",
+    "params": {
+      "mode": "mcp",
+      "model": "claude-opus-4-7",
+      "max_tokens": 8000,
+      "max_iterations": 30
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "a2-channel-bracket-01",
+    "rendered": "Make a U-shaped channel bracket built from three rectangular plates fused into a single solid. Bottom plate: x in [0, 30], y in [0, 40], z in [0, 4]. Left wall standing on top of the bottom: x in [0, 4], y in [0, 40], z in [4, 30]. Right wall standing on top of the bottom: x in [26, 30], y in [0, 40], z in [4, 30]. Output a single solid.",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "open_document",
+        "args": {},
+        "result_kind": "ok",
+        "wallclock_ms": 1.6040000000000134
+      },
+      {
+        "n": 1,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781198761714_1",
+          "type": "cube",
+          "name": "Bottom Plate",
+          "params": {
+            "size": [
+              30,
+              40,
+              4
+            ]
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 5.416958999999679
+      },
+      {
+        "n": 2,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781198761714_1",
+          "type": "cube",
+          "name": "Left Wall Raw",
+          "params": {
+            "size": [
+              4,
+              40,
+              26
+            ]
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 4.891833000000588
+      },
+      {
+        "n": 3,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781198761714_1",
+          "type": "cube",
+          "name": "Right Wall Raw",
+          "params": {
+            "size": [
+              4,
+              40,
+              26
+            ]
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.847458000000188
+      },
+      {
+        "n": 4,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781198761714_1",
+          "type": "translate",
+          "name": "Left Wall Placed",
+          "params": {
+            "child": "2",
+            "offset": [
+              0,
+              0,
+              4
+            ]
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 3.2764590000006137
+      },
+      {
+        "n": 5,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781198761714_1",
+          "type": "translate",
+          "name": "Right Wall Placed",
+          "params": {
+            "child": "3",
+            "offset": [
+              26,
+              0,
+              4
+            ]
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 1.0857500000001892
+      },
+      {
+        "n": 6,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781198761714_1",
+          "type": "translate",
+          "name": "Left Wall Placed",
+          "params": {
+            "child": 2,
+            "offset": [
+              0,
+              0,
+              4
+            ]
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 4.103209000000788
+      },
+      {
+        "n": 7,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781198761714_1",
+          "type": "translate",
+          "name": "Right Wall Placed",
+          "params": {
+            "child": 3,
+            "offset": [
+              26,
+              0,
+              4
+            ]
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.370542000000569
+      },
+      {
+        "n": 8,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781198761714_1",
+          "type": "union",
+          "name": "U Bracket",
+          "params": {
+            "children": [
+              1,
+              4,
+              5
+            ]
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 1.6891249999989668
+      },
+      {
+        "n": 9,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781198761714_1",
+          "type": "union",
+          "name": "Bottom + Left",
+          "params": {
+            "left": 1,
+            "right": 4
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.1535000000003492
+      },
+      {
+        "n": 10,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781198761714_1",
+          "type": "union",
+          "name": "U Bracket",
+          "params": {
+            "left": 6,
+            "right": 5
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.4071250000015425
+      },
+      {
+        "n": 11,
+        "tool": "render_view",
+        "args": {
+          "document_id": "doc_1781198761714_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 141.10887500000172
+      },
+      {
+        "n": 12,
+        "tool": "get_document",
+        "args": {
+          "document_id": "doc_1781198761714_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.0438329999997222
+      }
+    ],
+    "tokens": {
+      "input": 146612,
+      "output": 1635,
+      "total": 148247
+    },
+    "wallclock_sec": 25.327856916
+  },
+  "output": {
+    "vcad_path": "20260611T172601Z-ecd4.vcad",
+    "vcad_sha256": "9bd46108c73c76e52389b1c39d4d6523fb9ff833f283f822556598cd8ea72f61",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-06-11T17:26:01.537Z",
+    "ended_at": "2026-06-11T17:26:26.908Z"
+  },
+  "signature": null
+}

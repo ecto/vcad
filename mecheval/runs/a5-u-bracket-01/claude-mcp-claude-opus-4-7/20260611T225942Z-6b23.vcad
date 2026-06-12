@@ -1,0 +1,170 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "BaseRaw",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 100,
+          "y": 30,
+          "z": 8
+        }
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": "LegLRaw",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 8,
+          "y": 30,
+          "z": 35
+        }
+      }
+    },
+    "3": {
+      "id": 3,
+      "name": "LegRRaw",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 8,
+          "y": 30,
+          "z": 35
+        }
+      }
+    },
+    "4": {
+      "id": 4,
+      "name": "Hole1Raw",
+      "op": {
+        "type": "Cylinder",
+        "radius": 3,
+        "height": 10,
+        "segments": 64
+      }
+    },
+    "5": {
+      "id": 5,
+      "name": "Hole2Raw",
+      "op": {
+        "type": "Cylinder",
+        "radius": 3,
+        "height": 10,
+        "segments": 64
+      }
+    },
+    "6": {
+      "id": 6,
+      "name": "Base",
+      "op": {
+        "type": "Translate",
+        "child": 1,
+        "offset": {
+          "x": -50,
+          "y": -15,
+          "z": 0
+        }
+      }
+    },
+    "7": {
+      "id": 7,
+      "name": "LegL",
+      "op": {
+        "type": "Translate",
+        "child": 2,
+        "offset": {
+          "x": -50,
+          "y": -15,
+          "z": 8
+        }
+      }
+    },
+    "8": {
+      "id": 8,
+      "name": "LegR",
+      "op": {
+        "type": "Translate",
+        "child": 3,
+        "offset": {
+          "x": 42,
+          "y": -15,
+          "z": 8
+        }
+      }
+    },
+    "9": {
+      "id": 9,
+      "name": "Hole1",
+      "op": {
+        "type": "Translate",
+        "child": 4,
+        "offset": {
+          "x": -25,
+          "y": 0,
+          "z": -1
+        }
+      }
+    },
+    "10": {
+      "id": 10,
+      "name": "Hole2",
+      "op": {
+        "type": "Translate",
+        "child": 5,
+        "offset": {
+          "x": 25,
+          "y": 0,
+          "z": -1
+        }
+      }
+    },
+    "11": {
+      "id": 11,
+      "name": "BaseLegL",
+      "op": {
+        "type": "Union",
+        "left": 6,
+        "right": 7
+      }
+    },
+    "12": {
+      "id": 12,
+      "name": "UChannel",
+      "op": {
+        "type": "Union",
+        "left": 11,
+        "right": 8
+      }
+    },
+    "13": {
+      "id": 13,
+      "name": "Holes",
+      "op": {
+        "type": "Union",
+        "left": 9,
+        "right": 10
+      }
+    },
+    "14": {
+      "id": 14,
+      "name": "Bracket",
+      "op": {
+        "type": "Difference",
+        "left": 12,
+        "right": 13
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 14,
+      "material": "default"
+    }
+  ]
+}

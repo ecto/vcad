@@ -1,0 +1,493 @@
+{
+  "schema_version": 0,
+  "task_id": "a5-double-d-shaft-01",
+  "task_sha256": "fe39d8a3436856ee419047f122a771bc3cb13b3da664f9da658990dbdfedaf19",
+  "checks": [
+    {
+      "n": 0,
+      "type": "valid_solid",
+      "params": {
+        "type": "valid_solid"
+      },
+      "result": "pass",
+      "details": {
+        "root_count": 1,
+        "solids_produced": 1
+      }
+    },
+    {
+      "n": 1,
+      "type": "bbox",
+      "params": {
+        "type": "bbox",
+        "min": [
+          -14,
+          -20,
+          0
+        ],
+        "max": [
+          14,
+          20,
+          60
+        ],
+        "tolerance_mm": 0.15
+      },
+      "result": "pass",
+      "details": {
+        "actual_max": [
+          14,
+          20,
+          60
+        ],
+        "actual_min": [
+          -14,
+          -20,
+          0
+        ],
+        "deviation_max": [
+          0,
+          0,
+          0
+        ],
+        "deviation_min": [
+          0,
+          0,
+          0
+        ],
+        "max_abs_deviation_mm": 0,
+        "tolerance_mm": 0.15
+      }
+    },
+    {
+      "n": 2,
+      "type": "mass_props",
+      "params": {
+        "type": "mass_props",
+        "volume_mm3": 61214.28,
+        "center_of_mass": [
+          0,
+          0,
+          30
+        ],
+        "tolerance_pct": 1
+      },
+      "result": "pass",
+      "details": {
+        "center_of_mass": {
+          "actual": [
+            -0.000006513502554597363,
+            1.824299310292602e-15,
+            29.999701349950552
+          ],
+          "bbox_diagonal_mm": 77.35631842325486,
+          "deviation": [
+            -0.000006513502554597363,
+            1.824299310292602e-15,
+            -0.00029865004944795714
+          ],
+          "max_abs_deviation_mm": 0.00029865004944795714,
+          "pass": true,
+          "spec": [
+            0,
+            0,
+            30
+          ],
+          "tolerance_mm": 0.7735631842325487
+        },
+        "volume": {
+          "actual_mm3": 61154.81313183481,
+          "deviation_pct": 0.09714541797304359,
+          "pass": true,
+          "spec_mm3": 61214.28,
+          "tolerance_pct": 1
+        }
+      }
+    },
+    {
+      "n": 3,
+      "type": "step_roundtrip",
+      "params": {
+        "type": "step_roundtrip",
+        "tolerance_pct": 1
+      },
+      "result": "pass",
+      "details": {
+        "per_solid": [
+          {
+            "bbox": {
+              "max_abs_deviation_mm": 0,
+              "original_max": [
+                14,
+                20,
+                60
+              ],
+              "original_min": [
+                -14,
+                -20,
+                0
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                14,
+                20,
+                60
+              ],
+              "roundtripped_min": [
+                -14,
+                -20,
+                0
+              ],
+              "tolerance_mm": 0.7735631842325487
+            },
+            "index": 0,
+            "pass": true,
+            "volume": {
+              "deviation_pct": 0.19013455816841565,
+              "original_mm3": 61154.81313183481,
+              "pass": true,
+              "roundtripped_mm3": 61038.536698087875
+            }
+          }
+        ],
+        "tolerance_pct": 1
+      }
+    }
+  ],
+  "summary": {
+    "passed": true,
+    "checks_passed": 4,
+    "checks_total": 4,
+    "score": 1,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260611T223941Z-5b84",
+  "model": {
+    "id": "claude-mcp-claude-opus-4-7",
+    "name": "Claude (MCP, claude-opus-4-7)",
+    "provider": "anthropic",
+    "params": {
+      "mode": "mcp",
+      "model": "claude-opus-4-7",
+      "max_tokens": 8000,
+      "max_iterations": 30
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "a5-double-d-shaft-01",
+    "rendered": "Make a double-D profile shaft as a single solid. Start with a cylinder of diameter 40mm (radius 20mm) and height 60mm, with its base on the XY plane (z = 0 to z = 60), centered on the Z axis. Mill a flat on each side by subtracting a rectangular block from the left and from the right. The left flat is at x = -14: subtract all material at x < -14 (i.e. remove the cylindrical segment from x = -20 to x = -14, running the full height z = 0 to z = 60 and the full cylinder width in Y). The right flat is at x = +14: subtract all material at x > 14. The result is a shaft with flat-to-flat width 28mm and circular arc sections of radius 20mm on the front and back (+Y and -Y sides). Output a single solid.",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "open_document",
+        "args": {},
+        "result_kind": "ok",
+        "wallclock_ms": 1.6960410000000081
+      },
+      {
+        "n": 1,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781217581896_1",
+          "type": "cylinder",
+          "name": "Shaft Blank",
+          "params": {
+            "radius": 20,
+            "height": 60,
+            "center": [
+              0,
+              0,
+              0
+            ]
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 5.663457999999991
+      },
+      {
+        "n": 2,
+        "tool": "create_cad_loon",
+        "args": {
+          "source": "[let shaft [cylinder 20 60]\n [let left-block [translate -25 -25 0 [cube 11 50 60]]\n  [let right-block [translate 14 -25 0 [cube 11 50 60]]\n   [root [difference right-block [difference left-block shaft]] \"steel\"]]]]",
+          "format": "json"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 12.73554200000035
+      },
+      {
+        "n": 3,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781217581896_1",
+          "type": "cylinder",
+          "name": "Blank",
+          "params": {
+            "radius": 20,
+            "height": 60,
+            "segments": 64
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.249832999999853
+      },
+      {
+        "n": 4,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781217581896_1",
+          "type": "cube",
+          "name": "LeftCutterBase",
+          "params": {
+            "size": [
+              11,
+              50,
+              60
+            ]
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 5.368999999998778
+      },
+      {
+        "n": 5,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781217581896_1",
+          "type": "cube",
+          "name": "RightCutterBase",
+          "params": {
+            "size": [
+              11,
+              50,
+              60
+            ]
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.7090830000015558
+      },
+      {
+        "n": 6,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781217581896_1",
+          "type": "translate",
+          "name": "LeftCutter",
+          "params": {
+            "offset": [
+              -25,
+              -25,
+              0
+            ],
+            "child": 2
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.541457999999693
+      },
+      {
+        "n": 7,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781217581896_1",
+          "type": "translate",
+          "name": "RightCutter",
+          "params": {
+            "offset": [
+              14,
+              -25,
+              0
+            ],
+            "child": 3
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.5007089999999152
+      },
+      {
+        "n": 8,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781217581896_1",
+          "type": "difference",
+          "name": "CutLeft",
+          "params": {
+            "base": 1,
+            "tools": [
+              4
+            ]
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 5.513542000000598
+      },
+      {
+        "n": 9,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781217581896_1",
+          "type": "difference",
+          "name": "CutLeft",
+          "params": {
+            "left": 1,
+            "right": 4
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.7716659999969124
+      },
+      {
+        "n": 10,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781217581896_1",
+          "type": "difference",
+          "name": "DoubleDShaft",
+          "params": {
+            "left": 6,
+            "right": 5
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.64824999999837
+      },
+      {
+        "n": 11,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781217581896_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.932874999998603
+      },
+      {
+        "n": 12,
+        "tool": "get_document",
+        "args": {
+          "document_id": "doc_1781217581896_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.166417000000365
+      },
+      {
+        "n": 13,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781217581896_1",
+          "part_id": "6"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 5.438500000003842
+      },
+      {
+        "n": 14,
+        "tool": "get_document",
+        "args": {
+          "document_id": "doc_1781217581896_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.10283299999719
+      },
+      {
+        "n": 15,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781217581896_1",
+          "part_id": "1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.555791999999201
+      },
+      {
+        "n": 16,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781217581896_1",
+          "part_id": "2"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.2513330000001588
+      },
+      {
+        "n": 17,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781217581896_1",
+          "part_id": "3"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.9696669999975711
+      },
+      {
+        "n": 18,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781217581896_1",
+          "part_id": "4"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.091374999996333
+      },
+      {
+        "n": 19,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781217581896_1",
+          "part_id": "5"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.3227090000000317
+      },
+      {
+        "n": 20,
+        "tool": "render_view",
+        "args": {
+          "document_id": "doc_1781217581896_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 109.59620799999539
+      },
+      {
+        "n": 21,
+        "tool": "get_document",
+        "args": {
+          "document_id": "doc_1781217581896_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.4078750000044238
+      }
+    ],
+    "tokens": {
+      "input": 261901,
+      "output": 2642,
+      "total": 264543
+    },
+    "wallclock_sec": 52.5558095
+  },
+  "output": {
+    "vcad_path": "20260611T223941Z-5b84.vcad",
+    "vcad_sha256": "32794811eebf2d1e379c6e2a91ee569bdc94c2cd7486593ecc15a274be8052be",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-06-11T22:39:41.727Z",
+    "ended_at": "2026-06-11T22:40:34.315Z"
+  },
+  "signature": null
+}

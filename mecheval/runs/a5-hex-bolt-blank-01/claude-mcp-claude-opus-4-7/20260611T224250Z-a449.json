@@ -1,0 +1,634 @@
+{
+  "schema_version": 0,
+  "task_id": "a5-hex-bolt-blank-01",
+  "task_sha256": "b349eb4218ce71cb8bac9c7ea456b3d6d7991caee0147367e7798a2387c3c476",
+  "checks": [
+    {
+      "n": 0,
+      "type": "valid_solid",
+      "params": {
+        "type": "valid_solid"
+      },
+      "result": "pass",
+      "details": {
+        "root_count": 1,
+        "solids_produced": 1
+      }
+    },
+    {
+      "n": 1,
+      "type": "bbox",
+      "params": {
+        "type": "bbox",
+        "min": [
+          -13.856,
+          -12,
+          0
+        ],
+        "max": [
+          13.856,
+          12,
+          60
+        ],
+        "tolerance_mm": 0.2
+      },
+      "result": "pass",
+      "details": {
+        "actual_max": [
+          13.856406211853027,
+          12,
+          60
+        ],
+        "actual_min": [
+          -13.856406211853027,
+          -12,
+          0
+        ],
+        "deviation_max": [
+          0.00040621185302747165,
+          0,
+          0
+        ],
+        "deviation_min": [
+          -0.00040621185302747165,
+          0,
+          0
+        ],
+        "max_abs_deviation_mm": 0.00040621185302747165,
+        "tolerance_mm": 0.2
+      }
+    },
+    {
+      "n": 2,
+      "type": "mass_props",
+      "params": {
+        "type": "mass_props",
+        "volume_mm3": 14068.14,
+        "center_of_mass": [
+          0,
+          0,
+          22.1
+        ],
+        "tolerance_pct": 1.5
+      },
+      "result": "pass",
+      "details": {
+        "center_of_mass": {
+          "actual": [
+            5.527911806866933e-17,
+            -1.685338965508211e-17,
+            22.091954516366993
+          ],
+          "bbox_diagonal_mm": 70.31358312894825,
+          "deviation": [
+            5.527911806866933e-17,
+            -1.685338965508211e-17,
+            -0.008045483633008388
+          ],
+          "max_abs_deviation_mm": 0.008045483633008388,
+          "pass": true,
+          "spec": [
+            0,
+            0,
+            22.1
+          ],
+          "tolerance_mm": 1.0547037469342238
+        },
+        "volume": {
+          "actual_mm3": 14053.409043164147,
+          "deviation_pct": 0.10471147455066797,
+          "pass": true,
+          "spec_mm3": 14068.14,
+          "tolerance_pct": 1.5
+        }
+      }
+    },
+    {
+      "n": 3,
+      "type": "step_roundtrip",
+      "params": {
+        "type": "step_roundtrip",
+        "tolerance_pct": 1.5
+      },
+      "result": "pass",
+      "details": {
+        "per_solid": [
+          {
+            "bbox": {
+              "max_abs_deviation_mm": 0,
+              "original_max": [
+                13.856406211853027,
+                12,
+                60
+              ],
+              "original_min": [
+                -13.856406211853027,
+                -12,
+                0
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                13.856406211853027,
+                12,
+                60
+              ],
+              "roundtripped_min": [
+                -13.856406211853027,
+                -12,
+                0
+              ],
+              "tolerance_mm": 1.0547037469342238
+            },
+            "index": 0,
+            "pass": true,
+            "volume": {
+              "deviation_pct": 0.2668136386634713,
+              "original_mm3": 14053.409043164147,
+              "pass": true,
+              "roundtripped_mm3": 14015.91263113982
+            }
+          }
+        ],
+        "tolerance_pct": 1.5
+      }
+    }
+  ],
+  "summary": {
+    "passed": true,
+    "checks_passed": 4,
+    "checks_total": 4,
+    "score": 1,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260611T224250Z-a449",
+  "model": {
+    "id": "claude-mcp-claude-opus-4-7",
+    "name": "Claude (MCP, claude-opus-4-7)",
+    "provider": "anthropic",
+    "params": {
+      "mode": "mcp",
+      "model": "claude-opus-4-7",
+      "max_tokens": 8000,
+      "max_iterations": 30
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "a5-hex-bolt-blank-01",
+    "rendered": "Make a hex-head bolt blank as a single solid with no holes. The hexagonal head is a regular hexagonal prism with flat-to-flat distance 24mm and height 14mm, base on the XY plane (z = 0 to z = 14), centered on the Z axis, oriented so two flats are parallel to the X axis (flat-to-flat distance 24mm in the Y direction, so the head spans y in [-12, 12] and x in [-13.856, 13.856]). Directly above the head and concentric with it is a cylindrical shank of diameter 14mm and height 46mm (z = 14 to z = 60). The combined part is a single solid: hexagonal head at bottom, cylindrical shank extending upward. Output a single solid with no bores or holes.",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "open_document",
+        "args": {},
+        "result_kind": "ok",
+        "wallclock_ms": 1.5984579999999937
+      },
+      {
+        "n": 1,
+        "tool": "create_cad_loon",
+        "args": {
+          "source": "[let\n  hex [extrude 0 0 14\n    [sketch 0 0 0  1 0 0  0 1 0\n      #[[line  13.8564064606 -12  13.8564064606  12]\n        [line  13.8564064606  12   0           24]\n        [line   0            24 -13.8564064606  12]\n        [line -13.8564064606  12 -13.8564064606 -12]\n        [line -13.8564064606 -12   0          -24]\n        [line   0           -24  13.8564064606 -12]]]]\n  shank [translate 0 0 14 [cylinder 7 46]]\n  [union hex shank]]",
+          "format": "json"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 11.322957999999744
+      },
+      {
+        "n": 2,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781217770431_1",
+          "type": "sketch_2_d",
+          "name": "Hex Profile",
+          "params": {
+            "origin": {
+              "x": 0,
+              "y": 0,
+              "z": 0
+            },
+            "x_dir": {
+              "x": 1,
+              "y": 0,
+              "z": 0
+            },
+            "y_dir": {
+              "x": 0,
+              "y": 1,
+              "z": 0
+            },
+            "segments": [
+              {
+                "type": "Line",
+                "start": {
+                  "x": 13.8564064606,
+                  "y": 0
+                },
+                "end": {
+                  "x": 6.9282032303,
+                  "y": 12
+                }
+              },
+              {
+                "type": "Line",
+                "start": {
+                  "x": 6.9282032303,
+                  "y": 12
+                },
+                "end": {
+                  "x": -6.9282032303,
+                  "y": 12
+                }
+              },
+              {
+                "type": "Line",
+                "start": {
+                  "x": -6.9282032303,
+                  "y": 12
+                },
+                "end": {
+                  "x": -13.8564064606,
+                  "y": 0
+                }
+              },
+              {
+                "type": "Line",
+                "start": {
+                  "x": -13.8564064606,
+                  "y": 0
+                },
+                "end": {
+                  "x": -6.9282032303,
+                  "y": -12
+                }
+              },
+              {
+                "type": "Line",
+                "start": {
+                  "x": -6.9282032303,
+                  "y": -12
+                },
+                "end": {
+                  "x": 6.9282032303,
+                  "y": -12
+                }
+              },
+              {
+                "type": "Line",
+                "start": {
+                  "x": 6.9282032303,
+                  "y": -12
+                },
+                "end": {
+                  "x": 13.8564064606,
+                  "y": 0
+                }
+              }
+            ]
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 10.033332999999402
+      },
+      {
+        "n": 3,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781217770431_1",
+          "type": "extrude",
+          "name": "Hex Head",
+          "params": {
+            "sketch": "1",
+            "direction": {
+              "x": 0,
+              "y": 0,
+              "z": 14
+            }
+          },
+          "parent_part_id": "1"
+        },
+        "result_kind": "err",
+        "wallclock_ms": 7.399875000002794
+      },
+      {
+        "n": 4,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781217770431_1",
+          "type": "cylinder",
+          "name": "Shank Cyl",
+          "params": {
+            "radius": 7,
+            "height": 46
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 2.1944580000017595
+      },
+      {
+        "n": 5,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781217770431_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.4842089999983727
+      },
+      {
+        "n": 6,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781217770431_1",
+          "type": "extrude",
+          "name": "Hex Head",
+          "params": {
+            "sketch": 1,
+            "direction": {
+              "x": 0,
+              "y": 0,
+              "z": 14
+            }
+          },
+          "parent_part_id": "1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 4.3506669999987935
+      },
+      {
+        "n": 7,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781217770431_1",
+          "type": "cylinder",
+          "name": "Shank Raw",
+          "params": {
+            "r": 7,
+            "h": 46
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 3.188624999995227
+      },
+      {
+        "n": 8,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781217770431_1",
+          "type": "cylinder",
+          "name": "Shank Raw",
+          "params": {
+            "radius": 7,
+            "height": 46
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 2.594083000003593
+      },
+      {
+        "n": 9,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781217770431_1",
+          "type": "cylinder",
+          "name": "Shank Raw",
+          "params": {
+            "radius": 7,
+            "height": 46,
+            "segments": 64
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 6.190916999999899
+      },
+      {
+        "n": 10,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781217770431_1",
+          "type": "translate",
+          "name": "Shank Position",
+          "params": {
+            "x": 0,
+            "y": 0,
+            "z": 14
+          },
+          "parent_part_id": "3"
+        },
+        "result_kind": "err",
+        "wallclock_ms": 3.6160000000018044
+      },
+      {
+        "n": 11,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781217770431_1",
+          "type": "translate",
+          "name": "Shank Position",
+          "params": {
+            "child": 3,
+            "x": 0,
+            "y": 0,
+            "z": 14
+          },
+          "parent_part_id": "3"
+        },
+        "result_kind": "err",
+        "wallclock_ms": 2.5160000000032596
+      },
+      {
+        "n": 12,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781217770431_1",
+          "type": "translate",
+          "name": "Shank Position",
+          "params": {
+            "child": 3,
+            "offset": {
+              "x": 0,
+              "y": 0,
+              "z": 14
+            }
+          },
+          "parent_part_id": "3"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.193083000005572
+      },
+      {
+        "n": 13,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781217770431_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 4.208374999994703
+      },
+      {
+        "n": 14,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781217770431_1",
+          "type": "union",
+          "name": "Bolt Blank",
+          "params": {
+            "a": 2,
+            "b": 4
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 3.487874999998894
+      },
+      {
+        "n": 15,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781217770431_1",
+          "type": "union",
+          "name": "Bolt Blank",
+          "params": {
+            "left": 2,
+            "right": 4
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.626209000001836
+      },
+      {
+        "n": 16,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781217770431_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.6438750000015716
+      },
+      {
+        "n": 17,
+        "tool": "render_view",
+        "args": {
+          "document_id": "doc_1781217770431_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 132.20433299999422
+      },
+      {
+        "n": 18,
+        "tool": "inspect_cad",
+        "args": {
+          "document_id": "doc_1781217770431_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 10.521208000005572
+      },
+      {
+        "n": 19,
+        "tool": "get_document",
+        "args": {
+          "document_id": "doc_1781217770431_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.9270000000105938
+      },
+      {
+        "n": 20,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781217770431_1",
+          "part_id": "1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.9059589999960735
+      },
+      {
+        "n": 21,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781217770431_1",
+          "part_id": "2"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.5019999999931315
+      },
+      {
+        "n": 22,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781217770431_1",
+          "part_id": "3"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.4661669999914011
+      },
+      {
+        "n": 23,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781217770431_1",
+          "part_id": "4"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.33087499999965075
+      },
+      {
+        "n": 24,
+        "tool": "inspect_cad",
+        "args": {
+          "document_id": "doc_1781217770431_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 5.073792000010144
+      },
+      {
+        "n": 25,
+        "tool": "render_view",
+        "args": {
+          "document_id": "doc_1781217770431_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 97.02091700000165
+      },
+      {
+        "n": 26,
+        "tool": "get_document",
+        "args": {
+          "document_id": "doc_1781217770431_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.6415000000124564
+      }
+    ],
+    "tokens": {
+      "input": 396701,
+      "output": 5299,
+      "total": 402000
+    },
+    "wallclock_sec": 90.96733620799999
+  },
+  "output": {
+    "vcad_path": "20260611T224250Z-a449.vcad",
+    "vcad_sha256": "b67c8c1b2a21703f71150680f6477c1fb458974288eeecf235cc554708821a01",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-06-11T22:42:50.263Z",
+    "ended_at": "2026-06-11T22:44:21.261Z"
+  },
+  "signature": null
+}
