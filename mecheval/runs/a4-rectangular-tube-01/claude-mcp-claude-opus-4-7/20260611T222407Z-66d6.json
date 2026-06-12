@@ -1,0 +1,821 @@
+{
+  "schema_version": 0,
+  "task_id": "a4-rectangular-tube-01",
+  "task_sha256": "26b7bf3bb00bfe8031a199347b2cd162efa46a3d1195cbc11957e5ccdb16aae1",
+  "checks": [
+    {
+      "n": 0,
+      "type": "valid_solid",
+      "params": {
+        "type": "valid_solid"
+      },
+      "result": "pass",
+      "details": {
+        "root_count": 3,
+        "solids_produced": 3
+      }
+    },
+    {
+      "n": 1,
+      "type": "bbox",
+      "params": {
+        "type": "bbox",
+        "min": [
+          -20,
+          -20,
+          0
+        ],
+        "max": [
+          20,
+          20,
+          80
+        ],
+        "tolerance_mm": 0.05
+      },
+      "result": "fail",
+      "details": {
+        "actual_max": [
+          20,
+          20,
+          81
+        ],
+        "actual_min": [
+          -20,
+          -20,
+          -1
+        ],
+        "deviation_max": [
+          0,
+          0,
+          1
+        ],
+        "deviation_min": [
+          0,
+          0,
+          -1
+        ],
+        "max_abs_deviation_mm": 1,
+        "tolerance_mm": 0.05
+      }
+    },
+    {
+      "n": 2,
+      "type": "mass_props",
+      "params": {
+        "type": "mass_props",
+        "volume_mm3": 65280,
+        "center_of_mass": [
+          0,
+          0,
+          40
+        ],
+        "tolerance_pct": 0.5
+      },
+      "result": "fail",
+      "details": {
+        "center_of_mass": {
+          "actual": [
+            0,
+            0,
+            40
+          ],
+          "bbox_diagonal_mm": 99.61927524329818,
+          "deviation": [
+            0,
+            0,
+            0
+          ],
+          "max_abs_deviation_mm": 0,
+          "pass": true,
+          "spec": [
+            0,
+            0,
+            40
+          ],
+          "tolerance_mm": 0.4980963762164909
+        },
+        "volume": {
+          "actual_mm3": 257568,
+          "deviation_pct": 294.55882352941177,
+          "pass": false,
+          "spec_mm3": 65280,
+          "tolerance_pct": 0.5
+        }
+      }
+    },
+    {
+      "n": 3,
+      "type": "step_roundtrip",
+      "params": {
+        "type": "step_roundtrip",
+        "tolerance_pct": 0.5
+      },
+      "result": "pass",
+      "details": {
+        "per_solid": [
+          {
+            "bbox": {
+              "max_abs_deviation_mm": 0,
+              "original_max": [
+                14,
+                14,
+                81
+              ],
+              "original_min": [
+                -14,
+                -14,
+                -1
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                14,
+                14,
+                81
+              ],
+              "roundtripped_min": [
+                -14,
+                -14,
+                -1
+              ],
+              "tolerance_mm": 0.45530209751328843
+            },
+            "index": 0,
+            "pass": true,
+            "volume": {
+              "deviation_pct": 0,
+              "original_mm3": 64288,
+              "pass": true,
+              "roundtripped_mm3": 64288
+            }
+          },
+          {
+            "bbox": {
+              "max_abs_deviation_mm": 0,
+              "original_max": [
+                20,
+                20,
+                80
+              ],
+              "original_min": [
+                -20,
+                -20,
+                0
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                20,
+                20,
+                80
+              ],
+              "roundtripped_min": [
+                -20,
+                -20,
+                0
+              ],
+              "tolerance_mm": 0.4898979485566356
+            },
+            "index": 1,
+            "pass": true,
+            "volume": {
+              "deviation_pct": 0,
+              "original_mm3": 128000,
+              "pass": true,
+              "roundtripped_mm3": 128000
+            }
+          },
+          {
+            "bbox": {
+              "max_abs_deviation_mm": 0,
+              "original_max": [
+                20,
+                20,
+                80
+              ],
+              "original_min": [
+                -20,
+                -20,
+                0
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                20,
+                20,
+                80
+              ],
+              "roundtripped_min": [
+                -20,
+                -20,
+                0
+              ],
+              "tolerance_mm": 0.4898979485566356
+            },
+            "index": 2,
+            "pass": true,
+            "volume": {
+              "deviation_pct": 0,
+              "original_mm3": 65280,
+              "pass": true,
+              "roundtripped_mm3": 65280
+            }
+          }
+        ],
+        "tolerance_pct": 0.5
+      }
+    }
+  ],
+  "summary": {
+    "passed": false,
+    "checks_passed": 2,
+    "checks_total": 4,
+    "score": 0.5,
+    "anti_cheese_violated": true,
+    "limits_exceeded": []
+  },
+  "run_id": "20260611T222407Z-66d6",
+  "model": {
+    "id": "claude-mcp-claude-opus-4-7",
+    "name": "Claude (MCP, claude-opus-4-7)",
+    "provider": "anthropic",
+    "params": {
+      "mode": "mcp",
+      "model": "claude-opus-4-7",
+      "max_tokens": 8000,
+      "max_iterations": 30
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "a4-rectangular-tube-01",
+    "rendered": "Make a hollow square tube. The outer cross-section is a 40mm × 40mm square; the inner cavity is a 28mm × 28mm square, concentric with the outer. The cavity passes all the way through. The tube is 80mm long along Z, with the bottom face on the XY plane (so it spans x in [-20, 20], y in [-20, 20], z in [0, 80] for the outer envelope). The inner cavity spans x in [-14, 14], y in [-14, 14], z in [0, 80]. Wall thickness is 6mm uniformly. Output a single solid.",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "open_document",
+        "args": {},
+        "result_kind": "ok",
+        "wallclock_ms": 1.5629999999999882
+      },
+      {
+        "n": 1,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781216647350_1",
+          "type": "difference",
+          "name": "Hollow Square Tube",
+          "params": {
+            "a": {
+              "op": "translate",
+              "x": -20,
+              "y": -20,
+              "z": 0,
+              "child": {
+                "op": "cube",
+                "x": 40,
+                "y": 40,
+                "z": 80
+              }
+            },
+            "b": {
+              "op": "translate",
+              "x": -14,
+              "y": -14,
+              "z": -1,
+              "child": {
+                "op": "cube",
+                "x": 28,
+                "y": 28,
+                "z": 82
+              }
+            }
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 6.225709000000279
+      },
+      {
+        "n": 2,
+        "tool": "create_cad_loon",
+        "args": {
+          "source": "[root [difference [translate -14 -14 -1 [cube 28 28 82]] [translate -20 -20 0 [cube 40 40 80]]] \"steel\"]",
+          "format": "json"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 11.750834000000395
+      },
+      {
+        "n": 3,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781216647350_1",
+          "type": "cube",
+          "name": "outer",
+          "params": {
+            "size": {
+              "x": 40,
+              "y": 40,
+              "z": 80
+            }
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.69116700000086
+      },
+      {
+        "n": 4,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781216647350_1",
+          "type": "translate",
+          "name": "outer_pos",
+          "parent_part_id": "1",
+          "params": {
+            "offset": {
+              "x": -20,
+              "y": -20,
+              "z": 0
+            },
+            "child": 1
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 5.520999999998821
+      },
+      {
+        "n": 5,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781216647350_1",
+          "type": "cube",
+          "name": "inner",
+          "parent_part_id": "1",
+          "params": {
+            "size": {
+              "x": 28,
+              "y": 28,
+              "z": 82
+            }
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.727708000000348
+      },
+      {
+        "n": 6,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781216647350_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.4152500000000146
+      },
+      {
+        "n": 7,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781216647350_1",
+          "part_id": "1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.361291999997775
+      },
+      {
+        "n": 8,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781216647350_1",
+          "part_id": "2"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.1193749999983993
+      },
+      {
+        "n": 9,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781216647350_1",
+          "part_id": "3"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.5299579999991693
+      },
+      {
+        "n": 10,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781216647350_1",
+          "type": "cube",
+          "name": "outer",
+          "params": {
+            "size": {
+              "x": 40,
+              "y": 40,
+              "z": 80
+            }
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 4.864082999996754
+      },
+      {
+        "n": 11,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781216647350_1",
+          "type": "translate",
+          "parent_part_id": "1",
+          "params": {
+            "offset": {
+              "x": -20,
+              "y": -20,
+              "z": 0
+            }
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 2.8948750000017753
+      },
+      {
+        "n": 12,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781216647350_1",
+          "type": "translate",
+          "parent_part_id": "1",
+          "params": {
+            "offset": {
+              "x": -20,
+              "y": -20,
+              "z": 0
+            },
+            "child": 1
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.8213749999995343
+      },
+      {
+        "n": 13,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781216647350_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.6813750000001164
+      },
+      {
+        "n": 14,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781216647350_1",
+          "part_id": "2"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.7272920000032173
+      },
+      {
+        "n": 15,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781216647350_1",
+          "part_id": "1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.2324589999989257
+      },
+      {
+        "n": 16,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781216647350_1",
+          "part_id": "1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.216374999996333
+      },
+      {
+        "n": 17,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781216647350_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.939542000000074
+      },
+      {
+        "n": 18,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781216647350_1",
+          "type": "cube",
+          "name": "inner",
+          "parent_part_id": "2",
+          "params": {
+            "size": {
+              "x": 28,
+              "y": 28,
+              "z": 82
+            }
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 6.681000000004133
+      },
+      {
+        "n": 19,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781216647350_1",
+          "part_id": "3"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.2210419999973965
+      },
+      {
+        "n": 20,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781216647350_1",
+          "part_id": "2"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.896874999998545
+      },
+      {
+        "n": 21,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781216647350_1",
+          "part_id": "3"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.2582499999989523
+      },
+      {
+        "n": 22,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781216647350_1",
+          "type": "cube",
+          "name": "outer",
+          "params": {
+            "size": {
+              "x": 40,
+              "y": 40,
+              "z": 80
+            }
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 4.424958000003244
+      },
+      {
+        "n": 23,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781216647350_1",
+          "type": "translate",
+          "parent_part_id": "1",
+          "params": {
+            "offset": {
+              "x": -20,
+              "y": -20,
+              "z": 0
+            },
+            "child": 1
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.1301669999957085
+      },
+      {
+        "n": 24,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781216647350_1",
+          "part_id": "1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.43241599999601
+      },
+      {
+        "n": 25,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781216647350_1",
+          "type": "difference",
+          "name": "tube",
+          "parent_part_id": "2",
+          "params": {
+            "left": 2,
+            "right": {
+              "op": "translate",
+              "offset": {
+                "x": -14,
+                "y": -14,
+                "z": -1
+              },
+              "child": {
+                "op": "cube",
+                "size": {
+                  "x": 28,
+                  "y": 28,
+                  "z": 82
+                }
+              }
+            }
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 1.9398749999963911
+      },
+      {
+        "n": 26,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781216647350_1",
+          "part_id": "2"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.1297499999927823
+      },
+      {
+        "n": 27,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781216647350_1",
+          "type": "cube",
+          "name": "inner_cube",
+          "params": {
+            "size": {
+              "x": 28,
+              "y": 28,
+              "z": 82
+            }
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.3591250000026776
+      },
+      {
+        "n": 28,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781216647350_1",
+          "type": "translate",
+          "parent_part_id": "1",
+          "params": {
+            "offset": {
+              "x": -14,
+              "y": -14,
+              "z": -1
+            },
+            "child": 1
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.4137079999927664
+      },
+      {
+        "n": 29,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781216647350_1",
+          "part_id": "1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.509959000002709
+      },
+      {
+        "n": 30,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781216647350_1",
+          "type": "cube",
+          "name": "outer_cube",
+          "params": {
+            "size": {
+              "x": 40,
+              "y": 40,
+              "z": 80
+            }
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.8068749999947613
+      },
+      {
+        "n": 31,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781216647350_1",
+          "type": "translate",
+          "parent_part_id": "3",
+          "params": {
+            "offset": {
+              "x": -20,
+              "y": -20,
+              "z": 0
+            },
+            "child": 3
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.3277089999901364
+      },
+      {
+        "n": 32,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781216647350_1",
+          "part_id": "3"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.6943329999921843
+      },
+      {
+        "n": 33,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781216647350_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.3211670000018785
+      },
+      {
+        "n": 34,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781216647350_1",
+          "type": "difference",
+          "name": "Hollow Tube",
+          "parent_part_id": "4",
+          "params": {
+            "left": 4,
+            "right": 2
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.297791999997571
+      },
+      {
+        "n": 35,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781216647350_1",
+          "part_id": "5"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.477874999996857
+      },
+      {
+        "n": 36,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781216647350_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.3396669999929145
+      },
+      {
+        "n": 37,
+        "tool": "get_document",
+        "args": {
+          "document_id": "doc_1781216647350_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.5968749999883585
+      }
+    ],
+    "tokens": {
+      "input": 582996,
+      "output": 6118,
+      "total": 589114
+    },
+    "wallclock_sec": 114.36925516699999
+  },
+  "output": {
+    "vcad_path": "20260611T222407Z-66d6.vcad",
+    "vcad_sha256": "604a28e209594906a911f32acdc2dc4b397b969c3283fedce2b26918db60b49c",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-06-11T22:24:07.176Z",
+    "ended_at": "2026-06-11T22:26:01.690Z"
+  },
+  "signature": null
+}

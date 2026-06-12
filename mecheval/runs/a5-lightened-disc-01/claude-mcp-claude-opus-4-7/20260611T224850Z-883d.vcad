@@ -1,0 +1,55 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "disc",
+      "op": {
+        "type": "Cylinder",
+        "radius": 60,
+        "height": 15,
+        "segments": 64
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": "bore_raw",
+      "op": {
+        "type": "Cylinder",
+        "radius": 11,
+        "height": 15.2,
+        "segments": 48
+      }
+    },
+    "3": {
+      "id": 3,
+      "name": "bore_translated",
+      "op": {
+        "type": "Translate",
+        "child": 2,
+        "offset": {
+          "x": 0,
+          "y": 0,
+          "z": -0.1
+        }
+      }
+    },
+    "4": {
+      "id": 4,
+      "name": "disc_minus_bore",
+      "op": {
+        "type": "Difference",
+        "left": 1,
+        "right": 3
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 4,
+      "material": "default"
+    }
+  ]
+}

@@ -1,0 +1,87 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "Outer",
+      "op": {
+        "type": "Cylinder",
+        "radius": 40,
+        "height": 50,
+        "segments": 64
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": "BottomBoreCyl",
+      "op": {
+        "type": "Cylinder",
+        "radius": 15,
+        "height": 25.1,
+        "segments": 64
+      }
+    },
+    "3": {
+      "id": 3,
+      "name": "TopBoreCyl",
+      "op": {
+        "type": "Cylinder",
+        "radius": 25,
+        "height": 25.1,
+        "segments": 64
+      }
+    },
+    "4": {
+      "id": 4,
+      "name": "BottomBoreXlat",
+      "op": {
+        "type": "Translate",
+        "child": 2,
+        "offset": {
+          "x": 0,
+          "y": 0,
+          "z": -0.05
+        }
+      }
+    },
+    "5": {
+      "id": 5,
+      "name": "TopBoreXlat",
+      "op": {
+        "type": "Translate",
+        "child": 3,
+        "offset": {
+          "x": 0,
+          "y": 0,
+          "z": 25
+        }
+      }
+    },
+    "6": {
+      "id": 6,
+      "name": "MinusBottomBore",
+      "op": {
+        "type": "Difference",
+        "left": 1,
+        "right": 4
+      }
+    },
+    "7": {
+      "id": 7,
+      "name": "SteppedBoreRing",
+      "op": {
+        "type": "Difference",
+        "left": 6,
+        "right": 5
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 7,
+      "material": "default"
+    }
+  ]
+}

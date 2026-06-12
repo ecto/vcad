@@ -1,0 +1,471 @@
+{
+  "schema_version": 0,
+  "task_id": "a4-x-frame-01",
+  "task_sha256": "984c72e685616e39f1a57a059ec6b4f41560402835e80466730906ced3fa2f3b",
+  "checks": [
+    {
+      "n": 0,
+      "type": "valid_solid",
+      "params": {
+        "type": "valid_solid"
+      },
+      "result": "pass",
+      "details": {
+        "root_count": 1,
+        "solids_produced": 1
+      }
+    },
+    {
+      "n": 1,
+      "type": "bbox",
+      "params": {
+        "type": "bbox",
+        "min": [
+          -50,
+          -50,
+          0
+        ],
+        "max": [
+          50,
+          50,
+          10
+        ],
+        "tolerance_mm": 0.05
+      },
+      "result": "pass",
+      "details": {
+        "actual_max": [
+          50,
+          50,
+          10
+        ],
+        "actual_min": [
+          -50,
+          -50,
+          0
+        ],
+        "deviation_max": [
+          0,
+          0,
+          0
+        ],
+        "deviation_min": [
+          0,
+          0,
+          0
+        ],
+        "max_abs_deviation_mm": 0,
+        "tolerance_mm": 0.05
+      }
+    },
+    {
+      "n": 2,
+      "type": "mass_props",
+      "params": {
+        "type": "mass_props",
+        "volume_mm3": 36000,
+        "center_of_mass": [
+          0,
+          0,
+          5
+        ],
+        "tolerance_pct": 0.5
+      },
+      "result": "pass",
+      "details": {
+        "center_of_mass": {
+          "actual": [
+            0,
+            0,
+            5
+          ],
+          "bbox_diagonal_mm": 141.77446878757826,
+          "deviation": [
+            0,
+            0,
+            0
+          ],
+          "max_abs_deviation_mm": 0,
+          "pass": true,
+          "spec": [
+            0,
+            0,
+            5
+          ],
+          "tolerance_mm": 0.7088723439378913
+        },
+        "volume": {
+          "actual_mm3": 36000,
+          "deviation_pct": 0,
+          "pass": true,
+          "spec_mm3": 36000,
+          "tolerance_pct": 0.5
+        }
+      }
+    },
+    {
+      "n": 3,
+      "type": "step_roundtrip",
+      "params": {
+        "type": "step_roundtrip",
+        "tolerance_pct": 0.5
+      },
+      "result": "pass",
+      "details": {
+        "per_solid": [
+          {
+            "bbox": {
+              "max_abs_deviation_mm": 0,
+              "original_max": [
+                50,
+                50,
+                10
+              ],
+              "original_min": [
+                -50,
+                -50,
+                0
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                50,
+                50,
+                10
+              ],
+              "roundtripped_min": [
+                -50,
+                -50,
+                0
+              ],
+              "tolerance_mm": 0.7088723439378913
+            },
+            "index": 0,
+            "pass": true,
+            "volume": {
+              "deviation_pct": 0,
+              "original_mm3": 36000,
+              "pass": true,
+              "roundtripped_mm3": 36000
+            }
+          }
+        ],
+        "tolerance_pct": 0.5
+      }
+    }
+  ],
+  "summary": {
+    "passed": true,
+    "checks_passed": 4,
+    "checks_total": 4,
+    "score": 1,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260611T223549Z-641d",
+  "model": {
+    "id": "claude-mcp-claude-opus-4-7",
+    "name": "Claude (MCP, claude-opus-4-7)",
+    "provider": "anthropic",
+    "params": {
+      "mode": "mcp",
+      "model": "claude-opus-4-7",
+      "max_tokens": 8000,
+      "max_iterations": 30
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "a4-x-frame-01",
+    "rendered": "Make a cross-shaped frame in the XY plane by fusing two rectangular bars at right angles. Bar A is 100mm long along X, 20mm wide along Y, and 10mm tall along Z, centered in X and Y with its bottom face on the XY plane (so it spans x in [-50, 50], y in [-10, 10], z in [0, 10]). Bar B is 20mm wide along X, 100mm long along Y, and 10mm tall along Z, centered in X and Y with its bottom face on the XY plane (so it spans x in [-10, 10], y in [-50, 50], z in [0, 10]). Union the two bars into a single plus-sign-shaped solid; the central 20mm × 20mm × 10mm overlap is counted only once. Output a single solid.",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "open_document",
+        "args": {},
+        "result_kind": "ok",
+        "wallclock_ms": 1.5345829999999978
+      },
+      {
+        "n": 1,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781217350164_1",
+          "type": "union",
+          "name": "Cross Frame",
+          "params": {
+            "children": [
+              {
+                "type": "translate",
+                "params": {
+                  "x": -50,
+                  "y": -10,
+                  "z": 0,
+                  "child": {
+                    "type": "cube",
+                    "params": {
+                      "x": 100,
+                      "y": 20,
+                      "z": 10
+                    }
+                  }
+                }
+              },
+              {
+                "type": "translate",
+                "params": {
+                  "x": -10,
+                  "y": -50,
+                  "z": 0,
+                  "child": {
+                    "type": "cube",
+                    "params": {
+                      "x": 20,
+                      "y": 100,
+                      "z": 10
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 5.178875000000062
+      },
+      {
+        "n": 2,
+        "tool": "create_cad_loon",
+        "args": {
+          "source": "[root [union [translate -50 -10 0 [cube 100 20 10]] [translate -10 -50 0 [cube 20 100 10]]] \"steel\"]",
+          "format": "json"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 13.875
+      },
+      {
+        "n": 3,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781217350164_1",
+          "type": "cube",
+          "name": "BarA_cube",
+          "params": {
+            "size": {
+              "x": 100,
+              "y": 20,
+              "z": 10
+            }
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 4.351834000000963
+      },
+      {
+        "n": 4,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781217350164_1",
+          "type": "translate",
+          "name": "BarA",
+          "parent_part_id": "1",
+          "params": {
+            "offset": {
+              "x": -50,
+              "y": -10,
+              "z": 0
+            }
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 5.580041999999594
+      },
+      {
+        "n": 5,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781217350164_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.0581660000007105
+      },
+      {
+        "n": 6,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781217350164_1",
+          "type": "translate",
+          "name": "BarA",
+          "params": {
+            "offset": {
+              "x": -50,
+              "y": -10,
+              "z": 0
+            },
+            "child": 1
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.2209590000020398
+      },
+      {
+        "n": 7,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781217350164_1",
+          "type": "cube",
+          "name": "BarB_cube",
+          "params": {
+            "size": {
+              "x": 20,
+              "y": 100,
+              "z": 10
+            }
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.6555420000004233
+      },
+      {
+        "n": 8,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781217350164_1",
+          "type": "translate",
+          "name": "BarB",
+          "params": {
+            "offset": {
+              "x": -10,
+              "y": -50,
+              "z": 0
+            },
+            "child": 3
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 5.358832999998413
+      },
+      {
+        "n": 9,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781217350164_1",
+          "type": "union",
+          "name": "Cross",
+          "params": {
+            "left": 2,
+            "right": 4
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.757916999998997
+      },
+      {
+        "n": 10,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781217350164_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.8731249999982538
+      },
+      {
+        "n": 11,
+        "tool": "get_document",
+        "args": {
+          "document_id": "doc_1781217350164_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.898416999996698
+      },
+      {
+        "n": 12,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781217350164_1",
+          "part_id": "1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 5.410624999996799
+      },
+      {
+        "n": 13,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781217350164_1",
+          "part_id": "2"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.473999999994703
+      },
+      {
+        "n": 14,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781217350164_1",
+          "part_id": "3"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.8229589999973541
+      },
+      {
+        "n": 15,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781217350164_1",
+          "part_id": "4"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.0181250000023283
+      },
+      {
+        "n": 16,
+        "tool": "get_document",
+        "args": {
+          "document_id": "doc_1781217350164_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.4487910000025295
+      },
+      {
+        "n": 17,
+        "tool": "get_document",
+        "args": {
+          "document_id": "doc_1781217350164_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.05304199999955
+      }
+    ],
+    "tokens": {
+      "input": 239329,
+      "output": 2253,
+      "total": 241582
+    },
+    "wallclock_sec": 40.422872375
+  },
+  "output": {
+    "vcad_path": "20260611T223549Z-641d.vcad",
+    "vcad_sha256": "3421013cd6322645d51c8e5eac0064e78ad62731ae99908d17d75b932089622c",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-06-11T22:35:49.993Z",
+    "ended_at": "2026-06-11T22:36:30.437Z"
+  },
+  "signature": null
+}

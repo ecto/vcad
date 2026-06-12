@@ -1,0 +1,162 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "Flange",
+      "op": {
+        "type": "Cylinder",
+        "radius": 50,
+        "height": 10,
+        "segments": 64
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": "Hub",
+      "op": {
+        "type": "Cylinder",
+        "radius": 20,
+        "height": 20,
+        "segments": 64
+      }
+    },
+    "3": {
+      "id": 3,
+      "name": "HubLifted",
+      "op": {
+        "type": "Translate",
+        "child": 2,
+        "offset": {
+          "x": 0,
+          "y": 0,
+          "z": 10
+        }
+      }
+    },
+    "4": {
+      "id": 4,
+      "name": "FlangeHub",
+      "op": {
+        "type": "Union",
+        "left": 1,
+        "right": 3
+      }
+    },
+    "5": {
+      "id": 5,
+      "name": "Bore",
+      "op": {
+        "type": "Cylinder",
+        "radius": 9,
+        "height": 30,
+        "segments": 64
+      }
+    },
+    "6": {
+      "id": 6,
+      "name": "BoltHole",
+      "op": {
+        "type": "Cylinder",
+        "radius": 4,
+        "height": 10,
+        "segments": 32
+      }
+    },
+    "7": {
+      "id": 7,
+      "name": "BoltHoleAtR",
+      "op": {
+        "type": "Translate",
+        "child": 6,
+        "offset": {
+          "x": 37.5,
+          "y": 0,
+          "z": 0
+        }
+      }
+    },
+    "8": {
+      "id": 8,
+      "name": "BoltHoles",
+      "op": {
+        "type": "CircularPattern",
+        "child": 7,
+        "axis_origin": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "axis_dir": {
+          "x": 0,
+          "y": 0,
+          "z": 1
+        },
+        "count": 6,
+        "angle_deg": 360
+      }
+    },
+    "9": {
+      "id": 9,
+      "name": "MinusBore",
+      "op": {
+        "type": "Difference",
+        "left": 4,
+        "right": 5
+      }
+    },
+    "10": {
+      "id": 10,
+      "name": "FlangedDisc",
+      "op": {
+        "type": "Difference",
+        "left": 9,
+        "right": 8
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 1,
+      "material": "default"
+    },
+    {
+      "root": 2,
+      "material": "default"
+    },
+    {
+      "root": 3,
+      "material": "default"
+    },
+    {
+      "root": 4,
+      "material": "default"
+    },
+    {
+      "root": 5,
+      "material": "default"
+    },
+    {
+      "root": 6,
+      "material": "default"
+    },
+    {
+      "root": 7,
+      "material": "default"
+    },
+    {
+      "root": 8,
+      "material": "default"
+    },
+    {
+      "root": 9,
+      "material": "default"
+    },
+    {
+      "root": 10,
+      "material": "default"
+    }
+  ]
+}

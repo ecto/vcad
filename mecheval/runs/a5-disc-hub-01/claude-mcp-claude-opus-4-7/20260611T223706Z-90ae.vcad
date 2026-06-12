@@ -1,0 +1,139 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "Flange",
+      "op": {
+        "type": "Cylinder",
+        "radius": 50,
+        "height": 10,
+        "segments": 64
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": "Hub raw",
+      "op": {
+        "type": "Cylinder",
+        "radius": 20,
+        "height": 20,
+        "segments": 64
+      }
+    },
+    "3": {
+      "id": 3,
+      "name": "Hub up",
+      "op": {
+        "type": "Translate",
+        "child": 2,
+        "offset": {
+          "x": 0,
+          "y": 0,
+          "z": 10
+        }
+      }
+    },
+    "4": {
+      "id": 4,
+      "name": "Flange+Hub",
+      "op": {
+        "type": "Union",
+        "left": 1,
+        "right": 3
+      }
+    },
+    "5": {
+      "id": 5,
+      "name": "Bore raw",
+      "op": {
+        "type": "Cylinder",
+        "radius": 9,
+        "height": 32,
+        "segments": 64
+      }
+    },
+    "6": {
+      "id": 6,
+      "name": "Bore positioned",
+      "op": {
+        "type": "Translate",
+        "child": 5,
+        "offset": {
+          "x": 0,
+          "y": 0,
+          "z": -1
+        }
+      }
+    },
+    "7": {
+      "id": 7,
+      "name": "Bored body",
+      "op": {
+        "type": "Difference",
+        "left": 4,
+        "right": 6
+      }
+    },
+    "8": {
+      "id": 8,
+      "name": "Bolt hole raw",
+      "op": {
+        "type": "Cylinder",
+        "radius": 4,
+        "height": 12,
+        "segments": 32
+      }
+    },
+    "9": {
+      "id": 9,
+      "name": "Bolt hole at +X",
+      "op": {
+        "type": "Translate",
+        "child": 8,
+        "offset": {
+          "x": 37.5,
+          "y": 0,
+          "z": -1
+        }
+      }
+    },
+    "10": {
+      "id": 10,
+      "name": "Bolt holes ×6",
+      "op": {
+        "type": "CircularPattern",
+        "child": 9,
+        "axis_origin": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "axis_dir": {
+          "x": 0,
+          "y": 0,
+          "z": 1
+        },
+        "count": 6,
+        "angle_deg": 360
+      }
+    },
+    "11": {
+      "id": 11,
+      "name": "Flanged Disc",
+      "op": {
+        "type": "Difference",
+        "left": 7,
+        "right": 10
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 11,
+      "material": "default"
+    }
+  ]
+}

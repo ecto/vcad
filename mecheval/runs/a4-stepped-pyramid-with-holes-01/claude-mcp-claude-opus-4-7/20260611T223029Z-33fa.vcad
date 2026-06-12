@@ -1,0 +1,106 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "base",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 80,
+          "y": 80,
+          "z": 10
+        }
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": null,
+      "op": {
+        "type": "Translate",
+        "child": 1,
+        "offset": {
+          "x": -40,
+          "y": -40,
+          "z": 0
+        }
+      }
+    },
+    "3": {
+      "id": 3,
+      "name": "middle",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 60,
+          "y": 60,
+          "z": 10
+        }
+      }
+    },
+    "4": {
+      "id": 4,
+      "name": null,
+      "op": {
+        "type": "Translate",
+        "child": 3,
+        "offset": {
+          "x": -30,
+          "y": -30,
+          "z": 10
+        }
+      }
+    },
+    "5": {
+      "id": 5,
+      "name": "top",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 40,
+          "y": 40,
+          "z": 10
+        }
+      }
+    },
+    "6": {
+      "id": 6,
+      "name": null,
+      "op": {
+        "type": "Translate",
+        "child": 5,
+        "offset": {
+          "x": -20,
+          "y": -20,
+          "z": 20
+        }
+      }
+    },
+    "7": {
+      "id": 7,
+      "name": null,
+      "op": {
+        "type": "Union",
+        "left": 2,
+        "right": 4
+      }
+    },
+    "8": {
+      "id": 8,
+      "name": null,
+      "op": {
+        "type": "Union",
+        "left": 7,
+        "right": 6
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 8,
+      "material": "default"
+    }
+  ]
+}

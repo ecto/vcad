@@ -1,0 +1,148 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "Hex Profile",
+      "op": {
+        "type": "Sketch2D",
+        "origin": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "x_dir": {
+          "x": 1,
+          "y": 0,
+          "z": 0
+        },
+        "y_dir": {
+          "x": 0,
+          "y": 1,
+          "z": 0
+        },
+        "segments": [
+          {
+            "type": "Line",
+            "start": {
+              "x": 13.8564064606,
+              "y": 0
+            },
+            "end": {
+              "x": 6.9282032303,
+              "y": 12
+            }
+          },
+          {
+            "type": "Line",
+            "start": {
+              "x": 6.9282032303,
+              "y": 12
+            },
+            "end": {
+              "x": -6.9282032303,
+              "y": 12
+            }
+          },
+          {
+            "type": "Line",
+            "start": {
+              "x": -6.9282032303,
+              "y": 12
+            },
+            "end": {
+              "x": -13.8564064606,
+              "y": 0
+            }
+          },
+          {
+            "type": "Line",
+            "start": {
+              "x": -13.8564064606,
+              "y": 0
+            },
+            "end": {
+              "x": -6.9282032303,
+              "y": -12
+            }
+          },
+          {
+            "type": "Line",
+            "start": {
+              "x": -6.9282032303,
+              "y": -12
+            },
+            "end": {
+              "x": 6.9282032303,
+              "y": -12
+            }
+          },
+          {
+            "type": "Line",
+            "start": {
+              "x": 6.9282032303,
+              "y": -12
+            },
+            "end": {
+              "x": 13.8564064606,
+              "y": 0
+            }
+          }
+        ]
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": "Hex Head",
+      "op": {
+        "type": "Extrude",
+        "sketch": 1,
+        "direction": {
+          "x": 0,
+          "y": 0,
+          "z": 14
+        }
+      }
+    },
+    "3": {
+      "id": 3,
+      "name": "Shank Raw",
+      "op": {
+        "type": "Cylinder",
+        "radius": 7,
+        "height": 46,
+        "segments": 64
+      }
+    },
+    "4": {
+      "id": 4,
+      "name": "Shank Position",
+      "op": {
+        "type": "Translate",
+        "child": 3,
+        "offset": {
+          "x": 0,
+          "y": 0,
+          "z": 14
+        }
+      }
+    },
+    "5": {
+      "id": 5,
+      "name": "Bolt Blank",
+      "op": {
+        "type": "Union",
+        "left": 2,
+        "right": 4
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 5,
+      "material": "default"
+    }
+  ]
+}

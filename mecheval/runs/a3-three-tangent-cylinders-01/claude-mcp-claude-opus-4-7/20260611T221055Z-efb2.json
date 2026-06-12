@@ -1,0 +1,522 @@
+{
+  "schema_version": 0,
+  "task_id": "a3-three-tangent-cylinders-01",
+  "task_sha256": "4bf52e7ac1c38ed54b20a328274610f7ef2271b76fb1ea65799947ea855f7b4b",
+  "checks": [
+    {
+      "n": 0,
+      "type": "valid_solid",
+      "params": {
+        "type": "valid_solid"
+      },
+      "result": "pass",
+      "details": {
+        "root_count": 1,
+        "solids_produced": 1
+      }
+    },
+    {
+      "n": 1,
+      "type": "bbox",
+      "params": {
+        "type": "bbox",
+        "min": [
+          -20,
+          -15.77,
+          0
+        ],
+        "max": [
+          20,
+          21.55,
+          30
+        ],
+        "tolerance_mm": 0.3
+      },
+      "result": "pass",
+      "details": {
+        "actual_max": [
+          20,
+          21.54700469970703,
+          30
+        ],
+        "actual_min": [
+          -20,
+          -15.773502349853516,
+          0
+        ],
+        "deviation_max": [
+          0,
+          -0.0029953002929694605,
+          0
+        ],
+        "deviation_min": [
+          0,
+          -0.0035023498535160513,
+          0
+        ],
+        "max_abs_deviation_mm": 0.0035023498535160513,
+        "tolerance_mm": 0.3
+      }
+    },
+    {
+      "n": 2,
+      "type": "mass_props",
+      "params": {
+        "type": "mass_props",
+        "volume_mm3": 28274.33,
+        "tolerance_pct": 1
+      },
+      "result": "pass",
+      "details": {
+        "volume": {
+          "actual_mm3": 28228.93606530325,
+          "deviation_pct": 0.16054822411973224,
+          "pass": true,
+          "spec_mm3": 28274.33,
+          "tolerance_pct": 1
+        }
+      }
+    },
+    {
+      "n": 3,
+      "type": "step_roundtrip",
+      "params": {
+        "type": "step_roundtrip",
+        "tolerance_pct": 1
+      },
+      "result": "pass",
+      "details": {
+        "per_solid": [
+          {
+            "bbox": {
+              "max_abs_deviation_mm": 0,
+              "original_max": [
+                20,
+                21.54700469970703,
+                30
+              ],
+              "original_min": [
+                -20,
+                -15.773502349853516,
+                0
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                20,
+                21.54700469970703,
+                30
+              ],
+              "roundtripped_min": [
+                -20,
+                -15.773502349853516,
+                0
+              ],
+              "tolerance_mm": 0.6239246946896956
+            },
+            "index": 0,
+            "pass": true,
+            "volume": {
+              "deviation_pct": 0.4815269537820328,
+              "original_mm3": 28228.93606530325,
+              "pass": true,
+              "roundtripped_mm3": 28093.006129382917
+            }
+          }
+        ],
+        "tolerance_pct": 1
+      }
+    }
+  ],
+  "summary": {
+    "passed": true,
+    "checks_passed": 4,
+    "checks_total": 4,
+    "score": 1,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260611T221055Z-efb2",
+  "model": {
+    "id": "claude-mcp-claude-opus-4-7",
+    "name": "Claude (MCP, claude-opus-4-7)",
+    "provider": "anthropic",
+    "params": {
+      "mode": "mcp",
+      "model": "claude-opus-4-7",
+      "max_tokens": 8000,
+      "max_iterations": 30
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "a3-three-tangent-cylinders-01",
+    "rendered": "Make a single solid that is the union of three identical cylinders arranged so they are all mutually externally tangent (each cylinder touches each of the other two at exactly one tangent line). Each cylinder has outside diameter 20mm, length 30mm, axis along Z, base on the XY plane (z = 0 to z = 30). Place the three cylinder axes at the vertices of an equilateral triangle in the XY plane such that adjacent axes are exactly 20mm apart (so the cylinders are externally tangent — outer surfaces touch but do not overlap). Center the arrangement on the Z axis (the centroid of the three axes is at (0, 0)), with one cylinder axis on the +Y side directly above the centroid. Output a single solid.",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "open_document",
+        "args": {},
+        "result_kind": "ok",
+        "wallclock_ms": 1.7300839999999766
+      },
+      {
+        "n": 1,
+        "tool": "create_cad_loon",
+        "args": {
+          "source": "[let\n  r 10\n  h 30\n  cy 11.547005383792515\n  by -5.773502691896258\n  bx 10\n  [union\n    [translate 0 cy 0 [cylinder r h]]\n    [union\n      [translate (- 0 bx) by 0 [cylinder r h]]\n      [translate bx by 0 [cylinder r h]]]]]",
+          "format": "json"
+        },
+        "result_kind": "err",
+        "wallclock_ms": 8.575124999999389
+      },
+      {
+        "n": 2,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781215855582_1",
+          "type": "cylinder",
+          "name": "cyl_top",
+          "params": {
+            "radius": 10,
+            "height": 30
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 7.544040999999197
+      },
+      {
+        "n": 3,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781215855582_1",
+          "type": "cylinder",
+          "name": "cyl_bl",
+          "params": {
+            "radius": 10,
+            "height": 30
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 1.4279999999998836
+      },
+      {
+        "n": 4,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781215855582_1",
+          "type": "cylinder",
+          "name": "cyl_br",
+          "params": {
+            "radius": 10,
+            "height": 30
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 1.327000000001135
+      },
+      {
+        "n": 5,
+        "tool": "create_cad_loon",
+        "args": {
+          "source": "[union\n  [translate 0 11.547005383792515 0 [cylinder 10 30]]\n  [union\n    [translate -10 -5.773502691896258 0 [cylinder 10 30]]\n    [translate 10 -5.773502691896258 0 [cylinder 10 30]]]]",
+          "format": "json"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 7.491791999998895
+      },
+      {
+        "n": 6,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781215855582_1",
+          "type": "cylinder",
+          "name": "cyl_top",
+          "params": {
+            "radius": 10,
+            "height": 30,
+            "segments": 64
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 4.804624999997031
+      },
+      {
+        "n": 7,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781215855582_1",
+          "type": "cylinder",
+          "name": "cyl_bl",
+          "params": {
+            "radius": 10,
+            "height": 30,
+            "segments": 64
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.521874999998545
+      },
+      {
+        "n": 8,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781215855582_1",
+          "type": "cylinder",
+          "name": "cyl_br",
+          "params": {
+            "radius": 10,
+            "height": 30,
+            "segments": 64
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.7008329999989655
+      },
+      {
+        "n": 9,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781215855582_1",
+          "type": "translate",
+          "name": "pos_top",
+          "parent_part_id": "1",
+          "params": {
+            "child": 1,
+            "offset": {
+              "x": 0,
+              "y": 11.547005383792515,
+              "z": 0
+            }
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 5.386666000002151
+      },
+      {
+        "n": 10,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781215855582_1",
+          "type": "translate",
+          "name": "pos_bl",
+          "parent_part_id": "2",
+          "params": {
+            "child": 2,
+            "offset": {
+              "x": -10,
+              "y": -5.773502691896258,
+              "z": 0
+            }
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.745875000000524
+      },
+      {
+        "n": 11,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781215855582_1",
+          "type": "translate",
+          "name": "pos_br",
+          "parent_part_id": "3",
+          "params": {
+            "child": 3,
+            "offset": {
+              "x": 10,
+              "y": -5.773502691896258,
+              "z": 0
+            }
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.114291999998386
+      },
+      {
+        "n": 12,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781215855582_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.3787499999962165
+      },
+      {
+        "n": 13,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781215855582_1",
+          "type": "union",
+          "name": "union1",
+          "params": {
+            "left": 4,
+            "right": 5
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.4521249999961583
+      },
+      {
+        "n": 14,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781215855582_1",
+          "type": "union",
+          "name": "union2",
+          "params": {
+            "left": 7,
+            "right": 6
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.2248749999998836
+      },
+      {
+        "n": 15,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781215855582_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.7959169999958249
+      },
+      {
+        "n": 16,
+        "tool": "get_document",
+        "args": {
+          "document_id": "doc_1781215855582_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.5839169999962905
+      },
+      {
+        "n": 17,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781215855582_1",
+          "part_id": "1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.1259159999972326
+      },
+      {
+        "n": 18,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781215855582_1",
+          "part_id": "2"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.8487500000046566
+      },
+      {
+        "n": 19,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781215855582_1",
+          "part_id": "3"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.626749999995809
+      },
+      {
+        "n": 20,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781215855582_1",
+          "part_id": "4"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.1723330000022543
+      },
+      {
+        "n": 21,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781215855582_1",
+          "part_id": "5"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.6797909999950207
+      },
+      {
+        "n": 22,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781215855582_1",
+          "part_id": "6"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.9114159999953699
+      },
+      {
+        "n": 23,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781215855582_1",
+          "part_id": "7"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.5713329999998678
+      },
+      {
+        "n": 24,
+        "tool": "get_document",
+        "args": {
+          "document_id": "doc_1781215855582_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.0218750000058208
+      },
+      {
+        "n": 25,
+        "tool": "render_view",
+        "args": {
+          "document_id": "doc_1781215855582_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 107.22270800000115
+      },
+      {
+        "n": 26,
+        "tool": "get_document",
+        "args": {
+          "document_id": "doc_1781215855582_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.3915000000051805
+      }
+    ],
+    "tokens": {
+      "input": 263470,
+      "output": 3637,
+      "total": 267107
+    },
+    "wallclock_sec": 57.807086083
+  },
+  "output": {
+    "vcad_path": "20260611T221055Z-efb2.vcad",
+    "vcad_sha256": "99476b5c553ae6717af98ffdd004ffff52bac9045d6a8b0b70782bf24e1ca947",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-06-11T22:10:55.401Z",
+    "ended_at": "2026-06-11T22:11:53.236Z"
+  },
+  "signature": null
+}

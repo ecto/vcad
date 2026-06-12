@@ -1,0 +1,94 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "Outer Body",
+      "op": {
+        "type": "Cylinder",
+        "radius": 50,
+        "height": 12,
+        "segments": 64
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": "Central Bore",
+      "op": {
+        "type": "Cylinder",
+        "radius": 20,
+        "height": 12,
+        "segments": 64
+      }
+    },
+    "3": {
+      "id": 3,
+      "name": "Body Minus Bore",
+      "op": {
+        "type": "Difference",
+        "left": 1,
+        "right": 2
+      }
+    },
+    "4": {
+      "id": 4,
+      "name": "Bolt Hole Proto",
+      "op": {
+        "type": "Cylinder",
+        "radius": 4,
+        "height": 12,
+        "segments": 32
+      }
+    },
+    "5": {
+      "id": 5,
+      "name": "Bolt Hole at +X",
+      "op": {
+        "type": "Translate",
+        "child": 4,
+        "offset": {
+          "x": 37.5,
+          "y": 0,
+          "z": 0
+        }
+      }
+    },
+    "6": {
+      "id": 6,
+      "name": "Bolt Hole Pattern",
+      "op": {
+        "type": "CircularPattern",
+        "child": 5,
+        "axis_origin": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "axis_dir": {
+          "x": 0,
+          "y": 0,
+          "z": 1
+        },
+        "count": 6,
+        "angle_deg": 360
+      }
+    },
+    "7": {
+      "id": 7,
+      "name": "Flange",
+      "op": {
+        "type": "Difference",
+        "left": 3,
+        "right": 6
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 7,
+      "material": "default"
+    }
+  ]
+}

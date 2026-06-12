@@ -1,0 +1,209 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "plate_raw",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 60,
+          "y": 60,
+          "z": 12
+        }
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": "plate",
+      "op": {
+        "type": "Translate",
+        "child": 1,
+        "offset": {
+          "x": -30,
+          "y": -30,
+          "z": 0
+        }
+      }
+    },
+    "3": {
+      "id": 3,
+      "name": "h1_tool",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2,
+        "height": 12,
+        "segments": 64
+      }
+    },
+    "4": {
+      "id": 4,
+      "name": null,
+      "op": {
+        "type": "Translate",
+        "child": 3,
+        "offset": {
+          "x": 20,
+          "y": 20,
+          "z": 0
+        }
+      }
+    },
+    "5": {
+      "id": 5,
+      "name": null,
+      "op": {
+        "type": "Difference",
+        "left": 2,
+        "right": 4
+      }
+    },
+    "6": {
+      "id": 6,
+      "name": null,
+      "op": {
+        "type": "Cylinder",
+        "radius": 2,
+        "height": 12,
+        "segments": 64
+      }
+    },
+    "7": {
+      "id": 7,
+      "name": null,
+      "op": {
+        "type": "Translate",
+        "child": 6,
+        "offset": {
+          "x": -20,
+          "y": 20,
+          "z": 0
+        }
+      }
+    },
+    "8": {
+      "id": 8,
+      "name": null,
+      "op": {
+        "type": "Difference",
+        "left": 5,
+        "right": 7
+      }
+    },
+    "9": {
+      "id": 9,
+      "name": null,
+      "op": {
+        "type": "Cylinder",
+        "radius": 2,
+        "height": 12,
+        "segments": 64
+      }
+    },
+    "10": {
+      "id": 10,
+      "name": null,
+      "op": {
+        "type": "Translate",
+        "child": 9,
+        "offset": {
+          "x": -20,
+          "y": -20,
+          "z": 0
+        }
+      }
+    },
+    "11": {
+      "id": 11,
+      "name": null,
+      "op": {
+        "type": "Difference",
+        "left": 8,
+        "right": 10
+      }
+    },
+    "12": {
+      "id": 12,
+      "name": null,
+      "op": {
+        "type": "Cylinder",
+        "radius": 2,
+        "height": 12,
+        "segments": 64
+      }
+    },
+    "13": {
+      "id": 13,
+      "name": null,
+      "op": {
+        "type": "Translate",
+        "child": 12,
+        "offset": {
+          "x": 20,
+          "y": -20,
+          "z": 0
+        }
+      }
+    },
+    "14": {
+      "id": 14,
+      "name": null,
+      "op": {
+        "type": "Difference",
+        "left": 11,
+        "right": 13
+      }
+    },
+    "15": {
+      "id": 15,
+      "name": null,
+      "op": {
+        "type": "Cylinder",
+        "radius": 4,
+        "height": 4,
+        "segments": 64
+      }
+    },
+    "16": {
+      "id": 16,
+      "name": null,
+      "op": {
+        "type": "Translate",
+        "child": 15,
+        "offset": {
+          "x": 20,
+          "y": 20,
+          "z": 8
+        }
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 5,
+      "material": "default"
+    },
+    {
+      "root": 8,
+      "material": "default"
+    },
+    {
+      "root": 11,
+      "material": "default"
+    },
+    {
+      "root": 14,
+      "material": "default"
+    },
+    {
+      "root": 15,
+      "material": "default"
+    },
+    {
+      "root": 16,
+      "material": "default"
+    }
+  ]
+}

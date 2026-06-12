@@ -1,0 +1,89 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "Base",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 50,
+          "y": 30,
+          "z": 4
+        }
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": "WallRaw",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 4,
+          "y": 30,
+          "z": 26
+        }
+      }
+    },
+    "3": {
+      "id": 3,
+      "name": "HoleCyl",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 6,
+        "segments": 64
+      }
+    },
+    "4": {
+      "id": 4,
+      "name": "WallPos",
+      "op": {
+        "type": "Translate",
+        "child": 2,
+        "offset": {
+          "x": 46,
+          "y": 0,
+          "z": 4
+        }
+      }
+    },
+    "5": {
+      "id": 5,
+      "name": "Hole1Pos",
+      "op": {
+        "type": "Translate",
+        "child": 3,
+        "offset": {
+          "x": 10,
+          "y": 15,
+          "z": -1
+        }
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 1,
+      "material": "default"
+    },
+    {
+      "root": 2,
+      "material": "default"
+    },
+    {
+      "root": 3,
+      "material": "default"
+    },
+    {
+      "root": 4,
+      "material": "default"
+    },
+    {
+      "root": 5,
+      "material": "default"
+    }
+  ]
+}

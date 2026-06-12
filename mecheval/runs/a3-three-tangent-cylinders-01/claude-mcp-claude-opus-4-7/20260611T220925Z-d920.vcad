@@ -1,0 +1,128 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "Cyl Top",
+      "op": {
+        "type": "Cylinder",
+        "radius": 10,
+        "height": 30,
+        "segments": 64
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": "Cyl BL",
+      "op": {
+        "type": "Cylinder",
+        "radius": 10,
+        "height": 30,
+        "segments": 64
+      }
+    },
+    "3": {
+      "id": 3,
+      "name": "Cyl BR",
+      "op": {
+        "type": "Cylinder",
+        "radius": 10,
+        "height": 30,
+        "segments": 64
+      }
+    },
+    "4": {
+      "id": 4,
+      "name": "Move Top",
+      "op": {
+        "type": "Translate",
+        "child": 1,
+        "offset": {
+          "x": 0,
+          "y": 11.547005383792516,
+          "z": 0
+        }
+      }
+    },
+    "5": {
+      "id": 5,
+      "name": "Move BL",
+      "op": {
+        "type": "Translate",
+        "child": 2,
+        "offset": {
+          "x": -10,
+          "y": -5.773502691896258,
+          "z": 0
+        }
+      }
+    },
+    "6": {
+      "id": 6,
+      "name": "Move BR",
+      "op": {
+        "type": "Translate",
+        "child": 3,
+        "offset": {
+          "x": 10,
+          "y": -5.773502691896258,
+          "z": 0
+        }
+      }
+    },
+    "7": {
+      "id": 7,
+      "name": "Union12",
+      "op": {
+        "type": "Union",
+        "left": 4,
+        "right": 5
+      }
+    },
+    "8": {
+      "id": 8,
+      "name": "Three Cyl Union",
+      "op": {
+        "type": "Union",
+        "left": 7,
+        "right": 6
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 1,
+      "material": "default"
+    },
+    {
+      "root": 2,
+      "material": "default"
+    },
+    {
+      "root": 3,
+      "material": "default"
+    },
+    {
+      "root": 4,
+      "material": "default"
+    },
+    {
+      "root": 5,
+      "material": "default"
+    },
+    {
+      "root": 6,
+      "material": "default"
+    },
+    {
+      "root": 7,
+      "material": "default"
+    },
+    {
+      "root": 8,
+      "material": "default"
+    }
+  ]
+}

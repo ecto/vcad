@@ -1,0 +1,877 @@
+{
+  "schema_version": 0,
+  "task_id": "a4-rounded-bar-01",
+  "task_sha256": "7d784df0d0a2093508ecd8afc9682f361b3ac3936400a370796a57e039c78acb",
+  "checks": [
+    {
+      "n": 0,
+      "type": "valid_solid",
+      "params": {
+        "type": "valid_solid"
+      },
+      "result": "pass",
+      "details": {
+        "root_count": 1,
+        "solids_produced": 1
+      }
+    },
+    {
+      "n": 1,
+      "type": "bbox",
+      "params": {
+        "type": "bbox",
+        "min": [
+          -40,
+          -10,
+          0
+        ],
+        "max": [
+          40,
+          10,
+          10
+        ],
+        "tolerance_mm": 0.2
+      },
+      "result": "pass",
+      "details": {
+        "actual_max": [
+          40,
+          10,
+          10
+        ],
+        "actual_min": [
+          -40,
+          -10,
+          0
+        ],
+        "deviation_max": [
+          0,
+          0,
+          0
+        ],
+        "deviation_min": [
+          0,
+          0,
+          0
+        ],
+        "max_abs_deviation_mm": 0,
+        "tolerance_mm": 0.2
+      }
+    },
+    {
+      "n": 2,
+      "type": "mass_props",
+      "params": {
+        "type": "mass_props",
+        "volume_mm3": 15141.59,
+        "center_of_mass": [
+          0,
+          0,
+          5
+        ],
+        "tolerance_pct": 1
+      },
+      "result": "pass",
+      "details": {
+        "center_of_mass": {
+          "actual": [
+            6.390801884869006e-16,
+            4.403111534850693e-18,
+            4.999999999999997
+          ],
+          "bbox_diagonal_mm": 83.06623862918075,
+          "deviation": [
+            6.390801884869006e-16,
+            4.403111534850693e-18,
+            -2.6645352591003757e-15
+          ],
+          "max_abs_deviation_mm": 2.6645352591003757e-15,
+          "pass": true,
+          "spec": [
+            0,
+            0,
+            5
+          ],
+          "tolerance_mm": 0.8306623862918074
+        },
+        "volume": {
+          "actual_mm3": 15061.467664258204,
+          "deviation_pct": 0.5291540435436215,
+          "pass": true,
+          "spec_mm3": 15141.59,
+          "tolerance_pct": 1
+        }
+      }
+    },
+    {
+      "n": 3,
+      "type": "step_roundtrip",
+      "params": {
+        "type": "step_roundtrip",
+        "tolerance_pct": 1
+      },
+      "result": "pass",
+      "details": {
+        "per_solid": [
+          {
+            "bbox": {
+              "max_abs_deviation_mm": 0,
+              "original_max": [
+                40,
+                10,
+                10
+              ],
+              "original_min": [
+                -40,
+                -10,
+                0
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                40,
+                10,
+                10
+              ],
+              "roundtripped_min": [
+                -40,
+                -10,
+                0
+              ],
+              "tolerance_mm": 0.8306623862918074
+            },
+            "index": 0,
+            "pass": true,
+            "volume": {
+              "deviation_pct": 0,
+              "original_mm3": 15061.467664258204,
+              "pass": true,
+              "roundtripped_mm3": 15061.467664258204
+            }
+          }
+        ],
+        "tolerance_pct": 1
+      }
+    }
+  ],
+  "summary": {
+    "passed": true,
+    "checks_passed": 4,
+    "checks_total": 4,
+    "score": 1,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260611T222601Z-2cca",
+  "model": {
+    "id": "claude-mcp-claude-opus-4-7",
+    "name": "Claude (MCP, claude-opus-4-7)",
+    "provider": "anthropic",
+    "params": {
+      "mode": "mcp",
+      "model": "claude-opus-4-7",
+      "max_tokens": 8000,
+      "max_iterations": 30
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "a4-rounded-bar-01",
+    "rendered": "Make a flat bar with a stadium-shaped (rectangle with semicircular ends) footprint, extruded 10mm along Z. Total end-to-end length is 80mm along X; total width is 20mm along Y. The footprint is the union of a 60mm × 20mm rectangle (x in [-30, 30], y in [-10, 10]) and two semicircles of radius 10mm centered at (-30, 0) and (30, 0). The bottom face sits on the XY plane (z = 0 to z = 10). Output a single solid (no holes or other features).",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "open_document",
+        "args": {},
+        "result_kind": "ok",
+        "wallclock_ms": 1.54445800000002
+      },
+      {
+        "n": 1,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781216761901_1",
+          "type": "union",
+          "name": "Stadium Bar",
+          "params": {
+            "children": [
+              {
+                "type": "translate",
+                "params": {
+                  "x": -30,
+                  "y": -10,
+                  "z": 0,
+                  "child": {
+                    "type": "cube",
+                    "params": {
+                      "x": 60,
+                      "y": 20,
+                      "z": 10
+                    }
+                  }
+                }
+              },
+              {
+                "type": "translate",
+                "params": {
+                  "x": -30,
+                  "y": 0,
+                  "z": 0,
+                  "child": {
+                    "type": "cylinder",
+                    "params": {
+                      "radius": 10,
+                      "height": 10
+                    }
+                  }
+                }
+              },
+              {
+                "type": "translate",
+                "params": {
+                  "x": 30,
+                  "y": 0,
+                  "z": 0,
+                  "child": {
+                    "type": "cylinder",
+                    "params": {
+                      "radius": 10,
+                      "height": 10
+                    }
+                  }
+                }
+              }
+            ]
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 5.255874999999833
+      },
+      {
+        "n": 2,
+        "tool": "create_cad_loon",
+        "args": {
+          "source": "[root [union [translate -30 -10 0 [cube 60 20 10]] [union [translate -30 0 0 [cylinder 10 10]] [translate 30 0 0 [cylinder 10 10]]]] \"steel\"]",
+          "format": "json"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 14.143583000000035
+      },
+      {
+        "n": 3,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781216761901_1",
+          "type": "cube",
+          "name": "Rect",
+          "params": {
+            "size": {
+              "x": 60,
+              "y": 20,
+              "z": 10
+            }
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 4.552417000000787
+      },
+      {
+        "n": 4,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781216761901_1",
+          "part_id": "1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 4.127749999999651
+      },
+      {
+        "n": 5,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781216761901_1",
+          "part_id": "1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.3870420000002923
+      },
+      {
+        "n": 6,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781216761901_1",
+          "type": "translate",
+          "name": "Rect",
+          "params": {
+            "offset": {
+              "x": -30,
+              "y": -10,
+              "z": 0
+            },
+            "child": {
+              "type": "cube",
+              "params": {
+                "size": {
+                  "x": 60,
+                  "y": 20,
+                  "z": 10
+                }
+              }
+            }
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 4.303084000002855
+      },
+      {
+        "n": 7,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781216761901_1",
+          "type": "cube",
+          "params": {
+            "size": {
+              "x": 60,
+              "y": 20,
+              "z": 10
+            }
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 5.824625000001106
+      },
+      {
+        "n": 8,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781216761901_1",
+          "type": "translate",
+          "parent_part_id": "1",
+          "params": {
+            "offset": {
+              "x": -30,
+              "y": -10,
+              "z": 0
+            },
+            "child": 1
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 5.262290999999095
+      },
+      {
+        "n": 9,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781216761901_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.8888330000008864
+      },
+      {
+        "n": 10,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781216761901_1",
+          "part_id": "2"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 5.2245419999999285
+      },
+      {
+        "n": 11,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781216761901_1",
+          "part_id": "1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.0056670000049053
+      },
+      {
+        "n": 12,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781216761901_1",
+          "part_id": "2"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.3269580000051064
+      },
+      {
+        "n": 13,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781216761901_1",
+          "type": "cube",
+          "params": {
+            "size": {
+              "x": 60,
+              "y": 20,
+              "z": 10
+            }
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.862667000001238
+      },
+      {
+        "n": 14,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781216761901_1",
+          "type": "translate",
+          "parent_part_id": "1",
+          "params": {
+            "offset": {
+              "x": -30,
+              "y": -10,
+              "z": 0
+            },
+            "child": 1
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.9737089999980526
+      },
+      {
+        "n": 15,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781216761901_1",
+          "type": "cylinder",
+          "parent_part_id": "1",
+          "params": {
+            "radius": 10,
+            "height": 10
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 2.3707920000015292
+      },
+      {
+        "n": 16,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781216761901_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.5119999999951688
+      },
+      {
+        "n": 17,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781216761901_1",
+          "part_id": "1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.517208000004757
+      },
+      {
+        "n": 18,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781216761901_1",
+          "type": "cylinder",
+          "parent_part_id": "2",
+          "params": {
+            "radius": 10,
+            "height": 10,
+            "segments": 64
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.7325830000045244
+      },
+      {
+        "n": 19,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781216761901_1",
+          "part_id": "3"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.1084160000027623
+      },
+      {
+        "n": 20,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781216761901_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.5722079999977723
+      },
+      {
+        "n": 21,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781216761901_1",
+          "part_id": "2"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.172791999997571
+      },
+      {
+        "n": 22,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781216761901_1",
+          "part_id": "3"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.1417079999955604
+      },
+      {
+        "n": 23,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781216761901_1",
+          "type": "sketch_2_d",
+          "name": "Stadium Sketch",
+          "params": {
+            "origin": {
+              "x": 0,
+              "y": 0,
+              "z": 0
+            },
+            "x_axis": {
+              "x": 1,
+              "y": 0,
+              "z": 0
+            },
+            "y_axis": {
+              "x": 0,
+              "y": 1,
+              "z": 0
+            },
+            "segments": [
+              {
+                "type": "line",
+                "start": {
+                  "x": -30,
+                  "y": -10
+                },
+                "end": {
+                  "x": 30,
+                  "y": -10
+                }
+              },
+              {
+                "type": "arc",
+                "start": {
+                  "x": 30,
+                  "y": -10
+                },
+                "end": {
+                  "x": 30,
+                  "y": 10
+                },
+                "center": {
+                  "x": 30,
+                  "y": 0
+                },
+                "ccw": true
+              },
+              {
+                "type": "line",
+                "start": {
+                  "x": 30,
+                  "y": 10
+                },
+                "end": {
+                  "x": -30,
+                  "y": 10
+                }
+              },
+              {
+                "type": "arc",
+                "start": {
+                  "x": -30,
+                  "y": 10
+                },
+                "end": {
+                  "x": -30,
+                  "y": -10
+                },
+                "center": {
+                  "x": -30,
+                  "y": 0
+                },
+                "ccw": true
+              }
+            ]
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 4.238624999998137
+      },
+      {
+        "n": 24,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781216761901_1",
+          "type": "sketch_2_d",
+          "name": "Stadium Sketch",
+          "params": {
+            "origin": {
+              "x": 0,
+              "y": 0,
+              "z": 0
+            },
+            "x_axis": {
+              "x": 1,
+              "y": 0,
+              "z": 0
+            },
+            "y_axis": {
+              "x": 0,
+              "y": 1,
+              "z": 0
+            },
+            "segments": [
+              {
+                "type": "Line",
+                "start": {
+                  "x": -30,
+                  "y": -10
+                },
+                "end": {
+                  "x": 30,
+                  "y": -10
+                }
+              },
+              {
+                "type": "Arc",
+                "start": {
+                  "x": 30,
+                  "y": -10
+                },
+                "end": {
+                  "x": 30,
+                  "y": 10
+                },
+                "center": {
+                  "x": 30,
+                  "y": 0
+                },
+                "ccw": true
+              },
+              {
+                "type": "Line",
+                "start": {
+                  "x": 30,
+                  "y": 10
+                },
+                "end": {
+                  "x": -30,
+                  "y": 10
+                }
+              },
+              {
+                "type": "Arc",
+                "start": {
+                  "x": -30,
+                  "y": 10
+                },
+                "end": {
+                  "x": -30,
+                  "y": -10
+                },
+                "center": {
+                  "x": -30,
+                  "y": 0
+                },
+                "ccw": true
+              }
+            ]
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 3.546749999994063
+      },
+      {
+        "n": 25,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781216761901_1",
+          "type": "sketch_2_d",
+          "name": "Stadium Sketch",
+          "params": {
+            "origin": {
+              "x": 0,
+              "y": 0,
+              "z": 0
+            },
+            "x_dir": {
+              "x": 1,
+              "y": 0,
+              "z": 0
+            },
+            "y_dir": {
+              "x": 0,
+              "y": 1,
+              "z": 0
+            },
+            "segments": [
+              {
+                "type": "Line",
+                "start": {
+                  "x": -30,
+                  "y": -10
+                },
+                "end": {
+                  "x": 30,
+                  "y": -10
+                }
+              },
+              {
+                "type": "Arc",
+                "start": {
+                  "x": 30,
+                  "y": -10
+                },
+                "end": {
+                  "x": 30,
+                  "y": 10
+                },
+                "center": {
+                  "x": 30,
+                  "y": 0
+                },
+                "ccw": true
+              },
+              {
+                "type": "Line",
+                "start": {
+                  "x": 30,
+                  "y": 10
+                },
+                "end": {
+                  "x": -30,
+                  "y": 10
+                }
+              },
+              {
+                "type": "Arc",
+                "start": {
+                  "x": -30,
+                  "y": 10
+                },
+                "end": {
+                  "x": -30,
+                  "y": -10
+                },
+                "center": {
+                  "x": -30,
+                  "y": 0
+                },
+                "ccw": true
+              }
+            ]
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.847125000000233
+      },
+      {
+        "n": 26,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781216761901_1",
+          "type": "extrude",
+          "name": "Stadium Bar",
+          "parent_part_id": "1",
+          "params": {
+            "direction": {
+              "x": 0,
+              "y": 0,
+              "z": 10
+            },
+            "sketch": 1
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 4.798959000007017
+      },
+      {
+        "n": 27,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781216761901_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.235916999998153
+      },
+      {
+        "n": 28,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781216761901_1",
+          "part_id": "2"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.3379579999891575
+      },
+      {
+        "n": 29,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781216761901_1",
+          "part_id": "1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.5235000000102445
+      },
+      {
+        "n": 30,
+        "tool": "render_view",
+        "args": {
+          "document_id": "doc_1781216761901_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 94.62608400000317
+      },
+      {
+        "n": 31,
+        "tool": "get_document",
+        "args": {
+          "document_id": "doc_1781216761901_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.1966669999965234
+      }
+    ],
+    "tokens": {
+      "input": 524029,
+      "output": 5684,
+      "total": 529713
+    },
+    "wallclock_sec": 97.14008475
+  },
+  "output": {
+    "vcad_path": "20260611T222601Z-2cca.vcad",
+    "vcad_sha256": "d03ce9fedc917f29c580795dad108668c369f4aef0c4c54229bc3ace2fe0c7c3",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-06-11T22:26:01.725Z",
+    "ended_at": "2026-06-11T22:27:38.899Z"
+  },
+  "signature": null
+}

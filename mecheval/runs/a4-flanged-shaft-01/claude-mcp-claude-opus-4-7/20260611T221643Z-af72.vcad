@@ -1,0 +1,150 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "flange_disk",
+      "op": {
+        "type": "Cylinder",
+        "radius": 40,
+        "height": 10,
+        "segments": 64
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": "shaft_cyl",
+      "op": {
+        "type": "Cylinder",
+        "radius": 15,
+        "height": 50,
+        "segments": 64
+      }
+    },
+    "3": {
+      "id": 3,
+      "name": "shaft_translated",
+      "op": {
+        "type": "Translate",
+        "child": 2,
+        "offset": {
+          "x": 0,
+          "y": 0,
+          "z": 10
+        }
+      }
+    },
+    "4": {
+      "id": 4,
+      "name": "flange_plus_shaft",
+      "op": {
+        "type": "Union",
+        "left": 1,
+        "right": 3
+      }
+    },
+    "5": {
+      "id": 5,
+      "name": "bore_cyl",
+      "op": {
+        "type": "Cylinder",
+        "radius": 7.5,
+        "height": 60,
+        "segments": 64
+      }
+    },
+    "6": {
+      "id": 6,
+      "name": "bolt_hole_cyl",
+      "op": {
+        "type": "Cylinder",
+        "radius": 3,
+        "height": 10,
+        "segments": 32
+      }
+    },
+    "7": {
+      "id": 7,
+      "name": "bolt_hole_at_x30",
+      "op": {
+        "type": "Translate",
+        "child": 6,
+        "offset": {
+          "x": 30,
+          "y": 0,
+          "z": 0
+        }
+      }
+    },
+    "8": {
+      "id": 8,
+      "name": "bolt_holes",
+      "op": {
+        "type": "CircularPattern",
+        "child": 7,
+        "axis_origin": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "axis_dir": {
+          "x": 0,
+          "y": 0,
+          "z": 1
+        },
+        "count": 4,
+        "angle_deg": 360
+      }
+    },
+    "9": {
+      "id": 9,
+      "name": "all_holes",
+      "op": {
+        "type": "Union",
+        "left": 5,
+        "right": 8
+      }
+    },
+    "10": {
+      "id": 10,
+      "name": "FlangedHollowShaft",
+      "op": {
+        "type": "Difference",
+        "left": 4,
+        "right": 9
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 4,
+      "material": "default"
+    },
+    {
+      "root": 5,
+      "material": "default"
+    },
+    {
+      "root": 6,
+      "material": "default"
+    },
+    {
+      "root": 7,
+      "material": "default"
+    },
+    {
+      "root": 8,
+      "material": "default"
+    },
+    {
+      "root": 9,
+      "material": "default"
+    },
+    {
+      "root": 10,
+      "material": "default"
+    }
+  ]
+}

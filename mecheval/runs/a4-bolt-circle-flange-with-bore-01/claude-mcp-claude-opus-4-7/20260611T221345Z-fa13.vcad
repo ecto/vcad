@@ -1,0 +1,120 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "Outer",
+      "op": {
+        "type": "Cylinder",
+        "radius": 50,
+        "height": 12,
+        "segments": 64
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": "Bore",
+      "op": {
+        "type": "Cylinder",
+        "radius": 20,
+        "height": 14,
+        "segments": 64
+      }
+    },
+    "3": {
+      "id": 3,
+      "name": "BoltHole",
+      "op": {
+        "type": "Cylinder",
+        "radius": 4,
+        "height": 14,
+        "segments": 32
+      }
+    },
+    "4": {
+      "id": 4,
+      "name": "BoreShifted",
+      "op": {
+        "type": "Translate",
+        "child": 2,
+        "offset": {
+          "x": 0,
+          "y": 0,
+          "z": -1
+        }
+      }
+    },
+    "5": {
+      "id": 5,
+      "name": "BoltShiftZ",
+      "op": {
+        "type": "Translate",
+        "child": 3,
+        "offset": {
+          "x": 0,
+          "y": 0,
+          "z": -1
+        }
+      }
+    },
+    "6": {
+      "id": 6,
+      "name": "BoltOnCircle",
+      "op": {
+        "type": "Translate",
+        "child": 5,
+        "offset": {
+          "x": 37.5,
+          "y": 0,
+          "z": 0
+        }
+      }
+    },
+    "7": {
+      "id": 7,
+      "name": "BoltCircle",
+      "op": {
+        "type": "CircularPattern",
+        "child": 6,
+        "axis_origin": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        },
+        "axis_dir": {
+          "x": 0,
+          "y": 0,
+          "z": 1
+        },
+        "count": 6,
+        "angle_deg": 360
+      }
+    },
+    "8": {
+      "id": 8,
+      "name": "OuterMinusBore",
+      "op": {
+        "type": "Difference",
+        "left": 1,
+        "right": 4
+      }
+    },
+    "9": {
+      "id": 9,
+      "name": "Flange",
+      "op": {
+        "type": "Difference",
+        "left": 8,
+        "right": 7
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 9,
+      "material": "default"
+    }
+  ]
+}

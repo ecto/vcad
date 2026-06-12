@@ -1,0 +1,247 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "blank",
+      "op": {
+        "type": "Cylinder",
+        "radius": 60,
+        "height": 15,
+        "segments": 64
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": "bore_cyl",
+      "op": {
+        "type": "Cylinder",
+        "radius": 11,
+        "height": 15.2,
+        "segments": 48
+      }
+    },
+    "3": {
+      "id": 3,
+      "name": "bore_pos",
+      "op": {
+        "type": "Translate",
+        "child": 2,
+        "offset": {
+          "x": 0,
+          "y": 0,
+          "z": -0.1
+        }
+      }
+    },
+    "4": {
+      "id": 4,
+      "name": "d1",
+      "op": {
+        "type": "Difference",
+        "left": 1,
+        "right": 3
+      }
+    },
+    "5": {
+      "id": 5,
+      "name": "h1",
+      "op": {
+        "type": "Cylinder",
+        "radius": 8,
+        "height": 15.2,
+        "segments": 48
+      }
+    },
+    "6": {
+      "id": 6,
+      "name": "h2",
+      "op": {
+        "type": "Cylinder",
+        "radius": 8,
+        "height": 15.2,
+        "segments": 48
+      }
+    },
+    "7": {
+      "id": 7,
+      "name": "h3",
+      "op": {
+        "type": "Cylinder",
+        "radius": 8,
+        "height": 15.2,
+        "segments": 48
+      }
+    },
+    "8": {
+      "id": 8,
+      "name": "h4",
+      "op": {
+        "type": "Cylinder",
+        "radius": 8,
+        "height": 15.2,
+        "segments": 48
+      }
+    },
+    "9": {
+      "id": 9,
+      "name": "h5",
+      "op": {
+        "type": "Cylinder",
+        "radius": 8,
+        "height": 15.2,
+        "segments": 48
+      }
+    },
+    "10": {
+      "id": 10,
+      "name": "h6",
+      "op": {
+        "type": "Cylinder",
+        "radius": 8,
+        "height": 15.2,
+        "segments": 48
+      }
+    },
+    "11": {
+      "id": 11,
+      "name": "h1p",
+      "op": {
+        "type": "Translate",
+        "child": 5,
+        "offset": {
+          "x": 38,
+          "y": 0,
+          "z": -0.1
+        }
+      }
+    },
+    "12": {
+      "id": 12,
+      "name": "h2p",
+      "op": {
+        "type": "Translate",
+        "child": 6,
+        "offset": {
+          "x": 19,
+          "y": 32.909,
+          "z": -0.1
+        }
+      }
+    },
+    "13": {
+      "id": 13,
+      "name": "h3p",
+      "op": {
+        "type": "Translate",
+        "child": 7,
+        "offset": {
+          "x": -19,
+          "y": 32.909,
+          "z": -0.1
+        }
+      }
+    },
+    "14": {
+      "id": 14,
+      "name": "h4p",
+      "op": {
+        "type": "Translate",
+        "child": 8,
+        "offset": {
+          "x": -38,
+          "y": 0,
+          "z": -0.1
+        }
+      }
+    },
+    "15": {
+      "id": 15,
+      "name": "h5p",
+      "op": {
+        "type": "Translate",
+        "child": 9,
+        "offset": {
+          "x": -19,
+          "y": -32.909,
+          "z": -0.1
+        }
+      }
+    },
+    "16": {
+      "id": 16,
+      "name": "h6p",
+      "op": {
+        "type": "Translate",
+        "child": 10,
+        "offset": {
+          "x": 19,
+          "y": -32.909,
+          "z": -0.1
+        }
+      }
+    },
+    "17": {
+      "id": 17,
+      "name": "d2",
+      "op": {
+        "type": "Difference",
+        "left": 4,
+        "right": 11
+      }
+    },
+    "18": {
+      "id": 18,
+      "name": "d3",
+      "op": {
+        "type": "Difference",
+        "left": 17,
+        "right": 12
+      }
+    },
+    "19": {
+      "id": 19,
+      "name": "d4",
+      "op": {
+        "type": "Difference",
+        "left": 18,
+        "right": 13
+      }
+    },
+    "20": {
+      "id": 20,
+      "name": "d5",
+      "op": {
+        "type": "Difference",
+        "left": 19,
+        "right": 14
+      }
+    },
+    "21": {
+      "id": 21,
+      "name": "d6",
+      "op": {
+        "type": "Difference",
+        "left": 20,
+        "right": 15
+      }
+    },
+    "22": {
+      "id": 22,
+      "name": "Lightened Disc",
+      "op": {
+        "type": "Difference",
+        "left": 21,
+        "right": 16
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 22,
+      "material": "default"
+    }
+  ]
+}

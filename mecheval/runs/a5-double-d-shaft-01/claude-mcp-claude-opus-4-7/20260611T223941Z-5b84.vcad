@@ -1,0 +1,91 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "Blank",
+      "op": {
+        "type": "Cylinder",
+        "radius": 20,
+        "height": 60,
+        "segments": 64
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": "LeftCutterBase",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 11,
+          "y": 50,
+          "z": 60
+        }
+      }
+    },
+    "3": {
+      "id": 3,
+      "name": "RightCutterBase",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 11,
+          "y": 50,
+          "z": 60
+        }
+      }
+    },
+    "4": {
+      "id": 4,
+      "name": "LeftCutter",
+      "op": {
+        "type": "Translate",
+        "child": 2,
+        "offset": {
+          "x": -25,
+          "y": -25,
+          "z": 0
+        }
+      }
+    },
+    "5": {
+      "id": 5,
+      "name": "RightCutter",
+      "op": {
+        "type": "Translate",
+        "child": 3,
+        "offset": {
+          "x": 14,
+          "y": -25,
+          "z": 0
+        }
+      }
+    },
+    "6": {
+      "id": 6,
+      "name": "CutLeft",
+      "op": {
+        "type": "Difference",
+        "left": 1,
+        "right": 4
+      }
+    },
+    "7": {
+      "id": 7,
+      "name": "DoubleDShaft",
+      "op": {
+        "type": "Difference",
+        "left": 6,
+        "right": 5
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 7,
+      "material": "default"
+    }
+  ]
+}

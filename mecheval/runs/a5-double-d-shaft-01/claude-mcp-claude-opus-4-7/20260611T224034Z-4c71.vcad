@@ -1,0 +1,91 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "Shaft Blank",
+      "op": {
+        "type": "Cylinder",
+        "radius": 20,
+        "height": 60,
+        "segments": 64
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": "Left Cutter",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 26,
+          "y": 50,
+          "z": 62
+        }
+      }
+    },
+    "3": {
+      "id": 3,
+      "name": "Left Cutter Pos",
+      "op": {
+        "type": "Translate",
+        "child": 2,
+        "offset": {
+          "x": -40,
+          "y": -25,
+          "z": -1
+        }
+      }
+    },
+    "4": {
+      "id": 4,
+      "name": "Left Flat",
+      "op": {
+        "type": "Difference",
+        "left": 1,
+        "right": 3
+      }
+    },
+    "5": {
+      "id": 5,
+      "name": "Right Cutter",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 26,
+          "y": 50,
+          "z": 62
+        }
+      }
+    },
+    "6": {
+      "id": 6,
+      "name": "Right Cutter Pos",
+      "op": {
+        "type": "Translate",
+        "child": 5,
+        "offset": {
+          "x": 14,
+          "y": -25,
+          "z": -1
+        }
+      }
+    },
+    "7": {
+      "id": 7,
+      "name": "Double-D Shaft",
+      "op": {
+        "type": "Difference",
+        "left": 4,
+        "right": 6
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 7,
+      "material": "default"
+    }
+  ]
+}

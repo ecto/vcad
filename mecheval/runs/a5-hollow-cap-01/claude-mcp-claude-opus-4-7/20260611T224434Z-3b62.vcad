@@ -1,0 +1,55 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "Outer",
+      "op": {
+        "type": "Cylinder",
+        "radius": 30,
+        "height": 50,
+        "segments": 64
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": "InnerRaw",
+      "op": {
+        "type": "Cylinder",
+        "radius": 25,
+        "height": 42,
+        "segments": 64
+      }
+    },
+    "3": {
+      "id": 3,
+      "name": "InnerShifted",
+      "op": {
+        "type": "Translate",
+        "child": 2,
+        "offset": {
+          "x": 0,
+          "y": 0,
+          "z": 8
+        }
+      }
+    },
+    "4": {
+      "id": 4,
+      "name": "Hollow Cap",
+      "op": {
+        "type": "Difference",
+        "left": 1,
+        "right": 3
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 4,
+      "material": "default"
+    }
+  ]
+}

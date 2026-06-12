@@ -1,0 +1,52 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": null,
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 60,
+          "y": 20,
+          "z": 10
+        }
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": null,
+      "op": {
+        "type": "Translate",
+        "child": 1,
+        "offset": {
+          "x": -30,
+          "y": -10,
+          "z": 0
+        }
+      }
+    },
+    "3": {
+      "id": 3,
+      "name": null,
+      "op": {
+        "type": "Cylinder",
+        "radius": 10,
+        "height": 10,
+        "segments": 64
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 2,
+      "material": "default"
+    },
+    {
+      "root": 3,
+      "material": "default"
+    }
+  ]
+}

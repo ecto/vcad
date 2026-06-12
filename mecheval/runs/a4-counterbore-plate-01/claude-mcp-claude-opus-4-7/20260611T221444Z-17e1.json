@@ -1,0 +1,1224 @@
+{
+  "schema_version": 0,
+  "task_id": "a4-counterbore-plate-01",
+  "task_sha256": "cfd43e4b06b57f9083f3574a94ff3334d151693aea721bd7fdce1521bd5ad111",
+  "checks": [
+    {
+      "n": 0,
+      "type": "valid_solid",
+      "params": {
+        "type": "valid_solid"
+      },
+      "result": "pass",
+      "details": {
+        "root_count": 4,
+        "solids_produced": 4
+      }
+    },
+    {
+      "n": 1,
+      "type": "bbox",
+      "params": {
+        "type": "bbox",
+        "min": [
+          -30,
+          -30,
+          0
+        ],
+        "max": [
+          30,
+          30,
+          12
+        ],
+        "tolerance_mm": 0.1
+      },
+      "result": "fail",
+      "details": {
+        "actual_max": [
+          30,
+          30,
+          14
+        ],
+        "actual_min": [
+          -30,
+          -30,
+          -1
+        ],
+        "deviation_max": [
+          0,
+          0,
+          2
+        ],
+        "deviation_min": [
+          0,
+          0,
+          -1
+        ],
+        "max_abs_deviation_mm": 2,
+        "tolerance_mm": 0.1
+      }
+    },
+    {
+      "n": 2,
+      "type": "mass_props",
+      "params": {
+        "type": "mass_props",
+        "volume_mm3": 41993.63,
+        "tolerance_pct": 1
+      },
+      "result": "fail",
+      "details": {
+        "volume": {
+          "actual_mm3": 86600.73910331784,
+          "deviation_pct": 106.22351319311487,
+          "pass": false,
+          "spec_mm3": 41993.63,
+          "tolerance_pct": 1
+        }
+      }
+    },
+    {
+      "n": 3,
+      "type": "hole_count",
+      "params": {
+        "type": "hole_count",
+        "diameter_mm": 4,
+        "expected": 4,
+        "diameter_tolerance_mm": 0.05
+      },
+      "result": "fail",
+      "details": {
+        "actual": 1,
+        "diameter_mm": 4,
+        "diameter_tolerance_mm": 0.05,
+        "expected": 4,
+        "found": [
+          [
+            20,
+            20,
+            4
+          ]
+        ]
+      }
+    },
+    {
+      "n": 4,
+      "type": "hole_positions",
+      "params": {
+        "type": "hole_positions",
+        "diameter_mm": 4,
+        "positions": [
+          [
+            20,
+            20,
+            0
+          ],
+          [
+            -20,
+            20,
+            0
+          ],
+          [
+            -20,
+            -20,
+            0
+          ],
+          [
+            20,
+            -20,
+            0
+          ]
+        ],
+        "tolerance_mm": 0.15
+      },
+      "result": "fail",
+      "details": {
+        "diameter_mm": 4,
+        "per_expected": [
+          {
+            "distance_mm": 0,
+            "matched_hole": [
+              20,
+              20
+            ],
+            "pass": true,
+            "spec_xy": [
+              20,
+              20
+            ]
+          },
+          {
+            "pass": false,
+            "reason": "no candidate cylindrical feature of this diameter remained unmatched",
+            "spec_xy": [
+              -20,
+              20
+            ]
+          },
+          {
+            "pass": false,
+            "reason": "no candidate cylindrical feature of this diameter remained unmatched",
+            "spec_xy": [
+              -20,
+              -20
+            ]
+          },
+          {
+            "pass": false,
+            "reason": "no candidate cylindrical feature of this diameter remained unmatched",
+            "spec_xy": [
+              20,
+              -20
+            ]
+          }
+        ],
+        "tolerance_mm": 0.15,
+        "unmatched_extras": []
+      }
+    },
+    {
+      "n": 5,
+      "type": "hole_count",
+      "params": {
+        "type": "hole_count",
+        "diameter_mm": 8,
+        "expected": 4,
+        "diameter_tolerance_mm": 0.05
+      },
+      "result": "fail",
+      "details": {
+        "actual": 0,
+        "diameter_mm": 8,
+        "diameter_tolerance_mm": 0.05,
+        "expected": 4,
+        "found": []
+      }
+    },
+    {
+      "n": 6,
+      "type": "hole_positions",
+      "params": {
+        "type": "hole_positions",
+        "diameter_mm": 8,
+        "positions": [
+          [
+            20,
+            20,
+            0
+          ],
+          [
+            -20,
+            20,
+            0
+          ],
+          [
+            -20,
+            -20,
+            0
+          ],
+          [
+            20,
+            -20,
+            0
+          ]
+        ],
+        "tolerance_mm": 0.15
+      },
+      "result": "fail",
+      "details": {
+        "diameter_mm": 8,
+        "per_expected": [
+          {
+            "pass": false,
+            "reason": "no candidate cylindrical feature of this diameter remained unmatched",
+            "spec_xy": [
+              20,
+              20
+            ]
+          },
+          {
+            "pass": false,
+            "reason": "no candidate cylindrical feature of this diameter remained unmatched",
+            "spec_xy": [
+              -20,
+              20
+            ]
+          },
+          {
+            "pass": false,
+            "reason": "no candidate cylindrical feature of this diameter remained unmatched",
+            "spec_xy": [
+              -20,
+              -20
+            ]
+          },
+          {
+            "pass": false,
+            "reason": "no candidate cylindrical feature of this diameter remained unmatched",
+            "spec_xy": [
+              20,
+              -20
+            ]
+          }
+        ],
+        "tolerance_mm": 0.15,
+        "unmatched_extras": []
+      }
+    },
+    {
+      "n": 7,
+      "type": "step_roundtrip",
+      "params": {
+        "type": "step_roundtrip",
+        "tolerance_pct": 1
+      },
+      "result": "pass",
+      "details": {
+        "per_solid": [
+          {
+            "bbox": {
+              "max_abs_deviation_mm": 0,
+              "original_max": [
+                30,
+                30,
+                12
+              ],
+              "original_min": [
+                -30,
+                -30,
+                0
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                30,
+                30,
+                12
+              ],
+              "roundtripped_min": [
+                -30,
+                -30,
+                0
+              ],
+              "tolerance_mm": 0.856971411425142
+            },
+            "index": 0,
+            "pass": true,
+            "volume": {
+              "deviation_pct": 0,
+              "original_mm3": 43200,
+              "pass": true,
+              "roundtripped_mm3": 43200
+            }
+          },
+          {
+            "bbox": {
+              "max_abs_deviation_mm": 0,
+              "original_max": [
+                2,
+                2,
+                14
+              ],
+              "original_min": [
+                -2,
+                -2,
+                0
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                2,
+                2,
+                14
+              ],
+              "roundtripped_min": [
+                -2,
+                -2,
+                0
+              ],
+              "tolerance_mm": 0.150996688705415
+            },
+            "index": 1,
+            "pass": true,
+            "volume": {
+              "deviation_pct": 0.4815294295245813,
+              "original_mm3": 175.6467127230989,
+              "pass": true,
+              "roundtripped_mm3": 174.80092210934467
+            }
+          },
+          {
+            "bbox": {
+              "max_abs_deviation_mm": 0,
+              "original_max": [
+                22,
+                22,
+                13
+              ],
+              "original_min": [
+                18,
+                18,
+                -1
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                22,
+                22,
+                13
+              ],
+              "roundtripped_min": [
+                18,
+                18,
+                -1
+              ],
+              "tolerance_mm": 0.150996688705415
+            },
+            "index": 2,
+            "pass": true,
+            "volume": {
+              "deviation_pct": 0.4815231981675384,
+              "original_mm3": 175.64673416523146,
+              "pass": true,
+              "roundtripped_mm3": 174.8009543934022
+            }
+          },
+          {
+            "bbox": {
+              "max_abs_deviation_mm": 0,
+              "original_max": [
+                30,
+                30,
+                12
+              ],
+              "original_min": [
+                -30,
+                -30,
+                0
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                30,
+                30,
+                12
+              ],
+              "roundtripped_min": [
+                -30,
+                -30,
+                0
+              ],
+              "tolerance_mm": 0.856971411425142
+            },
+            "index": 3,
+            "pass": true,
+            "volume": {
+              "deviation_pct": 0.0011226688743292655,
+              "original_mm3": 43049.44565642952,
+              "pass": true,
+              "roundtripped_mm3": 43049.928959156474
+            }
+          }
+        ],
+        "tolerance_pct": 1
+      }
+    }
+  ],
+  "summary": {
+    "passed": false,
+    "checks_passed": 2,
+    "checks_total": 8,
+    "score": 0.25,
+    "anti_cheese_violated": true,
+    "limits_exceeded": []
+  },
+  "run_id": "20260611T221444Z-17e1",
+  "model": {
+    "id": "claude-mcp-claude-opus-4-7",
+    "name": "Claude (MCP, claude-opus-4-7)",
+    "provider": "anthropic",
+    "params": {
+      "mode": "mcp",
+      "model": "claude-opus-4-7",
+      "max_tokens": 8000,
+      "max_iterations": 30
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "a4-counterbore-plate-01",
+    "rendered": "Make a single solid: a flat plate 60mm × 60mm × 12mm, centered in X and Y with the bottom face on the XY plane (z = 0 to z = 12). Drill four counterbore holes at corners (20, 20), (-20, 20), (-20, -20), (20, -20). Each counterbore consists of two coaxial Z-aligned through-features: a clearance through-hole of diameter 4mm running the full thickness (z = 0 to z = 12), and a coaxial recess of diameter 8mm machined 4mm deep from the top face (so the larger diameter spans z = 8 to z = 12). Output a single solid.",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "open_document",
+        "args": {},
+        "result_kind": "ok",
+        "wallclock_ms": 1.5455420000000117
+      },
+      {
+        "n": 1,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781216084470_1",
+          "type": "difference",
+          "name": "Plate with counterbores",
+          "params": {
+            "a": {
+              "op": "translate",
+              "x": -30,
+              "y": -30,
+              "z": 0,
+              "child": {
+                "op": "cube",
+                "x": 60,
+                "y": 60,
+                "z": 12
+              }
+            },
+            "b": {
+              "op": "union",
+              "children": [
+                {
+                  "op": "translate",
+                  "x": 20,
+                  "y": 20,
+                  "z": -1,
+                  "child": {
+                    "op": "cylinder",
+                    "r": 2,
+                    "h": 14
+                  }
+                },
+                {
+                  "op": "translate",
+                  "x": -20,
+                  "y": 20,
+                  "z": -1,
+                  "child": {
+                    "op": "cylinder",
+                    "r": 2,
+                    "h": 14
+                  }
+                },
+                {
+                  "op": "translate",
+                  "x": -20,
+                  "y": -20,
+                  "z": -1,
+                  "child": {
+                    "op": "cylinder",
+                    "r": 2,
+                    "h": 14
+                  }
+                },
+                {
+                  "op": "translate",
+                  "x": 20,
+                  "y": -20,
+                  "z": -1,
+                  "child": {
+                    "op": "cylinder",
+                    "r": 2,
+                    "h": 14
+                  }
+                },
+                {
+                  "op": "translate",
+                  "x": 20,
+                  "y": 20,
+                  "z": 8,
+                  "child": {
+                    "op": "cylinder",
+                    "r": 4,
+                    "h": 5
+                  }
+                },
+                {
+                  "op": "translate",
+                  "x": -20,
+                  "y": 20,
+                  "z": 8,
+                  "child": {
+                    "op": "cylinder",
+                    "r": 4,
+                    "h": 5
+                  }
+                },
+                {
+                  "op": "translate",
+                  "x": -20,
+                  "y": -20,
+                  "z": 8,
+                  "child": {
+                    "op": "cylinder",
+                    "r": 4,
+                    "h": 5
+                  }
+                },
+                {
+                  "op": "translate",
+                  "x": 20,
+                  "y": -20,
+                  "z": 8,
+                  "child": {
+                    "op": "cylinder",
+                    "r": 4,
+                    "h": 5
+                  }
+                }
+              ]
+            }
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 5.857500000000073
+      },
+      {
+        "n": 2,
+        "tool": "create_cad_loon",
+        "args": {
+          "source": "[let plate [translate -30 -30 0 [cube 60 60 12]]\n  [let thru [cylinder 2 14]\n    [let cbore [cylinder 4 5]\n      [difference\n        [union [translate 20 20 -1 thru]\n        [union [translate -20 20 -1 thru]\n        [union [translate -20 -20 -1 thru]\n        [union [translate 20 -20 -1 thru]\n        [union [translate 20 20 8 cbore]\n        [union [translate -20 20 8 cbore]\n        [union [translate -20 -20 8 cbore]\n               [translate 20 -20 8 cbore]]]]]]]]\n        plate]]]]",
+          "format": "json"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 13.99658400000044
+      },
+      {
+        "n": 3,
+        "tool": "create_cad_loon",
+        "args": {
+          "source": "[pipe\n  [translate -30 -30 0 [cube 60 60 12]]\n  [difference [translate 20 20 -1 [cylinder 2 14]]]\n  [difference [translate -20 20 -1 [cylinder 2 14]]]\n  [difference [translate -20 -20 -1 [cylinder 2 14]]]\n  [difference [translate 20 -20 -1 [cylinder 2 14]]]\n  [difference [translate 20 20 8 [cylinder 4 5]]]\n  [difference [translate -20 20 8 [cylinder 4 5]]]\n  [difference [translate -20 -20 8 [cylinder 4 5]]]\n  [difference [translate 20 -20 8 [cylinder 4 5]]]]",
+          "format": "json"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 5.2317499999990105
+      },
+      {
+        "n": 4,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781216084470_1",
+          "type": "cube",
+          "name": "plate_raw",
+          "params": {
+            "size": {
+              "x": 60,
+              "y": 60,
+              "z": 12
+            }
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 4.005958999998256
+      },
+      {
+        "n": 5,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781216084470_1",
+          "part_id": "1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.1839579999978014
+      },
+      {
+        "n": 6,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781216084470_1",
+          "part_id": "1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 4.013999999999214
+      },
+      {
+        "n": 7,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781216084470_1",
+          "type": "difference",
+          "name": "Plate with counterbores",
+          "params": {
+            "left": {
+              "op": {
+                "type": "Translate",
+                "offset": {
+                  "x": -30,
+                  "y": -30,
+                  "z": 0
+                },
+                "child": {
+                  "op": {
+                    "type": "Cube",
+                    "size": {
+                      "x": 60,
+                      "y": 60,
+                      "z": 12
+                    }
+                  }
+                }
+              }
+            },
+            "right": {
+              "op": {
+                "type": "Union",
+                "left": {
+                  "op": {
+                    "type": "Union",
+                    "left": {
+                      "op": {
+                        "type": "Union",
+                        "left": {
+                          "op": {
+                            "type": "Union",
+                            "left": {
+                              "op": {
+                                "type": "Union",
+                                "left": {
+                                  "op": {
+                                    "type": "Union",
+                                    "left": {
+                                      "op": {
+                                        "type": "Union",
+                                        "left": {
+                                          "op": {
+                                            "type": "Translate",
+                                            "offset": {
+                                              "x": 20,
+                                              "y": 20,
+                                              "z": -1
+                                            },
+                                            "child": {
+                                              "op": {
+                                                "type": "Cylinder",
+                                                "radius": 2,
+                                                "height": 14
+                                              }
+                                            }
+                                          }
+                                        },
+                                        "right": {
+                                          "op": {
+                                            "type": "Translate",
+                                            "offset": {
+                                              "x": -20,
+                                              "y": 20,
+                                              "z": -1
+                                            },
+                                            "child": {
+                                              "op": {
+                                                "type": "Cylinder",
+                                                "radius": 2,
+                                                "height": 14
+                                              }
+                                            }
+                                          }
+                                        }
+                                      }
+                                    },
+                                    "right": {
+                                      "op": {
+                                        "type": "Translate",
+                                        "offset": {
+                                          "x": -20,
+                                          "y": -20,
+                                          "z": -1
+                                        },
+                                        "child": {
+                                          "op": {
+                                            "type": "Cylinder",
+                                            "radius": 2,
+                                            "height": 14
+                                          }
+                                        }
+                                      }
+                                    }
+                                  }
+                                },
+                                "right": {
+                                  "op": {
+                                    "type": "Translate",
+                                    "offset": {
+                                      "x": 20,
+                                      "y": -20,
+                                      "z": -1
+                                    },
+                                    "child": {
+                                      "op": {
+                                        "type": "Cylinder",
+                                        "radius": 2,
+                                        "height": 14
+                                      }
+                                    }
+                                  }
+                                }
+                              }
+                            },
+                            "right": {
+                              "op": {
+                                "type": "Translate",
+                                "offset": {
+                                  "x": 20,
+                                  "y": 20,
+                                  "z": 8
+                                },
+                                "child": {
+                                  "op": {
+                                    "type": "Cylinder",
+                                    "radius": 4,
+                                    "height": 5
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        },
+                        "right": {
+                          "op": {
+                            "type": "Translate",
+                            "offset": {
+                              "x": -20,
+                              "y": 20,
+                              "z": 8
+                            },
+                            "child": {
+                              "op": {
+                                "type": "Cylinder",
+                                "radius": 4,
+                                "height": 5
+                              }
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "right": {
+                      "op": {
+                        "type": "Translate",
+                        "offset": {
+                          "x": -20,
+                          "y": -20,
+                          "z": 8
+                        },
+                        "child": {
+                          "op": {
+                            "type": "Cylinder",
+                            "radius": 4,
+                            "height": 5
+                          }
+                        }
+                      }
+                    }
+                  }
+                },
+                "right": {
+                  "op": {
+                    "type": "Translate",
+                    "offset": {
+                      "x": 20,
+                      "y": -20,
+                      "z": 8
+                    },
+                    "child": {
+                      "op": {
+                        "type": "Cylinder",
+                        "radius": 4,
+                        "height": 5
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 4.02966600000218
+      },
+      {
+        "n": 8,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781216084470_1",
+          "type": "cube",
+          "name": "plate_raw",
+          "params": {
+            "size": {
+              "x": 60,
+              "y": 60,
+              "z": 12
+            }
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.7218340000035823
+      },
+      {
+        "n": 9,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781216084470_1",
+          "type": "translate",
+          "name": "plate",
+          "parent_part_id": "1",
+          "params": {
+            "offset": {
+              "x": -30,
+              "y": -30,
+              "z": 0
+            },
+            "child": 1
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 5.0318329999936395
+      },
+      {
+        "n": 10,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781216084470_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.0367499999993015
+      },
+      {
+        "n": 11,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781216084470_1",
+          "part_id": "1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.6291669999991427
+      },
+      {
+        "n": 12,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781216084470_1",
+          "part_id": "2"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 1.196416999999201
+      },
+      {
+        "n": 13,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781216084470_1",
+          "type": "cube",
+          "name": "plate_raw",
+          "params": {
+            "size": {
+              "x": 60,
+              "y": 60,
+              "z": 12
+            }
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.8697079999983544
+      },
+      {
+        "n": 14,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781216084470_1",
+          "type": "translate",
+          "name": "plate_centered",
+          "parent_part_id": "1",
+          "params": {
+            "offset": {
+              "x": -30,
+              "y": -30,
+              "z": 0
+            }
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 2.7819170000002487
+      },
+      {
+        "n": 15,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781216084470_1",
+          "type": "translate",
+          "name": "plate_centered",
+          "parent_part_id": "1",
+          "params": {
+            "offset": {
+              "x": -30,
+              "y": -30,
+              "z": 0
+            },
+            "child": 1
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.6418330000014976
+      },
+      {
+        "n": 16,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781216084470_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.3855839999887394
+      },
+      {
+        "n": 17,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781216084470_1",
+          "part_id": "2"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.6549579999991693
+      },
+      {
+        "n": 18,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781216084470_1",
+          "part_id": "1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.7678330000053393
+      },
+      {
+        "n": 19,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781216084470_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.311916000006022
+      },
+      {
+        "n": 20,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781216084470_1",
+          "type": "cylinder",
+          "parent_part_id": "2",
+          "params": {
+            "radius": 2,
+            "height": 14
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 2.8601250000065193
+      },
+      {
+        "n": 21,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781216084470_1",
+          "type": "cylinder",
+          "parent_part_id": "2",
+          "params": {
+            "radius": 2,
+            "height": 14,
+            "segments": 64
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 5.32158299999719
+      },
+      {
+        "n": 22,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781216084470_1",
+          "part_id": "3"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.6199999999953434
+      },
+      {
+        "n": 23,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781216084470_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.6290840000001481
+      },
+      {
+        "n": 24,
+        "tool": "delete",
+        "args": {
+          "document_id": "doc_1781216084470_1",
+          "part_id": "3"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.353000000002794
+      },
+      {
+        "n": 25,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781216084470_1",
+          "type": "difference",
+          "name": "drill1",
+          "parent_part_id": "2",
+          "params": {
+            "tool": {
+              "type": "translate",
+              "offset": {
+                "x": 20,
+                "y": 20,
+                "z": -1
+              },
+              "child": {
+                "type": "cylinder",
+                "radius": 2,
+                "height": 14,
+                "segments": 64
+              }
+            }
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 2.844209000002593
+      },
+      {
+        "n": 26,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781216084470_1",
+          "type": "difference",
+          "name": "drill1",
+          "parent_part_id": "2",
+          "params": {
+            "right": {
+              "type": "Translate",
+              "offset": {
+                "x": 20,
+                "y": 20,
+                "z": -1
+              },
+              "child": {
+                "type": "Cylinder",
+                "radius": 2,
+                "height": 14,
+                "segments": 64
+              }
+            }
+          }
+        },
+        "result_kind": "err",
+        "wallclock_ms": 8.11845799999719
+      },
+      {
+        "n": 27,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781216084470_1",
+          "type": "cylinder",
+          "parent_part_id": "2",
+          "params": {
+            "radius": 2,
+            "height": 14,
+            "segments": 64
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.9242919999960577
+      },
+      {
+        "n": 28,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781216084470_1",
+          "type": "translate",
+          "parent_part_id": "3",
+          "params": {
+            "offset": {
+              "x": 20,
+              "y": 20,
+              "z": -1
+            },
+            "child": 3
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.358458000002429
+      },
+      {
+        "n": 29,
+        "tool": "create",
+        "args": {
+          "document_id": "doc_1781216084470_1",
+          "type": "difference",
+          "parent_part_id": "2",
+          "params": {
+            "left": 2,
+            "right": 4
+          }
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.8954159999993863
+      },
+      {
+        "n": 30,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781216084470_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 2.1992089999985183
+      },
+      {
+        "n": 31,
+        "tool": "read",
+        "args": {
+          "document_id": "doc_1781216084470_1",
+          "part_id": "5"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3.575125000003027
+      },
+      {
+        "n": 32,
+        "tool": "get_document",
+        "args": {
+          "document_id": "doc_1781216084470_1"
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 0.8377499999915017
+      }
+    ],
+    "tokens": {
+      "input": 660197,
+      "output": 7126,
+      "total": 667323
+    },
+    "wallclock_sec": 118.964000042
+  },
+  "output": {
+    "vcad_path": "20260611T221444Z-17e1.vcad",
+    "vcad_sha256": "99cb7e8ab1bed77425daac784649758b34112bec7bea377a51951d8afbfae112",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-06-11T22:14:44.296Z",
+    "ended_at": "2026-06-11T22:16:43.287Z"
+  },
+  "signature": null
+}
