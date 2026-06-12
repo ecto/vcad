@@ -94,13 +94,54 @@ export interface BuildBlobInput {
   submissionKind: FullRunBlob["submission_kind"];
 }
 
+/** Harness-side limit annotations. The Rust grader only sees the task
+ *  and the .vcad, so token/wallclock/tool-call ceilings declared in
+ *  `task.limits` can only be checked here. Annotation ONLY — `passed`
+ *  is deliberately not flipped: no historical run ever had these set,
+ *  so changing scoring semantics retroactively would break
+ *  comparability. Whether over-limit runs are penalized is a
+ *  leaderboard policy decision at publication time. */
+export function computeLimitsExceeded(
+  limits: Task["limits"],
+  output: Pick<SolverOutput, "tokens" | "wallclockSec" | "toolCalls">,
+): string[] {
+  if (!limits) return [];
+  const exceeded: string[] = [];
+  if (limits.max_tokens != null && output.tokens.total > limits.max_tokens) {
+    exceeded.push(`max_tokens: ${output.tokens.total} > ${limits.max_tokens}`);
+  }
+  if (
+    limits.max_wallclock_sec != null &&
+    output.wallclockSec > limits.max_wallclock_sec
+  ) {
+    exceeded.push(
+      `max_wallclock_sec: ${Math.round(output.wallclockSec)} > ${limits.max_wallclock_sec}`,
+    );
+  }
+  if (
+    limits.max_tool_calls != null &&
+    output.toolCalls.length > limits.max_tool_calls
+  ) {
+    exceeded.push(
+      `max_tool_calls: ${output.toolCalls.length} > ${limits.max_tool_calls}`,
+    );
+  }
+  return exceeded;
+}
+
 export function buildBlob(inp: BuildBlobInput): FullRunBlob {
   return {
     schema_version: BLOB_SCHEMA_VERSION,
     task_id: inp.task.id,
     task_sha256: inp.partial.task_sha256,
     checks: inp.partial.checks,
-    summary: inp.partial.summary,
+    summary: {
+      ...inp.partial.summary,
+      limits_exceeded: [
+        ...inp.partial.summary.limits_exceeded,
+        ...computeLimitsExceeded(inp.task.limits, inp.solverOutput),
+      ],
+    },
     run_id: inp.runId,
     model: {
       id: inp.solver.id,

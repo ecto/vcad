@@ -51,14 +51,23 @@ Conventions:
 
 When you believe the document satisfies the task, stop calling tools and reply with a one-sentence summary. Don't call \`close_document\` — the grader needs the document open to read it.`;
 
-/** Self-grading oracle tools excluded from scored benchmark runs —
- *  letting the model grade itself against the task's own checks mid-run
- *  would contaminate the leaderboard. Applied BOTH when advertising the
- *  tool list to the model and when executing tool_use blocks: the API
- *  normally constrains tool_use to declared tools, but a hallucinated
- *  oracle call must not reach MCP either. render_view stays: eyes are
- *  product surface. */
+/** Self-grading oracle tools — letting the model grade itself against
+ *  the task's own checks mid-run would contaminate the leaderboard. */
 const ORACLE_TOOLS = new Set(["verify_part", "list_eval_tasks"]);
+
+/** All tools excluded from scored benchmark runs: the oracle pair, plus
+ *  close_document — agents occasionally call it mid-run despite the
+ *  system prompt forbidding it, destroying the session before the final
+ *  get_document (~3% of attempts in the 2026-06 matrix died this way).
+ *  It serves no purpose in a scored run. Applied BOTH when advertising
+ *  the tool list to the model and when executing tool_use blocks: the
+ *  API normally constrains tool_use to declared tools, but a
+ *  hallucinated call must not reach MCP either. render_view stays: eyes
+ *  are product surface. */
+export const BENCHMARK_EXCLUDED_TOOLS = new Set([
+  ...ORACLE_TOOLS,
+  "close_document",
+]);
 
 interface McpToolResult {
   content?: Array<{ type: string; text?: string; data?: string; mimeType?: string }>;
@@ -278,11 +287,11 @@ export function makeClaudeMcpSolver(cfg: Partial<ClaudeMcpConfig> = {}): Solver 
         lastDocumentId = extractDocumentId(openRaw.result);
 
         // 2. List MCP tools, translate to Anthropic tool schema.
-        // ORACLE_TOOLS (module scope) is excluded here AND at execution
-        // time below — see its doc comment.
+        // BENCHMARK_EXCLUDED_TOOLS (module scope) is excluded here AND
+        // at execution time below — see its doc comment.
         const toolList = await mcp.listTools();
         const anthropicTools = toolList.tools
-          .filter((t) => !ORACLE_TOOLS.has(t.name))
+          .filter((t) => !BENCHMARK_EXCLUDED_TOOLS.has(t.name))
           .map((t) => ({
             name: t.name,
             description: t.description,
@@ -334,10 +343,10 @@ export function makeClaudeMcpSolver(cfg: Partial<ClaudeMcpConfig> = {}): Solver 
                 name: string;
                 input: Record<string, unknown>;
               };
-              // Defense in depth: the oracle is filtered from the
+              // Defense in depth: excluded tools are filtered from the
               // advertised tool list, but a hallucinated tool_use block
               // must not reach MCP either.
-              if (ORACLE_TOOLS.has(tu.name)) {
+              if (BENCHMARK_EXCLUDED_TOOLS.has(tu.name)) {
                 trace.push({
                   n: nextN++,
                   tool: tu.name,
