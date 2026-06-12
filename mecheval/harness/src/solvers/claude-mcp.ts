@@ -51,12 +51,23 @@ Conventions:
 
 When you believe the document satisfies the task, stop calling tools and reply with a one-sentence summary. Don't call \`close_document\` — the grader needs the document open to read it.`;
 
+/** Self-grading oracle tools excluded from scored benchmark runs —
+ *  letting the model grade itself against the task's own checks mid-run
+ *  would contaminate the leaderboard. Applied BOTH when advertising the
+ *  tool list to the model and when executing tool_use blocks: the API
+ *  normally constrains tool_use to declared tools, but a hallucinated
+ *  oracle call must not reach MCP either. render_view stays: eyes are
+ *  product surface. */
+const ORACLE_TOOLS = new Set(["verify_part", "list_eval_tasks"]);
+
+interface McpToolResult {
+  content?: Array<{ type: string; text?: string; data?: string; mimeType?: string }>;
+  isError?: boolean;
+}
+
 interface MinimalMcpClient {
   listTools(): Promise<{ tools: Array<{ name: string; description?: string; inputSchema: unknown }> }>;
-  callTool(args: { name: string; arguments: Record<string, unknown> }): Promise<{
-    content?: Array<{ type: string; text?: string }>;
-    isError?: boolean;
-  }>;
+  callTool(args: { name: string; arguments: Record<string, unknown> }): Promise<McpToolResult>;
   close(): Promise<void>;
 }
 
@@ -86,15 +97,42 @@ function defaultMcpBin(): string {
 /** Pull the first text content out of an MCP tool result. Errors and
  *  non-text content are surfaced as a stringified placeholder so the
  *  model still gets useful feedback. */
-function mcpResultToText(result: {
-  content?: Array<{ type: string; text?: string }>;
-  isError?: boolean;
-}): string {
+function mcpResultToText(result: McpToolResult): string {
   const parts = (result.content ?? []).map((c) =>
     c.type === "text" && c.text != null ? c.text : `[${c.type} content]`,
   );
   const body = parts.join("\n");
   return result.isError ? `ERROR: ${body}` : body;
+}
+
+type AnthropicToolResultBlock =
+  | { type: "text"; text: string }
+  | { type: "image"; source: { type: "base64"; media_type: string; data: string } };
+
+/** Convert MCP content blocks to Anthropic tool_result blocks, forwarding
+ *  image blocks intact so tools like render_view actually deliver pixels
+ *  to the model — flattening them to a "[image content]" placeholder
+ *  would make the agent's eyes cost tokens while showing nothing. */
+function mcpResultToAnthropicContent(
+  result: McpToolResult,
+): AnthropicToolResultBlock[] {
+  const blocks: AnthropicToolResultBlock[] = [];
+  for (const c of result.content ?? []) {
+    if (c.type === "text" && c.text != null) {
+      blocks.push({ type: "text", text: c.text });
+    } else if (c.type === "image" && c.data && c.mimeType?.startsWith("image/")) {
+      blocks.push({
+        type: "image",
+        source: { type: "base64", media_type: c.mimeType, data: c.data },
+      });
+    } else {
+      blocks.push({ type: "text", text: `[${c.type} content]` });
+    }
+  }
+  if (blocks.length === 0) {
+    blocks.push({ type: "text", text: "(empty result)" });
+  }
+  return blocks;
 }
 
 function extractDocumentId(openResult: {
@@ -162,10 +200,10 @@ export function makeClaudeMcpSolver(cfg: Partial<ClaudeMcpConfig> = {}): Solver 
       let totalOut = 0;
       let lastDocumentId: string | null = null;
 
-      const recordTool = async (
+      const recordToolRaw = async (
         name: string,
         args: Record<string, unknown>,
-      ): Promise<string> => {
+      ): Promise<{ result: McpToolResult } | { error: string }> => {
         const t0 = performance.now();
         try {
           const result = await mcp.callTool({ name, arguments: args });
@@ -177,7 +215,7 @@ export function makeClaudeMcpSolver(cfg: Partial<ClaudeMcpConfig> = {}): Solver 
             result_kind: result.isError ? "err" : "ok",
             wallclock_ms: ms,
           });
-          return mcpResultToText(result);
+          return { result };
         } catch (e) {
           const ms = performance.now() - t0;
           trace.push({
@@ -187,8 +225,18 @@ export function makeClaudeMcpSolver(cfg: Partial<ClaudeMcpConfig> = {}): Solver 
             result_kind: "err",
             wallclock_ms: ms,
           });
-          return `ERROR: ${(e as Error).message}`;
+          return { error: (e as Error).message };
         }
+      };
+
+      const recordTool = async (
+        name: string,
+        args: Record<string, unknown>,
+      ): Promise<string> => {
+        const out = await recordToolRaw(name, args);
+        return "error" in out
+          ? `ERROR: ${out.error}`
+          : mcpResultToText(out.result);
       };
 
       try {
@@ -199,12 +247,16 @@ export function makeClaudeMcpSolver(cfg: Partial<ClaudeMcpConfig> = {}): Solver 
         });
 
         // 2. List MCP tools, translate to Anthropic tool schema.
+        // ORACLE_TOOLS (module scope) is excluded here AND at execution
+        // time below — see its doc comment.
         const toolList = await mcp.listTools();
-        const anthropicTools = toolList.tools.map((t) => ({
-          name: t.name,
-          description: t.description,
-          input_schema: t.inputSchema,
-        }));
+        const anthropicTools = toolList.tools
+          .filter((t) => !ORACLE_TOOLS.has(t.name))
+          .map((t) => ({
+            name: t.name,
+            description: t.description,
+            input_schema: t.inputSchema,
+          }));
 
         const userMessage = `${prompt}\n\nThe document_id for this session is "${lastDocumentId}". Use it on every tool call that requires it. Stop calling tools once you believe the document satisfies the task.`;
 
@@ -239,7 +291,7 @@ export function makeClaudeMcpSolver(cfg: Partial<ClaudeMcpConfig> = {}): Solver 
             const toolResults: Array<{
               type: "tool_result";
               tool_use_id: string;
-              content: Array<{ type: "text"; text: string }>;
+              content: AnthropicToolResultBlock[];
               is_error: boolean;
             }> = [];
 
@@ -251,13 +303,46 @@ export function makeClaudeMcpSolver(cfg: Partial<ClaudeMcpConfig> = {}): Solver 
                 name: string;
                 input: Record<string, unknown>;
               };
-              const text = await recordTool(tu.name, tu.input);
-              toolResults.push({
-                type: "tool_result",
-                tool_use_id: tu.id,
-                content: [{ type: "text", text }],
-                is_error: text.startsWith("ERROR:"),
-              });
+              // Defense in depth: the oracle is filtered from the
+              // advertised tool list, but a hallucinated tool_use block
+              // must not reach MCP either.
+              if (ORACLE_TOOLS.has(tu.name)) {
+                trace.push({
+                  n: nextN++,
+                  tool: tu.name,
+                  args: tu.input,
+                  result_kind: "err",
+                  wallclock_ms: 0,
+                });
+                toolResults.push({
+                  type: "tool_result",
+                  tool_use_id: tu.id,
+                  content: [
+                    {
+                      type: "text",
+                      text: `ERROR: ${tu.name} is not available during benchmark runs.`,
+                    },
+                  ],
+                  is_error: true,
+                });
+                continue;
+              }
+              const out = await recordToolRaw(tu.name, tu.input);
+              if ("error" in out) {
+                toolResults.push({
+                  type: "tool_result",
+                  tool_use_id: tu.id,
+                  content: [{ type: "text", text: `ERROR: ${out.error}` }],
+                  is_error: true,
+                });
+              } else {
+                toolResults.push({
+                  type: "tool_result",
+                  tool_use_id: tu.id,
+                  content: mcpResultToAnthropicContent(out.result),
+                  is_error: out.result.isError === true,
+                });
+              }
             }
             messages.push({ role: "user", content: toolResults });
           }

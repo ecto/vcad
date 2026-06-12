@@ -7259,6 +7259,7 @@ dependencies = [
  "vcad-kernel-urdf",
  "vcad-loon",
  "vcad-parts",
+ "vcad-render",
  "vcad-slicer",
  "vcad-slicer-bambu",
  "vcad-slicer-gcode",

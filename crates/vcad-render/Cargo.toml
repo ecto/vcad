@@ -10,6 +10,10 @@ vcad-eval = { workspace = true }
 vcad-ir = { workspace = true }
 vcad-kernel = { workspace = true }
 
+[lib]
+name = "vcad_render"
+path = "src/lib.rs"
+
 [[bin]]
 name = "vcad-render"
 path = "src/main.rs"

@@ -20,6 +20,36 @@ let wasmPromise: Promise<WasmModule> | null = null;
 let wasmModule: WasmModule | null = null;
 let wasmInputHint: BufferSource | Response | undefined;
 let bindgenStarted = false;
+let wasmPoisoned: string | null = null;
+
+/**
+ * Mark the shared WASM instance as unusable after a trap.
+ *
+ * On wasm32 a Rust panic compiles to an `unreachable` trap — it does NOT
+ * unwind, so `catch_unwind` inside the kernel never fires, no destructors
+ * run, and linear memory may be mid-mutation. wasm-bindgen documents
+ * post-trap instances as unsafe to reuse. Since this singleton hands the
+ * same instance to every consumer for the life of the process, the only
+ * honest move after a trap is to refuse all further kernel calls loudly
+ * rather than risk silently-corrupt geometry. Callers that catch a
+ * `WebAssembly.RuntimeError` from a kernel call should report it here.
+ */
+export function markKernelWasmPoisoned(reason: string): void {
+  if (!wasmPoisoned) wasmPoisoned = reason;
+}
+
+/** The poison reason, or `null` while the instance is healthy. */
+export function kernelWasmPoisonReason(): string | null {
+  return wasmPoisoned;
+}
+
+function assertNotPoisoned(): void {
+  if (wasmPoisoned) {
+    throw new Error(
+      `kernel WASM instance is poisoned (${wasmPoisoned}) — a previous call trapped and left WASM memory in an undefined state. Restart the process.`,
+    );
+  }
+}
 
 /**
  * Supply a pre-fetched WASM buffer (or `Response`) for the singleton to
@@ -47,6 +77,7 @@ export function primeKernelWasm(input: BufferSource | Response): void {
  * instance.
  */
 export async function getKernelWasm(): Promise<WasmModule> {
+  assertNotPoisoned();
   if (wasmModule) return wasmModule;
   if (!wasmPromise) {
     wasmPromise = loadAndInit();
@@ -110,5 +141,6 @@ async function loadAndInit(): Promise<WasmModule> {
  * code paths that need to invoke WASM from a synchronous Zustand action.
  */
 export function getKernelWasmSync(): WasmModule | null {
+  assertNotPoisoned();
   return wasmModule;
 }

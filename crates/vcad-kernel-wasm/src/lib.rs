@@ -112,6 +112,21 @@ pub fn build_chat_system_prompt(parts_json: &str, selection_json: &str) -> Strin
 }
 
 // =============================================================================
+// Static rendering
+// =============================================================================
+
+/// Render raw `.vcad` document JSON to a drafting-style isometric SVG.
+///
+/// Thin wrapper over `vcad_render::render_svg_str` — the same renderer the
+/// `vcad-render` CLI and the mecheval leaderboard use, so agents and humans
+/// see identical linework. `scale` is pixels per millimetre (pass
+/// `vcad_render::DEFAULT_SCALE` = 2.0 when in doubt).
+#[wasm_bindgen]
+pub fn render_svg(vcad_json: &str, scale: f64) -> Result<String, JsError> {
+    vcad_render::render_svg_str(vcad_json, scale).map_err(|e| JsError::new(&e))
+}
+
+// =============================================================================
 // DFM (Design for Manufacturing)
 // =============================================================================
 

@@ -11,4 +11,6 @@ export {
   getKernelWasm,
   getKernelWasmSync,
   primeKernelWasm,
+  markKernelWasmPoisoned,
+  kernelWasmPoisonReason,
 } from "@vcad/engine";

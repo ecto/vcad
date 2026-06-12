@@ -237,6 +237,10 @@ target/debug/vcad-render path/to/part.vcad > out.svg
 - `create_cad_document` — create parts from primitives + operations
 - `export_cad` — export to STL or GLB
 - `inspect_cad` — get volume, area, bbox, center of mass
+- `render_view` — render the session document to an isometric PNG (agent eyes)
+- `verify_part` / `list_eval_tasks` — grade the document against mecheval
+  benchmark tasks via the official `mecheval-grade` binary (self-grading
+  oracle; the benchmark harness excludes these during scored runs)
 - `create_robot_env` — create physics simulation from assembly
 - `gym_step` — step simulation with torque/position/velocity actions
 - `gym_reset` — reset simulation to initial state
