@@ -35,6 +35,19 @@ Unset, every pack is enabled. A smaller surface costs fewer schema
 tokens per request and measurably improves tool-selection accuracy for
 focused workflows.
 
+## Agent feedback loop
+
+- **Server instructions** — the kernel's type catalog, material preset
+  keys, Z-up orientation rules, and transform semantics are published as
+  MCP server `instructions` (extracted from the kernel registry at boot,
+  so they never drift). Hosts surface them to the agent automatically.
+- **Mutation diffs** — `create`/`update`/`delete`/`set_material` results
+  carry a compact `changed: {added, removed, modified}` part diff, so
+  agents see what a mutation actually did without a follow-up `read`.
+- **Inline viewer** — geometry tools render in an embedded vcad viewport
+  (MCP Apps hosts); `sheet_metal_unfold` draws its flat pattern as a 2D
+  drawing with cut and bend-line layers.
+
 ## Tools
 
 ### `create_cad_document`

@@ -1,0 +1,10 @@
+{
+  "id": "2026-06-11-mcp-agent-loop",
+  "version": "0.9.4",
+  "date": "2026-06-11",
+  "category": "feat",
+  "title": "Tighter MCP agent loop: diffs, instructions, flat patterns",
+  "summary": "Mutations report a compact changed diff; the kernel's type catalog, materials, and orientation rules ship as MCP server instructions; sheet_metal_unfold renders its flat pattern in the inline viewer.",
+  "features": ["mcp", "agents", "sheet-metal", "viewer"],
+  "mcpTools": ["create", "update", "delete", "set_material", "create_cad_loon", "sheet_metal_unfold"]
+}

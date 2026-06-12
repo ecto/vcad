@@ -131,6 +131,9 @@ const GEOMETRY_TOOLS = new Set([
   "set_material",
   "dfm_apply_fix",
   "sheet_metal_create",
+  // Doesn't mutate, but its result carries the flat pattern the viewer
+  // renders as a 2D drawing (cut profile + bend lines).
+  "sheet_metal_unfold",
 ]);
 
 /** MCP Apps UI metadata for geometry tools. */
@@ -191,8 +194,51 @@ const TOOL_PACKS: Record<string, readonly string[]> = {
   eval: ["verify_part", "list_eval_tasks"],
 };
 
-/** Tool names hidden by the `VCAD_MCP_PACKS` env var (empty = none). */
-function disabledToolNames(): Set<string> {
+/**
+ * Kernel system-prompt sections forwarded to MCP agents via the
+ * protocol-native server `instructions` field. The in-app chat surface
+ * gets this knowledge through its system prompt; MCP agents otherwise
+ * never see it (type catalog, material keys, Z-up orientation gotchas,
+ * world-origin rotation semantics). Extracted by header at boot so the
+ * catalog never drifts from the kernel registry; a renamed or missing
+ * section is silently skipped.
+ */
+const INSTRUCTION_SECTIONS = [
+  "Available Materials",
+  "Orientation Notes",
+  "How translate/rotate/scale work (IMPORTANT)",
+  "Sketch rules — READ CAREFULLY",
+  "Type Catalog",
+];
+
+/** Build MCP server instructions: a short workflow framing plus the
+ *  durable knowledge sections of the kernel chat system prompt. */
+function buildInstructions(kernelPrompt: string | null): string {
+  const header = [
+    "vcad — parametric CAD with a real BRep kernel. Coordinate system: Z-up (X right, Y forward, Z up). Units: millimeters.",
+    "",
+    "Workflow: `open_document` → author → see → measure → ship.",
+    "- Author whole parts with `create_cad_loon` (the full modeling vocabulary in one call); make surgical edits with `create`/`update`/`delete` (one node per call — mutation results report a compact `changed` diff of affected parts).",
+    "- See your work with `render_view` (isometric PNG); measure with `inspect_cad` (volume, area, bbox, center of mass).",
+    "- Ship with `export_cad` (STL/GLB/STEP) or `open_in_browser` (vcad.io deep link).",
+    "- Fix in place: when geometry is wrong, prefer `update` on the offending node over deleting parts and starting over.",
+  ].join("\n");
+  if (!kernelPrompt) return header;
+  const sections = new Map<string, string>();
+  for (const part of kernelPrompt.split(/^## /m).slice(1)) {
+    const nl = part.indexOf("\n");
+    if (nl < 0) continue;
+    sections.set(part.slice(0, nl).trim(), part.slice(nl + 1).trimEnd());
+  }
+  const picked = INSTRUCTION_SECTIONS.filter((t) => sections.has(t)).map(
+    (t) => `## ${t}\n${sections.get(t)}`,
+  );
+  return [header, ...picked].join("\n\n");
+}
+
+/** Tool names hidden by the `VCAD_MCP_PACKS` env var (empty = none).
+ *  Exported for tests. */
+export function disabledToolNames(): Set<string> {
   const env = process.env.VCAD_MCP_PACKS?.trim();
   if (!env) return new Set();
   const enabled = new Set(
@@ -214,6 +260,7 @@ export async function createServer(existingEngine?: Engine): Promise<Server> {
   // as `initEngineLifecycle` in @vcad/core, minus the docstore subscription
   // — we don't have a docstore here. Without this, registryToolDescriptors
   // returns the static-schemas fallback and planCrud returns null.
+  let kernelPrompt: string | null = null;
   try {
     const wasm = (await getKernelWasm()) as unknown as Record<string, unknown>;
     const getToolSchemas = wasm.get_tool_schemas as (() => string) | undefined;
@@ -233,6 +280,9 @@ export async function createServer(existingEngine?: Engine): Promise<Server> {
         build_chat_system_prompt: buildChatSystemPrompt,
         plan_chat_tool: planChatTool,
       });
+      // Empty parts / no selection — we only want the durable knowledge
+      // sections (type catalog, materials, orientation), not scene state.
+      kernelPrompt = buildChatSystemPrompt("[]", "null");
     }
   } catch (e) {
     console.warn("[mcp] commandRegistry wasm bootstrap failed:", e);
@@ -264,6 +314,10 @@ export async function createServer(existingEngine?: Engine): Promise<Server> {
         // The extension key is not in the typed ServerCapabilities schema so we spread as object.
         ...({ extensions: { "io.modelcontextprotocol/ui": { mimeTypes: [MCP_APP_MIME_TYPE] } } } as object),
       },
+      // Protocol-native equivalent of the in-app chat system prompt:
+      // workflow framing + the kernel's type catalog, material keys, and
+      // orientation semantics. Hosts surface this to the agent once.
+      instructions: buildInstructions(kernelPrompt),
     },
   );
 
@@ -334,7 +388,7 @@ export async function createServer(existingEngine?: Engine): Promise<Server> {
       {
         name: "create_cad_loon",
         description:
-          "Create a CAD document from loon source code. Loon is a Lisp-like language for parametric CAD — the FULL modeling vocabulary (patterns, sketches, extrude/revolve/sweep/loft, assemblies) is available here even where no dedicated MCP tool exists.\n\n" +
+          "The preferred authoring tool for whole parts and multi-feature models — one call, full vocabulary. Create a CAD document from loon source code. Loon is a Lisp-like language for parametric CAD — the FULL modeling vocabulary (patterns, sketches, extrude/revolve/sweep/loft, assemblies) is available here even where no dedicated MCP tool exists. For incremental single-node edits to an open session, use create/update/delete instead.\n\n" +
           "Primitives: [cube x y z], [cylinder r h], [sphere r], [cone r-bottom r-top h]\n" +
           "Booleans (subject-last): [difference tool subject], [union other subject], [intersection other subject]\n" +
           "Transforms (subject-last): [translate x y z s], [rotate rx ry rz s], [scale sx sy sz s]\n" +
@@ -419,6 +473,7 @@ export async function createServer(existingEngine?: Engine): Promise<Server> {
         description:
           "Return the flat pattern (panel outlines, holes, creases, area, bbox) for a sheet-metal session document, plus a fab-ready merged single-silhouette DXF (millimetres): one closed exterior polyline + holes on CUT, DASHED bend centerlines on BEND_UP/BEND_DOWN. DXF carries no bend angles (entered in the fab's UI); for zero data entry export the folded body as STEP via export_cad instead.",
         inputSchema: sheetMetalUnfoldSchema,
+        _meta: UI_META,
       },
       {
         name: "sheet_metal_check",
@@ -920,6 +975,9 @@ function slimPreviewForInlineUi(
   clientHasInlineUi: boolean,
 ): void {
   if (!clientHasInlineUi) return;
+  // The flat-pattern coordinates ARE the deliverable — the viewer draws
+  // them, but the agent needs the numbers too. Never slim.
+  if (toolName === "sheet_metal_unfold") return;
   const alwaysSlim = toolName === "create_cad_loon";
   const totalChars = result.content.reduce(
     (n, c) => n + (c.type === "text" ? c.text.length : 0),

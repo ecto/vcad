@@ -333,6 +333,20 @@ function updateStats(model: THREE.Object3D, size: THREE.Vector3): void {
     `${formatDim(size.x)} × ${formatDim(size.y)} × ${formatDim(size.z)} mm`;
 }
 
+function clearModel(): void {
+  if (!currentModel) return;
+  modelGroup.remove(currentModel);
+  currentModel.traverse((child) => {
+    const mesh = child as THREE.Mesh;
+    if (mesh.geometry) mesh.geometry.dispose();
+    if (mesh.material) {
+      if (Array.isArray(mesh.material)) mesh.material.forEach((m) => m.dispose());
+      else mesh.material.dispose();
+    }
+  });
+  currentModel = null;
+}
+
 function loadGlb(base64Data: string): void {
   const binary = atob(base64Data);
   const bytes = new Uint8Array(binary.length);
@@ -340,17 +354,7 @@ function loadGlb(base64Data: string): void {
     bytes[i] = binary.charCodeAt(i);
   }
 
-  if (currentModel) {
-    modelGroup.remove(currentModel);
-    currentModel.traverse((child) => {
-      const mesh = child as THREE.Mesh;
-      if (mesh.geometry) mesh.geometry.dispose();
-      if (mesh.material) {
-        if (Array.isArray(mesh.material)) mesh.material.forEach((m) => m.dispose());
-        else mesh.material.dispose();
-      }
-    });
-  }
+  clearModel();
 
   loader.parse(
     bytes.buffer,
@@ -400,6 +404,96 @@ function loadGlb(base64Data: string): void {
   );
 }
 
+// ── Flat pattern rendering (sheet_metal_unfold) ──────────────
+// Drafting-table view: the cut silhouette and dashed bend centerlines
+// drawn on the ground plane with a near-top-down camera. Colors match
+// the app's SheetMetalView: cut + bend-up red, bend-down blue.
+interface FlatPatternLike {
+  panel_outlines_2d?: [number, number][][];
+  panel_holes_2d?: [number, number][][][];
+  silhouette_2d?: [number, number][][];
+  creases?: Array<{
+    line: [[number, number], [number, number]];
+    direction?: string;
+  }>;
+  area_mm2?: number;
+  bbox?: [number, number, number, number];
+}
+
+// Kernel-space Z lift so the drawing sits just above the grid plane.
+const FLAT_LIFT = 0.05;
+
+function flatLoop(
+  ring: [number, number][],
+  material: THREE.LineBasicMaterial,
+): THREE.LineLoop {
+  const points = ring.map(([x, y]) => new THREE.Vector3(x, y, FLAT_LIFT));
+  const geom = new THREE.BufferGeometry().setFromPoints(points);
+  return new THREE.LineLoop(geom, material);
+}
+
+function renderFlatPattern(fp: FlatPatternLike): void {
+  clearModel();
+
+  const group = new THREE.Group();
+  const cutMaterial = new THREE.LineBasicMaterial({ color: 0xef4444 });
+
+  // Prefer the merged fab silhouette; fall back to per-panel outlines.
+  const rings = fp.silhouette_2d?.length
+    ? fp.silhouette_2d
+    : [
+        ...(fp.panel_outlines_2d ?? []),
+        ...(fp.panel_holes_2d ?? []).flat(),
+      ];
+  for (const ring of rings) {
+    if (ring.length >= 2) group.add(flatLoop(ring, cutMaterial));
+  }
+
+  const [minX, minY, maxX, maxY] = fp.bbox ?? [0, 0, 0, 0];
+  const span = Math.max(maxX - minX, maxY - minY, 1);
+
+  for (const crease of fp.creases ?? []) {
+    const up = crease.direction !== "Down";
+    const mat = new THREE.LineDashedMaterial({
+      color: up ? 0xef4444 : 0x3b82f6,
+      dashSize: span / 50,
+      gapSize: span / 80,
+    });
+    const [[x0, y0], [x1, y1]] = crease.line;
+    const geom = new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(x0, y0, FLAT_LIFT),
+      new THREE.Vector3(x1, y1, FLAT_LIFT),
+    ]);
+    const line = new THREE.Line(geom, mat);
+    line.computeLineDistances();
+    group.add(line);
+  }
+
+  modelGroup.add(group);
+  currentModel = group;
+  hasModel = true;
+  updateAxesVisibility();
+  contactShadow.visible = false;
+
+  // Near-top-down camera over the pattern (kernel XY → display X/-Z).
+  const cx = (minX + maxX) / 2;
+  const cy = (minY + maxY) / 2;
+  controls.target.set(cx, 0, -cy);
+  camera.position.set(cx, span * 1.5, -cy + span * 0.3);
+  camera.updateProjectionMatrix();
+  controls.update();
+
+  const panels = fp.panel_outlines_2d?.length ?? 0;
+  const bends = fp.creases?.length ?? 0;
+  statsEl.textContent =
+    `${panels} ${panels === 1 ? "panel" : "panels"} · ` +
+    `${bends} ${bends === 1 ? "bend" : "bends"} · ` +
+    `${formatDim(maxX - minX)} × ${formatDim(maxY - minY)} mm flat`;
+  loadingEl.classList.add("hidden");
+  setTicker("flat pattern — red cut/bend-up, blue bend-down", "ready");
+  renderer.render(scene, camera);
+}
+
 // ── Result handling ──────────────────────────────────────────
 type ContentBlock = { type?: string; text?: string };
 type ToolResultLike = {
@@ -416,6 +510,20 @@ function findInlineGlb(result: ToolResultLike): string | null {
     try {
       const parsed = JSON.parse(block.text) as { _vcad_glb?: string };
       if (parsed._vcad_glb) return parsed._vcad_glb;
+    } catch {
+      // Not JSON — skip
+    }
+  }
+  return null;
+}
+
+/** Find a `flat_pattern` payload (sheet_metal_unfold) in the result. */
+function findFlatPattern(result: ToolResultLike): FlatPatternLike | null {
+  for (const block of result.content ?? []) {
+    if (block?.type !== "text" || !block.text) continue;
+    try {
+      const parsed = JSON.parse(block.text) as { flat_pattern?: FlatPatternLike };
+      if (parsed.flat_pattern) return parsed.flat_pattern;
     } catch {
       // Not JSON — skip
     }
@@ -486,6 +594,20 @@ async function handleToolResult(result: ToolResultLike): Promise<void> {
 
   if (result.isError) {
     setStatus("tool reported an error — nothing to preview", "error");
+    return;
+  }
+
+  // Flat pattern (sheet_metal_unfold): 2D drawing, no GLB fetch. Checked
+  // before the document_id path — unfold results carry both.
+  const flat = findFlatPattern(result);
+  if (flat) {
+    const docId = result.structuredContent?.document_id ?? findDocumentId(result);
+    if (typeof docId === "string") {
+      lastDocumentId = docId;
+      docLabelEl.textContent = docId;
+      openBtn.style.display = "inline-flex";
+    }
+    renderFlatPattern(flat);
     return;
   }
 
@@ -574,48 +696,70 @@ fullscreenBtn.addEventListener("click", async () => {
 // ── Dev harness ──────────────────────────────────────────────
 // `#dev` renders sample geometry without an MCP host so the rig
 // (chrome, grid, IBL, shadow, stats) can be eyeballed in a browser.
-// `#dev-light` does the same in the light theme.
+// `#dev-light` does the same in the light theme; `#dev-flat` renders a
+// sample sheet-metal flat pattern (U-channel with two holes).
 if (location.hash.startsWith("#dev")) {
   if (location.hash === "#dev-light") {
     isDark = false;
     applyTheme();
   }
-  const sample = new THREE.Group();
-  const steel = new THREE.MeshStandardMaterial({ color: 0x9da3ab, metalness: 0.9, roughness: 0.35 });
-  const plastic = new THREE.MeshStandardMaterial({ color: 0xf92672, metalness: 0.0, roughness: 0.55 });
-  // Kernel space is Z-up: flange disc + boss along Z, pink cap on top.
-  const flange = new THREE.Mesh(new THREE.CylinderGeometry(30, 30, 8, 64), steel);
-  flange.rotation.x = Math.PI / 2;
-  flange.position.z = 4;
-  const boss = new THREE.Mesh(new THREE.CylinderGeometry(12, 12, 30, 48), steel);
-  boss.rotation.x = Math.PI / 2;
-  boss.position.z = 23;
-  const cap = new THREE.Mesh(new THREE.CylinderGeometry(13, 13, 4, 48), plastic);
-  cap.rotation.x = Math.PI / 2;
-  cap.position.z = 40;
-  sample.add(flange, boss, cap);
-  modelGroup.add(sample);
-  currentModel = sample;
-  hasModel = true;
-  updateAxesVisibility();
+  if (location.hash === "#dev-flat") {
+    renderFlatPattern({
+      silhouette_2d: [
+        [[-60, -40], [60, -40], [60, 40], [-60, 40]],
+        [[-45, -10], [-35, -10], [-35, 10], [-45, 10]],
+        [[35, -10], [45, -10], [45, 10], [35, 10]],
+      ],
+      panel_outlines_2d: [
+        [[-60, -40], [-20, -40], [-20, 40], [-60, 40]],
+        [[-20, -40], [20, -40], [20, 40], [-20, 40]],
+        [[20, -40], [60, -40], [60, 40], [20, 40]],
+      ],
+      creases: [
+        { line: [[-20, -40], [-20, 40]], direction: "Up" },
+        { line: [[20, -40], [20, 40]], direction: "Down" },
+      ],
+      bbox: [-60, -40, 60, 40],
+    });
+    docLabelEl.textContent = "dev-flat";
+  } else {
+    const sample = new THREE.Group();
+    const steel = new THREE.MeshStandardMaterial({ color: 0x9da3ab, metalness: 0.9, roughness: 0.35 });
+    const plastic = new THREE.MeshStandardMaterial({ color: 0xf92672, metalness: 0.0, roughness: 0.55 });
+    // Kernel space is Z-up: flange disc + boss along Z, pink cap on top.
+    const flange = new THREE.Mesh(new THREE.CylinderGeometry(30, 30, 8, 64), steel);
+    flange.rotation.x = Math.PI / 2;
+    flange.position.z = 4;
+    const boss = new THREE.Mesh(new THREE.CylinderGeometry(12, 12, 30, 48), steel);
+    boss.rotation.x = Math.PI / 2;
+    boss.position.z = 23;
+    const cap = new THREE.Mesh(new THREE.CylinderGeometry(13, 13, 4, 48), plastic);
+    cap.rotation.x = Math.PI / 2;
+    cap.position.z = 40;
+    sample.add(flange, boss, cap);
+    modelGroup.add(sample);
+    currentModel = sample;
+    hasModel = true;
+    updateAxesVisibility();
 
-  const box = new THREE.Box3().setFromObject(modelGroup);
-  const size = new THREE.Box3().setFromObject(sample).getSize(new THREE.Vector3());
-  const worldSize = box.getSize(new THREE.Vector3());
-  const worldCenter = box.getCenter(new THREE.Vector3());
-  const footprint = Math.max(worldSize.x, worldSize.z) * 1.8;
-  contactShadow.scale.set(footprint, footprint, 1);
-  contactShadow.position.set(worldCenter.x, -0.01, worldCenter.z);
-  contactShadow.visible = true;
-  controls.target.set(0, 21, 0);
-  camera.position.set(85, 75, 85);
-  controls.update();
-  docLabelEl.textContent = "dev-sample";
+    const box = new THREE.Box3().setFromObject(modelGroup);
+    const size = new THREE.Box3().setFromObject(sample).getSize(new THREE.Vector3());
+    const worldSize = box.getSize(new THREE.Vector3());
+    const worldCenter = box.getCenter(new THREE.Vector3());
+    const footprint = Math.max(worldSize.x, worldSize.z) * 1.8;
+    contactShadow.scale.set(footprint, footprint, 1);
+    contactShadow.position.set(worldCenter.x, -0.01, worldCenter.z);
+    contactShadow.visible = true;
+    controls.target.set(0, 21, 0);
+    camera.position.set(85, 75, 85);
+    controls.update();
+    docLabelEl.textContent = "dev-sample";
+    updateStats(sample, size);
+    loadingEl.classList.add("hidden");
+    setTicker("ready", "ready");
+  }
   openBtn.style.display = "inline-flex";
   fullscreenBtn.style.display = "inline-flex";
-  updateStats(sample, size);
-  loadingEl.classList.add("hidden");
-  setTicker("ready", "ready");
   // Debug handle for poking the scene from the console.
   (window as unknown as Record<string, unknown>).__vcad = {
     scene, camera, controls, grid, gridUniforms, contactShadow, renderer,
