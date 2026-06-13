@@ -322,4 +322,36 @@ mod tests {
             assert!((microstrip_z0(w, T, H, ER) - 50.0).abs() < 1e-4, "w={w}");
         }
     }
+
+    /// Co-design foundation: drive a MOTOR performance target by gradient on
+    /// geometry. The differentiable torque-constant leaf flows through the same
+    /// DesignSystem engine — proving geometry→performance sizing works for the
+    /// magnetics archetype, the bridge a future phyz co-design loop consumes.
+    #[test]
+    fn sizes_stator_radius_for_a_target_torque_constant() {
+        use vcad_ecad_sim::magnetics::motor_torque_constant;
+        let target_kt = 0.02; // N·m/A
+        // 12-pole (p=6), 60 series turns, kw=0.866, 0.4 T airgap, 5 mm bore.
+        // var(0) = outer stator radius (mm); everything else baked.
+        let residuals: Vec<ResidualFn> = vec![Box::new(move |v| {
+            motor_torque_constant(
+                ExprId::from_f64(6.0),
+                ExprId::from_f64(60.0),
+                ExprId::from_f64(0.866),
+                ExprId::from_f64(0.4),
+                ExprId::from_f64(5.0),
+                v[0],
+            ) - ExprId::from_f64(target_kt)
+        })];
+
+        let sys = DesignSystem::build(&residuals, 1).with_bounds(vec![6.0], vec![60.0]);
+        let mut params = vec![20.0]; // seed outer radius (mm)
+        let res = sys.solve(&mut params, &SolverConfig::default());
+        assert!(res.converged, "Kt sizing should converge: {:?}", res.status);
+
+        // Re-verify the torque constant at the solved radius against the model.
+        let kt = motor_torque_constant(6.0, 60.0, 0.866, 0.4, 5.0, params[0]);
+        assert!((kt - target_kt).abs() < 1e-6, "Kt {kt} vs target {target_kt}");
+        assert!(params[0] > 6.0 && params[0] < 60.0, "radius in box: {}", params[0]);
+    }
 }
