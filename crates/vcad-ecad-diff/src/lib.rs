@@ -13,8 +13,10 @@
 //! This is the Rust counterpart of the TypeScript `size_impedance` MCP tool:
 //! same model, gradients instead of finite differences, and a path that scales
 //! to coupled multi-parameter problems where the symbolic sparse Jacobian pays.
+pub mod codesign;
 pub mod design;
 pub mod pdn;
 
+pub use codesign::{codesign_motor, spin_up_omega};
 pub use design::{DesignSystem, ResidualFn};
 pub use pdn::{PdnEdge, PdnSystem};
