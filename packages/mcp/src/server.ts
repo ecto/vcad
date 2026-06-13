@@ -81,6 +81,8 @@ import {
   calcImpedanceSchema,
   sizeImpedance,
   sizeImpedanceSchema,
+  sizePdn,
+  sizePdnSchema,
   addCoil,
   addCoilSchema,
   addCoilArray,
@@ -207,6 +209,7 @@ const TOOL_PACKS: Record<string, readonly string[]> = {
     "export_gerber",
     "calc_impedance",
     "size_impedance",
+    "size_pdn",
   ],
   // Mecheval self-grading oracle. The benchmark harness already excludes
   // these during scored runs; hosts that don't want the benchmark
@@ -731,6 +734,17 @@ export async function createServer(existingEngine?: Engine): Promise<Server> {
           "width that misses spec. Pure: no board, no mutation.",
         inputSchema: sizeImpedanceSchema,
       },
+      {
+        name: "size_pdn",
+        description:
+          "Size copper-segment widths across a power-distribution resistor mesh " +
+          "so each load node's IR-drop meets its budget with minimal copper. " +
+          "Solves G·V=I for node voltages and drives drop→budget with a bounded " +
+          "gradient tuner; returns per-segment widths AS DATA with drops " +
+          "recomputed from a forward solve, and flags any node it can't meet " +
+          "within the width bounds. Pure: no board, no mutation.",
+        inputSchema: sizePdnSchema,
+      },
     ].filter((t) => !disabledTools.has(t.name)),
   }));
 
@@ -1019,6 +1033,10 @@ export async function createServer(existingEngine?: Engine): Promise<Server> {
 
         case "size_impedance":
           result = sizeImpedance(args);
+          break;
+
+        case "size_pdn":
+          result = sizePdn(args);
           break;
 
         default:

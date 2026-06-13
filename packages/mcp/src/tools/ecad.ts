@@ -835,6 +835,63 @@ export const sizeImpedanceSchema = {
   required: ["dielectric_height"],
 };
 
+/** JSON Schema for size_pdn tool. */
+export const sizePdnSchema = {
+  type: "object" as const,
+  properties: {
+    nodes: {
+      type: "number" as const,
+      description: "Number of PDN nodes; node 0 is the VRM / 0 V reference",
+    },
+    edges: {
+      type: "array" as const,
+      description: "Copper segments (a resistor mesh); each segment's width is solved for",
+      items: {
+        type: "object" as const,
+        properties: {
+          a: { type: "number" as const, description: "First node index" },
+          b: { type: "number" as const, description: "Second node index" },
+          length: { type: "number" as const, description: "Segment length in mm" },
+        },
+        required: ["a", "b", "length"],
+      },
+    },
+    loads: {
+      type: "array" as const,
+      description: "Current drawn at a node, A",
+      items: {
+        type: "object" as const,
+        properties: {
+          node: { type: "number" as const },
+          current: { type: "number" as const },
+        },
+        required: ["node", "current"],
+      },
+    },
+    targets: {
+      type: "array" as const,
+      description:
+        "Per-node IR-drop budget in V. Widths are sized so each node's drop meets " +
+        "its budget with minimal copper (the solver drives drop → budget).",
+      items: {
+        type: "object" as const,
+        properties: {
+          node: { type: "number" as const },
+          max_drop: { type: "number" as const },
+        },
+        required: ["node", "max_drop"],
+      },
+    },
+    copper_thickness: { type: "number" as const, description: "Copper thickness in mm (default 0.035)" },
+    resistivity: { type: "number" as const, description: "Copper resistivity Ω·mm (default 1.68e-5)" },
+    min_width: { type: "number" as const, description: "DFM minimum segment width in mm (default 0.1)" },
+    max_width: { type: "number" as const, description: "Maximum segment width to consider in mm (default 5)" },
+    fab_grid_mm: { type: "number" as const, description: "Snap widths to this grid in mm (default 0.0254)" },
+    tolerance_pct: { type: "number" as const, description: "Budget is met if drop ≤ target·(1 + this%) (default 5)" },
+  },
+  required: ["nodes", "edges", "loads", "targets"],
+};
+
 // ============================================================================
 // Tool implementations
 // ============================================================================
@@ -2295,6 +2352,156 @@ export function sizeImpedance(args: Record<string, unknown>) {
   };
 
   return { content: [{ type: "text" as const, text: JSON.stringify(payload) }] };
+}
+
+// ============================================================================
+// size_pdn — gradient sizing of a power-distribution resistor mesh
+// ============================================================================
+
+/**
+ * Size copper-segment widths across a PDN resistor mesh so each load node's
+ * IR-drop meets its budget with minimal copper. Builds the reduced conductance
+ * (Laplacian) matrix, solves G·V = I for node voltages via the shared dense
+ * solver, and drives drop → budget with the bounded LM tuner (finite-difference
+ * Jacobian over the forward solve). PURE: takes a mesh + budgets, returns the
+ * per-segment widths AS DATA with the drops recomputed-and-checked from a
+ * forward solve. The Rust `PdnSystem` is the scalable kernel backend (analytic
+ * implicit-function adjoint); this is the agent-facing path for small meshes.
+ */
+export function sizePdn(args: Record<string, unknown>) {
+  const fail = (text: string) => ({
+    content: [{ type: "text" as const, text: `Error: ${text}` }],
+    isError: true as const,
+  });
+
+  const nodes = Math.round(args.nodes as number);
+  const edges = args.edges as Array<{ a: number; b: number; length: number }>;
+  const loads = (args.loads as Array<{ node: number; current: number }>) || [];
+  const targets = args.targets as Array<{ node: number; max_drop: number }>;
+  const t = (args.copper_thickness as number) ?? 0.035;
+  const rho = (args.resistivity as number) ?? 1.68e-5;
+  const sigma = 1 / rho;
+  const minW = (args.min_width as number) ?? 0.1;
+  const maxW = (args.max_width as number) ?? 5;
+  const grid = (args.fab_grid_mm as number) ?? 0.0254;
+  const tolPct = (args.tolerance_pct as number) ?? 5;
+
+  if (!(nodes >= 2)) return fail("nodes must be >= 2 (node 0 is the reference)");
+  if (!Array.isArray(edges) || edges.length === 0) return fail("provide at least one edge");
+  if (!Array.isArray(targets) || targets.length === 0) return fail("provide at least one target");
+  if (!(maxW > minW)) return fail("max_width must be > min_width");
+
+  const m = nodes - 1; // reduced system size (node 0 eliminated)
+  const reduced = (n: number) => (n === 0 ? -1 : n - 1);
+  const conductance = (w: number, len: number) => (sigma * t * w) / len;
+
+  const injection = () => {
+    const inj = new Array<number>(m).fill(0);
+    for (const l of loads) {
+      const r = reduced(l.node);
+      if (r >= 0) inj[r] = -l.current; // a load draws current → negative injection
+    }
+    return inj;
+  };
+  const buildG = (widths: number[]) => {
+    const g: number[][] = Array.from({ length: m }, () => new Array<number>(m).fill(0));
+    edges.forEach((e, i) => {
+      const c = conductance(widths[i]!, e.length);
+      const ra = reduced(e.a);
+      const rb = reduced(e.b);
+      if (ra >= 0) g[ra]![ra]! += c;
+      if (rb >= 0) g[rb]![rb]! += c;
+      if (ra >= 0 && rb >= 0) {
+        g[ra]![rb]! -= c;
+        g[rb]![ra]! -= c;
+      }
+    });
+    return g;
+  };
+  const forward = (widths: number[]) => solveDense(buildG(widths), injection());
+  const vfull = (v: number[] | null, node: number) => {
+    const r = reduced(node);
+    return r < 0 || !v ? 0 : v[r]!;
+  };
+  const dropsOf = (widths: number[]) => {
+    const v = forward(widths);
+    return targets.map((tg) => -vfull(v, tg.node));
+  };
+
+  // The mesh must be solvable at the seed (connected to the reference).
+  if (!forward(new Array<number>(edges.length).fill((minW + maxW) / 2))) {
+    return fail("PDN mesh is singular — every node needs a conductive path to node 0");
+  }
+
+  const ne = edges.length;
+  const lo = new Array<number>(ne).fill(minW);
+  const hi = new Array<number>(ne).fill(maxW);
+  const residual = (widths: number[]) => {
+    const v = forward(widths);
+    if (!v) return targets.map(() => 1e6);
+    return targets.map((tg) => -vfull(v, tg.node) - tg.max_drop);
+  };
+  // Seed analytically: scaling EVERY width by k scales every conductance by k,
+  // so G→kG, V→V/k, and every IR-drop→drop/k exactly. So the uniform width that
+  // hits the tightest budget is one reference solve away — it lands LM on (or
+  // just outside) the feasible set, and it only has to refine. This sidesteps
+  // the 1/w curvature that stalls Gauss-Newton from a far seed, and unlike
+  // size_impedance's grid seed-scan it stays O(1) in the segment count.
+  const wRef = Math.min(maxW, Math.max(minW, 1.0));
+  const dropsRef = dropsOf(new Array<number>(ne).fill(wRef));
+  let k = 0;
+  targets.forEach((tg, i) => {
+    if (dropsRef[i]! > 0 && tg.max_drop > 0) k = Math.max(k, dropsRef[i]! / tg.max_drop);
+  });
+  if (!(k > 0)) k = 1;
+  const seed = new Array<number>(ne).fill(Math.min(maxW, Math.max(minW, wRef * k)));
+  const { x: cont } = lmSolve(residual, seed, lo, hi, 200);
+
+  // Snap UP to the fab grid: more copper than the continuous optimum, so a met
+  // budget stays met after quantization (never silently nudged over).
+  const snap = (v: number) => Math.min(maxW, Math.max(minW, Math.ceil(v / grid) * grid));
+  const widths = cont.map(snap);
+  const measured = dropsOf(widths);
+
+  const r4 = (v: number) => Math.round(v * 1e4) / 1e4;
+  const r6 = (v: number) => Math.round(v * 1e6) / 1e6;
+  const withinBudget = targets.every((tg, i) => measured[i]! <= tg.max_drop * (1 + tolPct / 100));
+
+  const active: string[] = [];
+  const near = (v: number, b: number) => Math.abs(v - b) <= grid * 1.5;
+  if (widths.some((w) => near(w, minW))) active.push("min_width");
+  if (widths.some((w) => near(w, maxW))) active.push("max_width");
+
+  const overBudget = targets
+    .map((tg, i) => ({ node: tg.node, drop: r6(measured[i]!), budget: tg.max_drop }))
+    .filter((x) => x.drop > x.budget * (1 + tolPct / 100));
+
+  const summary = withinBudget
+    ? `sized ${ne} segment(s); all ${targets.length} node(s) within their IR-drop budget (±${tolPct}%)`
+    : `cannot meet budget on ${overBudget.length} node(s) within [${minW}, ${maxW}]mm copper — ${
+        active.includes("max_width") ? "widen max_width or shorten segments" : "mesh-limited"
+      }`;
+
+  return {
+    content: [
+      {
+        type: "text" as const,
+        text: JSON.stringify({
+          success: true,
+          summary,
+          within_budget: withinBudget,
+          tolerance_pct: tolPct,
+          widths_mm: widths.map(r4),
+          continuous_widths_mm: cont.map(r4),
+          measured_drops_v: measured.map(r6),
+          targets,
+          fab_grid_mm: grid,
+          ...(active.length ? { active_constraints: active } : {}),
+          ...(overBudget.length ? { over_budget: overBudget } : {}),
+        }),
+      },
+    ],
+  };
 }
 
 // ============================================================================

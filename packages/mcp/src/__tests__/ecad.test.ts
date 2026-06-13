@@ -10,6 +10,7 @@ import {
   exportGerber,
   calcImpedance,
   sizeImpedance,
+  sizePdn,
   addCoil,
   addCoilArray,
   windingLayout,
@@ -810,6 +811,61 @@ describe("size_impedance", () => {
   it("rejects an invalid stackup (copper thicker than dielectric)", () => {
     const res = sizeImpedance({ target_z0: 50, dielectric_height: 0.02, copper_thickness: 0.035 });
     expect(res.isError).toBe(true);
+  });
+});
+
+describe("size_pdn", () => {
+  // Wheatstone-bridge mesh: VRM(0) -> {1,2} -> 3 with a bridge edge 1-2.
+  const bridge = (targets: Array<{ node: number; max_drop: number }>) => ({
+    nodes: 4,
+    edges: [
+      { a: 0, b: 1, length: 10 },
+      { a: 0, b: 2, length: 10 },
+      { a: 1, b: 3, length: 10 },
+      { a: 2, b: 3, length: 10 },
+      { a: 1, b: 2, length: 8 },
+    ],
+    loads: [{ node: 3, current: 1.0 }],
+    targets,
+  });
+
+  it("sizes segment widths so the load node meets its IR-drop budget", () => {
+    const r = out(sizePdn(bridge([{ node: 3, max_drop: 0.015 }])));
+    expect(r.success).toBe(true);
+    expect(r.within_budget).toBe(true);
+    expect(r.widths_mm).toHaveLength(5);
+    // Drop recomputed from a forward solve sits at/under budget (within tol).
+    expect(r.measured_drops_v[0]).toBeLessThanOrEqual(0.015 * 1.05);
+    expect(r.measured_drops_v[0]).toBeGreaterThan(0); // a real drop, mesh is solved
+    expect(r.document_id).toBeUndefined();
+  });
+
+  it("flags a budget it cannot meet within the width bounds", () => {
+    // An impossibly tight budget at realistic max widths -> over_budget reported.
+    const r = out(sizePdn({ ...bridge([{ node: 3, max_drop: 1e-5 }]), max_width: 0.5 }));
+    expect(r.within_budget).toBe(false);
+    expect(r.over_budget.length).toBeGreaterThan(0);
+    expect(r.active_constraints).toContain("max_width");
+  });
+
+  it("rejects a singular (disconnected) mesh", () => {
+    // Node 3 has no path to the reference (node 0).
+    const res = sizePdn({
+      nodes: 4,
+      edges: [{ a: 0, b: 1, length: 10 }],
+      loads: [{ node: 3, current: 1.0 }],
+      targets: [{ node: 3, max_drop: 0.1 }],
+    });
+    expect(res.isError).toBe(true);
+    expect(res.content[0].text).toMatch(/singular|path/i);
+  });
+
+  it("wider bounds let it meet a tighter budget than narrow bounds", () => {
+    const tight = out(sizePdn({ ...bridge([{ node: 3, max_drop: 0.008 }]), max_width: 0.3 }));
+    const roomy = out(sizePdn({ ...bridge([{ node: 3, max_drop: 0.008 }]), max_width: 5 }));
+    expect(roomy.within_budget).toBe(true);
+    // The constrained run does no better than the roomy one.
+    expect(roomy.measured_drops_v[0]).toBeLessThanOrEqual(tight.measured_drops_v[0] + 1e-9);
   });
 });
 
