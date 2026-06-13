@@ -13,6 +13,7 @@ import {
   sizePdn,
   calcCoil,
   sizeCoil,
+  calcRf,
   addCoil,
   addCoilArray,
   windingLayout,
@@ -921,6 +922,37 @@ describe("calc_coil / size_coil", () => {
     expect(r.fits).toBe(false);
     expect(r.within_tolerance).toBe(false);
     expect(r.summary).toMatch(/fit|widen|band/i);
+  });
+});
+
+describe("calc_rf", () => {
+  // 10 nH + 10 pF series RLC → f0 = 1/(2π√(LC)) ≈ 503 MHz.
+  const f0 = 1 / (2 * Math.PI * Math.sqrt(10e-9 * 10e-12));
+
+  it("reports resonance, and a series RLC dips to |Z|=R at f0", () => {
+    const r = out(calcRf({ topology: "series_rlc", r_ohm: 50, l_henry: 10e-9, c_farad: 10e-12 }));
+    expect(r.success).toBe(true);
+    expect(r.resonance_hz).toBeCloseTo(f0, -6); // within ~1 MHz
+    // At resonance the reactances cancel → |Z| ≈ R.
+    expect(r.z_at_resonance_ohm).toBeCloseTo(50, 1);
+  });
+
+  it("a 50Ω series RLC is well matched at resonance (high return loss)", () => {
+    const r = out(calcRf({ topology: "series_rlc", r_ohm: 50, l_henry: 10e-9, c_farad: 10e-12, z0_ohm: 50 }));
+    // Z=50=Z0 at f0 → S11→0 → large return loss; best match near f0.
+    expect(r.best_match.return_loss_db).toBeGreaterThan(40);
+    expect(r.best_match.f_hz).toBeCloseTo(f0, -7);
+  });
+
+  it("higher R lowers the series Q", () => {
+    const lowR = out(calcRf({ r_ohm: 5, l_henry: 10e-9, c_farad: 10e-12 })).q_factor;
+    const highR = out(calcRf({ r_ohm: 50, l_henry: 10e-9, c_farad: 10e-12 })).q_factor;
+    expect(lowR).toBeGreaterThan(highR);
+  });
+
+  it("validates inputs", () => {
+    expect(calcRf({ r_ohm: 50, l_henry: 0, c_farad: 1e-12 }).isError).toBe(true);
+    expect(calcRf({ r_ohm: 50, l_henry: 1e-9, c_farad: 1e-12, topology: "bogus" }).isError).toBe(true);
   });
 });
 

@@ -930,6 +930,25 @@ export const sizeCoilSchema = {
   required: ["target_inductance_nh", "inner_radius", "outer_radius", "trace_width"],
 };
 
+/** JSON Schema for calc_rf tool. */
+export const calcRfSchema = {
+  type: "object" as const,
+  properties: {
+    topology: {
+      type: "string" as const,
+      description: "'series_rlc' (default) or 'parallel_rlc'",
+    },
+    r_ohm: { type: "number" as const, description: "Resistance in Ω" },
+    l_henry: { type: "number" as const, description: "Inductance in H (e.g. 1e-9 for 1 nH)" },
+    c_farad: { type: "number" as const, description: "Capacitance in F (e.g. 1e-12 for 1 pF)" },
+    z0_ohm: { type: "number" as const, description: "Reference impedance for S11 (default 50)" },
+    f_start_hz: { type: "number" as const, description: "Sweep start frequency (default 0.1·f0)" },
+    f_stop_hz: { type: "number" as const, description: "Sweep stop frequency (default 10·f0)" },
+    points: { type: "number" as const, description: "Log-spaced sweep points returned (default 21, max 256)" },
+  },
+  required: ["r_ohm", "l_henry", "c_farad"],
+};
+
 // ============================================================================
 // Planar-magnetics leaves — modified-Wheeler spiral inductance (Mohan 1999)
 // ============================================================================
@@ -2688,6 +2707,103 @@ export function sizeCoil(args: Record<string, unknown>) {
           max_turns_fit: maxTurnsFit,
           dc_resistance_ohm: r3(resistance),
           wire_length_mm: r3(wireLen),
+        }),
+      },
+    ],
+  };
+}
+
+// ============================================================================
+// calc_rf — RLC frequency-domain (AC) analysis: |Z(f)|, S11, resonance, Q
+// ============================================================================
+
+/**
+ * Frequency-domain (AC) analysis of an RLC resonator — the RF/AC analyzer the
+ * surface was missing (calc_impedance is geometry-only; CircuitSim is transient
+ * only). Sweeps the complex impedance over frequency and reports |Z|, phase,
+ * and S11/return-loss against a reference Z0, plus resonance, Q, and the best
+ * match in the band. Closed-form, deterministic, PURE.
+ */
+export function calcRf(args: Record<string, unknown>) {
+  const fail = (text: string) => ({
+    content: [{ type: "text" as const, text: `Error: ${text}` }],
+    isError: true as const,
+  });
+  const topology = (args.topology as string) || "series_rlc";
+  const r = args.r_ohm as number;
+  const l = args.l_henry as number;
+  const c = args.c_farad as number;
+  const z0 = (args.z0_ohm as number) ?? 50;
+  if (!(r >= 0)) return fail("r_ohm must be >= 0");
+  if (!(l > 0)) return fail("l_henry must be > 0");
+  if (!(c > 0)) return fail("c_farad must be > 0");
+  if (topology !== "series_rlc" && topology !== "parallel_rlc") {
+    return fail("topology must be 'series_rlc' or 'parallel_rlc'");
+  }
+
+  const f0 = 1 / (2 * Math.PI * Math.sqrt(l * c)); // resonant frequency
+  const q = topology === "series_rlc"
+    ? (r > 0 ? (1 / r) * Math.sqrt(l / c) : Infinity)
+    : r * Math.sqrt(c / l);
+  const fStart = (args.f_start_hz as number) ?? f0 * 0.1;
+  const fStop = (args.f_stop_hz as number) ?? f0 * 10;
+  const points = Math.min(256, Math.max(3, Math.round((args.points as number) ?? 21)));
+  if (!(fStop > fStart && fStart > 0)) return fail("require 0 < f_start_hz < f_stop_hz");
+
+  // Impedance at one frequency, per topology → {re, im}.
+  const impedance = (f: number): [number, number] => {
+    const w = 2 * Math.PI * f;
+    if (topology === "series_rlc") {
+      return [r, w * l - 1 / (w * c)];
+    }
+    // Parallel RLC: Y = 1/R + j(ωC − 1/ωL); Z = 1/Y.
+    const gRe = r > 0 ? 1 / r : 1e12;
+    const gIm = w * c - 1 / (w * l);
+    const den = gRe * gRe + gIm * gIm;
+    return [gRe / den, -gIm / den];
+  };
+  const mag = (re: number, im: number) => Math.hypot(re, im);
+  // |S11| with S11 = (Z − Z0)/(Z + Z0), Z complex, Z0 real.
+  const returnLossDb = (zre: number, zim: number) => {
+    const s11 = mag(zre - z0, zim) / mag(zre + z0, zim);
+    return s11 > 0 ? -20 * Math.log10(s11) : Infinity;
+  };
+
+  const samples: Array<{ f_hz: number; z_mag_ohm: number; z_phase_deg: number; return_loss_db: number }> = [];
+  let best = { f_hz: 0, return_loss_db: -Infinity };
+  const logStart = Math.log10(fStart);
+  const logStop = Math.log10(fStop);
+  for (let i = 0; i < points; i++) {
+    const f = Math.pow(10, logStart + ((logStop - logStart) * i) / (points - 1));
+    const [zre, zim] = impedance(f);
+    const rl = returnLossDb(zre, zim);
+    samples.push({
+      f_hz: Math.round(f),
+      z_mag_ohm: Math.round(mag(zre, zim) * 1000) / 1000,
+      z_phase_deg: Math.round((Math.atan2(zim, zre) * 180) / Math.PI * 100) / 100,
+      return_loss_db: Number.isFinite(rl) ? Math.round(rl * 100) / 100 : 999,
+    });
+    if (rl > best.return_loss_db) best = { f_hz: Math.round(f), return_loss_db: rl };
+  }
+
+  const [z0re, z0im] = impedance(f0);
+  const r3 = (v: number) => Math.round(v * 1000) / 1000;
+  return {
+    content: [
+      {
+        type: "text" as const,
+        text: JSON.stringify({
+          success: true,
+          topology,
+          resonance_hz: Math.round(f0),
+          q_factor: Number.isFinite(q) ? r3(q) : 999999,
+          z_at_resonance_ohm: r3(mag(z0re, z0im)),
+          best_match: {
+            f_hz: best.f_hz,
+            return_loss_db: Number.isFinite(best.return_loss_db) ? r3(best.return_loss_db) : 999,
+          },
+          z0_ohm: z0,
+          samples,
         }),
       },
     ],

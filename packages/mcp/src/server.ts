@@ -87,6 +87,8 @@ import {
   calcCoilSchema,
   sizeCoil,
   sizeCoilSchema,
+  calcRf,
+  calcRfSchema,
   addCoil,
   addCoilSchema,
   addCoilArray,
@@ -216,6 +218,7 @@ const TOOL_PACKS: Record<string, readonly string[]> = {
     "size_pdn",
     "calc_coil",
     "size_coil",
+    "calc_rf",
   ],
   // Mecheval self-grading oracle. The benchmark harness already excludes
   // these during scored runs; hosts that don't want the benchmark
@@ -769,6 +772,15 @@ export async function createServer(existingEngine?: Engine): Promise<Server> {
           "many turns fit the radial band (else fit-limited). Pure.",
         inputSchema: sizeCoilSchema,
       },
+      {
+        name: "calc_rf",
+        description:
+          "Frequency-domain (AC) analysis of an RLC resonator: sweeps complex " +
+          "impedance over frequency and reports |Z|, phase, and S11/return-loss " +
+          "vs a reference Z0, plus resonance, Q, and the best match in the band. " +
+          "The RF/AC analyzer (calc_impedance is geometry-only). Pure.",
+        inputSchema: calcRfSchema,
+      },
     ].filter((t) => !disabledTools.has(t.name)),
   }));
 
@@ -1069,6 +1081,10 @@ export async function createServer(existingEngine?: Engine): Promise<Server> {
 
         case "size_coil":
           result = sizeCoil(args);
+          break;
+
+        case "calc_rf":
+          result = calcRf(args);
           break;
 
         default:
