@@ -544,6 +544,20 @@ export const runDrcSchema = {
   type: "object" as const,
   properties: {
     ...docInputProperties,
+    detail: {
+      type: "string" as const,
+      description:
+        "'summary' (default) returns counts by rule + net-pair, the worst " +
+        "clearance, and a capped representative sample — small, even with " +
+        "tens of thousands of violations. 'full' additionally attaches the " +
+        "complete `details` array.",
+    },
+    sample_size: {
+      type: "number" as const,
+      description:
+        "Max violations in the representative `sample` (default 20). The " +
+        "sample is drawn round-robin across distinct (rule, net-pair) buckets.",
+    },
   },
   required: [],
 };
@@ -652,6 +666,104 @@ export const boardFromSolidSchema = {
   required: ["document_id"],
 };
 
+/** JSON Schema for add_coil_array tool. */
+export const addCoilArraySchema = {
+  type: "object" as const,
+  properties: {
+    ...docInputProperties,
+    count: {
+      type: "number" as const,
+      description: "Number of coils to place evenly around the ring (>= 1)",
+    },
+    center: {
+      type: "object" as const,
+      description: "Ring center on the board, mm",
+      properties: { x: { type: "number" as const }, y: { type: "number" as const } },
+      required: ["x", "y"],
+    },
+    pitch_radius: {
+      type: "number" as const,
+      description: "Radius of the circle the coil centers sit on, mm (>= 0)",
+    },
+    start_angle_deg: {
+      type: "number" as const,
+      description: "Angle of the first coil center (default 0 = +X), degrees CCW",
+    },
+    turns: { type: "number" as const, description: "Turns per coil (fractional allowed)" },
+    inner_radius: { type: "number" as const, description: "Innermost turn radius per coil, mm" },
+    outer_radius: { type: "number" as const, description: "Outermost turn radius per coil, mm" },
+    trace_width: { type: "number" as const, description: "Copper trace width, mm" },
+    layer: { type: "string" as const, description: "Copper layer for every coil (default 'FCu')" },
+    clearance: {
+      type: "number" as const,
+      description: "Min turn-to-turn gap, mm (default: design-rule clearance)",
+    },
+    net_sequence: {
+      type: "array" as const,
+      items: { type: "string" as const },
+      description:
+        "Per-coil net names, cycled when shorter than count (e.g. " +
+        "['PHA','PHB','PHC'] for a 3-phase ring). Overrides `net`.",
+    },
+    net: {
+      type: "string" as const,
+      description: "Single net for every coil when net_sequence is omitted",
+    },
+    chirality: {
+      type: "string" as const,
+      description:
+        "Spiral winding sense: 'uniform' (all ccw, default), 'alternating' " +
+        "(ccw, cw, ccw, …), or a fixed 'ccw'/'cw'. GEOMETRY ONLY — it carries " +
+        "no phase/polarity meaning; derive correct per-coil polarity with " +
+        "winding_layout.",
+    },
+    segments_per_turn: { type: "number" as const, description: "Polyline resolution (default 48)" },
+    inner_via: {
+      type: "boolean" as const,
+      description: "Drop a via at each coil's inner endpoint to escape on another layer",
+    },
+    via_to_layer: {
+      type: "string" as const,
+      description: "Layer the inner vias connect to (default 'BCu')",
+    },
+  },
+  required: ["count", "center", "pitch_radius", "turns", "inner_radius", "outer_radius", "trace_width"],
+};
+
+/** JSON Schema for winding_layout tool. */
+export const windingLayoutSchema = {
+  type: "object" as const,
+  properties: {
+    slots: { type: "number" as const, description: "Stator slot/tooth count Z (>= 1)" },
+    poles: { type: "number" as const, description: "Rotor pole count 2p (even, >= 2)" },
+    phases: { type: "number" as const, description: "Phase count m (default 3)" },
+    turns_per_coil: {
+      type: "number" as const,
+      description: "Turns per coil (default 1, fractional allowed)",
+    },
+    connection: {
+      type: "string" as const,
+      description: "'wye' (default) or 'delta' — phase termination topology",
+    },
+    layer: {
+      type: "string" as const,
+      description:
+        "'double' (default — one coil per tooth, the general FSCW case) or " +
+        "'single'. Odd slot counts force double.",
+    },
+    phase_nets: {
+      type: "array" as const,
+      items: { type: "string" as const },
+      description: "Net name per phase, in order (default ['PHA','PHB','PHC',…])",
+    },
+    neutral_net: {
+      type: "string" as const,
+      description: "Wye neutral net name (default 'WIND_N'); ignored for delta",
+    },
+  },
+  required: ["slots", "poles"],
+};
+
 /** JSON Schema for calc_impedance tool. */
 export const calcImpedanceSchema = {
   type: "object" as const,
@@ -682,6 +794,45 @@ export const calcImpedanceSchema = {
     },
   },
   required: ["trace_width", "dielectric_height"],
+};
+
+/** JSON Schema for size_impedance tool. */
+export const sizeImpedanceSchema = {
+  type: "object" as const,
+  properties: {
+    trace_type: {
+      type: "string" as const,
+      description:
+        "microstrip (default), stripline, diff_microstrip, or diff_stripline. " +
+        "diff_* solves trace width AND spacing for a target differential impedance.",
+    },
+    target_z0: {
+      type: "number" as const,
+      description:
+        "Target single-ended characteristic impedance in Ω (default 50). For " +
+        "diff pairs this is the per-line target (default target_diff_z0/2).",
+    },
+    target_diff_z0: {
+      type: "number" as const,
+      description: "Target differential impedance in Ω for diff_* types (default 100)",
+    },
+    dielectric_height: { type: "number" as const, description: "Dielectric height h in mm (required)" },
+    dielectric_er: { type: "number" as const, description: "Relative permittivity (default 4.5, FR4)" },
+    copper_thickness: { type: "number" as const, description: "Copper thickness t in mm (default 0.035)" },
+    min_width: { type: "number" as const, description: "DFM minimum trace width in mm (default 0.1)" },
+    max_width: { type: "number" as const, description: "Maximum trace width to consider in mm (default 5)" },
+    min_spacing: { type: "number" as const, description: "DFM minimum edge-to-edge spacing in mm, diff only (default = min_width)" },
+    max_spacing: { type: "number" as const, description: "Maximum spacing to consider in mm, diff only (default 5)" },
+    fab_grid_mm: {
+      type: "number" as const,
+      description: "Snap the solved geometry to this manufacturing grid in mm (default 0.0254 = 1 mil)",
+    },
+    tolerance_pct: {
+      type: "number" as const,
+      description: "Pass band: |measured − target| ≤ this %% of target (default 5)",
+    },
+  },
+  required: ["dielectric_height"],
 };
 
 // ============================================================================
@@ -1377,6 +1528,158 @@ export async function routeNets(args: Record<string, unknown>) {
 }
 
 /** Run DRC checks on a PCB. */
+// ============================================================================
+// DRC result aggregation — summary-first, opt-in full detail
+// ============================================================================
+
+/** A single DRC violation, structurally compatible with both the kernel
+ *  result and the scalar fallback (which omits actual/required). */
+interface DrcViol {
+  rule: string;
+  severity: string;
+  message: string;
+  position?: Vec2;
+  actual?: number;
+  required?: number;
+}
+
+/** Per (rule, net-pair) rollup. netB is "" for single-net rules. */
+interface DrcNetPairCount {
+  nets: [string, string];
+  rule: string;
+  count: number;
+  worstActual: number;
+  worstRequired: number;
+}
+
+/** Summary-first DRC payload: counts + worst-case + a capped representative
+ *  sample by default; the full violation array only when detail==="full". */
+interface DrcSummary {
+  success: true;
+  violations: number;
+  errors: number;
+  warnings: number;
+  byRule: Record<string, number>;
+  byNetPair: DrcNetPairCount[];
+  worstClearance:
+    | { actual: number; required: number; position?: Vec2; nets: [string, string] }
+    | null;
+  sample: DrcViol[];
+  sampleCapped: boolean;
+  detail: "summary" | "full";
+  details?: DrcViol[];
+}
+
+/** Pull net names out of a kernel DRC message (`... net 'A' ... net 'B' ...`).
+ *  Returns a lexically-sorted pair so (A,B) and (B,A) collapse; "" when absent. */
+export function parseNetPair(message: string): [string, string] {
+  const names: string[] = [];
+  const re = /net '([^']+)'/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(message)) !== null) names.push(m[1]!);
+  const a = names[0] ?? "";
+  const b = names[1] ?? "";
+  // Single-net (or net-less) rules keep the real net first, "" in slot 2.
+  if (!a || !b) return [a || b, ""];
+  return a <= b ? [a, b] : [b, a];
+}
+
+/** Aggregate raw violations into a summary, with a representative sample drawn
+ *  round-robin across (rule, net-pair) buckets (not just the first N of one
+ *  rule). The kernel emits no structured net fields, so pairs are parsed from
+ *  the message text — a stable format (see crates/vcad-ecad-pcb DRC). */
+export function aggregateDrc(
+  violations: DrcViol[],
+  sampleSize: number,
+  detail: "summary" | "full",
+): DrcSummary {
+  const finite = (n: number | undefined): n is number => Number.isFinite(n);
+  const byRule: Record<string, number> = {};
+  const buckets = new Map<string, DrcNetPairCount & { items: DrcViol[] }>();
+  let worst: DrcSummary["worstClearance"] = null;
+
+  for (const v of violations) {
+    byRule[v.rule] = (byRule[v.rule] ?? 0) + 1;
+    const [a, b] = parseNetPair(v.message);
+    const key = `${v.rule}|${a}|${b}`;
+    let e = buckets.get(key);
+    if (!e) {
+      e = {
+        nets: [a, b],
+        rule: v.rule,
+        count: 0,
+        worstActual: v.actual ?? NaN,
+        worstRequired: v.required ?? NaN,
+        items: [],
+      };
+      buckets.set(key, e);
+    }
+    e.count++;
+    e.items.push(v);
+    if (
+      finite(v.actual) &&
+      finite(v.required) &&
+      (!finite(e.worstActual) ||
+        !finite(e.worstRequired) ||
+        v.actual - v.required < e.worstActual - e.worstRequired)
+    ) {
+      e.worstActual = v.actual;
+      e.worstRequired = v.required;
+    }
+    if (
+      v.rule === "Clearance" &&
+      finite(v.actual) &&
+      finite(v.required) &&
+      (!worst || v.actual - v.required < worst.actual - worst.required)
+    ) {
+      worst = { actual: v.actual, required: v.required, position: v.position, nets: [a, b] };
+    }
+  }
+
+  const byNetPair: DrcNetPairCount[] = [...buckets.values()]
+    .map((e) => ({
+      nets: e.nets,
+      rule: e.rule,
+      count: e.count,
+      worstActual: e.worstActual,
+      worstRequired: e.worstRequired,
+    }))
+    .sort((x, y) => y.count - x.count)
+    .slice(0, 50);
+
+  // Representative sample: round-robin across buckets so it isn't first-N-of-one-rule.
+  const lists = [...buckets.values()].map((e) => e.items.slice());
+  const cap = Math.max(0, Math.round(sampleSize));
+  const sample: DrcViol[] = [];
+  let progressed = true;
+  while (sample.length < cap && progressed) {
+    progressed = false;
+    for (const l of lists) {
+      if (sample.length >= cap) break;
+      const v = l.shift();
+      if (v) {
+        sample.push(v);
+        progressed = true;
+      }
+    }
+  }
+
+  const summary: DrcSummary = {
+    success: true,
+    violations: violations.length,
+    errors: violations.filter((v) => v.severity === "Error").length,
+    warnings: violations.filter((v) => v.severity === "Warning").length,
+    byRule,
+    byNetPair,
+    worstClearance: worst,
+    sample,
+    sampleCapped: sample.length < violations.length,
+    detail,
+  };
+  if (detail === "full") summary.details = violations;
+  return summary;
+}
+
 export async function runDrc(args: Record<string, unknown>) {
   const { doc } = resolveDocInput(args);
   const pcb = getDocPcb(doc);
@@ -1388,89 +1691,79 @@ export async function runDrc(args: Record<string, unknown>) {
     };
   }
 
+  const detail: "summary" | "full" = args.detail === "full" ? "full" : "summary";
+  const sampleSize =
+    typeof args.sample_size === "number" ? Math.max(0, Math.round(args.sample_size)) : 20;
+
   // Kernel DRC: copper clearance (trace↔copper and pad↔pad shorts), trace
-  // width, drill, annular ring, edge clearance, hole-to-hole.
+  // width, drill, annular ring, edge clearance, hole-to-hole. Falls back to
+  // basic scalar checks when the kernel WASM is unavailable.
+  let violations: DrcViol[];
   if (await isEcadAvailable()) {
-    const kernelViolations = await kernelRunDrc(pcb);
-    return {
-      content: [
-        {
-          type: "text" as const,
-          text: JSON.stringify({
-            success: true,
-            violations: kernelViolations.length,
-            errors: kernelViolations.filter((v) => v.severity === "Error").length,
-            warnings: kernelViolations.filter((v) => v.severity === "Warning").length,
-            details: kernelViolations,
-          }),
-        },
-      ],
-    };
-  }
+    violations = (await kernelRunDrc(pcb)) as unknown as DrcViol[];
+  } else {
+    violations = [];
 
-  // Fallback when the kernel WASM is unavailable: basic scalar checks only.
-  const violations: Array<{
-    rule: string;
-    severity: string;
-    message: string;
-    position?: Vec2;
-  }> = [];
-
-  // Check min trace width
-  for (const trace of pcb.traces) {
-    if (trace.width < pcb.rules.defaultRules.traceWidth) {
-      violations.push({
-        rule: "MinTraceWidth",
-        severity: "Error",
-        message: `Trace width ${trace.width}mm < minimum ${pcb.rules.defaultRules.traceWidth}mm`,
-        position: trace.start,
-      });
-    }
-  }
-
-  // Check min drill
-  for (const via of pcb.vias) {
-    if (via.drill < pcb.rules.minDrill) {
-      violations.push({
-        rule: "MinDrill",
-        severity: "Error",
-        message: `Via drill ${via.drill}mm < minimum ${pcb.rules.minDrill}mm`,
-        position: via.position,
-      });
-    }
-  }
-
-  // Check annular ring
-  for (const via of pcb.vias) {
-    const annularRing = (via.diameter - via.drill) / 2;
-    if (annularRing < pcb.rules.minAnnularRing) {
-      violations.push({
-        rule: "AnnularRing",
-        severity: "Error",
-        message: `Via annular ring ${annularRing.toFixed(3)}mm < minimum ${pcb.rules.minAnnularRing}mm`,
-        position: via.position,
-      });
-    }
-  }
-
-  // Check edge clearance for traces
-  const boardMinX = Math.min(...pcb.outline.vertices.map(v => v.x));
-  const boardMaxX = Math.max(...pcb.outline.vertices.map(v => v.x));
-  const boardMinY = Math.min(...pcb.outline.vertices.map(v => v.y));
-  const boardMaxY = Math.max(...pcb.outline.vertices.map(v => v.y));
-  const edgeClr = pcb.rules.edgeClearance;
-
-  for (const trace of pcb.traces) {
-    for (const pt of [trace.start, trace.end]) {
-      const hw = trace.width / 2;
-      if (pt.x - hw < boardMinX + edgeClr || pt.x + hw > boardMaxX - edgeClr ||
-          pt.y - hw < boardMinY + edgeClr || pt.y + hw > boardMaxY - edgeClr) {
+    // Check min trace width
+    for (const trace of pcb.traces) {
+      if (trace.width < pcb.rules.defaultRules.traceWidth) {
         violations.push({
-          rule: "EdgeClearance",
+          rule: "MinTraceWidth",
           severity: "Error",
-          message: `Trace too close to board edge (min ${edgeClr}mm)`,
-          position: pt,
+          message: `Trace width ${trace.width}mm < minimum ${pcb.rules.defaultRules.traceWidth}mm`,
+          position: trace.start,
         });
+      }
+    }
+
+    // Check min drill
+    for (const via of pcb.vias) {
+      if (via.drill < pcb.rules.minDrill) {
+        violations.push({
+          rule: "MinDrill",
+          severity: "Error",
+          message: `Via drill ${via.drill}mm < minimum ${pcb.rules.minDrill}mm`,
+          position: via.position,
+        });
+      }
+    }
+
+    // Check annular ring
+    for (const via of pcb.vias) {
+      const annularRing = (via.diameter - via.drill) / 2;
+      if (annularRing < pcb.rules.minAnnularRing) {
+        violations.push({
+          rule: "AnnularRing",
+          severity: "Error",
+          message: `Via annular ring ${annularRing.toFixed(3)}mm < minimum ${pcb.rules.minAnnularRing}mm`,
+          position: via.position,
+        });
+      }
+    }
+
+    // Check edge clearance for traces
+    const boardMinX = Math.min(...pcb.outline.vertices.map((v) => v.x));
+    const boardMaxX = Math.max(...pcb.outline.vertices.map((v) => v.x));
+    const boardMinY = Math.min(...pcb.outline.vertices.map((v) => v.y));
+    const boardMaxY = Math.max(...pcb.outline.vertices.map((v) => v.y));
+    const edgeClr = pcb.rules.edgeClearance;
+
+    for (const trace of pcb.traces) {
+      for (const pt of [trace.start, trace.end]) {
+        const hw = trace.width / 2;
+        if (
+          pt.x - hw < boardMinX + edgeClr ||
+          pt.x + hw > boardMaxX - edgeClr ||
+          pt.y - hw < boardMinY + edgeClr ||
+          pt.y + hw > boardMaxY - edgeClr
+        ) {
+          violations.push({
+            rule: "EdgeClearance",
+            severity: "Error",
+            message: `Trace too close to board edge (min ${edgeClr}mm)`,
+            position: pt,
+          });
+        }
       }
     }
   }
@@ -1479,13 +1772,7 @@ export async function runDrc(args: Record<string, unknown>) {
     content: [
       {
         type: "text" as const,
-        text: JSON.stringify({
-          success: true,
-          violations: violations.length,
-          errors: violations.filter(v => v.severity === "Error").length,
-          warnings: violations.filter(v => v.severity === "Warning").length,
-          details: violations,
-        }),
+        text: JSON.stringify(aggregateDrc(violations, sampleSize, detail)),
       },
     ],
   };
@@ -1638,6 +1925,190 @@ export async function exportGerber(args: Record<string, unknown>) {
 }
 
 /** Calculate trace impedance. */
+// ----------------------------------------------------------------------------
+// Impedance physics — pure closed-form leaves (IPC-2141-style).
+//
+// These are the single source of truth: calc_impedance reads them (verify) and
+// size_impedance inverts them (optimize), so the impedance an agent solves for
+// is bit-identical to the impedance verify later reports. Generalizing these to
+// `<S: Scalar>` in the Rust twin (crates/vcad-ecad-sim) is the symbolic-autodiff
+// foothold; the TS versions here drive the finite-difference MVP solver below.
+// ----------------------------------------------------------------------------
+
+/** Effective microstrip width accounting for copper thickness. */
+function microstripWe(w: number, t: number, h: number): number {
+  return (
+    w +
+    (t / Math.PI) *
+      Math.log(
+        (4 * Math.E) /
+          Math.sqrt(
+            Math.pow(t / h, 2) + Math.pow(t / (w * Math.PI + 1.1 * t * Math.PI), 2),
+          ),
+      )
+  );
+}
+
+/** Single-ended microstrip characteristic impedance (Ω). Monotonic ↓ in w. */
+function microstripZ0(w: number, t: number, h: number, er: number): number {
+  const we = microstripWe(w, t, h);
+  return (87 / Math.sqrt(er + 1.41)) * Math.log((5.98 * h) / (0.8 * we + t));
+}
+
+/** Microstrip effective permittivity. */
+function microstripErEff(w: number, t: number, h: number, er: number): number {
+  const we = microstripWe(w, t, h);
+  return (er + 1) / 2 + ((er - 1) / 2) * Math.pow(1 + (12 * h) / we, -0.5);
+}
+
+/** Single-ended stripline characteristic impedance (Ω). Monotonic ↓ in w. */
+function striplineZ0(w: number, t: number, h: number, er: number): number {
+  return (60 / Math.sqrt(er)) * Math.log((4 * h) / (0.67 * Math.PI * (0.8 * w + t)));
+}
+
+/** Edge-coupling factor for a differential pair; zDiff = 2·z0·k. ↑ in spacing. */
+function diffCouplingK(spacing: number, h: number): number {
+  return 1 - 0.48 * Math.exp((-0.96 * spacing) / h);
+}
+
+/** Single-ended z0 for a trace type (microstrip family vs stripline family). */
+function singleEndedZ0(traceType: string, w: number, t: number, h: number, er: number): number {
+  return traceType.includes("stripline")
+    ? striplineZ0(w, t, h, er)
+    : microstripZ0(w, t, h, er);
+}
+
+// ----------------------------------------------------------------------------
+// Bounded Gauss–Newton / Levenberg–Marquardt — a compact TS prototype of the
+// generic LM driver the differentiable-design roadmap extracts in Rust. Solves
+// least-squares residuals over 1–3 box-constrained continuous parameters with a
+// finite-difference Jacobian (exact-enough for the dense, near-convex MVP).
+// ----------------------------------------------------------------------------
+
+/** Solve A·x = b for small dense systems (Gaussian elimination, partial pivot). */
+function solveDense(A: number[][], b: number[]): number[] | null {
+  const n = b.length;
+  const M = A.map((row, i) => [...row, b[i]!]);
+  for (let c = 0; c < n; c++) {
+    let piv = c;
+    for (let r = c + 1; r < n; r++) {
+      if (Math.abs(M[r]![c]!) > Math.abs(M[piv]![c]!)) piv = r;
+    }
+    if (Math.abs(M[piv]![c]!) < 1e-15) return null;
+    const tmp = M[c]!;
+    M[c] = M[piv]!;
+    M[piv] = tmp;
+    const pivRow = M[c]!;
+    for (let r = 0; r < n; r++) {
+      if (r === c) continue;
+      const row = M[r]!;
+      const f = row[c]! / pivRow[c]!;
+      for (let k = c; k <= n; k++) row[k] = row[k]! - f * pivRow[k]!;
+    }
+  }
+  // Gauss–Jordan leaves a diagonal system: x[i] = M[i][n] / M[i][i].
+  return M.map((row, i) => row[n]! / row[i]!);
+}
+
+const sumSq = (v: number[]) => v.reduce((s, x) => s + x * x, 0);
+
+/**
+ * Minimize ‖residual(x)‖² over the box [lo, hi]. Forward-difference Jacobian,
+ * Marquardt damping, projected steps. Returns the best x found and its cost.
+ */
+function lmSolve(
+  residual: (x: number[]) => number[],
+  x0: number[],
+  lo: number[],
+  hi: number[],
+  maxIter = 80,
+): { x: number[]; cost: number; converged: boolean } {
+  const clamp = (x: number[]) => x.map((v, i) => Math.min(hi[i]!, Math.max(lo[i]!, v)));
+  let x = clamp(x0);
+  let r = residual(x);
+  let cost = sumSq(r);
+  let lambda = 1e-3;
+  const n = x.length;
+
+  for (let it = 0; it < maxIter && cost > 1e-12; it++) {
+    // Forward-difference Jacobian J (m×n).
+    const m = r.length;
+    const J: number[][] = Array.from({ length: m }, () => new Array(n).fill(0));
+    for (let j = 0; j < n; j++) {
+      const step = Math.max(1e-7, Math.abs(x[j]!) * 1e-6);
+      const xp = x.slice();
+      xp[j]! += step;
+      const rp = residual(xp);
+      for (let i = 0; i < m; i++) J[i]![j] = (rp[i]! - r[i]!) / step;
+    }
+    // Normal equations JᵀJ, Jᵀr.
+    const JtJ: number[][] = Array.from({ length: n }, () => new Array(n).fill(0));
+    const Jtr = new Array(n).fill(0);
+    for (let a = 0; a < n; a++) {
+      for (let b = 0; b < n; b++) {
+        let s = 0;
+        for (let i = 0; i < m; i++) s += J[i]![a]! * J[i]![b]!;
+        JtJ[a]![b] = s;
+      }
+      let s = 0;
+      for (let i = 0; i < m; i++) s += J[i]![a]! * r[i]!;
+      Jtr[a] = s;
+    }
+    // Damped step, with backtracking on the damping until the cost drops.
+    let stepped = false;
+    for (let tries = 0; tries < 10 && !stepped; tries++) {
+      const A = JtJ.map((row, a) =>
+        row.map((v, b) => (a === b ? v + lambda * (Math.abs(v) || 1) : v)),
+      );
+      const dx = solveDense(A, Jtr.map((v) => -v));
+      if (!dx) {
+        lambda *= 10;
+        continue;
+      }
+      const xn = clamp(x.map((v, i) => v + dx[i]!));
+      const rn = residual(xn);
+      const cn = sumSq(rn);
+      if (cn < cost) {
+        x = xn;
+        r = rn;
+        cost = cn;
+        lambda = Math.max(1e-9, lambda * 0.5);
+        stepped = true;
+      } else {
+        lambda *= 10;
+      }
+    }
+    if (!stepped) break; // converged or stuck at a bound
+  }
+  return { x, cost, converged: cost < 1e-6 };
+}
+
+/** Coarse grid scan for a robust LM seed (handles non-convex landscapes). */
+function seedScan(
+  residual: (x: number[]) => number[],
+  lo: number[],
+  hi: number[],
+  perDim = 12,
+): number[] {
+  const n = lo.length;
+  const best = { x: lo.slice(), cost: Infinity };
+  const idx = new Array(n).fill(0);
+  const total = Math.pow(perDim, n);
+  for (let c = 0; c < total; c++) {
+    const x = idx.map((q, d) => lo[d]! + ((hi[d]! - lo[d]!) * q) / (perDim - 1));
+    const cost = sumSq(residual(x));
+    if (cost < best.cost) {
+      best.cost = cost;
+      best.x = x;
+    }
+    for (let d = 0; d < n; d++) {
+      if (++idx[d] < perDim) break;
+      idx[d] = 0;
+    }
+  }
+  return best.x;
+}
+
 export function calcImpedance(args: Record<string, unknown>) {
   const traceWidth = args.trace_width as number;
   const copperThickness = (args.copper_thickness as number) || 0.035;
@@ -1646,42 +2117,26 @@ export function calcImpedance(args: Record<string, unknown>) {
   const traceType = (args.trace_type as string) || "microstrip";
   const spacing = (args.spacing as number) || 0;
 
+  const h = dielectricHeight;
+  const w = traceWidth;
+  const t = copperThickness;
+
   let z0: number;
   let erEff: number;
-  let delayPsPerMm: number;
 
   if (traceType === "stripline") {
-    // Stripline impedance
-    const h = dielectricHeight;
-    const w = traceWidth;
-    const t = copperThickness;
-    z0 = (60 / Math.sqrt(er)) * Math.log(4 * h / (0.67 * Math.PI * (0.8 * w + t)));
+    z0 = striplineZ0(w, t, h, er);
     erEff = er;
-    delayPsPerMm = 3.336 * Math.sqrt(erEff);
   } else {
-    // Microstrip impedance
-    const h = dielectricHeight;
-    const w = traceWidth;
-    const t = copperThickness;
-
-    // Effective width adjustment for copper thickness
-    const we = w + (t / Math.PI) * Math.log(
-      4 * Math.E / Math.sqrt(
-        Math.pow(t / h, 2) + Math.pow(t / (w * Math.PI + 1.1 * t * Math.PI), 2)
-      )
-    );
-
-    z0 = (87 / Math.sqrt(er + 1.41)) * Math.log(5.98 * h / (0.8 * we + t));
-    erEff = (er + 1) / 2 + ((er - 1) / 2) * Math.pow(1 + 12 * h / we, -0.5);
-    delayPsPerMm = 3.336 * Math.sqrt(erEff);
+    z0 = microstripZ0(w, t, h, er);
+    erEff = microstripErEff(w, t, h, er);
   }
+  const delayPsPerMm = 3.336 * Math.sqrt(erEff);
 
   // Differential pair calculations
   let zDiff: number | undefined;
   if (spacing > 0 && (traceType === "diff_microstrip" || traceType === "diff_stripline")) {
-    // Approximate differential impedance
-    const k = 1 - 0.48 * Math.exp(-0.96 * spacing / dielectricHeight);
-    zDiff = 2 * z0 * k;
+    zDiff = 2 * z0 * diffCouplingK(spacing, h);
   }
 
   const result: Record<string, unknown> = {
@@ -1710,6 +2165,136 @@ export function calcImpedance(args: Record<string, unknown>) {
       },
     ],
   };
+}
+
+// ============================================================================
+// size_impedance — the first differentiable design tool (intent → optimize)
+// ============================================================================
+
+/**
+ * Solve trace geometry for a target characteristic impedance — the inverse of
+ * calc_impedance, and the first end-to-end intent→optimize→verify loop. PURE:
+ * takes a target + stackup, returns the solved width (and spacing, for diff
+ * pairs) AS DATA, recomputed-and-checked against the SAME impedance model, then
+ * snapped to a fab grid and re-verified. A bounded Gauss–Newton/LM over the
+ * continuous geometry (the differentiable sub-problem once the layer/stackup is
+ * fixed); DFM min-width/spacing are hard box bounds and a binding floor is
+ * REPORTED, never silently clamped. No board, no session, no mutation.
+ */
+export function sizeImpedance(args: Record<string, unknown>) {
+  const fail = (text: string) => ({
+    content: [{ type: "text" as const, text: `Error: ${text}` }],
+    isError: true as const,
+  });
+
+  const traceType = (args.trace_type as string) || "microstrip";
+  const isDiff = traceType === "diff_microstrip" || traceType === "diff_stripline";
+  const h = args.dielectric_height as number;
+  const er = (args.dielectric_er as number) ?? 4.5;
+  const t = (args.copper_thickness as number) ?? 0.035;
+  const targetDiff = isDiff ? ((args.target_diff_z0 as number) ?? 100) : undefined;
+  const targetZ0 =
+    (args.target_z0 as number) ?? (isDiff ? (targetDiff as number) / 2 : 50);
+  const minW = (args.min_width as number) ?? 0.1;
+  const maxW = (args.max_width as number) ?? 5;
+  const minS = (args.min_spacing as number) ?? minW;
+  const maxS = (args.max_spacing as number) ?? 5;
+  const grid = (args.fab_grid_mm as number) ?? 0.0254;
+  const tolPct = (args.tolerance_pct as number) ?? 5;
+
+  if (!(h > 0)) return fail("dielectric_height must be > 0 mm");
+  if (!(t < h)) {
+    return fail(
+      `copper_thickness (${t}mm) must be < dielectric_height (${h}mm) — the impedance model is invalid otherwise`,
+    );
+  }
+  if (!(maxW > minW)) return fail("max_width must be > min_width");
+  if (isDiff && !(maxS > minS)) return fail("max_spacing must be > min_spacing");
+  if (!(targetZ0 > 0)) return fail("target_z0 must be > 0");
+  if (isDiff && !((targetDiff as number) > 0)) return fail("target_diff_z0 must be > 0");
+
+  const seZ0 = (w: number) => singleEndedZ0(traceType, w, t, h, er);
+  const snap = (v: number, loB: number, hiB: number) =>
+    Math.min(hiB, Math.max(loB, Math.round(v / grid) * grid));
+  const near = (a: number, b: number) => Math.abs(a - b) <= grid * 1.5;
+
+  // Residuals (Ω), the LM box, and the solve.
+  const residual = isDiff
+    ? (x: number[]) => [
+        seZ0(x[0]!) - targetZ0,
+        2 * seZ0(x[0]!) * diffCouplingK(x[1]!, h) - (targetDiff as number),
+      ]
+    : (x: number[]) => [seZ0(x[0]!) - targetZ0];
+  const lo = isDiff ? [minW, minS] : [minW];
+  const hi = isDiff ? [maxW, maxS] : [maxW];
+
+  const seed = seedScan(residual, lo, hi);
+  const { x: cont } = lmSolve(residual, seed, lo, hi);
+
+  // Snap to the fab grid and RE-VERIFY against the same model.
+  const wSnap = snap(cont[0]!, minW, maxW);
+  const sSnap = isDiff ? snap(cont[1]!, minS, maxS) : undefined;
+  const z0Meas = seZ0(wSnap);
+  const diffMeas = isDiff ? 2 * z0Meas * diffCouplingK(sSnap as number, h) : undefined;
+
+  const within = (meas: number, target: number) =>
+    Math.abs(meas - target) <= (tolPct / 100) * target;
+  const z0Ok = within(z0Meas, targetZ0);
+  const diffOk = isDiff ? within(diffMeas as number, targetDiff as number) : true;
+  const withinTolerance = z0Ok && diffOk;
+
+  // A bound that the solution sits on is a binding DFM constraint, not a fit.
+  const active: string[] = [];
+  if (near(wSnap, minW)) active.push("min_width");
+  if (near(wSnap, maxW)) active.push("max_width");
+  if (isDiff && near(sSnap as number, minS)) active.push("min_spacing");
+  if (isDiff && near(sSnap as number, maxS)) active.push("max_spacing");
+
+  const r2 = (v: number) => Math.round(v * 100) / 100;
+  const r4 = (v: number) => Math.round(v * 1e4) / 1e4;
+
+  let summary: string;
+  let reason: string | undefined;
+  if (withinTolerance) {
+    summary = isDiff
+      ? `${traceType} → width ${r4(wSnap)}mm, spacing ${r4(sSnap as number)}mm: ${r2(z0Meas)}Ω SE / ${r2(diffMeas as number)}Ω diff, within ±${tolPct}%`
+      : `${traceType} → width ${r4(wSnap)}mm: ${r2(z0Meas)}Ω, within ±${tolPct}% of ${targetZ0}Ω`;
+  } else {
+    const bound = active.length
+      ? ` — DFM bound active (${active.join(", ")})`
+      : " — outside the searched geometry box";
+    reason = isDiff
+      ? `closest achievable on this stackup is ${r2(z0Meas)}Ω SE / ${r2(diffMeas as number)}Ω diff (targets ${targetZ0}/${targetDiff})${bound}`
+      : `no width in [${minW}, ${maxW}]mm reaches ${targetZ0}Ω on this stackup; closest is ${r4(wSnap)}mm → ${r2(z0Meas)}Ω${bound}`;
+    summary = `${traceType}: ${reason}`;
+  }
+
+  const payload: Record<string, unknown> = {
+    success: true,
+    summary,
+    trace_type: traceType,
+    within_tolerance: withinTolerance,
+    tolerance_pct: tolPct,
+    width_mm: r4(wSnap),
+    ...(isDiff ? { spacing_mm: r4(sSnap as number) } : {}),
+    continuous: {
+      width_mm: r4(cont[0]!),
+      ...(isDiff ? { spacing_mm: r4(cont[1]!) } : {}),
+    },
+    snapped: !near(cont[0]!, wSnap) || (isDiff ? !near(cont[1]!, sSnap as number) : false),
+    fab_grid_mm: grid,
+    target: { z0: targetZ0, ...(isDiff ? { diff_z0: targetDiff } : {}) },
+    // "Proof": metrics recomputed from the chosen geometry via the same model.
+    measured: {
+      z0: r2(z0Meas),
+      ...(isDiff ? { diff_z0: r2(diffMeas as number) } : {}),
+      recomputed_from_geometry: true,
+    },
+    ...(active.length ? { active_constraints: active } : {}),
+    ...(reason ? { reason } : {}),
+  };
+
+  return { content: [{ type: "text" as const, text: JSON.stringify(payload) }] };
 }
 
 // ============================================================================
@@ -1864,6 +2449,286 @@ export function addCoil(args: Record<string, unknown>) {
       },
     ],
   };
+}
+
+// ============================================================================
+// add_coil_array — a ring of coils (a realizer primitive, no phase logic)
+// ============================================================================
+
+/**
+ * Fan `add_coil` out over a ring: `count` spirals evenly spaced on a circle of
+ * `pitch_radius` about `center`. Pure geometry — net assignment is caller-
+ * supplied (`net_sequence` cycles per coil) and `chirality` is a winding-sense
+ * convenience with NO phase/polarity meaning. For an electrically-correct phase
+ * and polarity per coil, plan with `winding_layout` first and map its result.
+ */
+export function addCoilArray(args: Record<string, unknown>) {
+  const ctx = resolveDocInput(args);
+  const pcb = getDocPcb(ctx.doc);
+  if (!pcb) {
+    return {
+      content: [
+        {
+          type: "text" as const,
+          text: "Error: Document has no PCB — run place_components first (or open a document that has a board)",
+        },
+      ],
+      isError: true as const,
+    };
+  }
+
+  const fail = (text: string) => ({
+    content: [{ type: "text" as const, text: `Error: ${text}` }],
+    isError: true as const,
+  });
+
+  const count = Math.round(args.count as number);
+  const center = args.center as Vec2;
+  const pitchRadius = args.pitch_radius as number;
+  const startAngleDeg = (args.start_angle_deg as number) || 0;
+  const netSequence = Array.isArray(args.net_sequence)
+    ? (args.net_sequence as string[])
+    : undefined;
+  const net = args.net ? String(args.net) : undefined;
+  const chirality = (args.chirality as string) || "uniform";
+
+  if (!(count >= 1)) return fail("count must be >= 1");
+  if (!center || typeof center.x !== "number" || typeof center.y !== "number") {
+    return fail("center must be {x, y} in mm");
+  }
+  if (!(pitchRadius >= 0)) return fail("pitch_radius must be >= 0");
+  if (!netSequence?.length && !net) {
+    return fail("provide `net` or a non-empty `net_sequence` — coil copper must belong to a net");
+  }
+
+  const dirFor = (i: number): string => {
+    if (chirality === "alternating") return i % 2 === 0 ? "ccw" : "cw";
+    if (chirality === "cw" || chirality === "ccw") return chirality;
+    return "ccw"; // 'uniform'
+  };
+
+  // Re-use the same session/doc so each delegated addCoil mutates this board.
+  const childDoc = ctx.documentId ? { document_id: ctx.documentId } : { document: ctx.doc };
+
+  const results: Array<Record<string, unknown>> = [];
+  const errors: string[] = [];
+  let totalTraces = 0;
+
+  for (let i = 0; i < count; i++) {
+    const angleDeg = startAngleDeg + (i * 360) / count;
+    const angle = (angleDeg * Math.PI) / 180;
+    const coilCenter = {
+      x: round3(center.x + pitchRadius * Math.cos(angle)),
+      y: round3(center.y + pitchRadius * Math.sin(angle)),
+    };
+    const coilNet = netSequence?.length ? netSequence[i % netSequence.length] : net;
+    const direction = dirFor(i);
+    const res = addCoil({
+      ...childDoc,
+      center: coilCenter,
+      turns: args.turns,
+      inner_radius: args.inner_radius,
+      outer_radius: args.outer_radius,
+      trace_width: args.trace_width,
+      net: coilNet,
+      layer: args.layer,
+      direction,
+      start_angle_deg: angleDeg,
+      clearance: args.clearance,
+      segments_per_turn: args.segments_per_turn,
+      inner_via: args.inner_via,
+      via_to_layer: args.via_to_layer,
+    });
+    if (res.isError) {
+      errors.push(`coil ${i} (net ${coilNet}): ${res.content[0]!.text}`);
+      continue;
+    }
+    const payload = JSON.parse(res.content[0]!.text) as Record<string, unknown>;
+    const traces = (payload.traces_added as number) ?? 0;
+    totalTraces += traces;
+    results.push({ index: i, center: coilCenter, net: coilNet, direction, traces_added: traces });
+  }
+
+  return {
+    content: [
+      {
+        type: "text" as const,
+        text: JSON.stringify({
+          success: errors.length === 0,
+          coils_added: results.length,
+          total_traces: totalTraces,
+          results,
+          ...(errors.length ? { errors } : {}),
+          ...docResultPayload(ctx),
+        }),
+      },
+    ],
+    // Hard error only when nothing landed; partial success returns errors[].
+    ...(errors.length && results.length === 0 ? { isError: true as const } : {}),
+  };
+}
+
+// ============================================================================
+// winding_layout — pure polyphase winding planner (data only, no session)
+// ============================================================================
+
+/** Greatest common divisor of two non-negative integers. */
+function gcdInt(a: number, b: number): number {
+  a = Math.abs(a);
+  b = Math.abs(b);
+  while (b) {
+    const r = a % b;
+    a = b;
+    b = r;
+  }
+  return a;
+}
+
+/** One coil in a winding plan: tooth-relative + electrical only (no copper). */
+interface WindingCoil {
+  slot: number;
+  angleDeg: number;
+  electricalDeg: number;
+  phase: number;
+  net: string;
+  polarity: 1 | -1;
+  turns: number;
+}
+
+/** Medium-agnostic result of winding_layout — a netlist with geometry hints. */
+interface WindingPlan {
+  feasible: boolean;
+  reason?: string;
+  slots: number;
+  poles: number;
+  phases: number;
+  layer: "single" | "double";
+  connection: "wye" | "delta";
+  coils: WindingCoil[];
+  windingFactor: number;
+  pitchFactor: number;
+  distributionFactor: number;
+  slotsPerPolePerPhase: number;
+  coilsPerPhase: number;
+  phaseSeries: Record<string, number[]>;
+  neutralNet?: string;
+}
+
+/**
+ * Plan a balanced polyphase concentrated (fractional-slot) winding. PURE: takes
+ * a spec, returns a WindingPlan as data — no document, no session mutation, no
+ * geometry. The plan describes the ELECTROMAGNETIC layout (which tooth, which
+ * phase, which winding direction); realizers (PCB spirals via add_coil_array, or
+ * a future swept-wire solid) consume it unchanged. Uses the star-of-slots /
+ * EMF-phasor method: each slot maps to a phasor at its electrical angle and is
+ * binned to the nearest of 2·phases belts to read off phase + polarity; the
+ * fundamental winding factor is kp·kd.
+ */
+export function windingLayout(args: Record<string, unknown>) {
+  const fail = (text: string) => ({
+    content: [{ type: "text" as const, text: `Error: ${text}` }],
+    isError: true as const,
+  });
+
+  const slots = Math.round(args.slots as number);
+  const poles = Math.round(args.poles as number);
+  const phases = args.phases != null ? Math.round(args.phases as number) : 3;
+  const turns = (args.turns_per_coil as number) ?? 1;
+  const connection = (args.connection as string) === "delta" ? "delta" : "wye";
+  const layer = (args.layer as string) === "single" ? "single" : "double";
+  const phaseNetsIn = Array.isArray(args.phase_nets) ? (args.phase_nets as string[]) : undefined;
+
+  if (!Number.isFinite(slots) || slots < 1) return fail("slots must be an integer >= 1");
+  if (!Number.isFinite(poles) || poles < 2 || poles % 2 !== 0) {
+    return fail("poles must be an even integer >= 2 (the pole count 2p)");
+  }
+  if (!Number.isFinite(phases) || phases < 1) return fail("phases must be an integer >= 1");
+  if (!(turns > 0)) return fail("turns_per_coil must be > 0");
+
+  const defaultNet = (j: number) => (phases === 3 ? ["PHA", "PHB", "PHC"][j]! : `PH${j + 1}`);
+  const phaseNet = (j: number) => phaseNetsIn?.[j] ?? defaultNet(j);
+  const neutralNet = connection === "wye" ? String(args.neutral_net ?? "WIND_N") : undefined;
+
+  const p = poles / 2; // pole pairs
+  const alpha = (360 * p) / slots; // electrical deg between adjacent slots
+  const W = 180 / phases; // belt width; there are 2·phases belts
+
+  // Feasibility (star-of-slots balance test).
+  const t = gcdInt(slots, p);
+  let feasible = true;
+  let reason: string | undefined;
+  if (slots % phases !== 0) {
+    feasible = false;
+    reason = `unbalanced: slots (${slots}) must be divisible by phases (${phases}) for equal coils per phase`;
+  } else if ((slots / t) % phases !== 0) {
+    feasible = false;
+    reason = `unbalanced: slots/gcd(slots,p) = ${slots}/${t} = ${slots / t} is not divisible by phases (${phases}) — no symmetric ${phases}-phase winding for ${slots}s/${poles}p`;
+  } else if (layer === "single") {
+    feasible = false;
+    reason =
+      slots % 2 !== 0
+        ? `single-layer winding impossible for an odd slot count (${slots}); use layer='double'`
+        : `single-layer planning is not yet implemented — use layer='double' (one coil per tooth)`;
+  }
+
+  // Assign each tooth/coil a phase + polarity from its slot phasor.
+  const coils: WindingCoil[] = [];
+  const phaseSeries: Record<string, number[]> = {};
+  for (let k = 0; k < slots; k++) {
+    const electricalDeg = (((alpha * k) % 360) + 360) % 360;
+    // Nearest of 2·phases belts, boundary-safe: shift by half a belt, then floor.
+    const shifted = (((electricalDeg + W / 2) % 360) + 360) % 360;
+    const belt = Math.floor(shifted / W) % (2 * phases);
+    const phase = (phases - (belt % phases)) % phases;
+    const polarity: 1 | -1 = belt % 2 === 0 ? 1 : -1;
+    const net = phaseNet(phase);
+    coils.push({
+      slot: k,
+      angleDeg: (k / slots) * 360,
+      electricalDeg: Math.round(electricalDeg * 1000) / 1000,
+      phase,
+      net,
+      polarity,
+      turns,
+    });
+    if (!phaseSeries[net]) phaseSeries[net] = [];
+    phaseSeries[net]!.push(k);
+  }
+
+  // Winding factors. kp for a single-tooth concentrated coil (1-slot throw).
+  const pitchFactor = Math.abs(Math.sin((p * Math.PI) / slots));
+  // kd from the signed phasor sum of phase 0's coils (equal across phases when balanced).
+  const phase0 = coils.filter((c) => c.phase === 0);
+  let re = 0;
+  let im = 0;
+  for (const c of phase0) {
+    const rad = (c.electricalDeg * Math.PI) / 180;
+    re += c.polarity * Math.cos(rad);
+    im += c.polarity * Math.sin(rad);
+  }
+  const distributionFactor = phase0.length ? Math.hypot(re, im) / phase0.length : 0;
+  const windingFactor = pitchFactor * distributionFactor;
+
+  const r6 = (n: number) => Math.round(n * 1e6) / 1e6;
+  const plan: WindingPlan = {
+    feasible,
+    ...(reason ? { reason } : {}),
+    slots,
+    poles,
+    phases,
+    layer,
+    connection,
+    coils,
+    windingFactor: r6(windingFactor),
+    pitchFactor: r6(pitchFactor),
+    distributionFactor: r6(distributionFactor),
+    slotsPerPolePerPhase: r6(slots / (poles * phases)),
+    coilsPerPhase: slots / phases,
+    phaseSeries,
+    ...(neutralNet ? { neutralNet } : {}),
+  };
+
+  return { content: [{ type: "text" as const, text: JSON.stringify(plan) }] };
 }
 
 // ============================================================================

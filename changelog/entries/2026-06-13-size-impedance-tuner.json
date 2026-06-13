@@ -1,0 +1,10 @@
+{
+  "id": "2026-06-13-size-impedance-tuner",
+  "version": "0.9.4",
+  "date": "2026-06-13",
+  "category": "feat",
+  "title": "size_impedance: solve trace geometry for a target impedance",
+  "summary": "Inverse of calc_impedance — given a target Z0 (and diff Z0) plus stackup, solves trace width/spacing via a bounded Gauss-Newton/LM, snaps to the fab grid, and re-verifies against the same model; reports binding DFM bounds instead of silent misses.",
+  "features": ["ecad", "pcb", "signal-integrity", "impedance", "optimization", "mcp"],
+  "mcpTools": ["size_impedance", "calc_impedance"]
+}
