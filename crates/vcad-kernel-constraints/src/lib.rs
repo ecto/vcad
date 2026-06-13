@@ -107,7 +107,7 @@ pub use session::{
     SketchSession, SketchTool, SnapConfig,
 };
 pub use sketch::Sketch2D;
-pub use solver::{SolveResult, SolveStatus, SolverConfig};
+pub use solver::{levenberg_marquardt, LeastSquares, SolveResult, SolveStatus, SolverConfig};
 
 #[cfg(test)]
 mod tests {

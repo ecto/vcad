@@ -245,6 +245,22 @@ impl CompiledSystem {
     }
 }
 
+/// Bridge to the generic Levenberg-Marquardt driver. Sketch constraints are
+/// unbounded, so `project` keeps its default no-op — making `solve` behave
+/// exactly as before the driver was extracted. Inherent methods are called by
+/// explicit path to avoid resolving back into the trait method (recursion).
+impl crate::solver::LeastSquares for CompiledSystem {
+    fn num_params(&self) -> usize {
+        self.num_params
+    }
+    fn eval_jtj_jtr(&self, params: &[f64]) -> (DMat<f64>, Vec<f64>) {
+        CompiledSystem::eval_jtj_jtr(self, params)
+    }
+    fn residual_norm_squared(&self, params: &[f64]) -> f64 {
+        CompiledSystem::residual_norm_squared(self, params)
+    }
+}
+
 /// Build symbolic residual expressions for all constraints.
 ///
 /// Each parameter maps to `ExprId::var(param_index)`. Entity lookups
