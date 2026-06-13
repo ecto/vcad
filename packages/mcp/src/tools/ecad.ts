@@ -892,6 +892,71 @@ export const sizePdnSchema = {
   required: ["nodes", "edges", "loads", "targets"],
 };
 
+/** JSON Schema for calc_coil tool. */
+export const calcCoilSchema = {
+  type: "object" as const,
+  properties: {
+    inner_radius: { type: "number" as const, description: "Innermost turn radius in mm" },
+    outer_radius: { type: "number" as const, description: "Outermost turn radius in mm" },
+    turns: { type: "number" as const, description: "Number of turns" },
+    trace_width: { type: "number" as const, description: "Copper trace width in mm" },
+    copper_thickness: { type: "number" as const, description: "Copper thickness in mm (default 0.035)" },
+    resistivity: { type: "number" as const, description: "Copper resistivity Ω·mm (default 1.68e-5)" },
+    geometry: {
+      type: "string" as const,
+      description: "Spiral shape: circular (default), square, hexagonal, octagonal",
+    },
+  },
+  required: ["inner_radius", "outer_radius", "turns", "trace_width"],
+};
+
+/** JSON Schema for size_coil tool. */
+export const sizeCoilSchema = {
+  type: "object" as const,
+  properties: {
+    target_inductance_nh: { type: "number" as const, description: "Target inductance in nH" },
+    inner_radius: { type: "number" as const, description: "Innermost turn radius in mm" },
+    outer_radius: { type: "number" as const, description: "Outermost turn radius in mm" },
+    trace_width: { type: "number" as const, description: "Copper trace width in mm" },
+    clearance: { type: "number" as const, description: "Turn-to-turn gap in mm (default = trace_width)" },
+    copper_thickness: { type: "number" as const, description: "Copper thickness in mm (default 0.035)" },
+    resistivity: { type: "number" as const, description: "Copper resistivity Ω·mm (default 1.68e-5)" },
+    geometry: {
+      type: "string" as const,
+      description: "Spiral shape: circular (default), square, hexagonal, octagonal",
+    },
+    tolerance_pct: { type: "number" as const, description: "Pass band on inductance (default 5)" },
+  },
+  required: ["target_inductance_nh", "inner_radius", "outer_radius", "trace_width"],
+};
+
+// ============================================================================
+// Planar-magnetics leaves — modified-Wheeler spiral inductance (Mohan 1999)
+// ============================================================================
+
+/** Modified-Wheeler shape coefficients (K1, K2) per spiral geometry. */
+const COIL_GEOMETRY: Record<string, { k1: number; k2: number }> = {
+  circular: { k1: 2.25, k2: 3.55 },
+  square: { k1: 2.34, k2: 2.75 },
+  hexagonal: { k1: 2.33, k2: 3.82 },
+  octagonal: { k1: 2.25, k2: 3.55 },
+};
+const MU0 = 4 * Math.PI * 1e-7; // H/m
+
+/** Modified-Wheeler planar-spiral inductance (nH). Inputs in mm. */
+function coilInductanceNh(turns: number, innerR: number, outerR: number, geometry: string): number {
+  const { k1, k2 } = COIL_GEOMETRY[geometry] ?? COIL_GEOMETRY.circular!;
+  const dAvgM = (innerR + outerR) * 1e-3; // (d_in + d_out)/2 in metres
+  const fill = (outerR - innerR) / (outerR + innerR); // fill ratio ρ
+  const lH = (k1 * MU0 * turns * turns * dAvgM) / (1 + k2 * fill);
+  return lH * 1e9;
+}
+
+/** Spiral copper length (mm): turns × mean circumference. */
+function coilWireLengthMm(turns: number, innerR: number, outerR: number): number {
+  return turns * Math.PI * (innerR + outerR);
+}
+
 // ============================================================================
 // Tool implementations
 // ============================================================================
@@ -2498,6 +2563,131 @@ export function sizePdn(args: Record<string, unknown>) {
           fab_grid_mm: grid,
           ...(active.length ? { active_constraints: active } : {}),
           ...(overBudget.length ? { over_budget: overBudget } : {}),
+        }),
+      },
+    ],
+  };
+}
+
+// ============================================================================
+// calc_coil / size_coil — planar-magnetics analyzer + sizer
+// ============================================================================
+
+/**
+ * Analyze a planar spiral coil: inductance (modified Wheeler), DC resistance,
+ * copper length, and L/R time constant. The evaluate-family analyzer for the
+ * planar-magnetics archetype (inductors, sensor coils, motor stators), built on
+ * the same closed-form leaves the differentiable kernel exposes. PURE.
+ */
+export function calcCoil(args: Record<string, unknown>) {
+  const fail = (text: string) => ({
+    content: [{ type: "text" as const, text: `Error: ${text}` }],
+    isError: true as const,
+  });
+  const innerR = args.inner_radius as number;
+  const outerR = args.outer_radius as number;
+  const turns = args.turns as number;
+  const w = args.trace_width as number;
+  const t = (args.copper_thickness as number) ?? 0.035;
+  const rho = (args.resistivity as number) ?? 1.68e-5;
+  const geometry = (args.geometry as string) || "circular";
+
+  if (!(innerR >= 0)) return fail("inner_radius must be >= 0");
+  if (!(outerR > innerR)) return fail("outer_radius must be > inner_radius");
+  if (!(turns > 0)) return fail("turns must be > 0");
+  if (!(w > 0)) return fail("trace_width must be > 0");
+
+  const inductanceNh = coilInductanceNh(turns, innerR, outerR, geometry);
+  const wireLen = coilWireLengthMm(turns, innerR, outerR);
+  const resistance = (rho * wireLen) / (w * t);
+  const r3 = (v: number) => Math.round(v * 1000) / 1000;
+
+  return {
+    content: [
+      {
+        type: "text" as const,
+        text: JSON.stringify({
+          success: true,
+          geometry,
+          turns,
+          inductance_nh: r3(inductanceNh),
+          dc_resistance_ohm: r3(resistance),
+          wire_length_mm: r3(wireLen),
+          // L/R time constant in microseconds.
+          time_constant_us: r3((inductanceNh * 1e-9) / resistance / 1e-6),
+          inputs: { inner_radius: innerR, outer_radius: outerR, trace_width: w, copper_thickness: t },
+        }),
+      },
+    ],
+  };
+}
+
+/**
+ * Inverse of calc_coil: solve the turn count for a target inductance in a given
+ * annulus. Wheeler's L ∝ turns², so the turn count is closed-form; we report the
+ * continuous and integer-rounded turns, the inductance actually achieved, and
+ * whether that many turns physically fit the radial band (else fit-limited).
+ * PURE — returns data, builds no geometry.
+ */
+export function sizeCoil(args: Record<string, unknown>) {
+  const fail = (text: string) => ({
+    content: [{ type: "text" as const, text: `Error: ${text}` }],
+    isError: true as const,
+  });
+  const targetNh = args.target_inductance_nh as number;
+  const innerR = args.inner_radius as number;
+  const outerR = args.outer_radius as number;
+  const w = args.trace_width as number;
+  const clearance = (args.clearance as number) ?? w;
+  const t = (args.copper_thickness as number) ?? 0.035;
+  const rho = (args.resistivity as number) ?? 1.68e-5;
+  const geometry = (args.geometry as string) || "circular";
+  const tolPct = (args.tolerance_pct as number) ?? 5;
+
+  if (!(targetNh > 0)) return fail("target_inductance_nh must be > 0");
+  if (!(innerR >= 0)) return fail("inner_radius must be >= 0");
+  if (!(outerR > innerR)) return fail("outer_radius must be > inner_radius");
+  if (!(w > 0)) return fail("trace_width must be > 0");
+
+  // Invert L = K1·μ0·n²·d_avg / (1 + K2·ρ)  →  n = sqrt(L·(1+K2ρ)/(K1·μ0·d_avg)).
+  const { k1, k2 } = COIL_GEOMETRY[geometry] ?? COIL_GEOMETRY.circular!;
+  const dAvgM = (innerR + outerR) * 1e-3;
+  const fill = (outerR - innerR) / (outerR + innerR);
+  const nContinuous = Math.sqrt((targetNh * 1e-9 * (1 + k2 * fill)) / (k1 * MU0 * dAvgM));
+
+  // How many turns physically fit the radial band at this pitch?
+  const pitch = w + clearance;
+  const maxTurnsFit = Math.floor((outerR - innerR) / pitch);
+  const turns = Math.max(1, Math.min(maxTurnsFit, Math.round(nContinuous)));
+  const fits = Math.round(nContinuous) <= maxTurnsFit && nContinuous >= 1;
+
+  const achievedNh = coilInductanceNh(turns, innerR, outerR, geometry);
+  const wireLen = coilWireLengthMm(turns, innerR, outerR);
+  const resistance = (rho * wireLen) / (w * t);
+  const within = Math.abs(achievedNh - targetNh) <= (tolPct / 100) * targetNh;
+  const r3 = (v: number) => Math.round(v * 1000) / 1000;
+
+  const summary = fits
+    ? `${turns} turn(s) → ${r3(achievedNh)}nH (target ${targetNh}nH, ${within ? "within" : "outside"} ±${tolPct}%)`
+    : `target ${targetNh}nH needs ${nContinuous.toFixed(1)} turns but only ${maxTurnsFit} fit the ${r3(outerR - innerR)}mm band at ${pitch}mm pitch — widen the annulus or thin the trace`;
+
+  return {
+    content: [
+      {
+        type: "text" as const,
+        text: JSON.stringify({
+          success: true,
+          summary,
+          geometry,
+          turns,
+          turns_continuous: r3(nContinuous),
+          target_inductance_nh: targetNh,
+          achieved_inductance_nh: r3(achievedNh),
+          within_tolerance: within && fits,
+          fits,
+          max_turns_fit: maxTurnsFit,
+          dc_resistance_ohm: r3(resistance),
+          wire_length_mm: r3(wireLen),
         }),
       },
     ],

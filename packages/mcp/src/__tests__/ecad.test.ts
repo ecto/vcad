@@ -11,6 +11,8 @@ import {
   calcImpedance,
   sizeImpedance,
   sizePdn,
+  calcCoil,
+  sizeCoil,
   addCoil,
   addCoilArray,
   windingLayout,
@@ -866,6 +868,59 @@ describe("size_pdn", () => {
     expect(roomy.within_budget).toBe(true);
     // The constrained run does no better than the roomy one.
     expect(roomy.measured_drops_v[0]).toBeLessThanOrEqual(tight.measured_drops_v[0] + 1e-9);
+  });
+});
+
+describe("calc_coil / size_coil", () => {
+  it("computes a sane inductance and resistance for a planar spiral", () => {
+    const r = out(
+      calcCoil({ inner_radius: 2, outer_radius: 6, turns: 10, trace_width: 0.2 }),
+    );
+    expect(r.success).toBe(true);
+    // ~10-turn 2–6mm circular spiral lands in the hundreds-of-nH range.
+    expect(r.inductance_nh).toBeGreaterThan(300);
+    expect(r.inductance_nh).toBeLessThan(1500);
+    expect(r.dc_resistance_ohm).toBeGreaterThan(0);
+    expect(r.wire_length_mm).toBeGreaterThan(0);
+  });
+
+  it("inductance grows with turns squared", () => {
+    const l1 = out(calcCoil({ inner_radius: 2, outer_radius: 6, turns: 5, trace_width: 0.2 })).inductance_nh;
+    const l2 = out(calcCoil({ inner_radius: 2, outer_radius: 6, turns: 10, trace_width: 0.2 })).inductance_nh;
+    // Doubling turns ~quadruples L (geometry fixed).
+    expect(l2 / l1).toBeGreaterThan(3.5);
+    expect(l2 / l1).toBeLessThan(4.5);
+  });
+
+  it("size_coil solves the turn count for a target inductance, and calc_coil re-verifies", () => {
+    const target = 500;
+    const r = out(
+      sizeCoil({ target_inductance_nh: target, inner_radius: 2, outer_radius: 8, trace_width: 0.15 }),
+    );
+    expect(r.success).toBe(true);
+    expect(r.fits).toBe(true);
+    expect(r.turns).toBeGreaterThan(0);
+    // Re-verify: calc_coil at the solved (integer) turns reproduces the achieved L.
+    const v = out(
+      calcCoil({ inner_radius: 2, outer_radius: 8, turns: r.turns, trace_width: 0.15 }),
+    );
+    expect(Math.abs(v.inductance_nh - r.achieved_inductance_nh)).toBeLessThan(1e-2);
+  });
+
+  it("size_coil reports fit-limited when the target needs more turns than fit", () => {
+    // Huge target in a thin annulus with a wide trace → cannot fit enough turns.
+    const r = out(
+      sizeCoil({
+        target_inductance_nh: 50000,
+        inner_radius: 2,
+        outer_radius: 3,
+        trace_width: 0.2,
+        clearance: 0.2,
+      }),
+    );
+    expect(r.fits).toBe(false);
+    expect(r.within_tolerance).toBe(false);
+    expect(r.summary).toMatch(/fit|widen|band/i);
   });
 });
 

@@ -83,6 +83,10 @@ import {
   sizeImpedanceSchema,
   sizePdn,
   sizePdnSchema,
+  calcCoil,
+  calcCoilSchema,
+  sizeCoil,
+  sizeCoilSchema,
   addCoil,
   addCoilSchema,
   addCoilArray,
@@ -210,6 +214,8 @@ const TOOL_PACKS: Record<string, readonly string[]> = {
     "calc_impedance",
     "size_impedance",
     "size_pdn",
+    "calc_coil",
+    "size_coil",
   ],
   // Mecheval self-grading oracle. The benchmark harness already excludes
   // these during scored runs; hosts that don't want the benchmark
@@ -745,6 +751,24 @@ export async function createServer(existingEngine?: Engine): Promise<Server> {
           "within the width bounds. Pure: no board, no mutation.",
         inputSchema: sizePdnSchema,
       },
+      {
+        name: "calc_coil",
+        description:
+          "Analyze a planar spiral coil: inductance (modified Wheeler), DC " +
+          "resistance, copper length, and L/R time constant. The analyzer for " +
+          "the planar-magnetics archetype (inductors, sensor coils, motor " +
+          "stators). Pure.",
+        inputSchema: calcCoilSchema,
+      },
+      {
+        name: "size_coil",
+        description:
+          "Inverse of calc_coil: solve the turn count for a target inductance " +
+          "in a given annulus (Wheeler L ∝ turns², so it's closed-form). Reports " +
+          "continuous + integer turns, the inductance achieved, and whether that " +
+          "many turns fit the radial band (else fit-limited). Pure.",
+        inputSchema: sizeCoilSchema,
+      },
     ].filter((t) => !disabledTools.has(t.name)),
   }));
 
@@ -1037,6 +1061,14 @@ export async function createServer(existingEngine?: Engine): Promise<Server> {
 
         case "size_pdn":
           result = sizePdn(args);
+          break;
+
+        case "calc_coil":
+          result = calcCoil(args);
+          break;
+
+        case "size_coil":
+          result = sizeCoil(args);
           break;
 
         default:
