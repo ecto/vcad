@@ -863,6 +863,21 @@ describe("size_pdn", () => {
     expect(res.content[0].text).toMatch(/singular|path/i);
   });
 
+  it("engine:'exact' routes into the Rust adjoint engine via WASM (when built)", async () => {
+    const { ecadDiffEngineAvailable } = await import("../wasm/ecad-diff.js");
+    const r = out(sizePdn({ ...bridge([{ node: 3, max_drop: 0.015 }]), engine: "exact" }));
+    if (ecadDiffEngineAvailable()) {
+      // The Rust engine (implicit-function adjoint) sized the mesh.
+      expect(r.engine).toBe("rust-adjoint");
+      expect(r.within_budget).toBe(true);
+      expect(r.measured_drops_v[0]).toBeLessThanOrEqual(0.015 * 1.05);
+      expect(r.widths_mm).toHaveLength(5);
+    } else {
+      // Artifact absent → graceful fall-through to the TS solver.
+      expect(r.success).toBe(true);
+    }
+  });
+
   it("wider bounds let it meet a tighter budget than narrow bounds", () => {
     const tight = out(sizePdn({ ...bridge([{ node: 3, max_drop: 0.008 }]), max_width: 0.3 }));
     const roomy = out(sizePdn({ ...bridge([{ node: 3, max_drop: 0.008 }]), max_width: 5 }));

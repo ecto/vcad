@@ -38,6 +38,7 @@ import {
 } from "@vcad/engine";
 import type { Engine, NetlistResult, TriangleMesh } from "@vcad/engine";
 import { registerSession, getSession } from "./session.js";
+import { sizePdnExact, ecadDiffEngineAvailable } from "../wasm/ecad-diff.js";
 
 /** Get PCB data from a document — checks PcbBoard nodes first, falls back to legacy doc.pcb */
 function getDocPcb(doc: Document): Pcb | null {
@@ -888,6 +889,13 @@ export const sizePdnSchema = {
     max_width: { type: "number" as const, description: "Maximum segment width to consider in mm (default 5)" },
     fab_grid_mm: { type: "number" as const, description: "Snap widths to this grid in mm (default 0.0254)" },
     tolerance_pct: { type: "number" as const, description: "Budget is met if drop ≤ target·(1 + this%) (default 5)" },
+    engine: {
+      type: "string" as const,
+      description:
+        "'ts' (default) uses the JS solver; 'exact' routes into the Rust " +
+        "kernel engine (implicit-function adjoint) via WASM when available, " +
+        "falling back to 'ts' if the artifact is absent.",
+    },
   },
   required: ["nodes", "edges", "loads", "targets"],
 };
@@ -2474,6 +2482,52 @@ export function sizePdn(args: Record<string, unknown>) {
   if (!Array.isArray(edges) || edges.length === 0) return fail("provide at least one edge");
   if (!Array.isArray(targets) || targets.length === 0) return fail("provide at least one target");
   if (!(maxW > minW)) return fail("max_width must be > min_width");
+
+  // Optionally route into the Rust kernel engine (implicit-function adjoint)
+  // via WASM. Falls through to the TS solver if the artifact isn't available.
+  if ((args.engine as string) === "exact" && ecadDiffEngineAvailable()) {
+    const exact = sizePdnExact({
+      nodes,
+      edges,
+      loads: loads.map((l) => [l.node, l.current]),
+      targets: targets.map((tg) => [tg.node, tg.max_drop]),
+      sigma: 1 / rho,
+      thickness: t,
+      min_width: minW,
+      max_width: maxW,
+      seed_width: (minW + maxW) / 4,
+    });
+    if (exact && !exact.error && Array.isArray(exact.widths_mm)) {
+      const r6 = (v: number) => Math.round(v * 1e6) / 1e6;
+      const widths = (exact.widths_mm as number[]).map((v) => Math.round(v * 1e4) / 1e4);
+      const drops = exact.drops_v as number[];
+      const withinBudget = targets.every((tg, i) => drops[i]! <= tg.max_drop * (1 + tolPct / 100));
+      const overBudget = targets
+        .map((tg, i) => ({ node: tg.node, drop: r6(drops[i]!), budget: tg.max_drop }))
+        .filter((x) => x.drop > x.budget * (1 + tolPct / 100));
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: JSON.stringify({
+              success: true,
+              engine: "rust-adjoint",
+              summary: withinBudget
+                ? `sized ${widths.length} segment(s) via the Rust adjoint engine; all ${targets.length} node(s) within budget`
+                : `Rust engine: ${overBudget.length} node(s) over budget within the width bounds`,
+              within_budget: withinBudget,
+              tolerance_pct: tolPct,
+              widths_mm: widths,
+              measured_drops_v: drops.map(r6),
+              targets,
+              converged: exact.converged,
+              ...(overBudget.length ? { over_budget: overBudget } : {}),
+            }),
+          },
+        ],
+      };
+    }
+  }
 
   const m = nodes - 1; // reduced system size (node 0 eliminated)
   const reduced = (n: number) => (n === 0 ? -1 : n - 1);

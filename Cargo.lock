@@ -6821,6 +6821,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "vcad-ecad-diff-wasm"
+version = "0.9.4"
+dependencies = [
+ "serde",
+ "serde_json",
+ "vcad-ecad-diff",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "vcad-ecad-export"
 version = "0.9.4"
 dependencies = [

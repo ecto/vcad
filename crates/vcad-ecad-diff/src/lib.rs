@@ -20,3 +20,4 @@ pub mod pdn;
 pub use codesign::{codesign_motor, spin_up_omega};
 pub use design::{DesignSystem, ResidualFn};
 pub use pdn::{PdnEdge, PdnSystem};
+pub use vcad_kernel_constraints::{SolveResult, SolveStatus, SolverConfig};
