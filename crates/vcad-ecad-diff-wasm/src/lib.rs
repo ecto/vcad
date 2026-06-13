@@ -61,9 +61,20 @@ pub fn size_pdn(spec_json: &str) -> String {
         Err(e) => return format!("{{\"error\":\"parse: {e}\"}}"),
     };
     let ne = spec.edges.len();
-    let edges: Vec<PdnEdge> = spec.edges.iter().map(|e| PdnEdge::new(e.a, e.b, e.length)).collect();
-    let sys = PdnSystem::new(spec.nodes, edges, spec.loads, spec.targets, spec.sigma, spec.thickness)
-        .with_bounds(vec![spec.min_width; ne], vec![spec.max_width; ne]);
+    let edges: Vec<PdnEdge> = spec
+        .edges
+        .iter()
+        .map(|e| PdnEdge::new(e.a, e.b, e.length))
+        .collect();
+    let sys = PdnSystem::new(
+        spec.nodes,
+        edges,
+        spec.loads,
+        spec.targets,
+        spec.sigma,
+        spec.thickness,
+    )
+    .with_bounds(vec![spec.min_width; ne], vec![spec.max_width; ne]);
     let mut widths = vec![spec.seed_width; ne];
     let res = sys.solve(&mut widths, &SolverConfig::default());
     let drops = sys.drops(&widths);

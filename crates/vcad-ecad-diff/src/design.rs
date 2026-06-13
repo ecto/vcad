@@ -102,8 +102,10 @@ impl DesignSystem {
         }
         let num_nonzero = sparse_entries.len();
 
-        let simplified_residuals: Vec<ExprId> =
-            residual_exprs.into_iter().map(|r| graph.simplify(r)).collect();
+        let simplified_residuals: Vec<ExprId> = residual_exprs
+            .into_iter()
+            .map(|r| graph.simplify(r))
+            .collect();
 
         let residual_fn = graph.compile_many(&simplified_residuals);
         let jacobian_fn = graph.compile_many(&jac_exprs);
@@ -226,15 +228,27 @@ mod tests {
         // coupled) and reduces to 2*Z0*k at the symmetric solution.
         let residuals: Vec<ResidualFn> = vec![
             Box::new(move |v| {
-                microstrip_z0(v[0], ExprId::from_f64(T), ExprId::from_f64(H), ExprId::from_f64(ER))
-                    - ExprId::from_f64(z0t)
+                microstrip_z0(
+                    v[0],
+                    ExprId::from_f64(T),
+                    ExprId::from_f64(H),
+                    ExprId::from_f64(ER),
+                ) - ExprId::from_f64(z0t)
             }),
             Box::new(move |v| {
-                microstrip_z0(v[1], ExprId::from_f64(T), ExprId::from_f64(H), ExprId::from_f64(ER))
-                    - ExprId::from_f64(z0t)
+                microstrip_z0(
+                    v[1],
+                    ExprId::from_f64(T),
+                    ExprId::from_f64(H),
+                    ExprId::from_f64(ER),
+                ) - ExprId::from_f64(z0t)
             }),
             Box::new(move |v| {
-                let (t, h, er) = (ExprId::from_f64(T), ExprId::from_f64(H), ExprId::from_f64(ER));
+                let (t, h, er) = (
+                    ExprId::from_f64(T),
+                    ExprId::from_f64(H),
+                    ExprId::from_f64(ER),
+                );
                 let z1 = microstrip_z0(v[0], t, h, er);
                 let z2 = microstrip_z0(v[1], t, h, er);
                 let k = diff_coupling_k(v[2], h, ExprId::from_f64(0.48), ExprId::from_f64(0.96));
@@ -253,12 +267,19 @@ mod tests {
 
         let mut params = vec![0.45, 0.18, 0.8]; // deliberately asymmetric seed
         let res = sys.solve(&mut params, &SolverConfig::default());
-        assert!(res.converged, "diff-pair solve should converge: {:?}", res.status);
+        assert!(
+            res.converged,
+            "diff-pair solve should converge: {:?}",
+            res.status
+        );
 
         let (w1, w2, s) = (params[0], params[1], params[2]);
 
         // (a) identical per-line targets => symmetric widths.
-        assert!((w1 - w2).abs() < 1e-6, "expected symmetric widths, got {w1} vs {w2}");
+        assert!(
+            (w1 - w2).abs() < 1e-6,
+            "expected symmetric widths, got {w1} vs {w2}"
+        );
 
         // (b) re-verify each line's Z0 against the forward f64 model.
         let z0_1 = microstrip_z0(w1, T, H, ER);
@@ -278,17 +299,25 @@ mod tests {
     #[test]
     fn jacobian_matches_finite_difference() {
         let residuals: Vec<ResidualFn> = vec![Box::new(move |v| {
-            microstrip_z0(v[0], ExprId::from_f64(T), ExprId::from_f64(H), ExprId::from_f64(ER))
-                - ExprId::from_f64(50.0)
+            microstrip_z0(
+                v[0],
+                ExprId::from_f64(T),
+                ExprId::from_f64(H),
+                ExprId::from_f64(ER),
+            ) - ExprId::from_f64(50.0)
         })];
         let sys = DesignSystem::build(&residuals, 1);
         assert_eq!(sys.num_nonzero, 1);
 
         let sparse = sys.eval_jacobian_sparse(&[0.30]);
         let eps = 1e-6;
-        let fd =
-            (microstrip_z0(0.30 + eps, T, H, ER) - microstrip_z0(0.30 - eps, T, H, ER)) / (2.0 * eps);
-        assert!((sparse[0] - fd).abs() < 1e-4, "symbolic {} vs FD {fd}", sparse[0]);
+        let fd = (microstrip_z0(0.30 + eps, T, H, ER) - microstrip_z0(0.30 - eps, T, H, ER))
+            / (2.0 * eps);
+        assert!(
+            (sparse[0] - fd).abs() < 1e-4,
+            "symbolic {} vs FD {fd}",
+            sparse[0]
+        );
         assert!(sparse[0] < 0.0, "wider trace => lower Z0");
     }
 
@@ -317,7 +346,11 @@ mod tests {
 
         let mut params = vec![0.5; n];
         let res = sys.solve(&mut params, &SolverConfig::default());
-        assert!(res.converged, "n-trace solve should converge: {:?}", res.status);
+        assert!(
+            res.converged,
+            "n-trace solve should converge: {:?}",
+            res.status
+        );
         for &w in &params {
             assert!((microstrip_z0(w, T, H, ER) - 50.0).abs() < 1e-4, "w={w}");
         }
@@ -331,8 +364,8 @@ mod tests {
     fn sizes_stator_radius_for_a_target_torque_constant() {
         use vcad_ecad_sim::magnetics::motor_torque_constant;
         let target_kt = 0.02; // N·m/A
-        // 12-pole (p=6), 60 series turns, kw=0.866, 0.4 T airgap, 5 mm bore.
-        // var(0) = outer stator radius (mm); everything else baked.
+                              // 12-pole (p=6), 60 series turns, kw=0.866, 0.4 T airgap, 5 mm bore.
+                              // var(0) = outer stator radius (mm); everything else baked.
         let residuals: Vec<ResidualFn> = vec![Box::new(move |v| {
             motor_torque_constant(
                 ExprId::from_f64(6.0),
@@ -351,7 +384,14 @@ mod tests {
 
         // Re-verify the torque constant at the solved radius against the model.
         let kt = motor_torque_constant(6.0, 60.0, 0.866, 0.4, 5.0, params[0]);
-        assert!((kt - target_kt).abs() < 1e-6, "Kt {kt} vs target {target_kt}");
-        assert!(params[0] > 6.0 && params[0] < 60.0, "radius in box: {}", params[0]);
+        assert!(
+            (kt - target_kt).abs() < 1e-6,
+            "Kt {kt} vs target {target_kt}"
+        );
+        assert!(
+            params[0] > 6.0 && params[0] < 60.0,
+            "radius in box: {}",
+            params[0]
+        );
     }
 }

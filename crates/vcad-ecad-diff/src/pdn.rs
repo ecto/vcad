@@ -300,7 +300,10 @@ mod tests {
         let sys = bridge(vec![(3, 0.0)]);
         let narrow = sys.drops(&[0.1, 0.1, 0.1, 0.1, 0.1])[0];
         let wide = sys.drops(&[0.4, 0.4, 0.4, 0.4, 0.4])[0];
-        assert!(wide < narrow, "wider copper should drop less: {wide} vs {narrow}");
+        assert!(
+            wide < narrow,
+            "wider copper should drop less: {wide} vs {narrow}"
+        );
     }
 
     #[test]
@@ -311,11 +314,18 @@ mod tests {
 
         let mut widths = vec![0.1; 5];
         let res = sys.solve(&mut widths, &SolverConfig::default());
-        assert!(res.converged, "PDN sizing should converge: {:?}", res.status);
+        assert!(
+            res.converged,
+            "PDN sizing should converge: {:?}",
+            res.status
+        );
 
         // Re-verify the drop from a forward solve at the solved widths.
         let drop = sys.drops(&widths)[0];
-        assert!((drop - target).abs() < 1e-5, "node-3 drop {drop} vs target {target}");
+        assert!(
+            (drop - target).abs() < 1e-5,
+            "node-3 drop {drop} vs target {target}"
+        );
         // Widths stayed inside the box.
         for &w in &widths {
             assert!((0.05..=3.0).contains(&w), "width out of bounds: {w}");

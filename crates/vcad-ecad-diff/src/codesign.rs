@@ -109,8 +109,12 @@ mod tests {
         let dexpr = g.diff(expr, 0);
         let grad = g.eval(dexpr, &[r0, kp0]);
         let eps = 1e-4;
-        let fd = (spin_up_omega(r0 + eps, kp0, STEPS) - spin_up_omega(r0 - eps, kp0, STEPS)) / (2.0 * eps);
-        assert!((grad - fd).abs() < 1e-5 * (1.0 + fd.abs()), "dω/dr {grad} vs fd {fd}");
+        let fd = (spin_up_omega(r0 + eps, kp0, STEPS) - spin_up_omega(r0 - eps, kp0, STEPS))
+            / (2.0 * eps);
+        assert!(
+            (grad - fd).abs() < 1e-5 * (1.0 + fd.abs()),
+            "dω/dr {grad} vs fd {fd}"
+        );
         assert!(grad > 0.0, "a bigger stator (more torque) spins up faster");
     }
 
@@ -126,9 +130,16 @@ mod tests {
             (omega_sol - TARGET).abs() < (omega_seed - TARGET).abs(),
             "co-design should improve tracking: seed ω={omega_seed}, solved ω={omega_sol}"
         );
-        assert!((omega_sol - TARGET).abs() < 0.25 * TARGET, "tracks within 25%: ω={omega_sol}");
+        assert!(
+            (omega_sol - TARGET).abs() < 0.25 * TARGET,
+            "tracks within 25%: ω={omega_sol}"
+        );
         // Solution respects the design box, and the plant param actually moved.
         assert!((15.0..=45.0).contains(&sol[0]) && (1.0..=50.0).contains(&sol[1]));
-        assert!(sol[0] > seed[0], "co-design grew the stator for more torque: {}", sol[0]);
+        assert!(
+            sol[0] > seed[0],
+            "co-design grew the stator for more torque: {}",
+            sol[0]
+        );
     }
 }

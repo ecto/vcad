@@ -80,7 +80,10 @@ mod tests {
         let fd = (coil_inductance_henry(n0 + eps, rin, rout, K1, K2)
             - coil_inductance_henry(n0 - eps, rin, rout, K1, K2))
             / (2.0 * eps);
-        assert!((grad - fd).abs() < 1e-6 * (1.0 + fd.abs()), "dL/dn {grad} vs fd {fd}");
+        assert!(
+            (grad - fd).abs() < 1e-6 * (1.0 + fd.abs()),
+            "dL/dn {grad} vs fd {fd}"
+        );
         assert!(grad > 0.0, "more turns -> more inductance");
     }
 
@@ -105,7 +108,10 @@ mod tests {
         let grad = g.eval(dexpr, &[r0]);
         let eps = 1e-3;
         let fd = (kt(r0 + eps) - kt(r0 - eps)) / (2.0 * eps);
-        assert!((grad - fd).abs() < 1e-6 * (1.0 + fd.abs()), "dKt/dr {grad} vs fd {fd}");
+        assert!(
+            (grad - fd).abs() < 1e-6 * (1.0 + fd.abs()),
+            "dKt/dr {grad} vs fd {fd}"
+        );
         assert!(grad > 0.0, "larger stator -> higher torque constant");
     }
 }

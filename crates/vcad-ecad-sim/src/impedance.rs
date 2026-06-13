@@ -56,7 +56,8 @@ pub fn microstrip_er_eff<S: Scalar>(w: S, t: S, h: S, er: S) -> S {
 /// Single-ended stripline characteristic impedance (Ω). Monotonic ↓ in `w`.
 pub fn stripline_z0<S: Scalar>(w: S, t: S, h: S, er: S) -> S {
     (S::from_f64(60.0) / er.sqrt())
-        * (S::from_f64(4.0) * h / (S::from_f64(0.67) * S::from_f64(PI) * (S::from_f64(0.8) * w + t)))
+        * (S::from_f64(4.0) * h
+            / (S::from_f64(0.67) * S::from_f64(PI) * (S::from_f64(0.8) * w + t)))
             .ln()
 }
 
@@ -361,7 +362,8 @@ mod tests {
         let dexpr = graph.diff(z0_expr, 0);
         let grad = graph.eval(dexpr, &[w0]);
         let eps = 1e-6;
-        let fd = (microstrip_z0(w0 + eps, t, h, er) - microstrip_z0(w0 - eps, t, h, er)) / (2.0 * eps);
+        let fd =
+            (microstrip_z0(w0 + eps, t, h, er) - microstrip_z0(w0 - eps, t, h, er)) / (2.0 * eps);
         assert!(
             (grad - fd).abs() < 1e-4,
             "symbolic dz0/dw {grad} vs finite-difference {fd}"
