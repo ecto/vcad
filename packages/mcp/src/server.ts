@@ -79,8 +79,22 @@ import {
   exportGerberSchema,
   calcImpedance,
   calcImpedanceSchema,
+  sizeImpedance,
+  sizeImpedanceSchema,
+  sizePdn,
+  sizePdnSchema,
+  calcCoil,
+  calcCoilSchema,
+  sizeCoil,
+  sizeCoilSchema,
+  calcRf,
+  calcRfSchema,
   addCoil,
   addCoilSchema,
+  addCoilArray,
+  addCoilArraySchema,
+  windingLayout,
+  windingLayoutSchema,
   boardFromSolid,
   boardFromSolidSchema,
 } from "./tools/ecad.js";
@@ -142,6 +156,7 @@ const GEOMETRY_TOOLS = new Set([
   "place_components",
   "route_nets",
   "add_coil",
+  "add_coil_array",
 ]);
 
 /** MCP Apps UI metadata for geometry tools. */
@@ -192,11 +207,18 @@ const TOOL_PACKS: Record<string, readonly string[]> = {
     "place_components",
     "route_nets",
     "add_coil",
+    "add_coil_array",
+    "winding_layout",
     "board_from_solid",
     "run_drc",
     "run_erc",
     "export_gerber",
     "calc_impedance",
+    "size_impedance",
+    "size_pdn",
+    "calc_coil",
+    "size_coil",
+    "calc_rf",
   ],
   // Mecheval self-grading oracle. The benchmark harness already excludes
   // these during scored runs; hosts that don't want the benchmark
@@ -233,7 +255,7 @@ function buildInstructions(kernelPrompt: string | null): string {
     "- Ship with `export_cad` (STL/GLB/STEP) or `open_in_browser` (vcad.io deep link).",
     "- Fix in place: when geometry is wrong, prefer `update` on the offending node over deleting parts and starting over.",
     "",
-    "PCB workflow: `create_schematic` (declare connectivity as data via `nets`) → `place_components` → `route_nets` / `add_coil` → `run_drc` → `export_gerber`. All take the `document_id` from create_schematic and mutate that session — never re-send the document. `board_from_solid` turns a solid part (e.g. an enclosure or stator disc in a CAD session) into an outline polygon for `place_components`.",
+    "PCB workflow: `create_schematic` (declare connectivity as data via `nets`) → `place_components` → `route_nets` / `add_coil` / `add_coil_array` → `run_drc` → `export_gerber`. All take the `document_id` from create_schematic and mutate that session — never re-send the document. `board_from_solid` turns a solid part (e.g. an enclosure or stator disc in a CAD session) into an outline polygon for `place_components`. For motors, plan the winding first with `winding_layout` (slots + poles → per-coil phase/polarity/winding-factor, as data — it touches no board), then realize it with `add_coil_array`. `run_drc` returns a summary by default (counts by rule + net-pair, worst clearance, a capped sample); pass `detail:'full'` for every violation.",
   ].join("\n");
   if (!kernelPrompt) return header;
   const sections = new Map<string, string>();
@@ -652,6 +674,27 @@ export async function createServer(existingEngine?: Engine): Promise<Server> {
         inputSchema: addCoilSchema,
       },
       {
+        name: "add_coil_array",
+        description:
+          "Lay a ring of `count` spiral coils evenly around `center` at " +
+          "`pitch_radius` — the placement primitive for a PCB-motor stator. " +
+          "Net per coil comes from `net_sequence` (cycled); `chirality` sets " +
+          "winding sense. GEOMETRY ONLY: it has no notion of phases — derive " +
+          "correct per-coil phase/polarity with `winding_layout` first, then " +
+          "map it onto net_sequence/chirality.",
+        inputSchema: addCoilArraySchema,
+      },
+      {
+        name: "winding_layout",
+        description:
+          "Plan a balanced polyphase motor winding (slots + poles → per-coil " +
+          "phase, polarity, winding factor, feasibility) as DATA. Pure — it " +
+          "does NOT take a board or modify anything; inspect the plan, then " +
+          "realize it with add_coil_array/add_coil. Catches infeasible " +
+          "slot/pole combos and wrong polarity before any copper is drawn.",
+        inputSchema: windingLayoutSchema,
+      },
+      {
         name: "board_from_solid",
         description:
           "Derive a PCB outline polygon (with cutouts, e.g. a center bore) " +
@@ -688,6 +731,55 @@ export async function createServer(existingEngine?: Engine): Promise<Server> {
           "Supports microstrip, stripline, and differential pair configurations. " +
           "Returns Z0, effective Er, and propagation delay.",
         inputSchema: calcImpedanceSchema,
+      },
+      {
+        name: "size_impedance",
+        description:
+          "Inverse of calc_impedance: solve trace geometry for a TARGET impedance. " +
+          "Given a target Z0 (and diff Z0 for pairs) + stackup, returns the trace " +
+          "width (and spacing) AS DATA, snapped to the fab grid and re-verified " +
+          "against the same model. Reports a binding DFM min-width/spacing bound " +
+          "and whether the target is reachable — it will not silently hand back a " +
+          "width that misses spec. Pure: no board, no mutation.",
+        inputSchema: sizeImpedanceSchema,
+      },
+      {
+        name: "size_pdn",
+        description:
+          "Size copper-segment widths across a power-distribution resistor mesh " +
+          "so each load node's IR-drop meets its budget with minimal copper. " +
+          "Solves G·V=I for node voltages and drives drop→budget with a bounded " +
+          "gradient tuner; returns per-segment widths AS DATA with drops " +
+          "recomputed from a forward solve, and flags any node it can't meet " +
+          "within the width bounds. Pure: no board, no mutation.",
+        inputSchema: sizePdnSchema,
+      },
+      {
+        name: "calc_coil",
+        description:
+          "Analyze a planar spiral coil: inductance (modified Wheeler), DC " +
+          "resistance, copper length, and L/R time constant. The analyzer for " +
+          "the planar-magnetics archetype (inductors, sensor coils, motor " +
+          "stators). Pure.",
+        inputSchema: calcCoilSchema,
+      },
+      {
+        name: "size_coil",
+        description:
+          "Inverse of calc_coil: solve the turn count for a target inductance " +
+          "in a given annulus (Wheeler L ∝ turns², so it's closed-form). Reports " +
+          "continuous + integer turns, the inductance achieved, and whether that " +
+          "many turns fit the radial band (else fit-limited). Pure.",
+        inputSchema: sizeCoilSchema,
+      },
+      {
+        name: "calc_rf",
+        description:
+          "Frequency-domain (AC) analysis of an RLC resonator: sweeps complex " +
+          "impedance over frequency and reports |Z|, phase, and S11/return-loss " +
+          "vs a reference Z0, plus resonance, Q, and the best match in the band. " +
+          "The RF/AC analyzer (calc_impedance is geometry-only). Pure.",
+        inputSchema: calcRfSchema,
       },
     ].filter((t) => !disabledTools.has(t.name)),
   }));
@@ -947,6 +1039,14 @@ export async function createServer(existingEngine?: Engine): Promise<Server> {
           result = addCoil(args);
           break;
 
+        case "add_coil_array":
+          result = addCoilArray(args);
+          break;
+
+        case "winding_layout":
+          result = windingLayout(args);
+          break;
+
         case "board_from_solid":
           result = boardFromSolid(args, engine);
           break;
@@ -965,6 +1065,26 @@ export async function createServer(existingEngine?: Engine): Promise<Server> {
 
         case "calc_impedance":
           result = calcImpedance(args);
+          break;
+
+        case "size_impedance":
+          result = sizeImpedance(args);
+          break;
+
+        case "size_pdn":
+          result = sizePdn(args);
+          break;
+
+        case "calc_coil":
+          result = calcCoil(args);
+          break;
+
+        case "size_coil":
+          result = sizeCoil(args);
+          break;
+
+        case "calc_rf":
+          result = calcRf(args);
           break;
 
         default:

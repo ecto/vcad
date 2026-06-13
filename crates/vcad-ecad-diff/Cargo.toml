@@ -1,0 +1,17 @@
+[package]
+name = "vcad-ecad-diff"
+description = "Differentiable PCB design: gradient-based trace geometry solving on the impedance leaves"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+vcad-ecad-sim = { workspace = true }
+vcad-kernel-constraints = { workspace = true }
+tang = { workspace = true }
+tang-la = { workspace = true }
+tang-expr = { workspace = true }
+
+[dev-dependencies]

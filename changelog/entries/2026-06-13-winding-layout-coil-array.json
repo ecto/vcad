@@ -1,0 +1,10 @@
+{
+  "id": "2026-06-13-winding-layout-coil-array",
+  "version": "0.9.4",
+  "date": "2026-06-13",
+  "category": "feat",
+  "title": "winding_layout planner + add_coil_array, summary-first DRC",
+  "summary": "winding_layout derives correct per-coil phase, polarity, and winding factor from slots+poles as data; add_coil_array fans add_coil over a ring in one call; run_drc now returns an aggregated summary by default (detail:'full' for the raw list).",
+  "features": ["ecad", "pcb", "motor", "winding", "drc", "mcp"],
+  "mcpTools": ["winding_layout", "add_coil_array", "run_drc", "add_coil"]
+}

@@ -1,0 +1,10 @@
+{
+  "id": "2026-06-13-wasm-engine",
+  "version": "0.9.4",
+  "date": "2026-06-13",
+  "category": "feat",
+  "title": "WASM: route size_pdn into the Rust differentiable engine",
+  "summary": "The Rust kernel solvers (PDN implicit-function adjoint sizing, differentiable co-design) now compile to WASM; size_pdn gains engine:'exact' to route coupled/mesh problems into the real engine, falling back to the JS solver when the artifact is absent.",
+  "features": ["ecad", "pcb", "pdn", "wasm", "kernel", "mcp"],
+  "mcpTools": ["size_pdn"]
+}

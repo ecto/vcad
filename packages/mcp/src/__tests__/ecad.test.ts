@@ -8,7 +8,17 @@ import {
   runDrc,
   runErc,
   exportGerber,
+  calcImpedance,
+  sizeImpedance,
+  sizePdn,
+  calcCoil,
+  sizeCoil,
+  calcRf,
   addCoil,
+  addCoilArray,
+  windingLayout,
+  aggregateDrc,
+  parseNetPair,
   boardFromSolid,
 } from "../tools/ecad.js";
 import { documents, getSession, openDocument } from "../tools/session.js";
@@ -497,6 +507,470 @@ describe("add_coil", () => {
   });
 });
 
+describe("winding_layout", () => {
+  it("9-slot/12-pole 3-phase: double layer, all-positive polarity, kw≈0.866", () => {
+    const plan = out(windingLayout({ slots: 9, poles: 12 }));
+    expect(plan.feasible).toBe(true);
+    expect(plan.layer).toBe("double");
+    expect(plan.coils).toHaveLength(9);
+    expect(plan.coilsPerPhase).toBe(3);
+    // Regression lock for the original session bug: NO sign flip within a phase.
+    expect(plan.coils.every((c: { polarity: number }) => c.polarity === 1)).toBe(true);
+    expect(plan.windingFactor).toBeCloseTo(0.866, 3);
+    expect(plan.pitchFactor).toBeCloseTo(0.866, 3);
+    expect(plan.distributionFactor).toBeCloseTo(1, 6);
+    // Canonical verified phase table: A,C,B repeating (phase indices 0,2,1).
+    expect(plan.coils.map((c: { phase: number }) => c.phase)).toEqual([0, 2, 1, 0, 2, 1, 0, 2, 1]);
+    expect(plan.coils.map((c: { net: string }) => c.net)).toEqual([
+      "PHA", "PHC", "PHB", "PHA", "PHC", "PHB", "PHA", "PHC", "PHB",
+    ]);
+    expect(plan.neutralNet).toBe("WIND_N");
+  });
+
+  it("rejects a single-layer winding for an odd slot count", () => {
+    const plan = out(windingLayout({ slots: 9, poles: 12, layer: "single" }));
+    expect(plan.feasible).toBe(false);
+    expect(plan.reason).toMatch(/single-layer|odd/i);
+  });
+
+  it("12-slot/10-pole: kw≈0.933, each phase carries both polarities", () => {
+    const plan = out(windingLayout({ slots: 12, poles: 10 }));
+    expect(plan.feasible).toBe(true);
+    expect(plan.coils).toHaveLength(12);
+    expect(plan.coilsPerPhase).toBe(4);
+    expect(plan.windingFactor).toBeCloseTo(0.933, 3);
+    expect(plan.distributionFactor).toBeCloseTo(0.966, 3);
+    for (let ph = 0; ph < 3; ph++) {
+      const signs = plan.coils
+        .filter((c: { phase: number }) => c.phase === ph)
+        .map((c: { polarity: number }) => c.polarity);
+      expect(signs).toContain(1);
+      expect(signs).toContain(-1);
+    }
+  });
+
+  it("flags infeasible slot/pole/phase combinations", () => {
+    const plan = out(windingLayout({ slots: 9, poles: 12, phases: 4 }));
+    expect(plan.feasible).toBe(false);
+    expect(plan.reason).toBeTruthy();
+  });
+
+  it("is pure — ignores document_id, mutates nothing, returns no doc handle", async () => {
+    const created = out(await createSchematic({ components: [resistor("R1", 0)] }));
+    const id = created.document_id;
+    out(
+      await placeComponents({
+        document_id: id,
+        board_shape: { type: "circle", outer_diameter: 80, inner_diameter: 16 },
+      }),
+    );
+    const before = getPcbBoard(getSession(id)).traces.length;
+    const plan = out(windingLayout({ document_id: id, slots: 9, poles: 12 }));
+    expect(plan.document_id).toBeUndefined();
+    expect(plan.document).toBeUndefined();
+    expect(getPcbBoard(getSession(id)).traces.length).toBe(before);
+  });
+});
+
+describe("add_coil_array", () => {
+  async function ringBoard(): Promise<string> {
+    const created = out(await createSchematic({ components: [resistor("R1", 0)] }));
+    const id = created.document_id;
+    out(
+      await placeComponents({
+        document_id: id,
+        board_shape: { type: "circle", outer_diameter: 120, inner_diameter: 20 },
+      }),
+    );
+    return id;
+  }
+
+  const base = {
+    count: 3,
+    center: { x: 60, y: 60 },
+    pitch_radius: 20,
+    turns: 4,
+    inner_radius: 3,
+    outer_radius: 8,
+    trace_width: 0.25,
+    clearance: 0.25,
+  };
+
+  it("lays a 3-phase ring: 3 coils 120° apart, nets cycled", async () => {
+    const id = await ringBoard();
+    const res = out(addCoilArray({ document_id: id, ...base, net_sequence: ["PHA", "PHB", "PHC"] }));
+    expect(res.success).toBe(true);
+    expect(res.coils_added).toBe(3);
+    expect(res.total_traces).toBeGreaterThan(0);
+    expect(res.results.map((r: { net: string }) => r.net)).toEqual(["PHA", "PHB", "PHC"]);
+
+    const board = getPcbBoard(getSession(id));
+    for (const n of ["PHA", "PHB", "PHC"]) {
+      expect(board.nets.some((x) => x.id === n)).toBe(true);
+    }
+    // First coil at +X of the ring; all centers at radius 20 from board center.
+    expect(res.results[0].center.x).toBeCloseTo(80, 2);
+    expect(res.results[0].center.y).toBeCloseTo(60, 2);
+    for (const r of res.results) {
+      expect(Math.hypot(r.center.x - 60, r.center.y - 60)).toBeCloseTo(20, 3);
+    }
+  });
+
+  it("chirality 'alternating' flips winding sense per coil", async () => {
+    const id = await ringBoard();
+    const res = out(addCoilArray({ document_id: id, ...base, net: "X", chirality: "alternating" }));
+    expect(res.results.map((r: { direction: string }) => r.direction)).toEqual(["ccw", "cw", "ccw"]);
+  });
+
+  it("cycles net_sequence when shorter than count", async () => {
+    const id = await ringBoard();
+    const res = out(
+      addCoilArray({ document_id: id, ...base, count: 4, net_sequence: ["A", "B"] }),
+    );
+    expect(res.results.map((r: { net: string }) => r.net)).toEqual(["A", "B", "A", "B"]);
+  });
+
+  it("mutates the same session that addCoil writes to", async () => {
+    const id = await ringBoard();
+    const before = getPcbBoard(getSession(id)).traces.length;
+    out(addCoilArray({ document_id: id, ...base, net_sequence: ["PHA", "PHB", "PHC"] }));
+    expect(getPcbBoard(getSession(id)).traces.length).toBeGreaterThan(before);
+  });
+
+  it("rejects count < 1", async () => {
+    const id = await ringBoard();
+    const res = addCoilArray({ document_id: id, ...base, count: 0, net: "X" });
+    expect(res.isError).toBe(true);
+  });
+
+  it("collects per-coil geometry failures instead of throwing", async () => {
+    const id = await ringBoard();
+    // outer_radius <= inner_radius fails inside addCoil for every coil.
+    const res = addCoilArray({
+      document_id: id,
+      ...base,
+      inner_radius: 8,
+      outer_radius: 4,
+      net: "X",
+    });
+    const payload = out(res);
+    expect(payload.success).toBe(false);
+    expect(payload.errors.length).toBeGreaterThan(0);
+  });
+});
+
+describe("run_drc summary aggregation", () => {
+  it("aggregateDrc rolls up by rule + net-pair with a capped sample", () => {
+    const viol = (rule: string, message: string, actual: number, required: number) => ({
+      rule,
+      severity: "Error",
+      message,
+      position: { x: 0, y: 0 },
+      actual,
+      required,
+    });
+    const violations = [
+      viol("Clearance", "Clearance violation: trace net 'PHA' to net 'PHB': 0.00mm < 0.25mm", 0, 0.25),
+      viol("Clearance", "Clearance violation: trace net 'PHB' to net 'PHA': 0.10mm < 0.25mm", 0.1, 0.25),
+      viol("Clearance", "Clearance violation: trace net 'PHA' to net 'PHC': 0.05mm < 0.25mm", 0.05, 0.25),
+      viol("MinTraceWidth", "Trace width on net 'GND' too narrow", 0.1, 0.2),
+    ];
+    const summary = aggregateDrc(violations, 2, "summary");
+    expect(summary.violations).toBe(4);
+    expect(summary.errors).toBe(4);
+    expect(summary.byRule.Clearance).toBe(3);
+    expect(summary.byRule.MinTraceWidth).toBe(1);
+    // (PHA,PHB) and (PHB,PHA) collapse into one pair.
+    const phaPhb = summary.byNetPair.find(
+      (p) => p.nets[0] === "PHA" && p.nets[1] === "PHB",
+    );
+    expect(phaPhb?.count).toBe(2);
+    // Single-net rule yields a [net, ""] pair.
+    expect(summary.byNetPair.some((p) => p.nets[0] === "GND" && p.nets[1] === "")).toBe(true);
+    // Worst clearance is the 0.00mm short.
+    expect(summary.worstClearance?.actual).toBe(0);
+    // Sample respects the cap and reports truncation; full details omitted.
+    expect(summary.sample.length).toBe(2);
+    expect(summary.sampleCapped).toBe(true);
+    expect(summary.details).toBeUndefined();
+  });
+
+  it("detail='full' attaches the complete violation array", () => {
+    const violations = [
+      { rule: "MinDrill", severity: "Error", message: "drill too small", actual: 0.1, required: 0.2 },
+    ];
+    const summary = aggregateDrc(violations, 20, "full");
+    expect(summary.details).toBeDefined();
+    expect(summary.details).toHaveLength(1);
+    expect(summary.detail).toBe("full");
+  });
+
+  it("does not let a NaN measurement corrupt worstClearance", () => {
+    const violations = [
+      { rule: "Clearance", severity: "Error", message: "net 'A' to net 'B'", actual: NaN, required: 0.2 },
+      { rule: "Clearance", severity: "Error", message: "net 'A' to net 'C'", actual: 0.05, required: 0.2 },
+    ];
+    const summary = aggregateDrc(violations, 20, "summary");
+    expect(summary.worstClearance?.actual).toBe(0.05);
+  });
+
+  it("parseNetPair sorts the pair so order doesn't matter", () => {
+    expect(parseNetPair("net 'B' to net 'A'")).toEqual(["A", "B"]);
+    expect(parseNetPair("only net 'GND' here")).toEqual(["GND", ""]);
+    expect(parseNetPair("no nets mentioned")).toEqual(["", ""]);
+  });
+
+  it("run_drc returns the summary shape by default (no details), full on request", async () => {
+    const created = out(await createSchematic({ components: [resistor("R1", 0)] }));
+    const id = created.document_id;
+    out(
+      await placeComponents({
+        document_id: id,
+        board_shape: { type: "circle", outer_diameter: 80, inner_diameter: 16 },
+      }),
+    );
+    const summary = out(await runDrc({ document_id: id }));
+    expect(summary.success).toBe(true);
+    expect(typeof summary.violations).toBe("number");
+    expect(summary.byRule).toBeDefined();
+    expect(Array.isArray(summary.byNetPair)).toBe(true);
+    expect(Array.isArray(summary.sample)).toBe(true);
+    expect(summary.detail).toBe("summary");
+    expect(summary.details).toBeUndefined();
+
+    const full = out(await runDrc({ document_id: id, detail: "full" }));
+    expect(full.detail).toBe("full");
+    expect(Array.isArray(full.details)).toBe(true);
+  });
+});
+
+describe("size_impedance", () => {
+  it("solves single-ended microstrip width for 50Ω, and calc_impedance re-verifies it", () => {
+    const stack = { dielectric_height: 0.2, dielectric_er: 4.3, copper_thickness: 0.035 };
+    const r = out(sizeImpedance({ trace_type: "microstrip", target_z0: 50, ...stack }));
+    expect(r.success).toBe(true);
+    expect(r.within_tolerance).toBe(true);
+    expect(Math.abs(r.measured.z0 - 50)).toBeLessThan(2.5);
+    expect(r.width_mm).toBeGreaterThan(0.1);
+    expect(r.width_mm).toBeLessThan(1);
+    expect(r.measured.recomputed_from_geometry).toBe(true);
+    // One model, one number: calc_impedance at the solved width agrees.
+    const v = out(calcImpedance({ trace_type: "microstrip", trace_width: r.width_mm, ...stack }));
+    expect(Math.abs(v.z0 - 50)).toBeLessThan(2.5);
+    expect(r.document_id).toBeUndefined();
+  });
+
+  it("solves stripline width for 50Ω", () => {
+    const r = out(
+      sizeImpedance({ trace_type: "stripline", target_z0: 50, dielectric_height: 0.5, dielectric_er: 4.3 }),
+    );
+    expect(r.within_tolerance).toBe(true);
+    expect(Math.abs(r.measured.z0 - 50)).toBeLessThan(2.5);
+  });
+
+  it("solves a differential pair for 90Ω diff / 50Ω SE and re-verifies both", () => {
+    const stack = { dielectric_height: 0.2, dielectric_er: 4.3 };
+    const r = out(
+      sizeImpedance({ trace_type: "diff_microstrip", target_diff_z0: 90, target_z0: 50, ...stack }),
+    );
+    expect(r.within_tolerance).toBe(true);
+    expect(Math.abs(r.measured.z0 - 50)).toBeLessThan(2.5);
+    expect(Math.abs(r.measured.diff_z0 - 90)).toBeLessThan(4.5);
+    expect(r.spacing_mm).toBeGreaterThan(0);
+    const v = out(
+      calcImpedance({ trace_type: "diff_microstrip", trace_width: r.width_mm, spacing: r.spacing_mm, ...stack }),
+    );
+    expect(Math.abs(v.z_diff - 90)).toBeLessThan(5);
+  });
+
+  it("reports an unreachable target with the binding DFM bound — never a silent miss", () => {
+    const r = out(
+      sizeImpedance({
+        trace_type: "microstrip",
+        target_z0: 120,
+        dielectric_height: 0.2,
+        dielectric_er: 4.3,
+        min_width: 0.1,
+        max_width: 2,
+      }),
+    );
+    expect(r.within_tolerance).toBe(false);
+    expect(r.reason).toMatch(/reach|closest/i);
+    expect(r.active_constraints).toContain("min_width");
+    // Still returns the honest best-achievable, recomputed from geometry.
+    expect(r.measured.z0).toBeLessThan(120);
+  });
+
+  it("snaps to the fab grid and stays in tolerance", () => {
+    const grid = 0.0254;
+    const r = out(
+      sizeImpedance({ trace_type: "microstrip", target_z0: 50, dielectric_height: 0.2, dielectric_er: 4.3, fab_grid_mm: grid }),
+    );
+    const ratio = r.width_mm / grid;
+    expect(Math.abs(ratio - Math.round(ratio))).toBeLessThan(1e-6);
+    expect(r.within_tolerance).toBe(true);
+  });
+
+  it("rejects an invalid stackup (copper thicker than dielectric)", () => {
+    const res = sizeImpedance({ target_z0: 50, dielectric_height: 0.02, copper_thickness: 0.035 });
+    expect(res.isError).toBe(true);
+  });
+});
+
+describe("size_pdn", () => {
+  // Wheatstone-bridge mesh: VRM(0) -> {1,2} -> 3 with a bridge edge 1-2.
+  const bridge = (targets: Array<{ node: number; max_drop: number }>) => ({
+    nodes: 4,
+    edges: [
+      { a: 0, b: 1, length: 10 },
+      { a: 0, b: 2, length: 10 },
+      { a: 1, b: 3, length: 10 },
+      { a: 2, b: 3, length: 10 },
+      { a: 1, b: 2, length: 8 },
+    ],
+    loads: [{ node: 3, current: 1.0 }],
+    targets,
+  });
+
+  it("sizes segment widths so the load node meets its IR-drop budget", () => {
+    const r = out(sizePdn(bridge([{ node: 3, max_drop: 0.015 }])));
+    expect(r.success).toBe(true);
+    expect(r.within_budget).toBe(true);
+    expect(r.widths_mm).toHaveLength(5);
+    // Drop recomputed from a forward solve sits at/under budget (within tol).
+    expect(r.measured_drops_v[0]).toBeLessThanOrEqual(0.015 * 1.05);
+    expect(r.measured_drops_v[0]).toBeGreaterThan(0); // a real drop, mesh is solved
+    expect(r.document_id).toBeUndefined();
+  });
+
+  it("flags a budget it cannot meet within the width bounds", () => {
+    // An impossibly tight budget at realistic max widths -> over_budget reported.
+    const r = out(sizePdn({ ...bridge([{ node: 3, max_drop: 1e-5 }]), max_width: 0.5 }));
+    expect(r.within_budget).toBe(false);
+    expect(r.over_budget.length).toBeGreaterThan(0);
+    expect(r.active_constraints).toContain("max_width");
+  });
+
+  it("rejects a singular (disconnected) mesh", () => {
+    // Node 3 has no path to the reference (node 0).
+    const res = sizePdn({
+      nodes: 4,
+      edges: [{ a: 0, b: 1, length: 10 }],
+      loads: [{ node: 3, current: 1.0 }],
+      targets: [{ node: 3, max_drop: 0.1 }],
+    });
+    expect(res.isError).toBe(true);
+    expect(res.content[0].text).toMatch(/singular|path/i);
+  });
+
+  it("engine:'exact' routes into the Rust adjoint engine via WASM (when built)", async () => {
+    const { ecadDiffEngineAvailable } = await import("../wasm/ecad-diff.js");
+    const r = out(sizePdn({ ...bridge([{ node: 3, max_drop: 0.015 }]), engine: "exact" }));
+    if (ecadDiffEngineAvailable()) {
+      // The Rust engine (implicit-function adjoint) sized the mesh.
+      expect(r.engine).toBe("rust-adjoint");
+      expect(r.within_budget).toBe(true);
+      expect(r.measured_drops_v[0]).toBeLessThanOrEqual(0.015 * 1.05);
+      expect(r.widths_mm).toHaveLength(5);
+    } else {
+      // Artifact absent → graceful fall-through to the TS solver.
+      expect(r.success).toBe(true);
+    }
+  });
+
+  it("wider bounds let it meet a tighter budget than narrow bounds", () => {
+    const tight = out(sizePdn({ ...bridge([{ node: 3, max_drop: 0.008 }]), max_width: 0.3 }));
+    const roomy = out(sizePdn({ ...bridge([{ node: 3, max_drop: 0.008 }]), max_width: 5 }));
+    expect(roomy.within_budget).toBe(true);
+    // The constrained run does no better than the roomy one.
+    expect(roomy.measured_drops_v[0]).toBeLessThanOrEqual(tight.measured_drops_v[0] + 1e-9);
+  });
+});
+
+describe("calc_coil / size_coil", () => {
+  it("computes a sane inductance and resistance for a planar spiral", () => {
+    const r = out(
+      calcCoil({ inner_radius: 2, outer_radius: 6, turns: 10, trace_width: 0.2 }),
+    );
+    expect(r.success).toBe(true);
+    // ~10-turn 2–6mm circular spiral lands in the hundreds-of-nH range.
+    expect(r.inductance_nh).toBeGreaterThan(300);
+    expect(r.inductance_nh).toBeLessThan(1500);
+    expect(r.dc_resistance_ohm).toBeGreaterThan(0);
+    expect(r.wire_length_mm).toBeGreaterThan(0);
+  });
+
+  it("inductance grows with turns squared", () => {
+    const l1 = out(calcCoil({ inner_radius: 2, outer_radius: 6, turns: 5, trace_width: 0.2 })).inductance_nh;
+    const l2 = out(calcCoil({ inner_radius: 2, outer_radius: 6, turns: 10, trace_width: 0.2 })).inductance_nh;
+    // Doubling turns ~quadruples L (geometry fixed).
+    expect(l2 / l1).toBeGreaterThan(3.5);
+    expect(l2 / l1).toBeLessThan(4.5);
+  });
+
+  it("size_coil solves the turn count for a target inductance, and calc_coil re-verifies", () => {
+    const target = 500;
+    const r = out(
+      sizeCoil({ target_inductance_nh: target, inner_radius: 2, outer_radius: 8, trace_width: 0.15 }),
+    );
+    expect(r.success).toBe(true);
+    expect(r.fits).toBe(true);
+    expect(r.turns).toBeGreaterThan(0);
+    // Re-verify: calc_coil at the solved (integer) turns reproduces the achieved L.
+    const v = out(
+      calcCoil({ inner_radius: 2, outer_radius: 8, turns: r.turns, trace_width: 0.15 }),
+    );
+    expect(Math.abs(v.inductance_nh - r.achieved_inductance_nh)).toBeLessThan(1e-2);
+  });
+
+  it("size_coil reports fit-limited when the target needs more turns than fit", () => {
+    // Huge target in a thin annulus with a wide trace → cannot fit enough turns.
+    const r = out(
+      sizeCoil({
+        target_inductance_nh: 50000,
+        inner_radius: 2,
+        outer_radius: 3,
+        trace_width: 0.2,
+        clearance: 0.2,
+      }),
+    );
+    expect(r.fits).toBe(false);
+    expect(r.within_tolerance).toBe(false);
+    expect(r.summary).toMatch(/fit|widen|band/i);
+  });
+});
+
+describe("calc_rf", () => {
+  // 10 nH + 10 pF series RLC → f0 = 1/(2π√(LC)) ≈ 503 MHz.
+  const f0 = 1 / (2 * Math.PI * Math.sqrt(10e-9 * 10e-12));
+
+  it("reports resonance, and a series RLC dips to |Z|=R at f0", () => {
+    const r = out(calcRf({ topology: "series_rlc", r_ohm: 50, l_henry: 10e-9, c_farad: 10e-12 }));
+    expect(r.success).toBe(true);
+    expect(r.resonance_hz).toBeCloseTo(f0, -6); // within ~1 MHz
+    // At resonance the reactances cancel → |Z| ≈ R.
+    expect(r.z_at_resonance_ohm).toBeCloseTo(50, 1);
+  });
+
+  it("a 50Ω series RLC is well matched at resonance (high return loss)", () => {
+    const r = out(calcRf({ topology: "series_rlc", r_ohm: 50, l_henry: 10e-9, c_farad: 10e-12, z0_ohm: 50 }));
+    // Z=50=Z0 at f0 → S11→0 → large return loss; best match near f0.
+    expect(r.best_match.return_loss_db).toBeGreaterThan(40);
+    expect(r.best_match.f_hz).toBeCloseTo(f0, -7);
+  });
+
+  it("higher R lowers the series Q", () => {
+    const lowR = out(calcRf({ r_ohm: 5, l_henry: 10e-9, c_farad: 10e-12 })).q_factor;
+    const highR = out(calcRf({ r_ohm: 50, l_henry: 10e-9, c_farad: 10e-12 })).q_factor;
+    expect(lowR).toBeGreaterThan(highR);
+  });
+
+  it("validates inputs", () => {
+    expect(calcRf({ r_ohm: 50, l_henry: 0, c_farad: 1e-12 }).isError).toBe(true);
+    expect(calcRf({ r_ohm: 50, l_henry: 1e-9, c_farad: 1e-12, topology: "bogus" }).isError).toBe(true);
+  });
+});
+
 describe("board_from_solid", () => {
   it("traces a stator disc into an outline with the bore as a cutout", async () => {
     // Solid: 30mm-radius disc, 2mm thick, with an 8mm-radius center bore.
@@ -695,9 +1169,15 @@ describe("ecad pipeline behaviors (session flow)", () => {
       { start: { x: 10, y: 30 }, end: { x: 30, y: 10 }, width: 0.25, layer: "FCu", net: "B" },
     );
 
+    // Default summary surfaces the short in the rule rollup + worst clearance.
     const drc = out(await runDrc({ document_id: id }));
     expect(drc.success).toBe(true);
-    const clearanceErrors = (drc.details as Array<{ rule: string }>).filter(
+    expect(drc.byRule.Clearance).toBeGreaterThan(0);
+    expect(drc.worstClearance).not.toBeNull();
+
+    // Full detail still returns every violation for callers that want it.
+    const full = out(await runDrc({ document_id: id, detail: "full" }));
+    const clearanceErrors = (full.details as Array<{ rule: string }>).filter(
       (v) => v.rule === "Clearance",
     );
     expect(clearanceErrors.length).toBeGreaterThan(0);

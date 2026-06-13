@@ -10,5 +10,11 @@ publish = false
 [dependencies]
 vcad-ir = { workspace = true }
 thiserror = { workspace = true }
+# Scalar trait — lets the closed-form leaves be generic so ExprId can flow
+# through them for symbolic autodiff (the differentiable-design foothold).
+tang = { workspace = true }
 
 [dev-dependencies]
+# Used only to prove differentiability: trace a leaf, diff it, and check the
+# symbolic gradient against finite difference.
+tang-expr = { workspace = true }

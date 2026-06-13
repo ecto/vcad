@@ -1,0 +1,10 @@
+{
+  "id": "2026-06-13-coil-magnetics",
+  "version": "0.9.4",
+  "date": "2026-06-13",
+  "category": "feat",
+  "title": "calc_coil / size_coil: planar-magnetics analyzer + sizer",
+  "summary": "Extends the parametric-design surface to planar magnetics: calc_coil reports a spiral's inductance (modified Wheeler), DC resistance, and L/R; size_coil solves the turn count for a target inductance and flags fit-limited annuli.",
+  "features": ["ecad", "pcb", "magnetics", "inductor", "motor", "mcp"],
+  "mcpTools": ["calc_coil", "size_coil"]
+}

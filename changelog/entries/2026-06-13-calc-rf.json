@@ -1,0 +1,10 @@
+{
+  "id": "2026-06-13-calc-rf",
+  "version": "0.9.4",
+  "date": "2026-06-13",
+  "category": "feat",
+  "title": "calc_rf: RF/AC frequency-domain resonator analysis",
+  "summary": "New MCP tool sweeps an RLC resonator's complex impedance over frequency and reports |Z|, phase, S11/return-loss vs a reference Z0, plus resonance, Q, and the best match in the band — the RF/AC analyzer the surface was missing.",
+  "features": ["ecad", "pcb", "rf", "frequency-domain", "s-parameters", "mcp"],
+  "mcpTools": ["calc_rf"]
+}

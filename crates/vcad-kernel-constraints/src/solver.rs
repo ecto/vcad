@@ -113,9 +113,52 @@ pub fn solve(
         };
     }
 
-    // Build symbolic system once — differentiates and compiles to closures.
-    // Reused across all iterations (only depends on constraint topology).
+    // Build the symbolic system once (depends only on constraint topology),
+    // then hand it to the generic Levenberg-Marquardt driver.
     let system = CompiledSystem::build(constraints, entities, params.len());
+    levenberg_marquardt(&system, params, config)
+}
+
+/// A least-squares system the Levenberg-Marquardt driver can minimize.
+///
+/// Implementors expose the normal-equation pieces (`J'J`, `J'r`) and the
+/// squared residual norm; the driver never touches residuals directly.
+/// `project` is the box-bounds hook — the default no-op leaves unconstrained
+/// solving (e.g. the sketch constraint solver) byte-for-byte unchanged.
+pub trait LeastSquares {
+    /// Number of free parameters (the dimension of the step vector).
+    fn num_params(&self) -> usize;
+
+    /// Compute `(J'J, J'r)` at `params`: `J'J` is `n×n`, `J'r` is length `n`.
+    fn eval_jtj_jtr(&self, params: &[f64]) -> (DMat<f64>, Vec<f64>);
+
+    /// Sum of squared residuals at `params`.
+    fn residual_norm_squared(&self, params: &[f64]) -> f64;
+
+    /// Project a candidate parameter vector back into the feasible set (e.g.
+    /// box bounds). Default is identity (unconstrained).
+    fn project(&self, params: &mut [f64]) {
+        let _ = params;
+    }
+}
+
+/// Run Levenberg-Marquardt on any [`LeastSquares`] system, mutating `params`
+/// in place. This is the generic core extracted from [`solve`]; the constraint
+/// solver is now a thin wrapper around it, and differentiable design reuses it.
+pub fn levenberg_marquardt<Sys: LeastSquares>(
+    system: &Sys,
+    params: &mut [f64],
+    config: &SolverConfig,
+) -> SolveResult {
+    if params.is_empty() {
+        return SolveResult {
+            parameters: vec![],
+            residual_norm: system.residual_norm_squared(params).sqrt(),
+            iterations: 0,
+            converged: false,
+            status: SolveStatus::NoParameters,
+        };
+    }
 
     let mut lambda = config.initial_lambda;
     let mut current_norm_sq = system.residual_norm_squared(params);
@@ -132,26 +175,22 @@ pub fn solve(
             };
         }
 
-        // Evaluate J'J and J'r using sparse Jacobian — skips known-zero entries
+        // Evaluate J'J and J'r using the sparse Jacobian — skips known-zero entries.
         let (jtj, jtr_vec) = system.eval_jtj_jtr(params);
         let jtr = DVec::from_vec(jtr_vec);
 
-        // Try to take a step with current lambda
-        let step_result = try_step(params, &jtj, &jtr, lambda, &system);
-
-        match step_result {
+        match try_step_generic(system, params, &jtj, &jtr, lambda) {
             StepResult::Accepted {
                 new_params,
                 new_norm_sq,
             } => {
-                // Accept step
                 params.copy_from_slice(&new_params);
                 current_norm_sq = new_norm_sq;
-                // Decrease lambda (trust the linear approximation more)
+                // Decrease lambda (trust the linear approximation more).
                 lambda = (lambda * config.lambda_decrease).max(config.min_lambda);
             }
             StepResult::Rejected => {
-                // Increase lambda (be more conservative)
+                // Increase lambda (be more conservative).
                 lambda *= config.lambda_increase;
                 if lambda > config.max_lambda {
                     return SolveResult {
@@ -164,7 +203,6 @@ pub fn solve(
                 }
             }
             StepResult::SingularMatrix => {
-                // Try with larger lambda
                 lambda *= config.lambda_increase;
                 if lambda > config.max_lambda {
                     return SolveResult {
@@ -197,13 +235,14 @@ enum StepResult {
     SingularMatrix,
 }
 
-/// Try taking a step with the given damping factor.
-fn try_step(
+/// Try a damped step `(J'J + λI) δ = -J'r`, projecting the candidate back into
+/// the feasible set before measuring its cost.
+fn try_step_generic<Sys: LeastSquares>(
+    system: &Sys,
     params: &[f64],
     jtj: &DMat<f64>,
     jtr: &DVec<f64>,
     lambda: f64,
-    system: &CompiledSystem,
 ) -> StepResult {
     let n = jtj.nrows();
 
@@ -213,25 +252,24 @@ fn try_step(
         a[(i, i)] += lambda;
     }
 
-    // Solve for step direction δ
-    // Using LU decomposition for general matrices
+    // Solve for step direction δ via LU decomposition.
     let delta = match a.clone().lu().solve(&(-jtr)) {
         Some(d) => d,
         None => return StepResult::SingularMatrix,
     };
 
-    // Compute new parameters
-    let new_params: Vec<f64> = params
+    // Candidate parameters, projected back into the feasible set (box bounds).
+    let mut new_params: Vec<f64> = params
         .iter()
         .enumerate()
         .map(|(i, &p)| p + delta[i])
         .collect();
+    system.project(&mut new_params);
 
-    // Evaluate new residual norm
     let new_norm_sq = system.residual_norm_squared(&new_params);
     let old_norm_sq = system.residual_norm_squared(params);
 
-    // Accept if the new norm is smaller
+    // Accept if the new norm is smaller.
     if new_norm_sq < old_norm_sq {
         StepResult::Accepted {
             new_params,

@@ -11,11 +11,13 @@
 //!
 //! - [`circuit`] — Lumped-element transient circuit simulation (MNA network solver)
 //! - [`impedance`] — Characteristic impedance for microstrip and stripline geometries
+//! - [`magnetics`] — Scalar-generic spiral inductance + motor torque constant
 //! - [`signal_integrity`] — Propagation delay, crosstalk estimation, length matching
 //! - [`thermal`] — Component junction temperature and via thermal resistance
 
 pub mod circuit;
 pub mod impedance;
+pub mod magnetics;
 pub mod signal_integrity;
 pub mod thermal;
 

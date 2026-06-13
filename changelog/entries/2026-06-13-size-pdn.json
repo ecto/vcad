@@ -1,0 +1,10 @@
+{
+  "id": "2026-06-13-size-pdn",
+  "version": "0.9.4",
+  "date": "2026-06-13",
+  "category": "feat",
+  "title": "size_pdn: gradient sizing of a power-distribution mesh",
+  "summary": "New MCP tool sizes copper-segment widths across a PDN resistor mesh so each load node's IR-drop meets its budget with minimal copper, solving G·V=I and driving drop→budget; reports any node it can't meet within the width bounds.",
+  "features": ["ecad", "pcb", "pdn", "power-integrity", "optimization", "mcp"],
+  "mcpTools": ["size_pdn"]
+}

@@ -4,6 +4,7 @@
 //! both single-ended and differential.
 
 use std::f64::consts::{E, PI};
+use tang::Scalar;
 
 /// Impedance calculation result.
 #[derive(Debug, Clone, PartialEq)]
@@ -14,6 +15,57 @@ pub struct ImpedanceResult {
     pub er_eff: f64,
     /// Propagation delay in ps/mm.
     pub delay_ps_per_mm: f64,
+}
+
+// ---------------------------------------------------------------------------
+// Scalar-generic closed-form leaves.
+//
+// Written over `tang::Scalar` so the same code computes f64 (forward / verify)
+// and, when instantiated with `tang_expr::ExprId`, builds an expression graph
+// that differentiates symbolically — the foundation for solving trace geometry
+// by gradient rather than by search. Every constant is lifted with
+// `S::from_f64`; π is `S::PI`.
+// ---------------------------------------------------------------------------
+
+/// Effective microstrip width (Hammerstad–Jensen copper-thickness correction).
+pub fn microstrip_we<S: Scalar>(w: S, t: S, h: S) -> S {
+    // NB: lift every constant with from_f64 — ExprId's associated consts
+    // (PI, ONE, HALF, …) are graph sentinels, not real nodes.
+    let pi = S::from_f64(PI);
+    let t_over_h = t / h;
+    let t_over_wp = t / (w * pi + S::from_f64(1.1) * t * pi);
+    w + (t / pi)
+        * (S::from_f64(4.0 * E) / (t_over_h * t_over_h + t_over_wp * t_over_wp).sqrt()).ln()
+}
+
+/// Single-ended microstrip characteristic impedance (Ω). Monotonic ↓ in `w`.
+pub fn microstrip_z0<S: Scalar>(w: S, t: S, h: S, er: S) -> S {
+    let we = microstrip_we(w, t, h);
+    (S::from_f64(87.0) / (er + S::from_f64(1.41)).sqrt())
+        * (S::from_f64(5.98) * h / (S::from_f64(0.8) * we + t)).ln()
+}
+
+/// Microstrip effective permittivity (Hammerstad–Jensen).
+pub fn microstrip_er_eff<S: Scalar>(w: S, t: S, h: S, er: S) -> S {
+    let we = microstrip_we(w, t, h);
+    let one = S::from_f64(1.0);
+    let half = S::from_f64(0.5);
+    (er + one) * half + (er - one) * half * (one + S::from_f64(12.0) * h / we).sqrt().recip()
+}
+
+/// Single-ended stripline characteristic impedance (Ω). Monotonic ↓ in `w`.
+pub fn stripline_z0<S: Scalar>(w: S, t: S, h: S, er: S) -> S {
+    (S::from_f64(60.0) / er.sqrt())
+        * (S::from_f64(4.0) * h
+            / (S::from_f64(0.67) * S::from_f64(PI) * (S::from_f64(0.8) * w + t)))
+            .ln()
+}
+
+/// Edge-coupling factor `k` for a differential pair; `Zdiff = 2·Z0·k`. `a` and
+/// `b` are the empirical microstrip (0.48, 0.96) or stripline (0.347, 2.9)
+/// constants.
+pub fn diff_coupling_k<S: Scalar>(s: S, h: S, a: S, b: S) -> S {
+    S::from_f64(1.0) - a * (-(b * s / h)).exp()
 }
 
 /// Calculate microstrip impedance (outer-layer trace) using simplified IPC-2141.
@@ -39,18 +91,9 @@ pub fn microstrip_impedance(w: f64, t: f64, h: f64, er: f64) -> ImpedanceResult 
     assert!(h > 0.0, "dielectric height must be positive");
     assert!(er > 0.0, "relative permittivity must be positive");
 
-    // Effective width accounting for copper thickness (Hammerstad–Jensen correction)
-    let t_over_h = t / h;
-    let t_over_wp = t / (w * PI + 1.1 * t * PI);
-    let we = w + (t / PI) * (4.0 * E / (t_over_h * t_over_h + t_over_wp * t_over_wp).sqrt()).ln();
-
-    // Characteristic impedance (IPC-2141 simplified)
-    let z0 = (87.0 / (er + 1.41).sqrt()) * (5.98 * h / (0.8 * we + t)).ln();
-
-    // Effective dielectric constant (Hammerstad–Jensen)
-    let er_eff = (er + 1.0) / 2.0 + (er - 1.0) / 2.0 * (1.0 + 12.0 * h / we).powf(-0.5);
-
-    // Propagation delay in ps/mm
+    // Shared Scalar-generic leaves (identical math to the differentiable path).
+    let z0 = microstrip_z0(w, t, h, er);
+    let er_eff = microstrip_er_eff(w, t, h, er);
     let delay_ps_per_mm = 3.336 * er_eff.sqrt();
 
     ImpedanceResult {
@@ -83,13 +126,9 @@ pub fn stripline_impedance(w: f64, t: f64, h: f64, er: f64) -> ImpedanceResult {
     assert!(h > 0.0, "dielectric height must be positive");
     assert!(er > 0.0, "relative permittivity must be positive");
 
-    // Stripline impedance (IPC-2141)
-    let z0 = (60.0 / er.sqrt()) * (4.0 * h / (0.67 * PI * (0.8 * w + t))).ln();
-
-    // For stripline, effective dielectric constant equals bulk Er
+    let z0 = stripline_z0(w, t, h, er);
+    // For stripline, effective dielectric constant equals bulk Er.
     let er_eff = er;
-
-    // Propagation delay in ps/mm
     let delay_ps_per_mm = 3.336 * er_eff.sqrt();
 
     ImpedanceResult {
@@ -123,11 +162,7 @@ pub fn diff_microstrip_impedance(w: f64, s: f64, t: f64, h: f64, er: f64) -> f64
     assert!(s > 0.0, "trace spacing must be positive");
 
     let single = microstrip_impedance(w, t, h, er);
-
-    // Coupling correction: Zdiff = 2 * Z0 * (1 - 0.48 * exp(-0.96 * s/h))
-    // This empirical formula accounts for mutual coupling between the pair.
-    let correction = 1.0 - 0.48 * (-0.96 * s / h).exp();
-    2.0 * single.z0 * correction
+    2.0 * single.z0 * diff_coupling_k(s, h, 0.48, 0.96)
 }
 
 /// Calculate differential stripline impedance.
@@ -154,10 +189,7 @@ pub fn diff_stripline_impedance(w: f64, s: f64, t: f64, h: f64, er: f64) -> f64 
     assert!(s > 0.0, "trace spacing must be positive");
 
     let single = stripline_impedance(w, t, h, er);
-
-    // Coupling correction: Zdiff = 2 * Z0 * (1 - 0.347 * exp(-2.9 * s/h))
-    let correction = 1.0 - 0.347 * (-2.9 * s / h).exp();
-    2.0 * single.z0 * correction
+    2.0 * single.z0 * diff_coupling_k(s, h, 0.347, 2.9)
 }
 
 #[cfg(test)]
@@ -297,5 +329,46 @@ mod tests {
     #[should_panic(expected = "trace spacing must be positive")]
     fn test_diff_microstrip_zero_spacing_panics() {
         diff_microstrip_impedance(0.15, 0.0, 0.035, 0.15, 4.3);
+    }
+
+    /// The differentiable foothold: trace z0(w) through tang-expr, differentiate
+    /// symbolically, and confirm dz0/dw matches a central finite difference of
+    /// the f64 path. This is what makes solving geometry by gradient possible.
+    #[test]
+    fn microstrip_z0_symbolic_gradient_matches_finite_difference() {
+        use tang_expr::{trace, ExprId};
+        let (t, h, er) = (0.035_f64, 0.20_f64, 4.3_f64);
+        let w0 = 0.30_f64;
+
+        // Trace z0 as a function of var(0) = w; t, h, er are baked constants.
+        let (mut graph, z0_expr) = trace(|| {
+            microstrip_z0(
+                ExprId::var(0),
+                ExprId::from_f64(t),
+                ExprId::from_f64(h),
+                ExprId::from_f64(er),
+            )
+        });
+
+        // The traced graph evaluates to the same number as the direct f64 path.
+        let traced = graph.eval(z0_expr, &[w0]);
+        assert!(
+            (traced - microstrip_z0(w0, t, h, er)).abs() < 1e-9,
+            "traced {traced} vs direct {}",
+            microstrip_z0(w0, t, h, er)
+        );
+
+        // The SYMBOLIC derivative matches a central finite difference.
+        let dexpr = graph.diff(z0_expr, 0);
+        let grad = graph.eval(dexpr, &[w0]);
+        let eps = 1e-6;
+        let fd =
+            (microstrip_z0(w0 + eps, t, h, er) - microstrip_z0(w0 - eps, t, h, er)) / (2.0 * eps);
+        assert!(
+            (grad - fd).abs() < 1e-4,
+            "symbolic dz0/dw {grad} vs finite-difference {fd}"
+        );
+        // Wider trace → lower impedance, so the gradient is negative.
+        assert!(grad < 0.0, "dz0/dw should be negative, got {grad}");
     }
 }

@@ -48,6 +48,8 @@ members = [
     "crates/vcad-ecad-pcb",
     "crates/vcad-ecad-export",
     "crates/vcad-ecad-sim",
+    "crates/vcad-ecad-diff",
+    "crates/vcad-ecad-diff-wasm",
     "crates/stepperoni",
     "crates/termview",
     "crates/vcad-embroidery",
@@ -111,6 +113,8 @@ default-members = [
     "crates/vcad-ecad-pcb",
     "crates/vcad-ecad-export",
     "crates/vcad-ecad-sim",
+    "crates/vcad-ecad-diff",
+    "crates/vcad-ecad-diff-wasm",
     "crates/stepperoni",
     "crates/termview",
     "crates/vcad-embroidery",
@@ -188,6 +192,7 @@ vcad-ecad-schematic = { path = "crates/vcad-ecad-schematic", version = "0.9.4" }
 vcad-ecad-pcb = { path = "crates/vcad-ecad-pcb", version = "0.9.4" }
 vcad-ecad-export = { path = "crates/vcad-ecad-export", version = "0.9.4" }
 vcad-ecad-sim = { path = "crates/vcad-ecad-sim", version = "0.9.4" }
+vcad-ecad-diff = { path = "crates/vcad-ecad-diff", version = "0.9.4" }
 nom = "7"
 rstar = "0.12"
 stepperoni = { path = "crates/stepperoni", version = "0.1" }

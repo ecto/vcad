@@ -3911,7 +3911,7 @@ dependencies = [
 
 [[package]]
 name = "phyz"
-version = "0.3.1"
+version = "0.3.0"
 dependencies = [
  "tang",
 ]
@@ -6810,6 +6810,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "vcad-ecad-diff"
+version = "0.9.4"
+dependencies = [
+ "tang",
+ "tang-expr",
+ "tang-la",
+ "vcad-ecad-sim",
+ "vcad-kernel-constraints",
+]
+
+[[package]]
+name = "vcad-ecad-diff-wasm"
+version = "0.9.4"
+dependencies = [
+ "serde",
+ "serde_json",
+ "vcad-ecad-diff",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "vcad-ecad-export"
 version = "0.9.4"
 dependencies = [
@@ -6842,6 +6863,8 @@ dependencies = [
 name = "vcad-ecad-sim"
 version = "0.9.4"
 dependencies = [
+ "tang",
+ "tang-expr",
  "thiserror 2.0.18",
  "vcad-ir",
 ]
