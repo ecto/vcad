@@ -19,6 +19,7 @@
   "scripts": {
     "build:viewer": "vite build --config vite.viewer.config.ts && node scripts/wrap-viewer.mjs",
     "build": "npm run build:viewer && tsc --noCheck",
+    "typecheck": "npm run build:viewer && tsc --noEmit",
     "test": "vitest run"
   },
   "dependencies": {

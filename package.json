@@ -6,6 +6,7 @@
     "postinstall": "node scripts/build-changelog.mjs",
     "build": "turbo build",
     "test": "turbo test",
+    "typecheck": "turbo typecheck",
     "dev": "turbo dev",
     "build:mecheval": "npm run build -w @mecheval/harness && npm run build -w @mecheval/leaderboard",
     "changelog:build": "node scripts/build-changelog.mjs",
