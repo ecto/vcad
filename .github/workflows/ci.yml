@@ -199,6 +199,16 @@ jobs:
       - run: npm run build -- --filter=!@vcad/docs
         env:
           VCAD_WASM_SKIP: '1'
+      # @vcad/mcp builds with `tsc --noCheck` (Vercel SDK-subpath compat,
+      # commit 2ae3b0cb), so its `build` task does NOT type-check — a real
+      # type error in packages/mcp/src would otherwise merge undetected.
+      # The `typecheck` task runs `tsc --noEmit` for every package that
+      # defines it (mcp + auth). mcp's script first regenerates its gitignored
+      # viewer module via build:viewer; upstream `dist` is reused from the
+      # build step above via `^build`.
+      - run: npm run typecheck
+        env:
+          VCAD_WASM_SKIP: '1'
       - run: npm test --workspaces --if-present
 
   # Dependency CVE gate. Informational for now so an unpatched upstream
