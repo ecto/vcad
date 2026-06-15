@@ -1620,13 +1620,27 @@ export async function routeNets(args: Record<string, unknown>) {
       res = await routeNet(pcb, line.net, line.from, line.to, width);
     }
 
+    // If the front copper is too congested for this connection, route it on
+    // the back layer instead — a via at each endpoint drops from the FCu pad
+    // down to BCu, where the long span can avoid the front-side traffic.
+    let routeLayer = "FCu";
+    let backLayerVias = false;
+    if (!res.success || res.segments.length === 0) {
+      const back = await routeNetMaze(pcb, line.net, line.from, line.to, width, "BCu");
+      if (back.success && back.segments.length > 0) {
+        res = back;
+        routeLayer = "BCu";
+        backLayerVias = true;
+      }
+    }
+
     if (res.success && res.segments.length > 0) {
       for (const [start, end] of res.segments) {
         pcb.traces.push({
           start: { x: start.x, y: start.y },
           end: { x: end.x, y: end.y },
           width,
-          layer: "FCu",
+          layer: routeLayer,
           net: line.net,
         });
         tracesAdded++;
@@ -1640,6 +1654,26 @@ export async function routeNets(args: Record<string, unknown>) {
           endLayer: "BCu",
           net: line.net,
         });
+      }
+      // Transition vias for a back-layer route: connect the FCu pads to the
+      // BCu trace at both endpoints. Skip a position that already has a via
+      // (e.g. a pad shared by two MST edges of the same net) so we don't stack
+      // coincident drills into a hole-to-hole violation.
+      if (backLayerVias) {
+        for (const p of [line.from, line.to]) {
+          const exists = pcb.vias.some(
+            (v) => Math.hypot(v.position.x - p.x, v.position.y - p.y) < 0.05,
+          );
+          if (exists) continue;
+          pcb.vias.push({
+            position: { x: p.x, y: p.y },
+            diameter: pcb.rules.defaultRules.viaDiameter,
+            drill: pcb.rules.defaultRules.viaDrill,
+            startLayer: "FCu",
+            endLayer: "BCu",
+            net: line.net,
+          });
+        }
       }
       routedNets.add(line.net);
     } else {
