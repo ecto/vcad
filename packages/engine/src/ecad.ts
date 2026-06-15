@@ -383,6 +383,34 @@ export async function routeAll(
   }
 }
 
+/** Result of {@link routeDiffPair}: the two routed legs, or `success:false`. */
+export interface DiffPairResult {
+  success: boolean;
+  p?: RouteResult;
+  n?: RouteResult;
+}
+
+/**
+ * Route a declared differential pair (P/N) coupled and length-matched. Gap and
+ * leg width come from the pair's diff-pair net class. Returns `success:false`
+ * when the pair can't be resolved (each net needs exactly two pads) or the
+ * kernel is unavailable.
+ */
+export async function routeDiffPair(
+  pcb: Pcb,
+  netP: string,
+  netN: string,
+): Promise<DiffPairResult> {
+  const wasm = await loadEcadWasm();
+  if (!wasm) return { success: false };
+  try {
+    return wasm.ecadRouteDiffPair(JSON.stringify(pcb), netP, netN) as DiffPairResult;
+  } catch (e) {
+    console.warn("[ECAD] Diff-pair routing failed:", e);
+    return { success: false };
+  }
+}
+
 /** A single generated fabrication output file. */
 export interface FabFile {
   name: string;

@@ -5009,6 +5009,45 @@ mod ecad_wasm {
         serde_wasm_bindgen::to_value(&result).map_err(|e| JsError::new(&e.to_string()))
     }
 
+    /// Route a declared differential pair (P/N) coupled and length-matched.
+    ///
+    /// Gap and leg width come from the pair's diff-pair net class. Returns
+    /// `{ success, p, n }` where `p`/`n` are the two routed legs (each
+    /// `{ net, segments, vias, success }`), or `success:false` when the pair
+    /// can't be resolved (each net needs exactly two pads).
+    #[wasm_bindgen(js_name = ecadRouteDiffPair)]
+    pub fn ecad_route_diff_pair(
+        pcb_json: &str,
+        net_p: &str,
+        net_n: &str,
+    ) -> Result<JsValue, JsError> {
+        // A struct (not serde_json::json!) so serde-wasm-bindgen emits a plain
+        // JS object — a json! Map would serialize as a JS Map and `.success`
+        // would read undefined.
+        #[derive(serde::Serialize)]
+        struct DiffPairOut {
+            success: bool,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            p: Option<vcad_ecad_pcb::router::RouteResult>,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            n: Option<vcad_ecad_pcb::router::RouteResult>,
+        }
+        let pcb: Pcb = serde_json::from_str(pcb_json).map_err(|e| JsError::new(&e.to_string()))?;
+        let out = match vcad_ecad_pcb::router::route_diff_pair(&pcb, net_p, net_n) {
+            Some((p, n)) => DiffPairOut {
+                success: true,
+                p: Some(p),
+                n: Some(n),
+            },
+            None => DiffPairOut {
+                success: false,
+                p: None,
+                n: None,
+            },
+        };
+        serde_wasm_bindgen::to_value(&out).map_err(|e| JsError::new(&e.to_string()))
+    }
+
     /// Fill copper pour zones on the PCB.
     ///
     /// # Arguments

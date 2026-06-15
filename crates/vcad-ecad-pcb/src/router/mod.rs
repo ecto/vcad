@@ -16,6 +16,7 @@ pub mod maze;
 pub mod push_shove;
 
 pub use auto::{route_all, RouteAllResult, RoutedTrace, RoutedVia};
+pub use diff_pair::route_diff_pair;
 pub use maze::route_net_maze;
 
 use vcad_ir::ecad::{Pcb, PcbLayer};

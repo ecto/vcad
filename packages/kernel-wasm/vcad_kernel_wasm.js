@@ -3705,6 +3705,32 @@ export function ecadRouteAll(pcb_json, width, nets_filter_json) {
 }
 
 /**
+ * Route a declared differential pair (P/N) coupled and length-matched.
+ *
+ * Gap and leg width come from the pair's diff-pair net class. Returns
+ * `{ success, p, n }` where `p`/`n` are the two routed legs (each
+ * `{ net, segments, vias, success }`), or `success:false` when the pair
+ * can't be resolved (each net needs exactly two pads).
+ * @param {string} pcb_json
+ * @param {string} net_p
+ * @param {string} net_n
+ * @returns {any}
+ */
+export function ecadRouteDiffPair(pcb_json, net_p, net_n) {
+    const ptr0 = passStringToWasm0(pcb_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(net_p, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ptr2 = passStringToWasm0(net_n, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len2 = WASM_VECTOR_LEN;
+    const ret = wasm.ecadRouteDiffPair(ptr0, len0, ptr1, len1, ptr2, len2);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+
+/**
  * Route a net between two points on the PCB using the grid router.
  *
  * # Arguments
@@ -7346,12 +7372,12 @@ function __wbg_get_imports() {
             arg0.writeTexture(arg1, arg2, arg3, arg4);
         },
         __wbindgen_cast_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 2337, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 2338, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 2336, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 2337, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h30743bca3150d93c, wasm_bindgen__convert__closures_____invoke__hcf7d3eaee8800b37);
             return ret;
         },
         __wbindgen_cast_0000000000000002: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 3121, function: Function { arguments: [Externref], shim_idx: 3122, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 3120, function: Function { arguments: [Externref], shim_idx: 3121, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__hfdadf281ff0f1c56, wasm_bindgen__convert__closures_____invoke__h9bdf540eb7e61590);
             return ret;
         },
