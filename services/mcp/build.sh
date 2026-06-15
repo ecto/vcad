@@ -32,12 +32,20 @@ echo "[vcad-mcp] Bundling with esbuild..."
 # "node:module"` that bundled sources (server.ts, wasm/ecad-diff.ts) emit —
 # two unaliased `createRequire` bindings would throw
 # `SyntaxError: Identifier 'createRequire' has already been declared` at load.
+#
+# __VCAD_VERSION__ is baked in from @vcad/mcp's package.json: the bundle flattens
+# server.ts away from its sibling package.json, so its source-relative require
+# resolves to nothing and server_info would otherwise report 0.0.0.
+MCP_VERSION="$(node -p "require('$REPO_ROOT/packages/mcp/package.json').version")"
+echo "[vcad-mcp] Baking version $MCP_VERSION into bundle"
+
 npx esbuild@latest entry.ts \
   --bundle \
   --platform=node \
   --target=node20 \
   --format=esm \
   --external:@resvg/resvg-js \
+  --define:__VCAD_VERSION__="\"$MCP_VERSION\"" \
   --outfile="$OUT/functions/mcp.func/index.mjs" \
   --banner:js="import { createRequire as __vcadCreateRequire } from 'module'; const require = __vcadCreateRequire(import.meta.url);"
 

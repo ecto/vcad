@@ -108,6 +108,16 @@ import {
   addViaSchema,
   setStackup,
   setStackupSchema,
+  setPlacement,
+  setPlacementSchema,
+  addZone,
+  addZoneSchema,
+  setDesignRules,
+  setDesignRulesSchema,
+  sizeTraceForCurrent,
+  sizeTraceForCurrentSchema,
+  addViaArray,
+  addViaArraySchema,
   addMotorWinding,
   addMotorWindingSchema,
   calcMotor,
@@ -155,11 +165,23 @@ import {
 /** Tools that produce or modify geometry and should show the 3D viewer.
  *  Registry-driven kernel tools (create, update, delete, …) are added
  *  dynamically in `createServer` once their names are known. */
+/** Build-time injected version. esbuild's `--define:__VCAD_VERSION__` (see
+ *  services/mcp/build.sh) replaces this with the package.json version literal
+ *  when bundling the hosted server, where the flattened layout breaks the
+ *  source-relative `../package.json` require below. Undefined in the normal
+ *  tsc `dist/` build — `typeof` guards against the ReferenceError. */
+declare const __VCAD_VERSION__: string | undefined;
+
 /** Server version + build identity, read from package.json at load time so the
  *  advertised version always matches the running build (no hardcoded literal to
  *  drift). VCAD_BUILD_SHA, if injected at build/deploy time, fingerprints the
  *  exact commit so a stale deploy is detectable via `server_info`. */
 const PKG_VERSION: string = (() => {
+  // Bundled hosted build: the version is baked in via esbuild define, since the
+  // require path below resolves to a nonexistent sibling of the single bundle.
+  if (typeof __VCAD_VERSION__ === "string" && __VCAD_VERSION__) {
+    return __VCAD_VERSION__;
+  }
   try {
     const req = createRequire(import.meta.url);
     return (req("../package.json") as { version?: string }).version ?? "0.0.0";
@@ -835,6 +857,55 @@ export async function createServer(existingEngine?: Engine): Promise<Server> {
         inputSchema: setStackupSchema,
       },
       {
+        name: "set_placement",
+        description:
+          "Place footprints at explicit board-frame coordinates by ref — the " +
+          "floorplan realizer the auto-placer (grid/force_directed/radial) can't " +
+          "express: thermal rings, a quiet IMU corner, rim connectors. Batch; " +
+          "sets position/rotation/side and warns on off-board, in-cutout, or " +
+          "stacked landings. Mutates the session document.",
+        inputSchema: setPlacementSchema,
+        _meta: UI_META,
+      },
+      {
+        name: "add_zone",
+        description:
+          "Add a copper pour (ground/power plane) on a net+layer — fills are not " +
+          "traces. `fill_board:true` pours the whole outline (cutouts become " +
+          "voids); or give an explicit polygon for a partial plane. Mutates the " +
+          "session document.",
+        inputSchema: addZoneSchema,
+        _meta: UI_META,
+      },
+      {
+        name: "set_design_rules",
+        description:
+          "Set the board design rules run_drc enforces (clearance, track width, " +
+          "via, edge/hole/annular) and net classes — the way to give a power or " +
+          "high-voltage class wider clearance than signal nets. run_drc already " +
+          "reads pcb.rules; this writes them. Mutates the session document.",
+        inputSchema: setDesignRulesSchema,
+      },
+      {
+        name: "size_trace_for_current",
+        description:
+          "IPC-2221 conductor ampacity solved for trace width: given current, " +
+          "copper weight, allowed temp rise, and layer (outer/inner), returns the " +
+          "minimum width. The ampacity sibling of size_impedance/size_pdn — pure " +
+          "calc, no document.",
+        inputSchema: sizeTraceForCurrentSchema,
+      },
+      {
+        name: "add_via_array",
+        description:
+          "Place many vias at once — a grid over a rectangular `region` (thermal " +
+          "vias under FETs, GND-plane stitching) or an explicit `points` list. " +
+          "Grid vias are clipped to the board outline by default. Mutates the " +
+          "session document.",
+        inputSchema: addViaArraySchema,
+        _meta: UI_META,
+      },
+      {
         name: "add_motor_winding",
         description:
           "One-shot motor winding realizer: plans a balanced slots/poles/" +
@@ -1222,6 +1293,26 @@ export async function createServer(existingEngine?: Engine): Promise<Server> {
 
         case "set_stackup":
           result = setStackup(args);
+          break;
+
+        case "set_placement":
+          result = setPlacement(args);
+          break;
+
+        case "add_zone":
+          result = addZone(args);
+          break;
+
+        case "set_design_rules":
+          result = setDesignRules(args);
+          break;
+
+        case "size_trace_for_current":
+          result = sizeTraceForCurrent(args);
+          break;
+
+        case "add_via_array":
+          result = addViaArray(args);
           break;
 
         case "add_motor_winding":
