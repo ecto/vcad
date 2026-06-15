@@ -15,13 +15,17 @@ import type {
   Pcb,
   BoardOutline,
   LayerStackup,
+  StackupLayer,
   Net,
+  NetTie,
   DesignRules,
   NetClassRules,
   Footprint,
   Pad,
   PadType,
   PcbLayer,
+  Trace,
+  Via,
   Vec2,
 } from "@vcad/ir";
 import { createDocument } from "@vcad/ir";
@@ -35,6 +39,8 @@ import {
   routeNet,
   routeNetShove,
   runDrc as kernelRunDrc,
+  evaluateMotor,
+  airgapFluxDensity,
 } from "@vcad/engine";
 import type { Engine, NetlistResult, TriangleMesh } from "@vcad/engine";
 import { registerSession, getSession } from "./session.js";
@@ -633,6 +639,24 @@ export const addCoilSchema = {
     via_to_layer: {
       type: "string" as const,
       description: "Layer the inner via connects to (default 'BCu')",
+    },
+    inner_lead_out: {
+      type: "number" as const,
+      description:
+        "If > 0, prepend a tangential lead-out terminal of this length (mm) at " +
+        "the inner end so the inner via no longer lands on the same radial spoke " +
+        "as the outer endpoint (a real same-net bypass-short hazard). When " +
+        "inner_via is set, the via is placed at the new lead-out terminal.",
+    },
+    layers: {
+      type: "array" as const,
+      items: { type: "string" as const },
+      description:
+        "Build a STACKED multilayer coil: same spiral geometry on each copper " +
+        "layer (fields add), stitched together with vias at alternating inner/ " +
+        "outer terminals. Length 2 means front+back. When given, `layer` and the " +
+        "single-via escape (inner_via/via_to_layer) are ignored — stitching " +
+        "handles inter-layer connections.",
     },
   },
   required: ["center", "turns", "inner_radius", "outer_radius", "trace_width", "net"],
@@ -2957,6 +2981,100 @@ export function addCoil(args: Record<string, unknown>) {
     if (!prev || prev.x !== p.x || prev.y !== p.y) pts.push(p);
   }
 
+  // Tangential lead-out: prepend a terminal off the inner spoke so the inner
+  // via no longer lands on the same radius as the outer endpoint (a same-net
+  // bypass-short hazard). Tangent at the inner end (angle θ0): radial dir is
+  // (cosθ0, sinθ0); the tangent that follows the winding sense is sign·(-sinθ0, cosθ0).
+  const innerLeadOut = (args.inner_lead_out as number) || 0;
+  if (innerLeadOut > 0 && pts.length) {
+    const tx = -Math.sin(theta0) * sign;
+    const ty = Math.cos(theta0) * sign;
+    const T = {
+      x: round3(pts[0].x + tx * innerLeadOut),
+      y: round3(pts[0].y + ty * innerLeadOut),
+    };
+    if (T.x !== pts[0].x || T.y !== pts[0].y) pts.unshift(T);
+  }
+
+  if (!pcb.nets.some((n) => n.id === net)) {
+    pcb.nets.push({ id: net, name: net });
+  }
+
+  // ---- Multilayer stacked coil ------------------------------------------
+  const layersIn = Array.isArray(args.layers) ? (args.layers as string[]) : undefined;
+  if (layersIn && layersIn.length >= 2) {
+    for (const l of layersIn) {
+      if (!/Cu$/.test(l)) {
+        return fail(`layers entry "${l}" is not a copper layer (use FCu, BCu, In1Cu, ...)`);
+      }
+    }
+    const stitchVias: Array<{ position: Vec2; startLayer: PcbLayer; endLayer: PcbLayer }> = [];
+    const perLayerLen = segLength(pts);
+    let totalLengthMm = 0;
+    let totalTraces = 0;
+    let totalResistance = 0;
+    for (let li = 0; li < layersIn.length; li++) {
+      const lyr = layersIn[li] as PcbLayer;
+      for (let i = 0; i + 1 < pts.length; i++) {
+        pcb.traces.push({ start: pts[i], end: pts[i + 1], width: traceWidth, layer: lyr, net });
+        totalTraces++;
+      }
+      totalLengthMm += perLayerLen;
+      const cuT =
+        pcb.stackup.layers.find((s) => s.layer === lyr)?.copperThickness ?? 0.035;
+      totalResistance += (1.68e-5 * perLayerLen) / (traceWidth * cuT);
+      // Stitch to the next layer at an alternating terminal.
+      if (li + 1 < layersIn.length) {
+        const atInner = li % 2 === 0;
+        const stitchPt = atInner ? pts[0] : pts[pts.length - 1];
+        pcb.vias.push({
+          position: stitchPt,
+          diameter: pcb.rules.defaultRules.viaDiameter,
+          drill: pcb.rules.defaultRules.viaDrill,
+          startLayer: lyr,
+          endLayer: layersIn[li + 1] as PcbLayer,
+          net,
+        });
+        stitchVias.push({ position: stitchPt, startLayer: lyr, endLayer: layersIn[li + 1] as PcbLayer });
+      }
+    }
+    // External terminals: layer[0] outer, and the last layer's free terminal
+    // (inner if an even number of stitches landed on the inner side). The last
+    // stitch (index n-2) is at inner when (n-2)%2===0 → last free end is outer;
+    // otherwise inner. Equivalently the last layer's free end is inner when
+    // (layersIn.length-1) is even.
+    const lastFreeInner = (layersIn.length - 1) % 2 === 0;
+    const terminalA = pts[pts.length - 1]; // layer[0] outer
+    const terminalB = lastFreeInner ? pts[0] : pts[pts.length - 1];
+    return {
+      content: [
+        {
+          type: "text" as const,
+          text: JSON.stringify({
+            success: true,
+            net,
+            turns,
+            direction,
+            layers_used: layersIn,
+            multilayer: true,
+            note:
+              "Multilayer stacked coil: `layer` and inner_via/via_to_layer ignored; " +
+              "layers stitched with alternating inner/outer vias.",
+            total_traces: totalTraces,
+            total_length_mm: Math.round(totalLengthMm * 100) / 100,
+            total_resistance_ohms: Math.round(totalResistance * 1000) / 1000,
+            stitch_vias: stitchVias,
+            terminals: { a: terminalA, b: terminalB },
+            inner_endpoint: pts[0],
+            outer_endpoint: pts[pts.length - 1],
+            ...docResultPayload(ctx),
+          }),
+        },
+      ],
+    };
+  }
+
+  // ---- Single-layer coil ------------------------------------------------
   let lengthMm = 0;
   let tracesAdded = 0;
   for (let i = 0; i + 1 < pts.length; i++) {
@@ -2969,10 +3087,6 @@ export function addCoil(args: Record<string, unknown>) {
     });
     tracesAdded++;
     lengthMm += Math.hypot(pts[i + 1].x - pts[i].x, pts[i + 1].y - pts[i].y);
-  }
-
-  if (!pcb.nets.some((n) => n.id === net)) {
-    pcb.nets.push({ id: net, name: net });
   }
 
   let via: { position: Vec2; startLayer: PcbLayer; endLayer: PcbLayer } | undefined;
@@ -3016,6 +3130,15 @@ export function addCoil(args: Record<string, unknown>) {
       },
     ],
   };
+}
+
+/** Total polyline length of an ordered point list. */
+function segLength(pts: Vec2[]): number {
+  let len = 0;
+  for (let i = 0; i + 1 < pts.length; i++) {
+    len += Math.hypot(pts[i + 1].x - pts[i].x, pts[i + 1].y - pts[i].y);
+  }
+  return len;
 }
 
 // ============================================================================
@@ -3296,6 +3419,689 @@ export function windingLayout(args: Record<string, unknown>) {
   };
 
   return { content: [{ type: "text" as const, text: JSON.stringify(plan) }] };
+}
+
+// ============================================================================
+// add_trace — push straight copper segments between consecutive points
+// ============================================================================
+
+/** Shared {x, y} JSON schema fragment. */
+const vec2Schema = {
+  type: "object" as const,
+  properties: { x: { type: "number" as const }, y: { type: "number" as const } },
+  required: ["x", "y"],
+};
+
+/** JSON Schema for add_trace tool. */
+export const addTraceSchema = {
+  type: "object" as const,
+  properties: {
+    ...docInputProperties,
+    points: {
+      type: "array" as const,
+      items: vec2Schema,
+      description: "Polyline vertices (>= 2); a Trace is emitted between each consecutive pair.",
+    },
+    layer: { type: "string" as const, description: "Copper layer (default 'FCu')" },
+    net: { type: "string" as const, description: "Net name the copper belongs to" },
+    width: {
+      type: "number" as const,
+      description: "Trace width, mm (default: design-rule traceWidth)",
+    },
+  },
+  required: ["document_id", "points", "net"],
+};
+
+/**
+ * Push straight copper traces between each consecutive pair of `points` onto a
+ * copper layer of the board. Ensures the net exists. The atomic routing
+ * primitive add_coil / add_motor_winding lean on.
+ */
+export function addTrace(args: Record<string, unknown>) {
+  const ctx = resolveDocInput(args);
+  const pcb = getDocPcb(ctx.doc);
+  const fail = (text: string) => ({
+    content: [{ type: "text" as const, text: `Error: ${text}` }],
+    isError: true as const,
+  });
+  if (!pcb) {
+    return fail(
+      "Document has no PCB — run place_components first (or open a document that has a board)",
+    );
+  }
+
+  const points = Array.isArray(args.points) ? (args.points as Vec2[]) : undefined;
+  const net = String(args.net ?? "");
+  const layer = ((args.layer as string) || "FCu") as PcbLayer;
+  const width = (args.width as number) ?? pcb.rules.defaultRules.traceWidth;
+
+  if (!points || points.length < 2) return fail("points must be an array of >= 2 {x, y}");
+  for (const p of points) {
+    if (!p || typeof p.x !== "number" || typeof p.y !== "number") {
+      return fail("every point must be {x, y} in mm");
+    }
+  }
+  if (!net) return fail("net is required — copper must belong to a net");
+  if (!/Cu$/.test(layer)) {
+    return fail(`layer "${layer}" is not a copper layer (use FCu, BCu, In1Cu, ...)`);
+  }
+  if (!(width > 0)) return fail("width must be > 0");
+
+  if (!pcb.nets.some((n) => n.id === net)) {
+    pcb.nets.push({ id: net, name: net });
+  }
+
+  let tracesAdded = 0;
+  let lengthMm = 0;
+  for (let i = 0; i + 1 < points.length; i++) {
+    const start = { x: round3(points[i].x), y: round3(points[i].y) };
+    const end = { x: round3(points[i + 1].x), y: round3(points[i + 1].y) };
+    const trace: Trace = { start, end, width, layer, net };
+    pcb.traces.push(trace);
+    tracesAdded++;
+    lengthMm += Math.hypot(end.x - start.x, end.y - start.y);
+  }
+
+  return {
+    content: [
+      {
+        type: "text" as const,
+        text: JSON.stringify({
+          success: true,
+          traces_added: tracesAdded,
+          length_mm: Math.round(lengthMm * 1000) / 1000,
+          net,
+          layer,
+          ...docResultPayload(ctx),
+        }),
+      },
+    ],
+  };
+}
+
+// ============================================================================
+// add_via — push a layer-spanning via
+// ============================================================================
+
+/** JSON Schema for add_via tool. */
+export const addViaSchema = {
+  type: "object" as const,
+  properties: {
+    ...docInputProperties,
+    position: { ...vec2Schema, description: "Via center on the board, mm" },
+    net: { type: "string" as const, description: "Net the via belongs to" },
+    start_layer: { type: "string" as const, description: "Span start layer (default 'FCu')" },
+    end_layer: { type: "string" as const, description: "Span end layer (default 'BCu')" },
+    diameter: {
+      type: "number" as const,
+      description: "Via pad diameter, mm (default: design-rule viaDiameter)",
+    },
+    drill: {
+      type: "number" as const,
+      description: "Via drill diameter, mm (default: design-rule viaDrill)",
+    },
+  },
+  required: ["document_id", "position", "net"],
+};
+
+/**
+ * Push a single via (layer-spanning connection) onto the board. Ensures the net
+ * exists. The escape primitive for trapped spiral ends and inter-layer hops.
+ */
+export function addVia(args: Record<string, unknown>) {
+  const ctx = resolveDocInput(args);
+  const pcb = getDocPcb(ctx.doc);
+  const fail = (text: string) => ({
+    content: [{ type: "text" as const, text: `Error: ${text}` }],
+    isError: true as const,
+  });
+  if (!pcb) {
+    return fail(
+      "Document has no PCB — run place_components first (or open a document that has a board)",
+    );
+  }
+
+  const position = args.position as Vec2;
+  const net = String(args.net ?? "");
+  const startLayer = ((args.start_layer as string) || "FCu") as PcbLayer;
+  const endLayer = ((args.end_layer as string) || "BCu") as PcbLayer;
+  const diameter = (args.diameter as number) ?? pcb.rules.defaultRules.viaDiameter;
+  const drill = (args.drill as number) ?? pcb.rules.defaultRules.viaDrill;
+
+  if (!position || typeof position.x !== "number" || typeof position.y !== "number") {
+    return fail("position must be {x, y} in mm");
+  }
+  if (!net) return fail("net is required — a via must belong to a net");
+  if (!/Cu$/.test(startLayer)) return fail(`start_layer "${startLayer}" is not a copper layer`);
+  if (!/Cu$/.test(endLayer)) return fail(`end_layer "${endLayer}" is not a copper layer`);
+
+  if (!pcb.nets.some((n) => n.id === net)) {
+    pcb.nets.push({ id: net, name: net });
+  }
+
+  const pos = { x: round3(position.x), y: round3(position.y) };
+  const via: Via = { position: pos, diameter, drill, startLayer, endLayer, net };
+  pcb.vias.push(via);
+
+  return {
+    content: [
+      {
+        type: "text" as const,
+        text: JSON.stringify({
+          success: true,
+          net,
+          position: pos,
+          start_layer: startLayer,
+          end_layer: endLayer,
+          ...docResultPayload(ctx),
+        }),
+      },
+    ],
+  };
+}
+
+// ============================================================================
+// set_stackup — set copper weight / layer materials in the board stackup
+// ============================================================================
+
+/** Copper weight conversion: 1 oz/ft² ≈ 0.0348 mm of copper. */
+const OZ_TO_MM = 0.0348;
+
+/** JSON Schema for set_stackup tool. */
+export const setStackupSchema = {
+  type: "object" as const,
+  properties: {
+    ...docInputProperties,
+    copper_oz: {
+      type: "number" as const,
+      description:
+        "Copper weight in oz/ft² applied to ALL copper layers (1 oz = 0.0348 mm). " +
+        "The knob that fixes coil DC-resistance estimates, which assumed 1 oz.",
+    },
+    layers: {
+      type: "array" as const,
+      description: "Per-layer overrides; entries naming a missing copper layer are created.",
+      items: {
+        type: "object" as const,
+        properties: {
+          layer: { type: "string" as const },
+          copper_oz: { type: "number" as const, description: "Copper weight, oz/ft²" },
+          copper_thickness_mm: { type: "number" as const, description: "Copper thickness, mm (overrides copper_oz)" },
+          dielectric_thickness_mm: { type: "number" as const },
+          material: { type: "string" as const },
+        },
+        required: ["layer"],
+      },
+    },
+  },
+  required: ["document_id"],
+};
+
+/**
+ * Mutate the board stackup: set a uniform copper weight across every copper
+ * layer (`copper_oz`) and/or apply per-layer thickness/material overrides.
+ * Closes the gap where coil DC-resistance was permanently computed at 1 oz
+ * because nothing could set copper weight.
+ */
+export function setStackup(args: Record<string, unknown>) {
+  const ctx = resolveDocInput(args);
+  const pcb = getDocPcb(ctx.doc);
+  const fail = (text: string) => ({
+    content: [{ type: "text" as const, text: `Error: ${text}` }],
+    isError: true as const,
+  });
+  if (!pcb) {
+    return fail(
+      "Document has no PCB — run place_components first (or open a document that has a board)",
+    );
+  }
+
+  const copperOz = args.copper_oz as number | undefined;
+  const perLayer = Array.isArray(args.layers)
+    ? (args.layers as Array<Record<string, unknown>>)
+    : undefined;
+
+  if (copperOz == null && (!perLayer || perLayer.length === 0)) {
+    return fail("provide `copper_oz` and/or a non-empty `layers` array");
+  }
+  if (copperOz != null && !(copperOz > 0)) return fail("copper_oz must be > 0");
+
+  const stackup = pcb.stackup.layers;
+
+  // 1) Uniform copper weight across all copper layers.
+  if (copperOz != null) {
+    const t = round3(copperOz * OZ_TO_MM);
+    for (const l of stackup) {
+      if (/Cu$/.test(l.layer)) l.copperThickness = t;
+    }
+  }
+
+  // 2) Per-layer overrides; create copper-layer entries that are missing.
+  for (const ov of perLayer ?? []) {
+    const layerName = String(ov.layer ?? "");
+    if (!layerName) return fail("each layers entry needs a `layer`");
+    let entry = stackup.find((l) => l.layer === layerName);
+    if (!entry) {
+      if (!/Cu$/.test(layerName)) {
+        return fail(`cannot create non-copper layer "${layerName}" — only copper layers are auto-added`);
+      }
+      entry = { layer: layerName as PcbLayer } as StackupLayer;
+      stackup.push(entry);
+    }
+    if (ov.copper_thickness_mm != null) {
+      entry.copperThickness = round3(ov.copper_thickness_mm as number);
+    } else if (ov.copper_oz != null) {
+      entry.copperThickness = round3((ov.copper_oz as number) * OZ_TO_MM);
+    }
+    if (ov.dielectric_thickness_mm != null) {
+      entry.dielectricThickness = ov.dielectric_thickness_mm as number;
+    }
+    if (ov.material != null) entry.material = String(ov.material);
+  }
+
+  return {
+    content: [
+      {
+        type: "text" as const,
+        text: JSON.stringify({
+          success: true,
+          stackup: pcb.stackup.layers,
+          ...docResultPayload(ctx),
+        }),
+      },
+    ],
+  };
+}
+
+// ============================================================================
+// add_motor_winding — plan → copper realizer (closes the winding loop)
+// ============================================================================
+
+/** JSON Schema for add_motor_winding tool. */
+export const addMotorWindingSchema = {
+  type: "object" as const,
+  properties: {
+    ...docInputProperties,
+    slots: { type: "number" as const, description: "Slot/tooth count" },
+    poles: { type: "number" as const, description: "Pole count 2p (even >= 2)" },
+    phases: { type: "number" as const, description: "Phase count (default 3)" },
+    turns_per_coil: { type: "number" as const, description: "Turns per coil (default 1)" },
+    connection: {
+      type: "string" as const,
+      description: "'wye' (default, star neutral) or 'delta' (loop)",
+    },
+    center: { ...vec2Schema, description: "Ring center on the board, mm" },
+    pitch_radius: {
+      type: "number" as const,
+      description: "Radius of the ring the coil CENTERS sit on, mm",
+    },
+    inner_radius: { type: "number" as const, description: "Each coil's inner turn radius, mm" },
+    outer_radius: { type: "number" as const, description: "Each coil's outer turn radius, mm" },
+    trace_width: { type: "number" as const, description: "Copper trace width, mm" },
+    copper_layer: { type: "string" as const, description: "Layer the spirals are drawn on (default 'FCu')" },
+    return_layer: {
+      type: "string" as const,
+      description: "Layer for interconnect + neutral/loop (default 'BCu')",
+    },
+    phase_nets: {
+      type: "array" as const,
+      items: { type: "string" as const },
+      description: "Override phase net names (default PHA/PHB/PHC...)",
+    },
+    neutral_net: { type: "string" as const, description: "Wye neutral net name (default 'WIND_N')" },
+    clearance: { type: "number" as const, description: "Turn-to-turn clearance, mm" },
+    segments_per_turn: { type: "number" as const, description: "Spiral polyline resolution" },
+  },
+  required: [
+    "document_id",
+    "slots",
+    "poles",
+    "center",
+    "pitch_radius",
+    "inner_radius",
+    "outer_radius",
+    "trace_width",
+  ],
+};
+
+/**
+ * One-shot motor-winding realizer: plans a balanced polyphase winding with
+ * winding_layout, drops a spiral coil per tooth (each escaping to the return
+ * layer via inner+outer vias), series-connects coils within each phase on the
+ * return layer, and terminates the phases (wye star or delta loop) — recording
+ * the join as a NetTie so DRC treats it as intentional, not a short. The
+ * interconnect is a baseline straight-line realizer; the new DRC honestly flags
+ * any crossings it introduces for follow-up routing.
+ */
+export function addMotorWinding(args: Record<string, unknown>) {
+  const ctx = resolveDocInput(args);
+  const pcb = getDocPcb(ctx.doc);
+  const fail = (text: string) => ({
+    content: [{ type: "text" as const, text: `Error: ${text}` }],
+    isError: true as const,
+  });
+  if (!pcb) {
+    return fail(
+      "Document has no PCB — run place_components first (or open a document that has a board)",
+    );
+  }
+
+  const center = args.center as Vec2;
+  const pitchRadius = args.pitch_radius as number;
+  const innerR = args.inner_radius as number;
+  const outerR = args.outer_radius as number;
+  const traceWidth = args.trace_width as number;
+  const turnsPerCoil = (args.turns_per_coil as number) ?? 1;
+  const connection = (args.connection as string) === "delta" ? "delta" : "wye";
+  const copperLayer = ((args.copper_layer as string) || "FCu") as PcbLayer;
+  const returnLayer = ((args.return_layer as string) || "BCu") as PcbLayer;
+
+  if (!center || typeof center.x !== "number" || typeof center.y !== "number") {
+    return fail("center must be {x, y} in mm");
+  }
+  if (!(pitchRadius >= 0)) return fail("pitch_radius must be >= 0");
+  if (!(outerR > innerR)) return fail("outer_radius must be > inner_radius");
+  if (!(traceWidth > 0)) return fail("trace_width must be > 0");
+  if (!/Cu$/.test(copperLayer)) return fail(`copper_layer "${copperLayer}" is not a copper layer`);
+  if (!/Cu$/.test(returnLayer)) return fail(`return_layer "${returnLayer}" is not a copper layer`);
+
+  // a. Plan the winding.
+  const planRes = windingLayout({
+    slots: args.slots,
+    poles: args.poles,
+    phases: args.phases,
+    turns_per_coil: turnsPerCoil,
+    connection,
+    layer: "double",
+    phase_nets: args.phase_nets,
+    neutral_net: args.neutral_net,
+  });
+  if ("isError" in planRes && planRes.isError) {
+    return fail(planRes.content[0]!.text.replace(/^Error:\s*/, ""));
+  }
+  const plan = JSON.parse(planRes.content[0]!.text) as WindingPlan;
+  if (!plan.feasible) return fail(plan.reason ?? "infeasible winding");
+
+  const childDoc = ctx.documentId ? { document_id: ctx.documentId } : { document: ctx.doc };
+  const errors: string[] = [];
+  let coilsPlaced = 0;
+  let vias = 0;
+  let interconnectTraces = 0;
+
+  // b. One spiral per tooth; both terminals reachable on the return layer.
+  //    Keyed by slot so the series walk can find each coil's endpoints.
+  const coilTerminals = new Map<number, { inner: Vec2; outer: Vec2 }>();
+  for (const coil of plan.coils) {
+    const angle = (coil.angleDeg * Math.PI) / 180;
+    const coilCenter = {
+      x: round3(center.x + pitchRadius * Math.cos(angle)),
+      y: round3(center.y + pitchRadius * Math.sin(angle)),
+    };
+    const dir = coil.polarity === 1 ? "ccw" : "cw";
+    const res = addCoil({
+      ...childDoc,
+      center: coilCenter,
+      turns: turnsPerCoil,
+      inner_radius: innerR,
+      outer_radius: outerR,
+      trace_width: traceWidth,
+      net: coil.net,
+      layer: copperLayer,
+      direction: dir,
+      start_angle_deg: coil.angleDeg,
+      clearance: args.clearance,
+      segments_per_turn: args.segments_per_turn,
+      inner_via: true,
+      via_to_layer: returnLayer,
+    });
+    if (res.isError) {
+      errors.push(`coil slot ${coil.slot} (net ${coil.net}): ${res.content[0]!.text}`);
+      continue;
+    }
+    const payload = JSON.parse(res.content[0]!.text) as {
+      inner_endpoint: Vec2;
+      outer_endpoint: Vec2;
+    };
+    coilsPlaced++;
+    vias++; // the inner via add_coil placed
+    // Add an outer via so the outer terminal is also reachable on returnLayer.
+    pcb.vias.push({
+      position: payload.outer_endpoint,
+      diameter: pcb.rules.defaultRules.viaDiameter,
+      drill: pcb.rules.defaultRules.viaDrill,
+      startLayer: copperLayer,
+      endLayer: returnLayer,
+      net: coil.net,
+    });
+    vias++;
+    coilTerminals.set(coil.slot, {
+      inner: payload.inner_endpoint,
+      outer: payload.outer_endpoint,
+    });
+  }
+
+  // c. Series interconnect on the return layer, per phase, in plan order.
+  //    Connect coil k's outer terminal to coil k+1's inner terminal.
+  const phaseEnds: Record<string, { start: Vec2; end: Vec2 }> = {};
+  for (const [netName, slotSeq] of Object.entries(plan.phaseSeries)) {
+    const present = slotSeq.filter((s) => coilTerminals.has(s));
+    if (present.length === 0) continue;
+    const first = coilTerminals.get(present[0]!)!;
+    let prevEnd = first.outer;
+    phaseEnds[netName] = { start: first.inner, end: first.outer };
+    for (let i = 1; i < present.length; i++) {
+      const term = coilTerminals.get(present[i]!)!;
+      pcb.traces.push({
+        start: prevEnd,
+        end: term.inner,
+        width: traceWidth,
+        layer: returnLayer,
+        net: netName,
+      });
+      interconnectTraces++;
+      prevEnd = term.outer;
+    }
+    phaseEnds[netName]!.end = prevEnd;
+  }
+
+  // d. Termination + net-tie so DRC sees an intentional join, not a short.
+  const phaseNetNames = Object.keys(phaseEnds);
+  pcb.netTies = pcb.netTies ?? [];
+  let netTiesAdded = 0;
+  if (connection === "wye") {
+    const neutral = plan.neutralNet ?? (args.neutral_net ? String(args.neutral_net) : "WIND_N");
+    for (const netName of phaseNetNames) {
+      pcb.traces.push({
+        start: phaseEnds[netName]!.end,
+        end: center,
+        width: traceWidth,
+        layer: returnLayer,
+        net: netName,
+      });
+      interconnectTraces++;
+    }
+    pcb.netTies.push({
+      nets: [...phaseNetNames, neutral],
+      position: center,
+      radius: Math.max(2, innerR),
+    });
+    netTiesAdded++;
+  } else {
+    // delta: phase[i].end → phase[(i+1)%n].start, one tie per junction.
+    const n = phaseNetNames.length;
+    for (let i = 0; i < n; i++) {
+      const a = phaseNetNames[i]!;
+      const b = phaseNetNames[(i + 1) % n]!;
+      pcb.traces.push({
+        start: phaseEnds[a]!.end,
+        end: phaseEnds[b]!.start,
+        width: traceWidth,
+        layer: returnLayer,
+        net: a,
+      });
+      interconnectTraces++;
+      pcb.netTies.push({
+        nets: [a, b],
+        position: phaseEnds[b]!.start,
+        radius: Math.max(2, innerR),
+      });
+      netTiesAdded++;
+    }
+  }
+
+  return {
+    content: [
+      {
+        type: "text" as const,
+        text: JSON.stringify({
+          success: errors.length === 0,
+          coils_placed: coilsPlaced,
+          coils_failed: errors.length,
+          interconnect_traces: interconnectTraces,
+          vias_added: vias,
+          net_ties_added: netTiesAdded,
+          connection,
+          winding_factor: plan.windingFactor,
+          interconnect_note:
+            "Series interconnect and termination are straight-line on the return " +
+            "layer and may cross; run_drc will flag any crossings for routing cleanup.",
+          ...(errors.length ? { errors } : {}),
+          ...docResultPayload(ctx),
+        }),
+      },
+    ],
+    ...(errors.length && coilsPlaced === 0 ? { isError: true as const } : {}),
+  };
+}
+
+// ============================================================================
+// calc_motor — first-order analytical motor performance (Kt/Ke/speed/torque)
+// ============================================================================
+
+export const calcMotorSchema = {
+  type: "object" as const,
+  properties: {
+    pole_pairs: { type: "number" as const, description: "Pole pairs p (electrical periods per mechanical rev)." },
+    turns_per_phase: { type: "number" as const, description: "Series turns per phase N." },
+    winding_factor: { type: "number" as const, description: "Winding factor kw (default 0.95). Use the value from winding_layout for accuracy." },
+    inner_radius_mm: { type: "number" as const, description: "Inner (bore) stator radius, mm." },
+    outer_radius_mm: { type: "number" as const, description: "Outer stator radius, mm." },
+    phase_resistance_ohm: { type: "number" as const, description: "Per-phase resistance, ohms (e.g. the add_coil DC estimate)." },
+    supply_voltage_v: { type: "number" as const, description: "DC bus / supply voltage, volts." },
+    airgap_flux_tesla: {
+      type: "number" as const,
+      description: "Air-gap flux density B_gap (T). Omit to COMPUTE it from `magnet` via the MEC model.",
+    },
+    magnet: {
+      type: "object" as const,
+      description:
+        "Optional magnet/geometry to compute B_gap when airgap_flux_tesla is omitted (NdFeB defaults). Fields: remanence_tesla, magnet_thickness_mm, airgap_mm, recoil_mu_rel, magnet_area_mm2, gap_area_mm2, iron_mu_rel.",
+    },
+  },
+  required: [
+    "pole_pairs",
+    "turns_per_phase",
+    "inner_radius_mm",
+    "outer_radius_mm",
+    "phase_resistance_ohm",
+    "supply_voltage_v",
+  ],
+};
+
+/**
+ * Evaluate a motor's headline performance — torque constant, back-EMF constant,
+ * no-load speed, stall torque, and a speed–torque curve — from its magnetics +
+ * electrical parameters. Pure analysis (no board, no mutation). The air-gap flux
+ * is either supplied directly or computed from magnet geometry via the
+ * first-order MEC reluctance model. First-order steady state: no slotting,
+ * fringing, saturation, or losses.
+ */
+export async function calcMotor(args: Record<string, unknown>) {
+  const fail = (text: string) => ({
+    content: [{ type: "text" as const, text: `Error: ${text}` }],
+    isError: true as const,
+  });
+
+  const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : NaN);
+  const polePairs = num(args.pole_pairs);
+  const turnsPerPhase = num(args.turns_per_phase);
+  const windingFactor = Number.isFinite(num(args.winding_factor)) ? num(args.winding_factor) : 0.95;
+  const innerR = num(args.inner_radius_mm);
+  const outerR = num(args.outer_radius_mm);
+  const phaseR = num(args.phase_resistance_ohm);
+  const supplyV = num(args.supply_voltage_v);
+
+  if (!(polePairs > 0)) return fail("pole_pairs must be > 0");
+  if (!(turnsPerPhase > 0)) return fail("turns_per_phase must be > 0");
+  if (!(outerR > innerR && innerR >= 0)) return fail("outer_radius_mm must be > inner_radius_mm >= 0");
+  if (!(phaseR > 0)) return fail("phase_resistance_ohm must be > 0");
+  if (!(supplyV > 0)) return fail("supply_voltage_v must be > 0");
+
+  // Resolve air-gap flux: explicit value, else compute from magnet geometry.
+  let bGap = num(args.airgap_flux_tesla);
+  let bGapSource: "supplied" | "computed" = "supplied";
+  if (!Number.isFinite(bGap)) {
+    const m = (args.magnet ?? {}) as Record<string, unknown>;
+    const mnum = (v: unknown, d: number) =>
+      typeof v === "number" && Number.isFinite(v) ? (v as number) : d;
+    const computed = await airgapFluxDensity({
+      remanenceTesla: mnum(m.remanence_tesla, 1.2),
+      magnetThicknessMm: mnum(m.magnet_thickness_mm, 3),
+      recoilMuRel: mnum(m.recoil_mu_rel, 1.05),
+      airgapMm: mnum(m.airgap_mm, 1),
+      magnetAreaMm2: mnum(m.magnet_area_mm2, 1),
+      gapAreaMm2: mnum(m.gap_area_mm2, 1),
+      ironMuRel: typeof m.iron_mu_rel === "number" ? (m.iron_mu_rel as number) : null,
+      ironPathMm: mnum(m.iron_path_mm, 0),
+      ironAreaMm2: mnum(m.iron_area_mm2, 1),
+    });
+    if (computed == null) {
+      return fail(
+        "air-gap flux is required: pass airgap_flux_tesla, or `magnet` params (ECAD WASM must be available to compute B_gap).",
+      );
+    }
+    bGap = computed;
+    bGapSource = "computed";
+  }
+
+  const perf = await evaluateMotor({
+    polePairs,
+    turnsPerPhase,
+    windingFactor,
+    innerRMm: innerR,
+    outerRMm: outerR,
+    phaseResistanceOhm: phaseR,
+    supplyVoltageV: supplyV,
+    airgapFluxTesla: bGap,
+  });
+  if (perf == null) {
+    return fail("motor evaluation unavailable — ECAD WASM is not loaded (rebuild vcad-kernel-wasm).");
+  }
+
+  const r4 = (n: number) => Math.round(n * 1e4) / 1e4;
+  return {
+    content: [
+      {
+        type: "text" as const,
+        text: JSON.stringify({
+          success: true,
+          airgap_flux_tesla: r4(bGap),
+          airgap_flux_source: bGapSource,
+          winding_factor: windingFactor,
+          kt_nm_per_a: r4(perf.ktNmPerA),
+          ke_v_s_per_rad: r4(perf.keVSPerRad),
+          no_load_speed_rad_s: r4(perf.noLoadSpeedRadS),
+          no_load_rpm: r4((perf.noLoadSpeedRadS * 60) / (2 * Math.PI)),
+          stall_torque_nm: r4(perf.stallTorqueNm),
+          speed_torque_curve: perf.curve.map((p) => ({
+            speed_rad_s: r4(p.speedRadS),
+            torque_nm: r4(p.torqueNm),
+          })),
+          note: "First-order steady-state estimate (no slotting/fringing/saturation/losses).",
+        }),
+      },
+    ],
+  };
 }
 
 // ============================================================================

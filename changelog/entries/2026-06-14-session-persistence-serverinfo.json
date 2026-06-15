@@ -1,0 +1,10 @@
+{
+  "id": "2026-06-14-session-persistence-serverinfo",
+  "version": "0.9.4",
+  "date": "2026-06-14",
+  "category": "feat",
+  "title": "Session persistence + server_info build probe",
+  "summary": "save_document/load_document persist a session to disk and reopen it by name; a new server_info tool plus a real (package-derived) server version and startup self-check make stale/skewed deploys detectable.",
+  "features": ["mcp", "sessions", "devex"],
+  "mcpTools": ["save_document", "load_document", "server_info"]
+}

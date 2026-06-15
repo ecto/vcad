@@ -373,23 +373,28 @@ pub fn write_gerber_layer<W: Write>(
     let zones_on_layer: Vec<&Zone> = pcb.zones.iter().filter(|z| z.layer == layer).collect();
 
     // 5) Board outline segments on EdgeCuts layer.
+    //    Emit the outer profile followed by any interior cutouts (center bores,
+    //    keyed/D-shaped shaft holes, slots). Cutouts are routed on the profile
+    //    layer so the fabricated board actually has the holes — dropping them
+    //    silently ships a board missing its bore.
     let outline_segments: Vec<(i64, i64, i64, i64)> = if layer == PcbLayer::EdgeCuts {
-        let verts = &pcb.outline.vertices;
-        if verts.len() >= 2 {
-            (0..verts.len())
-                .map(|i| {
-                    let j = (i + 1) % verts.len();
-                    (
-                        mm_to_coord(verts[i].x),
-                        mm_to_coord(verts[i].y),
-                        mm_to_coord(verts[j].x),
-                        mm_to_coord(verts[j].y),
-                    )
-                })
-                .collect()
-        } else {
-            Vec::new()
+        let mut segs: Vec<(i64, i64, i64, i64)> = Vec::new();
+        let loops = std::iter::once(&pcb.outline.vertices).chain(pcb.outline.cutouts.iter());
+        for verts in loops {
+            if verts.len() < 2 {
+                continue;
+            }
+            for i in 0..verts.len() {
+                let j = (i + 1) % verts.len();
+                segs.push((
+                    mm_to_coord(verts[i].x),
+                    mm_to_coord(verts[i].y),
+                    mm_to_coord(verts[j].x),
+                    mm_to_coord(verts[j].y),
+                ));
+            }
         }
+        segs
     } else {
         Vec::new()
     };
@@ -457,6 +462,147 @@ pub fn write_gerber_layer<W: Write>(
                             y2: mm_to_coord(ey),
                             dcode,
                         });
+                    }
+                }
+                FootprintGraphic::Circle {
+                    center,
+                    radius,
+                    width,
+                    layer: gfx_layer,
+                } if *gfx_layer == layer => {
+                    let dcode = apertures.register(ApertureShape::Circle { diameter: *width });
+                    // Tessellate the ring into ~48 short stroked segments.
+                    const SEGMENTS: usize = 48;
+                    let mut local: Vec<(f64, f64)> = Vec::with_capacity(SEGMENTS + 1);
+                    for i in 0..=SEGMENTS {
+                        let theta = std::f64::consts::TAU * (i as f64) / (SEGMENTS as f64);
+                        local.push((
+                            center.x + radius * theta.cos(),
+                            center.y + radius * theta.sin(),
+                        ));
+                    }
+                    for pair in local.windows(2) {
+                        let (ax, ay) = pair[0];
+                        let (bx, by) = pair[1];
+                        let sx = fp.position.x + ax * cos_r - ay * sin_r;
+                        let sy = fp.position.y + ax * sin_r + ay * cos_r;
+                        let ex = fp.position.x + bx * cos_r - by * sin_r;
+                        let ey = fp.position.y + bx * sin_r + by * cos_r;
+                        graphic_lines.push(GraphicLineCmd {
+                            x1: mm_to_coord(sx),
+                            y1: mm_to_coord(sy),
+                            x2: mm_to_coord(ex),
+                            y2: mm_to_coord(ey),
+                            dcode,
+                        });
+                    }
+                }
+                FootprintGraphic::Arc {
+                    center,
+                    radius,
+                    start_angle,
+                    end_angle,
+                    width,
+                    layer: gfx_layer,
+                } if *gfx_layer == layer => {
+                    let dcode = apertures.register(ApertureShape::Circle { diameter: *width });
+                    // Tessellate the arc into segments proportional to its sweep
+                    // (matching the ~48-per-full-turn density of the circle case).
+                    let a0 = start_angle.to_radians();
+                    let a1 = end_angle.to_radians();
+                    let sweep = (a1 - a0).abs();
+                    let segments =
+                        ((sweep / std::f64::consts::TAU) * 48.0).ceil().max(1.0) as usize;
+                    let mut local: Vec<(f64, f64)> = Vec::with_capacity(segments + 1);
+                    for i in 0..=segments {
+                        let t = (i as f64) / (segments as f64);
+                        let theta = a0 + (a1 - a0) * t;
+                        local.push((
+                            center.x + radius * theta.cos(),
+                            center.y + radius * theta.sin(),
+                        ));
+                    }
+                    for pair in local.windows(2) {
+                        let (ax, ay) = pair[0];
+                        let (bx, by) = pair[1];
+                        let sx = fp.position.x + ax * cos_r - ay * sin_r;
+                        let sy = fp.position.y + ax * sin_r + ay * cos_r;
+                        let ex = fp.position.x + bx * cos_r - by * sin_r;
+                        let ey = fp.position.y + bx * sin_r + by * cos_r;
+                        graphic_lines.push(GraphicLineCmd {
+                            x1: mm_to_coord(sx),
+                            y1: mm_to_coord(sy),
+                            x2: mm_to_coord(ex),
+                            y2: mm_to_coord(ey),
+                            dcode,
+                        });
+                    }
+                }
+                FootprintGraphic::Polygon {
+                    vertices,
+                    width,
+                    layer: gfx_layer,
+                } if *gfx_layer == layer && vertices.len() >= 2 => {
+                    let dcode = apertures.register(ApertureShape::Circle { diameter: *width });
+                    // Connect consecutive points, closing the loop.
+                    for i in 0..vertices.len() {
+                        let a = vertices[i];
+                        let b = vertices[(i + 1) % vertices.len()];
+                        let sx = fp.position.x + a.x * cos_r - a.y * sin_r;
+                        let sy = fp.position.y + a.x * sin_r + a.y * cos_r;
+                        let ex = fp.position.x + b.x * cos_r - b.y * sin_r;
+                        let ey = fp.position.y + b.x * sin_r + b.y * cos_r;
+                        graphic_lines.push(GraphicLineCmd {
+                            x1: mm_to_coord(sx),
+                            y1: mm_to_coord(sy),
+                            x2: mm_to_coord(ex),
+                            y2: mm_to_coord(ey),
+                            dcode,
+                        });
+                    }
+                }
+                FootprintGraphic::Text {
+                    text,
+                    position,
+                    rotation,
+                    height,
+                    width,
+                    layer: gfx_layer,
+                } if *gfx_layer == layer => {
+                    // Stroke width: fall back to a fraction of the cap height
+                    // when unset/non-positive so the legend is still visible.
+                    let stroke = if *width > 0.0 { *width } else { *height * 0.12 };
+                    let dcode = apertures.register(ApertureShape::Circle { diameter: stroke });
+                    // Local polylines from the shared stroke font (y up,
+                    // baseline at y=0, origin at the text's local origin).
+                    let strokes = vcad_ir::stroke_font::text_strokes(text, *height);
+                    // Apply the text's own position + rotation first, then the
+                    // footprint transform.
+                    let tcos = rotation.to_radians().cos();
+                    let tsin = rotation.to_radians().sin();
+                    for polyline in &strokes {
+                        for pair in polyline.windows(2) {
+                            let (lax, lay) = pair[0];
+                            let (lbx, lby) = pair[1];
+                            // Text-local → footprint-local (rotate by text
+                            // rotation, translate by text position).
+                            let pax = position.x + lax * tcos - lay * tsin;
+                            let pay = position.y + lax * tsin + lay * tcos;
+                            let pbx = position.x + lbx * tcos - lby * tsin;
+                            let pby = position.y + lbx * tsin + lby * tcos;
+                            // Footprint-local → board.
+                            let sx = fp.position.x + pax * cos_r - pay * sin_r;
+                            let sy = fp.position.y + pax * sin_r + pay * cos_r;
+                            let ex = fp.position.x + pbx * cos_r - pby * sin_r;
+                            let ey = fp.position.y + pbx * sin_r + pby * cos_r;
+                            graphic_lines.push(GraphicLineCmd {
+                                x1: mm_to_coord(sx),
+                                y1: mm_to_coord(sy),
+                                x2: mm_to_coord(ex),
+                                y2: mm_to_coord(ey),
+                                dcode,
+                            });
+                        }
                     }
                 }
                 _ => {}
@@ -717,6 +863,7 @@ mod tests {
                 priority: 0,
             }],
             keepouts: vec![],
+            net_ties: vec![],
         }
     }
 
@@ -795,6 +942,133 @@ mod tests {
         // 4 edges of the rectangle.
         let d01_count = output.matches("D01*").count();
         assert_eq!(d01_count, 4, "expected 4 outline edges, got {d01_count}");
+    }
+
+    #[test]
+    fn gerber_edge_cuts_includes_cutouts() {
+        let mut pcb = test_pcb();
+        // A square cutout standing in for a center bore / keyed shaft hole.
+        pcb.outline.cutouts = vec![vec![
+            Vec2::new(20.0, 15.0),
+            Vec2::new(30.0, 15.0),
+            Vec2::new(30.0, 25.0),
+            Vec2::new(20.0, 25.0),
+        ]];
+        let mut buf = Vec::new();
+        write_gerber_layer(&mut buf, &pcb, PcbLayer::EdgeCuts).unwrap();
+        let output = String::from_utf8(buf).unwrap();
+
+        // 4 outer edges + 4 cutout edges = 8 draw commands.
+        let d01_count = output.matches("D01*").count();
+        assert_eq!(
+            d01_count, 8,
+            "expected 4 outer + 4 cutout edges, got {d01_count}"
+        );
+        // A cutout-only coordinate must appear in the routed profile.
+        assert!(
+            output.contains(&format!("X{}", mm_to_coord(20.0))),
+            "cutout coordinate missing from Edge_Cuts"
+        );
+    }
+
+    #[test]
+    fn gerber_footprint_graphics_circle_arc_polygon_text() {
+        // A footprint placed at the origin with no rotation so coordinates are
+        // easy to reason about, carrying one of each non-Line/Rect graphic on
+        // the front silkscreen.
+        let mut pcb = test_pcb();
+        let text_height = 1.0;
+        let text_pos = Vec2::new(2.0, 3.0);
+        pcb.footprints.push(Footprint {
+            reference: "U1".into(),
+            value: "MCU".into(),
+            footprint_name: "Package_QFP:LQFP-48".into(),
+            position: Vec2::new(0.0, 0.0),
+            rotation: 0.0,
+            front: true,
+            pads: vec![],
+            graphics: vec![
+                FootprintGraphic::Circle {
+                    center: Vec2::new(0.0, 0.0),
+                    radius: 2.0,
+                    width: 0.15,
+                    layer: PcbLayer::FSilkS,
+                },
+                FootprintGraphic::Arc {
+                    center: Vec2::new(0.0, 0.0),
+                    radius: 2.0,
+                    start_angle: 0.0,
+                    end_angle: 90.0,
+                    width: 0.15,
+                    layer: PcbLayer::FSilkS,
+                },
+                FootprintGraphic::Polygon {
+                    vertices: vec![
+                        Vec2::new(-1.0, -1.0),
+                        Vec2::new(1.0, -1.0),
+                        Vec2::new(0.0, 1.0),
+                    ],
+                    width: 0.15,
+                    layer: PcbLayer::FSilkS,
+                },
+                FootprintGraphic::Text {
+                    text: "L".into(),
+                    position: text_pos,
+                    rotation: 0.0,
+                    height: text_height,
+                    width: 0.12,
+                    layer: PcbLayer::FSilkS,
+                },
+            ],
+            model_3d: None,
+            properties: Default::default(),
+        });
+
+        let mut buf = Vec::new();
+        write_gerber_layer(&mut buf, &pcb, PcbLayer::FSilkS).unwrap();
+        let output = String::from_utf8(buf).unwrap();
+
+        // It must be the front legend layer.
+        assert!(
+            output.contains("%TF.FileFunction,Legend,Top*%"),
+            "missing FSilkS file function"
+        );
+        // All four graphics stroke out as D01 draw commands.
+        assert!(
+            output.contains("D01*"),
+            "no draw commands emitted on FSilkS"
+        );
+
+        // Circle: 48 segments → 48 draw commands. Arc (0..90°): ceil(48/4)=12.
+        // Polygon: 3 closing edges. Plus the text strokes.
+        // We don't pin the exact total, but it must clearly exceed the
+        // circle+arc+polygon minimum, proving text was also rendered.
+        let circle_arc_poly = 48 + 12 + 3;
+        let d01_count = output.matches("D01*").count();
+        assert!(
+            d01_count > circle_arc_poly,
+            "expected circle+arc+polygon ({circle_arc_poly}) plus text strokes, got {d01_count}"
+        );
+
+        // A known text coordinate must appear. The writer applies the text's
+        // own position then the (identity) footprint transform; with the
+        // footprint at the origin and no rotation, the first stroke point of
+        // the laid-out glyph lands at text_pos + local. Derive it from the
+        // public stroke-font API so the test tracks the font, not its bytes.
+        let strokes = vcad_ir::stroke_font::text_strokes("L", text_height);
+        let (lx, ly) = strokes[0][0];
+        let expected_x = mm_to_coord(text_pos.x + lx);
+        let expected_y = mm_to_coord(text_pos.y + ly);
+        assert!(
+            output.contains(&format!(
+                "X{}Y{}",
+                fmt_coord(expected_x),
+                fmt_coord(expected_y)
+            )),
+            "expected text coordinate X{}Y{} missing from FSilkS output",
+            fmt_coord(expected_x),
+            fmt_coord(expected_y)
+        );
     }
 
     #[test]

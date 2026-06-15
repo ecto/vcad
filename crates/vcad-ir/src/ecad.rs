@@ -762,6 +762,29 @@ pub struct Keepout {
     pub no_components: bool,
 }
 
+/// An intentional connection between two or more otherwise-distinct nets
+/// (a "net-tie").
+///
+/// Models a wye/star neutral point, a transformer center tap, or a split-ground
+/// stitch: the joined nets keep their separate identities in the netlist, but
+/// are treated as electrically one where they meet, so DRC does not flag the
+/// deliberate junction as a short.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct NetTie {
+    /// Names of the nets joined at this tie (two or more).
+    pub nets: Vec<String>,
+    /// Optional center of the allowed join region (board coordinates, mm).
+    ///
+    /// When present together with `radius`, the short exemption only applies
+    /// inside the region; outside it the tied nets must still observe clearance.
+    /// When absent, the exemption applies board-wide.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub position: Option<Vec2>,
+    /// Optional radius of the allowed join region (mm).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub radius: Option<f64>,
+}
+
 // ============================================================================
 // Top-level PCB
 // ============================================================================
@@ -796,6 +819,9 @@ pub struct Pcb {
     /// Keepout regions.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub keepouts: Vec<Keepout>,
+    /// Intentional net-ties (wye/star points, center taps, split-ground stitches).
+    #[serde(rename = "netTies", default, skip_serializing_if = "Vec::is_empty")]
+    pub net_ties: Vec<NetTie>,
 }
 
 #[cfg(test)]
@@ -934,6 +960,7 @@ mod tests {
                 priority: 0,
             }],
             keepouts: vec![],
+            net_ties: vec![],
         };
 
         let json = serde_json::to_string_pretty(&pcb).unwrap();

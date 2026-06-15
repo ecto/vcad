@@ -1979,7 +1979,7 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
     stackupLayers.push({ layer: "FCu" as const, copperThickness: 0.035 });
     if (layerCount >= 4) {
       const innerCount = layerCount - 2;
-      const innerLayerNames = ["In1Cu", "In2Cu", "In3Cu", "In4Cu"] as const;
+      const innerLayerNames = ["In1Cu", "In2Cu", "In3Cu", "In4Cu", "In5Cu", "In6Cu"] as const;
       const dielectricPerLayer = thickness / (layerCount - 1);
       for (let i = 0; i < innerCount; i++) {
         stackupLayers.push({

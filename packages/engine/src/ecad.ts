@@ -129,6 +129,72 @@ export async function runErc(sheet: SchematicSheet): Promise<ErcViolationResult[
   }
 }
 
+/** Inputs for the analytical motor evaluator (mirrors `vcad_ecad_sim::MotorSpec`). */
+export interface MotorSpecInput {
+  polePairs: number;
+  turnsPerPhase: number;
+  windingFactor: number;
+  innerRMm: number;
+  outerRMm: number;
+  phaseResistanceOhm: number;
+  supplyVoltageV: number;
+  airgapFluxTesla: number;
+}
+
+/** Headline analytical motor performance (mirrors `vcad_ecad_sim::MotorPerformance`). */
+export interface MotorPerformanceResult {
+  ktNmPerA: number;
+  keVSPerRad: number;
+  noLoadSpeedRadS: number;
+  stallTorqueNm: number;
+  curve: Array<{ speedRadS: number; torqueNm: number }>;
+}
+
+/** Inputs for the cored air-gap MEC model (mirrors `vcad_ecad_sim::AirGapSpec`). */
+export interface AirGapSpecInput {
+  remanenceTesla: number;
+  magnetThicknessMm: number;
+  recoilMuRel: number;
+  airgapMm: number;
+  magnetAreaMm2: number;
+  gapAreaMm2: number;
+  ironMuRel?: number | null;
+  ironPathMm: number;
+  ironAreaMm2: number;
+}
+
+/** Evaluate first-order analytical motor performance. Null if ECAD WASM is unavailable. */
+export async function evaluateMotor(
+  spec: MotorSpecInput,
+): Promise<MotorPerformanceResult | null> {
+  const wasm = await loadEcadWasm();
+  if (!wasm) return null;
+  try {
+    const fn = (wasm as unknown as { ecadEvaluateMotor?: (s: string) => unknown })
+      .ecadEvaluateMotor;
+    if (typeof fn !== "function") return null;
+    return fn(JSON.stringify(spec)) as MotorPerformanceResult;
+  } catch (e) {
+    console.warn("[ECAD] evaluateMotor failed:", e);
+    return null;
+  }
+}
+
+/** Air-gap flux density (tesla) via the MEC reluctance model. Null if ECAD WASM is unavailable. */
+export async function airgapFluxDensity(spec: AirGapSpecInput): Promise<number | null> {
+  const wasm = await loadEcadWasm();
+  if (!wasm) return null;
+  try {
+    const fn = (wasm as unknown as { ecadAirgapFluxDensity?: (s: string) => number })
+      .ecadAirgapFluxDensity;
+    if (typeof fn !== "function") return null;
+    return fn(JSON.stringify(spec));
+  } catch (e) {
+    console.warn("[ECAD] airgapFluxDensity failed:", e);
+    return null;
+  }
+}
+
 /** Generate a netlist from a schematic sheet. */
 export async function generateNetlist(sheet: SchematicSheet): Promise<NetlistResult> {
   const wasm = await loadEcadWasm();

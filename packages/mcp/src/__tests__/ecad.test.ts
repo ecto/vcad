@@ -17,6 +17,10 @@ import {
   addCoil,
   addCoilArray,
   windingLayout,
+  addTrace,
+  addVia,
+  setStackup,
+  addMotorWinding,
   aggregateDrc,
   parseNetPair,
   boardFromSolid,
@@ -656,6 +660,312 @@ describe("add_coil_array", () => {
     const payload = out(res);
     expect(payload.success).toBe(false);
     expect(payload.errors.length).toBeGreaterThan(0);
+  });
+});
+
+describe("add_trace / add_via / set_stackup", () => {
+  async function board(): Promise<string> {
+    const created = out(await createSchematic({ components: [resistor("R1", 0)] }));
+    const id = created.document_id;
+    out(await placeComponents({ document_id: id, board_width: 50, board_height: 50 }));
+    return id;
+  }
+
+  it("add_trace adds N-1 segments and ensures the net", async () => {
+    const id = await board();
+    const res = out(
+      addTrace({
+        document_id: id,
+        net: "SIG",
+        points: [
+          { x: 0, y: 0 },
+          { x: 10, y: 0 },
+          { x: 10, y: 10 },
+          { x: 20, y: 10 },
+        ],
+      }),
+    );
+    expect(res.success).toBe(true);
+    expect(res.traces_added).toBe(3);
+    expect(res.length_mm).toBeCloseTo(30, 3);
+    expect(res.layer).toBe("FCu");
+    const b = getPcbBoard(getSession(id));
+    expect(b.traces.filter((t) => t.net === "SIG").length).toBe(3);
+    expect(b.nets.some((n) => n.id === "SIG")).toBe(true);
+  });
+
+  it("add_trace rejects < 2 points and non-copper layers", async () => {
+    const id = await board();
+    expect(addTrace({ document_id: id, net: "X", points: [{ x: 0, y: 0 }] }).isError).toBe(true);
+    expect(
+      addTrace({
+        document_id: id,
+        net: "X",
+        layer: "FSilkS",
+        points: [
+          { x: 0, y: 0 },
+          { x: 1, y: 1 },
+        ],
+      }).isError,
+    ).toBe(true);
+  });
+
+  it("add_via adds a via with default span and ensures the net", async () => {
+    const id = await board();
+    const res = out(addVia({ document_id: id, net: "GND", position: { x: 5, y: 5 } }));
+    expect(res.success).toBe(true);
+    expect(res.position).toEqual({ x: 5, y: 5 });
+    const b = getPcbBoard(getSession(id));
+    const via = b.vias.find((v) => v.net === "GND");
+    expect(via).toBeDefined();
+    expect(via!.startLayer).toBe("FCu");
+    expect(via!.endLayer).toBe("BCu");
+    expect(via!.diameter).toBe(b.rules.defaultRules.viaDiameter);
+    expect(b.nets.some((n) => n.id === "GND")).toBe(true);
+  });
+
+  it("set_stackup copper_oz changes copperThickness on all copper layers", async () => {
+    const id = await board();
+    const res = out(setStackup({ document_id: id, copper_oz: 2 }));
+    expect(res.success).toBe(true);
+    const b = getPcbBoard(getSession(id));
+    for (const l of b.stackup.layers.filter((s) => /Cu$/.test(s.layer))) {
+      expect(l.copperThickness).toBe(0.07); // round3(2 × 0.0348)
+    }
+  });
+
+  it("set_stackup at 2 oz roughly halves a coil's DC resistance", async () => {
+    // 1 oz baseline coil.
+    const id1 = await board();
+    const c1oz = out(
+      addCoil({
+        document_id: id1,
+        center: { x: 25, y: 25 },
+        turns: 3,
+        inner_radius: 3,
+        outer_radius: 10,
+        trace_width: 0.3,
+        clearance: 0.2,
+        net: "PHA",
+      }),
+    );
+    // 2 oz coil on a fresh board (thicker copper → lower resistance).
+    const id2 = await board();
+    out(setStackup({ document_id: id2, copper_oz: 2 }));
+    const c2oz = out(
+      addCoil({
+        document_id: id2,
+        center: { x: 25, y: 25 },
+        turns: 3,
+        inner_radius: 3,
+        outer_radius: 10,
+        trace_width: 0.3,
+        clearance: 0.2,
+        net: "PHA",
+      }),
+    );
+    const ratio = c2oz.estimated_dc_resistance_ohms / c1oz.estimated_dc_resistance_ohms;
+    expect(ratio).toBeCloseTo(0.035 / 0.07, 2); // ≈ 0.5 (round3 copper thickness)
+  });
+
+  it("set_stackup per-layer creates a missing copper layer entry", async () => {
+    const id = await board();
+    const res = out(
+      setStackup({
+        document_id: id,
+        layers: [{ layer: "In1Cu", copper_oz: 0.5, material: "FR4" }],
+      }),
+    );
+    expect(res.success).toBe(true);
+    const b = getPcbBoard(getSession(id));
+    const in1 = b.stackup.layers.find((l) => l.layer === "In1Cu");
+    expect(in1).toBeDefined();
+    expect(in1!.copperThickness).toBe(0.017); // round3(0.5 × 0.0348)
+    expect(in1!.material).toBe("FR4");
+  });
+});
+
+describe("add_coil lead-out and multilayer", () => {
+  async function circleBoardSession(): Promise<string> {
+    const created = out(await createSchematic({ components: [resistor("R1", 0)] }));
+    const id = created.document_id;
+    out(
+      await placeComponents({
+        document_id: id,
+        board_shape: { type: "circle", outer_diameter: 80, inner_diameter: 16 },
+      }),
+    );
+    return id;
+  }
+
+  it("inner_lead_out moves the inner endpoint off the outer radial spoke", async () => {
+    const id = await circleBoardSession();
+    const center = { x: 40, y: 40 };
+    const plain = out(
+      addCoil({
+        document_id: id,
+        center,
+        turns: 4,
+        inner_radius: 5,
+        outer_radius: 14,
+        trace_width: 0.4,
+        clearance: 0.3,
+        net: "A",
+        start_angle_deg: 0,
+      }),
+    );
+    // start_angle 0 → inner end sits on the +X spoke at angle 0.
+    const plainAngle = Math.atan2(plain.inner_endpoint.y - 40, plain.inner_endpoint.x - 40);
+    expect(plainAngle).toBeCloseTo(0, 5);
+
+    const id2 = await circleBoardSession();
+    const led = out(
+      addCoil({
+        document_id: id2,
+        center,
+        turns: 4,
+        inner_radius: 5,
+        outer_radius: 14,
+        trace_width: 0.4,
+        clearance: 0.3,
+        net: "A",
+        start_angle_deg: 0,
+        inner_lead_out: 3,
+        inner_via: true,
+      }),
+    );
+    // New inner terminal is no longer on the +X spoke (angle 0).
+    const ledAngle = Math.atan2(led.inner_endpoint.y - 40, led.inner_endpoint.x - 40);
+    expect(Math.abs(ledAngle)).toBeGreaterThan(0.1);
+    // The via lands on the lead-out terminal, not the spiral start.
+    const b = getPcbBoard(getSession(id2));
+    const via = b.vias.find((v) => v.net === "A");
+    expect(via).toBeDefined();
+    expect(via!.position).toEqual(led.inner_endpoint);
+  });
+
+  it("layers:[FCu,BCu] stacks the coil on both layers with a stitch via", async () => {
+    const id = await circleBoardSession();
+    const res = out(
+      addCoil({
+        document_id: id,
+        center: { x: 40, y: 40 },
+        turns: 3,
+        inner_radius: 5,
+        outer_radius: 12,
+        trace_width: 0.4,
+        clearance: 0.3,
+        net: "PHA",
+        layers: ["FCu", "BCu"],
+      }),
+    );
+    expect(res.success).toBe(true);
+    expect(res.multilayer).toBe(true);
+    expect(res.layers_used).toEqual(["FCu", "BCu"]);
+    expect(res.stitch_vias.length).toBe(1);
+    expect(res.terminals.a).toBeDefined();
+    expect(res.terminals.b).toBeDefined();
+    const b = getPcbBoard(getSession(id));
+    const fcu = b.traces.filter((t) => t.net === "PHA" && t.layer === "FCu").length;
+    const bcu = b.traces.filter((t) => t.net === "PHA" && t.layer === "BCu").length;
+    expect(fcu).toBeGreaterThan(0);
+    expect(bcu).toBe(fcu); // same geometry on both layers
+    const stitch = b.vias.find((v) => v.net === "PHA");
+    expect(stitch).toBeDefined();
+    expect(stitch!.startLayer).toBe("FCu");
+    expect(stitch!.endLayer).toBe("BCu");
+    // Total length is the sum across both layers.
+    expect(res.total_length_mm).toBeCloseTo(res.total_length_mm, 3);
+  });
+});
+
+describe("add_motor_winding", () => {
+  async function statorBoard(): Promise<string> {
+    const created = out(await createSchematic({ components: [resistor("R1", 0)] }));
+    const id = created.document_id;
+    out(
+      await placeComponents({
+        document_id: id,
+        board_shape: { type: "circle", outer_diameter: 120, inner_diameter: 20 },
+      }),
+    );
+    return id;
+  }
+
+  it("realizes a feasible 12s/10p wye winding: 12 coils, interconnect, a net-tie", async () => {
+    const id = await statorBoard();
+    const res = out(
+      addMotorWinding({
+        document_id: id,
+        slots: 12,
+        poles: 10,
+        center: { x: 60, y: 60 },
+        pitch_radius: 40,
+        inner_radius: 2,
+        outer_radius: 6,
+        trace_width: 0.2,
+        clearance: 0.15,
+        connection: "wye",
+      }),
+    );
+    expect(res.success).toBe(true);
+    expect(res.coils_placed).toBe(12);
+    expect(res.coils_failed).toBe(0);
+    expect(res.connection).toBe("wye");
+    expect(res.interconnect_traces).toBeGreaterThan(0);
+    expect(res.net_ties_added).toBe(1);
+    expect(res.vias_added).toBe(24); // inner + outer via per coil
+    expect(res.winding_factor).toBeGreaterThan(0.9);
+
+    const b = getPcbBoard(getSession(id));
+    expect(b.netTies).toBeDefined();
+    expect(b.netTies!.length).toBe(1);
+    // The tie lists all phase nets plus the neutral.
+    expect(b.netTies![0].nets).toContain("WIND_N");
+    expect(b.netTies![0].nets).toContain("PHA");
+    expect(b.netTies![0].nets).toContain("PHB");
+    expect(b.netTies![0].nets).toContain("PHC");
+    // Coils landed on copper (FCu) and interconnect on the return layer (BCu).
+    expect(b.traces.some((t) => t.layer === "FCu")).toBe(true);
+    expect(b.traces.some((t) => t.layer === "BCu")).toBe(true);
+  });
+
+  it("delta winding adds a net-tie per junction", async () => {
+    const id = await statorBoard();
+    const res = out(
+      addMotorWinding({
+        document_id: id,
+        slots: 12,
+        poles: 10,
+        center: { x: 60, y: 60 },
+        pitch_radius: 40,
+        inner_radius: 2,
+        outer_radius: 6,
+        trace_width: 0.2,
+        clearance: 0.15,
+        connection: "delta",
+      }),
+    );
+    expect(res.success).toBe(true);
+    expect(res.coils_placed).toBe(12);
+    expect(res.connection).toBe("delta");
+    expect(res.net_ties_added).toBe(3); // one per phase junction
+  });
+
+  it("rejects an infeasible slot/pole/phase combination", async () => {
+    const id = await statorBoard();
+    const res = addMotorWinding({
+      document_id: id,
+      slots: 9,
+      poles: 12,
+      phases: 4,
+      center: { x: 60, y: 60 },
+      pitch_radius: 40,
+      inner_radius: 2,
+      outer_radius: 6,
+      trace_width: 0.2,
+    });
+    expect(res.isError).toBe(true);
   });
 });
 

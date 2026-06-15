@@ -1,0 +1,10 @@
+{
+  "id": "2026-06-14-routing-motor-tools",
+  "version": "0.9.4",
+  "date": "2026-06-14",
+  "category": "feat",
+  "title": "Routing primitives + one-shot motor winding & evaluation",
+  "summary": "New add_trace/add_via routing primitives, an add_motor_winding realizer that turns a slots/poles plan into coils + series interconnect + wye/delta tie, and calc_motor for Kt/Ke/speed/torque from a computed air-gap field.",
+  "features": ["pcb", "routing", "motor", "winding", "magnetics"],
+  "mcpTools": ["add_trace", "add_via", "add_motor_winding", "calc_motor", "set_stackup"]
+}

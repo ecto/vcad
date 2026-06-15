@@ -1,0 +1,10 @@
+{
+  "id": "2026-06-14-drc-overhaul",
+  "version": "0.9.4",
+  "date": "2026-06-14",
+  "category": "feat",
+  "title": "PCB DRC: true-geometry clearance, keepouts, shorts, net-ties",
+  "summary": "DRC now measures real segment/polygon clearance (fewer false positives), enforces keepouts, flood-fills connectivity to catch shorts and unrouted nets, and honors intentional net-ties.",
+  "features": ["pcb", "drc", "design-rules", "net-tie"],
+  "mcpTools": ["run_drc"]
+}

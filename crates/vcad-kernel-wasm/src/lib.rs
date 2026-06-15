@@ -126,6 +126,32 @@ pub fn render_svg(vcad_json: &str, scale: f64) -> Result<String, JsError> {
     vcad_render::render_svg_str(vcad_json, scale).map_err(|e| JsError::new(&e))
 }
 
+/// Render raw `.vcad` document JSON to an SVG from a named orthographic view.
+///
+/// `view` accepts `"iso"`/`"isometric"`/`"hero"`, `"top"`, `"front"`, or
+/// `"side"` (case-insensitive); anything unrecognized falls back to isometric.
+/// Gives agents a flat top-down or elevation look at a part, not just the
+/// default 3/4 isometric.
+#[wasm_bindgen]
+pub fn render_svg_view(vcad_json: &str, scale: f64, view: &str) -> Result<String, JsError> {
+    let v = view
+        .parse::<vcad_render::View>()
+        .unwrap_or(vcad_render::View::Isometric);
+    vcad_render::render_svg_str_view(vcad_json, scale, v).map_err(|e| JsError::new(&e))
+}
+
+/// Render a PCB to a flat, top-down, per-layer 2D SVG (the "agent eyes" for
+/// boards — copper, silk, drills, outline).
+///
+/// `pcb_json` is a JSON-serialized `Pcb`; `layers_json` is a JSON array of
+/// layer-name strings accepting both KiCad (`"F.Cu"`, `"F.SilkS"`) and serde
+/// (`"FCu"`, `"FSilkS"`) spellings. Only the requested layers are drawn.
+#[wasm_bindgen]
+pub fn render_pcb_svg(pcb_json: &str, layers_json: &str, scale: f64) -> Result<String, JsError> {
+    vcad_render::pcb::render_pcb_svg_json(pcb_json, layers_json, scale)
+        .map_err(|e| JsError::new(&e))
+}
+
 // =============================================================================
 // DFM (Design for Manufacturing)
 // =============================================================================
@@ -4759,6 +4785,28 @@ mod ecad_wasm {
         let pcb: Pcb = serde_json::from_str(pcb_json).map_err(|e| JsError::new(&e.to_string()))?;
         let violations = vcad_ecad_pcb::drc::check_drc(&pcb);
         serde_wasm_bindgen::to_value(&violations).map_err(|e| JsError::new(&e.to_string()))
+    }
+
+    /// Evaluate first-order analytical motor performance from a JSON
+    /// `MotorSpec`: torque constant Kt, back-EMF constant Ke, no-load speed,
+    /// stall torque, and a speed–torque curve. Lets an agent ask "is this motor
+    /// any good?" instead of estimating by hand.
+    #[wasm_bindgen(js_name = ecadEvaluateMotor)]
+    pub fn ecad_evaluate_motor(spec_json: &str) -> Result<JsValue, JsError> {
+        let spec: vcad_ecad_sim::MotorSpec =
+            serde_json::from_str(spec_json).map_err(|e| JsError::new(&e.to_string()))?;
+        let perf = vcad_ecad_sim::evaluate_motor(&spec);
+        serde_wasm_bindgen::to_value(&perf).map_err(|e| JsError::new(&e.to_string()))
+    }
+
+    /// Compute air-gap flux density (tesla) from a JSON `AirGapSpec` via the
+    /// first-order magnetic-equivalent-circuit reluctance model — so B_gap is
+    /// computed from magnet + geometry, not assumed.
+    #[wasm_bindgen(js_name = ecadAirgapFluxDensity)]
+    pub fn ecad_airgap_flux_density(spec_json: &str) -> Result<f64, JsError> {
+        let spec: vcad_ecad_sim::AirGapSpec =
+            serde_json::from_str(spec_json).map_err(|e| JsError::new(&e.to_string()))?;
+        Ok(vcad_ecad_sim::airgap_flux_density(&spec))
     }
 
     /// Run Electrical Rule Check on a schematic sheet.

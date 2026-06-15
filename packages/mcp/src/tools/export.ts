@@ -24,7 +24,8 @@ export const exportCadSchema = {
     filename: {
       type: "string" as const,
       description:
-        "Output filename with extension (.stl, .glb, or — for sheet-metal documents — .step/.stp). " +
+        "Output filename with extension (.stl, .glb, or — for sheet-metal documents — .step/.stp), " +
+        "relative to the server working directory (or VCAD_MCP_EXPORT_DIR if set). " +
         "STEP exports the FOLDED sheet-metal body (AP214) with true cylindrical bend faces sized by " +
         "the document's shop profile, so fab services with a 3D pipeline (e.g. SendCutSend) " +
         "auto-detect bends, angles, and directions with zero data entry.",
@@ -54,7 +55,7 @@ export function exportCad(
           "body needs B-rep bend geometry). Use .stl or .glb for mesh exports.",
       );
     }
-    const path = resolveWithinRoot(filename);
+    const path = resolveWithinRoot(filename, process.env.VCAD_MCP_EXPORT_DIR ?? process.cwd());
     const bytes = new TextEncoder().encode(step);
     writeFileSync(path, bytes);
     return {
@@ -95,8 +96,9 @@ export function exportCad(
       throw new Error(`Unsupported format: .${ext}. Use .stl, .glb, or .step (sheet-metal only)`);
   }
 
-  // Resolve against cwd and reject any path that escapes it.
-  const path = resolveWithinRoot(filename);
+  // Resolve against the export dir (VCAD_MCP_EXPORT_DIR or cwd) and reject any
+  // path that escapes it.
+  const path = resolveWithinRoot(filename, process.env.VCAD_MCP_EXPORT_DIR ?? process.cwd());
   writeFileSync(path, bytes);
 
   return {

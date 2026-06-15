@@ -1115,6 +1115,21 @@ export interface Keepout {
   noComponents?: boolean;
 }
 
+/**
+ * An intentional connection between two or more otherwise-distinct nets (a
+ * "net-tie"): a wye/star neutral point, a center tap, or a split-ground stitch.
+ * Tied nets keep their separate identities in the netlist but are treated as
+ * electrically one where they meet, so DRC does not flag the junction as a short.
+ */
+export interface NetTie {
+  /** Names of the nets joined at this tie (two or more). */
+  nets: string[];
+  /** Optional center of the allowed join region (board mm); board-wide if absent. */
+  position?: Vec2;
+  /** Optional radius of the allowed join region (mm). */
+  radius?: number;
+}
+
 /** A complete PCB design. */
 export interface Pcb {
   outline: BoardOutline;
@@ -1127,6 +1142,8 @@ export interface Pcb {
   vias: Via[];
   zones: Zone[];
   keepouts?: Keepout[];
+  /** Intentional net-ties (wye/star points, center taps, split-ground stitches). */
+  netTies?: NetTie[];
 }
 
 // ============================================================================

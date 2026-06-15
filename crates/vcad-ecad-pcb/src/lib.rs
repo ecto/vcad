@@ -22,7 +22,7 @@ pub mod spatial;
 pub use copper_pour::{fill_zones, FilledZone};
 pub use drc::{check_drc, DrcRuleType, DrcSeverity, DrcViolation};
 pub use router::grid::GridRouter;
-pub use spatial::{CopperElement, SpatialIndex};
+pub use spatial::{CopperElement, CopperGeom, SpatialIndex};
 
 /// Errors returned by PCB operations.
 #[derive(Debug, thiserror::Error)]

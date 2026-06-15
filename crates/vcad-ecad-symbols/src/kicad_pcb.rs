@@ -217,6 +217,7 @@ fn convert_pcb(root: &SExpr<'_>) -> Result<Pcb, ParseError> {
         vias,
         zones,
         keepouts: vec![],
+        net_ties: vec![],
     })
 }
 

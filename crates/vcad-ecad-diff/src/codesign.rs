@@ -18,6 +18,7 @@
 use crate::design::{DesignSystem, ResidualFn};
 use tang::Scalar;
 use tang_expr::ExprId;
+use vcad_ecad_sim::airgap::{airgap_flux_density, AirGapSpec};
 use vcad_ecad_sim::magnetics::motor_torque_constant;
 use vcad_kernel_constraints::{SolveResult, SolverConfig};
 
@@ -30,12 +31,38 @@ const DT: f64 = 0.01;
 pub const STEPS: usize = 25;
 /// Target angular velocity (rad/s) the controller tracks.
 pub const TARGET: f64 = 30.0;
-// Fixed magnetics: pole pairs, series turns, winding factor, airgap flux (T), bore radius (mm).
+// Fixed magnetics: pole pairs, series turns, winding factor, bore radius (mm).
 const POLE_PAIRS: f64 = 6.0;
 const TURNS: f64 = 60.0;
 const KW: f64 = 0.866;
-const B_GAP: f64 = 0.4;
 const R_IN: f64 = 5.0;
+
+/// Magnet/gap geometry of the co-design's PM rotor: NdFeB (Br≈1.2 T), 3 mm
+/// magnet across a 1 mm air gap, recoil permeability 1.05, ideal back-iron.
+/// The air-gap flux density is *computed* from this (not hardcoded) so the plant
+/// constant reflects the chosen magnetics — see [`airgap_b_gap`].
+const MAGNET: AirGapSpec = AirGapSpec {
+    remanence_tesla: 1.2,
+    magnet_thickness_mm: 3.0,
+    recoil_mu_rel: 1.05,
+    airgap_mm: 1.0,
+    magnet_area_mm2: 1.0,
+    gap_area_mm2: 1.0,
+    iron_mu_rel: None,
+    iron_path_mm: 0.0,
+    iron_area_mm2: 1.0,
+};
+
+/// Air-gap flux density (T) used as the plant constant, computed from [`MAGNET`]
+/// by the first-order reluctance-network model in `vcad_ecad_sim::airgap`.
+///
+/// The flux is a *constant* with respect to the design variables (`outer_r`,
+/// `kp`), so it flows into the traced rollout as `S::from_f64(...)` and the
+/// autodiff / finite-difference path is unchanged — only its numeric value is
+/// now derived from magnet geometry instead of being a literal `0.4`.
+pub fn airgap_b_gap() -> f64 {
+    airgap_flux_density(&MAGNET)
+}
 
 /// One explicit-Euler step of a 1-DOF motor: `J·dω/dt = Kt·i − b·ω`.
 pub fn motor_step<S: Scalar>(omega: S, kt: S, i_cmd: S, j: S, b: S, dt: S) -> S {
@@ -48,12 +75,14 @@ pub fn motor_step<S: Scalar>(omega: S, kt: S, i_cmd: S, j: S, b: S, dt: S) -> S 
 /// `outer_r_mm` (plant geometry → Kt) and `kp` (controller gain) are the design
 /// variables.
 pub fn spin_up_omega<S: Scalar>(outer_r_mm: S, kp: S, steps: usize) -> S {
-    // Plant: torque constant from stator geometry.
+    // Plant: torque constant from stator geometry. The air-gap flux is computed
+    // from the magnet geometry by the MEC reluctance model (not hardcoded), then
+    // baked in as a constant w.r.t. the design vars so autodiff is unaffected.
     let kt = motor_torque_constant(
         S::from_f64(POLE_PAIRS),
         S::from_f64(TURNS),
         S::from_f64(KW),
-        S::from_f64(B_GAP),
+        S::from_f64(airgap_b_gap()),
         S::from_f64(R_IN),
         outer_r_mm,
     );
@@ -140,6 +169,19 @@ mod tests {
             sol[0] > seed[0],
             "co-design grew the stator for more torque: {}",
             sol[0]
+        );
+    }
+
+    #[test]
+    fn airgap_flux_is_computed_not_hardcoded() {
+        // The plant's air-gap flux now comes from the MEC reluctance model
+        // (NdFeB, 3 mm magnet, 1 mm gap), not a literal 0.4. Verify it lands in
+        // a physically plausible band and is no longer the old hardcoded value.
+        let b = airgap_b_gap();
+        assert!((0.4..=0.9).contains(&b), "computed B_gap {b} out of band");
+        assert!(
+            (b - 0.4).abs() > 1e-3,
+            "B_gap should differ from the old 0.4"
         );
     }
 }

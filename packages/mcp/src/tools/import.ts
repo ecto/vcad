@@ -23,7 +23,9 @@ export const importStepSchema = {
   properties: {
     filename: {
       type: "string" as const,
-      description: "Path to the STEP file (.step or .stp)",
+      description:
+        "Path to the STEP file (.step or .stp), relative to the server working directory " +
+        "(or VCAD_MCP_EXPORT_DIR if set).",
     },
     name: {
       type: "string" as const,
@@ -43,8 +45,9 @@ export function importStep(
 ): { content: Array<{ type: "text"; text: string }> } {
   const { filename, name, material } = input as ImportStepInput;
 
-  // Resolve against cwd and reject any path that escapes it.
-  const filepath = resolveWithinRoot(filename);
+  // Resolve against the export dir (VCAD_MCP_EXPORT_DIR or cwd) and reject any
+  // path that escapes it.
+  const filepath = resolveWithinRoot(filename, process.env.VCAD_MCP_EXPORT_DIR ?? process.cwd());
 
   if (!existsSync(filepath)) {
     throw new Error("STEP file not found");
