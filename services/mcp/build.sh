@@ -93,6 +93,21 @@ cat > "$OUT/config.json" << 'EOF'
       "src": "/health",
       "methods": ["GET"],
       "dest": "/mcp"
+    },
+    {
+      "src": "/oauth/(register|authorize|start|callback|token)",
+      "methods": ["GET", "POST", "OPTIONS"],
+      "dest": "/mcp"
+    },
+    {
+      "src": "/\\.well-known/oauth-authorization-server(/.*)?",
+      "methods": ["GET", "OPTIONS"],
+      "dest": "/mcp"
+    },
+    {
+      "src": "/\\.well-known/oauth-protected-resource(/.*)?",
+      "methods": ["GET", "OPTIONS"],
+      "dest": "/mcp"
     }
   ]
 }

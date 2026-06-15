@@ -11,7 +11,8 @@
   "exports": {
     ".": "./dist/index.js",
     "./server": "./dist/server.js",
-    "./viewer": "./dist/viewer.js"
+    "./viewer": "./dist/viewer.js",
+    "./oauth": "./dist/oauth.js"
   },
   "files": [
     "dist"

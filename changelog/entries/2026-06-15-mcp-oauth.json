@@ -1,0 +1,9 @@
+{
+  "id": "2026-06-15-mcp-oauth",
+  "version": "0.9.4",
+  "date": "2026-06-15",
+  "category": "feat",
+  "title": "Sign-in for the hosted MCP server",
+  "summary": "mcp.vcad.io now supports OAuth 2.1 with dynamic client registration, so Claude and other MCP clients can register and sign in via Google or GitHub instead of erroring.",
+  "features": ["mcp", "oauth", "auth"]
+}

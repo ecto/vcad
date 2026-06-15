@@ -13,6 +13,12 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { createServer } from "@vcad/mcp/server";
+import {
+  getOAuthConfig,
+  handleOAuthRoute,
+  verifyAccessToken,
+  wwwAuthenticate,
+} from "@vcad/mcp/oauth";
 import { Engine } from "@vcad/engine";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
@@ -42,17 +48,29 @@ export default async function handler(
   req: IncomingMessage,
   res: ServerResponse,
 ): Promise<void> {
-  // CORS
+  // CORS — `Authorization` is allowed so signed-in clients can present a
+  // Bearer access token on /mcp once the OAuth flow has run.
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS");
   res.setHeader(
     "Access-Control-Allow-Headers",
-    "Content-Type, mcp-session-id, Last-Event-ID, mcp-protocol-version",
+    "Content-Type, Authorization, mcp-session-id, Last-Event-ID, mcp-protocol-version",
   );
   res.setHeader(
     "Access-Control-Expose-Headers",
     "mcp-session-id, mcp-protocol-version",
   );
+
+  const url = new URL(req.url ?? "/", `https://${req.headers.host ?? "mcp.vcad.io"}`);
+
+  // OAuth 2.1 discovery + flow endpoints (/.well-known/oauth-* and
+  // /oauth/*). Active only when MCP_OAUTH_SECRET is set; otherwise these
+  // paths 404 and the server behaves as an open, no-auth endpoint.
+  // Returns true once it has written a response (incl. OPTIONS preflight
+  // for those paths), so it must run before the generic OPTIONS handler.
+  if (await handleOAuthRoute(req, res, url)) {
+    return;
+  }
 
   if (req.method === "OPTIONS") {
     res.writeHead(204);
@@ -76,6 +94,22 @@ export default async function handler(
       });
     }
     return;
+  }
+
+  // Optional hard gate on /mcp. Off by default so existing anonymous
+  // clients keep working while the OAuth flow rolls out; set
+  // MCP_REQUIRE_AUTH=1 (alongside MCP_OAUTH_SECRET) to require a valid
+  // signed-in access token once every client has migrated.
+  if (process.env.MCP_REQUIRE_AUTH && url.pathname === "/mcp") {
+    const cfg = getOAuthConfig();
+    if (cfg && !verifyAccessToken(req)) {
+      res.writeHead(401, {
+        "Content-Type": "text/plain",
+        "WWW-Authenticate": wwwAuthenticate(cfg),
+      });
+      res.end("Unauthorized");
+      return;
+    }
   }
 
   // MCP endpoint — parse body for POST, then delegate to transport
