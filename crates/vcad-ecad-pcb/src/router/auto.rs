@@ -68,7 +68,15 @@ const LAYERS: [PcbLayer; 2] = [PcbLayer::FCu, PcbLayer::BCu];
 /// board and against the copper the router itself places.
 pub fn route_all(pcb: &Pcb, width: f64, nets_filter: &[String]) -> RouteAllResult {
     let netlist = netlist_from_pads(pcb);
-    let rats = compute_ratsnest(pcb, &netlist);
+    let mut rats = compute_ratsnest(pcb, &netlist);
+    // Route the longest connections first. They span the most board and have
+    // the least routing freedom, so giving them the emptier board up front
+    // leaves fewer dead-ends for the short connections that fill in around them.
+    rats.sort_by(|a, b| {
+        dist(b.from, b.to)
+            .partial_cmp(&dist(a.from, a.to))
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
 
     let mut session = RouteSession::from_pcb(pcb);
     let hw = width / 2.0;
