@@ -3,6 +3,7 @@
 //! This module provides multiple routing strategies:
 //!
 //! - [`grid`] -- Lee/wave BFS-based grid router
+//! - [`maze`] -- Single-net A* that avoids real copper via the incremental oracle
 //! - [`push_shove`] -- Interactive push-and-shove router with visibility-graph pathfinding
 //! - [`diff_pair`] -- Differential pair router with phase matching
 //! - [`length_tune`] -- Length tuning meander generator with DRC-aware clearance checking
@@ -10,12 +11,44 @@
 pub mod diff_pair;
 pub mod grid;
 pub mod length_tune;
+pub mod maze;
 pub mod push_shove;
 
-use vcad_ir::ecad::Pcb;
+pub use maze::route_net_maze;
+
+use vcad_ir::ecad::{Pcb, PcbLayer};
 use vcad_ir::Vec2;
 
+use crate::session::RouteSession;
 use push_shove::{Obstacle, PushShoveRouter};
+
+/// Route a single net on a board with the avoiding A* maze router.
+///
+/// Builds a [`RouteSession`] from `pcb` (so the route avoids every trace, pad,
+/// and via already on `layer`, not just other-net trace bounding boxes) and
+/// searches for a clearance-legal path. Convenience wrapper over
+/// [`route_net_maze`] for one-shot single-net routing; to route many nets while
+/// each avoids the ones before it, hold a `RouteSession` and commit between
+/// calls.
+pub fn route_net_maze_pcb(
+    pcb: &Pcb,
+    layer: PcbLayer,
+    net: &str,
+    start: Vec2,
+    end: Vec2,
+    width: f64,
+) -> RouteResult {
+    let session = RouteSession::from_pcb(pcb);
+    route_net_maze(
+        &session,
+        &pcb.outline.vertices,
+        layer,
+        net,
+        start,
+        end,
+        width,
+    )
+}
 
 /// Unique identifier for a net within the router.
 pub type NetId = u32;
