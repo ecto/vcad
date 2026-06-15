@@ -80,9 +80,10 @@ pub fn check_drc(pcb: &Pcb) -> Vec<DrcViolation> {
     let mut violations = Vec::new();
     let index = SpatialIndex::from_pcb(pcb);
     let net_ties = NetTieGroups::from_pcb(pcb);
+    let dp_map = build_diff_pair_gap_map(pcb);
 
-    check_clearance(pcb, &index, &net_ties, &mut violations);
-    check_pad_clearance(pcb, &net_ties, &mut violations);
+    check_clearance(pcb, &index, &net_ties, &dp_map, &mut violations);
+    check_pad_clearance(pcb, &net_ties, &dp_map, &mut violations);
     check_min_trace_width(pcb, &mut violations);
     check_min_drill(pcb, &mut violations);
     check_edge_clearance(pcb, &mut violations);
@@ -191,6 +192,7 @@ fn check_clearance(
     pcb: &Pcb,
     index: &SpatialIndex,
     net_ties: &NetTieGroups,
+    dp_map: &HashMap<(String, String), f64>,
     violations: &mut Vec<DrcViolation>,
 ) {
     let default_clearance = pcb.rules.default_rules.clearance;
@@ -242,17 +244,20 @@ fn check_clearance(
                 continue;
             }
 
-            if dist < clearance - 1e-6 {
+            // A declared diff-pair partner only needs to clear by its gap, so
+            // the intentional close coupling isn't flagged as a short.
+            let required = pair_aware_clearance(dp_map, &trace.net, &elem.net, clearance);
+            if dist < required - 1e-6 {
                 violations.push(DrcViolation {
                     rule: DrcRuleType::Clearance,
                     severity: DrcSeverity::Error,
                     position: contact,
                     message: format!(
                         "Clearance violation: trace net '{}' to net '{}': {:.3}mm < {:.3}mm",
-                        trace.net, elem.net, dist, clearance
+                        trace.net, elem.net, dist, required
                     ),
                     actual: dist,
-                    required: clearance,
+                    required,
                 });
             }
         }
@@ -263,7 +268,12 @@ fn check_clearance(
 ///
 /// The trace pass covers trace↔copper pairs; this covers pad↔pad shorts
 /// (overlapping footprints or stacked pads), which that pass never sees.
-fn check_pad_clearance(pcb: &Pcb, net_ties: &NetTieGroups, violations: &mut Vec<DrcViolation>) {
+fn check_pad_clearance(
+    pcb: &Pcb,
+    net_ties: &NetTieGroups,
+    dp_map: &HashMap<(String, String), f64>,
+    violations: &mut Vec<DrcViolation>,
+) {
     let default_clearance = pcb.rules.default_rules.clearance;
     let net_clearance = build_net_clearance_map(pcb);
 
@@ -313,7 +323,7 @@ fn check_pad_clearance(pcb: &Pcb, net_ties: &NetTieGroups, violations: &mut Vec<
                 continue;
             }
 
-            let clearance = net_clearance
+            let base = net_clearance
                 .get(a.net)
                 .copied()
                 .unwrap_or(default_clearance)
@@ -323,6 +333,8 @@ fn check_pad_clearance(pcb: &Pcb, net_ties: &NetTieGroups, violations: &mut Vec<
                         .copied()
                         .unwrap_or(default_clearance),
                 );
+            // Diff-pair pads only need their gap, not the full clearance.
+            let clearance = pair_aware_clearance(dp_map, a.net, b.net, base);
 
             // True copper-to-copper distance, respecting pad rotation.
             let dist = a.geom.distance_to(&b.geom);
@@ -1210,6 +1222,108 @@ pub(crate) fn build_net_trace_width_map(pcb: &Pcb) -> HashMap<String, f64> {
     map
 }
 
+/// A declared differential pair: two nets in a diff-pair net class matched by
+/// base name (`FOO_P`/`FOO_N`, `FOO+`/`FOO-`).
+pub(crate) struct DiffPair {
+    /// Positive-polarity net.
+    pub net_p: String,
+    /// Negative-polarity net.
+    pub net_n: String,
+    /// Target gap between the two traces (mm).
+    pub gap: f64,
+    /// Trace width for each leg (mm).
+    pub width: f64,
+}
+
+/// Strip a polarity suffix, returning `(base, is_positive)`.
+fn split_polarity(net: &str) -> Option<(String, bool)> {
+    for (suf, pos) in [
+        ("_P", true),
+        ("_N", false),
+        ("_p", true),
+        ("_n", false),
+        ("+", true),
+        ("-", false),
+    ] {
+        if let Some(base) = net.strip_suffix(suf) {
+            if !base.is_empty() {
+                return Some((base.to_string(), pos));
+            }
+        }
+    }
+    None
+}
+
+/// Find every differential pair declared on the board: nets assigned to a class
+/// that carries `diff_pair_gap`, matched into +/- pairs by base name.
+pub(crate) fn diff_pairs(pcb: &Pcb) -> Vec<DiffPair> {
+    let mut pairs = Vec::new();
+    for class in &pcb.rules.class_rules {
+        let Some(gap) = class.diff_pair_gap else {
+            continue;
+        };
+        let width = class.diff_pair_width.unwrap_or(class.trace_width);
+        let Some(nets) = pcb.rules.net_class_assignments.get(&class.name) else {
+            continue;
+        };
+        let mut bases: std::collections::BTreeMap<String, (Option<String>, Option<String>)> =
+            Default::default();
+        for net in nets {
+            if let Some((base, pos)) = split_polarity(net) {
+                let e = bases.entry(base).or_default();
+                if pos {
+                    e.0 = Some(net.clone());
+                } else {
+                    e.1 = Some(net.clone());
+                }
+            }
+        }
+        for (_, (p, n)) in bases {
+            if let (Some(net_p), Some(net_n)) = (p, n) {
+                pairs.push(DiffPair {
+                    net_p,
+                    net_n,
+                    gap,
+                    width,
+                });
+            }
+        }
+    }
+    pairs
+}
+
+/// Map an unordered net pair to its differential-pair gap (its required
+/// clearance), so the clearance passes let a pair couple to its declared gap
+/// instead of false-flagging the intentional close spacing as a short.
+fn build_diff_pair_gap_map(pcb: &Pcb) -> HashMap<(String, String), f64> {
+    let mut map = HashMap::new();
+    for dp in diff_pairs(pcb) {
+        let key = if dp.net_p <= dp.net_n {
+            (dp.net_p.clone(), dp.net_n.clone())
+        } else {
+            (dp.net_n.clone(), dp.net_p.clone())
+        };
+        map.insert(key, dp.gap);
+    }
+    map
+}
+
+/// The required clearance between two nets: their diff-pair gap if they are a
+/// declared pair, else `fallback`.
+fn pair_aware_clearance(
+    dp_map: &HashMap<(String, String), f64>,
+    a: &str,
+    b: &str,
+    fallback: f64,
+) -> f64 {
+    let key = if a <= b {
+        (a.to_string(), b.to_string())
+    } else {
+        (b.to_string(), a.to_string())
+    };
+    dp_map.get(&key).copied().unwrap_or(fallback)
+}
+
 /// Compute the minimum distance between two axis-aligned bounding boxes.
 /// Each box is represented as `[min_x, min_y, max_x, max_y]`.
 /// Returns 0.0 if they overlap.
@@ -1595,6 +1709,52 @@ mod tests {
         assert!(
             shorts.is_empty(),
             "a poured plane must not short to the copper it clears, got: {shorts:?}"
+        );
+    }
+
+    #[test]
+    fn diff_pair_couples_at_its_gap_not_full_clearance() {
+        let mut pcb = clean_pcb();
+        pcb.traces.clear();
+        pcb.vias.clear();
+        // A diff-pair class (0.1mm gap, 0.2mm legs) with USB_P / USB_N.
+        pcb.rules.class_rules.push(NetClassRules {
+            name: "DP".into(),
+            trace_width: 0.2,
+            clearance: 0.2,
+            via_diameter: 0.8,
+            via_drill: 0.4,
+            diff_pair_gap: Some(0.1),
+            diff_pair_width: Some(0.2),
+        });
+        pcb.rules
+            .net_class_assignments
+            .insert("DP".into(), vec!["USB_P".into(), "USB_N".into()]);
+        // Parallel legs 0.3mm centre-to-centre, width 0.2 -> 0.1mm gap = exactly
+        // the declared gap. The normal 0.2mm clearance would flag this.
+        let leg = |y: f64, net: &str| Trace {
+            start: Vec2::new(20.0, y),
+            end: Vec2::new(60.0, y),
+            width: 0.2,
+            layer: PcbLayer::FCu,
+            net: net.into(),
+        };
+        pcb.traces.push(leg(40.0, "USB_P"));
+        pcb.traces.push(leg(40.3, "USB_N"));
+        let clr = |p: &Pcb| {
+            check_drc(p)
+                .into_iter()
+                .filter(|v| v.rule == DrcRuleType::Clearance)
+                .count()
+        };
+        assert_eq!(clr(&pcb), 0, "a diff pair at its gap is not a violation");
+
+        // Squeeze them below the gap (0.02mm edge-to-edge) -> flagged.
+        pcb.traces[1].start.y = 40.22;
+        pcb.traces[1].end.y = 40.22;
+        assert!(
+            clr(&pcb) > 0,
+            "a diff pair closer than its gap must violate"
         );
     }
 

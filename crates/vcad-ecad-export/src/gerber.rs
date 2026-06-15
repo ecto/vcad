@@ -702,6 +702,39 @@ pub fn write_gerber_layer<W: Write>(
         writeln!(writer, "G37*")?;
     }
 
+    // Teardrop fillets at trace→pad/via junctions on this layer, as region fills.
+    for td in vcad_ecad_pcb::generate_teardrops(pcb)
+        .iter()
+        .filter(|t| t.layer == layer)
+    {
+        if td.polygon.len() < 3 {
+            continue;
+        }
+        writeln!(writer, "G36*")?;
+        let first = &td.polygon[0];
+        writeln!(
+            writer,
+            "X{}Y{}D02*",
+            fmt_coord(mm_to_coord(first.x)),
+            fmt_coord(mm_to_coord(first.y))
+        )?;
+        for pt in &td.polygon[1..] {
+            writeln!(
+                writer,
+                "X{}Y{}D01*",
+                fmt_coord(mm_to_coord(pt.x)),
+                fmt_coord(mm_to_coord(pt.y))
+            )?;
+        }
+        writeln!(
+            writer,
+            "X{}Y{}D01*",
+            fmt_coord(mm_to_coord(first.x)),
+            fmt_coord(mm_to_coord(first.y))
+        )?;
+        writeln!(writer, "G37*")?;
+    }
+
     // Board outline (EdgeCuts).
     if let Some(dcode) = outline_dcode {
         if current_dcode != Some(dcode) {

@@ -1,0 +1,10 @@
+{
+  "id": "2026-06-15-teardrops",
+  "version": "0.9.4",
+  "date": "2026-06-15",
+  "category": "feat",
+  "title": "Teardrop fillets at trace-to-pad/via junctions",
+  "summary": "Traces landing on a same-net pad or via now get a teardrop copper fillet in the Gerber and the render, so a small drill or registration error can't break the trace out of its land.",
+  "features": ["pcb", "teardrops", "gerber", "render"],
+  "mcpTools": ["export_gerber", "render_pcb"]
+}

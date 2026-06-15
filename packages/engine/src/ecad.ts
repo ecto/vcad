@@ -117,6 +117,31 @@ export async function runDrc(pcb: Pcb): Promise<DrcViolationResult[]> {
   }
 }
 
+/** Read-only audit of one net's routing. */
+export interface NetCritique {
+  net: string;
+  routed: boolean;
+  routed_length_mm: number;
+  segment_count: number;
+  via_count: number;
+  layers: string[];
+  min_clearance_mm: number | null;
+  required_clearance_mm: number;
+  drc_issues: string[];
+}
+
+/** Audit a single net's routing quality (length, vias, margin, DRC issues). */
+export async function critiqueRoute(pcb: Pcb, net: string): Promise<NetCritique | null> {
+  const wasm = await loadEcadWasm();
+  if (!wasm) return null;
+  try {
+    return wasm.ecadCritiqueRoute(JSON.stringify(pcb), net) as NetCritique;
+  } catch (e) {
+    console.warn("[ECAD] Route critique failed:", e);
+    return null;
+  }
+}
+
 /** Run Electrical Rule Check on a schematic. */
 export async function runErc(sheet: SchematicSheet): Promise<ErcViolationResult[]> {
   const wasm = await loadEcadWasm();
@@ -355,6 +380,34 @@ export async function routeAll(
   } catch (e) {
     console.warn("[ECAD] Auto-route failed:", e);
     return empty;
+  }
+}
+
+/** Result of {@link routeDiffPair}: the two routed legs, or `success:false`. */
+export interface DiffPairResult {
+  success: boolean;
+  p?: RouteResult;
+  n?: RouteResult;
+}
+
+/**
+ * Route a declared differential pair (P/N) coupled and length-matched. Gap and
+ * leg width come from the pair's diff-pair net class. Returns `success:false`
+ * when the pair can't be resolved (each net needs exactly two pads) or the
+ * kernel is unavailable.
+ */
+export async function routeDiffPair(
+  pcb: Pcb,
+  netP: string,
+  netN: string,
+): Promise<DiffPairResult> {
+  const wasm = await loadEcadWasm();
+  if (!wasm) return { success: false };
+  try {
+    return wasm.ecadRouteDiffPair(JSON.stringify(pcb), netP, netN) as DiffPairResult;
+  } catch (e) {
+    console.warn("[ECAD] Diff-pair routing failed:", e);
+    return { success: false };
   }
 }
 

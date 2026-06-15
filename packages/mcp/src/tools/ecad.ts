@@ -37,6 +37,8 @@ import {
   generateNetlist,
   isEcadAvailable,
   routeAll,
+  routeDiffPair as kernelRouteDiffPair,
+  critiqueRoute as kernelCritiqueRoute,
   runDrc as kernelRunDrc,
   evaluateMotor,
   airgapFluxDensity,
@@ -575,6 +577,30 @@ export const runErcSchema = {
     ...docInputProperties,
   },
   required: [],
+};
+
+/** JSON Schema for critique_route tool. */
+export const critiqueRouteSchema = {
+  type: "object" as const,
+  properties: {
+    ...docInputProperties,
+    net: {
+      type: "string" as const,
+      description: "Net to audit (read-only — mutates nothing).",
+    },
+  },
+  required: ["net"],
+};
+
+/** JSON Schema for route_diff_pair tool. */
+export const routeDiffPairSchema = {
+  type: "object" as const,
+  properties: {
+    ...docInputProperties,
+    net_p: { type: "string" as const, description: "Positive-polarity net of the pair." },
+    net_n: { type: "string" as const, description: "Negative-polarity net of the pair." },
+  },
+  required: ["net_p", "net_n"],
 };
 
 /** JSON Schema for export_gerber tool. */
@@ -1843,6 +1869,103 @@ export function aggregateDrc(
   };
   if (detail === "full") summary.details = violations;
   return summary;
+}
+
+/** Route a declared differential pair (P/N) coupled + length-matched, committing the legs. */
+export async function routeDiffPair(args: Record<string, unknown>) {
+  const ctx = resolveDocInput(args);
+  const pcb = getDocPcb(ctx.doc);
+  if (!pcb) {
+    return {
+      content: [{ type: "text" as const, text: "Error: Document has no PCB" }],
+      isError: true,
+    };
+  }
+  const netP = String(args.net_p ?? "");
+  const netN = String(args.net_n ?? "");
+  if (!netP || !netN) {
+    return {
+      content: [{ type: "text" as const, text: "Error: 'net_p' and 'net_n' are required" }],
+      isError: true,
+    };
+  }
+
+  const res = await kernelRouteDiffPair(pcb, netP, netN);
+  if (!res.success || !res.p || !res.n) {
+    return {
+      content: [
+        {
+          type: "text" as const,
+          text: JSON.stringify({
+            success: false,
+            reason:
+              "could not resolve the pair — each of net_p/net_n needs exactly two pads, " +
+              "or the kernel is unavailable",
+          }),
+        },
+      ],
+    };
+  }
+
+  // Leg width: the pair's diff-pair-class width, else the default.
+  const cls = (pcb.rules.classRules ?? []).find(
+    (c) =>
+      c.diffPairGap != null &&
+      (pcb.rules.netClassAssignments?.[c.name] ?? []).includes(netP),
+  );
+  const width = cls?.diffPairWidth ?? cls?.traceWidth ?? pcb.rules.defaultRules.traceWidth;
+
+  let added = 0;
+  for (const leg of [res.p, res.n]) {
+    for (const [s, e] of leg.segments) {
+      pcb.traces.push({
+        start: { x: s.x, y: s.y },
+        end: { x: e.x, y: e.y },
+        width,
+        layer: "FCu",
+        net: leg.net,
+      });
+      added++;
+    }
+  }
+
+  return {
+    content: [
+      {
+        type: "text" as const,
+        text: JSON.stringify({ success: true, traces_added: added, ...docResultPayload(ctx) }),
+      },
+    ],
+  };
+}
+
+/** Read-only audit of one net's routing: length, vias, clearance margin, DRC issues. */
+export async function critiqueRoute(args: Record<string, unknown>) {
+  const { doc } = resolveDocInput(args);
+  const pcb = getDocPcb(doc);
+  if (!pcb) {
+    return {
+      content: [{ type: "text" as const, text: "Error: Document has no PCB" }],
+      isError: true,
+    };
+  }
+  const net = String(args.net ?? "");
+  if (!net) {
+    return {
+      content: [{ type: "text" as const, text: "Error: 'net' is required" }],
+      isError: true,
+    };
+  }
+  const critique = await kernelCritiqueRoute(pcb, net);
+  if (!critique) {
+    return {
+      content: [
+        { type: "text" as const, text: "critique_route unavailable: kernel WASM not loaded" },
+      ],
+      isError: true,
+    };
+  }
+  return { content: [{ type: "text" as const, text: JSON.stringify(critique) }] };
 }
 
 export async function runDrc(args: Record<string, unknown>) {

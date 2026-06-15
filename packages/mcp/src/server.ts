@@ -76,6 +76,10 @@ import {
   placeComponentsSchema,
   routeNets,
   routeNetsSchema,
+  routeDiffPair,
+  routeDiffPairSchema,
+  critiqueRoute,
+  critiqueRouteSchema,
   runDrc,
   runDrcSchema,
   runErc,
@@ -866,6 +870,22 @@ export async function createServer(existingEngine?: Engine): Promise<Server> {
         inputSchema: runDrcSchema,
       },
       {
+        name: "route_diff_pair",
+        description:
+          "Route a declared differential pair (net_p/net_n) coupled and length-matched, " +
+          "using the pair's diff-pair net-class gap and width. Routes straight (best on a " +
+          "clear channel); verify with run_drc / critique_route afterwards.",
+        inputSchema: routeDiffPairSchema,
+      },
+      {
+        name: "critique_route",
+        description:
+          "Audit one net's routing without changing anything: total length, via/" +
+          "layer-change count, the closest approach to other-net copper, and any " +
+          "clearance/short/unconnected DRC issues it's in. Inspect a route before trusting it.",
+        inputSchema: critiqueRouteSchema,
+      },
+      {
         name: "run_erc",
         description:
           "Run Electrical Rule Check (ERC) on a schematic. " +
@@ -1262,6 +1282,14 @@ export async function createServer(existingEngine?: Engine): Promise<Server> {
 
         case "run_drc":
           result = await runDrc(args);
+          break;
+
+        case "route_diff_pair":
+          result = await routeDiffPair(args);
+          break;
+
+        case "critique_route":
+          result = await critiqueRoute(args);
           break;
 
         case "run_erc":

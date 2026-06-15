@@ -4787,6 +4787,17 @@ mod ecad_wasm {
         serde_wasm_bindgen::to_value(&violations).map_err(|e| JsError::new(&e.to_string()))
     }
 
+    /// Audit one net's routing without mutating anything: length, via/layer
+    /// count, the closest approach to other-net copper (via the router oracle),
+    /// and any clearance/short/unconnected DRC issues it's involved in. The
+    /// read-only "inspect before you trust the route" verb.
+    #[wasm_bindgen(js_name = ecadCritiqueRoute)]
+    pub fn ecad_critique_route(pcb_json: &str, net: &str) -> Result<JsValue, JsError> {
+        let pcb: Pcb = serde_json::from_str(pcb_json).map_err(|e| JsError::new(&e.to_string()))?;
+        let critique = vcad_ecad_pcb::critique_net(&pcb, net);
+        serde_wasm_bindgen::to_value(&critique).map_err(|e| JsError::new(&e.to_string()))
+    }
+
     /// Evaluate first-order analytical motor performance from a JSON
     /// `MotorSpec`: torque constant Kt, back-EMF constant Ke, no-load speed,
     /// stall torque, and a speed–torque curve. Lets an agent ask "is this motor
@@ -4996,6 +5007,45 @@ mod ecad_wasm {
         let filter: Vec<String> = serde_json::from_str(nets_filter_json).unwrap_or_default();
         let result = vcad_ecad_pcb::router::route_all(&pcb, width, &filter);
         serde_wasm_bindgen::to_value(&result).map_err(|e| JsError::new(&e.to_string()))
+    }
+
+    /// Route a declared differential pair (P/N) coupled and length-matched.
+    ///
+    /// Gap and leg width come from the pair's diff-pair net class. Returns
+    /// `{ success, p, n }` where `p`/`n` are the two routed legs (each
+    /// `{ net, segments, vias, success }`), or `success:false` when the pair
+    /// can't be resolved (each net needs exactly two pads).
+    #[wasm_bindgen(js_name = ecadRouteDiffPair)]
+    pub fn ecad_route_diff_pair(
+        pcb_json: &str,
+        net_p: &str,
+        net_n: &str,
+    ) -> Result<JsValue, JsError> {
+        // A struct (not serde_json::json!) so serde-wasm-bindgen emits a plain
+        // JS object — a json! Map would serialize as a JS Map and `.success`
+        // would read undefined.
+        #[derive(serde::Serialize)]
+        struct DiffPairOut {
+            success: bool,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            p: Option<vcad_ecad_pcb::router::RouteResult>,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            n: Option<vcad_ecad_pcb::router::RouteResult>,
+        }
+        let pcb: Pcb = serde_json::from_str(pcb_json).map_err(|e| JsError::new(&e.to_string()))?;
+        let out = match vcad_ecad_pcb::router::route_diff_pair(&pcb, net_p, net_n) {
+            Some((p, n)) => DiffPairOut {
+                success: true,
+                p: Some(p),
+                n: Some(n),
+            },
+            None => DiffPairOut {
+                success: false,
+                p: None,
+                n: None,
+            },
+        };
+        serde_wasm_bindgen::to_value(&out).map_err(|e| JsError::new(&e.to_string()))
     }
 
     /// Fill copper pour zones on the PCB.

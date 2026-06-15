@@ -11,10 +11,79 @@
 //! 4. Check phase length matching between P and N.
 //! 5. Insert meanders on the shorter trace if the mismatch exceeds tolerance.
 
+use vcad_ir::ecad::Pcb;
 use vcad_ir::Vec2;
 
 use super::length_tune::{self, LengthTuneParams, MeanderStyle};
 use super::RouteResult;
+
+/// Route a declared differential pair end to end.
+///
+/// Looks up the pair's gap and leg width from its diff-pair net class, finds the
+/// two pad endpoints of each net, and routes them coupled and length-matched
+/// with [`DiffPairRouter`]. Returns `None` unless each net has exactly two pads.
+///
+/// The pair routes straight (no obstacle avoidance) — intended for a clear
+/// diff-pair channel; run `run_drc` / `critique_route` afterwards to confirm.
+pub fn route_diff_pair(pcb: &Pcb, net_p: &str, net_n: &str) -> Option<(RouteResult, RouteResult)> {
+    let pair = crate::drc::diff_pairs(pcb)
+        .into_iter()
+        .find(|d| (d.net_p == net_p && d.net_n == net_n) || (d.net_p == net_n && d.net_n == net_p));
+    let (gap, width) = pair.map(|d| (d.gap, d.width)).unwrap_or((
+        pcb.rules.default_rules.clearance,
+        pcb.rules.default_rules.trace_width,
+    ));
+
+    let pads_p = pad_positions_for_net(pcb, net_p);
+    let pads_n = pad_positions_for_net(pcb, net_n);
+    if pads_p.len() != 2 || pads_n.len() != 2 {
+        return None;
+    }
+
+    let mut router = DiffPairRouter::new(width, gap);
+    let (mut p, mut n) =
+        router.route_pair(net_p, net_n, pads_p[0], pads_n[0], pads_p[1], pads_n[1]);
+    // The coupled legs float at +/- half-separation about the centre line; fan
+    // each leg in to its actual pads so it connects (a short connector at each
+    // end from the pad to the leg).
+    fan_to_pads(&mut p.segments, pads_p[0], pads_p[1]);
+    fan_to_pads(&mut n.segments, pads_n[0], pads_n[1]);
+    Some((p, n))
+}
+
+/// Prepend/append connectors so a leg's segments start at `start_pad` and end
+/// at `end_pad` (no-ops when already coincident).
+fn fan_to_pads(segments: &mut Vec<(Vec2, Vec2)>, start_pad: Vec2, end_pad: Vec2) {
+    let near = |a: Vec2, b: Vec2| (a.x - b.x).abs() < 1e-6 && (a.y - b.y).abs() < 1e-6;
+    if let Some(first) = segments.first().map(|s| s.0) {
+        if !near(first, start_pad) {
+            segments.insert(0, (start_pad, first));
+        }
+    }
+    if let Some(last) = segments.last().map(|s| s.1) {
+        if !near(last, end_pad) {
+            segments.push((last, end_pad));
+        }
+    }
+}
+
+/// World positions of every pad assigned to `net`.
+fn pad_positions_for_net(pcb: &Pcb, net: &str) -> Vec<Vec2> {
+    let mut out = Vec::new();
+    for fp in &pcb.footprints {
+        let fr = fp.rotation.to_radians();
+        let (fc, fs) = (fr.cos(), fr.sin());
+        for pad in &fp.pads {
+            if pad.net.as_deref() == Some(net) {
+                out.push(Vec2::new(
+                    fp.position.x + pad.position.x * fc - pad.position.y * fs,
+                    fp.position.y + pad.position.x * fs + pad.position.y * fc,
+                ));
+            }
+        }
+    }
+    out
+}
 
 /// Differential pair router.
 ///
@@ -240,6 +309,135 @@ fn apply_meanders(original: &[Vec2], meanders: &[length_tune::MeanderSegment]) -
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn route_diff_pair_resolves_and_routes() {
+        use vcad_ir::ecad::*;
+        // P and N pads side-by-side, perpendicular to the (horizontal) route,
+        // 2*half_sep apart — the geometry a diff pair is laid out in.
+        let pad = |num: &str, y: f64, net: &str| Pad {
+            number: num.into(),
+            pad_type: PadType::SMD,
+            shape: PadShape::Rect {
+                width: 0.2,
+                height: 0.2,
+            },
+            position: Vec2::new(0.0, y),
+            rotation: 0.0,
+            drill: None,
+            net: Some(net.into()),
+            layers: vec![PcbLayer::FCu],
+        };
+        let fp = |reference: &str, x: f64| Footprint {
+            reference: reference.into(),
+            value: "x".into(),
+            footprint_name: "t".into(),
+            position: Vec2::new(x, 10.0),
+            rotation: 0.0,
+            front: true,
+            pads: vec![pad("1", 0.175, "USB_P"), pad("2", -0.175, "USB_N")],
+            graphics: vec![],
+            model_3d: None,
+            properties: Default::default(),
+        };
+        let mut pcb = Pcb {
+            outline: BoardOutline {
+                vertices: vec![
+                    Vec2::new(0.0, 0.0),
+                    Vec2::new(40.0, 0.0),
+                    Vec2::new(40.0, 20.0),
+                    Vec2::new(0.0, 20.0),
+                ],
+                cutouts: vec![],
+                thickness: 1.6,
+            },
+            stackup: LayerStackup {
+                layers: vec![StackupLayer {
+                    layer: PcbLayer::FCu,
+                    copper_thickness: Some(0.035),
+                    dielectric_thickness: None,
+                    dielectric_er: None,
+                    material: None,
+                }],
+            },
+            nets: vec![],
+            rules: DesignRules {
+                default_rules: NetClassRules {
+                    name: "Default".into(),
+                    trace_width: 0.25,
+                    clearance: 0.2,
+                    via_diameter: 0.8,
+                    via_drill: 0.4,
+                    diff_pair_gap: None,
+                    diff_pair_width: None,
+                },
+                class_rules: vec![NetClassRules {
+                    name: "USB".into(),
+                    trace_width: 0.2,
+                    clearance: 0.2,
+                    via_diameter: 0.8,
+                    via_drill: 0.4,
+                    diff_pair_gap: Some(0.15),
+                    diff_pair_width: Some(0.2),
+                }],
+                net_class_assignments: Default::default(),
+                edge_clearance: 0.5,
+                hole_to_hole: 0.5,
+                min_annular_ring: 0.15,
+                min_drill: 0.2,
+            },
+            footprints: vec![fp("J1", 5.0), fp("U1", 35.0)],
+            traces: vec![],
+            trace_arcs: vec![],
+            vias: vec![],
+            zones: vec![],
+            keepouts: vec![],
+            net_ties: vec![],
+        };
+        pcb.rules
+            .net_class_assignments
+            .insert("USB".into(), vec!["USB_P".into(), "USB_N".into()]);
+
+        let result = route_diff_pair(&pcb, "USB_P", "USB_N");
+        assert!(
+            result.is_some(),
+            "should resolve two pads per net and route"
+        );
+        let (p, n) = result.unwrap();
+        assert!(p.success && !p.segments.is_empty());
+        assert!(n.success && !n.segments.is_empty());
+
+        // Apply the legs and confirm the board is DRC-clean: the pair couples
+        // at its gap (no clearance/short) and both nets connect (no unrouted).
+        for leg in [&p, &n] {
+            for (a, b) in &leg.segments {
+                pcb.traces.push(Trace {
+                    start: *a,
+                    end: *b,
+                    width: 0.2,
+                    layer: PcbLayer::FCu,
+                    net: leg.net.clone(),
+                });
+            }
+        }
+        let viols = crate::drc::check_drc(&pcb);
+        let bad: Vec<_> = viols
+            .iter()
+            .filter(|v| {
+                matches!(
+                    v.rule,
+                    crate::drc::DrcRuleType::Clearance
+                        | crate::drc::DrcRuleType::Short
+                        | crate::drc::DrcRuleType::UnconnectedNet
+                )
+            })
+            .map(|v| &v.message)
+            .collect();
+        assert!(
+            bad.is_empty(),
+            "routed diff pair must be DRC-clean, got: {bad:?}"
+        );
+    }
 
     #[test]
     fn straight_pair() {
