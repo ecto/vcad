@@ -299,6 +299,11 @@ Skip changelog for:
 - Test-only changes
 - Documentation updates (unless significant)
 - Dependency bumps
+- Build, CI, and deployment-infra fixes (e.g. esbuild/bundler config,
+  Vercel/Fly wiring, hosted-server outages) — the changelog tracks changes to
+  what the product *does*, not how it's built or shipped. A fix only belongs
+  here if a user would notice a behavior change, not merely that a service is
+  reachable again.
 
 To add an entry, drop a new file at `changelog/entries/<id>.json`:
 
