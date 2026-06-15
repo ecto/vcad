@@ -1,0 +1,10 @@
+{
+  "id": "2026-06-15-get-document-full-ir",
+  "version": "0.9.4",
+  "date": "2026-06-15",
+  "category": "fix",
+  "title": "get_document returns the full IR again",
+  "summary": "On inline-viewer clients, get_document no longer collapses a large board's IR to a {document_id} stub, so callers can capture, serialize, and re-feed full session state.",
+  "features": ["mcp", "pcb"],
+  "mcpTools": ["get_document"]
+}

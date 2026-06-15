@@ -1474,7 +1474,7 @@ export async function createServer(existingEngine?: Engine): Promise<Server> {
  * summary's "see the inline 3D viewer" points at nothing and the agent
  * loses the entire payload — it must keep the full text result.
  */
-function slimPreviewForInlineUi(
+export function slimPreviewForInlineUi(
   result: { content: Array<{ type: string; text: string }> },
   docId: string,
   toolName: string,
@@ -1484,6 +1484,13 @@ function slimPreviewForInlineUi(
   // The flat-pattern coordinates ARE the deliverable — the viewer draws
   // them, but the agent needs the numbers too. Never slim.
   if (toolName === "sheet_metal_unfold") return;
+  // get_document's contract is to RETURN the full IR Document body so the
+  // caller can capture / serialize / feed it back — the IR is the deliverable,
+  // not a side effect of a mutation. Slimming it to a {document_id} stub
+  // breaks that contract (and would be circular: the summary says "use
+  // get_document for the full IR"). Same set attachPreviewHandle already
+  // exempts from the handle-block append.
+  if (PURE_JSON_RESULT_TOOLS.has(toolName)) return;
   const alwaysSlim = toolName === "create_cad_loon";
   const totalChars = result.content.reduce(
     (n, c) => n + (c.type === "text" ? c.text.length : 0),
