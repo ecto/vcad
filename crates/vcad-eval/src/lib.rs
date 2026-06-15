@@ -261,6 +261,7 @@ mod tests {
                 roughness: 0.5,
                 density: None,
                 friction: None,
+                ..Default::default()
             },
         );
         doc
@@ -701,6 +702,7 @@ mod tests {
                 roughness: 0.5,
                 density: None,
                 friction: None,
+                ..Default::default()
             },
         );
 

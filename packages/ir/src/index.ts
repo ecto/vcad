@@ -19,25 +19,149 @@ export {
 /** Unique identifier for a node in the IR graph. */
 export type NodeId = number;
 
-/** 2D vector with f64 components (for sketch coordinates). */
-export interface Vec2 {
-  x: number;
-  y: number;
-}
+// ===========================================================================
+// Generated IR types — single source of truth is the Rust `vcad-ir` crate.
+// Regenerate with: npm run ir:gen   (see packages/ir/src/generated.ts).
+// CI runs `npm run ir:check` to fail builds where this has drifted from Rust.
+// ===========================================================================
+export * from "./generated.js";
 
-/** 3D vector with f64 components (conventionally millimeters). */
-export interface Vec3 {
-  x: number;
-  y: number;
-  z: number;
-}
+// Local imports of the generated types so the hand-written behavior + aliases
+// below can reference them by bare name (export * does not bind locally).
+import type {
+  AmbientOcclusion,
+  Background,
+  Bindings,
+  Bloom,
+  BoardOutline,
+  CameraPreset,
+  CsgOp,
+  DesignRules,
+  Document,
+  DrillSpec,
+  EmbroideryDesign,
+  EmbroideryThread,
+  Environment,
+  EnvironmentPreset,
+  Expr,
+  FillParams,
+  FillType,
+  Footprint,
+  FootprintGraphic,
+  FootprintTemplate,
+  InertialProperties,
+  Instance,
+  IrStitchGroup,
+  Joint,
+  JointKind,
+  Keepout,
+  LabelScope,
+  LayerStackup,
+  Light,
+  LightKind,
+  MaterialDef,
+  Net,
+  NetClassRules,
+  NetTie,
+  Node,
+  Pad,
+  PadShape,
+  PadType,
+  Parameter,
+  PartDef,
+  PartInfo,
+  PathCurve,
+  Pcb,
+  PcbLayer,
+  PinType,
+  PostProcessing,
+  SceneEntry,
+  SceneSettings,
+  SchematicComponent,
+  SchematicJunction,
+  SchematicLabel,
+  SchematicPin,
+  SchematicSheet,
+  SchematicWire,
+  SheetMetalDirection,
+  SheetMetalHemKind,
+  Silhouette,
+  SketchSegment2D,
+  StackupLayer,
+  SymbolDef,
+  SymbolGraphic,
+  TextAlignment,
+  ThermalReliefStyle,
+  ToneMapping,
+  ToolSchemaEntry,
+  Trace,
+  TraceArc,
+  Transform3D,
+  VcadFile,
+  VcadFormat,
+  Vec2,
+  Vec3,
+  Via,
+  Vignette,
+  Zone,
+  ZoneFillType,
+} from "./generated.js";
 
-/** 3D transform (translation, rotation in degrees, scale). */
-export interface Transform3D {
-  translation: Vec3;
-  rotation: Vec3;
-  scale: Vec3;
-}
+// --- Named CsgOp variant aliases (ergonomic narrowing; ts-rs inlines the union) ---
+export type CubeOp = Extract<CsgOp, { type: "Cube" }>;
+export type CylinderOp = Extract<CsgOp, { type: "Cylinder" }>;
+export type SphereOp = Extract<CsgOp, { type: "Sphere" }>;
+export type ConeOp = Extract<CsgOp, { type: "Cone" }>;
+export type EmptyOp = Extract<CsgOp, { type: "Empty" }>;
+export type UnionOp = Extract<CsgOp, { type: "Union" }>;
+export type DifferenceOp = Extract<CsgOp, { type: "Difference" }>;
+export type IntersectionOp = Extract<CsgOp, { type: "Intersection" }>;
+export type TranslateOp = Extract<CsgOp, { type: "Translate" }>;
+export type RotateOp = Extract<CsgOp, { type: "Rotate" }>;
+export type ScaleOp = Extract<CsgOp, { type: "Scale" }>;
+export type Sketch2DOp = Extract<CsgOp, { type: "Sketch2D" }>;
+export type ExtrudeOp = Extract<CsgOp, { type: "Extrude" }>;
+export type RevolveOp = Extract<CsgOp, { type: "Revolve" }>;
+export type LinearPatternOp = Extract<CsgOp, { type: "LinearPattern" }>;
+export type CircularPatternOp = Extract<CsgOp, { type: "CircularPattern" }>;
+export type ShellOp = Extract<CsgOp, { type: "Shell" }>;
+export type FilletOp = Extract<CsgOp, { type: "Fillet" }>;
+export type ChamferOp = Extract<CsgOp, { type: "Chamfer" }>;
+export type Text2DOp = Extract<CsgOp, { type: "Text2D" }>;
+export type ImportedMeshOp = Extract<CsgOp, { type: "ImportedMesh" }>;
+export type SweepOp = Extract<CsgOp, { type: "Sweep" }>;
+export type LoftOp = Extract<CsgOp, { type: "Loft" }>;
+export type PcbBoardOp = Extract<CsgOp, { type: "PcbBoard" }>;
+export type EmbroideryPatternOp = Extract<CsgOp, { type: "EmbroideryPattern" }>;
+export type PartInstanceOp = Extract<CsgOp, { type: "PartInstance" }>;
+export type SheetMetalBaseFlangeRectOp = Extract<CsgOp, { type: "SheetMetalBaseFlangeRect" }>;
+export type SheetMetalEdgeFlangeOp = Extract<CsgOp, { type: "SheetMetalEdgeFlange" }>;
+export type SheetMetalBaseFlangePolygonOp = Extract<CsgOp, { type: "SheetMetalBaseFlangePolygon" }>;
+export type SheetMetalJogOp = Extract<CsgOp, { type: "SheetMetalJog" }>;
+export type SheetMetalBendReliefOp = Extract<CsgOp, { type: "SheetMetalBendRelief" }>;
+export type SheetMetalHemOp = Extract<CsgOp, { type: "SheetMetalHem" }>;
+
+// --- Sketch / path / light / environment / background variant aliases ---
+export type LineSegment2D = Extract<SketchSegment2D, { type: "Line" }>;
+export type ArcSegment2D = Extract<SketchSegment2D, { type: "Arc" }>;
+export type LinePath = Extract<PathCurve, { type: "Line" }>;
+export type HelixPath = Extract<PathCurve, { type: "Helix" }>;
+export type DirectionalLight = Extract<LightKind, { type: "Directional" }>;
+export type PointLight = Extract<LightKind, { type: "Point" }>;
+export type SpotLight = Extract<LightKind, { type: "Spot" }>;
+export type AreaLight = Extract<LightKind, { type: "Area" }>;
+export type PresetEnvironment = Extract<Environment, { type: "Preset" }>;
+export type CustomEnvironment = Extract<Environment, { type: "Custom" }>;
+export type NoEnvironment = Extract<Environment, { type: "None" }>;
+export type EnvironmentBackground = Extract<Background, { type: "Environment" }>;
+export type SolidBackground = Extract<Background, { type: "Solid" }>;
+export type GradientBackground = Extract<Background, { type: "Gradient" }>;
+export type TransparentBackground = Extract<Background, { type: "Transparent" }>;
+
+// --- Name aliases (the Rust/serde names differ from the prior TS names) ---
+export type StitchFillType = FillType;
+export type JointLimits = [number, number];
+export type PartInstance = Instance;
 
 /** Create an identity transform (no translation, rotation, or scaling). */
 export function identityTransform(): Transform3D {
@@ -47,25 +171,6 @@ export function identityTransform(): Transform3D {
     scale: { x: 1, y: 1, z: 1 },
   };
 }
-
-// --- SketchSegment2D discriminated union ---
-
-export interface LineSegment2D {
-  type: "Line";
-  start: Vec2;
-  end: Vec2;
-}
-
-export interface ArcSegment2D {
-  type: "Arc";
-  start: Vec2;
-  end: Vec2;
-  center: Vec2;
-  ccw: boolean;
-}
-
-/** A segment of a 2D sketch profile. */
-export type SketchSegment2D = LineSegment2D | ArcSegment2D;
 
 // --- Sketch Constraints ---
 
@@ -170,247 +275,6 @@ export type SketchConstraint =
   | RadiusConstraint
   | AngleConstraint;
 
-// --- CsgOp discriminated union ---
-
-export interface CubeOp {
-  type: "Cube";
-  size: Vec3;
-}
-
-export interface CylinderOp {
-  type: "Cylinder";
-  radius: number;
-  height: number;
-  segments: number;
-}
-
-export interface SphereOp {
-  type: "Sphere";
-  radius: number;
-  segments: number;
-}
-
-export interface ConeOp {
-  type: "Cone";
-  radius_bottom: number;
-  radius_top: number;
-  height: number;
-  segments: number;
-}
-
-export interface EmptyOp {
-  type: "Empty";
-}
-
-export interface UnionOp {
-  type: "Union";
-  left: NodeId;
-  right: NodeId;
-}
-
-export interface DifferenceOp {
-  type: "Difference";
-  left: NodeId;
-  right: NodeId;
-}
-
-export interface IntersectionOp {
-  type: "Intersection";
-  left: NodeId;
-  right: NodeId;
-}
-
-export interface TranslateOp {
-  type: "Translate";
-  child: NodeId;
-  offset: Vec3;
-}
-
-export interface RotateOp {
-  type: "Rotate";
-  child: NodeId;
-  angles: Vec3;
-}
-
-export interface ScaleOp {
-  type: "Scale";
-  child: NodeId;
-  factor: Vec3;
-}
-
-export interface Sketch2DOp {
-  type: "Sketch2D";
-  origin: Vec3;
-  x_dir: Vec3;
-  y_dir: Vec3;
-  segments: SketchSegment2D[];
-}
-
-export interface ExtrudeOp {
-  type: "Extrude";
-  sketch: NodeId;
-  direction: Vec3;
-  /** Optional twist angle in radians (rotation around extrusion axis). */
-  twist_angle?: number;
-  /** Optional scale factor at end of extrusion (1.0 = no taper). */
-  scale_end?: number;
-}
-
-export interface RevolveOp {
-  type: "Revolve";
-  sketch: NodeId;
-  axis_origin: Vec3;
-  axis_dir: Vec3;
-  angle_deg: number;
-}
-
-export interface LinearPatternOp {
-  type: "LinearPattern";
-  child: NodeId;
-  direction: Vec3;
-  count: number;
-  spacing: number;
-}
-
-export interface CircularPatternOp {
-  type: "CircularPattern";
-  child: NodeId;
-  axis_origin: Vec3;
-  axis_dir: Vec3;
-  count: number;
-  angle_deg: number;
-}
-
-export interface ShellOp {
-  type: "Shell";
-  child: NodeId;
-  thickness: number;
-}
-
-export interface FilletOp {
-  type: "Fillet";
-  child: NodeId;
-  radius: number;
-}
-
-export interface ChamferOp {
-  type: "Chamfer";
-  child: NodeId;
-  distance: number;
-}
-
-/** Text alignment options for 2D text geometry. */
-export type TextAlignment = "left" | "center" | "right";
-
-/**
- * 2D text that can be extruded into 3D geometry.
- *
- * Creates sketch profiles from text glyphs, which can then be
- * extruded and used in boolean operations for embossing/engraving.
- */
-export interface Text2DOp {
-  type: "Text2D";
-  /** Origin point of the text plane in 3D. */
-  origin: Vec3;
-  /** X direction of the text plane (text flows along this axis). */
-  x_dir: Vec3;
-  /** Y direction of the text plane (text height along this axis). */
-  y_dir: Vec3;
-  /** The text string to render. */
-  text: string;
-  /** Font name (e.g., "sans-serif", "monospace", or custom registered font). */
-  font: string;
-  /** Text height in mm. */
-  height: number;
-  /** Letter spacing multiplier (1.0 = normal). */
-  letter_spacing?: number;
-  /** Line spacing multiplier for multi-line text (1.0 = normal). */
-  line_spacing?: number;
-  /** Text alignment. */
-  alignment?: TextAlignment;
-}
-
-/**
- * An imported mesh (e.g., from STEP file).
- * Stores pre-tessellated geometry that can be transformed but not used in booleans.
- */
-export interface ImportedMeshOp {
-  type: "ImportedMesh";
-  /** Flat array of vertex positions (x, y, z, x, y, z, ...) */
-  positions: number[];
-  /** Triangle indices */
-  indices: number[];
-  /** Optional vertex normals (nx, ny, nz, ...) */
-  normals?: number[];
-  /** Source filename for display purposes */
-  source?: string;
-}
-
-// --- Path curves for sweep operations ---
-
-/** A straight line path from start to end. */
-export interface LinePath {
-  type: "Line";
-  start: Vec3;
-  end: Vec3;
-}
-
-/** A helical path for sweep operations. */
-export interface HelixPath {
-  type: "Helix";
-  radius: number;
-  pitch: number;
-  height: number;
-  turns: number;
-}
-
-/** Path curve types for sweep operations. */
-export type PathCurve = LinePath | HelixPath;
-
-/** Sweep operation — extrude a profile along a path curve. */
-export interface SweepOp {
-  type: "Sweep";
-  sketch: NodeId;              // Reference to Sketch2D node
-  path: PathCurve;             // The path to sweep along
-  twist_angle?: number;        // Total twist in radians (default 0)
-  scale_start?: number;        // Scale at start (default 1.0)
-  scale_end?: number;          // Scale at end (default 1.0)
-  orientation?: number;        // Initial profile rotation around path tangent (radians, default 0)
-  path_segments?: number;      // Segments along path (0 = auto)
-  arc_segments?: number;       // Segments per arc in profile (default 8)
-}
-
-/** Loft operation — interpolate between multiple profiles. */
-export interface LoftOp {
-  type: "Loft";
-  sketches: NodeId[];          // Array of Sketch2D node references (≥2)
-  closed?: boolean;            // Connect last to first (creates tube)
-}
-
-/** PCB board — evaluates the board's outline + components to 3D geometry. */
-export interface PcbBoardOp {
-  type: "PcbBoard";
-  board: Pcb;
-}
-
-/** A thread color in an embroidery design. */
-export interface EmbroideryThread {
-  color: [number, number, number];
-  name: string;
-}
-
-/** Stitch fill strategy. */
-export type StitchFillType = "fill" | "satin" | "running" | "manual";
-
-/** Parameters controlling how a stitch group is filled. */
-export interface FillParams {
-  fill_type: StitchFillType;
-  angle_deg: number;
-  density_mm: number;
-  underlay: boolean;
-  max_stitch_length_mm: number;
-}
-
 /** Default fill parameters (manual / no auto-fill). */
 export const DEFAULT_FILL_PARAMS: FillParams = {
   fill_type: "manual",
@@ -419,736 +283,6 @@ export const DEFAULT_FILL_PARAMS: FillParams = {
   underlay: false,
   max_stitch_length_mm: 7.0,
 };
-
-/** A group of stitches sharing a thread color. */
-export interface IrStitchGroup {
-  thread_index: number;
-  stitches: [number, number][];
-  fill_params?: FillParams;
-}
-
-/** An embroidery design for the IR. */
-export interface EmbroideryDesign {
-  threads: EmbroideryThread[];
-  stitch_groups: IrStitchGroup[];
-  hoop_width: number;
-  hoop_height: number;
-}
-
-/** Embroidery pattern — a 2D stitch design. */
-export interface EmbroideryPatternOp {
-  type: "EmbroideryPattern";
-  design: EmbroideryDesign;
-}
-
-/**
- * Parametric reference to a library part (stdlib or user-published).
- *
- * The engine resolves this node at evaluation time:
- * - `std:<category>.<slug>` → compiled-in Rust builder exported by
- *   the WASM kernel via `buildPart`.
- * - `@<username>/<slug>` → Loon source fetched from the social layer
- *   (Phase 2).
- *
- * The sub-graph produced by the resolver replaces this node during
- * meshing, but the `PartInstance` itself is preserved in the document
- * so parameters remain editable.
- */
-export interface PartInstanceOp {
-  type: "PartInstance";
-  /** Part source path (e.g. `"std:fastener.bolt.socket-head"`). */
-  path: string;
-  /** Pinned version string (e.g. `"1.0"`). Immutable once published. */
-  version: string;
-  /** Parameter name → JSON value map passed to the part's builder. */
-  params: Record<string, unknown>;
-}
-
-/** Direction tag for sheet-metal flanges. `Up` rises out of the parent's
- *  outside face; `Down` descends out of the inside face. Mirrors
- *  `vcad_ir::SheetMetalDirection`. */
-export type SheetMetalDirection = "Up" | "Down";
-
-/** Sheet-metal base flange (rectangular). Initialises a sheet-metal model
- *  from an axis-aligned rectangle in the XY plane. Outside face on +Z.
- *
- *  Evaluated by routing the IR chain to
- *  `kernelWasm.evaluateSheetMetalChain` — the Rust kernel builds the model
- *  and returns the tessellated mesh + flat pattern. The TS engine never
- *  reconstructs sheet-metal geometry itself. */
-export interface SheetMetalBaseFlangeRectOp {
-  type: "SheetMetalBaseFlangeRect";
-  width: number;
-  depth: number;
-  thickness: number;
-  /** Material name for K-factor lookup (e.g. `"Al-soft"`). */
-  material: string;
-  /** Optional built-in shop catalog id (e.g. `"sendcutsend"`). When set,
-   *  every bend's radius and K-factor resolve through the shop's published
-   *  table — custom radii are rejected by the kernel. */
-  shop_profile?: string;
-}
-
-/** Sheet-metal edge flange. Extends `parent` (must produce a sheet-metal
- *  model) with a new flange off `edge_index` of the referenced panel. */
-export interface SheetMetalEdgeFlangeOp {
-  type: "SheetMetalEdgeFlange";
-  parent: NodeId;
-  panel_id: number;
-  edge_index: number;
-  length: number;
-  angle: number;
-  /** Inside bend radius (mm). Omitted → thickness, or the shop's fixed
-   *  radius when a shop profile is active. */
-  radius?: number;
-  direction: SheetMetalDirection;
-  /** Optional manual K-factor override (skips bend-table lookup). */
-  manual_k?: number;
-}
-
-/** Sheet-metal base flange from an arbitrary CCW polygon outline. */
-export interface SheetMetalBaseFlangePolygonOp {
-  type: "SheetMetalBaseFlangePolygon";
-  /** CCW outer boundary (`{x, y}` points, mm). */
-  outline: { x: number; y: number }[];
-  /** Optional CW hole loops. */
-  holes?: { x: number; y: number }[][];
-  thickness: number;
-  /** Material name for K-factor / cost / DFM lookup. */
-  material: string;
-  /** Optional built-in shop catalog id (see {@link SheetMetalBaseFlangeRectOp}). */
-  shop_profile?: string;
-}
-
-/** Sheet-metal jog — a Z-shaped offset (two opposite 90° bends). */
-export interface SheetMetalJogOp {
-  type: "SheetMetalJog";
-  parent: NodeId;
-  panel_id: number;
-  edge_index: number;
-  offset: number;
-  length: number;
-  /** Inside bend radius (mm) for both bends. Omitted → thickness, or the
-   *  shop's fixed radius when a shop profile is active. */
-  radius?: number;
-  direction: SheetMetalDirection;
-}
-
-/** Sheet-metal bend relief — cuts relief notches at the ends of every bend
- *  whose parent material sits in the deformation zone. Applied after all
- *  other ops in the chain; affects the 3D body, the flat pattern, and the
- *  exported DXF. */
-export interface SheetMetalBendReliefOp {
-  type: "SheetMetalBendRelief";
-  parent: NodeId;
-  /** Notch width (mm). Default `max(1.5·t, 1.0)`. */
-  width?: number;
-  /** Notch depth from the bend line (mm). Default `R + t`, or the shop's
-   *  published per-thickness relief depth when a shop profile is active. */
-  depth?: number;
-}
-
-/** Hem kind. Wire-compatible with `vcad_ir::SheetMetalHemKind`. */
-export type SheetMetalHemKind = "Closed" | "Open";
-
-/** Sheet-metal hem — a 180° fold at the edge of a flange. */
-export interface SheetMetalHemOp {
-  type: "SheetMetalHem";
-  parent: NodeId;
-  panel_id: number;
-  edge_index: number;
-  kind?: SheetMetalHemKind;
-  length: number;
-  gap?: number;
-  direction: SheetMetalDirection;
-}
-
-/** CSG operation — the core building block of the IR DAG. */
-export type CsgOp =
-  | CubeOp
-  | CylinderOp
-  | SphereOp
-  | ConeOp
-  | EmptyOp
-  | UnionOp
-  | DifferenceOp
-  | IntersectionOp
-  | TranslateOp
-  | RotateOp
-  | ScaleOp
-  | Sketch2DOp
-  | ExtrudeOp
-  | RevolveOp
-  | LinearPatternOp
-  | CircularPatternOp
-  | ShellOp
-  | FilletOp
-  | ChamferOp
-  | Text2DOp
-  | SweepOp
-  | LoftOp
-  | ImportedMeshOp
-  | PcbBoardOp
-  | EmbroideryPatternOp
-  | PartInstanceOp
-  | SheetMetalBaseFlangeRectOp
-  | SheetMetalBaseFlangePolygonOp
-  | SheetMetalEdgeFlangeOp
-  | SheetMetalHemOp
-  | SheetMetalJogOp
-  | SheetMetalBendReliefOp;
-
-/** A node in the IR graph. */
-export interface Node {
-  id: NodeId;
-  name: string | null;
-  op: CsgOp;
-}
-
-/** PBR material definition. */
-export interface MaterialDef {
-  name: string;
-  color: [number, number, number];
-  metallic: number;
-  roughness: number;
-  density?: number;
-  friction?: number;
-  /**
-   * Optional physically-based extensions. When `transmission > 0` the renderer
-   * switches to a `MeshPhysicalMaterial` so the part renders as glass /
-   * translucent plastic. The vcode (`.loon`) text format does not yet round-trip
-   * these — they survive the JSON `.vcad` format only.
-   */
-  transmission?: number;
-  ior?: number;
-  thickness?: number;
-  attenuationDistance?: number;
-  attenuationColor?: [number, number, number];
-  clearcoat?: number;
-  clearcoatRoughness?: number;
-}
-
-/** An entry in the scene — a root node with an assigned material. */
-export interface SceneEntry {
-  root: NodeId;
-  material: string;
-  /** If false, the part is hidden from the viewport (default: true). */
-  visible?: boolean;
-}
-
-/** Joint limits as [min, max] tuple for constrained joints. */
-export type JointLimits = [number, number];
-
-/** Joint kind variants for assembly joints. */
-export type JointKind =
-  | { type: "Fixed" }
-  | { type: "Revolute"; axis: Vec3; limits?: JointLimits }
-  | { type: "Slider"; axis: Vec3; limits?: JointLimits }
-  | { type: "Cylindrical"; axis: Vec3 }
-  | { type: "Ball" };
-
-/** A joint connecting two instances in an assembly. */
-export interface Joint {
-  id: string;
-  name?: string;
-  parentInstanceId: string | null;
-  childInstanceId: string;
-  parentAnchor: Vec3;
-  childAnchor: Vec3;
-  kind: JointKind;
-  state: number;
-}
-
-/** An instance of a part definition in an assembly. */
-export interface Instance {
-  id: string;
-  partDefId: string;
-  name?: string;
-  /**
-   * Semantic tags for the link, e.g. `["tip"]`, `["foot_left"]`. Used by
-   * Suite C graders to identify end-effectors and required links.
-   */
-  tags?: string[];
-  transform?: Transform3D;
-  material?: string;
-}
-
-/** Alias for Instance (used in some components). */
-export type PartInstance = Instance;
-
-/** A reusable part definition in an assembly. */
-export interface PartDef {
-  id: string;
-  name?: string;
-  root: NodeId;
-  defaultMaterial?: string;
-}
-
-// ============================================================================
-// Scene Settings (lighting, environment, post-processing)
-// ============================================================================
-
-/** Available HDR environment presets. */
-export type EnvironmentPreset =
-  | "studio"
-  | "warehouse"
-  | "apartment"
-  | "park"
-  | "city"
-  | "dawn"
-  | "night"
-  | "sunset"
-  | "forest"
-  | "neutral";
-
-/** Preset environment configuration. */
-export interface PresetEnvironment {
-  type: "Preset";
-  preset: EnvironmentPreset;
-  intensity?: number;
-}
-
-/** Custom HDR environment configuration. */
-export interface CustomEnvironment {
-  type: "Custom";
-  url: string;
-  intensity?: number;
-}
-
-/** No environment map — uses only direct lights. */
-export interface NoEnvironment {
-  type: "None";
-}
-
-/** Environment lighting configuration. */
-export type Environment = PresetEnvironment | CustomEnvironment | NoEnvironment;
-
-/** Directional light (sun-like, parallel rays). */
-export interface DirectionalLight {
-  type: "Directional";
-  direction: Vec3;
-}
-
-/** Point light (omnidirectional from a point). */
-export interface PointLight {
-  type: "Point";
-  position: Vec3;
-  distance?: number;
-}
-
-/** Spot light (cone of light from a point). */
-export interface SpotLight {
-  type: "Spot";
-  position: Vec3;
-  direction: Vec3;
-  angle?: number;
-  penumbra?: number;
-}
-
-/** Area light (rectangular emitter). */
-export interface AreaLight {
-  type: "Area";
-  position: Vec3;
-  direction: Vec3;
-  width: number;
-  height: number;
-}
-
-/** Type of light source. */
-export type LightKind = DirectionalLight | PointLight | SpotLight | AreaLight;
-
-/** A light source in the scene. */
-export interface Light {
-  id: string;
-  kind: LightKind;
-  color: [number, number, number];
-  intensity: number;
-  enabled?: boolean;
-  castShadow?: boolean;
-}
-
-/** Environment map background. */
-export interface EnvironmentBackground {
-  type: "Environment";
-}
-
-/** Solid color background. */
-export interface SolidBackground {
-  type: "Solid";
-  color: [number, number, number];
-}
-
-/** Gradient background (top to bottom). */
-export interface GradientBackground {
-  type: "Gradient";
-  top: [number, number, number];
-  bottom: [number, number, number];
-}
-
-/** Transparent background (for compositing). */
-export interface TransparentBackground {
-  type: "Transparent";
-}
-
-/** Background configuration. */
-export type Background =
-  | EnvironmentBackground
-  | SolidBackground
-  | GradientBackground
-  | TransparentBackground;
-
-/** Ambient occlusion settings. */
-export interface AmbientOcclusion {
-  enabled: boolean;
-  intensity?: number;
-  radius?: number;
-}
-
-/** Bloom effect settings. */
-export interface Bloom {
-  enabled: boolean;
-  intensity?: number;
-  threshold?: number;
-}
-
-/** Vignette effect settings. */
-export interface Vignette {
-  enabled: boolean;
-  offset?: number;
-  darkness?: number;
-}
-
-/** Silhouette / outline effect settings. Draws a subtle dark contour
- * around every rendered part for a more "CAD viewer" look. */
-export interface Silhouette {
-  enabled: boolean;
-  /** Edge strength multiplier (default 2.0). Higher = thicker outline. */
-  edgeStrength?: number;
-  /** Outline color of edges that face the camera, packed 0xRRGGBB (default 0x000000). */
-  visibleEdgeColor?: number;
-  /** Outline color of edges occluded by other geometry, packed 0xRRGGBB (default 0x000000). */
-  hiddenEdgeColor?: number;
-}
-
-/** Tone mapping algorithm. */
-export type ToneMapping =
-  | "none"
-  | "reinhard"
-  | "cineon"
-  | "acesFilmic"
-  | "agX"
-  | "neutral";
-
-/** Post-processing effects configuration. */
-export interface PostProcessing {
-  ambientOcclusion?: AmbientOcclusion;
-  bloom?: Bloom;
-  vignette?: Vignette;
-  silhouette?: Silhouette;
-  toneMapping?: ToneMapping;
-  exposure?: number;
-}
-
-/** A saved camera position/orientation. */
-export interface CameraPreset {
-  id: string;
-  name?: string;
-  position: Vec3;
-  target: Vec3;
-  fov?: number;
-}
-
-/** Scene-wide settings for lighting, environment, and rendering. */
-export interface SceneSettings {
-  environment?: Environment;
-  lights?: Light[];
-  background?: Background;
-  postProcessing?: PostProcessing;
-  cameraPresets?: CameraPreset[];
-}
-
-// ============================================================================
-// ECAD (PCB/Schematic) types
-// ============================================================================
-
-/** Pin electrical type for ERC validation. */
-export type PinType =
-  | "Input"
-  | "Output"
-  | "Bidirectional"
-  | "TriState"
-  | "Passive"
-  | "PowerInput"
-  | "PowerOutput"
-  | "OpenCollector"
-  | "OpenEmitter"
-  | "NotConnected"
-  | "Free";
-
-/** Label scope for schematic net labels. */
-export type LabelScope = "Local" | "Global" | "Hierarchical";
-
-/** A net label on a schematic. */
-export interface SchematicLabel {
-  name: string;
-  position: Vec2;
-  rotation?: number;
-  scope: LabelScope;
-}
-
-/** A pin on a schematic symbol. */
-export interface SchematicPin {
-  number: string;
-  name: string;
-  pin_type: PinType;
-  position: Vec2;
-}
-
-/** A placed component instance on a schematic sheet. */
-export interface SchematicComponent {
-  ref: string;
-  value: string;
-  footprintId: string;
-  position: Vec2;
-  rotation?: number;
-  mirror?: boolean;
-  pins: SchematicPin[];
-  properties?: Record<string, string>;
-}
-
-/** A wire connection on a schematic. */
-export interface SchematicWire {
-  start: Vec2;
-  end: Vec2;
-}
-
-/** An explicit wire junction point. */
-export interface SchematicJunction {
-  position: Vec2;
-}
-
-/** A schematic sheet — top-level schematic container. */
-export interface SchematicSheet {
-  title?: string;
-  components: SchematicComponent[];
-  wires: SchematicWire[];
-  junctions: SchematicJunction[];
-  labels: SchematicLabel[];
-  /** Explicit netlist: net name → pin refs ("R1.2"). Merged with (and
-   *  taking name precedence over) wire/label-derived connectivity, so
-   *  callers can declare nets as data instead of relying on coordinate
-   *  coincidence. */
-  nets?: Record<string, string[]>;
-}
-
-/** PCB layer identifiers. */
-export type PcbLayer =
-  | "FCu" | "BCu"
-  | "In1Cu" | "In2Cu" | "In3Cu" | "In4Cu" | "In5Cu" | "In6Cu"
-  | "FSilkS" | "BSilkS"
-  | "FMask" | "BMask"
-  | "FPaste" | "BPaste"
-  | "FFab" | "BFab"
-  | "FCrtYd" | "BCrtYd"
-  | "EdgeCuts" | "UserDrawings" | "UserComments";
-
-/** A single layer in the physical board stackup. */
-export interface StackupLayer {
-  layer: PcbLayer;
-  copperThickness?: number;
-  dielectricThickness?: number;
-  dielectricEr?: number;
-  material?: string;
-}
-
-/** Physical layer stackup. */
-export interface LayerStackup {
-  layers: StackupLayer[];
-}
-
-/** Board outline profile. */
-export interface BoardOutline {
-  vertices: Vec2[];
-  cutouts?: Vec2[][];
-  thickness: number;
-}
-
-/** A named electrical connection. */
-export interface Net {
-  id: string;
-  name: string;
-}
-
-/** Per-net-class design rules. */
-export interface NetClassRules {
-  name: string;
-  traceWidth: number;
-  clearance: number;
-  viaDiameter: number;
-  viaDrill: number;
-  diffPairGap?: number;
-  diffPairWidth?: number;
-}
-
-/** Board-level design rules. */
-export interface DesignRules {
-  defaultRules: NetClassRules;
-  classRules?: NetClassRules[];
-  netClassAssignments?: Record<string, string[]>;
-  edgeClearance: number;
-  holeToHole: number;
-  minAnnularRing: number;
-  minDrill: number;
-}
-
-/** Pad shape. */
-export type PadShape =
-  | { type: "Circle"; diameter: number }
-  | { type: "Rect"; width: number; height: number }
-  | { type: "Oval"; width: number; height: number }
-  | { type: "RoundRect"; width: number; height: number; cornerRatio: number }
-  | { type: "Custom"; vertices: Vec2[] };
-
-/** Pad mounting type. */
-export type PadType = "THT" | "SMD" | "NPTH";
-
-/** Drill specification. */
-export interface DrillSpec {
-  diameter: number;
-  oval?: boolean;
-  ovalHeight?: number;
-}
-
-/** A pad on a footprint. */
-export interface Pad {
-  number: string;
-  padType: PadType;
-  shape: PadShape;
-  position: Vec2;
-  rotation?: number;
-  drill?: DrillSpec;
-  net?: string;
-  layers: PcbLayer[];
-}
-
-/** Footprint graphic element. */
-export type FootprintGraphic =
-  | { type: "Line"; start: Vec2; end: Vec2; width: number; layer: PcbLayer }
-  | { type: "Circle"; center: Vec2; radius: number; width: number; layer: PcbLayer }
-  | { type: "Arc"; center: Vec2; radius: number; startAngle: number; endAngle: number; width: number; layer: PcbLayer }
-  | { type: "Rect"; start: Vec2; end: Vec2; width: number; layer: PcbLayer }
-  | { type: "Polygon"; vertices: Vec2[]; width: number; layer: PcbLayer }
-  | { type: "Text"; text: string; position: Vec2; rotation?: number; height: number; width: number; layer: PcbLayer };
-
-/** A placed footprint on the PCB. */
-export interface Footprint {
-  ref: string;
-  value: string;
-  footprintName: string;
-  position: Vec2;
-  rotation?: number;
-  front?: boolean;
-  pads: Pad[];
-  graphics?: FootprintGraphic[];
-  model3d?: string;
-  properties?: Record<string, string>;
-}
-
-/** A straight routed copper trace segment. */
-export interface Trace {
-  start: Vec2;
-  end: Vec2;
-  width: number;
-  layer: PcbLayer;
-  net: string;
-}
-
-/** An arc routed copper trace segment. */
-export interface TraceArc {
-  center: Vec2;
-  radius: number;
-  startAngle: number;
-  endAngle: number;
-  width: number;
-  layer: PcbLayer;
-  net: string;
-}
-
-/** A via (layer-spanning connection). */
-export interface Via {
-  position: Vec2;
-  diameter: number;
-  drill: number;
-  startLayer: PcbLayer;
-  endLayer: PcbLayer;
-  net: string;
-}
-
-/** Copper fill type. */
-export type ZoneFillType = "Solid" | "Hatched";
-
-/** Thermal relief style. */
-export type ThermalReliefStyle = "Direct" | "Relief" | "None";
-
-/** A copper pour zone. */
-export interface Zone {
-  outline: Vec2[];
-  holes?: Vec2[][];
-  net: string;
-  layer: PcbLayer;
-  clearance: number;
-  minArea?: number;
-  fillType?: ZoneFillType;
-  thermalRelief?: ThermalReliefStyle;
-  thermalGap?: number;
-  thermalSpokeWidth?: number;
-  priority?: number;
-}
-
-/** A keepout region. */
-export interface Keepout {
-  outline: Vec2[];
-  layers: PcbLayer[];
-  noTracks?: boolean;
-  noVias?: boolean;
-  noPour?: boolean;
-  noComponents?: boolean;
-}
-
-/**
- * An intentional connection between two or more otherwise-distinct nets (a
- * "net-tie"): a wye/star neutral point, a center tap, or a split-ground stitch.
- * Tied nets keep their separate identities in the netlist but are treated as
- * electrically one where they meet, so DRC does not flag the junction as a short.
- */
-export interface NetTie {
-  /** Names of the nets joined at this tie (two or more). */
-  nets: string[];
-  /** Optional center of the allowed join region (board mm); board-wide if absent. */
-  position?: Vec2;
-  /** Optional radius of the allowed join region (mm). */
-  radius?: number;
-}
-
-/** A complete PCB design. */
-export interface Pcb {
-  outline: BoardOutline;
-  stackup: LayerStackup;
-  nets: Net[];
-  rules: DesignRules;
-  footprints: Footprint[];
-  traces: Trace[];
-  traceArcs?: TraceArc[];
-  vias: Via[];
-  zones: Zone[];
-  keepouts?: Keepout[];
-  /** Intentional net-ties (wye/star points, center taps, split-ground stitches). */
-  netTies?: NetTie[];
-}
-
-// ============================================================================
-// Length Tuning / Meander types (mirrors vcad-ecad-pcb router)
-// ============================================================================
 
 /** Meander pattern style. */
 export type MeanderStyle = "Trombone" | "Sawtooth";
@@ -1173,72 +307,6 @@ export interface MeanderSegment {
   added_length: number;
   /** Which segment of the input polyline this replaces. */
   segment_index: number;
-}
-
-/**
- * An expression value: either a literal number or a formula string.
- *
- * Formulas are evaluated lazily against a parameter environment at resolve
- * time. Serialization is an untagged union — a bare number is a literal,
- * a string is a formula.
- */
-export type Expr = number | string;
-
-/**
- * A document-level named parameter.
- *
- * Simple parameters use a number for `value`; derived parameters use an
- * expression string that may reference other parameters. Evaluation order
- * is determined by topological sort at resolve time.
- */
-export interface Parameter {
-  /** Literal value or formula. */
-  value: Expr;
-  /** Optional unit for display (e.g. "mm", "deg"). */
-  unit?: string;
-  /** Optional lower bound for scrub input. */
-  min?: number;
-  /** Optional upper bound for scrub input. */
-  max?: number;
-  /** Optional description shown in the parameters panel. */
-  description?: string;
-}
-
-/**
- * Bindings sidecar: map from `"{nodeId}:{dotted.field.path}"` to Expr.
- *
- * Example keys:
- * - `"1:size.x"` — x component of Cube.size
- * - `"7:radius"` — Cylinder.radius
- * - `"12:offset.z"` — Translate.offset.z
- */
-export type Bindings = Record<string, Expr>;
-
-/** A vcad document — the `.vcad` file format. */
-export interface Document {
-  version: string;
-  nodes: Record<string, Node>;
-  materials: Record<string, MaterialDef>;
-  part_materials: Record<string, string>;
-  roots: SceneEntry[];
-  /** Scene-wide rendering settings. */
-  scene?: SceneSettings;
-  /** Part definitions for assembly mode. */
-  partDefs?: Record<string, PartDef>;
-  /** Instances of part definitions. */
-  instances?: Instance[];
-  /** Joints connecting instances. */
-  joints?: Joint[];
-  /** The instance that is fixed in world space (ground). */
-  groundInstanceId?: string;
-  /** Schematic sheet for electronics design. */
-  schematic?: SchematicSheet;
-  /** @deprecated Legacy PCB field — migrated to PcbBoard node on load. */
-  pcb?: Pcb;
-  /** Named parameters driving expression-bound fields. */
-  parameters?: Record<string, Parameter>;
-  /** Sidecar bindings that patch concrete fields at resolve time. */
-  bindings?: Bindings;
 }
 
 /** Create a new empty document. */

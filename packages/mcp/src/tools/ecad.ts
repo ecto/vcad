@@ -53,6 +53,14 @@ function getDocPcb(doc: Document): Pcb | null {
   return (doc as Document & { pcb?: Pcb }).pcb ?? null;
 }
 
+/** Standard `{ content, isError }` failure result for ECAD tools. */
+function ecadError(text: string) {
+  return {
+    content: [{ type: "text" as const, text: `Error: ${text}` }],
+    isError: true as const,
+  };
+}
+
 // ============================================================================
 // Document resolution — session-based (document_id) with inline fallback
 // ============================================================================
@@ -2355,10 +2363,7 @@ export function calcImpedance(args: Record<string, unknown>) {
  * REPORTED, never silently clamped. No board, no session, no mutation.
  */
 export function sizeImpedance(args: Record<string, unknown>) {
-  const fail = (text: string) => ({
-    content: [{ type: "text" as const, text: `Error: ${text}` }],
-    isError: true as const,
-  });
+  const fail = ecadError;
 
   const traceType = (args.trace_type as string) || "microstrip";
   const isDiff = traceType === "diff_microstrip" || traceType === "diff_stripline";
@@ -2485,10 +2490,7 @@ export function sizeImpedance(args: Record<string, unknown>) {
  * implicit-function adjoint); this is the agent-facing path for small meshes.
  */
 export function sizePdn(args: Record<string, unknown>) {
-  const fail = (text: string) => ({
-    content: [{ type: "text" as const, text: `Error: ${text}` }],
-    isError: true as const,
-  });
+  const fail = ecadError;
 
   const nodes = Math.round(args.nodes as number);
   const edges = args.edges as Array<{ a: number; b: number; length: number }>;
@@ -2677,10 +2679,7 @@ export function sizePdn(args: Record<string, unknown>) {
  * the same closed-form leaves the differentiable kernel exposes. PURE.
  */
 export function calcCoil(args: Record<string, unknown>) {
-  const fail = (text: string) => ({
-    content: [{ type: "text" as const, text: `Error: ${text}` }],
-    isError: true as const,
-  });
+  const fail = ecadError;
   const innerR = args.inner_radius as number;
   const outerR = args.outer_radius as number;
   const turns = args.turns as number;
@@ -2727,10 +2726,7 @@ export function calcCoil(args: Record<string, unknown>) {
  * PURE — returns data, builds no geometry.
  */
 export function sizeCoil(args: Record<string, unknown>) {
-  const fail = (text: string) => ({
-    content: [{ type: "text" as const, text: `Error: ${text}` }],
-    isError: true as const,
-  });
+  const fail = ecadError;
   const targetNh = args.target_inductance_nh as number;
   const innerR = args.inner_radius as number;
   const outerR = args.outer_radius as number;
@@ -2803,10 +2799,7 @@ export function sizeCoil(args: Record<string, unknown>) {
  * match in the band. Closed-form, deterministic, PURE.
  */
 export function calcRf(args: Record<string, unknown>) {
-  const fail = (text: string) => ({
-    content: [{ type: "text" as const, text: `Error: ${text}` }],
-    isError: true as const,
-  });
+  const fail = ecadError;
   const topology = (args.topology as string) || "series_rlc";
   const r = args.r_ohm as number;
   const l = args.l_henry as number;
@@ -2930,10 +2923,7 @@ export function addCoil(args: Record<string, unknown>) {
   );
   const clearance = (args.clearance as number) ?? pcb.rules.defaultRules.clearance;
 
-  const fail = (text: string) => ({
-    content: [{ type: "text" as const, text: `Error: ${text}` }],
-    isError: true as const,
-  });
+  const fail = ecadError;
 
   if (!center || typeof center.x !== "number" || typeof center.y !== "number") {
     return fail("center must be {x, y} in mm");
@@ -3167,10 +3157,7 @@ export function addCoilArray(args: Record<string, unknown>) {
     };
   }
 
-  const fail = (text: string) => ({
-    content: [{ type: "text" as const, text: `Error: ${text}` }],
-    isError: true as const,
-  });
+  const fail = ecadError;
 
   const count = Math.round(args.count as number);
   const center = args.center as Vec2;
@@ -3315,10 +3302,7 @@ interface WindingPlan {
  * fundamental winding factor is kp·kd.
  */
 export function windingLayout(args: Record<string, unknown>) {
-  const fail = (text: string) => ({
-    content: [{ type: "text" as const, text: `Error: ${text}` }],
-    isError: true as const,
-  });
+  const fail = ecadError;
 
   const slots = Math.round(args.slots as number);
   const poles = Math.round(args.poles as number);
@@ -3460,10 +3444,7 @@ export const addTraceSchema = {
 export function addTrace(args: Record<string, unknown>) {
   const ctx = resolveDocInput(args);
   const pcb = getDocPcb(ctx.doc);
-  const fail = (text: string) => ({
-    content: [{ type: "text" as const, text: `Error: ${text}` }],
-    isError: true as const,
-  });
+  const fail = ecadError;
   if (!pcb) {
     return fail(
       "Document has no PCB — run place_components first (or open a document that has a board)",
@@ -3551,10 +3532,7 @@ export const addViaSchema = {
 export function addVia(args: Record<string, unknown>) {
   const ctx = resolveDocInput(args);
   const pcb = getDocPcb(ctx.doc);
-  const fail = (text: string) => ({
-    content: [{ type: "text" as const, text: `Error: ${text}` }],
-    isError: true as const,
-  });
+  const fail = ecadError;
   if (!pcb) {
     return fail(
       "Document has no PCB — run place_components first (or open a document that has a board)",
@@ -3646,10 +3624,7 @@ export const setStackupSchema = {
 export function setStackup(args: Record<string, unknown>) {
   const ctx = resolveDocInput(args);
   const pcb = getDocPcb(ctx.doc);
-  const fail = (text: string) => ({
-    content: [{ type: "text" as const, text: `Error: ${text}` }],
-    isError: true as const,
-  });
+  const fail = ecadError;
   if (!pcb) {
     return fail(
       "Document has no PCB — run place_components first (or open a document that has a board)",
@@ -3776,10 +3751,7 @@ export const addMotorWindingSchema = {
 export function addMotorWinding(args: Record<string, unknown>) {
   const ctx = resolveDocInput(args);
   const pcb = getDocPcb(ctx.doc);
-  const fail = (text: string) => ({
-    content: [{ type: "text" as const, text: `Error: ${text}` }],
-    isError: true as const,
-  });
+  const fail = ecadError;
   if (!pcb) {
     return fail(
       "Document has no PCB — run place_components first (or open a document that has a board)",
@@ -4017,10 +3989,7 @@ export const calcMotorSchema = {
  * fringing, saturation, or losses.
  */
 export async function calcMotor(args: Record<string, unknown>) {
-  const fail = (text: string) => ({
-    content: [{ type: "text" as const, text: `Error: ${text}` }],
-    isError: true as const,
-  });
+  const fail = ecadError;
 
   const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : NaN);
   const polePairs = num(args.pole_pairs);

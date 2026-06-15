@@ -343,8 +343,15 @@ function opToLoon(op: CsgOp, doc: Document): OpResult {
       return ok(`[part-instance ${JSON.stringify(op.path)} ${JSON.stringify(op.version)} #{${kv}}]`);
     }
 
-    default:
-      return { kind: "skip" };
+    // Mirror the Rust source-of-truth (vcad_ir::to_loon, which is an
+    // exhaustive match): every unhandled variant — StepImport/MeshImport
+    // (serialized as step_import/mesh_import) and the SheetMetal* ops — emits a
+    // comment placeholder AND is recorded in `unsupported`, so callers can warn
+    // instead of silently dropping the node from the live-source view.
+    default: {
+      const variant = (op as { type: string }).type;
+      return unsupported(variant, `; ${variant} — not yet supported in loon`);
+    }
   }
 }
 

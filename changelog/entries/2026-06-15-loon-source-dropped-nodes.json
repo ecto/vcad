@@ -1,0 +1,9 @@
+{
+  "id": "2026-06-15-loon-source-dropped-nodes",
+  "version": "0.9.4",
+  "date": "2026-06-15",
+  "category": "fix",
+  "title": "Loon source view stops silently dropping nodes",
+  "summary": "The .loon source view now records STEP/mesh imports and sheet-metal nodes as flagged placeholders instead of silently omitting them, matching the Rust serializer.",
+  "features": ["loon", "import", "sheet-metal"]
+}

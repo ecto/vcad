@@ -13,7 +13,7 @@
  *   ← {type: 'error', id, message}                       — evaluation error
  */
 
-import { evaluateDocument as evaluateDocumentTS, type EvaluateOptions, embroideryPatternToMesh, findEmbroideryPattern, transformMesh } from "./evaluate.js";
+import { evaluateDocument as evaluateDocumentTS, embroideryPatternToMesh, findEmbroideryPattern, transformMesh } from "./evaluate.js";
 import { buildSheetMetalChain, evaluateSheetMetalChain } from "./sheet-metal.js";
 import type { EvaluatedScene, EvalTimingData, TriangleMesh } from "./mesh.js";
 import type { Document } from "@vcad/ir";
@@ -197,8 +197,6 @@ self.onmessage = async (e: MessageEvent) => {
         evaluateDocument: (wasm as Record<string, unknown>).evaluateDocument,
         evaluateSheetMetalChain: (wasm as Record<string, unknown>)
           .evaluateSheetMetalChain,
-        checkSheetMetal: (wasm as Record<string, unknown>).checkSheetMetal,
-        costSheetMetal: (wasm as Record<string, unknown>).costSheetMetal,
       };
 
       // Check if native WASM evaluator is available

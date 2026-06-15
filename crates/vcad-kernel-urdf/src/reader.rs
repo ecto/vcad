@@ -437,6 +437,7 @@ impl<'a> UrdfReader<'a> {
                 roughness: 0.5,
                 density: None,
                 friction: None,
+                ..Default::default()
             },
         );
 
@@ -458,6 +459,7 @@ impl<'a> UrdfReader<'a> {
                 roughness: 0.5,
                 density: None,
                 friction: None,
+                ..Default::default()
             };
 
             doc.materials.insert(mat.name.clone(), mat_def);

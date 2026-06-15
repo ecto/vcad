@@ -692,6 +692,7 @@ mod tests {
                 roughness: 0.3,
                 density: None,
                 friction: None,
+                ..Default::default()
             },
         );
         let loon = document_to_loon(&doc);

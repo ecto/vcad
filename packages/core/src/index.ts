@@ -71,8 +71,8 @@ export type { VcadFile, DocumentState, PcbCreateOptions } from "./stores/documen
 
 export type { FeatureInput } from "./stores/feature-input.js";
 
-export { useCrdtDocumentStore, f64, vec3, bool, str, featureRef } from "./stores/crdt-document-store.js";
-export type { CrdtDocumentState, CrdtValue } from "./stores/crdt-document-store.js";
+export { f64, vec3, bool } from "./stores/crdt-value.js";
+export type { CrdtValue } from "./stores/crdt-value.js";
 
 export { useUiStore } from "./stores/ui-store.js";
 export {

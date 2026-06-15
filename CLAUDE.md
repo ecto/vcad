@@ -277,8 +277,14 @@ target/debug/vcad-render path/to/part.vcad > out.svg
 4. Run `npm run build -w @vcad/app`
 
 **New IR operation:**
-1. Add variant to `CsgOp` in `crates/vcad-ir/src/lib.rs`
-2. Mirror in `packages/ir/src/index.ts`
+1. Add the variant to `CsgOp` in `crates/vcad-ir/src/lib.rs`, carrying the same
+   `#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]` / `ts(...)` attrs the
+   sibling variants use (Rust is the single source of truth for IR types).
+2. Run `npm run ir:gen` to regenerate `packages/ir/src/generated.ts` from Rust
+   — the TS types are **generated, not hand-mirrored**. `npm run ir:check`
+   fails CI when the committed file drifts from the Rust definitions. Add an
+   `Extract<CsgOp, { type: "…" }>` alias in `index.ts` only if a consumer needs
+   the variant by name.
 3. Add evaluation logic in `packages/engine/src/evaluate.ts`
 
 ## Changelog
