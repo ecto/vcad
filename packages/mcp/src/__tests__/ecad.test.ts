@@ -259,6 +259,117 @@ describe("explicit netlist (nets as data)", () => {
   });
 });
 
+describe("route_nets idempotency", () => {
+  // The exact board from the field bug report. Before the fix, routing an
+  // already-routed board a second time stacked copper: the kernel ratsnest
+  // skips nets that already have a trace, so the second route_all came back
+  // empty, the no-kernel fallback in routeNets misfired, and it chained naive
+  // straight segments over the clean route — turning a handful of inherent
+  // violations into dozens of shorts. The fix rips up the target nets' copper
+  // before routing, so re-running replaces the route instead of adding to it.
+  const soic8 = (ref: string, x: number) => ({
+    ref,
+    value: "U",
+    footprint: "Package_SO:SOIC-8_3.9x4.9mm_P1.27mm",
+    x,
+    y: 0,
+    pins: Array.from({ length: 8 }, (_, i) => ({
+      number: `${i + 1}`,
+      name: "~",
+      type: "Passive",
+      x: i < 4 ? -5 : 5,
+      y: (i % 4) * 1.27,
+    })),
+  });
+  const cap = (ref: string, x: number) => ({
+    ref,
+    value: "100n",
+    footprint: "Capacitor_SMD:C_0805_2012Metric",
+    x,
+    y: 20,
+    pins: [
+      { number: "1", name: "~", type: "Passive", x: -2, y: 0 },
+      { number: "2", name: "~", type: "Passive", x: 2, y: 0 },
+    ],
+  });
+  const header = (ref: string, x: number) => ({
+    ref,
+    value: "Conn",
+    footprint: "Connector_PinHeader_2.54mm:PinHeader_1x04_P2.54mm_Vertical",
+    x,
+    y: 0,
+    pins: Array.from({ length: 4 }, (_, i) => ({
+      number: `${i + 1}`,
+      name: "~",
+      type: "Passive",
+      x: 0,
+      y: i * 2.54,
+    })),
+  });
+
+  const buildBoard = async () => {
+    const created = out(
+      await createSchematic({
+        components: [soic8("U1", 0), cap("C1", 20), cap("C2", 40), header("J1", 60)],
+        nets: {
+          VCC: ["U1.1", "C1.1", "J1.1"],
+          GND: ["U1.8", "C1.2", "C2.2", "J1.2"],
+          SIG1: ["U1.2", "C2.1"],
+          SIG2: ["U1.3", "J1.3"],
+          SIG3: ["U1.4", "J1.4"],
+        },
+      }),
+    );
+    const id = created.document_id;
+    out(await placeComponents({ document_id: id, board_width: 50, board_height: 35 }));
+    return id;
+  };
+
+  it("a second route_nets does not stack copper or add violations", async () => {
+    const id = await buildBoard();
+
+    // First route — establishes the clean baseline.
+    out(await routeNets({ document_id: id }));
+    const board1 = getPcbBoard(getSession(id));
+    const traces1 = board1.traces.length;
+    const vias1 = board1.vias.length;
+    const drc1 = out(await runDrc({ document_id: id }));
+    expect(traces1).toBeGreaterThan(0);
+
+    // Second route — must rip up and re-lay the same copper, not append a second
+    // set. After the rip-up the board is pads-only again, exactly as it was
+    // before the first route, so the deterministic router reproduces it byte
+    // for byte.
+    out(await routeNets({ document_id: id }));
+    const board2 = getPcbBoard(getSession(id));
+    const drc2 = out(await runDrc({ document_id: id }));
+
+    expect(board2.traces.length).toBe(traces1);
+    expect(board2.vias.length).toBe(vias1);
+    expect(drc2.violations).toBe(drc1.violations);
+    // The headline symptom: the re-route must never introduce shorts.
+    expect(drc2.byRule.Short ?? 0).toBe(0);
+  });
+
+  it("routing three times in a row stays flat — no monotonic copper growth", async () => {
+    const id = await buildBoard();
+
+    const snapshot = async () => {
+      out(await routeNets({ document_id: id }));
+      const b = getPcbBoard(getSession(id));
+      const drc = out(await runDrc({ document_id: id }));
+      return { traces: b.traces.length, vias: b.vias.length, violations: drc.violations };
+    };
+
+    const first = await snapshot();
+    const second = await snapshot();
+    const third = await snapshot();
+
+    expect(second).toEqual(first);
+    expect(third).toEqual(first);
+  });
+});
+
 describe("schematic label diagnostics", () => {
   it("warns when a label touches neither a pin nor a wire endpoint", async () => {
     const created = out(
