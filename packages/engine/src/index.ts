@@ -150,6 +150,7 @@ export {
   routeNet,
   routeNetShove,
   routeNetMaze,
+  routeAll,
   fillZones,
   exportFabFiles,
   parseKicadPcb,

@@ -99,6 +99,21 @@ pub fn route_net_maze(
     let pts = simplify(&pts);
 
     let segments: Vec<(Vec2, Vec2)> = pts.windows(2).map(|w| (w[0], w[1])).collect();
+
+    // Final guarantee: re-probe every emitted segment. The grid search probes
+    // node-to-node edges, but the connector from the last grid node to the
+    // exact endpoint pad is off-grid and unprobed — on a crowded board it can
+    // graze a neighbouring net's copper. If any segment is illegal, fail
+    // honestly so the caller can try another layer rather than ship a short.
+    if !segments.iter().all(|(a, b)| legal_step(*a, *b)) {
+        return RouteResult {
+            net: net.to_string(),
+            segments: Vec::new(),
+            vias: Vec::new(),
+            success: false,
+        };
+    }
+
     RouteResult {
         net: net.to_string(),
         segments,

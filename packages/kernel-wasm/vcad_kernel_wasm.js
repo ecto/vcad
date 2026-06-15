@@ -1622,7 +1622,7 @@ export class WasmCamSettings {
      * @returns {number}
      */
     get feed_rate() {
-        const ret = wasm.__wbg_get_wasmcamsettings_feed_rate(this.__wbg_ptr);
+        const ret = wasm.__wbg_get_slicersettings_nozzle_diameter(this.__wbg_ptr);
         return ret;
     }
     /**
@@ -1630,7 +1630,7 @@ export class WasmCamSettings {
      * @returns {number}
      */
     get plunge_rate() {
-        const ret = wasm.__wbg_get_wasmcamsettings_plunge_rate(this.__wbg_ptr);
+        const ret = wasm.__wbg_get_slicersettings_line_width(this.__wbg_ptr);
         return ret;
     }
     /**
@@ -1646,7 +1646,7 @@ export class WasmCamSettings {
      * @returns {number}
      */
     get safe_z() {
-        const ret = wasm.__wbg_get_wasmcamsettings_safe_z(this.__wbg_ptr);
+        const ret = wasm.__wbg_get_slicersettings_support_angle(this.__wbg_ptr);
         return ret;
     }
     /**
@@ -1654,7 +1654,7 @@ export class WasmCamSettings {
      * @returns {number}
      */
     get spindle_rpm() {
-        const ret = wasm.__wbg_get_wasmcamsettings_spindle_rpm(this.__wbg_ptr);
+        const ret = wasm.__wbg_get_slicersettings_infill_density(this.__wbg_ptr);
         return ret;
     }
     /**
@@ -1662,7 +1662,7 @@ export class WasmCamSettings {
      * @returns {number}
      */
     get stepdown() {
-        const ret = wasm.__wbg_get_wasmcamsettings_stepdown(this.__wbg_ptr);
+        const ret = wasm.__wbg_get_slicersettings_first_layer_height(this.__wbg_ptr);
         return ret;
     }
     /**
@@ -1670,7 +1670,7 @@ export class WasmCamSettings {
      * @returns {number}
      */
     get stepover() {
-        const ret = wasm.__wbg_get_wasmcamsettings_stepover(this.__wbg_ptr);
+        const ret = wasm.__wbg_get_slicersettings_layer_height(this.__wbg_ptr);
         return ret;
     }
     /**
@@ -1678,14 +1678,14 @@ export class WasmCamSettings {
      * @param {number} arg0
      */
     set feed_rate(arg0) {
-        wasm.__wbg_set_wasmcamsettings_feed_rate(this.__wbg_ptr, arg0);
+        wasm.__wbg_set_slicersettings_nozzle_diameter(this.__wbg_ptr, arg0);
     }
     /**
      * Plunge rate (mm/min).
      * @param {number} arg0
      */
     set plunge_rate(arg0) {
-        wasm.__wbg_set_wasmcamsettings_plunge_rate(this.__wbg_ptr, arg0);
+        wasm.__wbg_set_slicersettings_line_width(this.__wbg_ptr, arg0);
     }
     /**
      * Retract Z height (mm).
@@ -1699,28 +1699,28 @@ export class WasmCamSettings {
      * @param {number} arg0
      */
     set safe_z(arg0) {
-        wasm.__wbg_set_wasmcamsettings_safe_z(this.__wbg_ptr, arg0);
+        wasm.__wbg_set_slicersettings_support_angle(this.__wbg_ptr, arg0);
     }
     /**
      * Spindle RPM.
      * @param {number} arg0
      */
     set spindle_rpm(arg0) {
-        wasm.__wbg_set_wasmcamsettings_spindle_rpm(this.__wbg_ptr, arg0);
+        wasm.__wbg_set_slicersettings_infill_density(this.__wbg_ptr, arg0);
     }
     /**
      * Stepdown distance (mm).
      * @param {number} arg0
      */
     set stepdown(arg0) {
-        wasm.__wbg_set_wasmcamsettings_stepdown(this.__wbg_ptr, arg0);
+        wasm.__wbg_set_slicersettings_first_layer_height(this.__wbg_ptr, arg0);
     }
     /**
      * Stepover distance (mm).
      * @param {number} arg0
      */
     set stepover(arg0) {
-        wasm.__wbg_set_wasmcamsettings_stepover(this.__wbg_ptr, arg0);
+        wasm.__wbg_set_slicersettings_layer_height(this.__wbg_ptr, arg0);
     }
     /**
      * Create from JSON.
@@ -3658,6 +3658,32 @@ export function ecadNetForWire(wire_json, netlist_json, components_json) {
 }
 
 /**
+ * Auto-route the whole board over the incremental oracle.
+ *
+ * Computes the MST ratsnest and routes every unrouted net against a single
+ * growing route session, retrying on the back layer with transition vias
+ * that are probed on both layers before being committed. Returns
+ * `{ traces, vias, routed_nets, unrouted_nets }`; every returned trace and
+ * via is clearance-legal, or the net is reported unrouted — the router
+ * never emits copper that shorts.
+ * @param {string} pcb_json
+ * @param {number} width
+ * @param {string} nets_filter_json
+ * @returns {any}
+ */
+export function ecadRouteAll(pcb_json, width, nets_filter_json) {
+    const ptr0 = passStringToWasm0(pcb_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(nets_filter_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.ecadRouteAll(ptr0, len0, width, ptr1, len1);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+
+/**
  * Route a net between two points on the PCB using the grid router.
  *
  * # Arguments
@@ -4368,7 +4394,7 @@ export function isPhysicsAvailable() {
  * @returns {boolean}
  */
 export function isSlicerAvailable() {
-    const ret = wasm.isSlicerAvailable();
+    const ret = wasm.isCamAvailable();
     return ret !== 0;
 }
 
@@ -7299,12 +7325,12 @@ function __wbg_get_imports() {
             arg0.writeTexture(arg1, arg2, arg3, arg4);
         },
         __wbindgen_cast_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 2338, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 2339, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 2335, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 2336, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h30743bca3150d93c, wasm_bindgen__convert__closures_____invoke__hcf7d3eaee8800b37);
             return ret;
         },
         __wbindgen_cast_0000000000000002: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 3122, function: Function { arguments: [Externref], shim_idx: 3123, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 3119, function: Function { arguments: [Externref], shim_idx: 3120, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__hfdadf281ff0f1c56, wasm_bindgen__convert__closures_____invoke__h9bdf540eb7e61590);
             return ret;
         },

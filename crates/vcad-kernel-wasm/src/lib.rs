@@ -4978,6 +4978,26 @@ mod ecad_wasm {
         serde_wasm_bindgen::to_value(&result).map_err(|e| JsError::new(&e.to_string()))
     }
 
+    /// Auto-route the whole board over the incremental oracle.
+    ///
+    /// Computes the MST ratsnest and routes every unrouted net against a single
+    /// growing route session, retrying on the back layer with transition vias
+    /// that are probed on both layers before being committed. Returns
+    /// `{ traces, vias, routed_nets, unrouted_nets }`; every returned trace and
+    /// via is clearance-legal, or the net is reported unrouted — the router
+    /// never emits copper that shorts.
+    #[wasm_bindgen(js_name = ecadRouteAll)]
+    pub fn ecad_route_all(
+        pcb_json: &str,
+        width: f64,
+        nets_filter_json: &str,
+    ) -> Result<JsValue, JsError> {
+        let pcb: Pcb = serde_json::from_str(pcb_json).map_err(|e| JsError::new(&e.to_string()))?;
+        let filter: Vec<String> = serde_json::from_str(nets_filter_json).unwrap_or_default();
+        let result = vcad_ecad_pcb::router::route_all(&pcb, width, &filter);
+        serde_wasm_bindgen::to_value(&result).map_err(|e| JsError::new(&e.to_string()))
+    }
+
     /// Fill copper pour zones on the PCB.
     ///
     /// # Arguments

@@ -36,9 +36,7 @@ import {
   footprintForName,
   generateNetlist,
   isEcadAvailable,
-  routeNet,
-  routeNetMaze,
-  routeNetShove,
+  routeAll,
   runDrc as kernelRunDrc,
   evaluateMotor,
   airgapFluxDensity,
@@ -1603,96 +1601,45 @@ export async function routeNets(args: Record<string, unknown>) {
   const unroutedNets = new Set<string>();
   let tracesAdded = 0;
 
-  for (const line of rats) {
-    if (netsFilter.length > 0 && !netsFilter.includes(line.net)) continue;
+  // Auto-route the whole board in the kernel: every net is routed against one
+  // growing clearance oracle and retried on the back layer with transition vias
+  // that are probed before placement, so the returned copper is clearance-legal
+  // by construction. Nets that can't be routed legally come back in
+  // `unrouted_nets` instead of being shipped as a short.
+  const result = await routeAll(pcb, width, netsFilter);
+  const routedSomething =
+    result.traces.length > 0 || result.vias.length > 0 || result.unrouted_nets.length > 0;
 
-    // Avoiding maze router first: it clears ALL copper on the layer — traces,
-    // pads, and vias — via the exact clearance oracle, so routes don't graze
-    // other-net pads the way the bbox-based push-shove router can. Push-and-
-    // shove then the grid/wave router are fallbacks. Each committed route
-    // becomes an obstacle for the next because we append to pcb.traces between
-    // calls.
-    let res = await routeNetMaze(pcb, line.net, line.from, line.to, width);
-    if (!res.success || res.segments.length === 0) {
-      res = await routeNetShove(pcb, line.net, line.from, line.to, width);
+  if (routedSomething) {
+    for (const t of result.traces) {
+      pcb.traces.push({
+        start: { x: t.start.x, y: t.start.y },
+        end: { x: t.end.x, y: t.end.y },
+        width: t.width,
+        layer: t.layer,
+        net: t.net,
+      });
+      tracesAdded++;
     }
-    if (!res.success || res.segments.length === 0) {
-      res = await routeNet(pcb, line.net, line.from, line.to, width);
+    for (const v of result.vias) {
+      pcb.vias.push({
+        position: { x: v.position.x, y: v.position.y },
+        diameter: pcb.rules.defaultRules.viaDiameter,
+        drill: pcb.rules.defaultRules.viaDrill,
+        startLayer: "FCu",
+        endLayer: "BCu",
+        net: v.net,
+      });
     }
-
-    // If the front copper is too congested for this connection, route it on
-    // the back layer instead — a via at each endpoint drops from the FCu pad
-    // down to BCu, where the long span can avoid the front-side traffic.
-    let routeLayer = "FCu";
-    let backLayerVias = false;
-    if (!res.success || res.segments.length === 0) {
-      const back = await routeNetMaze(pcb, line.net, line.from, line.to, width, "BCu");
-      if (back.success && back.segments.length > 0) {
-        res = back;
-        routeLayer = "BCu";
-        backLayerVias = true;
-      }
-    }
-
-    if (res.success && res.segments.length > 0) {
-      for (const [start, end] of res.segments) {
-        pcb.traces.push({
-          start: { x: start.x, y: start.y },
-          end: { x: end.x, y: end.y },
-          width,
-          layer: routeLayer,
-          net: line.net,
-        });
-        tracesAdded++;
-      }
-      for (const via of res.vias) {
-        pcb.vias.push({
-          position: { x: via.x, y: via.y },
-          diameter: pcb.rules.defaultRules.viaDiameter,
-          drill: pcb.rules.defaultRules.viaDrill,
-          startLayer: "FCu",
-          endLayer: "BCu",
-          net: line.net,
-        });
-      }
-      // Transition vias for a back-layer route: connect the FCu pads to the
-      // BCu trace at both endpoints. Skip a position that already has a via
-      // (e.g. a pad shared by two MST edges of the same net) so we don't stack
-      // coincident drills into a hole-to-hole violation.
-      if (backLayerVias) {
-        for (const p of [line.from, line.to]) {
-          const exists = pcb.vias.some(
-            (v) => Math.hypot(v.position.x - p.x, v.position.y - p.y) < 0.05,
-          );
-          if (exists) continue;
-          pcb.vias.push({
-            position: { x: p.x, y: p.y },
-            diameter: pcb.rules.defaultRules.viaDiameter,
-            drill: pcb.rules.defaultRules.viaDrill,
-            startLayer: "FCu",
-            endLayer: "BCu",
-            net: line.net,
-          });
-        }
-      }
-      routedNets.add(line.net);
-    } else {
-      // The kernel is available (we have a ratsnest) but no router found a
-      // clearance-legal path for this connection on the layer. Leave it as an
-      // unrouted air-wire rather than dropping a direct segment that would
-      // short other copper — honest failure beats fabricating a broken board.
-      // (These nets typically need another layer or rip-up-and-reroute.)
-      unroutedNets.add(line.net);
-    }
-  }
-
-  // No kernel at all: computeRatsnest returns [] — chain pads directly so
-  // the tool still produces connectivity (legacy behavior).
-  if (rats.length === 0) {
+    for (const n of result.routed_nets) routedNets.add(n);
+    for (const n of result.unrouted_nets) unroutedNets.add(n);
+  } else if (rats.length === 0) {
+    // No kernel at all: computeRatsnest returns [] and the auto-router is empty
+    // — chain pads directly so the tool still produces connectivity (legacy
+    // behavior; flagged because it may cross copper).
     for (const [netId, conns] of netConnections) {
       if (conns.length < 2) continue;
       if (netsFilter.length > 0 && !netsFilter.includes(netId)) continue;
-      if (routedNets.has(netId)) continue;
       const positions = conns.map((c) => {
         const fp = pcb.footprints.find((f) => f.ref === c.component_ref)!;
         const pad = fp.pads.find((p) => p.number === c.pin_number)!;

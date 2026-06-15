@@ -8,12 +8,14 @@
 //! - [`diff_pair`] -- Differential pair router with phase matching
 //! - [`length_tune`] -- Length tuning meander generator with DRC-aware clearance checking
 
+pub mod auto;
 pub mod diff_pair;
 pub mod grid;
 pub mod length_tune;
 pub mod maze;
 pub mod push_shove;
 
+pub use auto::{route_all, RouteAllResult, RoutedTrace, RoutedVia};
 pub use maze::route_net_maze;
 
 use vcad_ir::ecad::{Pcb, PcbLayer};

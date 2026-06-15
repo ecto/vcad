@@ -305,6 +305,59 @@ export async function routeNetMaze(
   }
 }
 
+/** A trace produced by the whole-board auto-router. */
+export interface RoutedTrace {
+  start: Vec2;
+  end: Vec2;
+  width: number;
+  layer: string;
+  net: string;
+}
+
+/** A transition via produced by the whole-board auto-router. */
+export interface RoutedVia {
+  position: Vec2;
+  net: string;
+}
+
+/** Result of {@link routeAll}. */
+export interface RouteAllResult {
+  traces: RoutedTrace[];
+  vias: RoutedVia[];
+  routed_nets: string[];
+  unrouted_nets: string[];
+}
+
+/**
+ * Auto-route a whole board over the incremental clearance oracle.
+ *
+ * Routes every unrouted net against a single growing route session (so each net
+ * avoids the ones before it), retrying on the back layer with transition vias
+ * that are probed on both layers before being placed. Every returned trace and
+ * via is clearance-legal; nets that cannot be routed legally are reported in
+ * `unrouted_nets` rather than shipped as shorting copper. Returns an empty
+ * result if the kernel is unavailable.
+ */
+export async function routeAll(
+  pcb: Pcb,
+  width: number,
+  netsFilter: string[] = [],
+): Promise<RouteAllResult> {
+  const empty: RouteAllResult = { traces: [], vias: [], routed_nets: [], unrouted_nets: [] };
+  const wasm = await loadEcadWasm();
+  if (!wasm) return empty;
+  try {
+    return wasm.ecadRouteAll(
+      JSON.stringify(pcb),
+      width,
+      JSON.stringify(netsFilter),
+    ) as RouteAllResult;
+  } catch (e) {
+    console.warn("[ECAD] Auto-route failed:", e);
+    return empty;
+  }
+}
+
 /** A single generated fabrication output file. */
 export interface FabFile {
   name: string;
