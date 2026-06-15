@@ -7321,6 +7321,7 @@ version = "0.9.3"
 dependencies = [
  "image",
  "serde_json",
+ "vcad-ecad-pcb",
  "vcad-eval",
  "vcad-ir",
  "vcad-kernel",

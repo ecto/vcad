@@ -25,7 +25,7 @@
 use std::fmt::Write as _;
 
 use vcad_ir::ecad::{
-    BoardOutline, FootprintGraphic, Pad, PadShape, Pcb, PcbLayer, Trace, TraceArc, Via, Zone,
+    BoardOutline, FootprintGraphic, Pad, PadShape, Pcb, PcbLayer, Trace, TraceArc, Via,
 };
 use vcad_ir::{stroke_font, Vec2};
 
@@ -434,14 +434,35 @@ fn draw_via(out: &mut String, xf: &Xf, v: &Via, color: &str) {
     }
 }
 
-/// Draw a copper-pour zone as a translucent filled polygon (+ hole cutouts).
-fn draw_zone(out: &mut String, xf: &Xf, z: &Zone) {
-    let color = layer_color(z.layer);
-    push_polygon(out, xf, &z.outline, color, 0.4);
-    // Holes are punched by overdrawing the board fill colour.
-    for hole in &z.holes {
-        push_polygon(out, xf, hole, BOARD_FILL, 1.0);
+/// Draw a poured copper zone from its *filled* rings — the outline minus the
+/// clearance voids around other-net copper. CCW outer rings are translucent
+/// copper; CW void rings are punched back to the board fill, so the plane shows
+/// its real cut-outs and thermal reliefs instead of a solid flood.
+fn draw_zone(out: &mut String, xf: &Xf, layer: PcbLayer, rings: &[Vec<Vec2>]) {
+    let color = layer_color(layer);
+    for ring in rings {
+        if ring.len() < 3 {
+            continue;
+        }
+        if ring_signed_area(ring) >= 0.0 {
+            push_polygon(out, xf, ring, color, 0.4);
+        } else {
+            push_polygon(out, xf, ring, BOARD_FILL, 1.0);
+        }
     }
+}
+
+/// Signed area of a ring (shoelace). Positive = CCW (copper outer), negative =
+/// CW (a punched void).
+fn ring_signed_area(ring: &[Vec2]) -> f64 {
+    let n = ring.len();
+    let mut s = 0.0;
+    for i in 0..n {
+        let a = ring[i];
+        let b = ring[(i + 1) % n];
+        s += a.x * b.y - b.x * a.y;
+    }
+    0.5 * s
 }
 
 /// Parameters for a stroke-font text run, centred on `position`.
@@ -708,11 +729,18 @@ pub fn render_pcb_svg(pcb: &Pcb, layers: &[PcbLayer], scale: f64) -> String {
     // is `(rank, insertion index, svg fragment)`.
     let mut items: Vec<(u8, usize, String)> = Vec::new();
 
-    // 2. Zones (copper pours) — drawn lowest among copper.
-    for z in &pcb.zones {
+    // 2. Zones (copper pours) — drawn lowest among copper. Pour each so the
+    //    render shows the real clearance voids + thermal relief, not a solid
+    //    flood. `fill_zones` returns one result per zone, in order.
+    let filled = vcad_ecad_pcb::copper_pour::fill_zones(pcb);
+    for (i, z) in pcb.zones.iter().enumerate() {
         if want(z.layer) {
+            let rings = filled
+                .get(i)
+                .map(|f| f.polygons.clone())
+                .unwrap_or_else(|| vec![z.outline.clone()]);
             let mut s = String::new();
-            draw_zone(&mut s, &xf, z);
+            draw_zone(&mut s, &xf, z.layer, &rings);
             // Force zones below traces of the same rank by nudging rank down.
             push_item(&mut items, layer_rank(z.layer).saturating_sub(1), s);
         }

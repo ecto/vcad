@@ -767,8 +767,12 @@ fn single_layer_mask(layer: PcbLayer) -> u16 {
 enum NodeGeom {
     /// Copper segment / disc / rect (trace, via, pad).
     Copper(CopperGeom),
-    /// A zone copper pour outline (concave allowed).
-    Polygon(Vec<Vec2>),
+    /// A zone copper pour as its *filled* rings — the poured outline minus the
+    /// clearance voids around other-net copper (CCW outer + CW holes). A point
+    /// is in the pour by the even-odd rule over the rings, so the plane connects
+    /// to same-net copper it floods over and not to the cleared other-net copper
+    /// sitting in its voids.
+    Pour(Vec<Vec<Vec2>>),
 }
 
 /// A piece of copper participating in connectivity analysis.
@@ -803,41 +807,59 @@ const TOUCH_EPS: f64 = 1e-6;
 fn node_geoms_touch(a: &NodeGeom, b: &NodeGeom) -> bool {
     match (a, b) {
         (NodeGeom::Copper(ga), NodeGeom::Copper(gb)) => ga.distance_to(gb) <= TOUCH_EPS,
-        (NodeGeom::Polygon(poly), NodeGeom::Copper(g))
-        | (NodeGeom::Copper(g), NodeGeom::Polygon(poly)) => copper_touches_polygon(g, poly),
-        (NodeGeom::Polygon(pa), NodeGeom::Polygon(pb)) => polygons_touch(pa, pb),
+        (NodeGeom::Pour(rings), NodeGeom::Copper(g))
+        | (NodeGeom::Copper(g), NodeGeom::Pour(rings)) => copper_touches_pour(g, rings),
+        (NodeGeom::Pour(ra), NodeGeom::Pour(rb)) => pours_touch(ra, rb),
     }
 }
 
-/// True if a copper geom touches/overlaps a polygon.
-fn copper_touches_polygon(g: &CopperGeom, poly: &[Vec2]) -> bool {
+/// Even-odd point-in-pour test over the filled rings.
+fn point_in_pour(rings: &[Vec<Vec2>], p: Vec2) -> bool {
+    rings.iter().filter(|r| point_in_polygon(p, r)).count() % 2 == 1
+}
+
+/// Minimum distance from a point to the nearest edge of any ring.
+fn min_dist_point_to_pour(p: Vec2, rings: &[Vec<Vec2>]) -> f64 {
+    rings
+        .iter()
+        .map(|r| min_distance_to_polygon(&p, r))
+        .fold(f64::MAX, f64::min)
+}
+
+/// True if a copper geom touches/overlaps a filled pour (even-odd over rings).
+///
+/// Copper that the plane floods over reads as inside (odd ring count); copper
+/// sitting in a clearance void reads as outside (its hole adds an even count),
+/// and is also a full `clearance` from the nearest void edge, so the proximity
+/// check never false-connects it.
+fn copper_touches_pour(g: &CopperGeom, rings: &[Vec<Vec2>]) -> bool {
     match g {
         CopperGeom::Disc { center, r } => {
-            if point_in_polygon(*center, poly) {
-                return true;
-            }
-            min_dist_point_to_polygon_edges(*center, poly) <= *r + TOUCH_EPS
+            point_in_pour(rings, *center)
+                || min_dist_point_to_pour(*center, rings) <= *r + TOUCH_EPS
         }
         CopperGeom::Segment { a, b, half_w } => {
-            if segment_polygon_intersects(*a, *b, poly) {
+            let mid = Vec2::new((a.x + b.x) / 2.0, (a.y + b.y) / 2.0);
+            if point_in_pour(rings, *a) || point_in_pour(rings, *b) || point_in_pour(rings, mid) {
                 return true;
             }
-            // Within half-width of a polygon edge.
-            min_dist_segment_to_polygon_edges(*a, *b, poly) <= *half_w + TOUCH_EPS
+            min_dist_segment_to_pour(*a, *b, rings) <= *half_w + TOUCH_EPS
         }
         CopperGeom::Rect { center, .. } => {
-            // Use the rect corners + center for a robust touch test.
-            if point_in_polygon(*center, poly) {
+            if point_in_pour(rings, *center) {
                 return true;
             }
-            let corners = rect_corners(g);
-            if corners.iter().any(|c| point_in_polygon(*c, poly)) {
-                return true;
-            }
-            // Any polygon vertex inside the rect?
-            poly.iter().any(|v| dist_point_to_rect(*v, g) <= TOUCH_EPS)
+            rect_corners(g).iter().any(|c| point_in_pour(rings, *c))
         }
     }
+}
+
+/// Minimum distance from a segment to the nearest edge of any ring.
+fn min_dist_segment_to_pour(a: Vec2, b: Vec2, rings: &[Vec<Vec2>]) -> f64 {
+    rings
+        .iter()
+        .map(|r| min_dist_segment_to_polygon_edges(a, b, r))
+        .fold(f64::MAX, f64::min)
 }
 
 /// Corners of a [`CopperGeom::Rect`] (empty otherwise).
@@ -866,17 +888,6 @@ fn rect_corners(g: &CopperGeom) -> [Vec2; 4] {
     }
 }
 
-/// Distance from a point to a rect copper geom (0 inside).
-fn dist_point_to_rect(p: Vec2, g: &CopperGeom) -> f64 {
-    let disc = CopperGeom::Disc { center: p, r: 0.0 };
-    g.distance_to(&disc)
-}
-
-/// Min distance from a point to any edge of a polygon.
-fn min_dist_point_to_polygon_edges(p: Vec2, poly: &[Vec2]) -> f64 {
-    min_distance_to_polygon(&p, poly)
-}
-
 /// Min distance from a segment to any edge of a polygon.
 fn min_dist_segment_to_polygon_edges(a: Vec2, b: Vec2, poly: &[Vec2]) -> f64 {
     let n = poly.len();
@@ -899,20 +910,20 @@ fn min_dist_segment_to_polygon_edges(a: Vec2, b: Vec2, poly: &[Vec2]) -> f64 {
     min_d
 }
 
-/// True if two polygons touch/overlap.
-fn polygons_touch(a: &[Vec2], b: &[Vec2]) -> bool {
-    if a.len() < 3 || b.len() < 3 {
-        return false;
-    }
-    if a.iter().any(|p| point_in_polygon(*p, b)) || b.iter().any(|p| point_in_polygon(*p, a)) {
+/// True if two filled pours touch/overlap (even-odd over each ring set).
+fn pours_touch(a: &[Vec<Vec2>], b: &[Vec<Vec2>]) -> bool {
+    if a.iter().flatten().any(|p| point_in_pour(b, *p))
+        || b.iter().flatten().any(|p| point_in_pour(a, *p))
+    {
         return true;
     }
-    // Edge crossings.
-    for i in 0..a.len() {
-        let a0 = a[i];
-        let a1 = a[(i + 1) % a.len()];
-        if segment_polygon_intersects(a0, a1, b) {
-            return true;
+    // Any ring edge of one crossing a ring of the other.
+    for ra in a {
+        for i in 0..ra.len() {
+            let (s, e) = (ra[i], ra[(i + 1) % ra.len()]);
+            if b.iter().any(|rb| segment_polygon_intersects(s, e, rb)) {
+                return true;
+            }
         }
     }
     false
@@ -998,13 +1009,25 @@ fn build_conn_nodes(pcb: &Pcb) -> Vec<ConnNode> {
         }
     }
 
-    for zone in &pcb.zones {
+    // Pour each zone so connectivity sees the real filled copper (outline minus
+    // clearance voids), not the raw rectangle — otherwise a ground plane reads
+    // as touching every net it overlaps. `fill_zones` returns one result per
+    // zone in order, so the index lines up with `pcb.zones`.
+    let filled = crate::copper_pour::fill_zones(pcb);
+    for (i, zone) in pcb.zones.iter().enumerate() {
         if zone.outline.len() < 3 {
+            continue;
+        }
+        let rings = filled
+            .get(i)
+            .map(|f| f.polygons.clone())
+            .unwrap_or_else(|| vec![zone.outline.clone()]);
+        if rings.iter().all(|r| r.len() < 3) {
             continue;
         }
         let pos = polygon_centroid(&zone.outline);
         nodes.push(ConnNode {
-            geom: NodeGeom::Polygon(zone.outline.clone()),
+            geom: NodeGeom::Pour(rings),
             layers: single_layer_mask(zone.layer),
             net: zone.net.clone(),
             pad: None,
@@ -1540,6 +1563,38 @@ mod tests {
         assert!(
             !clearance_violations.is_empty(),
             "should detect clearance violation between close traces"
+        );
+    }
+
+    #[test]
+    fn ground_pour_does_not_short_to_cleared_nets() {
+        let mut pcb = clean_pcb();
+        // A net "2" (GND) pour flooding the whole board on FCu. The net "1"
+        // trace and via sit inside its outline but are cleared by clearance
+        // voids — connectivity must read the FILLED copper, not the raw
+        // rectangle, so this is NOT a short.
+        pcb.zones.push(Zone {
+            outline: pcb.outline.vertices.clone(),
+            holes: vec![],
+            net: "2".to_string(),
+            layer: PcbLayer::FCu,
+            clearance: 0.3,
+            min_area: 0.0,
+            fill_type: ZoneFillType::Solid,
+            thermal_relief: ThermalReliefStyle::Relief,
+            thermal_gap: Some(0.4),
+            thermal_spoke_width: Some(0.5),
+            priority: 0,
+        });
+        let viols = check_drc(&pcb);
+        let shorts: Vec<_> = viols
+            .iter()
+            .filter(|v| v.rule == DrcRuleType::Short)
+            .map(|v| &v.message)
+            .collect();
+        assert!(
+            shorts.is_empty(),
+            "a poured plane must not short to the copper it clears, got: {shorts:?}"
         );
     }
 

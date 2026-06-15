@@ -1,0 +1,10 @@
+{
+  "id": "2026-06-15-pour-connectivity",
+  "version": "0.9.4",
+  "date": "2026-06-15",
+  "category": "fix",
+  "title": "DRC and render see poured planes, not solid floods",
+  "summary": "Connectivity DRC and the PCB renderer now use the filled copper pour (outline minus clearance voids) instead of the raw zone outline, so a ground plane no longer reads as shorting every net it overlaps and renders with its real cut-outs and thermal relief.",
+  "features": ["pcb", "drc", "copper-pour", "render"],
+  "mcpTools": ["run_drc", "render_pcb"]
+}
