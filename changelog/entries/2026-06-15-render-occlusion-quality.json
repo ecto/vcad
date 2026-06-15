@@ -1,0 +1,10 @@
+{
+  "id": "2026-06-15-render-occlusion-quality",
+  "version": "0.9.4",
+  "date": "2026-06-15",
+  "category": "feat",
+  "title": "Drafting-plate renders: HLR, smooth shading, AO, materials",
+  "summary": "render_view is now a measured-ink drafting plate: hidden-line removal with dashed occluded edges, Gouraud smooth shading, baked ambient occlusion in cavities and concave seams, material-tinted ramps, studio rim light on a vellum ground with contact shadow, and a fix for cones rendering inside-out.",
+  "features": ["render", "visualization", "materials"],
+  "mcpTools": ["render_view"]
+}
