@@ -1629,6 +1629,28 @@ export async function routeNets(args: Record<string, unknown>) {
     nets: [...netConnections.entries()].map(([name, connections]) => ({ name, connections })),
   };
 
+  // Rip up existing copper on the nets we're about to (re)route. route_all is
+  // authoritative: it returns a *complete* fresh routing for every target net,
+  // so appending it on top of last run's copper would (a) stack duplicate
+  // traces at 0mm self-clearance and (b) let the recomputed solution cross the
+  // stale one and short other nets. Worse, the kernel's ratsnest skips nets that
+  // already have a trace, so a second route_all comes back empty and the
+  // no-kernel fallback below misfires — chaining naive straight segments over
+  // the clean route. Re-running route_nets must *replace* the prior route, not
+  // add to it. Scope the rip-up to exactly the nets route_all will route — nets
+  // with >=2 pads, intersected with `netsFilter` — so hand-routes on other nets
+  // (e.g. add_coil copper) survive.
+  const targetNets = new Set<string>();
+  for (const [net, conns] of netConnections) {
+    if (conns.length < 2) continue;
+    if (netsFilter.length > 0 && !netsFilter.includes(net)) continue;
+    targetNets.add(net);
+  }
+  if (targetNets.size > 0) {
+    pcb.traces = pcb.traces.filter((t) => !targetNets.has(t.net));
+    pcb.vias = pcb.vias.filter((v) => !targetNets.has(v.net));
+  }
+
   const rats = await computeRatsnest(pcb, netlist);
 
   const routedNets = new Set<string>();
