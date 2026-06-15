@@ -242,7 +242,7 @@ fn check_clearance(
                 continue;
             }
 
-            if dist < clearance {
+            if dist < clearance - 1e-6 {
                 violations.push(DrcViolation {
                     rule: DrcRuleType::Clearance,
                     severity: DrcSeverity::Error,
@@ -333,7 +333,7 @@ fn check_pad_clearance(pcb: &Pcb, net_ties: &NetTieGroups, violations: &mut Vec<
             if net_ties.exempt(a.net, b.net, pos) {
                 continue;
             }
-            if dist < clearance {
+            if dist < clearance - 1e-6 {
                 violations.push(DrcViolation {
                     rule: DrcRuleType::Clearance,
                     severity: DrcSeverity::Error,
@@ -1198,7 +1198,7 @@ pub(crate) fn build_net_clearance_map(pcb: &Pcb) -> HashMap<String, f64> {
 }
 
 /// Build a map of net ID to minimum trace width from design rules.
-fn build_net_trace_width_map(pcb: &Pcb) -> HashMap<String, f64> {
+pub(crate) fn build_net_trace_width_map(pcb: &Pcb) -> HashMap<String, f64> {
     let mut map = HashMap::new();
     for rule in &pcb.rules.class_rules {
         if let Some(nets) = pcb.rules.net_class_assignments.get(&rule.name) {

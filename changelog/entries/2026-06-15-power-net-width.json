@@ -1,0 +1,10 @@
+{
+  "id": "2026-06-15-power-net-width",
+  "version": "0.9.4",
+  "date": "2026-06-15",
+  "category": "feat",
+  "title": "Autorouter widens power/ground nets to their class width",
+  "summary": "route_nets routes each net at its net-class trace width (wider for power/ground rails), with per-net-pair clearance so a wide net pushes thin signals away by the larger of the two rules.",
+  "features": ["pcb", "autorouter", "routing"],
+  "mcpTools": ["route_nets"]
+}

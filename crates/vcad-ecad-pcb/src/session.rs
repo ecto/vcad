@@ -26,7 +26,7 @@ use rstar::{RTree, RTreeObject, AABB};
 use vcad_ir::ecad::{Pcb, PcbLayer};
 use vcad_ir::Vec2;
 
-use crate::drc::{build_net_clearance_map, NetTieGroups};
+use crate::drc::{build_net_clearance_map, build_net_trace_width_map, NetTieGroups};
 use crate::spatial::{copper_elements, CopperElement, CopperGeom};
 
 /// Stable handle to a committed copper span in a [`RouteSession`].
@@ -85,6 +85,10 @@ pub struct RouteSession {
     net_ties: NetTieGroups,
     net_clearance: HashMap<String, f64>,
     default_clearance: f64,
+    /// Largest clearance any net requires — the broadphase must reach this far
+    /// so a wide net's clearance is never missed when it exceeds the candidate's.
+    max_clearance: f64,
+    net_width: HashMap<String, f64>,
 }
 
 impl RouteSession {
@@ -97,13 +101,21 @@ impl RouteSession {
             .enumerate()
             .map(|(id, elem)| SessionElement { id, elem })
             .collect();
+        let default_clearance = pcb.rules.default_rules.clearance;
+        let net_clearance = build_net_clearance_map(pcb);
+        let max_clearance = net_clearance
+            .values()
+            .copied()
+            .fold(default_clearance, f64::max);
         Self {
             tree: RTree::bulk_load(session_elems),
             live,
             dead: 0,
             net_ties: NetTieGroups::from_pcb(pcb),
-            net_clearance: build_net_clearance_map(pcb),
-            default_clearance: pcb.rules.default_rules.clearance,
+            net_clearance,
+            default_clearance,
+            max_clearance,
+            net_width: build_net_trace_width_map(pcb),
         }
     }
 
@@ -113,6 +125,12 @@ impl RouteSession {
             .get(net)
             .copied()
             .unwrap_or(self.default_clearance)
+    }
+
+    /// The trace width for `net` from its net class, or `fallback` if the net
+    /// has no class width (so power/ground classes route wider than signals).
+    pub fn width_for(&self, net: &str, fallback: f64) -> f64 {
+        self.net_width.get(net).copied().unwrap_or(fallback)
     }
 
     /// Number of live (non-tombstoned) copper spans.
@@ -169,11 +187,15 @@ impl RouteSession {
         net: &str,
         clearance: f64,
     ) -> ProbeResult {
+        // Reach by the larger of the candidate's clearance and the biggest
+        // clearance any net requires, so a wide net beyond the candidate's own
+        // clearance is still found in the broadphase.
+        let search = clearance.max(self.max_clearance);
         let (mut lo, mut hi) = geom_aabb(geom);
-        lo[0] -= clearance;
-        lo[1] -= clearance;
-        hi[0] += clearance;
-        hi[1] += clearance;
+        lo[0] -= search;
+        lo[1] -= search;
+        hi[0] += search;
+        hi[1] += search;
         let cand_center = geom_center(geom);
 
         let mut min_clearance = f64::INFINITY;
@@ -202,7 +224,12 @@ impl RouteSession {
             if d < min_clearance {
                 min_clearance = d;
             }
-            if d < clearance {
+            // Two nets must clear by the larger of their two rules, matching the
+            // DRC clearance pass (which flags the pair from whichever side has
+            // the bigger requirement). A wide power net thus pushes thin signals
+            // away by its own clearance, not theirs.
+            let required = clearance.max(self.clearance_for(&e.net));
+            if d < required {
                 blockers.push(Blocker {
                     span: se.id,
                     net: e.net.clone(),

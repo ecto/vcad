@@ -68,6 +68,7 @@ struct Placed {
     from: Vec2,
     to: Vec2,
     layer: PcbLayer,
+    width: f64,
     segments: Vec<(Vec2, Vec2)>,
     via_pts: Vec<Vec2>,
     spans: Vec<SpanId>,
@@ -129,7 +130,7 @@ pub fn route_all(pcb: &Pcb, width: f64, nets_filter: &[String]) -> RouteAllResul
             traces.push(RoutedTrace {
                 start: *a,
                 end: *b,
-                width,
+                width: p.width,
                 layer: p.layer,
                 net: p.net.clone(),
             });
@@ -165,12 +166,16 @@ fn try_route(
     to: Vec2,
     placed: &[Placed],
 ) -> Option<Placed> {
-    let hw = width / 2.0;
+    // Net-class width if the net has one (wider power/ground), else the caller's
+    // default. The same width drives the maze search, the committed copper, and
+    // the reported trace.
+    let w = session.width_for(net, width);
+    let hw = w / 2.0;
     let via_r = pcb.rules.default_rules.via_diameter / 2.0;
     let clearance = session.clearance_for(net);
 
     for (li, &layer) in LAYERS.iter().enumerate() {
-        let r = route_net_maze(session, &pcb.outline.vertices, layer, net, from, to, width);
+        let r = route_net_maze(session, &pcb.outline.vertices, layer, net, from, to, w);
         if !r.success || r.segments.is_empty() {
             continue;
         }
@@ -241,6 +246,7 @@ fn try_route(
             from,
             to,
             layer,
+            width: w,
             segments: r.segments,
             via_pts: new_vias,
             spans,
@@ -532,5 +538,35 @@ mod tests {
             })
             .count();
         assert_eq!(bad, 0, "must never emit shorting copper");
+    }
+
+    #[test]
+    fn power_net_routes_at_its_class_width() {
+        let mut pcb = board(vec![
+            fp("R1", 10.0, 15.0, vec![pad("1", 0.0, 0.0, "PWR")]),
+            fp("R2", 40.0, 15.0, vec![pad("1", 0.0, 0.0, "PWR")]),
+        ]);
+        // Put PWR in a wide net class.
+        pcb.rules.class_rules.push(NetClassRules {
+            name: "Power".into(),
+            trace_width: 0.6,
+            clearance: 0.2,
+            via_diameter: 0.8,
+            via_drill: 0.4,
+            diff_pair_gap: None,
+            diff_pair_width: None,
+        });
+        pcb.rules
+            .net_class_assignments
+            .insert("Power".into(), vec!["PWR".into()]);
+
+        // Default width 0.25, but PWR's class says 0.6 — every PWR trace is wide.
+        let r = route_all(&pcb, 0.25, &[]);
+        assert!(!r.traces.is_empty());
+        assert!(
+            r.traces.iter().all(|t| (t.width - 0.6).abs() < 1e-9),
+            "PWR should route at its 0.6mm class width, got {:?}",
+            r.traces.iter().map(|t| t.width).collect::<Vec<_>>()
+        );
     }
 }
