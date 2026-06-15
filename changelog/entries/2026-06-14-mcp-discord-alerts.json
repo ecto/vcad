@@ -1,0 +1,10 @@
+{
+  "id": "2026-06-14-mcp-discord-alerts",
+  "version": "0.9.4",
+  "date": "2026-06-14",
+  "category": "feat",
+  "title": "MCP: Discord activity rollups",
+  "summary": "Set a Discord webhook in notifyConfig to post a periodic summary of MCP tool usage (e.g. '23 tool calls across 4 sessions' every 15 min) — disabled by default, fire-and-forget, quiet when idle, and payload-safe (counts only, never arg values or IR).",
+  "features": ["mcp", "observability"],
+  "mcpTools": []
+}

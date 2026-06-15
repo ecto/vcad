@@ -35,6 +35,30 @@ Unset, every pack is enabled. A smaller surface costs fewer schema
 tokens per request and measurably improves tool-selection accuracy for
 focused workflows.
 
+## Discord activity rollups
+
+The server can post a periodic activity summary to a Discord channel —
+handy for seeing that a deployed server is being used without a message
+per call. Every interval the notifier posts a rollup like:
+
+```
+📊 vcad activity · last 15m
+23 tool calls across 4 sessions · 1 error
+`create` ×9 · `update` ×6 · `export_cad` ×4 · `inspect_cad` ×3 · `render_view` ×1
+```
+
+It's disabled until you set a webhook, fire-and-forget (never blocks or
+fails a tool call), and stays quiet when idle (no "0 calls" pings). Only
+tool names, call counts, error counts, and the number of distinct sessions
+are sent — never argument values or document content.
+
+Configure it in `notifyConfig` at the top of [`src/notify.ts`](src/notify.ts) —
+paste your internal Discord webhook URL into `webhookUrl` (empty disables
+it). `rollupMs` (default 15 min) and `username` live there too. The repo is
+public, so a URL committed there lands in git history; treat it as a
+low-value secret (post-only, one channel) and rotate it from Discord if
+needed.
+
 ## Agent feedback loop
 
 - **Server instructions** — the kernel's type catalog, material preset
