@@ -149,6 +149,7 @@ export {
   generateNetlist,
   routeNet,
   routeNetShove,
+  routeNetMaze,
   fillZones,
   exportFabFiles,
   parseKicadPcb,

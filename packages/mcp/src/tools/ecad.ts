@@ -37,6 +37,7 @@ import {
   generateNetlist,
   isEcadAvailable,
   routeNet,
+  routeNetMaze,
   routeNetShove,
   runDrc as kernelRunDrc,
   evaluateMotor,
@@ -1604,10 +1605,16 @@ export async function routeNets(args: Record<string, unknown>) {
   for (const line of rats) {
     if (netsFilter.length > 0 && !netsFilter.includes(line.net)) continue;
 
-    // Push-and-shove first (continuous-space, detours around copper), grid
-    // router as fallback. Each committed route becomes an obstacle for the
-    // next because we append to pcb.traces between calls.
-    let res = await routeNetShove(pcb, line.net, line.from, line.to, width);
+    // Avoiding maze router first: it clears ALL copper on the layer — traces,
+    // pads, and vias — via the exact clearance oracle, so routes don't graze
+    // other-net pads the way the bbox-based push-shove router can. Push-and-
+    // shove then the grid/wave router are fallbacks. Each committed route
+    // becomes an obstacle for the next because we append to pcb.traces between
+    // calls.
+    let res = await routeNetMaze(pcb, line.net, line.from, line.to, width);
+    if (!res.success || res.segments.length === 0) {
+      res = await routeNetShove(pcb, line.net, line.from, line.to, width);
+    }
     if (!res.success || res.segments.length === 0) {
       res = await routeNet(pcb, line.net, line.from, line.to, width);
     }

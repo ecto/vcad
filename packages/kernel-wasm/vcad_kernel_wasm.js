@@ -3691,6 +3691,39 @@ export function ecadRouteNet(pcb_json, net, start_x, start_y, end_x, end_y, widt
 }
 
 /**
+ * Route a net with the avoiding A* maze router.
+ *
+ * Unlike [`Self::ecad_route_net_shove`] (which detours around static
+ * inflated bounding boxes of other-net *traces*), this searches a grid and
+ * tests every step against the exact clearance oracle, so the route avoids
+ * *all* copper on `layer` — traces, pads, and vias. Every returned segment
+ * is clearance-legal by construction. Board-space mm in and out. Returns
+ * `{ net, segments, vias, success }`.
+ * @param {string} pcb_json
+ * @param {string} layer
+ * @param {string} net
+ * @param {number} start_x
+ * @param {number} start_y
+ * @param {number} end_x
+ * @param {number} end_y
+ * @param {number} width
+ * @returns {any}
+ */
+export function ecadRouteNetMaze(pcb_json, layer, net, start_x, start_y, end_x, end_y, width) {
+    const ptr0 = passStringToWasm0(pcb_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(layer, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ptr2 = passStringToWasm0(net, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len2 = WASM_VECTOR_LEN;
+    const ret = wasm.ecadRouteNetMaze(ptr0, len0, ptr1, len1, ptr2, len2, start_x, start_y, end_x, end_y, width);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+
+/**
  * Route a net with the push-and-shove router.
  *
  * Unlike [`Self::ecad_route_net`] (grid/wave BFS), this routes in

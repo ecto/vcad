@@ -268,6 +268,43 @@ export async function routeNetShove(
   }
 }
 
+/**
+ * Route a net with the avoiding A* maze router.
+ *
+ * Stronger avoidance than {@link routeNetShove}: it searches a grid and tests
+ * every step against the exact clearance oracle, so the route clears *all*
+ * copper on `layer` — traces, pads, and vias — not just other-net trace
+ * bounding boxes. Every returned segment is clearance-legal by construction.
+ * Same result shape; returns a failed result if the kernel is unavailable.
+ */
+export async function routeNetMaze(
+  pcb: Pcb,
+  net: string,
+  start: Vec2,
+  end: Vec2,
+  width: number,
+  layer = "FCu",
+): Promise<RouteResult> {
+  const wasm = await loadEcadWasm();
+  const fail: RouteResult = { net, segments: [], vias: [], success: false };
+  if (!wasm) return fail;
+  try {
+    return wasm.ecadRouteNetMaze(
+      JSON.stringify(pcb),
+      layer,
+      net,
+      start.x,
+      start.y,
+      end.x,
+      end.y,
+      width,
+    ) as RouteResult;
+  } catch (e) {
+    console.warn("[ECAD] Maze routing failed:", e);
+    return fail;
+  }
+}
+
 /** A single generated fabrication output file. */
 export interface FabFile {
   name: string;
