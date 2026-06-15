@@ -136,6 +136,7 @@ import {
   VIEWER_CSP,
   MCP_APP_MIME_TYPE,
 } from "./viewer.js";
+import { fireToolAlert } from "./notify.js";
 
 /** Tools that produce or modify geometry and should show the 3D viewer.
  *  Registry-driven kernel tools (create, update, delete, …) are added
@@ -843,7 +844,7 @@ export async function createServer(existingEngine?: Engine): Promise<Server> {
     const { name, arguments: args = {} } = request.params;
 
     if (disabledTools.has(name)) {
-      return {
+      const disabledResult = {
         content: [
           {
             type: "text",
@@ -852,6 +853,8 @@ export async function createServer(existingEngine?: Engine): Promise<Server> {
         ],
         isError: true,
       };
+      fireToolAlert(name, args, disabledResult);
+      return disabledResult;
     }
 
     try {
@@ -873,6 +876,7 @@ export async function createServer(existingEngine?: Engine): Promise<Server> {
           attachPreviewHandle(result, docId, name);
           slimPreviewForInlineUi(result, docId, name, clientHasInlineUi());
         }
+        fireToolAlert(name, args, result);
         return result;
       }
 
@@ -1087,11 +1091,14 @@ export async function createServer(existingEngine?: Engine): Promise<Server> {
           result = calcRf(args);
           break;
 
-        default:
-          return {
+        default: {
+          const unknownResult = {
             content: [{ type: "text", text: `Unknown tool: ${name}` }],
             isError: true,
           };
+          fireToolAlert(name, args, unknownResult);
+          return unknownResult;
+        }
       }
 
       // ── MCP Apps: attach preview handle for geometry tools ──────
@@ -1105,13 +1112,16 @@ export async function createServer(existingEngine?: Engine): Promise<Server> {
         }
       }
 
+      fireToolAlert(name, args, result);
       return result;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      return {
+      const errorResult = {
         content: [{ type: "text", text: `Error: ${message}` }],
         isError: true,
       };
+      fireToolAlert(name, args, errorResult);
+      return errorResult;
     }
   });
 
