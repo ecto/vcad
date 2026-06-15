@@ -155,11 +155,23 @@ import {
 /** Tools that produce or modify geometry and should show the 3D viewer.
  *  Registry-driven kernel tools (create, update, delete, …) are added
  *  dynamically in `createServer` once their names are known. */
+/** Build-time injected version. esbuild's `--define:__VCAD_VERSION__` (see
+ *  services/mcp/build.sh) replaces this with the package.json version literal
+ *  when bundling the hosted server, where the flattened layout breaks the
+ *  source-relative `../package.json` require below. Undefined in the normal
+ *  tsc `dist/` build — `typeof` guards against the ReferenceError. */
+declare const __VCAD_VERSION__: string | undefined;
+
 /** Server version + build identity, read from package.json at load time so the
  *  advertised version always matches the running build (no hardcoded literal to
  *  drift). VCAD_BUILD_SHA, if injected at build/deploy time, fingerprints the
  *  exact commit so a stale deploy is detectable via `server_info`. */
 const PKG_VERSION: string = (() => {
+  // Bundled hosted build: the version is baked in via esbuild define, since the
+  // require path below resolves to a nonexistent sibling of the single bundle.
+  if (typeof __VCAD_VERSION__ === "string" && __VCAD_VERSION__) {
+    return __VCAD_VERSION__;
+  }
   try {
     const req = createRequire(import.meta.url);
     return (req("../package.json") as { version?: string }).version ?? "0.0.0";
