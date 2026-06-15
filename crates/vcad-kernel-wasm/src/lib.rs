@@ -4787,6 +4787,17 @@ mod ecad_wasm {
         serde_wasm_bindgen::to_value(&violations).map_err(|e| JsError::new(&e.to_string()))
     }
 
+    /// Audit one net's routing without mutating anything: length, via/layer
+    /// count, the closest approach to other-net copper (via the router oracle),
+    /// and any clearance/short/unconnected DRC issues it's involved in. The
+    /// read-only "inspect before you trust the route" verb.
+    #[wasm_bindgen(js_name = ecadCritiqueRoute)]
+    pub fn ecad_critique_route(pcb_json: &str, net: &str) -> Result<JsValue, JsError> {
+        let pcb: Pcb = serde_json::from_str(pcb_json).map_err(|e| JsError::new(&e.to_string()))?;
+        let critique = vcad_ecad_pcb::critique_net(&pcb, net);
+        serde_wasm_bindgen::to_value(&critique).map_err(|e| JsError::new(&e.to_string()))
+    }
+
     /// Evaluate first-order analytical motor performance from a JSON
     /// `MotorSpec`: torque constant Kt, back-EMF constant Ke, no-load speed,
     /// stall torque, and a speed–torque curve. Lets an agent ask "is this motor
@@ -4939,6 +4950,102 @@ mod ecad_wasm {
             width,
         );
         serde_wasm_bindgen::to_value(&result).map_err(|e| JsError::new(&e.to_string()))
+    }
+
+    /// Route a net with the avoiding A* maze router.
+    ///
+    /// Unlike [`Self::ecad_route_net_shove`] (which detours around static
+    /// inflated bounding boxes of other-net *traces*), this searches a grid and
+    /// tests every step against the exact clearance oracle, so the route avoids
+    /// *all* copper on `layer` — traces, pads, and vias. Every returned segment
+    /// is clearance-legal by construction. Board-space mm in and out. Returns
+    /// `{ net, segments, vias, success }`.
+    #[wasm_bindgen(js_name = ecadRouteNetMaze)]
+    #[allow(clippy::too_many_arguments)]
+    pub fn ecad_route_net_maze(
+        pcb_json: &str,
+        layer: &str,
+        net: &str,
+        start_x: f64,
+        start_y: f64,
+        end_x: f64,
+        end_y: f64,
+        width: f64,
+    ) -> Result<JsValue, JsError> {
+        let pcb: Pcb = serde_json::from_str(pcb_json).map_err(|e| JsError::new(&e.to_string()))?;
+        let pcb_layer: vcad_ir::ecad::PcbLayer =
+            serde_json::from_str(&format!("\"{layer}\"")).unwrap_or(vcad_ir::ecad::PcbLayer::FCu);
+        let result = vcad_ecad_pcb::router::route_net_maze_pcb(
+            &pcb,
+            pcb_layer,
+            net,
+            vcad_ir::Vec2 {
+                x: start_x,
+                y: start_y,
+            },
+            vcad_ir::Vec2 { x: end_x, y: end_y },
+            width,
+        );
+        serde_wasm_bindgen::to_value(&result).map_err(|e| JsError::new(&e.to_string()))
+    }
+
+    /// Auto-route the whole board over the incremental oracle.
+    ///
+    /// Computes the MST ratsnest and routes every unrouted net against a single
+    /// growing route session, retrying on the back layer with transition vias
+    /// that are probed on both layers before being committed. Returns
+    /// `{ traces, vias, routed_nets, unrouted_nets }`; every returned trace and
+    /// via is clearance-legal, or the net is reported unrouted — the router
+    /// never emits copper that shorts.
+    #[wasm_bindgen(js_name = ecadRouteAll)]
+    pub fn ecad_route_all(
+        pcb_json: &str,
+        width: f64,
+        nets_filter_json: &str,
+    ) -> Result<JsValue, JsError> {
+        let pcb: Pcb = serde_json::from_str(pcb_json).map_err(|e| JsError::new(&e.to_string()))?;
+        let filter: Vec<String> = serde_json::from_str(nets_filter_json).unwrap_or_default();
+        let result = vcad_ecad_pcb::router::route_all(&pcb, width, &filter);
+        serde_wasm_bindgen::to_value(&result).map_err(|e| JsError::new(&e.to_string()))
+    }
+
+    /// Route a declared differential pair (P/N) coupled and length-matched.
+    ///
+    /// Gap and leg width come from the pair's diff-pair net class. Returns
+    /// `{ success, p, n }` where `p`/`n` are the two routed legs (each
+    /// `{ net, segments, vias, success }`), or `success:false` when the pair
+    /// can't be resolved (each net needs exactly two pads).
+    #[wasm_bindgen(js_name = ecadRouteDiffPair)]
+    pub fn ecad_route_diff_pair(
+        pcb_json: &str,
+        net_p: &str,
+        net_n: &str,
+    ) -> Result<JsValue, JsError> {
+        // A struct (not serde_json::json!) so serde-wasm-bindgen emits a plain
+        // JS object — a json! Map would serialize as a JS Map and `.success`
+        // would read undefined.
+        #[derive(serde::Serialize)]
+        struct DiffPairOut {
+            success: bool,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            p: Option<vcad_ecad_pcb::router::RouteResult>,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            n: Option<vcad_ecad_pcb::router::RouteResult>,
+        }
+        let pcb: Pcb = serde_json::from_str(pcb_json).map_err(|e| JsError::new(&e.to_string()))?;
+        let out = match vcad_ecad_pcb::router::route_diff_pair(&pcb, net_p, net_n) {
+            Some((p, n)) => DiffPairOut {
+                success: true,
+                p: Some(p),
+                n: Some(n),
+            },
+            None => DiffPairOut {
+                success: false,
+                p: None,
+                n: None,
+            },
+        };
+        serde_wasm_bindgen::to_value(&out).map_err(|e| JsError::new(&e.to_string()))
     }
 
     /// Fill copper pour zones on the PCB.

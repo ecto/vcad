@@ -37,8 +37,9 @@ import {
   footprintForName,
   generateNetlist,
   isEcadAvailable,
-  routeNet,
-  routeNetShove,
+  routeAll,
+  routeDiffPair as kernelRouteDiffPair,
+  critiqueRoute as kernelCritiqueRoute,
   runDrc as kernelRunDrc,
   evaluateMotor,
   airgapFluxDensity,
@@ -585,6 +586,30 @@ export const runErcSchema = {
     ...docInputProperties,
   },
   required: [],
+};
+
+/** JSON Schema for critique_route tool. */
+export const critiqueRouteSchema = {
+  type: "object" as const,
+  properties: {
+    ...docInputProperties,
+    net: {
+      type: "string" as const,
+      description: "Net to audit (read-only — mutates nothing).",
+    },
+  },
+  required: ["net"],
+};
+
+/** JSON Schema for route_diff_pair tool. */
+export const routeDiffPairSchema = {
+  type: "object" as const,
+  properties: {
+    ...docInputProperties,
+    net_p: { type: "string" as const, description: "Positive-polarity net of the pair." },
+    net_n: { type: "string" as const, description: "Negative-polarity net of the pair." },
+  },
+  required: ["net_p", "net_n"],
 };
 
 /** JSON Schema for export_gerber tool. */
@@ -1608,64 +1633,50 @@ export async function routeNets(args: Record<string, unknown>) {
 
   const routedNets = new Set<string>();
   const fallbackNets = new Set<string>();
+  const unroutedNets = new Set<string>();
   let tracesAdded = 0;
 
-  for (const line of rats) {
-    if (netsFilter.length > 0 && !netsFilter.includes(line.net)) continue;
+  // Auto-route the whole board in the kernel: every net is routed against one
+  // growing clearance oracle and retried on the back layer with transition vias
+  // that are probed before placement, so the returned copper is clearance-legal
+  // by construction. Nets that can't be routed legally come back in
+  // `unrouted_nets` instead of being shipped as a short.
+  const result = await routeAll(pcb, width, netsFilter);
+  const routedSomething =
+    result.traces.length > 0 || result.vias.length > 0 || result.unrouted_nets.length > 0;
 
-    // Push-and-shove first (continuous-space, detours around copper), grid
-    // router as fallback. Each committed route becomes an obstacle for the
-    // next because we append to pcb.traces between calls.
-    let res = await routeNetShove(pcb, line.net, line.from, line.to, width);
-    if (!res.success || res.segments.length === 0) {
-      res = await routeNet(pcb, line.net, line.from, line.to, width);
-    }
-
-    if (res.success && res.segments.length > 0) {
-      for (const [start, end] of res.segments) {
-        pcb.traces.push({
-          start: { x: start.x, y: start.y },
-          end: { x: end.x, y: end.y },
-          width,
-          layer: "FCu",
-          net: line.net,
-        });
-        tracesAdded++;
-      }
-      for (const via of res.vias) {
-        pcb.vias.push({
-          position: { x: via.x, y: via.y },
-          diameter: pcb.rules.defaultRules.viaDiameter,
-          drill: pcb.rules.defaultRules.viaDrill,
-          startLayer: "FCu",
-          endLayer: "BCu",
-          net: line.net,
-        });
-      }
-      routedNets.add(line.net);
-    } else {
-      // Last resort (kernel unavailable or no path found): direct segment.
-      // Flagged so callers know this connection may cross other copper.
+  if (routedSomething) {
+    for (const t of result.traces) {
       pcb.traces.push({
-        start: { x: line.from.x, y: line.from.y },
-        end: { x: line.to.x, y: line.to.y },
-        width,
-        layer: "FCu",
-        net: line.net,
+        start: { x: t.start.x, y: t.start.y },
+        end: { x: t.end.x, y: t.end.y },
+        width: t.width,
+        // The kernel returns the layer as a string ("FCu"/"BCu"); it is always
+        // a valid PcbLayer value.
+        layer: t.layer as PcbLayer,
+        net: t.net,
       });
       tracesAdded++;
-      routedNets.add(line.net);
-      fallbackNets.add(line.net);
     }
-  }
-
-  // No kernel at all: computeRatsnest returns [] — chain pads directly so
-  // the tool still produces connectivity (legacy behavior).
-  if (rats.length === 0) {
+    for (const v of result.vias) {
+      pcb.vias.push({
+        position: { x: v.position.x, y: v.position.y },
+        diameter: pcb.rules.defaultRules.viaDiameter,
+        drill: pcb.rules.defaultRules.viaDrill,
+        startLayer: "FCu",
+        endLayer: "BCu",
+        net: v.net,
+      });
+    }
+    for (const n of result.routed_nets) routedNets.add(n);
+    for (const n of result.unrouted_nets) unroutedNets.add(n);
+  } else if (rats.length === 0) {
+    // No kernel at all: computeRatsnest returns [] and the auto-router is empty
+    // — chain pads directly so the tool still produces connectivity (legacy
+    // behavior; flagged because it may cross copper).
     for (const [netId, conns] of netConnections) {
       if (conns.length < 2) continue;
       if (netsFilter.length > 0 && !netsFilter.includes(netId)) continue;
-      if (routedNets.has(netId)) continue;
       const positions = conns.map((c) => {
         const fp = pcb.footprints.find((f) => f.ref === c.component_ref)!;
         const pad = fp.pads.find((p) => p.number === c.pin_number)!;
@@ -1686,6 +1697,18 @@ export async function routeNets(args: Record<string, unknown>) {
     }
   }
 
+  const warnings: string[] = [];
+  if (unroutedNets.size > 0) {
+    warnings.push(
+      `${unroutedNets.size} net(s) could not be routed without shorting and were left unrouted (no copper added) — they need another layer or rip-up rerouting: ${[...unroutedNets].join(", ")}`,
+    );
+  }
+  if (fallbackNets.size > 0) {
+    warnings.push(
+      `${fallbackNets.size} net(s) used direct fallback segments that may cross other copper — run run_drc to verify`,
+    );
+  }
+
   return {
     content: [
       {
@@ -1694,14 +1717,9 @@ export async function routeNets(args: Record<string, unknown>) {
           success: true,
           nets_routed: routedNets.size,
           traces_added: tracesAdded,
-          ...(fallbackNets.size > 0
-            ? {
-                fallback_nets: [...fallbackNets],
-                warnings: [
-                  `${fallbackNets.size} net(s) used direct fallback segments that may cross other copper — run run_drc to verify`,
-                ],
-              }
-            : {}),
+          ...(unroutedNets.size > 0 ? { unrouted_nets: [...unroutedNets] } : {}),
+          ...(fallbackNets.size > 0 ? { fallback_nets: [...fallbackNets] } : {}),
+          ...(warnings.length > 0 ? { warnings } : {}),
           ...docResultPayload(ctx),
         }),
       },
@@ -1860,6 +1878,103 @@ export function aggregateDrc(
   };
   if (detail === "full") summary.details = violations;
   return summary;
+}
+
+/** Route a declared differential pair (P/N) coupled + length-matched, committing the legs. */
+export async function routeDiffPair(args: Record<string, unknown>) {
+  const ctx = resolveDocInput(args);
+  const pcb = getDocPcb(ctx.doc);
+  if (!pcb) {
+    return {
+      content: [{ type: "text" as const, text: "Error: Document has no PCB" }],
+      isError: true,
+    };
+  }
+  const netP = String(args.net_p ?? "");
+  const netN = String(args.net_n ?? "");
+  if (!netP || !netN) {
+    return {
+      content: [{ type: "text" as const, text: "Error: 'net_p' and 'net_n' are required" }],
+      isError: true,
+    };
+  }
+
+  const res = await kernelRouteDiffPair(pcb, netP, netN);
+  if (!res.success || !res.p || !res.n) {
+    return {
+      content: [
+        {
+          type: "text" as const,
+          text: JSON.stringify({
+            success: false,
+            reason:
+              "could not resolve the pair — each of net_p/net_n needs exactly two pads, " +
+              "or the kernel is unavailable",
+          }),
+        },
+      ],
+    };
+  }
+
+  // Leg width: the pair's diff-pair-class width, else the default.
+  const cls = (pcb.rules.classRules ?? []).find(
+    (c) =>
+      c.diffPairGap != null &&
+      (pcb.rules.netClassAssignments?.[c.name] ?? []).includes(netP),
+  );
+  const width = cls?.diffPairWidth ?? cls?.traceWidth ?? pcb.rules.defaultRules.traceWidth;
+
+  let added = 0;
+  for (const leg of [res.p, res.n]) {
+    for (const [s, e] of leg.segments) {
+      pcb.traces.push({
+        start: { x: s.x, y: s.y },
+        end: { x: e.x, y: e.y },
+        width,
+        layer: "FCu",
+        net: leg.net,
+      });
+      added++;
+    }
+  }
+
+  return {
+    content: [
+      {
+        type: "text" as const,
+        text: JSON.stringify({ success: true, traces_added: added, ...docResultPayload(ctx) }),
+      },
+    ],
+  };
+}
+
+/** Read-only audit of one net's routing: length, vias, clearance margin, DRC issues. */
+export async function critiqueRoute(args: Record<string, unknown>) {
+  const { doc } = resolveDocInput(args);
+  const pcb = getDocPcb(doc);
+  if (!pcb) {
+    return {
+      content: [{ type: "text" as const, text: "Error: Document has no PCB" }],
+      isError: true,
+    };
+  }
+  const net = String(args.net ?? "");
+  if (!net) {
+    return {
+      content: [{ type: "text" as const, text: "Error: 'net' is required" }],
+      isError: true,
+    };
+  }
+  const critique = await kernelCritiqueRoute(pcb, net);
+  if (!critique) {
+    return {
+      content: [
+        { type: "text" as const, text: "critique_route unavailable: kernel WASM not loaded" },
+      ],
+      isError: true,
+    };
+  }
+  return { content: [{ type: "text" as const, text: JSON.stringify(critique) }] };
 }
 
 export async function runDrc(args: Record<string, unknown>) {

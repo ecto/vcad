@@ -80,9 +80,10 @@ pub fn check_drc(pcb: &Pcb) -> Vec<DrcViolation> {
     let mut violations = Vec::new();
     let index = SpatialIndex::from_pcb(pcb);
     let net_ties = NetTieGroups::from_pcb(pcb);
+    let dp_map = build_diff_pair_gap_map(pcb);
 
-    check_clearance(pcb, &index, &net_ties, &mut violations);
-    check_pad_clearance(pcb, &net_ties, &mut violations);
+    check_clearance(pcb, &index, &net_ties, &dp_map, &mut violations);
+    check_pad_clearance(pcb, &net_ties, &dp_map, &mut violations);
     check_min_trace_width(pcb, &mut violations);
     check_min_drill(pcb, &mut violations);
     check_edge_clearance(pcb, &mut violations);
@@ -191,6 +192,7 @@ fn check_clearance(
     pcb: &Pcb,
     index: &SpatialIndex,
     net_ties: &NetTieGroups,
+    dp_map: &HashMap<(String, String), f64>,
     violations: &mut Vec<DrcViolation>,
 ) {
     let default_clearance = pcb.rules.default_rules.clearance;
@@ -242,17 +244,20 @@ fn check_clearance(
                 continue;
             }
 
-            if dist < clearance {
+            // A declared diff-pair partner only needs to clear by its gap, so
+            // the intentional close coupling isn't flagged as a short.
+            let required = pair_aware_clearance(dp_map, &trace.net, &elem.net, clearance);
+            if dist < required - 1e-6 {
                 violations.push(DrcViolation {
                     rule: DrcRuleType::Clearance,
                     severity: DrcSeverity::Error,
                     position: contact,
                     message: format!(
                         "Clearance violation: trace net '{}' to net '{}': {:.3}mm < {:.3}mm",
-                        trace.net, elem.net, dist, clearance
+                        trace.net, elem.net, dist, required
                     ),
                     actual: dist,
-                    required: clearance,
+                    required,
                 });
             }
         }
@@ -263,7 +268,12 @@ fn check_clearance(
 ///
 /// The trace pass covers trace↔copper pairs; this covers pad↔pad shorts
 /// (overlapping footprints or stacked pads), which that pass never sees.
-fn check_pad_clearance(pcb: &Pcb, net_ties: &NetTieGroups, violations: &mut Vec<DrcViolation>) {
+fn check_pad_clearance(
+    pcb: &Pcb,
+    net_ties: &NetTieGroups,
+    dp_map: &HashMap<(String, String), f64>,
+    violations: &mut Vec<DrcViolation>,
+) {
     let default_clearance = pcb.rules.default_rules.clearance;
     let net_clearance = build_net_clearance_map(pcb);
 
@@ -313,7 +323,7 @@ fn check_pad_clearance(pcb: &Pcb, net_ties: &NetTieGroups, violations: &mut Vec<
                 continue;
             }
 
-            let clearance = net_clearance
+            let base = net_clearance
                 .get(a.net)
                 .copied()
                 .unwrap_or(default_clearance)
@@ -323,6 +333,8 @@ fn check_pad_clearance(pcb: &Pcb, net_ties: &NetTieGroups, violations: &mut Vec<
                         .copied()
                         .unwrap_or(default_clearance),
                 );
+            // Diff-pair pads only need their gap, not the full clearance.
+            let clearance = pair_aware_clearance(dp_map, a.net, b.net, base);
 
             // True copper-to-copper distance, respecting pad rotation.
             let dist = a.geom.distance_to(&b.geom);
@@ -333,7 +345,7 @@ fn check_pad_clearance(pcb: &Pcb, net_ties: &NetTieGroups, violations: &mut Vec<
             if net_ties.exempt(a.net, b.net, pos) {
                 continue;
             }
-            if dist < clearance {
+            if dist < clearance - 1e-6 {
                 violations.push(DrcViolation {
                     rule: DrcRuleType::Clearance,
                     severity: DrcSeverity::Error,
@@ -767,8 +779,12 @@ fn single_layer_mask(layer: PcbLayer) -> u16 {
 enum NodeGeom {
     /// Copper segment / disc / rect (trace, via, pad).
     Copper(CopperGeom),
-    /// A zone copper pour outline (concave allowed).
-    Polygon(Vec<Vec2>),
+    /// A zone copper pour as its *filled* rings — the poured outline minus the
+    /// clearance voids around other-net copper (CCW outer + CW holes). A point
+    /// is in the pour by the even-odd rule over the rings, so the plane connects
+    /// to same-net copper it floods over and not to the cleared other-net copper
+    /// sitting in its voids.
+    Pour(Vec<Vec<Vec2>>),
 }
 
 /// A piece of copper participating in connectivity analysis.
@@ -803,41 +819,59 @@ const TOUCH_EPS: f64 = 1e-6;
 fn node_geoms_touch(a: &NodeGeom, b: &NodeGeom) -> bool {
     match (a, b) {
         (NodeGeom::Copper(ga), NodeGeom::Copper(gb)) => ga.distance_to(gb) <= TOUCH_EPS,
-        (NodeGeom::Polygon(poly), NodeGeom::Copper(g))
-        | (NodeGeom::Copper(g), NodeGeom::Polygon(poly)) => copper_touches_polygon(g, poly),
-        (NodeGeom::Polygon(pa), NodeGeom::Polygon(pb)) => polygons_touch(pa, pb),
+        (NodeGeom::Pour(rings), NodeGeom::Copper(g))
+        | (NodeGeom::Copper(g), NodeGeom::Pour(rings)) => copper_touches_pour(g, rings),
+        (NodeGeom::Pour(ra), NodeGeom::Pour(rb)) => pours_touch(ra, rb),
     }
 }
 
-/// True if a copper geom touches/overlaps a polygon.
-fn copper_touches_polygon(g: &CopperGeom, poly: &[Vec2]) -> bool {
+/// Even-odd point-in-pour test over the filled rings.
+fn point_in_pour(rings: &[Vec<Vec2>], p: Vec2) -> bool {
+    rings.iter().filter(|r| point_in_polygon(p, r)).count() % 2 == 1
+}
+
+/// Minimum distance from a point to the nearest edge of any ring.
+fn min_dist_point_to_pour(p: Vec2, rings: &[Vec<Vec2>]) -> f64 {
+    rings
+        .iter()
+        .map(|r| min_distance_to_polygon(&p, r))
+        .fold(f64::MAX, f64::min)
+}
+
+/// True if a copper geom touches/overlaps a filled pour (even-odd over rings).
+///
+/// Copper that the plane floods over reads as inside (odd ring count); copper
+/// sitting in a clearance void reads as outside (its hole adds an even count),
+/// and is also a full `clearance` from the nearest void edge, so the proximity
+/// check never false-connects it.
+fn copper_touches_pour(g: &CopperGeom, rings: &[Vec<Vec2>]) -> bool {
     match g {
         CopperGeom::Disc { center, r } => {
-            if point_in_polygon(*center, poly) {
-                return true;
-            }
-            min_dist_point_to_polygon_edges(*center, poly) <= *r + TOUCH_EPS
+            point_in_pour(rings, *center)
+                || min_dist_point_to_pour(*center, rings) <= *r + TOUCH_EPS
         }
         CopperGeom::Segment { a, b, half_w } => {
-            if segment_polygon_intersects(*a, *b, poly) {
+            let mid = Vec2::new((a.x + b.x) / 2.0, (a.y + b.y) / 2.0);
+            if point_in_pour(rings, *a) || point_in_pour(rings, *b) || point_in_pour(rings, mid) {
                 return true;
             }
-            // Within half-width of a polygon edge.
-            min_dist_segment_to_polygon_edges(*a, *b, poly) <= *half_w + TOUCH_EPS
+            min_dist_segment_to_pour(*a, *b, rings) <= *half_w + TOUCH_EPS
         }
         CopperGeom::Rect { center, .. } => {
-            // Use the rect corners + center for a robust touch test.
-            if point_in_polygon(*center, poly) {
+            if point_in_pour(rings, *center) {
                 return true;
             }
-            let corners = rect_corners(g);
-            if corners.iter().any(|c| point_in_polygon(*c, poly)) {
-                return true;
-            }
-            // Any polygon vertex inside the rect?
-            poly.iter().any(|v| dist_point_to_rect(*v, g) <= TOUCH_EPS)
+            rect_corners(g).iter().any(|c| point_in_pour(rings, *c))
         }
     }
+}
+
+/// Minimum distance from a segment to the nearest edge of any ring.
+fn min_dist_segment_to_pour(a: Vec2, b: Vec2, rings: &[Vec<Vec2>]) -> f64 {
+    rings
+        .iter()
+        .map(|r| min_dist_segment_to_polygon_edges(a, b, r))
+        .fold(f64::MAX, f64::min)
 }
 
 /// Corners of a [`CopperGeom::Rect`] (empty otherwise).
@@ -866,17 +900,6 @@ fn rect_corners(g: &CopperGeom) -> [Vec2; 4] {
     }
 }
 
-/// Distance from a point to a rect copper geom (0 inside).
-fn dist_point_to_rect(p: Vec2, g: &CopperGeom) -> f64 {
-    let disc = CopperGeom::Disc { center: p, r: 0.0 };
-    g.distance_to(&disc)
-}
-
-/// Min distance from a point to any edge of a polygon.
-fn min_dist_point_to_polygon_edges(p: Vec2, poly: &[Vec2]) -> f64 {
-    min_distance_to_polygon(&p, poly)
-}
-
 /// Min distance from a segment to any edge of a polygon.
 fn min_dist_segment_to_polygon_edges(a: Vec2, b: Vec2, poly: &[Vec2]) -> f64 {
     let n = poly.len();
@@ -899,20 +922,20 @@ fn min_dist_segment_to_polygon_edges(a: Vec2, b: Vec2, poly: &[Vec2]) -> f64 {
     min_d
 }
 
-/// True if two polygons touch/overlap.
-fn polygons_touch(a: &[Vec2], b: &[Vec2]) -> bool {
-    if a.len() < 3 || b.len() < 3 {
-        return false;
-    }
-    if a.iter().any(|p| point_in_polygon(*p, b)) || b.iter().any(|p| point_in_polygon(*p, a)) {
+/// True if two filled pours touch/overlap (even-odd over each ring set).
+fn pours_touch(a: &[Vec<Vec2>], b: &[Vec<Vec2>]) -> bool {
+    if a.iter().flatten().any(|p| point_in_pour(b, *p))
+        || b.iter().flatten().any(|p| point_in_pour(a, *p))
+    {
         return true;
     }
-    // Edge crossings.
-    for i in 0..a.len() {
-        let a0 = a[i];
-        let a1 = a[(i + 1) % a.len()];
-        if segment_polygon_intersects(a0, a1, b) {
-            return true;
+    // Any ring edge of one crossing a ring of the other.
+    for ra in a {
+        for i in 0..ra.len() {
+            let (s, e) = (ra[i], ra[(i + 1) % ra.len()]);
+            if b.iter().any(|rb| segment_polygon_intersects(s, e, rb)) {
+                return true;
+            }
         }
     }
     false
@@ -998,13 +1021,25 @@ fn build_conn_nodes(pcb: &Pcb) -> Vec<ConnNode> {
         }
     }
 
-    for zone in &pcb.zones {
+    // Pour each zone so connectivity sees the real filled copper (outline minus
+    // clearance voids), not the raw rectangle — otherwise a ground plane reads
+    // as touching every net it overlaps. `fill_zones` returns one result per
+    // zone in order, so the index lines up with `pcb.zones`.
+    let filled = crate::copper_pour::fill_zones(pcb);
+    for (i, zone) in pcb.zones.iter().enumerate() {
         if zone.outline.len() < 3 {
+            continue;
+        }
+        let rings = filled
+            .get(i)
+            .map(|f| f.polygons.clone())
+            .unwrap_or_else(|| vec![zone.outline.clone()]);
+        if rings.iter().all(|r| r.len() < 3) {
             continue;
         }
         let pos = polygon_centroid(&zone.outline);
         nodes.push(ConnNode {
-            geom: NodeGeom::Polygon(zone.outline.clone()),
+            geom: NodeGeom::Pour(rings),
             layers: single_layer_mask(zone.layer),
             net: zone.net.clone(),
             pad: None,
@@ -1162,7 +1197,7 @@ impl Dsu {
 }
 
 /// Build a map of net ID to clearance from design rules.
-fn build_net_clearance_map(pcb: &Pcb) -> HashMap<String, f64> {
+pub(crate) fn build_net_clearance_map(pcb: &Pcb) -> HashMap<String, f64> {
     let mut map = HashMap::new();
     for rule in &pcb.rules.class_rules {
         if let Some(nets) = pcb.rules.net_class_assignments.get(&rule.name) {
@@ -1175,7 +1210,7 @@ fn build_net_clearance_map(pcb: &Pcb) -> HashMap<String, f64> {
 }
 
 /// Build a map of net ID to minimum trace width from design rules.
-fn build_net_trace_width_map(pcb: &Pcb) -> HashMap<String, f64> {
+pub(crate) fn build_net_trace_width_map(pcb: &Pcb) -> HashMap<String, f64> {
     let mut map = HashMap::new();
     for rule in &pcb.rules.class_rules {
         if let Some(nets) = pcb.rules.net_class_assignments.get(&rule.name) {
@@ -1185,6 +1220,108 @@ fn build_net_trace_width_map(pcb: &Pcb) -> HashMap<String, f64> {
         }
     }
     map
+}
+
+/// A declared differential pair: two nets in a diff-pair net class matched by
+/// base name (`FOO_P`/`FOO_N`, `FOO+`/`FOO-`).
+pub(crate) struct DiffPair {
+    /// Positive-polarity net.
+    pub net_p: String,
+    /// Negative-polarity net.
+    pub net_n: String,
+    /// Target gap between the two traces (mm).
+    pub gap: f64,
+    /// Trace width for each leg (mm).
+    pub width: f64,
+}
+
+/// Strip a polarity suffix, returning `(base, is_positive)`.
+fn split_polarity(net: &str) -> Option<(String, bool)> {
+    for (suf, pos) in [
+        ("_P", true),
+        ("_N", false),
+        ("_p", true),
+        ("_n", false),
+        ("+", true),
+        ("-", false),
+    ] {
+        if let Some(base) = net.strip_suffix(suf) {
+            if !base.is_empty() {
+                return Some((base.to_string(), pos));
+            }
+        }
+    }
+    None
+}
+
+/// Find every differential pair declared on the board: nets assigned to a class
+/// that carries `diff_pair_gap`, matched into +/- pairs by base name.
+pub(crate) fn diff_pairs(pcb: &Pcb) -> Vec<DiffPair> {
+    let mut pairs = Vec::new();
+    for class in &pcb.rules.class_rules {
+        let Some(gap) = class.diff_pair_gap else {
+            continue;
+        };
+        let width = class.diff_pair_width.unwrap_or(class.trace_width);
+        let Some(nets) = pcb.rules.net_class_assignments.get(&class.name) else {
+            continue;
+        };
+        let mut bases: std::collections::BTreeMap<String, (Option<String>, Option<String>)> =
+            Default::default();
+        for net in nets {
+            if let Some((base, pos)) = split_polarity(net) {
+                let e = bases.entry(base).or_default();
+                if pos {
+                    e.0 = Some(net.clone());
+                } else {
+                    e.1 = Some(net.clone());
+                }
+            }
+        }
+        for (_, (p, n)) in bases {
+            if let (Some(net_p), Some(net_n)) = (p, n) {
+                pairs.push(DiffPair {
+                    net_p,
+                    net_n,
+                    gap,
+                    width,
+                });
+            }
+        }
+    }
+    pairs
+}
+
+/// Map an unordered net pair to its differential-pair gap (its required
+/// clearance), so the clearance passes let a pair couple to its declared gap
+/// instead of false-flagging the intentional close spacing as a short.
+fn build_diff_pair_gap_map(pcb: &Pcb) -> HashMap<(String, String), f64> {
+    let mut map = HashMap::new();
+    for dp in diff_pairs(pcb) {
+        let key = if dp.net_p <= dp.net_n {
+            (dp.net_p.clone(), dp.net_n.clone())
+        } else {
+            (dp.net_n.clone(), dp.net_p.clone())
+        };
+        map.insert(key, dp.gap);
+    }
+    map
+}
+
+/// The required clearance between two nets: their diff-pair gap if they are a
+/// declared pair, else `fallback`.
+fn pair_aware_clearance(
+    dp_map: &HashMap<(String, String), f64>,
+    a: &str,
+    b: &str,
+    fallback: f64,
+) -> f64 {
+    let key = if a <= b {
+        (a.to_string(), b.to_string())
+    } else {
+        (b.to_string(), a.to_string())
+    };
+    dp_map.get(&key).copied().unwrap_or(fallback)
 }
 
 /// Compute the minimum distance between two axis-aligned bounding boxes.
@@ -1540,6 +1677,84 @@ mod tests {
         assert!(
             !clearance_violations.is_empty(),
             "should detect clearance violation between close traces"
+        );
+    }
+
+    #[test]
+    fn ground_pour_does_not_short_to_cleared_nets() {
+        let mut pcb = clean_pcb();
+        // A net "2" (GND) pour flooding the whole board on FCu. The net "1"
+        // trace and via sit inside its outline but are cleared by clearance
+        // voids — connectivity must read the FILLED copper, not the raw
+        // rectangle, so this is NOT a short.
+        pcb.zones.push(Zone {
+            outline: pcb.outline.vertices.clone(),
+            holes: vec![],
+            net: "2".to_string(),
+            layer: PcbLayer::FCu,
+            clearance: 0.3,
+            min_area: 0.0,
+            fill_type: ZoneFillType::Solid,
+            thermal_relief: ThermalReliefStyle::Relief,
+            thermal_gap: Some(0.4),
+            thermal_spoke_width: Some(0.5),
+            priority: 0,
+        });
+        let viols = check_drc(&pcb);
+        let shorts: Vec<_> = viols
+            .iter()
+            .filter(|v| v.rule == DrcRuleType::Short)
+            .map(|v| &v.message)
+            .collect();
+        assert!(
+            shorts.is_empty(),
+            "a poured plane must not short to the copper it clears, got: {shorts:?}"
+        );
+    }
+
+    #[test]
+    fn diff_pair_couples_at_its_gap_not_full_clearance() {
+        let mut pcb = clean_pcb();
+        pcb.traces.clear();
+        pcb.vias.clear();
+        // A diff-pair class (0.1mm gap, 0.2mm legs) with USB_P / USB_N.
+        pcb.rules.class_rules.push(NetClassRules {
+            name: "DP".into(),
+            trace_width: 0.2,
+            clearance: 0.2,
+            via_diameter: 0.8,
+            via_drill: 0.4,
+            diff_pair_gap: Some(0.1),
+            diff_pair_width: Some(0.2),
+        });
+        pcb.rules
+            .net_class_assignments
+            .insert("DP".into(), vec!["USB_P".into(), "USB_N".into()]);
+        // Parallel legs 0.3mm centre-to-centre, width 0.2 -> 0.1mm gap = exactly
+        // the declared gap. The normal 0.2mm clearance would flag this.
+        let leg = |y: f64, net: &str| Trace {
+            start: Vec2::new(20.0, y),
+            end: Vec2::new(60.0, y),
+            width: 0.2,
+            layer: PcbLayer::FCu,
+            net: net.into(),
+        };
+        pcb.traces.push(leg(40.0, "USB_P"));
+        pcb.traces.push(leg(40.3, "USB_N"));
+        let clr = |p: &Pcb| {
+            check_drc(p)
+                .into_iter()
+                .filter(|v| v.rule == DrcRuleType::Clearance)
+                .count()
+        };
+        assert_eq!(clr(&pcb), 0, "a diff pair at its gap is not a violation");
+
+        // Squeeze them below the gap (0.02mm edge-to-edge) -> flagged.
+        pcb.traces[1].start.y = 40.22;
+        pcb.traces[1].end.y = 40.22;
+        assert!(
+            clr(&pcb) > 0,
+            "a diff pair closer than its gap must violate"
         );
     }
 

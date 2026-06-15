@@ -7,22 +7,29 @@
 //! # Modules
 //!
 //! - [`router`] -- Trace routing algorithms (grid, push-and-shove, diff pair, length tuning)
+//! - [`session`] -- Incremental routing session: the in-loop legality oracle
 //! - [`copper_pour`] -- Zone fill algorithm
 //! - [`drc`] -- Design rule checking engine
 //! - [`spatial`] -- R-tree spatial index for copper elements
 
 pub mod component_mesh;
 pub mod copper_pour;
+pub mod critique;
 pub mod drc;
 pub mod geometry;
 pub mod ratsnest;
 pub mod router;
+pub mod session;
 pub mod spatial;
+pub mod teardrop;
 
 pub use copper_pour::{fill_zones, FilledZone};
+pub use critique::{critique_net, NetCritique};
 pub use drc::{check_drc, DrcRuleType, DrcSeverity, DrcViolation};
 pub use router::grid::GridRouter;
+pub use session::{Blocker, ProbeResult, RouteSession, SpanId};
 pub use spatial::{CopperElement, CopperGeom, SpatialIndex};
+pub use teardrop::{generate_teardrops, Teardrop};
 
 /// Errors returned by PCB operations.
 #[derive(Debug, thiserror::Error)]

@@ -1,0 +1,10 @@
+{
+  "id": "2026-06-15-critique-route",
+  "version": "0.9.4",
+  "date": "2026-06-15",
+  "category": "feat",
+  "title": "critique_route — read-only per-net route audit",
+  "summary": "New MCP tool that audits one net's routing without mutating it: total length, via/layer-change count, the closest approach to other-net copper, and any clearance/short/unconnected DRC issues it's involved in.",
+  "features": ["pcb", "routing"],
+  "mcpTools": ["critique_route"]
+}

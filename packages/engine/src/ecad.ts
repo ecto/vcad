@@ -112,6 +112,31 @@ export async function runDrc(pcb: Pcb): Promise<DrcViolationResult[]> {
   }
 }
 
+/** Read-only audit of one net's routing. */
+export interface NetCritique {
+  net: string;
+  routed: boolean;
+  routed_length_mm: number;
+  segment_count: number;
+  via_count: number;
+  layers: string[];
+  min_clearance_mm: number | null;
+  required_clearance_mm: number;
+  drc_issues: string[];
+}
+
+/** Audit a single net's routing quality (length, vias, margin, DRC issues). */
+export async function critiqueRoute(pcb: Pcb, net: string): Promise<NetCritique | null> {
+  const wasm = await loadEcadWasm();
+  if (!wasm) return null;
+  try {
+    return wasm.ecadCritiqueRoute(JSON.stringify(pcb), net) as NetCritique;
+  } catch (e) {
+    console.warn("[ECAD] Route critique failed:", e);
+    return null;
+  }
+}
+
 /** Run Electrical Rule Check on a schematic. */
 export async function runErc(sheet: SchematicSheet): Promise<ErcViolationResult[]> {
   const wasm = await loadEcadWasm();
@@ -260,6 +285,124 @@ export async function routeNetShove(
   } catch (e) {
     console.warn("[ECAD] Push-shove routing failed:", e);
     return fail;
+  }
+}
+
+/**
+ * Route a net with the avoiding A* maze router.
+ *
+ * Stronger avoidance than {@link routeNetShove}: it searches a grid and tests
+ * every step against the exact clearance oracle, so the route clears *all*
+ * copper on `layer` — traces, pads, and vias — not just other-net trace
+ * bounding boxes. Every returned segment is clearance-legal by construction.
+ * Same result shape; returns a failed result if the kernel is unavailable.
+ */
+export async function routeNetMaze(
+  pcb: Pcb,
+  net: string,
+  start: Vec2,
+  end: Vec2,
+  width: number,
+  layer = "FCu",
+): Promise<RouteResult> {
+  const wasm = await loadEcadWasm();
+  const fail: RouteResult = { net, segments: [], vias: [], success: false };
+  if (!wasm) return fail;
+  try {
+    return wasm.ecadRouteNetMaze(
+      JSON.stringify(pcb),
+      layer,
+      net,
+      start.x,
+      start.y,
+      end.x,
+      end.y,
+      width,
+    ) as RouteResult;
+  } catch (e) {
+    console.warn("[ECAD] Maze routing failed:", e);
+    return fail;
+  }
+}
+
+/** A trace produced by the whole-board auto-router. */
+export interface RoutedTrace {
+  start: Vec2;
+  end: Vec2;
+  width: number;
+  layer: string;
+  net: string;
+}
+
+/** A transition via produced by the whole-board auto-router. */
+export interface RoutedVia {
+  position: Vec2;
+  net: string;
+}
+
+/** Result of {@link routeAll}. */
+export interface RouteAllResult {
+  traces: RoutedTrace[];
+  vias: RoutedVia[];
+  routed_nets: string[];
+  unrouted_nets: string[];
+}
+
+/**
+ * Auto-route a whole board over the incremental clearance oracle.
+ *
+ * Routes every unrouted net against a single growing route session (so each net
+ * avoids the ones before it), retrying on the back layer with transition vias
+ * that are probed on both layers before being placed. Every returned trace and
+ * via is clearance-legal; nets that cannot be routed legally are reported in
+ * `unrouted_nets` rather than shipped as shorting copper. Returns an empty
+ * result if the kernel is unavailable.
+ */
+export async function routeAll(
+  pcb: Pcb,
+  width: number,
+  netsFilter: string[] = [],
+): Promise<RouteAllResult> {
+  const empty: RouteAllResult = { traces: [], vias: [], routed_nets: [], unrouted_nets: [] };
+  const wasm = await loadEcadWasm();
+  if (!wasm) return empty;
+  try {
+    return wasm.ecadRouteAll(
+      JSON.stringify(pcb),
+      width,
+      JSON.stringify(netsFilter),
+    ) as RouteAllResult;
+  } catch (e) {
+    console.warn("[ECAD] Auto-route failed:", e);
+    return empty;
+  }
+}
+
+/** Result of {@link routeDiffPair}: the two routed legs, or `success:false`. */
+export interface DiffPairResult {
+  success: boolean;
+  p?: RouteResult;
+  n?: RouteResult;
+}
+
+/**
+ * Route a declared differential pair (P/N) coupled and length-matched. Gap and
+ * leg width come from the pair's diff-pair net class. Returns `success:false`
+ * when the pair can't be resolved (each net needs exactly two pads) or the
+ * kernel is unavailable.
+ */
+export async function routeDiffPair(
+  pcb: Pcb,
+  netP: string,
+  netN: string,
+): Promise<DiffPairResult> {
+  const wasm = await loadEcadWasm();
+  if (!wasm) return { success: false };
+  try {
+    return wasm.ecadRouteDiffPair(JSON.stringify(pcb), netP, netN) as DiffPairResult;
+  } catch (e) {
+    console.warn("[ECAD] Diff-pair routing failed:", e);
+    return { success: false };
   }
 }
 

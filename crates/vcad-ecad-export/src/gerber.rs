@@ -369,8 +369,8 @@ pub fn write_gerber_layer<W: Write>(
         }
     }
 
-    // 4) Zones on this layer (region fills).
-    let zones_on_layer: Vec<&Zone> = pcb.zones.iter().filter(|z| z.layer == layer).collect();
+    // 4) Zones on this layer are poured (clearance knockouts + thermal relief)
+    //    by the copper-pour engine and emitted as region fills further below.
 
     // 5) Board outline segments on EdgeCuts layer.
     //    Emit the outer profile followed by any interior cutouts (center bores,
@@ -659,20 +659,66 @@ pub fn write_gerber_layer<W: Write>(
         writeln!(writer, "X{}Y{}D03*", fmt_coord(flash.x), fmt_coord(flash.y))?;
     }
 
-    // Region fills (zones).
-    for zone in &zones_on_layer {
-        if zone.outline.len() < 3 {
+    // Region fills (zones). Each zone is poured — its outline minus exact
+    // clearance voids around other-net copper, with thermal-relief spokes on
+    // same-net pads — by the copper-pour engine, so the fabricated plane has
+    // the gaps that keep it from shorting to every net it crosses. Each filled
+    // ring (CCW copper outer, CW clearance hole) is one contour of a single
+    // G36/G37 region; nested contours cut holes per the Gerber region rule.
+    for filled in vcad_ecad_pcb::copper_pour::fill_zones(pcb)
+        .iter()
+        .filter(|f| f.layer == layer)
+    {
+        let rings: Vec<&Vec<vcad_ir::Vec2>> =
+            filled.polygons.iter().filter(|r| r.len() >= 3).collect();
+        if rings.is_empty() {
             continue;
         }
         writeln!(writer, "G36*")?;
-        let first = &zone.outline[0];
+        for ring in rings {
+            let first = &ring[0];
+            writeln!(
+                writer,
+                "X{}Y{}D02*",
+                fmt_coord(mm_to_coord(first.x)),
+                fmt_coord(mm_to_coord(first.y))
+            )?;
+            for pt in &ring[1..] {
+                writeln!(
+                    writer,
+                    "X{}Y{}D01*",
+                    fmt_coord(mm_to_coord(pt.x)),
+                    fmt_coord(mm_to_coord(pt.y))
+                )?;
+            }
+            // Close the contour.
+            writeln!(
+                writer,
+                "X{}Y{}D01*",
+                fmt_coord(mm_to_coord(first.x)),
+                fmt_coord(mm_to_coord(first.y))
+            )?;
+        }
+        writeln!(writer, "G37*")?;
+    }
+
+    // Teardrop fillets at trace→pad/via junctions on this layer, as region fills.
+    for td in vcad_ecad_pcb::generate_teardrops(pcb)
+        .iter()
+        .filter(|t| t.layer == layer)
+    {
+        if td.polygon.len() < 3 {
+            continue;
+        }
+        writeln!(writer, "G36*")?;
+        let first = &td.polygon[0];
         writeln!(
             writer,
             "X{}Y{}D02*",
             fmt_coord(mm_to_coord(first.x)),
             fmt_coord(mm_to_coord(first.y))
         )?;
-        for pt in &zone.outline[1..] {
+        for pt in &td.polygon[1..] {
             writeln!(
                 writer,
                 "X{}Y{}D01*",
@@ -680,7 +726,6 @@ pub fn write_gerber_layer<W: Write>(
                 fmt_coord(mm_to_coord(pt.y))
             )?;
         }
-        // Close the polygon.
         writeln!(
             writer,
             "X{}Y{}D01*",
@@ -926,6 +971,18 @@ mod tests {
 
         assert!(output.contains("G36*"), "missing region start");
         assert!(output.contains("G37*"), "missing region end");
+
+        // The BCu zone (net "2") is crossed by an other-net via (net "1"), so
+        // the poured region must contain a clearance-void contour in addition
+        // to its outline — a solid flood would emit a single contour and short
+        // the plane to the via. Count D02 (contour-start) moves inside G36/G37.
+        let start = output.find("G36*").unwrap();
+        let end = output[start..].find("G37*").unwrap() + start;
+        let contours = output[start..end].matches("D02*").count();
+        assert!(
+            contours >= 2,
+            "poured region must knock out the other-net via, found {contours} contour(s)"
+        );
     }
 
     #[test]

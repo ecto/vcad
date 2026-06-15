@@ -375,76 +375,8 @@ impl SpatialIndex {
     ///
     /// Indexes traces, vias, and pads from all footprints.
     pub fn from_pcb(pcb: &Pcb) -> Self {
-        let mut elements = Vec::new();
-
-        // Index traces
-        for trace in &pcb.traces {
-            let half_w = trace.width / 2.0;
-            elements.push(CopperElement {
-                min: [
-                    trace.start.x.min(trace.end.x) - half_w,
-                    trace.start.y.min(trace.end.y) - half_w,
-                ],
-                max: [
-                    trace.start.x.max(trace.end.x) + half_w,
-                    trace.start.y.max(trace.end.y) + half_w,
-                ],
-                net: trace.net.clone(),
-                layer: trace.layer,
-                geom: CopperGeom::Segment {
-                    a: trace.start,
-                    b: trace.end,
-                    half_w,
-                },
-            });
-        }
-
-        // Index vias (on all copper layers they span)
-        for via in &pcb.vias {
-            let r = via.diameter / 2.0;
-            // Vias appear on FCu and BCu at minimum
-            for layer in [via.start_layer, via.end_layer] {
-                elements.push(CopperElement {
-                    min: [via.position.x - r, via.position.y - r],
-                    max: [via.position.x + r, via.position.y + r],
-                    net: via.net.clone(),
-                    layer,
-                    geom: CopperGeom::Disc {
-                        center: via.position,
-                        r,
-                    },
-                });
-            }
-        }
-
-        // Index footprint pads
-        for footprint in &pcb.footprints {
-            for pad in &footprint.pads {
-                let abs_x = footprint.position.x + pad.position.x;
-                let abs_y = footprint.position.y + pad.position.y;
-                let center = Vec2::new(abs_x, abs_y);
-                let net = pad.net.clone().unwrap_or_default();
-                // Total pad rotation = footprint rotation + pad-local rotation.
-                let rot = (footprint.rotation + pad.rotation).to_radians();
-                let (hw, hh) = pad_rotated_aabb_extents(pad, rot);
-                let geom = pad_geom(pad, center, rot);
-
-                for &layer in &pad.layers {
-                    if layer.is_copper() {
-                        elements.push(CopperElement {
-                            min: [abs_x - hw, abs_y - hh],
-                            max: [abs_x + hw, abs_y + hh],
-                            net: net.clone(),
-                            layer,
-                            geom,
-                        });
-                    }
-                }
-            }
-        }
-
         Self {
-            tree: RTree::bulk_load(elements),
+            tree: RTree::bulk_load(copper_elements(pcb)),
         }
     }
 
@@ -481,6 +413,82 @@ impl Default for SpatialIndex {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Build the full list of copper elements on a PCB (traces, vias, and pads),
+/// one [`CopperElement`] per copper layer an element occupies.
+///
+/// Shared by [`SpatialIndex::from_pcb`] and the incremental routing session so
+/// both index exactly the same copper.
+pub(crate) fn copper_elements(pcb: &Pcb) -> Vec<CopperElement> {
+    let mut elements = Vec::new();
+
+    // Traces.
+    for trace in &pcb.traces {
+        let half_w = trace.width / 2.0;
+        elements.push(CopperElement {
+            min: [
+                trace.start.x.min(trace.end.x) - half_w,
+                trace.start.y.min(trace.end.y) - half_w,
+            ],
+            max: [
+                trace.start.x.max(trace.end.x) + half_w,
+                trace.start.y.max(trace.end.y) + half_w,
+            ],
+            net: trace.net.clone(),
+            layer: trace.layer,
+            geom: CopperGeom::Segment {
+                a: trace.start,
+                b: trace.end,
+                half_w,
+            },
+        });
+    }
+
+    // Vias (on every copper layer they span — endpoints at minimum).
+    for via in &pcb.vias {
+        let r = via.diameter / 2.0;
+        for layer in [via.start_layer, via.end_layer] {
+            elements.push(CopperElement {
+                min: [via.position.x - r, via.position.y - r],
+                max: [via.position.x + r, via.position.y + r],
+                net: via.net.clone(),
+                layer,
+                geom: CopperGeom::Disc {
+                    center: via.position,
+                    r,
+                },
+            });
+        }
+    }
+
+    // Footprint pads.
+    for footprint in &pcb.footprints {
+        for pad in &footprint.pads {
+            let abs_x = footprint.position.x + pad.position.x;
+            let abs_y = footprint.position.y + pad.position.y;
+            let center = Vec2::new(abs_x, abs_y);
+            let net = pad.net.clone().unwrap_or_default();
+            // Total pad rotation = footprint rotation + pad-local rotation.
+            let rot = (footprint.rotation + pad.rotation).to_radians();
+            let (hw, hh) = pad_rotated_aabb_extents(pad, rot);
+            let geom = pad_geom(pad, center, rot);
+
+            for &layer in &pad.layers {
+                if layer.is_copper() {
+                    elements.push(CopperElement {
+                        min: [abs_x - hw, abs_y - hh],
+                        max: [abs_x + hw, abs_y + hh],
+                        net: net.clone(),
+                        layer,
+                        geom,
+                    });
+                }
+            }
+        }
+    }
+
+    elements
 }
 
 /// Get the unrotated half-width and half-height of a pad for bounding box

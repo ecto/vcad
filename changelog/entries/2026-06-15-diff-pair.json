@@ -1,0 +1,10 @@
+{
+  "id": "2026-06-15-diff-pair",
+  "version": "0.9.4",
+  "date": "2026-06-15",
+  "category": "feat",
+  "title": "Differential pair routing + DRC awareness",
+  "summary": "New route_diff_pair MCP tool routes a declared P/N pair coupled and length-matched; DRC now reads each diff-pair class's gap so a pair's intentional close coupling is checked against its gap instead of false-flagging as a short.",
+  "features": ["pcb", "routing", "drc", "diff-pair"],
+  "mcpTools": ["route_diff_pair", "run_drc"]
+}

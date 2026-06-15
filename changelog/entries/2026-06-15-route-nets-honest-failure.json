@@ -1,0 +1,10 @@
+{
+  "id": "2026-06-15-route-nets-honest-failure",
+  "version": "0.9.4",
+  "date": "2026-06-15",
+  "category": "fix",
+  "title": "route_nets leaves hard nets unrouted instead of shorting",
+  "summary": "When no router can find a clearance-legal path for a connection, route_nets now leaves it as an unrouted air-wire and reports it in unrouted_nets, instead of dropping a direct segment that shorts other copper.",
+  "features": ["pcb", "autorouter", "routing"],
+  "mcpTools": ["route_nets"]
+}

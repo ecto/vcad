@@ -1,0 +1,10 @@
+{
+  "id": "2026-06-15-route-nets-avoidance",
+  "version": "0.9.4",
+  "date": "2026-06-15",
+  "category": "feat",
+  "title": "Autorouter avoids all copper, not just trace boxes",
+  "summary": "route_nets now routes each net with an A* maze router that clears every trace, pad, and via on the layer via the exact clearance oracle, producing DRC-clean boards instead of grazing other-net pads.",
+  "features": ["pcb", "autorouter", "routing"],
+  "mcpTools": ["route_nets"]
+}

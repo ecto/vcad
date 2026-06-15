@@ -14,6 +14,7 @@ raster = ["dep:image"]
 vcad-eval = { workspace = true }
 vcad-ir = { workspace = true }
 vcad-kernel = { workspace = true }
+vcad-ecad-pcb = { workspace = true }
 serde_json = { workspace = true }
 image = { version = "0.25", default-features = false, features = ["jpeg"], optional = true }
 

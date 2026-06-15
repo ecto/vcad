@@ -6835,6 +6835,7 @@ name = "vcad-ecad-export"
 version = "0.9.4"
 dependencies = [
  "thiserror 2.0.18",
+ "vcad-ecad-pcb",
  "vcad-ir",
 ]
 
@@ -6847,6 +6848,8 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.18",
  "vcad-ir",
+ "vcad-kernel-math",
+ "vcad-kernel-sheet",
 ]
 
 [[package]]
@@ -7319,6 +7322,7 @@ version = "0.9.3"
 dependencies = [
  "image",
  "serde_json",
+ "vcad-ecad-pcb",
  "vcad-eval",
  "vcad-ir",
  "vcad-kernel",
