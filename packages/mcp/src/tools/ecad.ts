@@ -26,6 +26,7 @@ import type {
   PcbLayer,
   Trace,
   Via,
+  Zone,
   Vec2,
 } from "@vcad/ir";
 import { createDocument } from "@vcad/ir";
@@ -3706,6 +3707,752 @@ export function setStackup(args: Record<string, unknown>) {
         text: JSON.stringify({
           success: true,
           stackup: pcb.stackup.layers,
+          ...docResultPayload(ctx),
+        }),
+      },
+    ],
+  };
+}
+
+// ============================================================================
+// set_placement — explicit per-component placement (the floorplan primitive)
+// ============================================================================
+
+/** JSON Schema for set_placement tool. */
+export const setPlacementSchema = {
+  type: "object" as const,
+  properties: {
+    ...docInputProperties,
+    placements: {
+      type: "array" as const,
+      description:
+        "Absolute per-component placements in the board-local frame (mm). Each " +
+        "entry targets a placed footprint by `ref`. Realizes a deliberate " +
+        "floorplan the auto-placer (grid/force_directed/radial) can't — thermal " +
+        "rings, a quiet IMU corner, rim connectors. Off-board, in-cutout, and " +
+        "stacked positions are reported as warnings, not silently accepted.",
+      items: {
+        type: "object" as const,
+        properties: {
+          ref: { type: "string" as const, description: "Reference designator, e.g. 'U1', 'Q3', 'J2'" },
+          x: { type: "number" as const, description: "Absolute X in the board frame, mm" },
+          y: { type: "number" as const, description: "Absolute Y in the board frame, mm" },
+          rotation: { type: "number" as const, description: "Absolute rotation, degrees CCW" },
+          side: {
+            type: "string" as const,
+            description: "'top' (default) or 'bottom' — 'bottom' mirrors the footprint to the back copper",
+          },
+        },
+        required: ["ref"],
+      },
+    },
+  },
+  required: ["document_id", "placements"],
+};
+
+/**
+ * Place footprints at explicit board-frame coordinates — the realize step for a
+ * hand-authored floorplan. Looks each component up by `ref`, sets position /
+ * rotation / side, and validates each landing against the board outline
+ * (off-board, inside-a-cutout, and stacked-on-another-footprint become
+ * warnings). Mutates the session document.
+ */
+export function setPlacement(args: Record<string, unknown>) {
+  const ctx = resolveDocInput(args);
+  const pcb = getDocPcb(ctx.doc);
+  const fail = (text: string) => ({
+    content: [{ type: "text" as const, text: `Error: ${text}` }],
+    isError: true as const,
+  });
+  if (!pcb) {
+    return fail(
+      "Document has no PCB — run place_components first (or open a document that has a board)",
+    );
+  }
+  const placements = Array.isArray(args.placements)
+    ? (args.placements as Array<Record<string, unknown>>)
+    : undefined;
+  if (!placements || placements.length === 0) {
+    return fail("placements must be a non-empty array of {ref, x?, y?, rotation?, side?}");
+  }
+
+  const byRef = new Map<string, Footprint>(
+    pcb.footprints.map((f) => [f.ref, f] as [string, Footprint]),
+  );
+  const outline = pcb.outline.vertices ?? [];
+  const cutouts = pcb.outline.cutouts ?? [];
+
+  const moved: string[] = [];
+  const rotated: string[] = [];
+  const flipped: string[] = [];
+  const unknownRefs: string[] = [];
+  const warnings: string[] = [];
+
+  for (const p of placements) {
+    const ref = String(p.ref ?? "");
+    if (!ref) {
+      warnings.push("skipped a placement with no `ref`");
+      continue;
+    }
+    const fp = byRef.get(ref);
+    if (!fp) {
+      unknownRefs.push(ref);
+      continue;
+    }
+    const hasX = typeof p.x === "number";
+    const hasY = typeof p.y === "number";
+    if (hasX !== hasY) {
+      warnings.push(`${ref}: give both x and y (or neither) — ignoring partial position`);
+    } else if (hasX && hasY) {
+      const pos = { x: round3(p.x as number), y: round3(p.y as number) };
+      fp.position = pos;
+      moved.push(ref);
+      if (outline.length >= 3) {
+        if (!pointInPolygon(pos, outline)) {
+          warnings.push(`${ref} at (${pos.x}, ${pos.y}) is outside the board outline`);
+        } else if (cutouts.some((c) => c.length >= 3 && pointInPolygon(pos, c))) {
+          warnings.push(`${ref} at (${pos.x}, ${pos.y}) sits inside a board cutout`);
+        }
+      }
+    }
+    if (typeof p.rotation === "number") {
+      fp.rotation = p.rotation as number;
+      rotated.push(ref);
+    }
+    const side = p.side != null ? String(p.side).toLowerCase() : undefined;
+    if (side === "bottom" || side === "top") {
+      const front = side === "top";
+      if (fp.front !== front) {
+        fp.front = front;
+        flipped.push(ref);
+      }
+    } else if (side != null) {
+      warnings.push(`${ref}: side "${String(p.side)}" — use 'top' or 'bottom'`);
+    }
+  }
+
+  // Two footprints at the same rounded point is almost always a mistake — the
+  // auto-placer never does it, so it's worth surfacing.
+  const seen = new Map<string, string>();
+  for (const ref of moved) {
+    const fp = byRef.get(ref)!;
+    const key = `${fp.position.x},${fp.position.y}`;
+    const prev = seen.get(key);
+    if (prev) warnings.push(`${ref} and ${prev} share the exact position ${key} — likely overlap`);
+    else seen.set(key, ref);
+  }
+
+  if (unknownRefs.length > 0) {
+    warnings.push(
+      `unknown refs (not on this board): ${unknownRefs.join(", ")} — ` +
+        `refs come from the schematic via place_components`,
+    );
+  }
+  if (moved.length === 0 && rotated.length === 0 && flipped.length === 0) {
+    return fail(
+      `no footprints updated${unknownRefs.length ? ` — all refs unknown: ${unknownRefs.join(", ")}` : ""}`,
+    );
+  }
+
+  return {
+    content: [
+      {
+        type: "text" as const,
+        text: JSON.stringify({
+          success: true,
+          moved: moved.length,
+          rotated: rotated.length,
+          flipped: flipped.length,
+          ...(unknownRefs.length > 0 ? { unknown_refs: unknownRefs } : {}),
+          ...(warnings.length > 0 ? { warnings } : {}),
+          ...docResultPayload(ctx),
+        }),
+      },
+    ],
+  };
+}
+
+// ============================================================================
+// add_zone — copper pour (ground / power plane) on a net
+// ============================================================================
+
+/** JSON Schema for add_zone tool. */
+export const addZoneSchema = {
+  type: "object" as const,
+  properties: {
+    ...docInputProperties,
+    net: { type: "string" as const, description: "Net the pour belongs to (e.g. 'GND', 'VBAT')" },
+    layer: { type: "string" as const, description: "Copper layer (default 'FCu')" },
+    fill_board: {
+      type: "boolean" as const,
+      description:
+        "Pour the whole board outline (a full plane), treating board cutouts as " +
+        "voids. The usual ground/power-plane shortcut. Ignores `outline`.",
+    },
+    outline: {
+      type: "array" as const,
+      items: { ...vec2Schema },
+      description:
+        "Explicit pour polygon, board-local mm (>= 3 points) — for a partial " +
+        "plane (e.g. a VBAT pour over the FET drains). Omit with fill_board:true " +
+        "for a board-spanning plane.",
+    },
+    clearance: {
+      type: "number" as const,
+      description: "Copper-to-copper gap around the pour, mm (default: design-rule clearance)",
+    },
+    thermal_relief: {
+      type: "string" as const,
+      description:
+        "Pour-to-same-net-pad connection: 'Relief' (default, spoke thermals — " +
+        "solderable), 'Direct' (solid copper), or 'None'.",
+    },
+    thermal_gap: { type: "number" as const, description: "Relief gap around a connected pad, mm" },
+    thermal_spoke_width: { type: "number" as const, description: "Relief spoke width, mm" },
+    fill_type: { type: "string" as const, description: "'Solid' (default) or 'Hatched'" },
+    min_area: {
+      type: "number" as const,
+      description: "Discard isolated copper islands smaller than this, mm²",
+    },
+    priority: {
+      type: "number" as const,
+      description: "Higher-priority pours fill first and win overlaps (default 0)",
+    },
+  },
+  required: ["document_id", "net"],
+};
+
+/**
+ * Add a copper zone (pour) — the primitive for ground and power planes, which
+ * are fills on a net+layer, not traces. The stored zone is an outline + rules;
+ * the fab/DRC pipeline computes the actual filled copper. `fill_board` uses the
+ * board outline and treats its cutouts as voids. Mutates the session document.
+ */
+export function addZone(args: Record<string, unknown>) {
+  const ctx = resolveDocInput(args);
+  const pcb = getDocPcb(ctx.doc);
+  const fail = (text: string) => ({
+    content: [{ type: "text" as const, text: `Error: ${text}` }],
+    isError: true as const,
+  });
+  if (!pcb) {
+    return fail(
+      "Document has no PCB — run place_components first (or open a document that has a board)",
+    );
+  }
+
+  const net = String(args.net ?? "");
+  const layer = ((args.layer as string) || "FCu") as PcbLayer;
+  if (!net) return fail("net is required — a pour must belong to a net");
+  if (!/Cu$/.test(layer)) {
+    return fail(`layer "${layer}" is not a copper layer (use FCu, BCu, In1Cu, ...)`);
+  }
+
+  const reliefArg = (args.thermal_relief as string) || "Relief";
+  if (!["Direct", "Relief", "None"].includes(reliefArg)) {
+    return fail("thermal_relief must be 'Direct', 'Relief', or 'None'");
+  }
+  const fillArg = (args.fill_type as string) || "Solid";
+  if (!["Solid", "Hatched"].includes(fillArg)) {
+    return fail("fill_type must be 'Solid' or 'Hatched'");
+  }
+
+  const fillBoard = args.fill_board === true;
+  const explicit = Array.isArray(args.outline)
+    ? (args.outline as Array<Record<string, unknown>>)
+    : undefined;
+
+  let rawOutline: Vec2[];
+  let holes: Vec2[][] | undefined;
+  let fillMode: "board" | "polygon";
+  if (explicit && !fillBoard) {
+    if (explicit.length < 3) return fail("outline needs >= 3 points");
+    for (const v of explicit) {
+      if (!v || typeof v.x !== "number" || typeof v.y !== "number") {
+        return fail("every outline point must be {x, y} in mm");
+      }
+    }
+    rawOutline = explicit.map((v) => ({ x: v.x as number, y: v.y as number }));
+    fillMode = "polygon";
+  } else {
+    const verts = pcb.outline.vertices ?? [];
+    if (verts.length < 3) {
+      return fail("board has no outline to fill — pass an explicit `outline` polygon");
+    }
+    rawOutline = verts.map((v) => ({ x: v.x, y: v.y }));
+    const cuts = pcb.outline.cutouts ?? [];
+    if (cuts.length > 0) {
+      holes = cuts.map((c) => c.map((v) => ({ x: round3(v.x), y: round3(v.y) })));
+    }
+    fillMode = "board";
+  }
+
+  const outline = ensureCcw(rawOutline).map((v) => ({ x: round3(v.x), y: round3(v.y) }));
+  const clearance = (args.clearance as number) ?? pcb.rules.defaultRules.clearance;
+
+  if (!pcb.nets.some((n) => n.id === net)) pcb.nets.push({ id: net, name: net });
+
+  const zone: Zone = {
+    outline,
+    net,
+    layer,
+    clearance,
+    fillType: fillArg as NonNullable<Zone["fillType"]>,
+    thermalRelief: reliefArg as NonNullable<Zone["thermalRelief"]>,
+    priority: typeof args.priority === "number" ? (args.priority as number) : 0,
+    ...(holes ? { holes } : {}),
+    ...(typeof args.min_area === "number" ? { minArea: args.min_area as number } : {}),
+    ...(typeof args.thermal_gap === "number" ? { thermalGap: args.thermal_gap as number } : {}),
+    ...(typeof args.thermal_spoke_width === "number"
+      ? { thermalSpokeWidth: args.thermal_spoke_width as number }
+      : {}),
+  };
+  pcb.zones.push(zone);
+
+  return {
+    content: [
+      {
+        type: "text" as const,
+        text: JSON.stringify({
+          success: true,
+          net,
+          layer,
+          fill: fillMode,
+          vertices: outline.length,
+          ...(holes ? { holes: holes.length } : {}),
+          clearance,
+          thermal_relief: reliefArg,
+          zones_total: pcb.zones.length,
+          ...docResultPayload(ctx),
+        }),
+      },
+    ],
+  };
+}
+
+// ============================================================================
+// set_design_rules — configurable DRC rules + net classes
+// ============================================================================
+
+/** JSON Schema for set_design_rules tool. */
+export const setDesignRulesSchema = {
+  type: "object" as const,
+  properties: {
+    ...docInputProperties,
+    clearance: { type: "number" as const, description: "Default copper-to-copper clearance, mm" },
+    track_width: { type: "number" as const, description: "Default minimum trace width, mm" },
+    via_diameter: { type: "number" as const, description: "Default via pad diameter, mm" },
+    via_drill: { type: "number" as const, description: "Default via drill diameter, mm" },
+    diff_pair_gap: { type: "number" as const, description: "Default differential-pair gap, mm" },
+    diff_pair_width: { type: "number" as const, description: "Default differential-pair trace width, mm" },
+    edge_clearance: { type: "number" as const, description: "Copper-to-board-edge clearance, mm" },
+    hole_to_hole: { type: "number" as const, description: "Minimum hole-to-hole spacing, mm" },
+    min_annular_ring: { type: "number" as const, description: "Minimum via annular ring, mm" },
+    min_drill: { type: "number" as const, description: "Minimum drill diameter, mm" },
+    classes: {
+      type: "array" as const,
+      description:
+        "Net classes, each overriding the default clearance/width for its nets — " +
+        "DRC honors per-class clearance and trace width. This is how to enforce a " +
+        "high-voltage / power class (give VBAT and the phase nets a wide " +
+        "clearance) separate from signal nets. NOTE: creepage is not yet a " +
+        "distinct rule — model HV spacing as a high-clearance class here.",
+      items: {
+        type: "object" as const,
+        properties: {
+          name: { type: "string" as const, description: "Class name, e.g. 'power', 'hv'" },
+          nets: {
+            type: "array" as const,
+            items: { type: "string" as const },
+            description: "Net ids assigned to this class",
+          },
+          clearance: { type: "number" as const },
+          track_width: { type: "number" as const },
+          via_diameter: { type: "number" as const },
+          via_drill: { type: "number" as const },
+          diff_pair_gap: { type: "number" as const },
+          diff_pair_width: { type: "number" as const },
+        },
+        required: ["name", "nets"],
+      },
+    },
+  },
+  required: ["document_id"],
+};
+
+/**
+ * Mutate the board design rules consumed by run_drc (and used as defaults by
+ * route_nets / add_coil). Sets default clearances/widths and/or net classes so a
+ * power or high-voltage class can carry wider clearance than signal nets. run_drc
+ * already reads pcb.rules — this is the writer for it. Mutates the session
+ * document.
+ */
+export function setDesignRules(args: Record<string, unknown>) {
+  const ctx = resolveDocInput(args);
+  const pcb = getDocPcb(ctx.doc);
+  const fail = (text: string) => ({
+    content: [{ type: "text" as const, text: `Error: ${text}` }],
+    isError: true as const,
+  });
+  if (!pcb) {
+    return fail(
+      "Document has no PCB — run place_components first (or open a document that has a board)",
+    );
+  }
+
+  const rules = pcb.rules;
+  const dr = rules.defaultRules;
+  const warnings: string[] = [];
+  let touched = false;
+
+  const num = (k: string) => (typeof args[k] === "number" ? (args[k] as number) : undefined);
+  const requirePos = (k: string, v: number | undefined): boolean => {
+    if (v === undefined) return false;
+    if (!(v > 0)) {
+      warnings.push(`${k} must be > 0 — ignored`);
+      return false;
+    }
+    return true;
+  };
+
+  const clearance = num("clearance");
+  if (requirePos("clearance", clearance)) { dr.clearance = clearance!; touched = true; }
+  const trackWidth = num("track_width");
+  if (requirePos("track_width", trackWidth)) { dr.traceWidth = trackWidth!; touched = true; }
+  const viaDiameter = num("via_diameter");
+  if (requirePos("via_diameter", viaDiameter)) { dr.viaDiameter = viaDiameter!; touched = true; }
+  const viaDrill = num("via_drill");
+  if (requirePos("via_drill", viaDrill)) { dr.viaDrill = viaDrill!; touched = true; }
+  const dpg = num("diff_pair_gap");
+  if (requirePos("diff_pair_gap", dpg)) { dr.diffPairGap = dpg!; touched = true; }
+  const dpw = num("diff_pair_width");
+  if (requirePos("diff_pair_width", dpw)) { dr.diffPairWidth = dpw!; touched = true; }
+
+  const edgeClr = num("edge_clearance");
+  if (requirePos("edge_clearance", edgeClr)) { rules.edgeClearance = edgeClr!; touched = true; }
+  const h2h = num("hole_to_hole");
+  if (requirePos("hole_to_hole", h2h)) { rules.holeToHole = h2h!; touched = true; }
+  const minAnnular = num("min_annular_ring");
+  if (requirePos("min_annular_ring", minAnnular)) { rules.minAnnularRing = minAnnular!; touched = true; }
+  const minDrill = num("min_drill");
+  if (requirePos("min_drill", minDrill)) { rules.minDrill = minDrill!; touched = true; }
+
+  let classNames: string[] | undefined;
+  if (Array.isArray(args.classes)) {
+    const classesIn = args.classes as Array<Record<string, unknown>>;
+    const classRules: NetClassRules[] = [];
+    const assignments: Record<string, string[]> = {};
+    const knownNets = new Set(pcb.nets.map((n) => n.id));
+    for (const c of classesIn) {
+      const name = String(c.name ?? "");
+      const nets = Array.isArray(c.nets) ? (c.nets as unknown[]).map(String) : [];
+      if (!name) return fail("each class needs a `name`");
+      if (nets.length === 0) return fail(`class "${name}" needs a non-empty nets array`);
+      const unknown = nets.filter((id) => !knownNets.has(id));
+      if (unknown.length > 0) {
+        warnings.push(`class "${name}" references nets not on the board: ${unknown.join(", ")}`);
+      }
+      classRules.push({
+        name,
+        traceWidth: typeof c.track_width === "number" ? (c.track_width as number) : dr.traceWidth,
+        clearance: typeof c.clearance === "number" ? (c.clearance as number) : dr.clearance,
+        viaDiameter: typeof c.via_diameter === "number" ? (c.via_diameter as number) : dr.viaDiameter,
+        viaDrill: typeof c.via_drill === "number" ? (c.via_drill as number) : dr.viaDrill,
+        ...(typeof c.diff_pair_gap === "number" ? { diffPairGap: c.diff_pair_gap as number } : {}),
+        ...(typeof c.diff_pair_width === "number" ? { diffPairWidth: c.diff_pair_width as number } : {}),
+      });
+      assignments[name] = nets;
+    }
+    rules.classRules = classRules;
+    rules.netClassAssignments = assignments;
+    classNames = classRules.map((c) => c.name);
+    touched = true;
+  }
+
+  if (!touched) {
+    return fail("provide at least one rule field (clearance, track_width, …) or `classes`");
+  }
+
+  return {
+    content: [
+      {
+        type: "text" as const,
+        text: JSON.stringify({
+          success: true,
+          rules: {
+            clearance: dr.clearance,
+            track_width: dr.traceWidth,
+            via_diameter: dr.viaDiameter,
+            via_drill: dr.viaDrill,
+            edge_clearance: rules.edgeClearance,
+            hole_to_hole: rules.holeToHole,
+            min_annular_ring: rules.minAnnularRing,
+            min_drill: rules.minDrill,
+          },
+          ...(classNames ? { classes: classNames } : {}),
+          ...(warnings.length > 0 ? { warnings } : {}),
+          ...docResultPayload(ctx),
+        }),
+      },
+    ],
+  };
+}
+
+// ============================================================================
+// size_trace_for_current — IPC-2221 ampacity → trace width
+// ============================================================================
+
+/** JSON Schema for size_trace_for_current tool. */
+export const sizeTraceForCurrentSchema = {
+  type: "object" as const,
+  properties: {
+    current_a: { type: "number" as const, description: "Continuous current the trace must carry, A" },
+    copper_oz: {
+      type: "number" as const,
+      description: "Copper weight, oz/ft² (default 1; 1 oz ≈ 0.0348 mm). Match set_stackup.",
+    },
+    temp_rise_c: {
+      type: "number" as const,
+      description: "Allowed conductor temperature rise above ambient, °C (default 10)",
+    },
+    layer: {
+      type: "string" as const,
+      description:
+        "'outer' (default, in free air) or 'inner' (buried; derated ~2× because " +
+        "it sheds heat poorly, so it needs much more width for the same current).",
+    },
+    fab_grid_mm: {
+      type: "number" as const,
+      description: "Snap the solved width UP to this manufacturing grid, mm (default 0.0254 = 1 mil)",
+    },
+  },
+  required: ["current_a"],
+};
+
+/**
+ * IPC-2221 closed-form conductor ampacity, solved for width:
+ *   I = k · ΔT^0.44 · A^0.725   (A = cross-section in mil², k = 0.048 outer / 0.024 inner)
+ * Pure calc, no document — the ampacity sibling of size_impedance/size_pdn.
+ * Conservative vs IPC-2152 chart data (which credits board conduction and gives
+ * narrower traces) — the safe default for power nets.
+ */
+export function sizeTraceForCurrent(args: Record<string, unknown>) {
+  const fail = (text: string) => ({
+    content: [{ type: "text" as const, text: `Error: ${text}` }],
+    isError: true as const,
+  });
+  const current = args.current_a as number;
+  if (typeof current !== "number" || !(current > 0)) return fail("current_a must be > 0");
+  const copperOz = typeof args.copper_oz === "number" ? (args.copper_oz as number) : 1;
+  if (!(copperOz > 0)) return fail("copper_oz must be > 0");
+  const dT = typeof args.temp_rise_c === "number" ? (args.temp_rise_c as number) : 10;
+  if (!(dT > 0)) return fail("temp_rise_c must be > 0");
+  const layer = String(args.layer ?? "outer").toLowerCase() === "inner" ? "inner" : "outer";
+  const grid =
+    typeof args.fab_grid_mm === "number" && (args.fab_grid_mm as number) > 0
+      ? (args.fab_grid_mm as number)
+      : 0.0254;
+
+  const k = layer === "inner" ? 0.024 : 0.048;
+  const MIL_PER_MM = 1 / 0.0254;
+  const thicknessMm = copperOz * OZ_TO_MM;
+  const thicknessMil = thicknessMm * MIL_PER_MM;
+
+  // A_mil2 = (I / (k·ΔT^0.44))^(1/0.725)
+  const areaMil2 = Math.pow(current / (k * Math.pow(dT, 0.44)), 1 / 0.725);
+  const widthMil = areaMil2 / thicknessMil;
+  const widthMmRaw = widthMil / MIL_PER_MM;
+  const widthMm = Math.ceil(widthMmRaw / grid) * grid;
+  const crossMm2 = widthMm * thicknessMm;
+
+  return {
+    content: [
+      {
+        type: "text" as const,
+        text: JSON.stringify({
+          standard: "IPC-2221",
+          current_a: current,
+          temp_rise_c: dT,
+          copper_oz: copperOz,
+          copper_thickness_mm: round3(thicknessMm),
+          layer,
+          width_mm: round3(widthMm),
+          width_mm_raw: round3(widthMmRaw),
+          cross_section_mm2: round3(crossMm2),
+          cross_section_mil2: Math.round(areaMil2 * 100) / 100,
+          note:
+            `IPC-2221 closed form (k=${k}). Conservative vs IPC-2152; inner ` +
+            `layers derate ~2×. Width snapped up to a ${grid}mm grid.`,
+        }),
+      },
+    ],
+  };
+}
+
+// ============================================================================
+// add_via_array — grid / batch of vias (thermal field, plane stitching)
+// ============================================================================
+
+/** JSON Schema for add_via_array tool. */
+export const addViaArraySchema = {
+  type: "object" as const,
+  properties: {
+    ...docInputProperties,
+    net: { type: "string" as const, description: "Net for every via in the array (e.g. 'GND')" },
+    region: {
+      type: "object" as const,
+      description:
+        "Rectangular region (board-local mm) filled with a via grid at `pitch` " +
+        "spacing — thermal-via fields under FETs, GND-plane stitching.",
+      properties: {
+        x: { type: "number" as const },
+        y: { type: "number" as const },
+        w: { type: "number" as const },
+        h: { type: "number" as const },
+      },
+      required: ["x", "y", "w", "h"],
+    },
+    points: {
+      type: "array" as const,
+      items: { ...vec2Schema },
+      description: "Explicit via centers (board-local mm) — alternative to `region` for hand stitching.",
+    },
+    pitch: { type: "number" as const, description: "Grid spacing for region mode, mm (default 1.0)" },
+    start_layer: { type: "string" as const, description: "Span start layer (default 'FCu')" },
+    end_layer: { type: "string" as const, description: "Span end layer (default 'BCu')" },
+    diameter: { type: "number" as const, description: "Via pad diameter, mm (default: design-rule viaDiameter)" },
+    drill: { type: "number" as const, description: "Via drill, mm (default: design-rule viaDrill)" },
+    clip_to_board: {
+      type: "boolean" as const,
+      description: "Drop grid vias outside the board outline / inside a cutout (default true)",
+    },
+  },
+  required: ["document_id", "net"],
+};
+
+/** Max vias one call will place — a guard against a fine pitch over a big region. */
+const MAX_VIA_ARRAY = 2000;
+
+/**
+ * Place many vias at once: a regular grid over a rectangular `region` (thermal
+ * vias, plane stitching) or an explicit list of `points`. Grid vias are clipped
+ * to the board outline by default. Mutates the session document.
+ */
+export function addViaArray(args: Record<string, unknown>) {
+  const ctx = resolveDocInput(args);
+  const pcb = getDocPcb(ctx.doc);
+  const fail = (text: string) => ({
+    content: [{ type: "text" as const, text: `Error: ${text}` }],
+    isError: true as const,
+  });
+  if (!pcb) {
+    return fail(
+      "Document has no PCB — run place_components first (or open a document that has a board)",
+    );
+  }
+
+  const net = String(args.net ?? "");
+  const startLayer = ((args.start_layer as string) || "FCu") as PcbLayer;
+  const endLayer = ((args.end_layer as string) || "BCu") as PcbLayer;
+  const diameter = (args.diameter as number) ?? pcb.rules.defaultRules.viaDiameter;
+  const drill = (args.drill as number) ?? pcb.rules.defaultRules.viaDrill;
+  if (!net) return fail("net is required — a via must belong to a net");
+  if (!/Cu$/.test(startLayer)) return fail(`start_layer "${startLayer}" is not a copper layer`);
+  if (!/Cu$/.test(endLayer)) return fail(`end_layer "${endLayer}" is not a copper layer`);
+
+  const explicitPoints = Array.isArray(args.points)
+    ? (args.points as Array<Record<string, unknown>>)
+    : undefined;
+  const region = args.region as { x?: unknown; y?: unknown; w?: unknown; h?: unknown } | undefined;
+
+  const candidates: Vec2[] = [];
+  let mode: "region" | "points";
+  if (explicitPoints && explicitPoints.length > 0) {
+    for (const p of explicitPoints) {
+      if (!p || typeof p.x !== "number" || typeof p.y !== "number") {
+        return fail("every point must be {x, y} in mm");
+      }
+      candidates.push({ x: p.x as number, y: p.y as number });
+    }
+    mode = "points";
+  } else if (
+    region &&
+    typeof region.x === "number" &&
+    typeof region.y === "number" &&
+    typeof region.w === "number" &&
+    typeof region.h === "number"
+  ) {
+    const x0 = region.x as number;
+    const y0 = region.y as number;
+    const w = region.w as number;
+    const h = region.h as number;
+    if (!(w > 0) || !(h > 0)) return fail("region.w and region.h must be > 0");
+    const pitch =
+      typeof args.pitch === "number" && (args.pitch as number) > 0 ? (args.pitch as number) : 1.0;
+    const cols = Math.floor(w / pitch) + 1;
+    const rows = Math.floor(h / pitch) + 1;
+    if (cols * rows > MAX_VIA_ARRAY) {
+      return fail(
+        `grid would be ${cols * rows} vias (> ${MAX_VIA_ARRAY}) — increase pitch or shrink region`,
+      );
+    }
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        candidates.push({ x: x0 + c * pitch, y: y0 + r * pitch });
+      }
+    }
+    mode = "region";
+  } else {
+    return fail("provide either `region` {x,y,w,h} or a non-empty `points` array");
+  }
+
+  // Clip grid vias to the board (default on). Points mode is taken as authored.
+  const clip = args.clip_to_board !== false && mode === "region";
+  const outline = pcb.outline.vertices ?? [];
+  const cutouts = pcb.outline.cutouts ?? [];
+  let skipped = 0;
+  const kept: Vec2[] = [];
+  for (const p of candidates) {
+    if (clip && outline.length >= 3) {
+      if (!pointInPolygon(p, outline)) { skipped++; continue; }
+      if (cutouts.some((cc) => cc.length >= 3 && pointInPolygon(p, cc))) { skipped++; continue; }
+    }
+    kept.push(p);
+  }
+
+  if (kept.length === 0) {
+    return fail(
+      mode === "region"
+        ? "no vias landed inside the board outline — check region coordinates"
+        : "no via points given",
+    );
+  }
+
+  if (!pcb.nets.some((n) => n.id === net)) pcb.nets.push({ id: net, name: net });
+
+  for (const p of kept) {
+    pcb.vias.push({
+      position: { x: round3(p.x), y: round3(p.y) },
+      diameter,
+      drill,
+      startLayer,
+      endLayer,
+      net,
+    });
+  }
+
+  return {
+    content: [
+      {
+        type: "text" as const,
+        text: JSON.stringify({
+          success: true,
+          net,
+          mode,
+          vias_added: kept.length,
+          ...(skipped > 0 ? { skipped_outside_board: skipped } : {}),
+          start_layer: startLayer,
+          end_layer: endLayer,
           ...docResultPayload(ctx),
         }),
       },

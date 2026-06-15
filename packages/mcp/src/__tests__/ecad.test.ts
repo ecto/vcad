@@ -20,6 +20,11 @@ import {
   addTrace,
   addVia,
   setStackup,
+  setPlacement,
+  addZone,
+  setDesignRules,
+  sizeTraceForCurrent,
+  addViaArray,
   addMotorWinding,
   aggregateDrc,
   parseNetPair,
@@ -1607,5 +1612,268 @@ describe("ecad pipeline behaviors (session flow)", () => {
     expect(pcbNodes).toHaveLength(1);
     const w = Math.max(...getPcbBoard(doc).outline.vertices.map((v) => v.x));
     expect(w).toBe(50);
+  });
+});
+
+// A board with two placed resistors (refs R1, R2) on a 50×50 outline.
+async function boardWithTwoResistors(): Promise<string> {
+  const created = out(
+    await createSchematic({
+      components: [resistor("R1", 0), resistor("R2", 20)],
+      nets: { MID: ["R1.2", "R2.1"] },
+    }),
+  );
+  const id = created.document_id as string;
+  out(await placeComponents({ document_id: id, board_width: 50, board_height: 50 }));
+  return id;
+}
+
+/** True when a tool returned an error result (text isn't JSON — don't out() it). */
+const isErr = (r: unknown): boolean => (r as { isError?: boolean }).isError === true;
+
+describe("set_placement", () => {
+  it("places by ref with rotation + side and reports counts", async () => {
+    const id = await boardWithTwoResistors();
+    const res = out(
+      await setPlacement({
+        document_id: id,
+        placements: [
+          { ref: "R1", x: 10, y: 12, rotation: 90, side: "bottom" },
+          { ref: "R2", x: 30, y: 30 },
+        ],
+      }),
+    );
+    expect(res.success).toBe(true);
+    expect(res.moved).toBe(2);
+    expect(res.rotated).toBe(1);
+    expect(res.flipped).toBe(1);
+
+    const fp = (ref: string) => getPcbBoard(getSession(id)).footprints.find((f) => f.ref === ref)!;
+    expect(fp("R1").position).toEqual({ x: 10, y: 12 });
+    expect(fp("R1").rotation).toBe(90);
+    expect(fp("R1").front).toBe(false);
+    expect(fp("R2").position).toEqual({ x: 30, y: 30 });
+  });
+
+  it("collects unknown refs and warns on off-board landings", async () => {
+    const id = await boardWithTwoResistors();
+    const res = out(
+      await setPlacement({
+        document_id: id,
+        placements: [
+          { ref: "R1", x: 200, y: 200 },
+          { ref: "NOPE", x: 5, y: 5 },
+        ],
+      }),
+    );
+    expect(res.success).toBe(true);
+    expect(res.unknown_refs).toEqual(["NOPE"]);
+    expect(res.warnings.join(" ")).toContain("outside the board outline");
+  });
+
+  it("flags two footprints stacked at the same point", async () => {
+    const id = await boardWithTwoResistors();
+    const res = out(
+      await setPlacement({
+        document_id: id,
+        placements: [
+          { ref: "R1", x: 25, y: 25 },
+          { ref: "R2", x: 25, y: 25 },
+        ],
+      }),
+    );
+    expect(res.warnings.join(" ")).toContain("likely overlap");
+  });
+
+  it("errors when every ref is unknown", async () => {
+    const id = await boardWithTwoResistors();
+    const res = await setPlacement({ document_id: id, placements: [{ ref: "X", x: 1, y: 1 }] });
+    expect(isErr(res)).toBe(true);
+  });
+});
+
+describe("add_zone", () => {
+  it("fills the whole board outline on a new net", async () => {
+    const id = await boardWithTwoResistors();
+    const res = out(await addZone({ document_id: id, net: "GND", fill_board: true }));
+    expect(res.success).toBe(true);
+    expect(res.fill).toBe("board");
+    expect(res.thermal_relief).toBe("Relief");
+
+    const board = getPcbBoard(getSession(id));
+    expect(board.zones).toHaveLength(1);
+    expect(board.zones[0].net).toBe("GND");
+    expect(board.zones[0].layer).toBe("FCu");
+    expect(board.zones[0].fillType).toBe("Solid");
+    expect(board.zones[0].outline.length).toBeGreaterThanOrEqual(3);
+    // The net was auto-created.
+    expect(board.nets.some((n) => n.id === "GND")).toBe(true);
+  });
+
+  it("accepts an explicit polygon and rejects a degenerate one", async () => {
+    const id = await boardWithTwoResistors();
+    const ok = out(
+      await addZone({
+        document_id: id,
+        net: "VBAT",
+        layer: "BCu",
+        outline: [
+          { x: 5, y: 5 },
+          { x: 20, y: 5 },
+          { x: 20, y: 20 },
+          { x: 5, y: 20 },
+        ],
+        thermal_relief: "Direct",
+      }),
+    );
+    expect(ok.success).toBe(true);
+    expect(ok.fill).toBe("polygon");
+    expect(getPcbBoard(getSession(id)).zones[0].thermalRelief).toBe("Direct");
+
+    const bad = await addZone({ document_id: id, net: "X", outline: [{ x: 0, y: 0 }] });
+    expect(isErr(bad)).toBe(true);
+  });
+});
+
+describe("set_design_rules", () => {
+  it("writes default rules and a net class that DRC then reads", async () => {
+    const id = await boardWithTwoResistors();
+    const res = out(
+      await setDesignRules({
+        document_id: id,
+        clearance: 0.3,
+        track_width: 0.4,
+        classes: [{ name: "power", nets: ["MID"], clearance: 0.6, track_width: 1.0 }],
+      }),
+    );
+    expect(res.success).toBe(true);
+    expect(res.rules.clearance).toBe(0.3);
+    expect(res.rules.track_width).toBe(0.4);
+    expect(res.classes).toEqual(["power"]);
+
+    const board = getPcbBoard(getSession(id));
+    expect(board.rules.defaultRules.clearance).toBe(0.3);
+    expect(board.rules.defaultRules.traceWidth).toBe(0.4);
+    expect(board.rules.classRules?.[0]).toMatchObject({ name: "power", clearance: 0.6, traceWidth: 1.0 });
+    expect(board.rules.netClassAssignments).toEqual({ power: ["MID"] });
+
+    // DRC still runs against the updated rules.
+    const drc = out(await runDrc({ document_id: id }));
+    expect(drc.success).toBe(true);
+  });
+
+  it("warns on unknown class nets and errors with no fields", async () => {
+    const id = await boardWithTwoResistors();
+    const warn = out(
+      await setDesignRules({ document_id: id, classes: [{ name: "hv", nets: ["GHOST"] }] }),
+    );
+    expect(warn.success).toBe(true);
+    expect(warn.warnings.join(" ")).toContain("GHOST");
+
+    const empty = await setDesignRules({ document_id: id });
+    expect(isErr(empty)).toBe(true);
+  });
+});
+
+describe("size_trace_for_current", () => {
+  it("solves a plausible width and derates inner layers", async () => {
+    const outer = out(sizeTraceForCurrent({ current_a: 10, copper_oz: 1, temp_rise_c: 10 }));
+    expect(outer.standard).toBe("IPC-2221");
+    expect(outer.current_a).toBe(10);
+    // 10A / 10°C / 1oz external lands around 7mm by the closed form.
+    expect(outer.width_mm).toBeGreaterThan(5);
+    expect(outer.width_mm).toBeLessThan(9);
+
+    const inner = out(
+      sizeTraceForCurrent({ current_a: 10, copper_oz: 1, temp_rise_c: 10, layer: "inner" }),
+    );
+    expect(inner.layer).toBe("inner");
+    // Inner traces shed heat poorly → must be wider for the same current.
+    expect(inner.width_mm).toBeGreaterThan(outer.width_mm);
+
+    // Heavier copper → narrower trace for the same current.
+    const heavy = out(sizeTraceForCurrent({ current_a: 10, copper_oz: 2, temp_rise_c: 10 }));
+    expect(heavy.width_mm).toBeLessThan(outer.width_mm);
+  });
+
+  it("snaps the width up to the fab grid and rejects bad current", async () => {
+    const r = out(sizeTraceForCurrent({ current_a: 3, fab_grid_mm: 0.5 }));
+    // Snapped up to the next grid step, never below the raw solve.
+    expect(r.width_mm).toBeGreaterThanOrEqual(r.width_mm_raw);
+    expect(r.width_mm - r.width_mm_raw).toBeLessThan(0.5);
+    const ratio = r.width_mm / 0.5;
+    expect(Math.abs(ratio - Math.round(ratio))).toBeLessThan(1e-9);
+
+    const bad = sizeTraceForCurrent({ current_a: 0 });
+    expect(isErr(bad)).toBe(true);
+  });
+});
+
+describe("add_via_array", () => {
+  it("fills a region with a clipped via grid", async () => {
+    const id = await boardWithTwoResistors();
+    const res = out(
+      await addViaArray({ document_id: id, net: "GND", region: { x: 10, y: 10, w: 5, h: 5 }, pitch: 1 }),
+    );
+    expect(res.success).toBe(true);
+    expect(res.mode).toBe("region");
+    // 6×6 grid (0..5 inclusive at pitch 1), all inside the 50×50 board.
+    expect(res.vias_added).toBe(36);
+    const board = getPcbBoard(getSession(id));
+    expect(board.vias).toHaveLength(36);
+    expect(board.vias.every((v) => v.net === "GND")).toBe(true);
+  });
+
+  it("clips grid vias that fall outside the board", async () => {
+    const id = await boardWithTwoResistors();
+    const res = out(
+      await addViaArray({ document_id: id, net: "GND", region: { x: 48, y: 48, w: 6, h: 6 }, pitch: 1 }),
+    );
+    // Part of this region is off the 50×50 board → some vias dropped.
+    expect(res.skipped_outside_board).toBeGreaterThan(0);
+  });
+
+  it("places explicit points and refuses an empty request", async () => {
+    const id = await boardWithTwoResistors();
+    const res = out(
+      await addViaArray({
+        document_id: id,
+        net: "SIG",
+        points: [
+          { x: 5, y: 5 },
+          { x: 6, y: 6 },
+        ],
+      }),
+    );
+    expect(res.mode).toBe("points");
+    expect(res.vias_added).toBe(2);
+
+    const bad = await addViaArray({ document_id: id, net: "SIG" });
+    expect(isErr(bad)).toBe(true);
+  });
+});
+
+describe("new PCB tools survive the kernel pipeline", () => {
+  it("a pour, a via field, and tightened rules pass DRC + Gerber", async () => {
+    const id = await boardWithTwoResistors();
+    out(await setDesignRules({ document_id: id, clearance: 0.25, track_width: 0.3 }));
+    out(await addZone({ document_id: id, net: "GND", fill_board: true }));
+    out(
+      await addViaArray({
+        document_id: id,
+        net: "GND",
+        region: { x: 15, y: 15, w: 4, h: 4 },
+        pitch: 1,
+      }),
+    );
+    out(await routeNets({ document_id: id }));
+
+    // The kernel computes zone fills + DRC against the mutated rules; both must
+    // accept the board, and Gerber must render the new copper.
+    const drc = out(await runDrc({ document_id: id }));
+    expect(drc.success).toBe(true);
+    const gerber = out(await exportGerber({ document_id: id }));
+    expect(gerber.success).toBe(true);
+    expect(gerber.files.length).toBeGreaterThan(0);
   });
 });
