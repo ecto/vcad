@@ -1600,6 +1600,7 @@ export async function routeNets(args: Record<string, unknown>) {
 
   const routedNets = new Set<string>();
   const fallbackNets = new Set<string>();
+  const unroutedNets = new Set<string>();
   let tracesAdded = 0;
 
   for (const line of rats) {
@@ -1642,18 +1643,12 @@ export async function routeNets(args: Record<string, unknown>) {
       }
       routedNets.add(line.net);
     } else {
-      // Last resort (kernel unavailable or no path found): direct segment.
-      // Flagged so callers know this connection may cross other copper.
-      pcb.traces.push({
-        start: { x: line.from.x, y: line.from.y },
-        end: { x: line.to.x, y: line.to.y },
-        width,
-        layer: "FCu",
-        net: line.net,
-      });
-      tracesAdded++;
-      routedNets.add(line.net);
-      fallbackNets.add(line.net);
+      // The kernel is available (we have a ratsnest) but no router found a
+      // clearance-legal path for this connection on the layer. Leave it as an
+      // unrouted air-wire rather than dropping a direct segment that would
+      // short other copper — honest failure beats fabricating a broken board.
+      // (These nets typically need another layer or rip-up-and-reroute.)
+      unroutedNets.add(line.net);
     }
   }
 
@@ -1684,6 +1679,18 @@ export async function routeNets(args: Record<string, unknown>) {
     }
   }
 
+  const warnings: string[] = [];
+  if (unroutedNets.size > 0) {
+    warnings.push(
+      `${unroutedNets.size} net(s) could not be routed without shorting and were left unrouted (no copper added) — they need another layer or rip-up rerouting: ${[...unroutedNets].join(", ")}`,
+    );
+  }
+  if (fallbackNets.size > 0) {
+    warnings.push(
+      `${fallbackNets.size} net(s) used direct fallback segments that may cross other copper — run run_drc to verify`,
+    );
+  }
+
   return {
     content: [
       {
@@ -1692,14 +1699,9 @@ export async function routeNets(args: Record<string, unknown>) {
           success: true,
           nets_routed: routedNets.size,
           traces_added: tracesAdded,
-          ...(fallbackNets.size > 0
-            ? {
-                fallback_nets: [...fallbackNets],
-                warnings: [
-                  `${fallbackNets.size} net(s) used direct fallback segments that may cross other copper — run run_drc to verify`,
-                ],
-              }
-            : {}),
+          ...(unroutedNets.size > 0 ? { unrouted_nets: [...unroutedNets] } : {}),
+          ...(fallbackNets.size > 0 ? { fallback_nets: [...fallbackNets] } : {}),
+          ...(warnings.length > 0 ? { warnings } : {}),
           ...docResultPayload(ctx),
         }),
       },
