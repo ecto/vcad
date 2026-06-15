@@ -1616,7 +1616,9 @@ export async function routeNets(args: Record<string, unknown>) {
         start: { x: t.start.x, y: t.start.y },
         end: { x: t.end.x, y: t.end.y },
         width: t.width,
-        layer: t.layer,
+        // The kernel returns the layer as a string ("FCu"/"BCu"); it is always
+        // a valid PcbLayer value.
+        layer: t.layer as PcbLayer,
         net: t.net,
       });
       tracesAdded++;
