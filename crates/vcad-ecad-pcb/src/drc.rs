@@ -1162,7 +1162,7 @@ impl Dsu {
 }
 
 /// Build a map of net ID to clearance from design rules.
-fn build_net_clearance_map(pcb: &Pcb) -> HashMap<String, f64> {
+pub(crate) fn build_net_clearance_map(pcb: &Pcb) -> HashMap<String, f64> {
     let mut map = HashMap::new();
     for rule in &pcb.rules.class_rules {
         if let Some(nets) = pcb.rules.net_class_assignments.get(&rule.name) {
