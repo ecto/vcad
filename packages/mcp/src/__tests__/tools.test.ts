@@ -28,6 +28,7 @@ import {
   registryToolDescriptors,
   dispatchRegistryTool,
 } from "../tools/registry-dispatch.js";
+import { slimPreviewForInlineUi } from "../server.js";
 import {
   createRobotEnv,
   gymStep,
@@ -129,6 +130,74 @@ describe("session lifecycle", () => {
   it("close_document on unknown id reports closed: false", () => {
     const out = closeDocument({ document_id: "doc_missing" });
     expect(JSON.parse(out.content[0].text).closed).toBe(false);
+  });
+});
+
+describe("get_document body survives inline-UI slimming", () => {
+  // Regression: get_document is in GEOMETRY_TOOLS, so on a client that
+  // declared MCP Apps support, slimPreviewForInlineUi used to replace the
+  // full IR body with a {document_id} stub whenever it exceeded 8192 chars —
+  // which any real PCB does after place_components + route_nets. That broke
+  // get_document's contract ("return the full IR Document JSON").
+
+  /** A PCB session document whose serialized IR comfortably exceeds the
+   *  8192-char slim threshold, mirroring a routed board. */
+  function makeBigPcbDoc(): Document {
+    const components = Array.from({ length: 120 }, (_, i) => ({
+      ref: `R${i + 1}`,
+      footprint: "0805",
+      position: { x: i * 2.54, y: i * 1.27 },
+      pins: [
+        { number: "1", net: `NET_${i}` },
+        { number: "2", net: "GND" },
+      ],
+    }));
+    return {
+      version: "0.1",
+      nodes: {},
+      materials: {},
+      part_materials: {},
+      roots: [{ root: 1, material: "default" }],
+      pcb: {
+        outline: {
+          vertices: [
+            [0, 0],
+            [50, 0],
+            [50, 40],
+            [0, 40],
+          ],
+          thickness: 1.6,
+        },
+        components,
+        nets: { GND: components.map((c) => `${c.ref}.2`) },
+      },
+    } as unknown as Document;
+  }
+
+  it("get_document returns the full IR (pcb + roots), not a document_id stub", () => {
+    const text = JSON.stringify(makeBigPcbDoc());
+    expect(text.length).toBeGreaterThan(8192);
+
+    const result = { content: [{ type: "text", text }] };
+    // clientHasInlineUi=true is the case that triggered the bug.
+    slimPreviewForInlineUi(result, "doc_pcb", "get_document", true);
+
+    const parsed = JSON.parse(result.content[0].text);
+    expect(parsed.pcb).toBeDefined();
+    expect(parsed.pcb.components).toHaveLength(120);
+    expect(parsed.roots).toHaveLength(1);
+    // The regression collapsed the body to exactly { document_id }.
+    expect(Object.keys(parsed)).not.toEqual(["document_id"]);
+  });
+
+  it("still slims bulky mutation-tool results to a handle block", () => {
+    const result = { content: [{ type: "text", text: "x".repeat(9000) }] };
+    slimPreviewForInlineUi(result, "doc_pcb", "route_nets", true);
+    // summary line + { document_id } block
+    expect(result.content).toHaveLength(2);
+    expect(JSON.parse(result.content[1].text)).toEqual({
+      document_id: "doc_pcb",
+    });
   });
 });
 
