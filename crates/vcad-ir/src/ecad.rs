@@ -17,6 +17,8 @@ pub type NetId = String;
 
 /// A named electrical connection.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "bindings/"))]
 pub struct Net {
     /// Unique net identifier.
     pub id: NetId,
@@ -30,6 +32,8 @@ pub struct Net {
 
 /// Pin electrical type for ERC validation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "bindings/"))]
 pub enum PinType {
     /// Input signal pin.
     Input,
@@ -57,6 +61,8 @@ pub enum PinType {
 
 /// Label scope for schematic net labels.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "bindings/"))]
 pub enum LabelScope {
     /// Local to this sheet only.
     Local,
@@ -68,6 +74,8 @@ pub enum LabelScope {
 
 /// A net label on a schematic.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "bindings/"))]
 pub struct SchematicLabel {
     /// Net name this label assigns.
     pub name: String,
@@ -82,6 +90,8 @@ pub struct SchematicLabel {
 
 /// A pin on a schematic symbol.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "bindings/"))]
 pub struct SchematicPin {
     /// Pin number (e.g. "1", "2", "A1").
     pub number: String,
@@ -95,6 +105,8 @@ pub struct SchematicPin {
 
 /// A placed component instance on a schematic sheet.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "bindings/"))]
 pub struct SchematicComponent {
     /// Reference designator (e.g. "R1", "U3", "C5").
     #[serde(rename = "ref")]
@@ -121,6 +133,8 @@ pub struct SchematicComponent {
 
 /// A wire connection on a schematic.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "bindings/"))]
 pub struct SchematicWire {
     /// Wire start point.
     pub start: Vec2,
@@ -130,6 +144,8 @@ pub struct SchematicWire {
 
 /// An explicit wire junction point.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "bindings/"))]
 pub struct SchematicJunction {
     /// Junction position.
     pub position: Vec2,
@@ -137,9 +153,12 @@ pub struct SchematicJunction {
 
 /// A schematic sheet — top-level schematic container.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "bindings/"))]
 pub struct SchematicSheet {
     /// Sheet title.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-rs", ts(optional))]
     pub title: Option<String>,
     /// Placed component instances.
     #[serde(default)]
@@ -158,6 +177,7 @@ pub struct SchematicSheet {
     /// callers can declare nets as data instead of relying on coordinate
     /// coincidence.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-rs", ts(optional))]
     pub nets: Option<std::collections::BTreeMap<String, Vec<String>>>,
 }
 
@@ -168,6 +188,8 @@ pub struct SchematicSheet {
 /// A graphic element in a schematic symbol.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type")]
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "bindings/"))]
 pub enum SymbolGraphic {
     /// Rectangle.
     #[serde(rename = "rect")]
@@ -190,6 +212,8 @@ pub enum SymbolGraphic {
 
 /// A parametric footprint template (pads + silkscreen graphics).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "bindings/"))]
 pub struct FootprintTemplate {
     /// Footprint name (e.g. "0805", "SOIC-8", "DIP-14").
     pub name: String,
@@ -201,6 +225,8 @@ pub struct FootprintTemplate {
 
 /// A builtin symbol definition for schematic component placement.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "bindings/"))]
 pub struct SymbolDef {
     /// Unique identifier (e.g. "resistor", "capacitor", "npn").
     pub id: String,
@@ -226,6 +252,8 @@ pub struct SymbolDef {
 
 /// PCB layer identifiers (KiCad-compatible).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "bindings/"))]
 pub enum PcbLayer {
     // Copper layers
     /// Front copper.
@@ -301,28 +329,36 @@ impl PcbLayer {
 
 /// A single layer in the physical board stackup.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "bindings/"))]
 pub struct StackupLayer {
     /// Layer identifier.
     pub layer: PcbLayer,
     /// Copper thickness in mm (for copper layers).
     #[serde(rename = "copperThickness", skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-rs", ts(rename = "copperThickness", optional))]
     pub copper_thickness: Option<f64>,
     /// Dielectric thickness in mm (distance to next copper layer).
     #[serde(
         rename = "dielectricThickness",
         skip_serializing_if = "Option::is_none"
     )]
+    #[cfg_attr(feature = "ts-rs", ts(rename = "dielectricThickness", optional))]
     pub dielectric_thickness: Option<f64>,
     /// Dielectric constant (relative permittivity).
     #[serde(rename = "dielectricEr", skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-rs", ts(rename = "dielectricEr", optional))]
     pub dielectric_er: Option<f64>,
     /// Material name (e.g. "FR4", "Rogers 4350B").
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-rs", ts(optional))]
     pub material: Option<String>,
 }
 
 /// Physical layer stackup for impedance calculations.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "bindings/"))]
 pub struct LayerStackup {
     /// Ordered layers from top to bottom.
     pub layers: Vec<StackupLayer>,
@@ -334,6 +370,8 @@ pub struct LayerStackup {
 
 /// Board outline profile.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "bindings/"))]
 pub struct BoardOutline {
     /// Closed outline vertices (last connects to first).
     pub vertices: Vec<Vec2>,
@@ -350,6 +388,8 @@ pub struct BoardOutline {
 
 /// Per-net-class design rules.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "bindings/"))]
 pub struct NetClassRules {
     /// Net class name.
     pub name: String,
@@ -366,20 +406,25 @@ pub struct NetClassRules {
     pub via_drill: f64,
     /// Differential pair gap in mm.
     #[serde(rename = "diffPairGap", skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-rs", ts(rename = "diffPairGap", optional))]
     pub diff_pair_gap: Option<f64>,
     /// Differential pair trace width in mm.
     #[serde(rename = "diffPairWidth", skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-rs", ts(rename = "diffPairWidth", optional))]
     pub diff_pair_width: Option<f64>,
 }
 
 /// Board-level design rules.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "bindings/"))]
 pub struct DesignRules {
     /// Default net class rules.
     #[serde(rename = "defaultRules")]
     pub default_rules: NetClassRules,
     /// Per-class overrides.
     #[serde(rename = "classRules", default, skip_serializing_if = "Vec::is_empty")]
+    #[cfg_attr(feature = "ts-rs", ts(rename = "classRules"))]
     pub class_rules: Vec<NetClassRules>,
     /// Nets assigned to each class (class name → vec of net IDs).
     #[serde(
@@ -387,6 +432,7 @@ pub struct DesignRules {
         default,
         skip_serializing_if = "std::collections::HashMap::is_empty"
     )]
+    #[cfg_attr(feature = "ts-rs", ts(rename = "netClassAssignments"))]
     pub net_class_assignments: std::collections::HashMap<String, Vec<NetId>>,
     /// Minimum board edge clearance in mm.
     #[serde(rename = "edgeClearance")]
@@ -409,6 +455,8 @@ pub struct DesignRules {
 /// Pad shape.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type")]
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "bindings/"))]
 pub enum PadShape {
     /// Circular pad.
     Circle {
@@ -448,6 +496,8 @@ pub enum PadShape {
 
 /// Pad mounting type.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "bindings/"))]
 pub enum PadType {
     /// Through-hole technology pad.
     THT,
@@ -459,6 +509,8 @@ pub enum PadType {
 
 /// Drill specification for through-hole pads.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "bindings/"))]
 pub struct DrillSpec {
     /// Drill diameter in mm.
     pub diameter: f64,
@@ -467,11 +519,14 @@ pub struct DrillSpec {
     pub oval: bool,
     /// Secondary diameter for oval drill.
     #[serde(rename = "ovalHeight", skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-rs", ts(rename = "ovalHeight", optional))]
     pub oval_height: Option<f64>,
 }
 
 /// A pad on a footprint.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "bindings/"))]
 pub struct Pad {
     /// Pad number/name (e.g. "1", "A1").
     pub number: String,
@@ -487,9 +542,11 @@ pub struct Pad {
     pub rotation: f64,
     /// Drill specification (for THT/NPTH pads).
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-rs", ts(optional))]
     pub drill: Option<DrillSpec>,
     /// Net this pad is connected to.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-rs", ts(optional))]
     pub net: Option<NetId>,
     /// Layers this pad exists on.
     pub layers: Vec<PcbLayer>,
@@ -502,6 +559,8 @@ pub struct Pad {
 /// A graphic element on a footprint (silkscreen, courtyard, etc.).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type")]
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "bindings/"))]
 pub enum FootprintGraphic {
     /// A line segment.
     Line {
@@ -582,6 +641,8 @@ pub enum FootprintGraphic {
 
 /// A placed footprint on the PCB.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "bindings/"))]
 pub struct Footprint {
     /// Reference designator (e.g. "R1", "U3").
     #[serde(rename = "ref")]
@@ -606,6 +667,7 @@ pub struct Footprint {
     pub graphics: Vec<FootprintGraphic>,
     /// Reference to a 3D model file (STEP/VRML).
     #[serde(rename = "model3d", skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-rs", ts(rename = "model3d", optional))]
     pub model_3d: Option<String>,
     /// Extra properties.
     #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
@@ -622,6 +684,8 @@ fn default_true() -> bool {
 
 /// A straight routed copper trace segment.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "bindings/"))]
 pub struct Trace {
     /// Trace start point.
     pub start: Vec2,
@@ -637,6 +701,8 @@ pub struct Trace {
 
 /// An arc routed copper trace segment.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "bindings/"))]
 pub struct TraceArc {
     /// Arc center point.
     pub center: Vec2,
@@ -658,6 +724,8 @@ pub struct TraceArc {
 
 /// A via (layer-spanning connection).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "bindings/"))]
 pub struct Via {
     /// Via center position.
     pub position: Vec2,
@@ -681,6 +749,8 @@ pub struct Via {
 
 /// Copper fill type for zones.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "bindings/"))]
 pub enum ZoneFillType {
     /// Solid copper fill.
     Solid,
@@ -690,6 +760,8 @@ pub enum ZoneFillType {
 
 /// Thermal relief style for zone connections.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "bindings/"))]
 pub enum ThermalReliefStyle {
     /// Full connection (direct copper).
     Direct,
@@ -701,6 +773,8 @@ pub enum ThermalReliefStyle {
 
 /// A copper pour zone.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "bindings/"))]
 pub struct Zone {
     /// Zone outline vertices (closed polygon).
     pub outline: Vec<Vec2>,
@@ -724,9 +798,11 @@ pub struct Zone {
     pub thermal_relief: ThermalReliefStyle,
     /// Thermal relief gap width in mm.
     #[serde(rename = "thermalGap", skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-rs", ts(rename = "thermalGap", optional))]
     pub thermal_gap: Option<f64>,
     /// Thermal relief spoke width in mm.
     #[serde(rename = "thermalSpokeWidth", skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-rs", ts(rename = "thermalSpokeWidth", optional))]
     pub thermal_spoke_width: Option<f64>,
     /// Priority (higher priority zones override lower).
     #[serde(default)]
@@ -743,6 +819,8 @@ fn default_thermal_relief() -> ThermalReliefStyle {
 
 /// A keepout region (restricted area).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "bindings/"))]
 pub struct Keepout {
     /// Keepout outline vertices (closed polygon).
     pub outline: Vec<Vec2>,
@@ -770,6 +848,8 @@ pub struct Keepout {
 /// are treated as electrically one where they meet, so DRC does not flag the
 /// deliberate junction as a short.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "bindings/"))]
 pub struct NetTie {
     /// Names of the nets joined at this tie (two or more).
     pub nets: Vec<String>,
@@ -779,9 +859,11 @@ pub struct NetTie {
     /// inside the region; outside it the tied nets must still observe clearance.
     /// When absent, the exemption applies board-wide.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-rs", ts(optional))]
     pub position: Option<Vec2>,
     /// Optional radius of the allowed join region (mm).
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-rs", ts(optional))]
     pub radius: Option<f64>,
 }
 
@@ -791,6 +873,8 @@ pub struct NetTie {
 
 /// A complete PCB design.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "bindings/"))]
 pub struct Pcb {
     /// Board outline and thickness.
     pub outline: BoardOutline,
@@ -809,6 +893,7 @@ pub struct Pcb {
     pub traces: Vec<Trace>,
     /// Routed trace arcs.
     #[serde(rename = "traceArcs", default, skip_serializing_if = "Vec::is_empty")]
+    #[cfg_attr(feature = "ts-rs", ts(rename = "traceArcs"))]
     pub trace_arcs: Vec<TraceArc>,
     /// Vias.
     #[serde(default)]
@@ -821,6 +906,7 @@ pub struct Pcb {
     pub keepouts: Vec<Keepout>,
     /// Intentional net-ties (wye/star points, center taps, split-ground stitches).
     #[serde(rename = "netTies", default, skip_serializing_if = "Vec::is_empty")]
+    #[cfg_attr(feature = "ts-rs", ts(rename = "netTies"))]
     pub net_ties: Vec<NetTie>,
 }
 

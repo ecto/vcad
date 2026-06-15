@@ -199,7 +199,7 @@ export function evaluateDocument(
 // =========================================================================
 
 /** Convert IR sketch segment to WASM format */
-function convertSegment(seg: SketchSegment2D) {
+export function convertSegment(seg: SketchSegment2D) {
   if (seg.type === "Line") {
     return {
       type: "Line" as const,
@@ -877,6 +877,13 @@ function evaluateOp(
     }
 
     case "ImportedMesh":
+      return Solid.empty();
+
+    case "step_import":
+    case "mesh_import":
+      // File-backed imports (STEP / external mesh). The Rust/WASM evaluator
+      // loads the referenced file; the TS fallback can't read files, so it
+      // yields empty geometry — the WASM path is preferred for these.
       return Solid.empty();
 
     case "Text2D":

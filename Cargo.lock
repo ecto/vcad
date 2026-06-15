@@ -6938,6 +6938,7 @@ version = "0.9.4"
 dependencies = [
  "serde",
  "serde_json",
+ "ts-rs",
  "vcad-tool-derive",
 ]
 

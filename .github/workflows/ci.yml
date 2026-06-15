@@ -48,6 +48,21 @@ jobs:
       - run: cargo test --workspace --exclude vcad-desktop --features vcad-kernel-text/no-builtin-font
       - run: cargo build --workspace --exclude vcad-desktop --examples --features vcad-kernel-text/no-builtin-font
       - run: cargo doc --workspace --exclude vcad-desktop --no-deps --features vcad-kernel-text/no-builtin-font
+      # packages/ir/src/generated.ts is generated from the Rust `vcad-ir` types
+      # via ts-rs (`npm run ir:gen`). Fail if the committed file has drifted —
+      # i.e. an IR type changed without regenerating. Unlike the wasm-bindgen
+      # bindings (deliberately unchecked above — wasm-pack output is host-
+      # toolchain-sensitive), ts-rs is pure type derivation with the version
+      # pinned via Cargo.lock, so its output is byte-stable across platforms.
+      # `npm run ir:check` only needs cargo + node (no node_modules), so it
+      # runs here on stable rather than in the TS job (which has no Rust).
+      - uses: actions/setup-node@v6
+        if: matrix.toolchain == 'stable'
+        with:
+          node-version: 22
+      - name: IR types in sync (Rust → TS codegen)
+        if: matrix.toolchain == 'stable'
+        run: npm run ir:check
 
   # wasm-pack dominates the TS critical path (~3m23s of a 7m job), so it
   # runs as its own job. The TS job starts in parallel and downloads the

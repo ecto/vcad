@@ -17,6 +17,8 @@ type LoonEvaluator<'a> = Option<&'a dyn Fn(&str) -> Result<Document, String>>;
 
 /// Detected file format.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "bindings/"))]
 pub enum VcadFormat {
     /// JSON format (v0.1).
     Json,
@@ -29,6 +31,8 @@ pub enum VcadFormat {
 /// A parsed vcad file with metadata.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "bindings/"))]
 pub struct VcadFile {
     /// Format version string.
     pub version: String,
@@ -40,8 +44,10 @@ pub struct VcadFile {
     #[serde(default)]
     pub consumed_parts: HashMap<String, PartInfo>,
     /// Next available node ID.
+    #[cfg_attr(feature = "ts-rs", ts(type = "number"))]
     pub next_node_id: u64,
     /// Next available part number.
+    #[cfg_attr(feature = "ts-rs", ts(type = "number"))]
     pub next_part_num: u64,
     /// Original loon source (if format was loon).
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -53,6 +59,8 @@ pub struct VcadFile {
 /// Tagged union matching the TypeScript `PartInfo` type.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind")]
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "bindings/"))]
 pub enum PartInfo {
     /// A primitive shape (cube, cylinder, sphere).
     #[serde(rename = "cube")]
@@ -60,12 +68,16 @@ pub enum PartInfo {
         id: String,
         name: String,
         #[serde(rename = "primitiveNodeId")]
+        #[cfg_attr(feature = "ts-rs", ts(type = "number"))]
         primitive_node_id: NodeId,
         #[serde(rename = "scaleNodeId")]
+        #[cfg_attr(feature = "ts-rs", ts(type = "number"))]
         scale_node_id: NodeId,
         #[serde(rename = "rotateNodeId")]
+        #[cfg_attr(feature = "ts-rs", ts(type = "number"))]
         rotate_node_id: NodeId,
         #[serde(rename = "translateNodeId")]
+        #[cfg_attr(feature = "ts-rs", ts(type = "number"))]
         translate_node_id: NodeId,
     },
     #[serde(rename = "cylinder")]
@@ -73,12 +85,16 @@ pub enum PartInfo {
         id: String,
         name: String,
         #[serde(rename = "primitiveNodeId")]
+        #[cfg_attr(feature = "ts-rs", ts(type = "number"))]
         primitive_node_id: NodeId,
         #[serde(rename = "scaleNodeId")]
+        #[cfg_attr(feature = "ts-rs", ts(type = "number"))]
         scale_node_id: NodeId,
         #[serde(rename = "rotateNodeId")]
+        #[cfg_attr(feature = "ts-rs", ts(type = "number"))]
         rotate_node_id: NodeId,
         #[serde(rename = "translateNodeId")]
+        #[cfg_attr(feature = "ts-rs", ts(type = "number"))]
         translate_node_id: NodeId,
     },
     #[serde(rename = "sphere")]
@@ -86,12 +102,16 @@ pub enum PartInfo {
         id: String,
         name: String,
         #[serde(rename = "primitiveNodeId")]
+        #[cfg_attr(feature = "ts-rs", ts(type = "number"))]
         primitive_node_id: NodeId,
         #[serde(rename = "scaleNodeId")]
+        #[cfg_attr(feature = "ts-rs", ts(type = "number"))]
         scale_node_id: NodeId,
         #[serde(rename = "rotateNodeId")]
+        #[cfg_attr(feature = "ts-rs", ts(type = "number"))]
         rotate_node_id: NodeId,
         #[serde(rename = "translateNodeId")]
+        #[cfg_attr(feature = "ts-rs", ts(type = "number"))]
         translate_node_id: NodeId,
     },
     /// A boolean operation.
@@ -102,12 +122,16 @@ pub enum PartInfo {
         #[serde(rename = "booleanType")]
         boolean_type: String,
         #[serde(rename = "booleanNodeId")]
+        #[cfg_attr(feature = "ts-rs", ts(type = "number"))]
         boolean_node_id: NodeId,
         #[serde(rename = "scaleNodeId")]
+        #[cfg_attr(feature = "ts-rs", ts(type = "number"))]
         scale_node_id: NodeId,
         #[serde(rename = "rotateNodeId")]
+        #[cfg_attr(feature = "ts-rs", ts(type = "number"))]
         rotate_node_id: NodeId,
         #[serde(rename = "translateNodeId")]
+        #[cfg_attr(feature = "ts-rs", ts(type = "number"))]
         translate_node_id: NodeId,
         #[serde(rename = "sourcePartIds")]
         source_part_ids: Vec<String>,
@@ -118,14 +142,19 @@ pub enum PartInfo {
         id: String,
         name: String,
         #[serde(rename = "sketchNodeId")]
+        #[cfg_attr(feature = "ts-rs", ts(type = "number"))]
         sketch_node_id: NodeId,
         #[serde(rename = "extrudeNodeId")]
+        #[cfg_attr(feature = "ts-rs", ts(type = "number"))]
         extrude_node_id: NodeId,
         #[serde(rename = "scaleNodeId")]
+        #[cfg_attr(feature = "ts-rs", ts(type = "number"))]
         scale_node_id: NodeId,
         #[serde(rename = "rotateNodeId")]
+        #[cfg_attr(feature = "ts-rs", ts(type = "number"))]
         rotate_node_id: NodeId,
         #[serde(rename = "translateNodeId")]
+        #[cfg_attr(feature = "ts-rs", ts(type = "number"))]
         translate_node_id: NodeId,
     },
     /// A revolution.
@@ -134,14 +163,19 @@ pub enum PartInfo {
         id: String,
         name: String,
         #[serde(rename = "sketchNodeId")]
+        #[cfg_attr(feature = "ts-rs", ts(type = "number"))]
         sketch_node_id: NodeId,
         #[serde(rename = "revolveNodeId")]
+        #[cfg_attr(feature = "ts-rs", ts(type = "number"))]
         revolve_node_id: NodeId,
         #[serde(rename = "scaleNodeId")]
+        #[cfg_attr(feature = "ts-rs", ts(type = "number"))]
         scale_node_id: NodeId,
         #[serde(rename = "rotateNodeId")]
+        #[cfg_attr(feature = "ts-rs", ts(type = "number"))]
         rotate_node_id: NodeId,
         #[serde(rename = "translateNodeId")]
+        #[cfg_attr(feature = "ts-rs", ts(type = "number"))]
         translate_node_id: NodeId,
     },
     /// A sweep.
@@ -150,14 +184,19 @@ pub enum PartInfo {
         id: String,
         name: String,
         #[serde(rename = "sketchNodeId")]
+        #[cfg_attr(feature = "ts-rs", ts(type = "number"))]
         sketch_node_id: NodeId,
         #[serde(rename = "sweepNodeId")]
+        #[cfg_attr(feature = "ts-rs", ts(type = "number"))]
         sweep_node_id: NodeId,
         #[serde(rename = "scaleNodeId")]
+        #[cfg_attr(feature = "ts-rs", ts(type = "number"))]
         scale_node_id: NodeId,
         #[serde(rename = "rotateNodeId")]
+        #[cfg_attr(feature = "ts-rs", ts(type = "number"))]
         rotate_node_id: NodeId,
         #[serde(rename = "translateNodeId")]
+        #[cfg_attr(feature = "ts-rs", ts(type = "number"))]
         translate_node_id: NodeId,
     },
     /// A loft.
@@ -166,14 +205,19 @@ pub enum PartInfo {
         id: String,
         name: String,
         #[serde(rename = "sketchNodeIds")]
+        #[cfg_attr(feature = "ts-rs", ts(type = "number[]"))]
         sketch_node_ids: Vec<NodeId>,
         #[serde(rename = "loftNodeId")]
+        #[cfg_attr(feature = "ts-rs", ts(type = "number"))]
         loft_node_id: NodeId,
         #[serde(rename = "scaleNodeId")]
+        #[cfg_attr(feature = "ts-rs", ts(type = "number"))]
         scale_node_id: NodeId,
         #[serde(rename = "rotateNodeId")]
+        #[cfg_attr(feature = "ts-rs", ts(type = "number"))]
         rotate_node_id: NodeId,
         #[serde(rename = "translateNodeId")]
+        #[cfg_attr(feature = "ts-rs", ts(type = "number"))]
         translate_node_id: NodeId,
     },
     /// An imported mesh.
@@ -182,12 +226,16 @@ pub enum PartInfo {
         id: String,
         name: String,
         #[serde(rename = "meshNodeId")]
+        #[cfg_attr(feature = "ts-rs", ts(type = "number"))]
         mesh_node_id: NodeId,
         #[serde(rename = "scaleNodeId")]
+        #[cfg_attr(feature = "ts-rs", ts(type = "number"))]
         scale_node_id: NodeId,
         #[serde(rename = "rotateNodeId")]
+        #[cfg_attr(feature = "ts-rs", ts(type = "number"))]
         rotate_node_id: NodeId,
         #[serde(rename = "translateNodeId")]
+        #[cfg_attr(feature = "ts-rs", ts(type = "number"))]
         translate_node_id: NodeId,
     },
     /// A fillet.
@@ -198,12 +246,16 @@ pub enum PartInfo {
         #[serde(rename = "sourcePartId")]
         source_part_id: String,
         #[serde(rename = "filletNodeId")]
+        #[cfg_attr(feature = "ts-rs", ts(type = "number"))]
         fillet_node_id: NodeId,
         #[serde(rename = "scaleNodeId")]
+        #[cfg_attr(feature = "ts-rs", ts(type = "number"))]
         scale_node_id: NodeId,
         #[serde(rename = "rotateNodeId")]
+        #[cfg_attr(feature = "ts-rs", ts(type = "number"))]
         rotate_node_id: NodeId,
         #[serde(rename = "translateNodeId")]
+        #[cfg_attr(feature = "ts-rs", ts(type = "number"))]
         translate_node_id: NodeId,
     },
     /// A chamfer.
@@ -214,12 +266,16 @@ pub enum PartInfo {
         #[serde(rename = "sourcePartId")]
         source_part_id: String,
         #[serde(rename = "chamferNodeId")]
+        #[cfg_attr(feature = "ts-rs", ts(type = "number"))]
         chamfer_node_id: NodeId,
         #[serde(rename = "scaleNodeId")]
+        #[cfg_attr(feature = "ts-rs", ts(type = "number"))]
         scale_node_id: NodeId,
         #[serde(rename = "rotateNodeId")]
+        #[cfg_attr(feature = "ts-rs", ts(type = "number"))]
         rotate_node_id: NodeId,
         #[serde(rename = "translateNodeId")]
+        #[cfg_attr(feature = "ts-rs", ts(type = "number"))]
         translate_node_id: NodeId,
     },
     /// A shell operation.
@@ -230,12 +286,16 @@ pub enum PartInfo {
         #[serde(rename = "sourcePartId")]
         source_part_id: String,
         #[serde(rename = "shellNodeId")]
+        #[cfg_attr(feature = "ts-rs", ts(type = "number"))]
         shell_node_id: NodeId,
         #[serde(rename = "scaleNodeId")]
+        #[cfg_attr(feature = "ts-rs", ts(type = "number"))]
         scale_node_id: NodeId,
         #[serde(rename = "rotateNodeId")]
+        #[cfg_attr(feature = "ts-rs", ts(type = "number"))]
         rotate_node_id: NodeId,
         #[serde(rename = "translateNodeId")]
+        #[cfg_attr(feature = "ts-rs", ts(type = "number"))]
         translate_node_id: NodeId,
     },
     /// A linear pattern.
@@ -246,12 +306,16 @@ pub enum PartInfo {
         #[serde(rename = "sourcePartId")]
         source_part_id: String,
         #[serde(rename = "patternNodeId")]
+        #[cfg_attr(feature = "ts-rs", ts(type = "number"))]
         pattern_node_id: NodeId,
         #[serde(rename = "scaleNodeId")]
+        #[cfg_attr(feature = "ts-rs", ts(type = "number"))]
         scale_node_id: NodeId,
         #[serde(rename = "rotateNodeId")]
+        #[cfg_attr(feature = "ts-rs", ts(type = "number"))]
         rotate_node_id: NodeId,
         #[serde(rename = "translateNodeId")]
+        #[cfg_attr(feature = "ts-rs", ts(type = "number"))]
         translate_node_id: NodeId,
     },
     /// A circular pattern.
@@ -262,12 +326,16 @@ pub enum PartInfo {
         #[serde(rename = "sourcePartId")]
         source_part_id: String,
         #[serde(rename = "patternNodeId")]
+        #[cfg_attr(feature = "ts-rs", ts(type = "number"))]
         pattern_node_id: NodeId,
         #[serde(rename = "scaleNodeId")]
+        #[cfg_attr(feature = "ts-rs", ts(type = "number"))]
         scale_node_id: NodeId,
         #[serde(rename = "rotateNodeId")]
+        #[cfg_attr(feature = "ts-rs", ts(type = "number"))]
         rotate_node_id: NodeId,
         #[serde(rename = "translateNodeId")]
+        #[cfg_attr(feature = "ts-rs", ts(type = "number"))]
         translate_node_id: NodeId,
     },
     /// A PCB board.
@@ -276,12 +344,16 @@ pub enum PartInfo {
         id: String,
         name: String,
         #[serde(rename = "boardNodeId")]
+        #[cfg_attr(feature = "ts-rs", ts(type = "number"))]
         board_node_id: NodeId,
         #[serde(rename = "scaleNodeId")]
+        #[cfg_attr(feature = "ts-rs", ts(type = "number"))]
         scale_node_id: NodeId,
         #[serde(rename = "rotateNodeId")]
+        #[cfg_attr(feature = "ts-rs", ts(type = "number"))]
         rotate_node_id: NodeId,
         #[serde(rename = "translateNodeId")]
+        #[cfg_attr(feature = "ts-rs", ts(type = "number"))]
         translate_node_id: NodeId,
     },
     /// An embroidery pattern.
@@ -290,12 +362,16 @@ pub enum PartInfo {
         id: String,
         name: String,
         #[serde(rename = "patternNodeId")]
+        #[cfg_attr(feature = "ts-rs", ts(type = "number"))]
         pattern_node_id: NodeId,
         #[serde(rename = "scaleNodeId")]
+        #[cfg_attr(feature = "ts-rs", ts(type = "number"))]
         scale_node_id: NodeId,
         #[serde(rename = "rotateNodeId")]
+        #[cfg_attr(feature = "ts-rs", ts(type = "number"))]
         rotate_node_id: NodeId,
         #[serde(rename = "translateNodeId")]
+        #[cfg_attr(feature = "ts-rs", ts(type = "number"))]
         translate_node_id: NodeId,
     },
 }

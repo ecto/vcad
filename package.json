@@ -10,6 +10,8 @@
     "dev": "turbo dev",
     "build:mecheval": "npm run build -w @mecheval/harness && npm run build -w @mecheval/leaderboard",
     "changelog:build": "node scripts/build-changelog.mjs",
+    "ir:gen": "cargo test -p vcad-ir --features ts-rs export_bindings -- --ignored && node scripts/gen-ir-types.mjs",
+    "ir:check": "cargo test -p vcad-ir --features ts-rs export_bindings -- --ignored && node scripts/gen-ir-types.mjs --check",
     "build:ecad-diff-wasm": "wasm-pack build crates/vcad-ecad-diff-wasm --target nodejs --out-dir pkg",
     "tauri": "cd crates/vcad-desktop && tauri",
     "tauri:dev": "cd crates/vcad-desktop && tauri dev",

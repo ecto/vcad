@@ -48,6 +48,7 @@ pub fn value_to_document(value: &Value) -> Result<Document, String> {
                     roughness,
                     density: None,
                     friction: None,
+                    ..Default::default()
                 },
             );
         }
@@ -79,6 +80,7 @@ pub fn value_to_document(value: &Value) -> Result<Document, String> {
                 roughness: 0.5,
                 density: None,
                 friction: None,
+                ..Default::default()
             },
         );
     }
@@ -133,6 +135,7 @@ fn merge_value_into_doc(ctx: &mut ConvertCtx, value: &Value) -> Result<(), Strin
                     roughness,
                     density: None,
                     friction: None,
+                    ..Default::default()
                 },
             );
         }
@@ -378,6 +381,7 @@ fn convert_assembly(ctx: &mut ConvertCtx, fields: &[Value]) -> Result<(), String
                 roughness: 0.5,
                 density: None,
                 friction: None,
+                ..Default::default()
             },
         );
     }

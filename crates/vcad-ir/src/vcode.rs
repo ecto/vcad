@@ -851,6 +851,7 @@ pub fn from_vcode(s: &str) -> Result<Document, VCodeParseError> {
                     roughness: 0.5,
                     density: None,
                     friction: None,
+                    ..Default::default()
                 },
             );
         }
@@ -952,6 +953,7 @@ fn parse_material(doc: &mut Document, parts: &[&str], line: usize) -> Result<(),
             roughness,
             density,
             friction,
+            ..Default::default()
         },
     );
 
@@ -2613,6 +2615,7 @@ mod tests {
                 roughness: 0.5,
                 density: None,
                 friction: None,
+                ..Default::default()
             },
         );
         doc.nodes.insert(
@@ -3374,6 +3377,7 @@ CAM cam2 0 100 0 0 0 0"#;
                 roughness: 0.3,
                 density: Some(2700.0),
                 friction: Some(0.6),
+                ..Default::default()
             },
         );
 

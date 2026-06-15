@@ -30,6 +30,8 @@ use crate::NodeId;
 /// while old numeric docs remain wire-compatible.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "bindings/"))]
 pub enum Expr {
     /// Literal numeric value.
     Number(f64),
@@ -97,21 +99,27 @@ impl Default for Expr {
 /// derived parameters use `Expr::Formula(...)` and may reference other
 /// parameters. Evaluation order is determined by topological sort.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "bindings/"))]
 pub struct Parameter {
     /// Literal value or formula referencing other parameters.
     pub value: Expr,
     /// Optional unit string for display (e.g. "mm", "deg"). Not used for
     /// dimensional analysis in v1.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-rs", ts(optional))]
     pub unit: Option<String>,
     /// Optional lower bound for the scrub input.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-rs", ts(optional))]
     pub min: Option<f64>,
     /// Optional upper bound for the scrub input.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-rs", ts(optional))]
     pub max: Option<f64>,
     /// Optional description shown in the parameters panel.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-rs", ts(optional))]
     pub description: Option<String>,
 }
 
@@ -205,7 +213,11 @@ impl<'de> Deserialize<'de> for BindingKey {
 /// Sidecar map from (node, field path) → expression.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(transparent)]
-pub struct Bindings(pub HashMap<BindingKey, Expr>);
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "bindings/"))]
+pub struct Bindings(
+    #[cfg_attr(feature = "ts-rs", ts(type = "Record<string, Expr>"))] pub HashMap<BindingKey, Expr>,
+);
 
 impl Bindings {
     /// Create an empty binding map.

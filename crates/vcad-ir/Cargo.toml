@@ -10,3 +10,7 @@ repository.workspace = true
 serde = { workspace = true }
 serde_json = { workspace = true }
 vcad-tool-derive = { workspace = true }
+ts-rs = { version = "10", optional = true }
+
+[features]
+ts-rs = ["dep:ts-rs"]
