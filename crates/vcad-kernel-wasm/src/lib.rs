@@ -4787,6 +4787,17 @@ mod ecad_wasm {
         serde_wasm_bindgen::to_value(&violations).map_err(|e| JsError::new(&e.to_string()))
     }
 
+    /// Audit one net's routing without mutating anything: length, via/layer
+    /// count, the closest approach to other-net copper (via the router oracle),
+    /// and any clearance/short/unconnected DRC issues it's involved in. The
+    /// read-only "inspect before you trust the route" verb.
+    #[wasm_bindgen(js_name = ecadCritiqueRoute)]
+    pub fn ecad_critique_route(pcb_json: &str, net: &str) -> Result<JsValue, JsError> {
+        let pcb: Pcb = serde_json::from_str(pcb_json).map_err(|e| JsError::new(&e.to_string()))?;
+        let critique = vcad_ecad_pcb::critique_net(&pcb, net);
+        serde_wasm_bindgen::to_value(&critique).map_err(|e| JsError::new(&e.to_string()))
+    }
+
     /// Evaluate first-order analytical motor performance from a JSON
     /// `MotorSpec`: torque constant Kt, back-EMF constant Ke, no-load speed,
     /// stall torque, and a speed–torque curve. Lets an agent ask "is this motor

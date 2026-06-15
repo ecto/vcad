@@ -37,6 +37,7 @@ import {
   generateNetlist,
   isEcadAvailable,
   routeAll,
+  critiqueRoute as kernelCritiqueRoute,
   runDrc as kernelRunDrc,
   evaluateMotor,
   airgapFluxDensity,
@@ -575,6 +576,19 @@ export const runErcSchema = {
     ...docInputProperties,
   },
   required: [],
+};
+
+/** JSON Schema for critique_route tool. */
+export const critiqueRouteSchema = {
+  type: "object" as const,
+  properties: {
+    ...docInputProperties,
+    net: {
+      type: "string" as const,
+      description: "Net to audit (read-only — mutates nothing).",
+    },
+  },
+  required: ["net"],
 };
 
 /** JSON Schema for export_gerber tool. */
@@ -1841,6 +1855,35 @@ export function aggregateDrc(
   };
   if (detail === "full") summary.details = violations;
   return summary;
+}
+
+/** Read-only audit of one net's routing: length, vias, clearance margin, DRC issues. */
+export async function critiqueRoute(args: Record<string, unknown>) {
+  const { doc } = resolveDocInput(args);
+  const pcb = getDocPcb(doc);
+  if (!pcb) {
+    return {
+      content: [{ type: "text" as const, text: "Error: Document has no PCB" }],
+      isError: true,
+    };
+  }
+  const net = String(args.net ?? "");
+  if (!net) {
+    return {
+      content: [{ type: "text" as const, text: "Error: 'net' is required" }],
+      isError: true,
+    };
+  }
+  const critique = await kernelCritiqueRoute(pcb, net);
+  if (!critique) {
+    return {
+      content: [
+        { type: "text" as const, text: "critique_route unavailable: kernel WASM not loaded" },
+      ],
+      isError: true,
+    };
+  }
+  return { content: [{ type: "text" as const, text: JSON.stringify(critique) }] };
 }
 
 export async function runDrc(args: Record<string, unknown>) {

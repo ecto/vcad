@@ -117,6 +117,31 @@ export async function runDrc(pcb: Pcb): Promise<DrcViolationResult[]> {
   }
 }
 
+/** Read-only audit of one net's routing. */
+export interface NetCritique {
+  net: string;
+  routed: boolean;
+  routed_length_mm: number;
+  segment_count: number;
+  via_count: number;
+  layers: string[];
+  min_clearance_mm: number | null;
+  required_clearance_mm: number;
+  drc_issues: string[];
+}
+
+/** Audit a single net's routing quality (length, vias, margin, DRC issues). */
+export async function critiqueRoute(pcb: Pcb, net: string): Promise<NetCritique | null> {
+  const wasm = await loadEcadWasm();
+  if (!wasm) return null;
+  try {
+    return wasm.ecadCritiqueRoute(JSON.stringify(pcb), net) as NetCritique;
+  } catch (e) {
+    console.warn("[ECAD] Route critique failed:", e);
+    return null;
+  }
+}
+
 /** Run Electrical Rule Check on a schematic. */
 export async function runErc(sheet: SchematicSheet): Promise<ErcViolationResult[]> {
   const wasm = await loadEcadWasm();

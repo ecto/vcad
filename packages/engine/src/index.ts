@@ -145,6 +145,7 @@ export type { Ast as ExpressionAst } from "./expressions.js";
 export {
   isEcadAvailable,
   runDrc,
+  critiqueRoute,
   runErc,
   generateNetlist,
   routeNet,
