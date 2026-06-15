@@ -2195,15 +2195,15 @@ clearance: number,
 /**
  * Minimum copper island area in mm².
  */
-minArea: number, 
+minArea?: number, 
 /**
  * Fill type.
  */
-fillType: ZoneFillType, 
+fillType?: ZoneFillType, 
 /**
  * Thermal relief style for same-net pads.
  */
-thermalRelief: ThermalReliefStyle, 
+thermalRelief?: ThermalReliefStyle, 
 /**
  * Thermal relief gap width in mm.
  */

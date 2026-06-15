@@ -64,7 +64,7 @@ const FORCE_OPTIONAL = {
   Document: ["parameters", "bindings"],
   DesignRules: ["classRules", "netClassAssignments"],
   BoardOutline: ["cutouts"],
-  Zone: ["holes", "priority"],
+  Zone: ["holes", "priority", "minArea", "fillType", "thermalRelief"],
   Footprint: ["graphics", "properties", "rotation", "front"],
   Pcb: ["traceArcs", "keepouts", "netTies"],
   SchematicComponent: ["properties", "rotation", "mirror"],
