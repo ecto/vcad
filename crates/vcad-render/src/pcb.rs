@@ -754,6 +754,14 @@ pub fn render_pcb_svg(pcb: &Pcb, layers: &[PcbLayer], scale: f64) -> String {
             push_item(&mut items, layer_rank(t.layer), s);
         }
     }
+    // Teardrop fillets at trace→pad/via junctions (solid copper, under pads).
+    for td in &vcad_ecad_pcb::generate_teardrops(pcb) {
+        if want(td.layer) && td.polygon.len() >= 3 {
+            let mut s = String::new();
+            push_polygon(&mut s, &xf, &td.polygon, layer_color(td.layer), 1.0);
+            push_item(&mut items, layer_rank(td.layer), s);
+        }
+    }
     for a in &pcb.trace_arcs {
         if want(a.layer) {
             let mut s = String::new();

@@ -20,12 +20,14 @@ pub mod ratsnest;
 pub mod router;
 pub mod session;
 pub mod spatial;
+pub mod teardrop;
 
 pub use copper_pour::{fill_zones, FilledZone};
 pub use drc::{check_drc, DrcRuleType, DrcSeverity, DrcViolation};
 pub use router::grid::GridRouter;
 pub use session::{Blocker, ProbeResult, RouteSession, SpanId};
 pub use spatial::{CopperElement, CopperGeom, SpatialIndex};
+pub use teardrop::{generate_teardrops, Teardrop};
 
 /// Errors returned by PCB operations.
 #[derive(Debug, thiserror::Error)]
