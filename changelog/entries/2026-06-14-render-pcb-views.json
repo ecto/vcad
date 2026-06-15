@@ -1,0 +1,10 @@
+{
+  "id": "2026-06-14-render-pcb-views",
+  "version": "0.9.4",
+  "date": "2026-06-14",
+  "category": "feat",
+  "title": "Per-layer 2D PCB render + orthographic CAD views",
+  "summary": "New render_pcb gives a flat, top-down, per-layer board image (copper/silk/drills/outline); render_view gains top/front/side orthographic views alongside isometric.",
+  "features": ["pcb", "render", "visualization"],
+  "mcpTools": ["render_pcb", "render_view"]
+}

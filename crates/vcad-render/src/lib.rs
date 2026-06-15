@@ -30,6 +30,8 @@
 
 #![warn(missing_docs)]
 
+pub mod pcb;
+
 use std::collections::HashMap;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 

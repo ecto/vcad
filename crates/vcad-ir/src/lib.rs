@@ -13,6 +13,7 @@ pub mod ecad;
 pub mod expr_parser;
 pub mod file_io;
 pub mod parameters;
+pub mod stroke_font;
 pub mod to_loon;
 pub mod vcode;
 

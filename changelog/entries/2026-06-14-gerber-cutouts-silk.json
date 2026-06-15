@@ -1,0 +1,10 @@
+{
+  "id": "2026-06-14-gerber-cutouts-silk",
+  "version": "0.9.4",
+  "date": "2026-06-14",
+  "category": "fix",
+  "title": "Gerber export: board cutouts + silkscreen shapes/text",
+  "summary": "Edge_Cuts now routes interior cutouts (center bores, keyed/D holes) and silkscreen renders Circle/Arc/Polygon/Text — all previously dropped from fab output.",
+  "features": ["pcb", "gerber", "export", "fabrication"],
+  "mcpTools": ["export_gerber"]
+}

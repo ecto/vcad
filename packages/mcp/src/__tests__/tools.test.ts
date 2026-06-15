@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, beforeEach } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach, afterEach } from "vitest";
 import { Engine, getKernelWasm } from "@vcad/engine";
 import type { Document } from "@vcad/ir";
 import { commandRegistry } from "@vcad/core";
@@ -19,6 +19,8 @@ import {
   openDocument,
   getDocumentTool,
   closeDocument,
+  saveDocument,
+  loadDocument,
   documents,
 } from "../tools/session.js";
 import {
@@ -33,8 +35,9 @@ import {
   gymObserve,
   gymClose,
 } from "../tools/gym.js";
-import { existsSync, unlinkSync } from "node:fs";
-import { resolve } from "node:path";
+import { existsSync, unlinkSync, mkdtempSync, rmSync } from "node:fs";
+import { resolve, join } from "node:path";
+import { tmpdir } from "node:os";
 
 /** Minimal Document with one cube part — replaces what createCadDocument
  *  used to build for downstream tests. */
@@ -126,6 +129,58 @@ describe("session lifecycle", () => {
   it("close_document on unknown id reports closed: false", () => {
     const out = closeDocument({ document_id: "doc_missing" });
     expect(JSON.parse(out.content[0].text).closed).toBe(false);
+  });
+});
+
+describe("session persistence (save_document / load_document)", () => {
+  let stateDir: string;
+  let prevStateDir: string | undefined;
+
+  beforeEach(() => {
+    stateDir = mkdtempSync(join(tmpdir(), "vcad-mcp-state-"));
+    prevStateDir = process.env.VCAD_MCP_STATE_DIR;
+    process.env.VCAD_MCP_STATE_DIR = stateDir;
+  });
+
+  afterEach(() => {
+    if (prevStateDir === undefined) delete process.env.VCAD_MCP_STATE_DIR;
+    else process.env.VCAD_MCP_STATE_DIR = prevStateDir;
+    rmSync(stateDir, { recursive: true, force: true });
+  });
+
+  it("round-trips a session to disk and back", () => {
+    const open = openDocument({ initial: makeCubeDoc() });
+    const { document_id } = JSON.parse(open.content[0].text);
+
+    const save = saveDocument({ document_id, name: "my-part" });
+    const saved = JSON.parse(save.content[0].text);
+    expect(saved.saved).toBe(true);
+    expect(saved.name).toBe("my-part");
+    expect(saved.path).toBe(join(stateDir, "my-part.vcad"));
+    expect(existsSync(saved.path)).toBe(true);
+
+    // Simulate a cold start: drop the in-process session.
+    documents.clear();
+
+    const load = loadDocument({ name: "my-part" });
+    expect(load.isError).toBeFalsy();
+    const loaded = JSON.parse(load.content[0].text);
+    expect(loaded.document_id).toMatch(/^doc_/);
+    expect(loaded.name).toBe("my-part");
+    expect(loaded.parts).toBe(1);
+
+    const fetched = JSON.parse(
+      getDocumentTool({ document_id: loaded.document_id }).content[0].text,
+    ) as Document;
+    expect(fetched.roots).toHaveLength(1);
+    expect(Object.keys(fetched.nodes)).toContain("1");
+  });
+
+  it("load_document on a missing file returns an isError result", () => {
+    const load = loadDocument({ name: "does-not-exist" });
+    expect(load.isError).toBe(true);
+    expect(load.content[0].text).toContain('No saved document named "does-not-exist"');
+    expect(load.content[0].text).toContain(stateDir);
   });
 });
 

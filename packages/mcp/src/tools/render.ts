@@ -13,7 +13,8 @@
  */
 
 import { getKernelWasm, markKernelWasmPoisoned } from "@vcad/engine";
-import type { Document } from "@vcad/ir";
+import { getNodePcb, getPcbNodeIds } from "@vcad/core";
+import type { Document, Pcb } from "@vcad/ir";
 import { getSession } from "./session.js";
 
 export const renderViewSchema = {
@@ -22,6 +23,12 @@ export const renderViewSchema = {
     document_id: {
       type: "string" as const,
       description: "Session id from open_document.",
+    },
+    view: {
+      type: "string" as const,
+      enum: ["iso", "isometric", "top", "front", "side"],
+      description:
+        "Camera view: 'iso' (default, 3/4 isometric), or an orthographic 'top' / 'front' / 'side' elevation. Use 'top' to read a part flat from above.",
     },
     width_px: {
       type: "number" as const,
@@ -144,8 +151,21 @@ export async function renderView(
     };
   }
 
+  const viewRaw = String(args.view ?? "iso").toLowerCase();
+  const view = (
+    viewRaw === "isometric"
+      ? "iso"
+      : ["iso", "top", "front", "side"].includes(viewRaw)
+        ? viewRaw
+        : "iso"
+  ) as "iso" | "top" | "front" | "side";
+  // Canonical label for the result payload — the default view is reported as
+  // "isometric" (stable contract); orthographic views report their own name.
+  const viewLabel = view === "iso" ? "isometric" : view;
+
   const wasm = (await getKernelWasm()) as unknown as {
     render_svg: (vcadJson: string, scale: number) => string;
+    render_svg_view?: (vcadJson: string, scale: number, view: string) => string;
   };
   if (typeof wasm.render_svg !== "function") {
     return {
@@ -161,7 +181,10 @@ export async function renderView(
 
   let svg: string;
   try {
-    svg = wasm.render_svg(JSON.stringify(doc), SVG_SCALE);
+    svg =
+      view !== "iso" && typeof wasm.render_svg_view === "function"
+        ? wasm.render_svg_view(JSON.stringify(doc), SVG_SCALE, view)
+        : wasm.render_svg(JSON.stringify(doc), SVG_SCALE);
   } catch (e) {
     // A WebAssembly trap means a kernel panic that did NOT unwind —
     // wasm32 compiles panics to `unreachable`, so the kernel's own
@@ -213,7 +236,7 @@ export async function renderView(
           type: "text",
           text: JSON.stringify({
             document_id: documentId,
-            view: "isometric",
+            view: viewLabel,
             width_px: widthPx,
             format: "png",
           }),
@@ -235,7 +258,7 @@ export async function renderView(
         type: "text",
         text: JSON.stringify({
           document_id: documentId,
-          view: "isometric",
+          view: viewLabel,
           format: "svg",
           note,
           ...(svgBytes <= MAX_INLINE_SVG_BYTES
@@ -243,6 +266,140 @@ export async function renderView(
             : {
                 svg_omitted: `SVG is ${svgBytes} bytes (inline cap ${MAX_INLINE_SVG_BYTES}) — use export_cad for geometry output.`,
               }),
+        }),
+      },
+    ],
+  };
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// render_pcb — flat, top-down, per-layer 2D board view (agent eyes for PCBs)
+// ───────────────────────────────────────────────────────────────────────────
+
+export const renderPcbSchema = {
+  type: "object" as const,
+  properties: {
+    document_id: {
+      type: "string" as const,
+      description: "Session id of a board (from create_schematic / place_components).",
+    },
+    layers: {
+      type: "array" as const,
+      items: { type: "string" as const },
+      description:
+        'Layers to draw, front-to-back. Accepts KiCad ("F.Cu", "F.SilkS", "Edge_Cuts") or serde ("FCu", "FSilkS", "EdgeCuts") names. Default: ["F.Cu", "F.SilkS", "Edge_Cuts"].',
+    },
+    width_px: {
+      type: "number" as const,
+      description: "Target raster width in pixels (default 900, clamped 64–2048).",
+    },
+  },
+  required: ["document_id"],
+};
+
+/** Extract the PCB from a session document (PcbBoard node, or a bare `pcb`). */
+function docPcb(doc: Document): Pcb | null {
+  const ids = getPcbNodeIds(doc);
+  if (ids.length > 0) return getNodePcb(doc, ids[0]!);
+  return (doc as Document & { pcb?: Pcb }).pcb ?? null;
+}
+
+export async function renderPcb(
+  args: Record<string, unknown>,
+): Promise<RenderViewResult> {
+  const documentId = String(args.document_id ?? "");
+  const doc = getSession(documentId);
+  const pcb = docPcb(doc);
+  if (!pcb) {
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify({
+            error: "document has no PCB — run place_components first (or open a board)",
+            document_id: documentId,
+          }),
+        },
+      ],
+      isError: true,
+    };
+  }
+
+  const layers =
+    Array.isArray(args.layers) && args.layers.length > 0
+      ? (args.layers as unknown[]).map(String)
+      : ["F.Cu", "F.SilkS", "Edge_Cuts"];
+
+  const widthRaw = Number(args.width_px ?? 900);
+  const widthPx = Math.min(
+    2048,
+    Math.max(64, Number.isFinite(widthRaw) ? Math.round(widthRaw) : 900),
+  );
+
+  const wasm = (await getKernelWasm()) as unknown as {
+    render_pcb_svg?: (pcbJson: string, layersJson: string, scale: number) => string;
+  };
+  if (typeof wasm.render_pcb_svg !== "function") {
+    return {
+      content: [
+        {
+          type: "text",
+          text: "render_pcb unavailable: kernel WASM build predates render_pcb_svg — rebuild vcad-kernel-wasm.",
+        },
+      ],
+      isError: true,
+    };
+  }
+
+  let svg: string;
+  try {
+    svg = wasm.render_pcb_svg(JSON.stringify(pcb), JSON.stringify(layers), SVG_SCALE);
+  } catch (e) {
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify({
+            error: `PCB render failed: ${e instanceof Error ? e.message : String(e)}`,
+            document_id: documentId,
+            layers,
+          }),
+        },
+      ],
+      isError: true,
+    };
+  }
+
+  const raster = await rasterize(svg, widthPx);
+  if (raster.png) {
+    return {
+      content: [
+        { type: "image", data: raster.png.toString("base64"), mimeType: "image/png" },
+        {
+          type: "text",
+          text: JSON.stringify({ document_id: documentId, layers, width_px: widthPx, format: "png" }),
+        },
+      ],
+    };
+  }
+
+  const note =
+    raster.reason === "module-missing"
+      ? "Install @resvg/resvg-js for PNG output; returning raw SVG."
+      : `PNG ${raster.reason}; returning raw SVG.`;
+  const svgBytes = Buffer.byteLength(svg, "utf8");
+  return {
+    content: [
+      {
+        type: "text",
+        text: JSON.stringify({
+          document_id: documentId,
+          layers,
+          format: "svg",
+          note,
+          ...(svgBytes <= MAX_INLINE_SVG_BYTES
+            ? { svg }
+            : { svg_omitted: `SVG is ${svgBytes} bytes (inline cap ${MAX_INLINE_SVG_BYTES}).` }),
         }),
       },
     ],

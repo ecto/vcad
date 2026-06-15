@@ -228,6 +228,7 @@ mod tests {
             }],
             zones: vec![],
             keepouts: vec![],
+            net_ties: vec![],
         }
     }
 

@@ -195,6 +195,7 @@ mod tests {
             vias: vec![],
             zones: vec![],
             keepouts: vec![],
+            net_ties: vec![],
         }
     }
 

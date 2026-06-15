@@ -3362,6 +3362,23 @@ export function documentToLoonChecked(doc_json) {
 }
 
 /**
+ * Compute air-gap flux density (tesla) from a JSON `AirGapSpec` via the
+ * first-order magnetic-equivalent-circuit reluctance model — so B_gap is
+ * computed from magnet + geometry, not assumed.
+ * @param {string} spec_json
+ * @returns {number}
+ */
+export function ecadAirgapFluxDensity(spec_json) {
+    const ptr0 = passStringToWasm0(spec_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.ecadAirgapFluxDensity(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return ret[0];
+}
+
+/**
  * Return all builtin symbol definitions.
  *
  * # Returns
@@ -3458,6 +3475,24 @@ export function ecadComputeRatsnest(pcb_json, netlist_json) {
     const ptr1 = passStringToWasm0(netlist_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len1 = WASM_VECTOR_LEN;
     const ret = wasm.ecadComputeRatsnest(ptr0, len0, ptr1, len1);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+
+/**
+ * Evaluate first-order analytical motor performance from a JSON
+ * `MotorSpec`: torque constant Kt, back-EMF constant Ke, no-load speed,
+ * stall torque, and a speed–torque curve. Lets an agent ask "is this motor
+ * any good?" instead of estimating by hand.
+ * @param {string} spec_json
+ * @returns {any}
+ */
+export function ecadEvaluateMotor(spec_json) {
+    const ptr0 = passStringToWasm0(spec_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.ecadEvaluateMotor(ptr0, len0);
     if (ret[2]) {
         throw takeFromExternrefTable0(ret[1]);
     }
@@ -4801,6 +4836,41 @@ export function renderBakeMesh(input_json) {
 }
 
 /**
+ * Render a PCB to a flat, top-down, per-layer 2D SVG (the "agent eyes" for
+ * boards — copper, silk, drills, outline).
+ *
+ * `pcb_json` is a JSON-serialized `Pcb`; `layers_json` is a JSON array of
+ * layer-name strings accepting both KiCad (`"F.Cu"`, `"F.SilkS"`) and serde
+ * (`"FCu"`, `"FSilkS"`) spellings. Only the requested layers are drawn.
+ * @param {string} pcb_json
+ * @param {string} layers_json
+ * @param {number} scale
+ * @returns {string}
+ */
+export function render_pcb_svg(pcb_json, layers_json, scale) {
+    let deferred4_0;
+    let deferred4_1;
+    try {
+        const ptr0 = passStringToWasm0(pcb_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(layers_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.render_pcb_svg(ptr0, len0, ptr1, len1, scale);
+        var ptr3 = ret[0];
+        var len3 = ret[1];
+        if (ret[3]) {
+            ptr3 = 0; len3 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred4_0 = ptr3;
+        deferred4_1 = len3;
+        return getStringFromWasm0(ptr3, len3);
+    } finally {
+        wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
+    }
+}
+
+/**
  * Render raw `.vcad` document JSON to a drafting-style isometric SVG.
  *
  * Thin wrapper over `vcad_render::render_svg_str` — the same renderer the
@@ -4829,6 +4899,41 @@ export function render_svg(vcad_json, scale) {
         return getStringFromWasm0(ptr2, len2);
     } finally {
         wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+    }
+}
+
+/**
+ * Render raw `.vcad` document JSON to an SVG from a named orthographic view.
+ *
+ * `view` accepts `"iso"`/`"isometric"`/`"hero"`, `"top"`, `"front"`, or
+ * `"side"` (case-insensitive); anything unrecognized falls back to isometric.
+ * Gives agents a flat top-down or elevation look at a part, not just the
+ * default 3/4 isometric.
+ * @param {string} vcad_json
+ * @param {number} scale
+ * @param {string} view
+ * @returns {string}
+ */
+export function render_svg_view(vcad_json, scale, view) {
+    let deferred4_0;
+    let deferred4_1;
+    try {
+        const ptr0 = passStringToWasm0(vcad_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(view, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.render_svg_view(ptr0, len0, scale, ptr1, len1);
+        var ptr3 = ret[0];
+        var len3 = ret[1];
+        if (ret[3]) {
+            ptr3 = 0; len3 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred4_0 = ptr3;
+        deferred4_1 = len3;
+        return getStringFromWasm0(ptr3, len3);
+    } finally {
+        wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
     }
 }
 
@@ -7161,12 +7266,12 @@ function __wbg_get_imports() {
             arg0.writeTexture(arg1, arg2, arg3, arg4);
         },
         __wbindgen_cast_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 2264, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 2265, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 2338, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 2339, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h30743bca3150d93c, wasm_bindgen__convert__closures_____invoke__hcf7d3eaee8800b37);
             return ret;
         },
         __wbindgen_cast_0000000000000002: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 3048, function: Function { arguments: [Externref], shim_idx: 3049, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 3122, function: Function { arguments: [Externref], shim_idx: 3123, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__hfdadf281ff0f1c56, wasm_bindgen__convert__closures_____invoke__h9bdf540eb7e61590);
             return ret;
         },

@@ -2,6 +2,7 @@
  * MCP server implementation with vcad tools.
  */
 
+import { createRequire } from "node:module";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import {
   CallToolRequestSchema,
@@ -14,7 +15,7 @@ import { commandRegistry } from "@vcad/core";
 import type { Document } from "@vcad/ir";
 import { exportCad, exportCadSchema } from "./tools/export.js";
 import { inspectCad, inspectCadSchema } from "./tools/inspect.js";
-import { renderView, renderViewSchema } from "./tools/render.js";
+import { renderView, renderViewSchema, renderPcb, renderPcbSchema } from "./tools/render.js";
 import {
   verifyPart,
   verifyPartSchema,
@@ -30,6 +31,10 @@ import {
   getDocumentSchema,
   closeDocument,
   closeDocumentSchema,
+  saveDocument,
+  saveDocumentSchema,
+  loadDocument,
+  loadDocumentSchema,
   documents,
   registerSession,
   getSession,
@@ -97,6 +102,16 @@ import {
   windingLayoutSchema,
   boardFromSolid,
   boardFromSolidSchema,
+  addTrace,
+  addTraceSchema,
+  addVia,
+  addViaSchema,
+  setStackup,
+  setStackupSchema,
+  addMotorWinding,
+  addMotorWindingSchema,
+  calcMotor,
+  calcMotorSchema,
 } from "./tools/ecad.js";
 import { createCadLoon, createCadLoonSchema } from "./tools/loon.js";
 import {
@@ -140,6 +155,30 @@ import {
 /** Tools that produce or modify geometry and should show the 3D viewer.
  *  Registry-driven kernel tools (create, update, delete, …) are added
  *  dynamically in `createServer` once their names are known. */
+/** Server version + build identity, read from package.json at load time so the
+ *  advertised version always matches the running build (no hardcoded literal to
+ *  drift). VCAD_BUILD_SHA, if injected at build/deploy time, fingerprints the
+ *  exact commit so a stale deploy is detectable via `server_info`. */
+const PKG_VERSION: string = (() => {
+  try {
+    const req = createRequire(import.meta.url);
+    return (req("../package.json") as { version?: string }).version ?? "0.0.0";
+  } catch {
+    return "0.0.0";
+  }
+})();
+const BUILD_SHA: string = process.env.VCAD_BUILD_SHA ?? "unknown";
+
+/** Kernel WASM exports this server depends on; checked at startup so a stale or
+ *  incomplete dist surfaces as a clear boot error rather than an opaque
+ *  mid-call TypeError. Surfaced via `server_info`. */
+const REQUIRED_WASM_EXPORTS = ["render_svg", "render_svg_view", "render_pcb_svg"];
+
+const serverInfoSchema = {
+  type: "object" as const,
+  properties: {},
+};
+
 const GEOMETRY_TOOLS = new Set([
   "create_cad_loon",
   "import_step",
@@ -157,6 +196,12 @@ const GEOMETRY_TOOLS = new Set([
   "route_nets",
   "add_coil",
   "add_coil_array",
+  "add_trace",
+  "add_via",
+  "set_stackup",
+  "add_motor_winding",
+  // Materializes a saved board into a live session — show it like open_document.
+  "load_document",
 ]);
 
 /** MCP Apps UI metadata for geometry tools. */
@@ -335,10 +380,36 @@ export async function createServer(existingEngine?: Engine): Promise<Server> {
   // Tools hidden by VCAD_MCP_PACKS (resolved once at server creation).
   const disabledTools = disabledToolNames();
 
+  // Startup self-check: confirm the kernel WASM exposes the load-bearing
+  // exports this build depends on. A stale/incomplete dist otherwise surfaces
+  // as an opaque TypeError mid-call; here it's a clear, named boot error and is
+  // reported by `server_info` so an agent can detect version skew in one call.
+  let kernelWasmLoaded = false;
+  let kernelWasmMissing: string[] = [];
+  try {
+    const wasm = (await getKernelWasm()) as unknown as Record<string, unknown>;
+    kernelWasmLoaded = true;
+    kernelWasmMissing = REQUIRED_WASM_EXPORTS.filter((n) => typeof wasm[n] !== "function");
+    if (kernelWasmMissing.length > 0) {
+      console.error(
+        `[mcp] STALE/INCOMPLETE BUILD: kernel WASM is missing [${kernelWasmMissing.join(", ")}] — rebuild vcad-kernel-wasm. Affected tools (render_pcb, ortho views) will fail until then.`,
+      );
+    }
+  } catch (e) {
+    console.error(
+      "[mcp] kernel WASM failed to load:",
+      e,
+      "\n  → the dist may be stale; rebuild @vcad/engine + vcad-kernel-wasm.",
+    );
+  }
+  console.error(
+    `[mcp] vcad ${PKG_VERSION} (build ${BUILD_SHA}) — ${dispatchableTools.size} kernel tools; kernel WASM ${kernelWasmLoaded ? "ok" : "UNAVAILABLE"}`,
+  );
+
   const server = new Server(
     {
       name: "vcad",
-      version: "0.1.0",
+      version: PKG_VERSION,
     },
     {
       capabilities: {
@@ -378,6 +449,32 @@ export async function createServer(existingEngine?: Engine): Promise<Server> {
         description:
           "Close a document session and free its memory. Idempotent — closing an unknown id reports `closed: false`.",
         inputSchema: closeDocumentSchema,
+      },
+      {
+        name: "save_document",
+        description:
+          "Persist a live session to disk as `<name>.vcad` under VCAD_MCP_STATE_DIR " +
+          "(or the working directory) so it survives a restart and can be reopened " +
+          "by name with load_document. Sessions are otherwise in-memory only.",
+        inputSchema: saveDocumentSchema,
+      },
+      {
+        name: "load_document",
+        description:
+          "Reopen a previously saved `<name>.vcad` into a fresh session and return " +
+          "its new document_id. The cheap way to resume a board/part across runs " +
+          "instead of rebuilding it.",
+        inputSchema: loadDocumentSchema,
+        _meta: UI_META,
+      },
+      {
+        name: "server_info",
+        description:
+          "Report the running build's identity: version, git sha (if stamped), " +
+          "tool count, enabled packs, and whether the kernel WASM loaded. Call " +
+          "this to confirm a tool exists in THIS build before assuming a stale " +
+          "or version-skewed deploy.",
+        inputSchema: serverInfoSchema,
       },
       // ── Stdlib parts library (session-aware) ──────────────────
       {
@@ -702,6 +799,64 @@ export async function createServer(existingEngine?: Engine): Promise<Server> {
           "the XY plane. Bridges solid modeling and PCB layout: feed the " +
           "returned `outline` to place_components.",
         inputSchema: boardFromSolidSchema,
+      },
+      {
+        name: "add_trace",
+        description:
+          "Lay an explicit copper trace: a polyline of segments on a layer, " +
+          "assigned to a net. The general-purpose routing primitive — use it " +
+          "for coil interconnect, buses, and hand-routes that route_nets " +
+          "(pad-driven) won't make. Mutates the session document.",
+        inputSchema: addTraceSchema,
+        _meta: UI_META,
+      },
+      {
+        name: "add_via",
+        description:
+          "Drop a via at a point connecting two layers on a net (defaults " +
+          "FCu→BCu, diameter/drill from design rules). Pairs with add_trace " +
+          "for multi-layer routing. Mutates the session document.",
+        inputSchema: addViaSchema,
+        _meta: UI_META,
+      },
+      {
+        name: "set_stackup",
+        description:
+          "Set the board stackup copper weight (e.g. copper_oz: 2) and/or " +
+          "per-layer thickness/material, so DC-resistance and impedance " +
+          "estimates reflect the real fab stackup instead of a default 1 oz. " +
+          "Mutates the session document.",
+        inputSchema: setStackupSchema,
+      },
+      {
+        name: "add_motor_winding",
+        description:
+          "One-shot motor winding realizer: plans a balanced slots/poles/" +
+          "phases winding, drops a spiral coil per tooth with correct phase + " +
+          "polarity, series-connects each phase, and ties the wye/delta " +
+          "termination as a net-tie — closing the winding_layout plan into " +
+          "actual copper. Mutates the session document.",
+        inputSchema: addMotorWindingSchema,
+        _meta: UI_META,
+      },
+      {
+        name: "calc_motor",
+        description:
+          "Evaluate motor performance AS DATA: torque constant Kt, back-EMF " +
+          "constant Ke, no-load speed, stall torque, and a speed–torque " +
+          "curve. Supply air-gap flux directly or compute it from magnet " +
+          "geometry via the first-order MEC field model. Pure: no board, no " +
+          "mutation. First-order steady state (no slotting/fringing/losses).",
+        inputSchema: calcMotorSchema,
+      },
+      {
+        name: "render_pcb",
+        description:
+          "Render a flat, top-down, per-layer 2D image of a PCB (copper, silk, " +
+          "drills, outline) — agent eyes for boards. Pick `layers` (e.g. " +
+          "[\"F.Cu\", \"F.SilkS\", \"Edge_Cuts\"]); returns a PNG. Complements " +
+          "the isometric render_view and numeric run_drc.",
+        inputSchema: renderPcbSchema,
       },
       {
         name: "run_drc",
@@ -1049,6 +1204,60 @@ export async function createServer(existingEngine?: Engine): Promise<Server> {
 
         case "board_from_solid":
           result = boardFromSolid(args, engine);
+          break;
+
+        case "add_trace":
+          result = addTrace(args);
+          break;
+
+        case "add_via":
+          result = addVia(args);
+          break;
+
+        case "set_stackup":
+          result = setStackup(args);
+          break;
+
+        case "add_motor_winding":
+          result = addMotorWinding(args);
+          break;
+
+        case "calc_motor":
+          result = await calcMotor(args);
+          break;
+
+        case "render_pcb":
+          result = (await renderPcb(args)) as unknown as typeof result;
+          break;
+
+        case "save_document":
+          result = saveDocument(args);
+          break;
+
+        case "load_document":
+          result = loadDocument(args);
+          break;
+
+        case "server_info":
+          result = {
+            content: [
+              {
+                type: "text",
+                text: JSON.stringify({
+                  name: "vcad",
+                  version: PKG_VERSION,
+                  build_sha: BUILD_SHA,
+                  kernel_wasm: kernelWasmLoaded ? "ok" : "unavailable",
+                  ...(kernelWasmMissing.length > 0
+                    ? { kernel_wasm_missing_exports: kernelWasmMissing }
+                    : {}),
+                  kernel_tool_count: dispatchableTools.size,
+                  disabled_tool_count: disabledTools.size,
+                  packs: process.env.VCAD_MCP_PACKS ?? "all",
+                }),
+              },
+            ],
+          };
           break;
 
         case "run_drc":

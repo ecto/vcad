@@ -5,10 +5,12 @@
 
 use std::collections::HashMap;
 
-use vcad_ir::ecad::{Pad, PadShape, PadType, Pcb};
+use vcad_ir::ecad::{Pad, PadShape, PadType, Pcb, PcbLayer};
 use vcad_ir::Vec2;
 
-use crate::spatial::{pad_half_extents, SpatialIndex};
+use crate::spatial::{
+    pad_geom, point_in_polygon, segment_polygon_intersects, CopperGeom, SpatialIndex,
+};
 
 /// DRC rule type.
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
@@ -33,6 +35,10 @@ pub enum DrcRuleType {
     CourtyardOverlap,
     /// Acute angle copper creating acid trap.
     AcidTrap,
+    /// Copper/via/component violates a keepout region.
+    Keepout,
+    /// Two distinct nets are electrically connected (a short).
+    Short,
 }
 
 /// DRC violation severity.
@@ -73,20 +79,120 @@ pub struct DrcViolation {
 pub fn check_drc(pcb: &Pcb) -> Vec<DrcViolation> {
     let mut violations = Vec::new();
     let index = SpatialIndex::from_pcb(pcb);
+    let net_ties = NetTieGroups::from_pcb(pcb);
 
-    check_clearance(pcb, &index, &mut violations);
-    check_pad_clearance(pcb, &mut violations);
+    check_clearance(pcb, &index, &net_ties, &mut violations);
+    check_pad_clearance(pcb, &net_ties, &mut violations);
     check_min_trace_width(pcb, &mut violations);
     check_min_drill(pcb, &mut violations);
     check_edge_clearance(pcb, &mut violations);
     check_hole_to_hole(pcb, &mut violations);
     check_annular_ring(pcb, &mut violations);
+    check_keepout(pcb, &mut violations);
+    check_connectivity(pcb, &net_ties, &mut violations);
 
     violations
 }
 
+// ============================================================================
+// Net-tie grouping (intentional net junctions)
+// ============================================================================
+
+/// A single net-tie group with an optional spatial restriction.
+struct TieGroup {
+    /// Nets joined by this tie.
+    nets: Vec<String>,
+    /// Optional `(center, radius²)` restricting where the exemption applies.
+    region: Option<(Vec2, f64)>,
+}
+
+/// Resolved net-tie groups, used to treat intentionally-joined nets as a
+/// single electrical node for short/clearance detection.
+///
+/// Built from [`vcad_ir::ecad::NetTie`]. Two nets are exempt from
+/// short/clearance reporting when they appear together in any tie group; if a
+/// group carries a `position`+`radius`, the exemption only holds inside that
+/// region.
+pub(crate) struct NetTieGroups {
+    groups: Vec<TieGroup>,
+}
+
+impl NetTieGroups {
+    /// Build groups from a PCB's `net_ties`.
+    pub(crate) fn from_pcb(pcb: &Pcb) -> Self {
+        let groups = pcb
+            .net_ties
+            .iter()
+            .filter(|t| t.nets.len() >= 2)
+            .map(|t| {
+                let region = match (t.position, t.radius) {
+                    (Some(p), Some(r)) => Some((p, r * r)),
+                    _ => None,
+                };
+                TieGroup {
+                    nets: t.nets.clone(),
+                    region,
+                }
+            })
+            .collect();
+        Self { groups }
+    }
+
+    /// Returns true if nets `a` and `b` are tied together (and, for
+    /// region-scoped ties, the contact point lies within the region).
+    pub(crate) fn exempt(&self, a: &str, b: &str, at: Vec2) -> bool {
+        if a == b {
+            return true;
+        }
+        for g in &self.groups {
+            let joins = g.nets.iter().any(|n| n == a) && g.nets.iter().any(|n| n == b);
+            if !joins {
+                continue;
+            }
+            match g.region {
+                None => return true,
+                Some((c, r2)) => {
+                    let dx = at.x - c.x;
+                    let dy = at.y - c.y;
+                    if dx * dx + dy * dy <= r2 {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
+    }
+
+    /// Returns true if nets `a` and `b` are tied board-wide (no region scope).
+    /// Used by connectivity detection, where there is no single contact point.
+    pub(crate) fn tied_board_wide(&self, a: &str, b: &str) -> bool {
+        if a == b {
+            return true;
+        }
+        self.groups.iter().any(|g| {
+            g.region.is_none() && g.nets.iter().any(|n| n == a) && g.nets.iter().any(|n| n == b)
+        })
+    }
+}
+
+/// Pick a contact point between a trace and a candidate copper element: the
+/// trace midpoint clamped toward the element's bbox center.
+fn midpoint_of(start: Vec2, end: Vec2, elem: &crate::spatial::CopperElement) -> Vec2 {
+    let ec = Vec2::new(
+        (elem.min[0] + elem.max[0]) / 2.0,
+        (elem.min[1] + elem.max[1]) / 2.0,
+    );
+    let tm = Vec2::new((start.x + end.x) / 2.0, (start.y + end.y) / 2.0);
+    Vec2::new((tm.x + ec.x) / 2.0, (tm.y + ec.y) / 2.0)
+}
+
 /// Check copper-to-copper clearance between different-net elements.
-fn check_clearance(pcb: &Pcb, index: &SpatialIndex, violations: &mut Vec<DrcViolation>) {
+fn check_clearance(
+    pcb: &Pcb,
+    index: &SpatialIndex,
+    net_ties: &NetTieGroups,
+    violations: &mut Vec<DrcViolation>,
+) {
     let default_clearance = pcb.rules.default_rules.clearance;
 
     // Build net class clearance lookup
@@ -108,31 +214,39 @@ fn check_clearance(pcb: &Pcb, index: &SpatialIndex, violations: &mut Vec<DrcViol
 
         let nearby = index.query_region([min_x, min_y], [max_x, max_y]);
 
+        let trace_geom = CopperGeom::Segment {
+            a: trace.start,
+            b: trace.end,
+            half_w,
+        };
+
         for elem in nearby {
-            if elem.net == trace.net || elem.layer != trace.layer {
+            if elem.layer != trace.layer {
+                continue;
+            }
+            // Same net never shorts. Net-tied nets are treated as same-net
+            // (subject to the tie's optional region).
+            if elem.net == trace.net {
                 continue;
             }
 
-            // Compute approximate distance between trace bbox and element bbox
-            let dist = bbox_distance(
-                [
-                    trace.start.x.min(trace.end.x) - half_w,
-                    trace.start.y.min(trace.end.y) - half_w,
-                    trace.start.x.max(trace.end.x) + half_w,
-                    trace.start.y.max(trace.end.y) + half_w,
-                ],
-                [elem.min[0], elem.min[1], elem.max[0], elem.max[1]],
-            );
+            // True copper-to-copper distance (narrowphase). The R-tree query
+            // above is only a broadphase candidate filter.
+            let dist = trace_geom.distance_to(&elem.geom);
+
+            // Net-tie exemption: a deliberate junction between tied nets is
+            // not a short. Use the contact point (midpoint of the two
+            // elements) to test region-scoped ties.
+            let contact = midpoint_of(trace.start, trace.end, elem);
+            if net_ties.exempt(&trace.net, &elem.net, contact) {
+                continue;
+            }
 
             if dist < clearance {
-                let pos = Vec2::new(
-                    (trace.start.x + trace.end.x) / 2.0,
-                    (trace.start.y + trace.end.y) / 2.0,
-                );
                 violations.push(DrcViolation {
                     rule: DrcRuleType::Clearance,
                     severity: DrcSeverity::Error,
-                    position: pos,
+                    position: contact,
                     message: format!(
                         "Clearance violation: trace net '{}' to net '{}': {:.3}mm < {:.3}mm",
                         trace.net, elem.net, dist, clearance
@@ -149,12 +263,13 @@ fn check_clearance(pcb: &Pcb, index: &SpatialIndex, violations: &mut Vec<DrcViol
 ///
 /// The trace pass covers trace↔copper pairs; this covers pad↔pad shorts
 /// (overlapping footprints or stacked pads), which that pass never sees.
-fn check_pad_clearance(pcb: &Pcb, violations: &mut Vec<DrcViolation>) {
+fn check_pad_clearance(pcb: &Pcb, net_ties: &NetTieGroups, violations: &mut Vec<DrcViolation>) {
     let default_clearance = pcb.rules.default_rules.clearance;
     let net_clearance = build_net_clearance_map(pcb);
 
     struct PadBox<'a> {
-        bbox: [f64; 4],
+        center: Vec2,
+        geom: CopperGeom,
         net: &'a str,
         layers: &'a [vcad_ir::ecad::PcbLayer],
         fp_ref: &'a str,
@@ -168,11 +283,14 @@ fn check_pad_clearance(pcb: &Pcb, violations: &mut Vec<DrcViolation>) {
             let Some(net) = pad.net.as_deref() else {
                 continue;
             };
-            let (hw, hh) = pad_half_extents(pad);
-            let x = fp.position.x + pad.position.x;
-            let y = fp.position.y + pad.position.y;
+            let center = Vec2::new(
+                fp.position.x + pad.position.x,
+                fp.position.y + pad.position.y,
+            );
+            let rot = (fp.rotation + pad.rotation).to_radians();
             boxes.push(PadBox {
-                bbox: [x - hw, y - hh, x + hw, y + hh],
+                center,
+                geom: pad_geom(pad, center, rot),
                 net,
                 layers: &pad.layers,
                 fp_ref: &fp.reference,
@@ -206,12 +324,16 @@ fn check_pad_clearance(pcb: &Pcb, violations: &mut Vec<DrcViolation>) {
                         .unwrap_or(default_clearance),
                 );
 
-            let dist = bbox_distance(a.bbox, b.bbox);
+            // True copper-to-copper distance, respecting pad rotation.
+            let dist = a.geom.distance_to(&b.geom);
+            let pos = Vec2::new(
+                (a.center.x + b.center.x) / 2.0,
+                (a.center.y + b.center.y) / 2.0,
+            );
+            if net_ties.exempt(a.net, b.net, pos) {
+                continue;
+            }
             if dist < clearance {
-                let pos = Vec2::new(
-                    (a.bbox[0] + a.bbox[2] + b.bbox[0] + b.bbox[2]) / 4.0,
-                    (a.bbox[1] + a.bbox[3] + b.bbox[1] + b.bbox[3]) / 4.0,
-                );
                 violations.push(DrcViolation {
                     rule: DrcRuleType::Clearance,
                     severity: DrcSeverity::Error,
@@ -460,6 +582,117 @@ fn check_annular_ring(pcb: &Pcb, violations: &mut Vec<DrcViolation>) {
     }
 }
 
+/// Enforce keepout regions: no-tracks / no-vias / no-components.
+fn check_keepout(pcb: &Pcb, violations: &mut Vec<DrcViolation>) {
+    for keepout in &pcb.keepouts {
+        if keepout.outline.len() < 3 {
+            continue;
+        }
+        let centroid = polygon_centroid(&keepout.outline);
+
+        // no_tracks: any trace on a matching layer that touches the region.
+        if keepout.no_tracks {
+            for trace in &pcb.traces {
+                if !keepout.layers.contains(&trace.layer) {
+                    continue;
+                }
+                if segment_polygon_intersects(trace.start, trace.end, &keepout.outline) {
+                    let pos = Vec2::new(
+                        (trace.start.x + trace.end.x) / 2.0,
+                        (trace.start.y + trace.end.y) / 2.0,
+                    );
+                    violations.push(DrcViolation {
+                        rule: DrcRuleType::Keepout,
+                        severity: DrcSeverity::Error,
+                        position: pos,
+                        message: format!(
+                            "Keepout violation: trace net '{}' enters a no-tracks keepout",
+                            trace.net
+                        ),
+                        actual: 0.0,
+                        required: 0.0,
+                    });
+                }
+            }
+        }
+
+        // no_vias: any via whose layer span overlaps a keepout layer and whose
+        // center lies inside the region.
+        if keepout.no_vias {
+            for via in &pcb.vias {
+                let layer_match = keepout.layers.contains(&via.start_layer)
+                    || keepout.layers.contains(&via.end_layer);
+                if !layer_match {
+                    continue;
+                }
+                if point_in_polygon(via.position, &keepout.outline) {
+                    violations.push(DrcViolation {
+                        rule: DrcRuleType::Keepout,
+                        severity: DrcSeverity::Error,
+                        position: via.position,
+                        message: format!(
+                            "Keepout violation: via net '{}' inside a no-vias keepout",
+                            via.net
+                        ),
+                        actual: 0.0,
+                        required: 0.0,
+                    });
+                }
+            }
+        }
+
+        // no_components: any footprint whose pads or courtyard fall inside.
+        if keepout.no_components {
+            for fp in &pcb.footprints {
+                let mut hit = false;
+                let mut hit_pos = fp.position;
+                for pad in &fp.pads {
+                    let pad_pos = Vec2::new(
+                        fp.position.x + pad.position.x,
+                        fp.position.y + pad.position.y,
+                    );
+                    if point_in_polygon(pad_pos, &keepout.outline) {
+                        hit = true;
+                        hit_pos = pad_pos;
+                        break;
+                    }
+                }
+                if !hit && point_in_polygon(fp.position, &keepout.outline) {
+                    hit = true;
+                    hit_pos = fp.position;
+                }
+                if hit {
+                    violations.push(DrcViolation {
+                        rule: DrcRuleType::Keepout,
+                        severity: DrcSeverity::Error,
+                        position: hit_pos,
+                        message: format!(
+                            "Keepout violation: component '{}' inside a no-components keepout",
+                            fp.reference
+                        ),
+                        actual: 0.0,
+                        required: 0.0,
+                    });
+                }
+            }
+        }
+
+        // Silence unused-variable warning when no sub-flags are set.
+        let _ = centroid;
+    }
+}
+
+/// Centroid of a polygon's vertices (simple average, used for messaging only).
+fn polygon_centroid(poly: &[Vec2]) -> Vec2 {
+    if poly.is_empty() {
+        return Vec2::new(0.0, 0.0);
+    }
+    let n = poly.len() as f64;
+    let sx: f64 = poly.iter().map(|p| p.x).sum();
+    let sy: f64 = poly.iter().map(|p| p.y).sum();
+    Vec2::new(sx / n, sy / n)
+}
+
 /// Get the minimum dimension of a pad (for annular ring calculation).
 fn pad_min_dimension(pad: &Pad) -> f64 {
     match &pad.shape {
@@ -484,6 +717,447 @@ fn pad_min_dimension(pad: &Pad) -> f64 {
             }
             (max_x - min_x).min(max_y - min_y)
         }
+    }
+}
+
+// ============================================================================
+// Connectivity flood-fill (shorts + unrouted nets)
+// ============================================================================
+
+/// All copper layers, ordered top → bottom, for via span enumeration.
+const COPPER_STACK: [PcbLayer; 8] = [
+    PcbLayer::FCu,
+    PcbLayer::In1Cu,
+    PcbLayer::In2Cu,
+    PcbLayer::In3Cu,
+    PcbLayer::In4Cu,
+    PcbLayer::In5Cu,
+    PcbLayer::In6Cu,
+    PcbLayer::BCu,
+];
+
+/// Bitmask of copper layers between `start` and `end` (inclusive) in the
+/// physical stack. Used so a via bridges every layer it spans.
+fn copper_layer_span(start: PcbLayer, end: PcbLayer) -> u16 {
+    let idx = |l: PcbLayer| COPPER_STACK.iter().position(|&c| c == l);
+    match (idx(start), idx(end)) {
+        (Some(a), Some(b)) => {
+            let (lo, hi) = if a <= b { (a, b) } else { (b, a) };
+            let mut mask = 0u16;
+            for bit in lo..=hi {
+                mask |= 1 << bit;
+            }
+            mask
+        }
+        // Unknown layer — fall back to just the two endpoints.
+        _ => single_layer_mask(start) | single_layer_mask(end),
+    }
+}
+
+/// Bitmask for a single copper layer (0 for non-copper).
+fn single_layer_mask(layer: PcbLayer) -> u16 {
+    COPPER_STACK
+        .iter()
+        .position(|&c| c == layer)
+        .map(|i| 1u16 << i)
+        .unwrap_or(0)
+}
+
+/// Geometry of a connectivity node.
+enum NodeGeom {
+    /// Copper segment / disc / rect (trace, via, pad).
+    Copper(CopperGeom),
+    /// A zone copper pour outline (concave allowed).
+    Polygon(Vec<Vec2>),
+}
+
+/// A piece of copper participating in connectivity analysis.
+struct ConnNode {
+    geom: NodeGeom,
+    /// Copper layers this node occupies (bitmask over [`COPPER_STACK`]).
+    layers: u16,
+    /// Declared net label (empty string ⇒ no declared net).
+    net: String,
+    /// Whether this node is a pad (used for the unrouted netlist).
+    pad: Option<(String, String)>, // (footprint ref, pad number)
+    /// Representative position for violation messaging.
+    pos: Vec2,
+}
+
+impl ConnNode {
+    /// True if this node's copper physically touches/overlaps `other` and they
+    /// share a copper layer.
+    fn touches(&self, other: &ConnNode) -> bool {
+        if self.layers & other.layers == 0 {
+            return false;
+        }
+        node_geoms_touch(&self.geom, &other.geom)
+    }
+}
+
+/// Touch threshold (mm). Copper within this gap is treated as connected, to
+/// absorb floating-point seams where routed segments meet at endpoints.
+const TOUCH_EPS: f64 = 1e-6;
+
+/// True if two node geometries touch or overlap.
+fn node_geoms_touch(a: &NodeGeom, b: &NodeGeom) -> bool {
+    match (a, b) {
+        (NodeGeom::Copper(ga), NodeGeom::Copper(gb)) => ga.distance_to(gb) <= TOUCH_EPS,
+        (NodeGeom::Polygon(poly), NodeGeom::Copper(g))
+        | (NodeGeom::Copper(g), NodeGeom::Polygon(poly)) => copper_touches_polygon(g, poly),
+        (NodeGeom::Polygon(pa), NodeGeom::Polygon(pb)) => polygons_touch(pa, pb),
+    }
+}
+
+/// True if a copper geom touches/overlaps a polygon.
+fn copper_touches_polygon(g: &CopperGeom, poly: &[Vec2]) -> bool {
+    match g {
+        CopperGeom::Disc { center, r } => {
+            if point_in_polygon(*center, poly) {
+                return true;
+            }
+            min_dist_point_to_polygon_edges(*center, poly) <= *r + TOUCH_EPS
+        }
+        CopperGeom::Segment { a, b, half_w } => {
+            if segment_polygon_intersects(*a, *b, poly) {
+                return true;
+            }
+            // Within half-width of a polygon edge.
+            min_dist_segment_to_polygon_edges(*a, *b, poly) <= *half_w + TOUCH_EPS
+        }
+        CopperGeom::Rect { center, .. } => {
+            // Use the rect corners + center for a robust touch test.
+            if point_in_polygon(*center, poly) {
+                return true;
+            }
+            let corners = rect_corners(g);
+            if corners.iter().any(|c| point_in_polygon(*c, poly)) {
+                return true;
+            }
+            // Any polygon vertex inside the rect?
+            poly.iter().any(|v| dist_point_to_rect(*v, g) <= TOUCH_EPS)
+        }
+    }
+}
+
+/// Corners of a [`CopperGeom::Rect`] (empty otherwise).
+fn rect_corners(g: &CopperGeom) -> [Vec2; 4] {
+    match g {
+        CopperGeom::Rect {
+            center,
+            half_w,
+            half_h,
+            rot,
+        } => {
+            let (s, c) = rot.sin_cos();
+            let local = [
+                (-half_w, -half_h),
+                (*half_w, -half_h),
+                (*half_w, *half_h),
+                (-half_w, *half_h),
+            ];
+            let mut out = [Vec2::new(0.0, 0.0); 4];
+            for (i, (lx, ly)) in local.iter().enumerate() {
+                out[i] = Vec2::new(center.x + lx * c - ly * s, center.y + lx * s + ly * c);
+            }
+            out
+        }
+        _ => [Vec2::new(0.0, 0.0); 4],
+    }
+}
+
+/// Distance from a point to a rect copper geom (0 inside).
+fn dist_point_to_rect(p: Vec2, g: &CopperGeom) -> f64 {
+    let disc = CopperGeom::Disc { center: p, r: 0.0 };
+    g.distance_to(&disc)
+}
+
+/// Min distance from a point to any edge of a polygon.
+fn min_dist_point_to_polygon_edges(p: Vec2, poly: &[Vec2]) -> f64 {
+    min_distance_to_polygon(&p, poly)
+}
+
+/// Min distance from a segment to any edge of a polygon.
+fn min_dist_segment_to_polygon_edges(a: Vec2, b: Vec2, poly: &[Vec2]) -> f64 {
+    let n = poly.len();
+    if n < 2 {
+        return f64::MAX;
+    }
+    let seg = CopperGeom::Segment { a, b, half_w: 0.0 };
+    let mut min_d = f64::MAX;
+    for i in 0..n {
+        let e = CopperGeom::Segment {
+            a: poly[i],
+            b: poly[(i + 1) % n],
+            half_w: 0.0,
+        };
+        let d = seg.distance_to(&e);
+        if d < min_d {
+            min_d = d;
+        }
+    }
+    min_d
+}
+
+/// True if two polygons touch/overlap.
+fn polygons_touch(a: &[Vec2], b: &[Vec2]) -> bool {
+    if a.len() < 3 || b.len() < 3 {
+        return false;
+    }
+    if a.iter().any(|p| point_in_polygon(*p, b)) || b.iter().any(|p| point_in_polygon(*p, a)) {
+        return true;
+    }
+    // Edge crossings.
+    for i in 0..a.len() {
+        let a0 = a[i];
+        let a1 = a[(i + 1) % a.len()];
+        if segment_polygon_intersects(a0, a1, b) {
+            return true;
+        }
+    }
+    false
+}
+
+/// Connectivity flood-fill: detects shorts (one component, ≥2 distinct nets)
+/// and unrouted nets (one net split across ≥2 components).
+fn check_connectivity(pcb: &Pcb, net_ties: &NetTieGroups, violations: &mut Vec<DrcViolation>) {
+    let nodes = build_conn_nodes(pcb);
+    if nodes.is_empty() {
+        return;
+    }
+
+    // Union-find over geometric touch (same-layer, overlapping/touching).
+    let mut dsu = Dsu::new(nodes.len());
+    for i in 0..nodes.len() {
+        for j in (i + 1)..nodes.len() {
+            if nodes[i].touches(&nodes[j]) {
+                dsu.union(i, j);
+            }
+        }
+    }
+
+    detect_shorts(&nodes, &mut dsu, net_ties, violations);
+    detect_unrouted(pcb, &nodes, &mut dsu, net_ties, violations);
+}
+
+/// Build connectivity nodes from all copper on the board.
+fn build_conn_nodes(pcb: &Pcb) -> Vec<ConnNode> {
+    let mut nodes = Vec::new();
+
+    for trace in &pcb.traces {
+        nodes.push(ConnNode {
+            geom: NodeGeom::Copper(CopperGeom::Segment {
+                a: trace.start,
+                b: trace.end,
+                half_w: trace.width / 2.0,
+            }),
+            layers: single_layer_mask(trace.layer),
+            net: trace.net.clone(),
+            pad: None,
+            pos: Vec2::new(
+                (trace.start.x + trace.end.x) / 2.0,
+                (trace.start.y + trace.end.y) / 2.0,
+            ),
+        });
+    }
+
+    for via in &pcb.vias {
+        nodes.push(ConnNode {
+            geom: NodeGeom::Copper(CopperGeom::Disc {
+                center: via.position,
+                r: via.diameter / 2.0,
+            }),
+            layers: copper_layer_span(via.start_layer, via.end_layer),
+            net: via.net.clone(),
+            pad: None,
+            pos: via.position,
+        });
+    }
+
+    for fp in &pcb.footprints {
+        for pad in &fp.pads {
+            let center = Vec2::new(
+                fp.position.x + pad.position.x,
+                fp.position.y + pad.position.y,
+            );
+            let rot = (fp.rotation + pad.rotation).to_radians();
+            let mut layers = 0u16;
+            for &l in &pad.layers {
+                layers |= single_layer_mask(l);
+            }
+            if layers == 0 {
+                continue;
+            }
+            nodes.push(ConnNode {
+                geom: NodeGeom::Copper(pad_geom(pad, center, rot)),
+                layers,
+                net: pad.net.clone().unwrap_or_default(),
+                pad: Some((fp.reference.clone(), pad.number.clone())),
+                pos: center,
+            });
+        }
+    }
+
+    for zone in &pcb.zones {
+        if zone.outline.len() < 3 {
+            continue;
+        }
+        let pos = polygon_centroid(&zone.outline);
+        nodes.push(ConnNode {
+            geom: NodeGeom::Polygon(zone.outline.clone()),
+            layers: single_layer_mask(zone.layer),
+            net: zone.net.clone(),
+            pad: None,
+            pos,
+        });
+    }
+
+    nodes
+}
+
+/// Emit a `Short` violation for any component carrying ≥2 distinct declared
+/// nets that are not net-tied.
+fn detect_shorts(
+    nodes: &[ConnNode],
+    dsu: &mut Dsu,
+    net_ties: &NetTieGroups,
+    violations: &mut Vec<DrcViolation>,
+) {
+    // Gather declared nets per component, with a representative position.
+    let mut comp_nets: HashMap<usize, Vec<(String, Vec2)>> = HashMap::new();
+    for (i, node) in nodes.iter().enumerate() {
+        if node.net.is_empty() {
+            continue;
+        }
+        let root = dsu.find(i);
+        let entry = comp_nets.entry(root).or_default();
+        if !entry.iter().any(|(n, _)| n == &node.net) {
+            entry.push((node.net.clone(), node.pos));
+        }
+    }
+
+    let mut seen_pairs: std::collections::HashSet<(String, String)> = Default::default();
+    for nets in comp_nets.values() {
+        if nets.len() < 2 {
+            continue;
+        }
+        for a in 0..nets.len() {
+            for b in (a + 1)..nets.len() {
+                let (na, pa) = &nets[a];
+                let (nb, _pb) = &nets[b];
+                if net_ties.tied_board_wide(na, nb) {
+                    continue;
+                }
+                let key = if na <= nb {
+                    (na.clone(), nb.clone())
+                } else {
+                    (nb.clone(), na.clone())
+                };
+                if !seen_pairs.insert(key) {
+                    continue;
+                }
+                violations.push(DrcViolation {
+                    rule: DrcRuleType::Short,
+                    severity: DrcSeverity::Error,
+                    position: *pa,
+                    message: format!("Short: nets '{}' and '{}' are connected by copper", na, nb),
+                    actual: 0.0,
+                    required: 0.0,
+                });
+            }
+        }
+    }
+}
+
+/// Emit an `UnconnectedNet` violation for any declared net whose pads land in
+/// ≥2 disjoint components.
+fn detect_unrouted(
+    pcb: &Pcb,
+    nodes: &[ConnNode],
+    dsu: &mut Dsu,
+    net_ties: &NetTieGroups,
+    violations: &mut Vec<DrcViolation>,
+) {
+    // net → set of component roots that contain a pad of that net.
+    let mut net_comps: HashMap<String, Vec<(usize, Vec2)>> = HashMap::new();
+    for (i, node) in nodes.iter().enumerate() {
+        if node.pad.is_none() || node.net.is_empty() {
+            continue;
+        }
+        let root = dsu.find(i);
+        let entry = net_comps.entry(node.net.clone()).or_default();
+        if !entry.iter().any(|(r, _)| *r == root) {
+            entry.push((root, node.pos));
+        }
+    }
+
+    // Stable iteration for deterministic output.
+    let mut nets: Vec<&String> = net_comps.keys().collect();
+    nets.sort();
+
+    for net in nets {
+        let comps = &net_comps[net];
+        if comps.len() < 2 {
+            continue;
+        }
+        // Net-tied nets merge their pads' components: if every component for
+        // this net shares a tie group with another net's component that bridges
+        // them, we still report based on this net's own pad components. (A tie
+        // is an intentional junction, not a router substitute, so disjoint pads
+        // of the *same* net remain unrouted.)
+        let _ = net_ties;
+        let pos = comps[0].1;
+        violations.push(DrcViolation {
+            rule: DrcRuleType::UnconnectedNet,
+            severity: DrcSeverity::Error,
+            position: pos,
+            message: format!(
+                "Unconnected net '{}': pads split across {} disjoint copper groups",
+                net,
+                comps.len()
+            ),
+            actual: comps.len() as f64,
+            required: 1.0,
+        });
+    }
+
+    let _ = pcb;
+}
+
+/// A simple disjoint-set (union-find) with path compression + union by size.
+struct Dsu {
+    parent: Vec<usize>,
+    size: Vec<usize>,
+}
+
+impl Dsu {
+    fn new(n: usize) -> Self {
+        Self {
+            parent: (0..n).collect(),
+            size: vec![1; n],
+        }
+    }
+
+    fn find(&mut self, mut x: usize) -> usize {
+        while self.parent[x] != x {
+            self.parent[x] = self.parent[self.parent[x]];
+            x = self.parent[x];
+        }
+        x
+    }
+
+    fn union(&mut self, a: usize, b: usize) {
+        let (ra, rb) = (self.find(a), self.find(b));
+        if ra == rb {
+            return;
+        }
+        let (big, small) = if self.size[ra] >= self.size[rb] {
+            (ra, rb)
+        } else {
+            (rb, ra)
+        };
+        self.parent[small] = big;
+        self.size[big] += self.size[small];
     }
 }
 
@@ -516,6 +1190,10 @@ fn build_net_trace_width_map(pcb: &Pcb) -> HashMap<String, f64> {
 /// Compute the minimum distance between two axis-aligned bounding boxes.
 /// Each box is represented as `[min_x, min_y, max_x, max_y]`.
 /// Returns 0.0 if they overlap.
+///
+/// Retained as a broadphase utility; the clearance passes use true-geometry
+/// distance (see [`CopperGeom::distance_to`]) for the narrowphase.
+#[cfg(test)]
 fn bbox_distance(a: [f64; 4], b: [f64; 4]) -> f64 {
     let dx = (a[0] - b[2]).max(b[0] - a[2]).max(0.0);
     let dy = (a[1] - b[3]).max(b[1] - a[3]).max(0.0);
@@ -655,6 +1333,7 @@ mod tests {
             }],
             zones: vec![],
             keepouts: vec![],
+            net_ties: vec![],
         }
     }
 
@@ -883,5 +1562,463 @@ mod tests {
     fn bbox_distance_overlapping() {
         let dist = bbox_distance([0.0, 0.0, 2.0, 2.0], [1.0, 1.0, 3.0, 3.0]);
         assert!((dist - 0.0).abs() < 1e-10);
+    }
+
+    // ------------------------------------------------------------------
+    // Test helpers
+    // ------------------------------------------------------------------
+
+    fn trace(start: (f64, f64), end: (f64, f64), net: &str) -> Trace {
+        Trace {
+            start: Vec2::new(start.0, start.1),
+            end: Vec2::new(end.0, end.1),
+            width: 0.25,
+            layer: PcbLayer::FCu,
+            net: net.to_string(),
+        }
+    }
+
+    fn smd_pad(num: &str, pos: (f64, f64), net: &str) -> Pad {
+        Pad {
+            number: num.to_string(),
+            pad_type: PadType::SMD,
+            shape: PadShape::Rect {
+                width: 1.0,
+                height: 1.0,
+            },
+            position: Vec2::new(pos.0, pos.1),
+            rotation: 0.0,
+            drill: None,
+            net: Some(net.to_string()),
+            layers: vec![PcbLayer::FCu],
+        }
+    }
+
+    fn footprint(reference: &str, pos: (f64, f64), rotation: f64, pads: Vec<Pad>) -> Footprint {
+        Footprint {
+            reference: reference.to_string(),
+            value: "X".to_string(),
+            footprint_name: "test".to_string(),
+            position: Vec2::new(pos.0, pos.1),
+            rotation,
+            front: true,
+            pads,
+            graphics: vec![],
+            model_3d: None,
+            properties: std::collections::HashMap::new(),
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // 1. True-geometry clearance narrowphase
+    // ------------------------------------------------------------------
+
+    /// Two perpendicular diagonal traces whose closest approach is ~1mm must
+    /// NOT be flagged. The old bbox-based check false-positived here because
+    /// the diagonal bounding boxes overlap heavily.
+    #[test]
+    fn diagonal_traces_far_apart_pass() {
+        let mut pcb = clean_pcb();
+        pcb.traces.clear();
+        // Trace A: lower-left to upper-right diagonal (centerline y = x).
+        pcb.traces.push(trace((10.0, 10.0), (20.0, 20.0), "1"));
+        // Trace B: a perpendicular diagonal (direction (1,-1)) sitting wholly
+        // on the y > x side, so it does NOT cross A. Closest approach is its
+        // (14,16) endpoint at |14-16|/sqrt(2) ≈ 1.41mm centerline (~1.16mm
+        // edge-to-edge). Its AABB still overlaps A's AABB completely, so the
+        // old bbox check false-positived here.
+        pcb.traces.push(trace((12.0, 18.0), (14.0, 16.0), "2"));
+
+        let violations = check_drc(&pcb);
+        let clearance: Vec<_> = violations
+            .iter()
+            .filter(|v| v.rule == DrcRuleType::Clearance)
+            .collect();
+        assert!(
+            clearance.is_empty(),
+            "diagonal traces ~1mm apart should not violate, got: {:?}",
+            clearance
+        );
+    }
+
+    /// Two parallel traces 0.1mm apart (edge-to-edge) MUST still be flagged.
+    #[test]
+    fn parallel_traces_too_close_fail() {
+        let mut pcb = clean_pcb();
+        pcb.traces.clear();
+        // width 0.25 → half_w 0.125 each. Centerline gap 0.35 → edge gap 0.1.
+        pcb.traces.push(trace((10.0, 40.0), (40.0, 40.0), "1"));
+        pcb.traces.push(trace((10.0, 40.35), (40.0, 40.35), "2"));
+
+        let violations = check_drc(&pcb);
+        let clearance: Vec<_> = violations
+            .iter()
+            .filter(|v| v.rule == DrcRuleType::Clearance)
+            .collect();
+        assert!(
+            !clearance.is_empty(),
+            "parallel traces 0.1mm apart should violate"
+        );
+        // Edge-to-edge distance should be ~0.1mm, not the centerline 0.35.
+        assert!(
+            (clearance[0].actual - 0.1).abs() < 1e-6,
+            "expected edge distance ~0.1mm, got {}",
+            clearance[0].actual
+        );
+    }
+
+    /// A rotated pad's true footprint is respected: a 45°-rotated rectangular
+    /// pad clears a nearby trace its AABB would otherwise overlap.
+    #[test]
+    fn rotated_pad_clearance_uses_true_geometry() {
+        let mut pcb = clean_pcb();
+        pcb.traces.clear();
+        // A long thin pad rotated 45°, far enough that its real corners clear
+        // the trace, even though its AABB is large.
+        let mut pad = Pad {
+            number: "1".to_string(),
+            pad_type: PadType::SMD,
+            shape: PadShape::Rect {
+                width: 4.0,
+                height: 0.4,
+            },
+            position: Vec2::new(0.0, 0.0),
+            rotation: 45.0,
+            drill: None,
+            net: Some("1".to_string()),
+            layers: vec![PcbLayer::FCu],
+        };
+        pad.net = Some("1".to_string());
+        pcb.footprints
+            .push(footprint("U1", (50.0, 50.0), 0.0, vec![pad]));
+        // Trace on net 2, several mm from the rotated pad's true body.
+        pcb.traces.push(trace((40.0, 56.0), (60.0, 56.0), "2"));
+
+        let violations = check_drc(&pcb);
+        let clearance: Vec<_> = violations
+            .iter()
+            .filter(|v| v.rule == DrcRuleType::Clearance)
+            .collect();
+        assert!(
+            clearance.is_empty(),
+            "rotated pad should clear distant trace, got: {:?}",
+            clearance
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // 2. Keepout enforcement
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn keepout_no_tracks_flags_trace() {
+        let mut pcb = clean_pcb();
+        pcb.traces.clear();
+        // A no-tracks keepout square around (50,50).
+        pcb.keepouts.push(Keepout {
+            outline: vec![
+                Vec2::new(45.0, 45.0),
+                Vec2::new(55.0, 45.0),
+                Vec2::new(55.0, 55.0),
+                Vec2::new(45.0, 55.0),
+            ],
+            layers: vec![PcbLayer::FCu],
+            no_tracks: true,
+            no_vias: false,
+            no_pour: false,
+            no_components: false,
+        });
+        // Trace passing straight through the keepout.
+        pcb.traces.push(trace((40.0, 50.0), (60.0, 50.0), "1"));
+
+        let violations = check_drc(&pcb);
+        let ko: Vec<_> = violations
+            .iter()
+            .filter(|v| v.rule == DrcRuleType::Keepout)
+            .collect();
+        assert!(
+            !ko.is_empty(),
+            "trace through no-tracks keepout should flag"
+        );
+    }
+
+    #[test]
+    fn keepout_clear_board_passes() {
+        let mut pcb = clean_pcb();
+        pcb.traces.clear();
+        pcb.keepouts.push(Keepout {
+            outline: vec![
+                Vec2::new(45.0, 45.0),
+                Vec2::new(55.0, 45.0),
+                Vec2::new(55.0, 55.0),
+                Vec2::new(45.0, 55.0),
+            ],
+            layers: vec![PcbLayer::FCu],
+            no_tracks: true,
+            no_vias: true,
+            no_components: true,
+            no_pour: false,
+        });
+        // Trace well away from the keepout.
+        pcb.traces.push(trace((10.0, 20.0), (30.0, 20.0), "1"));
+
+        let violations = check_drc(&pcb);
+        let ko: Vec<_> = violations
+            .iter()
+            .filter(|v| v.rule == DrcRuleType::Keepout)
+            .collect();
+        assert!(
+            ko.is_empty(),
+            "clear board should have no keepout violations"
+        );
+    }
+
+    #[test]
+    fn keepout_no_vias_flags_via_inside() {
+        let mut pcb = clean_pcb();
+        pcb.traces.clear();
+        pcb.vias.clear();
+        pcb.keepouts.push(Keepout {
+            outline: vec![
+                Vec2::new(45.0, 45.0),
+                Vec2::new(55.0, 45.0),
+                Vec2::new(55.0, 55.0),
+                Vec2::new(45.0, 55.0),
+            ],
+            layers: vec![PcbLayer::FCu],
+            no_tracks: false,
+            no_vias: true,
+            no_pour: false,
+            no_components: false,
+        });
+        pcb.vias.push(Via {
+            position: Vec2::new(50.0, 50.0),
+            diameter: 0.8,
+            drill: 0.4,
+            start_layer: PcbLayer::FCu,
+            end_layer: PcbLayer::BCu,
+            net: "1".to_string(),
+        });
+
+        let violations = check_drc(&pcb);
+        let ko: Vec<_> = violations
+            .iter()
+            .filter(|v| v.rule == DrcRuleType::Keepout && v.message.contains("via"))
+            .collect();
+        assert!(!ko.is_empty(), "via inside no-vias keepout should flag");
+    }
+
+    // ------------------------------------------------------------------
+    // 3. Net-tie exemption
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn overlapping_nets_short_without_tie() {
+        let mut pcb = clean_pcb();
+        pcb.traces.clear();
+        // Two traces of different nets that physically touch at (50,50).
+        pcb.traces.push(trace((40.0, 50.0), (50.0, 50.0), "1"));
+        pcb.traces.push(trace((50.0, 50.0), (60.0, 50.0), "2"));
+
+        let violations = check_drc(&pcb);
+        let shorts: Vec<_> = violations
+            .iter()
+            .filter(|v| v.rule == DrcRuleType::Short || v.rule == DrcRuleType::Clearance)
+            .collect();
+        assert!(
+            !shorts.is_empty(),
+            "touching different-net traces should short without a tie"
+        );
+    }
+
+    #[test]
+    fn net_tie_exempts_short() {
+        let mut pcb = clean_pcb();
+        pcb.traces.clear();
+        pcb.traces.push(trace((40.0, 50.0), (50.0, 50.0), "1"));
+        pcb.traces.push(trace((50.0, 50.0), (60.0, 50.0), "2"));
+        // Join nets 1 and 2 board-wide.
+        pcb.net_ties.push(NetTie {
+            nets: vec!["1".to_string(), "2".to_string()],
+            position: None,
+            radius: None,
+        });
+
+        let violations = check_drc(&pcb);
+        let shorts: Vec<_> = violations
+            .iter()
+            .filter(|v| v.rule == DrcRuleType::Short || v.rule == DrcRuleType::Clearance)
+            .collect();
+        assert!(
+            shorts.is_empty(),
+            "net-tied junction should not short, got: {:?}",
+            shorts
+        );
+    }
+
+    #[test]
+    fn net_tie_region_scoped() {
+        let mut pcb = clean_pcb();
+        pcb.traces.clear();
+        // Junction at (50,50).
+        pcb.traces.push(trace((40.0, 50.0), (50.0, 50.0), "1"));
+        pcb.traces.push(trace((50.0, 50.0), (60.0, 50.0), "2"));
+        // Tie region centered far away — the junction is OUTSIDE it, so the
+        // exemption must NOT apply.
+        pcb.net_ties.push(NetTie {
+            nets: vec!["1".to_string(), "2".to_string()],
+            position: Some(Vec2::new(10.0, 10.0)),
+            radius: Some(2.0),
+        });
+
+        let violations = check_drc(&pcb);
+        let clearance: Vec<_> = violations
+            .iter()
+            .filter(|v| v.rule == DrcRuleType::Clearance)
+            .collect();
+        assert!(
+            !clearance.is_empty(),
+            "junction outside tie region should still violate clearance"
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // 4. Connectivity flood-fill
+    // ------------------------------------------------------------------
+
+    /// A stray copper bridge between two otherwise-separate nets reports a Short.
+    #[test]
+    fn connectivity_detects_short_bridge() {
+        let mut pcb = clean_pcb();
+        pcb.traces.clear();
+        pcb.vias.clear();
+        // Net 1 island.
+        pcb.traces.push(trace((10.0, 30.0), (30.0, 30.0), "1"));
+        // Net 2 island.
+        pcb.traces.push(trace((10.0, 50.0), (30.0, 50.0), "2"));
+        // Stray bridge on net 1 touching both islands (an accidental short).
+        pcb.traces.push(trace((20.0, 30.0), (20.0, 50.0), "1"));
+
+        let violations = check_drc(&pcb);
+        let shorts: Vec<_> = violations
+            .iter()
+            .filter(|v| v.rule == DrcRuleType::Short)
+            .collect();
+        assert!(
+            !shorts.is_empty(),
+            "copper bridge between nets should report a Short, got: {:?}",
+            violations
+        );
+        assert!(shorts[0].message.contains('1') && shorts[0].message.contains('2'));
+    }
+
+    /// A net whose two pads are not connected by copper reports UnconnectedNet.
+    #[test]
+    fn connectivity_detects_unrouted() {
+        let mut pcb = clean_pcb();
+        pcb.traces.clear();
+        pcb.vias.clear();
+        // Two pads on net "1", far apart, with NO trace between them.
+        pcb.footprints.push(footprint(
+            "J1",
+            (10.0, 10.0),
+            0.0,
+            vec![smd_pad("1", (0.0, 0.0), "1")],
+        ));
+        pcb.footprints.push(footprint(
+            "J2",
+            (60.0, 60.0),
+            0.0,
+            vec![smd_pad("1", (0.0, 0.0), "1")],
+        ));
+
+        let violations = check_drc(&pcb);
+        let unrouted: Vec<_> = violations
+            .iter()
+            .filter(|v| v.rule == DrcRuleType::UnconnectedNet)
+            .collect();
+        assert!(
+            !unrouted.is_empty(),
+            "two disjoint pads on the same net should report UnconnectedNet, got: {:?}",
+            violations
+        );
+    }
+
+    /// A correctly-routed net (pads joined by a trace) reports neither a short
+    /// nor an unrouted-net violation.
+    #[test]
+    fn connectivity_clean_routed_net() {
+        let mut pcb = clean_pcb();
+        pcb.traces.clear();
+        pcb.vias.clear();
+        // Two pads on net "1" joined by a trace.
+        pcb.footprints.push(footprint(
+            "J1",
+            (10.0, 40.0),
+            0.0,
+            vec![smd_pad("1", (0.0, 0.0), "1")],
+        ));
+        pcb.footprints.push(footprint(
+            "J2",
+            (30.0, 40.0),
+            0.0,
+            vec![smd_pad("1", (0.0, 0.0), "1")],
+        ));
+        pcb.traces.push(trace((10.0, 40.0), (30.0, 40.0), "1"));
+
+        let violations = check_drc(&pcb);
+        let bad: Vec<_> = violations
+            .iter()
+            .filter(|v| v.rule == DrcRuleType::UnconnectedNet || v.rule == DrcRuleType::Short)
+            .collect();
+        assert!(
+            bad.is_empty(),
+            "correctly routed net should be clean, got: {:?}",
+            bad
+        );
+    }
+
+    /// Via bridges its layer span: a trace on FCu and a trace on BCu joined by
+    /// a via on the same net form one component (no spurious unrouted).
+    #[test]
+    fn connectivity_via_bridges_layers() {
+        let mut pcb = clean_pcb();
+        pcb.traces.clear();
+        pcb.vias.clear();
+        // FCu pad + trace.
+        pcb.footprints.push(footprint(
+            "J1",
+            (10.0, 40.0),
+            0.0,
+            vec![smd_pad("1", (0.0, 0.0), "1")],
+        ));
+        pcb.traces.push(trace((10.0, 40.0), (40.0, 40.0), "1"));
+        // BCu pad + trace.
+        let mut bpad = smd_pad("1", (0.0, 0.0), "1");
+        bpad.layers = vec![PcbLayer::BCu];
+        pcb.footprints
+            .push(footprint("J2", (40.0, 40.0), 0.0, vec![bpad]));
+        let mut btrace = trace((40.0, 40.0), (40.0, 40.0), "1");
+        btrace.layer = PcbLayer::BCu;
+        // Via at (40,40) bridging FCu→BCu on net 1.
+        pcb.vias.push(Via {
+            position: Vec2::new(40.0, 40.0),
+            diameter: 0.8,
+            drill: 0.4,
+            start_layer: PcbLayer::FCu,
+            end_layer: PcbLayer::BCu,
+            net: "1".to_string(),
+        });
+
+        let violations = check_drc(&pcb);
+        let unrouted: Vec<_> = violations
+            .iter()
+            .filter(|v| v.rule == DrcRuleType::UnconnectedNet)
+            .collect();
+        assert!(
+            unrouted.is_empty(),
+            "via should bridge FCu/BCu pads on same net, got: {:?}",
+            unrouted
+        );
     }
 }

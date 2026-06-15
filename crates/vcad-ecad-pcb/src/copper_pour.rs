@@ -247,6 +247,7 @@ mod tests {
                 priority: 0,
             }],
             keepouts: vec![],
+            net_ties: vec![],
         }
     }
 

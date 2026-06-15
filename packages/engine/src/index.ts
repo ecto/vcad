@@ -157,6 +157,8 @@ export {
   computeRatsnest,
   componentMeshes,
   createCircuitSim,
+  evaluateMotor,
+  airgapFluxDensity,
 } from "./ecad.js";
 export type {
   DrcViolationResult,
@@ -172,6 +174,9 @@ export type {
   CircuitObservation,
   CircuitSimHandle,
   FootprintTemplate,
+  MotorSpecInput,
+  MotorPerformanceResult,
+  AirGapSpecInput,
 } from "./ecad.js";
 
 // Parts library
