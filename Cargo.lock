@@ -6835,6 +6835,7 @@ name = "vcad-ecad-export"
 version = "0.9.4"
 dependencies = [
  "thiserror 2.0.18",
+ "vcad-ecad-pcb",
  "vcad-ir",
 ]
 

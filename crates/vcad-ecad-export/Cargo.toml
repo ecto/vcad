@@ -9,4 +9,5 @@ publish = false
 
 [dependencies]
 vcad-ir = { workspace = true }
+vcad-ecad-pcb = { workspace = true }
 thiserror = { workspace = true }

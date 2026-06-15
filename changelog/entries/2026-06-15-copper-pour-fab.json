@@ -1,0 +1,10 @@
+{
+  "id": "2026-06-15-copper-pour-fab",
+  "version": "0.9.4",
+  "date": "2026-06-15",
+  "category": "fix",
+  "title": "Copper pours knock out clearances in fab output",
+  "summary": "Ground/power pours now subtract real clearance voids around other-net copper and form thermal-relief spokes on same-net pads, and Gerber export emits the poured geometry instead of a solid flood that would short the plane.",
+  "features": ["pcb", "copper-pour", "gerber"],
+  "mcpTools": ["export_gerber"]
+}
