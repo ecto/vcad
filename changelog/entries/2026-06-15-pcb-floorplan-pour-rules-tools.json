@@ -1,0 +1,10 @@
+{
+  "id": "2026-06-15-pcb-floorplan-pour-rules-tools",
+  "version": "0.9.4",
+  "date": "2026-06-15",
+  "category": "feat",
+  "title": "PCB floorplan, copper pours, rules & ampacity MCP tools",
+  "summary": "Five new ECAD tools: set_placement (explicit per-component floorplan), add_zone (ground/power-plane copper pours), set_design_rules (configurable DRC + net classes), size_trace_for_current (IPC-2221 ampacity), and add_via_array (thermal/stitching via grids).",
+  "features": ["mcp", "pcb", "ecad"],
+  "mcpTools": ["set_placement", "add_zone", "set_design_rules", "size_trace_for_current", "add_via_array"]
+}
