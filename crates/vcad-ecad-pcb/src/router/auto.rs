@@ -10,13 +10,13 @@
 //! rather than shipping copper that shorts — there is no path here that emits
 //! an un-probed segment or via.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 use vcad_ir::ecad::{Pcb, PcbLayer};
 use vcad_ir::Vec2;
 
 use crate::ratsnest::{compute_ratsnest, NetConnection, Netlist, NetlistNet};
-use crate::session::RouteSession;
+use crate::session::{RouteSession, SpanId};
 use crate::spatial::{CopperElement, CopperGeom};
 
 use super::route_net_maze;
@@ -61,11 +61,25 @@ pub struct RouteAllResult {
 /// Copper layers tried per connection, in order (front first, then back).
 const LAYERS: [PcbLayer; 2] = [PcbLayer::FCu, PcbLayer::BCu];
 
+/// A connection that has been routed, plus the session spans it occupies —
+/// enough to rip it back out and re-route it.
+struct Placed {
+    net: String,
+    from: Vec2,
+    to: Vec2,
+    layer: PcbLayer,
+    segments: Vec<(Vec2, Vec2)>,
+    via_pts: Vec<Vec2>,
+    spans: Vec<SpanId>,
+}
+
 /// Route every unrouted net on `pcb` (optionally restricted to `nets_filter`).
 ///
-/// `width` is the trace width; via geometry comes from the board's default
-/// rules. Returns the new copper to add — all of it clearance-legal against the
-/// board and against the copper the router itself places.
+/// Routes greedily (longest connection first) against one growing
+/// [`RouteSession`], then runs a single-level rip-up pass to place connections
+/// that were blocked. `width` is the trace width; via geometry comes from the
+/// board's default rules. Returns the new copper to add — all of it
+/// clearance-legal against the board and against the copper the router places.
 pub fn route_all(pcb: &Pcb, width: f64, nets_filter: &[String]) -> RouteAllResult {
     let netlist = netlist_from_pads(pcb);
     let mut rats = compute_ratsnest(pcb, &netlist);
@@ -79,117 +93,55 @@ pub fn route_all(pcb: &Pcb, width: f64, nets_filter: &[String]) -> RouteAllResul
     });
 
     let mut session = RouteSession::from_pcb(pcb);
-    let hw = width / 2.0;
-    let via_r = pcb.rules.default_rules.via_diameter / 2.0;
+    let mut placed: Vec<Placed> = Vec::new();
+    let mut unrouted_conns: Vec<(String, Vec2, Vec2)> = Vec::new();
 
-    let mut traces: Vec<RoutedTrace> = Vec::new();
-    let mut vias: Vec<RoutedVia> = Vec::new();
-    let mut routed: BTreeSet<String> = BTreeSet::new();
-    let mut unrouted: BTreeSet<String> = BTreeSet::new();
-
+    // Greedy pass: route each connection against the growing session.
     for line in &rats {
         if !nets_filter.is_empty() && !nets_filter.iter().any(|n| n == &line.net) {
             continue;
         }
-        let net = &line.net;
-        let clearance = session.clearance_for(net);
-        let mut done = false;
-
-        for (li, &layer) in LAYERS.iter().enumerate() {
-            let r = route_net_maze(
-                &session,
-                &pcb.outline.vertices,
-                layer,
-                net,
-                line.from,
-                line.to,
-                width,
-            );
-            if !r.success || r.segments.is_empty() {
-                continue;
-            }
-
-            // A non-front layer needs a transition via at each endpoint to drop
-            // from the FCu pad. Probe each via on BOTH layers first; if either
-            // endpoint can't take a legal via, abandon this layer.
-            let needs_via = li > 0;
-            let mut new_vias: Vec<Vec2> = Vec::new();
-            if needs_via {
-                let mut ok = true;
-                for &p in &[line.from, line.to] {
-                    // A same-net via already here (a pad shared by two MST
-                    // edges) is reused, not re-stacked.
-                    if vias
-                        .iter()
-                        .any(|v| v.net == *net && dist(v.position, p) < 0.05)
-                    {
-                        continue;
-                    }
-                    let disc = CopperGeom::Disc {
-                        center: p,
-                        r: via_r,
-                    };
-                    let legal = session.probe(&disc, PcbLayer::FCu, net, clearance).legal
-                        && session.probe(&disc, PcbLayer::BCu, net, clearance).legal;
-                    if !legal {
-                        ok = false;
-                        break;
-                    }
-                    new_vias.push(p);
-                }
-                if !ok {
-                    continue;
-                }
-            }
-
-            // Commit the route: traces, then transition vias on both layers, so
-            // the next connection avoids every piece of copper we just placed.
-            for (a, b) in &r.segments {
-                session.commit(CopperElement {
-                    min: [a.x.min(b.x) - hw, a.y.min(b.y) - hw],
-                    max: [a.x.max(b.x) + hw, a.y.max(b.y) + hw],
-                    net: net.clone(),
-                    layer,
-                    geom: CopperGeom::Segment {
-                        a: *a,
-                        b: *b,
-                        half_w: hw,
-                    },
-                });
-                traces.push(RoutedTrace {
-                    start: *a,
-                    end: *b,
-                    width,
-                    layer,
-                    net: net.clone(),
-                });
-            }
-            for &p in &new_vias {
-                for vl in LAYERS {
-                    session.commit(CopperElement {
-                        min: [p.x - via_r, p.y - via_r],
-                        max: [p.x + via_r, p.y + via_r],
-                        net: net.clone(),
-                        layer: vl,
-                        geom: CopperGeom::Disc {
-                            center: p,
-                            r: via_r,
-                        },
-                    });
-                }
-                vias.push(RoutedVia {
-                    position: p,
-                    net: net.clone(),
-                });
-            }
-            routed.insert(net.clone());
-            done = true;
-            break;
-        }
-        if !done {
-            unrouted.insert(net.clone());
+        match try_route(
+            &mut session,
+            pcb,
+            width,
+            &line.net,
+            line.from,
+            line.to,
+            &placed,
+        ) {
+            Some(p) => placed.push(p),
+            None => unrouted_conns.push((line.net.clone(), line.from, line.to)),
         }
     }
+
+    // Rip-up pass: for each connection that couldn't route, rip the other-net
+    // copper directly blocking it, route it, then re-route the ripped victims.
+    let still_unrouted = ripup_pass(&mut session, pcb, width, &mut placed, unrouted_conns);
+
+    // Flatten the placed connections into the result.
+    let mut traces = Vec::new();
+    let mut vias = Vec::new();
+    let mut routed: BTreeSet<String> = BTreeSet::new();
+    for p in &placed {
+        routed.insert(p.net.clone());
+        for (a, b) in &p.segments {
+            traces.push(RoutedTrace {
+                start: *a,
+                end: *b,
+                width,
+                layer: p.layer,
+                net: p.net.clone(),
+            });
+        }
+        for &pt in &p.via_pts {
+            vias.push(RoutedVia {
+                position: pt,
+                net: p.net.clone(),
+            });
+        }
+    }
+    let unrouted: BTreeSet<String> = still_unrouted.into_iter().map(|(n, _, _)| n).collect();
 
     RouteAllResult {
         traces,
@@ -197,6 +149,187 @@ pub fn route_all(pcb: &Pcb, width: f64, nets_filter: &[String]) -> RouteAllResul
         routed_nets: routed.into_iter().collect(),
         unrouted_nets: unrouted.into_iter().collect(),
     }
+}
+
+/// Try to route one connection on FCu then BCu against `session`. On success,
+/// commits the copper (traces, plus transition vias for a back-layer route) to
+/// `session` and returns the [`Placed`] record; otherwise returns `None`
+/// without mutating the session. Every committed segment and via is probed —
+/// there is no path here that commits illegal copper.
+fn try_route(
+    session: &mut RouteSession,
+    pcb: &Pcb,
+    width: f64,
+    net: &str,
+    from: Vec2,
+    to: Vec2,
+    placed: &[Placed],
+) -> Option<Placed> {
+    let hw = width / 2.0;
+    let via_r = pcb.rules.default_rules.via_diameter / 2.0;
+    let clearance = session.clearance_for(net);
+
+    for (li, &layer) in LAYERS.iter().enumerate() {
+        let r = route_net_maze(session, &pcb.outline.vertices, layer, net, from, to, width);
+        if !r.success || r.segments.is_empty() {
+            continue;
+        }
+
+        // A back-layer route needs a transition via at each endpoint. Probe
+        // each on BOTH layers before committing; reuse a same-net via already
+        // dropped at a shared pad rather than stacking a coincident drill.
+        let needs_via = li > 0;
+        let mut new_vias: Vec<Vec2> = Vec::new();
+        if needs_via {
+            let mut ok = true;
+            for &p in &[from, to] {
+                let reused = placed
+                    .iter()
+                    .filter(|pl| pl.net == net)
+                    .flat_map(|pl| pl.via_pts.iter())
+                    .any(|&vp| dist(vp, p) < 0.05);
+                if reused || new_vias.iter().any(|&q| dist(q, p) < 0.05) {
+                    continue;
+                }
+                let disc = CopperGeom::Disc {
+                    center: p,
+                    r: via_r,
+                };
+                let legal = session.probe(&disc, PcbLayer::FCu, net, clearance).legal
+                    && session.probe(&disc, PcbLayer::BCu, net, clearance).legal;
+                if !legal {
+                    ok = false;
+                    break;
+                }
+                new_vias.push(p);
+            }
+            if !ok {
+                continue;
+            }
+        }
+
+        let mut spans = Vec::new();
+        for (a, b) in &r.segments {
+            spans.push(session.commit(CopperElement {
+                min: [a.x.min(b.x) - hw, a.y.min(b.y) - hw],
+                max: [a.x.max(b.x) + hw, a.y.max(b.y) + hw],
+                net: net.to_string(),
+                layer,
+                geom: CopperGeom::Segment {
+                    a: *a,
+                    b: *b,
+                    half_w: hw,
+                },
+            }));
+        }
+        for &p in &new_vias {
+            for vl in LAYERS {
+                spans.push(session.commit(CopperElement {
+                    min: [p.x - via_r, p.y - via_r],
+                    max: [p.x + via_r, p.y + via_r],
+                    net: net.to_string(),
+                    layer: vl,
+                    geom: CopperGeom::Disc {
+                        center: p,
+                        r: via_r,
+                    },
+                }));
+            }
+        }
+        return Some(Placed {
+            net: net.to_string(),
+            from,
+            to,
+            layer,
+            segments: r.segments,
+            via_pts: new_vias,
+            spans,
+        });
+    }
+    None
+}
+
+/// Bounded single-level rip-up-and-reroute.
+///
+/// For each connection the greedy pass couldn't route, find the other-net
+/// copper directly in its way (the blockers `probe` reports along the direct
+/// path), rip those connections out of the session, route the failed
+/// connection, then re-route the ripped victims so they avoid the new copper.
+/// A victim that can no longer be routed becomes unrouted in its place — the
+/// DRC-clean invariant always holds because every (re)route goes through
+/// [`try_route`]. Returns the connections still unrouted after the pass.
+fn ripup_pass(
+    session: &mut RouteSession,
+    pcb: &Pcb,
+    width: f64,
+    placed: &mut Vec<Placed>,
+    unrouted: Vec<(String, Vec2, Vec2)>,
+) -> Vec<(String, Vec2, Vec2)> {
+    let hw = width / 2.0;
+    let mut still: Vec<(String, Vec2, Vec2)> = Vec::new();
+
+    for (net, from, to) in unrouted {
+        // Spans of other-net copper crossing the direct path, on either layer.
+        let seg = CopperGeom::Segment {
+            a: from,
+            b: to,
+            half_w: hw,
+        };
+        let clearance = session.clearance_for(&net);
+        let mut blocker_spans: HashSet<SpanId> = HashSet::new();
+        for &layer in &LAYERS {
+            for b in session.probe(&seg, layer, &net, clearance).blockers {
+                blocker_spans.insert(b.span);
+            }
+        }
+
+        // Which placed connections own those blocking spans (other nets only).
+        let victim_set: HashSet<usize> = placed
+            .iter()
+            .enumerate()
+            .filter(|(_, p)| p.net != net && p.spans.iter().any(|s| blocker_spans.contains(s)))
+            .map(|(i, _)| i)
+            .collect();
+        if victim_set.is_empty() {
+            still.push((net, from, to));
+            continue;
+        }
+
+        // Rip the victims out of `placed` and the session.
+        let mut victims = Vec::new();
+        let mut kept = Vec::new();
+        for (i, p) in std::mem::take(placed).into_iter().enumerate() {
+            if victim_set.contains(&i) {
+                victims.push(p);
+            } else {
+                kept.push(p);
+            }
+        }
+        *placed = kept;
+        for v in &victims {
+            for &s in &v.spans {
+                session.remove(s);
+            }
+        }
+
+        // Route the previously-failed connection into the freed space.
+        let routed_target = try_route(session, pcb, width, &net, from, to, placed);
+        if let Some(p) = routed_target {
+            placed.push(p);
+        } else {
+            still.push((net, from, to));
+        }
+
+        // Re-route every victim; one that can't be placed becomes unrouted.
+        for v in victims {
+            match try_route(session, pcb, width, &v.net, v.from, v.to, placed) {
+                Some(p) => placed.push(p),
+                None => still.push((v.net, v.from, v.to)),
+            }
+        }
+    }
+
+    still
 }
 
 /// Synthesize a netlist from pad net assignments for ratsnest computation.
