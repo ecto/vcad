@@ -26,6 +26,12 @@ echo "[vcad-mcp] Bundling with esbuild..."
 # old for `import ... with { type: "json" }` (needs 0.21+).
 # @resvg/resvg-js ships native .node binaries that esbuild cannot
 # bundle; keep it external and ship the package alongside the bundle.
+#
+# The banner imports createRequire under a private alias (__vcadCreateRequire)
+# so it never collides with the top-level `import { createRequire } from
+# "node:module"` that bundled sources (server.ts, wasm/ecad-diff.ts) emit —
+# two unaliased `createRequire` bindings would throw
+# `SyntaxError: Identifier 'createRequire' has already been declared` at load.
 npx esbuild@latest entry.ts \
   --bundle \
   --platform=node \
@@ -33,7 +39,7 @@ npx esbuild@latest entry.ts \
   --format=esm \
   --external:@resvg/resvg-js \
   --outfile="$OUT/functions/mcp.func/index.mjs" \
-  --banner:js="import { createRequire } from 'module'; const require = createRequire(import.meta.url);"
+  --banner:js="import { createRequire as __vcadCreateRequire } from 'module'; const require = __vcadCreateRequire(import.meta.url);"
 
 # ── 4. Copy WASM binary next to the bundle ───────────────────
 cp "$REPO_ROOT/packages/kernel-wasm/vcad_kernel_wasm_bg.wasm" \
