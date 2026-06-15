@@ -48,6 +48,12 @@ pub struct Netlist {
 }
 
 /// Compute ratsnest lines: unrouted connections between same-net pads.
+///
+/// Each net's air-wires form a Euclidean **minimum spanning tree** over its
+/// pad positions (Prim's algorithm), not a sequential chain — so the displayed
+/// ratsnest is the shortest set of connections that ties every pad together,
+/// independent of the order pins appear in the netlist. A 2-pin net yields one
+/// line; an n-pin net yields exactly n-1.
 pub fn compute_ratsnest(pcb: &Pcb, netlist: &Netlist) -> Vec<RatsnestLine> {
     let mut lines = Vec::new();
 
@@ -76,27 +82,89 @@ pub fn compute_ratsnest(pcb: &Pcb, netlist: &Netlist) -> Vec<RatsnestLine> {
             continue;
         }
 
-        // Create sequential ratsnest between consecutive pads
-        for i in 0..net.connections.len() - 1 {
-            let a = &net.connections[i];
-            let b = &net.connections[i + 1];
-            let key_a = format!("{}:{}", a.component_ref, a.pin_number);
-            let key_b = format!("{}:{}", b.component_ref, b.pin_number);
-            if let (Some(&pos_a), Some(&pos_b)) =
-                (pad_positions.get(&key_a), pad_positions.get(&key_b))
-            {
-                lines.push(RatsnestLine {
-                    net: net.name.clone(),
-                    from: pos_a,
-                    to: pos_b,
-                    fp_ref: a.component_ref.clone(),
-                    pad_num: a.pin_number.clone(),
-                });
-            }
+        // Gather the connection points whose pad position is known, preserving
+        // netlist order so MST tie-breaking is deterministic.
+        let nodes: Vec<(Vec2, &NetConnection)> = net
+            .connections
+            .iter()
+            .filter_map(|c| {
+                let key = format!("{}:{}", c.component_ref, c.pin_number);
+                pad_positions.get(&key).map(|&pos| (pos, c))
+            })
+            .collect();
+        if nodes.len() < 2 {
+            continue;
+        }
+
+        for (from_idx, to_idx) in mst_edges(&nodes) {
+            let (from_pos, from_conn) = nodes[from_idx];
+            let (to_pos, _) = nodes[to_idx];
+            lines.push(RatsnestLine {
+                net: net.name.clone(),
+                from: from_pos,
+                to: to_pos,
+                fp_ref: from_conn.component_ref.clone(),
+                pad_num: from_conn.pin_number.clone(),
+            });
         }
     }
 
     lines
+}
+
+/// Edges of a Euclidean minimum spanning tree over `nodes` via Prim's algorithm.
+///
+/// Returns `n-1` `(parent, child)` index pairs. Uses squared distance (monotonic
+/// in true distance, so the MST is identical) and starts from node 0 with strict
+/// `<` tie-breaking, making the result deterministic for a given node order.
+fn mst_edges(nodes: &[(Vec2, &NetConnection)]) -> Vec<(usize, usize)> {
+    let n = nodes.len();
+    if n < 2 {
+        return Vec::new();
+    }
+    let dist2 = |i: usize, j: usize| -> f64 {
+        let a = nodes[i].0;
+        let b = nodes[j].0;
+        let dx = a.x - b.x;
+        let dy = a.y - b.y;
+        dx * dx + dy * dy
+    };
+
+    let mut in_tree = vec![false; n];
+    let mut best_dist = vec![f64::INFINITY; n];
+    let mut best_parent = vec![0usize; n];
+    in_tree[0] = true;
+    for (j, d) in best_dist.iter_mut().enumerate().skip(1) {
+        *d = dist2(0, j);
+    }
+
+    let mut edges = Vec::with_capacity(n - 1);
+    for _ in 1..n {
+        // Closest not-yet-connected node to the growing tree.
+        let mut u = usize::MAX;
+        let mut bd = f64::INFINITY;
+        for j in 0..n {
+            if !in_tree[j] && best_dist[j] < bd {
+                bd = best_dist[j];
+                u = j;
+            }
+        }
+        if u == usize::MAX {
+            break;
+        }
+        in_tree[u] = true;
+        edges.push((best_parent[u], u));
+        for j in 0..n {
+            if !in_tree[j] {
+                let d = dist2(u, j);
+                if d < best_dist[j] {
+                    best_dist[j] = d;
+                    best_parent[j] = u;
+                }
+            }
+        }
+    }
+    edges
 }
 
 #[cfg(test)]
@@ -239,6 +307,87 @@ mod tests {
             keepouts: vec![],
             net_ties: vec![],
         }
+    }
+
+    fn conn(refdes: &str) -> NetConnection {
+        NetConnection {
+            component_ref: refdes.into(),
+            pin_number: "1".into(),
+        }
+    }
+
+    /// PCB with one single-pad footprint per `(ref, x, y)`, all on net "SIG".
+    fn line_pcb(positions: &[(&str, f64, f64)]) -> Pcb {
+        let mut pcb = minimal_pcb();
+        pcb.footprints.clear();
+        for (refdes, x, y) in positions {
+            pcb.footprints.push(Footprint {
+                reference: (*refdes).into(),
+                value: "x".into(),
+                footprint_name: "0402".into(),
+                position: Vec2::new(*x, *y),
+                rotation: 0.0,
+                front: true,
+                pads: vec![Pad {
+                    number: "1".into(),
+                    pad_type: PadType::SMD,
+                    shape: PadShape::Rect {
+                        width: 0.5,
+                        height: 0.5,
+                    },
+                    position: Vec2::new(0.0, 0.0),
+                    rotation: 0.0,
+                    drill: None,
+                    net: Some("SIG".into()),
+                    layers: vec![PcbLayer::FCu],
+                }],
+                graphics: vec![],
+                model_3d: None,
+                properties: Default::default(),
+            });
+        }
+        pcb
+    }
+
+    fn sig_netlist(order: &[&str]) -> Netlist {
+        Netlist {
+            nets: vec![NetlistNet {
+                name: "SIG".into(),
+                connections: order.iter().map(|r| conn(r)).collect(),
+            }],
+        }
+    }
+
+    fn total_len(lines: &[RatsnestLine]) -> f64 {
+        lines
+            .iter()
+            .map(|l| (l.to.x - l.from.x).hypot(l.to.y - l.from.y))
+            .sum()
+    }
+
+    #[test]
+    fn ratsnest_three_pin_is_minimum_spanning_tree() {
+        // A at x=0, B at x=10, C at x=11 — B and C nearly coincident.
+        let pcb = line_pcb(&[("A", 0.0, 0.0), ("B", 10.0, 0.0), ("C", 11.0, 0.0)]);
+        // Netlist order A, C, B — deliberately NOT the nearest-neighbour order.
+        let lines = compute_ratsnest(&pcb, &sig_netlist(&["A", "C", "B"]));
+        assert_eq!(lines.len(), 2, "3-pin net -> exactly 2 edges");
+        // MST total = 10 (A-B) + 1 (B-C) = 11; the old chain A-C-B would be 11+1=12.
+        assert!(
+            (total_len(&lines) - 11.0).abs() < 1e-9,
+            "MST length {} should be 11, not the chain's 12",
+            total_len(&lines)
+        );
+    }
+
+    #[test]
+    fn ratsnest_is_order_independent() {
+        let pcb = line_pcb(&[("A", 0.0, 0.0), ("B", 10.0, 0.0), ("C", 11.0, 0.0)]);
+        let len_of = |order: &[&str]| total_len(&compute_ratsnest(&pcb, &sig_netlist(order)));
+        let baseline = len_of(&["A", "B", "C"]);
+        // Any permutation of the pins yields the same minimum-spanning-tree length.
+        assert!((len_of(&["C", "A", "B"]) - baseline).abs() < 1e-9);
+        assert!((len_of(&["B", "C", "A"]) - baseline).abs() < 1e-9);
     }
 
     #[test]
