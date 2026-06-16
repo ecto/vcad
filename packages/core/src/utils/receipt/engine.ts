@@ -3,7 +3,7 @@
  * into an attributed, fingerprinted ledger entry. No I/O, no kernel, no MCP.
  */
 
-import { createHash } from "node:crypto";
+import { hashHex, HASH_ALGO } from "./hash.js";
 import type {
   Blame,
   Cause,
@@ -169,7 +169,7 @@ export function fingerprintSnapshot(s: DrcSnapshot): string {
     byRule: s.byRule,
     items,
   };
-  return createHash("sha256").update(JSON.stringify(canonicalize(proj))).digest("hex");
+  return hashHex(JSON.stringify(canonicalize(proj)));
 }
 
 /** The verdict is derived from the per-rule deltas, which come from `byRule` —
@@ -279,7 +279,7 @@ export function buildReceipt(input: BuildReceiptInput): import("./types.js").Rec
     board: input.board,
     preflight: input.preflight,
     entries: input.steps.map((s, i) => buildEntry(s, i)),
-    fingerprintAlgo: "sha256",
+    fingerprintAlgo: HASH_ALGO,
     build: input.build,
     reverification: "deterministic-same-session",
   };

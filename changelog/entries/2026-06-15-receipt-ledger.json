@@ -1,0 +1,9 @@
+{
+  "id": "2026-06-15-receipt-ledger",
+  "version": "0.9.4",
+  "date": "2026-06-15",
+  "category": "feat",
+  "title": "Live Receipt ledger in the electronics workspace",
+  "summary": "Each board edit now logs an attributed entry — what it fixed, what it introduced (incl. shorts), and footprint-vs-routing blame — with a verdict badge.",
+  "features": ["electronics", "pcb", "drc", "receipt"]
+}

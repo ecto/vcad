@@ -7,7 +7,7 @@ import type {
   NetlistResult,
 } from "@vcad/engine";
 import { useCoreElectronicsStore, getPcbNodeIds, useDocumentStore, isPcbBoardPart } from "@vcad/core";
-import type { PcbBoardPartInfo } from "@vcad/core";
+import type { PcbBoardPartInfo, ReceiptEntry } from "@vcad/core";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -111,6 +111,13 @@ export interface ElectronicsState {
   drcViolations: DrcViolationResult[];
   ercViolations: ErcViolationResult[];
 
+  // Live Receipt ledger (#280): one attributed entry per board mutation that
+  // changed DRC, newest last. `pendingMutation` is an optional label an action
+  // can stash so the recorder tags the next entry (e.g. "autoroute").
+  receiptEntries: ReceiptEntry[];
+  showReceiptPanel: boolean;
+  pendingMutation: { tool: string; args: Record<string, unknown> } | null;
+
   // Route-vs-enclosure: footprint refs whose 3D body intersects a mechanical
   // part (Phase 3 — live MCAD/ECAD interference).
   interferingFootprints: string[];
@@ -162,6 +169,13 @@ export interface ElectronicsState {
   setLayerOpacity: (layer: PcbLayer, opacity: number) => void;
   setDrcViolations: (v: DrcViolationResult[]) => void;
   setErcViolations: (v: ErcViolationResult[]) => void;
+  appendReceiptEntry: (entry: ReceiptEntry) => void;
+  clearReceipt: () => void;
+  toggleReceiptPanel: () => void;
+  /** Stash a label for the next recorded mutation (e.g. "autoroute"). */
+  noteMutation: (tool: string, args?: Record<string, unknown>) => void;
+  /** Read and clear the pending label — the recorder calls this per entry. */
+  consumePendingMutation: () => { tool: string; args: Record<string, unknown> } | null;
   setInterferingFootprints: (refs: string[]) => void;
   setComponentBodies: (bodies: ComponentMesh[]) => void;
   toggleComponentBodies: () => void;
@@ -254,6 +268,9 @@ export const useElectronicsStore = create<ElectronicsState>((set, get) => ({
 
   drcViolations: [],
   ercViolations: [],
+  receiptEntries: [],
+  showReceiptPanel: false,
+  pendingMutation: null,
   interferingFootprints: [],
   componentBodies: [],
   showComponentBodies: true,
@@ -391,6 +408,16 @@ export const useElectronicsStore = create<ElectronicsState>((set, get) => ({
 
   setDrcViolations: (drcViolations) => set({ drcViolations }),
   setErcViolations: (ercViolations) => set({ ercViolations }),
+  appendReceiptEntry: (entry) =>
+    set((s) => ({ receiptEntries: [...s.receiptEntries, entry] })),
+  clearReceipt: () => set({ receiptEntries: [] }),
+  toggleReceiptPanel: () => set((s) => ({ showReceiptPanel: !s.showReceiptPanel })),
+  noteMutation: (tool, args = {}) => set({ pendingMutation: { tool, args } }),
+  consumePendingMutation: () => {
+    const p = get().pendingMutation;
+    if (p) set({ pendingMutation: null });
+    return p;
+  },
   setInterferingFootprints: (interferingFootprints) => set({ interferingFootprints }),
   setComponentBodies: (componentBodies) => set({ componentBodies }),
   toggleComponentBodies: () => set((s) => ({ showComponentBodies: !s.showComponentBodies })),
