@@ -3705,6 +3705,35 @@ export function ecadPcbPreviewMeshes(pcb_json) {
 }
 
 /**
+ * Resolve a footprint id to a land pattern *plus* resolution status.
+ *
+ * Like [`ecad_footprint_for_name`] but returns a `FootprintResolution`
+ * (`{ template, matched, family, note }`) so callers can tell a real
+ * package-family match from a generic placeholder and warn loudly instead
+ * of silently placing wrong geometry.
+ *
+ * # Arguments
+ * * `name` - Footprint id (e.g. "Package_DFN_QFN:QFN-40_5x5mm_P0.4mm")
+ * * `pin_count` - Declared pin count, used when the id carries no count
+ *   and as the basis for the generic fallback.
+ *
+ * # Returns
+ * `FootprintResolution` as JsValue.
+ * @param {string} name
+ * @param {number} pin_count
+ * @returns {any}
+ */
+export function ecadResolveFootprint(name, pin_count) {
+    const ptr0 = passStringToWasm0(name, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.ecadResolveFootprint(ptr0, len0, pin_count);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+
+/**
  * Auto-route the whole board over the incremental oracle.
  *
  * Computes the MST ratsnest and routes every unrouted net against a single
@@ -7398,12 +7427,12 @@ function __wbg_get_imports() {
             arg0.writeTexture(arg1, arg2, arg3, arg4);
         },
         __wbindgen_cast_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 2338, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 2339, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 2340, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 2341, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h30743bca3150d93c, wasm_bindgen__convert__closures_____invoke__hcf7d3eaee8800b37);
             return ret;
         },
         __wbindgen_cast_0000000000000002: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 3122, function: Function { arguments: [Externref], shim_idx: 3123, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 3124, function: Function { arguments: [Externref], shim_idx: 3125, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__hfdadf281ff0f1c56, wasm_bindgen__convert__closures_____invoke__h9bdf540eb7e61590);
             return ret;
         },

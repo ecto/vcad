@@ -5176,6 +5176,26 @@ mod ecad_wasm {
         serde_wasm_bindgen::to_value(&template).map_err(|e| JsError::new(&e.to_string()))
     }
 
+    /// Resolve a footprint id to a land pattern *plus* resolution status.
+    ///
+    /// Like [`ecad_footprint_for_name`] but returns a `FootprintResolution`
+    /// (`{ template, matched, family, note }`) so callers can tell a real
+    /// package-family match from a generic placeholder and warn loudly instead
+    /// of silently placing wrong geometry.
+    ///
+    /// # Arguments
+    /// * `name` - Footprint id (e.g. "Package_DFN_QFN:QFN-40_5x5mm_P0.4mm")
+    /// * `pin_count` - Declared pin count, used when the id carries no count
+    ///   and as the basis for the generic fallback.
+    ///
+    /// # Returns
+    /// `FootprintResolution` as JsValue.
+    #[wasm_bindgen(js_name = ecadResolveFootprint)]
+    pub fn ecad_resolve_footprint(name: &str, pin_count: u32) -> Result<JsValue, JsError> {
+        let resolution = vcad_ecad_symbols::footprint::resolve_footprint(name, pin_count);
+        serde_wasm_bindgen::to_value(&resolution).map_err(|e| JsError::new(&e.to_string()))
+    }
+
     /// Compute ratsnest lines for unrouted net connections.
     ///
     /// # Arguments

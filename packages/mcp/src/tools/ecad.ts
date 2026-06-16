@@ -34,7 +34,7 @@ import { getNodePcb, getPcbNodeIds, buildEntry, agentView } from "@vcad/core";
 import {
   computeRatsnest,
   exportFabFiles,
-  footprintForName,
+  resolveFootprint,
   generateNetlist,
   isEcadAvailable,
   routeAll,
@@ -389,6 +389,38 @@ export const createSchematicSchema = {
               required: ["number", "name", "type"],
             },
           },
+          pads: {
+            type: "array" as const,
+            description:
+              "Optional explicit pad geometry (footprint-local mm), an escape " +
+              "hatch overriding the parametric footprint engine for parts it " +
+              "doesn't cover. Each pad's `number` should match a pin number; " +
+              "net/layers are assigned automatically.",
+            items: {
+              type: "object" as const,
+              properties: {
+                number: { type: "string" as const, description: "Matches a pin number" },
+                padType: { type: "string" as const, description: '"SMD" | "THT" | "NPTH" (default SMD)' },
+                shape: {
+                  type: "object" as const,
+                  description:
+                    'Pad shape, e.g. {"type":"Rect","width":1,"height":1.2} or ' +
+                    '{"type":"Circle","diameter":1.6}',
+                },
+                position: {
+                  type: "object" as const,
+                  description: "Footprint-local position {x, y} in mm",
+                  properties: { x: { type: "number" as const }, y: { type: "number" as const } },
+                },
+                rotation: { type: "number" as const },
+                drill: {
+                  type: "object" as const,
+                  description: 'Drill spec for THT pads, e.g. {"diameter":0.8}',
+                },
+              },
+              required: ["number", "shape", "position"],
+            },
+          },
         },
         required: ["ref", "value", "footprint", "x", "y", "pins"],
       },
@@ -521,6 +553,9 @@ export const placeComponentsSchema = {
       type: "string" as const,
       description:
         "Placement strategy: grid, force_directed, radial (default: grid). " +
+        "force_directed pulls net-sharing parts together and pushes overlapping " +
+        "courtyards apart (size-aware) — prefer it for dense, multi-cluster " +
+        "boards (power stage + MCU + connectors) where routability matters. " +
         "radial places components evenly on a ring — natural for circular " +
         "boards like motor stators.",
     },
@@ -550,7 +585,13 @@ export const routeNetsSchema = {
     },
     trace_width: {
       type: "number" as const,
-      description: "Trace width in mm (default from design rules)",
+      description:
+        "Fallback trace width in mm for nets with NO net class. Per-net-class " +
+        "widths AND clearances are applied automatically from the design rules " +
+        "(set_design_rules classes) — e.g. a VBAT/phase net in a 'power' class " +
+        "routes at the class width even if you pass a thin trace_width here. So " +
+        "you do NOT need one route_nets call per width; set classes once and " +
+        "route all nets together. Defaults to the default-class width.",
     },
     receipt: {
       type: "boolean" as const,
@@ -1071,6 +1112,21 @@ export async function createSchematic(args: Record<string, unknown>) {
       pin_type: (p.type as SchematicPin["pin_type"]) || "Passive",
       position: { x: (p.x as number) || 0, y: (p.y as number) || 0 },
     })),
+    // Inline-pad escape hatch: explicit footprint geometry that bypasses the
+    // parametric engine. net/layers are (re)assigned by place_components.
+    ...(Array.isArray(c.pads) && c.pads.length > 0
+      ? {
+          pads: (c.pads as Array<Record<string, unknown>>).map((p) => ({
+            number: p.number as string,
+            padType: (p.padType as PadType) || "SMD",
+            shape: p.shape as Pad["shape"],
+            position: (p.position as { x: number; y: number }) || { x: 0, y: 0 },
+            rotation: (p.rotation as number) || 0,
+            drill: (p.drill as Pad["drill"]) || undefined,
+            layers: ["FCu", "FPaste", "FMask"] as PcbLayer[],
+          })),
+        }
+      : {}),
   }));
 
   const wires: SchematicWire[] = wiresInput.map((w) => ({
@@ -1177,7 +1233,8 @@ function forceDirectedRefine(
   positions: Vec2[],
   netByPin: Map<string, string>,
   useConnectivity: boolean,
-  bounds: { minX: number; minY: number; maxX: number; maxY: number; minSep: number },
+  extents: number[],
+  bounds: { minX: number; minY: number; maxX: number; maxY: number },
 ): void {
   // net id → component indices on that net
   const netMembers = new Map<string, number[]>();
@@ -1199,7 +1256,7 @@ function forceDirectedRefine(
 
   const iterations = 120;
   const attract = 0.04;
-  const minSep = bounds.minSep;
+  const gap = 0.6; // edge-to-edge breathing room between component courtyards
 
   for (let it = 0; it < iterations; it++) {
     const forces: Vec2[] = positions.map(() => ({ x: 0, y: 0 }));
@@ -1220,12 +1277,14 @@ function forceDirectedRefine(
       }
     }
 
-    // Repulsion when components get closer than the minimum separation.
+    // Repulsion when component courtyards (extent radii) would collide —
+    // size-aware, so a DPAK or bulk cap claims more room than an 0402.
     for (let i = 0; i < positions.length; i++) {
       for (let j = i + 1; j < positions.length; j++) {
         const dx = positions[j].x - positions[i].x;
         const dy = positions[j].y - positions[i].y;
         const dist = Math.max(Math.hypot(dx, dy), 0.1);
+        const minSep = extents[i] + extents[j] + gap;
         if (dist >= minSep) continue;
         const push = (0.5 * (minSep - dist)) / dist;
         forces[i].x -= push * dx;
@@ -1403,6 +1462,10 @@ export async function placeComponents(args: Record<string, unknown>) {
   // Grid placement sized to the outline's bounding box: split the usable
   // area into cells so every component lands inside it regardless of size.
   const components = doc.schematic.components;
+  // Default to the deterministic grid (stable, good for sparse boards).
+  // `force_directed` adds net-attraction + size-aware repulsion — better for
+  // dense, multi-cluster boards (a power stage + MCU + connectors); `radial`
+  // rings parts for annular boards.
   const strategy = (args.strategy as string) || "grid";
   const margin = Math.min(5, extentW / 8, extentH / 8);
   const usableW = extentW - 2 * margin;
@@ -1425,6 +1488,43 @@ export async function placeComponents(args: Record<string, unknown>) {
       `Placement cells are ${Math.min(cellW, cellH).toFixed(1)}mm — components may overlap; consider a larger board`,
     );
   }
+
+  // Resolve pad geometry up-front (precedence: inline pads > parametric engine
+  // > generic placeholder) so the placer can size each component's keep-out
+  // from its real footprint — and so resolution happens once for both
+  // placement and the footprint build below.
+  const resolutions = await Promise.all(
+    components.map((c) =>
+      c.pads && c.pads.length > 0
+        ? Promise.resolve(null)
+        : resolveFootprint(c.footprintId, c.pins.length),
+    ),
+  );
+  const halfExtent = (shape: Pad["shape"]): number => {
+    switch (shape.type) {
+      case "Circle":
+        return shape.diameter / 2;
+      case "Rect":
+      case "Oval":
+      case "RoundRect":
+        return Math.max(shape.width, shape.height) / 2;
+      default:
+        return 0.5; // Custom polygon — small default
+    }
+  };
+  const componentExtent = (pads: Pad[]): number => {
+    let r = 0.8; // floor so a 1-pad part still claims some room
+    for (const p of pads) {
+      const h = halfExtent(p.shape);
+      r = Math.max(r, Math.abs(p.position.x) + h, Math.abs(p.position.y) + h);
+    }
+    return r;
+  };
+  const extents = components.map((c, i) => {
+    if (c.pads && c.pads.length > 0) return componentExtent(c.pads);
+    const t = resolutions[i]?.template;
+    return t ? componentExtent(t.pads) : 1.0;
+  });
 
   let positions: Vec2[];
   if (strategy === "radial") {
@@ -1462,12 +1562,11 @@ export async function placeComponents(args: Record<string, unknown>) {
     }));
 
     if (strategy === "force_directed") {
-      forceDirectedRefine(components, positions, netByPin, useConnectivity, {
+      forceDirectedRefine(components, positions, netByPin, useConnectivity, extents, {
         minX: bboxMinX + margin,
         minY: bboxMinY + margin,
         maxX: bboxMaxX - margin,
         maxY: bboxMaxY - margin,
-        minSep: Math.min(cellW, cellH),
       });
     }
   }
@@ -1489,30 +1588,43 @@ export async function placeComponents(args: Record<string, unknown>) {
     return netId;
   };
 
-  // Resolve real pad geometry from the kernel footprint library (SOIC, DIP,
-  // QFP, headers, chip sizes, ...). Null only when the kernel is unavailable.
-  const templates = await Promise.all(
-    components.map((c) => footprintForName(c.footprintId, c.pins.length)),
-  );
+  // (Footprints were resolved up-front, before placement — see `resolutions`.)
+  // Components whose footprint id did NOT resolve to a real package family —
+  // surfaced to the caller instead of silently substituting wrong geometry.
+  const fallbackFootprints: Array<{ ref: string; footprint: string; reason: string }> = [];
+
+  const applyNet = (comp: SchematicComponent, pad: Pad): Pad => {
+    const pin = comp.pins.find((p) => p.number === pad.number);
+    const netId = pin ? netIdForPin(comp, pin) : undefined;
+    const layers: PcbLayer[] =
+      pad.padType === "THT" ? ["FCu", "BCu", "FMask", "BMask"] : ["FCu", "FPaste", "FMask"];
+    return { ...pad, net: netId, layers };
+  };
 
   const footprints: Footprint[] = components.map((comp, i) => {
     const x = Math.round(positions[i].x * 100) / 100;
     const y = Math.round(positions[i].y * 100) / 100;
-    const template = templates[i];
+    const resolution = resolutions[i];
 
     let pads: Pad[];
-    if (template) {
-      pads = template.pads.map((pad) => {
-        const pin = comp.pins.find((p) => p.number === pad.number);
-        const netId = pin ? netIdForPin(comp, pin) : undefined;
-        const layers: PcbLayer[] =
-          pad.padType === "THT"
-            ? ["FCu", "BCu", "FMask", "BMask"]
-            : ["FCu", "FPaste", "FMask"];
-        return { ...pad, net: netId, layers };
-      });
+    let graphics: NonNullable<Footprint["graphics"]> = [];
+
+    if (comp.pads && comp.pads.length > 0) {
+      // (1) Inline override — author-supplied geometry.
+      pads = comp.pads.map((pad) => applyNet(comp, pad));
+    } else if (resolution?.template) {
+      // (2) Engine result — real family match or compact placeholder.
+      pads = resolution.template.pads.map((pad) => applyNet(comp, pad));
+      graphics = resolution.template.graphics;
+      if (!resolution.matched) {
+        fallbackFootprints.push({
+          ref: comp.ref,
+          footprint: comp.footprintId,
+          reason: resolution.note,
+        });
+      }
     } else {
-      // No kernel: spread generic SMD pads in a row so they never stack.
+      // (3) Kernel unavailable / nothing to synthesize — spread generic pads.
       pads = comp.pins.map((pin, pi) => ({
         number: pin.number,
         padType: "SMD" as PadType,
@@ -1521,6 +1633,11 @@ export async function placeComponents(args: Record<string, unknown>) {
         net: netIdForPin(comp, pin),
         layers: ["FCu", "FPaste", "FMask"] as PcbLayer[],
       }));
+      fallbackFootprints.push({
+        ref: comp.ref,
+        footprint: comp.footprintId,
+        reason: resolution?.note ?? "footprint kernel unavailable",
+      });
     }
 
     return {
@@ -1531,7 +1648,7 @@ export async function placeComponents(args: Record<string, unknown>) {
       rotation: 0,
       front: true,
       pads,
-      ...(template && template.graphics.length > 0 ? { graphics: template.graphics } : {}),
+      ...(graphics.length > 0 ? { graphics } : {}),
     };
   });
 
@@ -1585,8 +1702,15 @@ export async function placeComponents(args: Record<string, unknown>) {
         text: JSON.stringify({
           success: true,
           footprints_placed: footprints.length,
+          footprints_resolved: footprints.length - fallbackFootprints.length,
           strategy,
           ...(warnings.length > 0 ? { warnings } : {}),
+          // Footprint ids that did NOT resolve to a real package family — these
+          // got a generic placeholder, so their pads are approximate. Supply a
+          // recognized KiCad id or inline `pads` to fix.
+          ...(fallbackFootprints.length > 0
+            ? { fallback_footprints: fallbackFootprints }
+            : {}),
           board: {
             width: extentW,
             height: extentH,
@@ -1673,6 +1797,10 @@ export async function routeNets(args: Record<string, unknown>) {
   // that are probed before placement, so the returned copper is clearance-legal
   // by construction. Nets that can't be routed legally come back in
   // `unrouted_nets` instead of being shipped as a short.
+  // Realized copper width per net (max across its segments) — lets the caller
+  // confirm a power/phase net actually routed at its class width without
+  // re-reading the board.
+  const realizedWidths: Record<string, number> = {};
   const result = await routeAll(pcb, width, netsFilter);
   const routedSomething =
     result.traces.length > 0 || result.vias.length > 0 || result.unrouted_nets.length > 0;
@@ -1688,6 +1816,7 @@ export async function routeNets(args: Record<string, unknown>) {
         layer: t.layer as PcbLayer,
         net: t.net,
       });
+      realizedWidths[t.net] = Math.max(realizedWidths[t.net] ?? 0, t.width);
       tracesAdded++;
     }
     for (const v of result.vias) {
@@ -1759,6 +1888,9 @@ export async function routeNets(args: Record<string, unknown>) {
           success: true,
           nets_routed: routedNets.size,
           traces_added: tracesAdded,
+          ...(Object.keys(realizedWidths).length > 0
+            ? { track_widths_mm: realizedWidths }
+            : {}),
           ...(unroutedNets.size > 0 ? { unrouted_nets: [...unroutedNets] } : {}),
           ...(fallbackNets.size > 0 ? { fallback_nets: [...fallbackNets] } : {}),
           ...(warnings.length > 0 ? { warnings } : {}),
@@ -1795,6 +1927,33 @@ interface DrcNetPairCount {
   worstRequired: number;
 }
 
+/** Group each DRC rule by what it means for the board, so callers can tell an
+ *  *incomplete* layout (ratsnest left to route) from an *illegal* one (copper
+ *  conflicts / fab-rule breaks). UnconnectedNet is the only "incomplete" rule —
+ *  it's a to-do, not a defect. */
+const DRC_CATEGORY: Record<string, "connectivity" | "clearance" | "manufacturing"> = {
+  UnconnectedNet: "connectivity",
+  Clearance: "clearance",
+  Short: "clearance",
+  MinTraceWidth: "manufacturing",
+  MinDrill: "manufacturing",
+  AnnularRing: "manufacturing",
+  EdgeClearance: "manufacturing",
+  HoleToHole: "manufacturing",
+  SilkscreenClearance: "manufacturing",
+  CourtyardOverlap: "manufacturing",
+  AcidTrap: "manufacturing",
+  Keepout: "manufacturing",
+};
+
+/** Counts split by category — `connectivity` is unrouted nets (a to-do),
+ *  `clearance`+`manufacturing` are genuine violations. */
+interface DrcCategories {
+  connectivity: number;
+  clearance: number;
+  manufacturing: number;
+}
+
 /** Summary-first DRC payload: counts + worst-case + a capped representative
  *  sample by default; the full violation array only when detail==="full". */
 interface DrcSummary {
@@ -1802,6 +1961,8 @@ interface DrcSummary {
   violations: number;
   errors: number;
   warnings: number;
+  /** Counts split into connectivity (incomplete) vs clearance/manufacturing (illegal). */
+  categories: DrcCategories;
   byRule: Record<string, number>;
   byNetPair: DrcNetPairCount[];
   worstClearance:
@@ -1907,11 +2068,17 @@ export function aggregateDrc(
     }
   }
 
+  const categories: DrcCategories = { connectivity: 0, clearance: 0, manufacturing: 0 };
+  for (const [rule, count] of Object.entries(byRule)) {
+    categories[DRC_CATEGORY[rule] ?? "manufacturing"] += count;
+  }
+
   const summary: DrcSummary = {
     success: true,
     violations: violations.length,
     errors: violations.filter((v) => v.severity === "Error").length,
     warnings: violations.filter((v) => v.severity === "Warning").length,
+    categories,
     byRule,
     byNetPair,
     worstClearance: worst,

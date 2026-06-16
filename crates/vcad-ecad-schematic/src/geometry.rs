@@ -142,6 +142,7 @@ mod tests {
                     position: p,
                 })
                 .collect(),
+            pads_override: None,
             properties: std::collections::HashMap::new(),
         }
     }

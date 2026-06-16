@@ -345,6 +345,15 @@ fn check_pad_clearance(
             if net_ties.exempt(a.net, b.net, pos) {
                 continue;
             }
+            // Pads of one footprint are a qualified land pattern: their
+            // copper-to-copper *spacing* is the footprint's concern, not board
+            // DRC (KiCad exempts intra-footprint pad pairs likewise). This
+            // removes the phantom adjacent-pin clearance violations that
+            // dominate fine-pitch parts. A genuine *overlap* (dist ≈ 0, a
+            // broken land pattern) still falls through and is flagged.
+            if a.fp_ref == b.fp_ref && dist > 1e-6 {
+                continue;
+            }
             if dist < clearance - 1e-6 {
                 violations.push(DrcViolation {
                     rule: DrcRuleType::Clearance,
@@ -1822,6 +1831,69 @@ mod tests {
             model_3d: None,
             properties: std::collections::HashMap::new(),
         }
+    }
+
+    /// Two pads of the SAME footprint on different nets, closer than the rule
+    /// clearance, must NOT be flagged — a footprint is a qualified land pattern,
+    /// so intra-footprint pad spacing is the footprint's concern, not board DRC.
+    /// (This is what kills the phantom adjacent-pin clearance violations on
+    /// fine-pitch parts.)
+    #[test]
+    fn intra_footprint_pads_exempt_from_clearance() {
+        let mut pcb = clean_pcb();
+        pcb.traces.clear();
+        pcb.vias.clear();
+        // Pad edges 0.1mm apart (centers 1.1mm, width 1.0) — well under 0.2mm.
+        pcb.footprints = vec![footprint(
+            "U1",
+            (60.0, 60.0),
+            0.0,
+            vec![
+                smd_pad("1", (-0.55, 0.0), "A"),
+                smd_pad("2", (0.55, 0.0), "B"),
+            ],
+        )];
+        let violations = check_drc(&pcb);
+        let bad: Vec<_> = violations
+            .iter()
+            .filter(|v| matches!(v.rule, DrcRuleType::Clearance | DrcRuleType::Short))
+            .collect();
+        assert!(
+            bad.is_empty(),
+            "same-footprint pads must be exempt, got: {bad:?}"
+        );
+    }
+
+    /// The exemption is footprint-scoped: two pads of DIFFERENT footprints at
+    /// the same spacing MUST still be flagged.
+    #[test]
+    fn inter_footprint_pads_still_flagged() {
+        let mut pcb = clean_pcb();
+        pcb.traces.clear();
+        pcb.vias.clear();
+        pcb.footprints = vec![
+            footprint(
+                "U1",
+                (59.45, 60.0),
+                0.0,
+                vec![smd_pad("1", (0.0, 0.0), "A")],
+            ),
+            footprint(
+                "U2",
+                (60.55, 60.0),
+                0.0,
+                vec![smd_pad("1", (0.0, 0.0), "B")],
+            ),
+        ];
+        let violations = check_drc(&pcb);
+        let clearance: Vec<_> = violations
+            .iter()
+            .filter(|v| v.rule == DrcRuleType::Clearance)
+            .collect();
+        assert!(
+            !clearance.is_empty(),
+            "different-footprint pads 0.1mm apart must still violate"
+        );
     }
 
     // ------------------------------------------------------------------

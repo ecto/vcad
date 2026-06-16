@@ -1,0 +1,10 @@
+{
+  "id": "2026-06-16-parametric-footprint-engine",
+  "version": "0.9.4",
+  "date": "2026-06-16",
+  "category": "feat",
+  "title": "Parametric footprint engine for PCB components",
+  "summary": "place_components now synthesizes real IPC-style land patterns (QFN/DFN, QFP, SOIC/SSOP/TSSOP, SOT, DPAK, SOD, chips, headers, terminals) from the footprint id, reports any unresolved footprints, and accepts inline pad geometry.",
+  "features": ["pcb", "ecad", "footprints", "drc"],
+  "mcpTools": ["place_components", "create_schematic", "run_drc"]
+}
