@@ -5,7 +5,15 @@
  * netlist generation, routing, and zone fill.
  */
 
-import type { SchematicSheet, Pcb, Vec2, PcbLayer } from "@vcad/ir";
+import type {
+  SchematicSheet,
+  Pcb,
+  Vec2,
+  PcbLayer,
+  DerivedPart,
+  Receipt,
+  ReceiptStatus,
+} from "@vcad/ir";
 
 // ---------------------------------------------------------------------------
 // Result types (mirrors Rust serde output)
@@ -692,6 +700,188 @@ export async function createCircuitSim(specJson: string): Promise<CircuitSimHand
     return new wasm.CircuitSim(specJson) as CircuitSimHandle;
   } catch (e) {
     console.warn("[circuit-sim] build failed:", e);
+    return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Generative parts catalog + verified substitution (vcad-ecad-parts/-verify)
+// ---------------------------------------------------------------------------
+
+/** A typed, dimensioned spec value (mirrors Rust serde, tag `dim`). */
+export interface SpecValue {
+  dim:
+    | "Resistance"
+    | "Capacitance"
+    | "Inductance"
+    | "Voltage"
+    | "Current"
+    | "Power"
+    | "Frequency"
+    | "Tolerance";
+  value: number;
+}
+
+export type ComponentClass = "Resistor" | "Capacitor" | "Inductor";
+
+/** A manufacturer cross-reference. */
+export interface ElecXref {
+  mpn: string;
+  manufacturer: string;
+  datasheet: string | null;
+}
+
+/** A fully-resolved part: binding + generated geometry. */
+export interface ResolvedPart {
+  family_id: string;
+  class: ComponentClass;
+  value: string;
+  value_si: SpecValue;
+  tolerance: number | null;
+  package: string;
+  derived: DerivedPart;
+  mpns: ElecXref[];
+}
+
+export type FootprintCompat =
+  | "Identical"
+  | "Compatible"
+  | "NeedsReroute"
+  | "Incompatible";
+
+/** A proposed alternative part with its compatibility verdict. */
+export interface Alternative {
+  part: ResolvedPart;
+  spec_distance: number;
+  compat: FootprintCompat;
+}
+
+/** The outcome of proving a substitution against the board's DRC. */
+export interface Substitution {
+  reference: string;
+  drop_in: boolean;
+  added: DrcViolationResult[];
+  removed: DrcViolationResult[];
+  before_count: number;
+  after_count: number;
+}
+
+/**
+ * Resolve a free-text query (e.g. `"10k 0603 1%"`) into one fully-specified
+ * part — footprint, symbol, 3D body, and MPN cross-references — generated from
+ * a parametric package. Returns null when the query has no resolvable value or
+ * the ECAD WASM is unavailable.
+ */
+export async function resolvePart(query: string): Promise<ResolvedPart | null> {
+  const wasm = await loadEcadWasm();
+  if (!wasm || typeof wasm.ecadResolvePart !== "function") return null;
+  try {
+    return (wasm.ecadResolvePart(query) as ResolvedPart | null) ?? null;
+  } catch (e) {
+    console.warn("[ECAD] resolvePart failed:", e);
+    return null;
+  }
+}
+
+/**
+ * Spec-search the catalog, returning the best match plus its nearest E-series
+ * neighbours (spec-distance ranked). Empty if unavailable or unresolvable.
+ */
+export async function searchEcadParts(
+  query: string,
+  limit = 5,
+): Promise<ResolvedPart[]> {
+  const wasm = await loadEcadWasm();
+  if (!wasm || typeof wasm.ecadSearchParts !== "function") return [];
+  try {
+    return (wasm.ecadSearchParts(query, limit) as ResolvedPart[]) ?? [];
+  } catch (e) {
+    console.warn("[ECAD] searchParts failed:", e);
+    return [];
+  }
+}
+
+/** JSON manifest of the parametric part families. `null` if unavailable. */
+export async function partsManifest(): Promise<string | null> {
+  const wasm = await loadEcadWasm();
+  if (!wasm || typeof wasm.ecadPartsManifest !== "function") return null;
+  try {
+    return wasm.ecadPartsManifest() as string;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Propose spec-compatible alternatives for the part a query resolves to, each
+ * classified by footprint compatibility (Identical / NeedsReroute / …).
+ */
+export async function findAlternatives(query: string): Promise<Alternative[]> {
+  const wasm = await loadEcadWasm();
+  if (!wasm || typeof wasm.ecadFindAlternatives !== "function") return [];
+  try {
+    return (wasm.ecadFindAlternatives(query) as Alternative[]) ?? [];
+  } catch (e) {
+    console.warn("[ECAD] findAlternatives failed:", e);
+    return [];
+  }
+}
+
+/**
+ * PROVE a substitution: swap `reference` on the board for the part that
+ * `candidateQuery` resolves to, re-derive its footprint, re-place at the same
+ * anchor, re-run DRC (including connectivity), and return the before/after
+ * delta with a `drop_in` verdict. Null if the candidate is unresolvable.
+ */
+export async function verifySubstitution(
+  pcb: Pcb,
+  reference: string,
+  candidateQuery: string,
+): Promise<Substitution | null> {
+  const wasm = await loadEcadWasm();
+  if (!wasm || typeof wasm.ecadVerifySubstitution !== "function") return null;
+  try {
+    return (
+      (wasm.ecadVerifySubstitution(
+        JSON.stringify(pcb),
+        reference,
+        candidateQuery,
+      ) as Substitution | null) ?? null
+    );
+  } catch (e) {
+    console.warn("[ECAD] verifySubstitution failed:", e);
+    return null;
+  }
+}
+
+/** Build a re-runnable verification Receipt for the current board state. */
+export async function buildReceipt(pcb: Pcb): Promise<Receipt | null> {
+  const wasm = await loadEcadWasm();
+  if (!wasm || typeof wasm.ecadBuildReceipt !== "function") return null;
+  try {
+    return (wasm.ecadBuildReceipt(JSON.stringify(pcb)) as Receipt) ?? null;
+  } catch (e) {
+    console.warn("[ECAD] buildReceipt failed:", e);
+    return null;
+  }
+}
+
+/** Re-run a Receipt against the current board → Holds | Stale | Violated. */
+export async function verifyReceipt(
+  pcb: Pcb,
+  receipt: Receipt,
+): Promise<ReceiptStatus | null> {
+  const wasm = await loadEcadWasm();
+  if (!wasm || typeof wasm.ecadVerifyReceipt !== "function") return null;
+  try {
+    return (
+      (wasm.ecadVerifyReceipt(
+        JSON.stringify(pcb),
+        JSON.stringify(receipt),
+      ) as ReceiptStatus) ?? null
+    );
+  } catch (e) {
+    console.warn("[ECAD] verifyReceipt failed:", e);
     return null;
   }
 }

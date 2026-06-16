@@ -139,6 +139,16 @@ import {
   addMotorWindingSchema,
   calcMotor,
   calcMotorSchema,
+  searchElectronicParts,
+  searchElectronicPartsSchema,
+  resolvePart,
+  resolvePartSchema,
+  findAlternatives,
+  findAlternativesSchema,
+  verifySubstitution,
+  verifySubstitutionSchema,
+  buildReceipt,
+  buildReceiptSchema,
 } from "./tools/ecad.js";
 import { createCadLoon, createCadLoonSchema } from "./tools/loon.js";
 import {
@@ -370,6 +380,11 @@ const TOOL_PACKS: Record<string, readonly string[]> = {
     "size_coil",
     "calc_rf",
     "calc_motor",
+    "search_electronic_parts",
+    "resolve_part",
+    "find_alternatives",
+    "verify_substitution",
+    "build_receipt",
   ],
   // Mecheval self-grading oracle. The benchmark harness already excludes
   // these during scored runs; hosts that don't want the benchmark
@@ -1044,6 +1059,50 @@ export async function createServer(
         inputSchema: runDrcSchema,
       },
       {
+        name: "search_electronic_parts",
+        description:
+          "Spec-search the generative parts catalog (offline). A query like " +
+          "'10k 0603 1%' parses to value+package+tolerance and returns the best " +
+          "match plus E-series neighbours, each with a generated footprint, symbol, " +
+          "and 3D body. A part is family+value+package, not a scraped row.",
+        inputSchema: searchElectronicPartsSchema,
+      },
+      {
+        name: "resolve_part",
+        description:
+          "Resolve a spec query (e.g. '10k 0603 1%') into ONE fully-specified part: " +
+          "E-series-snapped value plus a generated footprint + schematic symbol + 3D " +
+          "body (one parametric source of truth) and any MPN cross-references.",
+        inputSchema: resolvePartSchema,
+      },
+      {
+        name: "find_alternatives",
+        description:
+          "Propose spec-compatible substitutes for the part a query resolves to. " +
+          "Each alternative keeps the value, varies the package, and is labelled " +
+          "identical / needs-reroute / incompatible by re-deriving its footprint.",
+        inputSchema: findAlternativesSchema,
+      },
+      {
+        name: "verify_substitution",
+        description:
+          "PROVE a part swap on the session PCB: replace `reference` with the part " +
+          "`candidate` resolves to, re-derive its footprint, re-place at the same " +
+          "anchor, re-run DRC (incl. connectivity), and return the before/after " +
+          "violation delta with a `drop_in` verdict. An alternative is only drop-in " +
+          "when it adds no new violations and preserves pin numbering.",
+        inputSchema: verifySubstitutionSchema,
+      },
+      {
+        name: "build_receipt",
+        description:
+          "Build a re-runnable verification Receipt for the session PCB: a content " +
+          "hash, the DRC backend, a canonicalized DRC summary, and per-part " +
+          "provenance — a durable proof that round-trips and re-verifies later as " +
+          "Holds / Stale / Violated.",
+        inputSchema: buildReceiptSchema,
+      },
+      {
         name: "route_diff_pair",
         description:
           "Route a declared differential pair (net_p/net_n) coupled and length-matched, " +
@@ -1534,6 +1593,26 @@ export async function createServer(
 
         case "run_drc":
           result = await runDrc(args);
+          break;
+
+        case "search_electronic_parts":
+          result = await searchElectronicParts(args);
+          break;
+
+        case "resolve_part":
+          result = await resolvePart(args);
+          break;
+
+        case "find_alternatives":
+          result = await findAlternatives(args);
+          break;
+
+        case "verify_substitution":
+          result = await verifySubstitution(args);
+          break;
+
+        case "build_receipt":
+          result = await buildReceipt(args);
           break;
 
         case "route_diff_pair":
