@@ -95,7 +95,7 @@ export function renderReceiptText(receipt: Receipt): string {
       const pe = rollup(e.persisted.filter((g) => g.blame === "pre-existing"));
       L.push(`     · pre-existing, NOT the agent's fault: ${pe.map(groupLine).join("; ")}`);
     }
-    L.push(`     fingerprint sha256:${fp(e.fingerprint)}  · re-run: ${receipt.reverification}  · coverage: ${e.coverage}`);
+    L.push(`     fingerprint ${fp(e.fingerprint)}  · re-run: ${receipt.reverification}  · coverage: ${e.coverage}`);
     L.push("");
   }
   return L.join("\n");
@@ -161,7 +161,7 @@ function entryHtml(e: ReceiptEntry, rev: string): string {
       ${e.introduced.length ? `<div class="row"><span class="tag blame">INTRODUCED · this mutation</span>${chips(rollup(e.introduced), "blame")}</div>` : ""}
       ${preExisting.length ? `<div class="row"><span class="tag neutral">PRE-EXISTING · not the agent</span>${chips(preExisting, "neutral")}</div>` : ""}
     </div>
-    <div class="foot">fingerprint <code>sha256:${fp(e.fingerprint)}</code> · re-run: ${esc(rev)} · coverage: ${e.coverage}</div>
+    <div class="foot">fingerprint <code>${fp(e.fingerprint)}</code> · re-run: ${esc(rev)} · coverage: ${e.coverage}</div>
   </div>`;
 }
 
