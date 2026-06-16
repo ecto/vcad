@@ -15,7 +15,10 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { createServer } from "./server.js";
 
 async function main() {
-  const server = await createServer();
+  // stdio is a single trusted local process — no HTTP request, no auth — so
+  // the session store stays in-memory (the documents Map is durable for the
+  // process lifetime).
+  const server = await createServer(undefined, { user: null });
   const transport = new StdioServerTransport();
   await server.connect(transport);
 }
