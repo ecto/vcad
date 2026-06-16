@@ -479,6 +479,21 @@ export interface FootprintTemplate {
   graphics: import("@vcad/ir").FootprintGraphic[];
 }
 
+/**
+ * Resolution of a footprint id by the parametric engine: the generated land
+ * pattern plus whether it was a real package-family match or a generic
+ * placeholder (so callers can warn loudly instead of placing wrong geometry).
+ */
+export interface FootprintResolution {
+  template: FootprintTemplate | null;
+  /** True when a real family land pattern was generated; false for a placeholder. */
+  matched: boolean;
+  /** Recognized family (e.g. "QFN", "SOIC", "DPAK"), or null for the fallback. */
+  family: string | null;
+  /** Human-readable explanation of what was generated or why it fell back. */
+  note: string;
+}
+
 export interface SymbolDef {
   id: string;
   name: string;
@@ -516,6 +531,26 @@ export async function footprintForName(
     return (wasm.ecadFootprintForName(name, pinCount) as FootprintTemplate) ?? null;
   } catch (e) {
     console.warn("[ECAD] footprintForName failed:", e);
+    return null;
+  }
+}
+
+/**
+ * Resolve a footprint id to a land pattern *plus* resolution status — like
+ * {@link footprintForName} but exposing whether the id matched a real package
+ * family or fell back to a generic placeholder. Returns `null` only when the
+ * kernel is unavailable (distinct from a resolution whose `template` is null).
+ */
+export async function resolveFootprint(
+  name: string,
+  pinCount: number,
+): Promise<FootprintResolution | null> {
+  const wasm = await loadEcadWasm();
+  if (!wasm || typeof wasm.ecadResolveFootprint !== "function") return null;
+  try {
+    return (wasm.ecadResolveFootprint(name, pinCount) as FootprintResolution) ?? null;
+  } catch (e) {
+    console.warn("[ECAD] resolveFootprint failed:", e);
     return null;
   }
 }

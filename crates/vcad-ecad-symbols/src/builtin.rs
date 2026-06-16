@@ -310,127 +310,17 @@ pub fn fp_pin_header(rows: u32, cols: u32) -> FootprintTemplate {
 // Footprint name resolution
 // ============================================================================
 
-/// Parse the first unsigned integer that follows `marker` in `s`.
-fn parse_num_after(s: &str, marker: &str) -> Option<u32> {
-    let idx = s.find(marker)? + marker.len();
-    let digits: String = s[idx..]
-        .chars()
-        .take_while(|c| c.is_ascii_digit())
-        .collect();
-    digits.parse().ok()
-}
-
-/// Parse the first decimal number that follows `marker` in `s` (e.g.
-/// pitch from "_P1.27mm").
-fn parse_float_after(s: &str, marker: &str) -> Option<f64> {
-    let idx = s.find(marker)? + marker.len();
-    let num: String = s[idx..]
-        .chars()
-        .take_while(|c| c.is_ascii_digit() || *c == '.')
-        .collect();
-    num.parse().ok()
-}
-
-/// Parse a "RxC" pattern with integer digits on both sides of the 'x' and
-/// an underscore (or string boundary) delimiting the digit runs, e.g. the
-/// "1x02" in "PinHeader_1x02_P2.54mm_Vertical".
-fn parse_rows_cols(s: &str) -> Option<(u32, u32)> {
-    let bytes = s.as_bytes();
-    for (i, &b) in bytes.iter().enumerate() {
-        if b != b'x' {
-            continue;
-        }
-        let run_start = s[..i]
-            .rfind(|c: char| !c.is_ascii_digit())
-            .map(|p| p + 1)
-            .unwrap_or(0);
-        let run_end = i
-            + 1
-            + s[i + 1..]
-                .find(|c: char| !c.is_ascii_digit())
-                .unwrap_or(s.len() - i - 1);
-        if run_start == i || run_end == i + 1 {
-            continue; // no digits on one side
-        }
-        let before_ok = run_start == 0 || bytes[run_start - 1] == b'_';
-        let after_ok = run_end == s.len() || bytes[run_end] == b'_';
-        if !before_ok || !after_ok {
-            continue; // part of a float like "3.9x4.9mm"
-        }
-        let rows: u32 = s[run_start..i].parse().ok()?;
-        let cols: u32 = s[i + 1..run_end].parse().ok()?;
-        return Some((rows, cols));
-    }
-    None
-}
-
 /// Resolve a KiCad-style footprint name to a parametric footprint template.
 ///
-/// Recognizes SOIC/TSSOP/SSOP, DIP, QFP (with pitch), SOT-23/SOT-223,
-/// pin headers/sockets ("RxC"), and chip sizes (0402/0603/0805/1206), e.g.
-/// "Package_SO:SOIC-8_3.9x4.9mm_P1.27mm" or "Resistor_SMD:R_0805_2012Metric".
-/// Unrecognized names fall back to a chip footprint for 2-pin parts and a
-/// single-row pin header otherwise, so callers always get non-overlapping
-/// pads. Returns `None` only when the name is unrecognized and `pin_count`
-/// is zero.
+/// Thin wrapper over [`crate::footprint::resolve_footprint`], which parses the
+/// package family, pin count, pitch, and body size out of the id and
+/// synthesizes IPC-7351-style pads (QFN/DFN, QFP, SOIC/SSOP/TSSOP, SOT, DPAK,
+/// SOD, chips, DIP, headers, screw terminals, electrolytics, ...). Returns
+/// `None` only when the name is unrecognized and `pin_count` is zero. Call
+/// `resolve_footprint` directly when you also need to know whether the id was a
+/// real family match or a generic placeholder.
 pub fn footprint_for_name(name: &str, pin_count: u32) -> Option<FootprintTemplate> {
-    // Strip the library prefix ("Package_SO:SOIC-8..." → "SOIC-8...").
-    let base = name.rsplit(':').next().unwrap_or(name);
-
-    // SOT-223 before SOT-23 (substring overlap).
-    if base.contains("SOT-223") {
-        return Some(fp_sot223());
-    }
-    if base.contains("SOT-23") {
-        return Some(fp_sot23());
-    }
-
-    for marker in ["SOIC-", "TSSOP-", "SSOP-", "SOP-", "SO-"] {
-        if let Some(pins) = parse_num_after(base, marker) {
-            if pins >= 4 && pins.is_multiple_of(2) {
-                return Some(fp_soic(pins));
-            }
-        }
-    }
-
-    if let Some(pins) = parse_num_after(base, "DIP-") {
-        if pins >= 4 && pins.is_multiple_of(2) {
-            return Some(fp_dip(pins));
-        }
-    }
-
-    if let Some(pins) = parse_num_after(base, "QFP-") {
-        if pins >= 8 && pins.is_multiple_of(4) {
-            let pitch = parse_float_after(base, "_P").unwrap_or(0.8);
-            return Some(fp_qfp(pins, pitch));
-        }
-    }
-
-    if base.contains("PinHeader") || base.contains("PinSocket") {
-        if let Some((rows, cols)) = parse_rows_cols(base) {
-            if rows >= 1 && cols >= 1 {
-                return Some(fp_pin_header(rows, cols));
-            }
-        }
-    }
-
-    for (token, size) in [
-        ("_0402", ChipSize::C0402),
-        ("_0603", ChipSize::C0603),
-        ("_0805", ChipSize::C0805),
-        ("_1206", ChipSize::C1206),
-    ] {
-        if base.contains(token) {
-            return Some(fp_chip(size));
-        }
-    }
-
-    // Fallbacks keyed off pin count so pads never stack on one spot.
-    match pin_count {
-        0 => None,
-        1 | 2 => Some(fp_chip(ChipSize::C0805)),
-        n => Some(fp_pin_header(1, n)),
-    }
+    crate::footprint::resolve_footprint(name, pin_count).template
 }
 
 // ============================================================================

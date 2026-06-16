@@ -1712,6 +1712,16 @@ mirror?: boolean,
  */
 pins: Array<SchematicPin>, 
 /**
+ * Optional explicit pad geometry, overriding footprint-library resolution.
+ *
+ * When present, PCB placement uses these pads verbatim (assigning each
+ * pad's net/layers from the schematic) instead of resolving the
+ * `footprint_id` through the parametric footprint engine — an escape hatch
+ * for parts the library does not cover, or for fully agent-authored
+ * footprints. Pad `number`s should match this component's pin numbers.
+ */
+pads?: Array<Pad>, 
+/**
  * Extra properties (manufacturer, datasheet URL, etc.).
  */
 properties?: Record<string, string>, };

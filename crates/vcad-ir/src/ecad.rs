@@ -126,6 +126,16 @@ pub struct SchematicComponent {
     pub mirror: bool,
     /// Component pins.
     pub pins: Vec<SchematicPin>,
+    /// Optional explicit pad geometry, overriding footprint-library resolution.
+    ///
+    /// When present, PCB placement uses these pads verbatim (assigning each
+    /// pad's net/layers from the schematic) instead of resolving the
+    /// `footprint_id` through the parametric footprint engine — an escape hatch
+    /// for parts the library does not cover, or for fully agent-authored
+    /// footprints. Pad `number`s should match this component's pin numbers.
+    #[serde(rename = "pads", default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-rs", ts(rename = "pads", optional))]
+    pub pads_override: Option<Vec<Pad>>,
     /// Extra properties (manufacturer, datasheet URL, etc.).
     #[serde(default, skip_serializing_if = "std::collections::HashMap::is_empty")]
     pub properties: std::collections::HashMap<String, String>,
@@ -1080,6 +1090,7 @@ mod tests {
                         position: Vec2::new(5.08, 0.0),
                     },
                 ],
+                pads_override: None,
                 properties: std::collections::HashMap::new(),
             }],
             wires: vec![SchematicWire {

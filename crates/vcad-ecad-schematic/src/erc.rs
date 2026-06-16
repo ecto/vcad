@@ -291,6 +291,7 @@ mod tests {
             rotation: 0.0,
             mirror: false,
             pins,
+            pads_override: None,
             properties: std::collections::HashMap::new(),
         }
     }

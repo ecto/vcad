@@ -444,6 +444,7 @@ fn convert_ecad_value(ctx: &mut ConvertCtx, value: &Value) -> Result<(), String>
                 rotation,
                 mirror: false,
                 pins: vec![],
+                pads_override: None,
                 properties: HashMap::new(),
             });
         }

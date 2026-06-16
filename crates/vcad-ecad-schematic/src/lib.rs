@@ -361,6 +361,7 @@ mod tests {
                     position: Vec2::new(5.0, 0.0),
                 },
             ],
+            pads_override: None,
             properties: std::collections::HashMap::new(),
         }
     }
@@ -514,6 +515,7 @@ mod tests {
                         pin_type: PinType::Passive,
                         position: Vec2::new(0.0, 0.0),
                     }],
+                    pads_override: None,
                     properties: std::collections::HashMap::new(),
                 },
                 SchematicComponent {
@@ -529,6 +531,7 @@ mod tests {
                         pin_type: PinType::Passive,
                         position: Vec2::new(0.0, 0.0),
                     }],
+                    pads_override: None,
                     properties: std::collections::HashMap::new(),
                 },
                 SchematicComponent {
@@ -544,6 +547,7 @@ mod tests {
                         pin_type: PinType::Passive,
                         position: Vec2::new(0.0, 0.0),
                     }],
+                    pads_override: None,
                     properties: std::collections::HashMap::new(),
                 },
             ],
@@ -664,6 +668,7 @@ mod tests {
                     pin_type: PinType::Passive,
                     position: Vec2::new(0.0, 0.0),
                 }],
+                pads_override: None,
                 properties: std::collections::HashMap::new(),
             }],
             wires: vec![],

@@ -1,0 +1,10 @@
+{
+  "id": "2026-06-16-pcb-placement-routing-drc",
+  "version": "0.9.4",
+  "date": "2026-06-16",
+  "category": "feat",
+  "title": "Smarter PCB placement, routing feedback, and DRC categories",
+  "summary": "force_directed placement is now size-aware (component courtyards no longer overlap), route_nets reports realized per-net track widths and documents automatic net-class widths, and run_drc splits counts into connectivity vs clearance/manufacturing.",
+  "features": ["pcb", "ecad", "placement", "routing", "drc"],
+  "mcpTools": ["place_components", "route_nets", "run_drc"]
+}

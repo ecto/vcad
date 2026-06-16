@@ -28,6 +28,7 @@
 //! ```
 
 pub mod builtin;
+pub mod footprint;
 pub mod kicad_mod;
 pub mod kicad_pcb;
 pub mod kicad_sym;

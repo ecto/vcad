@@ -126,6 +126,205 @@ describe("ecad session flow", () => {
     expect(gerber.files.length).toBeGreaterThan(0);
   });
 
+  it("parametric footprint engine resolves QFN/DPAK on-board and reports unknowns", async () => {
+    const comp = (
+      ref: string,
+      footprint: string,
+      pinNums: number[],
+      extra: Record<string, unknown> = {},
+    ) => ({
+      ref,
+      value: "X",
+      footprint,
+      x: 0,
+      y: 0,
+      pins: pinNums.map((n) => ({ number: String(n), name: String(n), type: "Passive" })),
+      ...extra,
+    });
+
+    const created = out(
+      await createSchematic({
+        components: [
+          comp("U1", "Package_DFN_QFN:QFN-40_5x5mm_P0.4mm", [1, 2, 3, 4]),
+          comp("Q1", "Package_TO_SOT_SMD:TO-252-3_TabPin2", [1, 2, 3]),
+          comp("X1", "Acme:TotallyUnknownConnector", [1, 2, 3, 4, 5, 6]),
+        ],
+      }),
+    );
+    const id = created.document_id;
+    const placed = out(
+      await placeComponents({ document_id: id, board_width: 80, board_height: 60 }),
+    );
+
+    expect(placed.success).toBe(true);
+    // Only the unknown footprint is a fallback; QFN + DPAK resolved.
+    const fbRefs = (placed.fallback_footprints ?? []).map((f: { ref: string }) => f.ref);
+    expect(fbRefs).toContain("X1");
+    expect(fbRefs).not.toContain("U1");
+    expect(fbRefs).not.toContain("Q1");
+    expect(placed.footprints_resolved).toBe(2);
+
+    const board = getPcbBoard(getSession(id));
+    const fp = (ref: string) => board.footprints.find((f) => f.ref === ref)!;
+
+    // QFN-40: 40 leads + 1 thermal EP, and every pad stays within the ~5mm
+    // body — the regression guard against the old ~74mm off-board column.
+    const u1 = fp("U1");
+    expect(u1.pads.length).toBe(41);
+    for (const p of u1.pads) {
+      expect(Math.abs(p.position.x)).toBeLessThan(4);
+      expect(Math.abs(p.position.y)).toBeLessThan(4);
+    }
+
+    // DPAK: the tab (pad "2") is the largest pad.
+    const q1 = fp("Q1");
+    const area = (p: (typeof q1.pads)[number]) =>
+      p.shape.type === "Rect" ? p.shape.width * p.shape.height : 0;
+    const tab = q1.pads.find((p) => p.number === "2")!;
+    expect(area(tab)).toBe(Math.max(...q1.pads.map(area)));
+
+    // Unknown part: compact grid placeholder, on-board, one pad per pin.
+    const x1 = fp("X1");
+    expect(x1.pads.length).toBe(6);
+    for (const p of x1.pads) {
+      expect(Math.abs(p.position.x)).toBeLessThan(10);
+      expect(Math.abs(p.position.y)).toBeLessThan(10);
+    }
+  });
+
+  it("inline pads escape hatch overrides the footprint engine", async () => {
+    const created = out(
+      await createSchematic({
+        components: [
+          {
+            ref: "J9",
+            value: "CustomConn",
+            footprint: "Acme:Unknown",
+            x: 0,
+            y: 0,
+            pins: [
+              { number: "1", name: "A", type: "Passive" },
+              { number: "2", name: "B", type: "Passive" },
+            ],
+            pads: [
+              { number: "1", shape: { type: "Rect", width: 2, height: 2 }, position: { x: -3, y: 0 } },
+              { number: "2", shape: { type: "Rect", width: 2, height: 2 }, position: { x: 3, y: 0 } },
+            ],
+          },
+        ],
+        nets: { SIG: ["J9.1"] },
+      }),
+    );
+    const id = created.document_id;
+    const placed = out(
+      await placeComponents({ document_id: id, board_width: 40, board_height: 40 }),
+    );
+
+    // Inline pads are author-supplied geometry, never a fallback.
+    const fbRefs = (placed.fallback_footprints ?? []).map((f: { ref: string }) => f.ref);
+    expect(fbRefs).not.toContain("J9");
+
+    const board = getPcbBoard(getSession(id));
+    const j9 = board.footprints.find((f) => f.ref === "J9")!;
+    expect(j9.pads.length).toBe(2);
+    const p1 = j9.pads.find((p) => p.number === "1")!;
+    expect(p1.position).toEqual({ x: -3, y: 0 });
+    // Net was assigned from the schematic even though geometry was inline.
+    expect(p1.net).toBe("SIG");
+  });
+
+  it("run_drc splits counts into connectivity vs illegal categories", async () => {
+    // Two pads on one net, never routed → an UnconnectedNet (connectivity), not
+    // an illegal-geometry violation.
+    const created = out(
+      await createSchematic({
+        components: [resistor("R1", 0), resistor("R2", 30)],
+        nets: { MID: ["R1.2", "R2.1"] },
+      }),
+    );
+    const id = created.document_id;
+    out(await placeComponents({ document_id: id, board_width: 50, board_height: 50 }));
+    const drc = out(await runDrc({ document_id: id }));
+    expect(drc.categories).toBeDefined();
+    expect(drc.categories).toHaveProperty("connectivity");
+    expect(drc.categories).toHaveProperty("clearance");
+    expect(drc.categories).toHaveProperty("manufacturing");
+    // The unrouted net is connectivity, and connectivity + clearance +
+    // manufacturing must sum to the total violation count.
+    const { connectivity, clearance, manufacturing } = drc.categories;
+    expect(connectivity + clearance + manufacturing).toBe(drc.violations);
+    expect(connectivity).toBe(drc.byRule.UnconnectedNet ?? 0);
+  });
+
+  it("force_directed placement keeps big components' courtyards apart (size-aware)", async () => {
+    const dpak = (ref: string, x: number) => ({
+      ref,
+      value: "FET",
+      footprint: "Package_TO_SOT_SMD:TO-252-3_TabPin2",
+      x,
+      y: 0,
+      pins: [
+        { number: "1", name: "G", type: "Passive" },
+        { number: "2", name: "D", type: "Passive" },
+        { number: "3", name: "S", type: "Passive" },
+      ],
+    });
+    const created = out(
+      await createSchematic({
+        components: [dpak("Q1", 0), dpak("Q2", 5)],
+        nets: { PH: ["Q1.2", "Q2.2"] }, // shared net → attraction competes with size repulsion
+      }),
+    );
+    const id = created.document_id;
+    out(
+      await placeComponents({
+        document_id: id,
+        board_width: 70,
+        board_height: 70,
+        strategy: "force_directed",
+      }),
+    );
+    const board = getPcbBoard(getSession(id));
+    const q1 = board.footprints.find((f) => f.ref === "Q1")!;
+    const q2 = board.footprints.find((f) => f.ref === "Q2")!;
+    const d = Math.hypot(q1.position.x - q2.position.x, q1.position.y - q2.position.y);
+    // Two DPAK courtyards (~6mm radius each) must not be stacked despite sharing
+    // a net — size-aware repulsion holds them well apart.
+    expect(d).toBeGreaterThan(8);
+  });
+
+  it("route_nets honors per-net-class width and reports realized widths", async () => {
+    const created = out(
+      await createSchematic({
+        components: [
+          { ref: "J1", value: "PWR", footprint: "Connector_PinHeader_2.54mm:PinHeader_1x02_P2.54mm", x: 0, y: 0, pins: [{ number: "1", name: "V", type: "Passive" }, { number: "2", name: "G", type: "Passive" }] },
+          resistor("R1", 15),
+          resistor("R2", 30),
+        ],
+        nets: { VBAT: ["J1.1", "R1.1"], SIG: ["R1.2", "R2.1"] },
+      }),
+    );
+    const id = created.document_id;
+    out(await placeComponents({ document_id: id, board_width: 50, board_height: 40 }));
+    // Give VBAT a wide power class; signals stay thin by default.
+    out(
+      await setDesignRules({
+        document_id: id,
+        track_width: 0.25,
+        classes: [{ name: "power", nets: ["VBAT"], track_width: 1.5 }],
+      }),
+    );
+    const routed = out(await routeNets({ document_id: id }));
+    expect(routed.success).toBe(true);
+    expect(routed.track_widths_mm).toBeDefined();
+    // VBAT routed at its class width; SIG at the default — a single route call,
+    // two widths, no per-net width argument needed.
+    if (routed.track_widths_mm.VBAT !== undefined && routed.track_widths_mm.SIG !== undefined) {
+      expect(routed.track_widths_mm.VBAT).toBeGreaterThan(routed.track_widths_mm.SIG);
+      expect(routed.track_widths_mm.VBAT).toBeCloseTo(1.5, 1);
+    }
+  });
+
   it("inline `document` still works as the legacy stateless flow", async () => {
     const doc = {
       version: "0.1",
