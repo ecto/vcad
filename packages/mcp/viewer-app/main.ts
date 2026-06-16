@@ -20,6 +20,7 @@ import {
   App,
   type McpUiHostContext,
 } from "@modelcontextprotocol/ext-apps";
+import { isOpenAiHost, createOpenAiShim } from "./openai-shim";
 
 const statusEl = document.getElementById("status")!;
 const errEl = document.getElementById("error")!;
@@ -793,11 +794,16 @@ function captureVcode(result: ToolResultLike): void {
   }
 }
 
-// ── MCP Apps protocol ────────────────────────────────────────
-const app = new App(
-  { name: "vcad-viewer", version: "2.1.0" },
-  { availableDisplayModes: ["inline", "fullscreen"] },
-);
+// ── Host protocol ────────────────────────────────────────────
+// MCP Apps hosts (Claude, Cursor) speak the SEP-1865 postMessage
+// protocol via the App class; ChatGPT injects `window.openai` instead —
+// the shim adapts it to the same surface.
+const app = isOpenAiHost()
+  ? (createOpenAiShim() as unknown as App)
+  : new App(
+      { name: "vcad-viewer", version: "2.1.0" },
+      { availableDisplayModes: ["inline", "fullscreen"] },
+    );
 
 function applyHostContext(ctx: McpUiHostContext | undefined): void {
   if (!ctx) return;

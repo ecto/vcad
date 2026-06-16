@@ -177,6 +177,9 @@ import {
   VIEWER_RESOURCE_URI,
   VIEWER_CSP,
   MCP_APP_MIME_TYPE,
+  OPENAI_VIEWER_RESOURCE_URI,
+  OPENAI_APP_MIME_TYPE,
+  OPENAI_WIDGET_CSP,
 } from "./viewer.js";
 import { fireToolAlert } from "./notify.js";
 
@@ -283,13 +286,26 @@ const SWITCH_DOC_WRITERS = new Set<string>([
   "set_design_rules",
 ]);
 
-/** MCP Apps UI metadata for geometry tools. */
+/** UI metadata for geometry tools — both dialects, hosts read what they
+ *  understand: MCP Apps (`ui`/`ui/resourceUri`) for Claude/Cursor, and
+ *  OpenAI Apps SDK (`openai/outputTemplate`) for ChatGPT. */
 const UI_META = {
   ui: {
     resourceUri: VIEWER_RESOURCE_URI,
   },
   // Flat key format also required by Claude Desktop MCP Apps protocol
   "ui/resourceUri": VIEWER_RESOURCE_URI,
+  // ChatGPT Apps SDK: render results through the skybridge viewer.
+  "openai/outputTemplate": OPENAI_VIEWER_RESOURCE_URI,
+  "openai/toolInvocation/invoking": "Modeling geometry…",
+  "openai/toolInvocation/invoked": "Model updated",
+};
+
+/** Extra meta for tools the viewer iframe itself calls (GLB fetch, IR
+ *  fetch for the deep link). ChatGPT blocks widget-initiated tool calls
+ *  unless the tool is explicitly marked widget-accessible. */
+const WIDGET_CALLABLE_META = {
+  "openai/widgetAccessible": true,
 };
 
 /**
@@ -552,7 +568,9 @@ export async function createServer(
         description:
           "Return the full IR Document JSON for an open session. Use after a series of mutations to capture the result, or to feed into `export_cad` / `open_in_browser`.",
         inputSchema: getDocumentSchema,
-        _meta: UI_META,
+        // Widget-callable: the viewer's "Open in vcad.io" button fetches
+        // the IR through this tool to build the deep link.
+        _meta: { ...UI_META, ...WIDGET_CALLABLE_META },
       },
       {
         name: "close_document",
@@ -623,6 +641,7 @@ export async function createServer(
             resourceUri: VIEWER_RESOURCE_URI,
             visibility: ["app"],
           },
+          ...WIDGET_CALLABLE_META,
         },
       },
       // ── Loon DSL one-shot ──────────────────────────────────────
@@ -1115,6 +1134,9 @@ export async function createServer(
   }));
 
   // ── MCP Apps: List UI resources ──────────────────────────────
+  // The same self-contained HTML is registered twice: once with the MCP
+  // Apps profile MIME (Claude, Cursor) and once with ChatGPT's skybridge
+  // MIME. The bundle detects which bridge the host injected at runtime.
   server.setRequestHandler(ListResourcesRequestSchema, async () => ({
     resources: [
       {
@@ -1127,6 +1149,16 @@ export async function createServer(
             csp: VIEWER_CSP,
             prefersBorder: false,
           },
+        },
+      },
+      {
+        uri: OPENAI_VIEWER_RESOURCE_URI,
+        name: "vcad 3D Viewer (ChatGPT)",
+        description: "Interactive 3D viewport for viewing CAD models",
+        mimeType: OPENAI_APP_MIME_TYPE,
+        _meta: {
+          "openai/widgetCSP": OPENAI_WIDGET_CSP,
+          "openai/widgetPrefersBorder": false,
         },
       },
     ],
@@ -1148,6 +1180,22 @@ export async function createServer(
                 csp: VIEWER_CSP,
                 prefersBorder: false,
               },
+            },
+          },
+        ],
+      };
+    }
+
+    if (uri === OPENAI_VIEWER_RESOURCE_URI) {
+      return {
+        contents: [
+          {
+            uri: OPENAI_VIEWER_RESOURCE_URI,
+            mimeType: OPENAI_APP_MIME_TYPE,
+            text: getViewerHtml(),
+            _meta: {
+              "openai/widgetCSP": OPENAI_WIDGET_CSP,
+              "openai/widgetPrefersBorder": false,
             },
           },
         ],

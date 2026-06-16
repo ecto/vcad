@@ -27,6 +27,23 @@ export const VIEWER_RESOURCE_URI = "ui://vcad/viewer";
 /** MIME type for MCP App HTML resources. */
 export const MCP_APP_MIME_TYPE = "text/html;profile=mcp-app";
 
+/** Second registration of the same HTML for ChatGPT (OpenAI Apps SDK):
+ *  referenced from tools via `_meta["openai/outputTemplate"]` and served
+ *  with the skybridge MIME type so ChatGPT injects its widget bridge
+ *  (the viewer detects `window.openai` and adapts — see
+ *  viewer-app/openai-shim.ts). */
+export const OPENAI_VIEWER_RESOURCE_URI = "ui://vcad/viewer-openai.html";
+
+/** MIME type marking a resource as a ChatGPT Apps SDK widget. */
+export const OPENAI_APP_MIME_TYPE = "text/html+skybridge";
+
+/** ChatGPT widget CSP: the bundle is fully inlined; blob: is needed for
+ *  GLTFLoader's createObjectURL textures. */
+export const OPENAI_WIDGET_CSP = {
+  connect_domains: [] as string[],
+  resource_domains: ["blob:"],
+};
+
 /** Return the self-contained viewer HTML. */
 export function getViewerHtml(): string {
   return VIEWER_HTML;

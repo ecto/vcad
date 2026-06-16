@@ -8,10 +8,55 @@ import { writeFileSync } from "node:fs";
 import { toStlBytes } from "../export/stl.js";
 import { toGlbBytes } from "../export/glb.js";
 import { resolveWithinRoot } from "./safe-path.js";
+import { isRemoteDeployment, maxInlineExportBytes } from "./remote.js";
 
 interface ExportInput {
   ir: Document;
   filename: string;
+}
+
+/**
+ * Deliver export bytes: write to disk on local servers, return base64
+ * inline on remote deployments. On serverless hosts (Vercel) the
+ * function filesystem is read-only — a writeFileSync there throws EROFS
+ * and the bytes would be invisible to the caller anyway — so the bytes
+ * ride back in the tool result instead.
+ */
+function deliver(
+  filename: string,
+  bytes: Uint8Array,
+  extra: Record<string, unknown>,
+): { content: Array<{ type: "text"; text: string }> } {
+  let payload: Record<string, unknown>;
+  if (isRemoteDeployment()) {
+    const cap = maxInlineExportBytes();
+    if (bytes.length > cap) {
+      throw new Error(
+        `Export is ${bytes.length} bytes — over the ${cap} byte inline limit for this hosted server. ` +
+          "Use open_in_browser to hand the document to vcad.io and export from there.",
+      );
+    }
+    payload = {
+      filename,
+      bytes: bytes.length,
+      data_base64: Buffer.from(bytes).toString("base64"),
+      note_delivery:
+        "Hosted server: file contents returned inline as base64 (this server has no access to your disk).",
+      ...extra,
+    };
+  } else {
+    // Resolve against the export dir (VCAD_MCP_EXPORT_DIR or cwd) and
+    // reject any path that escapes it.
+    const path = resolveWithinRoot(
+      filename,
+      process.env.VCAD_MCP_EXPORT_DIR ?? process.cwd(),
+    );
+    writeFileSync(path, bytes);
+    payload = { path, bytes: bytes.length, ...extra };
+  }
+  return {
+    content: [{ type: "text", text: JSON.stringify(payload) }],
+  };
 }
 
 export const exportCadSchema = {
@@ -55,23 +100,12 @@ export function exportCad(
           "body needs B-rep bend geometry). Use .stl or .glb for mesh exports.",
       );
     }
-    const path = resolveWithinRoot(filename, process.env.VCAD_MCP_EXPORT_DIR ?? process.cwd());
     const bytes = new TextEncoder().encode(step);
-    writeFileSync(path, bytes);
-    return {
-      content: [
-        {
-          type: "text",
-          text: JSON.stringify({
-            path,
-            bytes: bytes.length,
-            format: stepExt,
-            parts: 1,
-            note: "Folded sheet-metal body (AP214) with cylindrical bend faces — bends/angles/directions auto-detect in 3D fab pipelines.",
-          }),
-        },
-      ],
-    };
+    return deliver(filename, bytes, {
+      format: stepExt,
+      parts: 1,
+      note: "Folded sheet-metal body (AP214) with cylindrical bend faces — bends/angles/directions auto-detect in 3D fab pipelines.",
+    });
   }
 
   // Evaluate the document to get meshes
@@ -96,22 +130,8 @@ export function exportCad(
       throw new Error(`Unsupported format: .${ext}. Use .stl, .glb, or .step (sheet-metal only)`);
   }
 
-  // Resolve against the export dir (VCAD_MCP_EXPORT_DIR or cwd) and reject any
-  // path that escapes it.
-  const path = resolveWithinRoot(filename, process.env.VCAD_MCP_EXPORT_DIR ?? process.cwd());
-  writeFileSync(path, bytes);
-
-  return {
-    content: [
-      {
-        type: "text",
-        text: JSON.stringify({
-          path,
-          bytes: bytes.length,
-          format: ext,
-          parts: scene.parts.length,
-        }),
-      },
-    ],
-  };
+  return deliver(filename, bytes, {
+    format: ext,
+    parts: scene.parts.length,
+  });
 }
