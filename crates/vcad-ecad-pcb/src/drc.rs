@@ -5,7 +5,7 @@
 
 use std::collections::HashMap;
 
-use vcad_ir::ecad::{Pad, PadShape, PadType, Pcb, PcbLayer};
+use vcad_ir::ecad::{Footprint, FootprintGraphic, Pad, PadShape, PadType, Pcb, PcbLayer};
 use vcad_ir::Vec2;
 
 use crate::spatial::{
@@ -90,9 +90,102 @@ pub fn check_drc(pcb: &Pcb) -> Vec<DrcViolation> {
     check_hole_to_hole(pcb, &mut violations);
     check_annular_ring(pcb, &mut violations);
     check_keepout(pcb, &mut violations);
+    check_courtyard_overlap(pcb, &mut violations);
     check_connectivity(pcb, &net_ties, &mut violations);
 
     violations
+}
+
+/// World-space axis-aligned courtyard bounds for a footprint.
+///
+/// Prefers an explicit courtyard graphic (`FCrtYd`/`BCrtYd` rectangle) rotated
+/// and translated into board coordinates; falls back to the pad bounding box
+/// when a footprint carries no courtyard layer (e.g. legacy chip templates).
+fn courtyard_bounds(fp: &Footprint) -> (Vec2, Vec2) {
+    let rot = fp.rotation.to_radians();
+    let (cos_r, sin_r) = (rot.cos(), rot.sin());
+    let to_world = |p: Vec2| {
+        Vec2::new(
+            fp.position.x + p.x * cos_r - p.y * sin_r,
+            fp.position.y + p.x * sin_r + p.y * cos_r,
+        )
+    };
+
+    let mut min = Vec2::new(f64::MAX, f64::MAX);
+    let mut max = Vec2::new(f64::MIN, f64::MIN);
+    let mut found = false;
+    for g in &fp.graphics {
+        if let FootprintGraphic::Rect {
+            start, end, layer, ..
+        } = g
+        {
+            if !matches!(layer, PcbLayer::FCrtYd | PcbLayer::BCrtYd) {
+                continue;
+            }
+            found = true;
+            // All four (rotated) corners — the rect may be rotated off-axis.
+            for corner in [
+                Vec2::new(start.x, start.y),
+                Vec2::new(end.x, start.y),
+                Vec2::new(end.x, end.y),
+                Vec2::new(start.x, end.y),
+            ] {
+                let w = to_world(corner);
+                min.x = min.x.min(w.x);
+                min.y = min.y.min(w.y);
+                max.x = max.x.max(w.x);
+                max.y = max.y.max(w.y);
+            }
+        }
+    }
+    if found {
+        (min, max)
+    } else {
+        crate::geometry::footprint_bounds(fp)
+    }
+}
+
+/// Flag components whose courtyards overlap on the same board side — a
+/// placement collision. Courtyards are an assembly keep-clear envelope, so any
+/// overlap is an error. Components on opposite sides never collide.
+fn check_courtyard_overlap(pcb: &Pcb, violations: &mut Vec<DrcViolation>) {
+    let boxes: Vec<(usize, (Vec2, Vec2))> = pcb
+        .footprints
+        .iter()
+        .enumerate()
+        .map(|(i, fp)| (i, courtyard_bounds(fp)))
+        .collect();
+
+    for a in 0..boxes.len() {
+        for b in (a + 1)..boxes.len() {
+            let (ia, (amin, amax)) = &boxes[a];
+            let (ib, (bmin, bmax)) = &boxes[b];
+            let fa = &pcb.footprints[*ia];
+            let fb = &pcb.footprints[*ib];
+            if fa.front != fb.front {
+                continue;
+            }
+            // AABB overlap = positive penetration on both axes.
+            let pen_x = amax.x.min(bmax.x) - amin.x.max(bmin.x);
+            let pen_y = amax.y.min(bmax.y) - amin.y.max(bmin.y);
+            if pen_x > 1e-6 && pen_y > 1e-6 {
+                let ox = pen_x.min(pen_y);
+                let cx = (amin.x.max(bmin.x) + amax.x.min(bmax.x)) / 2.0;
+                let cy = (amin.y.max(bmin.y) + amax.y.min(bmax.y)) / 2.0;
+                violations.push(DrcViolation {
+                    rule: DrcRuleType::CourtyardOverlap,
+                    severity: DrcSeverity::Error,
+                    position: Vec2::new(cx, cy),
+                    message: format!(
+                        "courtyards of {} and {} overlap",
+                        fa.reference, fb.reference
+                    ),
+                    actual: ox.max(0.0),
+                    required: 0.0,
+                });
+            }
+        }
+    }
 }
 
 // ============================================================================
@@ -1861,6 +1954,56 @@ mod tests {
         assert!(
             bad.is_empty(),
             "same-footprint pads must be exempt, got: {bad:?}"
+        );
+    }
+
+    /// Two components whose courtyards (here, pad-bound fallback) overlap on
+    /// the same side are a placement collision → CourtyardOverlap.
+    #[test]
+    fn courtyard_overlap_flags_colliding_components() {
+        let mut pcb = clean_pcb();
+        pcb.traces.clear();
+        pcb.vias.clear();
+        // 1×1mm pads → ±0.5mm bounds; centers 0.5mm apart overlap.
+        pcb.footprints = vec![
+            footprint("U1", (60.0, 60.0), 0.0, vec![smd_pad("1", (0.0, 0.0), "A")]),
+            footprint("U2", (60.5, 60.0), 0.0, vec![smd_pad("1", (0.0, 0.0), "B")]),
+        ];
+        let v = check_drc(&pcb);
+        assert!(
+            v.iter().any(|x| x.rule == DrcRuleType::CourtyardOverlap),
+            "overlapping components must flag CourtyardOverlap: {v:?}"
+        );
+    }
+
+    /// Separated components, and components on opposite sides, do not collide.
+    #[test]
+    fn courtyard_overlap_clear_when_separated_or_opposite_side() {
+        let mut pcb = clean_pcb();
+        pcb.traces.clear();
+        pcb.vias.clear();
+        // Far apart on the same side.
+        pcb.footprints = vec![
+            footprint("U1", (50.0, 60.0), 0.0, vec![smd_pad("1", (0.0, 0.0), "A")]),
+            footprint("U2", (70.0, 60.0), 0.0, vec![smd_pad("1", (0.0, 0.0), "B")]),
+        ];
+        assert!(
+            !check_drc(&pcb)
+                .iter()
+                .any(|x| x.rule == DrcRuleType::CourtyardOverlap),
+            "separated components must not collide"
+        );
+        // Overlapping XY but opposite sides — no collision.
+        pcb.footprints = vec![
+            footprint("U1", (60.0, 60.0), 0.0, vec![smd_pad("1", (0.0, 0.0), "A")]),
+            footprint("U2", (60.0, 60.0), 0.0, vec![smd_pad("1", (0.0, 0.0), "B")]),
+        ];
+        pcb.footprints[1].front = false;
+        assert!(
+            !check_drc(&pcb)
+                .iter()
+                .any(|x| x.rule == DrcRuleType::CourtyardOverlap),
+            "opposite-side components must not collide"
         );
     }
 
