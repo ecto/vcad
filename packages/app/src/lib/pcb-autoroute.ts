@@ -21,6 +21,9 @@ export async function autorouteRatsnest(): Promise<{ routed: number; failed: num
   let pcb = getNodePcb(useDocumentStore.getState().document, boardNodeId);
   if (!pcb || !netlist) return { routed: 0, failed: 0 };
 
+  // Tag the burst so the Receipt recorder labels the coalesced entry "autoroute".
+  useElectronicsStore.getState().noteMutation("autoroute");
+
   const width = pcb.rules?.defaultRules?.traceWidth ?? 0.15;
   const rats = await computeRatsnest(pcb, netlist);
 
