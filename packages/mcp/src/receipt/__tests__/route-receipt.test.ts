@@ -71,11 +71,20 @@ describe("route_nets receipt — the agent gets a verdict instead of {document_i
     expect(r1.receipt.headline).toBeTruthy();
     expect(r1.receipt.coverage).toBe("full");
 
-    // The re-route silently stacks copper into shorts — the receipt makes it loud.
+    // A second route may or may not change the board (kernel-dependent: a clean
+    // re-route is a no-op; a non-idempotent one stacks copper into shorts — see
+    // issue #277). Either way the receipt must faithfully reflect what actually
+    // happened: its verdict and shorts count must agree with its own DRC delta.
+    // The catastrophic attribution itself is locked deterministically in
+    // receipt.test.ts over captured fixtures.
     const r2 = out(await routeNets({ document_id: id, receipt: true }));
-    expect(r2.receipt.verdict).toBe("regression");
-    expect(r2.receipt.shortsIntroduced).toBeGreaterThan(0);
-    expect(r2.receipt.headline).toMatch(/REGRESSION/);
+    const delta = r2.receipt.deltaByRule as Record<string, number>;
+    expect(r2.receipt.shortsIntroduced).toBe(Math.max(0, delta.Short ?? 0));
+    if (Object.values(delta).some((d) => d > 0)) {
+      expect(["regression", "improved-with-regressions"]).toContain(r2.receipt.verdict);
+    } else {
+      expect(["no-op", "improved", "clean"]).toContain(r2.receipt.verdict);
+    }
   });
 
   it("is opt-in — no receipt field unless requested", async () => {
