@@ -21,6 +21,7 @@ import { createServer as createHttpServer } from "node:http";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { Engine } from "@vcad/engine";
 import { createServer } from "./server.js";
+import { verifyAccessToken } from "./oauth.js";
 import { getViewerHtml, MCP_APP_MIME_TYPE } from "./viewer.js";
 
 const PORT = parseInt(process.env.PORT || "8080", 10);
@@ -99,7 +100,8 @@ async function handleMcpRequest(
   res: import("node:http").ServerResponse,
 ): Promise<void> {
   const eng = await getEngine();
-  const server = await createServer(eng);
+  const user = verifyAccessToken(req);
+  const server = await createServer(eng, { user });
 
   const transport = new StreamableHTTPServerTransport({
     // Stateless: no session tracking

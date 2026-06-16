@@ -96,13 +96,19 @@ export default async function handler(
     return;
   }
 
+  // Identify the caller (null when OAuth is off or no Bearer token was sent).
+  // Computed unconditionally so an authenticated session persists to the
+  // user's account even while /mcp stays open during the MCP_REQUIRE_AUTH
+  // transition. verifyAccessToken is a local HMAC verify — no network.
+  const user = verifyAccessToken(req);
+
   // Optional hard gate on /mcp. Off by default so existing anonymous
   // clients keep working while the OAuth flow rolls out; set
   // MCP_REQUIRE_AUTH=1 (alongside MCP_OAUTH_SECRET) to require a valid
   // signed-in access token once every client has migrated.
   if (process.env.MCP_REQUIRE_AUTH && url.pathname === "/mcp") {
     const cfg = getOAuthConfig();
-    if (cfg && !verifyAccessToken(req)) {
+    if (cfg && !user) {
       res.writeHead(401, {
         "Content-Type": "text/plain",
         "WWW-Authenticate": wwwAuthenticate(cfg),
@@ -115,7 +121,7 @@ export default async function handler(
   // MCP endpoint — parse body for POST, then delegate to transport
   try {
     const engine = await getEngine();
-    const server = await createServer(engine);
+    const server = await createServer(engine, { user });
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: undefined, // stateless
       enableJsonResponse: true, // return JSON instead of SSE — Vercel buffers responses and adds Content-Length which breaks SSE streaming
