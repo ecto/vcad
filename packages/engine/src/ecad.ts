@@ -575,6 +575,45 @@ export async function componentMeshes(pcb: Pcb): Promise<ComponentMesh[]> {
   }
 }
 
+/**
+ * A single colored sub-mesh of a layered PCB preview (see
+ * `vcad_eval::pcb_preview`). The board is split into a green substrate, gold
+ * copper, real component bodies, and white silkscreen so a lit GLB viewer
+ * renders a recognizable board instead of one gray slab.
+ */
+export interface PcbPreviewMesh {
+  /** Semantic role: "board" | "copper" | "component" | "silkscreen". */
+  role: string;
+  /** Flat vertex positions [x,y,z,...] (mm, board-local, centered on z=0). */
+  positions: number[];
+  /** Triangle indices. */
+  indices: number[];
+  /** Per-vertex normals [nx,ny,nz,...]. */
+  normals: number[];
+  /** Base color RGB, 0..1. */
+  color: [number, number, number];
+  /** PBR metalness, 0..1. */
+  metalness: number;
+  /** PBR roughness, 0..1. */
+  roughness: number;
+}
+
+/**
+ * Generate layered, colored preview meshes for a PCB — substrate, copper,
+ * component bodies, and silkscreen — for 3D rendering. Returns an empty array
+ * when the ECAD WASM is unavailable or the build predates the binding.
+ */
+export async function pcbPreviewMeshes(pcb: Pcb): Promise<PcbPreviewMesh[]> {
+  const wasm = await loadEcadWasm();
+  if (!wasm || typeof wasm.ecadPcbPreviewMeshes !== "function") return [];
+  try {
+    return wasm.ecadPcbPreviewMeshes(JSON.stringify(pcb)) as PcbPreviewMesh[];
+  } catch (e) {
+    console.warn("[ECAD] pcbPreviewMeshes failed:", e);
+    return [];
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Circuit simulation (lumped-element transient solver)
 // ---------------------------------------------------------------------------

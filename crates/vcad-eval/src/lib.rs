@@ -19,6 +19,7 @@
 pub mod convert;
 pub mod evaluate;
 pub mod kinematics;
+pub mod pcb_preview;
 pub mod resolve;
 pub mod validate;
 

@@ -6917,6 +6917,7 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.18",
+ "vcad-ecad-pcb",
  "vcad-ir",
  "vcad-kernel",
  "vcad-kernel-geom",
