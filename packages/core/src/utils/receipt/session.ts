@@ -14,6 +14,7 @@
  */
 
 import { buildEntry, fingerprintSnapshot } from "./engine.js";
+import { HASH_ALGO } from "./hash.js";
 import type { DrcSnapshot, Receipt, ReceiptEntry } from "./types.js";
 
 export interface ReceiptSessionDeps {
@@ -173,7 +174,7 @@ export class ReceiptSession {
       board: { title: this.board.title, components: this.board.components, nets: this.board.nets },
       preflight: this.board.unconnectedPins ? { unconnectedPins: this.board.unconnectedPins } : undefined,
       entries: this.entries,
-      fingerprintAlgo: "sha256",
+      fingerprintAlgo: HASH_ALGO,
       build: this.deps.build ?? { version: "unknown", sha: "unknown" },
       reverification: "deterministic-same-session",
     };
