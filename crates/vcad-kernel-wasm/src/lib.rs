@@ -5222,6 +5222,26 @@ mod ecad_wasm {
         serde_wasm_bindgen::to_value(&meshes).map_err(|e| JsError::new(&e.to_string()))
     }
 
+    /// Generate layered, colored preview meshes for a PCB.
+    ///
+    /// Unlike the merged `PcbBoard` solid (one gray slab), this returns a small
+    /// set of separately-colored sub-meshes — green substrate, gold copper,
+    /// real 3D component bodies, white silkscreen — for the inline GLB viewer.
+    ///
+    /// # Arguments
+    /// * `pcb_json` - JSON-serialized `Pcb` struct
+    ///
+    /// # Returns
+    /// Array of `PcbPreviewMesh` (`{ role, positions, indices, normals, color,
+    /// metalness, roughness }`) as JsValue.
+    #[wasm_bindgen(js_name = ecadPcbPreviewMeshes)]
+    pub fn ecad_pcb_preview_meshes(pcb_json: &str) -> Result<JsValue, JsError> {
+        let pcb: vcad_ir::ecad::Pcb =
+            serde_json::from_str(pcb_json).map_err(|e| JsError::new(&e.to_string()))?;
+        let meshes = vcad_eval::pcb_preview::pcb_preview_meshes(&pcb);
+        serde_wasm_bindgen::to_value(&meshes).map_err(|e| JsError::new(&e.to_string()))
+    }
+
     /// Snap a position to the nearest component pin or grid point.
     ///
     /// # Arguments

@@ -1180,13 +1180,13 @@ fn pad_extent(shape: &PadShape) -> (f64, f64) {
 // ============================================================================
 
 /// A raw triangle mesh: vertices as [x,y,z] and triangle indices as [a,b,c].
-type RawMesh = (Vec<[f64; 3]>, Vec<[u32; 3]>);
+pub(crate) type RawMesh = (Vec<[f64; 3]>, Vec<[u32; 3]>);
 
 /// Default copper thickness (mm) if not specified in stackup.
 const DEFAULT_COPPER_THICKNESS: f64 = 0.035;
 
 /// Z offset for the top of a copper layer.
-fn layer_z_top(pcb: &Pcb, layer: PcbLayer) -> f64 {
+pub(crate) fn layer_z_top(pcb: &Pcb, layer: PcbLayer) -> f64 {
     match layer {
         PcbLayer::FCu => pcb.outline.thickness,
         PcbLayer::BCu => 0.0,
@@ -1195,7 +1195,7 @@ fn layer_z_top(pcb: &Pcb, layer: PcbLayer) -> f64 {
 }
 
 /// Copper thickness from the stackup, falling back to default.
-fn copper_thickness(pcb: &Pcb, layer: PcbLayer) -> f64 {
+pub(crate) fn copper_thickness(pcb: &Pcb, layer: PcbLayer) -> f64 {
     pcb.stackup
         .layers
         .iter()
@@ -1206,7 +1206,7 @@ fn copper_thickness(pcb: &Pcb, layer: PcbLayer) -> f64 {
 
 /// Generate a box mesh for a trace segment (oriented ribbon at layer Z).
 /// Returns (vertices [x,y,z], triangle indices).
-fn trace_to_mesh(trace: &Trace, pcb: &Pcb) -> RawMesh {
+pub(crate) fn trace_to_mesh(trace: &Trace, pcb: &Pcb) -> RawMesh {
     let z_top = layer_z_top(pcb, trace.layer);
     let ct = copper_thickness(pcb, trace.layer);
     let z_bot = if trace.layer == PcbLayer::FCu {
@@ -1269,7 +1269,7 @@ fn trace_to_mesh(trace: &Trace, pcb: &Pcb) -> RawMesh {
 }
 
 /// Generate a cylindrical via mesh (outer cylinder + top/bottom annular rings).
-fn via_to_mesh(via: &Via, pcb: &Pcb, n_seg: usize) -> RawMesh {
+pub(crate) fn via_to_mesh(via: &Via, pcb: &Pcb, n_seg: usize) -> RawMesh {
     let z_top = pcb.outline.thickness;
     let z_bot = 0.0;
     let r_outer = via.diameter / 2.0;
@@ -1353,7 +1353,7 @@ fn via_to_mesh(via: &Via, pcb: &Pcb, n_seg: usize) -> RawMesh {
 }
 
 /// Generate a mesh for a pad on a footprint, positioned in board space.
-fn pad_to_mesh(pad: &Pad, fp: &Footprint, pcb: &Pcb) -> RawMesh {
+pub(crate) fn pad_to_mesh(pad: &Pad, fp: &Footprint, pcb: &Pcb) -> RawMesh {
     let (pw, ph) = pad_extent(&pad.shape);
     if pw < 1e-9 || ph < 1e-9 {
         return (vec![], vec![]);
@@ -1428,7 +1428,7 @@ fn pad_to_mesh(pad: &Pad, fp: &Footprint, pcb: &Pcb) -> RawMesh {
 }
 
 /// Generate a mesh for a copper zone (fan-triangulated polygon extruded by copper thickness).
-fn zone_to_mesh(zone: &Zone, pcb: &Pcb) -> RawMesh {
+pub(crate) fn zone_to_mesh(zone: &Zone, pcb: &Pcb) -> RawMesh {
     if zone.outline.len() < 3 {
         return (vec![], vec![]);
     }

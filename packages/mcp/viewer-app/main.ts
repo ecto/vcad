@@ -1010,10 +1010,11 @@ if (location.hash.startsWith("#dev")) {
   fullscreenBtn.style.display = "inline-flex";
   lastDocumentId = "doc_dev";
   updateAffordances();
-  // Debug handle for poking the scene from the console.
+  // Debug handle for poking the scene from the console. `loadGlb` lets a
+  // harness swap in an arbitrary base64 GLB (e.g. a generated PCB preview).
   (window as unknown as Record<string, unknown>).__vcad = {
     scene, camera, controls, grid, gridUniforms, contactShadow, renderer,
-    select, partInfoFor, modelGroup,
+    select, partInfoFor, modelGroup, loadGlb,
   };
 } else {
   // ── Connect (handlers are all registered above) ────────────

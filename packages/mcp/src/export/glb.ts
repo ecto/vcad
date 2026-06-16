@@ -24,25 +24,40 @@ export function buildPartLabels(doc: Document): string[] {
 }
 
 /** Default material for parts without material assignment. */
-const DEFAULT_MATERIAL = {
+export const DEFAULT_MATERIAL = {
   name: "default",
   color: [0.8, 0.8, 0.8] as [number, number, number],
   metallic: 0.1,
   roughness: 0.5,
 };
 
-/** Convert evaluated scene to binary GLB bytes.
+/**
+ * One renderable mesh for {@link buildGlb}: geometry plus an explicit PBR
+ * material. Positions/indices/normals accept either typed arrays (the scene
+ * path) or plain number arrays (the PCB-preview path). When `normals` is
+ * omitted the GLB carries no NORMAL attribute and the viewer flat-shades.
+ */
+export interface GlbMesh {
+  /** glTF node name — `"<part_id>:<name>"` for click-to-select. */
+  name: string;
+  positions: Float32Array | number[];
+  indices: Uint32Array | number[];
+  normals?: Float32Array | number[];
+  color: [number, number, number];
+  metallic: number;
+  roughness: number;
+}
+
+const f32 = (a: Float32Array | number[]): Float32Array =>
+  a instanceof Float32Array ? a : new Float32Array(a);
+
+/** Build binary GLB bytes from an explicit list of meshes + PBR materials.
  *
- * `partLabels` (index-aligned with `scene.parts`) become glTF node names —
- * the viewer parses them back into part identity for click-to-select, so
- * they follow the `"<part_id>:<name>"` convention from
- * {@link buildPartLabels}. Omitted entries fall back to `part_<idx>`. */
-export function toGlbBytes(
-  scene: EvaluatedScene,
-  name: string,
-  partLabels?: string[],
-): Uint8Array {
-  // Collect unique materials
+ * Writes POSITION, NORMAL (when present), and u32 indices per mesh, and
+ * de-dupes materials by `(color, metallic, roughness)` so a layered board
+ * (board / copper / components / silk) stays at a handful of materials. */
+export function buildGlb(inputMeshes: GlbMesh[], name: string): Uint8Array {
+  // Collect unique materials keyed by their PBR values.
   const materialMap = new Map<string, number>();
   const materials: Array<{
     name: string;
@@ -51,19 +66,22 @@ export function toGlbBytes(
     roughness: number;
   }> = [];
 
-  for (const part of scene.parts) {
-    if (!materialMap.has(part.material)) {
-      materialMap.set(part.material, materials.length);
-      materials.push({
-        name: part.material,
-        color: DEFAULT_MATERIAL.color,
-        metallic: DEFAULT_MATERIAL.metallic,
-        roughness: DEFAULT_MATERIAL.roughness,
-      });
-    }
-  }
+  const materialIndexFor = (m: GlbMesh): number => {
+    const key = `${m.color[0]},${m.color[1]},${m.color[2]},${m.metallic},${m.roughness}`;
+    const existing = materialMap.get(key);
+    if (existing !== undefined) return existing;
+    const idx = materials.length;
+    materialMap.set(key, idx);
+    materials.push({
+      name: m.name.includes(":") ? m.name.split(":")[0] : m.name,
+      color: m.color,
+      metallic: m.metallic,
+      roughness: m.roughness,
+    });
+    return idx;
+  };
 
-  if (materials.length === 0) {
+  if (inputMeshes.length === 0) {
     materials.push(DEFAULT_MATERIAL);
   }
 
@@ -76,12 +94,16 @@ export function toGlbBytes(
 
   let bufferOffset = 0;
 
-  for (let meshIdx = 0; meshIdx < scene.parts.length; meshIdx++) {
-    const part = scene.parts[meshIdx];
-    const mesh = part.mesh;
+  for (let meshIdx = 0; meshIdx < inputMeshes.length; meshIdx++) {
+    const input = inputMeshes[meshIdx];
+    const positions = f32(input.positions);
+    const normals =
+      input.normals && input.normals.length === positions.length
+        ? f32(input.normals)
+        : undefined;
 
-    const vertexCount = mesh.positions.length / 3;
-    const indexCount = mesh.indices.length;
+    const vertexCount = positions.length / 3;
+    const indexCount = input.indices.length;
 
     // Calculate bounds
     let minX = Infinity,
@@ -92,9 +114,9 @@ export function toGlbBytes(
       maxZ = -Infinity;
 
     for (let i = 0; i < vertexCount; i++) {
-      const x = mesh.positions[i * 3];
-      const y = mesh.positions[i * 3 + 1];
-      const z = mesh.positions[i * 3 + 2];
+      const x = positions[i * 3];
+      const y = positions[i * 3 + 1];
+      const z = positions[i * 3 + 2];
       minX = Math.min(minX, x);
       minY = Math.min(minY, y);
       minZ = Math.min(minZ, z);
@@ -107,7 +129,7 @@ export function toGlbBytes(
     const indicesBytes = new Uint8Array(indexCount * 4);
     const indicesView = new DataView(indicesBytes.buffer);
     for (let i = 0; i < indexCount; i++) {
-      indicesView.setUint32(i * 4, mesh.indices[i], true);
+      indicesView.setUint32(i * 4, input.indices[i], true);
     }
 
     // Pad to 4-byte alignment
@@ -133,8 +155,14 @@ export function toGlbBytes(
       type: "SCALAR",
     });
 
-    // Write positions as f32
-    const positionsBytes = new Uint8Array(mesh.positions.buffer.slice(0));
+    // Write positions as f32 (copy into a fresh, tightly-packed buffer so a
+    // subarray view of a larger backing buffer doesn't leak extra bytes).
+    const positionsBytes = new Uint8Array(
+      positions.buffer.slice(
+        positions.byteOffset,
+        positions.byteOffset + vertexCount * 12,
+      ),
+    );
     const positionsPadded = padTo4(positionsBytes);
     bufferChunks.push(positionsPadded);
 
@@ -159,17 +187,48 @@ export function toGlbBytes(
       max: [maxX, maxY, maxZ],
     });
 
-    // Get material index
-    const matIdx = materialMap.get(part.material) ?? 0;
+    const attributes: { POSITION: number; NORMAL?: number } = {
+      POSITION: positionsAccIdx,
+    };
+
+    // Normals (optional) — gives the viewer proper smooth/flat shading.
+    if (normals) {
+      const normalsBytes = new Uint8Array(
+        normals.buffer.slice(
+          normals.byteOffset,
+          normals.byteOffset + vertexCount * 12,
+        ),
+      );
+      const normalsPadded = padTo4(normalsBytes);
+      bufferChunks.push(normalsPadded);
+
+      const normalsBvIdx = bufferViews.length;
+      bufferViews.push({
+        buffer: 0,
+        byteOffset: bufferOffset,
+        byteLength: vertexCount * 12,
+        target: 34962, // ARRAY_BUFFER
+      });
+      bufferOffset += normalsPadded.length;
+
+      const normalsAccIdx = accessors.length;
+      accessors.push({
+        bufferView: normalsBvIdx,
+        componentType: 5126, // FLOAT
+        count: vertexCount,
+        type: "VEC3",
+      });
+      attributes.NORMAL = normalsAccIdx;
+    }
 
     // Mesh
     meshes.push({
       name: `mesh_${meshIdx}`,
       primitives: [
         {
-          attributes: { POSITION: positionsAccIdx },
+          attributes,
           indices: indicesAccIdx,
-          material: matIdx,
+          material: materialIndexFor(input),
         },
       ],
     });
@@ -177,7 +236,7 @@ export function toGlbBytes(
     // Node — named with part identity when the caller provides it.
     nodes.push({
       mesh: meshIdx,
-      name: partLabels?.[meshIdx] ?? `part_${meshIdx}`,
+      name: input.name,
     });
   }
 
@@ -246,6 +305,32 @@ export function toGlbBytes(
   return glb;
 }
 
+/** Convert an evaluated scene to binary GLB bytes.
+ *
+ * `partLabels` (index-aligned with `scene.parts`) become glTF node names —
+ * the viewer parses them back into part identity for click-to-select, so
+ * they follow the `"<part_id>:<name>"` convention from
+ * {@link buildPartLabels}. Omitted entries fall back to `part_<idx>`.
+ *
+ * Parts keep the neutral default material; for colored PCB previews the
+ * caller builds {@link GlbMesh}es directly and calls {@link buildGlb}. */
+export function toGlbBytes(
+  scene: EvaluatedScene,
+  name: string,
+  partLabels?: string[],
+): Uint8Array {
+  const meshes: GlbMesh[] = scene.parts.map((part, i) => ({
+    name: partLabels?.[i] ?? `part_${i}`,
+    positions: part.mesh.positions,
+    indices: part.mesh.indices,
+    normals: part.mesh.normals,
+    color: DEFAULT_MATERIAL.color,
+    metallic: DEFAULT_MATERIAL.metallic,
+    roughness: DEFAULT_MATERIAL.roughness,
+  }));
+  return buildGlb(meshes, name);
+}
+
 /** Pad bytes to 4-byte alignment. */
 function padTo4(bytes: Uint8Array, padByte = 0): Uint8Array {
   const paddedLength = (bytes.length + 3) & ~3;
@@ -278,7 +363,7 @@ interface Accessor {
 interface Mesh {
   name: string;
   primitives: Array<{
-    attributes: { POSITION: number };
+    attributes: { POSITION: number; NORMAL?: number };
     indices: number;
     material: number;
   }>;
