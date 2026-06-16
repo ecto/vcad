@@ -75,6 +75,21 @@ fn generate_for_footprint(
             fp, body, body, 1.6, cx, cy, zb, z_dir, IC_COLOR,
         )];
     }
+    // QFN/no-lead: source the 3D body from the SAME parametric generator that
+    // produced the land pattern, so footprint and body cannot drift.
+    if let Some((pins, pitch, body)) = parse_qfn(name) {
+        if let Ok(d) =
+            vcad_ecad_package::derive(&vcad_ecad_package::presets::qfn(pins, pitch, body, 0.0))
+        {
+            let bb = d.body.aabb();
+            let (w, l, h) = (
+                (bb.max.x - bb.min.x) as f32,
+                (bb.max.y - bb.min.y) as f32,
+                bb.height() as f32,
+            );
+            return vec![ic_body_model(fp, w, l, h, cx, cy, zb, z_dir, IC_COLOR)];
+        }
+    }
     if let Some(pins) = parse_dip(name) {
         return vec![ic_body_model(
             fp,
@@ -179,6 +194,50 @@ fn parse_qfp(name: &str) -> Option<u32> {
     } else {
         None
     }
+}
+
+/// Parse `(pins, pitch_mm, body_mm)` from a QFN/no-lead footprint id such as
+/// `"QFN-40_5x5mm_P0.4mm"`. Pitch and body fall back to sane defaults when the
+/// id omits them.
+fn parse_qfn(name: &str) -> Option<(u32, f64, f64)> {
+    let markers = ["QFN-", "VQFN-", "UQFN-", "WQFN-", "TQFN-", "DHVQFN-"];
+    let pins = markers.iter().find_map(|m| uint_after(name, m))?;
+    if pins < 4 {
+        return None;
+    }
+    let pitch = float_after(name, "_P").unwrap_or(0.5);
+    // Body: look for a "<w>x<h>mm" token; else estimate from the pad ring.
+    let body = name
+        .split(['_', ':'])
+        .find_map(parse_size_token)
+        .unwrap_or((pins as f64 / 4.0) * pitch + 1.0);
+    Some((pins, pitch, body))
+}
+
+/// First unsigned integer immediately following `marker` in `s`.
+fn uint_after(s: &str, marker: &str) -> Option<u32> {
+    let rest = &s[s.find(marker)? + marker.len()..];
+    let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+    digits.parse().ok()
+}
+
+/// First float immediately following `marker` in `s`.
+fn float_after(s: &str, marker: &str) -> Option<f64> {
+    let rest = &s[s.find(marker)? + marker.len()..];
+    let num: String = rest
+        .chars()
+        .take_while(|c| c.is_ascii_digit() || *c == '.')
+        .collect();
+    num.parse().ok()
+}
+
+/// Parse the leading width from a `"5x5mm"` / `"3.5x3.5mm"` token.
+fn parse_size_token(tok: &str) -> Option<f64> {
+    let t = tok.strip_suffix("mm").unwrap_or(tok);
+    let (w, h) = t.split_once('x')?;
+    let w: f64 = w.parse().ok()?;
+    let _h: f64 = h.parse().ok()?;
+    Some(w)
 }
 
 fn parse_dip(name: &str) -> Option<u32> {
@@ -652,6 +711,20 @@ mod tests {
             assert!(!m.positions.is_empty());
             assert!(!m.indices.is_empty());
         }
+    }
+
+    #[test]
+    fn qfn_parses_and_body_from_generator() {
+        let (pins, pitch, body) = parse_qfn("Package_DFN_QFN:QFN-40_5x5mm_P0.4mm").unwrap();
+        assert_eq!(pins, 40);
+        assert!((pitch - 0.4).abs() < 1e-9);
+        assert!((body - 5.0).abs() < 1e-9);
+        let d = vcad_ecad_package::derive(&vcad_ecad_package::presets::qfn(pins, pitch, body, 0.0))
+            .unwrap();
+        let bb = d.body.aabb();
+        // Body is the 5×5mm package, ~0.9mm tall — sourced from the generator.
+        assert!((bb.max.x - bb.min.x - 5.0).abs() < 1e-6);
+        assert!((bb.height() - 0.9).abs() < 1e-6);
     }
 
     #[test]

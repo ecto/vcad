@@ -1,6 +1,6 @@
 [package]
-name = "vcad-ecad-pcb"
-description = "PCB layout operations: routing, copper pour, DRC, and spatial indexing"
+name = "vcad-ecad-parts"
+description = "Generative electronic parts catalog: parametric families + typed specs + spec-aware resolve, no scraped rows"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -10,9 +10,5 @@ publish = false
 [dependencies]
 vcad-ir = { workspace = true }
 vcad-ecad-package = { workspace = true }
-vcad-kernel-math = { workspace = true }
-vcad-kernel-sheet = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-thiserror = { workspace = true }
-rstar = { workspace = true }

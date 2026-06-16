@@ -166,6 +166,13 @@ export {
   createCircuitSim,
   evaluateMotor,
   airgapFluxDensity,
+  resolvePart,
+  searchEcadParts,
+  partsManifest,
+  findAlternatives,
+  verifySubstitution,
+  buildReceipt,
+  verifyReceipt,
 } from "./ecad.js";
 export type {
   DrcViolationResult,
@@ -186,6 +193,13 @@ export type {
   MotorSpecInput,
   MotorPerformanceResult,
   AirGapSpecInput,
+  SpecValue,
+  ComponentClass,
+  ElecXref,
+  ResolvedPart,
+  FootprintCompat,
+  Alternative,
+  Substitution,
 } from "./ecad.js";
 
 // Parts library

@@ -79,6 +79,41 @@ cutouts?: Array<Array<Vec2>>,
 thickness: number, };
 
 /**
+ * The component body envelope (the molded/ceramic package, excluding leads).
+ */
+export type BodyEnvelope = { 
+/**
+ * Body length along X in mm.
+ */
+length: number, 
+/**
+ * Body width along Y in mm.
+ */
+width: number, 
+/**
+ * Body height (Z) in mm.
+ */
+height: number, 
+/**
+ * Standoff above the board surface in mm (0 for most SMD).
+ */
+standoff: number, };
+
+/**
+ * An axis-aligned 3D bounding box (millimeters), used for component bodies
+ * and courtyards.
+ */
+export type Box3D = { 
+/**
+ * Minimum corner.
+ */
+min: Vec3, 
+/**
+ * Maximum corner.
+ */
+max: Vec3, };
+
+/**
  * A saved camera position/orientation.
  */
 export type CameraPreset = { 
@@ -575,6 +610,39 @@ width?: number,
 depth?: number, };
 
 /**
+ * IPC-7351 producibility level, controlling fillet (toe/heel/side) goals and
+ * courtyard excess. Higher density → smaller lands.
+ */
+export type DensityLevel = "Most" | "Nominal" | "Least";
+
+/**
+ * The full result of deriving a package: footprint, symbol, body, courtyard,
+ * and the IPC goals used — all from one [`PackageClass`] in one pass, so pad
+ * numbers, symbol pin numbers, and body leads are bijective by construction.
+ */
+export type DerivedPart = { 
+/**
+ * The PCB land pattern.
+ */
+footprint: FootprintTemplate, 
+/**
+ * The schematic symbol (pins numbered identically to the footprint pads).
+ */
+symbol: SymbolDef, 
+/**
+ * The 3D component body.
+ */
+body: FootprintBody, 
+/**
+ * Assembly courtyard (encloses both body and lands plus excess).
+ */
+courtyard_aabb: Box3D, 
+/**
+ * The IPC fillet goals applied.
+ */
+ipc: IpcGoals, };
+
+/**
  * Board-level design rules.
  */
 export type DesignRules = { 
@@ -672,6 +740,24 @@ parameters?: Record<string, Parameter>,
  * resolve, so the kernel never sees expressions.
  */
 bindings?: Bindings, };
+
+/**
+ * A canonicalized DRC summary: total, per-rule counts (sorted), and the
+ * ordered set of violation keys, so the receipt hashes deterministically.
+ */
+export type DrcSummary = { 
+/**
+ * Total violation count.
+ */
+total: number, 
+/**
+ * Per-rule counts, sorted by rule name.
+ */
+by_rule: Array<RuleCount>, 
+/**
+ * Canonical violation keys (sorted) — `rule|message|x|y`.
+ */
+violations: Array<string>, };
 
 /**
  * Drill specification for through-hole pads.
@@ -833,6 +919,32 @@ model3d?: string,
  * Extra properties.
  */
 properties?: Record<string, string>, };
+
+/**
+ * A 3D body for a component, attached to its footprint so PCB↔enclosure
+ * co-design works from real per-package geometry.
+ */
+export type FootprintBody = { "type": "Box", 
+/**
+ * Body extents in footprint-local coordinates (Z up).
+ */
+bbox: Box3D, } | { "type": "Cylinder", 
+/**
+ * Center on the XY plane.
+ */
+center: Vec2, 
+/**
+ * Radius in mm.
+ */
+radius: number, 
+/**
+ * Base Z in mm.
+ */
+z_min: number, 
+/**
+ * Top Z in mm.
+ */
+z_max: number, };
 
 /**
  * A graphic element on a footprint (silkscreen, courtyard, etc.).
@@ -1022,6 +1134,27 @@ transform?: Transform3D,
 material?: string, };
 
 /**
+ * IPC-7351 land-pattern fillet goals (mm) used to size pads from terminals.
+ */
+export type IpcGoals = { 
+/**
+ * Toe (outward) fillet goal.
+ */
+toe: number, 
+/**
+ * Heel (inward) fillet goal.
+ */
+heel: number, 
+/**
+ * Side fillet goal (may be negative at fine pitch to avoid bridging).
+ */
+side: number, 
+/**
+ * Courtyard excess beyond the maximum of body/land extents.
+ */
+courtyard_excess: number, };
+
+/**
  * A group of stitches sharing a thread color.
  */
 export type IrStitchGroup = { 
@@ -1142,6 +1275,49 @@ export type LayerStackup = {
  * Ordered layers from top to bottom.
  */
 layers: Array<StackupLayer>, };
+
+/**
+ * Lead/terminal geometry, shared across all sides of the package.
+ */
+export type LeadSpec = { 
+/**
+ * Center-to-center terminal pitch in mm.
+ */
+pitch: number, 
+/**
+ * Number of terminals per populated side.
+ */
+count_per_side: number, 
+/**
+ * Number of populated sides (2 = dual, 4 = quad).
+ */
+sides: number, 
+/**
+ * Terminal contact length (the metallized land on the component, the
+ * dimension that runs radially in/out from the body edge) in mm.
+ */
+lead_length: number, 
+/**
+ * Terminal width (the dimension tangent to the body edge) in mm.
+ */
+lead_width: number, 
+/**
+ * How the terminal attaches to the board.
+ */
+terminal: LeadTerminal, };
+
+/**
+ * How a single terminal physically attaches to the board.
+ */
+export type LeadTerminal = { "type": "Smd" } | { "type": "ThtPin", 
+/**
+ * Drill diameter in mm.
+ */
+drill: number, } | { "type": "Castellated", 
+/**
+ * Drill diameter in mm.
+ */
+drill: number, };
 
 /**
  * A light source in the scene.
@@ -1372,6 +1548,46 @@ name: string | null,
 op: CsgOp, };
 
 /**
+ * The complete parametric description of a package — the single source of
+ * truth from which footprint, symbol, and 3D body are derived.
+ */
+export type PackageClass = { 
+/**
+ * Stable identifier (e.g. "QFN-40_5x5mm_P0.4mm", "0603", "SOIC-8").
+ */
+id: string, 
+/**
+ * Geometric family selecting the generator.
+ */
+family: PackageFamily, 
+/**
+ * Body envelope.
+ */
+body: BodyEnvelope, 
+/**
+ * Lead/terminal geometry.
+ */
+leads: LeadSpec, 
+/**
+ * Exposed thermal pad, if any.
+ */
+thermal_pad?: ThermalPad, 
+/**
+ * Producibility / density target.
+ */
+density: DensityLevel, 
+/**
+ * Pin map.
+ */
+pin_map: PinMap, };
+
+/**
+ * The broad geometric class of a package, which selects the land-pattern
+ * generator.
+ */
+export type PackageFamily = "Chip" | "GullWing" | "NoLead" | "JLead" | "ThroughHole" | "TabbedSmd" | "Header" | "Terminal" | "Bga";
+
+/**
  * A pad on a footprint.
  */
 export type Pad = { 
@@ -1521,6 +1737,27 @@ inertial?: InertialProperties, };
 export type PartInfo = { "kind": "cube", id: string, name: string, primitiveNodeId: number, scaleNodeId: number, rotateNodeId: number, translateNodeId: number, } | { "kind": "cylinder", id: string, name: string, primitiveNodeId: number, scaleNodeId: number, rotateNodeId: number, translateNodeId: number, } | { "kind": "sphere", id: string, name: string, primitiveNodeId: number, scaleNodeId: number, rotateNodeId: number, translateNodeId: number, } | { "kind": "boolean", id: string, name: string, booleanType: string, booleanNodeId: number, scaleNodeId: number, rotateNodeId: number, translateNodeId: number, sourcePartIds: Array<string>, } | { "kind": "extrude", id: string, name: string, sketchNodeId: number, extrudeNodeId: number, scaleNodeId: number, rotateNodeId: number, translateNodeId: number, } | { "kind": "revolve", id: string, name: string, sketchNodeId: number, revolveNodeId: number, scaleNodeId: number, rotateNodeId: number, translateNodeId: number, } | { "kind": "sweep", id: string, name: string, sketchNodeId: number, sweepNodeId: number, scaleNodeId: number, rotateNodeId: number, translateNodeId: number, } | { "kind": "loft", id: string, name: string, sketchNodeIds: number[], loftNodeId: number, scaleNodeId: number, rotateNodeId: number, translateNodeId: number, } | { "kind": "imported-mesh", id: string, name: string, meshNodeId: number, scaleNodeId: number, rotateNodeId: number, translateNodeId: number, } | { "kind": "fillet", id: string, name: string, sourcePartId: string, filletNodeId: number, scaleNodeId: number, rotateNodeId: number, translateNodeId: number, } | { "kind": "chamfer", id: string, name: string, sourcePartId: string, chamferNodeId: number, scaleNodeId: number, rotateNodeId: number, translateNodeId: number, } | { "kind": "shell", id: string, name: string, sourcePartId: string, shellNodeId: number, scaleNodeId: number, rotateNodeId: number, translateNodeId: number, } | { "kind": "linear-pattern", id: string, name: string, sourcePartId: string, patternNodeId: number, scaleNodeId: number, rotateNodeId: number, translateNodeId: number, } | { "kind": "circular-pattern", id: string, name: string, sourcePartId: string, patternNodeId: number, scaleNodeId: number, rotateNodeId: number, translateNodeId: number, } | { "kind": "pcb-board", id: string, name: string, boardNodeId: number, scaleNodeId: number, rotateNodeId: number, translateNodeId: number, } | { "kind": "embroidery-pattern", id: string, name: string, patternNodeId: number, scaleNodeId: number, rotateNodeId: number, translateNodeId: number, };
 
 /**
+ * Provenance for one placed part.
+ */
+export type PartReceiptLine = { 
+/**
+ * Reference designator.
+ */
+reference: string, 
+/**
+ * Footprint name.
+ */
+footprint: string, 
+/**
+ * Component value.
+ */
+value: string, 
+/**
+ * Manufacturer part number, if known.
+ */
+mpn?: string, };
+
+/**
  * A straight line path from start to end.
  */
 export type PathCurve = { "type": "Line", 
@@ -1604,6 +1841,54 @@ netTies?: Array<NetTie>, };
 export type PcbLayer = "FCu" | "BCu" | "In1Cu" | "In2Cu" | "In3Cu" | "In4Cu" | "In5Cu" | "In6Cu" | "FSilkS" | "BSilkS" | "FMask" | "BMask" | "FPaste" | "BPaste" | "FFab" | "BFab" | "FCrtYd" | "BCrtYd" | "EdgeCuts" | "UserDrawings" | "UserComments";
 
 /**
+ * A single pin's identity within a package.
+ */
+export type PinAssignment = { 
+/**
+ * Pad/pin number (e.g. "1", "EP", "A1").
+ */
+number: string, 
+/**
+ * Functional pin name (e.g. "VCC", "GND", "PA0").
+ */
+name: string, 
+/**
+ * Functional role.
+ */
+role: PinRole, };
+
+/**
+ * The pin map: numbering convention plus optional per-pin identities.
+ *
+ * When `pins` is empty the generator synthesizes anonymous passive pins
+ * `1..=N` (plus an exposed-pad pin if the package has a thermal pad).
+ */
+export type PinMap = { 
+/**
+ * Numbering convention.
+ */
+numbering: PinNumbering, 
+/**
+ * Explicit pin identities (may be empty — see type docs).
+ */
+pins: Array<PinAssignment>, 
+/**
+ * Whether pin 1 carries a polarity/orientation marker.
+ */
+polarity_marker: boolean, };
+
+/**
+ * Pin numbering convention for a package.
+ */
+export type PinNumbering = "Ccw" | "DualUpDown" | "Sequential";
+
+/**
+ * Functional role of a pin, used by ERC, net auto-assignment, and the
+ * pin-role hard-reject gate in verified substitution.
+ */
+export type PinRole = "Power" | "Ground" | "Signal" | "Analog" | "Clock" | "Reset" | "Io" | "NoConnect" | "Thermal" | "Passive" | "Anode" | "Cathode" | "Gate" | "Drain" | "Source";
+
+/**
  * Pin electrical type for ERC validation.
  */
 export type PinType = "Input" | "Output" | "Bidirectional" | "TriState" | "Passive" | "PowerInput" | "PowerOutput" | "OpenCollector" | "OpenEmitter" | "NotConnected" | "Free";
@@ -1636,6 +1921,53 @@ toneMapping?: ToneMapping,
  * Exposure adjustment (-2.0 to 2.0, default 0.0).
  */
 exposure?: number, };
+
+/**
+ * A re-runnable verification receipt for a board.
+ */
+export type Receipt = { 
+/**
+ * Content hash of the DRC-relevant board geometry (hex).
+ */
+board_hash: string, 
+/**
+ * Content hash of the design rules (hex).
+ */
+design_rules_hash: string, 
+/**
+ * The DRC backend + version that produced this receipt.
+ */
+drc_backend: string, 
+/**
+ * The canonicalized DRC summary.
+ */
+drc: DrcSummary, 
+/**
+ * Per-part provenance.
+ */
+parts: Array<PartReceiptLine>, 
+/**
+ * Optional sourcing snapshot (separate from the DRC verdict).
+ */
+sourcing?: SourcingSnapshot, };
+
+/**
+ * The result of re-running a receipt against the current board.
+ */
+export type ReceiptStatus = "Holds" | "Stale" | "Violated";
+
+/**
+ * Count of violations of one rule.
+ */
+export type RuleCount = { 
+/**
+ * Rule name (e.g. "Clearance", "CourtyardOverlap").
+ */
+rule: string, 
+/**
+ * Number of violations of this rule.
+ */
+count: number, };
 
 /**
  * An entry in the scene — a root node with an assigned material.
@@ -1887,6 +2219,36 @@ center: Vec2,
 ccw: boolean, };
 
 /**
+ * A single sourcing line captured at receipt-build time (optional leaf).
+ */
+export type SourcingLine = { 
+/**
+ * Manufacturer part number.
+ */
+mpn: string, 
+/**
+ * Stock quantity, if known.
+ */
+stock?: number, 
+/**
+ * Unit price, if known.
+ */
+unit_price?: number, 
+/**
+ * Currency code (e.g. "USD"), if a price is present.
+ */
+currency?: string, };
+
+/**
+ * A sourcing snapshot — informational, never gates the DRC verdict.
+ */
+export type SourcingSnapshot = { 
+/**
+ * The captured sourcing lines.
+ */
+lines: Array<SourcingLine>, };
+
+/**
  * A single layer in the physical board stackup.
  */
 export type StackupLayer = { 
@@ -1953,6 +2315,19 @@ export type SymbolGraphic = { "type": "rect", x: number, y: number, width: numbe
  * Text alignment options for 2D text geometry.
  */
 export type TextAlignment = "left" | "center" | "right";
+
+/**
+ * An exposed thermal pad under a no-lead package.
+ */
+export type ThermalPad = { 
+/**
+ * Pad length (X) in mm.
+ */
+length: number, 
+/**
+ * Pad width (Y) in mm.
+ */
+width: number, };
 
 /**
  * Thermal relief style for zone connections.
