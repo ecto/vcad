@@ -2192,10 +2192,13 @@ export async function exportGerber(args: Record<string, unknown>) {
     // module stays loadable in browser bundles (e.g. the HTTP MCP frontend).
     try {
       const fs = await import("node:fs/promises");
-      const path = await import("node:path");
-      await fs.mkdir(outputDir, { recursive: true });
+      const { resolveWithinRoot } = await import("./safe-path.js");
+      // Validate both the directory and each filename against cwd so a
+      // crafted output_dir or file name can't escape the workspace.
+      const dir = resolveWithinRoot(outputDir);
+      await fs.mkdir(dir, { recursive: true });
       for (const f of files) {
-        await fs.writeFile(path.join(outputDir, f.name), f.content, "utf8");
+        await fs.writeFile(resolveWithinRoot(f.name, dir), f.content, "utf8");
       }
       return {
         content: [

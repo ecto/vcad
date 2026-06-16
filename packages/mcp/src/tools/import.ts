@@ -8,12 +8,14 @@ import type { Engine, TriangleMesh } from "@vcad/engine";
 import { readFileSync, existsSync, statSync } from "node:fs";
 import { basename } from "node:path";
 import { resolveWithinRoot } from "./safe-path.js";
+import { isRemoteDeployment } from "./remote.js";
 
 // Cap STEP imports at 100 MB to prevent a remote caller from pinning memory.
 const MAX_STEP_BYTES = 100 * 1024 * 1024;
 
 interface ImportStepInput {
-  filename: string;
+  filename?: string;
+  content_base64?: string;
   name?: string;
   material?: string;
 }
@@ -24,8 +26,15 @@ export const importStepSchema = {
     filename: {
       type: "string" as const,
       description:
-        "Path to the STEP file (.step or .stp), relative to the server working directory " +
-        "(or VCAD_MCP_EXPORT_DIR if set).",
+        "Path to the STEP file (.step or .stp) on the server filesystem, relative to the " +
+        "server working directory (or VCAD_MCP_EXPORT_DIR if set). On hosted servers pass " +
+        "content_base64 instead.",
+    },
+    content_base64: {
+      type: "string" as const,
+      description:
+        "Base64-encoded STEP file contents. Use instead of `filename` when the " +
+        "server has no access to your filesystem (hosted/remote deployments).",
     },
     name: {
       type: "string" as const,
@@ -36,37 +45,58 @@ export const importStepSchema = {
       description: "Material key (default: 'steel')",
     },
   },
-  required: ["filename"],
 };
 
 export function importStep(
   input: unknown,
   engine: Engine,
 ): { content: Array<{ type: "text"; text: string }> } {
-  const { filename, name, material } = input as ImportStepInput;
+  const { filename, content_base64, name, material } = input as ImportStepInput;
 
-  // Resolve against the export dir (VCAD_MCP_EXPORT_DIR or cwd) and reject any
-  // path that escapes it.
-  const filepath = resolveWithinRoot(filename, process.env.VCAD_MCP_EXPORT_DIR ?? process.cwd());
+  let fileBuffer: Buffer;
+  if (content_base64) {
+    fileBuffer = Buffer.from(content_base64, "base64");
+    if (fileBuffer.length === 0) {
+      throw new Error("content_base64 decoded to zero bytes");
+    }
+    if (fileBuffer.length > MAX_STEP_BYTES) {
+      throw new Error(`STEP content exceeds ${MAX_STEP_BYTES} byte limit`);
+    }
+  } else if (filename) {
+    if (isRemoteDeployment()) {
+      throw new Error(
+        "This hosted server has no access to your filesystem — pass the STEP " +
+          "file contents as `content_base64` instead of `filename`.",
+      );
+    }
+    // Resolve against the export dir (VCAD_MCP_EXPORT_DIR or cwd) and reject
+    // any path that escapes it.
+    const filepath = resolveWithinRoot(
+      filename,
+      process.env.VCAD_MCP_EXPORT_DIR ?? process.cwd(),
+    );
 
-  if (!existsSync(filepath)) {
-    throw new Error("STEP file not found");
+    if (!existsSync(filepath)) {
+      throw new Error("STEP file not found");
+    }
+
+    const stat = statSync(filepath);
+    if (!stat.isFile()) {
+      throw new Error("STEP path is not a regular file");
+    }
+    if (stat.size > MAX_STEP_BYTES) {
+      throw new Error(`STEP file exceeds ${MAX_STEP_BYTES} byte limit`);
+    }
+
+    fileBuffer = readFileSync(filepath);
+  } else {
+    throw new Error("Provide either `filename` or `content_base64`");
   }
 
-  const stat = statSync(filepath);
-  if (!stat.isFile()) {
-    throw new Error("STEP path is not a regular file");
-  }
-  if (stat.size > MAX_STEP_BYTES) {
-    throw new Error(`STEP file exceeds ${MAX_STEP_BYTES} byte limit`);
-  }
-
-  // Read the file
-  const fileBuffer = readFileSync(filepath);
-  const arrayBuffer = fileBuffer.buffer.slice(
-    fileBuffer.byteOffset,
-    fileBuffer.byteOffset + fileBuffer.byteLength,
-  );
+  // Copy into a plain ArrayBuffer (Buffer.buffer may be a pooled
+  // SharedArrayBuffer slice; the engine API takes ArrayBuffer).
+  const arrayBuffer = new ArrayBuffer(fileBuffer.byteLength);
+  new Uint8Array(arrayBuffer).set(fileBuffer);
 
   // Import using the engine
   const meshes = engine.importStep(arrayBuffer);
@@ -77,7 +107,13 @@ export function importStep(
 
   // Create a document with ImportedMesh nodes
   const doc = createDocument();
-  const partName = name ?? basename(filename, /\.(step|stp)$/i.test(filename) ? filename.slice(-5) : "");
+  const sourceLabel = filename ?? "step-import";
+  const partName =
+    name ??
+    basename(
+      sourceLabel,
+      /\.(step|stp)$/i.test(sourceLabel) ? sourceLabel.slice(-5) : "",
+    );
   const partMaterial = material ?? "steel";
 
   let nextId = 1;
@@ -91,7 +127,7 @@ export function importStep(
       positions: Array.from(mesh.positions),
       indices: Array.from(mesh.indices),
       normals: mesh.normals ? Array.from(mesh.normals) : undefined,
-      source: filename,
+      source: sourceLabel,
     };
 
     const nodeId = nextId++;

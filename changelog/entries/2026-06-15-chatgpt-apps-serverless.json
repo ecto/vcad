@@ -1,0 +1,10 @@
+{
+  "id": "2026-06-15-chatgpt-apps-serverless",
+  "version": "0.9.4",
+  "date": "2026-06-15",
+  "category": "feat",
+  "title": "vcad 3D viewer in ChatGPT + serverless-safe exports",
+  "summary": "The inline 3D viewer now renders inside ChatGPT via the OpenAI Apps SDK, and export_cad / import_step / export_gerber return inline base64 on the hosted server instead of writing to its read-only disk.",
+  "features": ["mcp", "chatgpt", "apps-sdk", "viewer", "serverless"],
+  "mcpTools": ["export_cad", "import_step", "export_gerber", "get_preview_glb", "get_document"]
+}

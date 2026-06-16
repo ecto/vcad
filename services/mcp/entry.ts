@@ -24,6 +24,16 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { readFileSync } from "node:fs";
 
+// The serverless function filesystem is read-only (/var/task), so the
+// filesystem-touching tools (export_cad, import_step, export_gerber)
+// must return inline base64 payloads instead of writing to disk — a
+// writeFileSync there throws EROFS and the bytes would be invisible to
+// the caller anyway. The tools read this flag at call time
+// (isRemoteDeployment()), so setting it at module scope is sufficient.
+if (process.env.VCAD_MCP_REMOTE === undefined) {
+  process.env.VCAD_MCP_REMOTE = "1";
+}
+
 // Locate WASM file next to this bundle
 const __bundleDir = dirname(fileURLToPath(import.meta.url));
 const WASM_PATH = join(__bundleDir, "vcad_kernel_wasm_bg.wasm");
