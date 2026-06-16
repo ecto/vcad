@@ -1,0 +1,10 @@
+{
+  "id": "2026-06-16-router-fanout-plane-stitch",
+  "version": "0.9.4",
+  "date": "2026-06-16",
+  "category": "feat",
+  "title": "Router fan-out vias + pad-to-plane stitching",
+  "summary": "route_nets now escapes fine-pitch pads it can't route on-layer with dog-bone fan-out vias, and stitches power/ground pads down to inner copper planes instead of starring traces across a signal layer — every emitted via probed clearance-legal.",
+  "features": ["pcb", "ecad", "routing", "vias", "planes"],
+  "mcpTools": ["route_nets"]
+}
