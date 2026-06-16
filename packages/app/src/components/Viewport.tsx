@@ -19,6 +19,7 @@ import { useDrawingStore } from "@/stores/drawing-store";
 import { useElectronicsStore } from "@/stores/electronics-store";
 import { useDfmStore } from "@/stores/dfm-store";
 import { useElectronicsSync } from "@/hooks/useElectronicsSync";
+import { useReceiptRecorder } from "@/hooks/useReceiptRecorder";
 import { useCircuitSim } from "@/hooks/useCircuitSim";
 import {
   viewportPointerDown,
@@ -40,6 +41,11 @@ const ElectronicsViewToggle = lazy(() =>
 const LengthTunePanel = lazy(() =>
   import("./electronics/LengthTunePanel").then((m) => ({
     default: m.LengthTunePanel,
+  })),
+);
+const ReceiptPanel = lazy(() =>
+  import("./electronics/ReceiptPanel").then((m) => ({
+    default: m.ReceiptPanel,
   })),
 );
 const PcbGettingStarted = lazy(() =>
@@ -303,6 +309,8 @@ export function Viewport() {
 
   // Run electronics sync when in electronics mode
   useElectronicsSync();
+  // Record a Receipt ledger entry per board mutation (#280)
+  useReceiptRecorder();
   // Drive the live circuit simulation ("come alive") when enabled
   useCircuitSim();
 
@@ -406,6 +414,9 @@ export function Viewport() {
           )}
           <Suspense fallback={null}>
             <LengthTunePanel />
+          </Suspense>
+          <Suspense fallback={null}>
+            <ReceiptPanel />
           </Suspense>
           <Suspense fallback={null}>
             <PcbGettingStarted />

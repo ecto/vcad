@@ -1305,7 +1305,7 @@ export async function createServer(
           break;
 
         case "get_preview_glb":
-          result = getPreviewGlb(getSession(String(args.document_id ?? "")), engine);
+          result = await getPreviewGlb(getSession(String(args.document_id ?? "")), engine);
           break;
 
         case "create_cad_loon":

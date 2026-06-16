@@ -211,6 +211,9 @@ export function ElectronicsPanelHeader() {
   const pcbLayers = useElectronicsStore((s) => s.pcbLayers);
   const drcViolations = useElectronicsStore((s) => s.drcViolations);
   const ercViolations = useElectronicsStore((s) => s.ercViolations);
+  const receiptCount = useElectronicsStore((s) => s.receiptEntries.length);
+  const showReceiptPanel = useElectronicsStore((s) => s.showReceiptPanel);
+  const toggleReceiptPanel = useElectronicsStore((s) => s.toggleReceiptPanel);
   const activeBoardNodeId = useCoreElectronicsStore((s) => s.activeBoardNodeId);
   const document = useDocumentStore((s) => s.document);
   const pcb = activeBoardNodeId != null ? getNodePcb(document, activeBoardNodeId) : null;
@@ -248,6 +251,18 @@ export function ElectronicsPanelHeader() {
               {ercCount}
             </span>
           </span>
+          <button
+            onClick={toggleReceiptPanel}
+            title="Toggle the Receipt ledger — what each edit fixed or broke"
+            className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 transition-colors ${
+              showReceiptPanel ? "text-brand bg-brand/10" : "text-text-muted hover:text-text"
+            }`}
+          >
+            <span>Ledger</span>
+            {receiptCount > 0 && (
+              <span className="tabular-nums rounded bg-white/10 px-1 text-[9.5px]">{receiptCount}</span>
+            )}
+          </button>
         </div>
       </div>
 

@@ -1111,7 +1111,7 @@ describe("GLB part-identity node names", () => {
   it("names glTF nodes <part_id>:<name> for the viewer's click-to-select", async () => {
     const { generateGlbPreview } = await import("../tools/preview.js");
     const engine = await Engine.init();
-    const b64 = generateGlbPreview(makeCubeDoc(), engine);
+    const b64 = await generateGlbPreview(makeCubeDoc(), engine);
     expect(b64).toBeTruthy();
     const glb = Buffer.from(b64!, "base64");
     expect(glb.subarray(0, 4).toString()).toBe("glTF");

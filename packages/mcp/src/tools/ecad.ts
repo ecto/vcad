@@ -30,8 +30,7 @@ import type {
   Vec2,
 } from "@vcad/ir";
 import { createDocument } from "@vcad/ir";
-import { getNodePcb, getPcbNodeIds } from "@vcad/core";
-import { buildEntry, agentView } from "../receipt/index.js";
+import { getNodePcb, getPcbNodeIds, buildEntry, agentView } from "@vcad/core";
 import {
   computeRatsnest,
   exportFabFiles,

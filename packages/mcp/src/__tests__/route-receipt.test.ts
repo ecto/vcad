@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, beforeEach } from "vitest";
 import { Engine } from "@vcad/engine";
-import { createSchematic, placeComponents, routeNets } from "../../tools/ecad.js";
-import { documents } from "../../tools/session.js";
+import { createSchematic, placeComponents, routeNets } from "../tools/ecad.js";
+import { documents } from "../tools/session.js";
 
 beforeAll(async () => {
   await Engine.init();

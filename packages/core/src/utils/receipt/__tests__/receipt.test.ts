@@ -1,7 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { writeFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { buildReceipt, renderReceiptHtml, renderReceiptText } from "../index.js";
+import { buildReceipt, renderReceiptHtml } from "../index.js";
 import { S0, S1, S2 } from "./fixtures.js";
 
 describe("Receipt — diffs before/after DRC and attributes blame", () => {
@@ -50,11 +48,9 @@ describe("Receipt — diffs before/after DRC and attributes blame", () => {
     });
     expect(again.entries[0]!.fingerprint).toBe(e2!.fingerprint); // recomputes identically
 
-    // ---- Emit the rendered artifacts. ----
+    // ---- The standalone HTML render reflects the verdict. ----
     const html = renderReceiptHtml(receipt);
     expect(html).toContain("hard short");
     expect(html).toContain("PRE-EXISTING");
-    writeFileSync(fileURLToPath(new URL("../../../receipt-demo.html", import.meta.url)), html);
-    writeFileSync(fileURLToPath(new URL("../../../receipt-demo.txt", import.meta.url)), renderReceiptText(receipt));
   });
 });

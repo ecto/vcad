@@ -1,0 +1,10 @@
+{
+  "id": "2026-06-15-pcb-preview-layers",
+  "version": "0.9.4",
+  "date": "2026-06-15",
+  "category": "feat",
+  "title": "PCBs render as real boards in the 3D preview",
+  "summary": "The inline 3D viewer now shows PCBs as layered boards — green FR4, gold copper traces and pads, real 3D component bodies, and white silkscreen — instead of one flat gray slab. GLB previews/exports also carry vertex normals for proper shading.",
+  "features": ["pcb", "render", "preview", "glb"],
+  "mcpTools": ["get_preview_glb", "export_cad"]
+}

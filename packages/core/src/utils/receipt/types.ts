@@ -103,7 +103,7 @@ export interface ReceiptEntry {
   verdict: Verdict;
   /** Coverage of the diff: "full" when both snapshots had complete `details`. */
   coverage: "full" | "partial";
-  /** sha256 of the canonical `after` snapshot — the deterministic re-run token. */
+  /** Content hash of the canonical `after` snapshot — the deterministic re-run token. */
   fingerprint: string;
 }
 
@@ -113,7 +113,8 @@ export interface Receipt {
   /** Pre-flight satisfiability note from create_schematic. */
   preflight?: { unconnectedPins?: string[] };
   entries: ReceiptEntry[];
-  fingerprintAlgo: "sha256";
+  /** The hash algorithm used for `fingerprint` (e.g. "fnv1a-128"). */
+  fingerprintAlgo: string;
   build: { version: string; sha: string };
   /** How the re-run guarantee should be described — honest about its scope. */
   reverification: "deterministic-same-session";

@@ -1,3 +1,6 @@
+// Receipt — re-runnable PCB audit ledger (browser-safe engine)
+export * from "./utils/receipt/index.js";
+
 // Types
 export type {
   PrimitiveKind,
