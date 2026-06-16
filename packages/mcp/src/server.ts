@@ -38,7 +38,20 @@ import {
   documents,
   registerSession,
   getSession,
+  hydrateSession,
+  persistSession,
+  dropSession,
+  runInSessionScope,
 } from "./tools/session.js";
+import { createSessionStore } from "./session-store.js";
+import type { AuthUser } from "./oauth.js";
+
+/** Per-connection context threaded from the transport entry point — the
+ *  authenticated user when the request carried a valid Bearer access token,
+ *  otherwise null (stdio, anonymous HTTP, or OAuth disabled). */
+export interface ServerContext {
+  user: AuthUser | null;
+}
 import {
   registryToolDescriptors,
   registryDispatchableNames,
@@ -230,6 +243,45 @@ const GEOMETRY_TOOLS = new Set([
   "load_document",
 ]);
 
+/**
+ * Switch-path tools that create or mutate a session Document, so the dispatch
+ * layer persists them to the durable store after they run. Registry-path
+ * mutators (create / update / delete / set_material) are detected separately
+ * via `dispatchableTools`. Readers, exporters, calculators, and planners
+ * (`read`, `inspect_cad`, `export_*`, `board_from_solid`, `winding_layout`,
+ * `calc_*` / `size_*`, `run_drc`, …) are intentionally absent — they never
+ * change the stored document.
+ */
+const SWITCH_DOC_WRITERS = new Set<string>([
+  // creators
+  "open_document",
+  "create_cad_loon",
+  "import_step",
+  "create_schematic",
+  "sheet_metal_create",
+  // load_document materializes a saved board into a live session; its
+  // local-disk read is a no-op on the serverless deploy, but on success
+  // persisting the loaded doc to the user's account is desirable.
+  "load_document",
+  // CAD / sheet-metal / DFM mutators
+  "place_part",
+  "dfm_apply_fix",
+  // PCB / ECAD mutators
+  "place_components",
+  "route_nets",
+  "route_diff_pair",
+  "add_coil",
+  "add_coil_array",
+  "add_motor_winding",
+  "add_trace",
+  "add_via",
+  "add_via_array",
+  "add_zone",
+  "set_stackup",
+  "set_placement",
+  "set_design_rules",
+]);
+
 /** MCP Apps UI metadata for geometry tools. */
 const UI_META = {
   ui: {
@@ -367,9 +419,21 @@ export function disabledToolNames(): Set<string> {
   return disabled;
 }
 
-export async function createServer(existingEngine?: Engine): Promise<Server> {
+export async function createServer(
+  existingEngine?: Engine,
+  context: ServerContext = { user: null },
+): Promise<Server> {
   // Initialize the WASM engine (or reuse one provided by the caller)
   const engine = existingEngine ?? await Engine.init();
+
+  // Durable session store for THIS connection's user. With a signed-in user +
+  // a Supabase service-role key it persists sessions to the cloud `documents`
+  // table — so a cold serverless instance rehydrates the board instead of
+  // throwing "Unknown document_id", and the work shows up at vcad.io.
+  // Otherwise an in-memory no-op store reproduces today's behavior. Held in a
+  // closure (not a module global) so concurrent connections on one warm
+  // instance can't clobber each other's binding.
+  const sessionStore = createSessionStore(context.user);
 
   // Wire the kernel WASM's chat helpers into the shared commandRegistry so
   // `toAnthropicTools` and `planCrud` work on the server too. Same bootstrap
@@ -413,6 +477,14 @@ export async function createServer(existingEngine?: Engine): Promise<Server> {
   // set plus all registry-driven kernel tools (they all mutate a session
   // document, so a preview is always meaningful).
   const uiTools = new Set([...GEOMETRY_TOOLS, ...dispatchableTools]);
+
+  // A tool call writes the session document when it's a switch-path creator/
+  // mutator OR a registry mutator (every dispatchable tool except `read`,
+  // which only inspects). Gates the post-dispatch durable persist so readers
+  // don't trigger a needless write-back.
+  const isDocWriter = (toolName: string): boolean =>
+    SWITCH_DOC_WRITERS.has(toolName) ||
+    (dispatchableTools.has(toolName) && toolName !== "read");
 
   // Tools hidden by VCAD_MCP_PACKS (resolved once at server creation).
   const disabledTools = disabledToolNames();
@@ -1095,6 +1167,12 @@ export async function createServer(existingEngine?: Engine): Promise<Server> {
     return Boolean(ext && ext["io.modelcontextprotocol/ui"]);
   };
 
+  type ToolResult = {
+    content: Array<{ type: string; text: string; annotations?: unknown }>;
+    structuredContent?: Record<string, unknown>;
+    isError?: boolean;
+  };
+
   // Handle tool calls
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args = {} } = request.params;
@@ -1111,12 +1189,32 @@ export async function createServer(existingEngine?: Engine): Promise<Server> {
       };
     }
 
-    try {
-      let result: {
-        content: Array<{ type: string; text: string; annotations?: unknown }>;
-        structuredContent?: Record<string, unknown>;
-        isError?: boolean;
-      };
+    // Run the whole call in a per-connection session scope: a signed-in user
+    // gets an isolated per-request document cache (so a cache hit can't serve
+    // another tenant's doc), while anonymous/stdio callers share the
+    // process-wide fallback. Everything below — hydrate, dispatch, persist —
+    // must run inside it so the `documents` facade routes to the right cache.
+    return runInSessionScope(context.user, async (): Promise<ToolResult> => {
+    // ── Hydrate ───────────────────────────────────────────────────────────
+    // If the call names a session that isn't in the warm cache, rehydrate it
+    // from the durable store BEFORE the (synchronous) tool reads it via
+    // getSession. No-op under the in-memory store, so stdio/anonymous behavior
+    // is unchanged; the cold-serverless-instance fix lives here.
+    const incomingId =
+      typeof args.document_id === "string" ? args.document_id : null;
+    if (incomingId) {
+      try {
+        await hydrateSession(sessionStore, incomingId);
+      } catch {
+        // Durable load failed — fall back to cache (no worse than today).
+      }
+    }
+
+    // Inner dispatch. Encloses BOTH the registry path and the switch so the
+    // single persist site below covers every writer — the registry path used
+    // to early-return straight out of the handler, skipping post-processing.
+    const runTool = async (): Promise<ToolResult> => {
+      let result: ToolResult;
 
       // Registry-driven dispatch: any kernel tool from
       // `commandRegistry.toAnthropicTools()` (minus the browser-only and
@@ -1445,6 +1543,37 @@ export async function createServer(existingEngine?: Engine): Promise<Server> {
       }
 
       return result;
+    };
+
+    try {
+      const result = await runTool();
+
+      // ── Persist ─────────────────────────────────────────────────────────
+      // After a creator/mutator settles, write the (possibly newly-minted)
+      // session through to the durable store. Best-effort: the tool already
+      // succeeded, so a write failure must never turn it into an error.
+      // effectiveDocId reads the id already resolved into the result/args — it
+      // never re-runs resolvePreviewDocumentId, so minting tools
+      // (import_step / create_cad_loon) aren't double-registered.
+      if (!result.isError && isDocWriter(name)) {
+        const writtenId = effectiveDocId(result, args);
+        if (writtenId) {
+          try {
+            await persistSession(sessionStore, writtenId);
+          } catch {
+            // best-effort durable write
+          }
+        }
+      }
+      // close_document → also forget the durable row (flush-then-forget).
+      if (name === "close_document" && incomingId) {
+        try {
+          await dropSession(sessionStore, incomingId);
+        } catch {
+          // best-effort durable drop
+        }
+      }
+      return result;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       return {
@@ -1452,6 +1581,7 @@ export async function createServer(existingEngine?: Engine): Promise<Server> {
         isError: true,
       };
     }
+    });
   });
 
   return server;
@@ -1594,4 +1724,48 @@ function resolvePreviewDocumentId(
   } catch {
     return null;
   }
+}
+
+/**
+ * The session id a just-finished writer tool touched — WITHOUT minting a new
+ * one. Prefers the explicit `document_id` arg, then the id the dispatch already
+ * attached to the result (`structuredContent.document_id` for uiTools, or a
+ * `{ "document_id": … }` text block, which is how switch-path ECAD tools that
+ * aren't uiTools — create_schematic, route_diff_pair, add_via_array, add_zone,
+ * set_placement, set_design_rules — surface theirs). Every candidate is guarded
+ * by `documents.has`, so only a live session is ever persisted. Deliberately
+ * does NOT call resolvePreviewDocumentId, which registers a fresh session for
+ * import_step / create_cad_loon and would double-mint here.
+ */
+function effectiveDocId(
+  result: {
+    content: Array<{ type: string; text: string }>;
+    structuredContent?: Record<string, unknown>;
+  },
+  args: Record<string, unknown>,
+): string | null {
+  const fromArgs =
+    typeof args.document_id === "string" ? args.document_id : null;
+  if (fromArgs && documents.has(fromArgs)) return fromArgs;
+
+  const fromStructured = result.structuredContent?.document_id;
+  if (typeof fromStructured === "string" && documents.has(fromStructured)) {
+    return fromStructured;
+  }
+
+  for (const block of result.content) {
+    if (block.type !== "text") continue;
+    try {
+      const parsed = JSON.parse(block.text) as { document_id?: unknown };
+      if (
+        typeof parsed.document_id === "string" &&
+        documents.has(parsed.document_id)
+      ) {
+        return parsed.document_id;
+      }
+    } catch {
+      // not JSON — skip
+    }
+  }
+  return null;
 }

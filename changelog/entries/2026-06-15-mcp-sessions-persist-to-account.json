@@ -1,0 +1,10 @@
+{
+  "id": "2026-06-15-mcp-sessions-persist-to-account",
+  "version": "0.9.4",
+  "date": "2026-06-15",
+  "category": "fix",
+  "title": "MCP agent work persists to your vcad account",
+  "summary": "Signed-in MCP sessions now save to your vcad.io account and survive across requests, fixing mid-build \"Unknown document_id\" errors on the hosted server.",
+  "features": ["mcp", "sync", "sessions"],
+  "mcpTools": ["open_document", "create_cad_loon", "import_step", "create_schematic", "route_nets", "close_document"]
+}
