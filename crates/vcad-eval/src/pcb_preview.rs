@@ -165,8 +165,8 @@ pub fn pcb_preview_meshes(pcb: &Pcb) -> Vec<PcbPreviewMesh> {
 fn copper_lift(pcb: &Pcb, layer: PcbLayer) -> f64 {
     let ct = copper_thickness(pcb, layer);
     match layer {
-        PcbLayer::FCu => ct,   // raise the top-copper above the top face
-        PcbLayer::BCu => -ct,  // drop the bottom-copper below the bottom face
+        PcbLayer::FCu => ct,  // raise the top-copper above the top face
+        PcbLayer::BCu => -ct, // drop the bottom-copper below the bottom face
         _ => 0.0,
     }
 }
@@ -476,8 +476,16 @@ fn compute_normals(positions: &[f32], indices: &[u32]) -> Vec<f32> {
         let ax = positions[ia];
         let ay = positions[ia + 1];
         let az = positions[ia + 2];
-        let e1 = [positions[ib] - ax, positions[ib + 1] - ay, positions[ib + 2] - az];
-        let e2 = [positions[ic] - ax, positions[ic + 1] - ay, positions[ic + 2] - az];
+        let e1 = [
+            positions[ib] - ax,
+            positions[ib + 1] - ay,
+            positions[ib + 2] - az,
+        ];
+        let e2 = [
+            positions[ic] - ax,
+            positions[ic + 1] - ay,
+            positions[ic + 2] - az,
+        ];
         // Cross product (un-normalized → area weighting).
         let nx = e1[1] * e2[2] - e1[2] * e2[1];
         let ny = e1[2] * e2[0] - e1[0] * e2[2];
@@ -609,7 +617,10 @@ mod tests {
             width: 0.25,
             layer: PcbLayer::FCu,
         };
-        let pcb = board_with(vec![chip("R1", 10.0, 10.0), chip("R2", 25.0, 20.0)], vec![trace]);
+        let pcb = board_with(
+            vec![chip("R1", 10.0, 10.0), chip("R2", 25.0, 20.0)],
+            vec![trace],
+        );
         let meshes = pcb_preview_meshes(&pcb);
 
         let roles: Vec<&str> = meshes.iter().map(|m| m.role.as_str()).collect();
@@ -646,6 +657,9 @@ mod tests {
             .step_by(3)
             .cloned()
             .fold(f32::MIN, f32::max);
-        assert!(cu_max_z >= max_z, "copper {cu_max_z} should be >= board {max_z}");
+        assert!(
+            cu_max_z >= max_z,
+            "copper {cu_max_z} should be >= board {max_z}"
+        );
     }
 }
