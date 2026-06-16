@@ -11,16 +11,20 @@
 import { createDocument } from "@vcad/ir";
 import type { Document } from "@vcad/ir";
 import { writeFileSync, readFileSync } from "node:fs";
+import { randomBytes } from "node:crypto";
 import { resolveWithinRoot } from "./safe-path.js";
 
 /** Session id → Document. Lives for the lifetime of the MCP server
  *  process, like `simulations` and `batchGroups` in tools/gym.ts. */
 export const documents = new Map<string, Document>();
 
-let nextId = 1;
-
 function nextSessionId(): string {
-  return `doc_${Date.now()}_${nextId++}`;
+  // Crypto-random, unguessable session id. Session ids are bearer
+  // capabilities (anyone holding a document_id can read/mutate that
+  // session), so a sequential timestamp+counter scheme would let a caller
+  // enumerate another user's recent document_id within a warm instance's
+  // lifetime. Nothing parses the id — it's only a Map key / opaque handle.
+  return `doc_${randomBytes(12).toString("base64url")}`;
 }
 
 /** Register a freshly-built document as a session and return its id.
