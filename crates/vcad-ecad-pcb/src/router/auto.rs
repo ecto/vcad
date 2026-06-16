@@ -61,6 +61,11 @@ pub struct RouteAllResult {
 /// Copper layers tried per connection, in order (front first, then back).
 const LAYERS: [PcbLayer; 2] = [PcbLayer::FCu, PcbLayer::BCu];
 
+/// Maximum rip-up-and-reroute rounds before accepting the still-unrouted set.
+/// The loop also stops the instant a round places nothing new, so this only
+/// bounds worst-case work on a genuinely over-constrained board.
+const MAX_RIPUP_ROUNDS: usize = 8;
+
 /// A connection that has been routed, plus the session spans it occupies —
 /// enough to rip it back out and re-route it.
 struct Placed {
@@ -116,9 +121,23 @@ pub fn route_all(pcb: &Pcb, width: f64, nets_filter: &[String]) -> RouteAllResul
         }
     }
 
-    // Rip-up pass: for each connection that couldn't route, rip the other-net
-    // copper directly blocking it, route it, then re-route the ripped victims.
-    let still_unrouted = ripup_pass(&mut session, pcb, width, &mut placed, unrouted_conns);
+    // Rip-up passes: iterate to convergence (bounded). One pass rips the copper
+    // blocking a failed connection, routes it, then re-routes the victims;
+    // repeating lets short nets reclaim space from long ones and lets a victim
+    // that failed in one round find a path once the board settles. Stop the
+    // instant a round places nothing new, so a stuck board exits immediately.
+    let mut pending = unrouted_conns;
+    for _ in 0..MAX_RIPUP_ROUNDS {
+        if pending.is_empty() {
+            break;
+        }
+        let placed_before = placed.len();
+        pending = ripup_pass(&mut session, pcb, width, &mut placed, pending);
+        if placed.len() <= placed_before {
+            break;
+        }
+    }
+    let still_unrouted = pending;
 
     // Flatten the placed connections into the result.
     let mut traces = Vec::new();
@@ -275,13 +294,19 @@ fn ripup_pass(
     let mut still: Vec<(String, Vec2, Vec2)> = Vec::new();
 
     for (net, from, to) in unrouted {
-        // Spans of other-net copper crossing the direct path, on either layer.
+        // Other-net copper crossing a CORRIDOR around the direct path — not the
+        // hairline segment. The maze router detours around copper, so the
+        // connections worth ripping are everything in the band a detour would
+        // thread; a hairline probe finds only what sits exactly on the straight
+        // line and leaves congested-but-offset nets with an empty victim set
+        // (abandoned without trying). A few-trace-wide corridor surfaces them.
+        let clearance = session.clearance_for(&net);
+        let corridor_hw = hw + clearance + width * 3.0;
         let seg = CopperGeom::Segment {
             a: from,
             b: to,
-            half_w: hw,
+            half_w: corridor_hw,
         };
-        let clearance = session.clearance_for(&net);
         let mut blocker_spans: HashSet<SpanId> = HashSet::new();
         for &layer in &LAYERS {
             for b in session.probe(&seg, layer, &net, clearance).blockers {
@@ -538,6 +563,53 @@ mod tests {
             })
             .count();
         assert_eq!(bad, 0, "must never emit shorting copper");
+    }
+
+    #[test]
+    fn congested_crossing_nets_all_route() {
+        // N nets whose connections all cross through the board center — a
+        // rip-up stress test. The greedy pass plus a single rip-up round leaves
+        // several unrouted; iterative rip-up with corridor blocker detection
+        // should place them all, DRC-clean.
+        let n = 16usize;
+        let mut fps = Vec::new();
+        for i in 0..n {
+            let net = format!("N{i}");
+            // Top row left→right, bottom row right→left: every net crosses center.
+            fps.push(fp(
+                &format!("T{i}"),
+                4.0 + 2.8 * i as f64,
+                24.0,
+                vec![pad("1", 0.0, 0.0, &net)],
+            ));
+            fps.push(fp(
+                &format!("B{i}"),
+                4.0 + 2.8 * (n - 1 - i) as f64,
+                6.0,
+                vec![pad("1", 0.0, 0.0, &net)],
+            ));
+        }
+        let pcb0 = board(fps);
+        let r = route_all(&pcb0, 0.25, &[]);
+        let mut pcb = pcb0.clone();
+        apply(&mut pcb, &r);
+
+        let bad = check_drc(&pcb)
+            .into_iter()
+            .filter(|v| {
+                matches!(
+                    v.rule,
+                    crate::drc::DrcRuleType::Short | crate::drc::DrcRuleType::Clearance
+                )
+            })
+            .count();
+        assert_eq!(bad, 0, "router output must be short/clearance clean");
+        assert_eq!(
+            r.routed_nets.len(),
+            n,
+            "expected all {n} nets routed, unrouted: {:?}",
+            r.unrouted_nets
+        );
     }
 
     #[test]
