@@ -31,6 +31,7 @@ import type {
 } from "@vcad/ir";
 import { createDocument } from "@vcad/ir";
 import { getNodePcb, getPcbNodeIds } from "@vcad/core";
+import { buildEntry, agentView } from "../receipt/index.js";
 import {
   computeRatsnest,
   exportFabFiles,
@@ -551,6 +552,11 @@ export const routeNetsSchema = {
     trace_width: {
       type: "number" as const,
       description: "Trace width in mm (default from design rules)",
+    },
+    receipt: {
+      type: "boolean" as const,
+      description:
+        "When true, wrap the route in a before/after DRC and return a `receipt` verdict (what it fixed, what it introduced incl. shorts, with each violation attributed to footprint vs routing) — instead of just a document_id. Routing is not idempotent; this surfaces a re-route that silently shorts the board.",
     },
   },
   required: [],
@@ -1614,6 +1620,11 @@ export async function routeNets(args: Record<string, unknown>) {
 
   const width = traceWidth || pcb.rules.defaultRules.traceWidth;
 
+  // Receipt: snapshot DRC before the (non-idempotent) route so the after-diff
+  // can attribute exactly what this call fixed and what it introduced.
+  const wantReceipt = args.receipt === true;
+  const beforeSnap = wantReceipt ? await drcPcb(pcb, "full", 500) : null;
+
   // Synthesize a netlist from pad assignments so the kernel ratsnest can
   // compute the unrouted connections (MST per net).
   const netConnections = new Map<string, Array<{ component_ref: string; pin_number: string }>>();
@@ -1731,6 +1742,16 @@ export async function routeNets(args: Record<string, unknown>) {
     );
   }
 
+  const receiptField: Record<string, unknown> = {};
+  if (wantReceipt && beforeSnap) {
+    const after = await drcPcb(pcb, "full", 500);
+    const entry = buildEntry(
+      { tool: "route_nets", args: { nets: netsFilter, trace_width: traceWidth }, before: beforeSnap, after },
+      0,
+    );
+    receiptField.receipt = agentView(entry, ctx.documentId ?? "");
+  }
+
   return {
     content: [
       {
@@ -1742,6 +1763,7 @@ export async function routeNets(args: Record<string, unknown>) {
           ...(unroutedNets.size > 0 ? { unrouted_nets: [...unroutedNets] } : {}),
           ...(fallbackNets.size > 0 ? { fallback_nets: [...fallbackNets] } : {}),
           ...(warnings.length > 0 ? { warnings } : {}),
+          ...receiptField,
           ...docResultPayload(ctx),
         }),
       },
@@ -1999,21 +2021,13 @@ export async function critiqueRoute(args: Record<string, unknown>) {
   return { content: [{ type: "text" as const, text: JSON.stringify(critique) }] };
 }
 
-export async function runDrc(args: Record<string, unknown>) {
-  const { doc } = resolveDocInput(args);
-  const pcb = getDocPcb(doc);
-
-  if (!pcb) {
-    return {
-      content: [{ type: "text" as const, text: "Error: Document has no PCB" }],
-      isError: true,
-    };
-  }
-
-  const detail: "summary" | "full" = args.detail === "full" ? "full" : "summary";
-  const sampleSize =
-    typeof args.sample_size === "number" ? Math.max(0, Math.round(args.sample_size)) : 20;
-
+/** Run DRC on a board and return the summary-first payload. Shared by the
+ *  run_drc tool and the inline receipt wrap in the mutators. */
+export async function drcPcb(
+  pcb: Pcb,
+  detail: "summary" | "full" = "summary",
+  sampleSize = 20,
+): Promise<DrcSummary> {
   // Kernel DRC: copper clearance (trace↔copper and pad↔pad shorts), trace
   // width, drill, annular ring, edge clearance, hole-to-hole. Falls back to
   // basic scalar checks when the kernel WASM is unavailable.
@@ -2087,13 +2101,24 @@ export async function runDrc(args: Record<string, unknown>) {
     }
   }
 
+  return aggregateDrc(violations, sampleSize, detail);
+}
+
+/** Run DRC against a session/inline document and return the summary-first payload. */
+export async function runDrc(args: Record<string, unknown>) {
+  const { doc } = resolveDocInput(args);
+  const pcb = getDocPcb(doc);
+  if (!pcb) {
+    return {
+      content: [{ type: "text" as const, text: "Error: Document has no PCB" }],
+      isError: true,
+    };
+  }
+  const detail: "summary" | "full" = args.detail === "full" ? "full" : "summary";
+  const sampleSize =
+    typeof args.sample_size === "number" ? Math.max(0, Math.round(args.sample_size)) : 20;
   return {
-    content: [
-      {
-        type: "text" as const,
-        text: JSON.stringify(aggregateDrc(violations, sampleSize, detail)),
-      },
-    ],
+    content: [{ type: "text" as const, text: JSON.stringify(await drcPcb(pcb, detail, sampleSize)) }],
   };
 }
 
