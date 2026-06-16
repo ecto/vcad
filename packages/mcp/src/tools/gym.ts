@@ -7,6 +7,7 @@
  * Uses the phyz physics engine via WASM bindings.
  */
 
+import { randomBytes } from "node:crypto";
 import type { Document } from "@vcad/ir";
 import {
   PhysicsEnv,
@@ -38,9 +39,6 @@ interface BatchGroup {
   };
 }
 const batchGroups = new Map<string, BatchGroup>();
-
-let nextSimId = 1;
-let nextBatchId = 1;
 
 /** JSON Schema for create_robot_env input */
 export const createRobotEnvSchema = {
@@ -158,7 +156,7 @@ export async function createRobotEnv(input: unknown): Promise<{
   }
 
   try {
-    const envId = `sim_${nextSimId++}`;
+    const envId = `sim_${randomBytes(12).toString("base64url")}`;
 
     const env = await PhysicsEnv.create(args.document, {
       endEffectorIds: args.end_effector_ids,
@@ -401,7 +399,7 @@ export async function batchCreateEnvs(input: unknown): Promise<{
   }
 
   try {
-    const batchId = `batch_${nextBatchId++}`;
+    const batchId = `batch_${randomBytes(12).toString("base64url")}`;
     const envOptions = {
       endEffectorIds: args.end_effector_ids,
       dt: args.dt,
