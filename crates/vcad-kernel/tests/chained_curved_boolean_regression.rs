@@ -20,8 +20,10 @@
 //! `chained_planar_boolean_is_robust` and `single_curved_difference_is_robust`
 //! below are NOT ignored and guard the working cases.
 //!
-//! When the kernel is fixed, drop the `#[ignore]` from
-//! `chained_curved_boolean_resurfaces_sphere`.
+//! Fixed: the SSI circle path no longer splits a curved face by a "phantom"
+//! circle built from a small planar partner's infinite carrier plane (e.g. a
+//! cylinder cap), so the subtracted sphere stays trimmed away. The headline
+//! test is no longer ignored and now guards against regressions.
 
 use vcad_kernel::Solid;
 
@@ -29,10 +31,9 @@ fn zmax(s: &Solid) -> f64 {
     s.bounding_box().1[2]
 }
 
-/// The exact reported failing geometry. Ignored until the boolean kernel is
-/// fixed; flips from `z≈94` (sphere resurfaced) to `z≈28` when correct.
+/// The exact reported failing geometry: flips from `z≈94` (sphere resurfaced)
+/// to `z≈28` once the boolean kernel trims the curved face correctly.
 #[test]
-#[ignore = "known kernel boolean bug: chained curved difference resurfaces the subtracted sphere"]
 fn chained_curved_boolean_resurfaces_sphere() {
     let body = Solid::cube(90.0, 60.0, 28.0).fillet(14.0);
     let sphere = Solid::sphere(36.0, 0).translate(45.0, 30.0, 58.0);
