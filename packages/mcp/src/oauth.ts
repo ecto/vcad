@@ -342,6 +342,15 @@ const PROVIDER_LABELS: Record<string, string> = {
   github: "Continue with GitHub",
 };
 
+// Brand marks shown on the provider buttons, matching the in-app AuthModal
+// (packages/auth/src/components/AuthModal.tsx). Google is full-colour; the
+// GitHub mark uses currentColor so it inherits the button's text colour and
+// tracks the light/dark theme.
+const PROVIDER_ICONS: Record<string, string> = {
+  google: `<svg width="16" height="16" viewBox="0 0 48 48" aria-hidden="true"><path fill="#FFC107" d="M43.611 20.083H42V20H24v8h11.303c-1.649 4.657-6.08 8-11.303 8-6.627 0-12-5.373-12-12s5.373-12 12-12c3.059 0 5.842 1.154 7.961 3.039l5.657-5.657C34.046 6.053 29.268 4 24 4 12.955 4 4 12.955 4 24s8.955 20 20 20 20-8.955 20-20c0-1.341-.138-2.65-.389-3.917z"/><path fill="#FF3D00" d="M6.306 14.691l6.571 4.819C14.655 15.108 18.961 12 24 12c3.059 0 5.842 1.154 7.961 3.039l5.657-5.657C34.046 6.053 29.268 4 24 4 16.318 4 9.656 8.337 6.306 14.691z"/><path fill="#4CAF50" d="M24 44c5.166 0 9.86-1.977 13.409-5.192l-6.19-5.238C29.211 35.091 26.715 36 24 36c-5.202 0-9.619-3.317-11.283-7.946l-6.522 5.025C9.505 39.556 16.227 44 24 44z"/><path fill="#1976D2" d="M43.611 20.083H42V20H24v8h11.303c-.792 2.237-2.231 4.166-4.087 5.571l6.19 5.238C36.971 39.205 44 34 44 24c0-1.341-.138-2.65-.389-3.917z"/></svg>`,
+  github: `<svg width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M12 .5C5.73.5.66 5.58.66 11.86c0 5.02 3.25 9.27 7.76 10.77.57.1.78-.25.78-.55 0-.27-.01-1-.02-1.95-3.16.69-3.83-1.52-3.83-1.52-.52-1.32-1.27-1.67-1.27-1.67-1.04-.71.08-.7.08-.7 1.14.08 1.74 1.17 1.74 1.17 1.02 1.75 2.68 1.25 3.33.95.1-.74.4-1.25.72-1.54-2.52-.29-5.18-1.26-5.18-5.62 0-1.24.44-2.26 1.17-3.05-.12-.29-.51-1.45.11-3.03 0 0 .96-.31 3.14 1.16.91-.25 1.89-.38 2.86-.39.97 0 1.95.13 2.86.39 2.18-1.47 3.14-1.16 3.14-1.16.62 1.58.23 2.74.11 3.03.73.79 1.17 1.81 1.17 3.05 0 4.37-2.67 5.33-5.21 5.61.41.35.78 1.04.78 2.1 0 1.51-.01 2.73-.01 3.1 0 .3.21.66.79.55 4.5-1.51 7.75-5.76 7.75-10.77C23.34 5.58 18.27.5 12 .5z"/></svg>`,
+};
+
 function handleAuthorize(
   cfg: OAuthConfig,
   url: URL,
@@ -390,30 +399,59 @@ function handleAuthorize(
 
   const buttons = cfg.providers
     .map((p) => {
-      const label = PROVIDER_LABELS[p] ?? `Continue with ${p}`;
+      const label =
+        PROVIDER_LABELS[p] ?? `Continue with ${p.charAt(0).toUpperCase()}${p.slice(1)}`;
+      const icon = PROVIDER_ICONS[p] ?? "";
       const href = `/oauth/start?provider=${encodeURIComponent(p)}&request=${encodeURIComponent(request)}`;
-      return `<a class="btn" href="${escapeHtml(href)}">${escapeHtml(label)}</a>`;
+      return `<a class="btn" href="${escapeHtml(href)}">${icon}<span>${escapeHtml(label)}</span></a>`;
     })
     .join("\n");
   const appName = client.name ? escapeHtml(client.name) : "An MCP client";
 
+  // Mirrors the in-app AuthModal (packages/auth/src/components/AuthModal.tsx):
+  // app design tokens, Inter/system font stack, the vcad wordmark with its
+  // pink accent dot, provider buttons, and a Terms · Privacy · Security
+  // footer — with automatic light/dark via prefers-color-scheme.
   sendHtml(
     res,
     200,
-    `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Sign in — vcad</title>
+    `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Sign in — vcad</title><meta name="robots" content="noindex">
 <style>
-body{font-family:-apple-system,system-ui,sans-serif;background:#101014;color:#e8e8ec;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0}
-.card{background:#18181f;border:1px solid #2a2a33;border-radius:12px;padding:32px;max-width:380px;text-align:center}
-h1{font-size:18px;margin:0 0 6px} p{color:#9a9aa5;font-size:14px;margin:0 0 24px}
-.btn{display:block;background:#26262f;border:1px solid #3a3a45;border-radius:8px;color:#e8e8ec;text-decoration:none;padding:12px;margin:10px 0;font-size:14px}
-.btn:hover{background:#30303b}
-.logo{font-weight:700;letter-spacing:.5px;color:#f92672}
-</style></head><body><div class="card">
-<h1><span class="logo">vcad</span> — sign in</h1>
-<p>${appName} is requesting access to your vcad MCP sessions.</p>
+@font-face{font-family:"Inter";font-style:normal;font-weight:100 900;font-display:swap;src:url("https://vcad.io/fonts/InterVariable.woff2") format("woff2-variations")}
+:root{color-scheme:dark;--bg:#0e0e10;--surface:#1a1a1d;--border:#3a3a40;--border-soft:#2f2f34;--text:#f5f5f5;--text-muted:#9c9ca3;--text-tert:#6a6a70;--hover:#26262b;--brand:#f92672;--brand-hover:#d91e63}
+@media (prefers-color-scheme: light){:root{color-scheme:light;--bg:#fff;--surface:#fff;--border:#d4d4d4;--border-soft:#e5e5e5;--text:#000;--text-muted:#666;--text-tert:#999;--hover:rgba(0,0,0,.04)}}
+*,*::before,*::after{box-sizing:border-box}
+html,body{margin:0;height:100%}
+body{font:14px/1.5 -apple-system,BlinkMacSystemFont,"SF Pro Text","Inter",system-ui,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;background:var(--bg);color:var(--text);-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;font-optical-sizing:auto}
+main{min-height:100%;display:flex;align-items:center;justify-content:center;padding:1.5rem}
+.card{width:100%;max-width:360px;border:1px solid var(--border);background:var(--surface);border-radius:20px;overflow:hidden;box-shadow:0 16px 48px rgba(0,0,0,.45)}
+.body{display:flex;flex-direction:column;align-items:center;padding:40px 32px 28px}
+.wordmark{font-family:-apple-system,BlinkMacSystemFont,"SF Pro Display","Inter",system-ui,sans-serif;font-size:3rem;font-weight:700;letter-spacing:-0.05em;line-height:1;color:var(--text);user-select:none}
+.wordmark .dot{color:var(--brand)}
+.subtitle{margin:12px 0 0;font-size:13px;color:var(--text-muted);text-align:center}
+.actions{margin-top:24px;width:100%;display:flex;flex-direction:column;gap:8px}
+.btn{height:40px;width:100%;display:inline-flex;align-items:center;justify-content:center;gap:10px;border:1px solid var(--border);background:transparent;color:var(--text);font:inherit;font-size:13px;font-weight:500;border-radius:6px;text-decoration:none;cursor:pointer;transition:background .15s cubic-bezier(.32,.72,0,1),border-color .15s cubic-bezier(.32,.72,0,1)}
+.btn:hover{background:var(--hover)}
+.btn:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
+.btn svg{display:block;flex:none}
+.footer{display:flex;align-items:center;justify-content:center;border-top:1px solid var(--border-soft);padding:12px 16px}
+.footer p{margin:0;font-size:11px;color:var(--text-muted)}
+.footer a{color:inherit;text-decoration:none;transition:color .15s ease}
+.footer a:hover{color:var(--text)}
+.footer .sep{margin:0 8px;color:var(--text-tert)}
+</style></head><body><main><div class="card">
+<div class="body">
+<div class="wordmark">vcad<span class="dot">.</span></div>
+<p class="subtitle">${appName} is requesting access to your vcad MCP sessions.</p>
+<div class="actions">
 ${buttons}
-</div></body></html>`,
+</div>
+</div>
+<div class="footer"><p>
+<a href="https://vcad.io/terms" target="_blank" rel="noopener noreferrer">Terms</a><span class="sep">·</span><a href="https://vcad.io/privacy" target="_blank" rel="noopener noreferrer">Privacy</a><span class="sep">·</span><a href="https://vcad.io/security" target="_blank" rel="noopener noreferrer">Security</a>
+</p></div>
+</div></main></body></html>`,
   );
 }
 
