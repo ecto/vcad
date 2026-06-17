@@ -9,6 +9,19 @@ port = 5432
 # Enable/disable email auth
 enabled = true
 
+# ⚠️  DO NOT run `supabase config push` against this project.
+# config push OVERWRITES the ENTIRE GoTrue auth config, but the production
+# project's email stack (Resend SMTP creds, every custom email template +
+# subject, 8-digit OTP) and the Google/GitHub OAuth providers are managed
+# in the Supabase dashboard and are NOT represented in this file — a push
+# would silently revert all of them, breaking magic-link/confirmation
+# email and (if providers stay undeclared) social sign-in.
+#
+# This file is DOCUMENTATION of the desired auth state, not an apply
+# source. Make targeted live changes via the Management API
+# (PATCH https://api.supabase.com/v1/projects/<ref>/config/auth with the
+# single field) or the dashboard, then mirror them here.
+
 # Where Supabase sends users after auth. The site URL is the canonical
 # web home; additional_redirect_urls is the allow-list of every other
 # URL that the magic-link / OAuth flows are allowed to redirect to.
@@ -22,22 +35,30 @@ enabled = true
 #   sign-in against the production Supabase project during local
 #   development.
 #
-# Apply with `supabase config push` (the linked project's allow-list
-# is the source of truth at runtime; this file just keeps the desired
-# state in source control).
+# The live project's allow-list is the runtime source of truth; this list
+# mirrors it for reference (kept in sync by hand after Management-API /
+# dashboard edits — see the DO-NOT-PUSH note above).
 site_url = "https://vcad.io"
 additional_redirect_urls = [
   "https://vcad.io/**",
   "https://vcad.io/auth/desktop",
+  "https://vcad.io/auth/popup.html",
+  # MCP OAuth bridge: /oauth/start sends Supabase here as redirect_to so
+  # the hosted MCP server (mcp.vcad.io) can complete sign-in and hand a
+  # token back to the connecting client (claude.ai). Without this in the
+  # allow-list Supabase falls back to site_url and the connector flow
+  # never returns. See packages/mcp/src/oauth.ts (handleStart/handleCallback).
+  "https://mcp.vcad.io/oauth/callback",
   "http://localhost:5173",
   "http://localhost:5173/**",
+  "http://localhost:5173/auth/popup.html",
 ]
 
 # Anonymous sign-ins are required by the app: client.ts/ensureSession
 # creates an anon session for every visitor so RLS predicates of the
 # form `auth.uid() = user_id` hold uniformly across logged-in and
-# logged-out users. Pinning this here so `supabase config push` can't
-# silently revert the project to the CLI default of `false`.
+# logged-out users. Documented as desired state; set on the live project
+# via the dashboard / Management API (this file is not pushed).
 enable_anonymous_sign_ins = true
 
 # OAuth providers (configured in Supabase dashboard)
@@ -51,8 +72,8 @@ enable_anonymous_sign_ins = true
 # client_id = "env(GITHUB_CLIENT_ID)"
 # secret = "env(GITHUB_CLIENT_SECRET)"
 
-# Match the production project's hardened email settings so a future
-# `supabase config push` doesn't drift them back to CLI defaults.
+# Documents the production project's hardened email settings (live values
+# are managed in the dashboard / Management API; this file is not pushed).
 [auth.email]
 enable_signup = true
 double_confirm_changes = true
