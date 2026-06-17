@@ -6840,6 +6840,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "vcad-ecad-package"
+version = "0.9.4"
+dependencies = [
+ "vcad-ir",
+]
+
+[[package]]
+name = "vcad-ecad-parts"
+version = "0.9.4"
+dependencies = [
+ "serde",
+ "serde_json",
+ "vcad-ecad-package",
+ "vcad-ir",
+]
+
+[[package]]
 name = "vcad-ecad-pcb"
 version = "0.9.4"
 dependencies = [
@@ -6847,6 +6864,7 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.18",
+ "vcad-ecad-package",
  "vcad-ir",
  "vcad-kernel-math",
  "vcad-kernel-sheet",
@@ -6874,6 +6892,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "vcad-ecad-source"
+version = "0.9.4"
+dependencies = [
+ "serde",
+ "vcad-ir",
+]
+
+[[package]]
 name = "vcad-ecad-symbols"
 version = "0.9.4"
 dependencies = [
@@ -6881,6 +6907,18 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.18",
+ "vcad-ecad-package",
+ "vcad-ir",
+]
+
+[[package]]
+name = "vcad-ecad-verify"
+version = "0.9.4"
+dependencies = [
+ "serde",
+ "vcad-ecad-package",
+ "vcad-ecad-parts",
+ "vcad-ecad-pcb",
  "vcad-ir",
 ]
 
@@ -6926,6 +6964,7 @@ dependencies = [
  "vcad-kernel-sweep",
  "vcad-kernel-tessellate",
  "vcad-kernel-text",
+ "vcad-loon",
 ]
 
 [[package]]
@@ -7265,10 +7304,12 @@ dependencies = [
  "vcad-chat",
  "vcad-crdt",
  "vcad-ecad-export",
+ "vcad-ecad-parts",
  "vcad-ecad-pcb",
  "vcad-ecad-schematic",
  "vcad-ecad-sim",
  "vcad-ecad-symbols",
+ "vcad-ecad-verify",
  "vcad-embroidery",
  "vcad-embroidery-dst",
  "vcad-embroidery-pes",
@@ -7327,6 +7368,7 @@ dependencies = [
  "vcad-eval",
  "vcad-ir",
  "vcad-kernel",
+ "vcad-loon",
 ]
 
 [[package]]

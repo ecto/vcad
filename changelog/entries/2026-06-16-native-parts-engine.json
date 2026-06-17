@@ -1,0 +1,10 @@
+{
+  "id": "2026-06-16-native-parts-engine",
+  "version": "0.9.4",
+  "date": "2026-06-16",
+  "category": "feat",
+  "title": "Native generative parts engine with verified substitution",
+  "summary": "Resolve real parts from a spec ('10k 0603 1%') into a generated footprint + symbol + 3D body, find spec-compatible alternatives, prove a swap drops in by re-running DRC, and build a re-runnable verification receipt — all offline.",
+  "features": ["pcb", "ecad", "parts", "footprints", "drc", "verification"],
+  "mcpTools": ["search_electronic_parts", "resolve_part", "find_alternatives", "verify_substitution", "build_receipt"]
+}

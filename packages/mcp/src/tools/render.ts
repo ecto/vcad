@@ -12,7 +12,7 @@
  * inspect_cad gives numbers, render_view shows the part.
  */
 
-import { getKernelWasm, markKernelWasmPoisoned } from "@vcad/engine";
+import { getKernelWasm, resetKernelWasm } from "@vcad/engine";
 import { getNodePcb, getPcbNodeIds } from "@vcad/core";
 import type { Document, Pcb } from "@vcad/ir";
 import { getSession } from "./session.js";
@@ -188,11 +188,11 @@ export async function renderView(
   } catch (e) {
     // A WebAssembly trap means a kernel panic that did NOT unwind —
     // wasm32 compiles panics to `unreachable`, so the kernel's own
-    // catch_unwind never fires and linear memory is in an undefined
-    // state. Poison the shared instance so every subsequent kernel call
-    // fails loudly instead of computing on corrupt memory.
+    // catch_unwind never fires and the instance is left in an undefined
+    // state. Recover by dropping it and re-instantiating in place, so this
+    // one bad document fails without taking down every other session.
     if (e instanceof WebAssembly.RuntimeError) {
-      markKernelWasmPoisoned(`render_svg trapped: ${e.message}`);
+      resetKernelWasm(`render_svg trapped: ${e.message}`);
       return {
         content: [
           {
@@ -200,7 +200,7 @@ export async function renderView(
             text: JSON.stringify({
               error: `kernel trap during render: ${e.message}`,
               document_id: documentId,
-              hint: "The kernel WASM instance is now poisoned and all further kernel calls will fail — restart the MCP server. This is a kernel bug; please report the document that triggered it.",
+              hint: "This document hit a kernel bug while rendering; the kernel was reset, so other documents are unaffected. Please report the document that triggered it.",
             }),
           },
         ],
@@ -355,6 +355,11 @@ export async function renderPcb(
   try {
     svg = wasm.render_pcb_svg(JSON.stringify(pcb), JSON.stringify(layers), SVG_SCALE);
   } catch (e) {
+    // A kernel trap here would otherwise leave the shared instance in an
+    // undefined state and break every other session — recover it in place.
+    if (e instanceof WebAssembly.RuntimeError) {
+      resetKernelWasm(`render_pcb_svg trapped: ${e.message}`);
+    }
     return {
       content: [
         {

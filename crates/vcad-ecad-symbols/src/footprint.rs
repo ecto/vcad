@@ -690,6 +690,18 @@ fn delimited_contains(s: &str, token: &str) -> bool {
     false
 }
 
+/// Build a QFN land pattern via the unified parametric generator
+/// ([`vcad_ecad_package::derive`]). Returns `None` if derivation fails, so the
+/// caller can fall back to the legacy table.
+///
+/// `pins` is the (multiple-of-4) total lead count; `ep` is the exposed-pad
+/// edge length. Terminal contact dims (0.4 × 0.2 mm) plus the no-lead IPC
+/// fillet goals reproduce a standard fine-pitch QFN land.
+fn qfn_via_derive(pins: u32, pitch: f64, body: f64, ep: f64) -> Option<FootprintTemplate> {
+    let pc = vcad_ecad_package::presets::qfn(pins, pitch, body, ep);
+    vcad_ecad_package::derive(&pc).ok().map(|d| d.footprint)
+}
+
 fn match_family(base: &str, pin_count: u32) -> Option<(FootprintTemplate, &'static str)> {
     // --- Chip passives (imperial + metric synonyms) ------------------------
     // Bounded match only: a bare code must be `_`/boundary-delimited so an
@@ -838,9 +850,12 @@ fn match_family(base: &str, pin_count: u32) -> Option<(FootprintTemplate, &'stat
             let body = body_mm(base)
                 .map(|(w, _)| w)
                 .unwrap_or((pins / 4) as f64 * pitch + 1.0);
-            let row_center = body / 2.0 - 0.25;
             let ep = (body * 0.55).max(1.0);
-            return Some((
+            // Prefer the unified parametric generator (one PackageClass →
+            // footprint + symbol + 3D body in one pass); fall back to the
+            // legacy table only if derivation ever fails.
+            let template = qfn_via_derive(pins, pitch, body, ep).unwrap_or_else(|| {
+                let row_center = body / 2.0 - 0.25;
                 quad(
                     format!("QFN-{pins}"),
                     pins,
@@ -849,9 +864,9 @@ fn match_family(base: &str, pin_count: u32) -> Option<(FootprintTemplate, &'stat
                     0.5,
                     0.3,
                     Some(ep),
-                ),
-                "QFN",
-            ));
+                )
+            });
+            return Some((template, "QFN"));
         }
     }
     if base.contains("DFN-") || base.contains("SON-") || base.contains("WSON") {
@@ -1102,6 +1117,32 @@ mod tests {
         // 5x5 body → everything well within a few mm. This is the bug fix:
         // the old fallback produced a ~74mm column for this exact part.
         assert_on_board(&fp, 4.0);
+    }
+
+    #[test]
+    fn qfn_geometry_comes_from_parametric_generator() {
+        // Locks the P1 wiring: the QFN land is produced by the unified
+        // generator, not the legacy table. Fine-pitch lands are narrow
+        // (< pitch, avoiding bridging) and project a toe beyond the body edge.
+        let r = resolve_footprint("Package_DFN_QFN:QFN-40_5x5mm_P0.4mm", 40);
+        let fp = r.template.unwrap();
+        let lead1 = fp.pads.iter().find(|p| p.number == "1").unwrap();
+        if let PadShape::Rect { width, height } = lead1.shape {
+            // Left-side pad: radial (width) is the long axis, tangential
+            // (height) the narrow one.
+            assert!(height < 0.4, "tangential land {height} must be < 0.4 pitch");
+            let outer_edge = lead1.position.x - width / 2.0;
+            assert!(
+                outer_edge < -2.5,
+                "land outer edge {outer_edge} should project past the 5mm body edge"
+            );
+        } else {
+            panic!("expected rect pad");
+        }
+        assert!(
+            fp.pads.iter().any(|p| p.number == "EP"),
+            "exposed pad present"
+        );
     }
 
     #[test]

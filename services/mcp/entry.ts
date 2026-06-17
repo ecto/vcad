@@ -12,7 +12,7 @@
 
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import { createServer } from "@vcad/mcp/server";
+import { createServer, getBuildInfo } from "@vcad/mcp/server";
 import {
   getOAuthConfig,
   handleOAuthRoute,
@@ -88,12 +88,16 @@ export default async function handler(
     return;
   }
 
-  // Health check
-  if (req.method === "GET" && req.url === "/health") {
+  // Health check — public, no auth. Carries full build identity so prod can be
+  // verified with a plain `curl https://mcp.vcad.io/health` (no MCP handshake):
+  // diff build_sha against `git rev-parse HEAD`, and watch instance_id to see
+  // stale serverless instances draining behind a fresh deployment.
+  if (req.method === "GET" && url.pathname === "/health") {
     try {
       const engine = await getEngine();
       sendJson(res, 200, {
         status: "ok",
+        ...getBuildInfo(),
         engine: !!engine,
         timestamp: new Date().toISOString(),
       });

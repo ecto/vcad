@@ -1,0 +1,19 @@
+[package]
+name = "vcad-ecad-source"
+description = "Optional sourcing leaf: stock/price/datasheet lookup behind a provider trait, default-off"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[features]
+# The live adapter is opt-in. With it off (the default) the crate is fully
+# offline — and nothing in the durable core depends on this crate at all, so
+# sourcing is structurally amputable.
+default = []
+live = []
+
+[dependencies]
+vcad-ir = { workspace = true }
+serde = { workspace = true }

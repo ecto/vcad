@@ -1,0 +1,10 @@
+{
+  "id": "2026-06-16-render-cylinder-disc-trap-recovery",
+  "version": "0.9.4",
+  "date": "2026-06-16",
+  "category": "fix",
+  "title": "Fix all-cylinder boolean crash + kernel trap isolation",
+  "summary": "Differencing a solid built only from cylinders (e.g. a bored disc with patterned holes) no longer crashes the kernel, and a kernel panic in one document can no longer break rendering for every other session.",
+  "features": ["kernel", "booleans", "render", "mcp", "reliability"],
+  "mcpTools": ["render_view", "render_pcb"]
+}

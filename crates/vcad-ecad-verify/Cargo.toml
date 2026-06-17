@@ -1,0 +1,15 @@
+[package]
+name = "vcad-ecad-verify"
+description = "Verified substitution: re-derive a candidate, re-place it, re-run DRC, and prove drop-in"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+vcad-ir = { workspace = true }
+vcad-ecad-package = { workspace = true }
+vcad-ecad-parts = { workspace = true }
+vcad-ecad-pcb = { workspace = true }
+serde = { workspace = true }

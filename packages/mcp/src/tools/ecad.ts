@@ -43,6 +43,11 @@ import {
   runDrc as kernelRunDrc,
   evaluateMotor,
   airgapFluxDensity,
+  resolvePart as kernelResolvePart,
+  searchEcadParts as kernelSearchPartsEcad,
+  findAlternatives as kernelFindAlternatives,
+  verifySubstitution as kernelVerifySubstitution,
+  buildReceipt as kernelBuildReceipt,
 } from "@vcad/engine";
 import type { Engine, NetlistResult, TriangleMesh } from "@vcad/engine";
 import { registerSession, getSession } from "./session.js";
@@ -5522,4 +5527,162 @@ export function boardFromSolid(args: Record<string, unknown>, engine: Engine) {
       },
     ],
   };
+}
+
+// ===========================================================================
+// Generative parts catalog + verified substitution
+// (vcad-ecad-parts / vcad-ecad-verify)
+// ===========================================================================
+
+export const searchElectronicPartsSchema = {
+  type: "object",
+  properties: {
+    query: {
+      type: "string",
+      description:
+        "Spec query, e.g. '10k 0603 1%', '100nF 0402', '4.7uH 0805'. Parses value, package, and tolerance.",
+    },
+    limit: {
+      type: "integer",
+      description: "Max candidates (E-series neighbours included). Default 5.",
+    },
+  },
+  required: ["query"],
+} as const;
+
+export const resolvePartSchema = {
+  type: "object",
+  properties: {
+    query: {
+      type: "string",
+      description:
+        "Spec query to resolve into ONE part, e.g. '10k 0603 1%'. E-series-snapped; returns footprint + symbol + 3D body + MPN xrefs.",
+    },
+  },
+  required: ["query"],
+} as const;
+
+export const findAlternativesSchema = {
+  type: "object",
+  properties: {
+    query: {
+      type: "string",
+      description:
+        "Spec query whose resolved part to find substitutes for. Alternatives keep the value and vary the package, each labelled identical / needs-reroute / incompatible.",
+    },
+  },
+  required: ["query"],
+} as const;
+
+export const verifySubstitutionSchema = {
+  type: "object",
+  properties: {
+    document_id: {
+      type: "string",
+      description: "Session id from create_schematic/open_document holding the PCB.",
+    },
+    reference: {
+      type: "string",
+      description: "Reference designator on the board to swap (e.g. 'R1').",
+    },
+    candidate: {
+      type: "string",
+      description: "Spec query for the replacement part (e.g. '10k 0805').",
+    },
+  },
+  required: ["reference", "candidate"],
+} as const;
+
+export const buildReceiptSchema = {
+  type: "object",
+  properties: {
+    document_id: {
+      type: "string",
+      description: "Session id holding the PCB to certify.",
+    },
+  },
+} as const;
+
+/** Spec-search the generative catalog (offline). */
+export async function searchElectronicParts(args: Record<string, unknown>) {
+  const query = typeof args.query === "string" ? args.query : "";
+  const limit = typeof args.limit === "number" ? Math.max(1, Math.round(args.limit)) : 5;
+  const results = await kernelSearchPartsEcad(query, limit);
+  return {
+    content: [{ type: "text" as const, text: JSON.stringify({ query, count: results.length, results }) }],
+  };
+}
+
+/** Resolve a spec query into one fully-specified, geometry-generated part. */
+export async function resolvePart(args: Record<string, unknown>) {
+  const query = typeof args.query === "string" ? args.query : "";
+  const part = await kernelResolvePart(query);
+  if (!part) {
+    return {
+      content: [
+        {
+          type: "text" as const,
+          text: `No resolvable part for '${query}'. Provide a passive value with optional package + tolerance, e.g. '10k 0603 1%'.`,
+        },
+      ],
+      isError: true,
+    };
+  }
+  return { content: [{ type: "text" as const, text: JSON.stringify(part) }] };
+}
+
+/** Propose spec-compatible alternatives, each classified by footprint compat. */
+export async function findAlternatives(args: Record<string, unknown>) {
+  const query = typeof args.query === "string" ? args.query : "";
+  const alts = await kernelFindAlternatives(query);
+  return {
+    content: [{ type: "text" as const, text: JSON.stringify({ query, count: alts.length, alternatives: alts }) }],
+  };
+}
+
+/** PROVE a substitution: re-derive, re-place, re-run DRC, report the delta. */
+export async function verifySubstitution(args: Record<string, unknown>) {
+  const { doc } = resolveDocInput(args);
+  const pcb = getDocPcb(doc);
+  if (!pcb) {
+    return {
+      content: [{ type: "text" as const, text: "Error: Document has no PCB" }],
+      isError: true,
+    };
+  }
+  const reference = typeof args.reference === "string" ? args.reference : "";
+  const candidate = typeof args.candidate === "string" ? args.candidate : "";
+  const sub = await kernelVerifySubstitution(pcb, reference, candidate);
+  if (!sub) {
+    return {
+      content: [
+        {
+          type: "text" as const,
+          text: `Could not verify: no footprint '${reference}' on the board, or candidate '${candidate}' is unresolvable.`,
+        },
+      ],
+      isError: true,
+    };
+  }
+  return { content: [{ type: "text" as const, text: JSON.stringify(sub) }] };
+}
+
+/** Build a re-runnable verification Receipt for the session's PCB. */
+export async function buildReceipt(args: Record<string, unknown>) {
+  const { doc } = resolveDocInput(args);
+  const pcb = getDocPcb(doc);
+  if (!pcb) {
+    return {
+      content: [{ type: "text" as const, text: "Error: Document has no PCB" }],
+      isError: true,
+    };
+  }
+  const receipt = await kernelBuildReceipt(pcb);
+  if (!receipt) {
+    return {
+      content: [{ type: "text" as const, text: "Error: ECAD engine unavailable" }],
+      isError: true,
+    };
+  }
+  return { content: [{ type: "text" as const, text: JSON.stringify(receipt) }] };
 }

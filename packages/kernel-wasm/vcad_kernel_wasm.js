@@ -1622,7 +1622,7 @@ export class WasmCamSettings {
      * @returns {number}
      */
     get feed_rate() {
-        const ret = wasm.__wbg_get_slicersettings_nozzle_diameter(this.__wbg_ptr);
+        const ret = wasm.__wbg_get_wasmcamsettings_feed_rate(this.__wbg_ptr);
         return ret;
     }
     /**
@@ -1630,7 +1630,7 @@ export class WasmCamSettings {
      * @returns {number}
      */
     get plunge_rate() {
-        const ret = wasm.__wbg_get_slicersettings_line_width(this.__wbg_ptr);
+        const ret = wasm.__wbg_get_wasmcamsettings_plunge_rate(this.__wbg_ptr);
         return ret;
     }
     /**
@@ -1646,7 +1646,7 @@ export class WasmCamSettings {
      * @returns {number}
      */
     get safe_z() {
-        const ret = wasm.__wbg_get_slicersettings_support_angle(this.__wbg_ptr);
+        const ret = wasm.__wbg_get_wasmcamsettings_safe_z(this.__wbg_ptr);
         return ret;
     }
     /**
@@ -1654,7 +1654,7 @@ export class WasmCamSettings {
      * @returns {number}
      */
     get spindle_rpm() {
-        const ret = wasm.__wbg_get_slicersettings_infill_density(this.__wbg_ptr);
+        const ret = wasm.__wbg_get_wasmcamsettings_spindle_rpm(this.__wbg_ptr);
         return ret;
     }
     /**
@@ -1662,7 +1662,7 @@ export class WasmCamSettings {
      * @returns {number}
      */
     get stepdown() {
-        const ret = wasm.__wbg_get_slicersettings_first_layer_height(this.__wbg_ptr);
+        const ret = wasm.__wbg_get_wasmcamsettings_stepdown(this.__wbg_ptr);
         return ret;
     }
     /**
@@ -1670,7 +1670,7 @@ export class WasmCamSettings {
      * @returns {number}
      */
     get stepover() {
-        const ret = wasm.__wbg_get_slicersettings_layer_height(this.__wbg_ptr);
+        const ret = wasm.__wbg_get_wasmcamsettings_stepover(this.__wbg_ptr);
         return ret;
     }
     /**
@@ -1678,14 +1678,14 @@ export class WasmCamSettings {
      * @param {number} arg0
      */
     set feed_rate(arg0) {
-        wasm.__wbg_set_slicersettings_nozzle_diameter(this.__wbg_ptr, arg0);
+        wasm.__wbg_set_wasmcamsettings_feed_rate(this.__wbg_ptr, arg0);
     }
     /**
      * Plunge rate (mm/min).
      * @param {number} arg0
      */
     set plunge_rate(arg0) {
-        wasm.__wbg_set_slicersettings_line_width(this.__wbg_ptr, arg0);
+        wasm.__wbg_set_wasmcamsettings_plunge_rate(this.__wbg_ptr, arg0);
     }
     /**
      * Retract Z height (mm).
@@ -1699,28 +1699,28 @@ export class WasmCamSettings {
      * @param {number} arg0
      */
     set safe_z(arg0) {
-        wasm.__wbg_set_slicersettings_support_angle(this.__wbg_ptr, arg0);
+        wasm.__wbg_set_wasmcamsettings_safe_z(this.__wbg_ptr, arg0);
     }
     /**
      * Spindle RPM.
      * @param {number} arg0
      */
     set spindle_rpm(arg0) {
-        wasm.__wbg_set_slicersettings_infill_density(this.__wbg_ptr, arg0);
+        wasm.__wbg_set_wasmcamsettings_spindle_rpm(this.__wbg_ptr, arg0);
     }
     /**
      * Stepdown distance (mm).
      * @param {number} arg0
      */
     set stepdown(arg0) {
-        wasm.__wbg_set_slicersettings_first_layer_height(this.__wbg_ptr, arg0);
+        wasm.__wbg_set_wasmcamsettings_stepdown(this.__wbg_ptr, arg0);
     }
     /**
      * Stepover distance (mm).
      * @param {number} arg0
      */
     set stepover(arg0) {
-        wasm.__wbg_set_slicersettings_layer_height(this.__wbg_ptr, arg0);
+        wasm.__wbg_set_wasmcamsettings_stepover(this.__wbg_ptr, arg0);
     }
     /**
      * Create from JSON.
@@ -3379,6 +3379,21 @@ export function ecadAirgapFluxDensity(spec_json) {
 }
 
 /**
+ * Build a re-runnable verification Receipt for the current board state.
+ * @param {string} pcb_json
+ * @returns {any}
+ */
+export function ecadBuildReceipt(pcb_json) {
+    const ptr0 = passStringToWasm0(pcb_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.ecadBuildReceipt(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+
+/**
  * Return all builtin symbol definitions.
  *
  * # Returns
@@ -3565,6 +3580,22 @@ export function ecadFillZones(pcb_json) {
 }
 
 /**
+ * Propose spec-compatible alternatives for the part a query resolves to,
+ * each classified by footprint compatibility. Returns `[]` if unresolvable.
+ * @param {string} query
+ * @returns {any}
+ */
+export function ecadFindAlternatives(query) {
+    const ptr0 = passStringToWasm0(query, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.ecadFindAlternatives(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+
+/**
  * Resolve a KiCad-style footprint name to a parametric footprint
  * template (SOIC, DIP, QFP, SOT-23/223, pin headers, chip sizes).
  *
@@ -3679,6 +3710,23 @@ export function ecadNetForWire(wire_json, netlist_json, components_json) {
 }
 
 /**
+ * JSON manifest of all parametric part families.
+ * @returns {string}
+ */
+export function ecadPartsManifest() {
+    let deferred1_0;
+    let deferred1_1;
+    try {
+        const ret = wasm.ecadPartsManifest();
+        deferred1_0 = ret[0];
+        deferred1_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+    }
+}
+
+/**
  * Generate layered, colored preview meshes for a PCB.
  *
  * Unlike the merged `PcbBoard` solid (one gray slab), this returns a small
@@ -3727,6 +3775,23 @@ export function ecadResolveFootprint(name, pin_count) {
     const ptr0 = passStringToWasm0(name, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len0 = WASM_VECTOR_LEN;
     const ret = wasm.ecadResolveFootprint(ptr0, len0, pin_count);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+
+/**
+ * Resolve a free-text query (e.g. `"10k 0603 1%"`) into one fully-specified
+ * part: footprint + symbol + 3D body + MPN cross-references. Returns `null`
+ * when the query carries no resolvable passive value. Fully offline.
+ * @param {string} query
+ * @returns {any}
+ */
+export function ecadResolvePart(query) {
+    const ptr0 = passStringToWasm0(query, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.ecadResolvePart(ptr0, len0);
     if (ret[2]) {
         throw takeFromExternrefTable0(ret[1]);
     }
@@ -3880,6 +3945,23 @@ export function ecadRouteNetShove(pcb_json, net, start_x, start_y, end_x, end_y,
 }
 
 /**
+ * Search the catalog by spec, returning the best match plus its nearest
+ * E-series neighbours (spec-distance ranked). Fully offline.
+ * @param {string} query
+ * @param {number} limit
+ * @returns {any}
+ */
+export function ecadSearchParts(query, limit) {
+    const ptr0 = passStringToWasm0(query, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.ecadSearchParts(ptr0, len0, limit);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+
+/**
  * Snap a position to the nearest component pin or grid point.
  *
  * # Arguments
@@ -3901,6 +3983,49 @@ export function ecadSnapToGridOrPin(x, y, components_json, grid, threshold) {
     const ptr0 = passStringToWasm0(components_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len0 = WASM_VECTOR_LEN;
     const ret = wasm.ecadSnapToGridOrPin(x, y, ptr0, len0, grid, threshold);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+
+/**
+ * Re-run a Receipt against the current board → `"Holds"` | `"Stale"` |
+ * `"Violated"`.
+ * @param {string} pcb_json
+ * @param {string} receipt_json
+ * @returns {any}
+ */
+export function ecadVerifyReceipt(pcb_json, receipt_json) {
+    const ptr0 = passStringToWasm0(pcb_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(receipt_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.ecadVerifyReceipt(ptr0, len0, ptr1, len1);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+
+/**
+ * PROVE a substitution: swap `reference` on the board for the part that
+ * `candidate_query` resolves to, re-derive its footprint, re-place at the
+ * same anchor, re-run DRC (incl. connectivity), and return the before/after
+ * delta with a `drop_in` verdict. `null` if the candidate is unresolvable.
+ * @param {string} pcb_json
+ * @param {string} reference
+ * @param {string} candidate_query
+ * @returns {any}
+ */
+export function ecadVerifySubstitution(pcb_json, reference, candidate_query) {
+    const ptr0 = passStringToWasm0(pcb_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(reference, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ptr2 = passStringToWasm0(candidate_query, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len2 = WASM_VECTOR_LEN;
+    const ret = wasm.ecadVerifySubstitution(ptr0, len0, ptr1, len1, ptr2, len2);
     if (ret[2]) {
         throw takeFromExternrefTable0(ret[1]);
     }
@@ -4460,7 +4585,7 @@ export function isCamAvailable() {
  * @returns {boolean}
  */
 export function isEcadAvailable() {
-    const ret = wasm.isEcadAvailable();
+    const ret = wasm.isCamAvailable();
     return ret !== 0;
 }
 
@@ -4496,7 +4621,7 @@ export function isPhysicsAvailable() {
  * @returns {boolean}
  */
 export function isSlicerAvailable() {
-    const ret = wasm.isCamAvailable();
+    const ret = wasm.isSlicerAvailable();
     return ret !== 0;
 }
 
@@ -7427,12 +7552,12 @@ function __wbg_get_imports() {
             arg0.writeTexture(arg1, arg2, arg3, arg4);
         },
         __wbindgen_cast_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 2340, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 2341, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 2358, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 2359, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h30743bca3150d93c, wasm_bindgen__convert__closures_____invoke__hcf7d3eaee8800b37);
             return ret;
         },
         __wbindgen_cast_0000000000000002: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 3124, function: Function { arguments: [Externref], shim_idx: 3125, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 3142, function: Function { arguments: [Externref], shim_idx: 3143, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__hfdadf281ff0f1c56, wasm_bindgen__convert__closures_____invoke__h9bdf540eb7e61590);
             return ret;
         },
@@ -8029,3 +8154,13 @@ async function __wbg_init(module_or_path) {
 }
 
 export { initSync, __wbg_init as default };
+
+// vcad: trap-recovery hook (appended by packages/kernel-wasm build).
+// Dropping the cached `wasm`/`wasmModule` bindings lets a subsequent
+// initSync()/default() re-instantiate a fresh instance in place, so the
+// wasm-singleton can recover from a panic trap instead of poisoning the
+// process. See packages/engine/src/wasm-singleton.ts (resetKernelWasm).
+export function __vcad_reset_wasm() {
+    wasm = undefined;
+    wasmModule = undefined;
+}

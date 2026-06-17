@@ -3,6 +3,7 @@
  */
 
 import { createRequire } from "node:module";
+import { randomUUID } from "node:crypto";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import {
   CallToolRequestSchema,
@@ -10,7 +11,7 @@ import {
   ListResourcesRequestSchema,
   ReadResourceRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
-import { Engine, getKernelWasm } from "@vcad/engine";
+import { Engine, getKernelWasm, resetKernelWasm } from "@vcad/engine";
 import { commandRegistry } from "@vcad/core";
 import type { Document } from "@vcad/ir";
 import { exportCad, exportCadSchema } from "./tools/export.js";
@@ -139,6 +140,16 @@ import {
   addMotorWindingSchema,
   calcMotor,
   calcMotorSchema,
+  searchElectronicParts,
+  searchElectronicPartsSchema,
+  resolvePart,
+  resolvePartSchema,
+  findAlternatives,
+  findAlternativesSchema,
+  verifySubstitution,
+  verifySubstitutionSchema,
+  buildReceipt,
+  buildReceiptSchema,
 } from "./tools/ecad.js";
 import { createCadLoon, createCadLoonSchema } from "./tools/loon.js";
 import {
@@ -193,10 +204,16 @@ import { fireToolAlert } from "./notify.js";
  *  tsc `dist/` build — `typeof` guards against the ReferenceError. */
 declare const __VCAD_VERSION__: string | undefined;
 
+/** Build-time injected commit + timestamp. esbuild's `--define:__VCAD_BUILD_SHA__`
+ *  / `__VCAD_BUILD_TIME__` (see services/mcp/build.sh) replace these with the
+ *  string literals from VERCEL_GIT_COMMIT_SHA at bundle time. Undefined in the
+ *  normal tsc `dist/` build — `typeof` guards against the ReferenceError. */
+declare const __VCAD_BUILD_SHA__: string | undefined;
+declare const __VCAD_BUILD_TIME__: string | undefined;
+
 /** Server version + build identity, read from package.json at load time so the
  *  advertised version always matches the running build (no hardcoded literal to
- *  drift). VCAD_BUILD_SHA, if injected at build/deploy time, fingerprints the
- *  exact commit so a stale deploy is detectable via `server_info`. */
+ *  drift). */
 const PKG_VERSION: string = (() => {
   // Bundled hosted build: the version is baked in via esbuild define, since the
   // require path below resolves to a nonexistent sibling of the single bundle.
@@ -210,7 +227,56 @@ const PKG_VERSION: string = (() => {
     return "0.0.0";
   }
 })();
-const BUILD_SHA: string = process.env.VCAD_BUILD_SHA ?? "unknown";
+
+/** Exact commit, baked at build time. The runtime env fallbacks
+ *  (VERCEL_GIT_COMMIT_SHA, then the legacy VCAD_BUILD_SHA) only fire for
+ *  non-bundled runs; on the hosted serverless build the define wins. "unknown"
+ *  means neither was available — itself a useful signal. */
+const BUILD_SHA: string =
+  (typeof __VCAD_BUILD_SHA__ === "string" && __VCAD_BUILD_SHA__) ||
+  process.env.VERCEL_GIT_COMMIT_SHA ||
+  process.env.VCAD_BUILD_SHA ||
+  "unknown";
+const BUILD_TIME: string =
+  (typeof __VCAD_BUILD_TIME__ === "string" && __VCAD_BUILD_TIME__) || "unknown";
+const SHORT_SHA: string = BUILD_SHA === "unknown" ? "unknown" : BUILD_SHA.slice(0, 7);
+
+/** Version advertised in the MCP `initialize` handshake. Semver build-metadata
+ *  (`0.9.4+1a2b3c4`) is the protocol-native place to surface which commit a
+ *  client is connected to — every MCP client sees it at connect time without
+ *  calling a tool. Build metadata is ignored in semver precedence, so this stays
+ *  a valid version string. */
+const VERSION_WITH_BUILD: string =
+  SHORT_SHA === "unknown" ? PKG_VERSION : `${PKG_VERSION}+${SHORT_SHA}`;
+
+/** Per-process identity, fresh at every cold start. On serverless this is the
+ *  difference between "the deployment is wrong" and "I'm pinned to one stale
+ *  instance": two calls reporting different instance_id / build_sha means old
+ *  instances are still draining behind a correct deployment. */
+const INSTANCE_ID: string = randomUUID().slice(0, 8);
+const PROCESS_STARTED_AT: number = Date.now();
+
+/** Single source of truth for build/runtime identity, shared by the
+ *  `server_info` tool, the `initialize` handshake, and the /health endpoint. */
+export function getBuildInfo(): {
+  name: string;
+  version: string;
+  version_full: string;
+  build_sha: string;
+  build_time: string;
+  instance_id: string;
+  uptime_s: number;
+} {
+  return {
+    name: "vcad",
+    version: PKG_VERSION,
+    version_full: VERSION_WITH_BUILD,
+    build_sha: BUILD_SHA,
+    build_time: BUILD_TIME,
+    instance_id: INSTANCE_ID,
+    uptime_s: Math.round((Date.now() - PROCESS_STARTED_AT) / 1000),
+  };
+}
 
 /** Kernel WASM exports this server depends on; checked at startup so a stale or
  *  incomplete dist surfaces as a clear boot error rather than an opaque
@@ -370,6 +436,11 @@ const TOOL_PACKS: Record<string, readonly string[]> = {
     "size_coil",
     "calc_rf",
     "calc_motor",
+    "search_electronic_parts",
+    "resolve_part",
+    "find_alternatives",
+    "verify_substitution",
+    "build_receipt",
   ],
   // Mecheval self-grading oracle. The benchmark harness already excludes
   // these during scored runs; hosts that don't want the benchmark
@@ -529,13 +600,15 @@ export async function createServer(
     );
   }
   console.error(
-    `[mcp] vcad ${PKG_VERSION} (build ${BUILD_SHA}) — ${dispatchableTools.size} kernel tools; kernel WASM ${kernelWasmLoaded ? "ok" : "UNAVAILABLE"}`,
+    `[mcp] vcad ${VERSION_WITH_BUILD} (instance ${INSTANCE_ID}) — ${dispatchableTools.size} kernel tools; kernel WASM ${kernelWasmLoaded ? "ok" : "UNAVAILABLE"}`,
   );
 
   const server = new Server(
     {
       name: "vcad",
-      version: PKG_VERSION,
+      // Build-tagged (`0.9.4+1a2b3c4`) so the commit is visible in the MCP
+      // `initialize` handshake — no tool call needed to tell builds apart.
+      version: VERSION_WITH_BUILD,
     },
     {
       capabilities: {
@@ -1044,6 +1117,50 @@ export async function createServer(
         inputSchema: runDrcSchema,
       },
       {
+        name: "search_electronic_parts",
+        description:
+          "Spec-search the generative parts catalog (offline). A query like " +
+          "'10k 0603 1%' parses to value+package+tolerance and returns the best " +
+          "match plus E-series neighbours, each with a generated footprint, symbol, " +
+          "and 3D body. A part is family+value+package, not a scraped row.",
+        inputSchema: searchElectronicPartsSchema,
+      },
+      {
+        name: "resolve_part",
+        description:
+          "Resolve a spec query (e.g. '10k 0603 1%') into ONE fully-specified part: " +
+          "E-series-snapped value plus a generated footprint + schematic symbol + 3D " +
+          "body (one parametric source of truth) and any MPN cross-references.",
+        inputSchema: resolvePartSchema,
+      },
+      {
+        name: "find_alternatives",
+        description:
+          "Propose spec-compatible substitutes for the part a query resolves to. " +
+          "Each alternative keeps the value, varies the package, and is labelled " +
+          "identical / needs-reroute / incompatible by re-deriving its footprint.",
+        inputSchema: findAlternativesSchema,
+      },
+      {
+        name: "verify_substitution",
+        description:
+          "PROVE a part swap on the session PCB: replace `reference` with the part " +
+          "`candidate` resolves to, re-derive its footprint, re-place at the same " +
+          "anchor, re-run DRC (incl. connectivity), and return the before/after " +
+          "violation delta with a `drop_in` verdict. An alternative is only drop-in " +
+          "when it adds no new violations and preserves pin numbering.",
+        inputSchema: verifySubstitutionSchema,
+      },
+      {
+        name: "build_receipt",
+        description:
+          "Build a re-runnable verification Receipt for the session PCB: a content " +
+          "hash, the DRC backend, a canonicalized DRC summary, and per-part " +
+          "provenance — a durable proof that round-trips and re-verifies later as " +
+          "Holds / Stale / Violated.",
+        inputSchema: buildReceiptSchema,
+      },
+      {
         name: "route_diff_pair",
         description:
           "Route a declared differential pair (net_p/net_n) coupled and length-matched, " +
@@ -1516,9 +1633,7 @@ export async function createServer(
               {
                 type: "text",
                 text: JSON.stringify({
-                  name: "vcad",
-                  version: PKG_VERSION,
-                  build_sha: BUILD_SHA,
+                  ...getBuildInfo(),
                   kernel_wasm: kernelWasmLoaded ? "ok" : "unavailable",
                   ...(kernelWasmMissing.length > 0
                     ? { kernel_wasm_missing_exports: kernelWasmMissing }
@@ -1534,6 +1649,26 @@ export async function createServer(
 
         case "run_drc":
           result = await runDrc(args);
+          break;
+
+        case "search_electronic_parts":
+          result = await searchElectronicParts(args);
+          break;
+
+        case "resolve_part":
+          result = await resolvePart(args);
+          break;
+
+        case "find_alternatives":
+          result = await findAlternatives(args);
+          break;
+
+        case "verify_substitution":
+          result = await verifySubstitution(args);
+          break;
+
+        case "build_receipt":
+          result = await buildReceipt(args);
           break;
 
         case "route_diff_pair":
@@ -1632,8 +1767,24 @@ export async function createServer(
       return result;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
+      // Process-wide kernel-trap net: any tool whose kernel call panicked
+      // (wasm32 panics compile to an `unreachable` trap) lands here unless it
+      // handled the trap itself. Recover the shared instance so this one bad
+      // document can't DoS every other session — the hosted server can't be
+      // restarted by a client.
+      if (err instanceof WebAssembly.RuntimeError) {
+        resetKernelWasm(`${name} trapped: ${message}`);
+      }
       const errorResult = {
-        content: [{ type: "text", text: `Error: ${message}` }],
+        content: [
+          {
+            type: "text",
+            text:
+              err instanceof WebAssembly.RuntimeError
+                ? `Error: kernel trap during '${name}' (${message}). The kernel was reset; other documents are unaffected. This is a kernel bug — please report the document that triggered it.`
+                : `Error: ${message}`,
+          },
+        ],
         isError: true,
       };
       fireToolAlert(name, args, errorResult);

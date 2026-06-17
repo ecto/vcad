@@ -9,6 +9,7 @@ publish = false
 
 [dependencies]
 vcad-ir = { workspace = true }
+vcad-ecad-package = { workspace = true }
 nom = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

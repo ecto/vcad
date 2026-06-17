@@ -8,6 +8,18 @@ use serde::{Deserialize, Serialize};
 
 use crate::Vec2;
 
+pub mod package;
+pub use package::{
+    BodyEnvelope, Box3D, DensityLevel, DerivedPart, FootprintBody, IpcGoals, LeadSpec,
+    LeadTerminal, PackageClass, PackageFamily, PinAssignment, PinMap, PinNumbering, PinRole,
+    ThermalPad,
+};
+
+pub mod receipt;
+pub use receipt::{
+    DrcSummary, PartReceiptLine, Receipt, ReceiptStatus, RuleCount, SourcingLine, SourcingSnapshot,
+};
+
 // ============================================================================
 // Common types
 // ============================================================================

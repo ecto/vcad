@@ -4773,6 +4773,89 @@ mod ecad_wasm {
         true
     }
 
+    // --- Generative parts catalog (vcad-ecad-parts) ------------------------
+
+    /// Resolve a free-text query (e.g. `"10k 0603 1%"`) into one fully-specified
+    /// part: footprint + symbol + 3D body + MPN cross-references. Returns `null`
+    /// when the query carries no resolvable passive value. Fully offline.
+    #[wasm_bindgen(js_name = ecadResolvePart)]
+    pub fn ecad_resolve_part(query: &str) -> Result<JsValue, JsError> {
+        match vcad_ecad_parts::resolve(query) {
+            Some(part) => {
+                serde_wasm_bindgen::to_value(&part).map_err(|e| JsError::new(&e.to_string()))
+            }
+            None => Ok(JsValue::NULL),
+        }
+    }
+
+    /// Search the catalog by spec, returning the best match plus its nearest
+    /// E-series neighbours (spec-distance ranked). Fully offline.
+    #[wasm_bindgen(js_name = ecadSearchParts)]
+    pub fn ecad_search_parts(query: &str, limit: usize) -> Result<JsValue, JsError> {
+        let results = vcad_ecad_parts::search(query, limit);
+        serde_wasm_bindgen::to_value(&results).map_err(|e| JsError::new(&e.to_string()))
+    }
+
+    /// JSON manifest of all parametric part families.
+    #[wasm_bindgen(js_name = ecadPartsManifest)]
+    pub fn ecad_parts_manifest() -> String {
+        vcad_ecad_parts::catalog::manifest_json()
+    }
+
+    // --- Verified substitution (vcad-ecad-verify) --------------------------
+
+    /// Propose spec-compatible alternatives for the part a query resolves to,
+    /// each classified by footprint compatibility. Returns `[]` if unresolvable.
+    #[wasm_bindgen(js_name = ecadFindAlternatives)]
+    pub fn ecad_find_alternatives(query: &str) -> Result<JsValue, JsError> {
+        let alts = match vcad_ecad_parts::resolve(query) {
+            Some(part) => vcad_ecad_verify::find_alternatives(&part),
+            None => vec![],
+        };
+        serde_wasm_bindgen::to_value(&alts).map_err(|e| JsError::new(&e.to_string()))
+    }
+
+    /// PROVE a substitution: swap `reference` on the board for the part that
+    /// `candidate_query` resolves to, re-derive its footprint, re-place at the
+    /// same anchor, re-run DRC (incl. connectivity), and return the before/after
+    /// delta with a `drop_in` verdict. `null` if the candidate is unresolvable.
+    #[wasm_bindgen(js_name = ecadVerifySubstitution)]
+    pub fn ecad_verify_substitution(
+        pcb_json: &str,
+        reference: &str,
+        candidate_query: &str,
+    ) -> Result<JsValue, JsError> {
+        let pcb: Pcb = serde_json::from_str(pcb_json).map_err(|e| JsError::new(&e.to_string()))?;
+        let Some(candidate) = vcad_ecad_parts::resolve(candidate_query) else {
+            return Ok(JsValue::NULL);
+        };
+        match vcad_ecad_verify::verify_substitution(&pcb, reference, &candidate) {
+            Some(sub) => {
+                serde_wasm_bindgen::to_value(&sub).map_err(|e| JsError::new(&e.to_string()))
+            }
+            None => Ok(JsValue::NULL),
+        }
+    }
+
+    /// Build a re-runnable verification Receipt for the current board state.
+    #[wasm_bindgen(js_name = ecadBuildReceipt)]
+    pub fn ecad_build_receipt(pcb_json: &str) -> Result<JsValue, JsError> {
+        let pcb: Pcb = serde_json::from_str(pcb_json).map_err(|e| JsError::new(&e.to_string()))?;
+        let receipt = vcad_ecad_verify::build_receipt(&pcb, None);
+        serde_wasm_bindgen::to_value(&receipt).map_err(|e| JsError::new(&e.to_string()))
+    }
+
+    /// Re-run a Receipt against the current board → `"Holds"` | `"Stale"` |
+    /// `"Violated"`.
+    #[wasm_bindgen(js_name = ecadVerifyReceipt)]
+    pub fn ecad_verify_receipt(pcb_json: &str, receipt_json: &str) -> Result<JsValue, JsError> {
+        let pcb: Pcb = serde_json::from_str(pcb_json).map_err(|e| JsError::new(&e.to_string()))?;
+        let receipt: vcad_ir::ecad::Receipt =
+            serde_json::from_str(receipt_json).map_err(|e| JsError::new(&e.to_string()))?;
+        let status = vcad_ecad_verify::verify_receipt(&pcb, &receipt);
+        serde_wasm_bindgen::to_value(&status).map_err(|e| JsError::new(&e.to_string()))
+    }
+
     /// Run Design Rule Check on a PCB layout.
     ///
     /// # Arguments

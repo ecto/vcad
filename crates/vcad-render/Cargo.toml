@@ -25,3 +25,6 @@ path = "src/lib.rs"
 [[bin]]
 name = "vcad-render"
 path = "src/main.rs"
+
+[dev-dependencies]
+vcad-loon = { workspace = true }

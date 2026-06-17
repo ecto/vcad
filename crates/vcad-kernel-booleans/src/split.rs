@@ -486,6 +486,17 @@ pub fn split_planar_face_by_circle(
     circle: &vcad_kernel_geom::Circle3d,
     segments: u32,
 ) -> SplitResult {
+    // A circle approximated by fewer than 3 vertices can't form a valid face
+    // loop; constructing one would feed an empty slice to `add_loop` and panic.
+    // The kernel resolves the `0 = auto` sentinel upstream, so this only trips
+    // for callers that drive the booleans crate directly with a bad count —
+    // leave the face unsplit rather than crash the whole evaluation.
+    if segments < 3 {
+        return SplitResult {
+            sub_faces: vec![face_id],
+        };
+    }
+
     let face = &brep.topology.faces[face_id];
     let surface_index = face.surface_index;
     let orientation = face.orientation;

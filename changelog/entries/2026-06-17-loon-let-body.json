@@ -1,0 +1,10 @@
+{
+  "id": "2026-06-17-loon-let-body",
+  "version": "0.9.4",
+  "date": "2026-06-17",
+  "category": "fix",
+  "title": "Loon let-bound parts no longer drop their cuts",
+  "summary": "[let name value body] in create_cad_loon now evaluates and returns the body; previously the trailing body was silently dropped, so a let-bound base solid rendered un-cut with every boolean lost.",
+  "features": ["loon", "create_cad_loon", "booleans"],
+  "mcpTools": ["create_cad_loon"]
+}

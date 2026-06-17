@@ -43,9 +43,13 @@ members = [
     "crates/vcad-eval",
     "crates/vcad-loon",
     "crates/vcad-sim",
+    "crates/vcad-ecad-package",
+    "crates/vcad-ecad-parts",
     "crates/vcad-ecad-symbols",
     "crates/vcad-ecad-schematic",
     "crates/vcad-ecad-pcb",
+    "crates/vcad-ecad-verify",
+    "crates/vcad-ecad-source",
     "crates/vcad-ecad-export",
     "crates/vcad-ecad-sim",
     "crates/vcad-ecad-diff",
@@ -108,9 +112,13 @@ default-members = [
     "crates/vcad-eval",
     "crates/vcad-loon",
     "crates/vcad-sim",
+    "crates/vcad-ecad-package",
+    "crates/vcad-ecad-parts",
     "crates/vcad-ecad-symbols",
     "crates/vcad-ecad-schematic",
     "crates/vcad-ecad-pcb",
+    "crates/vcad-ecad-verify",
+    "crates/vcad-ecad-source",
     "crates/vcad-ecad-export",
     "crates/vcad-ecad-sim",
     "crates/vcad-ecad-diff",
@@ -187,9 +195,13 @@ vcad-app = { path = "crates/vcad-app", version = "0.9.4" }
 vcad-eval = { path = "crates/vcad-eval", version = "0.9.4" }
 vcad-loon = { path = "crates/vcad-loon", version = "0.9.4" }
 vcad-sim = { path = "crates/vcad-sim", version = "0.9.4" }
+vcad-ecad-package = { path = "crates/vcad-ecad-package", version = "0.9.4" }
+vcad-ecad-parts = { path = "crates/vcad-ecad-parts", version = "0.9.4" }
 vcad-ecad-symbols = { path = "crates/vcad-ecad-symbols", version = "0.9.4" }
 vcad-ecad-schematic = { path = "crates/vcad-ecad-schematic", version = "0.9.4" }
 vcad-ecad-pcb = { path = "crates/vcad-ecad-pcb", version = "0.9.4" }
+vcad-ecad-verify = { path = "crates/vcad-ecad-verify", version = "0.9.4" }
+vcad-ecad-source = { path = "crates/vcad-ecad-source", version = "0.9.4" }
 vcad-ecad-export = { path = "crates/vcad-ecad-export", version = "0.9.4" }
 vcad-ecad-sim = { path = "crates/vcad-ecad-sim", version = "0.9.4" }
 vcad-ecad-diff = { path = "crates/vcad-ecad-diff", version = "0.9.4" }

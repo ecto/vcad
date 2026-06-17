@@ -2406,5 +2406,12 @@ mod ts_tests {
         // Top-level PCB + schematic (reachable from Document, exported explicitly).
         crate::ecad::Pcb::export_all().expect("Pcb export failed");
         crate::ecad::SchematicSheet::export_all().expect("SchematicSheet export failed");
+        // Parametric package generator I/O (not reachable from Document).
+        // DerivedPart's graph pulls in PackageClass and every supporting type.
+        crate::ecad::PackageClass::export_all().expect("PackageClass export failed");
+        crate::ecad::DerivedPart::export_all().expect("DerivedPart export failed");
+        // Re-runnable verification receipt (not reachable from Document).
+        crate::ecad::Receipt::export_all().expect("Receipt export failed");
+        crate::ecad::ReceiptStatus::export_all().expect("ReceiptStatus export failed");
     }
 }

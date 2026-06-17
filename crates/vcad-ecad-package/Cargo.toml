@@ -1,0 +1,11 @@
+[package]
+name = "vcad-ecad-package"
+description = "Parametric IPC-7351 package generator: one PackageClass → footprint + symbol + 3D body in a single pass"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+vcad-ir = { workspace = true }
