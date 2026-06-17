@@ -3,6 +3,7 @@
  */
 
 import { createRequire } from "node:module";
+import { randomUUID } from "node:crypto";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import {
   CallToolRequestSchema,
@@ -203,10 +204,16 @@ import { fireToolAlert } from "./notify.js";
  *  tsc `dist/` build — `typeof` guards against the ReferenceError. */
 declare const __VCAD_VERSION__: string | undefined;
 
+/** Build-time injected commit + timestamp. esbuild's `--define:__VCAD_BUILD_SHA__`
+ *  / `__VCAD_BUILD_TIME__` (see services/mcp/build.sh) replace these with the
+ *  string literals from VERCEL_GIT_COMMIT_SHA at bundle time. Undefined in the
+ *  normal tsc `dist/` build — `typeof` guards against the ReferenceError. */
+declare const __VCAD_BUILD_SHA__: string | undefined;
+declare const __VCAD_BUILD_TIME__: string | undefined;
+
 /** Server version + build identity, read from package.json at load time so the
  *  advertised version always matches the running build (no hardcoded literal to
- *  drift). VCAD_BUILD_SHA, if injected at build/deploy time, fingerprints the
- *  exact commit so a stale deploy is detectable via `server_info`. */
+ *  drift). */
 const PKG_VERSION: string = (() => {
   // Bundled hosted build: the version is baked in via esbuild define, since the
   // require path below resolves to a nonexistent sibling of the single bundle.
@@ -220,7 +227,56 @@ const PKG_VERSION: string = (() => {
     return "0.0.0";
   }
 })();
-const BUILD_SHA: string = process.env.VCAD_BUILD_SHA ?? "unknown";
+
+/** Exact commit, baked at build time. The runtime env fallbacks
+ *  (VERCEL_GIT_COMMIT_SHA, then the legacy VCAD_BUILD_SHA) only fire for
+ *  non-bundled runs; on the hosted serverless build the define wins. "unknown"
+ *  means neither was available — itself a useful signal. */
+const BUILD_SHA: string =
+  (typeof __VCAD_BUILD_SHA__ === "string" && __VCAD_BUILD_SHA__) ||
+  process.env.VERCEL_GIT_COMMIT_SHA ||
+  process.env.VCAD_BUILD_SHA ||
+  "unknown";
+const BUILD_TIME: string =
+  (typeof __VCAD_BUILD_TIME__ === "string" && __VCAD_BUILD_TIME__) || "unknown";
+const SHORT_SHA: string = BUILD_SHA === "unknown" ? "unknown" : BUILD_SHA.slice(0, 7);
+
+/** Version advertised in the MCP `initialize` handshake. Semver build-metadata
+ *  (`0.9.4+1a2b3c4`) is the protocol-native place to surface which commit a
+ *  client is connected to — every MCP client sees it at connect time without
+ *  calling a tool. Build metadata is ignored in semver precedence, so this stays
+ *  a valid version string. */
+const VERSION_WITH_BUILD: string =
+  SHORT_SHA === "unknown" ? PKG_VERSION : `${PKG_VERSION}+${SHORT_SHA}`;
+
+/** Per-process identity, fresh at every cold start. On serverless this is the
+ *  difference between "the deployment is wrong" and "I'm pinned to one stale
+ *  instance": two calls reporting different instance_id / build_sha means old
+ *  instances are still draining behind a correct deployment. */
+const INSTANCE_ID: string = randomUUID().slice(0, 8);
+const PROCESS_STARTED_AT: number = Date.now();
+
+/** Single source of truth for build/runtime identity, shared by the
+ *  `server_info` tool, the `initialize` handshake, and the /health endpoint. */
+export function getBuildInfo(): {
+  name: string;
+  version: string;
+  version_full: string;
+  build_sha: string;
+  build_time: string;
+  instance_id: string;
+  uptime_s: number;
+} {
+  return {
+    name: "vcad",
+    version: PKG_VERSION,
+    version_full: VERSION_WITH_BUILD,
+    build_sha: BUILD_SHA,
+    build_time: BUILD_TIME,
+    instance_id: INSTANCE_ID,
+    uptime_s: Math.round((Date.now() - PROCESS_STARTED_AT) / 1000),
+  };
+}
 
 /** Kernel WASM exports this server depends on; checked at startup so a stale or
  *  incomplete dist surfaces as a clear boot error rather than an opaque
@@ -544,13 +600,15 @@ export async function createServer(
     );
   }
   console.error(
-    `[mcp] vcad ${PKG_VERSION} (build ${BUILD_SHA}) — ${dispatchableTools.size} kernel tools; kernel WASM ${kernelWasmLoaded ? "ok" : "UNAVAILABLE"}`,
+    `[mcp] vcad ${VERSION_WITH_BUILD} (instance ${INSTANCE_ID}) — ${dispatchableTools.size} kernel tools; kernel WASM ${kernelWasmLoaded ? "ok" : "UNAVAILABLE"}`,
   );
 
   const server = new Server(
     {
       name: "vcad",
-      version: PKG_VERSION,
+      // Build-tagged (`0.9.4+1a2b3c4`) so the commit is visible in the MCP
+      // `initialize` handshake — no tool call needed to tell builds apart.
+      version: VERSION_WITH_BUILD,
     },
     {
       capabilities: {
@@ -1575,9 +1633,7 @@ export async function createServer(
               {
                 type: "text",
                 text: JSON.stringify({
-                  name: "vcad",
-                  version: PKG_VERSION,
-                  build_sha: BUILD_SHA,
+                  ...getBuildInfo(),
                   kernel_wasm: kernelWasmLoaded ? "ok" : "unavailable",
                   ...(kernelWasmMissing.length > 0
                     ? { kernel_wasm_missing_exports: kernelWasmMissing }
