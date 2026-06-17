@@ -105,6 +105,28 @@ pub struct Solid {
     segments: u32,
 }
 
+/// Fallback circular resolution when a curved primitive is created with
+/// `segments == 0` — the IR "0 = auto" sentinel (see `CsgOp::Cylinder`).
+/// Matches the count the box and the other default constructors carry, so a
+/// document built entirely from cylinders/spheres/cones approximates its
+/// booleans at the same fidelity as one that happens to include a box.
+const DEFAULT_SEGMENTS: u32 = 32;
+
+/// Resolve a primitive's segment count to a concrete, safe value.
+///
+/// `0` means "auto" (use the default). Any non-zero count is clamped to a
+/// floor of 3: a circle approximated by fewer than 3 vertices can't form a
+/// valid face loop, and feeding such a count into the boolean splitter
+/// builds an empty loop that panics in `Topology::add_loop`
+/// ("loop must have at least one half-edge"). Resolving here keeps that
+/// degenerate count from ever reaching the kernel's geometry layer.
+fn resolve_segments(segments: u32) -> u32 {
+    match segments {
+        0 => DEFAULT_SEGMENTS,
+        n => n.max(3),
+    }
+}
+
 impl Solid {
     // =========================================================================
     // Constructors
@@ -156,6 +178,7 @@ impl Solid {
 
     /// Create a cylinder along Z axis with the given radius and height.
     pub fn cylinder(radius: f64, height: f64, segments: u32) -> Self {
+        let segments = resolve_segments(segments);
         Self {
             repr: SolidRepr::BRep(Box::new(vcad_kernel_primitives::make_cylinder(
                 radius, height, segments,
@@ -166,6 +189,7 @@ impl Solid {
 
     /// Create a sphere centered at origin with the given radius.
     pub fn sphere(radius: f64, segments: u32) -> Self {
+        let segments = resolve_segments(segments);
         Self {
             repr: SolidRepr::BRep(Box::new(vcad_kernel_primitives::make_sphere(
                 radius, segments,
@@ -176,6 +200,7 @@ impl Solid {
 
     /// Create a cone/frustum along Z axis.
     pub fn cone(radius_bottom: f64, radius_top: f64, height: f64, segments: u32) -> Self {
+        let segments = resolve_segments(segments);
         Self {
             repr: SolidRepr::BRep(Box::new(vcad_kernel_primitives::make_cone(
                 radius_bottom,
@@ -217,7 +242,10 @@ impl Solid {
                 BooleanOp::Intersection => Solid::empty(),
             },
             (SolidRepr::BRep(a), SolidRepr::BRep(b)) => {
-                let segments = self.segments.max(other.segments);
+                // Resolve before the splitter sees it: an operand carrying the
+                // raw `0` sentinel (e.g. a BRep built outside the primitive
+                // constructors) must not drive a 0-vertex circle loop.
+                let segments = resolve_segments(self.segments.max(other.segments));
                 let result = boolean_op(a.as_ref(), b.as_ref(), op, segments);
                 let BooleanResult::BRep(brep) = result;
                 Solid {
@@ -227,7 +255,7 @@ impl Solid {
             }
             // For mesh-only solids, tessellate BRep first then combine meshes
             _ => {
-                let segments = self.segments.max(other.segments);
+                let segments = resolve_segments(self.segments.max(other.segments));
                 let mesh_a = self.to_mesh(segments);
                 let mesh_b = other.to_mesh(segments);
                 // For mesh-only cases, just concatenate meshes.
@@ -1309,6 +1337,44 @@ mod tests {
     fn test_empty() {
         let empty = Solid::empty();
         assert!(empty.is_empty());
+    }
+
+    #[test]
+    fn test_resolve_segments() {
+        assert_eq!(resolve_segments(0), DEFAULT_SEGMENTS); // 0 = auto
+        assert_eq!(resolve_segments(1), 3); // clamp to a valid loop
+        assert_eq!(resolve_segments(2), 3);
+        assert_eq!(resolve_segments(3), 3);
+        assert_eq!(resolve_segments(48), 48); // honored as-is
+    }
+
+    /// Regression: a disc built entirely from cylinders with the IR "auto"
+    /// (`segments == 0`) sentinel used to drive a 0-vertex circle loop through
+    /// the boolean splitter and panic in `Topology::add_loop`. A cube survives
+    /// because it carries 32, bumping the boolean's `max(..)`; an all-cylinder
+    /// document has no such bump, so every operand was 0. Resolving the
+    /// sentinel must keep the difference panic-free and produce real geometry.
+    /// Mirrors the loon repro:
+    /// `[difference [union [translate 0 0 -0.5 [cylinder 4 2.6]]
+    ///   [circular-pattern 0 0 0 0 0 1 3 360 [translate 25 0 -0.5 [cylinder 1.6 2.6]]]]
+    ///   [cylinder 30 1.6]]`
+    #[test]
+    fn test_all_cylinder_disc_difference_does_not_panic() {
+        use vcad_kernel_math::{Point3, Vec3};
+
+        // Every primitive uses segments = 0 — the exact condition that panicked.
+        let disc = Solid::cylinder(4.0, 2.6, 0).translate(0.0, 0.0, -0.5);
+        let boss = Solid::cylinder(1.6, 2.6, 0).translate(25.0, 0.0, -0.5);
+        let bosses = boss.circular_pattern(Point3::origin(), Vec3::new(0.0, 0.0, 1.0), 3, 360.0);
+        let body = disc.union(&bosses);
+        let bore = Solid::cylinder(30.0, 1.6, 0);
+
+        let result = body.difference(&bore);
+        let mesh = result.to_mesh(64);
+        assert!(
+            !mesh.indices.is_empty(),
+            "all-cylinder disc difference produced an empty mesh"
+        );
     }
 
     #[test]

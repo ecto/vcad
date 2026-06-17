@@ -16,39 +16,110 @@
 
 type WasmModule = typeof import("@vcad/kernel-wasm");
 
+/** wasm-bindgen glue grows a `__vcad_reset_wasm` export (appended by the
+ *  kernel-wasm build) that drops the cached instance so the next init
+ *  re-instantiates. Optional so an older glue build degrades gracefully. */
+type ResettableWasmModule = WasmModule & {
+  __vcad_reset_wasm?: () => void;
+  initSync?: (input: { module: BufferSource | WebAssembly.Module }) => unknown;
+};
+
 let wasmPromise: Promise<WasmModule> | null = null;
 let wasmModule: WasmModule | null = null;
 let wasmInputHint: BufferSource | Response | undefined;
 let bindgenStarted = false;
-let wasmPoisoned: string | null = null;
+
+/** The byte buffer the instance was built from, retained so a trap can
+ *  re-instantiate without a disk read (serverless bundles relocate the
+ *  source-relative .wasm path). Only set when we init from a buffer. */
+let lastModuleBuffer: BufferSource | undefined;
+
+/** Reason string of the most recent trap recovery, for diagnostics. The
+ *  instance is healthy again after recovery — this is informational only,
+ *  not a gate, so a recovered server keeps serving every session. */
+let lastTrap: string | null = null;
+
+/** Bumps on every successful (re)instantiation. Lets long-lived holders of
+ *  the module detect that the underlying instance was swapped. */
+let generation = 0;
 
 /**
- * Mark the shared WASM instance as unusable after a trap.
+ * Recover the shared WASM instance after a trap.
  *
- * On wasm32 a Rust panic compiles to an `unreachable` trap — it does NOT
- * unwind, so `catch_unwind` inside the kernel never fires, no destructors
- * run, and linear memory may be mid-mutation. wasm-bindgen documents
- * post-trap instances as unsafe to reuse. Since this singleton hands the
- * same instance to every consumer for the life of the process, the only
- * honest move after a trap is to refuse all further kernel calls loudly
- * rather than risk silently-corrupt geometry. Callers that catch a
- * `WebAssembly.RuntimeError` from a kernel call should report it here.
+ * On wasm32 a Rust panic compiles to an `unreachable` trap: it does NOT
+ * unwind, so the kernel's own `catch_unwind` never fires, destructors don't
+ * run, and the instance is left in an undefined state — the shadow stack
+ * pointer is decremented but never restored, and linear memory may be
+ * mid-mutation. Reusing that instance corrupts every subsequent call, so a
+ * single bad document used to poison the process and DoS every session.
+ *
+ * Instead of refusing all further calls, we drop the trapped instance and
+ * re-instantiate a fresh one *in place*: the wasm-bindgen glue's exported
+ * functions and classes (e.g. `Solid`, `render_svg`, and every reference
+ * `Engine` captured at init) read the glue's module-level `wasm` binding at
+ * call time, so swapping it under them transparently repairs all holders.
+ * Re-init is eager and synchronous when we have the source buffer (the node
+ * / MCP-server path) so a captured reference is never observed pointing at a
+ * torn-down instance; otherwise it falls back to a lazy re-init on the next
+ * `getKernelWasm()`.
+ *
+ * Callers that catch a `WebAssembly.RuntimeError` from a kernel call should
+ * route it here.
  */
-export function markKernelWasmPoisoned(reason: string): void {
-  if (!wasmPoisoned) wasmPoisoned = reason;
-}
+export function resetKernelWasm(reason: string): void {
+  lastTrap = reason;
+  const mod = wasmModule as ResettableWasmModule | null;
 
-/** The poison reason, or `null` while the instance is healthy. */
-export function kernelWasmPoisonReason(): string | null {
-  return wasmPoisoned;
-}
-
-function assertNotPoisoned(): void {
-  if (wasmPoisoned) {
-    throw new Error(
-      `kernel WASM instance is poisoned (${wasmPoisoned}) — a previous call trapped and left WASM memory in an undefined state. Restart the process.`,
+  if (!mod || typeof mod.__vcad_reset_wasm !== "function") {
+    // Old glue without the reset hook, or never initialized. We can't drop
+    // the cached instance in place; clear our refs so the next init at least
+    // re-runs (it will no-op back to the same instance on old glue, but a
+    // current build always has the hook).
+    if (!mod) return;
+    console.warn(
+      "[wasm-singleton] kernel glue lacks __vcad_reset_wasm — cannot recover in place; rebuild @vcad/kernel-wasm",
     );
+    wasmModule = null;
+    wasmPromise = null;
+    bindgenStarted = false;
+    if (lastModuleBuffer) wasmInputHint = lastModuleBuffer;
+    return;
   }
+
+  // Drop the trapped instance: the glue sets its internal `wasm`/`wasmModule`
+  // to undefined, so initSync/default re-instantiate rather than early-return.
+  mod.__vcad_reset_wasm();
+
+  // Eager, synchronous re-instantiation from the retained buffer. Keeps the
+  // same glue module object, so nothing that captured `wasmModule` needs to
+  // refetch — only the underlying instance changed.
+  if (lastModuleBuffer && typeof mod.initSync === "function") {
+    try {
+      mod.initSync({ module: lastModuleBuffer });
+      generation++;
+      return;
+    } catch (e) {
+      console.error("[wasm-singleton] eager re-init after trap failed:", e);
+    }
+  }
+
+  // No buffer to re-instantiate from synchronously (e.g. browser streamed a
+  // Response). Fall back to a lazy re-init on the next getKernelWasm().
+  wasmModule = null;
+  wasmPromise = null;
+  bindgenStarted = false;
+  if (lastModuleBuffer) wasmInputHint = lastModuleBuffer;
+}
+
+/** The reason of the most recent trap recovery, or `null` if none. */
+export function lastKernelTrapReason(): string | null {
+  return lastTrap;
+}
+
+/** Monotonic counter of how many times the instance has been (re)created.
+ *  `1` after first init; higher means a trap was recovered. */
+export function kernelWasmGeneration(): number {
+  return generation;
 }
 
 /**
@@ -77,7 +148,6 @@ export function primeKernelWasm(input: BufferSource | Response): void {
  * instance.
  */
 export async function getKernelWasm(): Promise<WasmModule> {
-  assertNotPoisoned();
   if (wasmModule) return wasmModule;
   if (!wasmPromise) {
     wasmPromise = loadAndInit();
@@ -120,16 +190,23 @@ async function loadAndInit(): Promise<WasmModule> {
       );
       wasmBuffer = fs.readFileSync(wasmPath);
     }
+    // Retain the bytes so resetKernelWasm() can re-instantiate after a trap.
+    lastModuleBuffer = wasmBuffer;
     bindgenStarted = true;
     mod.initSync({ module: wasmBuffer });
   } else {
     bindgenStarted = true;
     const hint = wasmInputHint;
     wasmInputHint = undefined;
+    // Retain the buffer for trap recovery; a streamed Response can't be reused.
+    if (hint && typeof Response !== "undefined" && !(hint instanceof Response)) {
+      lastModuleBuffer = hint;
+    }
     await mod.default(hint ? { module_or_path: hint } : undefined);
   }
 
   wasmModule = mod;
+  generation++;
   return mod;
 }
 
@@ -141,6 +218,5 @@ async function loadAndInit(): Promise<WasmModule> {
  * code paths that need to invoke WASM from a synchronous Zustand action.
  */
 export function getKernelWasmSync(): WasmModule | null {
-  assertNotPoisoned();
   return wasmModule;
 }

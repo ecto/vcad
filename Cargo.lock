@@ -7367,6 +7367,7 @@ dependencies = [
  "vcad-eval",
  "vcad-ir",
  "vcad-kernel",
+ "vcad-loon",
 ]
 
 [[package]]

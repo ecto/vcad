@@ -54,8 +54,9 @@ export {
   getKernelWasm,
   getKernelWasmSync,
   primeKernelWasm,
-  markKernelWasmPoisoned,
-  kernelWasmPoisonReason,
+  resetKernelWasm,
+  lastKernelTrapReason,
+  kernelWasmGeneration,
 } from "./wasm-singleton.js";
 
 export {

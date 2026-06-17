@@ -10,7 +10,7 @@ import {
   ListResourcesRequestSchema,
   ReadResourceRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
-import { Engine, getKernelWasm } from "@vcad/engine";
+import { Engine, getKernelWasm, resetKernelWasm } from "@vcad/engine";
 import { commandRegistry } from "@vcad/core";
 import type { Document } from "@vcad/ir";
 import { exportCad, exportCadSchema } from "./tools/export.js";
@@ -1711,8 +1711,24 @@ export async function createServer(
       return result;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
+      // Process-wide kernel-trap net: any tool whose kernel call panicked
+      // (wasm32 panics compile to an `unreachable` trap) lands here unless it
+      // handled the trap itself. Recover the shared instance so this one bad
+      // document can't DoS every other session — the hosted server can't be
+      // restarted by a client.
+      if (err instanceof WebAssembly.RuntimeError) {
+        resetKernelWasm(`${name} trapped: ${message}`);
+      }
       const errorResult = {
-        content: [{ type: "text", text: `Error: ${message}` }],
+        content: [
+          {
+            type: "text",
+            text:
+              err instanceof WebAssembly.RuntimeError
+                ? `Error: kernel trap during '${name}' (${message}). The kernel was reset; other documents are unaffected. This is a kernel bug — please report the document that triggered it.`
+                : `Error: ${message}`,
+          },
+        ],
         isError: true,
       };
       fireToolAlert(name, args, errorResult);
