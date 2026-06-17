@@ -57,7 +57,7 @@
     "idb": "^8.0.3",
     "lucide-react": "^1.8.0",
     "motion": "^12.38.0",
-    "nanoid": "^5.1.7",
+    "nanoid": "^5.1.11",
     "posthog-js": "^1.336.4",
     "postprocessing": "^6.38.2",
     "radix-ui": "^1.4.3",
