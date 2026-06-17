@@ -37,7 +37,17 @@ echo "[vcad-mcp] Bundling with esbuild..."
 # server.ts away from its sibling package.json, so its source-relative require
 # resolves to nothing and server_info would otherwise report 0.0.0.
 MCP_VERSION="$(node -p "require('$REPO_ROOT/packages/mcp/package.json').version")"
-echo "[vcad-mcp] Baking version $MCP_VERSION into bundle"
+
+# Build identity baked at build time so server_info, the MCP `initialize`
+# handshake, and /health can fingerprint the exact running commit. On Vercel
+# VERCEL_GIT_COMMIT_SHA is set during the build; fall back to git, then a
+# sentinel. Baking (vs reading process.env at runtime) is deterministic — it
+# doesn't depend on the project's "expose system env vars at runtime" setting,
+# whose absence is what made a stale serverless instance indistinguishable
+# from a fresh one.
+BUILD_SHA="${VERCEL_GIT_COMMIT_SHA:-$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null || echo unknown)}"
+BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+echo "[vcad-mcp] Baking version $MCP_VERSION build ${BUILD_SHA:0:7} ($BUILD_TIME) into bundle"
 
 npx esbuild@latest entry.ts \
   --bundle \
@@ -46,6 +56,8 @@ npx esbuild@latest entry.ts \
   --format=esm \
   --external:@resvg/resvg-js \
   --define:__VCAD_VERSION__="\"$MCP_VERSION\"" \
+  --define:__VCAD_BUILD_SHA__="\"$BUILD_SHA\"" \
+  --define:__VCAD_BUILD_TIME__="\"$BUILD_TIME\"" \
   --outfile="$OUT/functions/mcp.func/index.mjs" \
   --banner:js="import { createRequire as __vcadCreateRequire } from 'module'; const require = __vcadCreateRequire(import.meta.url);"
 
