@@ -43,7 +43,7 @@
     "@types/react-dom": "^19.0.0",
     "@types/three": "^0.172.0",
     "gray-matter": "^4.0.3",
-    "postcss": "^8.5.0",
+    "postcss": "^8.5.15",
     "tailwindcss": "^4.1.0",
     "typescript": "^5.7.0"
   }
