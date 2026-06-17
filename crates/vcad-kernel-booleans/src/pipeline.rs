@@ -470,6 +470,29 @@ pub(crate) fn brep_boolean(
         if let ssi::IntersectionCurve::Circle(circle) = &curve {
             // Sample a point on the circle (not center — center might not be in face for cylindrical)
             let sample_pt = circle.center + circle.radius * circle.x_dir.into_inner();
+
+            // A circle from a curved×planar SSI is built from the planar face's
+            // *infinite* carrier plane. When that planar face is a small bounded
+            // disk (e.g. a cylinder cap), the circle can be far larger than the
+            // face and centered well outside it — a "phantom" circle. The
+            // analytic splitters for curved faces (cylinder/sphere/cone) split
+            // the *whole* surface by the circle, so applying a phantom circle to
+            // a curved partner resurfaces geometry that a prior boolean already
+            // trimmed away (e.g. a subtracted sphere reappearing above the part).
+            //
+            // Gate each curved-face split on the planar partner actually
+            // anchoring the circle: its center must lie within the partner face.
+            // The circle is coplanar with the planar partner, so a small disk
+            // (cap) centered away from the circle correctly fails this test,
+            // while a large face that the circle is seated in (a part's top, a
+            // box wall) passes — even when the circle pokes slightly past the
+            // face's filleted edge. Curved×curved pairs have no planar partner
+            // and keep their existing behavior.
+            let b_anchors_circle = !split::is_planar_face(&b, face_b)
+                || trim::point_in_face(&b, face_b, &circle.center);
+            let a_anchors_circle = !split::is_planar_face(&a, face_a)
+                || trim::point_in_face(&a, face_a, &circle.center);
+
             if split::is_planar_face(&a, face_a) {
                 // Check point_in_face to avoid creating inner loops inside existing holes.
                 // For degenerate cap faces (single-vertex outer loop), always check.
@@ -493,13 +516,13 @@ pub(crate) fn brep_boolean(
                     results_a.push((curve.clone(), circle.center, circle.center));
                 }
             }
-            if split::is_cylindrical_face(&a, face_a) {
+            if b_anchors_circle && split::is_cylindrical_face(&a, face_a) {
                 results_a.push((curve.clone(), circle.center, circle.center));
             }
-            if split::is_spherical_face(&a, face_a) {
+            if b_anchors_circle && split::is_spherical_face(&a, face_a) {
                 results_a.push((curve.clone(), circle.center, circle.center));
             }
-            if split::is_conical_face(&a, face_a) {
+            if b_anchors_circle && split::is_conical_face(&a, face_a) {
                 results_a.push((curve.clone(), circle.center, circle.center));
             }
             if split::is_planar_face(&b, face_b) {
@@ -519,13 +542,13 @@ pub(crate) fn brep_boolean(
                     results_b.push((curve.clone(), circle.center, circle.center));
                 }
             }
-            if split::is_cylindrical_face(&b, face_b) {
+            if a_anchors_circle && split::is_cylindrical_face(&b, face_b) {
                 results_b.push((curve.clone(), circle.center, circle.center));
             }
-            if split::is_spherical_face(&b, face_b) {
+            if a_anchors_circle && split::is_spherical_face(&b, face_b) {
                 results_b.push((curve.clone(), circle.center, circle.center));
             }
-            if split::is_conical_face(&b, face_b) {
+            if a_anchors_circle && split::is_conical_face(&b, face_b) {
                 results_b.push((curve.clone(), circle.center, circle.center));
             }
             return Some((face_a, results_a, face_b, results_b));

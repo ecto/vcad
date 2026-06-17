@@ -1,0 +1,9 @@
+{
+  "id": "2026-06-17-chained-curved-boolean-resurface-fix",
+  "version": "0.9.4",
+  "date": "2026-06-17",
+  "category": "fix",
+  "title": "Chained curved booleans no longer resurface cut geometry",
+  "summary": "Subtracting a curved tool from a solid that already has a concave curved face (e.g. a dimpled body) no longer makes the earlier subtracted shape reappear as solid geometry.",
+  "features": ["kernel", "booleans"]
+}
