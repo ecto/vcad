@@ -106,10 +106,17 @@ describe("kernel trap recovery", () => {
 
     const genBefore = kernelWasmGeneration();
     resetKernelWasm("test-induced reset");
-    expect(kernelWasmGeneration()).toBe(genBefore + 1);
+    // Re-instantiation may be eager (synchronous, inside resetKernelWasm when a
+    // source buffer is retained — the production path) or lazy (deferred to the
+    // next getKernelWasm). Force whichever applies, then assert a fresh
+    // instance is live without coupling the test to that internal choice.
+    await getKernelWasm();
+    expect(kernelWasmGeneration()).toBeGreaterThan(genBefore);
 
     // Same captured reference, fresh underlying instance: still works because
     // the glue's exports read the module-level `wasm` binding at call time.
+    // This is exactly the property that lets Engine's captured kernel refs
+    // survive a reset.
     expect(renderSvg(cubeJson, 2).length).toBeGreaterThan(100);
   });
 });
