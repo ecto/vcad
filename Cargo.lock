@@ -6964,6 +6964,7 @@ dependencies = [
  "vcad-kernel-sweep",
  "vcad-kernel-tessellate",
  "vcad-kernel-text",
+ "vcad-loon",
 ]
 
 [[package]]
