@@ -45,6 +45,15 @@ import {
   runInSessionScope,
 } from "./tools/session.js";
 import { createSessionStore } from "./session-store.js";
+import { createFabricateStore } from "./fabricate/store.js";
+import {
+  quoteManufacturing,
+  quoteManufacturingSchema,
+  getOrderStatus,
+  getOrderStatusSchema,
+  listOrders,
+  listOrdersSchema,
+} from "./tools/order.js";
 import type { AuthUser } from "./oauth.js";
 
 /** Per-connection context threaded from the transport entry point — the
@@ -386,6 +395,7 @@ const WIDGET_CALLABLE_META = {
  * tool in a disabled pack return an error pointing at the env var.
  */
 const TOOL_PACKS: Record<string, readonly string[]> = {
+  fabricate: ["quote_manufacturing", "get_order_status", "list_orders"],
   dfm: ["dfm_check", "dfm_explain", "dfm_suggest_fix", "dfm_apply_fix"],
   sheet_metal: [
     "sheet_metal_create",
@@ -522,6 +532,12 @@ export async function createServer(
   // closure (not a module global) so concurrent connections on one warm
   // instance can't clobber each other's binding.
   const sessionStore = createSessionStore(context.user);
+
+  // vcad Fabricate store (quotes + orders). Cloud-backed for a signed-in user
+  // with the Supabase service-role key, else in-memory (local stdio). Held in
+  // the connection closure like sessionStore so concurrent connections can't
+  // clobber each other.
+  const fabricateStore = createFabricateStore(context.user);
 
   // Wire the kernel WASM's chat helpers into the shared commandRegistry so
   // `toAnthropicTools` and `planCrud` work on the server too. Same bootstrap
@@ -676,6 +692,25 @@ export async function createServer(
           "this to confirm a tool exists in THIS build before assuming a stale " +
           "or version-skewed deploy.",
         inputSchema: serverInfoSchema,
+      },
+      // ── vcad Fabricate: order custom-manufactured parts ───────
+      {
+        name: "quote_manufacturing",
+        description:
+          "Quote manufacturing a part from a live session: measures the design, runs light DFM, and returns margin-inclusive price options per fab (pcb/cnc/3dprint/sheet_metal/cast_metal). Persists a quote + a QUOTED order. Phase 0 is quote-only — prices are estimates and ordering/payment ship next; no money moves.",
+        inputSchema: quoteManufacturingSchema,
+      },
+      {
+        name: "get_order_status",
+        description:
+          "Return the lifecycle row for a Fabricate order (state, fab, totals, event timeline). Read-only.",
+        inputSchema: getOrderStatusSchema,
+      },
+      {
+        name: "list_orders",
+        description:
+          "List the caller's Fabricate orders, newest first. Optional status filter and limit. Read-only.",
+        inputSchema: listOrdersSchema,
       },
       // ── Stdlib parts library (session-aware) ──────────────────
       {
@@ -1435,6 +1470,18 @@ export async function createServer(
 
         case "inspect_cad":
           result = inspectCad(args, engine);
+          break;
+
+        case "quote_manufacturing":
+          result = await quoteManufacturing(args, engine, fabricateStore, context.user);
+          break;
+
+        case "get_order_status":
+          result = await getOrderStatus(args, fabricateStore, context.user);
+          break;
+
+        case "list_orders":
+          result = await listOrders(args, fabricateStore, context.user);
           break;
 
         case "render_view":

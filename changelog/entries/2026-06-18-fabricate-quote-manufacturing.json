@@ -1,0 +1,10 @@
+{
+  "id": "2026-06-18-fabricate-quote-manufacturing",
+  "version": "0.9.4",
+  "date": "2026-06-18",
+  "category": "feat",
+  "title": "Quote custom manufacturing from a design via MCP",
+  "summary": "New quote_manufacturing / get_order_status / list_orders MCP tools quote a part (PCB, CNC, 3D-print, sheet-metal, cast-metal) from a live session through a fab broker (JLCPCB, Digital Metal) and persist a quote + order. Quote-only for now — no payment.",
+  "features": ["fabricate", "ordering", "manufacturing", "jlcpcb", "digital-metal"],
+  "mcpTools": ["quote_manufacturing", "get_order_status", "list_orders"]
+}
