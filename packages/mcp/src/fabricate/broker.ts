@@ -92,15 +92,25 @@ export class FulfillmentBroker {
       });
     }
 
+    // The generic estimator is a FALLBACK, not a competitor: drop it whenever a
+    // contracted fab already quoted this process, so a non-orderable ballpark
+    // can't out-rank or duplicate a real fab (e.g. vcad_estimate undercutting
+    // JLCPCB on a 4-layer board). It only stands alone for processes with no
+    // contracted fab yet (CNC, sheet metal).
+    const hasContracted = built.some((b) => CONTRACTED_FABS.has(b.option.fab));
+    const pool = hasContracted
+      ? built.filter((b) => CONTRACTED_FABS.has(b.option.fab))
+      : built;
+
     // Sort: in-spec first, then orderable, then cheapest total.
-    built.sort((a, b) => {
+    pool.sort((a, b) => {
       if (a.option.in_spec !== b.option.in_spec) return a.option.in_spec ? -1 : 1;
       if (a.option.orderable !== b.option.orderable)
         return a.option.orderable ? -1 : 1;
       return a.option.total_minor - b.option.total_minor;
     });
 
-    const top = built[0] ?? null;
+    const top = pool[0] ?? null;
     const landed = top
       ? estimateLandedCost({
           region: this.adapterRegion(top.option.fab),
@@ -109,7 +119,7 @@ export class FulfillmentBroker {
       : { shipping_minor: 0, duty_minor: 0, basis: "none" };
 
     return {
-      options: built.map((b) => b.option),
+      options: pool.map((b) => b.option),
       recommended: top ? top.option : null,
       landed_cost: landed,
       fab_cost_minor: top ? top.fabCost : 0,
