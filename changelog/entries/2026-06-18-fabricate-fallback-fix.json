@@ -1,0 +1,10 @@
+{
+  "id": "2026-06-18-fabricate-fallback-fix",
+  "version": "0.9.4",
+  "date": "2026-06-18",
+  "category": "fix",
+  "title": "Manufacturing quotes prefer real fabs over the estimate",
+  "summary": "quote_manufacturing no longer lets the generic 'no contracted fab' estimate duplicate or out-rank a real fab (e.g. undercutting JLCPCB on a 4-layer board); the estimate now appears only for processes with no contracted fab yet.",
+  "features": ["fabricate", "ordering", "manufacturing"],
+  "mcpTools": ["quote_manufacturing"]
+}

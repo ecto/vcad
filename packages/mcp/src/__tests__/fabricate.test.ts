@@ -112,6 +112,35 @@ describe("fabricate pricing + broker (no engine)", () => {
     expect(r.recommended!.fab).toBe("digitalmetal");
     expect(r.recommended!.total_minor).toBe(applyMargin(base) + 800);
   });
+
+  it("drops the generic estimator when a contracted fab serves the process", async () => {
+    const broker = new FulfillmentBroker();
+
+    // PCB: JLCPCB is contracted → the non-orderable generic must not appear or
+    // out-rank it (regression: it used to undercut JLCPCB on a 4-layer board).
+    const pcb = await broker.quote({
+      process: "pcb",
+      quantity: 10,
+      metrics: metrics({ ok: false, parts: 0, footprint_mm2: 0, max_dim_mm: 0, bbox: null }),
+      boardAreaMm2: 10000,
+      layers: 4,
+    });
+    expect(pcb.options.some((o) => o.fab === "vcad_estimate")).toBe(false);
+    expect(pcb.recommended?.fab).toBe("jlcpcb");
+
+    // cast_metal: Digital Metal contracted → generic dropped.
+    const cast = await broker.quote({
+      process: "cast_metal",
+      quantity: 1,
+      metrics: metrics(),
+      baseCostMinor: 5000,
+    });
+    expect(cast.options.every((o) => o.fab !== "vcad_estimate")).toBe(true);
+
+    // CNC: no contracted fab → the generic estimator remains (as the fallback).
+    const cnc = await broker.quote({ process: "cnc", quantity: 1, metrics: metrics() });
+    expect(cnc.options.some((o) => o.fab === "vcad_estimate")).toBe(true);
+  });
 });
 
 describe("fabricate quote loop (engine)", () => {
