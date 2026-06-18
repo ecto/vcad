@@ -1,0 +1,181 @@
+import { describe, it, expect, beforeAll, beforeEach } from "vitest";
+import { Engine } from "@vcad/engine";
+import type { Document } from "@vcad/ir";
+import { openDocument, documents } from "../tools/session.js";
+import {
+  quoteManufacturing,
+  getOrderStatus,
+  listOrders,
+} from "../tools/order.js";
+import { InMemoryFabricateStore } from "../fabricate/store.js";
+import { FulfillmentBroker } from "../fabricate/broker.js";
+import { applyMargin, MARGIN_RATE } from "../fabricate/pricing.js";
+import { digitalMetalAdapter } from "../fabricate/adapters/digitalmetal.js";
+import type { GeometryMetrics } from "../fabricate/types.js";
+
+function metrics(over: Partial<GeometryMetrics> = {}): GeometryMetrics {
+  return {
+    ok: true,
+    parts: 1,
+    volume_mm3: 1000,
+    surface_area_mm2: 600,
+    footprint_mm2: 100,
+    max_dim_mm: 10,
+    bbox: { min: [0, 0, 0], max: [10, 10, 10] },
+    ...over,
+  };
+}
+
+function cubeDoc(): Document {
+  return {
+    version: "0.1",
+    nodes: {
+      "1": { id: 1, name: "blank", op: { type: "Cube", size: { x: 10, y: 10, z: 10 } } },
+    },
+    materials: {},
+    part_materials: {},
+    roots: [{ root: 1, material: "default" }],
+  } as unknown as Document;
+}
+
+describe("fabricate pricing + broker (no engine)", () => {
+  it("applies the cost-plus margin", () => {
+    expect(applyMargin(1000)).toBe(Math.round(1000 * (1 + MARGIN_RATE)));
+    expect(applyMargin(1000)).toBe(1250);
+  });
+
+  it("quotes cast_metal, keeps fab cost server-only, and is not orderable in Phase 0", async () => {
+    const broker = new FulfillmentBroker();
+    const r = await broker.quote({ process: "cast_metal", quantity: 2, metrics: metrics() });
+
+    expect(r.recommended).not.toBeNull();
+    expect(r.options.length).toBeGreaterThan(0);
+    // Server-only economics are returned to the BROKER caller (the tool), but
+    // every customer-facing option is margin-inclusive and not orderable yet.
+    expect(r.fab_cost_minor).toBeGreaterThan(0);
+    expect(r.margin_minor).toBeGreaterThan(0);
+    for (const o of r.options) {
+      expect(o.total_minor).toBeGreaterThan(0);
+      expect(o.pricing_basis).toBe("estimate");
+      expect(o.orderable).toBe(false); // Phase 0: estimate, never orderable
+    }
+    // Marked-up total is strictly above the raw fab cost.
+    expect(r.recommended!.total_minor).toBeGreaterThan(r.fab_cost_minor);
+  });
+
+  it("flags an oversize cast_metal part as out of spec", async () => {
+    const q = await digitalMetalAdapter.quote({
+      process: "cast_metal",
+      quantity: 1,
+      metrics: metrics({ max_dim_mm: 400 }), // > 350 mm envelope
+    });
+    expect(q).not.toBeNull();
+    expect(q!.in_spec).toBe(false);
+  });
+
+  it("PCB quote uses board area + layers and stays in spec", async () => {
+    const broker = new FulfillmentBroker();
+    const r = await broker.quote({
+      process: "pcb",
+      quantity: 5,
+      metrics: metrics({ ok: false, parts: 0, footprint_mm2: 0, max_dim_mm: 0, bbox: null }),
+      boardAreaMm2: 2500, // 50x50mm
+      layers: 4,
+    });
+    const jlc = r.options.find((o) => o.fab === "jlcpcb");
+    expect(jlc).toBeDefined();
+    expect(jlc!.in_spec).toBe(true);
+    expect(jlc!.total_minor).toBeGreaterThan(0);
+  });
+
+  it("CNC has no contracted fab → only a non-orderable estimate", async () => {
+    const broker = new FulfillmentBroker();
+    const r = await broker.quote({ process: "cnc", quantity: 1, metrics: metrics() });
+    expect(r.options.length).toBeGreaterThan(0);
+    expect(r.options.every((o) => o.orderable === false)).toBe(true);
+    expect(r.options.some((o) => o.fab === "vcad_estimate")).toBe(true);
+  });
+
+  it("uses the shared kernel estimate when provided, so MCP agrees with the app", async () => {
+    const broker = new FulfillmentBroker();
+    const base = 10000; // $100 total fab cost from the shared estimator
+    const r = await broker.quote({
+      process: "cast_metal",
+      quantity: 1,
+      metrics: metrics(),
+      baseCostMinor: base,
+    });
+    expect(r.recommended).not.toBeNull();
+    // The adapter used the shared estimate, NOT its local coefficients.
+    expect(r.fab_cost_minor).toBe(base);
+    // Customer total = marked-up base + landed (Digital Metal = US, $8, no duty).
+    expect(r.recommended!.fab).toBe("digitalmetal");
+    expect(r.recommended!.total_minor).toBe(applyMargin(base) + 800);
+  });
+});
+
+describe("fabricate quote loop (engine)", () => {
+  let engine: Engine;
+  beforeAll(async () => {
+    engine = await Engine.init();
+  });
+  beforeEach(() => {
+    documents.clear();
+  });
+
+  it("quotes a real cube, hides fab cost, persists a QUOTED order, and reads it back", async () => {
+    const open = openDocument({ initial: cubeDoc() });
+    const { document_id } = JSON.parse(open.content[0].text);
+
+    const store = new InMemoryFabricateStore();
+    const quoteRes = await quoteManufacturing(
+      { document_id, process: "cast_metal", quantity: 2, material: "stainless" },
+      engine,
+      store,
+      null,
+    );
+    expect(quoteRes.isError).toBeFalsy();
+    const quote = JSON.parse(quoteRes.content[0].text);
+
+    // Measured real geometry off the cube.
+    expect(quote.geometry.parts).toBe(1);
+    expect(quote.geometry.volume_mm3).toBeGreaterThan(0);
+    expect(quote.quote_id).toBeTruthy();
+    expect(quote.order_id).toBeTruthy();
+    expect(quote.total_amount_usd).toBeGreaterThan(0);
+    expect(quote.fab_options.length).toBeGreaterThan(0);
+    expect(quote.margin_hidden).toBe(true);
+
+    // Consistency: a volume-based process is priced by the SAME kernel cost
+    // model the app's Build quote uses (not ad-hoc coefficients).
+    expect(quote.material_catalog).toBeTruthy();
+    expect(quote.cost_model).toContain("kernel");
+
+    // The marked-up cost / margin must NEVER leak into the agent-facing result.
+    expect(quoteRes.content[0].text).not.toContain("fab_cost");
+    expect(quoteRes.content[0].text).not.toContain("margin_minor");
+
+    // The order was persisted at QUOTED and is readable + listable.
+    const statusRes = await getOrderStatus({ order_id: quote.order_id }, store, null);
+    const status = JSON.parse(statusRes.content[0].text);
+    expect(status.state).toBe("QUOTED");
+    expect(status.events[0].state).toBe("QUOTED");
+    expect(status.tracking).toBeNull();
+
+    const listRes = await listOrders({ status: "QUOTED" }, store, null);
+    const list = JSON.parse(listRes.content[0].text);
+    expect(list.orders.some((o: { order_id: string }) => o.order_id === quote.order_id)).toBe(true);
+  });
+
+  it("rejects an unknown process", async () => {
+    const open = openDocument({ initial: cubeDoc() });
+    const { document_id } = JSON.parse(open.content[0].text);
+    const res = await quoteManufacturing(
+      { document_id, process: "frobnicate", quantity: 1 },
+      engine,
+      new InMemoryFabricateStore(),
+      null,
+    );
+    expect(res.isError).toBe(true);
+  });
+});
