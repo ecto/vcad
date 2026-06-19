@@ -7,6 +7,7 @@ import {
   vi,
 } from "vitest";
 import { fireToolAlert, notifyConfig } from "../notify.js";
+import { telemetryConfig } from "../telemetry.js";
 
 const WEBHOOK = "https://discord.com/api/webhooks/test/token";
 // Tests run with a short rollup window so a single timer tick fires it.
@@ -21,6 +22,9 @@ describe("fireToolAlert (rollup)", () => {
     vi.stubGlobal("fetch", fetchMock);
     notifyConfig.webhookUrl = "";
     notifyConfig.rollupMs = INTERVAL_MS;
+    // Keep the PostHog sink off so fetch-call counts reflect only Discord,
+    // regardless of any POSTHOG_API_KEY in the ambient environment.
+    telemetryConfig.apiKey = "";
   });
 
   afterEach(async () => {

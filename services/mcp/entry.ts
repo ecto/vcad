@@ -12,7 +12,7 @@
 
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import { createServer, getBuildInfo } from "@vcad/mcp/server";
+import { createServer, getBuildInfo, flushTelemetry } from "@vcad/mcp/server";
 import {
   getOAuthConfig,
   handleOAuthRoute,
@@ -146,6 +146,9 @@ export default async function handler(
     try {
       await transport.handleRequest(req, res);
     } finally {
+      // Drain PostHog captures before the serverless instance can freeze —
+      // an in-flight fetch is killed the instant the function returns.
+      await flushTelemetry();
       await transport.close();
       await server.close();
     }

@@ -202,6 +202,11 @@ import {
   OPENAI_WIDGET_CSP,
 } from "./viewer.js";
 import { fireToolAlert } from "./notify.js";
+import { configureTelemetry, flushTelemetry } from "./telemetry.js";
+
+// Re-exported so the Vercel transport entry can drain in-flight PostHog
+// captures before a serverless instance freezes (see services/mcp/entry.ts).
+export { flushTelemetry };
 
 /** Tools that produce or modify geometry and should show the 3D viewer.
  *  Registry-driven kernel tools (create, update, delete, …) are added
@@ -286,6 +291,10 @@ export function getBuildInfo(): {
     uptime_s: Math.round((Date.now() - PROCESS_STARTED_AT) / 1000),
   };
 }
+
+// Stamp every telemetry event with the running build identity (version, commit,
+// instance) — set once at module load.
+configureTelemetry(getBuildInfo());
 
 /** Kernel WASM exports this server depends on; checked at startup so a stale or
  *  incomplete dist surfaces as a clear boot error rather than an opaque
