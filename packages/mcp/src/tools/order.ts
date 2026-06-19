@@ -14,6 +14,7 @@
 
 import { randomUUID, createHash } from "node:crypto";
 import { estimateCost, type Engine } from "@vcad/engine";
+import type { Document } from "@vcad/ir";
 import type { AuthUser } from "../oauth.js";
 import { getSession } from "./session.js";
 import { measureDocument } from "../fabricate/geometry.js";
@@ -46,7 +47,15 @@ function err(message: string): ToolResult {
 export const quoteManufacturingSchema = {
   type: "object" as const,
   properties: {
-    document_id: { type: "string" as const, description: "Session id from open_document." },
+    ir: {
+      type: "object" as const,
+      description:
+        "Inline Document IR to quote directly — a STATELESS alternative to document_id. Needs no open_document, holds no session, and is immune to the serverless cold-start/instance issue, so it's the robust choice for one-shot or parallel quotes. Provide this OR document_id.",
+    },
+    document_id: {
+      type: "string" as const,
+      description: "Session id from open_document. Provide this OR `ir`.",
+    },
     process: {
       type: "string" as const,
       enum: [...PROCESSES],
@@ -65,7 +74,7 @@ export const quoteManufacturingSchema = {
       description: "PCB only: board area override when geometry can't recover it.",
     },
   },
-  required: ["document_id", "process", "quantity"],
+  required: ["process", "quantity"],
 };
 
 /** Lightweight Phase-0 DFM. Deep checks (dfm_check / run_drc /
@@ -94,15 +103,27 @@ export async function quoteManufacturing(
 ): Promise<ToolResult> {
   const args = (input ?? {}) as Record<string, unknown>;
   const documentId = String(args.document_id ?? "");
+  const inlineIr =
+    args.ir && typeof args.ir === "object" ? (args.ir as Document) : null;
   const process = String(args.process ?? "") as Process;
   const quantity = Math.max(1, Math.round(Number(args.quantity ?? 1)));
 
-  if (!documentId) return err("document_id is required.");
   if (!PROCESSES.includes(process)) {
     return err(`Unknown process "${process}". Use one of: ${PROCESSES.join(", ")}.`);
   }
+  if (!inlineIr && !documentId) {
+    return err(
+      "Provide either `ir` (inline Document — stateless, serverless-safe) or `document_id` (an open session).",
+    );
+  }
 
-  const ir = getSession(documentId); // throws "Unknown document_id" if absent
+  // Stateless when `ir` is supplied: no session lookup, so it's immune to the
+  // serverless cold-start/cross-instance session loss and safe to call in
+  // parallel. Otherwise resolve from the live session (throws if absent).
+  const ir = inlineIr ?? getSession(documentId);
+  const hash = docHash(ir);
+  // Traceability ref for the persisted quote/order when there's no session id.
+  const documentRef = documentId || `inline:${hash}`;
   const metrics = measureDocument(ir, engine);
   const dfm = quoteDfm(process, metrics);
 
@@ -156,8 +177,8 @@ export async function quoteManufacturing(
 
   const quote: Quote = {
     quote_id: quoteId,
-    document_id: documentId,
-    doc_hash: docHash(ir),
+    document_id: documentRef,
+    doc_hash: hash,
     process,
     material: typeof args.material === "string" ? args.material : null,
     quantity,
@@ -173,7 +194,7 @@ export async function quoteManufacturing(
 
   const order: Order = {
     order_id: orderId,
-    document_id: documentId,
+    document_id: documentRef,
     quote_id: quoteId,
     state: "QUOTED",
     fab: result.recommended.fab,

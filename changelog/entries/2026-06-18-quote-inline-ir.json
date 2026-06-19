@@ -1,0 +1,10 @@
+{
+  "id": "2026-06-18-quote-inline-ir",
+  "version": "0.9.4",
+  "date": "2026-06-18",
+  "category": "feat",
+  "title": "Stateless manufacturing quotes via inline IR",
+  "summary": "quote_manufacturing now accepts an inline `ir` Document as an alternative to document_id — no open_document needed, no session held, immune to serverless cold-start/cross-instance session loss, and safe to call in parallel.",
+  "features": ["fabricate", "ordering", "manufacturing", "mcp"],
+  "mcpTools": ["quote_manufacturing"]
+}

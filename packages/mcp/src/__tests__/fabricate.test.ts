@@ -207,4 +207,32 @@ describe("fabricate quote loop (engine)", () => {
     );
     expect(res.isError).toBe(true);
   });
+
+  it("quotes from inline IR with no open_document (stateless, serverless-safe)", async () => {
+    // The serverless fix: no session is created, so this can't hit the
+    // cross-instance "Unknown document_id" failure and is safe to parallelize.
+    const res = await quoteManufacturing(
+      { ir: cubeDoc(), process: "cnc", quantity: 1, material: "aluminum" },
+      engine,
+      new InMemoryFabricateStore(),
+      null,
+    );
+    expect(res.isError).toBeFalsy();
+    const quote = JSON.parse(res.content[0].text);
+    expect(quote.geometry.parts).toBe(1);
+    expect(quote.total_amount_usd).toBeGreaterThan(0);
+    expect(quote.cost_model).toContain("kernel");
+    expect(quote.quote_id).toBeTruthy();
+    expect(quote.order_id).toBeTruthy();
+  });
+
+  it("requires either ir or document_id", async () => {
+    const res = await quoteManufacturing(
+      { process: "cnc", quantity: 1 },
+      engine,
+      new InMemoryFabricateStore(),
+      null,
+    );
+    expect(res.isError).toBe(true);
+  });
 });
