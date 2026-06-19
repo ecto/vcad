@@ -36,6 +36,7 @@ const fallbackDocuments = new Map<string, Document>();
 
 const sessionScope = new AsyncLocalStorage<{
   documents: Map<string, Document>;
+  user: AuthUser | null;
 }>();
 
 /** The cache for the current connection: a signed-in user's isolated
@@ -54,7 +55,13 @@ function activeDocuments(): Map<string, Document> {
  */
 export function runInSessionScope<T>(user: AuthUser | null, fn: () => T): T {
   if (!user) return fn();
-  return sessionScope.run({ documents: new Map() }, fn);
+  return sessionScope.run({ documents: new Map(), user }, fn);
+}
+
+/** The signed-in user for the current tool call, or null (anonymous/stdio).
+ *  Read by telemetry to attribute events; outside any scope returns null. */
+export function currentUser(): AuthUser | null {
+  return sessionScope.getStore()?.user ?? null;
 }
 
 /**

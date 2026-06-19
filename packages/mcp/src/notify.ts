@@ -1,3 +1,5 @@
+import { captureToolCall } from "./telemetry.js";
+
 /**
  * Discord activity rollups for MCP tool usage.
  *
@@ -77,6 +79,9 @@ export function fireToolAlert(
   args: Record<string, unknown>,
   result: { isError?: boolean },
 ): void {
+  // PostHog telemetry is gated independently of the Discord webhook below.
+  captureToolCall(name, args, result);
+
   if (!notifyConfig.webhookUrl) return;
 
   if (!win) win = freshWindow();

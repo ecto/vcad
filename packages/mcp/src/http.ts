@@ -23,6 +23,7 @@ import { Engine } from "@vcad/engine";
 import { createServer } from "./server.js";
 import { verifyAccessToken } from "./oauth.js";
 import { getViewerHtml, MCP_APP_MIME_TYPE } from "./viewer.js";
+import { flushTelemetry } from "./telemetry.js";
 
 const PORT = parseInt(process.env.PORT || "8080", 10);
 
@@ -211,6 +212,7 @@ const httpServer = createHttpServer(async (req, res) => {
         return;
       }
       await handleMcpRequest(req, res);
+      await flushTelemetry();
       return;
     }
 
