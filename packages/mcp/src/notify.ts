@@ -157,3 +157,87 @@ async function rollup(): Promise<void> {
     console.error("[mcp] Discord rollup error:", err);
   }
 }
+
+// ── New-session ping ─────────────────────────────────────────────────────────
+
+/** Resolve the webhook for session pings: a session-specific override, then the
+ *  shared `DISCORD_WEBHOOK_URL` (same convention as the app), then the hardcoded
+ *  rollup config (usually empty). */
+function resolveSessionWebhook(): string | null {
+  return (
+    process.env.DISCORD_WEBHOOK_URL_SESSION ||
+    process.env.DISCORD_WEBHOOK_URL ||
+    notifyConfig.webhookUrl ||
+    null
+  );
+}
+
+/** "alex@example.com" → "a****@example.com"; null/empty → "anonymous". */
+function maskEmail(email: string | null | undefined): string {
+  if (!email) return "anonymous";
+  const at = email.indexOf("@");
+  if (at < 1) return "signed-in";
+  return `${email[0]}${"*".repeat(Math.max(1, at - 1))}${email.slice(at)}`;
+}
+
+/**
+ * Post a one-off Discord embed when a NEW MCP session is created (open_document
+ * and the other session creators). Awaited by the dispatch layer but bounded by
+ * a 2.5s timeout and never throws — a Discord outage can't break or hang a tool
+ * call. Gated to production (mirrors packages/app/api/_lib/discord.ts); set
+ * DISCORD_FORCE=1 to fire from preview/dev. No webhook configured → silent no-op.
+ *
+ * Privacy: sends only the session id, the creating tool, a masked `who`, and the
+ * build sha — never argument values or IR.
+ */
+export async function fireSessionAlert(
+  documentId: string,
+  toolName: string,
+  user: { email?: string | null } | null,
+): Promise<void> {
+  if (
+    process.env.VERCEL_ENV !== "production" &&
+    process.env.DISCORD_FORCE !== "1"
+  ) {
+    return;
+  }
+  const webhook = resolveSessionWebhook();
+  if (!webhook) return;
+
+  const sha = (process.env.VCAD_BUILD_SHA ?? "").slice(0, 7);
+  const embed: Record<string, unknown> = {
+    title: "🟢 New MCP session",
+    color: 0xf92672, // vcad pink
+    timestamp: new Date().toISOString(),
+    fields: [
+      { name: "session", value: `\`${clip(documentId, 64)}\``, inline: true },
+      { name: "via", value: `\`${clip(toolName, 48)}\``, inline: true },
+      { name: "who", value: maskEmail(user?.email ?? null), inline: true },
+      ...(sha ? [{ name: "build", value: `\`${sha}\``, inline: true }] : []),
+    ],
+  };
+
+  const ctrl = new AbortController();
+  const timeout = setTimeout(() => ctrl.abort(), 2500);
+  try {
+    const res = await fetch(webhook, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        username: notifyConfig.username,
+        embeds: [embed],
+        allowed_mentions: { parse: [] },
+      }),
+      signal: ctrl.signal,
+    });
+    if (!res.ok) {
+      console.error(
+        `[mcp] Discord session ping failed: ${res.status} ${res.statusText}`,
+      );
+    }
+  } catch (err) {
+    console.error("[mcp] Discord session ping error:", err);
+  } finally {
+    clearTimeout(timeout);
+  }
+}

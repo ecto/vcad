@@ -201,7 +201,7 @@ import {
   OPENAI_APP_MIME_TYPE,
   OPENAI_WIDGET_CSP,
 } from "./viewer.js";
-import { fireToolAlert } from "./notify.js";
+import { fireToolAlert, fireSessionAlert } from "./notify.js";
 
 /** Tools that produce or modify geometry and should show the 3D viewer.
  *  Registry-driven kernel tools (create, update, delete, …) are added
@@ -1800,6 +1800,12 @@ export async function createServer(
             await persistSession(sessionStore, writtenId);
           } catch {
             // best-effort durable write
+          }
+          // A creator mints an id with NO incoming document_id → a brand-new
+          // session. Ping Discord once (no-op unless a webhook is configured;
+          // never throws, bounded by its own timeout).
+          if (!incomingId) {
+            await fireSessionAlert(writtenId, name, context.user);
           }
         }
       }
