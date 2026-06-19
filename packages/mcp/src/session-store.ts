@@ -186,6 +186,83 @@ export class SupabaseSessionStore implements SessionStore {
   }
 }
 
+/**
+ * Cloud-backed store for ANONYMOUS sessions, keyed by the (unguessable)
+ * document id — capability access, no user. Backed by the `mcp_sessions` table
+ * (service-role only). Same hydrate-on-miss / persist-after-write contract as
+ * SupabaseSessionStore, so anonymous callers survive serverless cold starts and
+ * cross-instance routing exactly like signed-in users do.
+ */
+export class AnonSupabaseSessionStore implements SessionStore {
+  constructor(private cfg: { supabaseUrl: string; serviceRoleKey: string }) {}
+
+  private headers(extra: Record<string, string> = {}): Record<string, string> {
+    return {
+      apikey: this.cfg.serviceRoleKey,
+      Authorization: `Bearer ${this.cfg.serviceRoleKey}`,
+      "Content-Type": "application/json",
+      ...extra,
+    };
+  }
+
+  private url(query = ""): string {
+    return `${this.cfg.supabaseUrl}/rest/v1/mcp_sessions${query}`;
+  }
+
+  async load(documentId: string): Promise<Document | null> {
+    try {
+      const res = await sessionFetch(
+        this.url(
+          `?document_id=eq.${encodeURIComponent(documentId)}&select=content&limit=1`,
+        ),
+        {
+          method: "GET",
+          headers: this.headers({ Accept: "application/vnd.pgrst.object+json" }),
+        },
+      );
+      if (!res.ok) return null; // 406 = zero/≠1 rows → miss
+      const row = (await res.json()) as { content?: unknown };
+      const ir = unwrapDocument(row?.content);
+      return ir ? (JSON.parse(JSON.stringify(ir)) as Document) : null;
+    } catch (err) {
+      console.error("[session-store] anon load failed:", err);
+      return null;
+    }
+  }
+
+  async save(documentId: string, doc: Document): Promise<void> {
+    try {
+      const res = await sessionFetch(this.url("?on_conflict=document_id"), {
+        method: "POST",
+        headers: this.headers({
+          Prefer: "resolution=merge-duplicates,return=minimal",
+        }),
+        body: JSON.stringify([{ document_id: documentId, content: doc }]),
+      });
+      if (!res.ok) {
+        console.error(
+          "[session-store] anon save failed:",
+          res.status,
+          await res.text().catch(() => ""),
+        );
+      }
+    } catch (err) {
+      console.error("[session-store] anon save failed:", err);
+    }
+  }
+
+  async drop(documentId: string): Promise<void> {
+    try {
+      await sessionFetch(
+        this.url(`?document_id=eq.${encodeURIComponent(documentId)}`),
+        { method: "DELETE", headers: this.headers() },
+      );
+    } catch (err) {
+      console.error("[session-store] anon drop failed:", err);
+    }
+  }
+}
+
 /** True when `content` looks like a raw Document IR (has nodes + roots). */
 function looksLikeDocument(content: unknown): content is Document {
   return (
@@ -206,21 +283,20 @@ function unwrapDocument(content: unknown): Document | null {
 }
 
 /**
- * Choose the store impl from env + the per-connection user. Returns the
- * cloud-backed store only when ALL of: a signed-in user, SUPABASE_URL, and
- * SUPABASE_SERVICE_ROLE_KEY are present; otherwise the in-memory no-op store
- * (which preserves today's behavior). This single gate keeps the service-role
- * key off any path that lacks an authenticated user.
+ * Choose the store impl from env + the per-connection user. With Supabase env
+ * present: a signed-in user gets the user-owned `documents` store (also renders
+ * at vcad.io); an anonymous caller gets the capability-keyed `mcp_sessions`
+ * store (durable across instances, the unguessable id is the capability). With
+ * no Supabase env (stdio / local) it's the in-memory no-op store — today's
+ * behavior. Either way the service-role key only loads when the env provides it.
  */
 export function createSessionStore(user: AuthUser | null): SessionStore {
   const url = (process.env.SUPABASE_URL || "").replace(/\/+$/, "");
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
-  if (user && url && key) {
-    return new SupabaseSessionStore({
-      supabaseUrl: url,
-      serviceRoleKey: key,
-      userId: user.sub,
-    });
+  if (url && key) {
+    return user
+      ? new SupabaseSessionStore({ supabaseUrl: url, serviceRoleKey: key, userId: user.sub })
+      : new AnonSupabaseSessionStore({ supabaseUrl: url, serviceRoleKey: key });
   }
   return new InMemorySessionStore();
 }
