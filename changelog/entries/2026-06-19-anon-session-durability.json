@@ -1,0 +1,9 @@
+{
+  "id": "2026-06-19-anon-session-durability",
+  "version": "0.9.4",
+  "date": "2026-06-19",
+  "category": "fix",
+  "title": "Durable MCP sessions for anonymous callers",
+  "summary": "Anonymous MCP sessions now persist to a capability-keyed mcp_sessions table, so open_document → later calls survive serverless cold starts and cross-instance routing instead of failing with \"Unknown document_id\". Signed-in users were already durable.",
+  "features": ["mcp", "sessions", "serverless"]
+}
