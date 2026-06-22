@@ -339,8 +339,10 @@ export interface StoredSessionEvent {
 export interface SessionEventStore {
   /** Append one event. Best-effort: errors are logged, never thrown. */
   append(sessionId: string, evt: SessionEvent): Promise<void>;
-  /** Read a session's events in seq order (replay / live window). */
-  list(sessionId: string): Promise<StoredSessionEvent[]>;
+  /** Read a session's events in seq order (replay / live window). With
+   *  `sinceSeq`, only events after it — the backend filters server-side so a
+   *  late-join catch-up doesn't pull the whole log. */
+  list(sessionId: string, sinceSeq?: number): Promise<StoredSessionEvent[]>;
 }
 
 /** No-op store = stdio/local: nothing durable, list is empty. */
@@ -408,11 +410,16 @@ export class SupabaseSessionEventStore implements SessionEventStore {
     }
   }
 
-  async list(sessionId: string): Promise<StoredSessionEvent[]> {
+  async list(sessionId: string, sinceSeq?: number): Promise<StoredSessionEvent[]> {
     try {
+      const sinceFilter =
+        typeof sinceSeq === "number" && Number.isFinite(sinceSeq)
+          ? `&seq=gt.${Math.trunc(sinceSeq)}`
+          : "";
       const res = await sessionFetch(
         `${this.cfg.supabaseUrl}/rest/v1/session_events` +
           `?session_id=eq.${encodeURIComponent(sessionId)}` +
+          sinceFilter +
           `&order=seq.asc` +
           `&select=id,seq,session_id,author,kind,type,payload,created_at`,
         { method: "GET", headers: this.headers() },

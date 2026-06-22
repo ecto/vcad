@@ -1,0 +1,10 @@
+{
+  "id": "2026-06-22-mcp-next-actions",
+  "version": "0.9.4",
+  "date": "2026-06-22",
+  "category": "feat",
+  "title": "MCP tool errors now carry recovery steps",
+  "summary": "Every failed MCP tool call returns structured next_actions — concrete recovery steps (and the tool to call) so an agent can recover in one turn instead of guessing.",
+  "features": ["mcp", "agents"],
+  "mcpTools": []
+}
