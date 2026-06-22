@@ -67,6 +67,7 @@ import {
   registryDispatchableNames,
   dispatchRegistryTool,
 } from "./tools/registry-dispatch.js";
+import { buildErrorResult, enrichErrorResult } from "./tools/next-actions.js";
 import {
   createRobotEnv,
   createRobotEnvSchema,
@@ -1800,6 +1801,11 @@ export async function createServer(
     try {
       const result = await runTool();
 
+      // Tools that RETURN {isError:true} (the ECAD / sheet-metal / DFM surface)
+      // never reach the throw-catch below, so enrich them here — every failure
+      // carries next_actions, not just the ones that throw.
+      if (result.isError) enrichErrorResult(result, name, args);
+
       // ── Persist ─────────────────────────────────────────────────────────
       // After a creator/mutator settles, write the (possibly newly-minted)
       // session through to the durable store. Best-effort: the tool already
@@ -1846,21 +1852,14 @@ export async function createServer(
       // handled the trap itself. Recover the shared instance so this one bad
       // document can't DoS every other session — the hosted server can't be
       // restarted by a client.
-      if (err instanceof WebAssembly.RuntimeError) {
+      const kernelTrap = err instanceof WebAssembly.RuntimeError;
+      if (kernelTrap) {
         resetKernelWasm(`${name} trapped: ${message}`);
       }
-      const errorResult = {
-        content: [
-          {
-            type: "text",
-            text:
-              err instanceof WebAssembly.RuntimeError
-                ? `Error: kernel trap during '${name}' (${message}). The kernel was reset; other documents are unaffected. This is a kernel bug — please report the document that triggered it.`
-                : `Error: ${message}`,
-          },
-        ],
-        isError: true,
-      };
+      // Every failure carries structured `next_actions` so the agent can
+      // recover in one turn instead of flailing — the verified loop's
+      // error side. (The success side rides on the `changed` diff.)
+      const errorResult = buildErrorResult(name, args, message, { kernelTrap });
       fireToolAlert(name, args, errorResult);
       return errorResult;
     }
