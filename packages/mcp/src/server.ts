@@ -44,7 +44,7 @@ import {
   dropSession,
   runInSessionScope,
 } from "./tools/session.js";
-import { createSessionStore } from "./session-store.js";
+import { createSessionStore, createSessionEventStore } from "./session-store.js";
 import { createFabricateStore } from "./fabricate/store.js";
 import {
   quoteManufacturing,
@@ -541,6 +541,11 @@ export async function createServer(
   // closure (not a module global) so concurrent connections on one warm
   // instance can't clobber each other's binding.
   const sessionStore = createSessionStore(context.user);
+
+  // The event spine for THIS connection. Every kernel mutation appends one row
+  // (state = fold(log)); the sessionStore's content write is the derived
+  // materialization. No-op without Supabase env, so stdio/local is unchanged.
+  const eventStore = createSessionEventStore(context.user);
 
   // vcad Fabricate store (quotes + orders). Cloud-backed for a signed-in user
   // with the Supabase service-role key, else in-memory (local stdio). Held in
@@ -1810,6 +1815,19 @@ export async function createServer(
           } catch {
             // best-effort durable write
           }
+          // Append the kernel event to the spine (state = fold(log)). Same
+          // best-effort discipline as persist — a spine write must never turn a
+          // successful tool call into an error.
+          try {
+            await eventStore.append(writtenId, {
+              author: context.user?.sub ?? "agent",
+              kind: "kernel",
+              type: name,
+              payload: buildKernelEventPayload(name, args, result),
+            });
+          } catch {
+            // best-effort event append
+          }
         }
       }
       // close_document → also forget the durable row (flush-then-forget).
@@ -2009,6 +2027,45 @@ function resolvePreviewDocumentId(
  * does NOT call resolvePreviewDocumentId, which registers a fresh session for
  * import_step / create_cad_loon and would double-mint here.
  */
+/**
+ * Build the payload for a `kernel` session_events row: the tool name, its args
+ * (minus document_id), and the compact `changed` parts diff the registry path
+ * already merged into the result. Capped so a fat call can't bloat the spine —
+ * mirrors the >8KB result-slimming discipline; tool + changed (the cheap,
+ * high-value parts) are always kept.
+ */
+function buildKernelEventPayload(
+  name: string,
+  args: Record<string, unknown>,
+  result: { content: Array<{ type: string; text: string }> },
+): Record<string, unknown> {
+  const { document_id: _docId, ...rest } = args;
+  void _docId;
+  let changed: unknown;
+  for (const block of result.content) {
+    if (block.type !== "text") continue;
+    try {
+      const parsed = JSON.parse(block.text) as { changed?: unknown };
+      if (parsed && parsed.changed !== undefined) {
+        changed = parsed.changed;
+        break;
+      }
+    } catch {
+      // not JSON — skip
+    }
+  }
+  const payload: Record<string, unknown> = { tool: name, args: rest };
+  if (changed !== undefined) payload.changed = changed;
+  try {
+    if (JSON.stringify(payload).length > 8192) {
+      payload.args = { _omitted: true };
+    }
+  } catch {
+    payload.args = { _omitted: true };
+  }
+  return payload;
+}
+
 function effectiveDocId(
   result: {
     content: Array<{ type: string; text: string }>;

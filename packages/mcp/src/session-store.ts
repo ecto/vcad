@@ -16,6 +16,7 @@
  * anonymous hosted call during the pre-MCP_REQUIRE_AUTH transition) the
  * in-memory impl reproduces today's behavior exactly.
  */
+import { randomUUID } from "node:crypto";
 import type { Document } from "@vcad/ir";
 import type { AuthUser } from "./oauth.js";
 
@@ -299,4 +300,148 @@ export function createSessionStore(user: AuthUser | null): SessionStore {
       : new AnonSupabaseSessionStore({ supabaseUrl: url, serviceRoleKey: key });
   }
   return new InMemorySessionStore();
+}
+
+// ─── Event spine — the per-session append-only log (migration 028) ───────────
+//
+// State = fold(log); the content snapshot the SessionStore writes is a derived
+// materialization. This store is the canonical record: a kernel mutation, an
+// overlay annotation, or a control event each appends one row, which the DB
+// fans out over Realtime. Best-effort throughout (mirrors SessionStore): a
+// failed append must never turn a successful tool call into an error.
+
+/** An event to append. `idempotencyKey` is generated when omitted. */
+export interface SessionEvent {
+  /** Emitter: a user sub, the literal "agent", or "human". */
+  author: string;
+  /** kernel = folds into geometry; overlay = annotation; control = lifecycle. */
+  kind: "kernel" | "overlay" | "control";
+  /** Fine type: the tool name for kernel, "pin"/"flag" for overlay, etc. */
+  type: string;
+  /** kernel: {tool, args, changed?}; overlay: {anchor, text, …}. */
+  payload: Record<string, unknown>;
+  /** Per-session idempotency key; a random uuid is used when omitted. */
+  idempotencyKey?: string;
+}
+
+/** A row read back from `session_events`. */
+export interface StoredSessionEvent {
+  id: number;
+  seq: number;
+  session_id: string;
+  author: string;
+  kind: string;
+  type: string;
+  payload: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface SessionEventStore {
+  /** Append one event. Best-effort: errors are logged, never thrown. */
+  append(sessionId: string, evt: SessionEvent): Promise<void>;
+  /** Read a session's events in seq order (replay / live window). */
+  list(sessionId: string): Promise<StoredSessionEvent[]>;
+}
+
+/** No-op store = stdio/local: nothing durable, list is empty. */
+export class NoopSessionEventStore implements SessionEventStore {
+  async append(): Promise<void> {
+    /* no spine without Supabase env */
+  }
+  async list(): Promise<StoredSessionEvent[]> {
+    return [];
+  }
+}
+
+/**
+ * Cloud-backed spine. Appends via the `append_session_event` RPC (the sole
+ * writer; the table grants service_role SELECT only), reads the table directly.
+ * The service role bypasses RLS, so `list` sees every row for a session
+ * regardless of ownership — the unguessable session_id is the capability.
+ */
+export class SupabaseSessionEventStore implements SessionEventStore {
+  constructor(
+    private cfg: {
+      supabaseUrl: string;
+      serviceRoleKey: string;
+      /** Caller's user id, or null for an anonymous capability session. */
+      userId: string | null;
+    },
+  ) {}
+
+  private headers(extra: Record<string, string> = {}): Record<string, string> {
+    return {
+      apikey: this.cfg.serviceRoleKey,
+      Authorization: `Bearer ${this.cfg.serviceRoleKey}`,
+      "Content-Type": "application/json",
+      ...extra,
+    };
+  }
+
+  async append(sessionId: string, evt: SessionEvent): Promise<void> {
+    try {
+      const res = await sessionFetch(
+        `${this.cfg.supabaseUrl}/rest/v1/rpc/append_session_event`,
+        {
+          method: "POST",
+          headers: this.headers(),
+          body: JSON.stringify({
+            p_session_id: sessionId,
+            p_user: this.cfg.userId,
+            p_author: evt.author,
+            p_kind: evt.kind,
+            p_type: evt.type,
+            p_payload: evt.payload ?? {},
+            p_idempotency_key: evt.idempotencyKey ?? randomUUID(),
+          }),
+        },
+      );
+      if (!res.ok) {
+        console.error(
+          "[session-events] append failed:",
+          res.status,
+          await res.text().catch(() => ""),
+        );
+      }
+    } catch (err) {
+      console.error("[session-events] append failed:", err);
+    }
+  }
+
+  async list(sessionId: string): Promise<StoredSessionEvent[]> {
+    try {
+      const res = await sessionFetch(
+        `${this.cfg.supabaseUrl}/rest/v1/session_events` +
+          `?session_id=eq.${encodeURIComponent(sessionId)}` +
+          `&order=seq.asc` +
+          `&select=id,seq,session_id,author,kind,type,payload,created_at`,
+        { method: "GET", headers: this.headers() },
+      );
+      if (!res.ok) return [];
+      return (await res.json()) as StoredSessionEvent[];
+    } catch (err) {
+      console.error("[session-events] list failed:", err);
+      return [];
+    }
+  }
+}
+
+/**
+ * Choose the spine impl from env + user. With Supabase env present, both
+ * signed-in and anonymous sessions append via the same RPC (it takes a nullable
+ * user). Without it (stdio/local) the no-op store reproduces today's behavior.
+ */
+export function createSessionEventStore(
+  user: AuthUser | null,
+): SessionEventStore {
+  const url = (process.env.SUPABASE_URL || "").replace(/\/+$/, "");
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
+  if (url && key) {
+    return new SupabaseSessionEventStore({
+      supabaseUrl: url,
+      serviceRoleKey: key,
+      userId: user?.sub ?? null,
+    });
+  }
+  return new NoopSessionEventStore();
 }
