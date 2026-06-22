@@ -159,6 +159,43 @@ export interface QuoteEconomics {
   margin_minor: number;
 }
 
+/** Lifecycle of a spend authorization (mirrors the migration-027 check). */
+export type AuthorizationStatus =
+  | "pending_human"
+  | "authorized"
+  | "consumed"
+  | "revoked"
+  | "expired";
+
+/**
+ * A DB-backed, revocable spend authorization (NOT a stateless JWT). The agent
+ * PROPOSES one (status pending_human); a HUMAN approves it (→ authorized) out of
+ * band via the web app — never through an MCP tool. Only then can place_order
+ * consume it. Mirrors the spend_authorizations table.
+ */
+export interface SpendAuthorization {
+  id: string;
+  user_id: string;
+  quote_id: string | null;
+  kind: "one_time" | "standing";
+  max_amount_minor: number;
+  daily_cap_minor: number | null;
+  process_allowlist: string[] | null;
+  fab_allowlist: string[] | null;
+  doc_hash: string | null;
+  status: AuthorizationStatus;
+  expires_at: string;
+  created_at: string;
+}
+
+/** Result of an atomic wallet debit (mirrors the debit_wallet RPC jsonb). */
+export interface DebitResult {
+  ok: boolean;
+  reason?: string;
+  balance_minor?: number;
+  idempotent?: boolean;
+}
+
 /** The persisted order lifecycle row. */
 export interface Order {
   order_id: string;

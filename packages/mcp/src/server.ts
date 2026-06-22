@@ -54,6 +54,12 @@ import {
   listOrders,
   listOrdersSchema,
 } from "./tools/order.js";
+import {
+  authorizeSpend,
+  authorizeSpendSchema,
+  placeOrder,
+  placeOrderSchema,
+} from "./tools/ordering.js";
 import type { AuthUser } from "./oauth.js";
 
 /** Per-connection context threaded from the transport entry point — the
@@ -405,7 +411,13 @@ const WIDGET_CALLABLE_META = {
  * tool in a disabled pack return an error pointing at the env var.
  */
 const TOOL_PACKS: Record<string, readonly string[]> = {
-  fabricate: ["quote_manufacturing", "get_order_status", "list_orders"],
+  fabricate: [
+    "quote_manufacturing",
+    "get_order_status",
+    "list_orders",
+    "authorize_spend",
+    "place_order",
+  ],
   dfm: ["dfm_check", "dfm_explain", "dfm_suggest_fix", "dfm_apply_fix"],
   sheet_metal: [
     "sheet_metal_create",
@@ -726,6 +738,18 @@ export async function createServer(
         description:
           "List the caller's Fabricate orders, newest first. Optional status filter and limit. Read-only.",
         inputSchema: listOrdersSchema,
+      },
+      {
+        name: "authorize_spend",
+        description:
+          "Propose a spend authorization for a QUOTED order. Creates a DB-backed, revocable authorization (status pending_human) and records the proposal on the session's event log. A HUMAN must approve it in the vcad app before place_order can charge — the agent cannot approve its own spend. Flag-gated (test-mode); no money moves here.",
+        inputSchema: authorizeSpendSchema,
+      },
+      {
+        name: "place_order",
+        description:
+          "Place a QUOTED order once its authorization has been human-approved: performs one atomic wallet debit and moves the order to PAID (fab submission follows in a later step). Refuses if the authorization is still pending approval. Flag-gated (test-mode).",
+        inputSchema: placeOrderSchema,
       },
       // ── Stdlib parts library (session-aware) ──────────────────
       {
@@ -1497,6 +1521,14 @@ export async function createServer(
 
         case "list_orders":
           result = await listOrders(args, fabricateStore, context.user);
+          break;
+
+        case "authorize_spend":
+          result = await authorizeSpend(args, fabricateStore, eventStore, context.user);
+          break;
+
+        case "place_order":
+          result = await placeOrder(args, fabricateStore, eventStore, context.user);
           break;
 
         case "render_view":

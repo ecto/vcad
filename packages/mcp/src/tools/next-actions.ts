@@ -214,10 +214,17 @@ interface MutableResult {
   isError?: boolean;
 }
 
-/** Errors that are intentionally NOT made recoverable — a disabled pack or an
- *  unknown tool aren't design mistakes the agent can retry its way out of. */
+/** Errors that should NOT get a generic recovery floor — either not recoverable
+ *  (disabled pack / unknown tool / ordering off) or self-explanatory with their
+ *  own instruction (a spend awaiting human approval must NOT be retried, and a
+ *  generic "inspect then read" would be actively misleading). */
 function isCarveOut(message: string): boolean {
-  return /^unknown tool:/i.test(message) || /belongs to a pack/i.test(message);
+  return (
+    /^unknown tool:/i.test(message) ||
+    /belongs to a pack/i.test(message) ||
+    /ordering is disabled/i.test(message) ||
+    /pending human approval/i.test(message)
+  );
 }
 
 /**
