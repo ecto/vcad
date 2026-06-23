@@ -120,17 +120,33 @@ impl TriangleMesh {
             }
         }
 
-        // Validate normals match vertices in source mesh
-        #[cfg(debug_assertions)]
-        debug_assert!(
-            other.normals.is_empty() || other.normals.len() == other.vertices.len(),
-            "Normals/vertices mismatch: {} normals vs {} vertices",
-            other.normals.len(),
-            other.vertices.len()
-        );
+        // Keep the normals buffer in lockstep with vertices so the invariant
+        // `normals.is_empty() || normals.len() == vertices.len()` survives in
+        // release builds — the old check was debug-only and silently let a
+        // mismatch through in release, where parallel-buffer consumers
+        // (RealityKit/Metal, GLB/STL export, raytracer normal sampling) then
+        // read out of bounds or render garbage. In the common case both
+        // meshes carry one normal per vertex and this is a plain concat; if
+        // either side is missing or partial, recompute that side's normals
+        // from its own geometry before appending. Must run before the
+        // vertices/indices extends below so it sees `self`'s pre-merge mesh.
+        let self_normals_ok = self.normals.len() == self.vertices.len();
+        let other_normals_ok = other.normals.len() == other.vertices.len();
+        if self_normals_ok && other_normals_ok {
+            self.normals.extend_from_slice(&other.normals);
+        } else {
+            if !self_normals_ok {
+                self.normals = computed_vertex_normals(&self.vertices, &self.indices);
+            }
+            if other_normals_ok {
+                self.normals.extend_from_slice(&other.normals);
+            } else {
+                self.normals
+                    .extend_from_slice(&computed_vertex_normals(&other.vertices, &other.indices));
+            }
+        }
 
         self.vertices.extend_from_slice(&other.vertices);
-        self.normals.extend_from_slice(&other.normals);
         self.indices
             .extend(other.indices.iter().map(|&i| i + offset));
         // face_kinds is per-triangle (one u8 per 3 indices). Pad with
@@ -468,6 +484,58 @@ pub fn tessellate_solid(brep: &BRepSolid, params: &TessellationParams) -> Triang
     mesh
 }
 
+/// Smooth per-vertex normals computed from indexed triangle geometry: each
+/// vertex accumulates the area-weighted face normals of the triangles that
+/// use it, then is normalized. This is the canonical "fill missing normals"
+/// path for an *indexed* mesh — used by [`TriangleMesh::merge`] and
+/// [`weld_coincident_vertices`] to repair an empty or partial normals buffer
+/// so `normals.len()` always matches `vertices.len()`. (For an unindexed,
+/// crease-split result use [`apply_creased_normals`] instead.) Degenerate
+/// accumulators fall back to `+Z`, matching `creased_normals`.
+fn computed_vertex_normals(vertices: &[f32], indices: &[u32]) -> Vec<f32> {
+    let vcount = vertices.len() / 3;
+    let mut acc = vec![0.0f32; vertices.len()];
+    let tri_count = indices.len() / 3;
+    for t in 0..tri_count {
+        let i0 = indices[3 * t] as usize;
+        let i1 = indices[3 * t + 1] as usize;
+        let i2 = indices[3 * t + 2] as usize;
+        if i0 >= vcount || i1 >= vcount || i2 >= vcount {
+            continue;
+        }
+        let p = |i: usize| [vertices[3 * i], vertices[3 * i + 1], vertices[3 * i + 2]];
+        let (a, b, c) = (p(i0), p(i1), p(i2));
+        let ab = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+        let ac = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+        // Unnormalized cross product → area-weighted accumulation. Winding
+        // matches `creased_normals::face_normal` (cross(p1-p0, p2-p0)).
+        let n = [
+            ab[1] * ac[2] - ab[2] * ac[1],
+            ab[2] * ac[0] - ab[0] * ac[2],
+            ab[0] * ac[1] - ab[1] * ac[0],
+        ];
+        for &vi in &[i0, i1, i2] {
+            acc[3 * vi] += n[0];
+            acc[3 * vi + 1] += n[1];
+            acc[3 * vi + 2] += n[2];
+        }
+    }
+    for v in 0..vcount {
+        let (nx, ny, nz) = (acc[3 * v], acc[3 * v + 1], acc[3 * v + 2]);
+        let len = (nx * nx + ny * ny + nz * nz).sqrt();
+        if len > 1e-12 {
+            acc[3 * v] = nx / len;
+            acc[3 * v + 1] = ny / len;
+            acc[3 * v + 2] = nz / len;
+        } else {
+            acc[3 * v] = 0.0;
+            acc[3 * v + 1] = 0.0;
+            acc[3 * v + 2] = 1.0;
+        }
+    }
+    acc
+}
+
 /// Collapse mesh vertices that share a position to 3 decimal places.
 /// Indices are rewritten; positions kept from the first occurrence.
 /// Normals of the winning vertex are kept as-is — downstream smoothing is
@@ -488,6 +556,18 @@ fn weld_coincident_vertices(mesh: &mut TriangleMesh) {
             (mesh.vertices[3 * i + 2] as f64 * 1000.0).round() as i64,
         ]
     };
+    // The welded output copies one normal per surviving vertex, so the input
+    // must carry either no normals or exactly one per vertex. A partial buffer
+    // (e.g. an empty-normal face merged into a normal-bearing one) would
+    // otherwise produce `normals.len() < 3 * vertices` — a silent mismatch and
+    // an out-of-bounds hazard for parallel-buffer consumers, and only in
+    // release builds where merge's check is gone. Recompute from geometry so
+    // weld only ever sees an empty-or-complete buffer.
+    if !mesh.normals.is_empty() && mesh.normals.len() != mesh.vertices.len() {
+        mesh.normals = computed_vertex_normals(&mesh.vertices, &mesh.indices);
+    }
+    let copy_normals = !mesh.normals.is_empty();
+
     let mut remap: Vec<u32> = vec![u32::MAX; n];
     let mut dedup: std::collections::HashMap<[i64; 3], u32> = std::collections::HashMap::new();
     let mut new_vertices: Vec<f32> = Vec::with_capacity(mesh.vertices.len());
@@ -497,7 +577,9 @@ fn weld_coincident_vertices(mesh: &mut TriangleMesh) {
         let idx = *dedup.entry(k).or_insert_with(|| {
             let new_i = (new_vertices.len() / 3) as u32;
             new_vertices.extend_from_slice(&mesh.vertices[3 * i..3 * i + 3]);
-            if mesh.normals.len() >= 3 * i + 3 {
+            // `copy_normals` guarantees `normals.len() == vertices.len()`, so
+            // `3 * i + 3 <= normals.len()` for every `i < n` — no underrun.
+            if copy_normals {
                 new_normals.extend_from_slice(&mesh.normals[3 * i..3 * i + 3]);
             }
             new_i
@@ -530,6 +612,16 @@ fn weld_coincident_vertices(mesh: &mut TriangleMesh) {
     if had_face_kinds {
         mesh.face_kinds = new_face_kinds;
     }
+
+    // Invariant restated for release builds: the welded mesh carries either no
+    // normals or exactly one per vertex. The recompute above makes this hold;
+    // this assert documents it and trips loudly if a future edit regresses it.
+    assert!(
+        mesh.normals.is_empty() || mesh.normals.len() == mesh.vertices.len(),
+        "weld produced {} normals for {} vertices",
+        mesh.normals.len(),
+        mesh.vertices.len()
+    );
 }
 
 /// Close any boundary loop with at most `max_verts` vertices that
@@ -4002,6 +4094,96 @@ pub fn tessellate_brep(brep: &BRepSolid, segments: u32) -> TriangleMesh {
 mod tests {
     use super::*;
     use vcad_kernel_primitives::{make_cone, make_cube, make_cylinder, make_sphere};
+
+    fn assert_normals_consistent(mesh: &TriangleMesh, ctx: &str) {
+        assert!(
+            mesh.normals.is_empty() || mesh.normals.len() == mesh.vertices.len(),
+            "{ctx}: {} normals for {} vertices (invariant: empty or 1:1)",
+            mesh.normals.len(),
+            mesh.vertices.len()
+        );
+    }
+
+    /// Merging a face that came back with empty normals into a normal-bearing
+    /// mesh must not leave a partial normals buffer — the invariant
+    /// `normals.len() == vertices.len()` has to hold in release builds, where
+    /// merge's old check was compiled out. Regression guard for the silent
+    /// buffer underrun that hit RealityKit/Metal, GLB/STL export, and the
+    /// raytracer.
+    #[test]
+    fn merge_empty_normals_keeps_buffers_consistent() {
+        // A mesh with full per-vertex normals.
+        let mut a = TriangleMesh {
+            vertices: vec![0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0],
+            indices: vec![0, 1, 2],
+            normals: vec![0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0],
+            face_kinds: Vec::new(),
+        };
+        // A second mesh with vertices but NO normals (the bug trigger). Placed
+        // at z=1 so weld won't collapse it into `a`.
+        let b = TriangleMesh {
+            vertices: vec![0.0, 0.0, 1.0, 1.0, 0.0, 1.0, 0.0, 1.0, 1.0],
+            indices: vec![0, 1, 2],
+            normals: Vec::new(),
+            face_kinds: Vec::new(),
+        };
+
+        a.merge(&b);
+        assert_normals_consistent(&a, "after merge");
+        assert_eq!(a.num_vertices(), 6);
+
+        // ...and it survives weld without truncating the normals buffer.
+        weld_coincident_vertices(&mut a);
+        assert_normals_consistent(&a, "after weld");
+
+        // Every normal is unit length — no zeroed/garbage slots.
+        for v in 0..a.num_vertices() {
+            let n = [a.normals[3 * v], a.normals[3 * v + 1], a.normals[3 * v + 2]];
+            let len = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();
+            assert!(
+                (len - 1.0).abs() < 1e-4,
+                "vertex {v} normal not unit: {n:?}"
+            );
+        }
+    }
+
+    /// A mesh whose normals buffer is shorter than its vertex buffer (partial)
+    /// must be repaired by weld rather than copied slice-by-slice — otherwise
+    /// the welded output keeps the shortfall.
+    #[test]
+    fn weld_recomputes_partial_normals() {
+        // Two well-separated triangles (6 distinct verts) but normals for only
+        // the first three vertices.
+        let mut mesh = TriangleMesh {
+            vertices: vec![
+                0.0, 0.0, 0.0, 2.0, 0.0, 0.0, 0.0, 2.0, 0.0, // tri 0
+                5.0, 0.0, 0.0, 7.0, 0.0, 0.0, 5.0, 2.0, 0.0, // tri 1
+            ],
+            indices: vec![0, 1, 2, 3, 4, 5],
+            normals: vec![0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0], // 3 of 6
+            face_kinds: Vec::new(),
+        };
+
+        weld_coincident_vertices(&mut mesh);
+        assert_normals_consistent(&mesh, "weld of partial-normal mesh");
+        assert_eq!(mesh.num_vertices(), 6);
+    }
+
+    /// Merging into an empty accumulator (the per-face loop's first iteration)
+    /// keeps things consistent regardless of which side carries normals.
+    #[test]
+    fn merge_into_empty_accumulator() {
+        let face = TriangleMesh {
+            vertices: vec![0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0],
+            indices: vec![0, 1, 2],
+            normals: vec![0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0],
+            face_kinds: Vec::new(),
+        };
+        let mut acc = TriangleMesh::new();
+        acc.merge(&face);
+        assert_normals_consistent(&acc, "empty.merge(full)");
+        assert_eq!(acc.normals.len(), acc.vertices.len());
+    }
 
     #[test]
     fn test_tessellate_cube() {
