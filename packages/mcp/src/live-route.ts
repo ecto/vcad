@@ -20,8 +20,20 @@
 
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { AuthUser } from "./oauth.js";
-import { createSessionEventStore } from "./session-store.js";
+import {
+  createSessionEventStore,
+  createShareStore,
+  resolveSessionIr,
+} from "./session-store.js";
 import { appendOverlay, listEvents } from "./tools/live.js";
+import { generateGlbPreview } from "./tools/preview.js";
+import { LIVE_HTML } from "./live-html.generated.js";
+import type { Engine } from "@vcad/engine";
+
+// Public Supabase creds for the browser viewer — the publishable anon key is
+// designed to ship in client bundles. The service-role key is NEVER sent.
+const PUBLIC_SUPABASE_URL_DEFAULT = "https://yteuhwciuxcbjwmabawj.supabase.co";
+const PUBLIC_ANON_KEY_DEFAULT = "sb_publishable_pt2xNsK8d7fEbdlkj9PQrA_KvYERtjM";
 
 /** An overlay body is tiny — a far smaller cap than the 10 MiB /mcp default. */
 const LIVE_BODY_MAX_BYTES = 16 * 1024;
@@ -88,7 +100,7 @@ const json = (res: ServerResponse, status: number, body: unknown): void => {
 export async function handleLiveRequest(
   req: IncomingMessage,
   res: ServerResponse,
-  opts: { user: AuthUser | null } = { user: null },
+  opts: { user: AuthUser | null; getEngine?: () => Promise<Engine> } = { user: null },
 ): Promise<boolean> {
   const url = new URL(req.url ?? "/", `https://${req.headers.host ?? "localhost"}`);
   if (!url.pathname.startsWith("/live/")) return false;
@@ -107,13 +119,46 @@ export async function handleLiveRequest(
     return true;
   }
 
+  // Bound the per-IP rate of EVERY /live route with one early check — the gate
+  // query, the HTML page, config, replay, annotate, and glb all pass through.
+  if (rateLimited(clientIp(req))) {
+    text(res, 429, "Too Many Requests");
+    return true;
+  }
+
+  // Private by default: the session must be explicitly shared (share_session
+  // wrote a live_shares row) or every /live route 404s — even with the flag on
+  // and a valid id. The share record's owner scopes geometry resolution so a
+  // link-holder can only ever see the actual sharer's document.
+  const share = await createShareStore().getShare(sessionId);
+  if (!share) {
+    text(res, 404, "Not Found");
+    return true;
+  }
+
+  // The viewer page (GET /live/<id>) — served only for a shared session.
+  if (req.method === "GET" && action === "") {
+    res.writeHead(200, {
+      "Content-Type": "text/html; charset=utf-8",
+      "Cache-Control": "no-store",
+    });
+    res.end(LIVE_HTML);
+    return true;
+  }
+
+  // Public realtime config for the browser app — anon/publishable key only.
+  if (req.method === "GET" && action === "config") {
+    json(res, 200, {
+      session_id: sessionId,
+      supabaseUrl: (process.env.SUPABASE_URL || PUBLIC_SUPABASE_URL_DEFAULT).replace(/\/+$/, ""),
+      anonKey: process.env.SUPABASE_ANON_KEY || PUBLIC_ANON_KEY_DEFAULT,
+    });
+    return true;
+  }
+
   const eventStore = createSessionEventStore(opts.user);
 
   if (req.method === "GET" && action === "events") {
-    if (rateLimited(clientIp(req))) {
-      text(res, 429, "Too Many Requests");
-      return true;
-    }
     const sinceRaw = url.searchParams.get("since");
     const since = sinceRaw != null && sinceRaw !== "" ? Number(sinceRaw) : undefined;
     const events = await listEvents(
@@ -126,10 +171,6 @@ export async function handleLiveRequest(
   }
 
   if (req.method === "POST" && action === "annotate") {
-    if (rateLimited(clientIp(req))) {
-      text(res, 429, "Too Many Requests");
-      return true;
-    }
     let parsed: unknown;
     try {
       parsed = JSON.parse(await readBody(req, LIVE_BODY_MAX_BYTES));
@@ -156,6 +197,35 @@ export async function handleLiveRequest(
       { trustedAuthor: opts.user?.email || undefined },
     );
     json(res, result.ok ? 200 : 400, result);
+    return true;
+  }
+
+  if (req.method === "GET" && action === "glb") {
+    // Geometry for a hostless viewer that knows only the capability id: resolve
+    // the session IR by id (service role), scoped to the sharer so a link-holder
+    // can't be served a spoofed document. The session is already share-gated.
+    const doc = await resolveSessionIr(sessionId, share.shared_by);
+    if (!doc) {
+      text(res, 404, "Not Found");
+      return true;
+    }
+    const engine = opts.getEngine ? await opts.getEngine() : undefined;
+    if (!engine) {
+      text(res, 503, "geometry engine unavailable");
+      return true;
+    }
+    const b64 = await generateGlbPreview(doc, engine);
+    if (!b64) {
+      text(res, 404, "no previewable geometry");
+      return true;
+    }
+    const bytes = Buffer.from(b64, "base64");
+    res.writeHead(200, {
+      "Content-Type": "model/gltf-binary",
+      "Cache-Control": "no-store",
+      "Content-Length": String(bytes.length),
+    });
+    res.end(bytes);
     return true;
   }
 

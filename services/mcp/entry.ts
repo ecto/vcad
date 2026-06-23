@@ -123,7 +123,7 @@ export default async function handler(
 
   // Live review window (/live/*) — shared, flag-gated handler (VCAD_LIVE_WINDOW).
   // Returns true once it has written a response; falls through otherwise.
-  if (await handleLiveRequest(req, res, { user })) {
+  if (await handleLiveRequest(req, res, { user, getEngine })) {
     return;
   }
 

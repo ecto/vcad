@@ -452,3 +452,154 @@ export function createSessionEventStore(
   }
   return new NoopSessionEventStore();
 }
+
+// ─── Live-window share gate (migration 029) ──────────────────────────────────
+//
+// Sessions are PRIVATE by default. The /live/* routes work only after the
+// driver explicitly shares the session (share_session writes a live_shares
+// row); without a row they 404 even with VCAD_LIVE_WINDOW on. Revocable.
+
+/** The active share row, or null when a session isn't shared. */
+export interface ShareRecord {
+  /** The driver who shared it, or null for an anonymous capability session. */
+  shared_by: string | null;
+}
+
+export interface ShareStore {
+  /** The active share row for a session, or null if it isn't shared. The
+   *  owner (shared_by) scopes the geometry resolve so a link-holder can only
+   *  ever see the actual sharer's document. */
+  getShare(sessionId: string): Promise<ShareRecord | null>;
+  /** Mark a session shared (idempotent). `sharedBy` = the driver's user id. */
+  share(sessionId: string, sharedBy: string | null): Promise<void>;
+  /** Revoke the share — the live link goes dead. */
+  unshare(sessionId: string): Promise<void>;
+}
+
+/** No-op = stdio/local: nothing is shareable (no live window without Supabase). */
+export class NoopShareStore implements ShareStore {
+  async getShare(): Promise<ShareRecord | null> {
+    return null;
+  }
+  async share(): Promise<void> {}
+  async unshare(): Promise<void> {}
+}
+
+/** Cloud-backed share gate over the `live_shares` table (service role). */
+export class SupabaseShareStore implements ShareStore {
+  constructor(private cfg: { supabaseUrl: string; serviceRoleKey: string }) {}
+
+  private headers(extra: Record<string, string> = {}): Record<string, string> {
+    return {
+      apikey: this.cfg.serviceRoleKey,
+      Authorization: `Bearer ${this.cfg.serviceRoleKey}`,
+      "Content-Type": "application/json",
+      ...extra,
+    };
+  }
+  private url(query = ""): string {
+    return `${this.cfg.supabaseUrl}/rest/v1/live_shares${query}`;
+  }
+
+  async getShare(sessionId: string): Promise<ShareRecord | null> {
+    try {
+      const res = await sessionFetch(
+        this.url(`?session_id=eq.${encodeURIComponent(sessionId)}&select=session_id,shared_by&limit=1`),
+        { method: "GET", headers: this.headers() },
+      );
+      if (!res.ok) return null;
+      const rows = (await res.json()) as Array<{ shared_by?: string | null }>;
+      return Array.isArray(rows) && rows[0]
+        ? { shared_by: rows[0].shared_by ?? null }
+        : null;
+    } catch (err) {
+      console.error("[live-share] getShare failed:", err);
+      return null;
+    }
+  }
+
+  async share(sessionId: string, sharedBy: string | null): Promise<void> {
+    try {
+      const res = await sessionFetch(this.url("?on_conflict=session_id"), {
+        method: "POST",
+        headers: this.headers({
+          Prefer: "resolution=merge-duplicates,return=minimal",
+        }),
+        body: JSON.stringify([{ session_id: sessionId, shared_by: sharedBy }]),
+      });
+      if (!res.ok) {
+        console.error(
+          "[live-share] share failed:",
+          res.status,
+          await res.text().catch(() => ""),
+        );
+      }
+    } catch (err) {
+      console.error("[live-share] share failed:", err);
+    }
+  }
+
+  async unshare(sessionId: string): Promise<void> {
+    try {
+      await sessionFetch(
+        this.url(`?session_id=eq.${encodeURIComponent(sessionId)}`),
+        { method: "DELETE", headers: this.headers() },
+      );
+    } catch (err) {
+      console.error("[live-share] unshare failed:", err);
+    }
+  }
+}
+
+/** Share gate from env — Supabase-backed when configured, else a no-op. */
+export function createShareStore(): ShareStore {
+  const url = (process.env.SUPABASE_URL || "").replace(/\/+$/, "");
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
+  return url && key
+    ? new SupabaseShareStore({ supabaseUrl: url, serviceRoleKey: key })
+    : new NoopShareStore();
+}
+
+/**
+ * Resolve a session's Document IR by session id ALONE, via the service role —
+ * for the capability-keyed live geometry endpoint, which has no logged-in user.
+ * Tries the anonymous `mcp_sessions` table first, then the user-owned
+ * `documents` table by its `mcp:<id>` local_id with NO user filter (the share
+ * gate + unguessable id are the capability). Returns null on miss / no env.
+ */
+export async function resolveSessionIr(
+  sessionId: string,
+  owner?: string | null,
+): Promise<Document | null> {
+  const url = (process.env.SUPABASE_URL || "").replace(/\/+$/, "");
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
+  if (!url || !key) return null;
+  const headers = { apikey: key, Authorization: `Bearer ${key}` };
+  const firstContent = async (endpoint: string): Promise<Document | null> => {
+    try {
+      const res = await sessionFetch(`${url}${endpoint}`, { method: "GET", headers });
+      if (!res.ok) return null;
+      const rows = (await res.json()) as Array<{ content?: unknown }>;
+      const ir = Array.isArray(rows) && rows[0] ? unwrapDocument(rows[0].content) : null;
+      return ir ? (JSON.parse(JSON.stringify(ir)) as Document) : null;
+    } catch (err) {
+      console.error("[resolveSessionIr] read failed:", err);
+      return null;
+    }
+  };
+  const sid = encodeURIComponent(sessionId);
+  const anon = await firstContent(
+    `/rest/v1/mcp_sessions?document_id=eq.${sid}&select=content&limit=1`,
+  );
+  if (anon) return anon;
+  // The documents fallback MUST be scoped to the sharer: local_id is the
+  // client-supplied IndexedDB id (unique only per user_id), so a global
+  // local_id='mcp:<id>' match would let any signed-in user spoof a shared
+  // session's geometry by syncing a doc with that id. Resolve only the owner's.
+  if (!owner) return null;
+  const lid = encodeURIComponent(`mcp:${sessionId}`);
+  const uid = encodeURIComponent(owner);
+  return firstContent(
+    `/rest/v1/documents?local_id=eq.${lid}&user_id=eq.${uid}&select=content&order=device_modified_at.desc&limit=1`,
+  );
+}

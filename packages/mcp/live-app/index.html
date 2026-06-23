@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>vcad · live review</title>
+    <style>
+      :root {
+        --bg: #0e1116;
+        --panel: #161b22;
+        --border: #2a313c;
+        --text: #e6edf3;
+        --muted: #8b949e;
+        --accent: #4493f8;
+        --live: #3fb950;
+      }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+        font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; overflow: hidden; }
+      #app { position: fixed; inset: 0; display: flex; flex-direction: column; }
+      header { display: flex; align-items: center; gap: 12px; padding: 8px 14px;
+        background: var(--panel); border-bottom: 1px solid var(--border); z-index: 2; }
+      .brand { font-weight: 600; letter-spacing: .2px; }
+      .live { display: inline-flex; align-items: center; gap: 6px; color: var(--live);
+        font-weight: 600; font-size: 12px; }
+      .live .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--live);
+        box-shadow: 0 0 0 0 rgba(63,185,80,.6); animation: pulse 1.8s infinite; }
+      @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(63,185,80,.5);} 70% { box-shadow: 0 0 0 8px rgba(63,185,80,0);} 100% { box-shadow: 0 0 0 0 rgba(63,185,80,0);} }
+      .sid { color: var(--muted); font-family: ui-monospace, monospace; font-size: 12px; }
+      .spacer { flex: 1; }
+      #roster { display: flex; align-items: center; gap: -6px; }
+      .avatar { width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center;
+        font-size: 11px; font-weight: 600; color: #0e1116; border: 2px solid var(--panel); margin-left: -6px; }
+      #stage { position: relative; flex: 1; min-height: 0; }
+      canvas { display: block; width: 100%; height: 100%; }
+      #hint { position: absolute; top: 10px; left: 12px; color: var(--muted); font-size: 12px;
+        background: rgba(22,27,34,.7); padding: 4px 8px; border-radius: 6px; }
+      #banner { position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
+        background: rgba(68,147,248,.15); border: 1px solid var(--accent); color: var(--text);
+        padding: 6px 12px; border-radius: 8px; font-size: 13px; display: none; }
+      footer { display: flex; align-items: center; gap: 8px; padding: 6px 14px; background: var(--panel);
+        border-top: 1px solid var(--border); font-size: 12px; color: var(--muted); z-index: 2; }
+      #conn { color: var(--muted); }
+      #conn.ok { color: var(--live); }
+      #ticker { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+        font-family: ui-monospace, monospace; }
+      .pin-input { position: absolute; background: var(--panel); border: 1px solid var(--border);
+        border-radius: 8px; padding: 8px; display: none; z-index: 3; box-shadow: 0 6px 20px rgba(0,0,0,.4); }
+      .pin-input input { background: var(--bg); border: 1px solid var(--border); color: var(--text);
+        border-radius: 6px; padding: 6px 8px; width: 220px; outline: none; }
+      .pin-input button { background: var(--accent); color: #0e1116; border: 0; border-radius: 6px;
+        padding: 6px 10px; margin-left: 6px; font-weight: 600; cursor: pointer; }
+    </style>
+  </head>
+  <body>
+    <div id="app">
+      <header>
+        <span class="brand">vcad</span>
+        <span class="live"><span class="dot"></span>LIVE REVIEW</span>
+        <span class="sid" id="sid"></span>
+        <span class="spacer"></span>
+        <div id="roster"></div>
+      </header>
+      <div id="stage">
+        <div id="hint">click the model to drop a pin · share is read-only for geometry</div>
+        <div id="banner"></div>
+        <div class="pin-input" id="pinInput">
+          <input id="pinText" placeholder="note (e.g. wall too thin)" />
+          <button id="pinSave">Pin</button>
+        </div>
+      </div>
+      <footer>
+        <span id="conn">connecting…</span>
+        <span id="ticker"></span>
+      </footer>
+    </div>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

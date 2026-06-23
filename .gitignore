@@ -5,6 +5,8 @@ node_modules/
 packages/*/dist/
 packages/mcp/dist-viewer/
 packages/mcp/src/viewer-html.generated.ts
+packages/mcp/dist-live/
+packages/mcp/src/live-html.generated.ts
 .next/
 out/
 .env
