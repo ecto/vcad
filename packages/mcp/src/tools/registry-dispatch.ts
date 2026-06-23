@@ -86,7 +86,7 @@ const CREATE_PARAM_DEFAULTS: Record<string, Record<string, unknown>> = {
  * errors. serde errors like "missing field `left`" are accurate but say
  * nothing about the full shape — this does.
  */
-const CREATE_PARAM_HINTS: Record<string, string> = {
+export const CREATE_PARAM_HINTS: Record<string, string> = {
   cube: "{size: {x, y, z}}",
   cylinder: "{radius, height, segments? (default 64)} — axis along Z",
   sphere: "{radius, segments? (default 32)}",

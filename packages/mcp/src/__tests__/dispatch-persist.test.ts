@@ -25,11 +25,14 @@ interface Fake {
   rows: Map<string, Record<string, unknown>>;
   posts: number;
   gets: number;
+  /** Appends to the event spine (rpc/append_session_event) — counted apart
+   *  from the document persist POSTs so each is asserted independently. */
+  appends: number;
 }
 
 function installFake(): Fake {
   const rows = new Map<string, Record<string, unknown>>();
-  const fake: Fake = { rows, posts: 0, gets: 0 };
+  const fake: Fake = { rows, posts: 0, gets: 0, appends: 0 };
   const eq = (sp: URLSearchParams, k: string): string | null => {
     const v = sp.get(k);
     return v && v.startsWith("eq.") ? v.slice(3) : null;
@@ -37,6 +40,15 @@ function installFake(): Fake {
   setSessionFetch((async (input: unknown, init: RequestInit = {}) => {
     const url = new URL(String(input));
     const method = (init.method ?? "GET").toUpperCase();
+    // Event spine append — a kernel mutation logs one row. Separate endpoint,
+    // separate counter; returns the RPC's jsonb result.
+    if (method === "POST" && url.pathname.endsWith("/rpc/append_session_event")) {
+      fake.appends++;
+      return new Response(JSON.stringify({ ok: true, id: fake.appends, seq: fake.appends }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
     if (method === "POST") {
       fake.posts++;
       const body = JSON.parse(String(init.body)) as Array<
@@ -118,8 +130,11 @@ describe("dispatch persist wrapper (end-to-end through createServer)", () => {
     const documentId = JSON.parse(firstText(open)).document_id as string;
     expect(fake.posts).toBe(1);
     expect(fake.rows.has(`user-1|mcp:${documentId}`)).toBe(true);
+    // A creator is a kernel mutation → exactly one event on the spine.
+    expect(fake.appends).toBe(1);
 
     const postsAfterOpen = fake.posts;
+    const appendsAfterOpen = fake.appends;
 
     // Reader: get_document runs in a fresh per-request scope, so it can only
     // succeed by hydrating from the durable store — and it must NOT persist.
@@ -130,6 +145,7 @@ describe("dispatch persist wrapper (end-to-end through createServer)", () => {
     expect(JSON.parse(firstText(got)).version).toBeDefined(); // IR round-tripped
     expect(fake.gets).toBeGreaterThanOrEqual(1); // hydrate read happened
     expect(fake.posts).toBe(postsAfterOpen); // reader did not write
+    expect(fake.appends).toBe(appendsAfterOpen); // reader emitted no event
 
     await client.close();
     await server.close();
@@ -152,6 +168,8 @@ describe("dispatch persist wrapper (end-to-end through createServer)", () => {
     const documentId = JSON.parse(firstText(res)).document_id as string;
     expect(fake.posts).toBe(1);
     expect(fake.rows.has(`user-2|mcp:${documentId}`)).toBe(true);
+    // …and the same call logged exactly one kernel event to the spine.
+    expect(fake.appends).toBe(1);
 
     await client.close();
     await server.close();

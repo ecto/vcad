@@ -44,7 +44,7 @@ import {
   dropSession,
   runInSessionScope,
 } from "./tools/session.js";
-import { createSessionStore } from "./session-store.js";
+import { createSessionStore, createSessionEventStore } from "./session-store.js";
 import { createFabricateStore } from "./fabricate/store.js";
 import {
   quoteManufacturing,
@@ -54,6 +54,12 @@ import {
   listOrders,
   listOrdersSchema,
 } from "./tools/order.js";
+import {
+  authorizeSpend,
+  authorizeSpendSchema,
+  placeOrder,
+  placeOrderSchema,
+} from "./tools/ordering.js";
 import type { AuthUser } from "./oauth.js";
 
 /** Per-connection context threaded from the transport entry point — the
@@ -67,6 +73,7 @@ import {
   registryDispatchableNames,
   dispatchRegistryTool,
 } from "./tools/registry-dispatch.js";
+import { buildErrorResult, enrichErrorResult } from "./tools/next-actions.js";
 import {
   createRobotEnv,
   createRobotEnvSchema,
@@ -404,7 +411,13 @@ const WIDGET_CALLABLE_META = {
  * tool in a disabled pack return an error pointing at the env var.
  */
 const TOOL_PACKS: Record<string, readonly string[]> = {
-  fabricate: ["quote_manufacturing", "get_order_status", "list_orders"],
+  fabricate: [
+    "quote_manufacturing",
+    "get_order_status",
+    "list_orders",
+    "authorize_spend",
+    "place_order",
+  ],
   dfm: ["dfm_check", "dfm_explain", "dfm_suggest_fix", "dfm_apply_fix"],
   sheet_metal: [
     "sheet_metal_create",
@@ -541,6 +554,11 @@ export async function createServer(
   // closure (not a module global) so concurrent connections on one warm
   // instance can't clobber each other's binding.
   const sessionStore = createSessionStore(context.user);
+
+  // The event spine for THIS connection. Every kernel mutation appends one row
+  // (state = fold(log)); the sessionStore's content write is the derived
+  // materialization. No-op without Supabase env, so stdio/local is unchanged.
+  const eventStore = createSessionEventStore(context.user);
 
   // vcad Fabricate store (quotes + orders). Cloud-backed for a signed-in user
   // with the Supabase service-role key, else in-memory (local stdio). Held in
@@ -720,6 +738,18 @@ export async function createServer(
         description:
           "List the caller's Fabricate orders, newest first. Optional status filter and limit. Read-only.",
         inputSchema: listOrdersSchema,
+      },
+      {
+        name: "authorize_spend",
+        description:
+          "Propose a spend authorization for a QUOTED order. Creates a DB-backed, revocable authorization (status pending_human) and records the proposal on the session's event log. A HUMAN must approve it in the vcad app before place_order can charge — the agent cannot approve its own spend. Flag-gated (test-mode); no money moves here.",
+        inputSchema: authorizeSpendSchema,
+      },
+      {
+        name: "place_order",
+        description:
+          "Place a QUOTED order once its authorization has been human-approved: performs one atomic wallet debit and moves the order to PAID (fab submission follows in a later step). Refuses if the authorization is still pending approval. Flag-gated (test-mode).",
+        inputSchema: placeOrderSchema,
       },
       // ── Stdlib parts library (session-aware) ──────────────────
       {
@@ -1493,6 +1523,14 @@ export async function createServer(
           result = await listOrders(args, fabricateStore, context.user);
           break;
 
+        case "authorize_spend":
+          result = await authorizeSpend(args, fabricateStore, eventStore, context.user);
+          break;
+
+        case "place_order":
+          result = await placeOrder(args, fabricateStore, eventStore, context.user);
+          break;
+
         case "render_view":
           // Image content blocks don't fit the text-only local result
           // type; the MCP SDK accepts them as-is.
@@ -1795,6 +1833,11 @@ export async function createServer(
     try {
       const result = await runTool();
 
+      // Tools that RETURN {isError:true} (the ECAD / sheet-metal / DFM surface)
+      // never reach the throw-catch below, so enrich them here — every failure
+      // carries next_actions, not just the ones that throw.
+      if (result.isError) enrichErrorResult(result, name, args);
+
       // ── Persist ─────────────────────────────────────────────────────────
       // After a creator/mutator settles, write the (possibly newly-minted)
       // session through to the durable store. Best-effort: the tool already
@@ -1809,6 +1852,19 @@ export async function createServer(
             await persistSession(sessionStore, writtenId);
           } catch {
             // best-effort durable write
+          }
+          // Append the kernel event to the spine (state = fold(log)). Same
+          // best-effort discipline as persist — a spine write must never turn a
+          // successful tool call into an error.
+          try {
+            await eventStore.append(writtenId, {
+              author: context.user?.sub ?? "agent",
+              kind: "kernel",
+              type: name,
+              payload: buildKernelEventPayload(name, args, result),
+            });
+          } catch {
+            // best-effort event append
           }
         }
       }
@@ -1828,21 +1884,14 @@ export async function createServer(
       // handled the trap itself. Recover the shared instance so this one bad
       // document can't DoS every other session — the hosted server can't be
       // restarted by a client.
-      if (err instanceof WebAssembly.RuntimeError) {
+      const kernelTrap = err instanceof WebAssembly.RuntimeError;
+      if (kernelTrap) {
         resetKernelWasm(`${name} trapped: ${message}`);
       }
-      const errorResult = {
-        content: [
-          {
-            type: "text",
-            text:
-              err instanceof WebAssembly.RuntimeError
-                ? `Error: kernel trap during '${name}' (${message}). The kernel was reset; other documents are unaffected. This is a kernel bug — please report the document that triggered it.`
-                : `Error: ${message}`,
-          },
-        ],
-        isError: true,
-      };
+      // Every failure carries structured `next_actions` so the agent can
+      // recover in one turn instead of flailing — the verified loop's
+      // error side. (The success side rides on the `changed` diff.)
+      const errorResult = buildErrorResult(name, args, message, { kernelTrap });
       fireToolAlert(name, args, errorResult);
       return errorResult;
     }
@@ -2009,6 +2058,45 @@ function resolvePreviewDocumentId(
  * does NOT call resolvePreviewDocumentId, which registers a fresh session for
  * import_step / create_cad_loon and would double-mint here.
  */
+/**
+ * Build the payload for a `kernel` session_events row: the tool name, its args
+ * (minus document_id), and the compact `changed` parts diff the registry path
+ * already merged into the result. Capped so a fat call can't bloat the spine —
+ * mirrors the >8KB result-slimming discipline; tool + changed (the cheap,
+ * high-value parts) are always kept.
+ */
+function buildKernelEventPayload(
+  name: string,
+  args: Record<string, unknown>,
+  result: { content: Array<{ type: string; text: string }> },
+): Record<string, unknown> {
+  const { document_id: _docId, ...rest } = args;
+  void _docId;
+  let changed: unknown;
+  for (const block of result.content) {
+    if (block.type !== "text") continue;
+    try {
+      const parsed = JSON.parse(block.text) as { changed?: unknown };
+      if (parsed && parsed.changed !== undefined) {
+        changed = parsed.changed;
+        break;
+      }
+    } catch {
+      // not JSON — skip
+    }
+  }
+  const payload: Record<string, unknown> = { tool: name, args: rest };
+  if (changed !== undefined) payload.changed = changed;
+  try {
+    if (JSON.stringify(payload).length > 8192) {
+      payload.args = { _omitted: true };
+    }
+  } catch {
+    payload.args = { _omitted: true };
+  }
+  return payload;
+}
+
 function effectiveDocId(
   result: {
     content: Array<{ type: string; text: string }>;
