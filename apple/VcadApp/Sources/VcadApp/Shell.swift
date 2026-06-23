@@ -31,30 +31,36 @@ struct EditorView: View {
     @State private var model = EditorModel()
 
     var body: some View {
-        ViewportView(model: model)
-            .ignoresSafeArea()
-            .overlay(alignment: .topLeading) {
-                FeatureTreeView(model: model)
-                    .frame(width: 206)
-                    .padding(14)
-            }
-            .overlay(alignment: .top) {
-                if model.source.isSandbox {
-                    ToolPaletteView(model: model).padding(.top, 14)
+        GeometryReader { geo in
+            let compact = geo.size.width < 760
+            ViewportView(model: model)
+                .ignoresSafeArea()
+                .overlay(alignment: .topLeading) {
+                    if !compact {
+                        FeatureTreeView(model: model)
+                            .frame(width: 206)
+                            .padding(14)
+                    }
                 }
-            }
-            .overlay(alignment: .topTrailing) {
-                InspectorView(model: model)
-                    .frame(width: 280)
-                    .padding(14)
-            }
-            .overlay(alignment: .bottom) {
-                StatusBarView(model: model).padding(14)
-            }
-            .toolbar {
-                ToolbarItem(placement: .principal) { SourcePicker(model: model) }
-            }
-            .navigationTitle("vcad")
+                .overlay(alignment: compact ? .leading : .top) {
+                    if model.source.isSandbox {
+                        ToolPaletteView(model: model, axis: compact ? .vertical : .horizontal)
+                            .padding(compact ? .leading : .top, 14)
+                    }
+                }
+                .overlay(alignment: .topTrailing) {
+                    InspectorView(model: model)
+                        .frame(width: compact ? 224 : 280)
+                        .padding(14)
+                }
+                .overlay(alignment: .bottom) {
+                    StatusBarView(model: model).padding(.bottom, 14)
+                }
+                .toolbar {
+                    ToolbarItem(placement: .principal) { SourcePicker(model: model) }
+                }
+                .navigationTitle("vcad")
+        }
     }
 }
 
@@ -66,7 +72,7 @@ struct SourcePicker: View {
         }
         .pickerStyle(.segmented)
         .labelsHidden()
-        .frame(minWidth: 360)
+        .frame(minWidth: 280)
     }
 }
 
@@ -74,52 +80,81 @@ struct SourcePicker: View {
 
 struct ToolPaletteView: View {
     @Bindable var model: EditorModel
+    var axis: Axis = .horizontal
+    private var vertical: Bool { axis == .vertical }
 
     var body: some View {
-        HStack(spacing: 10) {
-            HStack(spacing: 3) {
+        let outer = vertical ? AnyLayout(VStackLayout(spacing: 6)) : AnyLayout(HStackLayout(spacing: 10))
+        let tabsLayout = vertical ? AnyLayout(VStackLayout(spacing: 4)) : AnyLayout(HStackLayout(spacing: 3))
+        let toolsLayout = vertical ? AnyLayout(VStackLayout(spacing: 5)) : AnyLayout(HStackLayout(spacing: 6))
+        return outer {
+            tabsLayout {
                 ForEach(Array(ToolTab.allCases.enumerated()), id: \.element.id) { idx, tab in
-                    let active = model.toolTab == tab
-                    Button { model.toolTab = tab } label: {
-                        HStack(spacing: 5) {
-                            Image(systemName: tab.symbol).font(.system(size: 12))
-                            Text(tab.label).font(.system(size: 12, weight: .medium))
-                            Text("\(idx + 1)").font(.system(size: 9, design: .monospaced)).opacity(0.5)
-                        }
-                        .padding(.horizontal, 10).padding(.vertical, 5)
-                        .background(active ? Color.accentColor.opacity(0.18) : .clear,
-                                    in: RoundedRectangle(cornerRadius: 7, style: .continuous))
-                        .foregroundStyle(active ? Color.accentColor : Color.secondary)
-                    }
-                    .buttonStyle(.plain)
-                    .keyboardShortcut(KeyEquivalent(Character(String(idx + 1))), modifiers: [])
+                    tabButton(tab, idx: idx)
                 }
             }
-
-            Divider().frame(height: 18)
-
-            HStack(spacing: 6) {
+            if vertical { Divider().frame(width: 24) } else { Divider().frame(height: 18) }
+            toolsLayout {
                 ForEach(model.tools(for: model.toolTab)) { tool in
-                    Button { tool.action() } label: {
-                        HStack(spacing: 5) {
-                            Image(systemName: tool.symbol).font(.system(size: 12))
-                            Text(tool.label).font(.system(size: 12))
-                        }
-                        .padding(.horizontal, 9).padding(.vertical, 5)
-                        .background(tool.isActive ? Color.white.opacity(0.10) : .clear,
-                                    in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                                .strokeBorder(tool.isActive ? Color.white.opacity(0.18) : .clear)
-                        )
-                        .foregroundStyle(tool.isActive ? Color.primary : Color.secondary)
-                    }
-                    .buttonStyle(.plain)
+                    toolButton(tool)
                 }
             }
         }
-        .padding(.horizontal, 10).padding(.vertical, 6)
-        .glassCard(13)
+        .padding(vertical ? 6 : 8)
+        .glassCard(vertical ? 16 : 13)
+    }
+
+    @ViewBuilder private func tabButton(_ tab: ToolTab, idx: Int) -> some View {
+        let active = model.toolTab == tab
+        Button { model.toolTab = tab } label: {
+            if vertical {
+                Image(systemName: tab.symbol).font(.system(size: 17))
+                    .frame(width: 42, height: 42)
+                    .background(active ? Color.accentColor.opacity(0.20) : .clear,
+                                in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            } else {
+                HStack(spacing: 5) {
+                    Image(systemName: tab.symbol).font(.system(size: 12))
+                    Text(tab.label).font(.system(size: 12, weight: .medium))
+                    Text("\(idx + 1)").font(.system(size: 9, design: .monospaced)).opacity(0.5)
+                }
+                .padding(.horizontal, 10).padding(.vertical, 5)
+                .background(active ? Color.accentColor.opacity(0.18) : .clear,
+                            in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+            }
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(active ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.secondary))
+        .help(tab.label)
+        .keyboardShortcut(KeyEquivalent(Character(String(idx + 1))), modifiers: [])
+    }
+
+    @ViewBuilder private func toolButton(_ tool: Tool) -> some View {
+        Button { if tool.enabled { tool.action() } } label: {
+            if vertical {
+                Image(systemName: tool.symbol).font(.system(size: 16))
+                    .frame(width: 42, height: 42)
+                    .background(tool.isActive ? Color.white.opacity(0.10) : .clear,
+                                in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous)
+                        .strokeBorder(tool.isActive ? Color.accentColor.opacity(0.65) : .clear, lineWidth: 1))
+            } else {
+                HStack(spacing: 5) {
+                    Image(systemName: tool.symbol).font(.system(size: 12))
+                    Text(tool.label).font(.system(size: 12))
+                }
+                .padding(.horizontal, 9).padding(.vertical, 5)
+                .background(tool.isActive ? Color.white.opacity(0.10) : .clear,
+                            in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .strokeBorder(tool.isActive ? Color.accentColor.opacity(0.65) : .clear, lineWidth: 1))
+            }
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(tool.isActive ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
+        .opacity(tool.enabled ? 1 : 0.32)
+        .disabled(!tool.enabled)
+        .help(tool.enabled ? tool.label : "\(tool.label) — \(tool.hint)")
     }
 }
 
@@ -166,6 +201,9 @@ struct InspectorView: View {
                     case .modifier:
                         if model.modifier == .none {
                             Text("No modifier").font(.system(size: 12)).foregroundStyle(.secondary)
+                        } else if !model.modifierEffective {
+                            Label("No edges on a sphere", systemImage: "info.circle")
+                                .font(.system(size: 12)).foregroundStyle(.secondary)
                         } else {
                             VStack(alignment: .leading, spacing: 8) {
                                 HStack {

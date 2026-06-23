@@ -69,6 +69,8 @@ struct Tool: Identifiable {
     let label: String
     let symbol: String
     let isActive: Bool
+    var enabled: Bool = true
+    var hint: String = ""
     let action: () -> Void
 }
 
@@ -152,11 +154,18 @@ final class EditorModel {
             }
         case .modify:
             return Modifier.allCases.map { mod in
-                Tool(id: "mod.\(mod.rawValue)", label: mod.label, symbol: mod.symbol,
-                     isActive: modifier == mod) { [weak self] in self?.modifier = mod }
+                // Fillet/chamfer are no-ops on a sphere (no edges) — surface that.
+                let ok = mod == .none || baseShape != .sphere
+                return Tool(id: "mod.\(mod.rawValue)", label: mod.label, symbol: mod.symbol,
+                            isActive: modifier == mod, enabled: ok,
+                            hint: ok ? "" : "No edges on a sphere") { [weak self] in self?.modifier = mod }
             }
         }
     }
+
+    /// Whether the active modifier actually changes the geometry (a fillet on a
+    /// sphere has no edges to round).
+    var modifierEffective: Bool { !(baseShape == .sphere && modifier != .none) }
 
     // MARK: feature tree
 

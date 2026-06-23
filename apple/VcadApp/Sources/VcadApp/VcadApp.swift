@@ -8,7 +8,7 @@ struct VcadApp: App {
     var body: some Scene {
         WindowGroup {
             EditorView()
-                .frame(minWidth: 900, minHeight: 600)
+                .frame(minWidth: 560, minHeight: 600)
         }
         .windowStyle(.automatic)
     }
