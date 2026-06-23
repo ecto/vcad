@@ -1804,7 +1804,7 @@ export async function createServer(
           break;
 
         case "continue_document":
-          result = await continueDocument(args);
+          result = await continueDocument(args, sessionStore);
           break;
 
         case "server_info":

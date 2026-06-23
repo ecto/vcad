@@ -121,4 +121,43 @@ describe("continueDocument", () => {
     expect(r.isError).toBe(true);
     expect(r.content[0].text).toMatch(/Continue in Claude/);
   });
+
+  it("is idempotent on the token: re-open reuses the same session (one fetch)", async () => {
+    let fetches = 0;
+    setSessionFetch((async () => {
+      fetches++;
+      return jsonResp([
+        { name: "Bracket", content: { version: 1, nodes: {}, roots: ["n1"] } },
+      ]);
+    }) as unknown as typeof fetch);
+    const r1 = await continueDocument({ token: UUID });
+    const r2 = await continueDocument({ token: UUID });
+    const id1 = json(r1).document_id;
+    const id2 = json(r2).document_id;
+    expect(id1).toBe(`cont_${UUID}`); // deterministic rendezvous key
+    expect(id2).toBe(id1);
+    expect(fetches).toBe(1); // the re-open is served from the warm cache
+  });
+
+  it("rehydrates a durable session before re-fetching the share (cold instance)", async () => {
+    let fetched = false;
+    setSessionFetch((() => {
+      fetched = true;
+      throw new Error("cold re-open must prefer the durable session");
+    }) as unknown as typeof fetch);
+    const store = {
+      load: async (id: string) =>
+        id === `cont_${UUID}`
+          ? ({ version: 1, nodes: {}, roots: ["a", "b", "c"] } as never)
+          : null,
+      save: async () => {},
+      drop: async () => {},
+    };
+    const r = await continueDocument({ token: UUID }, store);
+    expect(r.isError).toBeFalsy();
+    const out = json(r);
+    expect(out.document_id).toBe(`cont_${UUID}`);
+    expect(out.parts).toBe(3); // came from the durable session, not the share
+    expect(fetched).toBe(false);
+  });
 });

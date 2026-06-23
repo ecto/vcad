@@ -20,8 +20,9 @@ import { getKernelWasm } from "@vcad/engine";
 import { fromVCode } from "@vcad/ir";
 import type { Document } from "@vcad/ir";
 import { gunzipSync } from "node:zlib";
+import type { SessionStore } from "../session-store.js";
 import { resolveShareToken } from "../session-store.js";
-import { registerSession } from "./session.js";
+import { documents, registerSession } from "./session.js";
 
 export const continueDocumentSchema = {
   type: "object" as const,
@@ -50,6 +51,26 @@ type ToolText = {
 
 function err(text: string): ToolText {
   return { isError: true, content: [{ type: "text", text }] };
+}
+
+/** The success payload: the session handle plus a nudge toward the verify loop
+ *  (render it, then leave a re-runnable Receipt for any claim). */
+function ok(id: string, doc: Document, name: string): ToolText {
+  return {
+    content: [
+      {
+        type: "text",
+        text: JSON.stringify({
+          document_id: id,
+          parts: doc.roots?.length ?? 0,
+          name,
+          hint:
+            "Render with render_view, then continue the user's work. Leave a " +
+            "re-runnable proof of any claim with verify_part / build_receipt.",
+        }),
+      },
+    ],
+  };
 }
 
 function looksLikeIr(c: unknown): c is Document {
@@ -108,6 +129,7 @@ async function materialize(content: unknown): Promise<Document | null> {
 
 export async function continueDocument(
   args: Record<string, unknown>,
+  store?: SessionStore,
 ): Promise<ToolText> {
   const token = String(args.token ?? "").trim();
   const inlineDoc = String(args.doc ?? "").trim();
@@ -118,10 +140,27 @@ export async function continueDocument(
     );
   }
 
-  // Resolve the raw content + a display name from whichever source was given.
-  let content: unknown;
-  let name = "Shared part";
+  // ── Signed-in handoff: a deterministic, idempotent session keyed off the
+  // token. A re-click — or a re-open on a cold serverless instance — reuses the
+  // SAME session, so the Living Viewport accretes in place, any in-progress
+  // edits survive, and the vcad.io tab can subscribe to this session's durable
+  // row (`mcp:cont_<token>`) by a key it already knows. The token is an
+  // unguessable UUID, so the derived id stays capability-safe.
   if (token) {
+    const id = `cont_${token}`;
+    // Warm cache → reuse as-is (preserves the model's edits this session).
+    const cached = documents.get(id);
+    if (cached) return ok(id, cached, "Shared part");
+    // Cold instance → rehydrate the durable session before falling back to the
+    // (older) shared snapshot, so edits aren't lost across an instance flip.
+    if (store) {
+      const existing = await store.load(id);
+      if (existing) {
+        documents.set(id, existing);
+        return ok(id, existing, "Shared part");
+      }
+    }
+    // First open → materialize from the share snapshot.
     const resolved = await resolveShareToken(token);
     if (!resolved) {
       return err(
@@ -129,19 +168,35 @@ export async function continueDocument(
           `"Continue in Claude" again from vcad.io to mint a fresh handoff link.`,
       );
     }
-    content = resolved.content;
-    name = resolved.name;
-  } else {
+    let doc: Document | null;
     try {
-      content = decodeInlineDoc(inlineDoc);
+      doc = await materialize(resolved.content);
     } catch (e) {
       return err(
-        `Couldn't read the inline handoff: ${(e as Error).message}. ` +
-          `Ask the user to click "Continue in Claude" again from vcad.io.`,
+        `Could not open the shared document: ${(e as Error).message}. ` +
+          `Ask the user to re-share from vcad.io.`,
       );
     }
+    if (!doc) {
+      return err(
+        "The shared document is in a format this build can't open yet " +
+          "(expected CRDT or IR content).",
+      );
+    }
+    documents.set(id, doc);
+    return ok(id, doc, resolved.name);
   }
 
+  // ── Accountless inline handoff: no stable key, so a fresh session id.
+  let content: unknown;
+  try {
+    content = decodeInlineDoc(inlineDoc);
+  } catch (e) {
+    return err(
+      `Couldn't read the inline handoff: ${(e as Error).message}. ` +
+        `Ask the user to click "Continue in Claude" again from vcad.io.`,
+    );
+  }
   let doc: Document | null;
   try {
     doc = await materialize(content);
@@ -157,18 +212,5 @@ export async function continueDocument(
         "(expected CRDT or IR content).",
     );
   }
-
-  const id = registerSession(doc);
-  return {
-    content: [
-      {
-        type: "text",
-        text: JSON.stringify({
-          document_id: id,
-          parts: doc.roots?.length ?? 0,
-          name,
-        }),
-      },
-    ],
-  };
+  return ok(registerSession(doc), doc, "Shared part");
 }
