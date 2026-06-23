@@ -27,7 +27,13 @@ import {
 } from "./session-store.js";
 import { appendOverlay, listEvents } from "./tools/live.js";
 import { generateGlbPreview } from "./tools/preview.js";
+import { LIVE_HTML } from "./live-html.generated.js";
 import type { Engine } from "@vcad/engine";
+
+// Public Supabase creds for the browser viewer — the publishable anon key is
+// designed to ship in client bundles. The service-role key is NEVER sent.
+const PUBLIC_SUPABASE_URL_DEFAULT = "https://yteuhwciuxcbjwmabawj.supabase.co";
+const PUBLIC_ANON_KEY_DEFAULT = "sb_publishable_pt2xNsK8d7fEbdlkj9PQrA_KvYERtjM";
 
 /** An overlay body is tiny — a far smaller cap than the 10 MiB /mcp default. */
 const LIVE_BODY_MAX_BYTES = 16 * 1024;
@@ -119,6 +125,26 @@ export async function handleLiveRequest(
   const shareStore = createShareStore();
   if (!(await shareStore.isShared(sessionId))) {
     text(res, 404, "Not Found");
+    return true;
+  }
+
+  // The viewer page (GET /live/<id>) — served only for a shared session.
+  if (req.method === "GET" && action === "") {
+    res.writeHead(200, {
+      "Content-Type": "text/html; charset=utf-8",
+      "Cache-Control": "no-store",
+    });
+    res.end(LIVE_HTML);
+    return true;
+  }
+
+  // Public realtime config for the browser app — anon/publishable key only.
+  if (req.method === "GET" && action === "config") {
+    json(res, 200, {
+      session_id: sessionId,
+      supabaseUrl: (process.env.SUPABASE_URL || PUBLIC_SUPABASE_URL_DEFAULT).replace(/\/+$/, ""),
+      anonKey: process.env.SUPABASE_ANON_KEY || PUBLIC_ANON_KEY_DEFAULT,
+    });
     return true;
   }
 

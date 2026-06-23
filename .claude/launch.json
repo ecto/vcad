@@ -32,6 +32,16 @@
       "runtimeExecutable": "node",
       "runtimeArgs": ["mecheval/leaderboard/dist/serve.js"],
       "port": 5174
+    },
+    {
+      "name": "mcp-live",
+      "runtimeExecutable": "bash",
+      "runtimeArgs": [
+        "-c",
+        "cd packages/mcp && npx vite --config vite.live.config.ts --host 0.0.0.0 --port ${PORT:-5191} --strictPort"
+      ],
+      "port": 5191,
+      "autoPort": true
     }
   ]
 }
