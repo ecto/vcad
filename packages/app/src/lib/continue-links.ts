@@ -62,6 +62,17 @@ export interface ContinueLinksInput {
  *  fall back to a sign-in handoff. */
 export const MAX_INLINE_BLOB = 8000;
 
+/**
+ * The Supabase `documents.local_id` a signed-in token handoff persists under —
+ * the `mcp:` prefix plus the deterministic `cont_<token>` session id the server
+ * keys it by (see continue_document). The vcad.io tab watches this row over
+ * Realtime to reflect the model's edits live; must stay in lockstep with the
+ * server's keying.
+ */
+export function continueSessionRowKey(token: string): string {
+  return `mcp:cont_${token}`;
+}
+
 /** Base64-encode a UTF-8 string. `btoa` is global in the browser and in the
  *  Node ≥16 test runner; we route bytes through it via a binary string so
  *  non-ASCII doc names survive. */

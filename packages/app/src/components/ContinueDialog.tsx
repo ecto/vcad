@@ -19,6 +19,7 @@ import {
   type ContinueHost,
 } from "@/lib/continue-links";
 import { analytics } from "@/lib/analytics";
+import { useClaudeLiveStatus } from "@/hooks/useClaudeLiveStatus";
 import { cn } from "@/lib/utils";
 
 interface ContinueDialogProps {
@@ -54,6 +55,11 @@ export function ContinueDialog({ open, onOpenChange }: ContinueDialogProps) {
   const [preparing, setPreparing] = useState(false);
   const [lastHost, setLastHost] = useState<ContinueHost | null>(null);
   const [copiedHost, setCopiedHost] = useState<ContinueHost | null>(null);
+  const [launched, setLaunched] = useState(false);
+
+  // Once a signed-in (token) handoff is launched, reflect the model's edits to
+  // the continued session back into this tab — the "alive in both surfaces" beat.
+  const live = useClaudeLiveStatus(launched && token ? token : null);
 
   // Prepare the handoff when the dialog opens. Preferred path: a signed-in,
   // cloud-synced doc → a durable share token the model resolves server-side (no
@@ -64,8 +70,10 @@ export function ContinueDialog({ open, onOpenChange }: ContinueDialogProps) {
       setToken(null);
       setInlineBlob(null);
       setPrepError(null);
+      setLaunched(false);
       return;
     }
+    setLaunched(false);
     try {
       const stored = localStorage.getItem(LAST_HOST_KEY);
       if (stored) setLastHost(stored as ContinueHost);
@@ -151,6 +159,8 @@ export function ContinueDialog({ open, onOpenChange }: ContinueDialogProps) {
       if (target.url) openLink(target.url);
       remember(target.host);
       analytics.continueHandoff(target.host, token ? "token" : "inline");
+      // A token handoff has a durable row to watch — start reflecting edits.
+      if (token) setLaunched(true);
 
       const msg = target.url
         ? needsCopy
@@ -206,6 +216,22 @@ export function ContinueDialog({ open, onOpenChange }: ContinueDialogProps) {
             Hand this part to an AI you can talk to — it loads your exact
             geometry and picks up where you left off.
           </p>
+
+          {launched && mode === "token" && (
+            <div className="flex items-center gap-2 mb-4 px-2.5 py-1.5 rounded-md border border-brand/30 bg-brand/5">
+              <span
+                className={cn(
+                  "h-1.5 w-1.5 rounded-full shrink-0",
+                  live.live ? "bg-brand animate-pulse" : "bg-text-muted/50",
+                )}
+              />
+              <span className="text-[11px] text-text">
+                {live.live
+                  ? `Live in Claude · ${live.edits} edit${live.edits === 1 ? "" : "s"}`
+                  : "Waiting for Claude to pick it up…"}
+              </span>
+            </div>
+          )}
 
           {prepError && (
             <div className="text-xs text-text-muted py-4">{prepError}</div>

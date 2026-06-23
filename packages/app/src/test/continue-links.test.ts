@@ -3,6 +3,7 @@ import {
   buildContinueTargets,
   buildSeedPrompt,
   encodeDocForSeed,
+  continueSessionRowKey,
   MAX_INLINE_BLOB,
   DEFAULT_MCP_URL,
   type ContinueHost,
@@ -112,6 +113,12 @@ describe("buildContinueTargets", () => {
     }).find((x) => x.host === "cursor")!;
     const cfg = JSON.parse(atob(t.url!.split("config=")[1]!));
     expect(cfg.url).toBe("https://staging.vcad.io/mcp");
+  });
+});
+
+describe("continueSessionRowKey", () => {
+  it("matches the server's mcp:cont_<token> keying (rendezvous contract)", () => {
+    expect(continueSessionRowKey(TOKEN)).toBe(`mcp:cont_${TOKEN}`);
   });
 });
 
