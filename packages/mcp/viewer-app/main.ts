@@ -40,6 +40,12 @@ const askBarEl = document.getElementById("ask-bar")!;
 const askPrefixEl = document.getElementById("ask-prefix")!;
 const askInput = document.getElementById("ask-input") as HTMLInputElement;
 const askSendBtn = document.getElementById("ask-send") as HTMLButtonElement;
+const receiptEl = document.getElementById("receipt")!;
+const receiptBadgeEl = document.getElementById("receipt-badge")!;
+const receiptHashEl = document.getElementById("receipt-hash")!;
+const receiptBodyEl = document.getElementById("receipt-body")!;
+const receiptRerunBtn = document.getElementById("receipt-rerun") as HTMLButtonElement;
+const receiptCloseBtn = document.getElementById("receipt-close") as HTMLButtonElement;
 
 // Hostless dev harness (`#dev*`): selection affordances stay active but
 // protocol calls are logged instead of sent.
@@ -910,6 +916,203 @@ function renderGlbForDoc(
   });
 }
 
+// ── Verification receipt — the audit ledger (build_receipt) ──
+// build_receipt's result carries a Receipt (board hash, DRC summary,
+// per-part provenance). We render it as a docked, opaque ledger over the
+// board, with a Re-run button that re-verifies the live board through
+// verify_receipt → Holds / Stale / Violated. Verification is the moat;
+// the geometry behind the ledger is supporting evidence.
+interface ReceiptLike {
+  board_hash?: string;
+  design_rules_hash?: string;
+  drc_backend?: string;
+  drc?: {
+    total?: number;
+    by_rule?: Array<{ rule: string; count: number }>;
+    violations?: string[];
+  };
+  parts?: Array<{ reference: string; footprint: string; value: string; mpn?: string }>;
+  sourcing?: { lines?: unknown[] };
+}
+
+let lastReceipt: ReceiptLike | null = null;
+
+/** Find a Receipt: structuredContent first (ChatGPT-visible), then a
+ *  receipt-shaped JSON text block (Cursor fallback / agent-direct call). */
+function findReceipt(result: ToolResultLike): ReceiptLike | null {
+  const sc = result.structuredContent?.receipt;
+  if (sc && typeof sc === "object") return sc as ReceiptLike;
+  for (const block of result.content ?? []) {
+    if (block?.type !== "text" || !block.text) continue;
+    try {
+      const parsed = JSON.parse(block.text) as ReceiptLike;
+      if (parsed && parsed.board_hash && parsed.drc) return parsed;
+    } catch {
+      // Not JSON — skip
+    }
+  }
+  return null;
+}
+
+/** The re-verify verdict from verify_receipt. */
+function findReceiptStatus(result: ToolResultLike): string | null {
+  const sc = result.structuredContent?.verify_receipt as { status?: string } | undefined;
+  if (sc?.status) return sc.status;
+  for (const block of result.content ?? []) {
+    if (block?.type !== "text" || !block.text) continue;
+    try {
+      const parsed = JSON.parse(block.text) as { status?: string };
+      if (parsed.status) return parsed.status;
+    } catch {
+      // Not JSON — skip
+    }
+  }
+  return null;
+}
+
+function setReceiptBadge(receipt: ReceiptLike, status?: string): void {
+  let text: string;
+  let cls: string;
+  if (status) {
+    text = status;
+    cls = status === "Holds" ? "badge-hold" : status === "Stale" ? "badge-warn" : "badge-bad";
+  } else {
+    const total = receipt.drc?.total ?? 0;
+    text = total === 0 ? "DRC clean" : `${total} ${total === 1 ? "violation" : "violations"}`;
+    cls = total === 0 ? "badge-hold" : "badge-bad";
+  }
+  receiptBadgeEl.textContent = text;
+  receiptBadgeEl.className = cls;
+}
+
+function rcptRow(
+  k: string,
+  v: string,
+  opts?: { cls?: string; onClick?: () => void },
+): HTMLElement {
+  const r = document.createElement("div");
+  r.className = `rcpt-row${opts?.cls ? " " + opts.cls : ""}`;
+  const ke = document.createElement("span");
+  ke.className = "k";
+  ke.textContent = k;
+  const ve = document.createElement("span");
+  ve.className = "v";
+  ve.textContent = v;
+  r.append(ke, ve);
+  if (opts?.onClick) r.addEventListener("click", opts.onClick);
+  return r;
+}
+
+function rcptSection(title: string): HTMLElement {
+  const s = document.createElement("div");
+  s.className = "rcpt-sec";
+  const h = document.createElement("h4");
+  h.textContent = title;
+  s.append(h);
+  return s;
+}
+
+/** Recenter the orbit on a board-local XY point (kernel mm → Y-up world),
+ *  so a violation row points the camera at the geometry it describes. */
+function focusBoardXY(x: number, y: number): void {
+  if (!hasModel) return;
+  controls.target.set(x, 0, -y);
+  controls.update();
+  setTicker(`centered on ${x.toFixed(1)}, ${y.toFixed(1)} mm`, "ready");
+}
+
+function renderReceipt(receipt: ReceiptLike, status?: string): void {
+  lastReceipt = receipt;
+  setReceiptBadge(receipt, status);
+
+  const backend = receipt.drc_backend ?? "drc";
+  const bh = (receipt.board_hash ?? "").slice(0, 12) || "—";
+  const rh = (receipt.design_rules_hash ?? "").slice(0, 12) || "—";
+  receiptHashEl.textContent = `${backend} · board ${bh} · rules ${rh}`;
+
+  receiptBodyEl.innerHTML = "";
+
+  // DRC — counts, then the first violations (clickable to fly the camera).
+  const drc = receipt.drc;
+  const drcSec = rcptSection("DRC");
+  drcSec.append(rcptRow("violations", String(drc?.total ?? 0)));
+  for (const rc of drc?.by_rule ?? []) {
+    drcSec.append(rcptRow(rc.rule, String(rc.count)));
+  }
+  for (const key of (drc?.violations ?? []).slice(0, 6)) {
+    // Canonical key is `rule|message|x|y`.
+    const segs = key.split("|");
+    const rule = segs[0] ?? "violation";
+    const x = Number(segs[segs.length - 2]);
+    const y = Number(segs[segs.length - 1]);
+    const hasPos = Number.isFinite(x) && Number.isFinite(y);
+    drcSec.append(
+      rcptRow(
+        rule,
+        hasPos ? `${x.toFixed(1)}, ${y.toFixed(1)}` : "—",
+        hasPos ? { cls: "rcpt-viol", onClick: () => focusBoardXY(x, y) } : undefined,
+      ),
+    );
+  }
+  receiptBodyEl.append(drcSec);
+
+  // Per-part provenance.
+  if (receipt.parts?.length) {
+    const pSec = rcptSection(`Parts (${receipt.parts.length})`);
+    for (const p of receipt.parts.slice(0, 40)) {
+      const v = [p.value, p.mpn].filter(Boolean).join(" · ");
+      pSec.append(rcptRow(`${p.reference} · ${p.footprint}`, v || "—"));
+    }
+    receiptBodyEl.append(pSec);
+  }
+
+  // Sourcing — shown but muted: a price change must never read as an
+  // electrical failure, so it never drives the verdict badge.
+  const lines = receipt.sourcing?.lines;
+  if (lines?.length) {
+    const sSec = rcptSection("Sourcing");
+    sSec.append(rcptRow("captured lines", String(lines.length), { cls: "rcpt-muted" }));
+    receiptBodyEl.append(sSec);
+  }
+
+  receiptEl.classList.add("visible");
+  receiptRerunBtn.style.display = "inline-flex";
+}
+
+/** Re-verify the shown receipt against the live board via verify_receipt. */
+async function rerunReceipt(): Promise<void> {
+  if (!lastReceipt) return;
+  if (devMode) {
+    console.log("[vcad-viewer:dev] verify_receipt:", lastDocumentId);
+    setReceiptBadge(lastReceipt, "Holds");
+    return;
+  }
+  if (!lastDocumentId) return;
+  receiptRerunBtn.disabled = true;
+  setTicker("re-verifying receipt…", "busy");
+  try {
+    const res = (await app.callServerTool({
+      name: "verify_receipt",
+      arguments: { document_id: lastDocumentId, receipt: lastReceipt },
+    })) as ToolResultLike;
+    const status = findReceiptStatus(res);
+    if (status) {
+      setReceiptBadge(lastReceipt, status);
+      setTicker(`receipt ${status.toLowerCase()}`, status === "Holds" ? "ready" : "error");
+    } else {
+      setTicker("re-verify unavailable", "error");
+    }
+  } catch (e) {
+    console.warn("[vcad-viewer] verify_receipt failed:", e);
+    setTicker("re-verify failed", "error");
+  } finally {
+    receiptRerunBtn.disabled = false;
+  }
+}
+
+receiptRerunBtn.addEventListener("click", () => void rerunReceipt());
+receiptCloseBtn.addEventListener("click", () => receiptEl.classList.remove("visible"));
+
 // ── Host protocol ────────────────────────────────────────────
 // MCP Apps hosts (Claude, Cursor) speak the SEP-1865 postMessage
 // protocol via the App class; ChatGPT injects `window.openai` instead —
@@ -955,6 +1158,13 @@ async function handleToolResult(result: ToolResultLike): Promise<void> {
     setStatus("tool reported an error — nothing to preview", "error");
     return;
   }
+
+  // Verification receipt → docked audit ledger. Render it, then fall
+  // through so the board GLB loads behind it as supporting evidence. Any
+  // other result dismisses a ledger left over from a prior call.
+  const receipt = findReceipt(result);
+  if (receipt) renderReceipt(receipt);
+  else receiptEl.classList.remove("visible");
 
   // Flat pattern (sheet_metal_unfold): 2D drawing, no GLB fetch. Checked
   // before the document_id path — unfold results carry both.
@@ -1134,6 +1344,30 @@ if (location.hash.startsWith("#dev")) {
   fullscreenBtn.style.display = "inline-flex";
   lastDocumentId = "doc_dev";
   updateAffordances();
+  if (location.hash === "#dev-receipt") {
+    renderReceipt({
+      board_hash: "a1b2c3d4e5f60718",
+      design_rules_hash: "9f8e7d6c5b4a3210",
+      drc_backend: "vcad-drc v0.9",
+      drc: {
+        total: 2,
+        by_rule: [
+          { rule: "Clearance", count: 1 },
+          { rule: "CourtyardOverlap", count: 1 },
+        ],
+        violations: [
+          "Clearance|trace within 0.15mm|12.4|8.1",
+          "CourtyardOverlap|U1 over C3|20.0|15.5",
+        ],
+      },
+      parts: [
+        { reference: "U1", footprint: "QFN-32", value: "STM32G0", mpn: "STM32G031K8" },
+        { reference: "R1", footprint: "0402", value: "10k" },
+        { reference: "C3", footprint: "0402", value: "100n" },
+      ],
+      sourcing: { lines: [1, 2, 3] },
+    });
+  }
   // Debug handle for poking the scene from the console. `loadGlb` lets a
   // harness swap in an arbitrary base64 GLB (e.g. a generated PCB preview).
   (window as unknown as Record<string, unknown>).__vcad = {

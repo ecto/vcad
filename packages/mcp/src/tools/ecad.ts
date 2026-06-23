@@ -28,6 +28,7 @@ import type {
   Via,
   Zone,
   Vec2,
+  Receipt,
 } from "@vcad/ir";
 import { createDocument } from "@vcad/ir";
 import { getNodePcb, getPcbNodeIds, buildEntry, agentView } from "@vcad/core";
@@ -48,6 +49,7 @@ import {
   findAlternatives as kernelFindAlternatives,
   verifySubstitution as kernelVerifySubstitution,
   buildReceipt as kernelBuildReceipt,
+  verifyReceipt as kernelVerifyReceipt,
 } from "@vcad/engine";
 import type { Engine, NetlistResult, TriangleMesh } from "@vcad/engine";
 import { registerSession, getSession } from "./session.js";
@@ -5669,8 +5671,8 @@ export async function verifySubstitution(args: Record<string, unknown>) {
 
 /** Build a re-runnable verification Receipt for the session's PCB. */
 export async function buildReceipt(args: Record<string, unknown>) {
-  const { doc } = resolveDocInput(args);
-  const pcb = getDocPcb(doc);
+  const ctx = resolveDocInput(args);
+  const pcb = getDocPcb(ctx.doc);
   if (!pcb) {
     return {
       content: [{ type: "text" as const, text: "Error: Document has no PCB" }],
@@ -5684,5 +5686,69 @@ export async function buildReceipt(args: Record<string, unknown>) {
       isError: true,
     };
   }
-  return { content: [{ type: "text" as const, text: JSON.stringify(receipt) }] };
+  // The receipt rides in structuredContent so the inline viewer renders it
+  // as an audit ledger (the only carrier ChatGPT's widget bridge exposes);
+  // document_id lets the viewer also fetch the board GLB behind the ledger.
+  return {
+    content: [{ type: "text" as const, text: JSON.stringify(receipt) }],
+    structuredContent: {
+      receipt,
+      ...(ctx.documentId ? { document_id: ctx.documentId } : {}),
+    },
+  };
+}
+
+export const verifyReceiptSchema = {
+  type: "object",
+  properties: {
+    document_id: {
+      type: "string",
+      description: "Session id holding the PCB to re-verify against.",
+    },
+    receipt: {
+      type: "object",
+      description: "A Receipt previously produced by build_receipt.",
+    },
+  },
+  required: ["receipt"],
+} as const;
+
+/** Re-run a prior Receipt against the session's current board. Returns the
+ *  verdict: Holds (same board, clean), Stale (board changed), or Violated. */
+export async function verifyReceipt(args: Record<string, unknown>) {
+  const ctx = resolveDocInput(args);
+  const pcb = getDocPcb(ctx.doc);
+  if (!pcb) {
+    return {
+      content: [{ type: "text" as const, text: "Error: Document has no PCB" }],
+      isError: true,
+    };
+  }
+  const receipt = args.receipt as Receipt | undefined;
+  if (!receipt || typeof receipt !== "object" || !receipt.board_hash) {
+    return {
+      content: [
+        {
+          type: "text" as const,
+          text: "Error: missing `receipt` — pass a Receipt produced by build_receipt.",
+        },
+      ],
+      isError: true,
+    };
+  }
+  const status = await kernelVerifyReceipt(pcb, receipt);
+  if (!status) {
+    return {
+      content: [{ type: "text" as const, text: "Error: ECAD engine unavailable" }],
+      isError: true,
+    };
+  }
+  const payload = { status, board_hash: receipt.board_hash };
+  return {
+    content: [{ type: "text" as const, text: JSON.stringify(payload) }],
+    structuredContent: {
+      verify_receipt: payload,
+      ...(ctx.documentId ? { document_id: ctx.documentId } : {}),
+    },
+  };
 }

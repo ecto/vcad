@@ -1,0 +1,10 @@
+{
+  "id": "2026-06-23-mcp-receipt-ledger",
+  "version": "0.9.4",
+  "date": "2026-06-23",
+  "category": "feat",
+  "title": "PCB verification receipt as a re-runnable ledger",
+  "summary": "build_receipt now renders in the inline viewer as a docked audit ledger — verdict badge, board-hash fingerprint, DRC counts, and per-part provenance — with a Re-run button (new verify_receipt tool) that re-verifies the live board as Holds / Stale / Violated. Clicking a violation flies the camera to it; sourcing is shown but never gates the verdict.",
+  "features": ["mcp", "pcb", "ecad", "verification"],
+  "mcpTools": ["build_receipt", "verify_receipt"]
+}

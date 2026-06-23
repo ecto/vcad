@@ -179,6 +179,8 @@ import {
   verifySubstitutionSchema,
   buildReceipt,
   buildReceiptSchema,
+  verifyReceipt,
+  verifyReceiptSchema,
 } from "./tools/ecad.js";
 import { createCadLoon, createCadLoonSchema } from "./tools/loon.js";
 import {
@@ -486,6 +488,7 @@ const TOOL_PACKS: Record<string, readonly string[]> = {
     "find_alternatives",
     "verify_substitution",
     "build_receipt",
+    "verify_receipt",
   ],
   // Mecheval self-grading oracle. The benchmark harness already excludes
   // these during scored runs; hosts that don't want the benchmark
@@ -1261,8 +1264,18 @@ export async function createServer(
           "Build a re-runnable verification Receipt for the session PCB: a content " +
           "hash, the DRC backend, a canonicalized DRC summary, and per-part " +
           "provenance — a durable proof that round-trips and re-verifies later as " +
-          "Holds / Stale / Violated.",
+          "Holds / Stale / Violated. Renders as an audit ledger in the inline viewer.",
         inputSchema: buildReceiptSchema,
+        _meta: UI_META,
+      },
+      {
+        name: "verify_receipt",
+        description:
+          "Re-run a prior Receipt (from build_receipt) against the session's current " +
+          "board and return the verdict — Holds (same board, clean), Stale (board " +
+          "changed), or Violated. Powers the ledger's Re-run button.",
+        inputSchema: verifyReceiptSchema,
+        _meta: { ...UI_META, ...WIDGET_CALLABLE_META },
       },
       {
         name: "route_diff_pair",
@@ -1801,6 +1814,10 @@ export async function createServer(
 
         case "build_receipt":
           result = await buildReceipt(args);
+          break;
+
+        case "verify_receipt":
+          result = await verifyReceipt(args);
           break;
 
         case "route_diff_pair":
