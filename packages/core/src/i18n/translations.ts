@@ -778,6 +778,7 @@ export const translations = {
     "menu.file.open": "Open…",
     "menu.file.save": "Save",
     "menu.file.share_link": "Share link…",
+    "menu.file.continue_in_claude": "Continue in Claude…",
     "menu.file.version_history": "Version history…",
     "menu.file.export": "Export",
     "menu.file.export_stl": "Export STL",

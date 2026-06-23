@@ -39,6 +39,11 @@ export const analytics = {
   printPanelOpened: () => ph?.capture("print_panel_opened"),
   quotePanelOpened: () => ph?.capture("quote_panel_opened"),
 
+  // "Continue in Claude" handoff — which host, and whether it was a signed-in
+  // (token) or accountless (inline) handoff.
+  continueHandoff: (host: string, mode: "token" | "inline") =>
+    ph?.capture("continue_handoff", { host, mode }),
+
   // Command registry — fired for every action triggered through
   // useAppCommands, regardless of which surface invoked it. Lets us see
   // which commands are actually used and whether users prefer the mobile

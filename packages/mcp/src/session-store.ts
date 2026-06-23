@@ -264,6 +264,59 @@ export class AnonSupabaseSessionStore implements SessionStore {
   }
 }
 
+/**
+ * Resolve a public share token (`document_shares.token`) to its cloud document
+ * content + name, via the `get_shared_document` SECURITY DEFINER RPC — the same
+ * path the web app's `fetchSharedDocument` uses. This is the server side of the
+ * "Continue in Claude" handoff: the browser mints a share token for the part the
+ * user is looking at, and `continue_document` resolves it here. Service-role
+ * keyed (the RPC is granted to anon/authenticated, but we already hold the key
+ * and it avoids spinning a second client). Returns null on miss / invalid token
+ * / no env.
+ *
+ * `content` is the RAW stored content — a CRDT state blob (`{replica_id, ops}`),
+ * a raw IR Document (`{nodes, roots}`), or a loon envelope — so the caller
+ * materializes it to IR (CRDT needs the kernel engine).
+ */
+export async function resolveShareToken(
+  token: string,
+): Promise<{ content: unknown; name: string } | null> {
+  const url = (process.env.SUPABASE_URL || "").replace(/\/+$/, "");
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
+  if (!url || !key) return null;
+  // The RPC param is typed `uuid`; a non-uuid token 400s. Cheap guard so a
+  // malformed handoff degrades to a clean miss, not a logged PostgREST error.
+  if (
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(token)
+  ) {
+    return null;
+  }
+  try {
+    const res = await sessionFetch(`${url}/rest/v1/rpc/get_shared_document`, {
+      method: "POST",
+      headers: {
+        apikey: key,
+        Authorization: `Bearer ${key}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ p_token: token }),
+    });
+    if (!res.ok) return null;
+    const body = (await res.json()) as
+      | Array<{ name?: string; content?: unknown }>
+      | { name?: string; content?: unknown };
+    const row = Array.isArray(body) ? body[0] : body;
+    if (!row || row.content == null) return null;
+    return {
+      content: row.content,
+      name: typeof row.name === "string" ? row.name : "Shared document",
+    };
+  } catch (err) {
+    console.error("[session-store] resolveShareToken failed:", err);
+    return null;
+  }
+}
+
 /** True when `content` looks like a raw Document IR (has nodes + roots). */
 function looksLikeDocument(content: unknown): content is Document {
   return (

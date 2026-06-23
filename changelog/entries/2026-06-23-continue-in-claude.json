@@ -1,0 +1,18 @@
+{
+  "id": "2026-06-23-continue-in-claude",
+  "version": "0.9.4",
+  "date": "2026-06-23",
+  "category": "feat",
+  "title": "Continue in Claude",
+  "summary": "Hand the part you're looking at to Claude, ChatGPT, or your editor in one click — it loads your exact geometry and picks up where you left off.",
+  "details": "## What's New\n\n- **One-click handoff** - A \"Continue in Claude…\" item in the File menu opens an AI host with your current part already loaded — no blank slate, no copy-paste.\n- **Host matrix** - Claude Desktop and ChatGPT open with the part prefilled; Cursor and VS Code get one-click connector install; Claude Code gets a copyable command. Remembers your last-used host.\n- **Token-based, not geometry-in-URL** - The link carries only a short share token; the new `continue_document` MCP tool resolves it server-side and materializes the geometry, so even large parts hand off cleanly.",
+  "features": [
+    "mcp",
+    "ai",
+    "handoff",
+    "sharing"
+  ],
+  "mcpTools": [
+    "continue_document"
+  ]
+}

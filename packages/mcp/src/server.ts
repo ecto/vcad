@@ -45,6 +45,10 @@ import {
   runInSessionScope,
 } from "./tools/session.js";
 import {
+  continueDocument,
+  continueDocumentSchema,
+} from "./tools/continue-doc.js";
+import {
   createSessionStore,
   createSessionEventStore,
   createShareStore,
@@ -333,6 +337,9 @@ const GEOMETRY_TOOLS = new Set([
   "import_step",
   "open_document",
   "get_document",
+  // Opens a web doc (from a "Continue in Claude" share token) as a live session
+  // seeded with its geometry — render it like open_document/load_document.
+  "continue_document",
   "place_part",
   "set_material",
   "dfm_apply_fix",
@@ -369,6 +376,9 @@ const SWITCH_DOC_WRITERS = new Set<string>([
   "import_step",
   "create_schematic",
   "sheet_metal_create",
+  // Seeds a new session from a web doc's geometry — persist it to the user's
+  // account so the continued part survives a cold instance and shows at vcad.io.
+  "continue_document",
   // load_document materializes a saved board into a live session; its
   // local-disk read is a no-op on the serverless deploy, but on success
   // persisting the loaded doc to the user's account is desirable.
@@ -729,6 +739,27 @@ export async function createServer(
           "its new document_id. The cheap way to resume a board/part across runs " +
           "instead of rebuilding it.",
         inputSchema: loadDocumentSchema,
+        _meta: UI_META,
+      },
+      {
+        name: "continue_document",
+        description:
+          "Open the user's vcad.io part as an editing session from a 'Continue " +
+          "in Claude' handoff (a share `token`, or an inline `doc` for accountless " +
+          "handoffs). The web app hands you this in the starter prompt; call this " +
+          "first, then render_view it and continue the user's work. Returns a " +
+          "`document_id` for subsequent tool calls. The geometry is fetched " +
+          "server-side — never paste it.",
+        inputSchema: continueDocumentSchema,
+        // Directory-ready hints: read-only intent (it opens, never mutates the
+        // source doc), and it reaches the network to resolve the handoff.
+        annotations: {
+          title: "Continue from vcad.io",
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: false,
+          openWorldHint: true,
+        },
         _meta: UI_META,
       },
       {
@@ -1770,6 +1801,10 @@ export async function createServer(
 
         case "load_document":
           result = loadDocument(args);
+          break;
+
+        case "continue_document":
+          result = await continueDocument(args, sessionStore);
           break;
 
         case "server_info":
