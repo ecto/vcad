@@ -6,51 +6,50 @@ import {
   resolveSessionIr,
   setSessionFetch,
   type ShareStore,
+  type ShareRecord,
 } from "../session-store.js";
 import { shareSession, unshareSession } from "../tools/live-share.js";
 
 const CFG = { supabaseUrl: "https://supa.test", serviceRoleKey: "svc" };
 const json = (r: { content: Array<{ text: string }> }) => JSON.parse(r.content[0].text);
+const jsonResp = (body: unknown) =>
+  new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } });
 
 afterEach(() => {
   setSessionFetch(((...a: Parameters<typeof fetch>) => fetch(...a)) as typeof fetch);
 });
 
-/** In-memory live_shares fake routed by method. */
+/** In-memory live_shares fake (stores shared_by) routed by method. */
 function makeSharesFake() {
-  const rows = new Set<string>();
+  const rows = new Map<string, string | null>();
   const fetchImpl = (async (input: unknown, init: RequestInit = {}) => {
     const url = new URL(String(input));
     const method = (init.method ?? "GET").toUpperCase();
     const eq = url.searchParams.get("session_id");
     const id = eq && eq.startsWith("eq.") ? eq.slice(3) : null;
     if (method === "POST") {
-      const body = JSON.parse(String(init.body)) as Array<{ session_id: string }>;
-      for (const r of body) rows.add(r.session_id);
+      const body = JSON.parse(String(init.body)) as Array<{ session_id: string; shared_by?: string | null }>;
+      for (const r of body) rows.set(r.session_id, r.shared_by ?? null);
       return new Response(null, { status: 201 });
     }
     if (method === "DELETE") {
       if (id) rows.delete(id);
       return new Response(null, { status: 204 });
     }
-    // GET
-    return new Response(JSON.stringify(id && rows.has(id) ? [{ session_id: id }] : []), {
-      status: 200,
-      headers: { "Content-Type": "application/json" },
-    });
+    return jsonResp(id && rows.has(id) ? [{ session_id: id, shared_by: rows.get(id) }] : []);
   }) as unknown as typeof fetch;
   return { rows, fetchImpl };
 }
 
 describe("SupabaseShareStore", () => {
-  it("share → isShared true; unshare → isShared false", async () => {
+  it("share → getShare returns the owner; unshare → null", async () => {
     setSessionFetch(makeSharesFake().fetchImpl);
     const store = new SupabaseShareStore(CFG);
-    expect(await store.isShared("doc_x")).toBe(false);
+    expect(await store.getShare("doc_x")).toBeNull();
     await store.share("doc_x", "user-1");
-    expect(await store.isShared("doc_x")).toBe(true);
+    expect(await store.getShare("doc_x")).toEqual({ shared_by: "user-1" });
     await store.unshare("doc_x");
-    expect(await store.isShared("doc_x")).toBe(false);
+    expect(await store.getShare("doc_x")).toBeNull();
   });
 
   it("never throws on a transport error (degrades to not-shared)", async () => {
@@ -58,7 +57,7 @@ describe("SupabaseShareStore", () => {
       throw new Error("down");
     }) as unknown as typeof fetch);
     const store = new SupabaseShareStore(CFG);
-    expect(await store.isShared("doc_x")).toBe(false);
+    expect(await store.getShare("doc_x")).toBeNull();
     await expect(store.share("doc_x", null)).resolves.toBeUndefined();
   });
 });
@@ -99,53 +98,56 @@ describe("resolveSessionIr", () => {
     else process.env.SUPABASE_SERVICE_ROLE_KEY = prev.k;
   });
 
-  const fake = (handler: (table: string, id: string | null) => unknown[]) =>
+  it("resolves from mcp_sessions (anon capability session)", async () => {
     setSessionFetch((async (input: unknown) => {
       const url = new URL(String(input));
-      const table = url.pathname.endsWith("/mcp_sessions")
-        ? "mcp_sessions"
-        : url.pathname.endsWith("/documents")
-          ? "documents"
-          : "?";
-      const idP = url.searchParams.get(table === "mcp_sessions" ? "document_id" : "local_id");
-      const id = idP && idP.startsWith("eq.") ? idP.slice(3) : null;
-      return new Response(JSON.stringify(handler(table, id)), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      });
+      return jsonResp(url.pathname.endsWith("/mcp_sessions") ? [{ content: DOC }] : []);
     }) as unknown as typeof fetch);
-
-  it("resolves from mcp_sessions (anon capability session)", async () => {
-    fake((t) => (t === "mcp_sessions" ? [{ content: DOC }] : []));
     const ir = await resolveSessionIr("doc_anon");
     expect(ir).not.toBeNull();
     expect(Object.keys(ir!.nodes)).toContain("1");
   });
 
-  it("falls back to documents by mcp:<id> when mcp_sessions misses", async () => {
-    fake((t, id) => (t === "documents" && id === "mcp:doc_signed" ? [{ content: DOC }] : []));
-    const ir = await resolveSessionIr("doc_signed");
-    expect(ir).not.toBeNull();
+  it("does NOT fall back to documents without an owner (anti-spoof)", async () => {
+    let documentsQueried = false;
+    setSessionFetch((async (input: unknown) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith("/documents")) documentsQueried = true;
+      return jsonResp([]); // mcp_sessions misses
+    }) as unknown as typeof fetch);
+    expect(await resolveSessionIr("doc_signed")).toBeNull();
+    expect(documentsQueried).toBe(false);
   });
 
-  it("returns null when neither table has it", async () => {
-    fake(() => []);
-    expect(await resolveSessionIr("nope")).toBeNull();
+  it("scopes the documents fallback to the owner's user_id", async () => {
+    let docSearch = "";
+    setSessionFetch((async (input: unknown) => {
+      const url = new URL(String(input));
+      if (url.pathname.endsWith("/documents")) {
+        docSearch = url.search;
+        return jsonResp([{ content: DOC }]);
+      }
+      return jsonResp([]); // mcp_sessions misses
+    }) as unknown as typeof fetch);
+    const ir = await resolveSessionIr("doc_signed", "owner-1");
+    expect(ir).not.toBeNull();
+    expect(docSearch).toContain("local_id=eq.mcp%3Adoc_signed");
+    expect(docSearch).toContain("user_id=eq.owner-1");
   });
 
   it("returns null with no Supabase env", async () => {
     delete process.env.SUPABASE_URL;
-    expect(await resolveSessionIr("doc_anon")).toBeNull();
+    expect(await resolveSessionIr("doc_anon", "owner-1")).toBeNull();
   });
 });
 
 class FakeShareStore implements ShareStore {
-  shared = new Set<string>();
-  async isShared(id: string) {
-    return this.shared.has(id);
+  shared = new Map<string, string | null>();
+  async getShare(id: string): Promise<ShareRecord | null> {
+    return this.shared.has(id) ? { shared_by: this.shared.get(id) ?? null } : null;
   }
-  async share(id: string) {
-    this.shared.add(id);
+  async share(id: string, by: string | null) {
+    this.shared.set(id, by);
   }
   async unshare(id: string) {
     this.shared.delete(id);
@@ -171,7 +173,7 @@ describe("share_session / unshare_session tools", () => {
     expect(out.shared).toBe(true);
     expect(out.link).toContain("/live/doc_1");
     expect(out.warning.toUpperCase()).toContain("PUBLIC");
-    expect(await store.isShared("doc_1")).toBe(true);
+    expect(await store.getShare("doc_1")).toEqual({ shared_by: "u1" });
   });
 
   it("share_session refuses when the live window is disabled", async () => {
@@ -187,9 +189,9 @@ describe("share_session / unshare_session tools", () => {
 
   it("unshare_session revokes the share", async () => {
     const store = new FakeShareStore();
-    await store.share("doc_1");
+    await store.share("doc_1", null);
     const res = await unshareSession({ document_id: "doc_1" }, store);
     expect(json(res).shared).toBe(false);
-    expect(await store.isShared("doc_1")).toBe(false);
+    expect(await store.getShare("doc_1")).toBeNull();
   });
 });

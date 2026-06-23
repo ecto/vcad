@@ -95,6 +95,6 @@ export async function unshareSession(
   await store.unshare(documentId);
   return ok({
     shared: false,
-    note: "Live link revoked — the session is private again. Any open viewers will lose access on their next request.",
+    note: "Live link revoked — the link now 404s and no further live updates are broadcast for this session. (A viewer already connected keeps only the events they had already received; their socket isn't force-closed.)",
   });
 }

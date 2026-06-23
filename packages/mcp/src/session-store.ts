@@ -459,9 +459,17 @@ export function createSessionEventStore(
 // driver explicitly shares the session (share_session writes a live_shares
 // row); without a row they 404 even with VCAD_LIVE_WINDOW on. Revocable.
 
+/** The active share row, or null when a session isn't shared. */
+export interface ShareRecord {
+  /** The driver who shared it, or null for an anonymous capability session. */
+  shared_by: string | null;
+}
+
 export interface ShareStore {
-  /** True iff this session has an active live share. */
-  isShared(sessionId: string): Promise<boolean>;
+  /** The active share row for a session, or null if it isn't shared. The
+   *  owner (shared_by) scopes the geometry resolve so a link-holder can only
+   *  ever see the actual sharer's document. */
+  getShare(sessionId: string): Promise<ShareRecord | null>;
   /** Mark a session shared (idempotent). `sharedBy` = the driver's user id. */
   share(sessionId: string, sharedBy: string | null): Promise<void>;
   /** Revoke the share — the live link goes dead. */
@@ -470,8 +478,8 @@ export interface ShareStore {
 
 /** No-op = stdio/local: nothing is shareable (no live window without Supabase). */
 export class NoopShareStore implements ShareStore {
-  async isShared(): Promise<boolean> {
-    return false;
+  async getShare(): Promise<ShareRecord | null> {
+    return null;
   }
   async share(): Promise<void> {}
   async unshare(): Promise<void> {}
@@ -493,18 +501,20 @@ export class SupabaseShareStore implements ShareStore {
     return `${this.cfg.supabaseUrl}/rest/v1/live_shares${query}`;
   }
 
-  async isShared(sessionId: string): Promise<boolean> {
+  async getShare(sessionId: string): Promise<ShareRecord | null> {
     try {
       const res = await sessionFetch(
-        this.url(`?session_id=eq.${encodeURIComponent(sessionId)}&select=session_id&limit=1`),
+        this.url(`?session_id=eq.${encodeURIComponent(sessionId)}&select=session_id,shared_by&limit=1`),
         { method: "GET", headers: this.headers() },
       );
-      if (!res.ok) return false;
-      const rows = (await res.json()) as unknown[];
-      return Array.isArray(rows) && rows.length > 0;
+      if (!res.ok) return null;
+      const rows = (await res.json()) as Array<{ shared_by?: string | null }>;
+      return Array.isArray(rows) && rows[0]
+        ? { shared_by: rows[0].shared_by ?? null }
+        : null;
     } catch (err) {
-      console.error("[live-share] isShared failed:", err);
-      return false;
+      console.error("[live-share] getShare failed:", err);
+      return null;
     }
   }
 
@@ -559,6 +569,7 @@ export function createShareStore(): ShareStore {
  */
 export async function resolveSessionIr(
   sessionId: string,
+  owner?: string | null,
 ): Promise<Document | null> {
   const url = (process.env.SUPABASE_URL || "").replace(/\/+$/, "");
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
@@ -581,8 +592,14 @@ export async function resolveSessionIr(
     `/rest/v1/mcp_sessions?document_id=eq.${sid}&select=content&limit=1`,
   );
   if (anon) return anon;
+  // The documents fallback MUST be scoped to the sharer: local_id is the
+  // client-supplied IndexedDB id (unique only per user_id), so a global
+  // local_id='mcp:<id>' match would let any signed-in user spoof a shared
+  // session's geometry by syncing a doc with that id. Resolve only the owner's.
+  if (!owner) return null;
   const lid = encodeURIComponent(`mcp:${sessionId}`);
+  const uid = encodeURIComponent(owner);
   return firstContent(
-    `/rest/v1/documents?local_id=eq.${lid}&select=content&order=device_modified_at.desc&limit=1`,
+    `/rest/v1/documents?local_id=eq.${lid}&user_id=eq.${uid}&select=content&order=device_modified_at.desc&limit=1`,
   );
 }

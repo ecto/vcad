@@ -119,11 +119,19 @@ export async function handleLiveRequest(
     return true;
   }
 
+  // Bound the per-IP rate of EVERY /live route with one early check — the gate
+  // query, the HTML page, config, replay, annotate, and glb all pass through.
+  if (rateLimited(clientIp(req))) {
+    text(res, 429, "Too Many Requests");
+    return true;
+  }
+
   // Private by default: the session must be explicitly shared (share_session
   // wrote a live_shares row) or every /live route 404s — even with the flag on
-  // and a valid id. This is the deliberate, revocable opt-in.
-  const shareStore = createShareStore();
-  if (!(await shareStore.isShared(sessionId))) {
+  // and a valid id. The share record's owner scopes geometry resolution so a
+  // link-holder can only ever see the actual sharer's document.
+  const share = await createShareStore().getShare(sessionId);
+  if (!share) {
     text(res, 404, "Not Found");
     return true;
   }
@@ -151,10 +159,6 @@ export async function handleLiveRequest(
   const eventStore = createSessionEventStore(opts.user);
 
   if (req.method === "GET" && action === "events") {
-    if (rateLimited(clientIp(req))) {
-      text(res, 429, "Too Many Requests");
-      return true;
-    }
     const sinceRaw = url.searchParams.get("since");
     const since = sinceRaw != null && sinceRaw !== "" ? Number(sinceRaw) : undefined;
     const events = await listEvents(
@@ -167,10 +171,6 @@ export async function handleLiveRequest(
   }
 
   if (req.method === "POST" && action === "annotate") {
-    if (rateLimited(clientIp(req))) {
-      text(res, 429, "Too Many Requests");
-      return true;
-    }
     let parsed: unknown;
     try {
       parsed = JSON.parse(await readBody(req, LIVE_BODY_MAX_BYTES));
@@ -202,14 +202,9 @@ export async function handleLiveRequest(
 
   if (req.method === "GET" && action === "glb") {
     // Geometry for a hostless viewer that knows only the capability id: resolve
-    // the session IR by id (service role, no user), then the standard preview
-    // GLB. The session is already share-gated above, so this only ever serves a
-    // deliberately-shared model.
-    if (rateLimited(clientIp(req))) {
-      text(res, 429, "Too Many Requests");
-      return true;
-    }
-    const doc = await resolveSessionIr(sessionId);
+    // the session IR by id (service role), scoped to the sharer so a link-holder
+    // can't be served a spoofed document. The session is already share-gated.
+    const doc = await resolveSessionIr(sessionId, share.shared_by);
     if (!doc) {
       text(res, 404, "Not Found");
       return true;

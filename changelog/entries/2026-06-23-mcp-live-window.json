@@ -1,0 +1,10 @@
+{
+  "id": "2026-06-23-mcp-live-window",
+  "version": "0.9.4",
+  "date": "2026-06-23",
+  "category": "feat",
+  "title": "Live review window — watch a session build",
+  "summary": "Share an MCP session as a live link: anyone with it watches the geometry update in real time and can drop annotation pins. Private by default; share is explicit and revocable.",
+  "features": ["mcp", "live", "collaboration"],
+  "mcpTools": ["share_session", "unshare_session"]
+}
