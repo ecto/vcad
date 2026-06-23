@@ -24,8 +24,7 @@ import { createServer } from "./server.js";
 import { verifyAccessToken } from "./oauth.js";
 import { getViewerHtml, MCP_APP_MIME_TYPE } from "./viewer.js";
 import { flushTelemetry } from "./telemetry.js";
-import { createSessionEventStore } from "./session-store.js";
-import { appendOverlay, listEvents } from "./tools/live.js";
+import { handleLiveRequest } from "./live-route.js";
 
 const PORT = parseInt(process.env.PORT || "8080", 10);
 
@@ -126,99 +125,6 @@ async function handleMcpRequest(
     await transport.close();
     await server.close();
   }
-}
-
-/**
- * Handle a live-review-window request. Capability-keyed by the session id in the
- * path (`/live/<id>/<action>`) — possession of the unguessable id is the grant,
- * same model as mcp_sessions. Reads/appends go through the service-role event
- * store, so they work for both anon and signed-in sessions by session id alone.
- *
- *   GET  /live/<id>/events[?since=N]  → the session's spine events (replay)
- *   POST /live/<id>/annotate          → append a viewer overlay (pin/flag/…)
- *
- * The geometry stream (GLB / fold) and the browser viewer app are a separate,
- * env-gated slice — this is the data backbone the broadcast trigger feeds.
- */
-async function handleLiveRequest(
-  req: import("node:http").IncomingMessage,
-  res: import("node:http").ServerResponse,
-): Promise<void> {
-  const url = new URL(req.url ?? "/", `http://${req.headers.host}`);
-  const parts = url.pathname.split("/").filter(Boolean); // ["live", id, action]
-  const sessionId = parts[1] ? decodeURIComponent(parts[1]) : "";
-  const action = parts[2] ?? "";
-  if (!sessionId) {
-    res.writeHead(400, { "Content-Type": "text/plain" });
-    res.end("missing session id");
-    return;
-  }
-
-  // Viewers are usually anonymous (the link is the capability); a Bearer token,
-  // if present, just attributes the actor. The event store reads/writes by
-  // session id via the service role regardless.
-  const user = verifyAccessToken(req);
-  const eventStore = createSessionEventStore(user);
-
-  if (req.method === "GET" && action === "events") {
-    // Each call does a per-session fetch; throttle this public read like annotate.
-    if (rateLimitExceeded(clientIp(req))) {
-      res.writeHead(429, { "Content-Type": "text/plain" });
-      res.end("Too Many Requests");
-      return;
-    }
-    const sinceRaw = url.searchParams.get("since");
-    const since = sinceRaw != null && sinceRaw !== "" ? Number(sinceRaw) : undefined;
-    const events = await listEvents(
-      eventStore,
-      sessionId,
-      Number.isFinite(since) ? since : undefined,
-    );
-    res.writeHead(200, { "Content-Type": "application/json" });
-    res.end(JSON.stringify({ session_id: sessionId, events }));
-    return;
-  }
-
-  if (req.method === "POST" && action === "annotate") {
-    if (rateLimitExceeded(clientIp(req))) {
-      res.writeHead(429, { "Content-Type": "text/plain" });
-      res.end("Too Many Requests");
-      return;
-    }
-    let parsed: unknown;
-    try {
-      // An overlay is tiny — a far smaller cap than the 10 MiB /mcp default.
-      parsed = JSON.parse(await readBody(req, 16 * 1024));
-    } catch {
-      res.writeHead(400, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ ok: false, error: "invalid or oversized json body" }));
-      return;
-    }
-    // Tolerate null / array / scalar bodies — appendOverlay rejects the empty
-    // overlay with a clean 400 instead of throwing a 500.
-    const body =
-      parsed && typeof parsed === "object" && !Array.isArray(parsed)
-        ? (parsed as Record<string, unknown>)
-        : {};
-    const result = await appendOverlay(
-      eventStore,
-      sessionId,
-      {
-        type: typeof body.type === "string" ? body.type : "",
-        payload: body.payload,
-        author: typeof body.author === "string" ? body.author : undefined,
-      },
-      // The verified token identity is authoritative; a body author is only ever
-      // honored (namespaced) for genuinely anonymous viewers.
-      { trustedAuthor: user?.email || undefined },
-    );
-    res.writeHead(result.ok ? 200 : 400, { "Content-Type": "application/json" });
-    res.end(JSON.stringify(result));
-    return;
-  }
-
-  res.writeHead(404, { "Content-Type": "text/plain" });
-  res.end("Not Found");
 }
 
 /** Read request body as string, enforcing a max size (default MAX_BODY_BYTES;
@@ -325,15 +231,9 @@ const httpServer = createHttpServer(async (req, res) => {
       return;
     }
 
-    // Live review window — capability-keyed by the (unguessable) session id.
-    // Flag-gated: a new public read/append surface, off until VCAD_LIVE_WINDOW=1.
-    if (path.startsWith("/live/")) {
-      if (process.env.VCAD_LIVE_WINDOW !== "1") {
-        res.writeHead(404, { "Content-Type": "text/plain" });
-        res.end("Not Found");
-        return;
-      }
-      await handleLiveRequest(req, res);
+    // Live review window (/live/*) — shared, flag-gated handler. Returns true
+    // once it has written a response.
+    if (await handleLiveRequest(req, res, { user: verifyAccessToken(req) })) {
       return;
     }
 
