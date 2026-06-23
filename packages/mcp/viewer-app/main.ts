@@ -363,42 +363,54 @@ function clearModel(): void {
   currentModel = null;
 }
 
-function loadGlb(base64Data: string): void {
+interface LoadOpts {
+  /** Hold the current camera framing instead of re-fitting — used when the
+   *  same document re-renders so the part accretes in place. */
+  preserveCamera?: boolean;
+  /** Runs once the new model is in the scene (re-select, flash, …). */
+  afterLoad?: () => void;
+}
+
+function loadGlb(base64Data: string, opts?: LoadOpts): void {
   const binary = atob(base64Data);
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) {
     bytes[i] = binary.charCodeAt(i);
   }
 
-  clearModel();
-
   loader.parse(
     bytes.buffer,
     "",
     (gltf) => {
+      // Swap only once the new model has parsed, so a same-document
+      // re-render never blinks through an empty scene (and a parse error
+      // leaves the current model untouched).
+      clearModel();
       currentModel = gltf.scene;
       modelGroup.add(currentModel);
       hasModel = true;
       updateAxesVisibility();
 
-      // Fit camera to model
       const box = new THREE.Box3().setFromObject(currentModel);
       const center = box.getCenter(new THREE.Vector3());
       const size = box.getSize(new THREE.Vector3());
-      const maxDim = Math.max(size.x, size.y, size.z);
-      const dist = maxDim * 2;
 
-      // Center is in Z-up space, convert to Y-up for camera target
-      controls.target.set(center.x, center.z, -center.y);
-      camera.position.set(
-        center.x + dist * 0.7,
-        center.z + dist * 0.7,
-        -center.y + dist * 0.7,
-      );
-      camera.updateProjectionMatrix();
-      controls.update();
+      if (!opts?.preserveCamera) {
+        // Fit camera to model. Center is in Z-up space, convert to Y-up.
+        const maxDim = Math.max(size.x, size.y, size.z);
+        const dist = maxDim * 2;
+        controls.target.set(center.x, center.z, -center.y);
+        camera.position.set(
+          center.x + dist * 0.7,
+          center.z + dist * 0.7,
+          -center.y + dist * 0.7,
+        );
+        camera.updateProjectionMatrix();
+        controls.update();
+      }
 
-      // Contact shadow under the footprint (world Y-up space)
+      // Contact shadow under the footprint (world Y-up space) — rebound on
+      // every load so the part stays grounded as its footprint morphs.
       const worldBox = new THREE.Box3().setFromObject(modelGroup);
       const worldSize = worldBox.getSize(new THREE.Vector3());
       const worldCenter = worldBox.getCenter(new THREE.Vector3());
@@ -411,6 +423,7 @@ function loadGlb(base64Data: string): void {
       updateStats(currentModel, size);
       loadingEl.classList.add("hidden");
       setTicker("ready", "ready");
+      opts?.afterLoad?.();
       renderer.render(scene, camera);
     },
     (error) => {
@@ -460,6 +473,9 @@ function setHighlight(root: THREE.Object3D, on: boolean): void {
     const mesh = child as THREE.Mesh;
     if (!mesh.isMesh) return;
     if (on) {
+      // Idempotent: a mesh already highlighted (by selection or a flash)
+      // keeps its saved original, so overlapping highlights never lose it.
+      if (mesh.userData.origMaterial) return;
       const orig = mesh.material as THREE.MeshStandardMaterial;
       if (!orig?.clone) return;
       const highlighted = orig.clone();
@@ -794,6 +810,106 @@ function captureVcode(result: ToolResultLike): void {
   }
 }
 
+// ── Live re-render — geometry accretes in place ──────────────
+// The viewport is idempotent on document_id: when a later tool result
+// targets the document already on screen, we re-render WITHOUT snapping
+// the camera, re-bind the selection to the same part, and flash the
+// parts the edit touched — so a multi-turn session grows under the
+// user's cursor instead of stacking stale snapshot cards.
+let renderedDocId: string | null = null;
+
+interface PartRef {
+  part_id: string;
+  name?: string;
+}
+interface PartsChanged {
+  added?: PartRef[];
+  removed?: PartRef[];
+  modified?: PartRef[];
+}
+
+/** The mutation diff: structuredContent first (the only carrier ChatGPT's
+ *  widget bridge exposes), then any JSON text block (Cursor fallback). */
+function findChanged(result: ToolResultLike): PartsChanged | null {
+  const sc = result.structuredContent?.changed;
+  if (sc && typeof sc === "object") return sc as PartsChanged;
+  for (const block of result.content ?? []) {
+    if (block?.type !== "text" || !block.text) continue;
+    try {
+      const parsed = JSON.parse(block.text) as { changed?: PartsChanged };
+      if (parsed.changed) return parsed.changed;
+    } catch {
+      // Not JSON — skip
+    }
+  }
+  return null;
+}
+
+/** Re-bind the selection to the same part after a re-render (sticky
+ *  deixis). If the part is gone, selection stays cleared — clearModel
+ *  already pushed a null context, so "this" never resolves to a ghost. */
+function reselectById(partId: string): void {
+  if (!currentModel) return;
+  let found: SelectedPart | null = null;
+  currentModel.traverse((o) => {
+    if (found) return;
+    const m = /^(\d+):(.*)$/.exec(o.name);
+    if (m && m[1] === partId) {
+      found = { partId: m[1], name: m[2] || `part ${m[1]}`, object: o };
+    }
+  });
+  if (found) select(found);
+}
+
+/** Transient brand-pink flash on the parts a mutation just touched.
+ *  Reuses the selection-highlight path; auto-clears after FLASH_MS. */
+const FLASH_MS = 1200;
+function flashChanged(changed: PartsChanged): void {
+  if (!currentModel) return;
+  const ids = new Set<string>();
+  for (const e of changed.added ?? []) ids.add(e.part_id);
+  for (const e of changed.modified ?? []) ids.add(e.part_id);
+  if (ids.size === 0) return;
+
+  const flashed: THREE.Object3D[] = [];
+  currentModel.traverse((o) => {
+    const m = /^(\d+):/.exec(o.name);
+    if (m && ids.has(m[1]) && o !== selected?.object) {
+      setHighlight(o, true);
+      flashed.push(o);
+    }
+  });
+  if (flashed.length === 0) return;
+
+  const n = flashed.length;
+  setTicker(`updated ${n} ${n === 1 ? "part" : "parts"}`, "ready");
+  window.setTimeout(() => {
+    // Don't un-highlight a part the user has since selected.
+    for (const o of flashed) {
+      if (o !== selected?.object) setHighlight(o, false);
+    }
+  }, FLASH_MS);
+}
+
+/** Render a freshly-fetched GLB for a document, holding the camera and
+ *  re-binding the selection when it's the document already on screen. */
+function renderGlbForDoc(
+  glb: string,
+  docId: string | null,
+  changed: PartsChanged | null,
+): void {
+  const preserveCamera = docId != null && docId === renderedDocId;
+  const keepPartId = preserveCamera ? selected?.partId ?? null : null;
+  loadGlb(glb, {
+    preserveCamera,
+    afterLoad: () => {
+      if (docId != null) renderedDocId = docId;
+      if (keepPartId != null) reselectById(keepPartId);
+      if (changed) flashChanged(changed);
+    },
+  });
+}
+
 // ── Host protocol ────────────────────────────────────────────
 // MCP Apps hosts (Claude, Cursor) speak the SEP-1865 postMessage
 // protocol via the App class; ChatGPT injects `window.openai` instead —
@@ -854,10 +970,14 @@ async function handleToolResult(result: ToolResultLike): Promise<void> {
     return;
   }
 
+  // The parts this call changed (for the in-place flash).
+  const changed = findChanged(result);
+
   // Legacy path: GLB inlined in the result
   const inline = findInlineGlb(result);
   if (inline) {
-    loadGlb(inline);
+    const inlineDoc = result.structuredContent?.document_id ?? findDocumentId(result);
+    renderGlbForDoc(inline, typeof inlineDoc === "string" ? inlineDoc : null, changed);
     return;
   }
 
@@ -870,12 +990,16 @@ async function handleToolResult(result: ToolResultLike): Promise<void> {
     setStatus("no geometry to preview", "idle");
     return;
   }
+  const sameDoc = docId === renderedDocId;
   lastDocumentId = docId;
   docLabelEl.textContent = docId;
   // A session document exists, so the deep link can always lazily fetch
   // the doc on click even when no VCode rode along in the result.
   openBtn.style.display = "inline-flex";
-  setStatus("fetching geometry…");
+  // Same document already on screen → keep showing it under a subtle
+  // ticker rather than the full loading overlay, so it accretes in place.
+  if (sameDoc) setTicker("updating…", "busy");
+  else setStatus("fetching geometry…");
   try {
     const previewResult = (await app.callServerTool({
       name: "get_preview_glb",
@@ -883,7 +1007,7 @@ async function handleToolResult(result: ToolResultLike): Promise<void> {
     })) as ToolResultLike;
     const glb = findInlineGlb(previewResult);
     if (glb) {
-      loadGlb(glb);
+      renderGlbForDoc(glb, docId, changed);
     } else {
       setStatus("no geometry to preview", "idle");
     }
@@ -1014,7 +1138,8 @@ if (location.hash.startsWith("#dev")) {
   // harness swap in an arbitrary base64 GLB (e.g. a generated PCB preview).
   (window as unknown as Record<string, unknown>).__vcad = {
     scene, camera, controls, grid, gridUniforms, contactShadow, renderer,
-    select, partInfoFor, modelGroup, loadGlb,
+    select, partInfoFor, modelGroup, loadGlb, renderGlbForDoc,
+    get renderedDocId() { return renderedDocId; },
   };
 } else {
   // ── Connect (handlers are all registered above) ────────────
