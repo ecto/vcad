@@ -40,6 +40,7 @@ struct EditorView: View {
                         FeatureTreeView(model: model)
                             .frame(width: 206)
                             .padding(14)
+                            .transition(.move(edge: .leading).combined(with: .opacity))
                     }
                 }
                 .overlay(alignment: compact ? .leading : .top) {
@@ -60,6 +61,7 @@ struct EditorView: View {
                     ToolbarItem(placement: .principal) { SourcePicker(model: model) }
                 }
                 .navigationTitle("vcad")
+                .animation(.smooth(duration: 0.3), value: compact)
         }
     }
 }
@@ -82,6 +84,7 @@ struct ToolPaletteView: View {
     @Bindable var model: EditorModel
     var axis: Axis = .horizontal
     private var vertical: Bool { axis == .vertical }
+    @Namespace private var paletteNS
 
     var body: some View {
         let outer = vertical ? AnyLayout(VStackLayout(spacing: 6)) : AnyLayout(HStackLayout(spacing: 10))
@@ -99,28 +102,37 @@ struct ToolPaletteView: View {
                     toolButton(tool)
                 }
             }
+            .id(model.toolTab)
+            .transition(.opacity)
         }
         .padding(vertical ? 6 : 8)
         .glassCard(vertical ? 16 : 13)
+        .animation(.snappy(duration: 0.26), value: model.toolTab)
+        .animation(.snappy(duration: 0.22), value: model.baseShape)
+        .animation(.snappy(duration: 0.22), value: model.modifier)
     }
 
     @ViewBuilder private func tabButton(_ tab: ToolTab, idx: Int) -> some View {
         let active = model.toolTab == tab
         Button { model.toolTab = tab } label: {
-            if vertical {
-                Image(systemName: tab.symbol).font(.system(size: 17))
-                    .frame(width: 42, height: 42)
-                    .background(active ? Color.accentColor.opacity(0.20) : .clear,
-                                in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-            } else {
-                HStack(spacing: 5) {
-                    Image(systemName: tab.symbol).font(.system(size: 12))
-                    Text(tab.label).font(.system(size: 12, weight: .medium))
-                    Text("\(idx + 1)").font(.system(size: 9, design: .monospaced)).opacity(0.5)
+            Group {
+                if vertical {
+                    Image(systemName: tab.symbol).font(.system(size: 17)).frame(width: 42, height: 42)
+                } else {
+                    HStack(spacing: 5) {
+                        Image(systemName: tab.symbol).font(.system(size: 12))
+                        Text(tab.label).font(.system(size: 12, weight: .medium))
+                        Text("\(idx + 1)").font(.system(size: 9, design: .monospaced)).opacity(0.5)
+                    }
+                    .padding(.horizontal, 10).padding(.vertical, 5)
                 }
-                .padding(.horizontal, 10).padding(.vertical, 5)
-                .background(active ? Color.accentColor.opacity(0.18) : .clear,
-                            in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+            }
+            .background {
+                if active {
+                    RoundedRectangle(cornerRadius: vertical ? 12 : 7, style: .continuous)
+                        .fill(Color.accentColor.opacity(0.18))
+                        .matchedGeometryEffect(id: "tabSel", in: paletteNS)
+                }
             }
         }
         .buttonStyle(.plain)
@@ -186,6 +198,7 @@ struct FeatureTreeView: View {
         }
         .padding(6)
         .glassCard()
+        .animation(.snappy(duration: 0.18), value: model.selectedFeatureID)
     }
 }
 
@@ -434,8 +447,12 @@ struct ViewportView: View {
         let geomRoot = Entity()
         geomRoot.name = "geomRoot"
         geomRoot.addChild(zUp)
-        geomRoot.scale = SIMD3<Float>(repeating: sceneScale)
+        geomRoot.scale = SIMD3<Float>(repeating: sceneScale * 0.9)
         content.add(geomRoot)
+        // Subtle "materialize" pop when the geometry changes.
+        var grown = geomRoot.transform
+        grown.scale = SIMD3<Float>(repeating: sceneScale)
+        geomRoot.move(to: grown, relativeTo: geomRoot.parent, duration: 0.3, timingFunction: .easeOut)
 
         // Grounding floor that catches the soft contact shadow.
         content.entities.filter { $0.name == "floor" }.forEach { $0.removeFromParent() }
