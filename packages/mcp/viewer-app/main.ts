@@ -40,6 +40,12 @@ const askBarEl = document.getElementById("ask-bar")!;
 const askPrefixEl = document.getElementById("ask-prefix")!;
 const askInput = document.getElementById("ask-input") as HTMLInputElement;
 const askSendBtn = document.getElementById("ask-send") as HTMLButtonElement;
+const receiptEl = document.getElementById("receipt")!;
+const receiptBadgeEl = document.getElementById("receipt-badge")!;
+const receiptHashEl = document.getElementById("receipt-hash")!;
+const receiptBodyEl = document.getElementById("receipt-body")!;
+const receiptRerunBtn = document.getElementById("receipt-rerun") as HTMLButtonElement;
+const receiptCloseBtn = document.getElementById("receipt-close") as HTMLButtonElement;
 
 // Hostless dev harness (`#dev*`): selection affordances stay active but
 // protocol calls are logged instead of sent.
@@ -363,42 +369,54 @@ function clearModel(): void {
   currentModel = null;
 }
 
-function loadGlb(base64Data: string): void {
+interface LoadOpts {
+  /** Hold the current camera framing instead of re-fitting — used when the
+   *  same document re-renders so the part accretes in place. */
+  preserveCamera?: boolean;
+  /** Runs once the new model is in the scene (re-select, flash, …). */
+  afterLoad?: () => void;
+}
+
+function loadGlb(base64Data: string, opts?: LoadOpts): void {
   const binary = atob(base64Data);
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i++) {
     bytes[i] = binary.charCodeAt(i);
   }
 
-  clearModel();
-
   loader.parse(
     bytes.buffer,
     "",
     (gltf) => {
+      // Swap only once the new model has parsed, so a same-document
+      // re-render never blinks through an empty scene (and a parse error
+      // leaves the current model untouched).
+      clearModel();
       currentModel = gltf.scene;
       modelGroup.add(currentModel);
       hasModel = true;
       updateAxesVisibility();
 
-      // Fit camera to model
       const box = new THREE.Box3().setFromObject(currentModel);
       const center = box.getCenter(new THREE.Vector3());
       const size = box.getSize(new THREE.Vector3());
-      const maxDim = Math.max(size.x, size.y, size.z);
-      const dist = maxDim * 2;
 
-      // Center is in Z-up space, convert to Y-up for camera target
-      controls.target.set(center.x, center.z, -center.y);
-      camera.position.set(
-        center.x + dist * 0.7,
-        center.z + dist * 0.7,
-        -center.y + dist * 0.7,
-      );
-      camera.updateProjectionMatrix();
-      controls.update();
+      if (!opts?.preserveCamera) {
+        // Fit camera to model. Center is in Z-up space, convert to Y-up.
+        const maxDim = Math.max(size.x, size.y, size.z);
+        const dist = maxDim * 2;
+        controls.target.set(center.x, center.z, -center.y);
+        camera.position.set(
+          center.x + dist * 0.7,
+          center.z + dist * 0.7,
+          -center.y + dist * 0.7,
+        );
+        camera.updateProjectionMatrix();
+        controls.update();
+      }
 
-      // Contact shadow under the footprint (world Y-up space)
+      // Contact shadow under the footprint (world Y-up space) — rebound on
+      // every load so the part stays grounded as its footprint morphs.
       const worldBox = new THREE.Box3().setFromObject(modelGroup);
       const worldSize = worldBox.getSize(new THREE.Vector3());
       const worldCenter = worldBox.getCenter(new THREE.Vector3());
@@ -411,6 +429,7 @@ function loadGlb(base64Data: string): void {
       updateStats(currentModel, size);
       loadingEl.classList.add("hidden");
       setTicker("ready", "ready");
+      opts?.afterLoad?.();
       renderer.render(scene, camera);
     },
     (error) => {
@@ -460,6 +479,9 @@ function setHighlight(root: THREE.Object3D, on: boolean): void {
     const mesh = child as THREE.Mesh;
     if (!mesh.isMesh) return;
     if (on) {
+      // Idempotent: a mesh already highlighted (by selection or a flash)
+      // keeps its saved original, so overlapping highlights never lose it.
+      if (mesh.userData.origMaterial) return;
       const orig = mesh.material as THREE.MeshStandardMaterial;
       if (!orig?.clone) return;
       const highlighted = orig.clone();
@@ -794,6 +816,303 @@ function captureVcode(result: ToolResultLike): void {
   }
 }
 
+// ── Live re-render — geometry accretes in place ──────────────
+// The viewport is idempotent on document_id: when a later tool result
+// targets the document already on screen, we re-render WITHOUT snapping
+// the camera, re-bind the selection to the same part, and flash the
+// parts the edit touched — so a multi-turn session grows under the
+// user's cursor instead of stacking stale snapshot cards.
+let renderedDocId: string | null = null;
+
+interface PartRef {
+  part_id: string;
+  name?: string;
+}
+interface PartsChanged {
+  added?: PartRef[];
+  removed?: PartRef[];
+  modified?: PartRef[];
+}
+
+/** The mutation diff: structuredContent first (the only carrier ChatGPT's
+ *  widget bridge exposes), then any JSON text block (Cursor fallback). */
+function findChanged(result: ToolResultLike): PartsChanged | null {
+  const sc = result.structuredContent?.changed;
+  if (sc && typeof sc === "object") return sc as PartsChanged;
+  for (const block of result.content ?? []) {
+    if (block?.type !== "text" || !block.text) continue;
+    try {
+      const parsed = JSON.parse(block.text) as { changed?: PartsChanged };
+      if (parsed.changed) return parsed.changed;
+    } catch {
+      // Not JSON — skip
+    }
+  }
+  return null;
+}
+
+/** Re-bind the selection to the same part after a re-render (sticky
+ *  deixis). If the part is gone, selection stays cleared — clearModel
+ *  already pushed a null context, so "this" never resolves to a ghost. */
+function reselectById(partId: string): void {
+  if (!currentModel) return;
+  let found: SelectedPart | null = null;
+  currentModel.traverse((o) => {
+    if (found) return;
+    const m = /^(\d+):(.*)$/.exec(o.name);
+    if (m && m[1] === partId) {
+      found = { partId: m[1], name: m[2] || `part ${m[1]}`, object: o };
+    }
+  });
+  if (found) select(found);
+}
+
+/** Transient brand-pink flash on the parts a mutation just touched.
+ *  Reuses the selection-highlight path; auto-clears after FLASH_MS. */
+const FLASH_MS = 1200;
+function flashChanged(changed: PartsChanged): void {
+  if (!currentModel) return;
+  const ids = new Set<string>();
+  for (const e of changed.added ?? []) ids.add(e.part_id);
+  for (const e of changed.modified ?? []) ids.add(e.part_id);
+  if (ids.size === 0) return;
+
+  const flashed: THREE.Object3D[] = [];
+  currentModel.traverse((o) => {
+    const m = /^(\d+):/.exec(o.name);
+    if (m && ids.has(m[1]) && o !== selected?.object) {
+      setHighlight(o, true);
+      flashed.push(o);
+    }
+  });
+  if (flashed.length === 0) return;
+
+  const n = flashed.length;
+  setTicker(`updated ${n} ${n === 1 ? "part" : "parts"}`, "ready");
+  window.setTimeout(() => {
+    // Don't un-highlight a part the user has since selected.
+    for (const o of flashed) {
+      if (o !== selected?.object) setHighlight(o, false);
+    }
+  }, FLASH_MS);
+}
+
+/** Render a freshly-fetched GLB for a document, holding the camera and
+ *  re-binding the selection when it's the document already on screen. */
+function renderGlbForDoc(
+  glb: string,
+  docId: string | null,
+  changed: PartsChanged | null,
+): void {
+  const preserveCamera = docId != null && docId === renderedDocId;
+  const keepPartId = preserveCamera ? selected?.partId ?? null : null;
+  loadGlb(glb, {
+    preserveCamera,
+    afterLoad: () => {
+      if (docId != null) renderedDocId = docId;
+      if (keepPartId != null) reselectById(keepPartId);
+      if (changed) flashChanged(changed);
+    },
+  });
+}
+
+// ── Verification receipt — the audit ledger (build_receipt) ──
+// build_receipt's result carries a Receipt (board hash, DRC summary,
+// per-part provenance). We render it as a docked, opaque ledger over the
+// board, with a Re-run button that re-verifies the live board through
+// verify_receipt → Holds / Stale / Violated. Verification is the moat;
+// the geometry behind the ledger is supporting evidence.
+interface ReceiptLike {
+  board_hash?: string;
+  design_rules_hash?: string;
+  drc_backend?: string;
+  drc?: {
+    total?: number;
+    by_rule?: Array<{ rule: string; count: number }>;
+    violations?: string[];
+  };
+  parts?: Array<{ reference: string; footprint: string; value: string; mpn?: string }>;
+  sourcing?: { lines?: unknown[] };
+}
+
+let lastReceipt: ReceiptLike | null = null;
+
+/** Find a Receipt: structuredContent first (ChatGPT-visible), then a
+ *  receipt-shaped JSON text block (Cursor fallback / agent-direct call). */
+function findReceipt(result: ToolResultLike): ReceiptLike | null {
+  const sc = result.structuredContent?.receipt;
+  if (sc && typeof sc === "object") return sc as ReceiptLike;
+  for (const block of result.content ?? []) {
+    if (block?.type !== "text" || !block.text) continue;
+    try {
+      const parsed = JSON.parse(block.text) as ReceiptLike;
+      if (parsed && parsed.board_hash && parsed.drc) return parsed;
+    } catch {
+      // Not JSON — skip
+    }
+  }
+  return null;
+}
+
+/** The re-verify verdict from verify_receipt. */
+function findReceiptStatus(result: ToolResultLike): string | null {
+  const sc = result.structuredContent?.verify_receipt as { status?: string } | undefined;
+  if (sc?.status) return sc.status;
+  for (const block of result.content ?? []) {
+    if (block?.type !== "text" || !block.text) continue;
+    try {
+      const parsed = JSON.parse(block.text) as { status?: string };
+      if (parsed.status) return parsed.status;
+    } catch {
+      // Not JSON — skip
+    }
+  }
+  return null;
+}
+
+function setReceiptBadge(receipt: ReceiptLike, status?: string): void {
+  let text: string;
+  let cls: string;
+  if (status) {
+    text = status;
+    cls = status === "Holds" ? "badge-hold" : status === "Stale" ? "badge-warn" : "badge-bad";
+  } else {
+    const total = receipt.drc?.total ?? 0;
+    text = total === 0 ? "DRC clean" : `${total} ${total === 1 ? "violation" : "violations"}`;
+    cls = total === 0 ? "badge-hold" : "badge-bad";
+  }
+  receiptBadgeEl.textContent = text;
+  receiptBadgeEl.className = cls;
+}
+
+function rcptRow(
+  k: string,
+  v: string,
+  opts?: { cls?: string; onClick?: () => void },
+): HTMLElement {
+  const r = document.createElement("div");
+  r.className = `rcpt-row${opts?.cls ? " " + opts.cls : ""}`;
+  const ke = document.createElement("span");
+  ke.className = "k";
+  ke.textContent = k;
+  const ve = document.createElement("span");
+  ve.className = "v";
+  ve.textContent = v;
+  r.append(ke, ve);
+  if (opts?.onClick) r.addEventListener("click", opts.onClick);
+  return r;
+}
+
+function rcptSection(title: string): HTMLElement {
+  const s = document.createElement("div");
+  s.className = "rcpt-sec";
+  const h = document.createElement("h4");
+  h.textContent = title;
+  s.append(h);
+  return s;
+}
+
+/** Recenter the orbit on a board-local XY point (kernel mm → Y-up world),
+ *  so a violation row points the camera at the geometry it describes. */
+function focusBoardXY(x: number, y: number): void {
+  if (!hasModel) return;
+  controls.target.set(x, 0, -y);
+  controls.update();
+  setTicker(`centered on ${x.toFixed(1)}, ${y.toFixed(1)} mm`, "ready");
+}
+
+function renderReceipt(receipt: ReceiptLike, status?: string): void {
+  lastReceipt = receipt;
+  setReceiptBadge(receipt, status);
+
+  const backend = receipt.drc_backend ?? "drc";
+  const bh = (receipt.board_hash ?? "").slice(0, 12) || "—";
+  const rh = (receipt.design_rules_hash ?? "").slice(0, 12) || "—";
+  receiptHashEl.textContent = `${backend} · board ${bh} · rules ${rh}`;
+
+  receiptBodyEl.innerHTML = "";
+
+  // DRC — counts, then the first violations (clickable to fly the camera).
+  const drc = receipt.drc;
+  const drcSec = rcptSection("DRC");
+  drcSec.append(rcptRow("violations", String(drc?.total ?? 0)));
+  for (const rc of drc?.by_rule ?? []) {
+    drcSec.append(rcptRow(rc.rule, String(rc.count)));
+  }
+  for (const key of (drc?.violations ?? []).slice(0, 6)) {
+    // Canonical key is `rule|message|x|y`.
+    const segs = key.split("|");
+    const rule = segs[0] ?? "violation";
+    const x = Number(segs[segs.length - 2]);
+    const y = Number(segs[segs.length - 1]);
+    const hasPos = Number.isFinite(x) && Number.isFinite(y);
+    drcSec.append(
+      rcptRow(
+        rule,
+        hasPos ? `${x.toFixed(1)}, ${y.toFixed(1)}` : "—",
+        hasPos ? { cls: "rcpt-viol", onClick: () => focusBoardXY(x, y) } : undefined,
+      ),
+    );
+  }
+  receiptBodyEl.append(drcSec);
+
+  // Per-part provenance.
+  if (receipt.parts?.length) {
+    const pSec = rcptSection(`Parts (${receipt.parts.length})`);
+    for (const p of receipt.parts.slice(0, 40)) {
+      const v = [p.value, p.mpn].filter(Boolean).join(" · ");
+      pSec.append(rcptRow(`${p.reference} · ${p.footprint}`, v || "—"));
+    }
+    receiptBodyEl.append(pSec);
+  }
+
+  // Sourcing — shown but muted: a price change must never read as an
+  // electrical failure, so it never drives the verdict badge.
+  const lines = receipt.sourcing?.lines;
+  if (lines?.length) {
+    const sSec = rcptSection("Sourcing");
+    sSec.append(rcptRow("captured lines", String(lines.length), { cls: "rcpt-muted" }));
+    receiptBodyEl.append(sSec);
+  }
+
+  receiptEl.classList.add("visible");
+  receiptRerunBtn.style.display = "inline-flex";
+}
+
+/** Re-verify the shown receipt against the live board via verify_receipt. */
+async function rerunReceipt(): Promise<void> {
+  if (!lastReceipt) return;
+  if (devMode) {
+    console.log("[vcad-viewer:dev] verify_receipt:", lastDocumentId);
+    setReceiptBadge(lastReceipt, "Holds");
+    return;
+  }
+  if (!lastDocumentId) return;
+  receiptRerunBtn.disabled = true;
+  setTicker("re-verifying receipt…", "busy");
+  try {
+    const res = (await app.callServerTool({
+      name: "verify_receipt",
+      arguments: { document_id: lastDocumentId, receipt: lastReceipt },
+    })) as ToolResultLike;
+    const status = findReceiptStatus(res);
+    if (status) {
+      setReceiptBadge(lastReceipt, status);
+      setTicker(`receipt ${status.toLowerCase()}`, status === "Holds" ? "ready" : "error");
+    } else {
+      setTicker("re-verify unavailable", "error");
+    }
+  } catch (e) {
+    console.warn("[vcad-viewer] verify_receipt failed:", e);
+    setTicker("re-verify failed", "error");
+  } finally {
+    receiptRerunBtn.disabled = false;
+  }
+}
+
+receiptRerunBtn.addEventListener("click", () => void rerunReceipt());
+receiptCloseBtn.addEventListener("click", () => receiptEl.classList.remove("visible"));
+
 // ── Host protocol ────────────────────────────────────────────
 // MCP Apps hosts (Claude, Cursor) speak the SEP-1865 postMessage
 // protocol via the App class; ChatGPT injects `window.openai` instead —
@@ -840,6 +1159,13 @@ async function handleToolResult(result: ToolResultLike): Promise<void> {
     return;
   }
 
+  // Verification receipt → docked audit ledger. Render it, then fall
+  // through so the board GLB loads behind it as supporting evidence. Any
+  // other result dismisses a ledger left over from a prior call.
+  const receipt = findReceipt(result);
+  if (receipt) renderReceipt(receipt);
+  else receiptEl.classList.remove("visible");
+
   // Flat pattern (sheet_metal_unfold): 2D drawing, no GLB fetch. Checked
   // before the document_id path — unfold results carry both.
   const flat = findFlatPattern(result);
@@ -854,10 +1180,14 @@ async function handleToolResult(result: ToolResultLike): Promise<void> {
     return;
   }
 
+  // The parts this call changed (for the in-place flash).
+  const changed = findChanged(result);
+
   // Legacy path: GLB inlined in the result
   const inline = findInlineGlb(result);
   if (inline) {
-    loadGlb(inline);
+    const inlineDoc = result.structuredContent?.document_id ?? findDocumentId(result);
+    renderGlbForDoc(inline, typeof inlineDoc === "string" ? inlineDoc : null, changed);
     return;
   }
 
@@ -870,12 +1200,16 @@ async function handleToolResult(result: ToolResultLike): Promise<void> {
     setStatus("no geometry to preview", "idle");
     return;
   }
+  const sameDoc = docId === renderedDocId;
   lastDocumentId = docId;
   docLabelEl.textContent = docId;
   // A session document exists, so the deep link can always lazily fetch
   // the doc on click even when no VCode rode along in the result.
   openBtn.style.display = "inline-flex";
-  setStatus("fetching geometry…");
+  // Same document already on screen → keep showing it under a subtle
+  // ticker rather than the full loading overlay, so it accretes in place.
+  if (sameDoc) setTicker("updating…", "busy");
+  else setStatus("fetching geometry…");
   try {
     const previewResult = (await app.callServerTool({
       name: "get_preview_glb",
@@ -883,7 +1217,7 @@ async function handleToolResult(result: ToolResultLike): Promise<void> {
     })) as ToolResultLike;
     const glb = findInlineGlb(previewResult);
     if (glb) {
-      loadGlb(glb);
+      renderGlbForDoc(glb, docId, changed);
     } else {
       setStatus("no geometry to preview", "idle");
     }
@@ -1010,11 +1344,36 @@ if (location.hash.startsWith("#dev")) {
   fullscreenBtn.style.display = "inline-flex";
   lastDocumentId = "doc_dev";
   updateAffordances();
+  if (location.hash === "#dev-receipt") {
+    renderReceipt({
+      board_hash: "a1b2c3d4e5f60718",
+      design_rules_hash: "9f8e7d6c5b4a3210",
+      drc_backend: "vcad-drc v0.9",
+      drc: {
+        total: 2,
+        by_rule: [
+          { rule: "Clearance", count: 1 },
+          { rule: "CourtyardOverlap", count: 1 },
+        ],
+        violations: [
+          "Clearance|trace within 0.15mm|12.4|8.1",
+          "CourtyardOverlap|U1 over C3|20.0|15.5",
+        ],
+      },
+      parts: [
+        { reference: "U1", footprint: "QFN-32", value: "STM32G0", mpn: "STM32G031K8" },
+        { reference: "R1", footprint: "0402", value: "10k" },
+        { reference: "C3", footprint: "0402", value: "100n" },
+      ],
+      sourcing: { lines: [1, 2, 3] },
+    });
+  }
   // Debug handle for poking the scene from the console. `loadGlb` lets a
   // harness swap in an arbitrary base64 GLB (e.g. a generated PCB preview).
   (window as unknown as Record<string, unknown>).__vcad = {
     scene, camera, controls, grid, gridUniforms, contactShadow, renderer,
-    select, partInfoFor, modelGroup, loadGlb,
+    select, partInfoFor, modelGroup, loadGlb, renderGlbForDoc,
+    get renderedDocId() { return renderedDocId; },
   };
 } else {
   // ── Connect (handlers are all registered above) ────────────

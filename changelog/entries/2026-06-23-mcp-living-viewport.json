@@ -1,0 +1,10 @@
+{
+  "id": "2026-06-23-mcp-living-viewport",
+  "version": "0.9.4",
+  "date": "2026-06-23",
+  "category": "feat",
+  "title": "Inline 3D viewer updates in place as you edit",
+  "summary": "The MCP viewer is now idempotent per document: across a multi-turn session the geometry accretes in one viewport — camera held, the parts each edit touched flashing brand-pink — instead of stacking stale snapshots. The change diff now rides in structuredContent so the flash works on ChatGPT too.",
+  "features": ["mcp", "viewer", "3d"],
+  "mcpTools": ["create", "update", "delete"]
+}

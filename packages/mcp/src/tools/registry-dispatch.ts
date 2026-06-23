@@ -267,11 +267,25 @@ function diffParts(
   return diff;
 }
 
-/** Merge a `changed` diff into a single-JSON-text-block result. */
+/**
+ * Surface a `changed` diff on a mutation result in BOTH carriers:
+ *
+ *  1. `structuredContent.changed` — the inline 3D viewer reads this to
+ *     flash the parts an edit just touched. ChatGPT's widget bridge
+ *     (`window.openai.toolOutput`) exposes ONLY structuredContent, so a
+ *     diff that lived solely in the text block would be invisible there.
+ *  2. the single JSON text block — kept for the agent and for hosts
+ *     (Cursor) with known gaps forwarding structuredContent to widgets.
+ */
 function appendChanged(
-  result: { content: Array<{ type: "text"; text: string }> },
+  result: {
+    content: Array<{ type: "text"; text: string }>;
+    structuredContent?: Record<string, unknown>;
+  },
   changed: PartsDiff,
 ): void {
+  result.structuredContent = { ...result.structuredContent, changed };
+
   const block = result.content[0];
   if (!block || block.type !== "text") return;
   try {

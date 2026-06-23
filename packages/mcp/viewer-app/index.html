@@ -184,6 +184,63 @@
   }
   #ask-input::placeholder { color: var(--text-tert); }
   #ask-send { display: inline-flex; }
+
+  /* ── Receipt ledger (build_receipt) ────────────────────────── */
+  /* Opaque on --surface by design: a proof you can't read is not a
+     proof, so monospaced measured numbers never bleed onto the stage. */
+  #receipt {
+    position: absolute; top: 8px; right: 8px; bottom: 8px;
+    width: 290px; max-width: 62%;
+    display: none; flex-direction: column;
+    background: var(--surface);
+    border: var(--hairline) solid var(--border);
+    border-radius: var(--radius-sm);
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.30);
+    overflow: hidden;
+  }
+  #receipt.visible { display: flex; }
+  #receipt-head {
+    flex: none; display: flex; align-items: center; gap: 8px;
+    padding: 8px 8px 8px 10px;
+    border-bottom: var(--hairline) solid var(--border-soft);
+  }
+  #receipt-badge {
+    flex: none; display: inline-flex; align-items: center;
+    height: 19px; padding: 0 9px; border-radius: 999px;
+    font: 600 11px var(--font-ui); white-space: nowrap;
+  }
+  .badge-hold { background: color-mix(in srgb, #98c379 18%, transparent); color: #98c379; }
+  .badge-warn { background: color-mix(in srgb, #e5c07b 20%, transparent); color: #e5c07b; }
+  .badge-bad  { background: color-mix(in srgb, var(--brand) 16%, transparent); color: var(--brand); }
+  #receipt-title { flex: 1; font: 600 12px var(--font-ui); color: var(--text); }
+  #receipt-rerun { display: none; }
+  #receipt-hash {
+    flex: none; padding: 6px 10px;
+    font: 10px var(--font-mono); color: var(--text-tert);
+    word-break: break-all;
+    border-bottom: var(--hairline) solid var(--border-soft);
+  }
+  #receipt-body {
+    flex: 1; overflow-y: auto; padding: 8px 10px;
+    font: 11px var(--font-mono); color: var(--text-2);
+  }
+  .rcpt-sec { margin-bottom: 11px; }
+  .rcpt-sec h4 {
+    margin-bottom: 4px;
+    font: 600 10px var(--font-ui); letter-spacing: 0.04em; text-transform: uppercase;
+    color: var(--text-tert);
+  }
+  .rcpt-row {
+    display: flex; justify-content: space-between; gap: 8px;
+    padding: 3px 0;
+    border-bottom: var(--hairline) solid var(--border-soft);
+  }
+  .rcpt-row:last-child { border-bottom: none; }
+  .rcpt-row .k { color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .rcpt-row .v { flex: none; color: var(--text); }
+  .rcpt-viol { cursor: pointer; }
+  .rcpt-viol:hover .k, .rcpt-viol:hover .v { color: var(--brand); }
+  .rcpt-muted .k, .rcpt-muted .v { color: var(--text-tert); }
 </style>
 </head>
 <body>
@@ -204,6 +261,16 @@
       <span id="ask-prefix"></span>
       <input id="ask-input" type="text" placeholder="ask about this part…" />
       <button id="ask-send" class="btn btn-brand">Send</button>
+    </div>
+    <div id="receipt">
+      <div id="receipt-head">
+        <span id="receipt-badge"></span>
+        <span id="receipt-title">Receipt</span>
+        <button id="receipt-rerun" class="btn">Re-run</button>
+        <button id="receipt-close" class="chip-btn" title="Close">✕</button>
+      </div>
+      <div id="receipt-hash"></div>
+      <div id="receipt-body"></div>
     </div>
   </div>
   <div id="statusbar">
