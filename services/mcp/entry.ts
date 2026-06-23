@@ -12,7 +12,12 @@
 
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import { createServer, getBuildInfo, flushTelemetry } from "@vcad/mcp/server";
+import {
+  createServer,
+  getBuildInfo,
+  flushTelemetry,
+  handleLiveRequest,
+} from "@vcad/mcp/server";
 import {
   getOAuthConfig,
   handleOAuthRoute,
@@ -115,6 +120,12 @@ export default async function handler(
   // user's account even while /mcp stays open during the MCP_REQUIRE_AUTH
   // transition. verifyAccessToken is a local HMAC verify — no network.
   const user = verifyAccessToken(req);
+
+  // Live review window (/live/*) — shared, flag-gated handler (VCAD_LIVE_WINDOW).
+  // Returns true once it has written a response; falls through otherwise.
+  if (await handleLiveRequest(req, res, { user })) {
+    return;
+  }
 
   // Optional hard gate on /mcp. Off by default so existing anonymous
   // clients keep working while the OAuth flow rolls out; set

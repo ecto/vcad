@@ -107,6 +107,11 @@ cat > "$OUT/config.json" << 'EOF'
       "dest": "/mcp"
     },
     {
+      "src": "/live/(.*)",
+      "methods": ["GET", "POST", "OPTIONS"],
+      "dest": "/mcp"
+    },
+    {
       "src": "/oauth/(register|authorize|start|callback|token)",
       "methods": ["GET", "POST", "OPTIONS"],
       "dest": "/mcp"

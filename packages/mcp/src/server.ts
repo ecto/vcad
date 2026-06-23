@@ -74,6 +74,9 @@ import {
   dispatchRegistryTool,
 } from "./tools/registry-dispatch.js";
 import { buildErrorResult, enrichErrorResult } from "./tools/next-actions.js";
+// Re-exported so the Vercel entry point (services/mcp/entry.ts) serves the live
+// window through the same handler as the standalone server (http.ts).
+export { handleLiveRequest } from "./live-route.js";
 import {
   createRobotEnv,
   createRobotEnvSchema,
