@@ -60,7 +60,7 @@ export interface ContinueLinksInput {
 function toBase64(s: string): string {
   const bytes = new TextEncoder().encode(s);
   let bin = "";
-  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+  for (const b of bytes) bin += String.fromCharCode(b);
   return btoa(bin);
 }
 

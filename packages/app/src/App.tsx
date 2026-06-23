@@ -45,6 +45,7 @@ const AboutModal = lazyWithRetry(() => import("@/components/AboutModal").then(m 
 const RecentFilesModal = lazyWithRetry(() => import("@/components/RecentFilesModal").then(m => ({ default: m.RecentFilesModal })), "RecentFilesModal");
 const ProductModal = lazyWithRetry(() => import("@/components/ProductModal").then(m => ({ default: m.ProductModal })), "ProductModal");
 const ShareDialog = lazyWithRetry(() => import("@/components/ShareDialog").then(m => ({ default: m.ShareDialog })), "ShareDialog");
+const ContinueDialog = lazyWithRetry(() => import("@/components/ContinueDialog").then(m => ({ default: m.ContinueDialog })), "ContinueDialog");
 const VersionHistoryModal = lazyWithRetry(() => import("@/components/VersionHistoryModal").then(m => ({ default: m.VersionHistoryModal })), "VersionHistoryModal");
 const ForkPromptModal = lazyWithRetry(() => import("@/components/ForkPromptModal").then(m => ({ default: m.ForkPromptModal })), "ForkPromptModal");
 const ReadOnlyBanner = lazyWithRetry(() => import("@/components/ReadOnlyBanner").then(m => ({ default: m.ReadOnlyBanner })), "ReadOnlyBanner");
@@ -249,6 +250,7 @@ export function App() {
   const [aboutOpen, setAboutOpen] = useState(false);
   const [productOpen, setProductOpen] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
+  const [continueOpen, setContinueOpen] = useState(false);
   const [versionHistoryOpen, setVersionHistoryOpen] = useState(false);
   const [documentPickerOpen, setDocumentPickerOpen] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
@@ -1144,6 +1146,7 @@ export function App() {
                 onSave={handleSave}
                 onOpen={handleOpen}
                 onShareOpen={() => setShareOpen(true)}
+                onContinueOpen={() => setContinueOpen(true)}
                 onVersionHistoryOpen={() => setVersionHistoryOpen(true)}
               >
                 <ToolPalette />
@@ -1179,6 +1182,7 @@ export function App() {
           <AboutModal open={aboutOpen} onOpenChange={setAboutOpen} />
           <ProductModal open={productOpen} onOpenChange={setProductOpen} />
           <ShareDialog open={shareOpen} onOpenChange={setShareOpen} />
+          <ContinueDialog open={continueOpen} onOpenChange={setContinueOpen} />
           <VersionHistoryModal
             open={versionHistoryOpen}
             onOpenChange={setVersionHistoryOpen}

@@ -60,6 +60,9 @@ interface HeaderProps {
   onOpen: () => void;
   /** Opens the ShareDialog. Enabled only when signed in + cloud-synced. */
   onShareOpen: () => void;
+  /** Opens the ContinueDialog (hand off this part to Claude/ChatGPT/an editor).
+   *  Enabled only when signed in + cloud-synced. */
+  onContinueOpen: () => void;
   /** Opens the VersionHistoryModal. Enabled only when signed in. */
   onVersionHistoryOpen: () => void;
   /** Tool palette (tab strip + icon row) docked directly under the menu bar. */
@@ -357,7 +360,7 @@ function XRMenuItems() {
   );
 }
 
-export function Header({ onAboutOpen, onProductOpen, onSave, onOpen, onShareOpen, onVersionHistoryOpen, children }: HeaderProps) {
+export function Header({ onAboutOpen, onProductOpen, onSave, onOpen, onShareOpen, onContinueOpen, onVersionHistoryOpen, children }: HeaderProps) {
   const user = useAuthStore((s) => s.user);
   const isAnonymous = useAuthStore((s) => s.isAnonymous);
   // "Has a permanent identity" — false for anon Supabase sessions.
@@ -534,6 +537,14 @@ export function Header({ onAboutOpen, onProductOpen, onSave, onOpen, onShareOpen
                   disabled={!isSignedIn}
                 >
                   {t("menu.file.share_link")}
+                </MenuItem>
+                <MenuItem
+                  onSelect={onContinueOpen}
+                  icon={Sparkle}
+                  iconClassName="text-brand"
+                  disabled={!isSignedIn}
+                >
+                  {t("menu.file.continue_in_claude")}
                 </MenuItem>
                 <MenuItem
                   onSelect={onVersionHistoryOpen}

@@ -62,7 +62,7 @@ describe("buildContinueTargets", () => {
         "cursor://anysphere.cursor-deeplink/mcp/install?name=vcad&config=",
       ),
     ).toBe(true);
-    const b64 = t.url!.split("config=")[1];
+    const b64 = t.url!.split("config=")[1]!;
     const cfg = JSON.parse(atob(b64));
     expect(cfg).toEqual({ type: "http", url: DEFAULT_MCP_URL });
   });
@@ -89,7 +89,7 @@ describe("buildContinueTargets", () => {
       token: TOKEN,
       mcpUrl: "https://staging.vcad.io/mcp",
     }).find((x) => x.host === "cursor")!;
-    const cfg = JSON.parse(atob(t.url!.split("config=")[1]));
+    const cfg = JSON.parse(atob(t.url!.split("config=")[1]!));
     expect(cfg.url).toBe("https://staging.vcad.io/mcp");
   });
 });
