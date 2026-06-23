@@ -61,8 +61,16 @@ final class EditorModel {
         }
     }
 
-    // The selection that binds tree -> inspector (-> viewport, later).
-    var selectedFeatureID: String? = "fillet"
+    // Selection binds tree -> inspector AND, in the demo, rolls the model
+    // back/forward through history ("Box" shows the fillet's input).
+    var selectedFeatureID: String? = "fillet" {
+        didSet { if source.isDemo { geometryDirty = true } }
+    }
+
+    /// Radius actually applied — rolling history back to "Box" shows the bare cube.
+    private var effectiveFilletRadius: Double {
+        (source.isDemo && selectedFeatureID == "box") ? 0.0 : filletRadius
+    }
 
     // Live readouts surfaced in the inspector.
     var triangleCount: Int = 0
@@ -148,7 +156,7 @@ final class EditorModel {
         let start = Date()
         var target = base
         var owned: OpaquePointer?
-        if filletRadius > 0.05, let filleted = vcad_solid_fillet(base, filletRadius) {
+        if effectiveFilletRadius > 0.05, let filleted = vcad_solid_fillet(base, effectiveFilletRadius) {
             target = filleted; owned = filleted
         }
         defer { if let o = owned { vcad_solid_free(o) } }
