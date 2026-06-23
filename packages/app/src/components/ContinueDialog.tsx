@@ -14,9 +14,11 @@ import { useNotificationStore } from "@/stores/notification-store";
 import { loadDocument as loadStoredDocument } from "@/lib/storage";
 import {
   buildContinueTargets,
+  encodeDocForSeed,
   type ContinueTarget,
   type ContinueHost,
 } from "@/lib/continue-links";
+import { analytics } from "@/lib/analytics";
 import { cn } from "@/lib/utils";
 
 interface ContinueDialogProps {
@@ -46,21 +48,22 @@ export function ContinueDialog({ open, onOpenChange }: ContinueDialogProps) {
   const documentId = useDocumentStore((s) => s.documentId);
   const documentName = useDocumentStore((s) => s.documentName);
 
-  const [cloudId, setCloudId] = useState<string | null>(null);
-  const [cloudLookupDone, setCloudLookupDone] = useState(false);
   const [token, setToken] = useState<string | null>(null);
-  const [minting, setMinting] = useState(false);
+  const [inlineBlob, setInlineBlob] = useState<string | null>(null);
+  const [prepError, setPrepError] = useState<string | null>(null);
+  const [preparing, setPreparing] = useState(false);
   const [lastHost, setLastHost] = useState<ContinueHost | null>(null);
   const [copiedHost, setCopiedHost] = useState<ContinueHost | null>(null);
 
-  // Resolve cloudId + an existing-or-fresh share token when the dialog opens.
-  // The token is the capability the model resolves via `continue_document` —
-  // minting it here is what makes the first turn operate on the real part.
+  // Prepare the handoff when the dialog opens. Preferred path: a signed-in,
+  // cloud-synced doc → a durable share token the model resolves server-side (no
+  // size limit, persists at vcad.io). Fallback: an accountless inline handoff
+  // that compresses the live geometry into the seed itself.
   useEffect(() => {
-    if (!open || !documentId || !isSignedIn) {
-      setCloudLookupDone(false);
-      setCloudId(null);
+    if (!open || !documentId) {
       setToken(null);
+      setInlineBlob(null);
+      setPrepError(null);
       return;
     }
     try {
@@ -71,36 +74,48 @@ export function ContinueDialog({ open, onOpenChange }: ContinueDialogProps) {
     }
     let cancelled = false;
     (async () => {
-      setMinting(true);
+      setPreparing(true);
+      setPrepError(null);
       try {
-        const stored = await loadStoredDocument(documentId);
+        if (isSignedIn) {
+          const stored = await loadStoredDocument(documentId);
+          const cid = stored?.cloudId ?? null;
+          if (cid && !cancelled) {
+            // Reuse an existing share token, else mint one. Continue needs only
+            // the token (the capability) — it deliberately does NOT publish to
+            // the public /@user/slug profile, so there's no username picker.
+            const existing = await listSharesForDocument(cid);
+            if (cancelled) return;
+            const tok = existing[0]?.token ?? (await createShare(cid)).token;
+            if (!cancelled) {
+              setToken(tok);
+              setInlineBlob(null);
+            }
+            return;
+          }
+        }
+        // Accountless (or not-yet-synced) → inline handoff from the live IR.
+        const doc = useDocumentStore.getState().document;
+        const blob = await encodeDocForSeed(doc);
         if (cancelled) return;
-        const cid = stored?.cloudId ?? null;
-        setCloudId(cid);
-        setCloudLookupDone(true);
-        if (!cid) return;
-        // Reuse an existing share token if one exists, else mint one. Continue
-        // only needs the token (the capability) — it deliberately does NOT
-        // publish to the public /@user/slug profile, so there's no username
-        // picker in this flow.
-        const existing = await listSharesForDocument(cid);
-        if (cancelled) return;
-        if (existing.length > 0 && existing[0]) {
-          setToken(existing[0].token);
+        if (blob) {
+          setInlineBlob(blob);
+          setToken(null);
         } else {
-          const share = await createShare(cid);
-          if (!cancelled) setToken(share.token);
+          setPrepError(
+            "This part is too large for an accountless handoff. Sign in to " +
+              "continue it in Claude.",
+          );
         }
       } catch (err) {
-        console.error("[continue-dialog] mint failed:", err);
+        console.error("[continue-dialog] prepare failed:", err);
         if (!cancelled) {
-          setCloudLookupDone(true);
-          useNotificationStore
-            .getState()
-            .toast.error(`Couldn't prepare the handoff: ${(err as Error).message}`);
+          setPrepError(
+            `Couldn't prepare the handoff: ${(err as Error).message}`,
+          );
         }
       } finally {
-        if (!cancelled) setMinting(false);
+        if (!cancelled) setPreparing(false);
       }
     })();
     return () => {
@@ -135,6 +150,7 @@ export function ContinueDialog({ open, onOpenChange }: ContinueDialogProps) {
       }
       if (target.url) openLink(target.url);
       remember(target.host);
+      analytics.continueHandoff(target.host, token ? "token" : "inline");
 
       const msg = target.url
         ? needsCopy
@@ -143,18 +159,20 @@ export function ContinueDialog({ open, onOpenChange }: ContinueDialogProps) {
         : `Copied the install command + prompt for ${target.label}.`;
       useNotificationStore.getState().toast.success(msg);
     },
-    [remember],
+    [remember, token],
   );
 
-  const blocker: string | null = !isSignedIn
-    ? "Sign in to continue this part in Claude."
-    : cloudLookupDone && !cloudId
-      ? "Save this document to the cloud before continuing."
+  const mode: "token" | "inline" | null = token
+    ? "token"
+    : inlineBlob
+      ? "inline"
       : null;
 
   const targets = token
     ? buildContinueTargets({ token, docName: documentName || undefined })
-    : [];
+    : inlineBlob
+      ? buildContinueTargets({ inlineDoc: inlineBlob, docName: documentName || undefined })
+      : [];
   // Surface the last-used host first; Claude Desktop leads otherwise.
   const ordered = [...targets].sort((a, b) => {
     if (a.host === lastHost) return -1;
@@ -189,13 +207,13 @@ export function ContinueDialog({ open, onOpenChange }: ContinueDialogProps) {
             geometry and picks up where you left off.
           </p>
 
-          {blocker && (
-            <div className="text-xs text-text-muted py-4">{blocker}</div>
+          {prepError && (
+            <div className="text-xs text-text-muted py-4">{prepError}</div>
           )}
 
-          {!blocker && (
+          {!prepError && (
             <div className="space-y-1.5">
-              {minting && !token && (
+              {preparing && !mode && (
                 <div className="text-[11px] text-text-muted py-3">
                   Preparing your handoff…
                 </div>
@@ -242,6 +260,15 @@ export function ContinueDialog({ open, onOpenChange }: ContinueDialogProps) {
                   </button>
                 );
               })}
+              {mode === "inline" && (
+                <p className="text-[10px] text-text-muted/70 leading-relaxed pt-1">
+                  Handing off without an account.{" "}
+                  <span className="text-text-muted">
+                    Sign in to hand off larger parts and keep them in your
+                    account.
+                  </span>
+                </p>
+              )}
               <p className="text-[10px] text-text-muted/70 leading-relaxed pt-2">
                 Adding the vcad connector is a one-time step. After that, every
                 handoff is one click.

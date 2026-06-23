@@ -542,7 +542,6 @@ export function Header({ onAboutOpen, onProductOpen, onSave, onOpen, onShareOpen
                   onSelect={onContinueOpen}
                   icon={Sparkle}
                   iconClassName="text-brand"
-                  disabled={!isSignedIn}
                 >
                   {t("menu.file.continue_in_claude")}
                 </MenuItem>

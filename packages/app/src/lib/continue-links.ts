@@ -46,13 +46,21 @@ export interface ContinueTarget {
 }
 
 export interface ContinueLinksInput {
-  /** The vcad.io share token (UUID) the model will resolve. */
-  token: string;
+  /** The vcad.io share token (UUID) the model resolves (signed-in handoff). */
+  token?: string;
+  /** A compressed inline IR blob (from {@link encodeDocForSeed}) for an
+   *  accountless handoff. Supply this OR `token`. */
+  inlineDoc?: string;
   /** Document name, woven into the seed for a friendlier first turn. */
   docName?: string;
   /** MCP endpoint to install; defaults to {@link DEFAULT_MCP_URL}. */
   mcpUrl?: string;
 }
+
+/** Max compressed-IR blob we'll inline into a seed. Keeps a prefilled host URL
+ *  under the tightest cap (Claude Desktop ~14k, ChatGPT unknown). Larger parts
+ *  fall back to a sign-in handoff. */
+export const MAX_INLINE_BLOB = 8000;
 
 /** Base64-encode a UTF-8 string. `btoa` is global in the browser and in the
  *  Node ≥16 test runner; we route bytes through it via a binary string so
@@ -78,6 +86,37 @@ export function buildSeedPrompt(token: string, docName?: string): string {
   );
 }
 
+/**
+ * The inline-doc seed for an accountless handoff — the same shape as
+ * {@link buildSeedPrompt} but carrying the compressed geometry instead of a
+ * token (the model passes it to `continue_document` as `doc`).
+ */
+function buildInlineSeed(blob: string, docName?: string): string {
+  const subject = docName ? `my vcad part "${docName}"` : "my vcad part";
+  return (
+    `Continue ${subject}. Call the vcad \`continue_document\` tool with this ` +
+    `inline doc to load it, then render it and tell me what you see. If the ` +
+    `vcad tool isn't available, walk me through adding the vcad connector.\n\n` +
+    `doc="${blob}"`
+  );
+}
+
+/** Compress an IR document for an accountless inline handoff (gzip + base64url,
+ *  matching what `continue_document` decodes). Returns null when the result is
+ *  too large to ride a host URL safely — the caller falls back to sign-in. */
+export async function encodeDocForSeed(doc: unknown): Promise<string | null> {
+  const cs = new CompressionStream("gzip");
+  const stream = new Blob([JSON.stringify(doc)]).stream().pipeThrough(cs);
+  const buf = new Uint8Array(await new Response(stream).arrayBuffer());
+  let bin = "";
+  for (const b of buf) bin += String.fromCharCode(b);
+  const blob = btoa(bin)
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
+  return blob.length > MAX_INLINE_BLOB ? null : blob;
+}
+
 /** The MCP server config object a host's install link encodes. */
 function serverConfig(mcpUrl: string): { type: "http"; url: string } {
   return { type: "http", url: mcpUrl };
@@ -91,7 +130,9 @@ export function buildContinueTargets(
   input: ContinueLinksInput,
 ): ContinueTarget[] {
   const mcpUrl = input.mcpUrl ?? DEFAULT_MCP_URL;
-  const seed = buildSeedPrompt(input.token, input.docName);
+  const seed = input.inlineDoc
+    ? buildInlineSeed(input.inlineDoc, input.docName)
+    : buildSeedPrompt(input.token ?? "", input.docName);
   const q = encodeURIComponent(seed);
 
   // Cursor: base64 server config + separate name param.

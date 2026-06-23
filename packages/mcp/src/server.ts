@@ -745,11 +745,21 @@ export async function createServer(
         name: "continue_document",
         description:
           "Open the user's vcad.io part as an editing session from a 'Continue " +
-          "in Claude' handoff token. The web app hands you this token in the " +
-          "starter prompt; call this first, then render_view it and continue the " +
-          "user's work. Returns a `document_id` for subsequent tool calls. The " +
-          "geometry is fetched server-side from the share token — never paste it.",
+          "in Claude' handoff (a share `token`, or an inline `doc` for accountless " +
+          "handoffs). The web app hands you this in the starter prompt; call this " +
+          "first, then render_view it and continue the user's work. Returns a " +
+          "`document_id` for subsequent tool calls. The geometry is fetched " +
+          "server-side — never paste it.",
         inputSchema: continueDocumentSchema,
+        // Directory-ready hints: read-only intent (it opens, never mutates the
+        // source doc), and it reaches the network to resolve the handoff.
+        annotations: {
+          title: "Continue from vcad.io",
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: false,
+          openWorldHint: true,
+        },
         _meta: UI_META,
       },
       {

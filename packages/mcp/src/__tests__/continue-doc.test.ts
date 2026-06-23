@@ -1,7 +1,17 @@
 import { describe, it, expect, afterEach, beforeEach } from "vitest";
+import { gzipSync } from "node:zlib";
 import { resolveShareToken, setSessionFetch } from "../session-store.js";
 import { continueDocument } from "../tools/continue-doc.js";
 import { documents } from "../tools/session.js";
+
+/** gzip + base64url, mirroring the web app's inline-doc encoder. */
+function encodeInline(obj: unknown): string {
+  return gzipSync(Buffer.from(JSON.stringify(obj), "utf-8"))
+    .toString("base64")
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
+}
 
 const UUID = "11111111-2222-3333-4444-555555555555";
 const json = (r: { content: Array<{ text: string }> }) =>
@@ -89,5 +99,26 @@ describe("continueDocument", () => {
     expect(out.name).toBe("Bracket");
     // The session is registered and resolvable for subsequent tool calls.
     expect(documents.has(out.document_id)).toBe(true);
+  });
+
+  it("opens a session from an inline `doc` handoff (anon path, no network)", async () => {
+    let fetched = false;
+    setSessionFetch((() => {
+      fetched = true;
+      throw new Error("inline path must not hit the network");
+    }) as unknown as typeof fetch);
+    const blob = encodeInline({ version: 1, nodes: {}, roots: ["a", "b"] });
+    const r = await continueDocument({ doc: blob });
+    expect(r.isError).toBeFalsy();
+    const out = json(r);
+    expect(out.parts).toBe(2);
+    expect(documents.has(out.document_id)).toBe(true);
+    expect(fetched).toBe(false);
+  });
+
+  it("errors with a re-share hint on a corrupt inline `doc`", async () => {
+    const r = await continueDocument({ doc: "not-valid-gzip-base64" });
+    expect(r.isError).toBe(true);
+    expect(r.content[0].text).toMatch(/Continue in Claude/);
   });
 });

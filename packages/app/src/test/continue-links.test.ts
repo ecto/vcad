@@ -2,11 +2,22 @@ import { describe, it, expect } from "vitest";
 import {
   buildContinueTargets,
   buildSeedPrompt,
+  encodeDocForSeed,
+  MAX_INLINE_BLOB,
   DEFAULT_MCP_URL,
   type ContinueHost,
 } from "../lib/continue-links";
 
 const TOKEN = "11111111-2222-3333-4444-555555555555";
+
+/** Decode a base64url gzip blob using only Web APIs (no node deps). */
+async function decodeBlob(blob: string): Promise<string> {
+  const b64 = blob.replace(/-/g, "+").replace(/_/g, "/");
+  const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+  const ds = new DecompressionStream("gzip");
+  const stream = new Blob([bytes]).stream().pipeThrough(ds);
+  return new Response(stream).text();
+}
 
 const byHost = (host: ContinueHost) => {
   const t = buildContinueTargets({ token: TOKEN, docName: "Bracket" }).find(
@@ -84,6 +95,16 @@ describe("buildContinueTargets", () => {
     expect(t.clipboard).toContain(TOKEN);
   });
 
+  it("inlineDoc builds a seed embedding the blob, with no token", () => {
+    const t = buildContinueTargets({
+      inlineDoc: "BLOB123",
+      docName: "Bracket",
+    }).find((x) => x.host === "claude-desktop")!;
+    const seed = decodeURIComponent(t.url!.slice(t.url!.indexOf("q=") + 2));
+    expect(seed).toContain('doc="BLOB123"');
+    expect(seed).not.toContain(TOKEN);
+  });
+
   it("honors a custom mcpUrl override", () => {
     const t = buildContinueTargets({
       token: TOKEN,
@@ -91,5 +112,30 @@ describe("buildContinueTargets", () => {
     }).find((x) => x.host === "cursor")!;
     const cfg = JSON.parse(atob(t.url!.split("config=")[1]!));
     expect(cfg.url).toBe("https://staging.vcad.io/mcp");
+  });
+});
+
+describe("encodeDocForSeed", () => {
+  it("round-trips an IR doc through gzip + base64url", async () => {
+    const doc = { version: 1, nodes: {}, roots: ["n1"] };
+    const blob = await encodeDocForSeed(doc);
+    expect(blob).toBeTruthy();
+    expect(blob).toMatch(/^[A-Za-z0-9_-]+$/); // base64url, no padding
+    expect(JSON.parse(await decodeBlob(blob!))).toEqual(doc);
+  });
+
+  it("returns null when the part is too large to inline", async () => {
+    // A doc whose compressed form blows past MAX_INLINE_BLOB. Random-ish keys
+    // resist gzip so the blob actually exceeds the cap.
+    const nodes: Record<string, unknown> = {};
+    for (let i = 0; i < 4000; i++) {
+      nodes[`node_${i}_${(i * 2654435761) % 1e9}`] = {
+        op: "cube",
+        size: [i % 97, (i * 7) % 89, (i * 13) % 83],
+      };
+    }
+    const blob = await encodeDocForSeed({ version: 1, nodes, roots: [] });
+    expect(blob).toBeNull();
+    expect(MAX_INLINE_BLOB).toBeGreaterThan(0);
   });
 });

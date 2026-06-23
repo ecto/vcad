@@ -17,7 +17,9 @@
  * separate live-mitosis path.)
  */
 import { getKernelWasm } from "@vcad/engine";
+import { fromVCode } from "@vcad/ir";
 import type { Document } from "@vcad/ir";
+import { gunzipSync } from "node:zlib";
 import { resolveShareToken } from "../session-store.js";
 import { registerSession } from "./session.js";
 
@@ -28,11 +30,17 @@ export const continueDocumentSchema = {
       type: "string" as const,
       description:
         "The vcad.io share token from a 'Continue in Claude' handoff (a UUID). " +
-        "Opens the user's current part as an editing session you can render, " +
-        "measure, and continue.",
+        "Opens the signed-in user's current part as an editing session you can " +
+        "render, measure, and continue.",
+    },
+    doc: {
+      type: "string" as const,
+      description:
+        "An inline, compressed document handoff (gzip + base64url of the IR), " +
+        "used when the part was handed off without a cloud account. Supply " +
+        "either `token` or `doc`.",
     },
   },
-  required: ["token"],
 };
 
 type ToolText = {
@@ -60,6 +68,18 @@ function looksLikeCrdt(c: unknown): boolean {
     "replica_id" in (c as object) &&
     Array.isArray((c as { ops?: unknown }).ops)
   );
+}
+
+/** Decode an inline `doc` handoff (gzip + base64url of VCode or IR JSON) into
+ *  raw content for {@link materialize}. Mirrors the encoding open_in_browser /
+ *  the web app produce. Throws on a corrupt blob — the caller turns that into a
+ *  re-share hint. */
+function decodeInlineDoc(blob: string): unknown {
+  const b64 = blob.replace(/-/g, "+").replace(/_/g, "/");
+  const buf = Buffer.from(b64, "base64");
+  const text = gunzipSync(buf).toString("utf-8").trim();
+  // The web app gzips raw IR JSON; open_in_browser may emit VCode (`#…`).
+  return text.startsWith("#") ? fromVCode(text) : JSON.parse(text);
 }
 
 /** Materialize raw cloud `content` into an IR Document. Returns null for shapes
@@ -90,24 +110,41 @@ export async function continueDocument(
   args: Record<string, unknown>,
 ): Promise<ToolText> {
   const token = String(args.token ?? "").trim();
-  if (!token) {
+  const inlineDoc = String(args.doc ?? "").trim();
+  if (!token && !inlineDoc) {
     return err(
-      "continue_document requires a `token` — the vcad.io share token from the " +
-        "Continue in Claude handoff.",
+      "continue_document requires a `token` (a vcad.io share token) or an " +
+        "inline `doc` from the Continue in Claude handoff.",
     );
   }
 
-  const resolved = await resolveShareToken(token);
-  if (!resolved) {
-    return err(
-      `No shared document for token "${token}". Ask the user to click ` +
-        `"Continue in Claude" again from vcad.io to mint a fresh handoff link.`,
-    );
+  // Resolve the raw content + a display name from whichever source was given.
+  let content: unknown;
+  let name = "Shared part";
+  if (token) {
+    const resolved = await resolveShareToken(token);
+    if (!resolved) {
+      return err(
+        `No shared document for token "${token}". Ask the user to click ` +
+          `"Continue in Claude" again from vcad.io to mint a fresh handoff link.`,
+      );
+    }
+    content = resolved.content;
+    name = resolved.name;
+  } else {
+    try {
+      content = decodeInlineDoc(inlineDoc);
+    } catch (e) {
+      return err(
+        `Couldn't read the inline handoff: ${(e as Error).message}. ` +
+          `Ask the user to click "Continue in Claude" again from vcad.io.`,
+      );
+    }
   }
 
   let doc: Document | null;
   try {
-    doc = await materialize(resolved.content);
+    doc = await materialize(content);
   } catch (e) {
     return err(
       `Could not open the shared document: ${(e as Error).message}. ` +
@@ -129,7 +166,7 @@ export async function continueDocument(
         text: JSON.stringify({
           document_id: id,
           parts: doc.roots?.length ?? 0,
-          name: resolved.name,
+          name,
         }),
       },
     ],
