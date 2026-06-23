@@ -3,20 +3,26 @@ import RealityKit
 import AppKit
 import simd
 
-// The three-pane shell: feature tree (sidebar) │ RealityView viewport │
-// inspector. One obsessive window; Liquid Glass chrome over live geometry;
-// selection binds the tree to the inspector.
+// The shell: tool palette + feature tree │ viewport │ inspector, over a dense
+// native status bar. Liquid Glass throughout; the tool palette is the native
+// reinterpretation of the web app's Borland tabbed tool picker (same model,
+// native skin).
 
 struct EditorView: View {
     @State private var model = EditorModel()
 
     var body: some View {
-        NavigationSplitView {
-            FeatureTreeView(model: model)
-                .navigationSplitViewColumnWidth(min: 200, ideal: 240, max: 320)
-        } detail: {
-            ViewportView(model: model)
-                .ignoresSafeArea()
+        VStack(spacing: 0) {
+            NavigationSplitView {
+                FeatureTreeView(model: model)
+                    .navigationSplitViewColumnWidth(min: 200, ideal: 240, max: 320)
+            } detail: {
+                VStack(spacing: 0) {
+                    if model.source.isSandbox {
+                        ToolPaletteView(model: model)
+                    }
+                    ViewportView(model: model)
+                }
                 .navigationTitle("vcad")
                 .navigationSubtitle(model.source.label)
                 .toolbar {
@@ -26,6 +32,8 @@ struct EditorView: View {
                     InspectorView(model: model)
                         .inspectorColumnWidth(min: 260, ideal: 300, max: 380)
                 }
+            }
+            StatusBarView(model: model)
         }
     }
 }
@@ -42,14 +50,69 @@ struct SourcePicker: View {
     }
 }
 
+// MARK: tool palette (native Borland-model)
+
+struct ToolPaletteView: View {
+    @Bindable var model: EditorModel
+
+    var body: some View {
+        HStack(spacing: 10) {
+            HStack(spacing: 3) {
+                ForEach(Array(ToolTab.allCases.enumerated()), id: \.element.id) { idx, tab in
+                    let active = model.toolTab == tab
+                    Button { model.toolTab = tab } label: {
+                        HStack(spacing: 5) {
+                            Image(systemName: tab.symbol).font(.system(size: 12))
+                            Text(tab.label).font(.system(size: 12, weight: .medium))
+                            Text("\(idx + 1)").font(.system(size: 9, design: .monospaced)).opacity(0.5)
+                        }
+                        .padding(.horizontal, 10).padding(.vertical, 5)
+                        .background(active ? Color.accentColor.opacity(0.18) : .clear,
+                                    in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+                        .foregroundStyle(active ? Color.accentColor : Color.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .keyboardShortcut(KeyEquivalent(Character(String(idx + 1))), modifiers: [])
+                }
+            }
+
+            Divider().frame(height: 18)
+
+            HStack(spacing: 6) {
+                ForEach(model.tools(for: model.toolTab)) { tool in
+                    Button { tool.action() } label: {
+                        HStack(spacing: 5) {
+                            Image(systemName: tool.symbol).font(.system(size: 12))
+                            Text(tool.label).font(.system(size: 12))
+                        }
+                        .padding(.horizontal, 9).padding(.vertical, 5)
+                        .background(tool.isActive ? Color.white.opacity(0.10) : .clear,
+                                    in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                .strokeBorder(tool.isActive ? Color.white.opacity(0.18) : .clear)
+                        )
+                        .foregroundStyle(tool.isActive ? Color.primary : Color.secondary)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+
+            Spacer()
+        }
+        .padding(.horizontal, 12).padding(.vertical, 7)
+        .background(.ultraThinMaterial)
+        .overlay(alignment: .bottom) { Divider() }
+    }
+}
+
 struct FeatureTreeView: View {
     @Bindable var model: EditorModel
     var body: some View {
         List(selection: $model.selectedFeatureID) {
             Section("History") {
                 ForEach(model.features) { f in
-                    Label(f.name, systemImage: f.symbol)
-                        .tag(f.id)
+                    Label(f.name, systemImage: f.symbol).tag(f.id)
                 }
             }
         }
@@ -64,22 +127,23 @@ struct InspectorView: View {
             if let f = model.selectedFeature {
                 Section(f.name) {
                     switch f.kind {
-                    case .fillet:
-                        VStack(alignment: .leading, spacing: 8) {
-                            HStack {
-                                Text("Radius")
-                                Spacer()
-                                Text(String(format: "%.1f mm", model.filletRadius))
-                                    .monospacedDigit()
-                                    .foregroundStyle(.secondary)
+                    case .base:
+                        LabeledContent("Shape", value: model.baseShape.label)
+                    case .modifier:
+                        if model.modifier == .none {
+                            Text("No modifier").foregroundStyle(.secondary)
+                        } else {
+                            VStack(alignment: .leading, spacing: 8) {
+                                HStack {
+                                    Text(model.modifier.paramLabel)
+                                    Spacer()
+                                    Text(String(format: "%.1f mm", model.modifierValue))
+                                        .monospacedDigit().foregroundStyle(.secondary)
+                                }
+                                Slider(value: $model.modifierValue, in: 0...12)
                             }
-                            Slider(value: $model.filletRadius, in: 0...12)
+                            .padding(.vertical, 2)
                         }
-                        .padding(.vertical, 2)
-                    case .box:
-                        LabeledContent("Size",
-                            value: String(format: "%.0f × %.0f × %.0f mm",
-                                          model.cubeSize, model.cubeSize, model.cubeSize))
                     case .part:
                         LabeledContent("Type", value: "Solid")
                     }
@@ -101,7 +165,37 @@ struct InspectorView: View {
 
     private var boundsText: String {
         let s = model.sizeMM
-        return String(format: "%.1f × %.1f × %.1f mm", s.x, s.y, s.z)
+        return String(format: "%.1f × %.1f × %.1f mm", abs(s.x), abs(s.y), abs(s.z))
+    }
+}
+
+// MARK: status bar (dense, native)
+
+struct StatusBarView: View {
+    let model: EditorModel
+    var body: some View {
+        HStack(spacing: 14) {
+            Label(model.source.label, systemImage: "cube.transparent")
+            Text(model.partCount == 1 ? "1 part" : "\(model.partCount) parts")
+            Text("\(model.triangleCount.formatted()) tris")
+            Text(String(format: "%.0f × %.0f × %.0f mm", abs(model.sizeMM.x), abs(model.sizeMM.y), abs(model.sizeMM.z)))
+            Text(String(format: "solve %.1f ms", model.solveMillis))
+            if let info = model.pickInfo {
+                Label(info.replacingOccurrences(of: "\n", with: " · "), systemImage: "scope")
+            }
+            Spacer()
+            HStack(spacing: 5) {
+                Circle().fill(.green).frame(width: 6, height: 6)
+                Text("kernel")
+            }
+        }
+        .font(.system(size: 11, design: .monospaced))
+        .foregroundStyle(.secondary)
+        .lineLimit(1)
+        .padding(.horizontal, 12)
+        .frame(height: 24)
+        .background(.ultraThinMaterial)
+        .overlay(alignment: .top) { Divider() }
     }
 }
 
@@ -109,16 +203,15 @@ struct ViewportView: View {
     let model: EditorModel
 
     var body: some View {
-        // Register observation dependencies so `update:` re-runs on change.
-        _ = (model.azimuth, model.elevation, model.distance, model.filletRadius,
-             model.source, model.selectedFeatureID, model.pickDirty)
+        _ = (model.azimuth, model.elevation, model.distance, model.modifierValue,
+             model.source, model.selectedFeatureID, model.baseShape, model.modifier, model.pickDirty)
 
         return GeometryReader { geo in
           RealityView { content in
             addLightsAndCamera(content)
             rebuildGeometry(content)
             model.geometryDirty = false
-        } update: { content in
+          } update: { content in
             if let camera = content.entities.first(where: { $0.name == "camera" }) {
                 camera.position = model.cameraPosition
                 camera.look(at: .zero, from: model.cameraPosition, relativeTo: nil)
@@ -128,14 +221,16 @@ struct ViewportView: View {
                 model.geometryDirty = false
                 model.parameterDirty = false
             } else if model.parameterDirty {
-                let recreated = model.streamFillet()
+                let recreated = model.streamSandbox()
                 if let root = content.entities.first(where: { $0.name == "geomRoot" }) {
                     if recreated, let res = model.streaming.resource,
                        let entity = root.findEntity(named: "part0") as? ModelEntity {
                         entity.model?.mesh = res
                     }
-                    root.findEntity(named: "filletHandle")?.position =
-                        model.handlePosition(radius: model.filletRadius)
+                    if model.showsHandle {
+                        root.findEntity(named: "filletHandle")?.position =
+                            model.handlePosition(radius: model.modifierValue)
+                    }
                 }
                 model.parameterDirty = false
             }
@@ -155,15 +250,14 @@ struct ViewportView: View {
                 }
                 model.pickDirty = false
             }
-        }
-        .background(.black)
-        .highPriorityGesture(handleDrag)
-        .gesture(orbitGesture)
-        .simultaneousGesture(zoomGesture)
-        .gesture(SpatialTapGesture(coordinateSpace: .local).onEnded { value in
-            pick(at: value.location, viewSize: geo.size)
-        })
-        .overlay(alignment: .bottomTrailing) { statsBadge.padding(12) }
+          }
+          .background(.black)
+          .highPriorityGesture(handleDrag)
+          .gesture(orbitGesture)
+          .simultaneousGesture(zoomGesture)
+          .gesture(SpatialTapGesture(coordinateSpace: .local).onEnded { value in
+              pick(at: value.location, viewSize: geo.size)
+          })
         }
     }
 
@@ -202,9 +296,8 @@ struct ViewportView: View {
             entity.name = "part\(i)"
             centering.addChild(entity)
         }
-
-        if model.source.isDemo, model.selectedFeatureID == "fillet" {
-            centering.addChild(makeHandle(radius: model.filletRadius))
+        if model.showsHandle {
+            centering.addChild(makeHandle(radius: model.modifierValue))
         }
 
         let zUp = Entity()
@@ -226,7 +319,6 @@ struct ViewportView: View {
         return m
     }
 
-    /// A glowing, grabbable handle that floats on the filleted edge.
     private func makeHandle(radius: Double) -> ModelEntity {
         let handle = ModelEntity(
             mesh: .generateSphere(radius: 1.8),
@@ -241,9 +333,6 @@ struct ViewportView: View {
 
     // MARK: gestures
 
-    /// Grab the glowing handle and drag to scrub the fillet radius in-scene —
-    /// the Mac rehearsal for the Vision Pro pinch-scrub. Targeted to the handle
-    /// entity, so it only fires when the drag starts on the handle.
     private var handleDrag: some Gesture {
         DragGesture()
             .targetedToAnyEntity()
@@ -251,10 +340,10 @@ struct ViewportView: View {
                 guard value.entity.name == "filletHandle" else { return }
                 if !model.draggingHandle {
                     model.draggingHandle = true
-                    model.handleBaseline = model.filletRadius
+                    model.handleBaseline = model.modifierValue
                 }
                 let delta = Double(-value.translation.height) * 0.03
-                model.filletRadius = max(0, min(12, model.handleBaseline + delta))
+                model.modifierValue = max(0, min(12, model.handleBaseline + delta))
             }
             .onEnded { _ in model.draggingHandle = false }
     }
@@ -282,8 +371,6 @@ struct ViewportView: View {
 
     // MARK: picking (#7)
 
-    /// Click -> world ray (pinhole, 60° vertical FOV) -> kernel ray -> analytic
-    /// BRep raycast. Drops a marker at the exact hit point.
     private func pick(at p: CGPoint, viewSize: CGSize) {
         guard viewSize.width > 1, viewSize.height > 1 else { return }
         let cam = model.cameraPosition
@@ -296,12 +383,11 @@ struct ViewportView: View {
         let ndcY = Float(1 - 2 * p.y / viewSize.height)
         let dirWorld = normalize(forward + ndcX * tanHalf * aspect * right + ndcY * tanHalf * up)
 
-        // World -> kernel: inverse of geomRoot (uniform scale, Rx(-90°), -center).
         let s = model.displayScale
         let camKernel = rxPlus90(cam / s) + model.displayCenter
         let dirKernel = normalize(rxPlus90(dirWorld))
 
-        if let hit = model.raycastDemo(originKernel: camKernel, dirKernel: dirKernel) {
+        if let hit = model.raycastSandbox(originKernel: camKernel, dirKernel: dirKernel) {
             model.pickPoint = hit.point
             model.pickInfo = describe(hit)
         } else {
@@ -311,22 +397,12 @@ struct ViewportView: View {
         model.pickDirty = true
     }
 
-    /// Rotate world->kernel: inverse of the kernel Z-up -> Y-up Rx(-90°).
     private func rxPlus90(_ v: SIMD3<Float>) -> SIMD3<Float> { SIMD3(v.x, -v.z, v.y) }
 
     private func describe(_ hit: EditorModel.PickHit) -> String {
         let n = hit.normal
         let maxAxis = max(abs(n.x), max(abs(n.y), abs(n.z)))
-        let kind = maxAxis > 0.97 ? "Planar face (Box)" : "Rounded face (Fillet)"
+        let kind = maxAxis > 0.97 ? "Planar face" : "Curved face"
         return String(format: "%@\n(%.1f, %.1f, %.1f) mm", kind, hit.point.x, hit.point.y, hit.point.z)
-    }
-
-    private var statsBadge: some View {
-        Text("\(model.triangleCount.formatted()) tris · \(String(format: "%.0f", model.solveMillis)) ms")
-            .font(.caption2.monospacedDigit())
-            .foregroundStyle(.secondary)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(.ultraThinMaterial, in: Capsule())
     }
 }
