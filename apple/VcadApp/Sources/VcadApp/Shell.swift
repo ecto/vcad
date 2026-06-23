@@ -7,35 +7,54 @@ import CoreGraphics
 // The shell: tool palette + feature tree │ viewport │ inspector, over a dense
 // native status bar. Liquid Glass throughout; the tool palette is the native
 // reinterpretation of the web app's Borland tabbed tool picker (same model,
-// native skin).
+// native skin). World-class 3D-tool layout: a full-bleed studio canvas with
+// floating frosted-glass panels over it, not opaque columns.
+
+/// A floating frosted-glass panel over the studio viewport.
+private struct GlassCard: ViewModifier {
+    var cornerRadius: CGFloat = 16
+    func body(content: Content) -> some View {
+        content
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+                    .strokeBorder(.white.opacity(0.10), lineWidth: 0.5)
+            )
+            .shadow(color: .black.opacity(0.38), radius: 16, y: 7)
+    }
+}
+extension View {
+    func glassCard(_ cornerRadius: CGFloat = 16) -> some View { modifier(GlassCard(cornerRadius: cornerRadius)) }
+}
 
 struct EditorView: View {
     @State private var model = EditorModel()
 
     var body: some View {
-        VStack(spacing: 0) {
-            NavigationSplitView {
+        ViewportView(model: model)
+            .ignoresSafeArea()
+            .overlay(alignment: .topLeading) {
                 FeatureTreeView(model: model)
-                    .navigationSplitViewColumnWidth(min: 200, ideal: 240, max: 320)
-            } detail: {
-                VStack(spacing: 0) {
-                    if model.source.isSandbox {
-                        ToolPaletteView(model: model)
-                    }
-                    ViewportView(model: model)
-                }
-                .navigationTitle("vcad")
-                .navigationSubtitle(model.source.label)
-                .toolbar {
-                    ToolbarItem(placement: .principal) { SourcePicker(model: model) }
-                }
-                .inspector(isPresented: .constant(true)) {
-                    InspectorView(model: model)
-                        .inspectorColumnWidth(min: 260, ideal: 300, max: 380)
+                    .frame(width: 206)
+                    .padding(14)
+            }
+            .overlay(alignment: .top) {
+                if model.source.isSandbox {
+                    ToolPaletteView(model: model).padding(.top, 14)
                 }
             }
-            StatusBarView(model: model)
-        }
+            .overlay(alignment: .topTrailing) {
+                InspectorView(model: model)
+                    .frame(width: 280)
+                    .padding(14)
+            }
+            .overlay(alignment: .bottom) {
+                StatusBarView(model: model).padding(14)
+            }
+            .toolbar {
+                ToolbarItem(placement: .principal) { SourcePicker(model: model) }
+            }
+            .navigationTitle("vcad")
     }
 }
 
@@ -98,70 +117,103 @@ struct ToolPaletteView: View {
                     .buttonStyle(.plain)
                 }
             }
-
-            Spacer()
         }
-        .padding(.horizontal, 12).padding(.vertical, 7)
-        .background(.ultraThinMaterial)
-        .overlay(alignment: .bottom) { Divider() }
+        .padding(.horizontal, 10).padding(.vertical, 6)
+        .glassCard(13)
     }
 }
 
 struct FeatureTreeView: View {
     @Bindable var model: EditorModel
     var body: some View {
-        List(selection: $model.selectedFeatureID) {
-            Section("History") {
-                ForEach(model.features) { f in
-                    Label(f.name, systemImage: f.symbol).tag(f.id)
+        VStack(alignment: .leading, spacing: 2) {
+            Text("HISTORY")
+                .font(.system(size: 10, weight: .semibold))
+                .tracking(0.6)
+                .foregroundStyle(.tertiary)
+                .padding(.horizontal, 8).padding(.top, 6).padding(.bottom, 4)
+            ForEach(model.features) { f in
+                let selected = model.selectedFeatureID == f.id
+                Button { model.selectedFeatureID = f.id } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: f.symbol).font(.system(size: 13)).frame(width: 16)
+                        Text(f.name).font(.system(size: 13))
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.horizontal, 8).padding(.vertical, 6)
+                    .background(selected ? Color.accentColor.opacity(0.22) : .clear,
+                                in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+                    .foregroundStyle(selected ? Color.primary : Color.secondary)
+                    .contentShape(Rectangle())
                 }
+                .buttonStyle(.plain)
             }
         }
-        .listStyle(.sidebar)
+        .padding(6)
+        .glassCard()
     }
 }
 
 struct InspectorView: View {
     @Bindable var model: EditorModel
     var body: some View {
-        Form {
+        VStack(alignment: .leading, spacing: 16) {
             if let f = model.selectedFeature {
-                Section(f.name) {
+                section(f.name) {
                     switch f.kind {
                     case .base:
-                        LabeledContent("Shape", value: model.baseShape.label)
+                        row("Shape", model.baseShape.label)
                     case .modifier:
                         if model.modifier == .none {
-                            Text("No modifier").foregroundStyle(.secondary)
+                            Text("No modifier").font(.system(size: 12)).foregroundStyle(.secondary)
                         } else {
                             VStack(alignment: .leading, spacing: 8) {
                                 HStack {
-                                    Text(model.modifier.paramLabel)
+                                    Text(model.modifier.paramLabel).font(.system(size: 12))
                                     Spacer()
                                     Text(String(format: "%.1f mm", model.modifierValue))
-                                        .monospacedDigit().foregroundStyle(.secondary)
+                                        .font(.system(size: 12).monospacedDigit())
+                                        .foregroundStyle(.secondary)
                                 }
                                 Slider(value: $model.modifierValue, in: 0...12)
                             }
-                            .padding(.vertical, 2)
                         }
                     case .part:
-                        LabeledContent("Type", value: "Solid")
+                        row("Type", "Solid")
                     }
                 }
             }
-            Section("Measurements") {
-                LabeledContent("Triangles", value: model.triangleCount.formatted())
-                LabeledContent("Bounds", value: boundsText)
-                LabeledContent("Solve", value: String(format: "%.1f ms", model.solveMillis))
+            section("Measurements") {
+                row("Triangles", model.triangleCount.formatted())
+                row("Bounds", boundsText)
+                row("Solve", String(format: "%.1f ms", model.solveMillis))
             }
             if let info = model.pickInfo {
-                Section("Picked") {
-                    Text(info).font(.callout.monospacedDigit())
+                section("Picked") {
+                    Text(info).font(.system(size: 12).monospacedDigit()).foregroundStyle(.secondary)
                 }
             }
         }
-        .formStyle(.grouped)
+        .padding(14)
+        .glassCard()
+    }
+
+    @ViewBuilder private func section<C: View>(_ title: String, @ViewBuilder _ content: () -> C) -> some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Text(title.uppercased())
+                .font(.system(size: 10, weight: .semibold))
+                .tracking(0.6)
+                .foregroundStyle(.tertiary)
+            content()
+        }
+    }
+
+    private func row(_ key: String, _ value: String) -> some View {
+        HStack {
+            Text(key).font(.system(size: 12))
+            Spacer()
+            Text(value).font(.system(size: 12).monospacedDigit()).foregroundStyle(.secondary)
+        }
     }
 
     private var boundsText: String {
@@ -175,29 +227,28 @@ struct InspectorView: View {
 struct StatusBarView: View {
     let model: EditorModel
     var body: some View {
-        HStack(spacing: 14) {
-            Label(model.source.label, systemImage: "cube.transparent")
-            Text(model.partCount == 1 ? "1 part" : "\(model.partCount) parts")
+        HStack(spacing: 11) {
+            HStack(spacing: 5) { Image(systemName: "cube.transparent"); Text(model.source.label) }
+            bar
             Text("\(model.triangleCount.formatted()) tris")
+            bar
             Text(String(format: "%.0f × %.0f × %.0f mm", abs(model.sizeMM.x), abs(model.sizeMM.y), abs(model.sizeMM.z)))
-            Text(String(format: "solve %.1f ms", model.solveMillis))
+            bar
+            Text(String(format: "%.1f ms", model.solveMillis))
             if let info = model.pickInfo {
-                Label(info.replacingOccurrences(of: "\n", with: " · "), systemImage: "scope")
+                bar
+                HStack(spacing: 5) { Image(systemName: "scope"); Text(info.replacingOccurrences(of: "\n", with: " · ")) }
             }
-            Spacer()
-            HStack(spacing: 5) {
-                Circle().fill(.green).frame(width: 6, height: 6)
-                Text("kernel")
-            }
+            bar
+            HStack(spacing: 5) { Circle().fill(.green).frame(width: 5, height: 5); Text("kernel") }
         }
         .font(.system(size: 11, design: .monospaced))
         .foregroundStyle(.secondary)
         .lineLimit(1)
-        .padding(.horizontal, 12)
-        .frame(height: 24)
-        .background(.ultraThinMaterial)
-        .overlay(alignment: .top) { Divider() }
+        .padding(.horizontal, 14).padding(.vertical, 7)
+        .glassCard(11)
     }
+    private var bar: some View { Rectangle().fill(.secondary.opacity(0.25)).frame(width: 1, height: 11) }
 }
 
 struct ViewportView: View {
