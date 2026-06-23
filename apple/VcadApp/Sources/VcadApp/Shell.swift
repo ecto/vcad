@@ -2,6 +2,7 @@ import SwiftUI
 import RealityKit
 import AppKit
 import simd
+import CoreGraphics
 
 // The shell: tool palette + feature tree │ viewport │ inspector, over a dense
 // native status bar. Liquid Glass throughout; the tool palette is the native
@@ -208,7 +209,8 @@ struct ViewportView: View {
 
         return GeometryReader { geo in
           RealityView { content in
-            addLightsAndCamera(content)
+            if let env = makeStudioEnvironment() { content.environment = .skybox(env) }
+            setupScene(content)
             rebuildGeometry(content)
             model.geometryDirty = false
           } update: { content in
@@ -251,7 +253,10 @@ struct ViewportView: View {
                 model.pickDirty = false
             }
           }
-          .background(.black)
+          .background(
+              RadialGradient(colors: [Color(white: 0.10), Color(white: 0.015)],
+                             center: .center, startRadius: 40, endRadius: 800)
+          )
           .highPriorityGesture(handleDrag)
           .gesture(orbitGesture)
           .simultaneousGesture(zoomGesture)
@@ -263,7 +268,7 @@ struct ViewportView: View {
 
     // MARK: scene
 
-    private func addLightsAndCamera(_ content: RealityViewCameraContent) {
+    private func setupScene(_ content: RealityViewCameraContent) {
         let camera = Entity()
         camera.name = "camera"
         camera.components.set(PerspectiveCameraComponent())
@@ -271,15 +276,48 @@ struct ViewportView: View {
         camera.look(at: .zero, from: model.cameraPosition, relativeTo: nil)
         content.add(camera)
 
+        // Key light with a soft grounding shadow.
         let key = DirectionalLight()
-        key.light.intensity = 7000
-        key.look(at: .zero, from: [1.0, 1.4, 1.0], relativeTo: nil)
+        key.light.intensity = 5500
+        key.shadow = DirectionalLightComponent.Shadow(maximumDistance: 4, depthBias: 2)
+        key.look(at: .zero, from: [0.7, 1.1, 0.85], relativeTo: nil)
         content.add(key)
 
-        let fill = DirectionalLight()
-        fill.light.intensity = 2200
-        fill.look(at: .zero, from: [-1.0, 0.4, -0.6], relativeTo: nil)
-        content.add(fill)
+        // Cool rim for silhouette separation.
+        let rim = DirectionalLight()
+        rim.light.intensity = 2600
+        rim.look(at: .zero, from: [-0.9, 0.35, -1.0], relativeTo: nil)
+        content.add(rim)
+    }
+
+    /// A dark studio environment drawn procedurally (no bundled HDR), used for
+    /// both the skybox backdrop and image-based reflections on the geometry.
+    private func makeStudioEnvironment() -> EnvironmentResource? {
+        let w = 1024, h = 512
+        let cs = CGColorSpaceCreateDeviceRGB()
+        guard let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8,
+                                  bytesPerRow: 0, space: cs,
+                                  bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) else { return nil }
+        // Vertical gradient: a faintly warm zenith down to a near-black floor.
+        let base = CGGradient(colorsSpace: cs, colors: [
+            CGColor(red: 0.12, green: 0.13, blue: 0.16, alpha: 1),
+            CGColor(red: 0.06, green: 0.07, blue: 0.09, alpha: 1),
+            CGColor(red: 0.015, green: 0.015, blue: 0.02, alpha: 1),
+        ] as CFArray, locations: [0, 0.55, 1])!
+        ctx.drawLinearGradient(base, start: CGPoint(x: 0, y: CGFloat(h)),
+                               end: CGPoint(x: 0, y: 0), options: [])
+        // Soft broad key glow → a gentle specular sweep across metal.
+        ctx.setBlendMode(.plusLighter)
+        let glow = CGGradient(colorsSpace: cs, colors: [
+            CGColor(red: 0.42, green: 0.48, blue: 0.58, alpha: 1),
+            CGColor(red: 0.42, green: 0.48, blue: 0.58, alpha: 0),
+        ] as CFArray, locations: [0, 1])!
+        ctx.drawRadialGradient(glow,
+            startCenter: CGPoint(x: CGFloat(w) * 0.34, y: CGFloat(h) * 0.74), startRadius: 0,
+            endCenter: CGPoint(x: CGFloat(w) * 0.34, y: CGFloat(h) * 0.74), endRadius: CGFloat(h) * 0.55,
+            options: [])
+        guard let img = ctx.makeImage() else { return nil }
+        return try? EnvironmentResource(equirectangular: img)
     }
 
     private func rebuildGeometry(_ content: RealityViewCameraContent) {
@@ -309,13 +347,25 @@ struct ViewportView: View {
         geomRoot.addChild(zUp)
         geomRoot.scale = SIMD3<Float>(repeating: sceneScale)
         content.add(geomRoot)
+
+        // Grounding floor that catches the soft contact shadow.
+        content.entities.filter { $0.name == "floor" }.forEach { $0.removeFromParent() }
+        let floorY = -(model.sizeMM.z * 0.5 * sceneScale) - 0.004
+        var floorMat = PhysicallyBasedMaterial()
+        floorMat.baseColor = .init(tint: NSColor(white: 0.03, alpha: 1.0))
+        floorMat.roughness = 0.55
+        floorMat.metallic = 0.0
+        let floor = ModelEntity(mesh: .generatePlane(width: 8, depth: 8), materials: [floorMat])
+        floor.name = "floor"
+        floor.position = [0, floorY, 0]
+        content.add(floor)
     }
 
     private func material(_ color: NSColor) -> PhysicallyBasedMaterial {
         var m = PhysicallyBasedMaterial()
         m.baseColor = .init(tint: color)
-        m.roughness = 0.30
-        m.metallic = 0.06
+        m.roughness = 0.34
+        m.metallic = 0.55
         return m
     }
 

@@ -329,7 +329,7 @@ final class EditorModel {
         return max(d.x, max(d.y, d.z))
     }
 
-    static let heroColor = NSColor(red: 0.23, green: 0.72, blue: 0.96, alpha: 1.0)
+    static let heroColor = NSColor(red: 0.40, green: 0.60, blue: 0.80, alpha: 1.0)
     static let partColors: [NSColor] = [
         NSColor(red: 0.62, green: 0.66, blue: 0.70, alpha: 1.0),
         NSColor(red: 0.82, green: 0.62, blue: 0.30, alpha: 1.0),
