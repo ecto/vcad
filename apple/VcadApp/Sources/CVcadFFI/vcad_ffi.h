@@ -54,6 +54,7 @@ void vcad_solid_free(VcadSolid *solid);
 VcadHit vcad_solid_raycast(const VcadSolid *solid, const double *origin, const double *dir);
 
 VcadScene *vcad_scene_from_json(const uint8_t *json, size_t json_len);
+VcadScene *vcad_scene_from_loon(const uint8_t *loon, size_t loon_len);
 size_t vcad_scene_part_count(const VcadScene *scene);
 VcadMeshView vcad_scene_part_mesh(const VcadScene *scene, size_t index);
 void vcad_scene_free(VcadScene *scene);

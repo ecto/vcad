@@ -30,6 +30,7 @@ extension View {
 
 struct EditorView: View {
     @State private var model = EditorModel()
+    @State private var intent = IntentEngine()
 
     var body: some View {
         GeometryReader { geo in
@@ -59,7 +60,8 @@ struct EditorView: View {
                     StatusBarView(model: model).padding(.bottom, 14)
                 }
                 .toolbar {
-                    ToolbarItem(placement: .principal) { DocumentMenu(model: model) }
+                    ToolbarItem(placement: .navigation) { DocumentMenu(model: model) }
+                    ToolbarItem(placement: .principal) { CommandBar(engine: intent, model: model) }
                 }
                 .navigationTitle("vcad")
                 .animation(.smooth(duration: 0.3), value: compact)

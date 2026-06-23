@@ -6977,6 +6977,7 @@ dependencies = [
  "vcad-kernel-math",
  "vcad-kernel-raytrace",
  "vcad-kernel-tessellate",
+ "vcad-loon",
 ]
 
 [[package]]

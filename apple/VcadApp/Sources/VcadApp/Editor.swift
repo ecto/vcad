@@ -11,20 +11,26 @@ private let kSamplesDir = "/Users/cam/Developer/vcad/.claude/worktrees/elated-mc
 enum GeometrySource: Hashable, Identifiable {
     case sandbox
     case document(path: String, label: String)
+    /// Geometry authored by the AI intent bar: a loon program the kernel
+    /// compiles + evaluates exactly like a loaded `.vcad` file.
+    case generated(loon: String, label: String)
 
     var id: String {
         switch self {
         case .sandbox: return "sandbox"
         case .document(let path, _): return path
+        case .generated: return "generated"
         }
     }
     var label: String {
         switch self {
         case .sandbox: return "Sandbox"
         case .document(_, let label): return label
+        case .generated(_, let label): return label
         }
     }
     var isSandbox: Bool { if case .sandbox = self { return true }; return false }
+    var isGenerated: Bool { if case .generated = self { return true }; return false }
 }
 
 /// The sandbox primitive — chosen from the Create tab of the tool palette.
@@ -147,12 +153,7 @@ final class EditorModel {
     var recents: [URL] = (UserDefaults.standard.array(forKey: "vcad.recents") as? [String] ?? [])
         .map { URL(fileURLWithPath: $0) }
 
-    var documentName: String {
-        switch source {
-        case .sandbox: return "Sandbox"
-        case .document(_, let label): return label
-        }
-    }
+    var documentName: String { source.label }
 
     func newDocument() { source = .sandbox }
 
@@ -198,7 +199,7 @@ final class EditorModel {
                 Feature(id: "modifier", name: modifier == .none ? "No modifier" : modifier.label,
                         symbol: modifier.symbol, kind: .modifier),
             ]
-        case .document(_, let label):
+        case .document(_, let label), .generated(_, let label):
             let n = max(partCount, 1)
             return (0..<n).map { i in
                 Feature(id: "part\(i)", name: n == 1 ? label : "Part \(i + 1)",
@@ -235,7 +236,27 @@ final class EditorModel {
         switch source {
         case .sandbox: return sandboxScene()
         case .document(let path, _): return documentScene(path: path)
+        case .generated(let loon, _): return generatedScene(loon: loon)
         }
+    }
+
+    /// Validate a generated loon program; if it evaluates to geometry, switch the
+    /// active source to it (which re-renders via `generatedScene`). Returns the
+    /// evaluated part count, or nil if the program failed — leaving the current
+    /// scene untouched so a bad generation never blanks the studio.
+    @discardableResult
+    func applyGenerated(loon: String, label: String) -> Int? {
+        let data = Data(loon.utf8)
+        guard !data.isEmpty else { return nil }
+        let count: Int? = data.withUnsafeBytes { raw -> Int? in
+            guard let base = raw.bindMemory(to: UInt8.self).baseAddress,
+                  let scene = vcad_scene_from_loon(base, data.count) else { return nil }
+            defer { vcad_scene_free(scene) }
+            return vcad_scene_part_count(scene)
+        }
+        guard let count, count > 0 else { return nil }
+        source = .generated(loon: loon, label: label)
+        return count
     }
 
     private func makeBase() -> OpaquePointer? {
@@ -327,7 +348,28 @@ final class EditorModel {
         }
         guard let scene else { return .empty }
         defer { vcad_scene_free(scene) }
+        return sceneFromHandle(scene, start: start)
+    }
 
+    /// Render the AI-generated loon program. Same evaluator + part-gather as a
+    /// loaded document, so the studio, feature tree, and materialize-pop are
+    /// shared for free.
+    private func generatedScene(loon: String) -> RenderScene {
+        let start = Date()
+        let data = Data(loon.utf8)
+        guard !data.isEmpty else { return .empty }
+        let scene: OpaquePointer? = data.withUnsafeBytes { raw in
+            vcad_scene_from_loon(raw.bindMemory(to: UInt8.self).baseAddress, data.count)
+        }
+        guard let scene else { return .empty }
+        defer { vcad_scene_free(scene) }
+        return sceneFromHandle(scene, start: start)
+    }
+
+    /// Gather every part mesh out of an evaluated scene handle into a centered,
+    /// auto-fit `RenderScene`, updating the live readouts. Shared by the
+    /// document and AI-generated paths.
+    private func sceneFromHandle(_ scene: OpaquePointer, start: Date) -> RenderScene {
         let count = vcad_scene_part_count(scene)
         var meshes: [(MeshResource, NSColor)] = []
         var lo = SIMD3<Float>(repeating: .greatestFiniteMagnitude)

@@ -14,6 +14,11 @@
 //! a direct match for Metal / RealityKit `LowLevelMesh`, no conversion.
 
 #![allow(clippy::missing_safety_doc)]
+// Every entry point is a `#[no_mangle] extern "C"` boundary that takes raw
+// pointers from Swift and dereferences them behind explicit null checks +
+// catch_unwind. That is the whole point of an FFI crate, so the
+// not-unsafe-ptr-arg lint doesn't apply here.
+#![allow(clippy::not_unsafe_ptr_arg_deref)]
 
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::ptr;
@@ -222,6 +227,36 @@ pub extern "C" fn vcad_scene_from_json(json: *const u8, json_len: usize) -> *mut
     .unwrap_or(ptr::null_mut())
 }
 
+/// Parse a `.vcad` **loon** source program (UTF-8 bytes of length `loon_len`)
+/// and evaluate it into a scene. This is the AI-intent path: an agent emits a
+/// loon program, which compiles to the same `Document` IR a `.vcad` file holds
+/// and evaluates identically. Module resolution (`[use …]`) is disabled
+/// (`base_dir = None`), so programs must be self-contained — the bundled vcad
+/// loon library (types + constructors) is always available. Returns null on
+/// invalid UTF-8, a loon parse/eval error, an evaluation error, or panic.
+#[no_mangle]
+pub extern "C" fn vcad_scene_from_loon(loon: *const u8, loon_len: usize) -> *mut VcadScene {
+    if loon.is_null() {
+        return ptr::null_mut();
+    }
+    catch_unwind(AssertUnwindSafe(|| {
+        let bytes = unsafe { std::slice::from_raw_parts(loon, loon_len) };
+        let text = match std::str::from_utf8(bytes) {
+            Ok(t) => t,
+            Err(_) => return ptr::null_mut(),
+        };
+        let doc = match vcad_loon::eval_vcad(text, None) {
+            Ok(d) => d,
+            Err(_) => return ptr::null_mut(),
+        };
+        match evaluate_document(&doc, &EvalOptions::default()) {
+            Ok(scene) => Box::into_raw(Box::new(VcadScene { inner: scene })),
+            Err(_) => ptr::null_mut(),
+        }
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
 /// Number of evaluated parts (visible document roots) in the scene.
 #[no_mangle]
 pub extern "C" fn vcad_scene_part_count(scene: *const VcadScene) -> usize {
@@ -343,6 +378,29 @@ mod tests {
         assert!(view.vertices_len > 0, "part 0 should have geometry");
         assert!(view.indices_len % 3 == 0, "indices form whole triangles");
         vcad_scene_free(scene);
+    }
+
+    #[test]
+    fn evaluates_a_loon_program() {
+        // The AI-intent path: a loon program (as an agent would emit) compiles
+        // and evaluates to geometry just like a loaded .vcad file.
+        let src = "[root [fillet 2.0 [cylinder 10 30]] \"brass\"]";
+        let scene = vcad_scene_from_loon(src.as_ptr(), src.len());
+        assert!(!scene.is_null(), "loon program should compile + evaluate");
+        let n = vcad_scene_part_count(scene);
+        assert!(n > 0, "expected >= 1 part, got {n}");
+        let view = vcad_scene_part_mesh(scene, 0);
+        assert!(view.vertices_len > 0, "part 0 should have geometry");
+        assert!(view.indices_len % 3 == 0, "indices form whole triangles");
+        vcad_scene_free(scene);
+    }
+
+    #[test]
+    fn bad_loon_returns_null() {
+        let src = "this is not loon";
+        let scene = vcad_scene_from_loon(src.as_ptr(), src.len());
+        assert!(scene.is_null(), "garbage loon should fail to a null scene, not panic");
+        assert!(vcad_scene_from_loon(ptr::null(), 0).is_null());
     }
 
     #[test]
