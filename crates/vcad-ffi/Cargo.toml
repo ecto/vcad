@@ -1,0 +1,25 @@
+[package]
+name = "vcad-ffi"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "C ABI bridge exposing the vcad kernel to native apps (Swift/Apple)."
+
+[lib]
+name = "vcad_ffi"
+# staticlib: the `.a` a Swift/Xcode app links. rlib: lets us unit-test the crate.
+crate-type = ["staticlib", "rlib"]
+
+[features]
+default = ["no-builtin-font"]
+# The kernel's builtin font is vendored from node_modules (absent in fresh
+# worktrees) and a native CAD app doesn't render with it — keep it off so the
+# static lib always builds without a JS toolchain present.
+no-builtin-font = ["vcad-kernel/no-builtin-font"]
+
+[dependencies]
+vcad-kernel = { workspace = true }
+vcad-kernel-tessellate = { workspace = true }
+vcad-eval = { workspace = true }
+vcad-ir = { workspace = true }
