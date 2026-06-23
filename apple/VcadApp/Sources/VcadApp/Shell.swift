@@ -3,6 +3,7 @@ import RealityKit
 import AppKit
 import simd
 import CoreGraphics
+import UniformTypeIdentifiers
 
 // The shell: tool palette + feature tree │ viewport │ inspector, over a dense
 // native status bar. Liquid Glass throughout; the tool palette is the native
@@ -58,7 +59,7 @@ struct EditorView: View {
                     StatusBarView(model: model).padding(.bottom, 14)
                 }
                 .toolbar {
-                    ToolbarItem(placement: .principal) { SourcePicker(model: model) }
+                    ToolbarItem(placement: .principal) { DocumentMenu(model: model) }
                 }
                 .navigationTitle("vcad")
                 .animation(.smooth(duration: 0.3), value: compact)
@@ -66,15 +67,42 @@ struct EditorView: View {
     }
 }
 
-struct SourcePicker: View {
+struct DocumentMenu: View {
     @Bindable var model: EditorModel
     var body: some View {
-        Picker("Source", selection: $model.source) {
-            ForEach(model.samples) { Text($0.label).tag($0) }
+        Menu {
+            Button("New Sandbox") { model.newDocument() }.keyboardShortcut("n")
+            Button("Open…") { openPanel() }.keyboardShortcut("o")
+            if !model.recents.isEmpty {
+                Menu("Open Recent") {
+                    ForEach(model.recents, id: \.self) { url in
+                        Button(url.deletingPathExtension().lastPathComponent) { model.openDocument(url) }
+                    }
+                }
+            }
+            Menu("Examples") {
+                ForEach(model.examples, id: \.path) { ex in
+                    Button(ex.name) { model.openDocument(URL(fileURLWithPath: ex.path)) }
+                }
+            }
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: model.source.isSandbox ? "cube" : "doc").font(.system(size: 12))
+                Text(model.documentName).font(.system(size: 13, weight: .medium))
+                Image(systemName: "chevron.down").font(.system(size: 9)).opacity(0.55)
+            }
         }
-        .pickerStyle(.segmented)
-        .labelsHidden()
-        .frame(minWidth: 280)
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+    }
+
+    private func openPanel() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [UTType(filenameExtension: "vcad") ?? .json]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.prompt = "Open"
+        if panel.runModal() == .OK, let url = panel.url { model.openDocument(url) }
     }
 }
 

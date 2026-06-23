@@ -136,12 +136,33 @@ final class EditorModel {
     var draggingHandle = false
     var handleBaseline: Double = 0
 
-    let samples: [GeometrySource] = [
-        .sandbox,
-        .document(path: "\(kSamplesDir)/mecheval/tasks/a6-pulley-01.vcad", label: "Pulley"),
-        .document(path: "\(kSamplesDir)/mecheval/tasks/a4-counterbore-plate-01.vcad", label: "Counterbore"),
-        .document(path: "\(kSamplesDir)/mecheval/tasks/a5-ribbed-plate-01.vcad", label: "Ribbed plate"),
+    let examples: [(name: String, path: String)] = [
+        ("Pulley", "\(kSamplesDir)/mecheval/tasks/a6-pulley-01.vcad"),
+        ("Counterbore", "\(kSamplesDir)/mecheval/tasks/a4-counterbore-plate-01.vcad"),
+        ("Ribbed plate", "\(kSamplesDir)/mecheval/tasks/a5-ribbed-plate-01.vcad"),
+        ("Robot arm", "\(kSamplesDir)/examples/robot-arm-2dof.vcad"),
+        ("Sensor mast", "\(kSamplesDir)/examples/sensor-mast.vcad"),
     ]
+
+    var recents: [URL] = (UserDefaults.standard.array(forKey: "vcad.recents") as? [String] ?? [])
+        .map { URL(fileURLWithPath: $0) }
+
+    var documentName: String {
+        switch source {
+        case .sandbox: return "Sandbox"
+        case .document(_, let label): return label
+        }
+    }
+
+    func newDocument() { source = .sandbox }
+
+    func openDocument(_ url: URL) {
+        source = .document(path: url.path, label: url.deletingPathExtension().lastPathComponent)
+        recents.removeAll { $0 == url }
+        recents.insert(url, at: 0)
+        if recents.count > 8 { recents = Array(recents.prefix(8)) }
+        UserDefaults.standard.set(recents.map { $0.path }, forKey: "vcad.recents")
+    }
 
     // MARK: tool palette
 
