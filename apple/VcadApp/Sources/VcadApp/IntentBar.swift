@@ -18,6 +18,8 @@ final class IntentEngine {
 
     var phase: Phase = .idle
     var draft: String = ""
+    /// Set by the example chips to pull focus into the field after filling it.
+    var focusRequested = false
 
     private let client = VcadIntentClient()
     private var inFlight: Task<Void, Never>?
@@ -45,10 +47,10 @@ final class IntentEngine {
             }
             // Validate + adopt. A program that doesn't evaluate leaves the
             // current studio untouched rather than blanking it.
-            if let count = model.applyGenerated(loon: loon, label: Self.label(from: prompt)) {
+            if let stats = model.applyGenerated(loon: loon, label: Self.label(from: prompt)) {
                 draft = ""
-                phase = .done("Built \(count) part\(count == 1 ? "" : "s")")
-                try? await Task.sleep(for: .seconds(2.4))
+                phase = .done(Self.summary(stats))
+                try? await Task.sleep(for: .seconds(2.6))
                 if case .done = phase { phase = .idle }
             } else {
                 phase = .failed("That didn't evaluate to valid geometry — try rephrasing.")
@@ -103,6 +105,22 @@ final class IntentEngine {
         if cleaned.count <= 30 { return cleaned }
         return String(cleaned.prefix(29)).trimmingCharacters(in: .whitespaces) + "…"
     }
+
+    /// One-line confirmation for a finished build.
+    static func summary(_ s: GenStats) -> String {
+        let d = s.size
+        let dims = String(format: "%.0f×%.0f×%.0f mm", abs(d.x), abs(d.y), abs(d.z))
+        return "Built · \(s.parts) part\(s.parts == 1 ? "" : "s") · \(dims)"
+    }
+
+    /// Seed suggestions shown as chips over an untouched studio.
+    static let examplePrompts = [
+        "a 40mm motor mount",
+        "a phone stand",
+        "a hex standoff, 12mm across flats",
+        "a rounded enclosure lid",
+        "an L-bracket with bolt holes",
+    ]
 
     // MARK: system prompt
 
@@ -185,6 +203,9 @@ struct CommandBar: View {
             .animation(.snappy(duration: 0.2), value: focused)
             .background(shortcutButton)
             .onExitCommand { engine.dismissError(); focused = false }
+            .onChange(of: engine.focusRequested) { _, req in
+                if req { focused = true; engine.focusRequested = false }
+            }
     }
 
     @ViewBuilder private var stateContent: some View {

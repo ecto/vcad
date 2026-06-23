@@ -57,7 +57,16 @@ struct EditorView: View {
                         .padding(14)
                 }
                 .overlay(alignment: .bottom) {
-                    StatusBarView(model: model).padding(.bottom, 14)
+                    VStack(spacing: 10) {
+                        if model.source.isSandbox && intent.draft.isEmpty && !intent.isThinking {
+                            ExampleChips(intent: intent)
+                                .transition(.opacity.combined(with: .move(edge: .bottom)))
+                        }
+                        StatusBarView(model: model)
+                    }
+                    .padding(.bottom, 14)
+                    .animation(.smooth(duration: 0.3), value: model.source.isSandbox)
+                    .animation(.smooth(duration: 0.25), value: intent.draft.isEmpty)
                 }
                 .toolbar {
                     ToolbarItem(placement: .navigation) { DocumentMenu(model: model) }
@@ -332,6 +341,29 @@ struct StatusBarView: View {
     private var bar: some View { Rectangle().fill(.secondary.opacity(0.25)).frame(width: 1, height: 11) }
 }
 
+/// Seed prompts over an untouched studio — tap to load one into the command bar.
+struct ExampleChips: View {
+    @Bindable var intent: IntentEngine
+    var body: some View {
+        HStack(spacing: 8) {
+            Text("Try").font(.system(size: 11, weight: .medium)).foregroundStyle(.tertiary)
+            ForEach(IntentEngine.examplePrompts.prefix(3), id: \.self) { prompt in
+                Button {
+                    intent.draft = prompt
+                    intent.focusRequested = true
+                } label: {
+                    Text(prompt).font(.system(size: 11))
+                        .padding(.horizontal, 11).padding(.vertical, 5)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .background(.regularMaterial, in: Capsule(style: .continuous))
+                .overlay(Capsule(style: .continuous).strokeBorder(.white.opacity(0.10), lineWidth: 0.5))
+            }
+        }
+    }
+}
+
 struct ViewportView: View {
     let model: EditorModel
 
@@ -420,6 +452,12 @@ struct ViewportView: View {
         rim.light.intensity = 2600
         rim.look(at: .zero, from: [-0.9, 0.35, -1.0], relativeTo: nil)
         content.add(rim)
+
+        // Soft front-low fill to lift shadow detail without flattening.
+        let fill = DirectionalLight()
+        fill.light.intensity = 1400
+        fill.look(at: .zero, from: [-0.2, 0.5, 1.2], relativeTo: nil)
+        content.add(fill)
     }
 
     /// A dark studio environment drawn procedurally (no bundled HDR), used for
@@ -524,6 +562,7 @@ struct ViewportView: View {
             .targetedToAnyEntity()
             .onChanged { value in
                 guard value.entity.name == "filletHandle" else { return }
+                model.noteInteraction()
                 if !model.draggingHandle {
                     model.draggingHandle = true
                     model.handleBaseline = model.modifierValue
@@ -538,6 +577,7 @@ struct ViewportView: View {
         DragGesture()
             .onChanged { value in
                 guard !model.draggingHandle else { return }
+                model.noteInteraction()
                 let dx = Float(value.translation.width - model.lastDrag.width)
                 let dy = Float(value.translation.height - model.lastDrag.height)
                 model.azimuth -= dx * 0.01
@@ -550,6 +590,7 @@ struct ViewportView: View {
     private var zoomGesture: some Gesture {
         MagnifyGesture()
             .onChanged { value in
+                model.noteInteraction()
                 model.distance = max(0.45, min(5.0, model.pinchBaseline / Float(value.magnification)))
             }
             .onEnded { _ in model.pinchBaseline = model.distance }
@@ -559,6 +600,7 @@ struct ViewportView: View {
 
     private func pick(at p: CGPoint, viewSize: CGSize) {
         guard viewSize.width > 1, viewSize.height > 1 else { return }
+        model.noteInteraction()
         let cam = model.cameraPosition
         let forward = normalize(-cam)
         let right = normalize(cross(forward, SIMD3<Float>(0, 1, 0)))

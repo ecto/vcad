@@ -89,6 +89,14 @@ struct Feature: Identifiable, Hashable {
     let kind: Kind
 }
 
+/// Stats captured when a generated program is validated — drives the intent
+/// bar's "Built · N parts · W×H×D mm" confirmation.
+struct GenStats {
+    var parts: Int
+    var size: SIMD3<Float>
+    var triangles: Int
+}
+
 @MainActor
 @Observable
 final class EditorModel {
@@ -98,7 +106,12 @@ final class EditorModel {
     var distance: Float = 1.5
 
     var source: GeometrySource = .sandbox {
-        didSet { geometryDirty = true; selectedFeatureID = source.isSandbox ? "modifier" : "part0" }
+        didSet {
+            geometryDirty = true
+            selectedFeatureID = source.isSandbox ? "modifier" : "part0"
+            resetCamera()        // frame the new part cleanly
+            noteInteraction()    // let the materialize-pop play before drifting
+        }
     }
 
     // Sandbox model: primitive + modifier, driven by the tool palette.
@@ -141,6 +154,35 @@ final class EditorModel {
     var pinchBaseline: Float = 1.5
     var draggingHandle = false
     var handleBaseline: Double = 0
+
+    // Idle turntable — after a beat with no interaction the camera drifts so the
+    // part shows itself off. Paused while dragging a handle or interacting.
+    var autoOrbit = true
+    @ObservationIgnored var lastInteraction = Date()
+    @ObservationIgnored private var orbitTimer: Timer?
+
+    init() { startIdleOrbit() }
+
+    func noteInteraction() { lastInteraction = Date() }
+
+    private func startIdleOrbit() {
+        orbitTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, self.autoOrbit, !self.draggingHandle,
+                      Date().timeIntervalSince(self.lastInteraction) > 3.0 else { return }
+                self.azimuth += 0.0026
+            }
+        }
+    }
+
+    /// Frame the geometry at a clean 3/4 view. Parts auto-fit to a constant
+    /// display size, so fixed camera params frame any part well.
+    func resetCamera() {
+        azimuth = .pi / 5
+        elevation = .pi / 7
+        distance = 1.5
+        pinchBaseline = 1.5
+    }
 
     let examples: [(name: String, path: String)] = [
         ("Pulley", "\(kSamplesDir)/mecheval/tasks/a6-pulley-01.vcad"),
@@ -245,18 +287,30 @@ final class EditorModel {
     /// evaluated part count, or nil if the program failed — leaving the current
     /// scene untouched so a bad generation never blanks the studio.
     @discardableResult
-    func applyGenerated(loon: String, label: String) -> Int? {
+    func applyGenerated(loon: String, label: String) -> GenStats? {
         let data = Data(loon.utf8)
         guard !data.isEmpty else { return nil }
-        let count: Int? = data.withUnsafeBytes { raw -> Int? in
+        let stats: GenStats? = data.withUnsafeBytes { raw -> GenStats? in
             guard let base = raw.bindMemory(to: UInt8.self).baseAddress,
                   let scene = vcad_scene_from_loon(base, data.count) else { return nil }
             defer { vcad_scene_free(scene) }
-            return vcad_scene_part_count(scene)
+            let n = vcad_scene_part_count(scene)
+            guard n > 0 else { return nil }
+            var lo = SIMD3<Float>(repeating: .greatestFiniteMagnitude)
+            var hi = SIMD3<Float>(repeating: -.greatestFiniteMagnitude)
+            var tris = 0, real = 0
+            for i in 0..<n {
+                let km = KernelMesh.fromView(vcad_scene_part_mesh(scene, i))
+                if km.isEmpty { continue }
+                lo = simd_min(lo, km.minBound); hi = simd_max(hi, km.maxBound)
+                tris += km.triangleCount; real += 1
+            }
+            guard real > 0 else { return nil }
+            return GenStats(parts: real, size: hi - lo, triangles: tris)
         }
-        guard let count, count > 0 else { return nil }
+        guard let stats else { return nil }
         source = .generated(loon: loon, label: label)
-        return count
+        return stats
     }
 
     private func makeBase() -> OpaquePointer? {
