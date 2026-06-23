@@ -123,15 +123,19 @@ struct ViewportView: View {
                 model.parameterDirty = false
             } else if model.parameterDirty {
                 let recreated = model.streamFillet()
-                if recreated, let res = model.streaming.resource,
-                   let root = content.entities.first(where: { $0.name == "geomRoot" }),
-                   let entity = root.findEntity(named: "part0") as? ModelEntity {
-                    entity.model?.mesh = res
+                if let root = content.entities.first(where: { $0.name == "geomRoot" }) {
+                    if recreated, let res = model.streaming.resource,
+                       let entity = root.findEntity(named: "part0") as? ModelEntity {
+                        entity.model?.mesh = res
+                    }
+                    root.findEntity(named: "filletHandle")?.position =
+                        model.handlePosition(radius: model.filletRadius)
                 }
                 model.parameterDirty = false
             }
         }
         .background(.black)
+        .highPriorityGesture(handleDrag)
         .gesture(orbitGesture)
         .simultaneousGesture(zoomGesture)
         .overlay(alignment: .bottomTrailing) { statsBadge.padding(12) }
@@ -172,6 +176,10 @@ struct ViewportView: View {
             centering.addChild(entity)
         }
 
+        if model.source.isDemo, model.selectedFeatureID == "fillet" {
+            centering.addChild(makeHandle(radius: model.filletRadius))
+        }
+
         let zUp = Entity()
         zUp.addChild(centering)
         zUp.orientation = simd_quatf(angle: -.pi / 2, axis: [1, 0, 0])
@@ -191,11 +199,43 @@ struct ViewportView: View {
         return m
     }
 
+    /// A glowing, grabbable handle that floats on the filleted edge.
+    private func makeHandle(radius: Double) -> ModelEntity {
+        let handle = ModelEntity(
+            mesh: .generateSphere(radius: 1.8),
+            materials: [UnlitMaterial(color: NSColor(red: 0.55, green: 0.95, blue: 1.0, alpha: 1.0))]
+        )
+        handle.name = "filletHandle"
+        handle.position = model.handlePosition(radius: radius)
+        handle.components.set(CollisionComponent(shapes: [ShapeResource.generateSphere(radius: 3.0)]))
+        handle.components.set(InputTargetComponent())
+        return handle
+    }
+
     // MARK: gestures
+
+    /// Grab the glowing handle and drag to scrub the fillet radius in-scene —
+    /// the Mac rehearsal for the Vision Pro pinch-scrub. Targeted to the handle
+    /// entity, so it only fires when the drag starts on the handle.
+    private var handleDrag: some Gesture {
+        DragGesture()
+            .targetedToAnyEntity()
+            .onChanged { value in
+                guard value.entity.name == "filletHandle" else { return }
+                if !model.draggingHandle {
+                    model.draggingHandle = true
+                    model.handleBaseline = model.filletRadius
+                }
+                let delta = Double(-value.translation.height) * 0.03
+                model.filletRadius = max(0, min(12, model.handleBaseline + delta))
+            }
+            .onEnded { _ in model.draggingHandle = false }
+    }
 
     private var orbitGesture: some Gesture {
         DragGesture()
             .onChanged { value in
+                guard !model.draggingHandle else { return }
                 let dx = Float(value.translation.width - model.lastDrag.width)
                 let dy = Float(value.translation.height - model.lastDrag.height)
                 model.azimuth -= dx * 0.01

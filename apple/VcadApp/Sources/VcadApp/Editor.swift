@@ -83,6 +83,8 @@ final class EditorModel {
     let streaming = StreamingMesh()
     var lastDrag: CGSize = .zero
     var pinchBaseline: Float = 1.5
+    var draggingHandle = false
+    var handleBaseline: Double = 0
 
     let cubeSize: Double = 30.0
 
@@ -127,6 +129,17 @@ final class EditorModel {
             r * sin(elevation),
             r * cos(elevation) * cos(azimuth)
         )
+    }
+
+    /// Position of the fillet handle, in kernel coords: the midpoint of the
+    /// top-front cube edge, pushed outward along the edge bisector by an amount
+    /// that grows with the radius. Anchored *parametrically* (not to a churning
+    /// FaceId), so it survives every re-solve — this is the demo's stand-in for
+    /// the geometry-stable-anchor layer the general case needs.
+    func handlePosition(radius: Double) -> SIMD3<Float> {
+        let mid = SIMD3<Float>(Float(cubeSize) / 2, 0, Float(cubeSize))
+        let outward = normalize(SIMD3<Float>(0, -1, 1))
+        return mid + outward * (2.5 + Float(radius))
     }
 
     // MARK: scene building
