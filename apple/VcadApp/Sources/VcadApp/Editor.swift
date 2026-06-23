@@ -78,6 +78,14 @@ final class EditorModel {
     var solveMillis: Double = 0
     var sizeMM: SIMD3<Float> = .zero
 
+    // Picking (#7): analytic ray-pick result + the world<->kernel transform of
+    // the current display, captured when the scene is built.
+    var pickPoint: SIMD3<Float>?
+    var pickInfo: String?
+    var pickDirty = false
+    var displayScale: Float = 0.02
+    var displayCenter: SIMD3<Float> = .zero
+
     var geometryDirty = true
     var parameterDirty = false
     let streaming = StreamingMesh()
@@ -142,6 +150,28 @@ final class EditorModel {
         return mid + outward * (2.5 + Float(radius))
     }
 
+    struct PickHit { var point: SIMD3<Float>; var normal: SIMD3<Float> }
+
+    /// Cast a ray (kernel coords) against the demo's current solid via the
+    /// analytic BRep raytracer.
+    func raycastDemo(originKernel: SIMD3<Float>, dirKernel: SIMD3<Float>) -> PickHit? {
+        guard source.isDemo, let base = baseSolid else { return nil }
+        var target = base
+        var owned: OpaquePointer?
+        if effectiveFilletRadius > 0.05, let f = vcad_solid_fillet(base, effectiveFilletRadius) {
+            target = f; owned = f
+        }
+        defer { if let o = owned { vcad_solid_free(o) } }
+        let o: [Double] = [Double(originKernel.x), Double(originKernel.y), Double(originKernel.z)]
+        let d: [Double] = [Double(dirKernel.x), Double(dirKernel.y), Double(dirKernel.z)]
+        let hit = vcad_solid_raycast(target, o, d)
+        guard hit.hit != 0 else { return nil }
+        return PickHit(
+            point: SIMD3(Float(hit.point.0), Float(hit.point.1), Float(hit.point.2)),
+            normal: SIMD3(Float(hit.normal.0), Float(hit.normal.1), Float(hit.normal.2))
+        )
+    }
+
     // MARK: scene building
 
     func buildScene() -> RenderScene {
@@ -155,10 +185,13 @@ final class EditorModel {
         guard let km = filletKernelMesh() else { return .empty }
         streaming.update(from: km)
         guard let res = streaming.resource else { return .empty }
+        let center = (km.minBound + km.maxBound) / 2
+        let size = Self.extent(km.minBound, km.maxBound)
+        displayCenter = center
+        displayScale = 0.6 / max(size, 0.0001)
         return RenderScene(
             meshes: [(res, Self.heroColor)],
-            center: (km.minBound + km.maxBound) / 2,
-            size: Self.extent(km.minBound, km.maxBound),
+            center: center, size: size,
             triangleCount: km.triangleCount, partCount: 1
         )
     }
@@ -221,8 +254,12 @@ final class EditorModel {
         triangleCount = tris
         partCount = meshes.count
         sizeMM = hi - lo
-        return RenderScene(meshes: meshes, center: (lo + hi) / 2,
-                           size: Self.extent(lo, hi), triangleCount: tris, partCount: meshes.count)
+        let center = (lo + hi) / 2
+        let size = Self.extent(lo, hi)
+        displayCenter = center
+        displayScale = 0.6 / max(size, 0.0001)
+        return RenderScene(meshes: meshes, center: center, size: size,
+                           triangleCount: tris, partCount: meshes.count)
     }
 
     static func extent(_ lo: SIMD3<Float>, _ hi: SIMD3<Float>) -> Float {

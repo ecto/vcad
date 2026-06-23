@@ -21,5 +21,7 @@ no-builtin-font = ["vcad-kernel/no-builtin-font"]
 [dependencies]
 vcad-kernel = { workspace = true }
 vcad-kernel-tessellate = { workspace = true }
+vcad-kernel-math = { workspace = true }
+vcad-kernel-raytrace = { workspace = true }
 vcad-eval = { workspace = true }
 vcad-ir = { workspace = true }

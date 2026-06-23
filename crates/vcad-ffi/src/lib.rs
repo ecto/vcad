@@ -21,6 +21,8 @@ use std::ptr;
 use vcad_eval::{evaluate_document, EvalOptions, EvaluatedScene};
 use vcad_ir::Document;
 use vcad_kernel::Solid;
+use vcad_kernel_math::{Point3, Vec3};
+use vcad_kernel_raytrace::{Bvh, Ray};
 use vcad_kernel_tessellate::TriangleMesh;
 
 /// Opaque handle to a kernel solid.
@@ -266,6 +268,51 @@ pub extern "C" fn vcad_scene_free(scene: *mut VcadScene) {
     }
 }
 
+/// Result of a ray-pick against a solid's BRep.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct VcadHit {
+    pub hit: u8,
+    pub point: [f64; 3],
+    pub normal: [f64; 3],
+    pub t: f64,
+}
+
+/// Cast a ray (origin + direction, kernel coords) against a solid and return
+/// the closest analytic surface hit. Builds a BVH per call — fine for
+/// interactive picking. Returns hit=0 on miss / null / non-BRep / panic.
+#[no_mangle]
+pub extern "C" fn vcad_solid_raycast(
+    solid: *const VcadSolid,
+    origin: *const f64,
+    dir: *const f64,
+) -> VcadHit {
+    let miss = VcadHit { hit: 0, point: [0.0; 3], normal: [0.0; 3], t: 0.0 };
+    if solid.is_null() || origin.is_null() || dir.is_null() {
+        return miss;
+    }
+    catch_unwind(AssertUnwindSafe(|| {
+        let s: &VcadSolid = unsafe { &*solid };
+        let o = unsafe { std::slice::from_raw_parts(origin, 3) };
+        let d = unsafe { std::slice::from_raw_parts(dir, 3) };
+        let Some(brep) = s.inner.as_brep() else {
+            return miss;
+        };
+        let bvh = Bvh::build(brep);
+        let ray = Ray::new(Point3::new(o[0], o[1], o[2]), Vec3::new(d[0], d[1], d[2]));
+        match bvh.trace_closest(&ray) {
+            Some(h) => VcadHit {
+                hit: 1,
+                point: [h.point.x, h.point.y, h.point.z],
+                normal: [h.normal.x, h.normal.y, h.normal.z],
+                t: h.t,
+            },
+            None => miss,
+        }
+    }))
+    .unwrap_or(miss)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -296,6 +343,18 @@ mod tests {
         assert!(view.vertices_len > 0, "part 0 should have geometry");
         assert!(view.indices_len % 3 == 0, "indices form whole triangles");
         vcad_scene_free(scene);
+    }
+
+    #[test]
+    fn raycast_hits_a_cube_face() {
+        let cube = vcad_solid_cube(30.0, 30.0, 30.0);
+        let origin = [15.0_f64, 15.0, 100.0];
+        let dir = [0.0_f64, 0.0, -1.0];
+        let hit = vcad_solid_raycast(cube, origin.as_ptr(), dir.as_ptr());
+        assert_eq!(hit.hit, 1, "a ray down +Z should hit the top face");
+        assert!((hit.point[2] - 30.0).abs() < 1e-6, "hit z should be 30, got {}", hit.point[2]);
+        assert!(hit.normal[2] > 0.9, "top-face normal should point +Z");
+        vcad_solid_free(cube);
     }
 
     #[test]

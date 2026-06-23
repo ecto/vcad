@@ -90,6 +90,11 @@ struct InspectorView: View {
                 LabeledContent("Bounds", value: boundsText)
                 LabeledContent("Solve", value: String(format: "%.1f ms", model.solveMillis))
             }
+            if let info = model.pickInfo {
+                Section("Picked") {
+                    Text(info).font(.callout.monospacedDigit())
+                }
+            }
         }
         .formStyle(.grouped)
     }
@@ -105,10 +110,11 @@ struct ViewportView: View {
 
     var body: some View {
         // Register observation dependencies so `update:` re-runs on change.
-        _ = (model.azimuth, model.elevation, model.distance,
-             model.filletRadius, model.source, model.selectedFeatureID)
+        _ = (model.azimuth, model.elevation, model.distance, model.filletRadius,
+             model.source, model.selectedFeatureID, model.pickDirty)
 
-        return RealityView { content in
+        return GeometryReader { geo in
+          RealityView { content in
             addLightsAndCamera(content)
             rebuildGeometry(content)
             model.geometryDirty = false
@@ -133,12 +139,32 @@ struct ViewportView: View {
                 }
                 model.parameterDirty = false
             }
+            if model.pickDirty {
+                if let root = content.entities.first(where: { $0.name == "geomRoot" }),
+                   let centering = root.findEntity(named: "centering") {
+                    centering.findEntity(named: "pickMarker")?.removeFromParent()
+                    if let p = model.pickPoint {
+                        let marker = ModelEntity(
+                            mesh: .generateSphere(radius: 1.3),
+                            materials: [UnlitMaterial(color: NSColor(red: 1.0, green: 0.62, blue: 0.12, alpha: 1.0))]
+                        )
+                        marker.name = "pickMarker"
+                        marker.position = p
+                        centering.addChild(marker)
+                    }
+                }
+                model.pickDirty = false
+            }
         }
         .background(.black)
         .highPriorityGesture(handleDrag)
         .gesture(orbitGesture)
         .simultaneousGesture(zoomGesture)
+        .gesture(SpatialTapGesture(coordinateSpace: .local).onEnded { value in
+            pick(at: value.location, viewSize: geo.size)
+        })
         .overlay(alignment: .bottomTrailing) { statsBadge.padding(12) }
+        }
     }
 
     // MARK: scene
@@ -169,6 +195,7 @@ struct ViewportView: View {
         let sceneScale = 0.6 / max(scene.size, 0.0001)
 
         let centering = Entity()
+        centering.name = "centering"
         centering.position = -scene.center
         for (i, item) in scene.meshes.enumerated() {
             let entity = ModelEntity(mesh: item.mesh, materials: [material(item.color)])
@@ -251,6 +278,47 @@ struct ViewportView: View {
                 model.distance = max(0.45, min(5.0, model.pinchBaseline / Float(value.magnification)))
             }
             .onEnded { _ in model.pinchBaseline = model.distance }
+    }
+
+    // MARK: picking (#7)
+
+    /// Click -> world ray (pinhole, 60° vertical FOV) -> kernel ray -> analytic
+    /// BRep raycast. Drops a marker at the exact hit point.
+    private func pick(at p: CGPoint, viewSize: CGSize) {
+        guard viewSize.width > 1, viewSize.height > 1 else { return }
+        let cam = model.cameraPosition
+        let forward = normalize(-cam)
+        let right = normalize(cross(forward, SIMD3<Float>(0, 1, 0)))
+        let up = cross(right, forward)
+        let tanHalf = Float(tan(Double.pi / 6.0))   // 60° vertical FOV / 2
+        let aspect = Float(viewSize.width / viewSize.height)
+        let ndcX = Float(2 * p.x / viewSize.width - 1)
+        let ndcY = Float(1 - 2 * p.y / viewSize.height)
+        let dirWorld = normalize(forward + ndcX * tanHalf * aspect * right + ndcY * tanHalf * up)
+
+        // World -> kernel: inverse of geomRoot (uniform scale, Rx(-90°), -center).
+        let s = model.displayScale
+        let camKernel = rxPlus90(cam / s) + model.displayCenter
+        let dirKernel = normalize(rxPlus90(dirWorld))
+
+        if let hit = model.raycastDemo(originKernel: camKernel, dirKernel: dirKernel) {
+            model.pickPoint = hit.point
+            model.pickInfo = describe(hit)
+        } else {
+            model.pickPoint = nil
+            model.pickInfo = nil
+        }
+        model.pickDirty = true
+    }
+
+    /// Rotate world->kernel: inverse of the kernel Z-up -> Y-up Rx(-90°).
+    private func rxPlus90(_ v: SIMD3<Float>) -> SIMD3<Float> { SIMD3(v.x, -v.z, v.y) }
+
+    private func describe(_ hit: EditorModel.PickHit) -> String {
+        let n = hit.normal
+        let maxAxis = max(abs(n.x), max(abs(n.y), abs(n.z)))
+        let kind = maxAxis > 0.97 ? "Planar face (Box)" : "Rounded face (Fillet)"
+        return String(format: "%@\n(%.1f, %.1f, %.1f) mm", kind, hit.point.x, hit.point.y, hit.point.z)
     }
 
     private var statsBadge: some View {

@@ -28,6 +28,13 @@ typedef struct VcadAabb {
   double max[3];
 } VcadAabb;
 
+typedef struct VcadHit {
+  uint8_t hit;
+  double point[3];
+  double normal[3];
+  double t;
+} VcadHit;
+
 uint32_t vcad_ffi_abi_version(void);
 
 VcadSolid *vcad_solid_cube(double sx, double sy, double sz);
@@ -43,6 +50,8 @@ VcadMeshView vcad_mesh_view(const VcadMesh *mesh);
 
 void vcad_mesh_free(VcadMesh *mesh);
 void vcad_solid_free(VcadSolid *solid);
+
+VcadHit vcad_solid_raycast(const VcadSolid *solid, const double *origin, const double *dir);
 
 VcadScene *vcad_scene_from_json(const uint8_t *json, size_t json_len);
 size_t vcad_scene_part_count(const VcadScene *scene);

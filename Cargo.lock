@@ -6974,6 +6974,8 @@ dependencies = [
  "vcad-eval",
  "vcad-ir",
  "vcad-kernel",
+ "vcad-kernel-math",
+ "vcad-kernel-raytrace",
  "vcad-kernel-tessellate",
 ]
 
