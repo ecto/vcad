@@ -233,7 +233,7 @@ const httpServer = createHttpServer(async (req, res) => {
 
     // Live review window (/live/*) — shared, flag-gated handler. Returns true
     // once it has written a response.
-    if (await handleLiveRequest(req, res, { user: verifyAccessToken(req) })) {
+    if (await handleLiveRequest(req, res, { user: verifyAccessToken(req), getEngine })) {
       return;
     }
 

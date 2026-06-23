@@ -20,8 +20,14 @@
 
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { AuthUser } from "./oauth.js";
-import { createSessionEventStore } from "./session-store.js";
+import {
+  createSessionEventStore,
+  createShareStore,
+  resolveSessionIr,
+} from "./session-store.js";
 import { appendOverlay, listEvents } from "./tools/live.js";
+import { generateGlbPreview } from "./tools/preview.js";
+import type { Engine } from "@vcad/engine";
 
 /** An overlay body is tiny — a far smaller cap than the 10 MiB /mcp default. */
 const LIVE_BODY_MAX_BYTES = 16 * 1024;
@@ -88,7 +94,7 @@ const json = (res: ServerResponse, status: number, body: unknown): void => {
 export async function handleLiveRequest(
   req: IncomingMessage,
   res: ServerResponse,
-  opts: { user: AuthUser | null } = { user: null },
+  opts: { user: AuthUser | null; getEngine?: () => Promise<Engine> } = { user: null },
 ): Promise<boolean> {
   const url = new URL(req.url ?? "/", `https://${req.headers.host ?? "localhost"}`);
   if (!url.pathname.startsWith("/live/")) return false;
@@ -104,6 +110,15 @@ export async function handleLiveRequest(
   const action = parts[2] ?? "";
   if (!sessionId) {
     text(res, 400, "missing session id");
+    return true;
+  }
+
+  // Private by default: the session must be explicitly shared (share_session
+  // wrote a live_shares row) or every /live route 404s — even with the flag on
+  // and a valid id. This is the deliberate, revocable opt-in.
+  const shareStore = createShareStore();
+  if (!(await shareStore.isShared(sessionId))) {
+    text(res, 404, "Not Found");
     return true;
   }
 
@@ -156,6 +171,40 @@ export async function handleLiveRequest(
       { trustedAuthor: opts.user?.email || undefined },
     );
     json(res, result.ok ? 200 : 400, result);
+    return true;
+  }
+
+  if (req.method === "GET" && action === "glb") {
+    // Geometry for a hostless viewer that knows only the capability id: resolve
+    // the session IR by id (service role, no user), then the standard preview
+    // GLB. The session is already share-gated above, so this only ever serves a
+    // deliberately-shared model.
+    if (rateLimited(clientIp(req))) {
+      text(res, 429, "Too Many Requests");
+      return true;
+    }
+    const doc = await resolveSessionIr(sessionId);
+    if (!doc) {
+      text(res, 404, "Not Found");
+      return true;
+    }
+    const engine = opts.getEngine ? await opts.getEngine() : undefined;
+    if (!engine) {
+      text(res, 503, "geometry engine unavailable");
+      return true;
+    }
+    const b64 = await generateGlbPreview(doc, engine);
+    if (!b64) {
+      text(res, 404, "no previewable geometry");
+      return true;
+    }
+    const bytes = Buffer.from(b64, "base64");
+    res.writeHead(200, {
+      "Content-Type": "model/gltf-binary",
+      "Cache-Control": "no-store",
+      "Content-Length": String(bytes.length),
+    });
+    res.end(bytes);
     return true;
   }
 

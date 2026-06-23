@@ -44,7 +44,11 @@ import {
   dropSession,
   runInSessionScope,
 } from "./tools/session.js";
-import { createSessionStore, createSessionEventStore } from "./session-store.js";
+import {
+  createSessionStore,
+  createSessionEventStore,
+  createShareStore,
+} from "./session-store.js";
 import { createFabricateStore } from "./fabricate/store.js";
 import {
   quoteManufacturing,
@@ -60,6 +64,12 @@ import {
   placeOrder,
   placeOrderSchema,
 } from "./tools/ordering.js";
+import {
+  shareSession,
+  shareSessionSchema,
+  unshareSession,
+  unshareSessionSchema,
+} from "./tools/live-share.js";
 import type { AuthUser } from "./oauth.js";
 
 /** Per-connection context threaded from the transport entry point — the
@@ -569,6 +579,10 @@ export async function createServer(
   // clobber each other.
   const fabricateStore = createFabricateStore(context.user);
 
+  // Live-window share gate (live_shares). Created per connection like the
+  // others. No-op without Supabase env.
+  const shareStore = createShareStore();
+
   // Wire the kernel WASM's chat helpers into the shared commandRegistry so
   // `toAnthropicTools` and `planCrud` work on the server too. Same bootstrap
   // as `initEngineLifecycle` in @vcad/core, minus the docstore subscription
@@ -753,6 +767,19 @@ export async function createServer(
         description:
           "Place a QUOTED order once its authorization has been human-approved: performs one atomic wallet debit and moves the order to PAID (fab submission follows in a later step). Refuses if the authorization is still pending approval. Flag-gated (test-mode).",
         inputSchema: placeOrderSchema,
+      },
+      // ── Live review window: share a watchable session link ────
+      {
+        name: "share_session",
+        description:
+          "Share this session as a live, watchable link (mcp.vcad.io/live/<id>). Sessions are PRIVATE by default — this is the explicit opt-in that makes one viewable. Anyone with the returned link can watch the geometry + full event log (read-only) and drop annotations, so the result includes a clear public-link warning. Revoke anytime with unshare_session.",
+        inputSchema: shareSessionSchema,
+      },
+      {
+        name: "unshare_session",
+        description:
+          "Revoke a session's live link — it goes dead and the session is private again.",
+        inputSchema: unshareSessionSchema,
       },
       // ── Stdlib parts library (session-aware) ──────────────────
       {
@@ -1532,6 +1559,14 @@ export async function createServer(
 
         case "place_order":
           result = await placeOrder(args, fabricateStore, eventStore, context.user);
+          break;
+
+        case "share_session":
+          result = await shareSession(args, shareStore, context.user);
+          break;
+
+        case "unshare_session":
+          result = await unshareSession(args, shareStore);
           break;
 
         case "render_view":
