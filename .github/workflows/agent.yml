@@ -30,7 +30,7 @@ jobs:
             --remove-label agent:ready \
             --add-label agent:running
 
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       # Sibling path-dep workspaces — mirrors ci.yml so the agent can build.
       - name: Clone sibling repos

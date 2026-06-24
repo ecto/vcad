@@ -39,7 +39,7 @@ jobs:
     outputs:
       body: ${{ steps.gen.outputs.body }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           # Enough history for release-notes.mjs to pull recent commit
           # subjects as flavor for the humanized summary.
@@ -82,7 +82,7 @@ jobs:
     runs-on: ubuntu-22.04
     if: startsWith(github.ref, 'refs/tags/')
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       # Same sibling-repo clones as `build`; `cargo publish` runs the in-tree
       # verify pass which compiles the crate, and that resolves path deps on
@@ -145,7 +145,7 @@ jobs:
             tauri-args: ''
     runs-on: ${{ matrix.platform }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       # Path-dep sibling workspaces (mirrors ci.yml / agent.yml).
       - name: Clone sibling repos
