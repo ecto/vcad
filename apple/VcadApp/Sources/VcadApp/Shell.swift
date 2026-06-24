@@ -612,10 +612,11 @@ struct ViewportView: View {
         centering.name = "centering"
         centering.position = -scene.center
         for (i, item) in scene.meshes.enumerated() {
-            // Ghost the gripper's enclosure (part 0) to glass so the board,
-            // connector, and handle read through it — the cross-domain coupling
-            // is only legible if you can see inside.
-            let mat = (model.source.isGripper && i == 0) ? glassMaterial() : material(item.color)
+            // The gripper's parts get intentional materials (glass enclosure,
+            // green FR4 board, brushed-metal bracket) so each domain reads as what
+            // it is; everything else falls back to the index palette.
+            let mat: PhysicallyBasedMaterial =
+                model.source.isGripper ? gripperMaterial(i) : material(item.color)
             let entity = ModelEntity(mesh: item.mesh, materials: [mat])
             entity.name = "part\(i)"
             centering.addChild(entity)
@@ -662,6 +663,35 @@ struct ViewportView: View {
         m.baseColor = .init(tint: color)
         m.roughness = 0.34
         m.metallic = 0.55
+        return m
+    }
+
+    /// Intentional materials for the gripper's known parts (enclosure 0, board 1,
+    /// bracket 2) — so each domain reads as what it physically is.
+    private func gripperMaterial(_ index: Int) -> PhysicallyBasedMaterial {
+        switch index {
+        case 0: return glassMaterial()  // enclosure — see inside
+        case 2: return brushedMetal()   // sheet-metal bracket
+        default: return pcbGreen()       // PCB board
+        }
+    }
+
+    /// Brushed aluminium for the sheet-metal bracket — semi-matte so it reads as
+    /// metal without mirroring the dark studio to black.
+    private func brushedMetal() -> PhysicallyBasedMaterial {
+        var m = PhysicallyBasedMaterial()
+        m.baseColor = .init(tint: NSColor(srgbRed: 0.80, green: 0.82, blue: 0.85, alpha: 1.0))
+        m.roughness = 0.5
+        m.metallic = 0.6
+        return m
+    }
+
+    /// Dark green FR4 for the PCB.
+    private func pcbGreen() -> PhysicallyBasedMaterial {
+        var m = PhysicallyBasedMaterial()
+        m.baseColor = .init(tint: NSColor(srgbRed: 0.09, green: 0.40, blue: 0.20, alpha: 1.0))
+        m.roughness = 0.5
+        m.metallic = 0.0
         return m
     }
 
