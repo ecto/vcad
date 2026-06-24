@@ -498,16 +498,17 @@ struct ViewportView: View {
             // re-solve already tracked the finger per frame; these heavy passes
             // run a single time per gesture, never in the drag hot loop.
             if model.copperDirty {
-                if model.source.isGripper {
-                    let scene = model.gripperScene() // full: enclosure + board + bracket
+                // ONE solve returns every domain: meshes (incl. the sheet-metal
+                // fold) + copper, both from the same resolved connector_x.
+                if model.source.isGripper, let solve = model.gripperSolve() {
                     if let root = content.entities.first(where: { $0.name == "geomRoot" }),
                        let centering = root.findEntity(named: "centering") {
-                        for (i, item) in scene.meshes.enumerated() {
-                            (centering.findEntity(named: "part\(i)") as? ModelEntity)?.model?.mesh = item.mesh
+                        for (i, mesh) in solve.meshes.enumerated() {
+                            (centering.findEntity(named: "part\(i)") as? ModelEntity)?.model?.mesh = mesh
                         }
                     }
+                    redrawCopper(content, solve.copper)
                 }
-                redrawCopper(content)
                 model.copperDirty = false
             }
 
@@ -626,7 +627,7 @@ struct ViewportView: View {
             centering.addChild(makeConnectorHandle(at: model.connectorHandlePosition()))
         }
         if model.source.isGripper {
-            centering.addChild(buildCopperRoot())
+            centering.addChild(buildCopperRoot(model.routeGripperCopper()))
         }
 
         let zUp = Entity()
@@ -708,12 +709,12 @@ struct ViewportView: View {
     /// `copperRoot` of ribbon traces — copper for SIG, tin-grey for GND. The
     /// router gives straight board-local segments; each becomes a thin flat box
     /// oriented along the segment. Tiny counts, so plain ModelEntities suffice.
-    private func buildCopperRoot() -> Entity {
+    private func buildCopperRoot(_ segs: [EditorModel.CopperSeg]) -> Entity {
         let copperRoot = Entity()
         copperRoot.name = "copperRoot"
         let cu = NSColor(srgbRed: 0.87, green: 0.52, blue: 0.20, alpha: 1.0)
         let gnd = NSColor(srgbRed: 0.60, green: 0.64, blue: 0.70, alpha: 1.0)
-        for (i, s) in model.routeGripperCopper().enumerated() {
+        for (i, s) in segs.enumerated() {
             let d = s.b - s.a
             let len = simd_length(d)
             guard len > 1e-4 else { continue }
@@ -730,12 +731,12 @@ struct ViewportView: View {
         return copperRoot
     }
 
-    /// Swap in a freshly-routed copperRoot (called on drag-settle).
-    private func redrawCopper(_ content: RealityViewCameraContent) {
+    /// Swap in a freshly-routed copperRoot from the given segments (drag-settle).
+    private func redrawCopper(_ content: RealityViewCameraContent, _ segs: [EditorModel.CopperSeg]) {
         guard let root = content.entities.first(where: { $0.name == "geomRoot" }),
               let centering = root.findEntity(named: "centering") else { return }
         centering.findEntity(named: "copperRoot")?.removeFromParent()
-        centering.addChild(buildCopperRoot())
+        centering.addChild(buildCopperRoot(segs))
     }
 
     /// Dim (or restore) the copper while it lags a moving connector.

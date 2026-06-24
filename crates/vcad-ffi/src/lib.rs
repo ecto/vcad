@@ -79,7 +79,7 @@ impl VcadMeshView {
 /// Swift side assert it linked a compatible static lib.
 #[no_mangle]
 pub extern "C" fn vcad_ffi_abi_version() -> u32 {
-    3
+    4
 }
 
 /// Create a box (corner at origin, extends to `(sx, sy, sz)`). Returns null on panic.
@@ -289,19 +289,7 @@ pub extern "C" fn vcad_scene_part_mesh(scene: *const VcadScene, index: usize) ->
     let Some(part) = s.inner.parts.get(index) else {
         return VcadMeshView::empty();
     };
-    let m = &part.mesh;
-    let (normals, normals_len) = match &m.normals {
-        Some(n) if n.len() == m.positions.len() => (n.as_ptr(), n.len()),
-        _ => (ptr::null(), 0),
-    };
-    VcadMeshView {
-        vertices: m.positions.as_ptr(),
-        vertices_len: m.positions.len(),
-        normals,
-        normals_len,
-        indices: m.indices.as_ptr(),
-        indices_len: m.indices.len(),
-    }
+    eval_mesh_view(&part.mesh)
 }
 
 /// Free a scene handle. No-op on null.
@@ -777,6 +765,160 @@ pub extern "C" fn vcad_route_result_free(r: *mut VcadRouteResult) {
     }
 }
 
+// =========================================================================
+// The unified cross-domain solve — ONE call returns every domain.
+//
+// `vcad_doc_solve` sets connector_x and returns geometry (the meshes, including
+// the sheet-metal fold), copper (routed traces), AND the receipt scalars — all
+// descending from the SAME resolved parameter. This is the cross-domain vision
+// at the FFI boundary: the KERNEL fans connector_x out to mechanical +
+// electrical + sheet-metal, not the view layer. It's the SETTLE path (full +
+// expensive); the per-frame cutout still uses `vcad_doc_set_param_cheap`.
+// =========================================================================
+
+/// Owned result of a full cross-domain solve: meshes + copper + receipt.
+pub struct VcadSolve {
+    scene: EvaluatedScene,
+    traces: Vec<VcadTraceLine>,
+    unrouted: usize,
+    min_wall: f64,
+}
+
+/// Borrowed mesh view over an evaluated part (normals reported only when they
+/// match the vertex count; the caller synthesizes otherwise).
+fn eval_mesh_view(m: &vcad_eval::EvaluatedMesh) -> VcadMeshView {
+    let (normals, normals_len) = match &m.normals {
+        Some(n) if n.len() == m.positions.len() => (n.as_ptr(), n.len()),
+        _ => (ptr::null(), 0),
+    };
+    VcadMeshView {
+        vertices: m.positions.as_ptr(),
+        vertices_len: m.positions.len(),
+        normals,
+        normals_len,
+        indices: m.indices.as_ptr(),
+        indices_len: m.indices.len(),
+    }
+}
+
+/// Set `connector_x` and solve EVERY domain at once: evaluate the document to
+/// meshes (enclosure + board + sheet-metal bracket), route the board's copper,
+/// and compute the receipt — all from the one resolved parameter. Caller owns
+/// the result (`vcad_solve_free`). Null on null input / eval error / panic.
+#[no_mangle]
+pub extern "C" fn vcad_doc_solve(
+    doc: *mut VcadDoc,
+    name: *const c_char,
+    value: f64,
+) -> *mut VcadSolve {
+    if doc.is_null() || name.is_null() {
+        return ptr::null_mut();
+    }
+    catch_unwind(AssertUnwindSafe(|| {
+        let d: &mut VcadDoc = unsafe { &mut *doc };
+        let Ok(name) = (unsafe { CStr::from_ptr(name) }).to_str() else {
+            return ptr::null_mut();
+        };
+        d.inner.parameters.insert(name.to_string(), Parameter::literal(value));
+        let Ok(scene) = evaluate_document(&d.inner, &interactive_opts()) else {
+            return ptr::null_mut();
+        };
+        // Copper + receipt derive from the SAME resolved connector_x as the meshes.
+        let cx = vcad_ir::resolve_parameters(&d.inner.parameters)
+            .ok()
+            .and_then(|env| env.get("connector_x").copied())
+            .unwrap_or(value);
+        let pcb = build_gripper_slice2_board(cx);
+        let r = route_all(&pcb, 0.25, &[]);
+        let traces = r
+            .traces
+            .iter()
+            .map(|t| VcadTraceLine {
+                start: [t.start.x, t.start.y],
+                end: [t.end.x, t.end.y],
+                width: t.width,
+                layer: layer_code(t.layer),
+                net_id: net_code(&t.net),
+            })
+            .collect();
+        // Receipt: connector cutout clearance to the nearest enclosure wall (mm).
+        let min_wall = (cx - 6.0).min(74.0 - cx);
+        Box::into_raw(Box::new(VcadSolve {
+            scene,
+            traces,
+            unrouted: r.unrouted_nets.len(),
+            min_wall,
+        }))
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
+/// Number of evaluated parts (mesh roots) in a solve. 0 on null.
+#[no_mangle]
+pub extern "C" fn vcad_solve_part_count(s: *const VcadSolve) -> usize {
+    if s.is_null() {
+        return 0;
+    }
+    unsafe { &*s }.scene.parts.len()
+}
+
+/// Borrow the `index`-th part's mesh. Empty view on null / OOB.
+#[no_mangle]
+pub extern "C" fn vcad_solve_part_mesh(s: *const VcadSolve, index: usize) -> VcadMeshView {
+    if s.is_null() {
+        return VcadMeshView::empty();
+    }
+    match unsafe { &*s }.scene.parts.get(index) {
+        Some(part) => eval_mesh_view(&part.mesh),
+        None => VcadMeshView::empty(),
+    }
+}
+
+/// Number of routed copper segments in a solve. 0 on null.
+#[no_mangle]
+pub extern "C" fn vcad_solve_trace_count(s: *const VcadSolve) -> usize {
+    if s.is_null() {
+        return 0;
+    }
+    unsafe { &*s }.traces.len()
+}
+
+/// Copper segment `idx` (board-local mm). Zeroed line on null / OOB.
+#[no_mangle]
+pub extern "C" fn vcad_solve_trace(s: *const VcadSolve, idx: usize) -> VcadTraceLine {
+    let zero = VcadTraceLine { start: [0.0; 2], end: [0.0; 2], width: 0.0, layer: 0, net_id: 0 };
+    if s.is_null() {
+        return zero;
+    }
+    unsafe { &*s }.traces.get(idx).copied().unwrap_or(zero)
+}
+
+/// Receipt: nets that failed to route (0 = fully routed). 0 on null.
+#[no_mangle]
+pub extern "C" fn vcad_solve_unrouted(s: *const VcadSolve) -> usize {
+    if s.is_null() {
+        return 0;
+    }
+    unsafe { &*s }.unrouted
+}
+
+/// Receipt: connector-to-wall clearance (mm; the slice-1 min-wall verdict).
+#[no_mangle]
+pub extern "C" fn vcad_solve_min_wall(s: *const VcadSolve) -> f64 {
+    if s.is_null() {
+        return 0.0;
+    }
+    unsafe { &*s }.min_wall
+}
+
+/// Free a solve result. No-op on null.
+#[no_mangle]
+pub extern "C" fn vcad_solve_free(s: *mut VcadSolve) {
+    if !s.is_null() {
+        drop(unsafe { Box::from_raw(s) });
+    }
+}
+
 /// Result of a ray-pick against a solid's BRep.
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -1002,6 +1144,27 @@ mod tests {
         let span = |b: &([f64; 3], [f64; 3]), ax: usize| b.1[ax] - b.0[ax];
         let grew = (0..3).any(|ax| span(&hi, ax) > span(&lo, ax) + 4.0);
         assert!(grew, "taller flange must grow the bracket bbox: lo={lo:?}, hi={hi:?}");
+    }
+
+    #[test]
+    fn gripper_solve_bundles_all_domains() {
+        // Tier 2: ONE call returns geometry + copper + receipt, all from the same
+        // resolved connector_x.
+        let doc = vcad_doc_gripper_slice1();
+        let name = std::ffi::CString::new("connector_x").unwrap();
+        let s = vcad_doc_solve(doc, name.as_ptr(), 40.0);
+        assert!(!s.is_null());
+        assert_eq!(vcad_solve_part_count(s), 3, "enclosure + board + bracket meshes");
+        assert!(vcad_solve_part_mesh(s, 2).vertices_len > 0, "bracket has geometry");
+        assert!(vcad_solve_trace_count(s) >= 2, "both nets routed to copper");
+        assert_eq!(vcad_solve_unrouted(s), 0, "fully routed");
+        assert!((vcad_solve_min_wall(s) - 34.0).abs() < 1e-6, "min-wall at cx=40 is 34mm");
+        vcad_solve_free(s);
+        // null-safety
+        assert_eq!(vcad_solve_part_count(ptr::null()), 0);
+        assert_eq!(vcad_solve_trace_count(ptr::null()), 0);
+        vcad_solve_free(ptr::null_mut());
+        vcad_doc_free(doc);
     }
 
     #[test]

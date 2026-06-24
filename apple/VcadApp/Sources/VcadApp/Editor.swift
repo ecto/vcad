@@ -297,6 +297,48 @@ final class EditorModel {
         return sceneFromHandle(scene, start: start)
     }
 
+    /// The unified cross-domain solve — ONE FFI call returns every domain at the
+    /// current `connector_x`: the meshes (enclosure + board + sheet-metal fold),
+    /// the routed copper, and the receipt scalars, all descending from the same
+    /// resolved parameter. The SETTLE path: the kernel fans connector_x out, not
+    /// this view layer.
+    struct GripperSolve {
+        var meshes: [MeshResource]
+        var copper: [CopperSeg]
+        var minWall: Double
+        var unrouted: Int
+    }
+
+    func gripperSolve() -> GripperSolve? {
+        guard source.isGripper, let doc = ensureGripperDoc() else { return nil }
+        let start = Date()
+        let s: OpaquePointer? = "connector_x".withCString { vcad_doc_solve(doc, $0, connectorX) }
+        guard let s else { return nil }
+        defer { vcad_solve_free(s) }
+
+        var meshes: [MeshResource] = []
+        let pc = Int(vcad_solve_part_count(s))
+        for i in 0..<pc {
+            let km = KernelMesh.fromView(vcad_solve_part_mesh(s, i))
+            meshes.append(km.isEmpty ? .generateBox(size: 0.001) : km.resource(name: "part\(i)"))
+        }
+
+        var copper: [CopperSeg] = []
+        let ox: Float = 5, oy: Float = 5, z: Float = 7.1
+        let tc = Int(vcad_solve_trace_count(s))
+        for i in 0..<tc {
+            let t = vcad_solve_trace(s, i)
+            copper.append(CopperSeg(
+                a: SIMD3<Float>(Float(t.start.0) + ox, Float(t.start.1) + oy, z),
+                b: SIMD3<Float>(Float(t.end.0) + ox, Float(t.end.1) + oy, z),
+                width: Float(t.width), net: t.net_id))
+        }
+        copperUnrouted = Int(vcad_solve_unrouted(s))
+        solveMillis = Date().timeIntervalSince(start) * 1000
+        return GripperSolve(meshes: meshes, copper: copper,
+                            minWall: vcad_solve_min_wall(s), unrouted: copperUnrouted)
+    }
+
     // MARK: copper — slice 2, the electrical domain of the Connector Drag
 
     /// One routed copper segment, mapped into the board plate's frame.

@@ -96,6 +96,21 @@ VcadTraceLine vcad_route_result_trace(const VcadRouteResult *r, size_t idx);
 size_t vcad_route_result_unrouted_count(const VcadRouteResult *r);
 void vcad_route_result_free(VcadRouteResult *r);
 
+/* The unified cross-domain solve. vcad_doc_solve sets connector_x and returns
+ * EVERY domain at once — meshes (enclosure + board + sheet-metal bracket), copper
+ * traces, and the receipt scalars — all from the one resolved parameter. The
+ * SETTLE path (full + expensive); per-frame still uses vcad_doc_set_param_cheap.
+ * Caller owns the result (vcad_solve_free). */
+typedef struct VcadSolve VcadSolve;
+VcadSolve *vcad_doc_solve(VcadDoc *doc, const char *name, double value);
+size_t vcad_solve_part_count(const VcadSolve *s);
+VcadMeshView vcad_solve_part_mesh(const VcadSolve *s, size_t index);
+size_t vcad_solve_trace_count(const VcadSolve *s);
+VcadTraceLine vcad_solve_trace(const VcadSolve *s, size_t idx);
+size_t vcad_solve_unrouted(const VcadSolve *s);  /* receipt: nets unrouted (0 = ok) */
+double vcad_solve_min_wall(const VcadSolve *s);   /* receipt: connector-wall mm */
+void vcad_solve_free(VcadSolve *s);
+
 #ifdef __cplusplus
 }
 #endif

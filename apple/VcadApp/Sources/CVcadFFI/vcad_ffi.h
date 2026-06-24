@@ -88,6 +88,18 @@ VcadTraceLine vcad_route_result_trace(const VcadRouteResult *r, size_t idx);
 size_t vcad_route_result_unrouted_count(const VcadRouteResult *r);
 void vcad_route_result_free(VcadRouteResult *r);
 
+/* Unified cross-domain solve: one call → meshes + copper + receipt, all from the
+ * resolved connector_x. Settle path. Caller owns the result (vcad_solve_free). */
+typedef struct VcadSolve VcadSolve;
+VcadSolve *vcad_doc_solve(VcadDoc *doc, const char *name, double value);
+size_t vcad_solve_part_count(const VcadSolve *s);
+VcadMeshView vcad_solve_part_mesh(const VcadSolve *s, size_t index);
+size_t vcad_solve_trace_count(const VcadSolve *s);
+VcadTraceLine vcad_solve_trace(const VcadSolve *s, size_t idx);
+size_t vcad_solve_unrouted(const VcadSolve *s);
+double vcad_solve_min_wall(const VcadSolve *s);
+void vcad_solve_free(VcadSolve *s);
+
 #ifdef __cplusplus
 }
 #endif
