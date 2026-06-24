@@ -155,6 +155,7 @@ final class EditorModel {
     var geometryDirty = true
     var parameterDirty = false
     let streaming = StreamingMesh()
+    let chime = Chime()
     var lastDrag: CGSize = .zero
     var pinchBaseline: Float = 1.5
     var draggingHandle = false
@@ -249,6 +250,9 @@ final class EditorModel {
             lastConnectorOK = ok
             if !ok {
                 NSHapticFeedbackManager.defaultPerformer.perform(.levelChange, performanceTime: .default)
+                chime.play(.warning)
+            } else {
+                chime.play(.solved)
             }
         }
     }

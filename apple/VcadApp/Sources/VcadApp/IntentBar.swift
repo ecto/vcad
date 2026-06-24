@@ -49,10 +49,12 @@ final class IntentEngine {
             // current studio untouched rather than blanking it.
             if let stats = model.applyGenerated(loon: loon, label: Self.label(from: prompt)) {
                 draft = ""
+                model.chime.play(.solved)
                 phase = .done(Self.summary(stats))
                 try? await Task.sleep(for: .seconds(2.6))
                 if case .done = phase { phase = .idle }
             } else {
+                model.chime.play(.failed)
                 phase = .failed("That didn't evaluate to valid geometry — try rephrasing.")
             }
         } catch is CancellationError {
