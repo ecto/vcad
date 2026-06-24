@@ -809,44 +809,78 @@ fn evaluate_op_timed(
         // bindings exactly like a cube. (The web engine still routes its own
         // sheet-metal roots through a dedicated WASM binding; this is the
         // kernel-direct path used by the native app.)
-        CsgOp::SheetMetalBaseFlangeRect { .. } | CsgOp::SheetMetalEdgeFlange { .. } => {
+        CsgOp::SheetMetalBaseFlangeRect { .. }
+        | CsgOp::SheetMetalBaseFlangePolygon { .. }
+        | CsgOp::SheetMetalEdgeFlange { .. } => {
             let model = build_sheet_model(op, nodes)?;
             // 8 segments is plenty for a small-radius bend arc, and keeps the
             // fold's booleans cheap enough for interactive re-solve.
-            let solid = vcad_kernel::folded_sheet_solid(&model, 8).map_err(EvalError::SheetMetal)?;
+            let solid =
+                vcad_kernel::folded_sheet_solid(&model, 8).map_err(EvalError::SheetMetal)?;
             Ok(Some(solid))
         }
 
-        // Polygon base flanges + later-tier ops (jog/hem/relief) aren't wired
-        // into the kernel-direct path yet — left as None (the web engine handles
-        // them). Defer to a follow-up.
-        CsgOp::SheetMetalBaseFlangePolygon { .. }
-        | CsgOp::SheetMetalHem { .. }
+        // Hem / jog / bend-relief are not yet built in the kernel-direct
+        // evaluator. Surface that as an honest FAILURE (→ a RootFailure with a
+        // message), NOT a silent `Ok(None)` — a silent None renders a blank part
+        // with zero diagnostics, the worst possible outcome on web/MCP.
+        CsgOp::SheetMetalHem { .. }
         | CsgOp::SheetMetalJog { .. }
-        | CsgOp::SheetMetalBendRelief { .. } => Ok(None),
+        | CsgOp::SheetMetalBendRelief { .. } => Err(EvalError::SheetMetal(
+            "sheet-metal hem/jog/bend-relief are not yet supported by the kernel-direct \
+             evaluator (the web engine routes these through its own WASM path)"
+                .into(),
+        )),
     }
 }
 
 /// Build a [`vcad_kernel_sheet::SheetMetalModel`] from a sheet-metal op chain.
 /// Edge flanges reference their `parent` node, so this recurses down the chain
 /// (mirroring [`collect_transform_chain`]) and applies each flange in order.
-/// Foundation tier: rectangular base flange + edge flanges.
+/// Handles rectangular + polygon base flanges and edge flanges; the model's
+/// `material` is threaded from the IR (NOT hardcoded), so the bend table picks
+/// the right K-factor when no `manual_k` override is given.
 fn build_sheet_model(
     op: &CsgOp,
     nodes: &HashMap<NodeId, vcad_ir::Node>,
 ) -> Result<vcad_kernel::vcad_kernel_sheet::SheetMetalModel, EvalError> {
     use vcad_kernel::vcad_kernel_sheet::{
-        add_edge_flange, base_flange_rect, edge_flange::EdgeFlangeParams, BendDirection, BendTable,
-        FlangePosition,
+        add_edge_flange, base_flange_polygon_with_holes, base_flange_rect,
+        edge_flange::EdgeFlangeParams, BendDirection, BendTable, FlangePosition,
     };
+    use vcad_kernel_math::Point2;
     let sm = |e: String| EvalError::SheetMetal(e);
     match op {
         CsgOp::SheetMetalBaseFlangeRect {
             width,
             depth,
             thickness,
+            material,
             ..
-        } => base_flange_rect(*width, *depth, *thickness).map_err(|e| sm(e.to_string())),
+        } => {
+            let mut model =
+                base_flange_rect(*width, *depth, *thickness).map_err(|e| sm(e.to_string()))?;
+            model.material = material.clone();
+            Ok(model)
+        }
+
+        CsgOp::SheetMetalBaseFlangePolygon {
+            outline,
+            holes,
+            thickness,
+            material,
+            ..
+        } => {
+            let to_pts = |v: &Vec<vcad_ir::Vec2>| {
+                v.iter().map(|p| Point2::new(p.x, p.y)).collect::<Vec<_>>()
+            };
+            let outer = to_pts(outline);
+            let hole_loops: Vec<Vec<Point2>> = holes.iter().map(to_pts).collect();
+            let mut model = base_flange_polygon_with_holes(outer, hole_loops, *thickness)
+                .map_err(|e| sm(e.to_string()))?;
+            model.material = material.clone();
+            Ok(model)
+        }
 
         CsgOp::SheetMetalEdgeFlange {
             parent,
@@ -861,6 +895,7 @@ fn build_sheet_model(
             let parent_op = &nodes.get(parent).ok_or(EvalError::MissingNode(*parent))?.op;
             let mut model = build_sheet_model(parent_op, nodes)?;
             let r = radius.unwrap_or(model.thickness);
+            let material = model.material.clone();
             add_edge_flange(
                 &mut model,
                 &BendTable::builtin(),
@@ -875,7 +910,9 @@ fn build_sheet_model(
                         vcad_ir::SheetMetalDirection::Down => BendDirection::Down,
                     },
                     position: FlangePosition::MaterialInside,
-                    material: "al-soft".into(),
+                    // Inherit the base flange's material so the bend-table
+                    // K-factor matches the actual sheet (steel ≠ aluminium).
+                    material,
                     manual_k: *manual_k,
                 },
             )
@@ -884,8 +921,8 @@ fn build_sheet_model(
         }
 
         _ => Err(sm(
-            "sheet-metal chain references a non-foundation op (polygon/jog/hem/relief \
-             not yet wired into kernel-direct eval)"
+            "sheet-metal chain references hem/jog/bend-relief, not yet buildable in \
+             kernel-direct eval"
                 .into(),
         )),
     }

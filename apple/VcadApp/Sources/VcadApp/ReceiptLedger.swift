@@ -20,9 +20,11 @@ struct ReceiptLedger: View {
 
     private var verdicts: [Verdict] {
         [
-            // Mechanical — LIVE: pure connector_x arithmetic, never stale.
+            // Mechanical — LIVE: REAL geometric min-wall measured by the kernel
+            // from the resolved box−cutout (vcad_doc_min_wall), refreshed every
+            // drag frame. Negative = the cutout has breached the shell.
             Verdict(label: "Min wall",
-                    detail: String(format: "%.1f mm", max(0, model.connectorMinWall)),
+                    detail: String(format: "%.1f mm", model.connectorMinWall),
                     held: model.connectorOK, stale: false),
             // Electrical — settles on release.
             Verdict(label: "Copper routed",
@@ -98,23 +100,54 @@ struct ReceiptLedger: View {
     }
 
     /// Quote — green↔amber only, NEVER red, NEVER gates (sourcing never gates).
-    /// The "est." suffix is load-bearing honesty: the bracket cost is a real
-    /// kernel model, but the lead time + board/enclosure lines are estimates.
+    /// Honest line items: enclosure CNC + bracket fold are REAL kernel cost
+    /// models (removed-volume / unfold); the board is the one labeled estimate
+    /// (no Rust PCB cost model). The lead time is a heuristic. The per-domain
+    /// breakdown is the load-bearing honesty — one opaque number would hide
+    /// which lines are kernel-real and which is an estimate.
+    private func dollars(_ cents: UInt64) -> String {
+        String(format: "$%.2f", Double(cents) / 100.0)
+    }
     private var quoteRow: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "shippingbox.fill").font(.system(size: 12))
-                .foregroundStyle(.secondary).frame(width: 16)
-            Text("Quote").font(.system(size: 12))
-            Spacer()
-            if model.receiptStale {
-                ProgressView().controlSize(.mini).scaleEffect(0.7)
-            } else {
-                Text(String(format: "$%.2f · %d day · est.",
-                            Double(model.quoteCents) / 100.0, model.leadDays))
-                    .font(.system(size: 12, design: .monospaced))
-                    .foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 8) {
+                Image(systemName: "shippingbox.fill").font(.system(size: 12))
+                    .foregroundStyle(.secondary).frame(width: 16)
+                Text("Quote").font(.system(size: 12))
+                Spacer()
+                if model.receiptStale {
+                    ProgressView().controlSize(.mini).scaleEffect(0.7)
+                } else {
+                    Text("\(dollars(model.quoteCents)) · \(model.leadDays) day")
+                        .font(.system(size: 12, weight: .medium, design: .monospaced))
+                        .foregroundStyle(.secondary)
+                }
+            }
+            if !model.receiptStale {
+                quoteLine("Enclosure (CNC)", dollars(model.quoteEnclosureCents), estimate: false)
+                quoteLine("Board (PCB)", dollars(model.quoteBoardCents), estimate: model.quoteHasEstimate)
+                quoteLine("Bracket (fold)", dollars(model.quoteBracketCents), estimate: false)
             }
         }
+    }
+
+    /// One quote sub-line, indented under the total. `estimate` appends an
+    /// "est." tag so the user sees exactly which line is not a kernel result.
+    @ViewBuilder private func quoteLine(_ label: String, _ amount: String, estimate: Bool) -> some View {
+        HStack(spacing: 6) {
+            Text(label).font(.system(size: 10))
+                .foregroundStyle(.tertiary)
+            Spacer()
+            if estimate {
+                Text("est.").font(.system(size: 9, weight: .semibold))
+                    .foregroundStyle(.tertiary)
+                    .padding(.horizontal, 4).padding(.vertical, 1)
+                    .background(.white.opacity(0.06), in: Capsule())
+            }
+            Text(amount).font(.system(size: 10, design: .monospaced))
+                .foregroundStyle(.tertiary)
+        }
+        .padding(.leading, 24)
     }
 
     @ViewBuilder private var makeButton: some View {

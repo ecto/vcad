@@ -75,6 +75,11 @@ VcadScene *vcad_doc_set_param(VcadDoc *doc, const char *name, double value);
  * mechanical cutout follows the drag live while the fold waits for settle
  * (vcad_doc_set_param). Same ownership. */
 VcadScene *vcad_doc_set_param_cheap(VcadDoc *doc, const char *name, double value);
+/* Per-frame REAL min-wall (mm): resolve the doc at its current params and measure
+ * the enclosure's thinnest enclosed-face clearance to the connector cutout from
+ * geometry — cheap enough to run live (no fold, no routing). f64::INFINITY when
+ * unmeasurable. The −Y front is the connector port and is excluded. */
+double vcad_doc_min_wall(const VcadDoc *doc);
 void vcad_doc_free(VcadDoc *doc);
 
 /* Slice 2 — copper re-route. vcad_route_traces builds the tiny 2-net gripper
@@ -110,14 +115,23 @@ VcadTraceLine vcad_solve_trace(const VcadSolve *s, size_t idx);
 size_t vcad_solve_unrouted(const VcadSolve *s);  /* receipt: nets unrouted (0 = ok) */
 double vcad_solve_min_wall(const VcadSolve *s);   /* receipt: connector-wall mm */
 /* Receipt verdicts (ABI 5). bracket_ok: 1=Held, 0=Violated (DFM Error).
- * bracket_severity: 0 clean / 1 Warning / 2 Error. quote: integer cents (bracket,
- * qty 1; a real estimate_cost). lead_days: HEURISTIC. all_held: AND of gating
- * domains (min-wall, copper, bracket; quote never gates) — gate the Make-it button. */
+ * bracket_severity: 0 clean / 1 Warning / 2 Error. quote_cost_cents: integer
+ * cents TOTAL (enclosure + board + bracket, qty 1). lead_days: HEURISTIC.
+ * all_held: AND of gating domains (min-wall, copper, bracket; quote never
+ * gates) — gate the Make-it button. */
 uint8_t vcad_solve_bracket_ok(const VcadSolve *s);
 uint8_t vcad_solve_bracket_severity(const VcadSolve *s);
 uint64_t vcad_solve_quote_cost_cents(const VcadSolve *s);
 uint32_t vcad_solve_lead_days(const VcadSolve *s);
 uint8_t vcad_solve_all_held(const VcadSolve *s);
+/* Per-domain quote breakdown (ABI 6): enclosure CNC + bracket fold are
+ * kernel-real cost models (removed-volume / unfold); board is a labeled estimate
+ * (no Rust PCB cost model). quote_has_estimate = 1 when the total includes the
+ * labeled board line, so the UI tags it "est." Sum == quote_cost_cents. */
+uint64_t vcad_solve_quote_enclosure_cents(const VcadSolve *s);
+uint64_t vcad_solve_quote_board_cents(const VcadSolve *s);
+uint64_t vcad_solve_quote_bracket_cents(const VcadSolve *s);
+uint8_t vcad_solve_quote_has_estimate(const VcadSolve *s);
 void vcad_solve_free(VcadSolve *s);
 
 #ifdef __cplusplus

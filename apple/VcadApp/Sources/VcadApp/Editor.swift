@@ -218,9 +218,22 @@ final class EditorModel {
         if let m = scrollMonitor { NSEvent.removeMonitor(m) }
     }
 
-    /// Clearance from the connector cutout to the nearest enclosure side wall.
-    var connectorMinWall: Double { min(connectorX - 6, 74 - connectorX) }
+    /// Clearance from the connector cutout to the nearest enclosure side wall —
+    /// the REAL geometric min-wall, measured by the kernel (`vcad_doc_min_wall`)
+    /// from the resolved `box − cutout`, not arithmetic on the box's literals.
+    /// Refreshed live on every cheap per-frame re-solve and on settle; seeded so
+    /// the centered open-state reads correctly before the first drag.
+    var connectorMinWall: Double = 34
     var connectorOK: Bool { connectorMinWall >= 6 }
+    /// Pull the real min-wall from the kernel at the current `connector_x`.
+    /// `vcad_doc_min_wall` resolves the resident doc (whose `connector_x` was
+    /// just written by the cheap/full re-solve) and measures the box−cutout
+    /// geometry — no fold, no routing, safe every drag frame.
+    func refreshMinWall() {
+        guard let doc = gripperDoc else { return }
+        let w = vcad_doc_min_wall(doc)
+        if w.isFinite { connectorMinWall = w }
+    }
     var showsConnectorHandle: Bool { source.isGripper }
     func connectorHandlePosition() -> SIMD3<Float> { SIMD3(Float(connectorX), 9, 13) }
 
@@ -306,6 +319,9 @@ final class EditorModel {
         }
         guard let scene else { return .empty }
         defer { vcad_scene_free(scene) }
+        // The cheap path wrote connector_x to the resident doc; pull the real
+        // min-wall back so the live Receipt row tracks geometry, not arithmetic.
+        refreshMinWall()
         return sceneFromHandle(scene, start: start)
     }
 
@@ -351,7 +367,15 @@ final class EditorModel {
         bracketOK = vcad_solve_bracket_ok(s) == 1
         bracketSeverity = Int(vcad_solve_bracket_severity(s))
         quoteCents = vcad_solve_quote_cost_cents(s)
+        quoteEnclosureCents = vcad_solve_quote_enclosure_cents(s)
+        quoteBoardCents = vcad_solve_quote_board_cents(s)
+        quoteBracketCents = vcad_solve_quote_bracket_cents(s)
+        quoteHasEstimate = vcad_solve_quote_has_estimate(s) == 1
         leadDays = Int(vcad_solve_lead_days(s))
+        // Authoritative min-wall from the full solve (same value the cheap path
+        // approximates per-frame). Keeps the settled Receipt row exact.
+        let solvedWall = vcad_solve_min_wall(s)
+        if solvedWall.isFinite { connectorMinWall = solvedWall }
         let held = vcad_solve_all_held(s) == 1
         receiptStale = false
         // Chime on the gate transition (the felt "verified" / "violated" moment).
@@ -381,7 +405,14 @@ final class EditorModel {
     var receiptStale = false
     var bracketOK = true
     var bracketSeverity = 0
+    /// Total quote (cents) = enclosure + board + bracket. Per-domain breakdown
+    /// below so the Receipt can show three labeled line items with an "est."
+    /// tag on the board (the one labeled estimate; the other two are kernel-real).
     var quoteCents: UInt64 = 0
+    var quoteEnclosureCents: UInt64 = 0
+    var quoteBoardCents: UInt64 = 0
+    var quoteBracketCents: UInt64 = 0
+    var quoteHasEstimate = false
     var leadDays = 0
     var allHeld = true
 

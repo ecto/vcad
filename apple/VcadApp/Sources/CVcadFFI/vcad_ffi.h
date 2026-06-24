@@ -69,6 +69,10 @@ VcadScene *vcad_doc_set_param(VcadDoc *doc, const char *name, double value);
 /* Per-frame: re-solve only cheap roots (skip the sheet-metal fold); fold waits
  * for settle via vcad_doc_set_param. */
 VcadScene *vcad_doc_set_param_cheap(VcadDoc *doc, const char *name, double value);
+/* Per-frame REAL min-wall (mm): resolve the doc at its current params and
+ * measure the enclosure side-wall clearance from geometry — cheap enough to run
+ * live (no fold, no routing). f64::INFINITY when unmeasurable. */
+double vcad_doc_min_wall(const VcadDoc *doc);
 void vcad_doc_free(VcadDoc *doc);
 
 /* Slice 2 — copper re-route. Build the 2-net gripper board at connector_x and
@@ -105,6 +109,14 @@ uint8_t vcad_solve_bracket_severity(const VcadSolve *s);
 uint64_t vcad_solve_quote_cost_cents(const VcadSolve *s);
 uint32_t vcad_solve_lead_days(const VcadSolve *s);
 uint8_t vcad_solve_all_held(const VcadSolve *s);
+/* Per-domain quote breakdown (ABI 6): enclosure CNC + bracket are kernel-real
+ * removed-volume / unfold cost models; board is a labeled estimate (no Rust PCB
+ * cost model). quote_has_estimate = 1 when the total includes the labeled board
+ * line, so the UI can tag it "est." quote_cost_cents == enclosure + board + bracket. */
+uint64_t vcad_solve_quote_enclosure_cents(const VcadSolve *s);
+uint64_t vcad_solve_quote_board_cents(const VcadSolve *s);
+uint64_t vcad_solve_quote_bracket_cents(const VcadSolve *s);
+uint8_t vcad_solve_quote_has_estimate(const VcadSolve *s);
 void vcad_solve_free(VcadSolve *s);
 
 #ifdef __cplusplus

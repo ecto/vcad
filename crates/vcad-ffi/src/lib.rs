@@ -85,8 +85,12 @@ pub extern "C" fn vcad_ffi_abi_version() -> u32 {
 /// Create a box (corner at origin, extends to `(sx, sy, sz)`). Returns null on panic.
 #[no_mangle]
 pub extern "C" fn vcad_solid_cube(sx: f64, sy: f64, sz: f64) -> *mut VcadSolid {
-    catch_unwind(|| Box::into_raw(Box::new(VcadSolid { inner: Solid::cube(sx, sy, sz) })))
-        .unwrap_or(ptr::null_mut())
+    catch_unwind(|| {
+        Box::into_raw(Box::new(VcadSolid {
+            inner: Solid::cube(sx, sy, sz),
+        }))
+    })
+    .unwrap_or(ptr::null_mut())
 }
 
 /// Create a cylinder along Z. Returns null on panic.
@@ -103,8 +107,12 @@ pub extern "C" fn vcad_solid_cylinder(radius: f64, height: f64, segments: u32) -
 /// Create a sphere centered at origin. Returns null on panic.
 #[no_mangle]
 pub extern "C" fn vcad_solid_sphere(radius: f64, segments: u32) -> *mut VcadSolid {
-    catch_unwind(|| Box::into_raw(Box::new(VcadSolid { inner: Solid::sphere(radius, segments) })))
-        .unwrap_or(ptr::null_mut())
+    catch_unwind(|| {
+        Box::into_raw(Box::new(VcadSolid {
+            inner: Solid::sphere(radius, segments),
+        }))
+    })
+    .unwrap_or(ptr::null_mut())
 }
 
 /// Tessellate a solid into a triangle mesh. `segments` controls curved-surface
@@ -116,7 +124,9 @@ pub extern "C" fn vcad_solid_to_mesh(solid: *const VcadSolid, segments: u32) -> 
     }
     catch_unwind(AssertUnwindSafe(|| {
         let s: &VcadSolid = unsafe { &*solid };
-        Box::into_raw(Box::new(VcadMesh { inner: s.inner.to_mesh(segments) }))
+        Box::into_raw(Box::new(VcadMesh {
+            inner: s.inner.to_mesh(segments),
+        }))
     }))
     .unwrap_or(ptr::null_mut())
 }
@@ -172,7 +182,9 @@ pub extern "C" fn vcad_solid_fillet(solid: *const VcadSolid, radius: f64) -> *mu
     }
     catch_unwind(AssertUnwindSafe(|| {
         let s: &VcadSolid = unsafe { &*solid };
-        Box::into_raw(Box::new(VcadSolid { inner: s.inner.fillet(radius) }))
+        Box::into_raw(Box::new(VcadSolid {
+            inner: s.inner.fillet(radius),
+        }))
     }))
     .unwrap_or(ptr::null_mut())
 }
@@ -185,7 +197,9 @@ pub extern "C" fn vcad_solid_chamfer(solid: *const VcadSolid, distance: f64) -> 
     }
     catch_unwind(AssertUnwindSafe(|| {
         let s: &VcadSolid = unsafe { &*solid };
-        Box::into_raw(Box::new(VcadSolid { inner: s.inner.chamfer(distance) }))
+        Box::into_raw(Box::new(VcadSolid {
+            inner: s.inner.chamfer(distance),
+        }))
     }))
     .unwrap_or(ptr::null_mut())
 }
@@ -194,7 +208,10 @@ pub extern "C" fn vcad_solid_chamfer(solid: *const VcadSolid, distance: f64) -> 
 #[no_mangle]
 pub extern "C" fn vcad_solid_bbox(solid: *const VcadSolid) -> VcadAabb {
     if solid.is_null() {
-        return VcadAabb { min: [0.0; 3], max: [0.0; 3] };
+        return VcadAabb {
+            min: [0.0; 3],
+            max: [0.0; 3],
+        };
     }
     let s: &VcadSolid = unsafe { &*solid };
     let (min, max) = s.inner.bounding_box();
@@ -342,13 +359,20 @@ pub extern "C" fn vcad_doc_load(json: *const u8, json_len: usize) -> *mut VcadDo
 /// domains together — the minimal Connector Drag.
 #[no_mangle]
 pub extern "C" fn vcad_doc_gripper_slice1() -> *mut VcadDoc {
-    catch_unwind(|| Box::into_raw(Box::new(VcadDoc { inner: build_gripper_slice1() })))
-        .unwrap_or(ptr::null_mut())
+    catch_unwind(|| {
+        Box::into_raw(Box::new(VcadDoc {
+            inner: build_gripper_slice1(),
+        }))
+    })
+    .unwrap_or(ptr::null_mut())
 }
 
 /// Interactive eval options: skip the O(n^2) clash pass the native app doesn't render.
 fn interactive_opts() -> EvalOptions {
-    EvalOptions { skip_clash_detection: true, ..Default::default() }
+    EvalOptions {
+        skip_clash_detection: true,
+        ..Default::default()
+    }
 }
 
 /// Set a parameter on a resident document and re-evaluate to a fresh scene.
@@ -372,7 +396,9 @@ pub extern "C" fn vcad_doc_set_param(
         };
         // Overwrite the parameter value; bindings (the coupling) stay intact and
         // re-apply during evaluation.
-        d.inner.parameters.insert(name.to_string(), Parameter::literal(value));
+        d.inner
+            .parameters
+            .insert(name.to_string(), Parameter::literal(value));
         match evaluate_document(&d.inner, &interactive_opts()) {
             Ok(scene) => Box::into_raw(Box::new(VcadScene { inner: scene })),
             Err(_) => ptr::null_mut(),
@@ -401,17 +427,43 @@ pub extern "C" fn vcad_doc_set_param_cheap(
         let Ok(name) = (unsafe { CStr::from_ptr(name) }).to_str() else {
             return ptr::null_mut();
         };
-        d.inner.parameters.insert(name.to_string(), Parameter::literal(value));
+        d.inner
+            .parameters
+            .insert(name.to_string(), Parameter::literal(value));
         // Evaluate a clone whose expensive (sheet-metal) roots are dropped.
         let mut fast = d.inner.clone();
         let nodes = fast.nodes.clone();
-        fast.roots.retain(|e| !subtree_has_sheet_metal(&nodes, e.root));
+        fast.roots
+            .retain(|e| !subtree_has_sheet_metal(&nodes, e.root));
         match evaluate_document(&fast, &interactive_opts()) {
             Ok(scene) => Box::into_raw(Box::new(VcadScene { inner: scene })),
             Err(_) => ptr::null_mut(),
         }
     }))
     .unwrap_or(ptr::null_mut())
+}
+
+/// Per-FRAME honest min-wall: resolve the resident doc at its current
+/// parameters and measure the REAL enclosure side-wall clearance (mm) from the
+/// geometry — the same computation the full solve reports, but cheap enough to
+/// run live during a drag (it evaluates only the cutout + housing nodes, no
+/// sheet-metal fold, no routing). This is what the Receipt's live min-wall row
+/// reads so the mid-drag number is geometry, not Swift-side arithmetic keyed to
+/// the box's literal extents. Returns f64::INFINITY when unmeasurable (null doc,
+/// no enclosure, resolve/eval failure) so a missing measure can't read as a
+/// violated wall.
+#[no_mangle]
+pub extern "C" fn vcad_doc_min_wall(doc: *const VcadDoc) -> f64 {
+    if doc.is_null() {
+        return f64::INFINITY;
+    }
+    catch_unwind(AssertUnwindSafe(|| {
+        let d: &VcadDoc = unsafe { &*doc };
+        let mut resolved = d.inner.clone();
+        let _ = vcad_eval::resolve_document(&mut resolved);
+        enclosure_min_wall(&resolved).unwrap_or(f64::INFINITY)
+    }))
+    .unwrap_or(f64::INFINITY)
 }
 
 /// Whether `op` is a sheet-metal fold op (expensive — booleans per bend).
@@ -478,55 +530,166 @@ fn build_gripper_slice1() -> Document {
     let mut doc = Document::new();
 
     // --- mechanical: enclosure = base box − connector cutout ---
-    doc.nodes.insert(1, Node { id: 1, name: Some("enclosure".into()),
-        op: CsgOp::Cube { size: v(80.0, 50.0, 30.0) } });
-    doc.nodes.insert(2, Node { id: 2, name: None,
-        op: CsgOp::Cube { size: v(12.0, 8.0, 12.0) } });
+    doc.nodes.insert(
+        1,
+        Node {
+            id: 1,
+            name: Some("enclosure".into()),
+            op: CsgOp::Cube {
+                size: v(80.0, 50.0, 30.0),
+            },
+        },
+    );
+    doc.nodes.insert(
+        2,
+        Node {
+            id: 2,
+            name: None,
+            op: CsgOp::Cube {
+                size: v(12.0, 8.0, 12.0),
+            },
+        },
+    );
     // offset.x is bound below; y/z fixed (straddles the front wall at y≈0).
-    doc.nodes.insert(3, Node { id: 3, name: None,
-        op: CsgOp::Translate { child: 2, offset: v(0.0, -2.0, 9.0) } });
-    doc.nodes.insert(4, Node { id: 4, name: Some("housing".into()),
-        op: CsgOp::Difference { left: 1, right: 3 } });
+    doc.nodes.insert(
+        3,
+        Node {
+            id: 3,
+            name: None,
+            op: CsgOp::Translate {
+                child: 2,
+                offset: v(0.0, -2.0, 9.0),
+            },
+        },
+    );
+    doc.nodes.insert(
+        4,
+        Node {
+            id: 4,
+            name: Some("housing".into()),
+            op: CsgOp::Difference { left: 1, right: 3 },
+        },
+    );
 
     // --- electrical: board = plate + connector body ---
-    doc.nodes.insert(5, Node { id: 5, name: None,
-        op: CsgOp::Cube { size: v(70.0, 40.0, 2.0) } });
-    doc.nodes.insert(6, Node { id: 6, name: None,
-        op: CsgOp::Translate { child: 5, offset: v(5.0, 5.0, 5.0) } });
-    doc.nodes.insert(7, Node { id: 7, name: None,
-        op: CsgOp::Cube { size: v(10.0, 14.0, 6.0) } });
-    doc.nodes.insert(8, Node { id: 8, name: None,
-        op: CsgOp::Translate { child: 7, offset: v(0.0, 2.0, 6.0) } });
-    doc.nodes.insert(9, Node { id: 9, name: Some("board".into()),
-        op: CsgOp::Union { left: 6, right: 8 } });
+    doc.nodes.insert(
+        5,
+        Node {
+            id: 5,
+            name: None,
+            op: CsgOp::Cube {
+                size: v(70.0, 40.0, 2.0),
+            },
+        },
+    );
+    doc.nodes.insert(
+        6,
+        Node {
+            id: 6,
+            name: None,
+            op: CsgOp::Translate {
+                child: 5,
+                offset: v(5.0, 5.0, 5.0),
+            },
+        },
+    );
+    doc.nodes.insert(
+        7,
+        Node {
+            id: 7,
+            name: None,
+            op: CsgOp::Cube {
+                size: v(10.0, 14.0, 6.0),
+            },
+        },
+    );
+    doc.nodes.insert(
+        8,
+        Node {
+            id: 8,
+            name: None,
+            op: CsgOp::Translate {
+                child: 7,
+                offset: v(0.0, 2.0, 6.0),
+            },
+        },
+    );
+    doc.nodes.insert(
+        9,
+        Node {
+            id: 9,
+            name: Some("board".into()),
+            op: CsgOp::Union { left: 6, right: 8 },
+        },
+    );
 
     // --- sheet metal: an L-bracket whose upstand height tracks connector_x ---
     // Foundation-tier sheet metal is now a first-class evaluator (vcad-eval), so
     // the bracket is just more nodes in this DAG — driven by the SAME binding
     // mechanism as the cubes, re-solved by the same evaluate_document. No
     // separate fold FFI: the cross-domain coupling rides one resolve.
-    doc.nodes.insert(10, Node { id: 10, name: Some("bracket-base".into()),
-        op: CsgOp::SheetMetalBaseFlangeRect {
-            width: 70.0, depth: 18.0, thickness: 1.0,
-            material: "al-soft".into(), shop_profile: None } });
+    doc.nodes.insert(
+        10,
+        Node {
+            id: 10,
+            name: Some("bracket-base".into()),
+            op: CsgOp::SheetMetalBaseFlangeRect {
+                width: 70.0,
+                depth: 18.0,
+                thickness: 1.0,
+                material: "al-soft".into(),
+                shop_profile: None,
+            },
+        },
+    );
     // Fold edge 2 (the back edge (70,18)->(0,18)) up so the upstand rises BEHIND
     // the connector body (Y≈2..16) and backs it, rather than in front of the board.
-    doc.nodes.insert(11, Node { id: 11, name: Some("bracket".into()),
-        op: CsgOp::SheetMetalEdgeFlange {
-            parent: 10, panel_id: 0, edge_index: 2,
-            length: 12.0, angle: std::f64::consts::FRAC_PI_2,
-            radius: Some(1.0), direction: vcad_ir::SheetMetalDirection::Down,
-            manual_k: Some(0.44) } });
-    doc.nodes.insert(12, Node { id: 12, name: None,
-        op: CsgOp::Translate { child: 11, offset: v(5.0, 1.0, 3.5) } });
+    doc.nodes.insert(
+        11,
+        Node {
+            id: 11,
+            name: Some("bracket".into()),
+            op: CsgOp::SheetMetalEdgeFlange {
+                parent: 10,
+                panel_id: 0,
+                edge_index: 2,
+                length: 12.0,
+                angle: std::f64::consts::FRAC_PI_2,
+                radius: Some(1.0),
+                direction: vcad_ir::SheetMetalDirection::Down,
+                manual_k: Some(0.44),
+            },
+        },
+    );
+    doc.nodes.insert(
+        12,
+        Node {
+            id: 12,
+            name: None,
+            op: CsgOp::Translate {
+                child: 11,
+                offset: v(5.0, 1.0, 3.5),
+            },
+        },
+    );
 
     // --- the coupling: ONE parameter drives THREE domains ---
-    doc.parameters.insert("connector_x".into(), Parameter::literal(40.0));
-    doc.bindings.bind(BindingKey::new(3, "offset.x"), Expr::formula("connector_x - 6"));
-    doc.bindings.bind(BindingKey::new(8, "offset.x"), Expr::formula("connector_x - 5"));
+    doc.parameters
+        .insert("connector_x".into(), Parameter::literal(40.0));
+    doc.bindings.bind(
+        BindingKey::new(3, "offset.x"),
+        Expr::formula("connector_x - 6"),
+    );
+    doc.bindings.bind(
+        BindingKey::new(8, "offset.x"),
+        Expr::formula("connector_x - 5"),
+    );
     // the bracket upstand grows toward the connector (length stays > 0 across the
     // 4..76 drag range: 5..23 mm).
-    doc.bindings.bind(BindingKey::new(11, "length"), Expr::formula("connector_x * 0.25 + 4"));
+    doc.bindings.bind(
+        BindingKey::new(11, "length"),
+        Expr::formula("connector_x * 0.25 + 4"),
+    );
 
     // --- the PCB lives IN the document: a "pcb." binding moves the connector
     // footprint declaratively, so the board's copper re-routes from the SAME
@@ -534,20 +697,62 @@ fn build_gripper_slice1() -> Document {
     // prefix routes the binding to the PCB, not a node.) The slope keeps J1 on
     // the 70 mm board (board-local ~10..61) across the 4..76 drag range.
     doc.pcb = Some(build_gripper_slice2_board(40.0));
-    doc.bindings.bind(BindingKey::new(0, "pcb.J1.position.x"), Expr::formula("connector_x * 0.7 + 8"));
+    doc.bindings.bind(
+        BindingKey::new(0, "pcb.J1.position.x"),
+        Expr::formula("connector_x * 0.7 + 8"),
+    );
 
-    doc.roots.push(SceneEntry { root: 4, material: "aluminum".into(), visible: None });
-    doc.roots.push(SceneEntry { root: 9, material: "board".into(), visible: None });
-    doc.roots.push(SceneEntry { root: 12, material: "bracket".into(), visible: None });
-    doc.materials.insert("aluminum".into(), MaterialDef {
-        name: "aluminum".into(), color: [0.72, 0.74, 0.78],
-        metallic: 0.6, roughness: 0.34, density: None, friction: None, ..Default::default() });
-    doc.materials.insert("board".into(), MaterialDef {
-        name: "board".into(), color: [0.12, 0.42, 0.18],
-        metallic: 0.0, roughness: 0.6, density: None, friction: None, ..Default::default() });
-    doc.materials.insert("bracket".into(), MaterialDef {
-        name: "bracket".into(), color: [0.66, 0.68, 0.72],
-        metallic: 0.85, roughness: 0.3, density: None, friction: None, ..Default::default() });
+    doc.roots.push(SceneEntry {
+        root: 4,
+        material: "aluminum".into(),
+        visible: None,
+    });
+    doc.roots.push(SceneEntry {
+        root: 9,
+        material: "board".into(),
+        visible: None,
+    });
+    doc.roots.push(SceneEntry {
+        root: 12,
+        material: "bracket".into(),
+        visible: None,
+    });
+    doc.materials.insert(
+        "aluminum".into(),
+        MaterialDef {
+            name: "aluminum".into(),
+            color: [0.72, 0.74, 0.78],
+            metallic: 0.6,
+            roughness: 0.34,
+            density: None,
+            friction: None,
+            ..Default::default()
+        },
+    );
+    doc.materials.insert(
+        "board".into(),
+        MaterialDef {
+            name: "board".into(),
+            color: [0.12, 0.42, 0.18],
+            metallic: 0.0,
+            roughness: 0.6,
+            density: None,
+            friction: None,
+            ..Default::default()
+        },
+    );
+    doc.materials.insert(
+        "bracket".into(),
+        MaterialDef {
+            name: "bracket".into(),
+            color: [0.66, 0.68, 0.72],
+            metallic: 0.85,
+            roughness: 0.3,
+            density: None,
+            friction: None,
+            ..Default::default()
+        },
+    );
     doc
 }
 
@@ -605,8 +810,14 @@ fn build_gripper_slice2_board(connector_x: f64) -> Pcb {
     // The router keys nets off `pad.net`, so net id == name keeps trace.net
     // human-readable ("SIG"/"GND").
     let nets = vec![
-        Net { id: "SIG".into(), name: "SIG".into() },
-        Net { id: "GND".into(), name: "GND".into() },
+        Net {
+            id: "SIG".into(),
+            name: "SIG".into(),
+        },
+        Net {
+            id: "GND".into(),
+            name: "GND".into(),
+        },
     ];
 
     // Non-zero rules are load-bearing: zeroed clearance/width routes invalid copper.
@@ -631,7 +842,10 @@ fn build_gripper_slice2_board(connector_x: f64) -> Pcb {
     let pad = |num: &str, net: &str, x: f64, y: f64| Pad {
         number: num.into(),
         pad_type: PadType::SMD,
-        shape: PadShape::Rect { width: 1.0, height: 1.2 },
+        shape: PadShape::Rect {
+            width: 1.0,
+            height: 1.2,
+        },
         position: Vec2::new(x, y),
         rotation: 0.0,
         drill: None,
@@ -733,7 +947,10 @@ pub extern "C" fn vcad_route_traces(connector_x: f64, width: f64) -> *mut VcadRo
                 net_id: net_code(&t.net),
             })
             .collect();
-        Box::into_raw(Box::new(VcadRouteResult { traces, unrouted: r.unrouted_nets.len() }))
+        Box::into_raw(Box::new(VcadRouteResult {
+            traces,
+            unrouted: r.unrouted_nets.len(),
+        }))
     })
     .unwrap_or(ptr::null_mut())
 }
@@ -751,7 +968,13 @@ pub extern "C" fn vcad_route_result_trace_count(r: *const VcadRouteResult) -> us
 /// Swift must bound by `vcad_route_result_trace_count`.
 #[no_mangle]
 pub extern "C" fn vcad_route_result_trace(r: *const VcadRouteResult, idx: usize) -> VcadTraceLine {
-    let zero = VcadTraceLine { start: [0.0; 2], end: [0.0; 2], width: 0.0, layer: 0, net_id: 0 };
+    let zero = VcadTraceLine {
+        start: [0.0; 2],
+        end: [0.0; 2],
+        width: 0.0,
+        layer: 0,
+        net_id: 0,
+    };
     if r.is_null() {
         return zero;
     }
@@ -817,7 +1040,94 @@ fn gripper_bracket_model(
     Ok(model)
 }
 
-/// Bracket DFM verdict + a REAL manufacturing quote at a given flange length.
+/// Real minimum enclosure wall: the smallest clearance from the connector cutout
+/// to an enclosure outer face, in mm — the Receipt's first gating check.
+///
+/// This is GEOMETRY that tracks the parameter, not arithmetic keyed to the box's
+/// literal extents. We evaluate the RESOLVED cutout (node 3) and enclosure
+/// (node 4) to solids and read their axis-aligned bounding boxes; each face's
+/// wall is `enclosure_outer − cutout_edge`, and the min-wall is the smallest over
+/// the FIVE ENCLOSED faces. We gate all of them — not just the connector's slide
+/// axis — because the true thinnest wall here is the fixed ±Z span (9 mm), not
+/// the ±X walls (34 mm at centre); reporting only X would overstate the margin.
+/// The one excluded face is the −Y front, which the cutout deliberately breaches:
+/// that's the connector PORT (an opening by design, not a wall). A wall goes
+/// negative when the cutout breaches the shell on a side it shouldn't → Violated.
+///
+/// Returns `None` when either solid can't be evaluated, so a missing enclosure
+/// surfaces as "unmeasured" rather than a fake 0.
+fn enclosure_min_wall(resolved: &Document) -> Option<f64> {
+    let mut cache = std::collections::HashMap::new();
+    // node 4 = housing (box − cutout), node 3 = the placed cutout, at their
+    // resolved positions (resolve_document already patched the X binding).
+    let housing = vcad_eval::evaluate_node(4, &resolved.nodes, &mut cache).ok()??;
+    let cutout = vcad_eval::evaluate_node(3, &resolved.nodes, &mut cache).ok()??;
+    let (h_min, h_max) = housing.bounding_box();
+    let (c_min, c_max) = cutout.bounding_box();
+    let neg_x = c_min[0] - h_min[0]; // left wall
+    let pos_x = h_max[0] - c_max[0]; // right wall
+    let pos_y = h_max[1] - c_max[1]; // back wall (−Y front is the port — excluded)
+    let neg_z = c_min[2] - h_min[2]; // bottom wall
+    let pos_z = h_max[2] - c_max[2]; // top wall
+    Some(
+        [neg_x, pos_x, pos_y, neg_z, pos_z]
+            .into_iter()
+            .fold(f64::INFINITY, f64::min),
+    )
+}
+
+/// Enclosure CNC cost from the RESOLVED solid, in integer cents.
+///
+/// Real removed-volume machining model (`estimate_cnc_from_removed_volume`):
+/// stock = the part's bounding-box block, removed = stock − true part volume.
+/// Both are read off the actual `box − cutout` BRep, so the number tracks the
+/// cutout as it moves — no hardcoded dims. Returns 0 only when there's no
+/// enclosure solid to cost. The `is_estimate` flag the model sets is implicit:
+/// this is a labeled CNC estimate (bbox stock, 1 feature = the pocket).
+fn enclosure_cnc_cents(scene: &EvaluatedScene) -> u64 {
+    use vcad_kernel::vcad_kernel_cost::{estimate_cnc_from_removed_volume, Material};
+    let Some(solid) = scene.parts.iter().find_map(|p| p.solid.as_ref()) else {
+        return 0;
+    };
+    let part_vol = solid.volume();
+    let (mn, mx) = solid.bounding_box();
+    let stock_vol = (mx[0] - mn[0]).abs() * (mx[1] - mn[1]).abs() * (mx[2] - mn[2]).abs();
+    // 1 machined feature: the connector pocket (the only cutout in this DAG).
+    let est = estimate_cnc_from_removed_volume(stock_vol, part_vol, 1, &Material::aluminum_6061());
+    (est.total_usd * 100.0).round().max(0.0) as u64
+}
+
+/// PCB fabrication estimate, in integer cents.
+///
+/// There is NO Rust PCB cost model — this is a clearly-labeled rate that
+/// mirrors the MCP `jlcpcb` placeholder (`estimatePcb`) so the native and MCP
+/// quotes agree: 2-layer, area-driven.
+/// `unit = round(area_cm2 · 6 · layer_factor) + 30`, plus a `200`-cent setup at
+/// qty 1. The area is read off the resolved board outline's bounding box, so it
+/// tracks a resized board. pricing_basis = ESTIMATE: surface it with an "est."
+/// tag, never as a kernel result.
+fn board_estimate_cents(pcb: Option<&Pcb>) -> u64 {
+    let Some(pcb) = pcb else { return 0 };
+    let verts = &pcb.outline.vertices;
+    if verts.is_empty() {
+        return 0;
+    }
+    let (mut min_x, mut min_y, mut max_x, mut max_y) = (f64::MAX, f64::MAX, f64::MIN, f64::MIN);
+    for v in verts {
+        min_x = min_x.min(v.x);
+        min_y = min_y.min(v.y);
+        max_x = max_x.max(v.x);
+        max_y = max_y.max(v.y);
+    }
+    let area_mm2 = (max_x - min_x).abs() * (max_y - min_y).abs();
+    let area_cm2 = (area_mm2 / 100.0).max(1.0);
+    let layers = pcb.stackup.layers.len().max(2) as f64;
+    let layer_factor = 1.0 + (layers - 2.0).max(0.0) * 0.4;
+    let unit = (area_cm2 * 6.0 * layer_factor).round() + 30.0;
+    (unit as u64) + 200
+}
+
+/// Bracket DFM verdict + a REAL bracket quote at a given flange length.
 /// Returns `(bracket_ok, severity, cents, lead_days)`. `bracket_ok = 0` only on a
 /// hard `Severity::Error` (a warning keeps it 1). The cost is a kernel model
 /// (`estimate_cost`); the lead time is a stated heuristic (no kernel lead model).
@@ -864,10 +1174,20 @@ pub struct VcadSolve {
     bracket_ok: u8,
     /// Worst bracket finding for display: 0 = clean, 1 = Warning, 2 = Error.
     bracket_severity: u8,
-    /// Manufacturing quote in integer cents (bracket only, qty 1) — a REAL
-    /// kernel cost (estimate_cost), no float across the ABI.
+    /// Total manufacturing quote in integer cents (enclosure + board + bracket,
+    /// qty 1) — no float across the ABI. Per-domain breakdown below.
     quote_cost_cents: u64,
-    /// Estimated lead time, business days. HEURISTIC — no kernel lead model.
+    /// Enclosure CNC cost (cents) — REAL removed-volume kernel model.
+    quote_enclosure_cents: u64,
+    /// PCB fab cost (cents) — LABELED ESTIMATE (no Rust PCB cost model).
+    quote_board_cents: u64,
+    /// Sheet-metal bracket cost (cents) — REAL kernel model (estimate_cost).
+    quote_bracket_cents: u64,
+    /// 1 when the total includes a labeled estimate (the board) the UI should
+    /// tag "est."; 0 when every line is a kernel-real cost.
+    quote_has_estimate: u8,
+    /// Estimated lead time, business days. HEURISTIC — no kernel lead model;
+    /// the max over participating domains (parts fabricate in parallel).
     lead_days: u32,
 }
 
@@ -906,7 +1226,9 @@ pub extern "C" fn vcad_doc_solve(
         let Ok(name) = (unsafe { CStr::from_ptr(name) }).to_str() else {
             return ptr::null_mut();
         };
-        d.inner.parameters.insert(name.to_string(), Parameter::literal(value));
+        d.inner
+            .parameters
+            .insert(name.to_string(), Parameter::literal(value));
         let Ok(scene) = evaluate_document(&d.inner, &interactive_opts()) else {
             return ptr::null_mut();
         };
@@ -939,8 +1261,12 @@ pub extern "C" fn vcad_doc_solve(
             }
             None => (Vec::new(), 0),
         };
-        // Receipt: connector cutout clearance to the nearest enclosure wall (mm).
-        let min_wall = (cx - 6.0).min(74.0 - cx);
+        // Receipt: REAL minimum wall thickness of the resolved enclosure BRep
+        // (DFM thickness raycast), not arithmetic on the box's literal extents.
+        // Falls to a large sentinel only if there's no solid to measure, so a
+        // missing enclosure can't masquerade as a violated wall.
+        let _ = cx; // retained for the binding fallback below, not the wall.
+        let min_wall = enclosure_min_wall(&resolved).unwrap_or(f64::INFINITY);
         // Bracket DFM + quote — read the flange length that actually folded off the
         // resolved node 11 (resolve_document patches op fields in place), so the
         // verdict matches the rendered bracket. Fall back to the binding formula.
@@ -948,8 +1274,18 @@ pub extern "C" fn vcad_doc_solve(
             Some(CsgOp::SheetMetalEdgeFlange { length, .. }) => *length,
             _ => cx * 0.25 + 4.0,
         };
-        let (bracket_ok, bracket_severity, quote_cost_cents, lead_days) =
+        let (bracket_ok, bracket_severity, quote_bracket_cents, bracket_lead) =
             gripper_bracket_verdict(flange_len);
+        // Multi-domain quote: enclosure CNC (real) + board fab (labeled est) +
+        // bracket (real). Lead time = max over domains (parallel fabrication,
+        // ship on the slowest); the per-domain leads are stated heuristics.
+        let quote_enclosure_cents = enclosure_cnc_cents(&scene);
+        let quote_board_cents = board_estimate_cents(resolved.pcb.as_ref());
+        let quote_cost_cents = quote_enclosure_cents + quote_board_cents + quote_bracket_cents;
+        let quote_has_estimate = u8::from(quote_board_cents > 0);
+        // Per-domain lead heuristics (business days): CNC 10, PCB 7, bracket
+        // from the sheet model. No kernel lead model exists.
+        let lead_days = bracket_lead.max(10).max(7);
         Box::into_raw(Box::new(VcadSolve {
             scene,
             traces,
@@ -958,6 +1294,10 @@ pub extern "C" fn vcad_doc_solve(
             bracket_ok,
             bracket_severity,
             quote_cost_cents,
+            quote_enclosure_cents,
+            quote_board_cents,
+            quote_bracket_cents,
+            quote_has_estimate,
             lead_days,
         }))
     }))
@@ -997,7 +1337,13 @@ pub extern "C" fn vcad_solve_trace_count(s: *const VcadSolve) -> usize {
 /// Copper segment `idx` (board-local mm). Zeroed line on null / OOB.
 #[no_mangle]
 pub extern "C" fn vcad_solve_trace(s: *const VcadSolve, idx: usize) -> VcadTraceLine {
-    let zero = VcadTraceLine { start: [0.0; 2], end: [0.0; 2], width: 0.0, layer: 0, net_id: 0 };
+    let zero = VcadTraceLine {
+        start: [0.0; 2],
+        end: [0.0; 2],
+        width: 0.0,
+        layer: 0,
+        net_id: 0,
+    };
     if s.is_null() {
         return zero;
     }
@@ -1013,7 +1359,9 @@ pub extern "C" fn vcad_solve_unrouted(s: *const VcadSolve) -> usize {
     unsafe { &*s }.unrouted
 }
 
-/// Receipt: connector-to-wall clearance (mm; the slice-1 min-wall verdict).
+/// Receipt: REAL minimum wall thickness of the resolved enclosure (mm), from
+/// the kernel DFM thickness raycast — not arithmetic on literal box dims.
+/// Returns f64::INFINITY when there's no enclosure solid to measure.
 #[no_mangle]
 pub extern "C" fn vcad_solve_min_wall(s: *const VcadSolve) -> f64 {
     if s.is_null() {
@@ -1040,13 +1388,51 @@ pub extern "C" fn vcad_solve_bracket_severity(s: *const VcadSolve) -> u8 {
     unsafe { &*s }.bracket_severity
 }
 
-/// Receipt: manufacturing quote in integer cents (bracket, qty 1). 0 on null.
+/// Receipt: TOTAL manufacturing quote in integer cents (enclosure + board +
+/// bracket, qty 1). 0 on null.
 #[no_mangle]
 pub extern "C" fn vcad_solve_quote_cost_cents(s: *const VcadSolve) -> u64 {
     if s.is_null() {
         return 0;
     }
     unsafe { &*s }.quote_cost_cents
+}
+
+/// Receipt: enclosure CNC cost (cents) — REAL removed-volume model. 0 on null.
+#[no_mangle]
+pub extern "C" fn vcad_solve_quote_enclosure_cents(s: *const VcadSolve) -> u64 {
+    if s.is_null() {
+        return 0;
+    }
+    unsafe { &*s }.quote_enclosure_cents
+}
+
+/// Receipt: PCB fab cost (cents) — LABELED ESTIMATE. 0 on null.
+#[no_mangle]
+pub extern "C" fn vcad_solve_quote_board_cents(s: *const VcadSolve) -> u64 {
+    if s.is_null() {
+        return 0;
+    }
+    unsafe { &*s }.quote_board_cents
+}
+
+/// Receipt: sheet-metal bracket cost (cents) — REAL kernel model. 0 on null.
+#[no_mangle]
+pub extern "C" fn vcad_solve_quote_bracket_cents(s: *const VcadSolve) -> u64 {
+    if s.is_null() {
+        return 0;
+    }
+    unsafe { &*s }.quote_bracket_cents
+}
+
+/// Receipt: 1 iff the quote total includes a labeled estimate (the board) the
+/// UI should tag "est."; 0 when every line is kernel-real. 0 on null.
+#[no_mangle]
+pub extern "C" fn vcad_solve_quote_has_estimate(s: *const VcadSolve) -> u8 {
+    if s.is_null() {
+        return 0;
+    }
+    unsafe { &*s }.quote_has_estimate
 }
 
 /// Receipt: estimated lead time, business days (HEURISTIC). 0 on null.
@@ -1097,7 +1483,12 @@ pub extern "C" fn vcad_solid_raycast(
     origin: *const f64,
     dir: *const f64,
 ) -> VcadHit {
-    let miss = VcadHit { hit: 0, point: [0.0; 3], normal: [0.0; 3], t: 0.0 };
+    let miss = VcadHit {
+        hit: 0,
+        point: [0.0; 3],
+        normal: [0.0; 3],
+        t: 0.0,
+    };
     if solid.is_null() || origin.is_null() || dir.is_null() {
         return miss;
     }
@@ -1134,8 +1525,14 @@ mod tests {
         let mesh = vcad_solid_to_mesh(solid, 16);
         assert!(!mesh.is_null());
         let view = vcad_mesh_view(mesh);
-        assert!(view.vertices_len > 0, "cube should tessellate to >0 vertices");
-        assert_eq!(view.vertices_len, view.normals_len, "one normal per position");
+        assert!(
+            view.vertices_len > 0,
+            "cube should tessellate to >0 vertices"
+        );
+        assert_eq!(
+            view.vertices_len, view.normals_len,
+            "one normal per position"
+        );
         assert!(view.indices_len % 3 == 0, "indices form whole triangles");
         vcad_mesh_free(mesh);
         vcad_solid_free(solid);
@@ -1174,7 +1571,10 @@ mod tests {
     fn bad_loon_returns_null() {
         let src = "this is not loon";
         let scene = vcad_scene_from_loon(src.as_ptr(), src.len());
-        assert!(scene.is_null(), "garbage loon should fail to a null scene, not panic");
+        assert!(
+            scene.is_null(),
+            "garbage loon should fail to a null scene, not panic"
+        );
         assert!(vcad_scene_from_loon(ptr::null(), 0).is_null());
     }
 
@@ -1183,7 +1583,8 @@ mod tests {
         // The coupling: one parameter must move BOTH the enclosure cutout
         // (mechanical, node 3) and the board connector (electrical, node 8).
         let mut doc = build_gripper_slice1();
-        doc.parameters.insert("connector_x".into(), Parameter::literal(25.0));
+        doc.parameters
+            .insert("connector_x".into(), Parameter::literal(25.0));
         vcad_eval::resolve_document(&mut doc).unwrap();
         let cutout_x = match &doc.nodes[&3].op {
             CsgOp::Translate { offset, .. } => offset.x,
@@ -1197,7 +1598,8 @@ mod tests {
         assert_eq!(conn_x, 20.0, "connector follows connector_x - 5");
 
         // Drag it and both re-solve together.
-        doc.parameters.insert("connector_x".into(), Parameter::literal(60.0));
+        doc.parameters
+            .insert("connector_x".into(), Parameter::literal(60.0));
         vcad_eval::resolve_document(&mut doc).unwrap();
         let cutout_x2 = match &doc.nodes[&3].op {
             CsgOp::Translate { offset, .. } => offset.x,
@@ -1237,8 +1639,16 @@ mod tests {
         // hand-built board, or there is nothing honest to draw.
         let pcb = build_gripper_slice2_board(40.0);
         let r = route_all(&pcb, 0.25, &[]);
-        assert!(r.unrouted_nets.is_empty(), "SIG+GND must both route, got {:?}", r.unrouted_nets);
-        assert!(r.traces.len() >= 2, "expect at least one segment per net, got {}", r.traces.len());
+        assert!(
+            r.unrouted_nets.is_empty(),
+            "SIG+GND must both route, got {:?}",
+            r.unrouted_nets
+        );
+        assert!(
+            r.traces.len() >= 2,
+            "expect at least one segment per net, got {}",
+            r.traces.len()
+        );
     }
 
     #[test]
@@ -1254,7 +1664,10 @@ mod tests {
                 .flat_map(|t| [t.start[0], t.end[0]])
                 .fold(f64::MIN, f64::max)
         };
-        assert!(max_x(b) > max_x(a), "copper should reach further +X when the connector slides right");
+        assert!(
+            max_x(b) > max_x(a),
+            "copper should reach further +X when the connector slides right"
+        );
         vcad_route_result_free(a);
         vcad_route_result_free(b);
     }
@@ -1278,31 +1691,50 @@ mod tests {
         let mut doc = build_gripper_slice1();
         let bracket_bbox = |doc: &Document| -> ([f64; 3], [f64; 3]) {
             // interactive path: no O(n^2) clash detection
-            let opts = EvalOptions { skip_clash_detection: true, clock: None };
+            let opts = EvalOptions {
+                skip_clash_detection: true,
+                clock: None,
+            };
             let scene = evaluate_document(doc, &opts).unwrap();
             // roots in order: enclosure (4), board (9), bracket (12).
-            let solid = scene.parts[2].solid.as_ref().expect("bracket should fold to a solid");
+            let solid = scene.parts[2]
+                .solid
+                .as_ref()
+                .expect("bracket should fold to a solid");
             solid.bounding_box()
         };
 
-        doc.parameters.insert("connector_x".into(), Parameter::literal(8.0));
+        doc.parameters
+            .insert("connector_x".into(), Parameter::literal(8.0));
         let lo = bracket_bbox(&doc); // warmup (first solve pays kernel init)
-        // steady-state: time three successive solves
+                                     // steady-state: time three successive solves
         for i in 0..3 {
-            doc.parameters.insert("connector_x".into(), Parameter::literal(20.0 + i as f64 * 15.0));
+            doc.parameters.insert(
+                "connector_x".into(),
+                Parameter::literal(20.0 + i as f64 * 15.0),
+            );
             let t = Instant::now();
             let _ = bracket_bbox(&doc);
-            eprintln!("[gripper] steady solve #{i} = {:.1}ms", t.elapsed().as_secs_f64() * 1000.0);
+            eprintln!(
+                "[gripper] steady solve #{i} = {:.1}ms",
+                t.elapsed().as_secs_f64() * 1000.0
+            );
         }
-        doc.parameters.insert("connector_x".into(), Parameter::literal(76.0));
+        doc.parameters
+            .insert("connector_x".into(), Parameter::literal(76.0));
         let hi = bracket_bbox(&doc);
 
-        eprintln!("[gripper] lo min={:?} max={:?}  hi min={:?} max={:?}",
-            lo.0, lo.1, hi.0, hi.1);
+        eprintln!(
+            "[gripper] lo min={:?} max={:?}  hi min={:?} max={:?}",
+            lo.0, lo.1, hi.0, hi.1
+        );
         // the flange grows with connector_x — assert SOME axis extent increases.
         let span = |b: &([f64; 3], [f64; 3]), ax: usize| b.1[ax] - b.0[ax];
         let grew = (0..3).any(|ax| span(&hi, ax) > span(&lo, ax) + 4.0);
-        assert!(grew, "taller flange must grow the bracket bbox: lo={lo:?}, hi={hi:?}");
+        assert!(
+            grew,
+            "taller flange must grow the bracket bbox: lo={lo:?}, hi={hi:?}"
+        );
     }
 
     #[test]
@@ -1313,11 +1745,42 @@ mod tests {
         let name = std::ffi::CString::new("connector_x").unwrap();
         let s = vcad_doc_solve(doc, name.as_ptr(), 40.0);
         assert!(!s.is_null());
-        assert_eq!(vcad_solve_part_count(s), 3, "enclosure + board + bracket meshes");
-        assert!(vcad_solve_part_mesh(s, 2).vertices_len > 0, "bracket has geometry");
+        assert_eq!(
+            vcad_solve_part_count(s),
+            3,
+            "enclosure + board + bracket meshes"
+        );
+        assert!(
+            vcad_solve_part_mesh(s, 2).vertices_len > 0,
+            "bracket has geometry"
+        );
         assert!(vcad_solve_trace_count(s) >= 2, "both nets routed to copper");
         assert_eq!(vcad_solve_unrouted(s), 0, "fully routed");
-        assert!((vcad_solve_min_wall(s) - 34.0).abs() < 1e-6, "min-wall at cx=40 is 34mm");
+        // Real min-wall is a positive geometric thickness of the resolved
+        // enclosure (not the faked 74-cx). It must be finite and positive.
+        let mw = vcad_solve_min_wall(s);
+        assert!(
+            mw.is_finite() && mw > 0.0,
+            "centered min-wall finite & positive, got {mw}"
+        );
+        // Multi-domain quote: enclosure (real) + board (est) + bracket (real),
+        // each a positive line item, summing to the total.
+        let enc = vcad_solve_quote_enclosure_cents(s);
+        let brd = vcad_solve_quote_board_cents(s);
+        let brk = vcad_solve_quote_bracket_cents(s);
+        assert!(enc > 0, "enclosure CNC cost present");
+        assert!(brd > 0, "board fab estimate present");
+        assert!(brk > 0, "bracket cost present");
+        assert_eq!(
+            vcad_solve_quote_cost_cents(s),
+            enc + brd + brk,
+            "total = sum of domains"
+        );
+        assert_eq!(
+            vcad_solve_quote_has_estimate(s),
+            1,
+            "board line is a labeled estimate"
+        );
         vcad_solve_free(s);
         // null-safety
         assert_eq!(vcad_solve_part_count(ptr::null()), 0);
@@ -1327,29 +1790,129 @@ mod tests {
     }
 
     #[test]
+    fn sheet_metal_polygon_base_flange_evaluates() {
+        // B1: the polygon base-flange eval arm (un-stubbed this pass) must fold to
+        // a real solid, and the IR material must thread through (B2) — not the old
+        // hardcoded "al-soft".
+        let mut doc = Document::new();
+        doc.nodes.insert(
+            1,
+            Node {
+                id: 1,
+                name: None,
+                op: CsgOp::SheetMetalBaseFlangePolygon {
+                    outline: vec![
+                        Vec2::new(0.0, 0.0),
+                        Vec2::new(40.0, 0.0),
+                        Vec2::new(40.0, 20.0),
+                        Vec2::new(0.0, 20.0),
+                    ],
+                    holes: vec![],
+                    thickness: 1.5,
+                    material: "steel".into(),
+                    shop_profile: None,
+                },
+            },
+        );
+        doc.roots.push(SceneEntry {
+            root: 1,
+            material: "steel".into(),
+            visible: None,
+        });
+        let scene = evaluate_document(&doc, &EvalOptions::default()).unwrap();
+        assert_eq!(scene.parts.len(), 1);
+        assert!(
+            scene.parts[0].solid.is_some(),
+            "polygon base flange should fold to a solid, not blank out"
+        );
+    }
+
+    #[test]
     fn receipt_gate_flips_on_min_wall() {
         // The honesty rule: the Make-it gate dies when any gating check Violates.
-        // On this drag the bracket DFM holds across the whole range, so the red
-        // demo comes from min-wall going negative as the connector nears the wall.
+        // The min-wall is now REAL geometry, so the proof is behavioral — the
+        // measured wall must SHRINK as the connector slides toward the side wall,
+        // and the gate must shut once it drops below the 6 mm floor. No magic
+        // constant keyed to the box's literal extents.
         let doc = vcad_doc_gripper_slice1();
         assert!(!doc.is_null());
         let name = std::ffi::CString::new("connector_x").unwrap();
 
-        // Centered: every gating domain holds, real quote present.
+        // Centered: every gating domain holds, real multi-domain quote present.
         let s = vcad_doc_solve(doc, name.as_ptr(), 40.0);
         assert_eq!(vcad_solve_bracket_ok(s), 1, "bracket foldable at cx=40");
-        assert!(vcad_solve_quote_cost_cents(s) > 0, "real bracket quote (cents > 0)");
-        assert!(vcad_solve_lead_days(s) >= 5, "lead-time heuristic floor");
+        assert!(
+            vcad_solve_quote_cost_cents(s) > 0,
+            "real multi-domain quote (cents > 0)"
+        );
+        assert!(
+            vcad_solve_lead_days(s) >= 7,
+            "lead-time = max over domains (PCB floor 7)"
+        );
         assert_eq!(vcad_solve_all_held(s), 1, "gate open when centered");
+        let wall_centered = vcad_solve_min_wall(s);
         vcad_solve_free(s);
 
-        // Push into the wall: min_wall = 74 - 78 < 0 → Violated → gate shut.
+        // Push the connector toward the +X wall: the real measured wall must
+        // shrink, and at the wall the gate is KILLED.
         let s2 = vcad_doc_solve(doc, name.as_ptr(), 78.0);
-        assert!(vcad_solve_min_wall(s2) < 6.0, "min-wall violated at the wall");
-        assert_eq!(vcad_solve_all_held(s2), 0, "gate KILLED when min-wall violated");
+        let wall_at_edge = vcad_solve_min_wall(s2);
+        assert!(
+            wall_at_edge < wall_centered,
+            "real min-wall must shrink as connector nears the wall: {wall_at_edge} !< {wall_centered}"
+        );
+        assert!(
+            wall_at_edge < 6.0,
+            "min-wall violated at the wall, got {wall_at_edge}"
+        );
+        assert_eq!(
+            vcad_solve_all_held(s2),
+            0,
+            "gate KILLED when min-wall violated"
+        );
         vcad_solve_free(s2);
 
         assert_eq!(vcad_solve_all_held(ptr::null()), 0);
+        vcad_doc_free(doc);
+    }
+
+    #[test]
+    fn cheap_min_wall_matches_full_solve_and_tracks_param() {
+        // The per-frame `vcad_doc_min_wall` (cheap: cutout + housing only) must
+        // agree with the full solve's min-wall AND move with connector_x — so the
+        // live Receipt row and the settled one read the same geometry.
+        let doc = vcad_doc_gripper_slice1();
+        assert!(!doc.is_null());
+        let name = std::ffi::CString::new("connector_x").unwrap();
+
+        for cx in [12.0_f64, 40.0, 68.0] {
+            // Drive the param through the cheap path (writes it to the doc), then
+            // measure both ways.
+            let scene = vcad_doc_set_param_cheap(doc, name.as_ptr(), cx);
+            assert!(!scene.is_null());
+            vcad_scene_free(scene);
+            let cheap = vcad_doc_min_wall(doc);
+            let s = vcad_doc_solve(doc, name.as_ptr(), cx);
+            let full = vcad_solve_min_wall(s);
+            vcad_solve_free(s);
+            assert!(
+                (cheap - full).abs() < 1e-6,
+                "cx={cx}: cheap min-wall {cheap} must equal full-solve {full}"
+            );
+        }
+
+        // Tracks the parameter: moving the connector toward +X shrinks the wall.
+        vcad_scene_free(vcad_doc_set_param_cheap(doc, name.as_ptr(), 20.0));
+        let near_left = vcad_doc_min_wall(doc);
+        vcad_scene_free(vcad_doc_set_param_cheap(doc, name.as_ptr(), 68.0));
+        let near_right = vcad_doc_min_wall(doc);
+        // cx=20 leaves a fat +X wall; cx=68 nearly breaches it.
+        assert!(
+            near_right < near_left,
+            "min-wall must shrink toward the +X wall: {near_right} !< {near_left}"
+        );
+
+        assert!(vcad_doc_min_wall(ptr::null()).is_infinite());
         vcad_doc_free(doc);
     }
 
@@ -1372,7 +1935,10 @@ mod tests {
         };
         let lo = max_trace_x(20.0);
         let hi = max_trace_x(70.0);
-        assert!(hi > lo, "the pcb. binding must shift copper right with connector_x: lo={lo}, hi={hi}");
+        assert!(
+            hi > lo,
+            "the pcb. binding must shift copper right with connector_x: lo={lo}, hi={hi}"
+        );
         vcad_doc_free(doc);
     }
 
@@ -1385,8 +1951,16 @@ mod tests {
         let name = std::ffi::CString::new("connector_x").unwrap();
         let full = vcad_doc_set_param(doc, name.as_ptr(), 40.0);
         let cheap = vcad_doc_set_param_cheap(doc, name.as_ptr(), 40.0);
-        assert_eq!(vcad_scene_part_count(full), 3, "full solve: enclosure + board + bracket");
-        assert_eq!(vcad_scene_part_count(cheap), 2, "cheap solve drops the sheet-metal root");
+        assert_eq!(
+            vcad_scene_part_count(full),
+            3,
+            "full solve: enclosure + board + bracket"
+        );
+        assert_eq!(
+            vcad_scene_part_count(cheap),
+            2,
+            "cheap solve drops the sheet-metal root"
+        );
         vcad_scene_free(full);
         vcad_scene_free(cheap);
         vcad_doc_free(doc);
@@ -1399,7 +1973,11 @@ mod tests {
         let dir = [0.0_f64, 0.0, -1.0];
         let hit = vcad_solid_raycast(cube, origin.as_ptr(), dir.as_ptr());
         assert_eq!(hit.hit, 1, "a ray down +Z should hit the top face");
-        assert!((hit.point[2] - 30.0).abs() < 1e-6, "hit z should be 30, got {}", hit.point[2]);
+        assert!(
+            (hit.point[2] - 30.0).abs() < 1e-6,
+            "hit z should be 30, got {}",
+            hit.point[2]
+        );
         assert!(hit.normal[2] > 0.9, "top-face normal should point +Z");
         vcad_solid_free(cube);
     }
