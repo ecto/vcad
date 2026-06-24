@@ -680,9 +680,9 @@ struct ViewportView: View {
     /// metal without mirroring the dark studio to black.
     private func brushedMetal() -> PhysicallyBasedMaterial {
         var m = PhysicallyBasedMaterial()
-        m.baseColor = .init(tint: NSColor(srgbRed: 0.80, green: 0.82, blue: 0.85, alpha: 1.0))
-        m.roughness = 0.5
-        m.metallic = 0.6
+        m.baseColor = .init(tint: NSColor(srgbRed: 0.56, green: 0.59, blue: 0.64, alpha: 1.0))
+        m.roughness = 0.42
+        m.metallic = 0.7
         return m
     }
 
@@ -742,14 +742,16 @@ struct ViewportView: View {
     private func buildCopperRoot(_ segs: [EditorModel.CopperSeg]) -> Entity {
         let copperRoot = Entity()
         copperRoot.name = "copperRoot"
-        let cu = NSColor(srgbRed: 0.87, green: 0.52, blue: 0.20, alpha: 1.0)
-        let gnd = NSColor(srgbRed: 0.60, green: 0.64, blue: 0.70, alpha: 1.0)
+        // Brighter copper / tin, and drawn ~2.4x the electrical width so the
+        // re-route reads at demo distance (the routed width is still 0.25 mm).
+        let cu = NSColor(srgbRed: 0.96, green: 0.60, blue: 0.22, alpha: 1.0)
+        let gnd = NSColor(srgbRed: 0.74, green: 0.78, blue: 0.84, alpha: 1.0)
         for (i, s) in segs.enumerated() {
             let d = s.b - s.a
             let len = simd_length(d)
             guard len > 1e-4 else { continue }
             let ribbon = ModelEntity(
-                mesh: .generateBox(size: SIMD3<Float>(len, max(s.width, 0.25), 0.08)),
+                mesh: .generateBox(size: SIMD3<Float>(len, max(s.width * 2.4, 0.6), 0.12)),
                 materials: [UnlitMaterial(color: s.net == 1 ? gnd : cu)]
             )
             ribbon.name = "copper\(i)"

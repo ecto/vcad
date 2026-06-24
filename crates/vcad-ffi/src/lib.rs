@@ -509,9 +509,11 @@ fn build_gripper_slice1() -> Document {
         op: CsgOp::SheetMetalBaseFlangeRect {
             width: 70.0, depth: 18.0, thickness: 1.0,
             material: "al-soft".into(), shop_profile: None } });
+    // Fold edge 2 (the back edge (70,18)->(0,18)) up so the upstand rises BEHIND
+    // the connector body (Y≈2..16) and backs it, rather than in front of the board.
     doc.nodes.insert(11, Node { id: 11, name: Some("bracket".into()),
         op: CsgOp::SheetMetalEdgeFlange {
-            parent: 10, panel_id: 0, edge_index: 0,
+            parent: 10, panel_id: 0, edge_index: 2,
             length: 12.0, angle: std::f64::consts::FRAC_PI_2,
             radius: Some(1.0), direction: vcad_ir::SheetMetalDirection::Down,
             manual_k: Some(0.44) } });

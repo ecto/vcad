@@ -231,6 +231,12 @@ final class EditorModel {
         copperStale = false
         copperDirty = false
         copperUnrouted = 0
+        // A consistent 3/4 view tilted toward the board top, so all four domains
+        // (cutout, board + copper, bracket) read at once instead of edge-on.
+        azimuth = .pi / 5
+        elevation = 0.62
+        distance = 1.45
+        panOffset = .zero
         source = .gripper
     }
 
