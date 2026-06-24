@@ -251,6 +251,9 @@ final class EditorModel {
     var selectionDirty = false
     /// Parts ⌘-clicked for a multi-part action (booleans). Ordered: first = base.
     var multiSelectedParts: [Int] = []
+    /// Part under the cursor (documents) — drives a subtle hover highlight.
+    var hoveredPartIndex: Int?
+    var hoverDirty = false
     /// Per-part kernel-space AABBs, index-aligned with the rendered parts —
     /// the cheap basis for picking a part in the viewport (tap → select row).
     @ObservationIgnored var docPartBounds: [(min: SIMD3<Float>, max: SIMD3<Float>)] = []
@@ -263,6 +266,7 @@ final class EditorModel {
         hiddenParts.removeAll()
         isolatedPart = nil
         multiSelectedParts = []
+        hoveredPartIndex = nil
         expandedFeatureIDs.removeAll()
         docPartBounds = []
         documentJSON = nil
@@ -488,14 +492,24 @@ final class EditorModel {
     /// Viewport needs to rebuild the sketch preview overlay.
     var sketchDirty = false
     private let sketchCircleSegments = 48
-    /// Click-to-close radius for the line tool (plane mm).
-    private let sketchCloseDist: Float = 2.5
+    /// Click-to-close radius for the line tool (plane mm). Also drives the
+    /// snap-to-close indicator in the preview, so it's not private.
+    let sketchCloseDist: Float = 2.5
+
+    /// True when the cursor is within snap range of the line tool's first vertex
+    /// (so the preview can flag that clicking will close the loop).
+    var sketchSnapToStart: Bool {
+        guard sketchTool == .line, !sketchClosed, sketchVerts.count >= 3,
+              let f = sketchVerts.first, let c = sketchCursor else { return false }
+        return simd_distance(f, c) < sketchCloseDist
+    }
 
     var canFinishSketch: Bool { sketchClosed && sketchVerts.count >= 3 }
 
     func enterSketch() {
         guard usesDocumentTree else { return }
         sketching = true
+        hoveredPartIndex = nil; hoverDirty = true
         resetSketchShape()
         // Frame the plane head-on so drawing maps 1:1 to the screen.
         switch sketchPlane {

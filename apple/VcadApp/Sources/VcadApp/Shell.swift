@@ -367,9 +367,17 @@ struct SketchPaletteView: View {
 struct SketchHintBar: View {
     let model: EditorModel
     var body: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "hand.point.up.left").font(.system(size: 11))
-            Text(hint)
+        HStack(spacing: 10) {
+            HStack(spacing: 6) {
+                Image(systemName: "hand.point.up.left").font(.system(size: 11))
+                Text(hint)
+            }
+            if let c = model.sketchCursor {
+                Rectangle().fill(.secondary.opacity(0.25)).frame(width: 1, height: 11)
+                Text(String(format: "%.1f, %.1f mm", c.x, c.y))
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundStyle(model.sketchSnapToStart ? AnyShapeStyle(Color.green) : AnyShapeStyle(.secondary))
+            }
         }
         .font(.system(size: 11))
         .foregroundStyle(.secondary)
@@ -466,9 +474,13 @@ struct FeatureRowView: View {
         guard let pi = node.partIndex else { return false }
         return !model.isPartVisible(pi)
     }
+    /// Hovered via the tree row itself OR via the viewport (bidirectional).
+    private var hovered: Bool {
+        hovering || (node.partIndex != nil && node.partIndex == model.hoveredPartIndex)
+    }
     private var rowBackground: Color {
         if selected { return Color.accentColor.opacity(0.20) }
-        return hovering ? Color.white.opacity(0.06) : .clear
+        return hovered ? Color.white.opacity(0.06) : .clear
     }
 
     var body: some View {
@@ -952,7 +964,7 @@ struct ViewportView: View {
              model.source, model.selectedFeatureID, model.baseShape, model.modifier,
              model.pickDirty, model.connectorX, model.hoveredHandle, model.panOffset,
              model.copperDirty, model.copperStale, model.visibilityDirty, model.selectionDirty,
-             model.docParamDirty, model.sketchDirty)
+             model.docParamDirty, model.sketchDirty, model.hoverDirty)
 
         return GeometryReader { geo in
           RealityView { content in
@@ -1040,9 +1052,10 @@ struct ViewportView: View {
                 applyVisibility(content)
                 model.visibilityDirty = false
             }
-            if model.selectionDirty {
+            if model.selectionDirty || model.hoverDirty {
                 applySelectionHighlight(content)
                 model.selectionDirty = false
+                model.hoverDirty = false
             }
 
             // Sketch overlay: rebuild the in-progress profile + rubber-band on
@@ -1403,6 +1416,17 @@ struct ViewportView: View {
                 break
             }
         }
+
+        // Landing-point marker: a bright dot where the next click lands, so you
+        // can always see where you're clicking. Turns green + snaps to the first
+        // vertex when a click would close the loop.
+        if let c = model.sketchCursor, !model.sketchClosed {
+            if model.sketchSnapToStart, let f = model.sketchVerts.first {
+                dot(f, NSColor.systemGreen, 1.9)
+            } else {
+                dot(c, live, 1.4)
+            }
+        }
         return root
     }
 
@@ -1424,12 +1448,16 @@ struct ViewportView: View {
               let root = content.entities.first(where: { $0.name == "geomRoot" }),
               let centering = root.findEntity(named: "centering") else { return }
         let sel = model.highlightedParts
+        let hov = model.hoveredPartIndex
         for i in 0..<model.partCount {
             guard let e = centering.findEntity(named: "part\(i)") as? ModelEntity else { continue }
             var m = material(model.documentBaseColor(i))
             if sel.contains(i) {
                 m.emissiveColor = .init(color: EditorModel.brandPink)
                 m.emissiveIntensity = 0.5
+            } else if i == hov {
+                m.emissiveColor = .init(color: EditorModel.brandPink)
+                m.emissiveIntensity = 0.16     // subtle hover glow
             }
             e.model?.materials = [m]
         }
@@ -1577,6 +1605,23 @@ struct ViewportView: View {
             }
             return
         }
+        // Documents: hover-highlight the part under the cursor (ray-AABB pick),
+        // and show a pointing cursor to signal it's clickable.
+        if model.usesDocumentTree {
+            switch phase {
+            case .active(let point):
+                let pi = kernelRay(at: point, viewSize: viewSize).flatMap {
+                    model.pickDocumentPart(originKernel: $0.o, dirKernel: $0.d)
+                }
+                if pi != model.hoveredPartIndex { model.hoveredPartIndex = pi; model.hoverDirty = true }
+                (pi != nil ? NSCursor.pointingHand : NSCursor.arrow).set()
+            case .ended:
+                if model.hoveredPartIndex != nil { model.hoveredPartIndex = nil; model.hoverDirty = true }
+                NSCursor.arrow.set()
+            }
+            return
+        }
+
         switch phase {
         case .active(let point):
             let hit = hitHandle(at: point, viewSize: viewSize)
