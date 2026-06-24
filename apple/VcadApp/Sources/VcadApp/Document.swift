@@ -131,6 +131,7 @@ struct DocumentGraph {
     static func label(_ t: String) -> String {
         switch t {
         case "Cube": return "Box"
+        case "Sketch2D": return "Sketch"
         case "LinearPattern": return "Linear Pattern"
         case "CircularPattern": return "Circular Pattern"
         case "PcbBoard": return "PCB Board"
@@ -156,7 +157,7 @@ struct DocumentGraph {
         case "Translate": return "move.3d"
         case "Rotate": return "rotate.3d"
         case "Scale": return "scale.3d"
-        case "Sketch": return "scribble.variable"
+        case "Sketch", "Sketch2D": return "scribble.variable"
         case "Extrude": return "arrow.up.to.line"
         case "Revolve": return "arrow.trianglehead.2.clockwise.rotate.90"
         case "LinearPattern": return "rectangle.split.3x1"
@@ -279,6 +280,38 @@ enum DocEdit {
         json["nodes"] = nodes
         var roots = json["roots"] as? [[String: Any]] ?? []
         roots.append(["root": id, "material": anyMaterial(json)])
+        json["roots"] = roots
+    }
+
+    /// Author a Sketch2D (closed Line loop) + Extrude as a new part — the
+    /// sketch→solid workflow. `verts` are 2D plane coords (mm); the basis vectors
+    /// place the plane in 3D and `direction` is the extrude vector (length=depth).
+    static func addExtrudedProfile(_ json: inout [String: Any],
+                                   verts: [(Double, Double)],
+                                   origin: (Double, Double, Double),
+                                   xDir: (Double, Double, Double),
+                                   yDir: (Double, Double, Double),
+                                   direction: (Double, Double, Double)) {
+        guard verts.count >= 3 else { return }
+        func v3(_ t: (Double, Double, Double)) -> [String: Any] { ["x": t.0, "y": t.1, "z": t.2] }
+        let sid = nextNodeId(json)
+        let eid = sid + 1
+        var segs: [[String: Any]] = []
+        for i in 0..<verts.count {
+            let a = verts[i], b = verts[(i + 1) % verts.count]
+            segs.append(["type": "Line",
+                         "start": ["x": a.0, "y": a.1],
+                         "end": ["x": b.0, "y": b.1]])
+        }
+        var nodes = json["nodes"] as? [String: Any] ?? [:]
+        nodes[String(sid)] = ["id": sid, "name": "Sketch",
+                              "op": ["type": "Sketch2D", "origin": v3(origin),
+                                     "x_dir": v3(xDir), "y_dir": v3(yDir), "segments": segs]]
+        nodes[String(eid)] = ["id": eid, "name": "Extrude",
+                              "op": ["type": "Extrude", "sketch": sid, "direction": v3(direction)]]
+        json["nodes"] = nodes
+        var roots = json["roots"] as? [[String: Any]] ?? []
+        roots.append(["root": eid, "material": anyMaterial(json)])
         json["roots"] = roots
     }
 

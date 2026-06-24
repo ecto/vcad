@@ -22,6 +22,10 @@ struct VcadApp: App {
             MainActor.assumeIsolated { authorSmoke(path: path) }
             exit(0)
         }
+        if let path = ProcessInfo.processInfo.environment["VCAD_SKETCH_SMOKE"] {
+            MainActor.assumeIsolated { sketchSmoke(path: path) }
+            exit(0)
+        }
     }
 
     var body: some Scene {
@@ -87,6 +91,25 @@ private func dumpFeatureTree(path: String) {
 
 private func fmt3(_ v: SIMD3<Float>) -> String {
     String(format: "%.1f×%.1f×%.1f", abs(v.x), abs(v.y), abs(v.z))
+}
+
+/// Sketch → extrude authoring: draw a 40×40 square on XY, extrude 12mm, verify
+/// the kernel builds a 40×40×12 solid.
+@MainActor private func sketchSmoke(path: String) {
+    func emit(_ s: String) { FileHandle.standardError.write(Data((s + "\n").utf8)) }
+    let m = EditorModel()
+    m.source = .document(path: path, label: "sketch")
+    guard m.usesDocumentTree else { emit("[VCAD_SKETCH] load failed"); return }
+    let parts0 = m.featureNodes.count
+    m.enterSketch()
+    m.setSketchTool(.rectangle)
+    m.sketchTap(SIMD2(0, 0))         // corner
+    m.sketchTap(SIMD2(40, 40))       // opposite corner
+    m.sketchExtrudeDepth = 12
+    emit("[VCAD_SKETCH] profile verts \(m.sketchVerts.count) closed \(m.sketchClosed) canFinish \(m.canFinishSketch)")
+    m.finishSketch()
+    _ = m.reevalDocumentMeshes()
+    emit("[VCAD_SKETCH] extruded → \(m.featureNodes.count) parts (was \(parts0)) · last op '\(m.featureNodes.last?.opType ?? "?")' · bbox \(fmt3(m.sizeMM)) · tris \(m.triangleCount) · sketching \(m.sketching)")
 }
 
 /// Exercise the authoring pipeline: add a primitive, apply a fillet, save,

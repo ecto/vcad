@@ -109,6 +109,40 @@ enum BooleanOp: String, CaseIterable, Identifiable {
     }
 }
 
+/// A 2D sketch drawing tool (mirrors the web app's line/rectangle/circle tools).
+enum SketchTool: String, CaseIterable, Identifiable {
+    case line, rectangle, circle
+    var id: String { rawValue }
+    var label: String { rawValue.capitalized }
+    var symbol: String {
+        switch self {
+        case .line: return "line.diagonal"
+        case .rectangle: return "rectangle"
+        case .circle: return "circle"
+        }
+    }
+}
+
+/// An axis-aligned sketch plane (origin at world 0). Basis vectors place 2D
+/// sketch coords in 3D; `normal` is the extrude direction.
+enum SketchPlane: String, CaseIterable, Identifiable {
+    case xy, xz, yz
+    var id: String { rawValue }
+    var label: String { rawValue.uppercased() }
+    var xDir: (Double, Double, Double) {
+        switch self { case .xy: return (1, 0, 0); case .xz: return (1, 0, 0); case .yz: return (0, 1, 0) }
+    }
+    var yDir: (Double, Double, Double) {
+        switch self { case .xy: return (0, 1, 0); case .xz: return (0, 0, 1); case .yz: return (0, 0, 1) }
+    }
+    var normal: (Double, Double, Double) {
+        switch self { case .xy: return (0, 0, 1); case .xz: return (0, 1, 0); case .yz: return (1, 0, 0) }
+    }
+    var xDirF: SIMD3<Float> { SIMD3(Float(xDir.0), Float(xDir.1), Float(xDir.2)) }
+    var yDirF: SIMD3<Float> { SIMD3(Float(yDir.0), Float(yDir.1), Float(yDir.2)) }
+    var normalF: SIMD3<Float> { SIMD3(Float(normal.0), Float(normal.1), Float(normal.2)) }
+}
+
 /// One tool button within a tab.
 struct Tool: Identifiable {
     let id: String
@@ -437,6 +471,130 @@ final class EditorModel {
         if let pi = selBefore, pi < featureNodes.count { selectedFeatureID = featureNodes[pi].id }
     }
 
+    // MARK: sketch mode (draw a profile → extrude), a port of the web sketcher
+
+    var sketching = false
+    var sketchPlane: SketchPlane = .xy
+    var sketchTool: SketchTool = .rectangle
+    /// The profile polygon, in plane (2D mm) coords. Closed when `sketchClosed`.
+    var sketchVerts: [SIMD2<Float>] = []
+    /// First click for the rectangle/circle two-click tools.
+    var sketchAnchor: SIMD2<Float>?
+    /// True once a closed profile exists (ready to extrude).
+    var sketchClosed = false
+    /// Live cursor on the plane, for rubber-band preview.
+    var sketchCursor: SIMD2<Float>?
+    var sketchExtrudeDepth: Double = 10
+    /// Viewport needs to rebuild the sketch preview overlay.
+    var sketchDirty = false
+    private let sketchCircleSegments = 48
+    /// Click-to-close radius for the line tool (plane mm).
+    private let sketchCloseDist: Float = 2.5
+
+    var canFinishSketch: Bool { sketchClosed && sketchVerts.count >= 3 }
+
+    func enterSketch() {
+        guard usesDocumentTree else { return }
+        sketching = true
+        resetSketchShape()
+        // Frame the plane head-on so drawing maps 1:1 to the screen.
+        switch sketchPlane {
+        case .xy: azimuth = 0; elevation = 1.45
+        case .xz: azimuth = 0; elevation = 0
+        case .yz: azimuth = .pi / 2; elevation = 0
+        }
+        sketchDirty = true
+    }
+    func exitSketch() {
+        sketching = false
+        resetSketchShape()
+        sketchDirty = true
+    }
+    func setSketchTool(_ t: SketchTool) {
+        sketchTool = t
+        resetSketchShape()
+        sketchDirty = true
+    }
+    func setSketchPlane(_ p: SketchPlane) {
+        sketchPlane = p
+        resetSketchShape()
+        switch p {
+        case .xy: azimuth = 0; elevation = 1.45
+        case .xz: azimuth = 0; elevation = 0
+        case .yz: azimuth = .pi / 2; elevation = 0
+        }
+        sketchDirty = true
+    }
+    private func resetSketchShape() {
+        sketchVerts = []; sketchAnchor = nil; sketchClosed = false; sketchCursor = nil
+    }
+
+    /// A tap on the sketch plane (2D plane coords) — drives the active tool.
+    func sketchTap(_ p: SIMD2<Float>) {
+        switch sketchTool {
+        case .line:
+            if sketchClosed { break }
+            if sketchVerts.count >= 3, let f = sketchVerts.first, simd_distance(f, p) < sketchCloseDist {
+                sketchClosed = true
+            } else {
+                sketchVerts.append(p)
+            }
+        case .rectangle:
+            if let a = sketchAnchor {
+                sketchVerts = [a, SIMD2(p.x, a.y), p, SIMD2(a.x, p.y)]
+                sketchClosed = true; sketchAnchor = nil
+            } else {
+                sketchAnchor = p; sketchVerts = []
+            }
+        case .circle:
+            if let c = sketchAnchor {
+                sketchVerts = circlePoints(center: c, radius: simd_distance(c, p))
+                sketchClosed = true; sketchAnchor = nil
+            } else {
+                sketchAnchor = p; sketchVerts = []
+            }
+        }
+        sketchDirty = true
+    }
+
+    private func circlePoints(center c: SIMD2<Float>, radius r: Float) -> [SIMD2<Float>] {
+        (0..<sketchCircleSegments).map { i in
+            let a = 2 * Float.pi * Float(i) / Float(sketchCircleSegments)
+            return SIMD2(c.x + r * cos(a), c.y + r * sin(a))
+        }
+    }
+
+    /// Project a kernel-space ray onto the sketch plane → 2D plane coords.
+    func sketchPlanePoint(originKernel o: SIMD3<Float>, dirKernel d: SIMD3<Float>) -> SIMD2<Float>? {
+        let n = sketchPlane.normalF
+        let denom = simd_dot(d, n)
+        guard abs(denom) > 1e-6 else { return nil }
+        let t = -simd_dot(o, n) / denom        // plane passes through origin
+        guard t > 0 else { return nil }
+        let pt = o + t * d
+        return SIMD2(simd_dot(pt, sketchPlane.xDirF), simd_dot(pt, sketchPlane.yDirF))
+    }
+
+    /// 2D plane coords → 3D kernel coords (for drawing the preview).
+    func sketchWorld(_ v: SIMD2<Float>) -> SIMD3<Float> {
+        v.x * sketchPlane.xDirF + v.y * sketchPlane.yDirF
+    }
+
+    /// Realize the closed profile as a Sketch2D + Extrude, then leave sketch mode.
+    func finishSketch() {
+        guard canFinishSketch, documentJSON != nil else { return }
+        let verts = sketchVerts.map { (Double($0.x), Double($0.y)) }
+        let n = sketchPlane.normal
+        let dir = (n.0 * sketchExtrudeDepth, n.1 * sketchExtrudeDepth, n.2 * sketchExtrudeDepth)
+        let plane = sketchPlane
+        applyEdit(snapshot: true, reeval: .rebuild) {
+            DocEdit.addExtrudedProfile(&$0, verts: verts, origin: (0, 0, 0),
+                                       xDir: plane.xDir, yDir: plane.yDir, direction: dir)
+        }
+        selectedFeatureID = featureNodes.last?.id
+        exitSketch()
+    }
+
     // MARK: save
 
     func saveDocument() {
@@ -680,9 +838,12 @@ final class EditorModel {
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             MainActor.assumeIsolated {
                 guard let self else { return }
-                if event.keyCode == 53, self.usesDocumentTree,
-                   self.renamingFeatureID == nil, self.hasSelection {
-                    self.deselectAll()
+                if event.keyCode == 53 {                       // Escape
+                    if self.sketching {
+                        self.exitSketch()
+                    } else if self.usesDocumentTree, self.renamingFeatureID == nil, self.hasSelection {
+                        self.deselectAll()
+                    }
                 }
             }
             return event
@@ -974,7 +1135,7 @@ final class EditorModel {
         let docMode = usesDocumentTree
         switch tab {
         case .create:
-            return BaseShape.allCases.map { shape in
+            var out = BaseShape.allCases.map { shape in
                 // Sandbox: pick the primitive. Document: add a new part.
                 Tool(id: "shape.\(shape.rawValue)",
                      label: docMode ? "Add \(shape.label)" : shape.label, symbol: shape.symbol,
@@ -982,6 +1143,11 @@ final class EditorModel {
                     if docMode { self?.addPrimitive(shape) } else { self?.baseShape = shape }
                 }
             }
+            if docMode {
+                out.append(Tool(id: "sketch", label: "Sketch", symbol: "scribble.variable",
+                                isActive: false) { [weak self] in self?.enterSketch() })
+            }
+            return out
         case .modify:
             return Modifier.allCases.compactMap { mod in
                 if docMode {

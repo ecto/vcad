@@ -46,7 +46,11 @@ struct EditorView: View {
                     }
                 }
                 .overlay(alignment: compact ? .leading : .top) {
-                    if model.source.isSandbox || model.usesDocumentTree {
+                    if model.sketching {
+                        SketchPaletteView(model: model)
+                            .padding(.top, 14)
+                            .transition(.move(edge: .top).combined(with: .opacity))
+                    } else if model.source.isSandbox || model.usesDocumentTree {
                         ToolPaletteView(model: model, axis: compact ? .vertical : .horizontal)
                             .padding(compact ? .leading : .top, 14)
                     }
@@ -72,7 +76,10 @@ struct EditorView: View {
                 }
                 .overlay(alignment: .bottom) {
                     VStack(spacing: 10) {
-                        if model.source.isSandbox && intent.draft.isEmpty && !intent.isThinking {
+                        if model.sketching {
+                            SketchHintBar(model: model)
+                                .transition(.opacity.combined(with: .move(edge: .bottom)))
+                        } else if model.source.isSandbox && intent.draft.isEmpty && !intent.isThinking {
                             ExampleChips(intent: intent)
                                 .transition(.opacity.combined(with: .move(edge: .bottom)))
                         }
@@ -81,6 +88,7 @@ struct EditorView: View {
                     .padding(.bottom, 14)
                     .animation(.smooth(duration: 0.3), value: model.source.isSandbox)
                     .animation(.smooth(duration: 0.25), value: intent.draft.isEmpty)
+                    .animation(.smooth(duration: 0.25), value: model.sketching)
                 }
                 .toolbar {
                     ToolbarItem(placement: .navigation) { DocumentMenu(model: model) }
@@ -277,6 +285,109 @@ struct ToolPaletteView: View {
         .opacity(tool.enabled ? 1 : 0.32)
         .disabled(!tool.enabled)
         .help(tool.enabled ? tool.label : "\(tool.label) — \(tool.hint)")
+    }
+}
+
+/// The sketch-mode toolbar: plane · tools · extrude depth · Finish / Cancel.
+/// Replaces the Create/Modify/Combine palette while drawing a profile.
+struct SketchPaletteView: View {
+    @Bindable var model: EditorModel
+    var body: some View {
+        HStack(spacing: 10) {
+            segmented(SketchPlane.allCases, get: { model.sketchPlane }, label: { $0.label }) {
+                model.setSketchPlane($0)
+            }
+            Divider().frame(height: 18)
+            HStack(spacing: 6) {
+                ForEach(SketchTool.allCases) { tool in
+                    let active = model.sketchTool == tool
+                    Button { model.setSketchTool(tool) } label: {
+                        HStack(spacing: 5) {
+                            Image(systemName: tool.symbol).font(.system(size: 12))
+                            Text(tool.label).font(.system(size: 12))
+                        }
+                        .padding(.horizontal, 9).padding(.vertical, 5)
+                        .background(active ? Color.accentColor.opacity(0.18) : .clear,
+                                    in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                        .foregroundStyle(active ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.secondary))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            Divider().frame(height: 18)
+            HStack(spacing: 6) {
+                Image(systemName: "arrow.up.to.line").font(.system(size: 11)).foregroundStyle(.secondary)
+                ScrubField(label: "", value: model.sketchExtrudeDepth, sensitivity: 0.1, minValue: 0.1) { v, _ in
+                    model.sketchExtrudeDepth = v
+                }.frame(width: 96)
+            }
+            Divider().frame(height: 18)
+            Button { model.finishSketch() } label: {
+                Label("Extrude", systemImage: "checkmark")
+                    .font(.system(size: 12, weight: .medium))
+                    .padding(.horizontal, 9).padding(.vertical, 5)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(model.canFinishSketch ? AnyShapeStyle(Color.green) : AnyShapeStyle(.tertiary))
+            .disabled(!model.canFinishSketch)
+            Button { model.exitSketch() } label: {
+                Image(systemName: "xmark").font(.system(size: 12)).foregroundStyle(.secondary)
+                    .padding(6)
+            }
+            .buttonStyle(.plain)
+            .help("Cancel sketch (Esc)")
+        }
+        .padding(8)
+        .glassCard(13)
+        .animation(.snappy(duration: 0.2), value: model.sketchTool)
+        .animation(.snappy(duration: 0.2), value: model.sketchPlane)
+    }
+
+    private func segmented<T: Identifiable & Equatable>(
+        _ items: [T], get: () -> T, label: @escaping (T) -> String, set: @escaping (T) -> Void
+    ) -> some View {
+        let current = get()
+        return HStack(spacing: 2) {
+            ForEach(items) { item in
+                let active = item == current
+                Button { set(item) } label: {
+                    Text(label(item)).font(.system(size: 11, weight: .medium))
+                        .padding(.horizontal, 8).padding(.vertical, 4)
+                        .background(active ? Color.accentColor.opacity(0.18) : .clear,
+                                    in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+                        .foregroundStyle(active ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.secondary))
+                }
+                .buttonStyle(.plain)
+            }
+        }
+    }
+}
+
+/// A one-line prompt at the bottom telling the user what to click next.
+struct SketchHintBar: View {
+    let model: EditorModel
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "hand.point.up.left").font(.system(size: 11))
+            Text(hint)
+        }
+        .font(.system(size: 11))
+        .foregroundStyle(.secondary)
+        .padding(.horizontal, 14).padding(.vertical, 7)
+        .glassCard(11)
+    }
+    private var hint: String {
+        if model.canFinishSketch { return "Profile closed — set a depth and hit Extrude" }
+        switch model.sketchTool {
+        case .line:
+            return model.sketchVerts.isEmpty
+                ? "Line: click to place the first point"
+                : "Line: keep clicking · click the first point to close"
+        case .rectangle:
+            return model.sketchAnchor == nil ? "Rectangle: click the first corner" : "Rectangle: click the opposite corner"
+        case .circle:
+            return model.sketchAnchor == nil ? "Circle: click the center" : "Circle: click to set the radius"
+        }
     }
 }
 
@@ -841,7 +952,7 @@ struct ViewportView: View {
              model.source, model.selectedFeatureID, model.baseShape, model.modifier,
              model.pickDirty, model.connectorX, model.hoveredHandle, model.panOffset,
              model.copperDirty, model.copperStale, model.visibilityDirty, model.selectionDirty,
-             model.docParamDirty)
+             model.docParamDirty, model.sketchDirty)
 
         return GeometryReader { geo in
           RealityView { content in
@@ -932,6 +1043,17 @@ struct ViewportView: View {
             if model.selectionDirty {
                 applySelectionHighlight(content)
                 model.selectionDirty = false
+            }
+
+            // Sketch overlay: rebuild the in-progress profile + rubber-band on
+            // every tap / cursor move (tiny geometry, so a full rebuild is fine).
+            if model.sketchDirty {
+                if let root = content.entities.first(where: { $0.name == "geomRoot" }),
+                   let centering = root.findEntity(named: "centering") {
+                    centering.findEntity(named: "sketchRoot")?.removeFromParent()
+                    if model.sketching { centering.addChild(buildSketchRoot()) }
+                }
+                model.sketchDirty = false
             }
 
             // Settle: the connector stopped moving — run the EXPENSIVE domains
@@ -1226,6 +1348,64 @@ struct ViewportView: View {
         copperRoot.components.set(OpacityComponent(opacity: dim ? 0.3 : 1.0))
     }
 
+    // MARK: sketch preview overlay
+
+    /// Build the in-progress sketch: committed segments + vertex dots in brand
+    /// pink, plus a cyan rubber-band from the last point / anchor to the cursor.
+    private func buildSketchRoot() -> Entity {
+        let root = Entity(); root.name = "sketchRoot"
+        let ink = NSColor(srgbRed: 0.98, green: 0.15, blue: 0.45, alpha: 1.0)   // brand pink
+        let live = NSColor(srgbRed: 0.55, green: 0.92, blue: 1.0, alpha: 1.0)   // cyan
+        let verts = model.sketchVerts
+
+        func seg(_ a2: SIMD2<Float>, _ b2: SIMD2<Float>, _ color: NSColor) {
+            let a = model.sketchWorld(a2), b = model.sketchWorld(b2)
+            let d = b - a; let len = simd_length(d)
+            guard len > 1e-4 else { return }
+            let e = ModelEntity(mesh: .generateBox(size: SIMD3(len, 0.7, 0.7)),
+                                materials: [UnlitMaterial(color: color)])
+            e.position = (a + b) / 2
+            e.orientation = simd_quatf(from: SIMD3(1, 0, 0), to: d / len)
+            root.addChild(e)
+        }
+        func dot(_ v2: SIMD2<Float>, _ color: NSColor, _ r: Float = 1.1) {
+            let e = ModelEntity(mesh: .generateSphere(radius: r), materials: [UnlitMaterial(color: color)])
+            e.position = model.sketchWorld(v2)
+            root.addChild(e)
+        }
+
+        // Committed profile.
+        if model.sketchTool == .line && !model.sketchClosed {
+            for i in 0..<max(0, verts.count - 1) { seg(verts[i], verts[i + 1], ink) }
+            for v in verts { dot(v, ink) }
+            if let last = verts.last, let c = model.sketchCursor { seg(last, c, live) }
+        } else if !verts.isEmpty {
+            for i in 0..<verts.count { seg(verts[i], verts[(i + 1) % verts.count], ink) }
+            for v in verts { dot(v, ink) }
+        }
+
+        // Two-click rect/circle preview from the anchor to the cursor.
+        if let a = model.sketchAnchor, let c = model.sketchCursor {
+            switch model.sketchTool {
+            case .rectangle:
+                let corners = [a, SIMD2(c.x, a.y), c, SIMD2(a.x, c.y)]
+                for i in 0..<4 { seg(corners[i], corners[(i + 1) % 4], live) }
+            case .circle:
+                let r = simd_distance(a, c)
+                let n = 48
+                let pts = (0..<n).map { i -> SIMD2<Float> in
+                    let t = 2 * Float.pi * Float(i) / Float(n)
+                    return SIMD2(a.x + r * cos(t), a.y + r * sin(t))
+                }
+                for i in 0..<n { seg(pts[i], pts[(i + 1) % n], live) }
+                dot(a, live)
+            case .line:
+                break
+            }
+        }
+        return root
+    }
+
     // MARK: feature-tree sync (visibility + selection highlight)
 
     /// Enable/disable part entities to honor the tree's eye toggles + isolate.
@@ -1320,8 +1500,10 @@ struct ViewportView: View {
 
     // MARK: picking (#7)
 
-    private func pick(at p: CGPoint, viewSize: CGSize) {
-        guard viewSize.width > 1, viewSize.height > 1 else { return }
+    /// Screen point → ray in kernel space (origin, normalized dir). Inverse of
+    /// the pinhole projection; shared by face-pick, part-pick, and sketch-pick.
+    private func kernelRay(at p: CGPoint, viewSize: CGSize) -> (o: SIMD3<Float>, d: SIMD3<Float>)? {
+        guard viewSize.width > 1, viewSize.height > 1 else { return nil }
         let cam = model.cameraPosition
         let forward = normalize(model.panOffset - cam)
         let right = normalize(cross(forward, SIMD3<Float>(0, 1, 0)))
@@ -1331,10 +1513,20 @@ struct ViewportView: View {
         let ndcX = Float(2 * p.x / viewSize.width - 1)
         let ndcY = Float(1 - 2 * p.y / viewSize.height)
         let dirWorld = normalize(forward + ndcX * tanHalf * aspect * right + ndcY * tanHalf * up)
-
         let s = model.displayScale
-        let camKernel = rxPlus90(cam / s) + model.displayCenter
-        let dirKernel = normalize(rxPlus90(dirWorld))
+        return (rxPlus90(cam / s) + model.displayCenter, normalize(rxPlus90(dirWorld)))
+    }
+
+    private func pick(at p: CGPoint, viewSize: CGSize) {
+        guard let (camKernel, dirKernel) = kernelRay(at: p, viewSize: viewSize) else { return }
+
+        // Sketch mode: a tap drops a point on the sketch plane.
+        if model.sketching {
+            if let pt = model.sketchPlanePoint(originKernel: camKernel, dirKernel: dirKernel) {
+                model.sketchTap(pt)
+            }
+            return
+        }
 
         // Documents: tap a part → select its row (⌘-tap toggles multi-select, for
         // booleans); tap empty space → deselect. Kernel-space AABBs make it cheap.
@@ -1372,6 +1564,19 @@ struct ViewportView: View {
     // MARK: hover (cursor + a scale pop on the draggable handles)
 
     private func hover(_ phase: HoverPhase, viewSize: CGSize) {
+        // Sketch mode: track the cursor on the plane for the rubber-band preview.
+        if model.sketching {
+            if case .active(let point) = phase,
+               let (o, d) = kernelRay(at: point, viewSize: viewSize),
+               let pt = model.sketchPlanePoint(originKernel: o, dirKernel: d) {
+                model.sketchCursor = pt
+                model.sketchDirty = true
+                NSCursor.crosshair.set()
+            } else if case .ended = phase {
+                NSCursor.arrow.set()
+            }
+            return
+        }
         switch phase {
         case .active(let point):
             let hit = hitHandle(at: point, viewSize: viewSize)
