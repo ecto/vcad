@@ -526,6 +526,14 @@ fn build_gripper_slice1() -> Document {
     // 4..76 drag range: 5..23 mm).
     doc.bindings.bind(BindingKey::new(11, "length"), Expr::formula("connector_x * 0.25 + 4"));
 
+    // --- the PCB lives IN the document: a "pcb." binding moves the connector
+    // footprint declaratively, so the board's copper re-routes from the SAME
+    // resolve_document as the geometry. (node id 0 is a placeholder — the "pcb."
+    // prefix routes the binding to the PCB, not a node.) The slope keeps J1 on
+    // the 70 mm board (board-local ~10..61) across the 4..76 drag range.
+    doc.pcb = Some(build_gripper_slice2_board(40.0));
+    doc.bindings.bind(BindingKey::new(0, "pcb.J1.position.x"), Expr::formula("connector_x * 0.7 + 8"));
+
     doc.roots.push(SceneEntry { root: 4, material: "aluminum".into(), visible: None });
     doc.roots.push(SceneEntry { root: 9, material: "board".into(), visible: None });
     doc.roots.push(SceneEntry { root: 12, material: "bracket".into(), visible: None });
@@ -823,30 +831,41 @@ pub extern "C" fn vcad_doc_solve(
         let Ok(scene) = evaluate_document(&d.inner, &interactive_opts()) else {
             return ptr::null_mut();
         };
-        // Copper + receipt derive from the SAME resolved connector_x as the meshes.
+        // The PCB lives in the document: resolve it (the "pcb." binding moves the
+        // connector footprint) and route THAT — copper descends from the same
+        // resolve_document as the geometry, not a procedural rebuild. Resolve a
+        // clone since evaluate_document resolved a clone internally for the meshes
+        // and didn't mutate the resident doc.
         let cx = vcad_ir::resolve_parameters(&d.inner.parameters)
             .ok()
             .and_then(|env| env.get("connector_x").copied())
             .unwrap_or(value);
-        let pcb = build_gripper_slice2_board(cx);
-        let r = route_all(&pcb, 0.25, &[]);
-        let traces = r
-            .traces
-            .iter()
-            .map(|t| VcadTraceLine {
-                start: [t.start.x, t.start.y],
-                end: [t.end.x, t.end.y],
-                width: t.width,
-                layer: layer_code(t.layer),
-                net_id: net_code(&t.net),
-            })
-            .collect();
+        let mut resolved = d.inner.clone();
+        let _ = vcad_eval::resolve_document(&mut resolved);
+        let (traces, unrouted) = match &resolved.pcb {
+            Some(pcb) => {
+                let r = route_all(pcb, 0.25, &[]);
+                let traces: Vec<VcadTraceLine> = r
+                    .traces
+                    .iter()
+                    .map(|t| VcadTraceLine {
+                        start: [t.start.x, t.start.y],
+                        end: [t.end.x, t.end.y],
+                        width: t.width,
+                        layer: layer_code(t.layer),
+                        net_id: net_code(&t.net),
+                    })
+                    .collect();
+                (traces, r.unrouted_nets.len())
+            }
+            None => (Vec::new(), 0),
+        };
         // Receipt: connector cutout clearance to the nearest enclosure wall (mm).
         let min_wall = (cx - 6.0).min(74.0 - cx);
         Box::into_raw(Box::new(VcadSolve {
             scene,
             traces,
-            unrouted: r.unrouted_nets.len(),
+            unrouted,
             min_wall,
         }))
     }))
@@ -1164,6 +1183,29 @@ mod tests {
         assert_eq!(vcad_solve_part_count(ptr::null()), 0);
         assert_eq!(vcad_solve_trace_count(ptr::null()), 0);
         vcad_solve_free(ptr::null_mut());
+        vcad_doc_free(doc);
+    }
+
+    #[test]
+    fn gripper_pcb_binding_moves_copper() {
+        // Tier 2b: the PCB lives in doc.pcb and the "pcb." binding moves the
+        // connector footprint declaratively — so copper shifts with connector_x
+        // through resolve_document, no procedural board rebuild.
+        let doc = vcad_doc_gripper_slice1();
+        let name = std::ffi::CString::new("connector_x").unwrap();
+        let max_trace_x = |cx: f64| -> f64 {
+            let s = vcad_doc_solve(doc, name.as_ptr(), cx);
+            let mut mx = f64::MIN;
+            for i in 0..vcad_solve_trace_count(s) {
+                let t = vcad_solve_trace(s, i);
+                mx = mx.max(t.start[0]).max(t.end[0]);
+            }
+            vcad_solve_free(s);
+            mx
+        };
+        let lo = max_trace_x(20.0);
+        let hi = max_trace_x(70.0);
+        assert!(hi > lo, "the pcb. binding must shift copper right with connector_x: lo={lo}, hi={hi}");
         vcad_doc_free(doc);
     }
 
