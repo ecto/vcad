@@ -22,6 +22,41 @@ use crate::{
     EvaluatedPartDef, EvaluatedScene, NodeTiming, RootFailure,
 };
 
+thread_local! {
+    /// When set, foundation-tier sheet-metal ops (rect/polygon base flange + edge
+    /// flange) fold to a real BRep solid during `evaluate_document`. OFF by
+    /// default: the web/MCP engine REQUIRES sheet-metal roots to evaluate empty
+    /// here so its own `evaluateSheetMetalChain` (unfold/DXF/DFM) takes over. Only
+    /// the kernel-direct native FFI opts in, via `evaluate_document_with_sheet_metal`.
+    static FOLD_SHEET_METAL: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// RAII guard: turn sheet-metal folding on for the current thread and restore it
+/// on drop (panic-safe — the flag never leaks past the call).
+struct FoldGuard(bool);
+impl FoldGuard {
+    fn enable() -> Self {
+        FoldGuard(FOLD_SHEET_METAL.with(|f| f.replace(true)))
+    }
+}
+impl Drop for FoldGuard {
+    fn drop(&mut self) {
+        FOLD_SHEET_METAL.with(|f| f.set(self.0));
+    }
+}
+
+/// Like [`evaluate_document`], but foundation-tier sheet-metal ops fold to real
+/// BRep solids (the kernel-direct path used by the native app). The default
+/// [`evaluate_document`] leaves them empty so the web/MCP engine's sheet-metal
+/// fallback can take over — do NOT use this from the WASM/web path.
+pub fn evaluate_document_with_sheet_metal(
+    doc: &Document,
+    options: &EvalOptions,
+) -> Result<EvaluatedScene, EvalError> {
+    let _guard = FoldGuard::enable();
+    evaluate_document(doc, options)
+}
+
 /// Evaluate a full document into an EvaluatedScene.
 ///
 /// If the document declares `parameters` or `bindings`, the pre-pass
@@ -804,14 +839,18 @@ fn evaluate_op_timed(
             Ok(None)
         }
 
-        // Foundation-tier sheet metal evaluates to a real folded BRep solid, so
-        // a bent bracket is just another node in the parametric DAG — drivable by
-        // bindings exactly like a cube. (The web engine still routes its own
-        // sheet-metal roots through a dedicated WASM binding; this is the
-        // kernel-direct path used by the native app.)
+        // Foundation-tier sheet metal can fold to a real BRep solid — but ONLY on
+        // the opt-in kernel-direct path (the native FFI). By DEFAULT we return
+        // `Ok(None)`, because the web/MCP engine's contract is that a sheet-metal
+        // root evaluates EMPTY here so its `positions.length === 0` fallback routes
+        // the chain to the dedicated `evaluateSheetMetalChain` (which does unfold +
+        // DXF + DFM). Returning a solid (or an error) here breaks that detection.
+        // The opt-in is `evaluate_document_with_sheet_metal` → `FOLD_SHEET_METAL`.
         CsgOp::SheetMetalBaseFlangeRect { .. }
         | CsgOp::SheetMetalBaseFlangePolygon { .. }
-        | CsgOp::SheetMetalEdgeFlange { .. } => {
+        | CsgOp::SheetMetalEdgeFlange { .. }
+            if FOLD_SHEET_METAL.with(|f| f.get()) =>
+        {
             let model = build_sheet_model(op, nodes)?;
             // 8 segments is plenty for a small-radius bend arc, and keeps the
             // fold's booleans cheap enough for interactive re-solve.
@@ -820,17 +859,15 @@ fn evaluate_op_timed(
             Ok(Some(solid))
         }
 
-        // Hem / jog / bend-relief are not yet built in the kernel-direct
-        // evaluator. Surface that as an honest FAILURE (→ a RootFailure with a
-        // message), NOT a silent `Ok(None)` — a silent None renders a blank part
-        // with zero diagnostics, the worst possible outcome on web/MCP.
-        CsgOp::SheetMetalHem { .. }
+        // Default path (web/MCP) + any not-yet-buildable op (hem/jog/relief, even
+        // under the fold flag): return empty so the engine's sheet-metal fallback
+        // takes over. Never a sub-solid, never an error — preserves the contract.
+        CsgOp::SheetMetalBaseFlangeRect { .. }
+        | CsgOp::SheetMetalBaseFlangePolygon { .. }
+        | CsgOp::SheetMetalEdgeFlange { .. }
+        | CsgOp::SheetMetalHem { .. }
         | CsgOp::SheetMetalJog { .. }
-        | CsgOp::SheetMetalBendRelief { .. } => Err(EvalError::SheetMetal(
-            "sheet-metal hem/jog/bend-relief are not yet supported by the kernel-direct \
-             evaluator (the web engine routes these through its own WASM path)"
-                .into(),
-        )),
+        | CsgOp::SheetMetalBendRelief { .. } => Ok(None),
     }
 }
 

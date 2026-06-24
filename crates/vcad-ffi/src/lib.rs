@@ -25,7 +25,14 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::ptr;
 
 use vcad_ecad_pcb::router::route_all;
-use vcad_eval::{evaluate_document, EvalOptions, EvaluatedScene};
+// The native FFI is a kernel-direct consumer: it ALWAYS wants sheet-metal ops to
+// fold to real BRep solids (the bracket is geometry here, not a web unfold/DXF
+// payload). Alias the folding entry point so every solve in this crate folds; the
+// plain `evaluate_document` (web/MCP contract: leave sheet-metal empty) is never
+// what we want natively.
+use vcad_eval::{
+    evaluate_document_with_sheet_metal as evaluate_document, EvalOptions, EvaluatedScene,
+};
 use vcad_ir::ecad::{
     BoardOutline, DesignRules, Footprint, LayerStackup, Net, NetClassRules, Pad, PadShape, PadType,
     Pcb, PcbLayer, StackupLayer,
@@ -1787,6 +1794,49 @@ mod tests {
         assert_eq!(vcad_solve_trace_count(ptr::null()), 0);
         vcad_solve_free(ptr::null_mut());
         vcad_doc_free(doc);
+    }
+
+    #[test]
+    fn sheet_metal_fold_is_opt_in_web_contract_preserved() {
+        // The load-bearing contract behind the CI fix: under the DEFAULT
+        // (non-folding) `evaluate_document` — the path the WASM/web + MCP use — a
+        // sheet-metal root must evaluate EMPTY, so the TS engine's
+        // `positions.length === 0` fallback routes it to evaluateSheetMetalChain.
+        // Only the native opt-in (`evaluate_document_with_sheet_metal`) folds.
+        let mut doc = Document::new();
+        doc.nodes.insert(
+            1,
+            Node {
+                id: 1,
+                name: None,
+                op: CsgOp::SheetMetalBaseFlangeRect {
+                    width: 40.0,
+                    depth: 20.0,
+                    thickness: 1.5,
+                    material: "al-soft".into(),
+                    shop_profile: None,
+                },
+            },
+        );
+        doc.roots.push(SceneEntry {
+            root: 1,
+            material: "al-soft".into(),
+            visible: None,
+        });
+
+        // Web/MCP path: empty (no solid) — preserves the fallback contract.
+        let web = vcad_eval::evaluate_document(&doc, &EvalOptions::default()).unwrap();
+        assert!(
+            web.parts[0].solid.is_none(),
+            "web contract: sheet metal must evaluate empty under the default evaluator"
+        );
+        // Native opt-in: the same root folds to a real solid.
+        let native =
+            vcad_eval::evaluate_document_with_sheet_metal(&doc, &EvalOptions::default()).unwrap();
+        assert!(
+            native.parts[0].solid.is_some(),
+            "native opt-in: sheet metal folds to a solid"
+        );
     }
 
     #[test]
