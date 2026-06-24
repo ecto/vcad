@@ -116,7 +116,6 @@ final class EditorModel {
             geometryDirty = true
             selectedFeatureID = source.isSandbox ? "modifier" : "part0"
             resetCamera()        // frame the new part cleanly
-            noteInteraction()    // let the materialize-pop play before drifting
         }
     }
 
@@ -168,26 +167,6 @@ final class EditorModel {
     @ObservationIgnored var connectorHandleWorld: SIMD3<Float> = .zero
     @ObservationIgnored var filletHandleWorld: SIMD3<Float> = .zero
 
-    // Idle turntable — after a beat with no interaction the camera drifts so the
-    // part shows itself off. Paused while dragging a handle or interacting.
-    var autoOrbit = true
-    @ObservationIgnored var lastInteraction = Date()
-    @ObservationIgnored private var orbitTimer: Timer?
-
-    init() { startIdleOrbit() }
-
-    func noteInteraction() { lastInteraction = Date() }
-
-    private func startIdleOrbit() {
-        orbitTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let self, self.autoOrbit, !self.draggingHandle,
-                      Date().timeIntervalSince(self.lastInteraction) > 3.0 else { return }
-                self.azimuth += 0.0026
-            }
-        }
-    }
-
     /// Frame the geometry at a clean 3/4 view. Parts auto-fit to a constant
     /// display size, so fixed camera params frame any part well.
     func resetCamera() {
@@ -195,6 +174,31 @@ final class EditorModel {
         elevation = .pi / 7
         distance = 1.5
         pinchBaseline = 1.5
+        panOffset = .zero
+    }
+
+    /// Pan the look-at target in the camera's screen plane (⇧-drag).
+    func panBy(dx: Float, dy: Float) {
+        let forward = normalize(-orbitVector)
+        let right = normalize(cross(forward, SIMD3<Float>(0, 1, 0)))
+        let up = cross(right, forward)
+        panOffset += (-dx * right + dy * up) * (distance * 0.0016)
+    }
+
+    // Two-finger / wheel scroll → zoom. Installed once when the viewport appears.
+    nonisolated(unsafe) private var scrollMonitor: Any?
+    func installScrollZoom() {
+        guard scrollMonitor == nil else { return }
+        scrollMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
+            MainActor.assumeIsolated {
+                guard let self, !self.draggingHandle else { return }
+                let dy = Float(event.scrollingDeltaY)
+                let k = Float(event.hasPreciseScrollingDeltas ? 0.004 : 0.04)
+                self.distance = max(0.45, min(8.0, self.distance * (1 - dy * k)))
+                self.pinchBaseline = self.distance
+            }
+            return event
+        }
     }
 
     // MARK: cross-domain slice — the gripper
@@ -208,7 +212,10 @@ final class EditorModel {
     @ObservationIgnored private var lastConnectorTick = 40
     @ObservationIgnored private var lastConnectorOK = true
 
-    deinit { if let d = gripperDoc { vcad_doc_free(d) } }
+    deinit {
+        if let d = gripperDoc { vcad_doc_free(d) }
+        if let m = scrollMonitor { NSEvent.removeMonitor(m) }
+    }
 
     /// Clearance from the connector cutout to the nearest enclosure side wall.
     var connectorMinWall: Double { min(connectorX - 6, 74 - connectorX) }
@@ -343,7 +350,8 @@ final class EditorModel {
         source.isSandbox && baseShape == .cube && modifier == .fillet && selectedFeatureID == "modifier"
     }
 
-    var cameraPosition: SIMD3<Float> {
+    var panOffset: SIMD3<Float> = .zero
+    var orbitVector: SIMD3<Float> {
         let r = distance
         return SIMD3<Float>(
             r * cos(elevation) * sin(azimuth),
@@ -351,6 +359,7 @@ final class EditorModel {
             r * cos(elevation) * cos(azimuth)
         )
     }
+    var cameraPosition: SIMD3<Float> { panOffset + orbitVector }
 
     func handlePosition(radius: Double) -> SIMD3<Float> {
         let mid = SIMD3<Float>(15, 0, 30)   // top-front edge midpoint of the 30mm cube

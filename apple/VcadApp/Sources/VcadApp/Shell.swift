@@ -416,7 +416,7 @@ struct ViewportView: View {
     var body: some View {
         _ = (model.azimuth, model.elevation, model.distance, model.modifierValue,
              model.source, model.selectedFeatureID, model.baseShape, model.modifier,
-             model.pickDirty, model.connectorX, model.hoveredHandle)
+             model.pickDirty, model.connectorX, model.hoveredHandle, model.panOffset)
 
         return GeometryReader { geo in
           RealityView { content in
@@ -427,7 +427,7 @@ struct ViewportView: View {
           } update: { content in
             if let camera = content.entities.first(where: { $0.name == "camera" }) {
                 camera.position = model.cameraPosition
-                camera.look(at: .zero, from: model.cameraPosition, relativeTo: nil)
+                camera.look(at: model.panOffset, from: model.cameraPosition, relativeTo: nil)
             }
             if model.geometryDirty {
                 rebuildGeometry(content)
@@ -505,6 +505,7 @@ struct ViewportView: View {
           .onContinuousHover(coordinateSpace: .local) { phase in
               hover(phase, viewSize: geo.size)
           }
+          .onAppear { model.installScrollZoom() }
         }
     }
 
@@ -515,7 +516,7 @@ struct ViewportView: View {
         camera.name = "camera"
         camera.components.set(PerspectiveCameraComponent())
         camera.position = model.cameraPosition
-        camera.look(at: .zero, from: model.cameraPosition, relativeTo: nil)
+        camera.look(at: model.panOffset, from: model.cameraPosition, relativeTo: nil)
         content.add(camera)
 
         // Key light with a soft grounding shadow.
@@ -675,7 +676,6 @@ struct ViewportView: View {
                 let isHandle = value.entity.name == "connectorHandle" || value.entity.name == "filletHandle"
                 if isHandle { NSCursor.closedHand.set() }
                 if value.entity.name == "connectorHandle" {
-                    model.noteInteraction()
                     if !model.draggingHandle {
                         model.draggingHandle = true
                         model.beginConnectorDrag()
@@ -685,7 +685,6 @@ struct ViewportView: View {
                     return
                 }
                 guard value.entity.name == "filletHandle" else { return }
-                model.noteInteraction()
                 if !model.draggingHandle {
                     model.draggingHandle = true
                     model.handleBaseline = model.modifierValue
@@ -700,14 +699,18 @@ struct ViewportView: View {
     }
 
     private var orbitGesture: some Gesture {
+        // Drag orbits; ⇧-drag pans the look-at target.
         DragGesture()
             .onChanged { value in
                 guard !model.draggingHandle else { return }
-                model.noteInteraction()
                 let dx = Float(value.translation.width - model.lastDrag.width)
                 let dy = Float(value.translation.height - model.lastDrag.height)
-                model.azimuth -= dx * 0.01
-                model.elevation = max(-1.45, min(1.45, model.elevation + dy * 0.01))
+                if NSEvent.modifierFlags.contains(.shift) {
+                    model.panBy(dx: dx, dy: dy)
+                } else {
+                    model.azimuth -= dx * 0.01
+                    model.elevation = max(-1.45, min(1.45, model.elevation + dy * 0.01))
+                }
                 model.lastDrag = value.translation
             }
             .onEnded { _ in model.lastDrag = .zero }
@@ -716,8 +719,7 @@ struct ViewportView: View {
     private var zoomGesture: some Gesture {
         MagnifyGesture()
             .onChanged { value in
-                model.noteInteraction()
-                model.distance = max(0.45, min(5.0, model.pinchBaseline / Float(value.magnification)))
+                model.distance = max(0.45, min(8.0, model.pinchBaseline / Float(value.magnification)))
             }
             .onEnded { _ in model.pinchBaseline = model.distance }
     }
@@ -726,9 +728,8 @@ struct ViewportView: View {
 
     private func pick(at p: CGPoint, viewSize: CGSize) {
         guard viewSize.width > 1, viewSize.height > 1 else { return }
-        model.noteInteraction()
         let cam = model.cameraPosition
-        let forward = normalize(-cam)
+        let forward = normalize(model.panOffset - cam)
         let right = normalize(cross(forward, SIMD3<Float>(0, 1, 0)))
         let up = cross(right, forward)
         let tanHalf = Float(tan(Double.pi / 6.0))   // 60° vertical FOV / 2
@@ -798,7 +799,7 @@ struct ViewportView: View {
     private func worldToScreen(_ p: SIMD3<Float>, _ viewSize: CGSize) -> CGPoint? {
         guard viewSize.width > 1, viewSize.height > 1 else { return nil }
         let cam = model.cameraPosition
-        let forward = normalize(-cam)
+        let forward = normalize(model.panOffset - cam)
         let right = normalize(cross(forward, SIMD3<Float>(0, 1, 0)))
         let up = cross(right, forward)
         let rel = p - cam
