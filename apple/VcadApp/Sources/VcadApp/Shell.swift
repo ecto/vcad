@@ -51,6 +51,11 @@ struct EditorView: View {
                             .padding(compact ? .leading : .top, 14)
                     }
                 }
+                .overlay(alignment: .top) {
+                    if model.source.isGripper {
+                        GripperReceiptPill(model: model).padding(.top, 14)
+                    }
+                }
                 .overlay(alignment: .topTrailing) {
                     InspectorView(model: model)
                         .frame(width: compact ? 224 : 280)
@@ -74,6 +79,14 @@ struct EditorView: View {
                 }
                 .navigationTitle("vcad")
                 .animation(.smooth(duration: 0.3), value: compact)
+                .task {
+                    // Dev hook: VCAD_GRIPPER=1 [VCAD_CONNECTOR_X=n] launches into
+                    // the cross-domain gripper (used to verify without driving the UI).
+                    let env = ProcessInfo.processInfo.environment
+                    guard env["VCAD_GRIPPER"] == "1" else { return }
+                    model.openGripper()
+                    if let x = env["VCAD_CONNECTOR_X"].flatMap(Double.init) { model.connectorX = x }
+                }
         }
     }
 }
@@ -83,6 +96,8 @@ struct DocumentMenu: View {
     var body: some View {
         Menu {
             Button("New Sandbox") { model.newDocument() }.keyboardShortcut("n")
+            Button("Cross-domain Gripper") { model.openGripper() }
+            Divider()
             Button("Open…") { openPanel() }.keyboardShortcut("o")
             if !model.recents.isEmpty {
                 Menu("Open Recent") {
@@ -341,6 +356,37 @@ struct StatusBarView: View {
     private var bar: some View { Rectangle().fill(.secondary.opacity(0.25)).frame(width: 1, height: 11) }
 }
 
+/// The slice-1 Receipt: the live cross-domain verdict. Drag the connector and
+/// the min-wall check flips green→red as the cutout threatens the housing.
+struct GripperReceiptPill: View {
+    let model: EditorModel
+    var body: some View {
+        let ok = model.connectorOK
+        return HStack(spacing: 11) {
+            HStack(spacing: 5) {
+                Image(systemName: "bolt.fill").font(.system(size: 11))
+                Text("connector \(Int(model.connectorX.rounded())) mm")
+            }
+            .foregroundStyle(.secondary)
+            bar
+            HStack(spacing: 5) {
+                Image(systemName: ok ? "checkmark.seal.fill" : "exclamationmark.triangle.fill")
+                Text(String(format: "min-wall %.1f mm", max(0, model.connectorMinWall)))
+            }
+            .foregroundStyle(ok ? Color.green : Color.orange)
+        }
+        .font(.system(size: 12, design: .monospaced))
+        .padding(.horizontal, 14).padding(.vertical, 8)
+        .glassCard(11)
+        .overlay(
+            RoundedRectangle(cornerRadius: 11, style: .continuous)
+                .strokeBorder((ok ? Color.green : Color.orange).opacity(0.35), lineWidth: 1)
+        )
+        .animation(.snappy(duration: 0.2), value: ok)
+    }
+    private var bar: some View { Rectangle().fill(.secondary.opacity(0.25)).frame(width: 1, height: 12) }
+}
+
 /// Seed prompts over an untouched studio — tap to load one into the command bar.
 struct ExampleChips: View {
     @Bindable var intent: IntentEngine
@@ -369,7 +415,8 @@ struct ViewportView: View {
 
     var body: some View {
         _ = (model.azimuth, model.elevation, model.distance, model.modifierValue,
-             model.source, model.selectedFeatureID, model.baseShape, model.modifier, model.pickDirty)
+             model.source, model.selectedFeatureID, model.baseShape, model.modifier,
+             model.pickDirty, model.connectorX)
 
         return GeometryReader { geo in
           RealityView { content in
@@ -387,15 +434,30 @@ struct ViewportView: View {
                 model.geometryDirty = false
                 model.parameterDirty = false
             } else if model.parameterDirty {
-                let recreated = model.streamSandbox()
-                if let root = content.entities.first(where: { $0.name == "geomRoot" }) {
-                    if recreated, let res = model.streaming.resource,
-                       let entity = root.findEntity(named: "part0") as? ModelEntity {
-                        entity.model?.mesh = res
+                if model.source.isGripper {
+                    // Live cross-domain re-solve: one connector_x → both parts
+                    // re-tessellate; reassign meshes in place (no re-pop) and
+                    // ride the connector handle along.
+                    let scene = model.gripperScene()
+                    if let root = content.entities.first(where: { $0.name == "geomRoot" }),
+                       let centering = root.findEntity(named: "centering") {
+                        for (i, item) in scene.meshes.enumerated() {
+                            (centering.findEntity(named: "part\(i)") as? ModelEntity)?.model?.mesh = item.mesh
+                        }
+                        centering.findEntity(named: "connectorHandle")?.position =
+                            model.connectorHandlePosition()
                     }
-                    if model.showsHandle {
-                        root.findEntity(named: "filletHandle")?.position =
-                            model.handlePosition(radius: model.modifierValue)
+                } else {
+                    let recreated = model.streamSandbox()
+                    if let root = content.entities.first(where: { $0.name == "geomRoot" }) {
+                        if recreated, let res = model.streaming.resource,
+                           let entity = root.findEntity(named: "part0") as? ModelEntity {
+                            entity.model?.mesh = res
+                        }
+                        if model.showsHandle {
+                            root.findEntity(named: "filletHandle")?.position =
+                                model.handlePosition(radius: model.modifierValue)
+                        }
                     }
                 }
                 model.parameterDirty = false
@@ -507,6 +569,9 @@ struct ViewportView: View {
         if model.showsHandle {
             centering.addChild(makeHandle(radius: model.modifierValue))
         }
+        if model.showsConnectorHandle {
+            centering.addChild(makeConnectorHandle(at: model.connectorHandlePosition()))
+        }
 
         let zUp = Entity()
         zUp.addChild(centering)
@@ -555,12 +620,36 @@ struct ViewportView: View {
         return handle
     }
 
+    /// The connector handle — drag it along the board edge to drive `connector_x`,
+    /// which re-solves the enclosure cutout and the board connector together.
+    private func makeConnectorHandle(at pos: SIMD3<Float>) -> ModelEntity {
+        let handle = ModelEntity(
+            mesh: .generateSphere(radius: 2.4),
+            materials: [UnlitMaterial(color: NSColor(red: 1.0, green: 0.62, blue: 0.12, alpha: 1.0))]
+        )
+        handle.name = "connectorHandle"
+        handle.position = pos
+        handle.components.set(CollisionComponent(shapes: [ShapeResource.generateSphere(radius: 3.6)]))
+        handle.components.set(InputTargetComponent())
+        return handle
+    }
+
     // MARK: gestures
 
     private var handleDrag: some Gesture {
         DragGesture()
             .targetedToAnyEntity()
             .onChanged { value in
+                if value.entity.name == "connectorHandle" {
+                    model.noteInteraction()
+                    if !model.draggingHandle {
+                        model.draggingHandle = true
+                        model.beginConnectorDrag()
+                    }
+                    let delta = Double(value.translation.width) * 0.14
+                    model.setConnectorX(model.connectorDragBaseline + delta)
+                    return
+                }
                 guard value.entity.name == "filletHandle" else { return }
                 model.noteInteraction()
                 if !model.draggingHandle {

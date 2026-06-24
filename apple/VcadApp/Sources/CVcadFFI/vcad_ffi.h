@@ -59,6 +59,15 @@ size_t vcad_scene_part_count(const VcadScene *scene);
 VcadMeshView vcad_scene_part_mesh(const VcadScene *scene, size_t index);
 void vcad_scene_free(VcadScene *scene);
 
+/* Resident parametric document — set one parameter, re-solve every bound domain.
+ * vcad_doc_gripper_slice1 builds the cross-domain worked example (one connector_x
+ * drives an enclosure cutout + a board connector). */
+typedef struct VcadDoc VcadDoc;
+VcadDoc *vcad_doc_load(const uint8_t *json, size_t json_len);
+VcadDoc *vcad_doc_gripper_slice1(void);
+VcadScene *vcad_doc_set_param(VcadDoc *doc, const char *name, double value);
+void vcad_doc_free(VcadDoc *doc);
+
 #ifdef __cplusplus
 }
 #endif

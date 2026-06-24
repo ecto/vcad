@@ -20,11 +20,14 @@
 // not-unsafe-ptr-arg lint doesn't apply here.
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
 
+use std::ffi::{c_char, CStr};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::ptr;
 
 use vcad_eval::{evaluate_document, EvalOptions, EvaluatedScene};
-use vcad_ir::Document;
+use vcad_ir::{
+    BindingKey, CsgOp, Document, Expr, MaterialDef, Node, Parameter, SceneEntry, Vec3 as IrVec3,
+};
 use vcad_kernel::Solid;
 use vcad_kernel_math::{Point3, Vec3};
 use vcad_kernel_raytrace::{Bvh, Ray};
@@ -303,6 +306,135 @@ pub extern "C" fn vcad_scene_free(scene: *mut VcadScene) {
     }
 }
 
+// =========================================================================
+// Resident parametric document — the cross-domain co-design hot loop.
+//
+// A `VcadDoc` keeps a `Document` (with its parameters + bindings) alive so a
+// gesture can set ONE parameter and re-evaluate, and every node bound to that
+// parameter re-solves together. This is how one `connector_x` drives both a
+// PCB connector (electrical) and an enclosure cutout (mechanical) at once —
+// the coupling rides the kernel's existing parameter/binding system
+// (`vcad_eval` resolves bindings inside `evaluate_document`).
+// =========================================================================
+
+/// Opaque handle to a resident parametric document.
+pub struct VcadDoc {
+    inner: Document,
+}
+
+/// Parse a `.vcad` JSON document and keep it resident for live re-solve.
+/// Returns null on invalid UTF-8, parse error, or panic.
+#[no_mangle]
+pub extern "C" fn vcad_doc_load(json: *const u8, json_len: usize) -> *mut VcadDoc {
+    if json.is_null() {
+        return ptr::null_mut();
+    }
+    catch_unwind(AssertUnwindSafe(|| {
+        let bytes = unsafe { std::slice::from_raw_parts(json, json_len) };
+        let Ok(text) = std::str::from_utf8(bytes) else {
+            return ptr::null_mut();
+        };
+        match Document::from_json(text) {
+            Ok(d) => Box::into_raw(Box::new(VcadDoc { inner: d })),
+            Err(_) => ptr::null_mut(),
+        }
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
+/// Build the slice-1 worked example in process: a servo-gripper subset where a
+/// single `connector_x` parameter is bound to BOTH an enclosure cutout
+/// (mechanical) and a board connector (electrical). Dragging it re-solves both
+/// domains together — the minimal Connector Drag.
+#[no_mangle]
+pub extern "C" fn vcad_doc_gripper_slice1() -> *mut VcadDoc {
+    catch_unwind(|| Box::into_raw(Box::new(VcadDoc { inner: build_gripper_slice1() })))
+        .unwrap_or(ptr::null_mut())
+}
+
+/// Set a parameter on a resident document and re-evaluate to a fresh scene.
+/// Bindings re-apply inside `evaluate_document`, so every node driven by this
+/// parameter moves together. Caller owns the returned scene (`vcad_scene_free`).
+/// Returns null on null input, unknown parameter name encoding, eval error, or panic.
+#[no_mangle]
+pub extern "C" fn vcad_doc_set_param(
+    doc: *mut VcadDoc,
+    name: *const c_char,
+    value: f64,
+) -> *mut VcadScene {
+    if doc.is_null() || name.is_null() {
+        return ptr::null_mut();
+    }
+    catch_unwind(AssertUnwindSafe(|| {
+        let d: &mut VcadDoc = unsafe { &mut *doc };
+        let Ok(name) = (unsafe { CStr::from_ptr(name) }).to_str() else {
+            return ptr::null_mut();
+        };
+        // Overwrite the parameter value; bindings (the coupling) stay intact and
+        // re-apply during evaluation.
+        d.inner.parameters.insert(name.to_string(), Parameter::literal(value));
+        match evaluate_document(&d.inner, &EvalOptions::default()) {
+            Ok(scene) => Box::into_raw(Box::new(VcadScene { inner: scene })),
+            Err(_) => ptr::null_mut(),
+        }
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
+/// Free a resident document. No-op on null.
+#[no_mangle]
+pub extern "C" fn vcad_doc_free(doc: *mut VcadDoc) {
+    if !doc.is_null() {
+        drop(unsafe { Box::from_raw(doc) });
+    }
+}
+
+/// The slice-1 gripper: an enclosure (a box minus a connector cutout) and a
+/// board (a plate plus a connector body), with one `connector_x` parameter
+/// bound to both the cutout's and the connector's X offset. Z-up, millimetres.
+fn build_gripper_slice1() -> Document {
+    let v = IrVec3::new;
+    let mut doc = Document::new();
+
+    // --- mechanical: enclosure = base box − connector cutout ---
+    doc.nodes.insert(1, Node { id: 1, name: Some("enclosure".into()),
+        op: CsgOp::Cube { size: v(80.0, 50.0, 30.0) } });
+    doc.nodes.insert(2, Node { id: 2, name: None,
+        op: CsgOp::Cube { size: v(12.0, 8.0, 12.0) } });
+    // offset.x is bound below; y/z fixed (straddles the front wall at y≈0).
+    doc.nodes.insert(3, Node { id: 3, name: None,
+        op: CsgOp::Translate { child: 2, offset: v(0.0, -2.0, 9.0) } });
+    doc.nodes.insert(4, Node { id: 4, name: Some("housing".into()),
+        op: CsgOp::Difference { left: 1, right: 3 } });
+
+    // --- electrical: board = plate + connector body ---
+    doc.nodes.insert(5, Node { id: 5, name: None,
+        op: CsgOp::Cube { size: v(70.0, 40.0, 2.0) } });
+    doc.nodes.insert(6, Node { id: 6, name: None,
+        op: CsgOp::Translate { child: 5, offset: v(5.0, 5.0, 5.0) } });
+    doc.nodes.insert(7, Node { id: 7, name: None,
+        op: CsgOp::Cube { size: v(10.0, 14.0, 6.0) } });
+    doc.nodes.insert(8, Node { id: 8, name: None,
+        op: CsgOp::Translate { child: 7, offset: v(0.0, 2.0, 6.0) } });
+    doc.nodes.insert(9, Node { id: 9, name: Some("board".into()),
+        op: CsgOp::Union { left: 6, right: 8 } });
+
+    // --- the coupling: one parameter drives both domains ---
+    doc.parameters.insert("connector_x".into(), Parameter::literal(40.0));
+    doc.bindings.bind(BindingKey::new(3, "offset.x"), Expr::formula("connector_x - 6"));
+    doc.bindings.bind(BindingKey::new(8, "offset.x"), Expr::formula("connector_x - 5"));
+
+    doc.roots.push(SceneEntry { root: 4, material: "aluminum".into(), visible: None });
+    doc.roots.push(SceneEntry { root: 9, material: "board".into(), visible: None });
+    doc.materials.insert("aluminum".into(), MaterialDef {
+        name: "aluminum".into(), color: [0.72, 0.74, 0.78],
+        metallic: 0.6, roughness: 0.34, density: None, friction: None, ..Default::default() });
+    doc.materials.insert("board".into(), MaterialDef {
+        name: "board".into(), color: [0.12, 0.42, 0.18],
+        metallic: 0.0, roughness: 0.6, density: None, friction: None, ..Default::default() });
+    doc
+}
+
 /// Result of a ray-pick against a solid's BRep.
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -401,6 +533,59 @@ mod tests {
         let scene = vcad_scene_from_loon(src.as_ptr(), src.len());
         assert!(scene.is_null(), "garbage loon should fail to a null scene, not panic");
         assert!(vcad_scene_from_loon(ptr::null(), 0).is_null());
+    }
+
+    #[test]
+    fn gripper_connector_x_drives_both_domains() {
+        // The coupling: one parameter must move BOTH the enclosure cutout
+        // (mechanical, node 3) and the board connector (electrical, node 8).
+        let mut doc = build_gripper_slice1();
+        doc.parameters.insert("connector_x".into(), Parameter::literal(25.0));
+        vcad_eval::resolve_document(&mut doc).unwrap();
+        let cutout_x = match &doc.nodes[&3].op {
+            CsgOp::Translate { offset, .. } => offset.x,
+            _ => panic!("node 3 should be a Translate"),
+        };
+        let conn_x = match &doc.nodes[&8].op {
+            CsgOp::Translate { offset, .. } => offset.x,
+            _ => panic!("node 8 should be a Translate"),
+        };
+        assert_eq!(cutout_x, 19.0, "cutout follows connector_x - 6");
+        assert_eq!(conn_x, 20.0, "connector follows connector_x - 5");
+
+        // Drag it and both re-solve together.
+        doc.parameters.insert("connector_x".into(), Parameter::literal(60.0));
+        vcad_eval::resolve_document(&mut doc).unwrap();
+        let cutout_x2 = match &doc.nodes[&3].op {
+            CsgOp::Translate { offset, .. } => offset.x,
+            _ => panic!(),
+        };
+        assert_eq!(cutout_x2, 54.0, "one drag moved the mechanical domain too");
+    }
+
+    #[test]
+    fn gripper_doc_set_param_evaluates_two_parts() {
+        let doc = vcad_doc_gripper_slice1();
+        assert!(!doc.is_null());
+        let name = std::ffi::CString::new("connector_x").unwrap();
+        let scene = vcad_doc_set_param(doc, name.as_ptr(), 30.0);
+        assert!(!scene.is_null(), "gripper should evaluate");
+        assert!(vcad_scene_part_count(scene) >= 2, "enclosure + board");
+        let view = vcad_scene_part_mesh(scene, 0);
+        assert!(view.vertices_len > 0, "enclosure has geometry");
+        vcad_scene_free(scene);
+        // a second drag re-solves cleanly
+        let scene2 = vcad_doc_set_param(doc, name.as_ptr(), 64.0);
+        assert!(!scene2.is_null());
+        vcad_scene_free(scene2);
+        vcad_doc_free(doc);
+    }
+
+    #[test]
+    fn gripper_doc_null_inputs_are_safe() {
+        assert!(vcad_doc_set_param(ptr::null_mut(), ptr::null(), 1.0).is_null());
+        vcad_doc_free(ptr::null_mut());
+        assert!(vcad_doc_load(ptr::null(), 0).is_null());
     }
 
     #[test]

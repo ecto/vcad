@@ -14,12 +14,16 @@ enum GeometrySource: Hashable, Identifiable {
     /// Geometry authored by the AI intent bar: a loon program the kernel
     /// compiles + evaluates exactly like a loaded `.vcad` file.
     case generated(loon: String, label: String)
+    /// The cross-domain slice: a resident parametric doc where one `connector_x`
+    /// couples the enclosure cutout (mechanical) + the board connector (electrical).
+    case gripper
 
     var id: String {
         switch self {
         case .sandbox: return "sandbox"
         case .document(let path, _): return path
         case .generated: return "generated"
+        case .gripper: return "gripper"
         }
     }
     var label: String {
@@ -27,10 +31,12 @@ enum GeometrySource: Hashable, Identifiable {
         case .sandbox: return "Sandbox"
         case .document(_, let label): return label
         case .generated(_, let label): return label
+        case .gripper: return "Gripper"
         }
     }
     var isSandbox: Bool { if case .sandbox = self { return true }; return false }
     var isGenerated: Bool { if case .generated = self { return true }; return false }
+    var isGripper: Bool { if case .gripper = self { return true }; return false }
 }
 
 /// The sandbox primitive — chosen from the Create tab of the tool palette.
@@ -184,6 +190,74 @@ final class EditorModel {
         pinchBaseline = 1.5
     }
 
+    // MARK: cross-domain slice — the gripper
+    // One `connector_x` couples the enclosure cutout (mechanical) + the board
+    // connector (electrical); see docs/plans/2026-06-23-gripper-vertical-slice.md.
+
+    nonisolated(unsafe) private var gripperDoc: OpaquePointer?
+    var connectorX: Double = 40
+    let connectorRange: ClosedRange<Double> = 4...76
+    @ObservationIgnored private var connectorBaseline: Double = 40
+    @ObservationIgnored private var lastConnectorTick = 40
+    @ObservationIgnored private var lastConnectorOK = true
+
+    deinit { if let d = gripperDoc { vcad_doc_free(d) } }
+
+    /// Clearance from the connector cutout to the nearest enclosure side wall.
+    var connectorMinWall: Double { min(connectorX - 6, 74 - connectorX) }
+    var connectorOK: Bool { connectorMinWall >= 6 }
+    var showsConnectorHandle: Bool { source.isGripper }
+    func connectorHandlePosition() -> SIMD3<Float> { SIMD3(Float(connectorX), 9, 13) }
+
+    func openGripper() {
+        connectorX = 40
+        lastConnectorTick = 40
+        lastConnectorOK = true
+        source = .gripper
+    }
+
+    func beginConnectorDrag() { connectorBaseline = connectorX }
+    var connectorDragBaseline: Double { connectorBaseline }
+
+    /// Drag handler: clamp, flag a re-solve, and fire the felt detents — a tick
+    /// per millimetre, a firm "wall" the instant min-wall is violated.
+    func setConnectorX(_ x: Double) {
+        let clamped = min(max(x, connectorRange.lowerBound), connectorRange.upperBound)
+        connectorX = clamped
+        parameterDirty = true
+        let tick = Int(clamped.rounded())
+        if tick != lastConnectorTick {
+            lastConnectorTick = tick
+            NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .default)
+        }
+        let ok = connectorOK
+        if ok != lastConnectorOK {
+            lastConnectorOK = ok
+            if !ok {
+                NSHapticFeedbackManager.defaultPerformer.perform(.levelChange, performanceTime: .default)
+            }
+        }
+    }
+
+    private func ensureGripperDoc() -> OpaquePointer? {
+        if gripperDoc == nil { gripperDoc = vcad_doc_gripper_slice1() }
+        return gripperDoc
+    }
+
+    /// Re-solve the coupled doc at the current `connector_x` and gather both
+    /// parts. Re-evaluating sets `connector_x`; bindings move the cutout AND the
+    /// connector together — one finger, two domains.
+    func gripperScene() -> RenderScene {
+        guard let doc = ensureGripperDoc() else { return .empty }
+        let start = Date()
+        let scene: OpaquePointer? = "connector_x".withCString {
+            vcad_doc_set_param(doc, $0, connectorX)
+        }
+        guard let scene else { return .empty }
+        defer { vcad_scene_free(scene) }
+        return sceneFromHandle(scene, start: start)
+    }
+
     let examples: [(name: String, path: String)] = [
         ("Pulley", "\(kSamplesDir)/mecheval/tasks/a6-pulley-01.vcad"),
         ("Counterbore", "\(kSamplesDir)/mecheval/tasks/a4-counterbore-plate-01.vcad"),
@@ -247,6 +321,11 @@ final class EditorModel {
                 Feature(id: "part\(i)", name: n == 1 ? label : "Part \(i + 1)",
                         symbol: "cube.transparent", kind: .part)
             }
+        case .gripper:
+            return [
+                Feature(id: "part0", name: "Enclosure", symbol: "cube", kind: .part),
+                Feature(id: "part1", name: "Board", symbol: "cpu", kind: .part),
+            ]
         }
     }
     var selectedFeature: Feature? { features.first { $0.id == selectedFeatureID } }
@@ -279,6 +358,7 @@ final class EditorModel {
         case .sandbox: return sandboxScene()
         case .document(let path, _): return documentScene(path: path)
         case .generated(let loon, _): return generatedScene(loon: loon)
+        case .gripper: return gripperScene()
         }
     }
 
