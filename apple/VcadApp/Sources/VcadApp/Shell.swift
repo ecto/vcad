@@ -85,7 +85,7 @@ struct EditorView: View {
                     let env = ProcessInfo.processInfo.environment
                     guard env["VCAD_GRIPPER"] == "1" else { return }
                     model.openGripper()
-                    if let x = env["VCAD_CONNECTOR_X"].flatMap(Double.init) { model.connectorX = x }
+                    if let x = env["VCAD_CONNECTOR_X"].flatMap(Double.init) { model.jumpConnector(x) }
                 }
         }
     }
@@ -434,10 +434,12 @@ struct ViewportView: View {
                 model.geometryDirty = false
                 model.parameterDirty = false
             } else if model.parameterDirty {
+                var keepAnimating = false
                 if model.source.isGripper {
-                    // Live cross-domain re-solve: one connector_x → both parts
-                    // re-tessellate; reassign meshes in place (no re-pop) and
-                    // ride the connector handle along.
+                    // Ease connector_x one frame toward the drag target, then
+                    // re-solve both parts at the eased value — the solved drag
+                    // tweens smoothly. Stay dirty until it settles.
+                    keepAnimating = model.advanceConnector()
                     let scene = model.gripperScene()
                     if let root = content.entities.first(where: { $0.name == "geomRoot" }),
                        let centering = root.findEntity(named: "centering") {
@@ -460,7 +462,7 @@ struct ViewportView: View {
                         }
                     }
                 }
-                model.parameterDirty = false
+                model.parameterDirty = keepAnimating
             }
             if model.pickDirty {
                 if let root = content.entities.first(where: { $0.name == "geomRoot" }),
