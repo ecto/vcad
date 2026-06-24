@@ -6,7 +6,7 @@ import CVcadFFI
 
 // Model layer. The SwiftUI shell is in Shell.swift; kernel/streaming in Kernel.swift.
 
-private let kSamplesDir = "/Users/cam/Developer/vcad/.claude/worktrees/elated-mclaren-925de7"
+private let kSamplesDir = "/Users/cam/Developer/vcad/.claude/worktrees/great-bohr-4c355d"
 
 enum GeometrySource: Hashable, Identifiable {
     case sandbox
@@ -69,10 +69,44 @@ enum Modifier: String, CaseIterable {
 /// A tab in the tool palette (the native reinterpretation of the web app's
 /// Borland tool picker — same model, native skin).
 enum ToolTab: String, CaseIterable, Identifiable {
-    case create, modify
+    case create, modify, combine
     var id: String { rawValue }
     var label: String { rawValue.capitalized }
-    var symbol: String { self == .create ? "plus.square.on.square" : "wand.and.rays" }
+    var symbol: String {
+        switch self {
+        case .create: return "plus.square.on.square"
+        case .modify: return "wand.and.rays"
+        case .combine: return "square.on.square.dashed"
+        }
+    }
+}
+
+/// A boolean combine operation (the Combine tab — acts on two selected parts).
+enum BooleanOp: String, CaseIterable, Identifiable {
+    case union, difference, intersection
+    var id: String { rawValue }
+    var label: String {
+        switch self {
+        case .union: return "Union"
+        case .difference: return "Subtract"
+        case .intersection: return "Intersect"
+        }
+    }
+    /// The IR op tag emitted into the document.
+    var opType: String {
+        switch self {
+        case .union: return "Union"
+        case .difference: return "Difference"
+        case .intersection: return "Intersection"
+        }
+    }
+    var symbol: String {
+        switch self {
+        case .union: return "plus.circle"
+        case .difference: return "minus.circle"
+        case .intersection: return "circle.circle"
+        }
+    }
 }
 
 /// One tool button within a tab.
@@ -114,7 +148,9 @@ final class EditorModel {
     var source: GeometrySource = .sandbox {
         didSet {
             geometryDirty = true
-            selectedFeatureID = source.isSandbox ? "modifier" : "part0"
+            loadDocumentTree()                    // parse the DAG for a .vcad
+            if !availableTabs.contains(toolTab) { toolTab = .create }
+            selectedFeatureID = defaultSelection()
             resetCamera()        // frame the new part cleanly
         }
     }
@@ -136,7 +172,10 @@ final class EditorModel {
     // Selection binds tree -> inspector AND rolls history (selecting "base"
     // shows the modifier's input).
     var selectedFeatureID: String? = "modifier" {
-        didSet { if source.isSandbox { geometryDirty = true } }
+        didSet {
+            if source.isSandbox { geometryDirty = true }
+            else if selectedFeatureID != oldValue { selectionDirty = true }
+        }
     }
 
     // Live readouts.
@@ -160,6 +199,444 @@ final class EditorModel {
     var pinchBaseline: Float = 1.5
     var draggingHandle = false
     var handleBaseline: Double = 0
+
+    // MARK: document feature tree
+    // The parsed DAG behind a loaded .vcad — drives the hierarchical sidebar,
+    // per-part visibility, and selection ↔ viewport highlight. Geometry still
+    // comes from the kernel; this is the *operations* view of the same file.
+
+    var documentGraph: DocumentGraph?
+    var featureNodes: [FeatureNode] = []
+    var expandedFeatureIDs: Set<String> = []
+    /// Part indices hidden via the eye toggle (empty = all shown).
+    var hiddenParts: Set<Int> = []
+    /// Isolate: when set, only this part shows (supersedes `hiddenParts`).
+    var isolatedPart: Int?
+    /// Viewport needs to re-apply part visibility / re-highlight the selection.
+    var visibilityDirty = false
+    var selectionDirty = false
+    /// Parts ⌘-clicked for a multi-part action (booleans). Ordered: first = base.
+    var multiSelectedParts: [Int] = []
+    /// Per-part kernel-space AABBs, index-aligned with the rendered parts —
+    /// the cheap basis for picking a part in the viewport (tap → select row).
+    @ObservationIgnored var docPartBounds: [(min: SIMD3<Float>, max: SIMD3<Float>)] = []
+
+    var usesDocumentTree: Bool { documentGraph != nil && !featureNodes.isEmpty }
+
+    /// Parse the DAG when a `.vcad` document loads; clear it for every other
+    /// source. Resets visibility + expansion so each document opens clean.
+    private func loadDocumentTree() {
+        hiddenParts.removeAll()
+        isolatedPart = nil
+        multiSelectedParts = []
+        expandedFeatureIDs.removeAll()
+        docPartBounds = []
+        documentJSON = nil
+        undoStack.removeAll(); redoStack.removeAll()
+        renamingFeatureID = nil
+        documentDirty = false
+        if case let .document(path, _) = source,
+           let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
+           let dict = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+           let g = DocumentGraph.parse(dict) {
+            documentJSON = dict
+            documentGraph = g
+            featureNodes = g.featureRoots()
+            // Auto-expand a single-root doc so its history reads at a glance.
+            if featureNodes.count == 1, let only = featureNodes.first {
+                expandedFeatureIDs.insert(only.id)
+            }
+        } else {
+            documentGraph = nil
+            featureNodes = []
+        }
+    }
+
+    private func defaultSelection() -> String? {
+        switch source {
+        case .sandbox: return "modifier"
+        case .document: return featureNodes.first?.id
+        default: return "part0"
+        }
+    }
+
+    func toggleExpanded(_ id: String) {
+        if expandedFeatureIDs.contains(id) { expandedFeatureIDs.remove(id) }
+        else { expandedFeatureIDs.insert(id) }
+    }
+
+    // MARK: per-part visibility
+
+    func isPartVisible(_ i: Int) -> Bool {
+        if let iso = isolatedPart { return i == iso }
+        return !hiddenParts.contains(i)
+    }
+    var hasHiddenParts: Bool { isolatedPart != nil || !hiddenParts.isEmpty }
+
+    func toggleVisibility(part i: Int) {
+        isolatedPart = nil                       // an explicit toggle exits isolate
+        if hiddenParts.contains(i) { hiddenParts.remove(i) } else { hiddenParts.insert(i) }
+        visibilityDirty = true
+    }
+    func isolate(part i: Int) {
+        isolatedPart = (isolatedPart == i) ? nil : i
+        hiddenParts.removeAll()
+        visibilityDirty = true
+    }
+    func showAllParts() {
+        hiddenParts.removeAll()
+        isolatedPart = nil
+        visibilityDirty = true
+    }
+
+    // MARK: selection ↔ part mapping
+
+    /// The viewport part index implied by the current selection — the owning
+    /// root of the selected feature row, or nil (selecting deep operands still
+    /// highlights the part they build).
+    var selectedPartIndex: Int? {
+        guard let sel = selectedFeatureID else { return nil }
+        for node in featureNodes {
+            if let pi = node.partIndex, Self.subtree(node, contains: sel) { return pi }
+        }
+        return nil
+    }
+    private static func subtree(_ node: FeatureNode, contains id: String) -> Bool {
+        if node.id == id { return true }
+        return node.children.contains { subtree($0, contains: id) }
+    }
+
+    /// Single-select a row (clears any multi-selection).
+    func selectFeature(_ id: String) {
+        if !multiSelectedParts.isEmpty { multiSelectedParts = [] }
+        selectedFeatureID = id
+    }
+    /// ⌘-click: toggle a part in the multi-selection; the last click stays primary.
+    func toggleMultiSelect(part pi: Int, featureID id: String) {
+        if let idx = multiSelectedParts.firstIndex(of: pi) { multiSelectedParts.remove(at: idx) }
+        else { multiSelectedParts.append(pi) }
+        selectedFeatureID = id
+        selectionDirty = true
+    }
+    /// The parts to highlight: the multi-selection if any, else the primary part.
+    var highlightedParts: Set<Int> {
+        multiSelectedParts.isEmpty ? Set([selectedPartIndex].compactMap { $0 }) : Set(multiSelectedParts)
+    }
+
+    var selectedFeatureNode: FeatureNode? { Self.find(featureNodes, id: selectedFeatureID) }
+    private static func find(_ nodes: [FeatureNode], id: String?) -> FeatureNode? {
+        guard let id else { return nil }
+        for n in nodes {
+            if n.id == id { return n }
+            if let f = find(n.children, id: id) { return f }
+        }
+        return nil
+    }
+
+    /// Material key assigned to a rendered part (root order), if any.
+    func materialName(forPart i: Int) -> String? {
+        guard let g = documentGraph, i < g.visibleRoots.count else { return nil }
+        return g.visibleRoots[i].material
+    }
+
+    func documentBaseColor(_ i: Int) -> NSColor { Self.partColors[i % Self.partColors.count] }
+    static let brandPink = NSColor(srgbRed: 0.976, green: 0.149, blue: 0.447, alpha: 1.0)
+
+    /// Ray-pick a document part by its AABB (kernel coords) — nearest entry
+    /// wins. Coarse (box, not triangle) but robust and ample for selection.
+    func pickDocumentPart(originKernel o: SIMD3<Float>, dirKernel d: SIMD3<Float>) -> Int? {
+        var best: (i: Int, t: Float)?
+        for (i, b) in docPartBounds.enumerated() where isPartVisible(i) {
+            guard let t = Self.rayAABB(o: o, d: d, lo: b.min, hi: b.max) else { continue }
+            if best == nil || t < best!.t { best = (i, t) }
+        }
+        return best?.i
+    }
+
+    /// Slab test → entry distance along the ray, or nil if it misses.
+    private static func rayAABB(o: SIMD3<Float>, d: SIMD3<Float>,
+                                lo: SIMD3<Float>, hi: SIMD3<Float>) -> Float? {
+        var tmin: Float = -.greatestFiniteMagnitude
+        var tmax: Float = .greatestFiniteMagnitude
+        for a in 0..<3 {
+            let di = d[a]
+            if abs(di) < 1e-9 {
+                if o[a] < lo[a] || o[a] > hi[a] { return nil }
+            } else {
+                let inv = 1 / di
+                var t1 = (lo[a] - o[a]) * inv
+                var t2 = (hi[a] - o[a]) * inv
+                if t1 > t2 { swap(&t1, &t2) }
+                tmin = max(tmin, t1)
+                tmax = min(tmax, t2)
+                if tmin > tmax { return nil }
+            }
+        }
+        return tmax < 0 ? nil : max(tmin, 0)
+    }
+
+    // MARK: document editing
+    // The kernel is a pure JSON→meshes evaluator, so editing = mutate the live
+    // doc dict + re-evaluate. `documentJSON` is the source of truth; `featureNodes`
+    // / geometry are re-derived after each edit. Undo/redo are JSON snapshots.
+
+    @ObservationIgnored var documentJSON: [String: Any]?
+    var undoStack: [Data] = []
+    var redoStack: [Data] = []
+    var documentDirty = false
+    /// One scrub gesture = one undo entry; skip the materialize-pop on edits.
+    @ObservationIgnored var suppressMaterializePop = false
+    /// In-place re-eval of a parameter edit (mesh swap, no full rebuild / pop).
+    var docParamDirty = false
+    /// The feature row currently being renamed inline, if any.
+    var renamingFeatureID: String?
+
+    var canUndo: Bool { !undoStack.isEmpty }
+    var canRedo: Bool { !redoStack.isEmpty }
+    /// Export is available for anything with exportable geometry (not the gripper).
+    var canExport: Bool { if case .gripper = source { return false }; return true }
+
+    // MARK: authoring (Create/Modify tools on a loaded document)
+
+    /// Add a fresh primitive as a new part in the loaded document.
+    func addPrimitive(_ shape: BaseShape) {
+        guard documentJSON != nil else { return }
+        applyEdit(snapshot: true, reeval: .rebuild) { DocEdit.addPrimitiveRoot(&$0, shape: shape) }
+        selectedFeatureID = featureNodes.last?.id        // focus the new part
+    }
+
+    /// Combine the two ⌘-selected parts with a boolean op (first = base).
+    func combineSelected(_ op: BooleanOp) {
+        guard documentJSON != nil, multiSelectedParts.count == 2 else { return }
+        let a = multiSelectedParts[0], b = multiSelectedParts[1]
+        applyEdit(snapshot: true, reeval: .rebuild) { DocEdit.combineRoots(&$0, a, b, op: op.opType) }
+        multiSelectedParts = []
+        hiddenParts.removeAll(); isolatedPart = nil       // indices collapsed
+        selectedFeatureID = featureNodes.last?.id          // the new combined part
+    }
+
+    /// Tabs available in the tool palette — Combine only applies to documents.
+    var availableTabs: [ToolTab] { usesDocumentTree ? [.create, .modify, .combine] : [.create, .modify] }
+
+    /// Wrap the selected part with a fillet/chamfer over all its edges.
+    func applyModifierToSelected(_ mod: Modifier) {
+        guard documentJSON != nil, mod != .none, let pi = selectedPartIndex else { return }
+        let selBefore = selectedPartIndex
+        applyEdit(snapshot: true, reeval: .rebuild) {
+            DocEdit.wrapRootWithModifier(&$0, partIndex: pi, fillet: mod == .fillet)
+        }
+        // Keep the same part selected (its root node id changed → select its row).
+        if let pi = selBefore, pi < featureNodes.count { selectedFeatureID = featureNodes[pi].id }
+    }
+
+    // MARK: save
+
+    func saveDocument() {
+        guard case let .document(path, _) = source,
+              let json = documentJSON, let data = DocEdit.serializePretty(json) else { return }
+        if (try? data.write(to: URL(fileURLWithPath: path))) != nil { documentDirty = false }
+    }
+
+    func saveDocumentAs(_ url: URL) {
+        guard let json = documentJSON, let data = DocEdit.serializePretty(json) else { return }
+        guard (try? data.write(to: url)) != nil else { return }
+        openDocument(url)        // re-open from the saved file (resets dirty/undo)
+    }
+
+    /// Discard edits and reload the document from disk.
+    func revertDocument() {
+        guard case .document = source else { return }
+        loadDocumentTree()
+        geometryDirty = true; selectionDirty = true; visibilityDirty = true
+        selectedFeatureID = featureNodes.first?.id
+    }
+
+    private enum Reeval { case inPlace, rebuild, none }
+
+    private func pushUndo() {
+        guard let json = documentJSON, let data = DocEdit.serialize(json) else { return }
+        undoStack.append(data)
+        if undoStack.count > 64 { undoStack.removeFirst() }
+        redoStack.removeAll()
+    }
+
+    private func applyEdit(snapshot: Bool, reeval: Reeval, _ mutate: (inout [String: Any]) -> Void) {
+        guard var json = documentJSON else { return }
+        if snapshot { pushUndo() }
+        mutate(&json)
+        documentJSON = json
+        documentDirty = true
+        if let g = DocumentGraph.parse(json) {
+            documentGraph = g
+            featureNodes = g.featureRoots()
+        }
+        switch reeval {
+        case .inPlace:
+            docParamDirty = true
+        case .rebuild:
+            suppressMaterializePop = true
+            geometryDirty = true; selectionDirty = true; visibilityDirty = true
+        case .none:
+            break
+        }
+    }
+
+    /// Current op dict for a node — feeds the inspector's parameter editors.
+    func opDict(nodeId: Int) -> [String: Any]? {
+        documentJSON.flatMap { DocEdit.op($0, nodeId: nodeId) }
+    }
+
+    func editScalar(nodeId: Int, key: String, value: Double, snapshot: Bool) {
+        applyEdit(snapshot: snapshot, reeval: .inPlace) {
+            DocEdit.setScalar(&$0, nodeId: nodeId, key: key, value: value)
+        }
+    }
+    func editVec(nodeId: Int, key: String, axis: String, value: Double, snapshot: Bool) {
+        applyEdit(snapshot: snapshot, reeval: .inPlace) {
+            DocEdit.setVecComponent(&$0, nodeId: nodeId, key: key, axis: axis, value: value)
+        }
+    }
+    func editInt(nodeId: Int, key: String, value: Int, snapshot: Bool) {
+        applyEdit(snapshot: snapshot, reeval: .inPlace) {
+            DocEdit.setInt(&$0, nodeId: nodeId, key: key, value: value)
+        }
+    }
+    func renameFeature(_ nodeId: Int, to name: String) {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        applyEdit(snapshot: true, reeval: .none) {
+            DocEdit.setName(&$0, nodeId: nodeId, name: trimmed)
+        }
+    }
+    func deletePart(_ partIndex: Int) {
+        applyEdit(snapshot: true, reeval: .rebuild) {
+            DocEdit.removeRoot(&$0, partIndex: partIndex)
+        }
+        // Indices shifted; clear visibility/multi-select and re-anchor selection.
+        hiddenParts.removeAll(); isolatedPart = nil; multiSelectedParts = []
+        if selectedFeatureNode == nil { selectedFeatureID = featureNodes.first?.id }
+    }
+
+    func undo() {
+        guard let data = undoStack.popLast() else { return }
+        if let cur = documentJSON, let curData = DocEdit.serialize(cur) { redoStack.append(curData) }
+        restore(data)
+    }
+    func redo() {
+        guard let data = redoStack.popLast() else { return }
+        if let cur = documentJSON, let curData = DocEdit.serialize(cur) { undoStack.append(curData) }
+        restore(data)
+    }
+    private func restore(_ data: Data) {
+        guard let dict = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return }
+        documentJSON = dict
+        if let g = DocumentGraph.parse(dict) { documentGraph = g; featureNodes = g.featureRoots() }
+        hiddenParts.removeAll(); isolatedPart = nil
+        suppressMaterializePop = true
+        geometryDirty = true; selectionDirty = true; visibilityDirty = true
+        if selectedFeatureNode == nil { selectedFeatureID = featureNodes.first?.id }
+    }
+
+    /// Re-evaluate the edited doc and return fresh part meshes for an in-place
+    /// swap (no entity rebuild → smooth scrubbing). Keeps display scale/center
+    /// fixed so the part doesn't jump mid-edit; updates the live readouts +
+    /// pick bounds. Returns nil if the edit produced no geometry.
+    func reevalDocumentMeshes() -> [MeshResource]? {
+        guard let json = documentJSON, let data = DocEdit.serialize(json) else { return nil }
+        let start = Date()
+        let scene: OpaquePointer? = data.withUnsafeBytes {
+            vcad_scene_from_json($0.bindMemory(to: UInt8.self).baseAddress, data.count)
+        }
+        guard let scene else { return nil }
+        defer { vcad_scene_free(scene) }
+        let count = vcad_scene_part_count(scene)
+        var meshes: [MeshResource] = []
+        var bounds: [(min: SIMD3<Float>, max: SIMD3<Float>)] = []
+        var lo = SIMD3<Float>(repeating: .greatestFiniteMagnitude)
+        var hi = SIMD3<Float>(repeating: -.greatestFiniteMagnitude)
+        var tris = 0
+        for i in 0..<count {
+            let km = KernelMesh.fromView(vcad_scene_part_mesh(scene, i))
+            if km.isEmpty { continue }
+            lo = simd_min(lo, km.minBound); hi = simd_max(hi, km.maxBound)
+            tris += km.triangleCount
+            meshes.append(km.resource(name: "part\(i)"))
+            bounds.append((km.minBound, km.maxBound))
+        }
+        guard !meshes.isEmpty else { return nil }
+        docPartBounds = bounds
+        solveMillis = Date().timeIntervalSince(start) * 1000
+        triangleCount = tris
+        partCount = meshes.count
+        sizeMM = hi - lo
+        return meshes
+    }
+
+    // MARK: export
+    // No export FFI today, so STL is written here from the current part meshes
+    // (binary STL = just triangles). Works for the sandbox + any loaded/edited doc.
+
+    /// Kernel meshes for whatever is on screen right now (sandbox primitive or
+    /// the evaluated document), for export.
+    private func currentKernelMeshes() -> [KernelMesh] {
+        switch source {
+        case .sandbox:
+            return sandboxKernelMesh().map { [$0] } ?? []
+        case .document, .generated:
+            let data: Data?
+            if let json = documentJSON { data = DocEdit.serialize(json) }
+            else if case let .document(path, _) = source { data = try? Data(contentsOf: URL(fileURLWithPath: path)) }
+            else if case let .generated(loon, _) = source { data = Data(loon.utf8) }
+            else { data = nil }
+            guard let data else { return [] }
+            let isLoon = { if case .generated = source { return true } else { return false } }()
+            let scene: OpaquePointer? = data.withUnsafeBytes { raw in
+                let base = raw.bindMemory(to: UInt8.self).baseAddress
+                return isLoon ? vcad_scene_from_loon(base, data.count) : vcad_scene_from_json(base, data.count)
+            }
+            guard let scene else { return [] }
+            defer { vcad_scene_free(scene) }
+            var out: [KernelMesh] = []
+            for i in 0..<vcad_scene_part_count(scene) {
+                let km = KernelMesh.fromView(vcad_scene_part_mesh(scene, i))
+                if !km.isEmpty { out.append(km) }
+            }
+            return out
+        case .gripper:
+            return []
+        }
+    }
+
+    @discardableResult
+    func exportSTL(to url: URL) -> Bool {
+        let meshes = currentKernelMeshes()
+        guard !meshes.isEmpty else { return false }
+        var triCount = 0
+        for m in meshes { triCount += m.triangleCount }
+
+        var data = Data()
+        data.append(Data(count: 80))                    // header
+        var n = UInt32(triCount).littleEndian
+        withUnsafeBytes(of: &n) { data.append(contentsOf: $0) }
+
+        func put(_ f: Float) { var v = f.bitPattern.littleEndian; withUnsafeBytes(of: &v) { data.append(contentsOf: $0) } }
+        for m in meshes {
+            var i = 0
+            while i + 2 < m.indices.count {
+                let a = m.positions[Int(m.indices[i])]
+                let b = m.positions[Int(m.indices[i + 1])]
+                let c = m.positions[Int(m.indices[i + 2])]
+                let nrm = normalize(cross(b - a, c - a))
+                put(nrm.x.isFinite ? nrm.x : 0); put(nrm.y.isFinite ? nrm.y : 0); put(nrm.z.isFinite ? nrm.z : 1)
+                put(a.x); put(a.y); put(a.z)
+                put(b.x); put(b.y); put(b.z)
+                put(c.x); put(c.y); put(c.z)
+                data.append(contentsOf: [0, 0])         // attribute byte count
+                i += 3
+            }
+        }
+        return (try? data.write(to: url)) != nil
+    }
 
     // Hover affordance for the draggable handles (cursor + a subtle scale pop).
     // The handles' live world positions are projected to screen to hit-test the
@@ -467,19 +944,41 @@ final class EditorModel {
     // MARK: tool palette
 
     func tools(for tab: ToolTab) -> [Tool] {
+        let docMode = usesDocumentTree
         switch tab {
         case .create:
             return BaseShape.allCases.map { shape in
-                Tool(id: "shape.\(shape.rawValue)", label: shape.label, symbol: shape.symbol,
-                     isActive: baseShape == shape) { [weak self] in self?.baseShape = shape }
+                // Sandbox: pick the primitive. Document: add a new part.
+                Tool(id: "shape.\(shape.rawValue)",
+                     label: docMode ? "Add \(shape.label)" : shape.label, symbol: shape.symbol,
+                     isActive: !docMode && baseShape == shape) { [weak self] in
+                    if docMode { self?.addPrimitive(shape) } else { self?.baseShape = shape }
+                }
             }
         case .modify:
-            return Modifier.allCases.map { mod in
+            return Modifier.allCases.compactMap { mod in
+                if docMode {
+                    guard mod != .none else { return nil }     // no "None" tool when authoring
+                    let ok = selectedPartIndex != nil
+                    return Tool(id: "mod.\(mod.rawValue)", label: mod.label, symbol: mod.symbol,
+                                isActive: false, enabled: ok,
+                                hint: ok ? "" : "Select a part first") { [weak self] in
+                        self?.applyModifierToSelected(mod)
+                    }
+                }
                 // Fillet/chamfer are no-ops on a sphere (no edges) — surface that.
                 let ok = mod == .none || baseShape != .sphere
                 return Tool(id: "mod.\(mod.rawValue)", label: mod.label, symbol: mod.symbol,
                             isActive: modifier == mod, enabled: ok,
                             hint: ok ? "" : "No edges on a sphere") { [weak self] in self?.modifier = mod }
+            }
+        case .combine:
+            guard docMode else { return [] }
+            let ready = multiSelectedParts.count == 2
+            return BooleanOp.allCases.map { b in
+                Tool(id: "bool.\(b.rawValue)", label: b.label, symbol: b.symbol,
+                     isActive: false, enabled: ready,
+                     hint: ready ? "" : "⌘-click 2 parts") { [weak self] in self?.combineSelected(b) }
             }
         }
     }
@@ -659,9 +1158,12 @@ final class EditorModel {
 
     private func documentScene(path: String) -> RenderScene {
         let start = Date()
-        guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)), !data.isEmpty else {
-            return .empty
-        }
+        // Prefer the live (possibly edited) doc; fall back to the file on disk
+        // for formats the JSON parser couldn't load (legacy terse `.vcad`).
+        let data: Data?
+        if let json = documentJSON { data = DocEdit.serialize(json) }
+        else { data = try? Data(contentsOf: URL(fileURLWithPath: path)) }
+        guard let data, !data.isEmpty else { return .empty }
         let scene: OpaquePointer? = data.withUnsafeBytes { raw in
             vcad_scene_from_json(raw.bindMemory(to: UInt8.self).baseAddress, data.count)
         }
@@ -691,6 +1193,7 @@ final class EditorModel {
     private func sceneFromHandle(_ scene: OpaquePointer, start: Date) -> RenderScene {
         let count = vcad_scene_part_count(scene)
         var meshes: [(MeshResource, NSColor)] = []
+        var bounds: [(min: SIMD3<Float>, max: SIMD3<Float>)] = []
         var lo = SIMD3<Float>(repeating: .greatestFiniteMagnitude)
         var hi = SIMD3<Float>(repeating: -.greatestFiniteMagnitude)
         var tris = 0
@@ -700,8 +1203,12 @@ final class EditorModel {
             lo = simd_min(lo, km.minBound); hi = simd_max(hi, km.maxBound)
             tris += km.triangleCount
             meshes.append((km.resource(name: "part\(i)"), Self.partColors[i % Self.partColors.count]))
+            // Index-aligned with `meshes` (and thus the rendered part entities),
+            // so a viewport tap maps back to the right feature-tree row.
+            bounds.append((km.minBound, km.maxBound))
         }
         guard !meshes.isEmpty else { return .empty }
+        docPartBounds = bounds
 
         solveMillis = Date().timeIntervalSince(start) * 1000
         triangleCount = tris

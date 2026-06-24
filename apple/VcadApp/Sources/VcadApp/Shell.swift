@@ -46,7 +46,7 @@ struct EditorView: View {
                     }
                 }
                 .overlay(alignment: compact ? .leading : .top) {
-                    if model.source.isSandbox {
+                    if model.source.isSandbox || model.usesDocumentTree {
                         ToolPaletteView(model: model, axis: compact ? .vertical : .horizontal)
                             .padding(compact ? .leading : .top, 14)
                     }
@@ -92,6 +92,11 @@ struct EditorView: View {
                     // Dev hook: VCAD_GRIPPER=1 [VCAD_CONNECTOR_X=n] launches into
                     // the cross-domain gripper (used to verify without driving the UI).
                     let env = ProcessInfo.processInfo.environment
+                    // Dev hook: VCAD_OPEN=<path> opens a .vcad on launch (handy
+                    // for verifying the feature tree against a real document).
+                    if let path = env["VCAD_OPEN"], !path.isEmpty {
+                        model.openDocument(URL(fileURLWithPath: path))
+                    }
                     guard env["VCAD_GRIPPER"] == "1" else { return }
                     model.openGripper()
                     if let x = env["VCAD_CONNECTOR_X"].flatMap(Double.init) { model.connectorX = x }
@@ -128,15 +133,49 @@ struct DocumentMenu: View {
                     Button(ex.name) { model.openDocument(URL(fileURLWithPath: ex.path)) }
                 }
             }
+            Divider()
+            Button("Undo") { model.undo() }.keyboardShortcut("z").disabled(!model.canUndo)
+            Button("Redo") { model.redo() }
+                .keyboardShortcut("z", modifiers: [.command, .shift]).disabled(!model.canRedo)
+            Divider()
+            if model.usesDocumentTree {
+                Button("Save") { model.saveDocument() }
+                    .keyboardShortcut("s").disabled(!model.documentDirty)
+                Button("Save As…") { saveAsPanel() }
+                    .keyboardShortcut("s", modifiers: [.command, .shift])
+                if model.documentDirty {
+                    Button("Revert Changes") { model.revertDocument() }
+                }
+            }
+            Button("Export STL…") { exportPanel() }.keyboardShortcut("e").disabled(!model.canExport)
         } label: {
             HStack(spacing: 6) {
                 Image(systemName: model.source.isSandbox ? "cube" : "doc").font(.system(size: 12))
                 Text(model.documentName).font(.system(size: 13, weight: .medium))
+                if model.documentDirty {
+                    Circle().fill(Color.accentColor).frame(width: 5, height: 5)
+                }
                 Image(systemName: "chevron.down").font(.system(size: 9)).opacity(0.55)
             }
         }
         .menuStyle(.borderlessButton)
         .fixedSize()
+    }
+
+    private func exportPanel() {
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [UTType(filenameExtension: "stl") ?? .data]
+        panel.nameFieldStringValue = "\(model.documentName).stl"
+        panel.prompt = "Export"
+        if panel.runModal() == .OK, let url = panel.url { _ = model.exportSTL(to: url) }
+    }
+
+    private func saveAsPanel() {
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [UTType(filenameExtension: "vcad") ?? .json]
+        panel.nameFieldStringValue = "\(model.documentName).vcad"
+        panel.prompt = "Save"
+        if panel.runModal() == .OK, let url = panel.url { model.saveDocumentAs(url) }
     }
 
     private func openPanel() {
@@ -163,7 +202,7 @@ struct ToolPaletteView: View {
         let toolsLayout = vertical ? AnyLayout(VStackLayout(spacing: 5)) : AnyLayout(HStackLayout(spacing: 6))
         return outer {
             tabsLayout {
-                ForEach(Array(ToolTab.allCases.enumerated()), id: \.element.id) { idx, tab in
+                ForEach(Array(model.availableTabs.enumerated()), id: \.element.id) { idx, tab in
                     tabButton(tab, idx: idx)
                 }
             }
@@ -245,31 +284,184 @@ struct FeatureTreeView: View {
     @Bindable var model: EditorModel
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text("HISTORY")
-                .font(.system(size: 10, weight: .semibold))
-                .tracking(0.6)
-                .foregroundStyle(.tertiary)
-                .padding(.horizontal, 8).padding(.top, 6).padding(.bottom, 4)
-            ForEach(model.features) { f in
-                let selected = model.selectedFeatureID == f.id
-                Button { model.selectedFeatureID = f.id } label: {
-                    HStack(spacing: 8) {
-                        Image(systemName: f.symbol).font(.system(size: 13)).frame(width: 16)
-                        Text(f.name).font(.system(size: 13))
-                        Spacer(minLength: 0)
-                    }
-                    .padding(.horizontal, 8).padding(.vertical, 6)
-                    .background(selected ? Color.accentColor.opacity(0.22) : .clear,
-                                in: RoundedRectangle(cornerRadius: 7, style: .continuous))
-                    .foregroundStyle(selected ? Color.primary : Color.secondary)
-                    .contentShape(Rectangle())
+            header
+            if model.usesDocumentTree {
+                ForEach(model.featureNodes) { node in
+                    FeatureRowView(model: model, node: node, depth: 0)
                 }
-                .buttonStyle(.plain)
+            } else {
+                ForEach(model.features) { f in
+                    let selected = model.selectedFeatureID == f.id
+                    Button { model.selectedFeatureID = f.id } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: f.symbol).font(.system(size: 13)).frame(width: 16)
+                            Text(f.name).font(.system(size: 13))
+                            Spacer(minLength: 0)
+                        }
+                        .padding(.horizontal, 8).padding(.vertical, 6)
+                        .background(selected ? Color.accentColor.opacity(0.22) : .clear,
+                                    in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+                        .foregroundStyle(selected ? Color.primary : Color.secondary)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                }
             }
         }
         .padding(6)
         .glassCard()
         .animation(.snappy(duration: 0.18), value: model.selectedFeatureID)
+        .animation(.snappy(duration: 0.2), value: model.expandedFeatureIDs)
+        .animation(.snappy(duration: 0.2), value: model.hiddenParts)
+        .animation(.snappy(duration: 0.2), value: model.isolatedPart)
+    }
+
+    private var header: some View {
+        HStack(spacing: 6) {
+            Text(model.usesDocumentTree ? "FEATURES" : "HISTORY")
+                .font(.system(size: 10, weight: .semibold)).tracking(0.6)
+                .foregroundStyle(.tertiary)
+            Spacer(minLength: 0)
+            if model.hasHiddenParts {
+                Button { model.showAllParts() } label: {
+                    Label("Show all", systemImage: "eye")
+                        .font(.system(size: 10, weight: .medium))
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .help("Show all hidden parts")
+            }
+        }
+        .padding(.horizontal, 8).padding(.top, 6).padding(.bottom, 4)
+    }
+}
+
+/// One row of the hierarchical document feature tree (recurses into operands
+/// when expanded). Root rows carry an eye toggle + a context menu acting on the
+/// part they produce.
+struct FeatureRowView: View {
+    @Bindable var model: EditorModel
+    let node: FeatureNode
+    let depth: Int
+
+    private var expanded: Bool { model.expandedFeatureIDs.contains(node.id) }
+    private var selected: Bool {
+        if model.selectedFeatureID == node.id { return true }
+        if let pi = node.partIndex { return model.multiSelectedParts.contains(pi) }
+        return false
+    }
+    private var dimmed: Bool {
+        guard let pi = node.partIndex else { return false }
+        return !model.isPartVisible(pi)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            row
+            if expanded {
+                ForEach(node.children) { child in
+                    FeatureRowView(model: model, node: child, depth: depth + 1)
+                }
+            }
+        }
+    }
+
+    private var row: some View {
+        HStack(spacing: 6) {
+            if node.hasChildren {
+                Button { model.toggleExpanded(node.id) } label: {
+                    Image(systemName: expanded ? "chevron.down" : "chevron.right")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(.tertiary)
+                        .frame(width: 12, height: 12)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            } else {
+                Color.clear.frame(width: 12, height: 12)
+            }
+            Image(systemName: node.symbol)
+                .font(.system(size: 12)).frame(width: 16)
+                .foregroundStyle(selected ? AnyShapeStyle(Color.accentColor) : AnyShapeStyle(.secondary))
+            VStack(alignment: .leading, spacing: 0) {
+                if model.renamingFeatureID == node.id {
+                    RenameField(initial: node.name,
+                                commit: { model.renameFeature(node.nodeId, to: $0); model.renamingFeatureID = nil },
+                                cancel: { model.renamingFeatureID = nil })
+                } else {
+                    Text(node.name).font(.system(size: 12)).lineLimit(1)
+                }
+                if let d = node.detail {
+                    Text(d).font(.system(size: 10).monospacedDigit())
+                        .foregroundStyle(.tertiary).lineLimit(1)
+                }
+            }
+            Spacer(minLength: 0)
+            if let pi = node.partIndex { eyeButton(pi) }
+        }
+        .padding(.leading, CGFloat(depth) * 13 + 4)
+        .padding(.trailing, 5).padding(.vertical, 4)
+        .background(selected ? Color.accentColor.opacity(0.20) : .clear,
+                    in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+        .foregroundStyle(selected ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
+        .opacity(dimmed ? 0.45 : 1)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            guard model.renamingFeatureID != node.id else { return }
+            // ⌘-click a part row → toggle it in the multi-selection (for booleans).
+            if NSEvent.modifierFlags.contains(.command), let pi = node.partIndex {
+                model.toggleMultiSelect(part: pi, featureID: node.id)
+            } else {
+                model.selectFeature(node.id)
+            }
+        }
+        .contextMenu { menu }
+    }
+
+    private func eyeButton(_ pi: Int) -> some View {
+        let vis = model.isPartVisible(pi)
+        return Button { model.toggleVisibility(part: pi) } label: {
+            Image(systemName: vis ? "eye" : "eye.slash")
+                .font(.system(size: 11))
+                .foregroundStyle(vis ? AnyShapeStyle(.tertiary) : AnyShapeStyle(Color.accentColor))
+                .frame(width: 18, height: 18)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help(vis ? "Hide part" : "Show part")
+    }
+
+    @ViewBuilder private var menu: some View {
+        if let pi = node.partIndex {
+            Button { model.isolate(part: pi) } label: {
+                Label(model.isolatedPart == pi ? "Exit Isolate" : "Isolate",
+                      systemImage: "scope")
+            }
+            Button { model.toggleVisibility(part: pi) } label: {
+                Label(model.isPartVisible(pi) ? "Hide" : "Show",
+                      systemImage: model.isPartVisible(pi) ? "eye.slash" : "eye")
+            }
+            if model.hasHiddenParts {
+                Button { model.showAllParts() } label: { Label("Show All", systemImage: "eye") }
+            }
+            Divider()
+        }
+        if node.hasChildren {
+            Button { model.toggleExpanded(node.id) } label: {
+                Label(expanded ? "Collapse" : "Expand", systemImage: "list.bullet.indent")
+            }
+        }
+        Button { model.renamingFeatureID = node.id } label: { Label("Rename", systemImage: "pencil") }
+        Button {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(node.name, forType: .string)
+        } label: { Label("Copy Name", systemImage: "doc.on.doc") }
+        if let pi = node.partIndex {
+            Divider()
+            Button(role: .destructive) { model.deletePart(pi) } label: {
+                Label("Delete Part", systemImage: "trash")
+            }
+        }
     }
 }
 
@@ -277,7 +469,25 @@ struct InspectorView: View {
     @Bindable var model: EditorModel
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            if let f = model.selectedFeature {
+            if model.usesDocumentTree {
+                if let node = model.selectedFeatureNode {
+                    section(node.name) {
+                        row("Operation", DocumentGraph.label(node.opType))
+                        if let pi = node.partIndex, let mat = model.materialName(forPart: pi) {
+                            row("Material", mat.capitalized)
+                        }
+                        if let pi = node.partIndex, !model.isPartVisible(pi) {
+                            Label("Hidden", systemImage: "eye.slash")
+                                .font(.system(size: 12)).foregroundStyle(.secondary)
+                        }
+                    }
+                    if Self.editableOps.contains(node.opType) {
+                        section("Parameters") { paramEditors(node) }
+                    } else if let d = node.detail {
+                        section("Parameters") { row("Value", d) }
+                    }
+                }
+            } else if let f = model.selectedFeature {
                 section(f.name) {
                     switch f.kind {
                     case .base:
@@ -341,6 +551,164 @@ struct InspectorView: View {
     private var boundsText: String {
         let s = model.sizeMM
         return String(format: "%.1f × %.1f × %.1f mm", abs(s.x), abs(s.y), abs(s.z))
+    }
+
+    /// Op types that expose live-editable parameters in the inspector.
+    static let editableOps: Set<String> = [
+        "Cube", "Cylinder", "Sphere", "Cone", "Fillet", "Chamfer", "Shell",
+        "Translate", "Rotate", "Scale", "Revolve", "LinearPattern", "CircularPattern",
+    ]
+
+    /// Scrub/stepper editors for the selected feature — each writes back into the
+    /// live document and re-evaluates (parity with the web app's scrub inputs).
+    @ViewBuilder private func paramEditors(_ node: FeatureNode) -> some View {
+        let op = model.opDict(nodeId: node.nodeId) ?? [:]
+        let id = node.nodeId
+        switch node.opType {
+        case "Cube":
+            axisField(op, id, "Width", "size", "x", minV: 0.1)
+            axisField(op, id, "Depth", "size", "y", minV: 0.1)
+            axisField(op, id, "Height", "size", "z", minV: 0.1)
+        case "Cylinder":
+            scalarField(op, id, "Radius", "radius"); scalarField(op, id, "Height", "height")
+        case "Sphere":
+            scalarField(op, id, "Radius", "radius")
+        case "Cone":
+            scalarField(op, id, "Radius 1", "radius1", minV: 0)
+            scalarField(op, id, "Radius 2", "radius2", minV: 0)
+            scalarField(op, id, "Height", "height")
+        case "Fillet":
+            scalarField(op, id, "Radius", "radius", sens: 0.05, minV: 0)
+        case "Chamfer":
+            scalarField(op, id, "Distance", "distance", sens: 0.05, minV: 0)
+        case "Shell":
+            scalarField(op, id, "Thickness", "thickness", sens: 0.05, minV: 0.1)
+        case "Translate":
+            axisField(op, id, "X", "offset", "x"); axisField(op, id, "Y", "offset", "y")
+            axisField(op, id, "Z", "offset", "z")
+        case "Rotate":
+            axisField(op, id, "X", "angles", "x", unit: "°", sens: 0.5)
+            axisField(op, id, "Y", "angles", "y", unit: "°", sens: 0.5)
+            axisField(op, id, "Z", "angles", "z", unit: "°", sens: 0.5)
+        case "Scale":
+            axisField(op, id, "X", "factor", "x", unit: "", sens: 0.01, minV: 0.01)
+            axisField(op, id, "Y", "factor", "y", unit: "", sens: 0.01, minV: 0.01)
+            axisField(op, id, "Z", "factor", "z", unit: "", sens: 0.01, minV: 0.01)
+        case "Revolve":
+            scalarField(op, id, "Angle", "angle_deg", unit: "°", sens: 0.5, minV: 0)
+        case "LinearPattern":
+            countStepper(id, (op["count"] as? NSNumber)?.intValue ?? 0)
+        case "CircularPattern":
+            countStepper(id, (op["count"] as? NSNumber)?.intValue ?? 0)
+            scalarField(op, id, "Span", "angle_deg", unit: "°", sens: 0.5, minV: 0)
+        default:
+            EmptyView()
+        }
+    }
+
+    private func scalarField(_ op: [String: Any], _ id: Int, _ label: String, _ key: String,
+                             unit: String = "mm", sens: Double = 0.1, minV: Double = 0.1) -> some View {
+        let value = (op[key] as? NSNumber)?.doubleValue ?? 0
+        return ScrubField(label: label, value: value, unit: unit, sensitivity: sens, minValue: minV) { v, s in
+            model.editScalar(nodeId: id, key: key, value: v, snapshot: s)
+        }
+    }
+
+    private func axisField(_ op: [String: Any], _ id: Int, _ label: String, _ key: String, _ a: String,
+                           unit: String = "mm", sens: Double = 0.1,
+                           minV: Double = -.greatestFiniteMagnitude) -> some View {
+        let value = ((op[key] as? [String: Any])?[a] as? NSNumber)?.doubleValue ?? 0
+        return ScrubField(label: label, value: value, unit: unit, sensitivity: sens, minValue: minV) { v, s in
+            model.editVec(nodeId: id, key: key, axis: a, value: v, snapshot: s)
+        }
+    }
+
+    private func countStepper(_ id: Int, _ count: Int) -> some View {
+        Stepper(value: Binding(
+            get: { count },
+            set: { model.editInt(nodeId: id, key: "count", value: max(1, $0), snapshot: true) }
+        ), in: 1...200) {
+            HStack {
+                Text("Count").font(.system(size: 12))
+                Spacer()
+                Text("\(count)").font(.system(size: 12).monospacedDigit()).foregroundStyle(.secondary)
+            }
+        }
+    }
+}
+
+/// A drag-to-scrub numeric field — the native take on the web app's scrub
+/// inputs. Horizontal drag changes the value; the first tick of a gesture
+/// snapshots for undo. Reads top-down each render so live re-eval stays in sync.
+struct ScrubField: View {
+    let label: String
+    let value: Double
+    var unit: String = "mm"
+    var sensitivity: Double = 0.1
+    var minValue: Double = -.greatestFiniteMagnitude
+    let onChange: (_ value: Double, _ snapshotFirst: Bool) -> Void
+    @State private var base: Double?
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Text(label).font(.system(size: 12)).foregroundStyle(.secondary)
+            Spacer(minLength: 8)
+            Text(formatted).font(.system(size: 12).monospacedDigit())
+                .padding(.horizontal, 8).padding(.vertical, 3)
+                .frame(minWidth: 70, alignment: .trailing)
+                .background(.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .strokeBorder(base != nil ? Color.accentColor.opacity(0.6) : .white.opacity(0.10), lineWidth: 0.5))
+                .contentShape(Rectangle())
+                .onHover { (($0 ? NSCursor.resizeLeftRight : NSCursor.arrow)).set() }
+                .gesture(
+                    DragGesture(minimumDistance: 1)
+                        .onChanged { v in
+                            let first = base == nil
+                            let b = base ?? value
+                            if base == nil { base = b }
+                            onChange(max(minValue, b + Double(v.translation.width) * sensitivity), first)
+                        }
+                        .onEnded { _ in base = nil }
+                )
+        }
+    }
+
+    private var formatted: String {
+        let s = abs(value - value.rounded()) < 0.001 ? String(Int(value.rounded())) : String(format: "%.2f", value)
+        return unit.isEmpty ? s : "\(s) \(unit)"
+    }
+}
+
+/// Inline rename field for a feature-tree row — commits on Return/blur, cancels
+/// on Escape.
+struct RenameField: View {
+    let initial: String
+    let commit: (String) -> Void
+    let cancel: () -> Void
+    @State private var text: String
+    @FocusState private var focused: Bool
+
+    init(initial: String, commit: @escaping (String) -> Void, cancel: @escaping () -> Void) {
+        self.initial = initial
+        self.commit = commit
+        self.cancel = cancel
+        _text = State(initialValue: initial)
+    }
+
+    var body: some View {
+        TextField("", text: $text)
+            .textFieldStyle(.plain)
+            .font(.system(size: 12))
+            .focused($focused)
+            .onAppear { focused = true }
+            .onSubmit { commit(text) }
+            .onExitCommand { cancel() }
+            .onChange(of: focused) { _, now in if !now { commit(text) } }
+            .padding(.horizontal, 4).padding(.vertical, 1)
+            .background(.white.opacity(0.10), in: RoundedRectangle(cornerRadius: 4, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 4, style: .continuous)
+                .strokeBorder(Color.accentColor.opacity(0.7), lineWidth: 1))
     }
 }
 
@@ -434,7 +802,8 @@ struct ViewportView: View {
         _ = (model.azimuth, model.elevation, model.distance, model.modifierValue,
              model.source, model.selectedFeatureID, model.baseShape, model.modifier,
              model.pickDirty, model.connectorX, model.hoveredHandle, model.panOffset,
-             model.copperDirty, model.copperStale)
+             model.copperDirty, model.copperStale, model.visibilityDirty, model.selectionDirty,
+             model.docParamDirty)
 
         return GeometryReader { geo in
           RealityView { content in
@@ -499,6 +868,32 @@ struct ViewportView: View {
                     }
                 }
                 model.pickDirty = false
+            }
+
+            // Live parameter edit: re-evaluate the doc and swap part meshes in
+            // place (no entity rebuild → smooth scrub, no materialize-pop). Part
+            // count is unchanged for scalar/vec/int edits; materials/highlight
+            // ride along untouched.
+            if model.docParamDirty {
+                if let meshes = model.reevalDocumentMeshes(),
+                   let root = content.entities.first(where: { $0.name == "geomRoot" }),
+                   let centering = root.findEntity(named: "centering") {
+                    for (i, m) in meshes.enumerated() {
+                        (centering.findEntity(named: "part\(i)") as? ModelEntity)?.model?.mesh = m
+                    }
+                }
+                model.docParamDirty = false
+            }
+
+            // Feature-tree → viewport: hide/show parts and highlight the
+            // selected one (documents only; cheap entity-property writes).
+            if model.visibilityDirty {
+                applyVisibility(content)
+                model.visibilityDirty = false
+            }
+            if model.selectionDirty {
+                applySelectionHighlight(content)
+                model.selectionDirty = false
             }
 
             // Settle: the connector stopped moving — run the EXPENSIVE domains
@@ -647,12 +1042,18 @@ struct ViewportView: View {
         let geomRoot = Entity()
         geomRoot.name = "geomRoot"
         geomRoot.addChild(zUp)
-        geomRoot.scale = SIMD3<Float>(repeating: sceneScale * 0.9)
         content.add(geomRoot)
-        // Subtle "materialize" pop when the geometry changes.
-        var grown = geomRoot.transform
-        grown.scale = SIMD3<Float>(repeating: sceneScale)
-        geomRoot.move(to: grown, relativeTo: geomRoot.parent, duration: 0.3, timingFunction: .easeOut)
+        if model.suppressMaterializePop {
+            // An edit re-eval: snap to final size (no pop) so scrubs feel direct.
+            geomRoot.scale = SIMD3<Float>(repeating: sceneScale)
+            model.suppressMaterializePop = false
+        } else {
+            // Subtle "materialize" pop when the geometry changes (load / new part).
+            geomRoot.scale = SIMD3<Float>(repeating: sceneScale * 0.9)
+            var grown = geomRoot.transform
+            grown.scale = SIMD3<Float>(repeating: sceneScale)
+            geomRoot.move(to: grown, relativeTo: geomRoot.parent, duration: 0.3, timingFunction: .easeOut)
+        }
 
         // Grounding floor that catches the soft contact shadow.
         content.entities.filter { $0.name == "floor" }.forEach { $0.removeFromParent() }
@@ -787,6 +1188,35 @@ struct ViewportView: View {
         copperRoot.components.set(OpacityComponent(opacity: dim ? 0.3 : 1.0))
     }
 
+    // MARK: feature-tree sync (visibility + selection highlight)
+
+    /// Enable/disable part entities to honor the tree's eye toggles + isolate.
+    private func applyVisibility(_ content: RealityViewCameraContent) {
+        guard let root = content.entities.first(where: { $0.name == "geomRoot" }),
+              let centering = root.findEntity(named: "centering") else { return }
+        for i in 0..<model.partCount {
+            centering.findEntity(named: "part\(i)")?.isEnabled = model.isPartVisible(i)
+        }
+    }
+
+    /// Tint the selected part's emissive brand-pink so the tree selection reads
+    /// in the viewport. Non-selected parts are restored to their base material.
+    private func applySelectionHighlight(_ content: RealityViewCameraContent) {
+        guard model.usesDocumentTree,
+              let root = content.entities.first(where: { $0.name == "geomRoot" }),
+              let centering = root.findEntity(named: "centering") else { return }
+        let sel = model.highlightedParts
+        for i in 0..<model.partCount {
+            guard let e = centering.findEntity(named: "part\(i)") as? ModelEntity else { continue }
+            var m = material(model.documentBaseColor(i))
+            if sel.contains(i) {
+                m.emissiveColor = .init(color: EditorModel.brandPink)
+                m.emissiveIntensity = 0.5
+            }
+            e.model?.materials = [m]
+        }
+    }
+
     // MARK: gestures
 
     private var handleDrag: some Gesture {
@@ -863,6 +1293,16 @@ struct ViewportView: View {
         let s = model.displayScale
         let camKernel = rxPlus90(cam / s) + model.displayCenter
         let dirKernel = normalize(rxPlus90(dirWorld))
+
+        // Documents: tap a part → select its feature-tree row (parity with the
+        // web app's click-to-select). The kernel-space AABBs make this cheap.
+        if model.usesDocumentTree {
+            if let pi = model.pickDocumentPart(originKernel: camKernel, dirKernel: dirKernel),
+               pi < model.featureNodes.count {
+                model.selectFeature(model.featureNodes[pi].id)
+            }
+            return
+        }
 
         if let hit = model.raycastSandbox(originKernel: camKernel, dirKernel: dirKernel) {
             model.pickPoint = hit.point
