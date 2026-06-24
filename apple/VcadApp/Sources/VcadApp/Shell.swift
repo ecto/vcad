@@ -343,6 +343,7 @@ struct FeatureRowView: View {
     @Bindable var model: EditorModel
     let node: FeatureNode
     let depth: Int
+    @State private var hovering = false
 
     private var expanded: Bool { model.expandedFeatureIDs.contains(node.id) }
     private var selected: Bool {
@@ -353,6 +354,10 @@ struct FeatureRowView: View {
     private var dimmed: Bool {
         guard let pi = node.partIndex else { return false }
         return !model.isPartVisible(pi)
+    }
+    private var rowBackground: Color {
+        if selected { return Color.accentColor.opacity(0.20) }
+        return hovering ? Color.white.opacity(0.06) : .clear
     }
 
     var body: some View {
@@ -401,11 +406,11 @@ struct FeatureRowView: View {
         }
         .padding(.leading, CGFloat(depth) * 13 + 4)
         .padding(.trailing, 5).padding(.vertical, 4)
-        .background(selected ? Color.accentColor.opacity(0.20) : .clear,
-                    in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+        .background(rowBackground, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
         .foregroundStyle(selected ? AnyShapeStyle(.primary) : AnyShapeStyle(.secondary))
         .opacity(dimmed ? 0.45 : 1)
         .contentShape(Rectangle())
+        .onHover { hovering = $0 }
         .onTapGesture {
             guard model.renamingFeatureID != node.id else { return }
             // ⌘-click a part row → toggle it in the multi-selection (for booleans).
@@ -637,9 +642,10 @@ struct InspectorView: View {
     }
 }
 
-/// A drag-to-scrub numeric field — the native take on the web app's scrub
-/// inputs. Horizontal drag changes the value; the first tick of a gesture
-/// snapshots for undo. Reads top-down each render so live re-eval stays in sync.
+/// A numeric field — the native take on the web app's scrub inputs. Drag the
+/// value horizontally to scrub, or double-click to type an exact number. The
+/// first tick of a scrub snapshots for undo; reads top-down each render so live
+/// re-eval stays in sync.
 struct ScrubField: View {
     let label: String
     let value: Double
@@ -648,30 +654,62 @@ struct ScrubField: View {
     var minValue: Double = -.greatestFiniteMagnitude
     let onChange: (_ value: Double, _ snapshotFirst: Bool) -> Void
     @State private var base: Double?
+    @State private var typing: String?
+    @FocusState private var focused: Bool
 
     var body: some View {
         HStack(spacing: 8) {
             Text(label).font(.system(size: 12)).foregroundStyle(.secondary)
             Spacer(minLength: 8)
-            Text(formatted).font(.system(size: 12).monospacedDigit())
-                .padding(.horizontal, 8).padding(.vertical, 3)
-                .frame(minWidth: 70, alignment: .trailing)
-                .background(.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
-                .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous)
-                    .strokeBorder(base != nil ? Color.accentColor.opacity(0.6) : .white.opacity(0.10), lineWidth: 0.5))
-                .contentShape(Rectangle())
-                .onHover { (($0 ? NSCursor.resizeLeftRight : NSCursor.arrow)).set() }
-                .gesture(
-                    DragGesture(minimumDistance: 1)
-                        .onChanged { v in
-                            let first = base == nil
-                            let b = base ?? value
-                            if base == nil { base = b }
-                            onChange(max(minValue, b + Double(v.translation.width) * sensitivity), first)
-                        }
-                        .onEnded { _ in base = nil }
-                )
+            if typing != nil { editor } else { pill }
         }
+    }
+
+    private var pill: some View {
+        Text(formatted).font(.system(size: 12).monospacedDigit())
+            .padding(.horizontal, 8).padding(.vertical, 3)
+            .frame(minWidth: 70, alignment: .trailing)
+            .background(.white.opacity(base != nil ? 0.12 : 0.06),
+                        in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .strokeBorder(base != nil ? Color.accentColor.opacity(0.6) : .white.opacity(0.10), lineWidth: 0.5))
+            .contentShape(Rectangle())
+            .onHover { (($0 ? NSCursor.resizeLeftRight : NSCursor.arrow)).set() }
+            .help("Drag to scrub · double-click to type")
+            .onTapGesture(count: 2) { typing = String(format: "%g", value) }
+            .gesture(
+                DragGesture(minimumDistance: 2)
+                    .onChanged { v in
+                        let first = base == nil
+                        let b = base ?? value
+                        if base == nil { base = b }
+                        onChange(max(minValue, b + Double(v.translation.width) * sensitivity), first)
+                    }
+                    .onEnded { _ in base = nil }
+            )
+    }
+
+    private var editor: some View {
+        TextField("", text: Binding(get: { typing ?? "" }, set: { typing = $0 }))
+            .textFieldStyle(.plain)
+            .font(.system(size: 12).monospacedDigit())
+            .multilineTextAlignment(.trailing)
+            .frame(width: 70)
+            .focused($focused)
+            .onAppear { focused = true }
+            .onSubmit { commit() }
+            .onExitCommand { typing = nil }
+            .onChange(of: focused) { _, now in if !now { commit() } }
+            .padding(.horizontal, 8).padding(.vertical, 3)
+            .background(.white.opacity(0.10), in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .strokeBorder(Color.accentColor.opacity(0.7), lineWidth: 1))
+    }
+
+    private func commit() {
+        defer { typing = nil }
+        guard let t = typing, let v = Double(t.trimmingCharacters(in: .whitespaces)) else { return }
+        onChange(max(minValue, v), true)
     }
 
     private var formatted: String {
@@ -1264,8 +1302,12 @@ struct ViewportView: View {
                     model.elevation = max(-1.45, min(1.45, model.elevation + dy * 0.01))
                 }
                 model.lastDrag = value.translation
+                NSCursor.closedHand.set()        // grabbing to orbit/pan
             }
-            .onEnded { _ in model.lastDrag = .zero }
+            .onEnded { _ in
+                model.lastDrag = .zero
+                if !model.draggingHandle { NSCursor.arrow.set() }
+            }
     }
 
     private var zoomGesture: some Gesture {
