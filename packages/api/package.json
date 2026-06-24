@@ -12,7 +12,7 @@
     "@vcad/engine": "*",
     "@vcad/mcp": "*",
     "ai": "^3.4.0",
-    "stripe": "^17.7.0"
+    "stripe": "^22.2.3"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
