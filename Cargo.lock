@@ -6968,6 +6968,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "vcad-ffi"
+version = "0.9.4"
+dependencies = [
+ "vcad-ecad-pcb",
+ "vcad-eval",
+ "vcad-ir",
+ "vcad-kernel",
+ "vcad-kernel-math",
+ "vcad-kernel-raytrace",
+ "vcad-kernel-tessellate",
+ "vcad-loon",
+]
+
+[[package]]
 name = "vcad-i18n"
 version = "0.9.4"
 dependencies = [

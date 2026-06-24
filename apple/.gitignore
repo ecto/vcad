@@ -1,0 +1,6 @@
+# SwiftPM build output
+VcadApp/.build/
+# Hand-assembled .app bundle (regenerate from the build)
+VcadApp/dist/
+# Prebuilt Rust static lib — regenerate with VcadApp/build-ffi.sh (kept out of git: ~140MB)
+VcadApp/Libs/

@@ -87,6 +87,17 @@ pub fn resolve_document(doc: &mut Document) -> Result<HashMap<String, f64>, Reso
 
     for (key, expr) in keys {
         let value = vcad_ir::resolve_binding(&key, &expr, &env)?;
+        // A "pcb."-prefixed field path targets the document's PCB (a non-node
+        // domain), so the same Bindings map couples connector_x to a footprint
+        // position exactly as it couples it to a node field — one DAG.
+        if let Some(pcb_path) = key.field_path.strip_prefix("pcb.") {
+            let pcb = doc
+                .pcb
+                .as_mut()
+                .ok_or_else(|| ResolvePatchError::MissingNode(key.clone()))?;
+            apply_pcb_patch(pcb, pcb_path, value, &key)?;
+            continue;
+        }
         let node = doc
             .nodes
             .get_mut(&key.node_id)
@@ -95,6 +106,37 @@ pub fn resolve_document(doc: &mut Document) -> Result<HashMap<String, f64>, Reso
     }
 
     Ok(env)
+}
+
+/// Apply a `"pcb."`-prefixed binding onto the document's PCB. The remaining path
+/// is `"<ref>.position.<x|y>"` — drives a footprint's placement from a parameter.
+fn apply_pcb_patch(
+    pcb: &mut vcad_ir::ecad::Pcb,
+    path: &str,
+    value: f64,
+    key: &BindingKey,
+) -> Result<(), ResolvePatchError> {
+    let bad = || ResolvePatchError::UnknownField {
+        key: key.clone(),
+        op_name: "Pcb",
+    };
+    let parts: Vec<&str> = path.split('.').collect();
+    match parts.as_slice() {
+        [reference, "position", axis] => {
+            let fp = pcb
+                .footprints
+                .iter_mut()
+                .find(|f| f.reference == *reference)
+                .ok_or_else(bad)?;
+            match *axis {
+                "x" => fp.position.x = value,
+                "y" => fp.position.y = value,
+                _ => return Err(bad()),
+            }
+        }
+        _ => return Err(bad()),
+    }
+    Ok(())
 }
 
 /// Shallow "resolve to JSON" helper: returns a cloned Document with
@@ -361,6 +403,28 @@ fn apply_to_op(op: &mut CsgOp, key: &BindingKey, value: f64) -> Result<(), Resol
             "scale_end" => *scale_end = Some(value),
             "orientation" => *orientation = Some(value),
             _ => return bad("Sweep"),
+        },
+        CsgOp::SheetMetalBaseFlangeRect {
+            width,
+            depth,
+            thickness,
+            ..
+        } => match path {
+            "width" => *width = value,
+            "depth" => *depth = value,
+            "thickness" => *thickness = value,
+            _ => return bad("SheetMetalBaseFlangeRect"),
+        },
+        CsgOp::SheetMetalEdgeFlange {
+            length,
+            angle,
+            radius,
+            ..
+        } => match path {
+            "length" => *length = value,
+            "angle" => *angle = value,
+            "radius" => *radius = Some(value),
+            _ => return bad("SheetMetalEdgeFlange"),
         },
         _ => return bad("<unsupported op>"),
     }

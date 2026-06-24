@@ -1,0 +1,730 @@
+import SwiftUI
+import RealityKit
+import AppKit
+import simd
+import CVcadFFI
+
+// Model layer. The SwiftUI shell is in Shell.swift; kernel/streaming in Kernel.swift.
+
+private let kSamplesDir = "/Users/cam/Developer/vcad/.claude/worktrees/elated-mclaren-925de7"
+
+enum GeometrySource: Hashable, Identifiable {
+    case sandbox
+    case document(path: String, label: String)
+    /// Geometry authored by the AI intent bar: a loon program the kernel
+    /// compiles + evaluates exactly like a loaded `.vcad` file.
+    case generated(loon: String, label: String)
+    /// The cross-domain slice: a resident parametric doc where one `connector_x`
+    /// couples the enclosure cutout (mechanical) + the board connector (electrical).
+    case gripper
+
+    var id: String {
+        switch self {
+        case .sandbox: return "sandbox"
+        case .document(let path, _): return path
+        case .generated: return "generated"
+        case .gripper: return "gripper"
+        }
+    }
+    var label: String {
+        switch self {
+        case .sandbox: return "Sandbox"
+        case .document(_, let label): return label
+        case .generated(_, let label): return label
+        case .gripper: return "Gripper"
+        }
+    }
+    var isSandbox: Bool { if case .sandbox = self { return true }; return false }
+    var isGenerated: Bool { if case .generated = self { return true }; return false }
+    var isGripper: Bool { if case .gripper = self { return true }; return false }
+}
+
+/// The sandbox primitive — chosen from the Create tab of the tool palette.
+enum BaseShape: String, CaseIterable {
+    case cube, cylinder, sphere
+    var label: String { rawValue.capitalized }
+    var symbol: String {
+        switch self {
+        case .cube: return "cube"
+        case .cylinder: return "cylinder"
+        case .sphere: return "circle.circle"
+        }
+    }
+}
+
+/// The sandbox modifier — chosen from the Modify tab.
+enum Modifier: String, CaseIterable {
+    case none, fillet, chamfer
+    var label: String { self == .none ? "None" : rawValue.capitalized }
+    var symbol: String {
+        switch self {
+        case .none: return "minus.circle"
+        case .fillet: return "square.on.circle.fill"
+        case .chamfer: return "triangle"
+        }
+    }
+    var paramLabel: String { self == .chamfer ? "Distance" : "Radius" }
+}
+
+/// A tab in the tool palette (the native reinterpretation of the web app's
+/// Borland tool picker — same model, native skin).
+enum ToolTab: String, CaseIterable, Identifiable {
+    case create, modify
+    var id: String { rawValue }
+    var label: String { rawValue.capitalized }
+    var symbol: String { self == .create ? "plus.square.on.square" : "wand.and.rays" }
+}
+
+/// One tool button within a tab.
+struct Tool: Identifiable {
+    let id: String
+    let label: String
+    let symbol: String
+    let isActive: Bool
+    var enabled: Bool = true
+    var hint: String = ""
+    let action: () -> Void
+}
+
+/// A node in the feature tree (the parametric DAG, shown in the sidebar).
+struct Feature: Identifiable, Hashable {
+    enum Kind { case base, modifier, part }
+    let id: String
+    let name: String
+    let symbol: String
+    let kind: Kind
+}
+
+/// Stats captured when a generated program is validated — drives the intent
+/// bar's "Built · N parts · W×H×D mm" confirmation.
+struct GenStats {
+    var parts: Int
+    var size: SIMD3<Float>
+    var triangles: Int
+}
+
+@MainActor
+@Observable
+final class EditorModel {
+    // Orbit camera (radians / scene meters).
+    var azimuth: Float = .pi / 5
+    var elevation: Float = .pi / 7
+    var distance: Float = 1.5
+
+    var source: GeometrySource = .sandbox {
+        didSet {
+            geometryDirty = true
+            selectedFeatureID = source.isSandbox ? "modifier" : "part0"
+            resetCamera()        // frame the new part cleanly
+        }
+    }
+
+    // Sandbox model: primitive + modifier, driven by the tool palette.
+    var baseShape: BaseShape = .cube { didSet { if source.isSandbox { geometryDirty = true } } }
+    var modifier: Modifier = .fillet { didSet { if source.isSandbox { geometryDirty = true } } }
+    var modifierValue: Double = 3.0 {
+        didSet {
+            if source.isSandbox { parameterDirty = true }
+            if Int(modifierValue.rounded()) != Int(oldValue.rounded()) {
+                NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .default)
+            }
+        }
+    }
+
+    var toolTab: ToolTab = .create
+
+    // Selection binds tree -> inspector AND rolls history (selecting "base"
+    // shows the modifier's input).
+    var selectedFeatureID: String? = "modifier" {
+        didSet { if source.isSandbox { geometryDirty = true } }
+    }
+
+    // Live readouts.
+    var triangleCount: Int = 0
+    var partCount: Int = 1
+    var solveMillis: Double = 0
+    var sizeMM: SIMD3<Float> = .zero
+
+    // Picking.
+    var pickPoint: SIMD3<Float>?
+    var pickInfo: String?
+    var pickDirty = false
+    var displayScale: Float = 0.02
+    var displayCenter: SIMD3<Float> = .zero
+
+    var geometryDirty = true
+    var parameterDirty = false
+    let streaming = StreamingMesh()
+    let chime = Chime()
+    var lastDrag: CGSize = .zero
+    var pinchBaseline: Float = 1.5
+    var draggingHandle = false
+    var handleBaseline: Double = 0
+
+    // Hover affordance for the draggable handles (cursor + a subtle scale pop).
+    // The handles' live world positions are projected to screen to hit-test the
+    // pointer; `hoveredHandle` drives the highlight + cursor.
+    var hoveredHandle: String?
+    @ObservationIgnored var connectorHandleWorld: SIMD3<Float> = .zero
+    @ObservationIgnored var filletHandleWorld: SIMD3<Float> = .zero
+
+    /// Frame the geometry at a clean 3/4 view. Parts auto-fit to a constant
+    /// display size, so fixed camera params frame any part well.
+    func resetCamera() {
+        azimuth = .pi / 5
+        elevation = .pi / 7
+        distance = 1.5
+        pinchBaseline = 1.5
+        panOffset = .zero
+    }
+
+    /// Pan the look-at target in the camera's screen plane (⇧-drag).
+    func panBy(dx: Float, dy: Float) {
+        let forward = normalize(-orbitVector)
+        let right = normalize(cross(forward, SIMD3<Float>(0, 1, 0)))
+        let up = cross(right, forward)
+        panOffset += (-dx * right + dy * up) * (distance * 0.0016)
+    }
+
+    // Two-finger / wheel scroll → zoom. Installed once when the viewport appears.
+    nonisolated(unsafe) private var scrollMonitor: Any?
+    func installScrollZoom() {
+        guard scrollMonitor == nil else { return }
+        scrollMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
+            MainActor.assumeIsolated {
+                guard let self, !self.draggingHandle else { return }
+                let dy = Float(event.scrollingDeltaY)
+                let k = Float(event.hasPreciseScrollingDeltas ? 0.004 : 0.04)
+                self.distance = max(0.45, min(8.0, self.distance * (1 - dy * k)))
+                self.pinchBaseline = self.distance
+            }
+            return event
+        }
+    }
+
+    // MARK: cross-domain slice — the gripper
+    // One `connector_x` couples the enclosure cutout (mechanical) + the board
+    // connector (electrical); see docs/plans/2026-06-23-gripper-vertical-slice.md.
+
+    nonisolated(unsafe) private var gripperDoc: OpaquePointer?
+    var connectorX: Double = 40
+    let connectorRange: ClosedRange<Double> = 4...76
+    @ObservationIgnored private var connectorBaseline: Double = 40
+    @ObservationIgnored private var lastConnectorTick = 40
+    @ObservationIgnored private var lastConnectorOK = true
+
+    deinit {
+        if let d = gripperDoc { vcad_doc_free(d) }
+        if let m = scrollMonitor { NSEvent.removeMonitor(m) }
+    }
+
+    /// Clearance from the connector cutout to the nearest enclosure side wall —
+    /// the REAL geometric min-wall, measured by the kernel (`vcad_doc_min_wall`)
+    /// from the resolved `box − cutout`, not arithmetic on the box's literals.
+    /// Refreshed live on every cheap per-frame re-solve and on settle; seeded so
+    /// the centered open-state reads correctly before the first drag.
+    var connectorMinWall: Double = 34
+    var connectorOK: Bool { connectorMinWall >= 6 }
+    /// Pull the real min-wall from the kernel at the current `connector_x`.
+    /// `vcad_doc_min_wall` resolves the resident doc (whose `connector_x` was
+    /// just written by the cheap/full re-solve) and measures the box−cutout
+    /// geometry — no fold, no routing, safe every drag frame.
+    func refreshMinWall() {
+        guard let doc = gripperDoc else { return }
+        let w = vcad_doc_min_wall(doc)
+        if w.isFinite { connectorMinWall = w }
+    }
+    var showsConnectorHandle: Bool { source.isGripper }
+    func connectorHandlePosition() -> SIMD3<Float> { SIMD3(Float(connectorX), 9, 13) }
+
+    func openGripper() {
+        connectorX = 40
+        lastConnectorTick = 40
+        lastConnectorOK = true
+        copperStale = false
+        copperDirty = false
+        copperUnrouted = 0
+        // A consistent 3/4 view tilted toward the board top, so all four domains
+        // (cutout, board + copper, bracket) read at once instead of edge-on.
+        azimuth = .pi / 5
+        elevation = 0.62
+        distance = 1.45
+        panOffset = .zero
+        source = .gripper
+        // Run the full solve once after the first rebuild so the Receipt's
+        // settle-fields (quote, lead time, bracket DFM) start populated instead
+        // of showing $0.00 until the first drag.
+        copperDirty = true
+    }
+
+    func beginConnectorDrag() { connectorBaseline = connectorX }
+    var connectorDragBaseline: Double { connectorBaseline }
+
+    /// Drag handler: clamp, flag a re-solve, and fire the felt detents — a tick
+    /// per millimetre, a firm "wall" the instant min-wall is violated.
+    func setConnectorX(_ x: Double) {
+        let clamped = min(max(x, connectorRange.lowerBound), connectorRange.upperBound)
+        connectorX = clamped
+        parameterDirty = true
+        // The shown copper + the expensive Receipt rows now lag the connector —
+        // mark them stale ("recomputing"); they re-solve on settle.
+        copperStale = true
+        receiptStale = true
+        let tick = Int(clamped.rounded())
+        if tick != lastConnectorTick {
+            lastConnectorTick = tick
+            NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .default)
+        }
+        let ok = connectorOK
+        if ok != lastConnectorOK {
+            lastConnectorOK = ok
+            if !ok {
+                NSHapticFeedbackManager.defaultPerformer.perform(.levelChange, performanceTime: .default)
+                chime.play(.warning)
+            } else {
+                chime.play(.solved)
+            }
+        }
+    }
+
+    private func ensureGripperDoc() -> OpaquePointer? {
+        if gripperDoc == nil { gripperDoc = vcad_doc_gripper_slice1() }
+        return gripperDoc
+    }
+
+    /// Re-solve the coupled doc at the current `connector_x` and gather both
+    /// parts. Re-evaluating sets `connector_x`; bindings move the cutout AND the
+    /// connector together — one finger, two domains.
+    func gripperScene() -> RenderScene {
+        guard let doc = ensureGripperDoc() else { return .empty }
+        let start = Date()
+        let scene: OpaquePointer? = "connector_x".withCString {
+            vcad_doc_set_param(doc, $0, connectorX)
+        }
+        guard let scene else { return .empty }
+        defer { vcad_scene_free(scene) }
+        return sceneFromHandle(scene, start: start)
+    }
+
+    /// Per-FRAME re-solve: cheap roots only. The mechanical cutout + board
+    /// connector follow the finger live (~15 ms); the expensive sheet-metal fold
+    /// is skipped here and re-folded once on settle (`gripperScene`). Same
+    /// `connector_x` writes through to the resident doc, so the settle solve sees
+    /// it — one DAG, staged by cost.
+    func gripperSceneCheap() -> RenderScene {
+        guard let doc = ensureGripperDoc() else { return .empty }
+        let start = Date()
+        let scene: OpaquePointer? = "connector_x".withCString {
+            vcad_doc_set_param_cheap(doc, $0, connectorX)
+        }
+        guard let scene else { return .empty }
+        defer { vcad_scene_free(scene) }
+        // The cheap path wrote connector_x to the resident doc; pull the real
+        // min-wall back so the live Receipt row tracks geometry, not arithmetic.
+        refreshMinWall()
+        return sceneFromHandle(scene, start: start)
+    }
+
+    /// The unified cross-domain solve — ONE FFI call returns every domain at the
+    /// current `connector_x`: the meshes (enclosure + board + sheet-metal fold),
+    /// the routed copper, and the receipt scalars, all descending from the same
+    /// resolved parameter. The SETTLE path: the kernel fans connector_x out, not
+    /// this view layer.
+    struct GripperSolve {
+        var meshes: [MeshResource]
+        var copper: [CopperSeg]
+        var minWall: Double
+        var unrouted: Int
+    }
+
+    func gripperSolve() -> GripperSolve? {
+        guard source.isGripper, let doc = ensureGripperDoc() else { return nil }
+        let start = Date()
+        let s: OpaquePointer? = "connector_x".withCString { vcad_doc_solve(doc, $0, connectorX) }
+        guard let s else { return nil }
+        defer { vcad_solve_free(s) }
+
+        var meshes: [MeshResource] = []
+        let pc = Int(vcad_solve_part_count(s))
+        for i in 0..<pc {
+            let km = KernelMesh.fromView(vcad_solve_part_mesh(s, i))
+            meshes.append(km.isEmpty ? .generateBox(size: 0.001) : km.resource(name: "part\(i)"))
+        }
+
+        var copper: [CopperSeg] = []
+        let ox: Float = 5, oy: Float = 5, z: Float = 7.1
+        let tc = Int(vcad_solve_trace_count(s))
+        for i in 0..<tc {
+            let t = vcad_solve_trace(s, i)
+            copper.append(CopperSeg(
+                a: SIMD3<Float>(Float(t.start.0) + ox, Float(t.start.1) + oy, z),
+                b: SIMD3<Float>(Float(t.end.0) + ox, Float(t.end.1) + oy, z),
+                width: Float(t.width), net: t.net_id))
+        }
+        copperUnrouted = Int(vcad_solve_unrouted(s))
+        // Settle: refresh the Receipt's expensive verdicts (these came from the
+        // same one solve as the meshes + copper).
+        bracketOK = vcad_solve_bracket_ok(s) == 1
+        bracketSeverity = Int(vcad_solve_bracket_severity(s))
+        quoteCents = vcad_solve_quote_cost_cents(s)
+        quoteEnclosureCents = vcad_solve_quote_enclosure_cents(s)
+        quoteBoardCents = vcad_solve_quote_board_cents(s)
+        quoteBracketCents = vcad_solve_quote_bracket_cents(s)
+        quoteHasEstimate = vcad_solve_quote_has_estimate(s) == 1
+        leadDays = Int(vcad_solve_lead_days(s))
+        // Authoritative min-wall from the full solve (same value the cheap path
+        // approximates per-frame). Keeps the settled Receipt row exact.
+        let solvedWall = vcad_solve_min_wall(s)
+        if solvedWall.isFinite { connectorMinWall = solvedWall }
+        let held = vcad_solve_all_held(s) == 1
+        receiptStale = false
+        // Chime on the gate transition (the felt "verified" / "violated" moment).
+        if held != allHeld { chime.play(held ? .solved : .failed) }
+        allHeld = held
+        solveMillis = Date().timeIntervalSince(start) * 1000
+        return GripperSolve(meshes: meshes, copper: copper,
+                            minWall: vcad_solve_min_wall(s), unrouted: copperUnrouted)
+    }
+
+    // MARK: copper — slice 2, the electrical domain of the Connector Drag
+
+    /// One routed copper segment, mapped into the board plate's frame.
+    struct CopperSeg { var a: SIMD3<Float>; var b: SIMD3<Float>; var width: Float; var net: UInt32 }
+
+    /// Copper is showing a pre-drag route — drawn dim until it re-routes on settle.
+    var copperStale = false
+    /// Set on drag-settle to request exactly ONE re-route (never per drag frame).
+    var copperDirty = false
+    /// Nets that failed to route at the current connector_x (0 = fully routed).
+    /// Observable (NOT @ObservationIgnored) so the Receipt's copper row refreshes.
+    var copperUnrouted = 0
+
+    // Receipt verdicts — the expensive ones settle on drag-release; min-wall is
+    // recomputed live from connectorX. `receiptStale` marks the expensive rows
+    // "recomputing" mid-drag (mirrors copperStale).
+    var receiptStale = false
+    var bracketOK = true
+    var bracketSeverity = 0
+    /// Total quote (cents) = enclosure + board + bracket. Per-domain breakdown
+    /// below so the Receipt can show three labeled line items with an "est."
+    /// tag on the board (the one labeled estimate; the other two are kernel-real).
+    var quoteCents: UInt64 = 0
+    var quoteEnclosureCents: UInt64 = 0
+    var quoteBoardCents: UInt64 = 0
+    var quoteBracketCents: UInt64 = 0
+    var quoteHasEstimate = false
+    var leadDays = 0
+    var allHeld = true
+
+    /// Route the slice-2 board at the current `connector_x` and map the copper
+    /// into the board plate's frame. ONE `route_all` per call — heeding the tween
+    /// lesson, this runs on settle, never per drag frame.
+    func routeGripperCopper() -> [CopperSeg] {
+        guard source.isGripper, let r = vcad_route_traces(connectorX, 0.25) else {
+            copperUnrouted = 0
+            return []
+        }
+        defer { vcad_route_result_free(r) }
+        copperUnrouted = Int(vcad_route_result_unrouted_count(r))
+        let n = Int(vcad_route_result_trace_count(r))
+        // Board-local mm → kernel frame: the board plate is translated (5,5,5) and
+        // is 2 mm thick, so its top face is z=7; copper sits a hair above it.
+        let ox: Float = 5, oy: Float = 5, z: Float = 7.1
+        var segs: [CopperSeg] = []
+        segs.reserveCapacity(n)
+        for i in 0..<n {
+            let t = vcad_route_result_trace(r, i)
+            let a = SIMD3<Float>(Float(t.start.0) + ox, Float(t.start.1) + oy, z)
+            let b = SIMD3<Float>(Float(t.end.0) + ox, Float(t.end.1) + oy, z)
+            segs.append(CopperSeg(a: a, b: b, width: Float(t.width), net: t.net_id))
+        }
+        return segs
+    }
+
+    let examples: [(name: String, path: String)] = [
+        ("Pulley", "\(kSamplesDir)/mecheval/tasks/a6-pulley-01.vcad"),
+        ("Counterbore", "\(kSamplesDir)/mecheval/tasks/a4-counterbore-plate-01.vcad"),
+        ("Ribbed plate", "\(kSamplesDir)/mecheval/tasks/a5-ribbed-plate-01.vcad"),
+        ("Robot arm", "\(kSamplesDir)/examples/robot-arm-2dof.vcad"),
+        ("Sensor mast", "\(kSamplesDir)/examples/sensor-mast.vcad"),
+    ]
+
+    var recents: [URL] = (UserDefaults.standard.array(forKey: "vcad.recents") as? [String] ?? [])
+        .map { URL(fileURLWithPath: $0) }
+
+    var documentName: String { source.label }
+
+    func newDocument() { source = .sandbox }
+
+    func openDocument(_ url: URL) {
+        source = .document(path: url.path, label: url.deletingPathExtension().lastPathComponent)
+        recents.removeAll { $0 == url }
+        recents.insert(url, at: 0)
+        if recents.count > 8 { recents = Array(recents.prefix(8)) }
+        UserDefaults.standard.set(recents.map { $0.path }, forKey: "vcad.recents")
+    }
+
+    // MARK: tool palette
+
+    func tools(for tab: ToolTab) -> [Tool] {
+        switch tab {
+        case .create:
+            return BaseShape.allCases.map { shape in
+                Tool(id: "shape.\(shape.rawValue)", label: shape.label, symbol: shape.symbol,
+                     isActive: baseShape == shape) { [weak self] in self?.baseShape = shape }
+            }
+        case .modify:
+            return Modifier.allCases.map { mod in
+                // Fillet/chamfer are no-ops on a sphere (no edges) — surface that.
+                let ok = mod == .none || baseShape != .sphere
+                return Tool(id: "mod.\(mod.rawValue)", label: mod.label, symbol: mod.symbol,
+                            isActive: modifier == mod, enabled: ok,
+                            hint: ok ? "" : "No edges on a sphere") { [weak self] in self?.modifier = mod }
+            }
+        }
+    }
+
+    /// Whether the active modifier actually changes the geometry (a fillet on a
+    /// sphere has no edges to round).
+    var modifierEffective: Bool { !(baseShape == .sphere && modifier != .none) }
+
+    // MARK: feature tree
+
+    var features: [Feature] {
+        switch source {
+        case .sandbox:
+            return [
+                Feature(id: "base", name: baseShape.label, symbol: baseShape.symbol, kind: .base),
+                Feature(id: "modifier", name: modifier == .none ? "No modifier" : modifier.label,
+                        symbol: modifier.symbol, kind: .modifier),
+            ]
+        case .document(_, let label), .generated(_, let label):
+            let n = max(partCount, 1)
+            return (0..<n).map { i in
+                Feature(id: "part\(i)", name: n == 1 ? label : "Part \(i + 1)",
+                        symbol: "cube.transparent", kind: .part)
+            }
+        case .gripper:
+            return [
+                Feature(id: "part0", name: "Enclosure", symbol: "cube", kind: .part),
+                Feature(id: "part1", name: "Board", symbol: "cpu", kind: .part),
+            ]
+        }
+    }
+    var selectedFeature: Feature? { features.first { $0.id == selectedFeatureID } }
+
+    /// Whether the grabbable 3D handle is shown (only the cube+fillet case has
+    /// a parametric anchor today).
+    var showsHandle: Bool {
+        source.isSandbox && baseShape == .cube && modifier == .fillet && selectedFeatureID == "modifier"
+    }
+
+    var panOffset: SIMD3<Float> = .zero
+    var orbitVector: SIMD3<Float> {
+        let r = distance
+        return SIMD3<Float>(
+            r * cos(elevation) * sin(azimuth),
+            r * sin(elevation),
+            r * cos(elevation) * cos(azimuth)
+        )
+    }
+    var cameraPosition: SIMD3<Float> { panOffset + orbitVector }
+
+    func handlePosition(radius: Double) -> SIMD3<Float> {
+        let mid = SIMD3<Float>(15, 0, 30)   // top-front edge midpoint of the 30mm cube
+        let outward = normalize(SIMD3<Float>(0, -1, 1))
+        return mid + outward * (2.5 + Float(radius))
+    }
+
+    // MARK: scene building
+
+    func buildScene() -> RenderScene {
+        switch source {
+        case .sandbox: return sandboxScene()
+        case .document(let path, _): return documentScene(path: path)
+        case .generated(let loon, _): return generatedScene(loon: loon)
+        case .gripper: return gripperScene()
+        }
+    }
+
+    /// Validate a generated loon program; if it evaluates to geometry, switch the
+    /// active source to it (which re-renders via `generatedScene`). Returns the
+    /// evaluated part count, or nil if the program failed — leaving the current
+    /// scene untouched so a bad generation never blanks the studio.
+    @discardableResult
+    func applyGenerated(loon: String, label: String) -> GenStats? {
+        let data = Data(loon.utf8)
+        guard !data.isEmpty else { return nil }
+        let stats: GenStats? = data.withUnsafeBytes { raw -> GenStats? in
+            guard let base = raw.bindMemory(to: UInt8.self).baseAddress,
+                  let scene = vcad_scene_from_loon(base, data.count) else { return nil }
+            defer { vcad_scene_free(scene) }
+            let n = vcad_scene_part_count(scene)
+            guard n > 0 else { return nil }
+            var lo = SIMD3<Float>(repeating: .greatestFiniteMagnitude)
+            var hi = SIMD3<Float>(repeating: -.greatestFiniteMagnitude)
+            var tris = 0, real = 0
+            for i in 0..<n {
+                let km = KernelMesh.fromView(vcad_scene_part_mesh(scene, i))
+                if km.isEmpty { continue }
+                lo = simd_min(lo, km.minBound); hi = simd_max(hi, km.maxBound)
+                tris += km.triangleCount; real += 1
+            }
+            guard real > 0 else { return nil }
+            return GenStats(parts: real, size: hi - lo, triangles: tris)
+        }
+        guard let stats else { return nil }
+        source = .generated(loon: loon, label: label)
+        return stats
+    }
+
+    private func makeBase() -> OpaquePointer? {
+        switch baseShape {
+        case .cube: return vcad_solid_cube(30, 30, 30)
+        case .cylinder: return vcad_solid_cylinder(15, 30, 64)
+        case .sphere: return vcad_solid_sphere(15, 48)
+        }
+    }
+
+    private var modifierApplies: Bool { selectedFeatureID != "base" && modifier != .none && modifierValue > 0.05 }
+
+    /// Build the sandbox solid (primitive + modifier) and tessellate it.
+    private func sandboxKernelMesh() -> KernelMesh? {
+        guard let base = makeBase() else { return nil }
+        defer { vcad_solid_free(base) }
+        let start = Date()
+        var target = base
+        var owned: OpaquePointer?
+        if modifierApplies {
+            switch modifier {
+            case .fillet: if let f = vcad_solid_fillet(base, modifierValue) { target = f; owned = f }
+            case .chamfer: if let c = vcad_solid_chamfer(base, modifierValue) { target = c; owned = c }
+            case .none: break
+            }
+        }
+        defer { if let o = owned { vcad_solid_free(o) } }
+        guard let mesh = vcad_solid_to_mesh(target, 64) else { return nil }
+        defer { vcad_mesh_free(mesh) }
+        let km = KernelMesh.fromView(vcad_mesh_view(mesh))
+        solveMillis = Date().timeIntervalSince(start) * 1000
+        triangleCount = km.triangleCount
+        partCount = 1
+        sizeMM = km.maxBound - km.minBound
+        return km
+    }
+
+    private func sandboxScene() -> RenderScene {
+        guard let km = sandboxKernelMesh() else { return .empty }
+        streaming.update(from: km)
+        guard let res = streaming.resource else { return .empty }
+        let center = (km.minBound + km.maxBound) / 2
+        let size = Self.extent(km.minBound, km.maxBound)
+        displayCenter = center
+        displayScale = 0.6 / max(size, 0.0001)
+        return RenderScene(meshes: [(res, Self.heroColor)], center: center, size: size,
+                           triangleCount: km.triangleCount, partCount: 1)
+    }
+
+    /// Hot path: re-solve the sandbox and stream into the GPU buffers in place.
+    func streamSandbox() -> Bool {
+        guard let km = sandboxKernelMesh() else { return false }
+        return streaming.update(from: km)
+    }
+
+    struct PickHit { var point: SIMD3<Float>; var normal: SIMD3<Float> }
+
+    /// Cast a ray (kernel coords) against the current sandbox solid.
+    func raycastSandbox(originKernel: SIMD3<Float>, dirKernel: SIMD3<Float>) -> PickHit? {
+        guard source.isSandbox, let base = makeBase() else { return nil }
+        defer { vcad_solid_free(base) }
+        var target = base
+        var owned: OpaquePointer?
+        if modifierApplies {
+            switch modifier {
+            case .fillet: if let f = vcad_solid_fillet(base, modifierValue) { target = f; owned = f }
+            case .chamfer: if let c = vcad_solid_chamfer(base, modifierValue) { target = c; owned = c }
+            case .none: break
+            }
+        }
+        defer { if let o = owned { vcad_solid_free(o) } }
+        let o: [Double] = [Double(originKernel.x), Double(originKernel.y), Double(originKernel.z)]
+        let d: [Double] = [Double(dirKernel.x), Double(dirKernel.y), Double(dirKernel.z)]
+        let hit = vcad_solid_raycast(target, o, d)
+        guard hit.hit != 0 else { return nil }
+        return PickHit(
+            point: SIMD3(Float(hit.point.0), Float(hit.point.1), Float(hit.point.2)),
+            normal: SIMD3(Float(hit.normal.0), Float(hit.normal.1), Float(hit.normal.2))
+        )
+    }
+
+    private func documentScene(path: String) -> RenderScene {
+        let start = Date()
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)), !data.isEmpty else {
+            return .empty
+        }
+        let scene: OpaquePointer? = data.withUnsafeBytes { raw in
+            vcad_scene_from_json(raw.bindMemory(to: UInt8.self).baseAddress, data.count)
+        }
+        guard let scene else { return .empty }
+        defer { vcad_scene_free(scene) }
+        return sceneFromHandle(scene, start: start)
+    }
+
+    /// Render the AI-generated loon program. Same evaluator + part-gather as a
+    /// loaded document, so the studio, feature tree, and materialize-pop are
+    /// shared for free.
+    private func generatedScene(loon: String) -> RenderScene {
+        let start = Date()
+        let data = Data(loon.utf8)
+        guard !data.isEmpty else { return .empty }
+        let scene: OpaquePointer? = data.withUnsafeBytes { raw in
+            vcad_scene_from_loon(raw.bindMemory(to: UInt8.self).baseAddress, data.count)
+        }
+        guard let scene else { return .empty }
+        defer { vcad_scene_free(scene) }
+        return sceneFromHandle(scene, start: start)
+    }
+
+    /// Gather every part mesh out of an evaluated scene handle into a centered,
+    /// auto-fit `RenderScene`, updating the live readouts. Shared by the
+    /// document and AI-generated paths.
+    private func sceneFromHandle(_ scene: OpaquePointer, start: Date) -> RenderScene {
+        let count = vcad_scene_part_count(scene)
+        var meshes: [(MeshResource, NSColor)] = []
+        var lo = SIMD3<Float>(repeating: .greatestFiniteMagnitude)
+        var hi = SIMD3<Float>(repeating: -.greatestFiniteMagnitude)
+        var tris = 0
+        for i in 0..<count {
+            let km = KernelMesh.fromView(vcad_scene_part_mesh(scene, i))
+            if km.isEmpty { continue }
+            lo = simd_min(lo, km.minBound); hi = simd_max(hi, km.maxBound)
+            tris += km.triangleCount
+            meshes.append((km.resource(name: "part\(i)"), Self.partColors[i % Self.partColors.count]))
+        }
+        guard !meshes.isEmpty else { return .empty }
+
+        solveMillis = Date().timeIntervalSince(start) * 1000
+        triangleCount = tris
+        partCount = meshes.count
+        sizeMM = hi - lo
+        let center = (lo + hi) / 2
+        let size = Self.extent(lo, hi)
+        displayCenter = center
+        displayScale = 0.6 / max(size, 0.0001)
+        return RenderScene(meshes: meshes, center: center, size: size,
+                           triangleCount: tris, partCount: meshes.count)
+    }
+
+    static func extent(_ lo: SIMD3<Float>, _ hi: SIMD3<Float>) -> Float {
+        let d = hi - lo
+        return max(d.x, max(d.y, d.z))
+    }
+
+    static let heroColor = NSColor(red: 0.40, green: 0.60, blue: 0.80, alpha: 1.0)
+    static let partColors: [NSColor] = [
+        NSColor(red: 0.62, green: 0.66, blue: 0.70, alpha: 1.0),
+        NSColor(red: 0.82, green: 0.62, blue: 0.30, alpha: 1.0),
+        NSColor(red: 0.45, green: 0.62, blue: 0.82, alpha: 1.0),
+        NSColor(red: 0.72, green: 0.46, blue: 0.46, alpha: 1.0),
+    ]
+}

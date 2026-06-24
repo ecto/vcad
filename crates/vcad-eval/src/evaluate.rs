@@ -22,6 +22,41 @@ use crate::{
     EvaluatedPartDef, EvaluatedScene, NodeTiming, RootFailure,
 };
 
+thread_local! {
+    /// When set, foundation-tier sheet-metal ops (rect/polygon base flange + edge
+    /// flange) fold to a real BRep solid during `evaluate_document`. OFF by
+    /// default: the web/MCP engine REQUIRES sheet-metal roots to evaluate empty
+    /// here so its own `evaluateSheetMetalChain` (unfold/DXF/DFM) takes over. Only
+    /// the kernel-direct native FFI opts in, via `evaluate_document_with_sheet_metal`.
+    static FOLD_SHEET_METAL: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// RAII guard: turn sheet-metal folding on for the current thread and restore it
+/// on drop (panic-safe — the flag never leaks past the call).
+struct FoldGuard(bool);
+impl FoldGuard {
+    fn enable() -> Self {
+        FoldGuard(FOLD_SHEET_METAL.with(|f| f.replace(true)))
+    }
+}
+impl Drop for FoldGuard {
+    fn drop(&mut self) {
+        FOLD_SHEET_METAL.with(|f| f.set(self.0));
+    }
+}
+
+/// Like [`evaluate_document`], but foundation-tier sheet-metal ops fold to real
+/// BRep solids (the kernel-direct path used by the native app). The default
+/// [`evaluate_document`] leaves them empty so the web/MCP engine's sheet-metal
+/// fallback can take over — do NOT use this from the WASM/web path.
+pub fn evaluate_document_with_sheet_metal(
+    doc: &Document,
+    options: &EvalOptions,
+) -> Result<EvaluatedScene, EvalError> {
+    let _guard = FoldGuard::enable();
+    evaluate_document(doc, options)
+}
+
 /// Evaluate a full document into an EvaluatedScene.
 ///
 /// If the document declares `parameters` or `bindings`, the pre-pass
@@ -804,18 +839,129 @@ fn evaluate_op_timed(
             Ok(None)
         }
 
+        // Foundation-tier sheet metal can fold to a real BRep solid — but ONLY on
+        // the opt-in kernel-direct path (the native FFI). By DEFAULT we return
+        // `Ok(None)`, because the web/MCP engine's contract is that a sheet-metal
+        // root evaluates EMPTY here so its `positions.length === 0` fallback routes
+        // the chain to the dedicated `evaluateSheetMetalChain` (which does unfold +
+        // DXF + DFM). Returning a solid (or an error) here breaks that detection.
+        // The opt-in is `evaluate_document_with_sheet_metal` → `FOLD_SHEET_METAL`.
+        CsgOp::SheetMetalBaseFlangeRect { .. }
+        | CsgOp::SheetMetalBaseFlangePolygon { .. }
+        | CsgOp::SheetMetalEdgeFlange { .. }
+            if FOLD_SHEET_METAL.with(|f| f.get()) =>
+        {
+            let model = build_sheet_model(op, nodes)?;
+            // 8 segments is plenty for a small-radius bend arc, and keeps the
+            // fold's booleans cheap enough for interactive re-solve.
+            let solid =
+                vcad_kernel::folded_sheet_solid(&model, 8).map_err(EvalError::SheetMetal)?;
+            Ok(Some(solid))
+        }
+
+        // Default path (web/MCP) + any not-yet-buildable op (hem/jog/relief, even
+        // under the fold flag): return empty so the engine's sheet-metal fallback
+        // takes over. Never a sub-solid, never an error — preserves the contract.
         CsgOp::SheetMetalBaseFlangeRect { .. }
         | CsgOp::SheetMetalBaseFlangePolygon { .. }
         | CsgOp::SheetMetalEdgeFlange { .. }
         | CsgOp::SheetMetalHem { .. }
         | CsgOp::SheetMetalJog { .. }
-        | CsgOp::SheetMetalBendRelief { .. } => {
-            // Sheet-metal ops bypass the BRep Solid pipeline — the engine
-            // detects them at root level and routes the chain to the
-            // sheet-metal kernel. Returning `None` here is safe: it just
-            // means nothing combines as a sub-solid, which is what we want.
-            Ok(None)
+        | CsgOp::SheetMetalBendRelief { .. } => Ok(None),
+    }
+}
+
+/// Build a [`vcad_kernel_sheet::SheetMetalModel`] from a sheet-metal op chain.
+/// Edge flanges reference their `parent` node, so this recurses down the chain
+/// (mirroring [`collect_transform_chain`]) and applies each flange in order.
+/// Handles rectangular + polygon base flanges and edge flanges; the model's
+/// `material` is threaded from the IR (NOT hardcoded), so the bend table picks
+/// the right K-factor when no `manual_k` override is given.
+fn build_sheet_model(
+    op: &CsgOp,
+    nodes: &HashMap<NodeId, vcad_ir::Node>,
+) -> Result<vcad_kernel::vcad_kernel_sheet::SheetMetalModel, EvalError> {
+    use vcad_kernel::vcad_kernel_sheet::{
+        add_edge_flange, base_flange_polygon_with_holes, base_flange_rect,
+        edge_flange::EdgeFlangeParams, BendDirection, BendTable, FlangePosition,
+    };
+    use vcad_kernel_math::Point2;
+    let sm = |e: String| EvalError::SheetMetal(e);
+    match op {
+        CsgOp::SheetMetalBaseFlangeRect {
+            width,
+            depth,
+            thickness,
+            material,
+            ..
+        } => {
+            let mut model =
+                base_flange_rect(*width, *depth, *thickness).map_err(|e| sm(e.to_string()))?;
+            model.material = material.clone();
+            Ok(model)
         }
+
+        CsgOp::SheetMetalBaseFlangePolygon {
+            outline,
+            holes,
+            thickness,
+            material,
+            ..
+        } => {
+            let to_pts = |v: &Vec<vcad_ir::Vec2>| {
+                v.iter().map(|p| Point2::new(p.x, p.y)).collect::<Vec<_>>()
+            };
+            let outer = to_pts(outline);
+            let hole_loops: Vec<Vec<Point2>> = holes.iter().map(to_pts).collect();
+            let mut model = base_flange_polygon_with_holes(outer, hole_loops, *thickness)
+                .map_err(|e| sm(e.to_string()))?;
+            model.material = material.clone();
+            Ok(model)
+        }
+
+        CsgOp::SheetMetalEdgeFlange {
+            parent,
+            panel_id,
+            edge_index,
+            length,
+            angle,
+            radius,
+            direction,
+            manual_k,
+        } => {
+            let parent_op = &nodes.get(parent).ok_or(EvalError::MissingNode(*parent))?.op;
+            let mut model = build_sheet_model(parent_op, nodes)?;
+            let r = radius.unwrap_or(model.thickness);
+            let material = model.material.clone();
+            add_edge_flange(
+                &mut model,
+                &BendTable::builtin(),
+                EdgeFlangeParams {
+                    panel: *panel_id,
+                    edge_index: *edge_index,
+                    length: *length,
+                    angle: *angle,
+                    radius: r,
+                    direction: match direction {
+                        vcad_ir::SheetMetalDirection::Up => BendDirection::Up,
+                        vcad_ir::SheetMetalDirection::Down => BendDirection::Down,
+                    },
+                    position: FlangePosition::MaterialInside,
+                    // Inherit the base flange's material so the bend-table
+                    // K-factor matches the actual sheet (steel ≠ aluminium).
+                    material,
+                    manual_k: *manual_k,
+                },
+            )
+            .map_err(|e| sm(e.to_string()))?;
+            Ok(model)
+        }
+
+        _ => Err(sm(
+            "sheet-metal chain references hem/jog/bend-relief, not yet buildable in \
+             kernel-direct eval"
+                .into(),
+        )),
     }
 }
 
