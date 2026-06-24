@@ -98,6 +98,13 @@ size_t vcad_solve_trace_count(const VcadSolve *s);
 VcadTraceLine vcad_solve_trace(const VcadSolve *s, size_t idx);
 size_t vcad_solve_unrouted(const VcadSolve *s);
 double vcad_solve_min_wall(const VcadSolve *s);
+/* Receipt verdicts (ABI 5): bracket DFM, quote cents (real), lead days
+ * (heuristic), and the honest Make-it gate (all_held = AND of gating domains). */
+uint8_t vcad_solve_bracket_ok(const VcadSolve *s);
+uint8_t vcad_solve_bracket_severity(const VcadSolve *s);
+uint64_t vcad_solve_quote_cost_cents(const VcadSolve *s);
+uint32_t vcad_solve_lead_days(const VcadSolve *s);
+uint8_t vcad_solve_all_held(const VcadSolve *s);
 void vcad_solve_free(VcadSolve *s);
 
 #ifdef __cplusplus

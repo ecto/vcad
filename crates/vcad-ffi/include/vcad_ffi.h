@@ -109,6 +109,15 @@ size_t vcad_solve_trace_count(const VcadSolve *s);
 VcadTraceLine vcad_solve_trace(const VcadSolve *s, size_t idx);
 size_t vcad_solve_unrouted(const VcadSolve *s);  /* receipt: nets unrouted (0 = ok) */
 double vcad_solve_min_wall(const VcadSolve *s);   /* receipt: connector-wall mm */
+/* Receipt verdicts (ABI 5). bracket_ok: 1=Held, 0=Violated (DFM Error).
+ * bracket_severity: 0 clean / 1 Warning / 2 Error. quote: integer cents (bracket,
+ * qty 1; a real estimate_cost). lead_days: HEURISTIC. all_held: AND of gating
+ * domains (min-wall, copper, bracket; quote never gates) — gate the Make-it button. */
+uint8_t vcad_solve_bracket_ok(const VcadSolve *s);
+uint8_t vcad_solve_bracket_severity(const VcadSolve *s);
+uint64_t vcad_solve_quote_cost_cents(const VcadSolve *s);
+uint32_t vcad_solve_lead_days(const VcadSolve *s);
+uint8_t vcad_solve_all_held(const VcadSolve *s);
 void vcad_solve_free(VcadSolve *s);
 
 #ifdef __cplusplus

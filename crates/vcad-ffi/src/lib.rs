@@ -79,7 +79,7 @@ impl VcadMeshView {
 /// Swift side assert it linked a compatible static lib.
 #[no_mangle]
 pub extern "C" fn vcad_ffi_abi_version() -> u32 {
-    4
+    5
 }
 
 /// Create a box (corner at origin, extends to `(sx, sy, sz)`). Returns null on panic.
@@ -786,12 +786,89 @@ pub extern "C" fn vcad_route_result_free(r: *mut VcadRouteResult) {
 // expensive); the per-frame cutout still uses `vcad_doc_set_param_cheap`.
 // =========================================================================
 
+/// Rebuild the slice-1 bracket `SheetMetalModel` at a resolved flange `length`,
+/// mirroring nodes 10/11 of `build_gripper_slice1`. Kept local so the receipt
+/// path doesn't reach into the evaluator's private chain-walker.
+fn gripper_bracket_model(
+    flange_len: f64,
+) -> Result<vcad_kernel::vcad_kernel_sheet::SheetMetalModel, String> {
+    use vcad_kernel::vcad_kernel_sheet::edge_flange::EdgeFlangeParams;
+    use vcad_kernel::vcad_kernel_sheet::{
+        add_edge_flange, base_flange_rect, BendDirection, BendTable, FlangePosition,
+    };
+    let mut model = base_flange_rect(70.0, 18.0, 1.0).map_err(|e| e.to_string())?;
+    model.material = "al-soft".into();
+    add_edge_flange(
+        &mut model,
+        &BendTable::builtin(),
+        EdgeFlangeParams {
+            panel: 0,
+            edge_index: 2,
+            length: flange_len,
+            angle: std::f64::consts::FRAC_PI_2,
+            radius: 1.0,
+            direction: BendDirection::Down,
+            position: FlangePosition::MaterialInside,
+            material: "al-soft".into(),
+            manual_k: Some(0.44),
+        },
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(model)
+}
+
+/// Bracket DFM verdict + a REAL manufacturing quote at a given flange length.
+/// Returns `(bracket_ok, severity, cents, lead_days)`. `bracket_ok = 0` only on a
+/// hard `Severity::Error` (a warning keeps it 1). The cost is a kernel model
+/// (`estimate_cost`); the lead time is a stated heuristic (no kernel lead model).
+fn gripper_bracket_verdict(flange_len: f64) -> (u8, u8, u64, u32) {
+    use vcad_kernel::vcad_kernel_sheet::{
+        check_manufacturability, estimate_cost, unfold, CostRates, FlatPattern, Severity,
+        ShopProfile,
+    };
+    let Ok(mut model) = gripper_bracket_model(flange_len) else {
+        return (0, 2, 0, 0); // can't build the bracket → Violated, no quote
+    };
+    // DFM verdict against a generic shop (min flange height = 5·t, etc.).
+    let viols = check_manufacturability(&model, &ShopProfile::generic());
+    let has_error = viols.iter().any(|v| v.severity() == Severity::Error);
+    let severity = if has_error {
+        2
+    } else if viols.is_empty() {
+        0
+    } else {
+        1
+    };
+    let bracket_ok = u8::from(!has_error);
+
+    // Quote: unfold → flat pattern → real line-item cost (qty 1, generic rates).
+    if unfold(&mut model).is_err() {
+        return (bracket_ok, severity, 0, 0);
+    }
+    let flat = FlatPattern::from_model(&model);
+    let cost = estimate_cost(&model, &flat, 1, &CostRates::generic());
+    let cents = (cost.total_each * 100.0).round().max(0.0) as u64;
+    // Lead time is a STATED HEURISTIC: 5 base days + 1 per bend, capped.
+    let lead_days = (5 + cost.bends).min(15);
+    (bracket_ok, severity, cents, lead_days)
+}
+
 /// Owned result of a full cross-domain solve: meshes + copper + receipt.
 pub struct VcadSolve {
     scene: EvaluatedScene,
     traces: Vec<VcadTraceLine>,
     unrouted: usize,
     min_wall: f64,
+    /// Bracket DFM: 1 = Held (no manufacturability Error), 0 = Violated.
+    /// Warnings keep it 1 — only a hard Error kills the Make-it gate.
+    bracket_ok: u8,
+    /// Worst bracket finding for display: 0 = clean, 1 = Warning, 2 = Error.
+    bracket_severity: u8,
+    /// Manufacturing quote in integer cents (bracket only, qty 1) — a REAL
+    /// kernel cost (estimate_cost), no float across the ABI.
+    quote_cost_cents: u64,
+    /// Estimated lead time, business days. HEURISTIC — no kernel lead model.
+    lead_days: u32,
 }
 
 /// Borrowed mesh view over an evaluated part (normals reported only when they
@@ -864,11 +941,24 @@ pub extern "C" fn vcad_doc_solve(
         };
         // Receipt: connector cutout clearance to the nearest enclosure wall (mm).
         let min_wall = (cx - 6.0).min(74.0 - cx);
+        // Bracket DFM + quote — read the flange length that actually folded off the
+        // resolved node 11 (resolve_document patches op fields in place), so the
+        // verdict matches the rendered bracket. Fall back to the binding formula.
+        let flange_len = match resolved.nodes.get(&11).map(|n| &n.op) {
+            Some(CsgOp::SheetMetalEdgeFlange { length, .. }) => *length,
+            _ => cx * 0.25 + 4.0,
+        };
+        let (bracket_ok, bracket_severity, quote_cost_cents, lead_days) =
+            gripper_bracket_verdict(flange_len);
         Box::into_raw(Box::new(VcadSolve {
             scene,
             traces,
             unrouted,
             min_wall,
+            bracket_ok,
+            bracket_severity,
+            quote_cost_cents,
+            lead_days,
         }))
     }))
     .unwrap_or(ptr::null_mut())
@@ -930,6 +1020,54 @@ pub extern "C" fn vcad_solve_min_wall(s: *const VcadSolve) -> f64 {
         return 0.0;
     }
     unsafe { &*s }.min_wall
+}
+
+/// Receipt: bracket DFM. 1 = Held (no manufacturability Error), 0 = Violated.
+#[no_mangle]
+pub extern "C" fn vcad_solve_bracket_ok(s: *const VcadSolve) -> u8 {
+    if s.is_null() {
+        return 0;
+    }
+    unsafe { &*s }.bracket_ok
+}
+
+/// Receipt: worst bracket finding — 0 clean / 1 Warning / 2 Error. 0 on null.
+#[no_mangle]
+pub extern "C" fn vcad_solve_bracket_severity(s: *const VcadSolve) -> u8 {
+    if s.is_null() {
+        return 0;
+    }
+    unsafe { &*s }.bracket_severity
+}
+
+/// Receipt: manufacturing quote in integer cents (bracket, qty 1). 0 on null.
+#[no_mangle]
+pub extern "C" fn vcad_solve_quote_cost_cents(s: *const VcadSolve) -> u64 {
+    if s.is_null() {
+        return 0;
+    }
+    unsafe { &*s }.quote_cost_cents
+}
+
+/// Receipt: estimated lead time, business days (HEURISTIC). 0 on null.
+#[no_mangle]
+pub extern "C" fn vcad_solve_lead_days(s: *const VcadSolve) -> u32 {
+    if s.is_null() {
+        return 0;
+    }
+    unsafe { &*s }.lead_days
+}
+
+/// The honest Make-it gate: 1 iff EVERY gating domain holds — min-wall ≥ 6 mm,
+/// 0 unrouted, bracket DFM Held. The quote never gates (sourcing never gates).
+/// Make-it must be disabled whenever this is 0. 0 on null.
+#[no_mangle]
+pub extern "C" fn vcad_solve_all_held(s: *const VcadSolve) -> u8 {
+    if s.is_null() {
+        return 0;
+    }
+    let s = unsafe { &*s };
+    u8::from(s.min_wall >= 6.0 && s.unrouted == 0 && s.bracket_ok == 1)
 }
 
 /// Free a solve result. No-op on null.
@@ -1185,6 +1323,33 @@ mod tests {
         assert_eq!(vcad_solve_part_count(ptr::null()), 0);
         assert_eq!(vcad_solve_trace_count(ptr::null()), 0);
         vcad_solve_free(ptr::null_mut());
+        vcad_doc_free(doc);
+    }
+
+    #[test]
+    fn receipt_gate_flips_on_min_wall() {
+        // The honesty rule: the Make-it gate dies when any gating check Violates.
+        // On this drag the bracket DFM holds across the whole range, so the red
+        // demo comes from min-wall going negative as the connector nears the wall.
+        let doc = vcad_doc_gripper_slice1();
+        assert!(!doc.is_null());
+        let name = std::ffi::CString::new("connector_x").unwrap();
+
+        // Centered: every gating domain holds, real quote present.
+        let s = vcad_doc_solve(doc, name.as_ptr(), 40.0);
+        assert_eq!(vcad_solve_bracket_ok(s), 1, "bracket foldable at cx=40");
+        assert!(vcad_solve_quote_cost_cents(s) > 0, "real bracket quote (cents > 0)");
+        assert!(vcad_solve_lead_days(s) >= 5, "lead-time heuristic floor");
+        assert_eq!(vcad_solve_all_held(s), 1, "gate open when centered");
+        vcad_solve_free(s);
+
+        // Push into the wall: min_wall = 74 - 78 < 0 → Violated → gate shut.
+        let s2 = vcad_doc_solve(doc, name.as_ptr(), 78.0);
+        assert!(vcad_solve_min_wall(s2) < 6.0, "min-wall violated at the wall");
+        assert_eq!(vcad_solve_all_held(s2), 0, "gate KILLED when min-wall violated");
+        vcad_solve_free(s2);
+
+        assert_eq!(vcad_solve_all_held(ptr::null()), 0);
         vcad_doc_free(doc);
     }
 

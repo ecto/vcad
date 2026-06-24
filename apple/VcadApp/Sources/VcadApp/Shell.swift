@@ -57,9 +57,18 @@ struct EditorView: View {
                     }
                 }
                 .overlay(alignment: .topTrailing) {
-                    InspectorView(model: model)
-                        .frame(width: compact ? 224 : 280)
-                        .padding(14)
+                    if model.source.isGripper {
+                        // The cross-domain Receipt takes the inspector slot — the
+                        // adaptive inspector adapting to a multi-domain part.
+                        ReceiptLedger(model: model)
+                            .frame(width: compact ? 248 : 300)
+                            .padding(14)
+                            .transition(.move(edge: .trailing).combined(with: .opacity))
+                    } else {
+                        InspectorView(model: model)
+                            .frame(width: compact ? 224 : 280)
+                            .padding(14)
+                    }
                 }
                 .overlay(alignment: .bottom) {
                     VStack(spacing: 10) {

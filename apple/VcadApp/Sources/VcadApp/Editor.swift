@@ -249,8 +249,10 @@ final class EditorModel {
         let clamped = min(max(x, connectorRange.lowerBound), connectorRange.upperBound)
         connectorX = clamped
         parameterDirty = true
-        // The shown copper now lags the connector — dim it; it re-routes on settle.
+        // The shown copper + the expensive Receipt rows now lag the connector —
+        // mark them stale ("recomputing"); they re-solve on settle.
         copperStale = true
+        receiptStale = true
         let tick = Int(clamped.rounded())
         if tick != lastConnectorTick {
             lastConnectorTick = tick
@@ -340,6 +342,17 @@ final class EditorModel {
                 width: Float(t.width), net: t.net_id))
         }
         copperUnrouted = Int(vcad_solve_unrouted(s))
+        // Settle: refresh the Receipt's expensive verdicts (these came from the
+        // same one solve as the meshes + copper).
+        bracketOK = vcad_solve_bracket_ok(s) == 1
+        bracketSeverity = Int(vcad_solve_bracket_severity(s))
+        quoteCents = vcad_solve_quote_cost_cents(s)
+        leadDays = Int(vcad_solve_lead_days(s))
+        let held = vcad_solve_all_held(s) == 1
+        receiptStale = false
+        // Chime on the gate transition (the felt "verified" / "violated" moment).
+        if held != allHeld { chime.play(held ? .solved : .failed) }
+        allHeld = held
         solveMillis = Date().timeIntervalSince(start) * 1000
         return GripperSolve(meshes: meshes, copper: copper,
                             minWall: vcad_solve_min_wall(s), unrouted: copperUnrouted)
@@ -355,7 +368,18 @@ final class EditorModel {
     /// Set on drag-settle to request exactly ONE re-route (never per drag frame).
     var copperDirty = false
     /// Nets that failed to route at the current connector_x (0 = fully routed).
-    @ObservationIgnored var copperUnrouted = 0
+    /// Observable (NOT @ObservationIgnored) so the Receipt's copper row refreshes.
+    var copperUnrouted = 0
+
+    // Receipt verdicts — the expensive ones settle on drag-release; min-wall is
+    // recomputed live from connectorX. `receiptStale` marks the expensive rows
+    // "recomputing" mid-drag (mirrors copperStale).
+    var receiptStale = false
+    var bracketOK = true
+    var bracketSeverity = 0
+    var quoteCents: UInt64 = 0
+    var leadDays = 0
+    var allHeld = true
 
     /// Route the slice-2 board at the current `connector_x` and map the copper
     /// into the board plate's frame. ONE `route_all` per call — heeding the tween
