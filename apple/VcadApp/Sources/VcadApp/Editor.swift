@@ -228,6 +228,9 @@ final class EditorModel {
         connectorX = 40
         lastConnectorTick = 40
         lastConnectorOK = true
+        copperStale = false
+        copperDirty = false
+        copperUnrouted = 0
         source = .gripper
     }
 
@@ -240,6 +243,8 @@ final class EditorModel {
         let clamped = min(max(x, connectorRange.lowerBound), connectorRange.upperBound)
         connectorX = clamped
         parameterDirty = true
+        // The shown copper now lags the connector — dim it; it re-routes on settle.
+        copperStale = true
         let tick = Int(clamped.rounded())
         if tick != lastConnectorTick {
             lastConnectorTick = tick
@@ -274,6 +279,43 @@ final class EditorModel {
         guard let scene else { return .empty }
         defer { vcad_scene_free(scene) }
         return sceneFromHandle(scene, start: start)
+    }
+
+    // MARK: copper — slice 2, the electrical domain of the Connector Drag
+
+    /// One routed copper segment, mapped into the board plate's frame.
+    struct CopperSeg { var a: SIMD3<Float>; var b: SIMD3<Float>; var width: Float; var net: UInt32 }
+
+    /// Copper is showing a pre-drag route — drawn dim until it re-routes on settle.
+    var copperStale = false
+    /// Set on drag-settle to request exactly ONE re-route (never per drag frame).
+    var copperDirty = false
+    /// Nets that failed to route at the current connector_x (0 = fully routed).
+    @ObservationIgnored var copperUnrouted = 0
+
+    /// Route the slice-2 board at the current `connector_x` and map the copper
+    /// into the board plate's frame. ONE `route_all` per call — heeding the tween
+    /// lesson, this runs on settle, never per drag frame.
+    func routeGripperCopper() -> [CopperSeg] {
+        guard source.isGripper, let r = vcad_route_traces(connectorX, 0.25) else {
+            copperUnrouted = 0
+            return []
+        }
+        defer { vcad_route_result_free(r) }
+        copperUnrouted = Int(vcad_route_result_unrouted_count(r))
+        let n = Int(vcad_route_result_trace_count(r))
+        // Board-local mm → kernel frame: the board plate is translated (5,5,5) and
+        // is 2 mm thick, so its top face is z=7; copper sits a hair above it.
+        let ox: Float = 5, oy: Float = 5, z: Float = 7.1
+        var segs: [CopperSeg] = []
+        segs.reserveCapacity(n)
+        for i in 0..<n {
+            let t = vcad_route_result_trace(r, i)
+            let a = SIMD3<Float>(Float(t.start.0) + ox, Float(t.start.1) + oy, z)
+            let b = SIMD3<Float>(Float(t.end.0) + ox, Float(t.end.1) + oy, z)
+            segs.append(CopperSeg(a: a, b: b, width: Float(t.width), net: t.net_id))
+        }
+        return segs
     }
 
     let examples: [(name: String, path: String)] = [

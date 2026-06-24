@@ -26,3 +26,4 @@ vcad-kernel-raytrace = { workspace = true }
 vcad-eval = { workspace = true }
 vcad-ir = { workspace = true }
 vcad-loon = { workspace = true }
+vcad-ecad-pcb = { workspace = true }

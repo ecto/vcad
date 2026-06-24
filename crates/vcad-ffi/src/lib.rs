@@ -24,9 +24,15 @@ use std::ffi::{c_char, CStr};
 use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::ptr;
 
+use vcad_ecad_pcb::router::route_all;
 use vcad_eval::{evaluate_document, EvalOptions, EvaluatedScene};
+use vcad_ir::ecad::{
+    BoardOutline, DesignRules, Footprint, LayerStackup, Net, NetClassRules, Pad, PadShape, PadType,
+    Pcb, PcbLayer, StackupLayer,
+};
 use vcad_ir::{
-    BindingKey, CsgOp, Document, Expr, MaterialDef, Node, Parameter, SceneEntry, Vec3 as IrVec3,
+    BindingKey, CsgOp, Document, Expr, MaterialDef, Node, Parameter, SceneEntry, Vec2,
+    Vec3 as IrVec3,
 };
 use vcad_kernel::Solid;
 use vcad_kernel_math::{Point3, Vec3};
@@ -73,7 +79,7 @@ impl VcadMeshView {
 /// Swift side assert it linked a compatible static lib.
 #[no_mangle]
 pub extern "C" fn vcad_ffi_abi_version() -> u32 {
-    1
+    2
 }
 
 /// Create a box (corner at origin, extends to `(sx, sy, sz)`). Returns null on panic.
@@ -435,6 +441,230 @@ fn build_gripper_slice1() -> Document {
     doc
 }
 
+// =========================================================================
+// Slice 2: copper re-route in the connector-drag loop.
+//
+// The same `connector_x` that drives the slice-1 enclosure cutout + connector
+// body also slides a connector footprint on a tiny 2-net board. Routing the
+// board with the OHM auto-router gives back copper polylines that re-thread to
+// the moved connector — the electrical domain of the Connector Drag. This is a
+// SEPARATE FFI path from the resident document: `route_all` is stateless and
+// reads only a `&Pcb`, so we build the board fresh at `connector_x` and route
+// it. Swift drives both paths from one `connectorX`.
+// =========================================================================
+
+/// Build the slice-2 routable board at `connector_x` (mm, board-LOCAL — the
+/// board plate's own 0..70 × 0..40 frame). One fixed 2-pad part sits at the
+/// left; the connector part slides with `connector_x` so the SIG and GND nets
+/// each have a moving endpoint the router must re-thread. 4 pads / 2 nets /
+/// 2-per-net is the minimum that routes: a net with <2 resolved pads is
+/// silently skipped by the ratsnest.
+fn build_gripper_slice2_board(connector_x: f64) -> Pcb {
+    // 70 × 40 rectangle, origin at corner — matches the slice-1 board plate.
+    let outline = BoardOutline {
+        vertices: vec![
+            Vec2::new(0.0, 0.0),
+            Vec2::new(70.0, 0.0),
+            Vec2::new(70.0, 40.0),
+            Vec2::new(0.0, 40.0),
+        ],
+        cutouts: vec![],
+        thickness: 1.6,
+    };
+
+    // 2-layer stackup; FCu carries this board, BCu present as an escape lane.
+    let stackup = LayerStackup {
+        layers: vec![
+            StackupLayer {
+                layer: PcbLayer::FCu,
+                copper_thickness: Some(0.035),
+                dielectric_thickness: Some(1.53),
+                dielectric_er: Some(4.5),
+                material: Some("FR4".into()),
+            },
+            StackupLayer {
+                layer: PcbLayer::BCu,
+                copper_thickness: Some(0.035),
+                dielectric_thickness: None,
+                dielectric_er: None,
+                material: None,
+            },
+        ],
+    };
+
+    // The router keys nets off `pad.net`, so net id == name keeps trace.net
+    // human-readable ("SIG"/"GND").
+    let nets = vec![
+        Net { id: "SIG".into(), name: "SIG".into() },
+        Net { id: "GND".into(), name: "GND".into() },
+    ];
+
+    // Non-zero rules are load-bearing: zeroed clearance/width routes invalid copper.
+    let rules = DesignRules {
+        default_rules: NetClassRules {
+            name: "default".into(),
+            trace_width: 0.25,
+            clearance: 0.2,
+            via_diameter: 0.8,
+            via_drill: 0.4,
+            diff_pair_gap: None,
+            diff_pair_width: None,
+        },
+        class_rules: vec![],
+        net_class_assignments: std::collections::HashMap::new(),
+        edge_clearance: 0.5,
+        hole_to_hole: 0.5,
+        min_annular_ring: 0.15,
+        min_drill: 0.2,
+    };
+
+    let pad = |num: &str, net: &str, x: f64, y: f64| Pad {
+        number: num.into(),
+        pad_type: PadType::SMD,
+        shape: PadShape::Rect { width: 1.0, height: 1.2 },
+        position: Vec2::new(x, y),
+        rotation: 0.0,
+        drill: None,
+        net: Some(net.into()),
+        layers: vec![PcbLayer::FCu],
+    };
+    let two_pad = |reference: &str, value: &str, x: f64| Footprint {
+        reference: reference.into(),
+        value: value.into(),
+        footprint_name: "SLICE2-2PAD".into(),
+        position: Vec2::new(x, 20.0),
+        rotation: 0.0,
+        front: true,
+        // SIG above, GND below — 5 mm apart, clear at 0.25/0.2 rules.
+        pads: vec![pad("1", "SIG", 0.0, 2.5), pad("2", "GND", 0.0, -2.5)],
+        graphics: vec![],
+        model_3d: None,
+        properties: std::collections::HashMap::new(),
+    };
+
+    // Fixed part near the left; connector slides with connector_x. The slice-1
+    // board plate is world-translated +5 in X, and the connector BODY centers on
+    // world `connector_x`, so the footprint centers on board-local connector_x-5.
+    // Clamp to keep both pads on the board with edge clearance, and never left of
+    // the fixed part (no pad overlap).
+    let fixed = two_pad("U1", "FIXED", 10.0);
+    let cx = (connector_x - 5.0).clamp(16.0, 64.0);
+    let connector = two_pad("J1", "CONN", cx);
+
+    Pcb {
+        outline,
+        stackup,
+        nets,
+        rules,
+        footprints: vec![fixed, connector],
+        traces: vec![],
+        trace_arcs: vec![],
+        vias: vec![],
+        zones: vec![],
+        keepouts: vec![],
+        net_ties: vec![],
+    }
+}
+
+/// One straight copper segment from the auto-router, board-LOCAL mm.
+/// `layer`: 0 = FCu, 1 = BCu, 2+ = inner. `net_id`: 0 = SIG, 1 = GND.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct VcadTraceLine {
+    pub start: [f64; 2],
+    pub end: [f64; 2],
+    pub width: f64,
+    pub layer: u32,
+    pub net_id: u32,
+}
+
+/// Owned result of routing the slice-2 board: the copper to draw, plus how many
+/// nets failed to route (for an honest "copper routed ✓ / unrouted ✗" verdict).
+pub struct VcadRouteResult {
+    traces: Vec<VcadTraceLine>,
+    unrouted: usize,
+}
+
+fn layer_code(l: PcbLayer) -> u32 {
+    match l {
+        PcbLayer::FCu => 0,
+        PcbLayer::BCu => 1,
+        PcbLayer::In1Cu => 2,
+        PcbLayer::In2Cu => 3,
+        _ => 0,
+    }
+}
+
+fn net_code(name: &str) -> u32 {
+    if name == "GND" {
+        1
+    } else {
+        0
+    }
+}
+
+/// Build the slice-2 board at `connector_x`, route it, and return the copper.
+/// `width` ≤ 0 falls back to 0.25 mm. Caller owns the result
+/// (`vcad_route_result_free`). Null only on panic.
+#[no_mangle]
+pub extern "C" fn vcad_route_traces(connector_x: f64, width: f64) -> *mut VcadRouteResult {
+    catch_unwind(|| {
+        let pcb = build_gripper_slice2_board(connector_x);
+        let w = if width > 0.0 { width } else { 0.25 };
+        let r = route_all(&pcb, w, &[]);
+        let traces = r
+            .traces
+            .iter()
+            .map(|t| VcadTraceLine {
+                start: [t.start.x, t.start.y],
+                end: [t.end.x, t.end.y],
+                width: t.width,
+                layer: layer_code(t.layer),
+                net_id: net_code(&t.net),
+            })
+            .collect();
+        Box::into_raw(Box::new(VcadRouteResult { traces, unrouted: r.unrouted_nets.len() }))
+    })
+    .unwrap_or(ptr::null_mut())
+}
+
+/// Number of copper segments in a route result. 0 on null.
+#[no_mangle]
+pub extern "C" fn vcad_route_result_trace_count(r: *const VcadRouteResult) -> usize {
+    if r.is_null() {
+        return 0;
+    }
+    unsafe { &*r }.traces.len()
+}
+
+/// Copper segment `idx` (board-local mm). Returns a zeroed line on null / OOB —
+/// Swift must bound by `vcad_route_result_trace_count`.
+#[no_mangle]
+pub extern "C" fn vcad_route_result_trace(r: *const VcadRouteResult, idx: usize) -> VcadTraceLine {
+    let zero = VcadTraceLine { start: [0.0; 2], end: [0.0; 2], width: 0.0, layer: 0, net_id: 0 };
+    if r.is_null() {
+        return zero;
+    }
+    unsafe { &*r }.traces.get(idx).copied().unwrap_or(zero)
+}
+
+/// How many nets could not be routed legally (0 = fully routed). 0 on null.
+#[no_mangle]
+pub extern "C" fn vcad_route_result_unrouted_count(r: *const VcadRouteResult) -> usize {
+    if r.is_null() {
+        return 0;
+    }
+    unsafe { &*r }.unrouted
+}
+
+/// Free a route result. No-op on null.
+#[no_mangle]
+pub extern "C" fn vcad_route_result_free(r: *mut VcadRouteResult) {
+    if !r.is_null() {
+        drop(unsafe { Box::from_raw(r) });
+    }
+}
+
 /// Result of a ray-pick against a solid's BRep.
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -586,6 +816,43 @@ mod tests {
         assert!(vcad_doc_set_param(ptr::null_mut(), ptr::null(), 1.0).is_null());
         vcad_doc_free(ptr::null_mut());
         assert!(vcad_doc_load(ptr::null(), 0).is_null());
+    }
+
+    #[test]
+    fn slice2_board_routes_both_nets() {
+        // The electrical domain: SIG and GND must both route cleanly on the
+        // hand-built board, or there is nothing honest to draw.
+        let pcb = build_gripper_slice2_board(40.0);
+        let r = route_all(&pcb, 0.25, &[]);
+        assert!(r.unrouted_nets.is_empty(), "SIG+GND must both route, got {:?}", r.unrouted_nets);
+        assert!(r.traces.len() >= 2, "expect at least one segment per net, got {}", r.traces.len());
+    }
+
+    #[test]
+    fn slice2_connector_x_moves_copper() {
+        // The coupling: sliding the connector right must push the copper right.
+        let a = vcad_route_traces(24.0, 0.25);
+        let b = vcad_route_traces(64.0, 0.25);
+        assert!(!a.is_null() && !b.is_null());
+        let max_x = |r: *const VcadRouteResult| {
+            let rr = unsafe { &*r };
+            rr.traces
+                .iter()
+                .flat_map(|t| [t.start[0], t.end[0]])
+                .fold(f64::MIN, f64::max)
+        };
+        assert!(max_x(b) > max_x(a), "copper should reach further +X when the connector slides right");
+        vcad_route_result_free(a);
+        vcad_route_result_free(b);
+    }
+
+    #[test]
+    fn slice2_route_null_safe() {
+        assert_eq!(vcad_route_result_trace_count(ptr::null()), 0);
+        let z = vcad_route_result_trace(ptr::null(), 0);
+        assert_eq!(z.width, 0.0);
+        assert_eq!(vcad_route_result_unrouted_count(ptr::null()), 0);
+        vcad_route_result_free(ptr::null_mut());
     }
 
     #[test]

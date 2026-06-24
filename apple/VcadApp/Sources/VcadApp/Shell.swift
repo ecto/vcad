@@ -86,6 +86,14 @@ struct EditorView: View {
                     guard env["VCAD_GRIPPER"] == "1" else { return }
                     model.openGripper()
                     if let x = env["VCAD_CONNECTOR_X"].flatMap(Double.init) { model.connectorX = x }
+                    if env["VCAD_ROUTE"] == "1" {
+                        let segs = model.routeGripperCopper()
+                        // stderr is unbuffered → survives the kill that a buffered
+                        // stdout print would lose; a quick end-to-end FFI smoke test.
+                        let line = "[VCAD_ROUTE] connector_x=\(Int(model.connectorX)) "
+                            + "segments=\(segs.count) unrouted=\(model.copperUnrouted)\n"
+                        FileHandle.standardError.write(Data(line.utf8))
+                    }
                 }
         }
     }
@@ -416,7 +424,8 @@ struct ViewportView: View {
     var body: some View {
         _ = (model.azimuth, model.elevation, model.distance, model.modifierValue,
              model.source, model.selectedFeatureID, model.baseShape, model.modifier,
-             model.pickDirty, model.connectorX, model.hoveredHandle, model.panOffset)
+             model.pickDirty, model.connectorX, model.hoveredHandle, model.panOffset,
+             model.copperDirty, model.copperStale)
 
         return GeometryReader { geo in
           RealityView { content in
@@ -447,6 +456,8 @@ struct ViewportView: View {
                         centering.findEntity(named: "connectorHandle")?.position =
                             model.connectorHandlePosition()
                     }
+                    // Copper now lags the connector — dim it until the drag settles.
+                    if model.copperStale { setCopperDimmed(content, true) }
                 } else {
                     let recreated = model.streamSandbox()
                     if let root = content.entities.first(where: { $0.name == "geomRoot" }) {
@@ -477,6 +488,14 @@ struct ViewportView: View {
                     }
                 }
                 model.pickDirty = false
+            }
+
+            // Settle: the connector stopped moving — re-route the copper ONCE and
+            // snap it crisp. The mechanical re-solve already ran per frame; the
+            // ~one route_all per gesture never touches the drag hot loop.
+            if model.copperDirty {
+                redrawCopper(content)
+                model.copperDirty = false
             }
 
             // Keep the handles' world positions current + apply the hover pop.
@@ -593,6 +612,9 @@ struct ViewportView: View {
         if model.showsConnectorHandle {
             centering.addChild(makeConnectorHandle(at: model.connectorHandlePosition()))
         }
+        if model.source.isGripper {
+            centering.addChild(buildCopperRoot())
+        }
 
         let zUp = Entity()
         zUp.addChild(centering)
@@ -667,6 +689,49 @@ struct ViewportView: View {
         return handle
     }
 
+    // MARK: copper (slice 2)
+
+    /// Route the slice-2 board at the current `connector_x` and build a fresh
+    /// `copperRoot` of ribbon traces — copper for SIG, tin-grey for GND. The
+    /// router gives straight board-local segments; each becomes a thin flat box
+    /// oriented along the segment. Tiny counts, so plain ModelEntities suffice.
+    private func buildCopperRoot() -> Entity {
+        let copperRoot = Entity()
+        copperRoot.name = "copperRoot"
+        let cu = NSColor(srgbRed: 0.87, green: 0.52, blue: 0.20, alpha: 1.0)
+        let gnd = NSColor(srgbRed: 0.60, green: 0.64, blue: 0.70, alpha: 1.0)
+        for (i, s) in model.routeGripperCopper().enumerated() {
+            let d = s.b - s.a
+            let len = simd_length(d)
+            guard len > 1e-4 else { continue }
+            let ribbon = ModelEntity(
+                mesh: .generateBox(size: SIMD3<Float>(len, max(s.width, 0.25), 0.08)),
+                materials: [UnlitMaterial(color: s.net == 1 ? gnd : cu)]
+            )
+            ribbon.name = "copper\(i)"
+            ribbon.position = (s.a + s.b) / 2
+            ribbon.orientation = simd_quatf(from: SIMD3<Float>(1, 0, 0), to: d / len)
+            copperRoot.addChild(ribbon)
+        }
+        model.copperStale = false
+        return copperRoot
+    }
+
+    /// Swap in a freshly-routed copperRoot (called on drag-settle).
+    private func redrawCopper(_ content: RealityViewCameraContent) {
+        guard let root = content.entities.first(where: { $0.name == "geomRoot" }),
+              let centering = root.findEntity(named: "centering") else { return }
+        centering.findEntity(named: "copperRoot")?.removeFromParent()
+        centering.addChild(buildCopperRoot())
+    }
+
+    /// Dim (or restore) the copper while it lags a moving connector.
+    private func setCopperDimmed(_ content: RealityViewCameraContent, _ dim: Bool) {
+        guard let root = content.entities.first(where: { $0.name == "geomRoot" }),
+              let copperRoot = root.findEntity(named: "copperRoot") else { return }
+        copperRoot.components.set(OpacityComponent(opacity: dim ? 0.3 : 1.0))
+    }
+
     // MARK: gestures
 
     private var handleDrag: some Gesture {
@@ -695,6 +760,8 @@ struct ViewportView: View {
             .onEnded { _ in
                 if model.draggingHandle { NSCursor.arrow.set() }
                 model.draggingHandle = false
+                // Connector settled → re-route the copper once (gripper only).
+                if model.source.isGripper { model.copperDirty = true }
             }
     }
 

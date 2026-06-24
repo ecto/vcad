@@ -73,6 +73,25 @@ VcadDoc *vcad_doc_gripper_slice1(void);
 VcadScene *vcad_doc_set_param(VcadDoc *doc, const char *name, double value);
 void vcad_doc_free(VcadDoc *doc);
 
+/* Slice 2 — copper re-route. vcad_route_traces builds the tiny 2-net gripper
+ * board at connector_x (mm, board-local) and routes it with the OHM auto-router,
+ * returning copper segments to draw as the connector moves. layer: 0=FCu 1=BCu
+ * 2+=inner; net_id: 0=SIG 1=GND. Coords are board-local mm (same frame as the
+ * board plate). Caller owns the result (vcad_route_result_free). */
+typedef struct VcadRouteResult VcadRouteResult;
+typedef struct VcadTraceLine {
+  double start[2];
+  double end[2];
+  double width;
+  uint32_t layer;
+  uint32_t net_id;
+} VcadTraceLine;
+VcadRouteResult *vcad_route_traces(double connector_x, double width);
+size_t vcad_route_result_trace_count(const VcadRouteResult *r);
+VcadTraceLine vcad_route_result_trace(const VcadRouteResult *r, size_t idx);
+size_t vcad_route_result_unrouted_count(const VcadRouteResult *r);
+void vcad_route_result_free(VcadRouteResult *r);
+
 #ifdef __cplusplus
 }
 #endif
