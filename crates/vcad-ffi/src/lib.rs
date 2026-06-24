@@ -79,7 +79,7 @@ impl VcadMeshView {
 /// Swift side assert it linked a compatible static lib.
 #[no_mangle]
 pub extern "C" fn vcad_ffi_abi_version() -> u32 {
-    2
+    3
 }
 
 /// Create a box (corner at origin, extends to `(sx, sy, sz)`). Returns null on panic.
@@ -358,9 +358,15 @@ pub extern "C" fn vcad_doc_gripper_slice1() -> *mut VcadDoc {
         .unwrap_or(ptr::null_mut())
 }
 
+/// Interactive eval options: skip the O(n^2) clash pass the native app doesn't render.
+fn interactive_opts() -> EvalOptions {
+    EvalOptions { skip_clash_detection: true, ..Default::default() }
+}
+
 /// Set a parameter on a resident document and re-evaluate to a fresh scene.
 /// Bindings re-apply inside `evaluate_document`, so every node driven by this
-/// parameter moves together. Caller owns the returned scene (`vcad_scene_free`).
+/// parameter moves together — ALL roots, including the (expensive) sheet-metal
+/// fold. This is the SETTLE path. Caller owns the scene (`vcad_scene_free`).
 /// Returns null on null input, unknown parameter name encoding, eval error, or panic.
 #[no_mangle]
 pub extern "C" fn vcad_doc_set_param(
@@ -379,12 +385,93 @@ pub extern "C" fn vcad_doc_set_param(
         // Overwrite the parameter value; bindings (the coupling) stay intact and
         // re-apply during evaluation.
         d.inner.parameters.insert(name.to_string(), Parameter::literal(value));
-        match evaluate_document(&d.inner, &EvalOptions::default()) {
+        match evaluate_document(&d.inner, &interactive_opts()) {
             Ok(scene) => Box::into_raw(Box::new(VcadScene { inner: scene })),
             Err(_) => ptr::null_mut(),
         }
     }))
     .unwrap_or(ptr::null_mut())
+}
+
+/// Set a parameter and re-evaluate only the CHEAP roots — those whose subtree
+/// contains no sheet-metal fold. This is the per-FRAME path during a drag: the
+/// mechanical cutout + board connector follow the finger live (~15 ms) while the
+/// expensive sheet-metal fold is left to the settle path (`vcad_doc_set_param`).
+/// The parameter is still written to the resident doc, so the deferred full
+/// solve picks it up. Same ownership as `vcad_doc_set_param`.
+#[no_mangle]
+pub extern "C" fn vcad_doc_set_param_cheap(
+    doc: *mut VcadDoc,
+    name: *const c_char,
+    value: f64,
+) -> *mut VcadScene {
+    if doc.is_null() || name.is_null() {
+        return ptr::null_mut();
+    }
+    catch_unwind(AssertUnwindSafe(|| {
+        let d: &mut VcadDoc = unsafe { &mut *doc };
+        let Ok(name) = (unsafe { CStr::from_ptr(name) }).to_str() else {
+            return ptr::null_mut();
+        };
+        d.inner.parameters.insert(name.to_string(), Parameter::literal(value));
+        // Evaluate a clone whose expensive (sheet-metal) roots are dropped.
+        let mut fast = d.inner.clone();
+        let nodes = fast.nodes.clone();
+        fast.roots.retain(|e| !subtree_has_sheet_metal(&nodes, e.root));
+        match evaluate_document(&fast, &interactive_opts()) {
+            Ok(scene) => Box::into_raw(Box::new(VcadScene { inner: scene })),
+            Err(_) => ptr::null_mut(),
+        }
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
+/// Whether `op` is a sheet-metal fold op (expensive — booleans per bend).
+fn is_sheet_metal_op(op: &CsgOp) -> bool {
+    matches!(
+        op,
+        CsgOp::SheetMetalBaseFlangeRect { .. }
+            | CsgOp::SheetMetalBaseFlangePolygon { .. }
+            | CsgOp::SheetMetalEdgeFlange { .. }
+            | CsgOp::SheetMetalHem { .. }
+            | CsgOp::SheetMetalJog { .. }
+            | CsgOp::SheetMetalBendRelief { .. }
+    )
+}
+
+/// Structural child node-ids of an op (mirror of the IR's internal walk).
+fn op_child_ids(op: &CsgOp) -> Vec<u64> {
+    match op {
+        CsgOp::Translate { child, .. }
+        | CsgOp::Rotate { child, .. }
+        | CsgOp::Scale { child, .. }
+        | CsgOp::Fillet { child, .. }
+        | CsgOp::Chamfer { child, .. }
+        | CsgOp::Shell { child, .. }
+        | CsgOp::LinearPattern { child, .. }
+        | CsgOp::CircularPattern { child, .. } => vec![*child],
+        CsgOp::Union { left, right }
+        | CsgOp::Difference { left, right }
+        | CsgOp::Intersection { left, right } => vec![*left, *right],
+        CsgOp::SheetMetalEdgeFlange { parent, .. }
+        | CsgOp::SheetMetalHem { parent, .. }
+        | CsgOp::SheetMetalJog { parent, .. }
+        | CsgOp::SheetMetalBendRelief { parent, .. } => vec![*parent],
+        _ => vec![],
+    }
+}
+
+/// True if the subtree rooted at `id` contains any sheet-metal fold op.
+fn subtree_has_sheet_metal(nodes: &std::collections::HashMap<u64, Node>, id: u64) -> bool {
+    let Some(node) = nodes.get(&id) else {
+        return false;
+    };
+    if is_sheet_metal_op(&node.op) {
+        return true;
+    }
+    op_child_ids(&node.op)
+        .into_iter()
+        .any(|c| subtree_has_sheet_metal(nodes, c))
 }
 
 /// Free a resident document. No-op on null.
@@ -425,19 +512,44 @@ fn build_gripper_slice1() -> Document {
     doc.nodes.insert(9, Node { id: 9, name: Some("board".into()),
         op: CsgOp::Union { left: 6, right: 8 } });
 
-    // --- the coupling: one parameter drives both domains ---
+    // --- sheet metal: an L-bracket whose upstand height tracks connector_x ---
+    // Foundation-tier sheet metal is now a first-class evaluator (vcad-eval), so
+    // the bracket is just more nodes in this DAG — driven by the SAME binding
+    // mechanism as the cubes, re-solved by the same evaluate_document. No
+    // separate fold FFI: the cross-domain coupling rides one resolve.
+    doc.nodes.insert(10, Node { id: 10, name: Some("bracket-base".into()),
+        op: CsgOp::SheetMetalBaseFlangeRect {
+            width: 70.0, depth: 18.0, thickness: 1.0,
+            material: "al-soft".into(), shop_profile: None } });
+    doc.nodes.insert(11, Node { id: 11, name: Some("bracket".into()),
+        op: CsgOp::SheetMetalEdgeFlange {
+            parent: 10, panel_id: 0, edge_index: 0,
+            length: 12.0, angle: std::f64::consts::FRAC_PI_2,
+            radius: Some(1.0), direction: vcad_ir::SheetMetalDirection::Down,
+            manual_k: Some(0.44) } });
+    doc.nodes.insert(12, Node { id: 12, name: None,
+        op: CsgOp::Translate { child: 11, offset: v(5.0, 1.0, 3.5) } });
+
+    // --- the coupling: ONE parameter drives THREE domains ---
     doc.parameters.insert("connector_x".into(), Parameter::literal(40.0));
     doc.bindings.bind(BindingKey::new(3, "offset.x"), Expr::formula("connector_x - 6"));
     doc.bindings.bind(BindingKey::new(8, "offset.x"), Expr::formula("connector_x - 5"));
+    // the bracket upstand grows toward the connector (length stays > 0 across the
+    // 4..76 drag range: 5..23 mm).
+    doc.bindings.bind(BindingKey::new(11, "length"), Expr::formula("connector_x * 0.25 + 4"));
 
     doc.roots.push(SceneEntry { root: 4, material: "aluminum".into(), visible: None });
     doc.roots.push(SceneEntry { root: 9, material: "board".into(), visible: None });
+    doc.roots.push(SceneEntry { root: 12, material: "bracket".into(), visible: None });
     doc.materials.insert("aluminum".into(), MaterialDef {
         name: "aluminum".into(), color: [0.72, 0.74, 0.78],
         metallic: 0.6, roughness: 0.34, density: None, friction: None, ..Default::default() });
     doc.materials.insert("board".into(), MaterialDef {
         name: "board".into(), color: [0.12, 0.42, 0.18],
         metallic: 0.0, roughness: 0.6, density: None, friction: None, ..Default::default() });
+    doc.materials.insert("bracket".into(), MaterialDef {
+        name: "bracket".into(), color: [0.66, 0.68, 0.72],
+        metallic: 0.85, roughness: 0.3, density: None, friction: None, ..Default::default() });
     doc
 }
 
@@ -853,6 +965,59 @@ mod tests {
         assert_eq!(z.width, 0.0);
         assert_eq!(vcad_route_result_unrouted_count(ptr::null()), 0);
         vcad_route_result_free(ptr::null_mut());
+    }
+
+    #[test]
+    fn gripper_bracket_refolds_with_connector_x() {
+        // Tier 1: the sheet-metal bracket is a node in the gripper DAG, driven by
+        // the SAME connector_x binding as the cubes. One evaluate_document folds
+        // it. Assert the upstand grows with connector_x, and TIME the full
+        // 3-domain solve so the per-frame-vs-settle call is measured, not guessed.
+        use std::time::Instant;
+        let mut doc = build_gripper_slice1();
+        let bracket_bbox = |doc: &Document| -> ([f64; 3], [f64; 3]) {
+            // interactive path: no O(n^2) clash detection
+            let opts = EvalOptions { skip_clash_detection: true, clock: None };
+            let scene = evaluate_document(doc, &opts).unwrap();
+            // roots in order: enclosure (4), board (9), bracket (12).
+            let solid = scene.parts[2].solid.as_ref().expect("bracket should fold to a solid");
+            solid.bounding_box()
+        };
+
+        doc.parameters.insert("connector_x".into(), Parameter::literal(8.0));
+        let lo = bracket_bbox(&doc); // warmup (first solve pays kernel init)
+        // steady-state: time three successive solves
+        for i in 0..3 {
+            doc.parameters.insert("connector_x".into(), Parameter::literal(20.0 + i as f64 * 15.0));
+            let t = Instant::now();
+            let _ = bracket_bbox(&doc);
+            eprintln!("[gripper] steady solve #{i} = {:.1}ms", t.elapsed().as_secs_f64() * 1000.0);
+        }
+        doc.parameters.insert("connector_x".into(), Parameter::literal(76.0));
+        let hi = bracket_bbox(&doc);
+
+        eprintln!("[gripper] lo min={:?} max={:?}  hi min={:?} max={:?}",
+            lo.0, lo.1, hi.0, hi.1);
+        // the flange grows with connector_x — assert SOME axis extent increases.
+        let span = |b: &([f64; 3], [f64; 3]), ax: usize| b.1[ax] - b.0[ax];
+        let grew = (0..3).any(|ax| span(&hi, ax) > span(&lo, ax) + 4.0);
+        assert!(grew, "taller flange must grow the bracket bbox: lo={lo:?}, hi={hi:?}");
+    }
+
+    #[test]
+    fn gripper_cheap_path_drops_the_bracket() {
+        // The per-frame path skips the expensive sheet-metal root: full solve
+        // yields 3 parts (enclosure, board, bracket); the cheap solve yields 2.
+        let doc = vcad_doc_gripper_slice1();
+        assert!(!doc.is_null());
+        let name = std::ffi::CString::new("connector_x").unwrap();
+        let full = vcad_doc_set_param(doc, name.as_ptr(), 40.0);
+        let cheap = vcad_doc_set_param_cheap(doc, name.as_ptr(), 40.0);
+        assert_eq!(vcad_scene_part_count(full), 3, "full solve: enclosure + board + bracket");
+        assert_eq!(vcad_scene_part_count(cheap), 2, "cheap solve drops the sheet-metal root");
+        vcad_scene_free(full);
+        vcad_scene_free(cheap);
+        vcad_doc_free(doc);
     }
 
     #[test]

@@ -126,6 +126,10 @@ pub enum EvalError {
     /// Parameter / binding resolution failed before kernel evaluation.
     #[error("parameter resolution failed: {0}")]
     ResolveBindings(String),
+
+    /// Sheet-metal flange/fold construction failed.
+    #[error("sheet-metal error: {0}")]
+    SheetMetal(String),
 }
 
 /// Triangle mesh output from evaluation.

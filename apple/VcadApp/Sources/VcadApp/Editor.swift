@@ -281,6 +281,22 @@ final class EditorModel {
         return sceneFromHandle(scene, start: start)
     }
 
+    /// Per-FRAME re-solve: cheap roots only. The mechanical cutout + board
+    /// connector follow the finger live (~15 ms); the expensive sheet-metal fold
+    /// is skipped here and re-folded once on settle (`gripperScene`). Same
+    /// `connector_x` writes through to the resident doc, so the settle solve sees
+    /// it — one DAG, staged by cost.
+    func gripperSceneCheap() -> RenderScene {
+        guard let doc = ensureGripperDoc() else { return .empty }
+        let start = Date()
+        let scene: OpaquePointer? = "connector_x".withCString {
+            vcad_doc_set_param_cheap(doc, $0, connectorX)
+        }
+        guard let scene else { return .empty }
+        defer { vcad_scene_free(scene) }
+        return sceneFromHandle(scene, start: start)
+    }
+
     // MARK: copper — slice 2, the electrical domain of the Connector Drag
 
     /// One routed copper segment, mapped into the board plate's frame.

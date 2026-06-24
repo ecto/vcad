@@ -66,6 +66,9 @@ typedef struct VcadDoc VcadDoc;
 VcadDoc *vcad_doc_load(const uint8_t *json, size_t json_len);
 VcadDoc *vcad_doc_gripper_slice1(void);
 VcadScene *vcad_doc_set_param(VcadDoc *doc, const char *name, double value);
+/* Per-frame: re-solve only cheap roots (skip the sheet-metal fold); fold waits
+ * for settle via vcad_doc_set_param. */
+VcadScene *vcad_doc_set_param_cheap(VcadDoc *doc, const char *name, double value);
 void vcad_doc_free(VcadDoc *doc);
 
 /* Slice 2 — copper re-route. Build the 2-net gripper board at connector_x and

@@ -71,6 +71,10 @@ typedef struct VcadDoc VcadDoc;
 VcadDoc *vcad_doc_load(const uint8_t *json, size_t json_len);
 VcadDoc *vcad_doc_gripper_slice1(void);
 VcadScene *vcad_doc_set_param(VcadDoc *doc, const char *name, double value);
+/* Per-frame path: re-solve only cheap roots (skips the sheet-metal fold), so the
+ * mechanical cutout follows the drag live while the fold waits for settle
+ * (vcad_doc_set_param). Same ownership. */
+VcadScene *vcad_doc_set_param_cheap(VcadDoc *doc, const char *name, double value);
 void vcad_doc_free(VcadDoc *doc);
 
 /* Slice 2 — copper re-route. vcad_route_traces builds the tiny 2-net gripper

@@ -804,18 +804,90 @@ fn evaluate_op_timed(
             Ok(None)
         }
 
-        CsgOp::SheetMetalBaseFlangeRect { .. }
-        | CsgOp::SheetMetalBaseFlangePolygon { .. }
-        | CsgOp::SheetMetalEdgeFlange { .. }
+        // Foundation-tier sheet metal evaluates to a real folded BRep solid, so
+        // a bent bracket is just another node in the parametric DAG — drivable by
+        // bindings exactly like a cube. (The web engine still routes its own
+        // sheet-metal roots through a dedicated WASM binding; this is the
+        // kernel-direct path used by the native app.)
+        CsgOp::SheetMetalBaseFlangeRect { .. } | CsgOp::SheetMetalEdgeFlange { .. } => {
+            let model = build_sheet_model(op, nodes)?;
+            // 8 segments is plenty for a small-radius bend arc, and keeps the
+            // fold's booleans cheap enough for interactive re-solve.
+            let solid = vcad_kernel::folded_sheet_solid(&model, 8).map_err(EvalError::SheetMetal)?;
+            Ok(Some(solid))
+        }
+
+        // Polygon base flanges + later-tier ops (jog/hem/relief) aren't wired
+        // into the kernel-direct path yet — left as None (the web engine handles
+        // them). Defer to a follow-up.
+        CsgOp::SheetMetalBaseFlangePolygon { .. }
         | CsgOp::SheetMetalHem { .. }
         | CsgOp::SheetMetalJog { .. }
-        | CsgOp::SheetMetalBendRelief { .. } => {
-            // Sheet-metal ops bypass the BRep Solid pipeline — the engine
-            // detects them at root level and routes the chain to the
-            // sheet-metal kernel. Returning `None` here is safe: it just
-            // means nothing combines as a sub-solid, which is what we want.
-            Ok(None)
+        | CsgOp::SheetMetalBendRelief { .. } => Ok(None),
+    }
+}
+
+/// Build a [`vcad_kernel_sheet::SheetMetalModel`] from a sheet-metal op chain.
+/// Edge flanges reference their `parent` node, so this recurses down the chain
+/// (mirroring [`collect_transform_chain`]) and applies each flange in order.
+/// Foundation tier: rectangular base flange + edge flanges.
+fn build_sheet_model(
+    op: &CsgOp,
+    nodes: &HashMap<NodeId, vcad_ir::Node>,
+) -> Result<vcad_kernel::vcad_kernel_sheet::SheetMetalModel, EvalError> {
+    use vcad_kernel::vcad_kernel_sheet::{
+        add_edge_flange, base_flange_rect, edge_flange::EdgeFlangeParams, BendDirection, BendTable,
+        FlangePosition,
+    };
+    let sm = |e: String| EvalError::SheetMetal(e);
+    match op {
+        CsgOp::SheetMetalBaseFlangeRect {
+            width,
+            depth,
+            thickness,
+            ..
+        } => base_flange_rect(*width, *depth, *thickness).map_err(|e| sm(e.to_string())),
+
+        CsgOp::SheetMetalEdgeFlange {
+            parent,
+            panel_id,
+            edge_index,
+            length,
+            angle,
+            radius,
+            direction,
+            manual_k,
+        } => {
+            let parent_op = &nodes.get(parent).ok_or(EvalError::MissingNode(*parent))?.op;
+            let mut model = build_sheet_model(parent_op, nodes)?;
+            let r = radius.unwrap_or(model.thickness);
+            add_edge_flange(
+                &mut model,
+                &BendTable::builtin(),
+                EdgeFlangeParams {
+                    panel: *panel_id,
+                    edge_index: *edge_index,
+                    length: *length,
+                    angle: *angle,
+                    radius: r,
+                    direction: match direction {
+                        vcad_ir::SheetMetalDirection::Up => BendDirection::Up,
+                        vcad_ir::SheetMetalDirection::Down => BendDirection::Down,
+                    },
+                    position: FlangePosition::MaterialInside,
+                    material: "al-soft".into(),
+                    manual_k: *manual_k,
+                },
+            )
+            .map_err(|e| sm(e.to_string()))?;
+            Ok(model)
         }
+
+        _ => Err(sm(
+            "sheet-metal chain references a non-foundation op (polygon/jog/hem/relief \
+             not yet wired into kernel-direct eval)"
+                .into(),
+        )),
     }
 }
 

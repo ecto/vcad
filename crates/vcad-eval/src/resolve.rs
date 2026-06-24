@@ -362,6 +362,28 @@ fn apply_to_op(op: &mut CsgOp, key: &BindingKey, value: f64) -> Result<(), Resol
             "orientation" => *orientation = Some(value),
             _ => return bad("Sweep"),
         },
+        CsgOp::SheetMetalBaseFlangeRect {
+            width,
+            depth,
+            thickness,
+            ..
+        } => match path {
+            "width" => *width = value,
+            "depth" => *depth = value,
+            "thickness" => *thickness = value,
+            _ => return bad("SheetMetalBaseFlangeRect"),
+        },
+        CsgOp::SheetMetalEdgeFlange {
+            length,
+            angle,
+            radius,
+            ..
+        } => match path {
+            "length" => *length = value,
+            "angle" => *angle = value,
+            "radius" => *radius = Some(value),
+            _ => return bad("SheetMetalEdgeFlange"),
+        },
         _ => return bad("<unsupported op>"),
     }
     Ok(())

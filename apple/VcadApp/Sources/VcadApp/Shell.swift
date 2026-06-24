@@ -444,10 +444,12 @@ struct ViewportView: View {
                 model.parameterDirty = false
             } else if model.parameterDirty {
                 if model.source.isGripper {
-                    // Live cross-domain re-solve: one connector_x → both parts
-                    // re-tessellate; reassign meshes in place (no re-pop) and
-                    // ride the connector handle along.
-                    let scene = model.gripperScene()
+                    // Live re-solve, CHEAP roots only: the enclosure cutout + board
+                    // connector follow the finger every frame (~15 ms). The
+                    // expensive sheet-metal fold + copper are deferred to settle, so
+                    // the drag stays smooth (heeding the tween lesson). Reassign
+                    // meshes in place (no re-pop) and ride the handle along.
+                    let scene = model.gripperSceneCheap()
                     if let root = content.entities.first(where: { $0.name == "geomRoot" }),
                        let centering = root.findEntity(named: "centering") {
                         for (i, item) in scene.meshes.enumerated() {
@@ -490,10 +492,21 @@ struct ViewportView: View {
                 model.pickDirty = false
             }
 
-            // Settle: the connector stopped moving — re-route the copper ONCE and
-            // snap it crisp. The mechanical re-solve already ran per frame; the
-            // ~one route_all per gesture never touches the drag hot loop.
+            // Settle: the connector stopped moving — run the EXPENSIVE domains
+            // once and snap them crisp. Re-fold the sheet-metal bracket (full
+            // solve, all roots) and re-route the copper. The cheap mechanical
+            // re-solve already tracked the finger per frame; these heavy passes
+            // run a single time per gesture, never in the drag hot loop.
             if model.copperDirty {
+                if model.source.isGripper {
+                    let scene = model.gripperScene() // full: enclosure + board + bracket
+                    if let root = content.entities.first(where: { $0.name == "geomRoot" }),
+                       let centering = root.findEntity(named: "centering") {
+                        for (i, item) in scene.meshes.enumerated() {
+                            (centering.findEntity(named: "part\(i)") as? ModelEntity)?.model?.mesh = item.mesh
+                        }
+                    }
+                }
                 redrawCopper(content)
                 model.copperDirty = false
             }
