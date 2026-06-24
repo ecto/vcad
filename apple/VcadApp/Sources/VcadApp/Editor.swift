@@ -161,6 +161,13 @@ final class EditorModel {
     var draggingHandle = false
     var handleBaseline: Double = 0
 
+    // Hover affordance for the draggable handles (cursor + a subtle scale pop).
+    // The handles' live world positions are projected to screen to hit-test the
+    // pointer; `hoveredHandle` drives the highlight + cursor.
+    var hoveredHandle: String?
+    @ObservationIgnored var connectorHandleWorld: SIMD3<Float> = .zero
+    @ObservationIgnored var filletHandleWorld: SIMD3<Float> = .zero
+
     // Idle turntable — after a beat with no interaction the camera drifts so the
     // part shows itself off. Paused while dragging a handle or interacting.
     var autoOrbit = true

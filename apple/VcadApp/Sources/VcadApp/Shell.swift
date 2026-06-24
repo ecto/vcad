@@ -416,7 +416,7 @@ struct ViewportView: View {
     var body: some View {
         _ = (model.azimuth, model.elevation, model.distance, model.modifierValue,
              model.source, model.selectedFeatureID, model.baseShape, model.modifier,
-             model.pickDirty, model.connectorX)
+             model.pickDirty, model.connectorX, model.hoveredHandle)
 
         return GeometryReader { geo in
           RealityView { content in
@@ -478,6 +478,19 @@ struct ViewportView: View {
                 }
                 model.pickDirty = false
             }
+
+            // Keep the handles' world positions current + apply the hover pop.
+            if let root = content.entities.first(where: { $0.name == "geomRoot" }),
+               let centering = root.findEntity(named: "centering") {
+                if let h = centering.findEntity(named: "connectorHandle") {
+                    model.connectorHandleWorld = h.position(relativeTo: nil)
+                    applyHover(h, hovered: model.hoveredHandle == "connectorHandle")
+                }
+                if let h = centering.findEntity(named: "filletHandle") {
+                    model.filletHandleWorld = h.position(relativeTo: nil)
+                    applyHover(h, hovered: model.hoveredHandle == "filletHandle")
+                }
+            }
           }
           .background(
               RadialGradient(colors: [Color(white: 0.10), Color(white: 0.015)],
@@ -489,6 +502,9 @@ struct ViewportView: View {
           .gesture(SpatialTapGesture(coordinateSpace: .local).onEnded { value in
               pick(at: value.location, viewSize: geo.size)
           })
+          .onContinuousHover(coordinateSpace: .local) { phase in
+              hover(phase, viewSize: geo.size)
+          }
         }
     }
 
@@ -562,7 +578,11 @@ struct ViewportView: View {
         centering.name = "centering"
         centering.position = -scene.center
         for (i, item) in scene.meshes.enumerated() {
-            let entity = ModelEntity(mesh: item.mesh, materials: [material(item.color)])
+            // Ghost the gripper's enclosure (part 0) to glass so the board,
+            // connector, and handle read through it — the cross-domain coupling
+            // is only legible if you can see inside.
+            let mat = (model.source.isGripper && i == 0) ? glassMaterial() : material(item.color)
+            let entity = ModelEntity(mesh: item.mesh, materials: [mat])
             entity.name = "part\(i)"
             centering.addChild(entity)
         }
@@ -608,6 +628,18 @@ struct ViewportView: View {
         return m
     }
 
+    /// A frosted-glass enclosure so the interior (board, connector, handle)
+    /// reads through it.
+    private func glassMaterial() -> PhysicallyBasedMaterial {
+        var m = PhysicallyBasedMaterial()
+        m.baseColor = .init(tint: NSColor(red: 0.78, green: 0.84, blue: 0.92, alpha: 1.0))
+        m.roughness = 0.12
+        m.metallic = 0.0
+        m.blending = .transparent(opacity: .init(floatLiteral: 0.20))
+        m.faceCulling = .none
+        return m
+    }
+
     private func makeHandle(radius: Double) -> ModelEntity {
         let handle = ModelEntity(
             mesh: .generateSphere(radius: 1.8),
@@ -640,6 +672,8 @@ struct ViewportView: View {
         DragGesture()
             .targetedToAnyEntity()
             .onChanged { value in
+                let isHandle = value.entity.name == "connectorHandle" || value.entity.name == "filletHandle"
+                if isHandle { NSCursor.closedHand.set() }
                 if value.entity.name == "connectorHandle" {
                     model.noteInteraction()
                     if !model.draggingHandle {
@@ -659,7 +693,10 @@ struct ViewportView: View {
                 let delta = Double(-value.translation.height) * 0.03
                 model.modifierValue = max(0, min(12, model.handleBaseline + delta))
             }
-            .onEnded { _ in model.draggingHandle = false }
+            .onEnded { _ in
+                if model.draggingHandle { NSCursor.arrow.set() }
+                model.draggingHandle = false
+            }
     }
 
     private var orbitGesture: some Gesture {
@@ -721,5 +758,64 @@ struct ViewportView: View {
         let maxAxis = max(abs(n.x), max(abs(n.y), abs(n.z)))
         let kind = maxAxis > 0.97 ? "Planar face" : "Curved face"
         return String(format: "%@\n(%.1f, %.1f, %.1f) mm", kind, hit.point.x, hit.point.y, hit.point.z)
+    }
+
+    // MARK: hover (cursor + a scale pop on the draggable handles)
+
+    private func hover(_ phase: HoverPhase, viewSize: CGSize) {
+        switch phase {
+        case .active(let point):
+            let hit = hitHandle(at: point, viewSize: viewSize)
+            if hit != nil, !model.draggingHandle {
+                NSCursor.openHand.set()
+            } else if hit == nil, model.hoveredHandle != nil {
+                NSCursor.arrow.set()
+            }
+            if hit != model.hoveredHandle { model.hoveredHandle = hit }
+        case .ended:
+            if model.hoveredHandle != nil {
+                model.hoveredHandle = nil
+                NSCursor.arrow.set()
+            }
+        }
+    }
+
+    /// Nearest visible handle whose projected screen position is within reach of
+    /// the pointer, or nil.
+    private func hitHandle(at p: CGPoint, viewSize: CGSize) -> String? {
+        var best: (name: String, dist: CGFloat)?
+        func consider(_ name: String, _ world: SIMD3<Float>) {
+            guard let s = worldToScreen(world, viewSize) else { return }
+            let d = hypot(s.x - p.x, s.y - p.y)
+            if d < 24, best == nil || d < best!.dist { best = (name, d) }
+        }
+        if model.showsConnectorHandle { consider("connectorHandle", model.connectorHandleWorld) }
+        if model.showsHandle { consider("filletHandle", model.filletHandleWorld) }
+        return best?.name
+    }
+
+    /// Forward pinhole projection — the inverse of `pick`'s ray build: world → screen.
+    private func worldToScreen(_ p: SIMD3<Float>, _ viewSize: CGSize) -> CGPoint? {
+        guard viewSize.width > 1, viewSize.height > 1 else { return nil }
+        let cam = model.cameraPosition
+        let forward = normalize(-cam)
+        let right = normalize(cross(forward, SIMD3<Float>(0, 1, 0)))
+        let up = cross(right, forward)
+        let rel = p - cam
+        let z = dot(rel, forward)
+        guard z > 0.0001 else { return nil }
+        let tanHalf = Float(tan(Double.pi / 6.0))
+        let aspect = Float(viewSize.width / viewSize.height)
+        let ndcX = (dot(rel, right) / z) / (tanHalf * aspect)
+        let ndcY = (dot(rel, up) / z) / tanHalf
+        return CGPoint(x: Double((ndcX + 1) / 2) * viewSize.width,
+                       y: Double((1 - ndcY) / 2) * viewSize.height)
+    }
+
+    private func applyHover(_ e: Entity, hovered: Bool) {
+        let target: Float = hovered ? 1.4 : 1.0
+        if abs(e.scale.x - target) > 0.001 {
+            e.scale = SIMD3<Float>(repeating: target)
+        }
     }
 }
