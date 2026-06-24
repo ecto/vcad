@@ -33,9 +33,13 @@ const resistor = (ref: string, x: number) => ({
 
 /** Parse the JSON chunk out of a binary GLB. */
 function parseGlbJson(b64: string): {
-  materials: Array<{ pbrMetallicRoughness?: { baseColorFactor?: number[] } }>;
+  materials: Array<{
+    pbrMetallicRoughness?: { baseColorFactor?: number[] };
+    extensions?: Record<string, unknown>;
+  }>;
   meshes: Array<{ primitives: Array<{ attributes: Record<string, number> }> }>;
   nodes: Array<{ name?: string }>;
+  extensionsUsed?: string[];
 } {
   const bytes = Buffer.from(b64, "base64");
   // 12-byte header, then chunk: [u32 len][u32 type][data].
@@ -74,16 +78,24 @@ describe("PCB GLB preview", () => {
       expect(m.primitives[0].attributes.POSITION).toBeDefined();
     }
 
-    // Distinct PBR colors are present: FR4 green substrate + gold copper.
+    // Distinct PBR colors: glossy green soldermask, matte-tan FR4 edge, ENIG copper.
     const colors = gltf.materials.map((m) => m.pbrMetallicRoughness?.baseColorFactor);
-    const hasGreen = colors.some((c) => near(c, [0.051, 0.353, 0.176]));
-    const hasCopper = colors.some((c) => near(c, [0.85, 0.62, 0.3]));
-    expect(hasGreen, `colors: ${JSON.stringify(colors)}`).toBe(true);
+    const hasMask = colors.some((c) => near(c, [0.045, 0.21, 0.1]));
+    const hasSubstrate = colors.some((c) => near(c, [0.46, 0.38, 0.22]));
+    const hasCopper = colors.some((c) => near(c, [0.85, 0.66, 0.3]));
+    expect(hasMask, `colors: ${JSON.stringify(colors)}`).toBe(true);
+    expect(hasSubstrate, `colors: ${JSON.stringify(colors)}`).toBe(true);
     expect(hasCopper, `colors: ${JSON.stringify(colors)}`).toBe(true);
 
     // No material is the old neutral gray default for the board.
     const allGray = colors.every((c) => near(c, [0.8, 0.8, 0.8]));
     expect(allGray).toBe(false);
+
+    // The glossy soldermask carries a KHR_materials_clearcoat extension.
+    expect(gltf.extensionsUsed ?? []).toContain("KHR_materials_clearcoat");
+    expect(
+      gltf.materials.some((m) => m.extensions?.KHR_materials_clearcoat),
+    ).toBe(true);
 
     // Board sub-meshes keep the PcbBoard part identity for click-to-select.
     expect(gltf.nodes.some((n) => (n.name ?? "").includes("PCB Board"))).toBe(true);
@@ -103,6 +115,6 @@ describe("PCB GLB preview", () => {
     expect(b64).toBeTruthy();
     const gltf = parseGlbJson(b64!);
     const colors = gltf.materials.map((m) => m.pbrMetallicRoughness?.baseColorFactor);
-    expect(colors.some((c) => near(c, [0.051, 0.353, 0.176]))).toBe(true);
+    expect(colors.some((c) => near(c, [0.045, 0.21, 0.1]))).toBe(true);
   });
 });

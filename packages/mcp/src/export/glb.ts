@@ -46,7 +46,30 @@ export interface GlbMesh {
   color: [number, number, number];
   metallic: number;
   roughness: number;
+  /** Emissive RGB 0..1 (linear); omitted/`[0,0,0]` = not emissive. */
+  emissive?: [number, number, number];
+  /** KHR_materials_emissive_strength multiplier (>1 = glows past white). */
+  emissiveStrength?: number;
+  /** KHR_materials_clearcoat factor 0..1 (glossy soldermask wet-look). */
+  clearcoat?: number;
+  /** Clearcoat roughness 0..1. */
+  clearcoatRoughness?: number;
 }
+
+/** A PBR material resolved from a {@link GlbMesh}, deduped across meshes. */
+interface GlbMaterial {
+  name: string;
+  color: [number, number, number];
+  metallic: number;
+  roughness: number;
+  emissive: [number, number, number];
+  emissiveStrength: number;
+  clearcoat: number;
+  clearcoatRoughness: number;
+}
+
+const isEmissive = (e: [number, number, number]): boolean =>
+  e[0] > 0 || e[1] > 0 || e[2] > 0;
 
 const f32 = (a: Float32Array | number[]): Float32Array =>
   a instanceof Float32Array ? a : new Float32Array(a);
@@ -57,17 +80,16 @@ const f32 = (a: Float32Array | number[]): Float32Array =>
  * de-dupes materials by `(color, metallic, roughness)` so a layered board
  * (board / copper / components / silk) stays at a handful of materials. */
 export function buildGlb(inputMeshes: GlbMesh[], name: string): Uint8Array {
-  // Collect unique materials keyed by their PBR values.
+  // Collect unique materials keyed by their full PBR values.
   const materialMap = new Map<string, number>();
-  const materials: Array<{
-    name: string;
-    color: [number, number, number];
-    metallic: number;
-    roughness: number;
-  }> = [];
+  const materials: GlbMaterial[] = [];
 
   const materialIndexFor = (m: GlbMesh): number => {
-    const key = `${m.color[0]},${m.color[1]},${m.color[2]},${m.metallic},${m.roughness}`;
+    const emissive = m.emissive ?? [0, 0, 0];
+    const emissiveStrength = m.emissiveStrength ?? 1;
+    const clearcoat = m.clearcoat ?? 0;
+    const clearcoatRoughness = m.clearcoatRoughness ?? 0;
+    const key = `${m.color[0]},${m.color[1]},${m.color[2]},${m.metallic},${m.roughness},${emissive[0]},${emissive[1]},${emissive[2]},${emissiveStrength},${clearcoat},${clearcoatRoughness}`;
     const existing = materialMap.get(key);
     if (existing !== undefined) return existing;
     const idx = materials.length;
@@ -77,12 +99,22 @@ export function buildGlb(inputMeshes: GlbMesh[], name: string): Uint8Array {
       color: m.color,
       metallic: m.metallic,
       roughness: m.roughness,
+      emissive,
+      emissiveStrength,
+      clearcoat,
+      clearcoatRoughness,
     });
     return idx;
   };
 
   if (inputMeshes.length === 0) {
-    materials.push(DEFAULT_MATERIAL);
+    materials.push({
+      ...DEFAULT_MATERIAL,
+      emissive: [0, 0, 0],
+      emissiveStrength: 1,
+      clearcoat: 0,
+      clearcoatRoughness: 0,
+    });
   }
 
   // Build binary buffer for all meshes
@@ -240,25 +272,58 @@ export function buildGlb(inputMeshes: GlbMesh[], name: string): Uint8Array {
     });
   }
 
-  // Build JSON
-  const json = {
-    asset: { version: "2.0", generator: "vcad-mcp" },
-    scene: 0,
-    scenes: [{ name, nodes: nodes.map((_, i) => i) }],
-    nodes,
-    meshes,
-    materials: materials.map((m) => ({
+  // Build JSON. Materials may carry KHR extensions (clearcoat for glossy
+  // soldermask, emissive_strength for LEDs that glow past white). GLTFLoader
+  // applies both automatically onto a MeshPhysicalMaterial.
+  let usesClearcoat = false;
+  let usesEmissiveStrength = false;
+  const materialJson = materials.map((m) => {
+    const mat: Record<string, unknown> = {
       name: m.name,
       pbrMetallicRoughness: {
         baseColorFactor: [...m.color, 1.0],
         metallicFactor: m.metallic,
         roughnessFactor: m.roughness,
       },
-    })),
+    };
+    if (isEmissive(m.emissive)) {
+      mat.emissiveFactor = m.emissive;
+    }
+    const extensions: Record<string, unknown> = {};
+    if (m.clearcoat > 0) {
+      usesClearcoat = true;
+      extensions.KHR_materials_clearcoat = {
+        clearcoatFactor: m.clearcoat,
+        clearcoatRoughnessFactor: m.clearcoatRoughness,
+      };
+    }
+    if (isEmissive(m.emissive) && m.emissiveStrength !== 1) {
+      usesEmissiveStrength = true;
+      extensions.KHR_materials_emissive_strength = {
+        emissiveStrength: m.emissiveStrength,
+      };
+    }
+    if (Object.keys(extensions).length > 0) mat.extensions = extensions;
+    return mat;
+  });
+
+  const extensionsUsed: string[] = [];
+  if (usesClearcoat) extensionsUsed.push("KHR_materials_clearcoat");
+  if (usesEmissiveStrength)
+    extensionsUsed.push("KHR_materials_emissive_strength");
+
+  const json: Record<string, unknown> = {
+    asset: { version: "2.0", generator: "vcad-mcp" },
+    scene: 0,
+    scenes: [{ name, nodes: nodes.map((_, i) => i) }],
+    nodes,
+    meshes,
+    materials: materialJson,
     accessors,
     bufferViews,
     buffers: [{ byteLength: bufferOffset }],
   };
+  if (extensionsUsed.length > 0) json.extensionsUsed = extensionsUsed;
 
   const jsonStr = JSON.stringify(json);
   const jsonBytes = new TextEncoder().encode(jsonStr);

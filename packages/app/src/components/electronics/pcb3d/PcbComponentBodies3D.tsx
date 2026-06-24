@@ -18,6 +18,7 @@ import * as THREE from "three";
 import { useElectronicsStore } from "@/stores/electronics-store";
 
 const INTERFERE_COLOR = new THREE.Color("#ef4444");
+const BLACK = new THREE.Color(0, 0, 0);
 
 export function PcbComponentBodies3D() {
   const bodies = useElectronicsStore((s) => s.componentBodies);
@@ -35,12 +36,16 @@ export function PcbComponentBodies3D() {
       }
       geo.setIndex(m.indices);
       if (m.normals.length !== m.positions.length) geo.computeVertexNormals();
+      const emissive = m.emissive ?? [0, 0, 0];
       return {
         key: `body-${i}`,
         geo,
         ref: m.footprint_ref,
         color: new THREE.Color(m.color[0], m.color[1], m.color[2]),
         metalness: m.metalness,
+        roughness: m.roughness ?? 0.45,
+        emissive: new THREE.Color(emissive[0], emissive[1], emissive[2]),
+        emissiveOn: emissive[0] > 0 || emissive[1] > 0 || emissive[2] > 0,
       };
     });
   }, [bodies]);
@@ -59,9 +64,11 @@ export function PcbComponentBodies3D() {
             <meshStandardMaterial
               color={clash ? INTERFERE_COLOR : b.color}
               metalness={clash ? 0.1 : b.metalness}
-              roughness={0.45}
-              emissive={clash ? INTERFERE_COLOR : new THREE.Color(0, 0, 0)}
-              emissiveIntensity={clash ? 0.45 : 0}
+              roughness={clash ? 0.45 : b.roughness}
+              emissive={
+                clash ? INTERFERE_COLOR : b.emissiveOn ? b.emissive : BLACK
+              }
+              emissiveIntensity={clash ? 0.45 : b.emissiveOn ? 2.5 : 0}
             />
           </mesh>
         );
