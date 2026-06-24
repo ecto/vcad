@@ -23,7 +23,16 @@ import type {
 } from "./mesh.js";
 import type { Solid } from "@vcad/kernel-wasm";
 import { solveForwardKinematics } from "./kinematics.js";
-import { buildSheetMetalChain, evaluateSheetMetalChain } from "./sheet-metal.js";
+import {
+  buildSheetMetalChain,
+  evaluateSheetMetalChain,
+  findSheetMetalChainRoot,
+} from "./sheet-metal.js";
+import {
+  findWrappedRoot,
+  isIdentityTransform,
+  type TransformInfo,
+} from "./transform-walk.js";
 
 /** Debug flag - set to true to enable verbose console logging */
 const DEBUG_EVAL = false;
@@ -129,28 +138,25 @@ export function evaluateDocument(
             return { mesh, material: p.material };
           }
           // Sheet-metal: the regular evaluator returns empty for these ops
-          // (kernel.evaluateDocument knows nothing about them). The kernel's
-          // `evaluateSheetMetalChain` does the actual work.
-          const chain = buildSheetMetalChain(visibleRoots[i].root, doc.nodes);
-          if (chain) {
-            try {
-              const { mesh, sheetMetal } = evaluateSheetMetalChain(
-                chain,
-                kernel as unknown as Parameters<typeof evaluateSheetMetalChain>[1],
-              );
-              return { mesh, material: p.material, sheetMetal };
-            } catch (e) {
-              const msg = e instanceof Error ? e.message : String(e);
-              extraFailures.push({
-                scope: `root[${i}]`,
-                node_id: visibleRoots[i].root,
-                error: msg,
-              });
-              console.warn(
-                `[ENGINE] sheet-metal eval failed at root[${i}] (node ${visibleRoots[i].root}): ${msg}`,
-              );
-              return { mesh: wasmMeshToTriangleMesh(p.mesh), material: p.material };
-            }
+          // (kernel.evaluateDocument knows nothing about them);
+          // `resolveSheetMetalPart` walks any Translate/Rotate/Scale wrapper to
+          // the chain tip and does the unfold + place. A positioned bracket
+          // (e.g. `Translate(child: EdgeFlange)`) is recognized, not just a
+          // bare root.
+          try {
+            const smPart = resolveSheetMetalPart(visibleRoots[i].root, doc.nodes, kernel);
+            if (smPart) return { ...smPart, material: p.material };
+          } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            extraFailures.push({
+              scope: `root[${i}]`,
+              node_id: visibleRoots[i].root,
+              error: msg,
+            });
+            console.warn(
+              `[ENGINE] sheet-metal eval failed at root[${i}] (node ${visibleRoots[i].root}): ${msg}`,
+            );
+            return { mesh: wasmMeshToTriangleMesh(p.mesh), material: p.material };
           }
         }
         return { mesh: wasmMeshToTriangleMesh(p.mesh), material: p.material };
@@ -267,85 +273,65 @@ function solidToMesh(solid: Solid): TriangleMesh {
   };
 }
 
-/** Transform info extracted from node chain */
-interface TransformInfo {
-  translate: { x: number; y: number; z: number };
-  rotate: { x: number; y: number; z: number };
-  scale: { x: number; y: number; z: number };
-}
-
 /**
- * Find an ImportedMesh in the node chain and extract transforms.
+ * Find an ImportedMesh at a scene root (through any transform wrapper) and the
+ * accumulated placement.
  */
 function findImportedMesh(
   rootId: NodeId,
   nodes: Record<string, Node>,
 ): { mesh: ImportedMeshOp; transform: TransformInfo } | null {
-  const transform: TransformInfo = {
-    translate: { x: 0, y: 0, z: 0 },
-    rotate: { x: 0, y: 0, z: 0 },
-    scale: { x: 1, y: 1, z: 1 },
-  };
-
-  let current = rootId;
-  while (true) {
-    const node = nodes[String(current)];
-    if (!node) return null;
-
-    if (node.op.type === "ImportedMesh") {
-      return { mesh: node.op, transform };
-    }
-
-    if (node.op.type === "Translate") {
-      transform.translate = node.op.offset;
-      current = node.op.child;
-    } else if (node.op.type === "Rotate") {
-      transform.rotate = node.op.angles;
-      current = node.op.child;
-    } else if (node.op.type === "Scale") {
-      transform.scale = node.op.factor;
-      current = node.op.child;
-    } else {
-      return null;
-    }
-  }
+  const hit = findWrappedRoot(rootId, nodes, (op) =>
+    op.type === "ImportedMesh" ? op : null,
+  );
+  return hit ? { mesh: hit.value, transform: hit.transform } : null;
 }
 
 /**
- * Find an EmbroideryPattern in the node chain and extract transforms.
+ * Find an EmbroideryPattern at a scene root (through any transform wrapper) and
+ * the accumulated placement.
  */
 export function findEmbroideryPattern(
   rootId: NodeId,
   nodes: Record<string, Node>,
 ): { pattern: EmbroideryPatternOp; transform: TransformInfo } | null {
-  const transform: TransformInfo = {
-    translate: { x: 0, y: 0, z: 0 },
-    rotate: { x: 0, y: 0, z: 0 },
-    scale: { x: 1, y: 1, z: 1 },
+  const hit = findWrappedRoot(rootId, nodes, (op) =>
+    op.type === "EmbroideryPattern" ? op : null,
+  );
+  return hit ? { pattern: hit.value, transform: hit.transform } : null;
+}
+
+/**
+ * Resolve a scene root to its PLACED sheet-metal render, or `null` if the root
+ * isn't a sheet-metal part. Walks any Translate/Rotate/Scale wrapper to the
+ * chain tip ({@link findSheetMetalChainRoot}), rebuilds the op chain, evaluates
+ * it through the kernel's `evaluateSheetMetalChain`, and positions the folded
+ * body in world space — the flat-pattern/DXF/DFM bundle is intrinsic and rides
+ * along unchanged (identity placement skips the mesh copy). Throws on kernel
+ * error so each caller can record a per-root failure with its own semantics.
+ *
+ * The single source of truth behind the WASM evaluator's post-process, the TS
+ * fallback, and the worker's `postProcessSheetMetal`.
+ */
+export function resolveSheetMetalPart(
+  rootId: NodeId,
+  nodes: Record<string, Node>,
+  kernel: unknown,
+): ReturnType<typeof evaluateSheetMetalChain> | null {
+  const sm = findSheetMetalChainRoot(rootId, nodes);
+  if (!sm) return null;
+  const chain = buildSheetMetalChain(sm.root, nodes);
+  if (!chain) return null;
+  const { mesh, sheetMetal } = evaluateSheetMetalChain(
+    chain,
+    kernel as Parameters<typeof evaluateSheetMetalChain>[1],
+  );
+  return {
+    mesh: isIdentityTransform(sm.transform)
+      ? mesh
+      : transformMesh(mesh, sm.transform),
+    sheetMetal,
   };
-
-  let current = rootId;
-  while (true) {
-    const node = nodes[String(current)];
-    if (!node) return null;
-
-    if (node.op.type === "EmbroideryPattern") {
-      return { pattern: node.op, transform };
-    }
-
-    if (node.op.type === "Translate") {
-      transform.translate = node.op.offset;
-      current = node.op.child;
-    } else if (node.op.type === "Rotate") {
-      transform.rotate = node.op.angles;
-      current = node.op.child;
-    } else if (node.op.type === "Scale") {
-      transform.scale = node.op.factor;
-      current = node.op.child;
-    } else {
-      return null;
-    }
-  }
 }
 
 /**
@@ -509,25 +495,22 @@ export function evaluateDocumentTS(
       return { mesh, material: entry.material };
     }
 
-    // Sheet-metal — route the chain through the kernel binding.
-    const smChain = buildSheetMetalChain(entry.root, doc.nodes);
-    if (smChain) {
-      try {
-        const { mesh, sheetMetal } = evaluateSheetMetalChain(
-          smChain,
-          kernel as unknown as Parameters<typeof evaluateSheetMetalChain>[1],
-        );
+    // Sheet-metal — route the chain through the kernel binding (any
+    // Translate/Rotate/Scale wrapper resolved + the folded body placed).
+    try {
+      const smPart = resolveSheetMetalPart(entry.root, doc.nodes, kernel);
+      if (smPart) {
         solids.push(Solid.empty());
-        return { mesh, material: entry.material, sheetMetal };
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
-        failures.push({ scope: `root[${idx}]`, node_id: entry.root, error: msg });
-        console.warn(
-          `[ENGINE] sheet-metal eval failed at root[${idx}] (node ${entry.root}): ${msg}`,
-        );
-        solids.push(Solid.empty());
-        return { mesh: emptyMesh(), material: entry.material };
+        return { ...smPart, material: entry.material };
       }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      failures.push({ scope: `root[${idx}]`, node_id: entry.root, error: msg });
+      console.warn(
+        `[ENGINE] sheet-metal eval failed at root[${idx}] (node ${entry.root}): ${msg}`,
+      );
+      solids.push(Solid.empty());
+      return { mesh: emptyMesh(), material: entry.material };
     }
 
     try {

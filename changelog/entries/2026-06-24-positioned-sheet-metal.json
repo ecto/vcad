@@ -1,0 +1,9 @@
+{
+  "id": "2026-06-24-positioned-sheet-metal",
+  "version": "0.9.4",
+  "date": "2026-06-24",
+  "category": "fix",
+  "title": "Positioned sheet-metal parts render their unfold + DFM",
+  "summary": "A sheet-metal part wrapped in a Translate/Rotate/Scale (the common case, including the Sheet metal U-channel example) is now recognized as sheet metal, so its folded body is placed in world space and its unfold view, bend table, DXF, and DFM checks appear.",
+  "features": ["sheet-metal", "unfold", "dfm"]
+}

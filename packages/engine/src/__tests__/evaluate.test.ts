@@ -2,6 +2,8 @@ import { describe, expect, it, beforeAll } from "vitest";
 import type { Document, Node } from "@vcad/ir";
 import { createDocument } from "@vcad/ir";
 import { Engine, type EvaluatedScene } from "../index.js";
+import { findWrappedRoot, isIdentityTransform } from "../transform-walk.js";
+import { findEmbroideryPattern } from "../evaluate.js";
 
 let engine: Engine;
 
@@ -971,5 +973,166 @@ describe("PcbBoard", () => {
     expect(maxY - minY).toBeCloseTo(30, 1);
     expect(maxZ - minZ).toBeCloseTo(1.6, 1);
     expect((minZ + maxZ) / 2).toBeCloseTo(0, 1);
+  });
+});
+
+describe("Sheet metal", () => {
+  /** 100×50 base flange with one 25 mm edge flange off edge 0. */
+  function flangeChainNodes(): Node[] {
+    return [
+      {
+        id: 0,
+        name: "Base flange",
+        op: {
+          type: "SheetMetalBaseFlangeRect",
+          width: 100,
+          depth: 50,
+          thickness: 1,
+          material: "al-soft",
+        },
+      },
+      {
+        id: 1,
+        name: "Edge flange",
+        op: {
+          type: "SheetMetalEdgeFlange",
+          parent: 0,
+          panel_id: 0,
+          edge_index: 0,
+          length: 25,
+          angle: Math.PI / 2,
+          direction: "Up",
+        },
+      },
+    ] as unknown as Node[];
+  }
+
+  function meshMinX(positions: ArrayLike<number>): number {
+    let minX = Infinity;
+    for (let i = 0; i + 2 < positions.length; i += 3) {
+      minX = Math.min(minX, positions[i]!);
+    }
+    return minX;
+  }
+
+  it("attaches the sheet-metal bundle to a bare flange root", () => {
+    const doc = singlePartDoc(flangeChainNodes(), 1);
+    const scene = engine.evaluate(doc);
+    expect(scene.parts).toHaveLength(1);
+    const part = scene.parts[0]!;
+    expect(part.mesh.positions.length).toBeGreaterThan(0);
+    const sm = part.sheetMetal as { model: { panel_count: number; bend_count: number }; dxf: string } | undefined;
+    expect(sm).toBeDefined();
+    expect(sm!.model.panel_count).toBe(2);
+    expect(sm!.model.bend_count).toBe(1);
+    expect(sm!.dxf).toContain("0\nLAYER\n2\nCUT\n");
+  });
+
+  it("recognizes a Translate-wrapped flange and places the folded body", () => {
+    // The common case in a larger document (and the native gripper bracket):
+    // the sheet-metal chain tip sits under a Translate. The web used to miss
+    // this — root-detection only matched a BARE sheet-metal op.
+    const bare = engine.evaluate(singlePartDoc(flangeChainNodes(), 1));
+    const bareMinX = meshMinX(bare.parts[0]!.mesh.positions);
+
+    const dx = 1000;
+    const wrappedDoc = singlePartDoc(
+      [
+        ...flangeChainNodes(),
+        {
+          id: 2,
+          name: "Place",
+          op: { type: "Translate", child: 1, offset: { x: dx, y: 0, z: 0 } },
+        } as unknown as Node,
+      ],
+      2,
+    );
+    const wrapped = engine.evaluate(wrappedDoc);
+    expect(wrapped.parts).toHaveLength(1);
+    const part = wrapped.parts[0]!;
+
+    // The DFM/flat-pattern bundle is intrinsic — identical to the bare part.
+    const bareSm = bare.parts[0]!.sheetMetal as { model: { panel_count: number; bend_count: number } };
+    const wrappedSm = part.sheetMetal as { model: { panel_count: number; bend_count: number } } | undefined;
+    expect(wrappedSm).toBeDefined();
+    expect(wrappedSm!.model.panel_count).toBe(bareSm.model.panel_count);
+    expect(wrappedSm!.model.bend_count).toBe(bareSm.model.bend_count);
+
+    // But the 3D body is shifted by the wrapper transform.
+    expect(part.mesh.positions.length).toBe(bare.parts[0]!.mesh.positions.length);
+    expect(meshMinX(part.mesh.positions)).toBeCloseTo(bareMinX + dx, 3);
+  });
+
+  it("checkSheetMetal resolves a positioned bracket through the wrapper", () => {
+    const wrappedDoc = singlePartDoc(
+      [
+        ...flangeChainNodes(),
+        {
+          id: 2,
+          name: "Place",
+          op: { type: "Translate", child: 1, offset: { x: 5, y: 0, z: 0 } },
+        } as unknown as Node,
+      ],
+      2,
+    );
+    // Pure query (no mesh) — used to return null for a wrapped root.
+    const result = engine.checkSheetMetal(wrappedDoc);
+    expect(result).not.toBeNull();
+    expect(result!.violations).toHaveLength(0);
+  });
+});
+
+describe("transform-walk (findWrappedRoot)", () => {
+  const cube = (id: number): Node => ({
+    id,
+    name: null,
+    op: { type: "Cube", size: { x: 1, y: 1, z: 1 } },
+  });
+  const matchCube = (op: Node["op"]) => (op.type === "Cube" ? op : null);
+  const nodeMap = (nodes: Node[]): Record<string, Node> =>
+    Object.fromEntries(nodes.map((n) => [String(n.id), n]));
+
+  it("returns the bare root with an identity placement", () => {
+    const hit = findWrappedRoot(1, nodeMap([cube(1)]), matchCube);
+    expect(hit?.node).toBe(1);
+    expect(isIdentityTransform(hit!.transform)).toBe(true);
+  });
+
+  it("accumulates a Translate/Rotate/Scale wrapper down to the inner node", () => {
+    const nodes = nodeMap([
+      cube(1),
+      { id: 2, name: null, op: { type: "Scale", child: 1, factor: { x: 2, y: 2, z: 2 } } },
+      { id: 3, name: null, op: { type: "Rotate", child: 2, angles: { x: 0, y: 0, z: 90 } } },
+      { id: 4, name: null, op: { type: "Translate", child: 3, offset: { x: 5, y: 6, z: 7 } } },
+    ] as unknown as Node[]);
+    const hit = findWrappedRoot(4, nodes, matchCube);
+    expect(hit?.node).toBe(1);
+    expect(hit!.transform.translate).toEqual({ x: 5, y: 6, z: 7 });
+    expect(hit!.transform.rotate).toEqual({ x: 0, y: 0, z: 90 });
+    expect(hit!.transform.scale).toEqual({ x: 2, y: 2, z: 2 });
+  });
+
+  it("returns null at a non-matching, non-transform op (and on a missing node)", () => {
+    const nodes = nodeMap([
+      cube(1),
+      { id: 2, name: null, op: { type: "Shell", child: 1, thickness: 1 } },
+    ] as unknown as Node[]);
+    expect(findWrappedRoot(2, nodes, matchCube)).toBeNull();
+    expect(findWrappedRoot(99, {}, matchCube)).toBeNull();
+  });
+
+  it("findEmbroideryPattern still walks through a Translate wrapper", () => {
+    const nodes = nodeMap([
+      {
+        id: 1,
+        name: null,
+        op: { type: "EmbroideryPattern", design: { threads: [], stitch_groups: [] } },
+      },
+      { id: 2, name: null, op: { type: "Translate", child: 1, offset: { x: 3, y: 0, z: 0 } } },
+    ] as unknown as Node[]);
+    const hit = findEmbroideryPattern(2, nodes);
+    expect(hit).not.toBeNull();
+    expect(hit!.pattern.type).toBe("EmbroideryPattern");
+    expect(hit!.transform.translate).toEqual({ x: 3, y: 0, z: 0 });
   });
 });
