@@ -311,6 +311,14 @@ final class EditorModel {
         if !multiSelectedParts.isEmpty { multiSelectedParts = [] }
         selectedFeatureID = id
     }
+    /// Whether anything is selected (drives Escape/empty-click deselect).
+    var hasSelection: Bool { selectedFeatureID != nil || !multiSelectedParts.isEmpty }
+    /// Clear all selection — empty-space click or Escape (documents only).
+    func deselectAll() {
+        multiSelectedParts = []
+        selectedFeatureID = nil
+        selectionDirty = true
+    }
     /// ⌘-click: toggle a part in the multi-selection; the last click stays primary.
     func toggleMultiSelect(part pi: Int, featureID id: String) {
         if let idx = multiSelectedParts.firstIndex(of: pi) { multiSelectedParts.remove(at: idx) }
@@ -663,6 +671,24 @@ final class EditorModel {
         panOffset += (-dx * right + dy * up) * (distance * 0.0016)
     }
 
+    // Escape → deselect (documents only; never while renaming, so the rename
+    // field's own Esc-cancel still works). Returns the event so other handlers
+    // still see it.
+    nonisolated(unsafe) private var keyMonitor: Any?
+    func installKeyMonitor() {
+        guard keyMonitor == nil else { return }
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                if event.keyCode == 53, self.usesDocumentTree,
+                   self.renamingFeatureID == nil, self.hasSelection {
+                    self.deselectAll()
+                }
+            }
+            return event
+        }
+    }
+
     // Two-finger / wheel scroll → zoom. Installed once when the viewport appears.
     nonisolated(unsafe) private var scrollMonitor: Any?
     func installScrollZoom() {
@@ -693,6 +719,7 @@ final class EditorModel {
     deinit {
         if let d = gripperDoc { vcad_doc_free(d) }
         if let m = scrollMonitor { NSEvent.removeMonitor(m) }
+        if let m = keyMonitor { NSEvent.removeMonitor(m) }
     }
 
     /// Clearance from the connector cutout to the nearest enclosure side wall —

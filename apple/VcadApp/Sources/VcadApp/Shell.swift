@@ -942,7 +942,7 @@ struct ViewportView: View {
           .onContinuousHover(coordinateSpace: .local) { phase in
               hover(phase, viewSize: geo.size)
           }
-          .onAppear { model.installScrollZoom() }
+          .onAppear { model.installScrollZoom(); model.installKeyMonitor() }
         }
     }
 
@@ -1294,12 +1294,16 @@ struct ViewportView: View {
         let camKernel = rxPlus90(cam / s) + model.displayCenter
         let dirKernel = normalize(rxPlus90(dirWorld))
 
-        // Documents: tap a part → select its feature-tree row (parity with the
-        // web app's click-to-select). The kernel-space AABBs make this cheap.
+        // Documents: tap a part → select its row (⌘-tap toggles multi-select, for
+        // booleans); tap empty space → deselect. Kernel-space AABBs make it cheap.
         if model.usesDocumentTree {
+            let cmd = NSEvent.modifierFlags.contains(.command)
             if let pi = model.pickDocumentPart(originKernel: camKernel, dirKernel: dirKernel),
                pi < model.featureNodes.count {
-                model.selectFeature(model.featureNodes[pi].id)
+                if cmd { model.toggleMultiSelect(part: pi, featureID: model.featureNodes[pi].id) }
+                else { model.selectFeature(model.featureNodes[pi].id) }
+            } else if !cmd {
+                model.deselectAll()
             }
             return
         }
