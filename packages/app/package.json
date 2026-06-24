@@ -82,7 +82,7 @@
     "@types/three": "^0.172.0",
     "@vercel/node": "^3.2.0",
     "@vitejs/plugin-basic-ssl": "^2.3.0",
-    "@vitejs/plugin-react": "^4.3.0",
+    "@vitejs/plugin-react": "^6.0.3",
     "eslint": "^9.18.0",
     "eslint-plugin-react-hooks": "^5.2.0",
     "eslint-plugin-react-refresh": "^0.4.18",
