@@ -210,7 +210,6 @@ final class EditorModel {
     var connectorX: Double = 40
     let connectorRange: ClosedRange<Double> = 4...76
     @ObservationIgnored private var connectorBaseline: Double = 40
-    @ObservationIgnored private var connectorTarget: Double = 40
     @ObservationIgnored private var lastConnectorTick = 40
     @ObservationIgnored private var lastConnectorOK = true
 
@@ -226,39 +225,22 @@ final class EditorModel {
     func connectorHandlePosition() -> SIMD3<Float> { SIMD3(Float(connectorX), 9, 13) }
 
     func openGripper() {
-        jumpConnector(40)
+        connectorX = 40
+        lastConnectorTick = 40
+        lastConnectorOK = true
         source = .gripper
     }
 
-    /// Snap the connector with no easing — first load / dev hook.
-    func jumpConnector(_ x: Double) {
-        let c = min(max(x, connectorRange.lowerBound), connectorRange.upperBound)
-        connectorX = c
-        connectorTarget = c
-        lastConnectorTick = Int(c.rounded())
-        lastConnectorOK = connectorOK
-    }
-
-    func beginConnectorDrag() { connectorBaseline = connectorTarget }
+    func beginConnectorDrag() { connectorBaseline = connectorX }
     var connectorDragBaseline: Double { connectorBaseline }
 
-    /// Set the drag TARGET; the geometry eases toward it (advanceConnector) so
-    /// the solved drag tweens to a smooth, weighted settle instead of snapping
-    /// to each raw delta.
+    /// Drag handler: clamp, flag a re-solve, and fire the felt detents — a tick
+    /// per millimetre, a firm "wall" the instant min-wall is violated.
     func setConnectorX(_ x: Double) {
-        connectorTarget = min(max(x, connectorRange.lowerBound), connectorRange.upperBound)
+        let clamped = min(max(x, connectorRange.lowerBound), connectorRange.upperBound)
+        connectorX = clamped
         parameterDirty = true
-    }
-
-    /// Ease connectorX one frame toward the target, firing the per-mm detent and
-    /// the verdict-flip haptic/chime on the eased value (so they match the
-    /// motion). Returns true while still animating — the viewport keeps
-    /// re-solving until it settles.
-    func advanceConnector() -> Bool {
-        let diff = connectorTarget - connectorX
-        let animating = abs(diff) >= 0.05
-        connectorX = animating ? connectorX + diff * 0.45 : connectorTarget
-        let tick = Int(connectorX.rounded())
+        let tick = Int(clamped.rounded())
         if tick != lastConnectorTick {
             lastConnectorTick = tick
             NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .default)
@@ -273,7 +255,6 @@ final class EditorModel {
                 chime.play(.solved)
             }
         }
-        return animating
     }
 
     private func ensureGripperDoc() -> OpaquePointer? {
