@@ -13,8 +13,13 @@
  *   ← {type: 'error', id, message}                       — evaluation error
  */
 
-import { evaluateDocument as evaluateDocumentTS, embroideryPatternToMesh, findEmbroideryPattern, transformMesh } from "./evaluate.js";
-import { buildSheetMetalChain, evaluateSheetMetalChain } from "./sheet-metal.js";
+import {
+  evaluateDocument as evaluateDocumentTS,
+  embroideryPatternToMesh,
+  findEmbroideryPattern,
+  transformMesh,
+  resolveSheetMetalPart,
+} from "./evaluate.js";
 import type { EvaluatedScene, EvalTimingData, TriangleMesh } from "./mesh.js";
 import type { Document } from "@vcad/ir";
 
@@ -137,18 +142,21 @@ function postProcessSheetMetal(
   let changed = false;
   const parts = scene.parts.map((p, i) => {
     if (p.mesh.positions.length === 0 && i < visibleRoots.length) {
-      const chain = buildSheetMetalChain(visibleRoots[i]!.root, doc.nodes);
-      if (chain) {
-        try {
-          const { mesh, sheetMetal } = evaluateSheetMetalChain(
-            chain,
-            kernelModule,
-          );
+      // Resolve any Translate/Rotate/Scale wrapper to the chain tip and place
+      // the folded body, so a positioned bracket (e.g.
+      // `Translate(child: EdgeFlange)`) is recognized — not just a bare root.
+      try {
+        const smPart = resolveSheetMetalPart(
+          visibleRoots[i]!.root,
+          doc.nodes,
+          kernelModule,
+        );
+        if (smPart) {
           changed = true;
-          return { mesh, material: p.material, sheetMetal };
-        } catch (e) {
-          console.warn(`[worker] sheet-metal eval failed at root[${i}]:`, e);
+          return { ...smPart, material: p.material };
         }
+      } catch (e) {
+        console.warn(`[worker] sheet-metal eval failed at root[${i}]:`, e);
       }
     }
     return p;

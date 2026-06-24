@@ -12,6 +12,7 @@ import { MeshCache } from "./mesh-cache.js";
 import { DependencyGraph } from "./dependency-graph.js";
 import {
   buildSheetMetalChain,
+  findSheetMetalChainRoot,
   checkSheetMetalManufacturability,
   costSheetMetalChain,
   sheetMetalSequence as runSheetMetalSequence,
@@ -760,6 +761,28 @@ export class Engine {
   }
 
   /**
+   * Find the first visible sheet-metal part in `doc` and rebuild its op chain.
+   *
+   * Resolves the chain tip through any Translate/Rotate/Scale wrapper so a
+   * POSITIONED bracket (e.g. `Translate(child: EdgeFlange)`) is found, not just
+   * a bare root — the same recognition the render path uses. The chain is
+   * placement-independent (flat-2D), so these pure queries don't need the
+   * transform. Returns `null` when the document has no sheet-metal part.
+   */
+  private firstSheetMetalChain(
+    doc: Document,
+  ): ReturnType<typeof buildSheetMetalChain> {
+    for (const entry of doc.roots) {
+      if (entry.visible === false) continue;
+      const sm = findSheetMetalChainRoot(entry.root, doc.nodes);
+      if (!sm) continue;
+      const chain = buildSheetMetalChain(sm.root, doc.nodes);
+      if (chain) return chain;
+    }
+    return null;
+  }
+
+  /**
    * Estimate the manufacturing cost of the sheet-metal part in `doc`.
    *
    * Finds the first sheet-metal root, rebuilds its op chain, and asks the
@@ -772,19 +795,14 @@ export class Engine {
     rates?: SheetMetalCostRates,
     quantity = 1,
   ): SheetMetalCostResult | null {
-    for (const entry of doc.roots) {
-      if (entry.visible === false) continue;
-      const chain = buildSheetMetalChain(entry.root, doc.nodes);
-      if (chain) {
-        return costSheetMetalChain(
-          chain,
-          this.kernel as unknown as Parameters<typeof costSheetMetalChain>[1],
-          rates,
-          quantity,
-        );
-      }
-    }
-    return null;
+    const chain = this.firstSheetMetalChain(doc);
+    if (!chain) return null;
+    return costSheetMetalChain(
+      chain,
+      this.kernel as unknown as Parameters<typeof costSheetMetalChain>[1],
+      rates,
+      quantity,
+    );
   }
 
   /** Nest part footprints on stock sheets (bottom-left fill
@@ -803,17 +821,12 @@ export class Engine {
   /** Compute a feasible bend sequence (outermost-first) for the
    *  sheet-metal part in `doc`. Returns `null` if there is none. */
   sheetMetalSequence(doc: Document): SheetMetalBendStep[] | null {
-    for (const entry of doc.roots) {
-      if (entry.visible === false) continue;
-      const chain = buildSheetMetalChain(entry.root, doc.nodes);
-      if (chain) {
-        return runSheetMetalSequence(
-          chain,
-          this.kernel as unknown as Parameters<typeof runSheetMetalSequence>[1],
-        );
-      }
-    }
-    return null;
+    const chain = this.firstSheetMetalChain(doc);
+    if (!chain) return null;
+    return runSheetMetalSequence(
+      chain,
+      this.kernel as unknown as Parameters<typeof runSheetMetalSequence>[1],
+    );
   }
 
   /** Return the kernel's curated sheet-metal materials registry. */
@@ -854,20 +867,15 @@ export class Engine {
     doc: Document,
     shop?: SheetMetalShopProfile | string,
   ): SheetMetalCheckResult | null {
-    for (const entry of doc.roots) {
-      if (entry.visible === false) continue;
-      const chain = buildSheetMetalChain(entry.root, doc.nodes);
-      if (chain) {
-        return checkSheetMetalManufacturability(
-          chain,
-          this.kernel as unknown as Parameters<
-            typeof checkSheetMetalManufacturability
-          >[1],
-          shop,
-        );
-      }
-    }
-    return null;
+    const chain = this.firstSheetMetalChain(doc);
+    if (!chain) return null;
+    return checkSheetMetalManufacturability(
+      chain,
+      this.kernel as unknown as Parameters<
+        typeof checkSheetMetalManufacturability
+      >[1],
+      shop,
+    );
   }
 
   /**
@@ -881,19 +889,14 @@ export class Engine {
    * hems/closed folds, which the folded body cannot represent).
    */
   foldedSheetMetalStep(doc: Document): string | null {
-    for (const entry of doc.roots) {
-      if (entry.visible === false) continue;
-      const chain = buildSheetMetalChain(entry.root, doc.nodes);
-      if (chain) {
-        return buildFoldedSheetMetalStep(
-          chain,
-          this.kernel as unknown as Parameters<
-            typeof buildFoldedSheetMetalStep
-          >[1],
-        );
-      }
-    }
-    return null;
+    const chain = this.firstSheetMetalChain(doc);
+    if (!chain) return null;
+    return buildFoldedSheetMetalStep(
+      chain,
+      this.kernel as unknown as Parameters<
+        typeof buildFoldedSheetMetalStep
+      >[1],
+    );
   }
 
   /** Create a detail view (magnified region) from a projected view.

@@ -16,6 +16,21 @@ import type {
   SheetMetalHemKind,
 } from "@vcad/ir";
 import type { TriangleMesh } from "./mesh.js";
+import { findWrappedRoot, type TransformInfo } from "./transform-walk.js";
+
+/** Whether `op` is any foundation-tier sheet-metal op (base flange, edge
+ *  flange, hem, jog, or bend relief). The chain root and every detector key
+ *  off this one list. */
+function isSheetMetalOp(op: CsgOp): boolean {
+  return (
+    op.type === "SheetMetalBaseFlangeRect" ||
+    op.type === "SheetMetalBaseFlangePolygon" ||
+    op.type === "SheetMetalEdgeFlange" ||
+    op.type === "SheetMetalHem" ||
+    op.type === "SheetMetalJog" ||
+    op.type === "SheetMetalBendRelief"
+  );
+}
 
 /** Per-bend summary the property panel reads. Mirrors `BendSummaryDto`. */
 export interface SheetMetalBendSummary {
@@ -318,16 +333,7 @@ export function buildSheetMetalChain(
 ): ChainOp[] | null {
   const root = nodes[String(rootId)];
   if (!root) return null;
-  if (
-    root.op.type !== "SheetMetalBaseFlangeRect" &&
-    root.op.type !== "SheetMetalBaseFlangePolygon" &&
-    root.op.type !== "SheetMetalEdgeFlange" &&
-    root.op.type !== "SheetMetalHem" &&
-    root.op.type !== "SheetMetalJog" &&
-    root.op.type !== "SheetMetalBendRelief"
-  ) {
-    return null;
-  }
+  if (!isSheetMetalOp(root.op)) return null;
 
   // Walk tip-to-base, then reverse.
   const tipToBase: ChainOp[] = [];
@@ -408,6 +414,29 @@ export function buildSheetMetalChain(
   }
   if (material === null) return null;
   return tipToBase.reverse();
+}
+
+/**
+ * Resolve a scene root to the tip of a sheet-metal op chain, walking through
+ * any `Translate` / `Rotate` / `Scale` wrappers and accumulating their
+ * placement. Returns `{ root, transform }` where `root` is the sheet-metal
+ * node id (the chain tip, ready for {@link buildSheetMetalChain}) and
+ * `transform` is the world placement to apply to the rendered body (identity
+ * for a bare root). Returns `null` when no sheet-metal op is reached.
+ *
+ * Shares {@link findWrappedRoot} with `findEmbroideryPattern` /
+ * `findImportedMesh`, so a positioned bracket — the common case, e.g.
+ * `Translate(child: EdgeFlange)` — is recognized as sheet metal the same way a
+ * bare root is.
+ */
+export function findSheetMetalChainRoot(
+  rootId: NodeId,
+  nodes: Record<string, Node>,
+): { root: NodeId; transform: TransformInfo } | null {
+  const hit = findWrappedRoot(rootId, nodes, (op) =>
+    isSheetMetalOp(op) ? op : null,
+  );
+  return hit ? { root: hit.node, transform: hit.transform } : null;
 }
 
 /** Kernel binding signature — just the functions we need. */
