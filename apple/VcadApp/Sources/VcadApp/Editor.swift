@@ -238,6 +238,10 @@ final class EditorModel {
         distance = 1.45
         panOffset = .zero
         source = .gripper
+        // Run the full solve once after the first rebuild so the Receipt's
+        // settle-fields (quote, lead time, bracket DFM) start populated instead
+        // of showing $0.00 until the first drag.
+        copperDirty = true
     }
 
     func beginConnectorDrag() { connectorBaseline = connectorX }
