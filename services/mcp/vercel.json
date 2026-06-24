@@ -2,5 +2,6 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "installCommand": "cd ../.. && npm ci --ignore-scripts",
   "buildCommand": "bash build.sh",
+  "ignoreCommand": "cd ../.. && git diff --quiet HEAD^ HEAD -- services/mcp packages/ir packages/core packages/engine packages/mcp packages/kernel-wasm",
   "framework": null
 }
