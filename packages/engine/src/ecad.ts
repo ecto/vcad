@@ -604,6 +604,10 @@ export interface ComponentMesh {
   normals: number[];
   color: [number, number, number];
   metalness: number;
+  /** PBR roughness, 0..1 (older WASM payloads may omit it). */
+  roughness?: number;
+  /** Emissive RGB 0..1 (linear); `[0,0,0]` = not emissive (LEDs glow). */
+  emissive?: [number, number, number];
 }
 
 /** Generate 3D component body meshes for all footprints on a PCB. */
@@ -625,7 +629,7 @@ export async function componentMeshes(pcb: Pcb): Promise<ComponentMesh[]> {
  * renders a recognizable board instead of one gray slab.
  */
 export interface PcbPreviewMesh {
-  /** Semantic role: "board" | "copper" | "component" | "silkscreen". */
+  /** Role: "mask" | "substrate" | "copper" | "pour" | "via" | "component" | "silkscreen". */
   role: string;
   /** Flat vertex positions [x,y,z,...] (mm, board-local, centered on z=0). */
   positions: number[];
@@ -633,12 +637,18 @@ export interface PcbPreviewMesh {
   indices: number[];
   /** Per-vertex normals [nx,ny,nz,...]. */
   normals: number[];
-  /** Base color RGB, 0..1. */
+  /** Base color RGB, 0..1 (linear). */
   color: [number, number, number];
   /** PBR metalness, 0..1. */
   metalness: number;
   /** PBR roughness, 0..1. */
   roughness: number;
+  /** Emissive RGB 0..1 (linear); `[0,0,0]` = not emissive (older WASM omits). */
+  emissive?: [number, number, number];
+  /** KHR_materials_clearcoat factor 0..1 (glossy soldermask). */
+  clearcoat?: number;
+  /** Clearcoat roughness, 0..1. */
+  clearcoat_roughness?: number;
 }
 
 /**

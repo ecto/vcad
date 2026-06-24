@@ -53,6 +53,8 @@ export async function generateGlbPreview(
         const preview = pcb ? await pcbPreviewMeshes(pcb) : [];
         if (preview.length > 0) {
           for (const pm of preview) {
+            const emissive = pm.emissive ?? [0, 0, 0];
+            const glows = emissive[0] > 0 || emissive[1] > 0 || emissive[2] > 0;
             meshes.push({
               // Keep the board's part identity on every sub-mesh so a click
               // anywhere on the board still resolves to the PCB part.
@@ -63,6 +65,12 @@ export async function generateGlbPreview(
               color: pm.color,
               metallic: pm.metalness,
               roughness: pm.roughness,
+              emissive,
+              // Push LED lenses past white so they read as "on" under the
+              // viewer's bright studio IBL.
+              emissiveStrength: glows ? 3.0 : 1,
+              clearcoat: pm.clearcoat ?? 0,
+              clearcoatRoughness: pm.clearcoat_roughness ?? 0,
             });
           }
           continue;

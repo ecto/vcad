@@ -37,7 +37,8 @@ use crate::evaluate::{
 /// exporter turns `color` / `metalness` / `roughness` into a PBR material.
 #[derive(Debug, Clone, Serialize)]
 pub struct PcbPreviewMesh {
-    /// Semantic role: `"board"`, `"copper"`, `"component"`, or `"silkscreen"`.
+    /// Semantic role: `"mask"`, `"substrate"`, `"copper"`, `"pour"`, `"via"`,
+    /// `"component"`, or `"silkscreen"`.
     pub role: String,
     /// Flat vertex positions `[x,y,z, ...]` (mm, board-local, centered on z=0).
     pub positions: Vec<f32>,
@@ -45,20 +46,39 @@ pub struct PcbPreviewMesh {
     pub indices: Vec<u32>,
     /// Per-vertex normals `[nx,ny,nz, ...]`.
     pub normals: Vec<f32>,
-    /// Base color RGB, 0..1.
+    /// Base color RGB, 0..1 (linear).
     pub color: [f32; 3],
     /// PBR metalness, 0..1.
     pub metalness: f32,
     /// PBR roughness, 0..1.
     pub roughness: f32,
+    /// Emissive color RGB, 0..1 (linear). `[0,0,0]` = not emissive (LEDs glow).
+    pub emissive: [f32; 3],
+    /// KHR_materials_clearcoat factor, 0..1 (glossy soldermask wet-look).
+    pub clearcoat: f32,
+    /// Clearcoat roughness, 0..1.
+    pub clearcoat_roughness: f32,
 }
 
-// FR4 soldermask green — matches the app's `FR4_MATERIAL_KEY` preset (#0d5a2d).
-const FR4_GREEN: [f32; 3] = [0.051, 0.353, 0.176];
-// Exposed/finished copper (ENIG-ish warm gold).
-const COPPER_GOLD: [f32; 3] = [0.85, 0.62, 0.30];
+// Glossy green soldermask (dark saturated dielectric; the clearcoat carries
+// the wet highlight so the base color stays dark and doesn't go neon).
+const SOLDERMASK_GREEN: [f32; 3] = [0.045, 0.21, 0.10];
+// Exposed fiberglass substrate at the board edge — matte tan, no clearcoat;
+// the contrast against the glossy mask sells the "real board" read.
+const FR4_EDGE_TAN: [f32; 3] = [0.46, 0.38, 0.22];
+// Exposed/finished copper (ENIG warm gold) — signal traces and pads.
+const COPPER_ENIG: [f32; 3] = [0.85, 0.66, 0.30];
+// Copper pour/zone — slightly darker and rougher so a plane reads distinct
+// from a signal trace.
+const COPPER_POUR: [f32; 3] = [0.78, 0.60, 0.30];
+// Bare plated copper (via barrels) — pinkish, rougher inside the hole.
+const COPPER_BARE: [f32; 3] = [0.72, 0.45, 0.30];
 // Silkscreen white.
 const SILK_WHITE: [f32; 3] = [0.92, 0.92, 0.88];
+
+// Clearcoat for the glossy soldermask.
+const MASK_CLEARCOAT: f32 = 1.0;
+const MASK_CLEARCOAT_ROUGH: f32 = 0.08;
 
 // Silk line width and reference-designator text height (mm).
 const SILK_LINE_WIDTH: f64 = 0.15;
@@ -75,54 +95,82 @@ pub fn pcb_preview_meshes(pcb: &Pcb) -> Vec<PcbPreviewMesh> {
     let t = pcb.outline.thickness;
     let mut out: Vec<PcbPreviewMesh> = Vec::new();
 
-    // ---- Board substrate (green FR4 slab) ----
+    // ---- Board: glossy green soldermask (faces) + matte tan substrate (edge) ----
+    // Splitting the slab by face normal lets the top/bottom carry a wet
+    // clearcoat while the exposed fiberglass edge stays matte tan.
     if let Some(board) = board_slab_buf(pcb) {
         if !board.is_empty() {
-            out.push(board.finish("board", FR4_GREEN, 0.0, 0.85));
+            let (mask, edge) = split_faces_by_normal(&board, 0.7);
+            if !mask.is_empty() {
+                let mut m = mask.finish("mask", SOLDERMASK_GREEN, 0.0, 0.35);
+                m.clearcoat = MASK_CLEARCOAT;
+                m.clearcoat_roughness = MASK_CLEARCOAT_ROUGH;
+                out.push(m);
+            }
+            if !edge.is_empty() {
+                out.push(edge.finish("substrate", FR4_EDGE_TAN, 0.0, 0.85));
+            }
         }
     }
 
-    // ---- Copper (gold): traces, pads, vias, zones, lifted proud of the board ----
-    let mut copper = MeshBuf::default();
+    // ---- Copper, split by role so a plane reads distinct from a signal ----
+    // Signal copper (ENIG gold): traces + exposed pads.
+    let mut signal = MeshBuf::default();
     for trace in &pcb.traces {
-        copper.append_raw(&trace_to_mesh(trace, pcb), copper_lift(pcb, trace.layer));
+        signal.append_raw(&trace_to_mesh(trace, pcb), copper_lift(pcb, trace.layer));
     }
     for fp in &pcb.footprints {
         for pad in &fp.pads {
             let layer = pad_layer(pad, fp);
-            copper.append_raw(&pad_to_mesh(pad, fp, pcb), copper_lift(pcb, layer));
+            signal.append_raw(&pad_to_mesh(pad, fp, pcb), copper_lift(pcb, layer));
         }
     }
-    for via in &pcb.vias {
-        // Vias span the full board height and connect both surfaces — leave
-        // them unlifted so they meet the proud front/back copper flush.
-        copper.append_raw(&via_to_mesh(via, pcb, 20), 0.0);
+    if !signal.is_empty() {
+        out.push(signal.finish("copper", COPPER_ENIG, 0.9, 0.30));
     }
+    // Copper pours / zones (slightly darker + rougher than signal copper).
+    let mut pour = MeshBuf::default();
     for zone in &pcb.zones {
-        copper.append_raw(&zone_to_mesh(zone, pcb), copper_lift(pcb, zone.layer));
+        pour.append_raw(&zone_to_mesh(zone, pcb), copper_lift(pcb, zone.layer));
     }
-    if !copper.is_empty() {
-        out.push(copper.finish("copper", COPPER_GOLD, 0.9, 0.35));
+    if !pour.is_empty() {
+        out.push(pour.finish("pour", COPPER_POUR, 0.9, 0.42));
+    }
+    // Plated via barrels (bare copper). They span the full board height and
+    // meet both surfaces flush, so they stay unlifted.
+    let mut vias = MeshBuf::default();
+    for via in &pcb.vias {
+        vias.append_raw(&via_to_mesh(via, pcb, 24), 0.0);
+    }
+    if !vias.is_empty() {
+        out.push(vias.finish("via", COPPER_BARE, 0.9, 0.45));
     }
 
-    // ---- Component bodies (real packages, grouped by color) ----
+    // ---- Component bodies (real packages, grouped by full material) ----
     let comp_meshes = vcad_ecad_pcb::component_mesh::generate_component_meshes(pcb);
-    // Group by quantized (color, metalness) so distinct package colors survive
-    // while keeping the GLB to a handful of materials.
-    let mut groups: HashMap<[u16; 4], MeshBuf> = HashMap::new();
-    let mut order: Vec<[u16; 4]> = Vec::new();
+    // Group by quantized (color, metalness, roughness, emissive) so distinct
+    // materials survive while keeping the GLB to a handful of materials.
+    let mut groups: HashMap<[u16; 7], MeshBuf> = HashMap::new();
+    let mut order: Vec<[u16; 7]> = Vec::new();
     for cm in &comp_meshes {
         let key = [
             quantize(cm.color[0]),
             quantize(cm.color[1]),
             quantize(cm.color[2]),
             quantize(cm.metalness),
+            quantize(cm.roughness),
+            quantize(cm.emissive[0]),
+            // Pack g,b of emissive into one slot to stay within key width; the
+            // LED is the only emissive material so this collision is harmless.
+            quantize((cm.emissive[1] + cm.emissive[2]) * 0.5),
         ];
         let buf = groups.entry(key).or_insert_with(|| {
             order.push(key);
             MeshBuf::default()
         });
         buf.append_indexed(&cm.positions, &cm.indices, &cm.normals);
+        // Stash the exact emissive on first sight (keyed groups share material).
+        buf.emissive = cm.emissive;
     }
     // `order` preserves first-seen insertion order for deterministic output.
     for key in &order {
@@ -133,7 +181,11 @@ pub fn pcb_preview_meshes(pcb: &Pcb) -> Vec<PcbPreviewMesh> {
                 key[2] as f32 / 1000.0,
             ];
             let metalness = key[3] as f32 / 1000.0;
-            out.push(buf.finish("component", color, metalness, 0.5));
+            let roughness = key[4] as f32 / 1000.0;
+            let emissive = buf.emissive;
+            let mut m = buf.finish("component", color, metalness, roughness);
+            m.emissive = emissive;
+            out.push(m);
         }
     }
 
@@ -229,6 +281,7 @@ fn board_slab_buf(pcb: &Pcb) -> Option<MeshBuf> {
         positions: mesh.vertices,
         indices: mesh.indices,
         normals,
+        ..Default::default()
     })
 }
 
@@ -403,6 +456,8 @@ struct MeshBuf {
     indices: Vec<u32>,
     /// Provided normals (kept when present); empty means "compute on finish".
     normals: Vec<f32>,
+    /// Emissive color stashed for grouped component materials (LEDs).
+    emissive: [f32; 3],
 }
 
 impl MeshBuf {
@@ -457,8 +512,67 @@ impl MeshBuf {
             color,
             metalness,
             roughness,
+            emissive: [0.0, 0.0, 0.0],
+            clearcoat: 0.0,
+            clearcoat_roughness: 0.0,
         }
     }
+}
+
+/// Split a mesh buffer into (faces, edges) by per-triangle geometric normal:
+/// triangles whose normal is mostly vertical (`|nz| >= z_thresh`) go to the
+/// first buffer (board faces / soldermask), the rest to the second (the
+/// exposed substrate edge). Vertices are duplicated per triangle (the board is
+/// low-poly) and provided normals are preserved when present.
+fn split_faces_by_normal(src: &MeshBuf, z_thresh: f32) -> (MeshBuf, MeshBuf) {
+    let mut faces = MeshBuf::default();
+    let mut edges = MeshBuf::default();
+    let has_normals = src.normals.len() == src.positions.len();
+
+    let mut tri = 0;
+    while tri + 2 < src.indices.len() {
+        let ia = src.indices[tri] as usize;
+        let ib = src.indices[tri + 1] as usize;
+        let ic = src.indices[tri + 2] as usize;
+        tri += 3;
+        let p = |i: usize| {
+            [
+                src.positions[i * 3],
+                src.positions[i * 3 + 1],
+                src.positions[i * 3 + 2],
+            ]
+        };
+        let (a, b, c) = (p(ia), p(ib), p(ic));
+        // Geometric face normal.
+        let e1 = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+        let e2 = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+        let nz = e1[0] * e2[1] - e1[1] * e2[0];
+        let nx = e1[1] * e2[2] - e1[2] * e2[1];
+        let ny = e1[2] * e2[0] - e1[0] * e2[2];
+        let len = (nx * nx + ny * ny + nz * nz).sqrt().max(1e-12);
+        let dst = if (nz / len).abs() >= z_thresh {
+            &mut faces
+        } else {
+            &mut edges
+        };
+        let base = (dst.positions.len() / 3) as u32;
+        for &i in &[ia, ib, ic] {
+            dst.positions.extend_from_slice(&[
+                src.positions[i * 3],
+                src.positions[i * 3 + 1],
+                src.positions[i * 3 + 2],
+            ]);
+            if has_normals {
+                dst.normals.extend_from_slice(&[
+                    src.normals[i * 3],
+                    src.normals[i * 3 + 1],
+                    src.normals[i * 3 + 2],
+                ]);
+            }
+        }
+        dst.indices.extend_from_slice(&[base, base + 1, base + 2]);
+    }
+    (faces, edges)
 }
 
 /// Compute smooth per-vertex normals by area-weighted face-normal accumulation.
@@ -600,12 +714,16 @@ mod tests {
     fn empty_board_yields_only_substrate() {
         let pcb = board_with(vec![], vec![]);
         let meshes = pcb_preview_meshes(&pcb);
-        // A bare board still gives a substrate slab.
-        assert!(meshes.iter().any(|m| m.role == "board"));
-        let board = meshes.iter().find(|m| m.role == "board").unwrap();
-        assert!(!board.positions.is_empty());
-        assert_eq!(board.normals.len(), board.positions.len());
-        assert_eq!(board.color, FR4_GREEN);
+        // A bare board still gives a glossy soldermask + a matte substrate edge.
+        let mask = meshes.iter().find(|m| m.role == "mask").unwrap();
+        assert!(!mask.positions.is_empty());
+        assert_eq!(mask.normals.len(), mask.positions.len());
+        assert_eq!(mask.color, SOLDERMASK_GREEN);
+        // The mask carries the wet clearcoat; the edge does not.
+        assert!(mask.clearcoat > 0.5, "soldermask should be clearcoated");
+        let edge = meshes.iter().find(|m| m.role == "substrate").unwrap();
+        assert_eq!(edge.color, FR4_EDGE_TAN);
+        assert_eq!(edge.clearcoat, 0.0);
     }
 
     #[test]
@@ -624,7 +742,8 @@ mod tests {
         let meshes = pcb_preview_meshes(&pcb);
 
         let roles: Vec<&str> = meshes.iter().map(|m| m.role.as_str()).collect();
-        assert!(roles.contains(&"board"), "roles: {roles:?}");
+        assert!(roles.contains(&"mask"), "roles: {roles:?}");
+        assert!(roles.contains(&"substrate"), "roles: {roles:?}");
         assert!(roles.contains(&"copper"), "roles: {roles:?}");
         assert!(roles.contains(&"component"), "roles: {roles:?}");
         assert!(roles.contains(&"silkscreen"), "roles: {roles:?}");
@@ -638,7 +757,7 @@ mod tests {
         }
 
         // Board is centered on z=0: top surface near +thickness/2.
-        let board = meshes.iter().find(|m| m.role == "board").unwrap();
+        let board = meshes.iter().find(|m| m.role == "mask").unwrap();
         let max_z = board
             .positions
             .iter()

@@ -74,12 +74,14 @@ export function PcbBoardMesh({ pcb, explosion }: Props) {
 
   return (
     <group>
-      {/* Main board slab */}
+      {/* Main board slab — glossy green soldermask with a wet clearcoat. */}
       <mesh geometry={mainGeometry} position={[0, 0, -thickness / 2]}>
-        <meshStandardMaterial
+        <meshPhysicalMaterial
           color="#0d5a2d"
-          roughness={0.8}
+          roughness={0.5}
           metalness={0}
+          clearcoat={1}
+          clearcoatRoughness={0.18}
           side={THREE.DoubleSide}
         />
       </mesh>
