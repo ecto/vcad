@@ -385,6 +385,29 @@ final class EditorModel {
         return g.visibleRoots[i].material
     }
 
+    /// Resolve a part's render material: the doc's own definition → a preset by
+    /// key → a neutral fallback (so unknown-material parts look as before).
+    func resolvedMaterial(forPart i: Int) -> ResolvedMaterial {
+        let key = materialName(forPart: i) ?? ""
+        if let d = documentGraph?.materials[key] {
+            return ResolvedMaterial(
+                color: NSColor(srgbRed: d.color.0, green: d.color.1, blue: d.color.2, alpha: 1),
+                metallic: d.metallic, roughness: d.roughness, transmission: d.transmission)
+        }
+        if let p = MaterialPreset.byKey(key) {
+            return ResolvedMaterial(color: p.nsColor, metallic: p.metallic,
+                                    roughness: p.roughness, transmission: p.transmission)
+        }
+        return ResolvedMaterial(color: documentBaseColor(i), metallic: 0.55, roughness: 0.34, transmission: 0)
+    }
+
+    /// Assign a material to a part — recolors live (no geometry rebuild).
+    func setPartMaterial(_ partIndex: Int, _ key: String) {
+        guard documentJSON != nil else { return }
+        applyEdit(snapshot: true, reeval: .none) { DocEdit.setRootMaterial(&$0, partIndex: partIndex, key: key) }
+        selectionDirty = true
+    }
+
     func documentBaseColor(_ i: Int) -> NSColor { Self.partColors[i % Self.partColors.count] }
     static let brandPink = NSColor(srgbRed: 0.976, green: 0.149, blue: 0.447, alpha: 1.0)
 

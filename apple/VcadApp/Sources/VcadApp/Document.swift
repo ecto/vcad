@@ -28,11 +28,20 @@ struct DocRoot {
     let visible: Bool
 }
 
+/// A material definition embedded in the document (color + PBR scalars).
+struct DocMaterial {
+    let color: (Double, Double, Double)
+    let metallic: Float
+    let roughness: Float
+    let transmission: Float
+}
+
 /// A parsed parametric document — just enough structure to render the tree and
 /// the inspector; geometry still comes from the kernel.
 struct DocumentGraph {
     let nodes: [Int: DocNode]
     let roots: [DocRoot]
+    let materials: [String: DocMaterial]
 
     /// Visible roots in order — index-aligned with the kernel scene's parts.
     var visibleRoots: [DocRoot] { roots.filter { $0.visible } }
@@ -71,8 +80,23 @@ struct DocumentGraph {
             }
         }
 
+        var materials: [String: DocMaterial] = [:]
+        if let raw = obj["materials"] as? [String: Any] {
+            for (k, v) in raw {
+                guard let m = v as? [String: Any], let c = m["color"] as? [Any], c.count >= 3,
+                      let r = (c[0] as? NSNumber)?.doubleValue,
+                      let g = (c[1] as? NSNumber)?.doubleValue,
+                      let b = (c[2] as? NSNumber)?.doubleValue else { continue }
+                materials[k] = DocMaterial(
+                    color: (r, g, b),
+                    metallic: Float((m["metallic"] as? NSNumber)?.doubleValue ?? 0.4),
+                    roughness: Float((m["roughness"] as? NSNumber)?.doubleValue ?? 0.5),
+                    transmission: Float((m["transmission"] as? NSNumber)?.doubleValue ?? 0))
+            }
+        }
+
         guard !nodes.isEmpty, !roots.isEmpty else { return nil }
-        return DocumentGraph(nodes: nodes, roots: roots)
+        return DocumentGraph(nodes: nodes, roots: roots, materials: materials)
     }
 
     // MARK: feature tree
@@ -365,6 +389,28 @@ enum DocEdit {
     /// Current op dict for a node (for populating the inspector's editors).
     static func op(_ json: [String: Any], nodeId: Int) -> [String: Any]? {
         (json["nodes"] as? [String: Any])?[String(nodeId)].flatMap { $0 as? [String: Any] }?["op"] as? [String: Any]
+    }
+
+    /// Assign a material to the `partIndex`-th visible root, and ensure the
+    /// document carries a definition for the key (from the preset table) so it
+    /// renders + survives save/reload.
+    static func setRootMaterial(_ json: inout [String: Any], partIndex: Int, key: String) {
+        guard var roots = json["roots"] as? [[String: Any]] else { return }
+        var vis = 0
+        for (i, r) in roots.enumerated() where (r["visible"] as? Bool) ?? true {
+            if vis == partIndex { roots[i]["material"] = key; json["roots"] = roots; break }
+            vis += 1
+        }
+        var mats = json["materials"] as? [String: Any] ?? [:]
+        if mats[key] == nil, let p = MaterialPreset.byKey(key) {
+            mats[key] = ["name": key,
+                         "color": [p.color.0, p.color.1, p.color.2],
+                         "metallic": Double(p.metallic),
+                         "roughness": Double(p.roughness),
+                         "transmission": Double(p.transmission),
+                         "density": 1000.0, "friction": 0.5]
+            json["materials"] = mats
+        }
     }
 
     static func setName(_ json: inout [String: Any], nodeId: Int, name: String) {

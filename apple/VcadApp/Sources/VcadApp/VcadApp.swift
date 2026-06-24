@@ -26,6 +26,10 @@ struct VcadApp: App {
             MainActor.assumeIsolated { sketchSmoke(path: path) }
             exit(0)
         }
+        if let path = ProcessInfo.processInfo.environment["VCAD_MAT_SMOKE"] {
+            MainActor.assumeIsolated { matSmoke(path: path) }
+            exit(0)
+        }
     }
 
     var body: some Scene {
@@ -91,6 +95,31 @@ private func dumpFeatureTree(path: String) {
 
 private func fmt3(_ v: SIMD3<Float>) -> String {
     String(format: "%.1f×%.1f×%.1f", abs(v.x), abs(v.y), abs(v.z))
+}
+
+/// Material assignment + persistence: set part 0 to copper, verify the resolved
+/// color, save, reload, and confirm the assignment + definition round-trip.
+@MainActor private func matSmoke(path: String) {
+    func emit(_ s: String) { FileHandle.standardError.write(Data((s + "\n").utf8)) }
+    let m = EditorModel()
+    m.source = .document(path: path, label: "mat")
+    guard m.usesDocumentTree else { emit("[VCAD_MAT] load failed"); return }
+    let before = m.resolvedMaterial(forPart: 0).color
+    emit("[VCAD_MAT] part0 material '\(m.materialName(forPart: 0) ?? "—")' color \(rgb(before))")
+    m.setPartMaterial(0, "copper")
+    let after = m.resolvedMaterial(forPart: 0).color
+    emit("[VCAD_MAT] → copper: key '\(m.materialName(forPart: 0) ?? "—")' color \(rgb(after))")
+    let out = URL(fileURLWithPath: "/tmp/vcad_mat.vcad")
+    m.saveDocumentAs(out)
+    if let g = DocumentGraph.load(path: out.path) {
+        let hasDef = g.materials["copper"] != nil
+        emit("[VCAD_MAT] reloaded: part0 key '\(g.visibleRoots.first?.material ?? "—")' · copper def present \(hasDef)")
+    } else { emit("[VCAD_MAT] reload failed") }
+}
+
+private func rgb(_ c: NSColor) -> String {
+    let s = c.usingColorSpace(.sRGB) ?? c
+    return String(format: "(%.2f, %.2f, %.2f)", s.redComponent, s.greenComponent, s.blueComponent)
 }
 
 /// Sketch → extrude authoring: draw a 40×40 square on XY, extrude 12mm, verify

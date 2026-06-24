@@ -601,9 +601,7 @@ struct InspectorView: View {
                 if let node = model.selectedFeatureNode {
                     section(node.name) {
                         row("Operation", DocumentGraph.label(node.opType))
-                        if let pi = node.partIndex, let mat = model.materialName(forPart: pi) {
-                            row("Material", mat.capitalized)
-                        }
+                        if let pi = node.partIndex { materialPicker(pi) }
                         if let pi = node.partIndex, !model.isPartVisible(pi) {
                             Label("Hidden", systemImage: "eye.slash")
                                 .font(.system(size: 12)).foregroundStyle(.secondary)
@@ -673,6 +671,39 @@ struct InspectorView: View {
             Text(key).font(.system(size: 12))
             Spacer()
             Text(value).font(.system(size: 12).monospacedDigit()).foregroundStyle(.secondary)
+        }
+    }
+
+    /// Material assignment for a part — a swatch + grouped preset menu.
+    private func materialPicker(_ pi: Int) -> some View {
+        let current = model.materialName(forPart: pi) ?? "default"
+        let resolved = model.resolvedMaterial(forPart: pi)
+        return HStack {
+            Text("Material").font(.system(size: 12))
+            Spacer()
+            Menu {
+                ForEach(MaterialPreset.grouped, id: \.category) { group in
+                    Section(group.category.capitalized) {
+                        ForEach(group.items) { p in
+                            Button { model.setPartMaterial(pi, p.key) } label: {
+                                if p.key == current { Label(p.name, systemImage: "checkmark") }
+                                else { Text(p.name) }
+                            }
+                        }
+                    }
+                }
+            } label: {
+                HStack(spacing: 6) {
+                    Circle().fill(Color(nsColor: resolved.color)).frame(width: 11, height: 11)
+                        .overlay(Circle().strokeBorder(.white.opacity(0.25), lineWidth: 0.5))
+                    Text(MaterialPreset.byKey(current)?.name ?? current.capitalized)
+                        .font(.system(size: 12))
+                    Image(systemName: "chevron.up.chevron.down").font(.system(size: 8)).opacity(0.5)
+                }
+                .foregroundStyle(.secondary)
+            }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
         }
     }
 
@@ -1193,7 +1224,9 @@ struct ViewportView: View {
             // green FR4 board, brushed-metal bracket) so each domain reads as what
             // it is; everything else falls back to the index palette.
             let mat: PhysicallyBasedMaterial =
-                model.source.isGripper ? gripperMaterial(i) : material(item.color)
+                model.source.isGripper ? gripperMaterial(i)
+                : model.usesDocumentTree ? pbrMaterial(model.resolvedMaterial(forPart: i))
+                : material(item.color)
             let entity = ModelEntity(mesh: item.mesh, materials: [mat])
             entity.name = "part\(i)"
             centering.addChild(entity)
@@ -1246,6 +1279,20 @@ struct ViewportView: View {
         m.baseColor = .init(tint: color)
         m.roughness = 0.34
         m.metallic = 0.55
+        return m
+    }
+
+    /// Build a PBR material from a resolved document material (color + metallic +
+    /// roughness, with transmission rendered as translucency).
+    private func pbrMaterial(_ r: ResolvedMaterial) -> PhysicallyBasedMaterial {
+        var m = PhysicallyBasedMaterial()
+        m.baseColor = .init(tint: r.color)
+        m.roughness = .init(floatLiteral: r.roughness)
+        m.metallic = .init(floatLiteral: r.metallic)
+        if r.transmission > 0.02 {
+            m.blending = .transparent(opacity: .init(floatLiteral: max(0.14, 1 - r.transmission * 0.85)))
+            m.faceCulling = .none
+        }
         return m
     }
 
@@ -1451,7 +1498,7 @@ struct ViewportView: View {
         let hov = model.hoveredPartIndex
         for i in 0..<model.partCount {
             guard let e = centering.findEntity(named: "part\(i)") as? ModelEntity else { continue }
-            var m = material(model.documentBaseColor(i))
+            var m = pbrMaterial(model.resolvedMaterial(forPart: i))
             if sel.contains(i) {
                 m.emissiveColor = .init(color: EditorModel.brandPink)
                 m.emissiveIntensity = 0.5
