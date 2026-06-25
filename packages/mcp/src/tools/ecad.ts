@@ -1603,8 +1603,15 @@ export async function placeComponents(args: Record<string, unknown>) {
   const applyNet = (comp: SchematicComponent, pad: Pad): Pad => {
     const pin = comp.pins.find((p) => p.number === pad.number);
     const netId = pin ? netIdForPin(comp, pin) : undefined;
+    // Normalize copper/mask/paste layers by mounting tech, but honor a
+    // deliberate no-paste choice on SMD pads (bare-copper spring-pin / test
+    // pads like Tag-Connect) so they don't get a solder-stencil aperture.
     const layers: PcbLayer[] =
-      pad.padType === "THT" ? ["FCu", "BCu", "FMask", "BMask"] : ["FCu", "FPaste", "FMask"];
+      pad.padType === "THT"
+        ? ["FCu", "BCu", "FMask", "BMask"]
+        : (pad.layers?.includes("FPaste") ?? true)
+          ? ["FCu", "FPaste", "FMask"]
+          : ["FCu", "FMask"];
     return { ...pad, net: netId, layers };
   };
 
