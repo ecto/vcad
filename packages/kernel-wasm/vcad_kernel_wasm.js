@@ -3662,6 +3662,24 @@ export function ecadGetSymbol(id) {
 }
 
 /**
+ * JSON manifest of the curated jellybean catalog: per part its name,
+ * aliases, description, packages, and pin count.
+ * @returns {string}
+ */
+export function ecadJellybeanManifest() {
+    let deferred1_0;
+    let deferred1_1;
+    try {
+        const ret = wasm.ecadJellybeanManifest();
+        deferred1_0 = ret[0];
+        deferred1_1 = ret[1];
+        return getStringFromWasm0(ret[0], ret[1]);
+    } finally {
+        wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+    }
+}
+
+/**
  * Compute Z offset for a PCB layer.
  *
  * # Arguments
@@ -3792,6 +3810,29 @@ export function ecadResolvePart(query) {
     const ptr0 = passStringToWasm0(query, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len0 = WASM_VECTOR_LEN;
     const ret = wasm.ecadResolvePart(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+
+/**
+ * Resolve a named jellybean part (e.g. `"NE555"`) plus an optional
+ * footprint into its pin definitions — number, name, electrical type, and
+ * an auto-generated schematic-symbol position — along with the part's
+ * aliases-resolved name, datasheet, and application notes. Returns `null`
+ * when the name is not in the curated database. When `footprint` is
+ * omitted the part's primary package is used. Fully offline.
+ * @param {string} name
+ * @param {string | null} [footprint]
+ * @returns {any}
+ */
+export function ecadResolvePartDef(name, footprint) {
+    const ptr0 = passStringToWasm0(name, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    var ptr1 = isLikeNone(footprint) ? 0 : passStringToWasm0(footprint, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    var len1 = WASM_VECTOR_LEN;
+    const ret = wasm.ecadResolvePartDef(ptr0, len0, ptr1, len1);
     if (ret[2]) {
         throw takeFromExternrefTable0(ret[1]);
     }
@@ -7552,12 +7593,12 @@ function __wbg_get_imports() {
             arg0.writeTexture(arg1, arg2, arg3, arg4);
         },
         __wbindgen_cast_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 2358, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 2359, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 2367, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 2368, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h30743bca3150d93c, wasm_bindgen__convert__closures_____invoke__hcf7d3eaee8800b37);
             return ret;
         },
         __wbindgen_cast_0000000000000002: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 3142, function: Function { arguments: [Externref], shim_idx: 3143, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 3151, function: Function { arguments: [Externref], shim_idx: 3152, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__hfdadf281ff0f1c56, wasm_bindgen__convert__closures_____invoke__h9bdf540eb7e61590);
             return ret;
         },

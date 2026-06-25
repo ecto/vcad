@@ -26,6 +26,13 @@ export type StepResult = PhysicsStepResult;
 /** In-memory storage for active simulations */
 const simulations = new Map<string, PhysicsEnv>();
 
+/** Look up an active env by id. Returns null if not found.
+ *  Exposed for sibling tools (e.g. record_simulation) that need to drive
+ *  an already-created env without re-creating it. */
+export function getSimulation(envId: string): PhysicsEnv | null {
+  return simulations.get(envId) ?? null;
+}
+
 /** In-memory storage for batch simulation groups */
 interface BatchGroup {
   envs: PhysicsEnv[];

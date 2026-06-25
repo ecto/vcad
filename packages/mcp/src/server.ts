@@ -17,6 +17,7 @@ import type { Document } from "@vcad/ir";
 import { exportCad, exportCadSchema } from "./tools/export.js";
 import { inspectCad, inspectCadSchema } from "./tools/inspect.js";
 import { renderView, renderViewSchema, renderPcb, renderPcbSchema } from "./tools/render.js";
+import { recordSimulation, recordSimulationSchema } from "./tools/record.js";
 import {
   verifyPart,
   verifyPartSchema,
@@ -461,6 +462,7 @@ const TOOL_PACKS: Record<string, readonly string[]> = {
     "gym_reset",
     "gym_observe",
     "gym_close",
+    "record_simulation",
     "batch_create_envs",
     "batch_step",
     "batch_reset",
@@ -1038,6 +1040,17 @@ export async function createServer(
         name: "gym_close",
         description: "Close and clean up a simulation environment.",
         inputSchema: gymCloseSchema,
+      },
+      {
+        name: "record_simulation",
+        description:
+          "Step an open physics env N times and return an animated GIF of the run — your eyes on the simulation. " +
+          "Drives the env created via create_robot_env, mutates the paired session document's joint states each step, " +
+          "and re-renders through the same kernel SVG pipeline as render_view. " +
+          "Defaults to passive playback (zero torque) under gravity; pass `action` (constant) or `actions[steps][action_dim]` (per-step) for active control. " +
+          "Hard caps: steps ≤ 600, width_px ≤ 1024. " +
+          "Requires the optional `@resvg/resvg-js` rasterizer and `gifenc` encoder; degrades to a JSON joint-trajectory dump when either is missing.",
+        inputSchema: recordSimulationSchema,
       },
       {
         name: "batch_create_envs",
@@ -1710,6 +1723,10 @@ export async function createServer(
 
         case "gym_close":
           result = gymClose(args);
+          break;
+
+        case "record_simulation":
+          result = (await recordSimulation(args)) as unknown as typeof result;
           break;
 
         case "batch_create_envs":

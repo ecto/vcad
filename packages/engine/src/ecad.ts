@@ -822,6 +822,67 @@ export async function partsManifest(): Promise<string | null> {
   }
 }
 
+/** A resolved jellybean pin: its definition plus an auto-generated symbol position. */
+export interface PartDefPin {
+  number: string;
+  name: string;
+  /** PinType variant name (Input, Output, PowerInput, OpenCollector, ...). */
+  pin_type: string;
+  x: number;
+  y: number;
+}
+
+/**
+ * A resolved jellybean part: the universal pin definitions for the requested
+ * footprint plus the metadata needed to place and document it. Returned by the
+ * curated parts database (`vcad_ecad_parts::jellybean`).
+ */
+export interface ResolvedPartDef {
+  name: string;
+  matched_alias: string | null;
+  description: string | null;
+  footprint: string;
+  footprint_known: boolean;
+  footprints: string[];
+  pins: PartDefPin[];
+  datasheet_url: string | null;
+  app_notes: string[];
+  warnings: string[];
+}
+
+/**
+ * Resolve a named jellybean part (e.g. `"NE555"`) and optional footprint into
+ * its pin definitions — number, name, electrical type, and symbol position.
+ * Returns null when the name is not in the curated database, or the ECAD WASM
+ * is unavailable.
+ */
+export async function resolvePartDef(
+  name: string,
+  footprint?: string,
+): Promise<ResolvedPartDef | null> {
+  const wasm = await loadEcadWasm();
+  if (!wasm || typeof wasm.ecadResolvePartDef !== "function") return null;
+  try {
+    return (
+      (wasm.ecadResolvePartDef(name, footprint) as ResolvedPartDef | null) ?? null
+    );
+  } catch (e) {
+    console.warn("[ECAD] resolvePartDef failed:", e);
+    return null;
+  }
+}
+
+/** JSON manifest of the curated jellybean catalog. `null` if unavailable. */
+export async function jellybeanManifest(): Promise<string | null> {
+  const wasm = await loadEcadWasm();
+  if (!wasm || typeof wasm.ecadJellybeanManifest !== "function") return null;
+  try {
+    return wasm.ecadJellybeanManifest() as string;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Propose spec-compatible alternatives for the part a query resolves to, each
  * classified by footprint compatibility (Identical / NeedsReroute / …).
