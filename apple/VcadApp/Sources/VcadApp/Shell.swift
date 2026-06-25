@@ -1339,32 +1339,67 @@ struct ViewportView: View {
 
     /// A dark studio environment drawn procedurally (no bundled HDR), used for
     /// both the skybox backdrop and image-based reflections on the geometry.
+    /// A soft ceiling, a horizon band, and three softbox highlights at varied
+    /// azimuths give metals real reflection structure as the camera orbits.
     private func makeStudioEnvironment() -> EnvironmentResource? {
-        let w = 1024, h = 512
+        let w = 2048, h = 1024
         let cs = CGColorSpaceCreateDeviceRGB()
         guard let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8,
                                   bytesPerRow: 0, space: cs,
                                   bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue) else { return nil }
-        // Vertical gradient: a faintly warm zenith down to a near-black floor.
+        let fw = CGFloat(w), fh = CGFloat(h)
+        // Base: soft ceiling (top) → horizon → near-black floor (bottom).
         let base = CGGradient(colorsSpace: cs, colors: [
-            CGColor(red: 0.12, green: 0.13, blue: 0.16, alpha: 1),
-            CGColor(red: 0.06, green: 0.07, blue: 0.09, alpha: 1),
-            CGColor(red: 0.015, green: 0.015, blue: 0.02, alpha: 1),
-        ] as CFArray, locations: [0, 0.55, 1])!
-        ctx.drawLinearGradient(base, start: CGPoint(x: 0, y: CGFloat(h)),
-                               end: CGPoint(x: 0, y: 0), options: [])
-        // Soft broad key glow → a gentle specular sweep across metal.
+            CGColor(red: 0.20, green: 0.21, blue: 0.25, alpha: 1),   // zenith
+            CGColor(red: 0.13, green: 0.14, blue: 0.17, alpha: 1),
+            CGColor(red: 0.07, green: 0.075, blue: 0.09, alpha: 1),  // horizon
+            CGColor(red: 0.025, green: 0.025, blue: 0.032, alpha: 1),
+            CGColor(red: 0.008, green: 0.008, blue: 0.011, alpha: 1), // nadir
+        ] as CFArray, locations: [0, 0.34, 0.52, 0.74, 1])!
+        ctx.drawLinearGradient(base, start: CGPoint(x: 0, y: fh), end: CGPoint(x: 0, y: 0), options: [])
+
         ctx.setBlendMode(.plusLighter)
-        let glow = CGGradient(colorsSpace: cs, colors: [
-            CGColor(red: 0.42, green: 0.48, blue: 0.58, alpha: 1),
-            CGColor(red: 0.42, green: 0.48, blue: 0.58, alpha: 0),
-        ] as CFArray, locations: [0, 1])!
-        ctx.drawRadialGradient(glow,
-            startCenter: CGPoint(x: CGFloat(w) * 0.34, y: CGFloat(h) * 0.74), startRadius: 0,
-            endCenter: CGPoint(x: CGFloat(w) * 0.34, y: CGFloat(h) * 0.74), endRadius: CGFloat(h) * 0.55,
-            options: [])
+        // A faint horizon band so reflective edges catch a bright line.
+        let horizon = CGGradient(colorsSpace: cs, colors: [
+            CGColor(red: 0.16, green: 0.18, blue: 0.22, alpha: 0),
+            CGColor(red: 0.16, green: 0.18, blue: 0.22, alpha: 0.7),
+            CGColor(red: 0.16, green: 0.18, blue: 0.22, alpha: 0),
+        ] as CFArray, locations: [0, 0.5, 1])!
+        ctx.drawLinearGradient(horizon,
+            start: CGPoint(x: 0, y: fh * 0.40), end: CGPoint(x: 0, y: fh * 0.56), options: [])
+
+        // Softbox highlights — bright soft blobs the metal reflects.
+        func softbox(_ cx: CGFloat, _ cy: CGFloat, _ rad: CGFloat, _ c: CGColor) {
+            let g = CGGradient(colorsSpace: cs, colors: [c, c.copy(alpha: 0)!] as CFArray, locations: [0, 1])!
+            ctx.drawRadialGradient(g, startCenter: CGPoint(x: cx, y: cy), startRadius: 0,
+                                   endCenter: CGPoint(x: cx, y: cy), endRadius: rad, options: [])
+        }
+        softbox(fw * 0.20, fh * 0.80, fh * 0.42, CGColor(red: 0.52, green: 0.58, blue: 0.68, alpha: 1)) // cool key
+        softbox(fw * 0.56, fh * 0.86, fh * 0.30, CGColor(red: 0.55, green: 0.50, blue: 0.42, alpha: 1)) // warm
+        softbox(fw * 0.83, fh * 0.74, fh * 0.32, CGColor(red: 0.38, green: 0.44, blue: 0.54, alpha: 1)) // cool fill
         guard let img = ctx.makeImage() else { return nil }
         return try? EnvironmentResource(equirectangular: img)
+    }
+
+    /// A soft radial alpha disc (dark center → clear edge) for the pooled contact
+    /// shadow. Resolution-independent, so it's built once and stretched per part.
+    private static let contactTexture: TextureResource? = makeContactTexture()
+    private static func makeContactTexture() -> TextureResource? {
+        let s = 256
+        let cs = CGColorSpaceCreateDeviceRGB()
+        guard let ctx = CGContext(data: nil, width: s, height: s, bitsPerComponent: 8,
+                                  bytesPerRow: 0, space: cs,
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        let g = CGGradient(colorsSpace: cs, colors: [
+            CGColor(red: 0, green: 0, blue: 0, alpha: 0.5),
+            CGColor(red: 0, green: 0, blue: 0, alpha: 0.32),
+            CGColor(red: 0, green: 0, blue: 0, alpha: 0.0),
+        ] as CFArray, locations: [0, 0.45, 1])!
+        let c = CGFloat(s) / 2
+        ctx.drawRadialGradient(g, startCenter: CGPoint(x: c, y: c), startRadius: 0,
+                               endCenter: CGPoint(x: c, y: c), endRadius: c, options: [])
+        guard let img = ctx.makeImage() else { return nil }
+        return try? TextureResource(image: img, options: .init(semantic: .color))
     }
 
     private func rebuildGeometry(_ content: RealityViewCameraContent) {
@@ -1421,17 +1456,31 @@ struct ViewportView: View {
             geomRoot.move(to: grown, relativeTo: geomRoot.parent, duration: 0.3, timingFunction: .easeOut)
         }
 
-        // Grounding floor that catches the soft contact shadow.
-        content.entities.filter { $0.name == "floor" }.forEach { $0.removeFromParent() }
+        // Grounding floor + pooled contact shadow under the part.
+        content.entities.filter { $0.name == "floor" || $0.name == "contactShadow" }
+            .forEach { $0.removeFromParent() }
         let floorY = -(model.sizeMM.z * 0.5 * sceneScale) - 0.004
         var floorMat = PhysicallyBasedMaterial()
-        floorMat.baseColor = .init(tint: NSColor(white: 0.03, alpha: 1.0))
-        floorMat.roughness = 0.55
+        floorMat.baseColor = .init(tint: NSColor(white: 0.025, alpha: 1.0))
+        floorMat.roughness = 0.42            // a touch glossy → catches the IBL sheen
         floorMat.metallic = 0.0
         let floor = ModelEntity(mesh: .generatePlane(width: 8, depth: 8), materials: [floorMat])
         floor.name = "floor"
         floor.position = [0, floorY, 0]
         content.add(floor)
+
+        // Soft AO blob right under the part (footprint: kernel XY → world XZ).
+        if let tex = Self.contactTexture {
+            var sm = UnlitMaterial()
+            sm.color = .init(tint: .white, texture: .init(tex))
+            sm.blending = .transparent(opacity: .init(floatLiteral: 1.0))
+            let fwd = max(0.05, model.sizeMM.x * sceneScale * 1.8)
+            let dpt = max(0.05, model.sizeMM.y * sceneScale * 1.8)
+            let blob = ModelEntity(mesh: .generatePlane(width: fwd, depth: dpt), materials: [sm])
+            blob.name = "contactShadow"
+            blob.position = [0, floorY + 0.0015, 0]
+            content.add(blob)
+        }
     }
 
     private func material(_ color: NSColor) -> PhysicallyBasedMaterial {
