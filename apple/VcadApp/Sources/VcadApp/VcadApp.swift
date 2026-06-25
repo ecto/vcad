@@ -141,6 +141,20 @@ private func rgb(_ c: NSColor) -> String {
     _ = m.reevalDocumentMeshes()
     let c1 = m.gizmoCenterKernel() ?? .zero
     emit("[VCAD_GIZMO] +50 X · part0 center \(fmt3(c1)) (Δx \(String(format: "%.1f", c1.x - c0.x)))")
+
+    // Rotate-about-center: 90° about Z should swap the footprint + hold the center.
+    let r = EditorModel()
+    r.source = .document(path: path, label: "rot")
+    _ = r.reevalDocumentMeshes()
+    let rc0 = r.gizmoCenterKernel() ?? .zero
+    let before = r.sizeMM
+    guard var rj = r.documentJSON, let rot = DocEdit.wrapRotate(&rj, partIndex: 0,
+                                                                Double(rc0.x), Double(rc0.y), Double(rc0.z)) else { return }
+    DocEdit.setRotateAngle(&rj, rotNodeId: rot, axisIndex: 2, degrees: 90)
+    r.documentJSON = rj
+    _ = r.reevalDocumentMeshes()
+    let rc1 = r.gizmoCenterKernel() ?? .zero
+    emit("[VCAD_GIZMO] rotate 90°Z · bbox \(fmt3(before)) → \(fmt3(r.sizeMM)) · center \(fmt3(rc0)) → \(fmt3(rc1))")
 }
 
 /// Sketch → extrude authoring: draw a 40×40 square on XY, extrude 12mm, verify

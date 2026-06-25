@@ -1760,6 +1760,39 @@ struct ViewportView: View {
             root.addChild(hit)
         }
 
+        // Rotate rings — a circle of grabbable segments around each axis.
+        let ringR = model.gizmoRingRadius
+        let tube = max(0.25, len * 0.013)
+        let segN = 40
+        let rings: [(name: String, axis: SIMD3<Float>, color: NSColor)] = [
+            ("rotX", SIMD3(1, 0, 0), Self.gizmoX),
+            ("rotY", SIMD3(0, 1, 0), Self.gizmoY),
+            ("rotZ", SIMD3(0, 0, 1), Self.gizmoZ),
+        ]
+        for r in rings {
+            let on = hov == r.name
+            let mat = UnlitMaterial(color: (on ? brighten(r.color) : r.color).withAlphaComponent(on ? 1 : 0.85))
+            let (u1, u2) = EditorModel.ringBasis(r.axis)
+            let k: Float = on ? 1.5 : 1.0
+            var prev = c + u1 * ringR
+            for i in 1...segN {
+                let ang = 2 * Float.pi * Float(i) / Float(segN)
+                let pt = c + (u1 * cos(ang) + u2 * sin(ang)) * ringR
+                let mid = (prev + pt) / 2
+                let seg = pt - prev
+                let l = simd_length(seg)
+                let e = ModelEntity(mesh: .generateBox(size: SIMD3(l * 1.06, tube * 2 * k, tube * 2 * k)),
+                                    materials: [mat])
+                e.name = r.name
+                e.position = mid
+                e.orientation = simd_quatf(from: SIMD3(1, 0, 0), to: seg / l)
+                e.components.set(CollisionComponent(shapes: [.generateBox(size: SIMD3(l, tube * 6, tube * 6))]))
+                e.components.set(InputTargetComponent())
+                root.addChild(e)
+                prev = pt
+            }
+        }
+
         let hub = ModelEntity(mesh: .generateSphere(radius: shaftR * 2.4),
                               materials: [UnlitMaterial(color: NSColor(white: 0.95, alpha: 1))])
         hub.position = c

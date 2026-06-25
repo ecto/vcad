@@ -708,6 +708,13 @@ final class EditorModel {
     @ObservationIgnored private var gizmoStartCenter: SIMD3<Float> = .zero
     @ObservationIgnored private var gizmoT0: Float = 0
     @ObservationIgnored private var gizmoStartPlane: SIMD3<Float> = .zero
+    // Rotate-ring drag.
+    @ObservationIgnored private var gizmoRotNode: Int?
+    @ObservationIgnored private var gizmoRotAxisIndex = 0
+    @ObservationIgnored private var gizmoRotU1: SIMD3<Float> = .zero
+    @ObservationIgnored private var gizmoRotU2: SIMD3<Float> = .zero
+    @ObservationIgnored private var gizmoRotPrev: Float = 0
+    @ObservationIgnored private var gizmoRotAccum: Float = 0
     /// Live displacement of the part during a drag, so the viewport can slide the
     /// gizmo with it instead of leaving it at the grab point.
     @ObservationIgnored var gizmoLiveOffset: SIMD3<Float> = .zero
@@ -715,6 +722,7 @@ final class EditorModel {
     enum GizmoHandle {
         case axis(SIMD3<Float>)
         case plane(SIMD3<Float>, SIMD3<Float>)   // two in-plane unit axes
+        case rotate(SIMD3<Float>)                // spin axis
     }
     func gizmoHandle(for name: String) -> GizmoHandle? {
         switch name {
@@ -724,8 +732,21 @@ final class EditorModel {
         case "planeXY": return .plane(SIMD3(1, 0, 0), SIMD3(0, 1, 0))
         case "planeYZ": return .plane(SIMD3(0, 1, 0), SIMD3(0, 0, 1))
         case "planeXZ": return .plane(SIMD3(1, 0, 0), SIMD3(0, 0, 1))
+        case "rotX": return .rotate(SIMD3(1, 0, 0))
+        case "rotY": return .rotate(SIMD3(0, 1, 0))
+        case "rotZ": return .rotate(SIMD3(0, 0, 1))
         default: return nil
         }
+    }
+    static let gizmoRotDefs: [(name: String, axis: SIMD3<Float>)] = [
+        ("rotX", SIMD3(1, 0, 0)), ("rotY", SIMD3(0, 1, 0)), ("rotZ", SIMD3(0, 0, 1)),
+    ]
+    var gizmoRingRadius: Float { gizmoArmLength() * 0.82 }
+    /// Two orthonormal in-plane reference axes for a rotation axis.
+    static func ringBasis(_ axis: SIMD3<Float>) -> (SIMD3<Float>, SIMD3<Float>) {
+        if axis.x != 0 { return (SIMD3(0, 1, 0), SIMD3(0, 0, 1)) }
+        if axis.y != 0 { return (SIMD3(0, 0, 1), SIMD3(1, 0, 0)) }
+        return (SIMD3(1, 0, 0), SIMD3(0, 1, 0))
     }
     static let gizmoAxisDefs: [(name: String, dir: SIMD3<Float>)] = [
         ("gizmoX", SIMD3(1, 0, 0)), ("gizmoY", SIMD3(0, 1, 0)), ("gizmoZ", SIMD3(0, 0, 1)),
@@ -770,24 +791,49 @@ final class EditorModel {
         case .plane(let a, let b):
             let n = simd_normalize(simd_cross(a, b))
             gizmoStartPlane = Self.rayPlane(o: ray.o, d: ray.d, point: c, normal: n) ?? c
+        case .rotate(let ax):
+            let (u1, u2) = Self.ringBasis(ax)
+            gizmoRotU1 = u1; gizmoRotU2 = u2
+            gizmoRotAxisIndex = ax.x != 0 ? 0 : (ax.y != 0 ? 1 : 2)
+            gizmoRotAccum = 0
+            gizmoRotPrev = Self.ringAngle(o: ray.o, d: ray.d, center: c, axis: ax, u1: u1, u2: u2) ?? 0
+            var j = json
+            gizmoRotNode = DocEdit.wrapRotate(&j, partIndex: pi, Double(c.x), Double(c.y), Double(c.z))
+            documentJSON = j
+            if let g = DocumentGraph.parse(j) { documentGraph = g; featureNodes = g.featureRoots() }
         }
     }
     func gizmoDragTo(ray: (o: SIMD3<Float>, d: SIMD3<Float>)) {
         guard let pi = gizmoPart, var json = documentJSON, let h = gizmoActive else { return }
-        var off = SIMD3<Float>.zero
         switch h {
-        case .axis(let ax):
-            off = ax * (Self.axisParam(rayO: ray.o, rayD: ray.d, center: gizmoStartCenter, axis: ax) - gizmoT0)
-        case .plane(let a, let b):
-            let n = simd_normalize(simd_cross(a, b))
-            guard let p = Self.rayPlane(o: ray.o, d: ray.d, point: gizmoStartCenter, normal: n) else { return }
-            off = p - gizmoStartPlane
+        case .rotate(let ax):
+            guard let rn = gizmoRotNode,
+                  let a = Self.ringAngle(o: ray.o, d: ray.d, center: gizmoStartCenter,
+                                         axis: ax, u1: gizmoRotU1, u2: gizmoRotU2) else { return }
+            var d = a - gizmoRotPrev
+            if d > .pi { d -= 2 * .pi } else if d < -.pi { d += 2 * .pi }   // unwrap
+            gizmoRotAccum += d
+            gizmoRotPrev = a
+            DocEdit.setRotateAngle(&json, rotNodeId: rn, axisIndex: gizmoRotAxisIndex,
+                                   degrees: Double(gizmoRotAccum * 180 / .pi))
+        default:
+            var off = SIMD3<Float>.zero
+            switch h {
+            case .axis(let ax):
+                off = ax * (Self.axisParam(rayO: ray.o, rayD: ray.d, center: gizmoStartCenter, axis: ax) - gizmoT0)
+            case .plane(let a, let b):
+                let n = simd_normalize(simd_cross(a, b))
+                guard let p = Self.rayPlane(o: ray.o, d: ray.d, point: gizmoStartCenter, normal: n) else { return }
+                off = p - gizmoStartPlane
+            case .rotate:
+                break
+            }
+            gizmoLiveOffset = off
+            DocEdit.setRootTranslate(&json, partIndex: pi,
+                                     gizmoBase.0 + Double(off.x),
+                                     gizmoBase.1 + Double(off.y),
+                                     gizmoBase.2 + Double(off.z))
         }
-        gizmoLiveOffset = off
-        DocEdit.setRootTranslate(&json, partIndex: pi,
-                                 gizmoBase.0 + Double(off.x),
-                                 gizmoBase.1 + Double(off.y),
-                                 gizmoBase.2 + Double(off.z))
         documentJSON = json
         documentDirty = true
         if let g = DocumentGraph.parse(json) { documentGraph = g; featureNodes = g.featureRoots() }
@@ -796,6 +842,7 @@ final class EditorModel {
     func endGizmoDrag() {
         gizmoPart = nil
         gizmoActive = nil
+        gizmoRotNode = nil
         gizmoLiveOffset = .zero
         gizmoDirty = true
     }
@@ -817,6 +864,17 @@ final class EditorModel {
         for p in Self.gizmoPlaneDefs {
             let pc = c + (p.a + p.b) * off
             consider(p.name, pc - SIMD3(repeating: hs), pc + SIMD3(repeating: hs))
+        }
+        // Rotate rings: ray ∩ ring plane, then distance ≈ ring radius.
+        let ringR = gizmoRingRadius, ringPad = max(0.8, len * 0.06)
+        for rd in Self.gizmoRotDefs {
+            let denom = simd_dot(d, rd.axis)
+            if abs(denom) < 1e-6 { continue }
+            let t = simd_dot(c - o, rd.axis) / denom
+            if t <= 0 { continue }
+            if abs(simd_length((o + d * t) - c) - ringR) < ringPad, best == nil || t < best!.t {
+                best = (rd.name, t)
+            }
         }
         return best?.name
     }
@@ -844,6 +902,15 @@ final class EditorModel {
         let denom = simd_dot(d, normal)
         if abs(denom) < 1e-6 { return nil }
         return o + d * (simd_dot(point - o, normal) / denom)
+    }
+
+    /// Angle of the cursor around `axis` in the ring plane (atan2 in the u1/u2
+    /// basis) — drives the rotate-ring drag.
+    private static func ringAngle(o: SIMD3<Float>, d: SIMD3<Float>, center: SIMD3<Float>,
+                                  axis: SIMD3<Float>, u1: SIMD3<Float>, u2: SIMD3<Float>) -> Float? {
+        guard let p = rayPlane(o: o, d: d, point: center, normal: axis) else { return nil }
+        let v = p - center
+        return atan2(simd_dot(v, u2), simd_dot(v, u1))
     }
 
     // MARK: save

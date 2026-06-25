@@ -426,6 +426,43 @@ enum DocEdit {
         }
     }
 
+    /// Wrap the part's root in a rotate-about-center sandwich
+    /// (Translate(C) · Rotate(0) · Translate(−C)) so a ring drag spins it in
+    /// place, not around the world origin. Returns the Rotate node id to drive.
+    static func wrapRotate(_ json: inout [String: Any], partIndex: Int,
+                           _ cx: Double, _ cy: Double, _ cz: Double) -> Int? {
+        guard let childId = rootNodeId(json, partIndex: partIndex),
+              var nodes = json["nodes"] as? [String: Any] else { return nil }
+        let base = nodes.values.compactMap { ($0 as? [String: Any])?["id"] as? NSNumber }
+            .map(\.intValue).max() ?? 0
+        let inId = base + 1, rotId = base + 2, outId = base + 3
+        nodes[String(inId)] = ["id": inId,
+                               "op": ["type": "Translate", "child": childId,
+                                      "offset": ["x": -cx, "y": -cy, "z": -cz]]]
+        nodes[String(rotId)] = ["id": rotId, "name": "Rotate",
+                                "op": ["type": "Rotate", "child": inId,
+                                       "angles": ["x": 0.0, "y": 0.0, "z": 0.0]]]
+        nodes[String(outId)] = ["id": outId,
+                                "op": ["type": "Translate", "child": rotId,
+                                       "offset": ["x": cx, "y": cy, "z": cz]]]
+        json["nodes"] = nodes
+        setRootNode(&json, partIndex: partIndex, nodeId: outId)
+        return rotId
+    }
+
+    /// Set one component (0=x,1=y,2=z, degrees) of a Rotate node's angles.
+    static func setRotateAngle(_ json: inout [String: Any], rotNodeId: Int, axisIndex: Int, degrees: Double) {
+        guard var nodes = json["nodes"] as? [String: Any],
+              var node = nodes[String(rotNodeId)] as? [String: Any],
+              var op = node["op"] as? [String: Any],
+              var ang = op["angles"] as? [String: Any] else { return }
+        ang[["x", "y", "z"][axisIndex]] = degrees
+        op["angles"] = ang
+        node["op"] = op
+        nodes[String(rotNodeId)] = node
+        json["nodes"] = nodes
+    }
+
     private static func rootNodeId(_ json: [String: Any], partIndex: Int) -> Int? {
         guard let roots = json["roots"] as? [[String: Any]] else { return nil }
         var vis = 0
