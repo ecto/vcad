@@ -561,8 +561,11 @@ export const placeComponentsSchema = {
       description:
         "Placement strategy: grid, force_directed, radial (default: grid). " +
         "force_directed pulls net-sharing parts together and pushes overlapping " +
-        "courtyards apart (size-aware) — prefer it for dense, multi-cluster " +
-        "boards (power stage + MCU + connectors) where routability matters. " +
+        "courtyards apart (size-aware), then legalizes any different-net pad " +
+        "overlap to clearance so it never bakes in a short — prefer it for " +
+        "dense, multi-cluster boards (power stage + MCU + connectors) where " +
+        "routability matters. If the board is too small to separate every " +
+        "cross-net pad it reports `placement_conflicts` and success:false. " +
         "radial places components evenly on a ring — natural for circular " +
         "boards like motor stators.",
     },
@@ -1315,6 +1318,114 @@ function forceDirectedRefine(
   }
 }
 
+/** A pad's copper, in component-local coordinates, for clearance legalization. */
+interface LocalPad {
+  x: number;
+  y: number;
+  /** Bounding-circle radius (over-approximates the copper, never misses an overlap). */
+  r: number;
+  net?: string;
+}
+
+/**
+ * Hard-separate components whose cross-net pads violate copper clearance.
+ *
+ * The force-directed pass balances net-attraction against courtyard repulsion,
+ * but that equilibrium can still settle with two components' pads — on
+ * *different* nets — overlapping, baking a short into the board before any
+ * routing (e.g. a VCC pad stacked on a GND pad). This pass mirrors the DRC
+ * pad-clearance rule (different-net pads must clear; same-net or unnetted pads
+ * may touch) and shoves the offending components apart along their
+ * center-to-center axis until every cross-net pad pair clears — or a pass cap
+ * is hit when the board is simply too tight. Each pad is modeled as its
+ * bounding circle (radius ≥ the real copper), so clearing the circles
+ * guarantees the true rectangular copper clears too.
+ *
+ * Returns the component pairs it could *not* separate, so the caller can refuse
+ * to report success on a board that still contains a short.
+ */
+function legalizeCrossNetClearance(
+  components: SchematicComponent[],
+  positions: Vec2[],
+  padLayout: LocalPad[][],
+  clearance: number,
+  bounds: { minX: number; minY: number; maxX: number; maxY: number },
+): Array<{ a: string; b: string; gap: number }> {
+  const n = positions.length;
+  const eps = 1e-3;
+  // Separate to a hair beyond clearance so the later 0.01mm position rounding
+  // (footprint build) can't nudge a just-cleared pair back under the limit.
+  const target = clearance + 0.05;
+
+  // Worst cross-net clearance deficit between components i and j at their
+  // current positions (>0 means a cross-net pad pair is closer than `goal`).
+  const deficit = (i: number, j: number, goal: number): number => {
+    let worst = 0;
+    for (const pa of padLayout[i]) {
+      if (!pa.net) continue;
+      for (const pb of padLayout[j]) {
+        if (!pb.net || pa.net === pb.net) continue;
+        const ax = positions[i].x + pa.x;
+        const ay = positions[i].y + pa.y;
+        const bx = positions[j].x + pb.x;
+        const by = positions[j].y + pb.y;
+        const gap = Math.hypot(ax - bx, ay - by) - pa.r - pb.r;
+        const d = goal - gap;
+        if (d > worst) worst = d;
+      }
+    }
+    return worst;
+  };
+
+  const maxPasses = 400;
+  for (let pass = 0; pass < maxPasses; pass++) {
+    let moved = false;
+    for (let i = 0; i < n; i++) {
+      for (let j = i + 1; j < n; j++) {
+        const d = deficit(i, j, target);
+        if (d <= eps) continue;
+        moved = true;
+        let dx = positions[j].x - positions[i].x;
+        let dy = positions[j].y - positions[i].y;
+        let len = Math.hypot(dx, dy);
+        if (len < 1e-6) {
+          // Coincident centers — pick a deterministic separation axis (no RNG,
+          // so placement stays reproducible) from the index pair.
+          const a = (((i + 1) * 73856093) ^ ((j + 1) * 19349663)) % 360;
+          dx = Math.cos((a * Math.PI) / 180);
+          dy = Math.sin((a * Math.PI) / 180);
+          len = 1;
+        }
+        const ux = dx / len;
+        const uy = dy / len;
+        const half = d / 2 + eps;
+        positions[i].x = Math.min(bounds.maxX, Math.max(bounds.minX, positions[i].x - ux * half));
+        positions[i].y = Math.min(bounds.maxY, Math.max(bounds.minY, positions[i].y - uy * half));
+        positions[j].x = Math.min(bounds.maxX, Math.max(bounds.minX, positions[j].x + ux * half));
+        positions[j].y = Math.min(bounds.maxY, Math.max(bounds.minY, positions[j].y + uy * half));
+      }
+    }
+    if (!moved) break;
+  }
+
+  // Report pairs that still breach the real clearance after the cap — the board
+  // couldn't fit them (e.g. too small, or clamped into the same corner).
+  const remaining: Array<{ a: string; b: string; gap: number }> = [];
+  for (let i = 0; i < n; i++) {
+    for (let j = i + 1; j < n; j++) {
+      const d = deficit(i, j, clearance);
+      if (d > eps) {
+        remaining.push({
+          a: components[i].ref,
+          b: components[j].ref,
+          gap: Math.round((clearance - d) * 1000) / 1000,
+        });
+      }
+    }
+  }
+  return remaining;
+}
+
 /** Return the polygon wound counter-clockwise (kernel extrusion convention). */
 function ensureCcw(poly: Vec2[]): Vec2[] {
   return loopSignedArea(poly) < 0 ? [...poly].reverse() : poly;
@@ -1526,6 +1637,21 @@ export async function placeComponents(args: Record<string, unknown>) {
         return 0.5; // Custom polygon — small default
     }
   };
+  // Bounding-circle radius of a pad's copper (half-diagonal for rects) — used by
+  // cross-net clearance legalization, where the circle must *contain* the copper
+  // so that separating circles guarantees the real pads can't short.
+  const padRadius = (shape: Pad["shape"]): number => {
+    switch (shape.type) {
+      case "Circle":
+        return shape.diameter / 2;
+      case "Rect":
+      case "Oval":
+      case "RoundRect":
+        return Math.hypot(shape.width, shape.height) / 2;
+      default:
+        return 0.5; // Custom polygon — small default
+    }
+  };
   const componentExtent = (pads: Pad[]): number => {
     let r = 0.8; // floor so a 1-pad part still claims some room
     for (const p of pads) {
@@ -1539,6 +1665,51 @@ export async function placeComponents(args: Record<string, unknown>) {
     const t = resolutions[i]?.template;
     return t ? componentExtent(t.pads) : 1.0;
   });
+
+  // Pad copper (local position + bounding radius + net) per component, mirroring
+  // the same precedence the footprint build below uses (inline > engine template
+  // > generic spread). Feeds cross-net clearance legalization. Net resolution
+  // matches netIdForPin but is side-effect free (doesn't populate the net list).
+  const padNetOf = (comp: SchematicComponent, padNumber: string): string | undefined => {
+    const pin = comp.pins.find((p) => p.number === padNumber);
+    if (!pin) return undefined;
+    return useConnectivity
+      ? netByPin.get(pinKey(comp.ref, pin.number))
+      : pin.name && pin.name !== "~"
+        ? pin.name
+        : undefined;
+  };
+  const padLayout: LocalPad[][] = components.map((comp, i) => {
+    if (comp.pads && comp.pads.length > 0) {
+      return comp.pads.map((p) => ({
+        x: p.position.x,
+        y: p.position.y,
+        r: padRadius(p.shape),
+        net: padNetOf(comp, p.number),
+      }));
+    }
+    const t = resolutions[i]?.template;
+    if (t) {
+      return t.pads.map((p) => ({
+        x: p.position.x,
+        y: p.position.y,
+        r: padRadius(p.shape),
+        net: padNetOf(comp, p.number),
+      }));
+    }
+    // Generic fallback — must match the spread used in the footprint build.
+    return comp.pins.map((pin, pi) => ({
+      x: (pi - (comp.pins.length - 1) / 2) * 2.54,
+      y: 0,
+      r: padRadius({ type: "Rect", width: 1.0, height: 1.2 }),
+      net: padNetOf(comp, pin.number),
+    }));
+  });
+
+  // Cross-net pad pairs the force-directed legalizer could not separate (board
+  // too tight). Non-empty means a short is baked in → the placer reports failure
+  // rather than silently shipping it.
+  let placementConflicts: Array<{ a: string; b: string; gap: number }> = [];
 
   let positions: Vec2[];
   if (strategy === "radial") {
@@ -1576,12 +1747,23 @@ export async function placeComponents(args: Record<string, unknown>) {
     }));
 
     if (strategy === "force_directed") {
-      forceDirectedRefine(components, positions, netByPin, useConnectivity, extents, {
+      const fdBounds = {
         minX: bboxMinX + margin,
         minY: bboxMinY + margin,
         maxX: bboxMaxX - margin,
         maxY: bboxMaxY - margin,
-      });
+      };
+      forceDirectedRefine(components, positions, netByPin, useConnectivity, extents, fdBounds);
+      // The force-directed equilibrium can leave different-net pads overlapping
+      // (a short). Shove them apart to clearance before the board is built; any
+      // pair that can't be separated on this board is surfaced to the caller.
+      placementConflicts = legalizeCrossNetClearance(
+        components,
+        positions,
+        padLayout,
+        defaultRules.clearance,
+        fdBounds,
+      );
     }
   }
 
@@ -1709,16 +1891,31 @@ export async function placeComponents(args: Record<string, unknown>) {
   const netsSummary: Record<string, string[]> = {};
   for (const [name, pins] of derived.nets) netsSummary[name] = pins;
 
+  // A cross-net pad overlap is a hard short — never report success with one.
+  if (placementConflicts.length > 0) {
+    const pairs = placementConflicts.map((c) => `${c.a}/${c.b}`).join(", ");
+    warnings.push(
+      `Cross-net pad overlap couldn't be resolved on this board (${pairs}) — a short ` +
+        `before any routing. Enlarge the board, or floorplan these parts with set_placement.`,
+    );
+  }
+
   return {
     content: [
       {
         type: "text" as const,
         text: JSON.stringify({
-          success: true,
+          success: placementConflicts.length === 0,
           footprints_placed: footprints.length,
           footprints_resolved: footprints.length - fallbackFootprints.length,
           strategy,
           ...(warnings.length > 0 ? { warnings } : {}),
+          // Cross-net pad pairs the placer could not separate — each is a short
+          // baked into the layout. `gap` is the residual copper-to-copper
+          // distance (mm); below the design clearance (0.2mm) it will fail DRC.
+          ...(placementConflicts.length > 0
+            ? { placement_conflicts: placementConflicts }
+            : {}),
           // Footprint ids that did NOT resolve to a real package family — these
           // got a generic placeholder, so their pads are approximate. Supply a
           // recognized KiCad id or inline `pads` to fix.
