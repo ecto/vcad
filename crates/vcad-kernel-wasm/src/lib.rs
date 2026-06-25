@@ -3539,9 +3539,16 @@ fn evaluate_node(doc: &vcad_ir::Document, node_id: vcad_ir::NodeId) -> Result<So
             plane_normal,
         } => {
             let c = evaluate_node(doc, *child)?;
+            // WASM binding signature is six scalars (matches js_name="mirror"
+            // expecting positional args from the browser), so we flatten the
+            // IR's Vec3 fields here rather than passing slices.
             Ok(c.mirror(
-                [plane_origin.x, plane_origin.y, plane_origin.z],
-                [plane_normal.x, plane_normal.y, plane_normal.z],
+                plane_origin.x,
+                plane_origin.y,
+                plane_origin.z,
+                plane_normal.x,
+                plane_normal.y,
+                plane_normal.z,
             ))
         }
 
