@@ -190,6 +190,10 @@ import {
   buildReceiptSchema,
   verifyReceipt,
   verifyReceiptSchema,
+  listFootprints,
+  listFootprintsSchema,
+  searchFootprints,
+  searchFootprintsSchema,
 } from "./tools/ecad.js";
 import { createCadLoon, createCadLoonSchema } from "./tools/loon.js";
 import {
@@ -503,6 +507,8 @@ const TOOL_PACKS: Record<string, readonly string[]> = {
     "calc_rf",
     "calc_motor",
     "search_electronic_parts",
+    "list_footprints",
+    "search_footprints",
     "resolve_part",
     "find_alternatives",
     "verify_substitution",
@@ -1167,6 +1173,23 @@ export async function createServer(
         inputSchema: boardFromSolidSchema,
       },
       {
+        name: "list_footprints",
+        description:
+          "List the footprint families the parametric engine resolves, each " +
+          "with a canonical example id to drop into create_schematic's " +
+          "`footprint`. Optional `kind` filter (passive/ic/transistor/diode/" +
+          "power/connector). Use this instead of guessing id spellings.",
+        inputSchema: listFootprintsSchema,
+      },
+      {
+        name: "search_footprints",
+        description:
+          "Fuzzy-search footprint families by name/alias (e.g. 'SOIC 8', " +
+          "'jst', 'qfn') and get ranked matches with a canonical example id — " +
+          "resolve a footprint id without a failed create_schematic round-trip.",
+        inputSchema: searchFootprintsSchema,
+      },
+      {
         name: "get_pad_positions",
         description:
           "Return every footprint pad's absolute board-frame (x, y), copper " +
@@ -1803,6 +1826,14 @@ export async function createServer(
 
         case "board_from_solid":
           result = boardFromSolid(args, engine);
+          break;
+
+        case "list_footprints":
+          result = listFootprints(args);
+          break;
+
+        case "search_footprints":
+          result = searchFootprints(args);
           break;
 
         case "get_pad_positions":

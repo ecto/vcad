@@ -4884,6 +4884,175 @@ export function setBoardOutline(args: Record<string, unknown>) {
 }
 
 // ============================================================================
+// list_footprints / search_footprints — parametric footprint discovery
+// ============================================================================
+
+/** A footprint family the parametric engine can resolve. `example` is a
+ *  canonical id that resolves to this family (verified by a drift-guard test
+ *  against the kernel `resolveFootprint`). */
+interface FootprintFamily {
+  family: string;
+  label: string;
+  aliases: string[];
+  kind: "passive" | "ic" | "transistor" | "diode" | "power" | "connector";
+  pins: string;
+  pitch_mm: string;
+  example: string;
+  example_pins: number;
+}
+
+/**
+ * Discovery catalog mirroring the parametric footprint engine
+ * (`crates/vcad-ecad-symbols/src/footprint.rs` `match_family`). Hand-curated
+ * (the engine match is imperative, not a table), but every `example` is kept
+ * honest by `footprint_examples_resolve` in the test suite, which runs each
+ * one through the kernel resolver and asserts a real family match.
+ */
+const FOOTPRINT_FAMILIES: FootprintFamily[] = [
+  { family: "Chip", label: "Two-terminal SMD passive (R/C/L)", aliases: ["0201", "0402", "0603", "0805", "1206", "1210", "2010", "2512", "1608Metric", "2012Metric"], kind: "passive", pins: "2", pitch_mm: "n/a", example: "0805", example_pins: 2 },
+  { family: "SOT-23", label: "Small-outline transistor", aliases: ["SOT-23", "SOT-23-3", "SOT-23-5", "SOT-23-6", "SOT-23-8", "TSOT-23"], kind: "transistor", pins: "3, 5, 6, 8", pitch_mm: "0.95", example: "SOT-23", example_pins: 3 },
+  { family: "SOT-223", label: "SOT-223 power package (tab)", aliases: ["SOT-223", "SOT-223-3", "SOT-223-5"], kind: "power", pins: "4, 5, 8", pitch_mm: "2.3", example: "SOT-223", example_pins: 4 },
+  { family: "SC-70", label: "SC-70 / SOT-353 / SOT-363", aliases: ["SC-70", "SC-70-5", "SOT-353", "SOT-363"], kind: "transistor", pins: "3, 5, 6", pitch_mm: "0.65", example: "SC-70-5", example_pins: 5 },
+  { family: "SOT-89", label: "SOT-89 power transistor", aliases: ["SOT-89"], kind: "power", pins: "3", pitch_mm: "1.5", example: "SOT-89", example_pins: 3 },
+  { family: "SOD", label: "Small-outline diode", aliases: ["SOD-123", "SOD-323", "SOD-523", "SOD-882"], kind: "diode", pins: "2", pitch_mm: "n/a", example: "SOD-123", example_pins: 2 },
+  { family: "DO-214", label: "DO-214 SMD diode (SMA/SMB/SMC)", aliases: ["D_SMA", "D_SMB", "D_SMC", "DO-214AC", "DO-214AA", "DO-214AB", "SMA", "SMB", "SMC"], kind: "diode", pins: "2", pitch_mm: "n/a", example: "D_SMA", example_pins: 2 },
+  { family: "QFN", label: "Quad flat no-lead (thermal pad)", aliases: ["QFN", "VQFN", "UQFN", "WQFN", "TQFN", "DHVQFN"], kind: "ic", pins: "multiple of 4", pitch_mm: "0.4–0.5", example: "QFN-16", example_pins: 16 },
+  { family: "DFN", label: "Dual flat no-lead / SON", aliases: ["DFN", "SON", "WSON"], kind: "ic", pins: "even", pitch_mm: "0.4–0.5", example: "DFN-8", example_pins: 8 },
+  { family: "QFP", label: "Quad flat package (LQFP/TQFP/PQFP)", aliases: ["QFP", "LQFP", "TQFP", "PQFP", "CQFP"], kind: "ic", pins: "multiple of 4, ≥8", pitch_mm: "0.4–0.8", example: "LQFP-48", example_pins: 48 },
+  { family: "SOIC", label: "Small-outline IC (SO/SOP)", aliases: ["SOIC", "SO", "SOP"], kind: "ic", pins: "even, ≥4", pitch_mm: "1.27", example: "SOIC-8", example_pins: 8 },
+  { family: "SSOP", label: "Shrink small-outline (QSOP)", aliases: ["SSOP", "QSOP"], kind: "ic", pins: "even, ≥4", pitch_mm: "0.635–0.65", example: "SSOP-16", example_pins: 16 },
+  { family: "TSSOP", label: "Thin shrink small-outline", aliases: ["TSSOP", "HTSSOP"], kind: "ic", pins: "even, ≥4", pitch_mm: "0.65", example: "TSSOP-20", example_pins: 20 },
+  { family: "MSOP", label: "Mini small-outline", aliases: ["MSOP"], kind: "ic", pins: "even, ≥4", pitch_mm: "0.65", example: "MSOP-8", example_pins: 8 },
+  { family: "VSSOP", label: "Very-thin shrink small-outline", aliases: ["VSSOP"], kind: "ic", pins: "even, ≥4", pitch_mm: "0.5", example: "VSSOP-8", example_pins: 8 },
+  { family: "DIP", label: "Dual in-line (through-hole)", aliases: ["DIP", "PDIP"], kind: "ic", pins: "even, ≥4", pitch_mm: "2.54", example: "DIP-8", example_pins: 8 },
+  { family: "DPAK", label: "DPAK / TO-252 power tab", aliases: ["DPAK", "TO-252"], kind: "power", pins: "2, 3", pitch_mm: "2.28", example: "TO-252", example_pins: 3 },
+  { family: "D2PAK", label: "D2PAK / TO-263 power tab", aliases: ["D2PAK", "DDPAK", "TO-263"], kind: "power", pins: "2, 3", pitch_mm: "2.54", example: "TO-263", example_pins: 3 },
+  { family: "TO-220", label: "TO-220 / TO-247 (through-hole)", aliases: ["TO-220", "TO-247"], kind: "power", pins: "2, 3", pitch_mm: "2.54", example: "TO-220", example_pins: 3 },
+  { family: "PinHeader", label: "Pin header / socket (RxC grid)", aliases: ["PinHeader", "PinSocket", "Socket_Strip", "IDC-Header"], kind: "connector", pins: "rows × cols", pitch_mm: "2.54 (default)", example: "PinHeader_2x05_P2.54mm", example_pins: 10 },
+  { family: "ScrewTerminal", label: "Screw terminal block", aliases: ["TerminalBlock", "Screw_Terminal"], kind: "connector", pins: "positions", pitch_mm: "5.08 (default)", example: "TerminalBlock_1x02_P5.08mm", example_pins: 2 },
+  { family: "Electrolytic", label: "Radial electrolytic capacitor", aliases: ["CP_Radial", "C_Radial"], kind: "passive", pins: "2", pitch_mm: "2.0–5.0", example: "CP_Radial_D6.3mm_P2.50mm", example_pins: 2 },
+  { family: "JST-PH", label: "JST PH wire-to-board (2.0mm THT)", aliases: ["JST_PH", "JST-PH"], kind: "connector", pins: "2+", pitch_mm: "2.0", example: "JST_PH_2", example_pins: 2 },
+  { family: "JST-XH", label: "JST XH wire-to-board (2.5mm THT)", aliases: ["JST_XH", "JST-XH"], kind: "connector", pins: "2+", pitch_mm: "2.5", example: "JST_XH_3", example_pins: 3 },
+  { family: "JST-EH", label: "JST EH wire-to-board (2.5mm THT)", aliases: ["JST_EH", "JST-EH"], kind: "connector", pins: "2+", pitch_mm: "2.5", example: "JST_EH_2", example_pins: 2 },
+  { family: "JST-SH", label: "JST SH wire-to-board (1.0mm SMD)", aliases: ["JST_SH", "JST-SH"], kind: "connector", pins: "2+", pitch_mm: "1.0", example: "JST_SH_4", example_pins: 4 },
+  { family: "JST-GH", label: "JST GH wire-to-board (1.25mm SMD)", aliases: ["JST_GH", "JST-GH"], kind: "connector", pins: "2+", pitch_mm: "1.25", example: "JST_GH_4", example_pins: 4 },
+  { family: "Molex-PicoBlade", label: "Molex Pico-Blade (1.25mm SMD)", aliases: ["PicoBlade", "Pico-Blade", "53048", "53261"], kind: "connector", pins: "2+", pitch_mm: "1.25", example: "Molex_PicoBlade_1x04_P1.25mm", example_pins: 4 },
+  { family: "Tag-Connect", label: "Tag-Connect spring-pin programming pads", aliases: ["Tag-Connect", "TagConnect", "TC2030", "TC2050"], kind: "connector", pins: "6 (TC2030), 10 (TC2050)", pitch_mm: "1.27", example: "TC2030", example_pins: 6 },
+  { family: "USB-C", label: "USB-C receptacle (simplified)", aliases: ["USB_C", "USB-C", "Type-C", "TypeC"], kind: "connector", pins: "up to 24", pitch_mm: "0.5", example: "USB-C", example_pins: 24 },
+];
+
+/** Relevance score of a family for a query (0..1) — exact alias, substring,
+ *  then edit-distance similarity, over family/label/aliases. */
+function scoreFootprintFamily(query: string, fam: FootprintFamily): number {
+  const q = query.toLowerCase().trim();
+  if (!q) return 0;
+  const cands = [fam.family, fam.label, ...fam.aliases].map((s) => s.toLowerCase());
+  let best = 0;
+  for (const c of cands) {
+    if (c === q) {
+      best = Math.max(best, 1);
+    } else if (c.includes(q) || q.includes(c)) {
+      best = Math.max(best, 0.75);
+    } else {
+      const sim = 1 - editDistance(q, c) / Math.max(q.length, c.length);
+      best = Math.max(best, sim * 0.6);
+    }
+  }
+  return best;
+}
+
+/** JSON Schema for list_footprints tool. */
+export const listFootprintsSchema = {
+  type: "object" as const,
+  properties: {
+    kind: {
+      type: "string" as const,
+      description:
+        "Optional filter: passive | ic | transistor | diode | power | connector.",
+    },
+  },
+  required: [],
+};
+
+/**
+ * List the footprint families the parametric engine resolves, each with a
+ * canonical `example` id to drop into create_schematic's `footprint`. Removes
+ * the guess-and-fail loop over id spellings ("SOIC8" vs "SOIC-8").
+ */
+export function listFootprints(args: Record<string, unknown>) {
+  const kind = args.kind != null ? String(args.kind).toLowerCase() : undefined;
+  const families = FOOTPRINT_FAMILIES.filter((f) => !kind || f.kind === kind).map((f) => ({
+    family: f.family,
+    label: f.label,
+    kind: f.kind,
+    aliases: f.aliases,
+    pins: f.pins,
+    pitch_mm: f.pitch_mm,
+    example: f.example,
+  }));
+  return {
+    content: [
+      {
+        type: "text" as const,
+        text: JSON.stringify({
+          success: true,
+          count: families.length,
+          ...(kind ? { kind } : {}),
+          families,
+        }),
+      },
+    ],
+  };
+}
+
+/** JSON Schema for search_footprints tool. */
+export const searchFootprintsSchema = {
+  type: "object" as const,
+  properties: {
+    query: {
+      type: "string" as const,
+      description:
+        "Family name, alias, or partial id to match (e.g. 'SOIC 8', 'jst', 'qfn').",
+    },
+  },
+  required: ["query"],
+};
+
+/**
+ * Fuzzy-search footprint families by name/alias/label and return ranked
+ * matches with a canonical example id — so an agent can resolve "what's the id
+ * for an 8-pin small-outline?" without a failed create_schematic round-trip.
+ */
+export function searchFootprints(args: Record<string, unknown>) {
+  const query = String(args.query ?? "");
+  if (!query.trim()) {
+    return ecadError("query is required (a family name, alias, or partial id)");
+  }
+  const ranked = FOOTPRINT_FAMILIES.map((f) => ({ f, score: scoreFootprintFamily(query, f) }))
+    .filter((r) => r.score >= 0.34)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 10)
+    .map((r) => ({
+      family: r.f.family,
+      label: r.f.label,
+      kind: r.f.kind,
+      aliases: r.f.aliases,
+      pins: r.f.pins,
+      pitch_mm: r.f.pitch_mm,
+      example: r.f.example,
+      score: Math.round(r.score * 100) / 100,
+    }));
+  return {
+    content: [
+      {
+        type: "text" as const,
+        text: JSON.stringify({ success: true, query, count: ranked.length, matches: ranked }),
+      },
+    ],
+  };
+}
+
+// ============================================================================
 // get_pad_positions — absolute board-frame pad coordinates (read-only)
 // ============================================================================
 

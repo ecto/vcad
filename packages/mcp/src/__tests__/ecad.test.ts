@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, beforeEach } from "vitest";
-import { Engine } from "@vcad/engine";
+import { Engine, resolveFootprint } from "@vcad/engine";
 import type { Document, Pcb, Vec2 } from "@vcad/ir";
 import {
   createSchematic,
@@ -19,6 +19,8 @@ import {
   windingLayout,
   addTrace,
   getPadPositions,
+  listFootprints,
+  searchFootprints,
   addVia,
   setStackup,
   setPlacement,
@@ -154,6 +156,54 @@ describe("pin-type validation (create_schematic)", () => {
     );
     const doc = getSession(created.document_id);
     expect(doc.schematic!.components[0]!.pins[0]!.pin_type).toBe("Passive");
+  });
+});
+
+describe("footprint discovery", () => {
+  interface FamilyOut {
+    family: string;
+    example: string;
+    kind: string;
+    aliases: string[];
+  }
+
+  it("list_footprints returns families with example ids, filterable by kind", async () => {
+    const all = out(await listFootprints({}));
+    expect(all.success).toBe(true);
+    expect(all.count).toBeGreaterThan(20);
+    const conn = out(await listFootprints({ kind: "connector" }));
+    expect((conn.families as FamilyOut[]).length).toBeGreaterThan(0);
+    expect((conn.families as FamilyOut[]).every((f) => f.kind === "connector")).toBe(true);
+    expect((conn.families as FamilyOut[]).map((f) => f.family)).toContain("USB-C");
+  });
+
+  it("every advertised example id resolves to a real family (drift guard)", async () => {
+    const all = out(await listFootprints({}));
+    // Reach into the same examples list the tool advertises and resolve each
+    // through the kernel — keeps the TS catalog honest against footprint.rs.
+    for (const fam of all.families as Array<{ family: string; example: string }>) {
+      // Resolve each advertised example through the kernel and assert a real
+      // (non-fallback) match. The id carries its own count for most families;
+      // a generous 8 covers the count-less ones.
+      const res = await resolveFootprint(fam.example, 8);
+      expect(res, `resolver unavailable for ${fam.example}`).toBeTruthy();
+      expect(res!.matched, `${fam.family} example "${fam.example}" must match a real family, got note: ${res!.note}`).toBe(true);
+    }
+  });
+
+  it("search_footprints ranks the obvious family first", async () => {
+    const soic = out(await searchFootprints({ query: "SOIC 8" }));
+    expect(soic.count).toBeGreaterThan(0);
+    expect(soic.matches[0].family).toBe("SOIC");
+    const jst = out(await searchFootprints({ query: "jst" }));
+    expect((jst.matches as Array<{ family: string }>).every((m) => m.family.startsWith("JST"))).toBe(true);
+    const qfn = out(await searchFootprints({ query: "qfn" }));
+    expect(qfn.matches[0].family).toBe("QFN");
+  });
+
+  it("search_footprints errors on an empty query", async () => {
+    const res = await searchFootprints({ query: "  " });
+    expect((res as { isError?: boolean }).isError).toBe(true);
   });
 });
 
