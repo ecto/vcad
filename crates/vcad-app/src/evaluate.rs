@@ -79,6 +79,30 @@ fn evaluate_node(doc: &Document, node_id: NodeId) -> Result<Option<Solid>> {
             height,
             segments,
         } => Some(Solid::cone(*radius_bottom, *radius_top, *height, *segments)),
+        CsgOp::Torus {
+            major_radius,
+            minor_radius,
+            segments,
+        } => Some(Solid::torus(*major_radius, *minor_radius, *segments)),
+        CsgOp::Wedge { size } => Some(Solid::wedge(size.x, size.y, size.z)),
+        CsgOp::Prism {
+            sides,
+            radius,
+            height,
+        } => Some(Solid::prism(*sides, *radius, *height)),
+        CsgOp::Mirror {
+            child,
+            plane_origin,
+            plane_normal,
+        } => {
+            let c = evaluate_node(doc, *child)?;
+            c.map(|s| {
+                s.mirror(
+                    [plane_origin.x, plane_origin.y, plane_origin.z],
+                    [plane_normal.x, plane_normal.y, plane_normal.z],
+                )
+            })
+        }
         CsgOp::Union { left, right } => {
             let l = evaluate_node(doc, *left)?;
             let r = evaluate_node(doc, *right)?;

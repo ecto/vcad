@@ -377,6 +377,31 @@ interface LoadOpts {
   afterLoad?: () => void;
 }
 
+// The studio IBL is tuned bright for hero metallic CAD parts; on a PCB's
+// copper — and on any low-roughness metal — it blows reflections into a wet,
+// glassy sheet. Scale every loaded material's environment response down and
+// floor the roughness so reflections read as a soft sheen rather than chrome.
+// Applied after GLTF import, so it rides on top of whatever the GLB carries
+// (including KHR_materials_clearcoat soldermask).
+const ENV_MAP_INTENSITY = 0.5;
+const MIN_ROUGHNESS = 0.3;
+
+function tameMaterials(root: THREE.Object3D): void {
+  root.traverse((child) => {
+    const mesh = child as THREE.Mesh;
+    if (!mesh.isMesh || !mesh.material) return;
+    const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+    for (const m of mats) {
+      const std = m as THREE.MeshStandardMaterial;
+      // MeshStandard/Physical only — Basic/Line materials have no IBL.
+      if (std.envMapIntensity === undefined) continue;
+      std.envMapIntensity = ENV_MAP_INTENSITY;
+      std.roughness = Math.max(std.roughness, MIN_ROUGHNESS);
+      std.needsUpdate = true;
+    }
+  });
+}
+
 function loadGlb(base64Data: string, opts?: LoadOpts): void {
   const binary = atob(base64Data);
   const bytes = new Uint8Array(binary.length);
@@ -393,6 +418,7 @@ function loadGlb(base64Data: string, opts?: LoadOpts): void {
       // leaves the current model untouched).
       clearModel();
       currentModel = gltf.scene;
+      tameMaterials(currentModel);
       modelGroup.add(currentModel);
       hasModel = true;
       updateAxesVisibility();
@@ -805,6 +831,44 @@ function findDocumentId(result: ToolResultLike): string | null {
   return null;
 }
 
+/** Pull the cheap `version` change token out of a preview result, if any. */
+function findPreviewVersion(result: ToolResultLike): string | null {
+  for (const block of result.content ?? []) {
+    if (block?.type !== "text" || !block.text) continue;
+    try {
+      const parsed = JSON.parse(block.text) as { version?: unknown };
+      if (typeof parsed.version === "string") return parsed.version;
+    } catch {
+      // Not JSON — skip
+    }
+  }
+  return null;
+}
+
+/**
+ * Fetch a document's GLB via the app-only preview tool and render it in
+ * place. Records the version token so the self-refresh poll knows the
+ * current state and only re-fetches when it actually changes. Shared by the
+ * tool-result handler (mount tools) and the poll loop (data-tool mutations).
+ */
+async function fetchAndRenderGlb(
+  docId: string,
+  changed: PartsChanged | null,
+): Promise<void> {
+  const previewResult = (await app.callServerTool({
+    name: "get_preview_glb",
+    arguments: { document_id: docId },
+  })) as ToolResultLike;
+  const glb = findInlineGlb(previewResult);
+  if (!glb) {
+    setStatus("no geometry to preview", "idle");
+    return;
+  }
+  const ver = findPreviewVersion(previewResult);
+  if (ver) lastPreviewVersion = ver;
+  renderGlbForDoc(glb, docId, changed);
+}
+
 /** Capture VCode IR text for the "Open in vcad.io" button. */
 function captureVcode(result: ToolResultLike): void {
   for (const block of result.content ?? []) {
@@ -1121,7 +1185,10 @@ const app = isOpenAiHost()
   ? (createOpenAiShim() as unknown as App)
   : new App(
       { name: "vcad-viewer", version: "2.1.0" },
-      { availableDisplayModes: ["inline", "fullscreen"] },
+      // Declare pip so a host can DOCK the live canvas as a persistent side
+      // panel that updates across the conversation, rather than scrolling
+      // inline. (Capability only — the host/user chooses when to dock.)
+      { availableDisplayModes: ["inline", "pip", "fullscreen"] },
     );
 
 function applyHostContext(ctx: McpUiHostContext | undefined): void {
@@ -1211,16 +1278,7 @@ async function handleToolResult(result: ToolResultLike): Promise<void> {
   if (sameDoc) setTicker("updating…", "busy");
   else setStatus("fetching geometry…");
   try {
-    const previewResult = (await app.callServerTool({
-      name: "get_preview_glb",
-      arguments: { document_id: docId },
-    })) as ToolResultLike;
-    const glb = findInlineGlb(previewResult);
-    if (glb) {
-      renderGlbForDoc(glb, docId, changed);
-    } else {
-      setStatus("no geometry to preview", "idle");
-    }
+    await fetchAndRenderGlb(docId, changed);
   } catch (e) {
     console.error("[vcad-viewer] preview fetch failed:", e);
     setStatus("preview unavailable", "error");
@@ -1231,6 +1289,9 @@ async function handleToolResult(result: ToolResultLike): Promise<void> {
 // ── "Open in vcad.io" deep link ──────────────────────────────
 let vcodeDoc: string | null = null;
 let lastDocumentId: string | null = null;
+// Last geometry version this canvas has rendered — the self-refresh poll
+// re-fetches only when the server reports a different token (see below).
+let lastPreviewVersion: string | null = null;
 
 openBtn.addEventListener("click", async () => {
   let doc = vcodeDoc;
@@ -1269,6 +1330,94 @@ fullscreenBtn.addEventListener("click", async () => {
     console.warn("[vcad-viewer] display mode change failed:", e);
   }
 });
+
+// ── Auto-dock: pin the canvas as a persistent side panel ─────────────
+// When the host supports pip, dock the freshly-mounted canvas once so it
+// stays visible and updates live as the agent works — instead of scrolling
+// away inline. Capability-guarded + best-effort + one-shot, so hosts without
+// pip (and a user who later un-docks) just stay where they are.
+let autoDocked = false;
+
+async function maybeAutoDock(): Promise<void> {
+  if (autoDocked) return;
+  const modes = app.getHostContext()?.availableDisplayModes ?? [];
+  if (!modes.includes("pip") || currentDisplayMode !== "inline") return;
+  autoDocked = true;
+  try {
+    const result = await app.requestDisplayMode({ mode: "pip" });
+    currentDisplayMode = result.mode;
+  } catch (e) {
+    console.warn("[vcad-viewer] auto-dock (pip) failed:", e);
+  }
+}
+
+// ── Self-refresh: poll a cheap version token, re-fetch on change ─────
+// Data tools (create/update/route/add_*/…) no longer carry a UI template,
+// so the host doesn't push their results to this iframe. Instead the one
+// mounted canvas polls get_preview_version — a geometry-free change token —
+// and re-fetches the GLB only when the document actually changed. Net: one
+// live surface across a long session instead of an iframe per mutation.
+//
+// Cadence is brisk while the document is changing and backs off when idle, so
+// a quiet session isn't a steady drip of calls; it snaps back to brisk on any
+// change or when the tab regains focus.
+const POLL_FAST_MS = 2500;
+const POLL_SLOW_MS = 10000;
+const POLL_IDLE_THRESHOLD = 8; // ~20s with no change → back off
+let pollIdleStreak = 0;
+let pollHandle: ReturnType<typeof setTimeout> | undefined;
+
+async function pollPreviewVersion(): Promise<void> {
+  if (!lastDocumentId) return;
+  if (typeof document !== "undefined" && document.hidden) return;
+  let ver: string | null = null;
+  try {
+    const res = (await app.callServerTool({
+      name: "get_preview_version",
+      arguments: { document_id: lastDocumentId },
+    })) as ToolResultLike;
+    ver = findPreviewVersion(res);
+  } catch {
+    return; // transient poll/network failure — next tick retries
+  }
+  // Refresh on ANY change from what's on screen — including geometry first
+  // appearing in a document that was empty when the canvas mounted (no
+  // baseline guard, or that build would never show).
+  if (!ver || ver === lastPreviewVersion) return;
+  // Record first so a failed/empty render doesn't re-trigger every tick.
+  lastPreviewVersion = ver;
+  setTicker("updating…", "busy");
+  try {
+    await fetchAndRenderGlb(lastDocumentId, null);
+  } catch {
+    // Empty doc or transient fetch failure — version already advanced.
+  }
+}
+
+function scheduleNextPoll(): void {
+  const delay = pollIdleStreak >= POLL_IDLE_THRESHOLD ? POLL_SLOW_MS : POLL_FAST_MS;
+  pollHandle = setTimeout(() => void runPoll(), delay);
+}
+
+async function runPoll(): Promise<void> {
+  const before = lastPreviewVersion;
+  await pollPreviewVersion();
+  pollIdleStreak = lastPreviewVersion !== before ? 0 : pollIdleStreak + 1;
+  scheduleNextPoll();
+}
+
+function startPreviewPolling(): void {
+  // Returning to the tab → back to brisk and check immediately.
+  if (typeof document !== "undefined") {
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden) return;
+      pollIdleStreak = 0;
+      if (pollHandle) clearTimeout(pollHandle);
+      void runPoll();
+    });
+  }
+  scheduleNextPoll();
+}
 
 // ── Dev harness ──────────────────────────────────────────────
 // `#dev` renders sample geometry without an MCP host so the rig
@@ -1319,6 +1468,7 @@ if (location.hash.startsWith("#dev")) {
     cap.rotation.x = Math.PI / 2;
     cap.position.z = 40;
     sample.add(flange, boss, cap);
+    tameMaterials(sample);
     modelGroup.add(sample);
     currentModel = sample;
     hasModel = true;
@@ -1385,4 +1535,9 @@ if (location.hash.startsWith("#dev")) {
     "[vcad-viewer] connected to host; capabilities:",
     JSON.stringify(app.getHostCapabilities() ?? {}),
   );
+  // Keep the one mounted canvas live as the agent mutates the document.
+  startPreviewPolling();
+  // Dock as a side panel when the host supports it, so it persists and
+  // updates across the conversation rather than scrolling away.
+  void maybeAutoDock();
 }

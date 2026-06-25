@@ -78,9 +78,9 @@ describe("PCB GLB preview", () => {
       expect(m.primitives[0].attributes.POSITION).toBeDefined();
     }
 
-    // Distinct PBR colors: glossy green soldermask, matte-tan FR4 edge, ENIG copper.
+    // Distinct PBR colors: deep green soldermask, matte-tan FR4 edge, ENIG copper.
     const colors = gltf.materials.map((m) => m.pbrMetallicRoughness?.baseColorFactor);
-    const hasMask = colors.some((c) => near(c, [0.045, 0.21, 0.1]));
+    const hasMask = colors.some((c) => near(c, [0.010, 0.060, 0.024]));
     const hasSubstrate = colors.some((c) => near(c, [0.46, 0.38, 0.22]));
     const hasCopper = colors.some((c) => near(c, [0.85, 0.66, 0.3]));
     expect(hasMask, `colors: ${JSON.stringify(colors)}`).toBe(true);
@@ -115,6 +115,6 @@ describe("PCB GLB preview", () => {
     expect(b64).toBeTruthy();
     const gltf = parseGlbJson(b64!);
     const colors = gltf.materials.map((m) => m.pbrMetallicRoughness?.baseColorFactor);
-    expect(colors.some((c) => near(c, [0.045, 0.21, 0.1]))).toBe(true);
+    expect(colors.some((c) => near(c, [0.010, 0.060, 0.024]))).toBe(true);
   });
 });

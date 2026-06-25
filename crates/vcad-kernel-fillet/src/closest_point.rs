@@ -35,7 +35,7 @@ pub fn closest_point_uv(surface: &dyn Surface, point: &Point3, tolerance: f64) -
                 return None;
             }
             let d_norm = d / len;
-            let v = d_norm.dot(sphere.axis.as_ref()).asin();
+            let v = d_norm.dot(sphere.axis.as_ref()).clamp(-1.0, 1.0).asin();
             let cos_v = v.cos();
             if cos_v.abs() < 1e-15 {
                 return Some(Point2::new(0.0, v));
@@ -166,4 +166,56 @@ fn newton_from(
     let p = surface.evaluate(uv);
     let dist = (p - *point).norm();
     Some((uv, dist))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use vcad_kernel_geom::SphereSurface;
+
+    /// Regression: projecting an exact pole point onto a sphere must not NaN.
+    ///
+    /// `closest_point_uv` for SphereSurface computes
+    /// `d_norm.dot(sphere.axis).asin()`. The dot product of two unit vectors
+    /// is mathematically in [-1, 1] but floating-point rounding can push it
+    /// to 1.0 + eps, at which point bare `asin` returns NaN. We clamp before
+    /// the asin call; this test pins that contract.
+    #[test]
+    fn sphere_pole_projection_does_not_nan() {
+        let sphere = SphereSurface::with_center(Point3::new(0.0, 0.0, 0.0), 10.0);
+
+        // North pole, exactly on the +axis.
+        let north = Point3::new(0.0, 0.0, 10.0);
+        let uv = closest_point_uv(&sphere, &north, 1e-9)
+            .expect("closest_point_uv should return Some for a point on the sphere");
+        assert!(uv.x.is_finite(), "north u must be finite (got {})", uv.x);
+        assert!(uv.y.is_finite(), "north v must be finite (got {})", uv.y);
+        assert!(
+            (uv.y - std::f64::consts::FRAC_PI_2).abs() < 1e-9,
+            "north v should be π/2, got {}",
+            uv.y
+        );
+
+        // South pole.
+        let south = Point3::new(0.0, 0.0, -10.0);
+        let uv = closest_point_uv(&sphere, &south, 1e-9).expect("south projection");
+        assert!(uv.x.is_finite() && uv.y.is_finite());
+        assert!(
+            (uv.y + std::f64::consts::FRAC_PI_2).abs() < 1e-9,
+            "south v should be -π/2, got {}",
+            uv.y
+        );
+
+        // A point displaced from the pole by a tiny perturbation that lands
+        // outside the unit-vector domain after FP rounding — the typical
+        // shape of the bug we just fixed.
+        let near_pole = Point3::new(1e-12, 0.0, 10.0 + 1e-12);
+        let uv = closest_point_uv(&sphere, &near_pole, 1e-9).expect("near-pole projection");
+        assert!(
+            uv.x.is_finite() && uv.y.is_finite(),
+            "near-pole UV must be finite (got u={}, v={})",
+            uv.x,
+            uv.y
+        );
+    }
 }

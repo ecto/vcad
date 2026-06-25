@@ -6,8 +6,9 @@
 //! tracing, but it renders as a featureless gray slab in a lit GLB viewer.
 //!
 //! This module produces the *same* board as a small set of separately colored
-//! meshes — green substrate, gold copper, real 3D component bodies, and white
-//! silkscreen — for the inline GLB preview. It reuses the exact copper-mesh
+//! meshes — green soldermask, mask-clad copper (green) with exposed gold pads,
+//! real 3D component bodies, and white silkscreen — for the inline GLB preview.
+//! It reuses the exact copper-mesh
 //! helpers the merged path uses ([`trace_to_mesh`](crate::evaluate::trace_to_mesh)
 //! et al.) so the two views never diverge, and pulls component bodies from
 //! [`vcad_ecad_pcb::component_mesh`] so the preview shows real packages
@@ -37,8 +38,9 @@ use crate::evaluate::{
 /// exporter turns `color` / `metalness` / `roughness` into a PBR material.
 #[derive(Debug, Clone, Serialize)]
 pub struct PcbPreviewMesh {
-    /// Semantic role: `"mask"`, `"substrate"`, `"copper"`, `"pour"`, `"via"`,
-    /// `"component"`, or `"silkscreen"`.
+    /// Semantic role: `"mask"`, `"substrate"`, `"copper"` (exposed pads/vias),
+    /// `"copper_masked"` (mask-clad traces/pours), `"component"`, or
+    /// `"silkscreen"`.
     pub role: String,
     /// Flat vertex positions `[x,y,z, ...]` (mm, board-local, centered on z=0).
     pub positions: Vec<f32>,
@@ -60,25 +62,31 @@ pub struct PcbPreviewMesh {
     pub clearcoat_roughness: f32,
 }
 
-// Glossy green soldermask (dark saturated dielectric; the clearcoat carries
-// the wet highlight so the base color stays dark and doesn't go neon).
-const SOLDERMASK_GREEN: [f32; 3] = [0.045, 0.21, 0.10];
+// Green soldermask over the bare laminate (the board substrate between copper).
+// A satin dielectric: a soft clearcoat sheen carries the highlight, so the base
+// color stays a dark saturated green and never blows out to a wet mirror.
+// Dark linear albedo on purpose: the up-facing board catches the studio key +
+// fill directly, which multiplies the diffuse ~3x, so a light albedo washes out
+// to mint. This deep value lands a classic PCB green once lit.
+const SOLDERMASK_GREEN: [f32; 3] = [0.010, 0.060, 0.024];
+// Soldermask over copper (traces, pours). The mask conforms to a flat copper
+// plane, so it sits a touch brighter than mask over the rough weave — which is
+// exactly what keeps routing faintly legible on a finished board, instead of
+// a sea of bare gold.
+const COPPER_MASK_GREEN: [f32; 3] = [0.013, 0.075, 0.030];
 // Exposed fiberglass substrate at the board edge — matte tan, no clearcoat;
-// the contrast against the glossy mask sells the "real board" read.
+// the contrast against the mask sells the "real board" read.
 const FR4_EDGE_TAN: [f32; 3] = [0.46, 0.38, 0.22];
-// Exposed/finished copper (ENIG warm gold) — signal traces and pads.
+// Exposed/finished copper (ENIG warm gold) at the mask openings: pads + via
+// rings. Satin, not a mirror — the openings are the only bright copper.
 const COPPER_ENIG: [f32; 3] = [0.85, 0.66, 0.30];
-// Copper pour/zone — slightly darker and rougher so a plane reads distinct
-// from a signal trace.
-const COPPER_POUR: [f32; 3] = [0.78, 0.60, 0.30];
-// Bare plated copper (via barrels) — pinkish, rougher inside the hole.
-const COPPER_BARE: [f32; 3] = [0.72, 0.45, 0.30];
 // Silkscreen white.
 const SILK_WHITE: [f32; 3] = [0.92, 0.92, 0.88];
 
-// Clearcoat for the glossy soldermask.
-const MASK_CLEARCOAT: f32 = 1.0;
-const MASK_CLEARCOAT_ROUGH: f32 = 0.08;
+// Soft clearcoat sheen for the soldermask — a satin coat, not the old wet glass
+// (the previous 1.0 / 0.08 read as a reflective mirror under the studio IBL).
+const MASK_CLEARCOAT: f32 = 0.2;
+const MASK_CLEARCOAT_ROUGH: f32 = 0.35;
 
 // Silk line width and reference-designator text height (mm).
 const SILK_LINE_WIDTH: f64 = 0.15;
@@ -95,14 +103,14 @@ pub fn pcb_preview_meshes(pcb: &Pcb) -> Vec<PcbPreviewMesh> {
     let t = pcb.outline.thickness;
     let mut out: Vec<PcbPreviewMesh> = Vec::new();
 
-    // ---- Board: glossy green soldermask (faces) + matte tan substrate (edge) ----
-    // Splitting the slab by face normal lets the top/bottom carry a wet
-    // clearcoat while the exposed fiberglass edge stays matte tan.
+    // ---- Board: satin green soldermask (faces) + matte tan substrate (edge) ----
+    // Splitting the slab by face normal lets the top/bottom carry the soft
+    // soldermask clearcoat while the exposed fiberglass edge stays matte tan.
     if let Some(board) = board_slab_buf(pcb) {
         if !board.is_empty() {
             let (mask, edge) = split_faces_by_normal(&board, 0.7);
             if !mask.is_empty() {
-                let mut m = mask.finish("mask", SOLDERMASK_GREEN, 0.0, 0.35);
+                let mut m = mask.finish("mask", SOLDERMASK_GREEN, 0.0, 0.45);
                 m.clearcoat = MASK_CLEARCOAT;
                 m.clearcoat_roughness = MASK_CLEARCOAT_ROUGH;
                 out.push(m);
@@ -113,37 +121,42 @@ pub fn pcb_preview_meshes(pcb: &Pcb) -> Vec<PcbPreviewMesh> {
         }
     }
 
-    // ---- Copper, split by role so a plane reads distinct from a signal ----
-    // Signal copper (ENIG gold): traces + exposed pads.
-    let mut signal = MeshBuf::default();
+    // ---- Copper, split by solder-mask coverage ----
+    // A finished board is mostly green: the mask covers traces and pours and
+    // opens only over pads and via rings. So traces + pours render as soldermask
+    // green (faintly proud of the board, with the same satin coat, so routing
+    // stays legible as a lighter-green topography); pads + via rings show the
+    // exposed ENIG finish. This is what reads as a real PCB — and it removes the
+    // board-spanning bare-gold pour that a low-roughness metal blew out to a
+    // wet, glassy sheet under the studio IBL.
+    let mut masked = MeshBuf::default(); // traces + pours → mask green
     for trace in &pcb.traces {
-        signal.append_raw(&trace_to_mesh(trace, pcb), copper_lift(pcb, trace.layer));
+        masked.append_raw(&trace_to_mesh(trace, pcb), copper_lift(pcb, trace.layer));
     }
+    for zone in &pcb.zones {
+        masked.append_raw(&zone_to_mesh(zone, pcb), copper_lift(pcb, zone.layer));
+    }
+    if !masked.is_empty() {
+        let mut m = masked.finish("copper_masked", COPPER_MASK_GREEN, 0.0, 0.45);
+        m.clearcoat = MASK_CLEARCOAT;
+        m.clearcoat_roughness = MASK_CLEARCOAT_ROUGH;
+        out.push(m);
+    }
+    // Exposed finish at the mask openings: ENIG gold, satin (not a chrome
+    // mirror). Pads, then plated via barrels — vias span the full board height
+    // and meet both surfaces flush, so they stay unlifted.
+    let mut exposed = MeshBuf::default();
     for fp in &pcb.footprints {
         for pad in &fp.pads {
             let layer = pad_layer(pad, fp);
-            signal.append_raw(&pad_to_mesh(pad, fp, pcb), copper_lift(pcb, layer));
+            exposed.append_raw(&pad_to_mesh(pad, fp, pcb), copper_lift(pcb, layer));
         }
     }
-    if !signal.is_empty() {
-        out.push(signal.finish("copper", COPPER_ENIG, 0.9, 0.30));
-    }
-    // Copper pours / zones (slightly darker + rougher than signal copper).
-    let mut pour = MeshBuf::default();
-    for zone in &pcb.zones {
-        pour.append_raw(&zone_to_mesh(zone, pcb), copper_lift(pcb, zone.layer));
-    }
-    if !pour.is_empty() {
-        out.push(pour.finish("pour", COPPER_POUR, 0.9, 0.42));
-    }
-    // Plated via barrels (bare copper). They span the full board height and
-    // meet both surfaces flush, so they stay unlifted.
-    let mut vias = MeshBuf::default();
     for via in &pcb.vias {
-        vias.append_raw(&via_to_mesh(via, pcb, 24), 0.0);
+        exposed.append_raw(&via_to_mesh(via, pcb, 24), 0.0);
     }
-    if !vias.is_empty() {
-        out.push(vias.finish("via", COPPER_BARE, 0.9, 0.45));
+    if !exposed.is_empty() {
+        out.push(exposed.finish("copper", COPPER_ENIG, 0.7, 0.45));
     }
 
     // ---- Component bodies (real packages, grouped by full material) ----
@@ -522,12 +535,13 @@ impl MeshBuf {
 /// Split a mesh buffer into (faces, edges) by per-triangle geometric normal:
 /// triangles whose normal is mostly vertical (`|nz| >= z_thresh`) go to the
 /// first buffer (board faces / soldermask), the rest to the second (the
-/// exposed substrate edge). Vertices are duplicated per triangle (the board is
-/// low-poly) and provided normals are preserved when present.
+/// exposed substrate edge). Vertices are duplicated per triangle and given a
+/// flat per-face normal: `to_mesh` averages normals across the 90° face/wall
+/// seams, which makes a flat board face shade like a bright fan under a
+/// specular light — re-flattening here keeps each face uniformly lit.
 fn split_faces_by_normal(src: &MeshBuf, z_thresh: f32) -> (MeshBuf, MeshBuf) {
     let mut faces = MeshBuf::default();
     let mut edges = MeshBuf::default();
-    let has_normals = src.normals.len() == src.positions.len();
 
     let mut tri = 0;
     while tri + 2 < src.indices.len() {
@@ -556,19 +570,14 @@ fn split_faces_by_normal(src: &MeshBuf, z_thresh: f32) -> (MeshBuf, MeshBuf) {
             &mut edges
         };
         let base = (dst.positions.len() / 3) as u32;
+        let fnormal = [nx / len, ny / len, nz / len];
         for &i in &[ia, ib, ic] {
             dst.positions.extend_from_slice(&[
                 src.positions[i * 3],
                 src.positions[i * 3 + 1],
                 src.positions[i * 3 + 2],
             ]);
-            if has_normals {
-                dst.normals.extend_from_slice(&[
-                    src.normals[i * 3],
-                    src.normals[i * 3 + 1],
-                    src.normals[i * 3 + 2],
-                ]);
-            }
+            dst.normals.extend_from_slice(&fnormal);
         }
         dst.indices.extend_from_slice(&[base, base + 1, base + 2]);
     }
@@ -714,13 +723,18 @@ mod tests {
     fn empty_board_yields_only_substrate() {
         let pcb = board_with(vec![], vec![]);
         let meshes = pcb_preview_meshes(&pcb);
-        // A bare board still gives a glossy soldermask + a matte substrate edge.
+        // A bare board still gives a satin soldermask + a matte substrate edge.
         let mask = meshes.iter().find(|m| m.role == "mask").unwrap();
         assert!(!mask.positions.is_empty());
         assert_eq!(mask.normals.len(), mask.positions.len());
         assert_eq!(mask.color, SOLDERMASK_GREEN);
-        // The mask carries the wet clearcoat; the edge does not.
-        assert!(mask.clearcoat > 0.5, "soldermask should be clearcoated");
+        // The mask carries a soft clearcoat sheen (not a wet mirror); the edge
+        // is bare fiberglass and has none.
+        assert!(
+            mask.clearcoat > 0.0 && mask.clearcoat <= 0.6,
+            "soldermask should be a satin sheen, got {}",
+            mask.clearcoat
+        );
         let edge = meshes.iter().find(|m| m.role == "substrate").unwrap();
         assert_eq!(edge.color, FR4_EDGE_TAN);
         assert_eq!(edge.clearcoat, 0.0);
@@ -744,7 +758,9 @@ mod tests {
         let roles: Vec<&str> = meshes.iter().map(|m| m.role.as_str()).collect();
         assert!(roles.contains(&"mask"), "roles: {roles:?}");
         assert!(roles.contains(&"substrate"), "roles: {roles:?}");
+        // Pads are exposed gold copper; the trace is mask-clad green copper.
         assert!(roles.contains(&"copper"), "roles: {roles:?}");
+        assert!(roles.contains(&"copper_masked"), "roles: {roles:?}");
         assert!(roles.contains(&"component"), "roles: {roles:?}");
         assert!(roles.contains(&"silkscreen"), "roles: {roles:?}");
 

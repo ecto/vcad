@@ -275,6 +275,12 @@ export type SketchConstraint =
   | RadiusConstraint
   | AngleConstraint;
 
+// --- New CsgOp variant aliases (Torus/Wedge/Prism/Mirror) ---
+export type TorusOp = Extract<CsgOp, { type: "Torus" }>;
+export type WedgeOp = Extract<CsgOp, { type: "Wedge" }>;
+export type PrismOp = Extract<CsgOp, { type: "Prism" }>;
+export type MirrorOp = Extract<CsgOp, { type: "Mirror" }>;
+
 /** Default fill parameters (manual / no auto-fill). */
 export const DEFAULT_FILL_PARAMS: FillParams = {
   fill_type: "manual",
@@ -283,6 +289,14 @@ export const DEFAULT_FILL_PARAMS: FillParams = {
   underlay: false,
   max_stitch_length_mm: 7.0,
 };
+
+// ============================================================================
+// ECAD (PCB/Schematic) types
+// ============================================================================
+
+// ============================================================================
+// Length Tuning / Meander types (mirrors vcad-ecad-pcb router)
+// ============================================================================
 
 /** Meander pattern style. */
 export type MeanderStyle = "Trombone" | "Sawtooth";
@@ -708,6 +722,24 @@ function parseStringArg(s: string): string {
   return s;
 }
 
+/** Parse a decimal integer argument. Rejects hex/octal prefixes, NaN, and non-finite results. */
+function parseIntArg(s: string, line: number, field?: string): number {
+  const n = parseInt(s, 10);
+  if (!Number.isFinite(n)) {
+    throw new VCodeParseError(line, `expected integer${field ? ` for ${field}` : ''}, got ${JSON.stringify(s)}`);
+  }
+  return n;
+}
+
+/** Parse a finite floating-point argument. Rejects NaN and ±Infinity. */
+function parseFloatArg(s: string, line: number, field?: string): number {
+  const n = parseFloat(s);
+  if (!Number.isFinite(n)) {
+    throw new VCodeParseError(line, `expected finite number${field ? ` for ${field}` : ''}, got ${JSON.stringify(s)}`);
+  }
+  return n;
+}
+
 /** Escape an identifier - if it contains spaces or special chars, quote it. */
 function escapeId(s: string): string {
   if (/[\s"]/.test(s) || s.length === 0 || /^\d/.test(s)) {
@@ -805,6 +837,14 @@ function formatOp(op: CsgOp, idMap: Map<number, number>, name?: string): string 
       return `S ${op.radius}${nameSuffix}`;
     case 'Cone':
       return `K ${op.radius_bottom} ${op.radius_top} ${op.height}${nameSuffix}`;
+    case 'Torus':
+      return `TO ${op.major_radius} ${op.minor_radius}${nameSuffix}`;
+    case 'Wedge':
+      return `W ${op.size.x} ${op.size.y} ${op.size.z}${nameSuffix}`;
+    case 'Prism':
+      return `PR ${op.sides} ${op.radius} ${op.height}${nameSuffix}`;
+    case 'Mirror':
+      return `MI ${idMap.get(op.child)} ${op.plane_origin.x} ${op.plane_origin.y} ${op.plane_origin.z} ${op.plane_normal.x} ${op.plane_normal.y} ${op.plane_normal.z}${nameSuffix}`;
     case 'Empty':
       return `C 0 0 0${nameSuffix}`;
     case 'Union':
@@ -994,11 +1034,15 @@ function parseMaterial(doc: Document, parts: string[], line: number): void {
   }
 
   const name = parseStringArg(parts[1]);
-  const color: [number, number, number] = [parseFloat(parts[2]), parseFloat(parts[3]), parseFloat(parts[4])];
-  const metallic = parseFloat(parts[5]);
-  const roughness = parseFloat(parts[6]);
-  const density = parts[7] ? parseFloat(parts[7]) : undefined;
-  const friction = parts[8] ? parseFloat(parts[8]) : undefined;
+  const color: [number, number, number] = [
+    parseFloatArg(parts[2], line, 'color.r'),
+    parseFloatArg(parts[3], line, 'color.g'),
+    parseFloatArg(parts[4], line, 'color.b'),
+  ];
+  const metallic = parseFloatArg(parts[5], line, 'metallic');
+  const roughness = parseFloatArg(parts[6], line, 'roughness');
+  const density = parts[7] ? parseFloatArg(parts[7], line, 'density') : undefined;
+  const friction = parts[8] ? parseFloatArg(parts[8], line, 'friction') : undefined;
 
   doc.materials[name] = { name, color, metallic, roughness, density, friction };
 }
@@ -1008,7 +1052,7 @@ function parseRoot(doc: Document, parts: string[], line: number): void {
     throw new VCodeParseError(line, `ROOT requires at least 2 args, got ${parts.length - 1}`);
   }
 
-  const root = parseInt(parts[1]);
+  const root = parseIntArg(parts[1], line, 'root');
   const material = parseStringArg(parts[2]);
   const visible = parts[3] === 'hidden' ? false : undefined;
 
@@ -1022,7 +1066,7 @@ function parsePartDef(doc: Document, parts: string[], line: number): void {
 
   const id = parseStringArg(parts[1]);
   const name = parseStringArg(parts[2]);
-  const root = parseInt(parts[3]);
+  const root = parseIntArg(parts[3], line, 'root');
   const defaultMaterial = parts[4] ? parseStringArg(parts[4]) : undefined;
 
   if (!doc.partDefs) doc.partDefs = {};
@@ -1297,7 +1341,7 @@ function parseAO(doc: Document, parts: string[], line: number): void {
   if (!doc.scene.postProcessing) doc.scene.postProcessing = {};
 
   doc.scene.postProcessing.ambientOcclusion = {
-    enabled: parseInt(parts[1]) !== 0,
+    enabled: parseInt(parts[1], 10) !== 0,
     intensity: parseFloat(parts[2]),
     radius: parseFloat(parts[3]),
   };
@@ -1312,7 +1356,7 @@ function parseBloom(doc: Document, parts: string[], line: number): void {
   if (!doc.scene.postProcessing) doc.scene.postProcessing = {};
 
   doc.scene.postProcessing.bloom = {
-    enabled: parseInt(parts[1]) !== 0,
+    enabled: parseInt(parts[1], 10) !== 0,
     intensity: parseFloat(parts[2]),
     threshold: parseFloat(parts[3]),
   };
@@ -1327,7 +1371,7 @@ function parseVignette(doc: Document, parts: string[], line: number): void {
   if (!doc.scene.postProcessing) doc.scene.postProcessing = {};
 
   doc.scene.postProcessing.vignette = {
-    enabled: parseInt(parts[1]) !== 0,
+    enabled: parseInt(parts[1], 10) !== 0,
     offset: parseFloat(parts[2]),
     darkness: parseFloat(parts[3]),
   };
@@ -1432,49 +1476,65 @@ function parseGeometryOpcode(opcode: string, parts: string[], lineNum: number, l
       if (parts.length !== 4) throw new VCodeParseError(lineNum, `K requires 3 args, got ${parts.length - 1}`);
       return { type: 'Cone', radius_bottom: parseFloat(parts[1]), radius_top: parseFloat(parts[2]), height: parseFloat(parts[3]), segments: 0 };
 
+    case 'TO':
+      if (parts.length !== 3) throw new VCodeParseError(lineNum, `TO requires 2 args, got ${parts.length - 1}`);
+      return { type: 'Torus', major_radius: parseFloatArg(parts[1], lineNum, 'major_radius'), minor_radius: parseFloatArg(parts[2], lineNum, 'minor_radius'), segments: 0 };
+
+    case 'W':
+      if (parts.length !== 4) throw new VCodeParseError(lineNum, `W requires 3 args, got ${parts.length - 1}`);
+      return { type: 'Wedge', size: { x: parseFloatArg(parts[1], lineNum, 'sx'), y: parseFloatArg(parts[2], lineNum, 'sy'), z: parseFloatArg(parts[3], lineNum, 'sz') } };
+
+    case 'PR':
+      if (parts.length !== 4) throw new VCodeParseError(lineNum, `PR requires 3 args, got ${parts.length - 1}`);
+      return { type: 'Prism', sides: parseIntArg(parts[1], lineNum, 'sides'), radius: parseFloatArg(parts[2], lineNum, 'radius'), height: parseFloatArg(parts[3], lineNum, 'height') };
+
+    case 'MI':
+      if (parts.length !== 8) throw new VCodeParseError(lineNum, `MI requires 7 args, got ${parts.length - 1}`);
+      return { type: 'Mirror', child: parseIntArg(parts[1], lineNum, 'child'), plane_origin: { x: parseFloatArg(parts[2], lineNum, 'ox'), y: parseFloatArg(parts[3], lineNum, 'oy'), z: parseFloatArg(parts[4], lineNum, 'oz') }, plane_normal: { x: parseFloatArg(parts[5], lineNum, 'nx'), y: parseFloatArg(parts[6], lineNum, 'ny'), z: parseFloatArg(parts[7], lineNum, 'nz') } };
+
     case 'U':
       if (parts.length !== 3) throw new VCodeParseError(lineNum, `U requires 2 args, got ${parts.length - 1}`);
-      return { type: 'Union', left: parseInt(parts[1]), right: parseInt(parts[2]) };
+      return { type: 'Union', left: parseInt(parts[1], 10), right: parseInt(parts[2], 10) };
 
     case 'D':
       if (parts.length !== 3) throw new VCodeParseError(lineNum, `D requires 2 args, got ${parts.length - 1}`);
-      return { type: 'Difference', left: parseInt(parts[1]), right: parseInt(parts[2]) };
+      return { type: 'Difference', left: parseInt(parts[1], 10), right: parseInt(parts[2], 10) };
 
     case 'I':
       if (parts.length !== 3) throw new VCodeParseError(lineNum, `I requires 2 args, got ${parts.length - 1}`);
-      return { type: 'Intersection', left: parseInt(parts[1]), right: parseInt(parts[2]) };
+      return { type: 'Intersection', left: parseInt(parts[1], 10), right: parseInt(parts[2], 10) };
 
     case 'T':
       if (parts.length !== 5) throw new VCodeParseError(lineNum, `T requires 4 args, got ${parts.length - 1}`);
-      return { type: 'Translate', child: parseInt(parts[1]), offset: { x: parseFloat(parts[2]), y: parseFloat(parts[3]), z: parseFloat(parts[4]) } };
+      return { type: 'Translate', child: parseInt(parts[1], 10), offset: { x: parseFloat(parts[2]), y: parseFloat(parts[3]), z: parseFloat(parts[4]) } };
 
     case 'R':
       if (parts.length !== 5) throw new VCodeParseError(lineNum, `R requires 4 args, got ${parts.length - 1}`);
-      return { type: 'Rotate', child: parseInt(parts[1]), angles: { x: parseFloat(parts[2]), y: parseFloat(parts[3]), z: parseFloat(parts[4]) } };
+      return { type: 'Rotate', child: parseInt(parts[1], 10), angles: { x: parseFloat(parts[2]), y: parseFloat(parts[3]), z: parseFloat(parts[4]) } };
 
     case 'X':
       if (parts.length !== 5) throw new VCodeParseError(lineNum, `X requires 4 args, got ${parts.length - 1}`);
-      return { type: 'Scale', child: parseInt(parts[1]), factor: { x: parseFloat(parts[2]), y: parseFloat(parts[3]), z: parseFloat(parts[4]) } };
+      return { type: 'Scale', child: parseInt(parts[1], 10), factor: { x: parseFloat(parts[2]), y: parseFloat(parts[3]), z: parseFloat(parts[4]) } };
 
     case 'LP':
       if (parts.length !== 7) throw new VCodeParseError(lineNum, `LP requires 6 args, got ${parts.length - 1}`);
-      return { type: 'LinearPattern', child: parseInt(parts[1]), direction: { x: parseFloat(parts[2]), y: parseFloat(parts[3]), z: parseFloat(parts[4]) }, count: parseInt(parts[5]), spacing: parseFloat(parts[6]) };
+      return { type: 'LinearPattern', child: parseInt(parts[1], 10), direction: { x: parseFloat(parts[2]), y: parseFloat(parts[3]), z: parseFloat(parts[4]) }, count: parseInt(parts[5], 10), spacing: parseFloat(parts[6]) };
 
     case 'CP':
       if (parts.length !== 10) throw new VCodeParseError(lineNum, `CP requires 9 args, got ${parts.length - 1}`);
-      return { type: 'CircularPattern', child: parseInt(parts[1]), axis_origin: { x: parseFloat(parts[2]), y: parseFloat(parts[3]), z: parseFloat(parts[4]) }, axis_dir: { x: parseFloat(parts[5]), y: parseFloat(parts[6]), z: parseFloat(parts[7]) }, count: parseInt(parts[8]), angle_deg: parseFloat(parts[9]) };
+      return { type: 'CircularPattern', child: parseInt(parts[1], 10), axis_origin: { x: parseFloat(parts[2]), y: parseFloat(parts[3]), z: parseFloat(parts[4]) }, axis_dir: { x: parseFloat(parts[5]), y: parseFloat(parts[6]), z: parseFloat(parts[7]) }, count: parseInt(parts[8], 10), angle_deg: parseFloat(parts[9]) };
 
     case 'SH':
       if (parts.length !== 3) throw new VCodeParseError(lineNum, `SH requires 2 args, got ${parts.length - 1}`);
-      return { type: 'Shell', child: parseInt(parts[1]), thickness: parseFloat(parts[2]) };
+      return { type: 'Shell', child: parseInt(parts[1], 10), thickness: parseFloat(parts[2]) };
 
     case 'FI':
       if (parts.length !== 3) throw new VCodeParseError(lineNum, `FI requires 2 args, got ${parts.length - 1}`);
-      return { type: 'Fillet', child: parseInt(parts[1]), radius: parseFloat(parts[2]) };
+      return { type: 'Fillet', child: parseInt(parts[1], 10), radius: parseFloat(parts[2]) };
 
     case 'CH':
       if (parts.length !== 3) throw new VCodeParseError(lineNum, `CH requires 2 args, got ${parts.length - 1}`);
-      return { type: 'Chamfer', child: parseInt(parts[1]), distance: parseFloat(parts[2]) };
+      return { type: 'Chamfer', child: parseInt(parts[1], 10), distance: parseFloat(parts[2]) };
 
     case 'SK': {
       if (parts.length !== 10) throw new VCodeParseError(lineNum, `SK requires 9 args, got ${parts.length - 1}`);
@@ -1515,11 +1575,11 @@ function parseGeometryOpcode(opcode: string, parts: string[], lineNum: number, l
 
     case 'E':
       if (parts.length !== 5) throw new VCodeParseError(lineNum, `E requires 4 args, got ${parts.length - 1}`);
-      return { type: 'Extrude', sketch: parseInt(parts[1]), direction: { x: parseFloat(parts[2]), y: parseFloat(parts[3]), z: parseFloat(parts[4]) } };
+      return { type: 'Extrude', sketch: parseInt(parts[1], 10), direction: { x: parseFloat(parts[2]), y: parseFloat(parts[3]), z: parseFloat(parts[4]) } };
 
     case 'V':
       if (parts.length !== 9) throw new VCodeParseError(lineNum, `V requires 8 args, got ${parts.length - 1}`);
-      return { type: 'Revolve', sketch: parseInt(parts[1]), axis_origin: { x: parseFloat(parts[2]), y: parseFloat(parts[3]), z: parseFloat(parts[4]) }, axis_dir: { x: parseFloat(parts[5]), y: parseFloat(parts[6]), z: parseFloat(parts[7]) }, angle_deg: parseFloat(parts[8]) };
+      return { type: 'Revolve', sketch: parseInt(parts[1], 10), axis_origin: { x: parseFloat(parts[2]), y: parseFloat(parts[3]), z: parseFloat(parts[4]) }, axis_dir: { x: parseFloat(parts[5]), y: parseFloat(parts[6]), z: parseFloat(parts[7]) }, angle_deg: parseFloat(parts[8]) };
 
     default:
       throw new VCodeParseError(lineNum, `Unknown opcode: ${opcode}`);

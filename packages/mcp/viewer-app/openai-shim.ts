@@ -93,7 +93,9 @@ export function createOpenAiShim() {
       return {
         theme: oai.theme === "light" ? "light" : "dark",
         displayMode: oai.displayMode ?? "inline",
-        availableDisplayModes: ["inline", "fullscreen"],
+        // ChatGPT supports pip — advertise it so the canvas can auto-dock as a
+        // persistent side panel that updates across the conversation.
+        availableDisplayModes: ["inline", "pip", "fullscreen"],
       };
     },
 

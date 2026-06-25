@@ -93,7 +93,9 @@ export const solid_horizontalSection: (a: number, b: number, c: number, d: numbe
 export const solid_intersection: (a: number, b: number) => number;
 export const solid_isEmpty: (a: number) => number;
 export const solid_loft: (a: number, b: number, c: number) => [number, number, number];
+export const solid_mirror: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => number;
 export const solid_numTriangles: (a: number) => number;
+export const solid_prism: (a: number, b: number, c: number) => number;
 export const solid_projectView: (a: number, b: number, c: number, d: number) => any;
 export const solid_rotate: (a: number, b: number, c: number, d: number) => number;
 export const solid_runDfm: (a: number, b: number, c: number, d: number, e: number, f: bigint) => [number, number, number, number];
@@ -105,9 +107,11 @@ export const solid_sweepHelix: (a: number, b: number, c: number, d: number, e: n
 export const solid_sweepLine: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number) => [number, number, number];
 export const solid_textExtrude: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number, o: number, p: number, q: number, r: number, s: number) => [number, number, number];
 export const solid_toStepBuffer: (a: number) => [number, number, number, number];
+export const solid_torus: (a: number, b: number, c: number) => number;
 export const solid_translate: (a: number, b: number, c: number, d: number) => number;
 export const solid_union: (a: number, b: number) => number;
 export const solid_volume: (a: number) => number;
+export const solid_wedge: (a: number, b: number, c: number) => number;
 export const solveForwardKinematics: (a: number, b: number) => [number, number, number];
 export const textBounds: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => [number, number, number];
 export const toVCode: (a: number, b: number) => [number, number, number, number];

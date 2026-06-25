@@ -577,6 +577,21 @@ fn export_step(doc: &vcad_ir::Document, output: &PathBuf) -> Result<()> {
             *height,
             if *segments == 0 { 32 } else { *segments },
         ),
+        vcad_ir::CsgOp::Torus {
+            major_radius,
+            minor_radius,
+            segments,
+        } => Solid::torus(
+            *major_radius,
+            *minor_radius,
+            if *segments == 0 { 32 } else { *segments },
+        ),
+        vcad_ir::CsgOp::Wedge { size } => Solid::wedge(size.x, size.y, size.z),
+        vcad_ir::CsgOp::Prism {
+            sides,
+            radius,
+            height,
+        } => Solid::prism(*sides, *radius, *height),
         vcad_ir::CsgOp::StepImport { path } => {
             // Re-read from the original STEP file
             Solid::from_step(path)?
@@ -1182,6 +1197,21 @@ fn try_build_solid(doc: &vcad_ir::Document) -> Option<vcad_kernel::Solid> {
             *height,
             if *segments == 0 { 32 } else { *segments },
         )),
+        vcad_ir::CsgOp::Torus {
+            major_radius,
+            minor_radius,
+            segments,
+        } => Some(Solid::torus(
+            *major_radius,
+            *minor_radius,
+            if *segments == 0 { 32 } else { *segments },
+        )),
+        vcad_ir::CsgOp::Wedge { size } => Some(Solid::wedge(size.x, size.y, size.z)),
+        vcad_ir::CsgOp::Prism {
+            sides,
+            radius,
+            height,
+        } => Some(Solid::prism(*sides, *radius, *height)),
         _ => None,
     }
 }

@@ -1110,12 +1110,39 @@ export class Solid {
         return Solid.__wrap(ret[0]);
     }
     /**
+     * Mirror the solid across a plane through `(origin_x, origin_y, origin_z)`
+     * with the given plane normal. Triangle / face winding is automatically
+     * reversed to preserve outward normals.
+     * @param {number} origin_x
+     * @param {number} origin_y
+     * @param {number} origin_z
+     * @param {number} normal_x
+     * @param {number} normal_y
+     * @param {number} normal_z
+     * @returns {Solid}
+     */
+    mirror(origin_x, origin_y, origin_z, normal_x, normal_y, normal_z) {
+        const ret = wasm.solid_mirror(this.__wbg_ptr, origin_x, origin_y, origin_z, normal_x, normal_y, normal_z);
+        return Solid.__wrap(ret);
+    }
+    /**
      * Get the number of triangles in the tessellated mesh.
      * @returns {number}
      */
     numTriangles() {
         const ret = wasm.solid_numTriangles(this.__wbg_ptr);
         return ret >>> 0;
+    }
+    /**
+     * Create a regular n-gonal right prism centered on Z.
+     * @param {number} sides
+     * @param {number} radius
+     * @param {number} height
+     * @returns {Solid}
+     */
+    static prism(sides, radius, height) {
+        const ret = wasm.solid_prism(sides, radius, height);
+        return Solid.__wrap(ret);
     }
     /**
      * Project the solid to a 2D view for technical drawing.
@@ -1393,6 +1420,17 @@ export class Solid {
         return v1;
     }
     /**
+     * Create a torus centered at origin with axis along Z.
+     * @param {number} major_radius
+     * @param {number} minor_radius
+     * @param {number | null} [segments]
+     * @returns {Solid}
+     */
+    static torus(major_radius, minor_radius, segments) {
+        const ret = wasm.solid_torus(major_radius, minor_radius, isLikeNone(segments) ? 0x100000001 : (segments) >>> 0);
+        return Solid.__wrap(ret);
+    }
+    /**
      * Translate the solid by (x, y, z).
      * @param {number} x
      * @param {number} y
@@ -1420,6 +1458,17 @@ export class Solid {
     volume() {
         const ret = wasm.solid_volume(this.__wbg_ptr);
         return ret;
+    }
+    /**
+     * Create a right-triangular-prism wedge with corner at origin.
+     * @param {number} sx
+     * @param {number} sy
+     * @param {number} sz
+     * @returns {Solid}
+     */
+    static wedge(sx, sy, sz) {
+        const ret = wasm.solid_wedge(sx, sy, sz);
+        return Solid.__wrap(ret);
     }
 }
 if (Symbol.dispose) Solid.prototype[Symbol.dispose] = Solid.prototype.free;
@@ -7593,12 +7642,12 @@ function __wbg_get_imports() {
             arg0.writeTexture(arg1, arg2, arg3, arg4);
         },
         __wbindgen_cast_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 2367, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 2368, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 2391, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 2392, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h30743bca3150d93c, wasm_bindgen__convert__closures_____invoke__hcf7d3eaee8800b37);
             return ret;
         },
         __wbindgen_cast_0000000000000002: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 3151, function: Function { arguments: [Externref], shim_idx: 3152, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 3175, function: Function { arguments: [Externref], shim_idx: 3176, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__hfdadf281ff0f1c56, wasm_bindgen__convert__closures_____invoke__h9bdf540eb7e61590);
             return ret;
         },

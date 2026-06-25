@@ -482,6 +482,51 @@ impl Solid {
         }
     }
 
+    /// Create a torus centered at origin with axis along Z.
+    #[wasm_bindgen(js_name = torus)]
+    pub fn torus(major_radius: f64, minor_radius: f64, segments: Option<u32>) -> Solid {
+        Solid {
+            inner: vcad_kernel::Solid::torus(major_radius, minor_radius, segments.unwrap_or(32)),
+        }
+    }
+
+    /// Create a right-triangular-prism wedge with corner at origin.
+    #[wasm_bindgen(js_name = wedge)]
+    pub fn wedge(sx: f64, sy: f64, sz: f64) -> Solid {
+        Solid {
+            inner: vcad_kernel::Solid::wedge(sx, sy, sz),
+        }
+    }
+
+    /// Create a regular n-gonal right prism centered on Z.
+    #[wasm_bindgen(js_name = prism)]
+    pub fn prism(sides: u32, radius: f64, height: f64) -> Solid {
+        Solid {
+            inner: vcad_kernel::Solid::prism(sides, radius, height),
+        }
+    }
+
+    /// Mirror the solid across a plane through `(origin_x, origin_y, origin_z)`
+    /// with the given plane normal. Triangle / face winding is automatically
+    /// reversed to preserve outward normals.
+    #[wasm_bindgen(js_name = mirror)]
+    pub fn mirror(
+        &self,
+        origin_x: f64,
+        origin_y: f64,
+        origin_z: f64,
+        normal_x: f64,
+        normal_y: f64,
+        normal_z: f64,
+    ) -> Solid {
+        Solid {
+            inner: self.inner.mirror(
+                [origin_x, origin_y, origin_z],
+                [normal_x, normal_y, normal_z],
+            ),
+        }
+    }
+
     /// Create a solid by extruding a 2D sketch profile.
     ///
     /// Takes a sketch profile and extrusion direction as JS objects.
@@ -3432,6 +3477,27 @@ fn evaluate_node(doc: &vcad_ir::Document, node_id: vcad_ir::NodeId) -> Result<So
             Ok(Solid::cone(*radius_bottom, *radius_top, *height, segs))
         }
 
+        vcad_ir::CsgOp::Torus {
+            major_radius,
+            minor_radius,
+            segments,
+        } => {
+            let segs = if *segments == 0 {
+                None
+            } else {
+                Some(*segments)
+            };
+            Ok(Solid::torus(*major_radius, *minor_radius, segs))
+        }
+
+        vcad_ir::CsgOp::Wedge { size } => Ok(Solid::wedge(size.x, size.y, size.z)),
+
+        vcad_ir::CsgOp::Prism {
+            sides,
+            radius,
+            height,
+        } => Ok(Solid::prism(*sides, *radius, *height)),
+
         vcad_ir::CsgOp::Empty => Ok(Solid::empty()),
 
         vcad_ir::CsgOp::Union { left, right } => {
@@ -3465,6 +3531,25 @@ fn evaluate_node(doc: &vcad_ir::Document, node_id: vcad_ir::NodeId) -> Result<So
         vcad_ir::CsgOp::Scale { child, factor } => {
             let c = evaluate_node(doc, *child)?;
             Ok(c.scale(factor.x, factor.y, factor.z))
+        }
+
+        vcad_ir::CsgOp::Mirror {
+            child,
+            plane_origin,
+            plane_normal,
+        } => {
+            let c = evaluate_node(doc, *child)?;
+            // WASM binding signature is six scalars (matches js_name="mirror"
+            // expecting positional args from the browser), so we flatten the
+            // IR's Vec3 fields here rather than passing slices.
+            Ok(c.mirror(
+                plane_origin.x,
+                plane_origin.y,
+                plane_origin.z,
+                plane_normal.x,
+                plane_normal.y,
+                plane_normal.z,
+            ))
         }
 
         vcad_ir::CsgOp::LinearPattern {

@@ -241,7 +241,13 @@ import {
   sheetMetalNest,
   sheetMetalNestSchema,
 } from "./tools/sheet-metal.js";
-import { getPreviewGlb, getPreviewGlbSchema } from "./tools/preview.js";
+import {
+  getPreviewGlb,
+  getPreviewGlbSchema,
+  getPreviewVersion,
+  getPreviewVersionSchema,
+  previewVersion,
+} from "./tools/preview.js";
 import {
   getViewerHtml,
   VIEWER_RESOURCE_URI,
@@ -450,6 +456,81 @@ const UI_META = {
 const WIDGET_CALLABLE_META = {
   "openai/widgetAccessible": true,
 };
+
+/**
+ * Tools that MOUNT the live 3D canvas — i.e. carry the UI template
+ * (`ui.resourceUri` / `openai/outputTemplate`). Per the MCP Apps spec
+ * (SEP-1865), the template is static and should be referenced by a SMALL
+ * set of tools, not attached to every result: "If you attach a widget
+ * template to every tool call, [the host] can re-render your iframe too
+ * often." So only the tools that BEGIN a viewable session reference it.
+ *
+ * Everything else (create/update/delete, route/add_*, place_part, …) is a
+ * data tool: it returns `structuredContent` ({document_id, document_version,
+ * changed}) and NO template, so it never spawns a fresh iframe. The canvas
+ * mounted here stays live by polling `get_preview_version` and re-fetching
+ * geometry only when the version changes — one durable surface across a long
+ * session instead of one heavy iframe per mutation.
+ */
+const MOUNT_TOOLS = new Set<string>([
+  // CAD session openers
+  "open_document",
+  "create_cad_loon",
+  "import_step",
+  "load_document",
+  "continue_document",
+  // PCB: place_components creates the first board geometry (create_schematic
+  // has none yet, so it must NOT mount — the canvas would fetch an empty board)
+  "place_components",
+  // Sheet metal: the part, and the flat-pattern drawing
+  "sheet_metal_create",
+  "sheet_metal_unfold",
+  // Verification ledger artifact
+  "build_receipt",
+]);
+
+/** Tools the viewer iframe calls itself but that must NOT mount a template:
+ *  readers reached over the postMessage bridge (deep-link IR fetch, ledger
+ *  re-run). They keep `widgetAccessible` so ChatGPT permits the call. */
+const WIDGET_CALLABLE_TOOLS = new Set<string>(["get_document", "verify_receipt"]);
+
+/** App-only geometry/version fetchers the viewer polls. Hidden from the model
+ *  (`visibility: ["app"]`); never carry a template (they return data the
+ *  iframe consumes, not a surface to render). */
+const PREVIEW_FETCH_TOOLS = new Set<string>([
+  "get_preview_glb",
+  "get_preview_version",
+]);
+
+/**
+ * Single source of truth for viewer `_meta` across the whole tool list.
+ * Applied once to the assembled ListTools array so a new tool can never
+ * accidentally inherit the template — it has to opt into MOUNT_TOOLS. Strips
+ * any stray template meta off data tools.
+ */
+function applyViewerMeta<T extends { name: string; _meta?: Record<string, unknown> }>(
+  tools: T[],
+): T[] {
+  return tools.map((t) => {
+    if (PREVIEW_FETCH_TOOLS.has(t.name)) {
+      return { ...t, _meta: { ...WIDGET_CALLABLE_META, ui: { visibility: ["app"] } } };
+    }
+    if (MOUNT_TOOLS.has(t.name)) {
+      return { ...t, _meta: { ...UI_META } };
+    }
+    if (WIDGET_CALLABLE_TOOLS.has(t.name)) {
+      return { ...t, _meta: { ...WIDGET_CALLABLE_META } };
+    }
+    // Data tool: no viewer template. Drop any inherited _meta so it returns
+    // structuredContent only and the host never mounts a per-call iframe.
+    if (t._meta) {
+      const { _meta: _drop, ...rest } = t;
+      void _drop;
+      return rest as T;
+    }
+    return t;
+  });
+}
 
 /**
  * Domain tool packs. The surface is a small always-on core — the
@@ -736,14 +817,16 @@ export async function createServer(
 
   // List available tools
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: [
+    // Single chokepoint for viewer `_meta`: MOUNT_TOOLS get the template,
+    // everything else returns data only — so a long session is one live
+    // canvas, not one heavy iframe per tool call.
+    tools: applyViewerMeta([
       // ── Session lifecycle ──────────────────────────────────────
       {
         name: "open_document",
         description:
           "Open an editing session for a CAD document. Returns a `document_id` to pass to subsequent tool calls (create, update, place_part, inspect_cad, …). Pass an `initial` IR to begin editing an existing document; omit it for a fresh empty document.",
         inputSchema: openDocumentSchema,
-        _meta: UI_META,
       },
       {
         name: "get_document",
@@ -752,7 +835,6 @@ export async function createServer(
         inputSchema: getDocumentSchema,
         // Widget-callable: the viewer's "Open in vcad.io" button fetches
         // the IR through this tool to build the deep link.
-        _meta: { ...UI_META, ...WIDGET_CALLABLE_META },
       },
       {
         name: "close_document",
@@ -775,7 +857,6 @@ export async function createServer(
           "its new document_id. The cheap way to resume a board/part across runs " +
           "instead of rebuilding it.",
         inputSchema: loadDocumentSchema,
-        _meta: UI_META,
       },
       {
         name: "continue_document",
@@ -796,7 +877,6 @@ export async function createServer(
           idempotentHint: false,
           openWorldHint: true,
         },
-        _meta: UI_META,
       },
       {
         name: "server_info",
@@ -863,33 +943,35 @@ export async function createServer(
         description:
           "Insert a stdlib part into the session's document. Takes a `document_id`, a `path` (from `search_parts.id`), and an optional `params` map; missing params use declared defaults. The part remains parametric — end users can edit its params from the feature tree.",
         inputSchema: placePartSchema,
-        _meta: UI_META,
       },
       // ── Registry-driven kernel tools (auto-exposed) ───────────
       // The next block iterates `commandRegistry.toAnthropicTools()` so the
       // schema lives in one place — the kernel WASM. Same tools, same
       // behavior as the in-app chat surface; viewport-only tools (camera
       // and scene-evaluation tools) are filtered out via blocklists in
-      // tools/registry-dispatch.ts. All of them mutate a session document,
-      // so they all get the inline 3D viewer.
-      ...registryToolDescriptors().map((t) => ({ ...t, _meta: UI_META })),
-      // ── MCP Apps: app-only preview fetch ───────────────────────
-      // visibility: ["app"] — spec-compliant hosts hide this from the
-      // agent's tool list; only the viewer iframe calls it (via
-      // app.callServerTool). Keeps multi-hundred-KB GLB payloads out of
-      // model-visible tool results.
+      // tools/registry-dispatch.ts. They are DATA tools: each mutates a
+      // session document and returns structuredContent (document_id +
+      // document_version + changed), but carries no UI template — the live
+      // canvas self-refreshes from the version token. (applyViewerMeta is the
+      // single place that decides viewer `_meta`.)
+      ...registryToolDescriptors(),
+      // ── MCP Apps: app-only preview fetch + version poll ────────
+      // visibility: ["app"] (set by applyViewerMeta) — spec-compliant hosts
+      // hide these from the agent's tool list; only the viewer iframe calls
+      // them (via app.callServerTool). Keeps multi-hundred-KB GLB payloads
+      // out of model-visible tool results, and lets the canvas poll a cheap
+      // change token to self-refresh without re-evaluating geometry.
       {
         name: "get_preview_glb",
         description:
           "Return a base64 GLB preview of an open session document. Internal to the inline 3D viewer — agents should use `export_cad` for geometry exports.",
         inputSchema: getPreviewGlbSchema,
-        _meta: {
-          ui: {
-            resourceUri: VIEWER_RESOURCE_URI,
-            visibility: ["app"],
-          },
-          ...WIDGET_CALLABLE_META,
-        },
+      },
+      {
+        name: "get_preview_version",
+        description:
+          "Return a cheap {document_id, version} change token for an open session document (no geometry eval). Internal to the inline 3D viewer's self-refresh poll — agents should ignore it.",
+        inputSchema: getPreviewVersionSchema,
       },
       // ── Loon DSL one-shot ──────────────────────────────────────
       {
@@ -908,7 +990,6 @@ export async function createServer(
           "Let bindings: [let body [cube 50 30 5]]\n" +
           "Scene: [root solid \"material-name\"]",
         inputSchema: createCadLoonSchema,
-        _meta: UI_META,
       },
       {
         name: "export_cad",
@@ -965,7 +1046,6 @@ export async function createServer(
         description:
           "Apply an approved DFM fix to the session document. v1 supports `set_param` patches (raise a fillet radius, thicken a wall) — other kinds throw and require manual edits. Re-run `dfm_check` afterwards to confirm the issue cleared.",
         inputSchema: dfmApplyFixSchema,
-        _meta: UI_META,
       },
       // ── Sheet metal (AI-native manufacturability surface) ───────
       {
@@ -973,14 +1053,12 @@ export async function createServer(
         description:
           "Create a sheet-metal part: a rectangular or polygon base flange plus an ordered chain of edge flanges, hems, and jogs. Supports `shop_profile` (e.g. \"sendcutsend\") to resolve bend radii/K-factors from the fab's published catalog, and `bend_relief` to cut relief notches at bend ends. Returns a `document_id` (usable with sheet_metal_unfold/check, inspect_cad, export_cad, open_in_browser), the panel/bend model summary, flat bbox + area, and DFM violations.",
         inputSchema: sheetMetalCreateSchema,
-        _meta: UI_META,
       },
       {
         name: "sheet_metal_unfold",
         description:
           "Return the flat pattern (panel outlines, holes, creases, area, bbox) for a sheet-metal session document, plus a fab-ready merged single-silhouette DXF (millimetres): one closed exterior polyline + holes on CUT, DASHED bend centerlines on BEND_UP/BEND_DOWN. DXF carries no bend angles (entered in the fab's UI); for zero data entry export the folded body as STEP via export_cad instead.",
         inputSchema: sheetMetalUnfoldSchema,
-        _meta: UI_META,
       },
       {
         name: "sheet_metal_check",
@@ -1030,7 +1108,6 @@ export async function createServer(
           "Import geometry from a STEP file (.step or .stp). Returns an IR document with ImportedMesh nodes. " +
           "Supports AP203/AP214 STEP files commonly exported from Fusion 360, SolidWorks, Onshape, etc.",
         inputSchema: importStepSchema,
-        _meta: UI_META,
       },
       {
         name: "import_kicad",
@@ -1249,7 +1326,6 @@ export async function createServer(
           "for coil interconnect, buses, and hand-routes that route_nets " +
           "(pad-driven) won't make. Mutates the session document.",
         inputSchema: addTraceSchema,
-        _meta: UI_META,
       },
       {
         name: "add_via",
@@ -1258,7 +1334,6 @@ export async function createServer(
           "FCu→BCu, diameter/drill from design rules). Pairs with add_trace " +
           "for multi-layer routing. Mutates the session document.",
         inputSchema: addViaSchema,
-        _meta: UI_META,
       },
       {
         name: "set_stackup",
@@ -1280,7 +1355,6 @@ export async function createServer(
           "`placement_drc` (same shape as place_components) so a move can be " +
           "re-checked in one call without running run_drc.",
         inputSchema: setPlacementSchema,
-        _meta: UI_META,
       },
       {
         name: "set_board_outline",
@@ -1302,7 +1376,6 @@ export async function createServer(
           "voids); or give an explicit polygon for a partial plane. Mutates the " +
           "session document.",
         inputSchema: addZoneSchema,
-        _meta: UI_META,
       },
       {
         name: "set_design_rules",
@@ -1330,7 +1403,6 @@ export async function createServer(
           "Grid vias are clipped to the board outline by default. Mutates the " +
           "session document.",
         inputSchema: addViaArraySchema,
-        _meta: UI_META,
       },
       {
         name: "add_motor_winding",
@@ -1341,7 +1413,6 @@ export async function createServer(
           "termination as a net-tie — closing the winding_layout plan into " +
           "actual copper. Mutates the session document.",
         inputSchema: addMotorWindingSchema,
-        _meta: UI_META,
       },
       {
         name: "calc_motor",
@@ -1430,7 +1501,6 @@ export async function createServer(
           "provenance — a durable proof that round-trips and re-verifies later as " +
           "Holds / Stale / Violated. Renders as an audit ledger in the inline viewer.",
         inputSchema: buildReceiptSchema,
-        _meta: UI_META,
       },
       {
         name: "verify_receipt",
@@ -1439,7 +1509,6 @@ export async function createServer(
           "board and return the verdict — Holds (same board, clean), Stale (board " +
           "changed), or Violated. Powers the ledger's Re-run button.",
         inputSchema: verifyReceiptSchema,
-        _meta: { ...UI_META, ...WIDGET_CALLABLE_META },
       },
       {
         name: "route_diff_pair",
@@ -1528,7 +1597,7 @@ export async function createServer(
           "The RF/AC analyzer (calc_impedance is geometry-only). Pure.",
         inputSchema: calcRfSchema,
       },
-    ].filter((t) => !disabledTools.has(t.name)),
+    ].filter((t) => !disabledTools.has(t.name))),
   }));
 
   // ── MCP Apps: List UI resources ──────────────────────────────
@@ -1704,6 +1773,13 @@ export async function createServer(
 
         case "get_preview_glb":
           result = await getPreviewGlb(getSession(String(args.document_id ?? "")), engine);
+          break;
+
+        case "get_preview_version":
+          result = getPreviewVersion(
+            getSession(String(args.document_id ?? "")),
+            String(args.document_id ?? ""),
+          );
           break;
 
         case "create_cad_loon":
@@ -2224,10 +2300,20 @@ function attachPreviewHandle(
   docId: string,
   toolName?: string,
 ): void {
-  result.structuredContent = {
+  const structured: Record<string, unknown> = {
     ...result.structuredContent,
     document_id: docId,
   };
+  // Cheap, geometry-free change token (FNV-1a over the IR). The live canvas
+  // polls `get_preview_version` and re-fetches the GLB only when this flips —
+  // so a mutation needn't carry a UI template (no per-call iframe), the one
+  // mounted canvas just notices the change and updates itself.
+  try {
+    structured.document_version = previewVersion(getSession(docId));
+  } catch {
+    // session not resolvable here — the id alone is enough for the viewer
+  }
+  result.structuredContent = structured;
   if (toolName && PURE_JSON_RESULT_TOOLS.has(toolName)) return;
   const mentioned = result.content.some(
     (c) => c.type === "text" && c.text.includes(docId),
