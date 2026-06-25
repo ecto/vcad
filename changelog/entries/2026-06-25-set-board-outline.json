@@ -4,7 +4,12 @@
   "date": "2026-06-25",
   "category": "feat",
   "title": "set_board_outline resizes the board in place",
-  "summary": "New MCP tool changes the board outline (rectangle, circle, or polygon) without re-placing components, traces, vias, or zones. Footprints now off the board are reported in off_board instead of being silently relocated.",
-  "features": ["ecad", "pcb"],
-  "mcpTools": ["set_board_outline"]
+  "summary": "New set_board_outline changes the board outline (rectangle, circle, or polygon) without re-placing components; footprints that end up off the board are reported in off_board.",
+  "features": [
+    "ecad",
+    "pcb"
+  ],
+  "mcpTools": [
+    "set_board_outline"
+  ]
 }

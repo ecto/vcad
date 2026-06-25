@@ -4,7 +4,15 @@
   "date": "2026-06-25",
   "category": "feat",
   "title": "Discover footprints with list/search_footprints",
-  "summary": "Two new MCP tools enumerate and fuzzy-search the parametric footprint families (with a canonical example id each), so agents stop guessing id spellings like SOIC8 vs SOIC-8 and failing create_schematic to learn the right one.",
-  "features": ["ecad", "pcb", "footprints", "discovery"],
-  "mcpTools": ["list_footprints", "search_footprints"]
+  "summary": "Two MCP tools enumerate and fuzzy-search the parametric footprint families (each with a canonical example id), so agents stop guessing id spellings like SOIC8 vs SOIC-8.",
+  "features": [
+    "ecad",
+    "pcb",
+    "footprints",
+    "discovery"
+  ],
+  "mcpTools": [
+    "list_footprints",
+    "search_footprints"
+  ]
 }

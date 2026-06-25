@@ -4,7 +4,13 @@
   "date": "2026-06-25",
   "category": "feat",
   "title": "get_pad_positions returns exact pad coordinates",
-  "summary": "New read-only MCP tool returns every footprint pad's absolute board-frame (x, y), copper layer, and net, so manual add_trace/add_via routing lands on pads instead of being eyeballed from component centers. Optional net/ref filters.",
-  "features": ["ecad", "pcb", "routing"],
-  "mcpTools": ["get_pad_positions"]
+  "summary": "New read-only tool returns every pad's absolute board-frame (x, y), copper layer, and net, so manual add_trace/add_via routing lands on pads instead of guessing from component centers.",
+  "features": [
+    "ecad",
+    "pcb",
+    "routing"
+  ],
+  "mcpTools": [
+    "get_pad_positions"
+  ]
 }

@@ -1684,6 +1684,52 @@ mod tests {
         );
     }
 
+    /// A foreign-net trace lying over a pour on the SAME layer is NOT a short:
+    /// the pour is generated with a clearance void around all foreign copper, so
+    /// it never galvanically connects to another net. A signal trace crossing a
+    /// ground pour is the everyday case, not a defect (inadequate spacing would
+    /// be a Clearance concern). This guards the pour-only-same-net rule against
+    /// a regression that re-introduces the false short.
+    #[test]
+    fn same_layer_foreign_trace_over_pour_is_not_short() {
+        let mut pcb = clean_pcb();
+        pcb.nets.push(Net {
+            id: "3".to_string(),
+            name: "3V3".to_string(),
+        });
+        // GND (net "2") pour flooding the board on FCu.
+        pcb.zones.push(Zone {
+            outline: pcb.outline.vertices.clone(),
+            holes: vec![],
+            net: "2".to_string(),
+            layer: PcbLayer::FCu,
+            clearance: 0.2,
+            min_area: 0.0,
+            fill_type: ZoneFillType::Solid,
+            thermal_relief: ThermalReliefStyle::Relief,
+            thermal_gap: Some(0.5),
+            thermal_spoke_width: Some(0.5),
+            priority: 0,
+        });
+        // A 3V3 (net "3") signal trace on FCu, inside the GND pour area.
+        pcb.traces.push(Trace {
+            start: Vec2::new(20.0, 65.0),
+            end: Vec2::new(60.0, 65.0),
+            width: 0.25,
+            layer: PcbLayer::FCu,
+            net: "3".to_string(),
+        });
+        let shorts: Vec<_> = check_drc(&pcb)
+            .into_iter()
+            .filter(|v| matches!(v.rule, DrcRuleType::Short))
+            .collect();
+        assert!(
+            shorts.is_empty(),
+            "a signal trace over a same-layer foreign pour must not short (the pour voids around it): {:?}",
+            shorts
+        );
+    }
+
     #[test]
     fn clean_pcb_no_violations() {
         let pcb = clean_pcb();

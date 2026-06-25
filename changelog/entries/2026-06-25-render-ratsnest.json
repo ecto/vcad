@@ -4,7 +4,14 @@
   "date": "2026-06-25",
   "category": "feat",
   "title": "render_ratsnest shows pre-route airwires",
-  "summary": "New MCP tool renders the board with its unrouted-connection ratsnest (per-net MST airwires) overlaid as dashed lines, so placement quality and crossing density can be judged before committing to a route pass. Reports the unconnected-pair count.",
-  "features": ["ecad", "pcb", "render", "routing"],
-  "mcpTools": ["render_ratsnest"]
+  "summary": "New render_ratsnest overlays the unrouted-connection ratsnest (per-net MST airwires) as dashed lines over the board, so placement and crossing density can be judged before routing.",
+  "features": [
+    "ecad",
+    "pcb",
+    "render",
+    "routing"
+  ],
+  "mcpTools": [
+    "render_ratsnest"
+  ]
 }
