@@ -1,0 +1,10 @@
+{
+  "id": "2026-06-25-unconnected-pin-app-notes",
+  "version": "0.9.4",
+  "date": "2026-06-25",
+  "category": "feat",
+  "title": "Unconnected pins carry datasheet app-notes",
+  "summary": "create_schematic now reports each unconnected pin with its name, a severity, and the datasheet application notes that reference it (e.g. NE555 CTRL bypass) for parts in the database.",
+  "features": ["schematic", "ecad", "parts-database", "pcb"],
+  "mcpTools": ["create_schematic"]
+}
