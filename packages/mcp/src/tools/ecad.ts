@@ -45,6 +45,7 @@ import {
   evaluateMotor,
   airgapFluxDensity,
   resolvePart as kernelResolvePart,
+  resolvePartDef as kernelResolvePartDef,
   searchEcadParts as kernelSearchPartsEcad,
   findAlternatives as kernelFindAlternatives,
   verifySubstitution as kernelVerifySubstitution,
@@ -376,14 +377,34 @@ export const createSchematicSchema = {
         type: "object" as const,
         properties: {
           ref: { type: "string" as const, description: 'Reference designator (e.g. "R1", "U3")' },
-          value: { type: "string" as const, description: 'Component value (e.g. "10k", "ATmega328P")' },
-          footprint: { type: "string" as const, description: 'Footprint ID (e.g. "Resistor_SMD:R_0805")' },
+          part: {
+            type: "string" as const,
+            description:
+              'Optional part name to auto-resolve pins from the parts database, ' +
+              'e.g. "NE555", "LM358", "ATmega328P" (aliases like "LM555" work too). ' +
+              "When set and `pins` is omitted, the part's universal pin definitions " +
+              "(number, name, electrical type) are populated automatically.",
+          },
+          value: {
+            type: "string" as const,
+            description:
+              'Component value (e.g. "10k", "100nF"). Optional when `part` is given ' +
+              "(defaults to the part name). Also tried as a part name when `part` is " +
+              "absent and `pins` is omitted.",
+          },
+          footprint: {
+            type: "string" as const,
+            description: 'Footprint ID (e.g. "Resistor_SMD:R_0805", "SOIC-8", "DIP-8")',
+          },
           x: { type: "number" as const, description: "X position on sheet" },
           y: { type: "number" as const, description: "Y position on sheet" },
           rotation: { type: "number" as const, description: "Rotation in degrees (default 0)" },
           pins: {
             type: "array" as const,
-            description: "Component pins",
+            description:
+              "Component pins. Optional when `part` (or `value`) names a part in " +
+              "the database — pins are auto-resolved. Provide explicitly to override " +
+              "the database or to define a part it doesn't cover.",
             items: {
               type: "object" as const,
               properties: {
@@ -429,7 +450,7 @@ export const createSchematicSchema = {
             },
           },
         },
-        required: ["ref", "value", "footprint", "x", "y", "pins"],
+        required: ["ref", "footprint", "x", "y"],
       },
     },
     wires: {
@@ -1107,34 +1128,116 @@ export async function createSchematic(args: Record<string, unknown>) {
   const labelsInput = (args.labels as Array<Record<string, unknown>>) || [];
   const netsInput = (args.nets as Record<string, string[]>) || undefined;
 
-  const components: SchematicComponent[] = componentsInput.map((c) => ({
-    ref: c.ref as string,
-    value: c.value as string,
-    footprintId: c.footprint as string,
-    position: { x: c.x as number, y: c.y as number },
-    rotation: (c.rotation as number) || 0,
-    pins: ((c.pins as Array<Record<string, unknown>>) || []).map((p) => ({
-      number: p.number as string,
-      name: p.name as string,
-      pin_type: (p.type as SchematicPin["pin_type"]) || "Passive",
-      position: { x: (p.x as number) || 0, y: (p.y as number) || 0 },
-    })),
-    // Inline-pad escape hatch: explicit footprint geometry that bypasses the
-    // parametric engine. net/layers are (re)assigned by place_components.
-    ...(Array.isArray(c.pads) && c.pads.length > 0
-      ? {
-          pads: (c.pads as Array<Record<string, unknown>>).map((p) => ({
-            number: p.number as string,
-            padType: (p.padType as PadType) || "SMD",
-            shape: p.shape as Pad["shape"],
-            position: (p.position as { x: number; y: number }) || { x: 0, y: 0 },
-            rotation: (p.rotation as number) || 0,
-            drill: (p.drill as Pad["drill"]) || undefined,
-            layers: ["FCu", "FPaste", "FMask"] as PcbLayer[],
-          })),
+  const warnings: string[] = [];
+  // Parts auto-resolved from the database, echoed back so the caller sees what
+  // got pinned (and any datasheet / application notes).
+  const resolvedParts: Array<{
+    ref: string;
+    part: string;
+    footprint: string;
+    pins: number;
+    datasheet_url?: string;
+    app_notes?: string[];
+  }> = [];
+
+  // Resolve each component's pins up front. Caller-provided `pins` always win
+  // (the explicit override); otherwise look the part up in the parts database
+  // by `part` (or `value` as a fallback) so jellybean ICs need no pin boilerplate.
+  const resolvedDefs = await Promise.all(
+    componentsInput.map(async (c) => {
+      const explicit = (c.pins as Array<Record<string, unknown>>) || [];
+      if (explicit.length > 0) return null;
+      const partName = (c.part as string) || (c.value as string) || "";
+      if (!partName) return null;
+      const def = await kernelResolvePartDef(partName, c.footprint as string | undefined);
+      if (!def) {
+        // Only a hard miss when they named a part explicitly (a bare `value`
+        // like "10k" is a passive, not a database lookup, and may have no pins).
+        if (c.part) {
+          warnings.push(
+            `Part "${partName}" (ref ${c.ref ?? "?"}) is not in the parts database and ` +
+              "no `pins` were provided — this component has no pins. Provide a `pins` " +
+              "array, or use a known part / alias.",
+          );
         }
-      : {}),
-  }));
+        return null;
+      }
+      warnings.push(...def.warnings);
+      resolvedParts.push({
+        ref: c.ref as string,
+        part: def.name,
+        footprint: def.footprint,
+        pins: def.pins.length,
+        ...(def.datasheet_url ? { datasheet_url: def.datasheet_url } : {}),
+        ...(def.app_notes.length > 0 ? { app_notes: def.app_notes } : {}),
+      });
+      return def;
+    }),
+  );
+
+  const components: SchematicComponent[] = componentsInput.map((c, i) => {
+    const def = resolvedDefs[i];
+    const explicitPins = (c.pins as Array<Record<string, unknown>>) || [];
+    const pins: SchematicPin[] =
+      explicitPins.length > 0
+        ? explicitPins.map((p) => ({
+            number: p.number as string,
+            name: p.name as string,
+            pin_type: (p.type as SchematicPin["pin_type"]) || "Passive",
+            position: { x: (p.x as number) || 0, y: (p.y as number) || 0 },
+          }))
+        : def
+          ? def.pins.map((p) => ({
+              number: p.number,
+              name: p.name,
+              pin_type: p.pin_type as SchematicPin["pin_type"],
+              position: { x: p.x, y: p.y },
+            }))
+          : [];
+
+    // Carry the resolved part identity + datasheet for traceability.
+    const properties: Record<string, string> = {};
+    if (c.part) properties.part = c.part as string;
+    if (def?.datasheet_url) properties.datasheet = def.datasheet_url;
+
+    return {
+      ref: c.ref as string,
+      value: (c.value as string) || (c.part as string) || def?.name || "",
+      footprintId: c.footprint as string,
+      position: { x: c.x as number, y: c.y as number },
+      rotation: (c.rotation as number) || 0,
+      pins,
+      ...(Object.keys(properties).length > 0 ? { properties } : {}),
+      // Inline-pad escape hatch: explicit footprint geometry that bypasses the
+      // parametric engine. net/layers are (re)assigned by place_components.
+      ...(Array.isArray(c.pads) && c.pads.length > 0
+        ? {
+            pads: (c.pads as Array<Record<string, unknown>>).map((p) => ({
+              number: p.number as string,
+              padType: (p.padType as PadType) || "SMD",
+              shape: p.shape as Pad["shape"],
+              position: (p.position as { x: number; y: number }) || { x: 0, y: 0 },
+              rotation: (p.rotation as number) || 0,
+              drill: (p.drill as Pad["drill"]) || undefined,
+              layers: ["FCu", "FPaste", "FMask"] as PcbLayer[],
+            })),
+          }
+        : {}),
+    };
+  });
+
+  // `pins` is now optional, so flag any component that ended up with none and
+  // wasn't a (separately-warned) unresolved `part` — usually a forgotten pin
+  // list on a passive. A pinless component connects to nothing silently.
+  componentsInput.forEach((c, i) => {
+    const hadExplicitPins = ((c.pins as unknown[]) || []).length > 0;
+    if (!hadExplicitPins && !c.part && components[i].pins.length === 0) {
+      warnings.push(
+        `Component ${(c.ref as string) ?? "?"} has no pins — give it a \`pins\` ` +
+          "array or a `part` name from the database.",
+      );
+    }
+  });
 
   const wires: SchematicWire[] = wiresInput.map((w) => ({
     start: { x: w.x1 as number, y: w.y1 as number },
@@ -1159,8 +1262,6 @@ export async function createSchematic(args: Record<string, unknown>) {
   // Validate the explicit netlist eagerly so bad pin refs fail this call,
   // not place_components three steps later.
   if (netsInput) validateExplicitNets(schematic, netsInput);
-
-  const warnings: string[] = [];
 
   // A label only joins a net when it sits exactly on a pin or wire endpoint
   // (within tolerance). A label that touches nothing silently names nothing —
@@ -1222,6 +1323,7 @@ export async function createSchematic(args: Record<string, unknown>) {
           wires: wires.length,
           labels: labels.length,
           nets: netsPreview,
+          ...(resolvedParts.length > 0 ? { resolved_parts: resolvedParts } : {}),
           ...(unconnected.length > 0 ? { unconnected_pins: unconnected } : {}),
           ...(warnings.length > 0 ? { warnings } : {}),
         }),
@@ -5558,7 +5660,10 @@ export const resolvePartSchema = {
     query: {
       type: "string",
       description:
-        "Spec query to resolve into ONE part, e.g. '10k 0603 1%'. E-series-snapped; returns footprint + symbol + 3D body + MPN xrefs.",
+        "Either a passive spec query (e.g. '10k 0603 1%') — E-series-snapped, " +
+        "returns footprint + symbol + 3D body + MPN xrefs — or a jellybean part " +
+        "name/alias (e.g. 'NE555', 'LM358', 'LM555'), which returns its universal " +
+        "pin definitions (number, name, electrical type) plus datasheet and notes.",
     },
   },
   required: ["query"],
@@ -5615,22 +5720,35 @@ export async function searchElectronicParts(args: Record<string, unknown>) {
   };
 }
 
-/** Resolve a spec query into one fully-specified, geometry-generated part. */
+/**
+ * Resolve a query into one fully-specified part. A passive spec
+ * ('10k 0603 1%') resolves via the generative catalog (footprint + symbol +
+ * 3D body); otherwise the query is tried as a jellybean part name/alias
+ * ('NE555'), returning its universal pin definitions. This unifies the parts
+ * search and schematic-capture pipelines behind one tool.
+ */
 export async function resolvePart(args: Record<string, unknown>) {
   const query = typeof args.query === "string" ? args.query : "";
   const part = await kernelResolvePart(query);
-  if (!part) {
+  if (part) {
+    return { content: [{ type: "text" as const, text: JSON.stringify(part) }] };
+  }
+  // Fall back to the curated jellybean database (named ICs by part or alias).
+  const def = await kernelResolvePartDef(query, undefined);
+  if (def) {
     return {
-      content: [
-        {
-          type: "text" as const,
-          text: `No resolvable part for '${query}'. Provide a passive value with optional package + tolerance, e.g. '10k 0603 1%'.`,
-        },
-      ],
-      isError: true,
+      content: [{ type: "text" as const, text: JSON.stringify({ kind: "jellybean", ...def }) }],
     };
   }
-  return { content: [{ type: "text" as const, text: JSON.stringify(part) }] };
+  return {
+    content: [
+      {
+        type: "text" as const,
+        text: `No resolvable part for '${query}'. Provide a passive value with optional package + tolerance (e.g. '10k 0603 1%'), or a known part name/alias (e.g. 'NE555', 'LM358').`,
+      },
+    ],
+    isError: true,
+  };
 }
 
 /** Propose spec-compatible alternatives, each classified by footprint compat. */

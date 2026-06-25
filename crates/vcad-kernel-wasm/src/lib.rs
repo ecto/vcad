@@ -4802,6 +4802,34 @@ mod ecad_wasm {
         vcad_ecad_parts::catalog::manifest_json()
     }
 
+    // --- Jellybean parts database (vcad-ecad-parts) ------------------------
+
+    /// Resolve a named jellybean part (e.g. `"NE555"`) plus an optional
+    /// footprint into its pin definitions — number, name, electrical type, and
+    /// an auto-generated schematic-symbol position — along with the part's
+    /// aliases-resolved name, datasheet, and application notes. Returns `null`
+    /// when the name is not in the curated database. When `footprint` is
+    /// omitted the part's primary package is used. Fully offline.
+    #[wasm_bindgen(js_name = ecadResolvePartDef)]
+    pub fn ecad_resolve_part_def(
+        name: &str,
+        footprint: Option<String>,
+    ) -> Result<JsValue, JsError> {
+        match vcad_ecad_parts::resolve_part_def(name, footprint.as_deref()) {
+            Some(part) => {
+                serde_wasm_bindgen::to_value(&part).map_err(|e| JsError::new(&e.to_string()))
+            }
+            None => Ok(JsValue::NULL),
+        }
+    }
+
+    /// JSON manifest of the curated jellybean catalog: per part its name,
+    /// aliases, description, packages, and pin count.
+    #[wasm_bindgen(js_name = ecadJellybeanManifest)]
+    pub fn ecad_jellybean_manifest() -> String {
+        vcad_ecad_parts::jellybean::jellybean_manifest_json()
+    }
+
     // --- Verified substitution (vcad-ecad-verify) --------------------------
 
     /// Propose spec-compatible alternatives for the part a query resolves to,
