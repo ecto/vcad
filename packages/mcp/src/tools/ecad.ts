@@ -600,6 +600,14 @@ export const placeComponentsSchema = {
       type: "number" as const,
       description: "Angle of the first component for strategy=radial (default 0 = +X).",
     },
+    edge_margin: {
+      type: "number" as const,
+      description:
+        "Edge clearance in mm used when computing the advisory " +
+        "`utilization.suggested_outline` (default: max of the design-rule edge " +
+        "clearance and 2mm). Does not affect placement — only the suggested " +
+        "right-sized outline reported back.",
+    },
   },
   required: [],
 };
@@ -2002,6 +2010,22 @@ export async function placeComponents(args: Record<string, unknown>) {
     );
   }
 
+  // --- Board utilization + suggested outline (advisory) -----------------
+  // Force-directed/grid placement can leave a generous board mostly empty
+  // copper. Report how much area the parts actually occupy, plus the tightest
+  // same-shape outline that still holds them, so cost-sensitive callers (and
+  // agents) can right-size in one step instead of trial-and-error. Strictly
+  // advisory — the caller decides whether to act on it.
+  const utilization = computeUtilization(
+    footprints,
+    vertices,
+    cutouts,
+    outlineArg ? "polygon" : shapeArg ? "circle" : "rect",
+    circleInnerR,
+    args.edge_margin as number | undefined,
+    rules.edgeClearance,
+  );
+
   return {
     content: [
       {
@@ -2031,11 +2055,139 @@ export async function placeComponents(args: Record<string, unknown>) {
             shape: outlineArg ? "polygon" : shapeArg ? "circle" : "rect",
             ...(cutouts && cutouts.length > 0 ? { cutouts: cutouts.length } : {}),
           },
+          ...(utilization ? { utilization } : {}),
           nets: netsSummary,
           ...docResultPayload(ctx),
         }),
       },
     ],
+  };
+}
+
+/**
+ * Axis-aligned half-extents (mm) of a single pad in footprint-local coords.
+ * Mirrors the placer's keep-out sizing but keeps x/y separate for a tight
+ * bounding box. Pad rotation is ignored (consistent with the placer).
+ */
+function padHalfExtents(shape: Pad["shape"]): { hx: number; hy: number } {
+  switch (shape.type) {
+    case "Circle":
+      return { hx: shape.diameter / 2, hy: shape.diameter / 2 };
+    case "Rect":
+    case "Oval":
+    case "RoundRect":
+      return { hx: shape.width / 2, hy: shape.height / 2 };
+    case "Custom": {
+      let hx = 0;
+      let hy = 0;
+      for (const v of shape.vertices) {
+        hx = Math.max(hx, Math.abs(v.x));
+        hy = Math.max(hy, Math.abs(v.y));
+      }
+      return { hx: hx || 0.5, hy: hy || 0.5 };
+    }
+    default:
+      return { hx: 0.5, hy: 0.5 };
+  }
+}
+
+/**
+ * Board-area utilization plus an advisory right-sized outline, from the final
+ * placed footprints. Component area is courtyard-approximate — summed pad
+ * bounding boxes, the geometry we reliably have for every footprint (inline,
+ * engine-resolved, or generic placeholder). The suggested outline keeps the
+ * board's current shape and honors `edge_margin`. Returns undefined when
+ * there's nothing to measure (no pads, or a degenerate board area).
+ */
+function computeUtilization(
+  footprints: Footprint[],
+  vertices: Vec2[],
+  cutouts: Vec2[][] | undefined,
+  shape: "polygon" | "circle" | "rect",
+  innerRadius: number,
+  edgeMarginArg: number | undefined,
+  edgeClearance: number,
+):
+  | {
+      board_area_mm2: number;
+      component_area_mm2: number;
+      utilization_pct: number;
+      bounding_box: { x: number; y: number; w: number; h: number };
+      suggested_outline: Record<string, unknown>;
+    }
+  | undefined {
+  // World-space AABB of every placed footprint; sum of the boxes is the
+  // occupied (courtyard-approximate) area.
+  let occMinX = Infinity;
+  let occMinY = Infinity;
+  let occMaxX = -Infinity;
+  let occMaxY = -Infinity;
+  let componentArea = 0;
+  for (const fp of footprints) {
+    let lMinX = Infinity;
+    let lMinY = Infinity;
+    let lMaxX = -Infinity;
+    let lMaxY = -Infinity;
+    for (const pad of fp.pads) {
+      const { hx, hy } = padHalfExtents(pad.shape);
+      lMinX = Math.min(lMinX, pad.position.x - hx);
+      lMaxX = Math.max(lMaxX, pad.position.x + hx);
+      lMinY = Math.min(lMinY, pad.position.y - hy);
+      lMaxY = Math.max(lMaxY, pad.position.y + hy);
+    }
+    if (!Number.isFinite(lMinX)) continue; // padless footprint — skip
+    componentArea += (lMaxX - lMinX) * (lMaxY - lMinY);
+    occMinX = Math.min(occMinX, fp.position.x + lMinX);
+    occMaxX = Math.max(occMaxX, fp.position.x + lMaxX);
+    occMinY = Math.min(occMinY, fp.position.y + lMinY);
+    occMaxY = Math.max(occMaxY, fp.position.y + lMaxY);
+  }
+
+  // Usable board area = outer polygon minus cutouts (shoelace, sign-agnostic).
+  const boardArea =
+    Math.abs(loopSignedArea(vertices)) -
+    (cutouts ?? []).reduce((s, c) => s + Math.abs(loopSignedArea(c)), 0);
+
+  if (!Number.isFinite(occMinX) || boardArea <= 0) return undefined;
+
+  const round2 = (v: number) => Math.round(v * 100) / 100;
+  const ceilHalf = (v: number) => Math.ceil(v * 2) / 2; // round up to 0.5mm
+  const bbW = occMaxX - occMinX;
+  const bbH = occMaxY - occMinY;
+  // Default keeps the suggestion DRC-safe: never tighter than the board's own
+  // edge clearance, and at least 2mm so a fab edge router has room.
+  const margin = Math.max(0, edgeMarginArg ?? Math.max(edgeClearance, 2));
+
+  // Suggest the board's current shape — that's the in-place right-size.
+  let suggested: Record<string, unknown>;
+  if (shape === "circle") {
+    // Enclosing circle of the component AABBs, recentered on the cluster.
+    const cx = (occMinX + occMaxX) / 2;
+    const cy = (occMinY + occMaxY) / 2;
+    const od = ceilHalf(2 * (Math.hypot(bbW / 2, bbH / 2) + margin));
+    suggested = {
+      type: "circle",
+      outer_diameter: od,
+      center: { x: round2(cx), y: round2(cy) },
+      ...(innerRadius > 0 ? { inner_diameter: round2(2 * innerRadius) } : {}),
+      note: `Minimum enclosing circle with ${margin}mm edge clearance`,
+    };
+  } else {
+    suggested = {
+      type: "rect",
+      width: ceilHalf(bbW + 2 * margin),
+      height: ceilHalf(bbH + 2 * margin),
+      origin: { x: round2(occMinX - margin), y: round2(occMinY - margin) },
+      note: `Minimum enclosing rectangle with ${margin}mm edge clearance`,
+    };
+  }
+
+  return {
+    board_area_mm2: round2(boardArea),
+    component_area_mm2: round2(componentArea),
+    utilization_pct: Math.round((componentArea / boardArea) * 1000) / 10,
+    bounding_box: { x: round2(occMinX), y: round2(occMinY), w: round2(bbW), h: round2(bbH) },
+    suggested_outline: suggested,
   };
 }
 

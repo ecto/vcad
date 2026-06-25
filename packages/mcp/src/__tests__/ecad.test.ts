@@ -938,6 +938,98 @@ describe("board shapes and radial placement", () => {
   });
 });
 
+describe("place_components utilization", () => {
+  it("reports board utilization and a tighter rectangular outline", async () => {
+    const created = out(
+      await createSchematic({
+        components: [resistor("R1", 0), resistor("R2", 20)],
+      }),
+    );
+    const placed = out(
+      await placeComponents({
+        document_id: created.document_id,
+        board_width: 50,
+        board_height: 40,
+      }),
+    );
+
+    const u = placed.utilization;
+    expect(u).toBeDefined();
+    // Board area is exact from the rectangle outline.
+    expect(u.board_area_mm2).toBeCloseTo(2000, 1);
+    expect(u.component_area_mm2).toBeGreaterThan(0);
+    expect(u.component_area_mm2).toBeLessThan(u.board_area_mm2);
+    // % used is internally consistent and a small fraction (two 0805 parts).
+    expect(u.utilization_pct).toBeCloseTo(
+      Math.round((u.component_area_mm2 / u.board_area_mm2) * 1000) / 10,
+      1,
+    );
+    expect(u.utilization_pct).toBeGreaterThan(0);
+    expect(u.utilization_pct).toBeLessThan(100);
+
+    // Bounding box is positive and fits inside the board.
+    expect(u.bounding_box.w).toBeGreaterThan(0);
+    expect(u.bounding_box.h).toBeGreaterThan(0);
+    expect(u.bounding_box.x).toBeGreaterThanOrEqual(0);
+
+    // Suggested outline keeps the rect shape, encloses the parts, and is
+    // tighter than the over-large 50×40 board.
+    expect(u.suggested_outline.type).toBe("rect");
+    expect(u.suggested_outline.width).toBeGreaterThanOrEqual(u.bounding_box.w);
+    expect(u.suggested_outline.height).toBeGreaterThanOrEqual(u.bounding_box.h);
+    expect(u.suggested_outline.width).toBeLessThan(50);
+    expect(u.suggested_outline.note).toContain("edge clearance");
+  });
+
+  it("suggests an enclosing circle for a circular board", async () => {
+    const created = out(
+      await createSchematic({
+        components: Array.from({ length: 4 }, (_, i) => resistor(`R${i + 1}`, i * 8)),
+      }),
+    );
+    const placed = out(
+      await placeComponents({
+        document_id: created.document_id,
+        board_shape: { type: "circle", outer_diameter: 40 },
+      }),
+    );
+
+    const u = placed.utilization;
+    expect(u).toBeDefined();
+    // 64-gon inscribed in r=20 ≈ π·20² = 1257 mm².
+    expect(u.board_area_mm2).toBeGreaterThan(1200);
+    expect(u.board_area_mm2).toBeLessThan(1300);
+    expect(u.suggested_outline.type).toBe("circle");
+    expect(u.suggested_outline.outer_diameter).toBeGreaterThan(0);
+    expect(u.suggested_outline.outer_diameter).toBeLessThanOrEqual(40);
+    expect(u.suggested_outline.center).toBeDefined();
+  });
+
+  it("honors edge_margin when sizing the suggested outline", async () => {
+    const created = out(
+      await createSchematic({
+        components: [resistor("R1", 0), resistor("R2", 20)],
+      }),
+    );
+    const id = created.document_id;
+
+    // Zero margin → suggested width hugs the bounding box (rounded up to 0.5mm).
+    const tight = out(
+      await placeComponents({ document_id: id, board_width: 50, board_height: 40, edge_margin: 0 }),
+    ).utilization;
+    expect(tight.suggested_outline.width - tight.bounding_box.w).toBeGreaterThanOrEqual(0);
+    expect(tight.suggested_outline.width - tight.bounding_box.w).toBeLessThan(0.5);
+    expect(tight.suggested_outline.note).toContain("0mm");
+
+    // 5mm margin → ~10mm wider than the bounding box (both sides).
+    const loose = out(
+      await placeComponents({ document_id: id, board_width: 50, board_height: 40, edge_margin: 5 }),
+    ).utilization;
+    expect(loose.suggested_outline.width - loose.bounding_box.w).toBeGreaterThanOrEqual(10);
+    expect(loose.suggested_outline.width - loose.bounding_box.w).toBeLessThan(10.5);
+  });
+});
+
 describe("add_coil", () => {
   async function circleBoardSession(): Promise<string> {
     const created = out(await createSchematic({ components: [resistor("R1", 0)] }));
