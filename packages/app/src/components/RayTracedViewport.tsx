@@ -580,7 +580,7 @@ export function RayTracedViewportOverlay() {
     return () => {
       if (overlayCanvasEl === canvasRef.current) overlayCanvasEl = null;
     };
-  });
+  }, []);
 
   // Expose a one-shot render hook for the recorder. Each call renders the
   // current camera state at the standard tier (no refinement chain) so a
@@ -642,34 +642,19 @@ export function RayTracedViewportOverlay() {
 
   // Apply debug mode changes to raytracer
   useEffect(() => {
-    console.log(`[DEBUG] Debug mode effect running: mode=${raytraceDebugMode}, lastMode=${lastDebugModeRef.current}, hasRayTracer=${!!rayTracer}`);
-
-    if (!rayTracer) {
-      console.log("[DEBUG] No rayTracer available");
-      return;
-    }
-    if (raytraceDebugMode === lastDebugModeRef.current) {
-      console.log("[DEBUG] Debug mode unchanged, skipping");
-      return;
-    }
+    if (!rayTracer) return;
+    if (raytraceDebugMode === lastDebugModeRef.current) return;
 
     lastDebugModeRef.current = raytraceDebugMode;
     const modeNumber = DEBUG_MODE_MAP[raytraceDebugMode] ?? 0;
 
-    console.log(`[DEBUG] Setting debug mode: ${raytraceDebugMode} -> ${modeNumber}`);
-
-    // Check if method exists
     const rt = rayTracer as { setDebugMode?: (mode: number) => void };
-    const hasMethod = typeof rt.setDebugMode === "function";
-    console.log(`[DEBUG] setDebugMode method exists: ${hasMethod}`);
-
-    if (!hasMethod) {
-      console.log("[DEBUG] WARNING: setDebugMode not available - WASM may need rebuild");
+    if (typeof rt.setDebugMode !== "function") {
+      logger.debug("gpu", "setDebugMode not available - WASM may need rebuild");
       return;
     }
 
-    rt.setDebugMode!(modeNumber);
-    console.log(`[DEBUG] Called setDebugMode(${modeNumber})`);
+    rt.setDebugMode(modeNumber);
 
     // Re-render to see the change
     if (lastCameraStateRef.current) {

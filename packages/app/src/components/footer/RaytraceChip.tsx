@@ -5,6 +5,7 @@ import { useUiStore, type RaytraceQuality } from "@vcad/core";
 import { FooterChipButton } from "@/components/footer/FooterChip";
 import { Tooltip } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
+import { ensureNotRecording } from "@/lib/recording-guard";
 import { useCallback } from "react";
 
 const QUALITY_OPTIONS: Array<{
@@ -364,7 +365,9 @@ export function RaytraceChip({ className }: { className?: string }) {
 
           <button
             type="button"
-            onClick={toggleRenderMode}
+            onClick={() => {
+              if (ensureNotRecording()) toggleRenderMode();
+            }}
             className={cn(
               "flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-left",
               "transition-colors",

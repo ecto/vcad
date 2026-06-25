@@ -424,7 +424,9 @@ function resolveActions(
           error: `'actions[${i}]' must be an array of length ${actionDim} (got ${Array.isArray(row) ? `length ${row.length}` : typeof row}).`,
         };
       }
-      out.push(row.map(Number));
+      const checked = coerceFiniteVector(row, `actions[${i}]`);
+      if ("error" in checked) return checked;
+      out.push(checked.values);
     }
     return { values: out };
   }
@@ -436,13 +438,35 @@ function resolveActions(
         error: `'action' length ${constant.length} does not match action_dim=${actionDim}.`,
       };
     }
-    vec = constant.map(Number);
+    const checked = coerceFiniteVector(constant, "action");
+    if ("error" in checked) return checked;
+    vec = checked.values;
   } else {
     vec = new Array(actionDim).fill(0);
   }
   const values: number[][] = new Array(steps);
   for (let i = 0; i < steps; i++) values[i] = vec;
   return { values };
+}
+
+/** Validate that every element coerces to a finite number. NaN and ±Infinity
+ *  silently propagate through the phyz solver and surface as corrupted joint
+ *  states downstream, so we reject them at the boundary. */
+function coerceFiniteVector(
+  row: unknown[],
+  label: string,
+): { values: number[] } | { error: string } {
+  const out = new Array<number>(row.length);
+  for (let j = 0; j < row.length; j++) {
+    const n = Number(row[j]);
+    if (!Number.isFinite(n)) {
+      return {
+        error: `'${label}[${j}]' must be a finite number (got ${JSON.stringify(row[j])}).`,
+      };
+    }
+    out[j] = n;
+  }
+  return { values: out };
 }
 
 function errorResult(text: string): RecordResult {

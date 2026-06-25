@@ -217,7 +217,15 @@ export function useCanvasRecorder() {
 
     // Intent: finalize. Store has flipped to "saving" — stop the recorder so
     // onstop fires, the file gets written, and the store moves back to idle.
+    // Synchronously cancel the raytrace-driver rAF here too: onstop is
+    // dispatched async, so without this we'd kick off one or two pointless
+    // renders during the gap between stop() and onstop.
     if (status === "saving" && cur.recorder) {
+      cur.raytraceDriving = false;
+      if (cur.rafId !== null) {
+        cancelAnimationFrame(cur.rafId);
+        cur.rafId = null;
+      }
       try {
         if (cur.recorder.state !== "inactive") cur.recorder.stop();
       } catch (err) {
@@ -286,7 +294,11 @@ export function useCanvasRecorder() {
       // save path runs.
       useRecordingStore.getState().stop();
     }
-  }, [simMode]);
+    // `status` is in the deps so this also fires right after the recorder
+    // is created — without it, a recorder started while simMode was already
+    // "paused" would remain in the "recording" MediaRecorder state and
+    // capture frozen frames.
+  }, [simMode, status]);
 
   // Clean up on unmount.
   useEffect(() => {
