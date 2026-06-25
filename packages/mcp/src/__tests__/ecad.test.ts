@@ -28,6 +28,7 @@ import {
   addMotorWinding,
   aggregateDrc,
   parseNetPair,
+  summarizePlacementDrc,
   boardFromSolid,
 } from "../tools/ecad.js";
 import { documents, getSession, openDocument } from "../tools/session.js";
@@ -564,6 +565,106 @@ describe("ecad session flow", () => {
 
   it("rejects calls with neither document_id nor document", async () => {
     await expect(routeNets({})).rejects.toThrow(/document_id/);
+  });
+});
+
+describe("placement DRC (pre-routing checks)", () => {
+  /** A 1-pad part on a named net — the smallest thing that can short another. */
+  const onePad = (ref: string, net: string) => ({
+    ref,
+    value: net,
+    footprint: "Test:Pad",
+    x: 0,
+    y: 0,
+    pins: [{ number: "1", name: net, type: "Passive" }],
+    pads: [{ number: "1", shape: { type: "Rect" as const, width: 1.5, height: 1.5 }, position: { x: 0, y: 0 } }],
+  });
+
+  it("place_components returns a clean placement_drc for a roomy board", async () => {
+    const created = out(
+      await createSchematic({
+        components: [resistor("R1", 0), resistor("R2", 30)],
+        nets: { MID: ["R1.2", "R2.1"] },
+      }),
+    );
+    const placed = out(
+      await placeComponents({ document_id: created.document_id, board_width: 60, board_height: 60 }),
+    );
+    expect(placed.placement_drc).toBeDefined();
+    expect(placed.placement_drc.clean).toBe(true);
+    expect(placed.placement_drc.shorts).toEqual([]);
+    expect(placed.placement_drc.clearance_violations).toBe(0);
+    expect(placed.placement_drc.courtyard_overlaps).toBe(0);
+    expect(placed.placement_drc.off_board).toEqual([]);
+    // A clean placement adds no DRC warning.
+    expect((placed.warnings ?? []).some((w: string) => w.includes("placement DRC"))).toBe(false);
+  });
+
+  it("reports a pad-to-pad short with both nets and the offending refs", async () => {
+    const created = out(
+      await createSchematic({
+        components: [onePad("C1", "VCC"), onePad("J1", "GND")],
+        nets: { VCC: ["C1.1"], GND: ["J1.1"] },
+      }),
+    );
+    const id = created.document_id;
+    out(await placeComponents({ document_id: id, board_width: 40, board_height: 40 }));
+    const board = getPcbBoard(getSession(id));
+    // Stack J1 on C1 so their different-net pads overlap → a hard short.
+    const c1 = board.footprints.find((f) => f.ref === "C1")!;
+    const j1 = board.footprints.find((f) => f.ref === "J1")!;
+    j1.position = { x: c1.position.x, y: c1.position.y };
+
+    const drc = await summarizePlacementDrc(board);
+    expect(drc.clean).toBe(false);
+    expect(drc.shorts.length).toBe(1);
+    expect([...drc.shorts[0].nets].sort()).toEqual(["GND", "VCC"]);
+    expect([...drc.shorts[0].refs].sort()).toEqual(["C1", "J1"]);
+    // The overlap is reported as a short, not double-counted as clearance.
+    expect(drc.clearance_violations).toBe(0);
+  });
+
+  it("flags a footprint placed off the board outline", async () => {
+    const created = out(
+      await createSchematic({
+        components: [resistor("R1", 0), resistor("R2", 20)],
+        nets: { MID: ["R1.2", "R2.1"] },
+      }),
+    );
+    const id = created.document_id;
+    out(await placeComponents({ document_id: id, board_width: 40, board_height: 40 }));
+    const board = getPcbBoard(getSession(id));
+    board.footprints.find((f) => f.ref === "R2")!.position = { x: 500, y: 500 };
+
+    const drc = await summarizePlacementDrc(board);
+    expect(drc.off_board).toContain("R2");
+    expect(drc.off_board).not.toContain("R1");
+    expect(drc.clean).toBe(false);
+  });
+
+  it("place_components surfaces collisions on an overcrowded board (and warns)", async () => {
+    const dpak = (ref: string, x: number) => ({
+      ref,
+      value: "FET",
+      footprint: "Package_TO_SOT_SMD:TO-252-3_TabPin2",
+      x,
+      y: 0,
+      pins: [
+        { number: "1", name: "G", type: "Passive" },
+        { number: "2", name: "D", type: "Passive" },
+        { number: "3", name: "S", type: "Passive" },
+      ],
+    });
+    const created = out(
+      await createSchematic({ components: [dpak("Q1", 0), dpak("Q2", 4), dpak("Q3", 8), dpak("Q4", 12)] }),
+    );
+    const placed = out(
+      await placeComponents({ document_id: created.document_id, board_width: 14, board_height: 14 }),
+    );
+    const d = placed.placement_drc;
+    expect(d.clean).toBe(false);
+    expect(d.shorts.length + d.clearance_violations + d.courtyard_overlaps).toBeGreaterThan(0);
+    expect((placed.warnings ?? []).some((w: string) => w.includes("placement DRC"))).toBe(true);
   });
 });
 
@@ -2375,6 +2476,45 @@ describe("set_placement", () => {
     const id = await boardWithTwoResistors();
     const res = await setPlacement({ document_id: id, placements: [{ ref: "X", x: 1, y: 1 }] });
     expect(isErr(res)).toBe(true);
+  });
+
+  it("returns a fresh placement_drc so a short can be made then fixed in-loop", async () => {
+    const onePad = (ref: string, net: string) => ({
+      ref,
+      value: net,
+      footprint: "Test:Pad",
+      x: 0,
+      y: 0,
+      pins: [{ number: "1", name: net, type: "Passive" }],
+      pads: [{ number: "1", shape: { type: "Rect" as const, width: 1.5, height: 1.5 }, position: { x: 0, y: 0 } }],
+    });
+    const created = out(
+      await createSchematic({
+        components: [onePad("C1", "VCC"), onePad("J1", "GND")],
+        nets: { VCC: ["C1.1"], GND: ["J1.1"] },
+      }),
+    );
+    const id = created.document_id;
+    out(await placeComponents({ document_id: id, board_width: 40, board_height: 40 }));
+
+    // Stack J1 on C1 → set_placement reports the short directly.
+    const shorted = out(
+      await setPlacement({
+        document_id: id,
+        placements: [
+          { ref: "C1", x: 20, y: 20 },
+          { ref: "J1", x: 20, y: 20 },
+        ],
+      }),
+    );
+    expect(shorted.placement_drc.clean).toBe(false);
+    expect(shorted.placement_drc.shorts.length).toBe(1);
+    expect([...shorted.placement_drc.shorts[0].refs].sort()).toEqual(["C1", "J1"]);
+
+    // Move J1 away → the same call confirms a clean board; no run_drc needed.
+    const fixed = out(await setPlacement({ document_id: id, placements: [{ ref: "J1", x: 5, y: 5 }] }));
+    expect(fixed.placement_drc.clean).toBe(true);
+    expect(fixed.placement_drc.shorts).toEqual([]);
   });
 });
 

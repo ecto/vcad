@@ -2008,6 +2008,25 @@ export async function placeComponents(args: Record<string, unknown>) {
   const netsSummary: Record<string, string[]> = {};
   for (const [name, pins] of derived.nets) netsSummary[name] = pins;
 
+  // Surface the pre-routing DRC subset (shorts, pad clearance, courtyard
+  // overlaps, off-board parts) so the caller can fix the floorplan with
+  // set_placement before routing on top of a fault — instead of only finding
+  // out at run_drc, three steps later.
+  const placementDrc = await summarizePlacementDrc(pcb);
+  if (!placementDrc.clean) {
+    const parts: string[] = [];
+    if (placementDrc.shorts.length > 0) parts.push(`${placementDrc.shorts.length} short(s)`);
+    if (placementDrc.clearance_violations > 0)
+      parts.push(`${placementDrc.clearance_violations} clearance`);
+    if (placementDrc.courtyard_overlaps > 0)
+      parts.push(`${placementDrc.courtyard_overlaps} courtyard overlap(s)`);
+    if (placementDrc.off_board.length > 0)
+      parts.push(`${placementDrc.off_board.length} off-board`);
+    warnings.push(
+      `placement DRC found ${parts.join(", ")} — see placement_drc; fix with set_placement before routing`,
+    );
+  }
+
   // A cross-net pad overlap is a hard short — never report success with one.
   if (placementConflicts.length > 0) {
     const pairs = placementConflicts.map((c) => `${c.a}/${c.b}`).join(", ");
@@ -2042,6 +2061,7 @@ export async function placeComponents(args: Record<string, unknown>) {
           footprints_placed: footprints.length,
           footprints_resolved: footprints.length - fallbackFootprints.length,
           strategy,
+          placement_drc: placementDrc,
           ...(warnings.length > 0 ? { warnings } : {}),
           // Cross-net pad pairs the placer could not separate — each is a short
           // baked into the layout. `gap` is the residual copper-to-copper
@@ -2879,6 +2899,128 @@ export async function drcPcb(
   }
 
   return aggregateDrc(violations, sampleSize, detail);
+}
+
+// ============================================================================
+// Post-placement DRC — the lightweight subset that makes sense before routing
+// ============================================================================
+
+/** A short between two nets, with the components whose pads cause it. */
+export interface PlacementShort {
+  /** The two shorted nets (lexically sorted). */
+  nets: [string, string];
+  /** Reference designators of the footprints whose pads overlap. */
+  refs: string[];
+}
+
+/** Placement-stage DRC: the faults that are real *before* any copper is routed
+ *  — overlapping pads (shorts), too-close pads (clearance), colliding
+ *  courtyards, and components hanging off the board. Trace/via-only rules
+ *  (trace width, annular ring, trace clearance) are intentionally excluded:
+ *  there are no traces yet. `clean` is the single branch the caller needs. */
+export interface PlacementDrc {
+  clean: boolean;
+  shorts: PlacementShort[];
+  clearance_violations: number;
+  courtyard_overlaps: number;
+  /** Refs of footprints placed off the board outline (or inside a cutout). */
+  off_board: string[];
+}
+
+/** Pull the two refs and two nets out of a pad↔pad clearance message:
+ *  `Clearance violation: pad C1.1 net 'VCC' to pad J1.2 net 'GND': …`. */
+function parsePadClearance(
+  message: string,
+): { refs: [string, string]; nets: [string, string] } | null {
+  const m = /pad (\S+?)\.\S+ net '([^']+)' to pad (\S+?)\.\S+ net '([^']+)'/.exec(message);
+  if (!m) return null;
+  return { refs: [m[1]!, m[3]!], nets: [m[2]!, m[4]!] };
+}
+
+/** Sorted, NUL-joined net-pair key so (A,B) and (B,A) collapse. */
+function netPairKey(a: string, b: string): string {
+  return a <= b ? `${a} ${b}` : `${b} ${a}`;
+}
+
+/** Run the lightweight pre-routing DRC subset against a freshly-placed board.
+ *  Reuses the kernel DRC (single source of truth for pad geometry, net-ties,
+ *  diff-pairs) and keeps only the rules that are meaningful with no copper —
+ *  so it agrees with what `run_drc` will later report. Shared by
+ *  `place_components` and `set_placement` so the move→re-check loop never has
+ *  to fall through to a full route→DRC pass. */
+export async function summarizePlacementDrc(pcb: Pcb): Promise<PlacementDrc> {
+  // `full` so we get every violation, not a capped sample.
+  const viols = (await drcPcb(pcb, "full")).details ?? [];
+
+  // Pad↔pad clearance messages carry both refs and nets. With no traces on the
+  // board yet, every Clearance violation is pad↔pad.
+  const clearanceViols = viols.filter((v) => v.rule === "Clearance");
+  const padPairs = clearanceViols
+    .map((v) => ({ parsed: parsePadClearance(v.message), actual: v.actual ?? Infinity }))
+    .filter(
+      (p): p is { parsed: NonNullable<ReturnType<typeof parsePadClearance>>; actual: number } =>
+        p.parsed !== null,
+    );
+
+  // A short = two different-net pads whose copper overlaps. The kernel Short
+  // rule names the nets; the coincident (≈0mm) pad-pair clearance names the
+  // refs. Take net-pairs from both signals so a short is caught either way.
+  const shortPairs = new Set<string>();
+  for (const v of viols) {
+    if (v.rule !== "Short") continue;
+    const [a, b] = parseNetPair(v.message);
+    if (a && b) shortPairs.add(netPairKey(a, b));
+  }
+  for (const p of padPairs) {
+    if (p.actual < 1e-3) shortPairs.add(netPairKey(p.parsed.nets[0], p.parsed.nets[1]));
+  }
+
+  const shorts: PlacementShort[] = [...shortPairs].map((key) => {
+    const [a, b] = key.split(" ") as [string, string];
+    const refs = new Set<string>();
+    for (const p of padPairs) {
+      if (netPairKey(p.parsed.nets[0], p.parsed.nets[1]) === key) {
+        refs.add(p.parsed.refs[0]);
+        refs.add(p.parsed.refs[1]);
+      }
+    }
+    return { nets: [a, b], refs: [...refs] };
+  });
+
+  // Genuine clearance violations are too-close pads that are NOT overlapping —
+  // the overlaps are already reported as shorts above, so don't double-count.
+  const clearanceViolations = clearanceViols.filter(
+    (v) => !(typeof v.actual === "number" && v.actual < 1e-3),
+  ).length;
+
+  const courtyardOverlaps = viols.filter((v) => v.rule === "CourtyardOverlap").length;
+
+  // Off-board: a footprint origin outside the outline (or inside a cutout) —
+  // the same definition set_placement warns on. The kernel edge-clearance rule
+  // only covers traces and vias, so footprints need this explicit check.
+  const offBoard: string[] = [];
+  const outline = pcb.outline.vertices ?? [];
+  const cutouts = pcb.outline.cutouts ?? [];
+  if (outline.length >= 3) {
+    for (const fp of pcb.footprints) {
+      const onBoard =
+        pointInPolygon(fp.position, outline) &&
+        !cutouts.some((c) => c.length >= 3 && pointInPolygon(fp.position, c));
+      if (!onBoard) offBoard.push(fp.ref);
+    }
+  }
+
+  return {
+    clean:
+      shorts.length === 0 &&
+      clearanceViolations === 0 &&
+      courtyardOverlaps === 0 &&
+      offBoard.length === 0,
+    shorts,
+    clearance_violations: clearanceViolations,
+    courtyard_overlaps: courtyardOverlaps,
+    off_board: offBoard,
+  };
 }
 
 /** Run DRC against a session/inline document and return the summary-first payload. */
@@ -4674,7 +4816,7 @@ export const setPlacementSchema = {
  * (off-board, inside-a-cutout, and stacked-on-another-footprint become
  * warnings). Mutates the session document.
  */
-export function setPlacement(args: Record<string, unknown>) {
+export async function setPlacement(args: Record<string, unknown>) {
   const ctx = resolveDocInput(args);
   const pcb = getDocPcb(ctx.doc);
   const fail = (text: string) => ({
@@ -4771,6 +4913,10 @@ export function setPlacement(args: Record<string, unknown>) {
     );
   }
 
+  // Re-check the floorplan after the move so the caller can branch on the
+  // result in one call — the move→re-check loop never has to reach run_drc.
+  const placementDrc = await summarizePlacementDrc(pcb);
+
   return {
     content: [
       {
@@ -4780,6 +4926,7 @@ export function setPlacement(args: Record<string, unknown>) {
           moved: moved.length,
           rotated: rotated.length,
           flipped: flipped.length,
+          placement_drc: placementDrc,
           ...(unknownRefs.length > 0 ? { unknown_refs: unknownRefs } : {}),
           ...(warnings.length > 0 ? { warnings } : {}),
           ...docResultPayload(ctx),
