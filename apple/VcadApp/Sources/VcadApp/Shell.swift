@@ -45,14 +45,10 @@ struct EditorView: View {
                             .transition(.move(edge: .leading).combined(with: .opacity))
                     }
                 }
-                .overlay(alignment: compact ? .leading : .top) {
-                    if model.sketching {
-                        SketchPaletteView(model: model)
-                            .padding(.top, 14)
+                .overlay(alignment: .top) {
+                    if showsTools && model.toolPlacement == .header {
+                        toolStrip(header: true)
                             .transition(.move(edge: .top).combined(with: .opacity))
-                    } else if model.source.isSandbox || model.usesDocumentTree {
-                        ToolPaletteView(model: model, axis: compact ? .vertical : .horizontal)
-                            .padding(compact ? .leading : .top, 14)
                     }
                 }
                 .overlay(alignment: .top) {
@@ -83,18 +79,24 @@ struct EditorView: View {
                             ExampleChips(intent: intent)
                                 .transition(.opacity.combined(with: .move(edge: .bottom)))
                         }
-                        StatusBarView(model: model)
+                        ComposerBar(engine: intent, model: model)
+                        if showsTools && model.toolPlacement == .footer {
+                            toolStrip(header: false)
+                                .transition(.move(edge: .bottom).combined(with: .opacity))
+                        }
                     }
                     .padding(.bottom, 14)
                     .animation(.smooth(duration: 0.3), value: model.source.isSandbox)
                     .animation(.smooth(duration: 0.25), value: intent.draft.isEmpty)
                     .animation(.smooth(duration: 0.25), value: model.sketching)
+                    .animation(.smooth(duration: 0.3), value: model.toolPlacement)
                 }
                 .toolbar {
-                    ToolbarItem(placement: .navigation) { DocumentMenu(model: model) }
-                    ToolbarItem(placement: .principal) { CommandBar(engine: intent, model: model) }
+                    ToolbarItem(placement: .navigation) { BrandMark() }
+                    ToolbarItem(placement: .principal) { IdentityStatusBar(model: model) }
+                    ToolbarItem(placement: .primaryAction) { CollabAvatars() }
                 }
-                .navigationTitle("vcad")
+                .navigationTitle(model.documentName)
                 .animation(.smooth(duration: 0.3), value: compact)
                 .task {
                     // Dev hook: VCAD_GRIPPER=1 [VCAD_CONNECTOR_X=n] launches into
@@ -117,6 +119,23 @@ struct EditorView: View {
                         FileHandle.standardError.write(Data(line.utf8))
                     }
                 }
+        }
+    }
+
+    private var showsTools: Bool {
+        model.sketching || model.source.isSandbox || model.usesDocumentTree
+    }
+
+    /// The active tool strip — the sketch palette while drawing, otherwise the
+    /// tool palette, rendered as a docked header bar or a floating footer card.
+    @ViewBuilder private func toolStrip(header: Bool) -> some View {
+        if model.sketching {
+            SketchPaletteView(model: model)
+                .padding(.top, header ? 8 : 0)
+        } else if header {
+            ToolPaletteView(model: model, axis: .horizontal, docked: true)
+        } else {
+            ToolPaletteView(model: model, axis: .horizontal)
         }
     }
 }
@@ -156,6 +175,11 @@ struct DocumentMenu: View {
                 }
             }
             Button("Export STL…") { exportPanel() }.keyboardShortcut("e").disabled(!model.canExport)
+            Divider()
+            Picker("Tool Palette", selection: $model.toolPlacement) {
+                ForEach(ToolPlacement.allCases) { p in Text(p.label).tag(p) }
+            }
+            Button("Toggle Tool Palette") { model.cycleToolPlacement() }.keyboardShortcut("t")
         } label: {
             HStack(spacing: 6) {
                 Image(systemName: model.source.isSandbox ? "cube" : "doc").font(.system(size: 12))
@@ -196,11 +220,121 @@ struct DocumentMenu: View {
     }
 }
 
+// MARK: top chrome — brand · centered identity + status · presence
+
+/// The leading wordmark.
+struct BrandMark: View {
+    var body: some View {
+        Text("vcad")
+            .font(.system(size: 14, weight: .semibold, design: .rounded))
+            .foregroundStyle(.secondary)
+            .padding(.trailing, 2)
+    }
+}
+
+/// Centered identity (the document menu) + a compact live status readout.
+struct IdentityStatusBar: View {
+    @Bindable var model: EditorModel
+    var body: some View {
+        HStack(spacing: 10) {
+            DocumentMenu(model: model)
+            Divider().frame(height: 13)
+            StatusStrip(model: model)
+        }
+    }
+}
+
+/// kernel · tris · bounds · solve — the dense status, inline in the title bar.
+struct StatusStrip: View {
+    let model: EditorModel
+    var body: some View {
+        HStack(spacing: 9) {
+            HStack(spacing: 4) {
+                Circle().fill(.green).frame(width: 5, height: 5)
+                Text("kernel")
+            }
+            bar
+            Text("\(model.triangleCount.formatted()) tris")
+            bar
+            Text(String(format: "%.0f×%.0f×%.0f", abs(model.sizeMM.x), abs(model.sizeMM.y), abs(model.sizeMM.z)))
+            bar
+            Text(String(format: "%.0f ms", model.solveMillis))
+        }
+        .font(.system(size: 11, design: .monospaced))
+        .foregroundStyle(.secondary)
+        .lineLimit(1)
+        .fixedSize()
+    }
+    private var bar: some View { Rectangle().fill(.secondary.opacity(0.25)).frame(width: 1, height: 10) }
+}
+
+/// Presence + share — a share affordance and the current user's avatar.
+struct CollabAvatars: View {
+    var body: some View {
+        HStack(spacing: 9) {
+            Button {} label: { Image(systemName: "person.badge.plus").font(.system(size: 13)) }
+                .buttonStyle(.plain).foregroundStyle(.secondary).help("Share")
+            Circle()
+                .fill(LinearGradient(
+                    colors: [Color(red: 0.98, green: 0.15, blue: 0.45), Color(red: 0.72, green: 0.09, blue: 0.32)],
+                    startPoint: .top, endPoint: .bottom))
+                .frame(width: 22, height: 22)
+                .overlay(Text("C").font(.system(size: 11, weight: .semibold)).foregroundStyle(.white))
+                .overlay(Circle().strokeBorder(.white.opacity(0.25), lineWidth: 0.5))
+                .help("You")
+        }
+    }
+}
+
+/// The bottom composer: a `+` quick-start menu beside the AI command field.
+struct ComposerBar: View {
+    @Bindable var engine: IntentEngine
+    let model: EditorModel
+    var body: some View {
+        HStack(spacing: 8) {
+            Menu {
+                Button("New") { model.newDocument() }
+                Button("Open…") { openPanel() }
+                if !model.examples.isEmpty {
+                    Menu("Examples") {
+                        ForEach(model.examples, id: \.path) { ex in
+                            Button(ex.name) { model.openDocument(URL(fileURLWithPath: ex.path)) }
+                        }
+                    }
+                }
+            } label: {
+                Image(systemName: "plus")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 30, height: 30)
+                    .background(.regularMaterial, in: Circle())
+                    .overlay(Circle().strokeBorder(.white.opacity(0.10), lineWidth: 0.5))
+                    .shadow(color: .black.opacity(0.35), radius: 10, y: 5)
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            CommandBar(engine: engine, model: model)
+        }
+    }
+
+    private func openPanel() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [UTType(filenameExtension: "vcad") ?? .json]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.prompt = "Open"
+        if panel.runModal() == .OK, let url = panel.url { model.openDocument(url) }
+    }
+}
+
 // MARK: tool palette (native Borland-model)
 
 struct ToolPaletteView: View {
     @Bindable var model: EditorModel
     var axis: Axis = .horizontal
+    /// Docked (Borland-style) full-width top strip vs a floating glass card.
+    var docked: Bool = false
     private var vertical: Bool { axis == .vertical }
     @Namespace private var paletteNS
 
@@ -208,7 +342,7 @@ struct ToolPaletteView: View {
         let outer = vertical ? AnyLayout(VStackLayout(spacing: 6)) : AnyLayout(HStackLayout(spacing: 10))
         let tabsLayout = vertical ? AnyLayout(VStackLayout(spacing: 4)) : AnyLayout(HStackLayout(spacing: 3))
         let toolsLayout = vertical ? AnyLayout(VStackLayout(spacing: 5)) : AnyLayout(HStackLayout(spacing: 6))
-        return outer {
+        let content = outer {
             tabsLayout {
                 ForEach(Array(model.availableTabs.enumerated()), id: \.element.id) { idx, tab in
                     tabButton(tab, idx: idx)
@@ -222,12 +356,27 @@ struct ToolPaletteView: View {
             }
             .id(model.toolTab)
             .transition(.opacity)
+            if docked { Spacer(minLength: 0) }
         }
-        .padding(vertical ? 6 : 8)
-        .glassCard(vertical ? 16 : 13)
         .animation(.snappy(duration: 0.26), value: model.toolTab)
         .animation(.snappy(duration: 0.22), value: model.baseShape)
         .animation(.snappy(duration: 0.22), value: model.modifier)
+
+        return Group {
+            if docked {
+                content
+                    .padding(.horizontal, 14).padding(.vertical, 7)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(.regularMaterial)
+                    .overlay(alignment: .bottom) {
+                        Rectangle().fill(.white.opacity(0.08)).frame(height: 0.5)
+                    }
+            } else {
+                content
+                    .padding(vertical ? 6 : 8)
+                    .glassCard(vertical ? 16 : 13)
+            }
+        }
     }
 
     @ViewBuilder private func tabButton(_ tab: ToolTab, idx: Int) -> some View {

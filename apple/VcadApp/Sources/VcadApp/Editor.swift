@@ -28,7 +28,7 @@ enum GeometrySource: Hashable, Identifiable {
     }
     var label: String {
         switch self {
-        case .sandbox: return "Sandbox"
+        case .sandbox: return "Untitled"
         case .document(_, let label): return label
         case .generated(_, let label): return label
         case .gripper: return "Gripper"
@@ -64,6 +64,14 @@ enum Modifier: String, CaseIterable {
         }
     }
     var paramLabel: String { self == .chamfer ? "Distance" : "Radius" }
+}
+
+/// Where the tool palette docks. Prototyping two looks: a Borland-style header
+/// strip vs a footer bar below the composer.
+enum ToolPlacement: String, CaseIterable, Identifiable {
+    case header, footer
+    var id: String { rawValue }
+    var label: String { rawValue.capitalized }
 }
 
 /// A tab in the tool palette (the native reinterpretation of the web app's
@@ -202,6 +210,11 @@ final class EditorModel {
     }
 
     var toolTab: ToolTab = .create
+    /// Header (Borland-style top strip) vs footer (below the composer).
+    var toolPlacement: ToolPlacement = .header
+    func cycleToolPlacement() {
+        toolPlacement = toolPlacement == .header ? .footer : .header
+    }
 
     // Selection binds tree -> inspector AND rolls history (selecting "base"
     // shows the modifier's input).
