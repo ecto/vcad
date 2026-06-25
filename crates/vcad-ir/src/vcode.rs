@@ -2306,19 +2306,13 @@ fn format_op(
             major_radius, minor_radius, name_suffix
         )),
 
-        CsgOp::Wedge { size } => Ok(format!(
-            "W {} {} {}{}",
-            size.x, size.y, size.z, name_suffix
-        )),
+        CsgOp::Wedge { size } => Ok(format!("W {} {} {}{}", size.x, size.y, size.z, name_suffix)),
 
         CsgOp::Prism {
             sides,
             radius,
             height,
-        } => Ok(format!(
-            "PR {} {} {}{}",
-            sides, radius, height, name_suffix
-        )),
+        } => Ok(format!("PR {} {} {}{}", sides, radius, height, name_suffix)),
 
         CsgOp::Empty => Ok(format!("C 0 0 0{}", name_suffix)),
 

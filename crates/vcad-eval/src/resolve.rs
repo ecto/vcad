@@ -206,12 +206,12 @@ fn apply_to_op(op: &mut CsgOp, key: &BindingKey, value: f64) -> Result<(), Resol
             _ => return bad("Torus"),
         },
         CsgOp::Wedge { size } => {
-            let sub = path
-                .strip_prefix("size.")
-                .ok_or_else(|| ResolvePatchError::UnknownField {
-                    key: key.clone(),
-                    op_name: "Wedge",
-                })?;
+            let sub =
+                path.strip_prefix("size.")
+                    .ok_or_else(|| ResolvePatchError::UnknownField {
+                        key: key.clone(),
+                        op_name: "Wedge",
+                    })?;
             apply_vec3(size, sub, value).ok_or_else(|| ResolvePatchError::UnknownField {
                 key: key.clone(),
                 op_name: "Wedge",

@@ -162,6 +162,22 @@ fn migrate_node(
             params.insert("segments".to_string(), Value::F64(*segments as f64));
             Some(create(crdt, ctx, "torus", params))
         }
+        CsgOp::Wedge { size } => {
+            params.insert("size_x".to_string(), Value::F64(size.x));
+            params.insert("size_y".to_string(), Value::F64(size.y));
+            params.insert("size_z".to_string(), Value::F64(size.z));
+            Some(create(crdt, ctx, "wedge", params))
+        }
+        CsgOp::Prism {
+            sides,
+            radius,
+            height,
+        } => {
+            params.insert("sides".to_string(), Value::F64(*sides as f64));
+            params.insert("radius".to_string(), Value::F64(*radius));
+            params.insert("height".to_string(), Value::F64(*height));
+            Some(create(crdt, ctx, "prism", params))
+        }
         // Boolean ops: migrate both operands first so their feature ids
         // exist before the boolean feature that references them.
         CsgOp::Union { left, right } => {

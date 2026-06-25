@@ -275,7 +275,12 @@ impl<'a> UrdfWriter<'a> {
                 // URDF has no native wedge; approximate as a bounding box.
                 let geometry = Geometry {
                     box_geom: Some(BoxGeom {
-                        size: format!("{} {} {}", size.x / 1000.0, size.y / 1000.0, size.z / 1000.0),
+                        size: format!(
+                            "{} {} {}",
+                            size.x / 1000.0,
+                            size.y / 1000.0,
+                            size.z / 1000.0
+                        ),
                     }),
                     cylinder: None,
                     sphere: None,
@@ -283,9 +288,7 @@ impl<'a> UrdfWriter<'a> {
                 };
                 Ok((geometry, None))
             }
-            CsgOp::Prism {
-                radius, height, ..
-            } => {
+            CsgOp::Prism { radius, height, .. } => {
                 // URDF has no n-gonal prism; approximate as a cylinder whose
                 // radius equals the polygon circumradius.
                 let geometry = Geometry {

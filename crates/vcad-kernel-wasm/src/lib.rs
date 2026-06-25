@@ -3477,6 +3477,27 @@ fn evaluate_node(doc: &vcad_ir::Document, node_id: vcad_ir::NodeId) -> Result<So
             Ok(Solid::cone(*radius_bottom, *radius_top, *height, segs))
         }
 
+        vcad_ir::CsgOp::Torus {
+            major_radius,
+            minor_radius,
+            segments,
+        } => {
+            let segs = if *segments == 0 {
+                None
+            } else {
+                Some(*segments)
+            };
+            Ok(Solid::torus(*major_radius, *minor_radius, segs))
+        }
+
+        vcad_ir::CsgOp::Wedge { size } => Ok(Solid::wedge(size.x, size.y, size.z)),
+
+        vcad_ir::CsgOp::Prism {
+            sides,
+            radius,
+            height,
+        } => Ok(Solid::prism(*sides, *radius, *height)),
+
         vcad_ir::CsgOp::Empty => Ok(Solid::empty()),
 
         vcad_ir::CsgOp::Union { left, right } => {
@@ -3510,6 +3531,18 @@ fn evaluate_node(doc: &vcad_ir::Document, node_id: vcad_ir::NodeId) -> Result<So
         vcad_ir::CsgOp::Scale { child, factor } => {
             let c = evaluate_node(doc, *child)?;
             Ok(c.scale(factor.x, factor.y, factor.z))
+        }
+
+        vcad_ir::CsgOp::Mirror {
+            child,
+            plane_origin,
+            plane_normal,
+        } => {
+            let c = evaluate_node(doc, *child)?;
+            Ok(c.mirror(
+                [plane_origin.x, plane_origin.y, plane_origin.z],
+                [plane_normal.x, plane_normal.y, plane_normal.z],
+            ))
         }
 
         vcad_ir::CsgOp::LinearPattern {
