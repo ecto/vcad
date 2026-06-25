@@ -4706,6 +4706,184 @@ export function windingLayout(args: Record<string, unknown>) {
 }
 
 // ============================================================================
+// set_board_outline — resize/reshape the board without re-placing parts
+// ============================================================================
+
+/** Shared {x, y} JSON schema fragment. */
+const vec2Schema = {
+  type: "object" as const,
+  properties: { x: { type: "number" as const }, y: { type: "number" as const } },
+  required: ["x", "y"],
+};
+
+/** JSON Schema for set_board_outline tool. */
+export const setBoardOutlineSchema = {
+  type: "object" as const,
+  properties: {
+    ...docInputProperties,
+    board_width: {
+      type: "number" as const,
+      description:
+        "Rectangle width in mm — origin-corner outline (0,0)→(w,h). Pair with board_height.",
+    },
+    board_height: {
+      type: "number" as const,
+      description: "Rectangle height in mm. Pair with board_width.",
+    },
+    board_shape: {
+      type: "object" as const,
+      description:
+        "Circular/annular outline: {outer_diameter, inner_diameter?, center?, segments?}.",
+      properties: {
+        outer_diameter: { type: "number" as const },
+        inner_diameter: { type: "number" as const },
+        center: vec2Schema,
+        segments: { type: "number" as const },
+      },
+    },
+    outline: {
+      type: "object" as const,
+      description:
+        "Explicit polygon outline: {vertices: [{x,y}, ...], cutouts?: [[{x,y}, ...]]}.",
+      properties: {
+        vertices: { type: "array" as const, items: vec2Schema },
+        cutouts: {
+          type: "array" as const,
+          items: { type: "array" as const, items: vec2Schema },
+        },
+      },
+    },
+    thickness: {
+      type: "number" as const,
+      description: "Board thickness in mm (defaults to the current board thickness).",
+    },
+  },
+  required: ["document_id"],
+};
+
+/**
+ * Replace the board outline in place — resize a rectangle, swap in a circular
+ * or arbitrary polygon — WITHOUT touching component placement, traces, vias, or
+ * zones. The kernel re-extrudes the new `outline.vertices` (minus `cutouts`) on
+ * the next eval; everything else is preserved exactly.
+ *
+ * Footprints keep their positions. Any whose origin ends up off the new board
+ * (outside the outline, or inside a cutout) is reported in `off_board` — never
+ * silently relocated, so the caller decides whether to move them or grow the
+ * board. This is the non-destructive counterpart to re-running place_components
+ * with new dimensions (which would reset the floorplan).
+ */
+export function setBoardOutline(args: Record<string, unknown>) {
+  const ctx = resolveDocInput(args);
+  const pcb = getDocPcb(ctx.doc);
+  if (!pcb) {
+    return ecadError(
+      "Document has no PCB — run place_components first (or open a document that has a board)",
+    );
+  }
+
+  // Resolve the new outline: explicit polygon > circle shorthand > rectangle.
+  const outlineArg = args.outline as
+    | { vertices?: Vec2[]; cutouts?: Vec2[][] }
+    | undefined;
+  const shapeArg = args.board_shape as
+    | {
+        outer_diameter?: number;
+        inner_diameter?: number;
+        center?: Vec2;
+        segments?: number;
+      }
+    | undefined;
+  const boardWidth = args.board_width as number | undefined;
+  const boardHeight = args.board_height as number | undefined;
+
+  let vertices: Vec2[];
+  let cutouts: Vec2[][] | undefined;
+
+  if (outlineArg) {
+    if (!Array.isArray(outlineArg.vertices) || outlineArg.vertices.length < 3) {
+      return ecadError("outline.vertices needs at least 3 points");
+    }
+    vertices = outlineArg.vertices;
+    cutouts = outlineArg.cutouts;
+  } else if (shapeArg) {
+    const od = shapeArg.outer_diameter;
+    if (!od || od <= 0) return ecadError("board_shape.outer_diameter must be > 0");
+    const id = shapeArg.inner_diameter ?? 0;
+    if (id < 0 || id >= od) {
+      return ecadError("board_shape.inner_diameter must be >= 0 and < outer_diameter");
+    }
+    const segments = Math.max(16, Math.round(shapeArg.segments ?? 64));
+    const center = shapeArg.center ?? { x: od / 2, y: od / 2 };
+    vertices = circlePolygon(center, od / 2, segments);
+    cutouts = id > 0 ? [circlePolygon(center, id / 2, segments)] : undefined;
+  } else if (boardWidth && boardHeight) {
+    if (!(boardWidth > 0) || !(boardHeight > 0)) {
+      return ecadError("board_width and board_height must be > 0");
+    }
+    vertices = [
+      { x: 0, y: 0 },
+      { x: boardWidth, y: 0 },
+      { x: boardWidth, y: boardHeight },
+      { x: 0, y: boardHeight },
+    ];
+  } else {
+    return ecadError(
+      "specify the new outline — board_width + board_height (rectangle), " +
+        "board_shape ({outer_diameter, inner_diameter?}), or outline ({vertices, cutouts?})",
+    );
+  }
+
+  // Match the kernel extruder's CCW expectation (agent polygons arrive either way).
+  vertices = ensureCcw(vertices);
+  cutouts = cutouts?.map(ensureCcw);
+
+  const thickness = (args.thickness as number) ?? pcb.outline.thickness ?? 1.6;
+
+  pcb.outline = {
+    vertices,
+    ...(cutouts && cutouts.length > 0 ? { cutouts } : {}),
+    thickness,
+  };
+
+  // Components keep their positions; flag any now off-board (origin outside the
+  // outline or inside a cutout) — the same definition placement DRC uses.
+  const offBoard: string[] = [];
+  for (const fp of pcb.footprints) {
+    const onBoard =
+      pointInPolygon(fp.position, vertices) &&
+      !(cutouts ?? []).some((c) => c.length >= 3 && pointInPolygon(fp.position, c));
+    if (!onBoard) offBoard.push(fp.ref);
+  }
+
+  const xs = vertices.map((v) => v.x);
+  const ys = vertices.map((v) => v.y);
+  const width = round3(Math.max(...xs) - Math.min(...xs));
+  const height = round3(Math.max(...ys) - Math.min(...ys));
+
+  return {
+    content: [
+      {
+        type: "text" as const,
+        text: JSON.stringify({
+          success: true,
+          outline: {
+            width,
+            height,
+            vertices: vertices.length,
+            cutouts: cutouts?.length ?? 0,
+            thickness,
+          },
+          components_kept: pcb.footprints.length,
+          ...(offBoard.length > 0 ? { off_board: offBoard } : {}),
+          ...docResultPayload(ctx),
+        }),
+      },
+    ],
+  };
+}
+
+// ============================================================================
 // get_pad_positions — absolute board-frame pad coordinates (read-only)
 // ============================================================================
 
@@ -4816,13 +4994,6 @@ export function getPadPositions(args: Record<string, unknown>) {
 // ============================================================================
 // add_trace — push straight copper segments between consecutive points
 // ============================================================================
-
-/** Shared {x, y} JSON schema fragment. */
-const vec2Schema = {
-  type: "object" as const,
-  properties: { x: { type: "number" as const }, y: { type: "number" as const } },
-  required: ["x", "y"],
-};
 
 /** JSON Schema for add_trace tool. */
 export const addTraceSchema = {

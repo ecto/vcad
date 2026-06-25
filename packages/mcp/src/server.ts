@@ -164,6 +164,8 @@ import {
   setStackupSchema,
   setPlacement,
   setPlacementSchema,
+  setBoardOutline,
+  setBoardOutlineSchema,
   addZone,
   addZoneSchema,
   setDesignRules,
@@ -402,6 +404,7 @@ const SWITCH_DOC_WRITERS = new Set<string>([
   "add_zone",
   "set_stackup",
   "set_placement",
+  "set_board_outline",
   "set_design_rules",
 ]);
 
@@ -479,6 +482,7 @@ const TOOL_PACKS: Record<string, readonly string[]> = {
     "add_via_array",
     "set_stackup",
     "set_placement",
+    "set_board_outline",
     "add_zone",
     "set_design_rules",
     "size_trace_for_current",
@@ -1214,6 +1218,18 @@ export async function createServer(
         _meta: UI_META,
       },
       {
+        name: "set_board_outline",
+        description:
+          "Resize or reshape the board outline in place — rectangle " +
+          "(board_width/height), circle/annulus (board_shape), or any polygon " +
+          "(outline) — WITHOUT re-placing components, traces, vias, or zones. " +
+          "Unlike re-running place_components, the floorplan is preserved; any " +
+          "footprint whose origin ends up off the new board is reported in " +
+          "`off_board` rather than silently relocated. Mutates the session document.",
+        inputSchema: setBoardOutlineSchema,
+        _meta: UI_META,
+      },
+      {
         name: "add_zone",
         description:
           "Add a copper pour (ground/power plane) on a net+layer — fills are not " +
@@ -1807,6 +1823,10 @@ export async function createServer(
 
         case "set_placement":
           result = await setPlacement(args);
+          break;
+
+        case "set_board_outline":
+          result = setBoardOutline(args);
           break;
 
         case "add_zone":

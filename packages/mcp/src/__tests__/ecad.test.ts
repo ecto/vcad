@@ -22,6 +22,7 @@ import {
   addVia,
   setStackup,
   setPlacement,
+  setBoardOutline,
   addZone,
   setDesignRules,
   sizeTraceForCurrent,
@@ -297,6 +298,89 @@ describe("route_nets locked_nets", () => {
     const res = out(await routeNets({ document_id: id }));
     expect(res.traces_removed).toBeGreaterThan(0);
     expect(hasDetour(getPcbBoard(getSession(id)))).toBe(false);
+  });
+});
+
+describe("set_board_outline", () => {
+  it("resizes the outline, keeps component positions, and flags off-board parts", async () => {
+    const created = out(
+      await createSchematic({
+        components: [resistor("R1", 0), resistor("R2", 20)],
+        nets: { MID: ["R1.2", "R2.1"] },
+      }),
+    );
+    const id = created.document_id;
+    await placeComponents({ document_id: id, board_width: 60, board_height: 40 });
+
+    const before = getPcbBoard(getSession(id));
+    const posBefore = before.footprints
+      .map((f) => ({ ref: f.ref, x: f.position.x, y: f.position.y }))
+      .sort((a, b) => a.ref.localeCompare(b.ref));
+
+    // Shrink the width just below the rightmost footprint so it is guaranteed
+    // off-board; a tall height keeps Y from being the limiting axis.
+    const maxX = Math.max(...posBefore.map((p) => p.x));
+    const newW = Math.max(1, maxX - 0.5);
+    const res = out(
+      await setBoardOutline({ document_id: id, board_width: newW, board_height: 100 }),
+    );
+    expect(res.success).toBe(true);
+    expect(res.outline.width).toBeCloseTo(newW, 3);
+    expect(res.components_kept).toBe(2);
+
+    const after = getPcbBoard(getSession(id));
+    // Positions untouched (this is the whole point — no re-placement).
+    const posAfter = after.footprints
+      .map((f) => ({ ref: f.ref, x: f.position.x, y: f.position.y }))
+      .sort((a, b) => a.ref.localeCompare(b.ref));
+    expect(posAfter).toEqual(posBefore);
+    // The outline really changed.
+    const xs = after.outline.vertices.map((v) => v.x);
+    expect(Math.max(...xs) - Math.min(...xs)).toBeCloseTo(newW, 3);
+    // Off-board set matches exactly the footprints whose origin is now outside.
+    const offX = posAfter
+      .filter((p) => p.x < 0 || p.x > newW)
+      .map((p) => p.ref)
+      .sort();
+    expect(offX.length).toBeGreaterThan(0);
+    expect(((res.off_board as string[]) ?? []).slice().sort()).toEqual(offX);
+  });
+
+  it("accepts an explicit polygon outline and preserves the current thickness", async () => {
+    const created = out(await createSchematic({ components: [resistor("R1", 0)] }));
+    const id = created.document_id;
+    await placeComponents({
+      document_id: id,
+      board_width: 30,
+      board_height: 30,
+      board_thickness: 2.0,
+    });
+    const res = out(
+      await setBoardOutline({
+        document_id: id,
+        outline: {
+          vertices: [
+            { x: 0, y: 0 },
+            { x: 50, y: 0 },
+            { x: 50, y: 50 },
+            { x: 0, y: 50 },
+          ],
+        },
+      }),
+    );
+    expect(res.success).toBe(true);
+    expect(res.outline.thickness).toBeCloseTo(2.0, 3);
+    const after = getPcbBoard(getSession(id));
+    expect(after.outline.thickness).toBeCloseTo(2.0, 3);
+    expect(after.outline.vertices.length).toBe(4);
+  });
+
+  it("errors when no outline is specified", async () => {
+    const created = out(await createSchematic({ components: [resistor("R1", 0)] }));
+    const id = created.document_id;
+    await placeComponents({ document_id: id, board_width: 20, board_height: 20 });
+    const res = await setBoardOutline({ document_id: id });
+    expect((res as { isError?: boolean }).isError).toBe(true);
   });
 });
 
