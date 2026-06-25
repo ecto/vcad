@@ -184,35 +184,35 @@ height: number,
 /**
  * Number of circular segments (0 = auto).
  */
-segments: number, } | { "type": "Torus",
+segments: number, } | { "type": "Torus", 
 /**
  * Major radius — distance from the central axis to the tube center.
  */
-major_radius: number,
+major_radius: number, 
 /**
  * Minor radius — radius of the tube cross-section.
  */
-minor_radius: number,
+minor_radius: number, 
 /**
  * Number of circular segments per ring (0 = auto).
  */
-segments: number, } | { "type": "Wedge",
+segments: number, } | { "type": "Wedge", 
 /**
  * Wedge size: leg along +X, extrusion length along +Y, leg along +Z.
  */
-size: Vec3, } | { "type": "Prism",
+size: Vec3, } | { "type": "Prism", 
 /**
  * Number of polygon sides (>= 3).
  */
-sides: number,
+sides: number, 
 /**
  * Polygon circumradius (distance from center to each vertex).
  */
-radius: number,
+radius: number, 
 /**
  * Extrusion height along +Z.
  */
-height: number, } | { "type": "Empty" } | { "type": "Union",
+height: number, } | { "type": "Empty" } | { "type": "Union", 
 /**
  * Left operand.
  */
@@ -260,19 +260,19 @@ child: number,
 /**
  * Scale factors per axis.
  */
-factor: Vec3, } | { "type": "Mirror",
+factor: Vec3, } | { "type": "Mirror", 
 /**
  * Child node to mirror.
  */
-child: number,
+child: number, 
 /**
  * A point on the mirror plane.
  */
-plane_origin: Vec3,
+plane_origin: Vec3, 
 /**
  * Normal vector of the mirror plane (need not be unit).
  */
-plane_normal: Vec3, } | { "type": "Sketch2D",
+plane_normal: Vec3, } | { "type": "Sketch2D", 
 /**
  * Origin point of the sketch plane in 3D.
  */
