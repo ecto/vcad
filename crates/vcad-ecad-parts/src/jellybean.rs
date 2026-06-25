@@ -429,6 +429,37 @@ mod tests {
     }
 
     #[test]
+    fn fc_parts_resolve_with_expected_pin_counts() {
+        // (query, footprint, expected pad count). Counts must equal the package
+        // pad count so place_components maps every pin to a pad.
+        let cases = [
+            ("SN65HVD230", "SOIC-8", 8),
+            ("TCAN1042HGV", "SOIC-8", 8),
+            ("TCAN1042", "SOIC-8", 8), // alias
+            ("MCP2515", "SOIC-18", 18),
+            ("MCP2515", "DIP-18", 18),
+            ("TPS562200", "SOT-23-6", 6),
+            ("STM32G431CBT6", "LQFP-48", 48),
+            ("STM32G431", "LQFP-48", 48), // alias
+            ("RP2040", "QFN-56", 56),
+        ];
+        for (name, fp, n) in cases {
+            let def = resolve_part_def(name, Some(fp))
+                .unwrap_or_else(|| panic!("{name} did not resolve"));
+            assert_eq!(def.pins.len(), n, "{name}/{fp} pin count");
+            assert!(def.footprint_known, "{name}/{fp} footprint should be curated");
+            assert!(def.datasheet_url.is_some(), "{name} should carry a datasheet");
+            assert!(!def.app_notes.is_empty(), "{name} should carry app notes");
+            assert!(
+                def.pins
+                    .iter()
+                    .any(|p| p.pin_type == "PowerInput" || p.pin_type == "PowerOutput"),
+                "{name} should have at least one power pin",
+            );
+        }
+    }
+
+    #[test]
     fn resolves_by_case_insensitive_alias() {
         let part = resolve_part_def("lm555", None).unwrap();
         assert_eq!(part.name, "NE555");

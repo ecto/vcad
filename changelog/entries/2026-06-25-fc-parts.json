@@ -1,0 +1,10 @@
+{
+  "id": "2026-06-25-fc-parts",
+  "version": "0.9.4",
+  "date": "2026-06-25",
+  "category": "feat",
+  "title": "Flight-controller parts added to the catalog",
+  "summary": "The offline parts database gains datasheet-verified entries for CAN (SN65HVD230, TCAN1042, MCP2515), a buck regulator (TPS562200), and MCUs (STM32G431 LQFP-48, RP2040), each with full pinouts, electrical types, and handling app-notes.",
+  "features": ["ecad", "pcb", "parts-database"],
+  "mcpTools": ["create_schematic", "search_electronic_parts", "resolve_part"]
+}

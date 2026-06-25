@@ -11,364 +11,1292 @@
   "parts": [
     {
       "name": "NE555",
-      "aliases": ["LM555", "TLC555", "ICM7555", "555"],
+      "aliases": [
+        "LM555",
+        "TLC555",
+        "ICM7555",
+        "555"
+      ],
       "description": "Single precision timer / oscillator",
-      "footprints": ["DIP-8", "SOIC-8", "VSSOP-8"],
+      "footprints": [
+        "DIP-8",
+        "SOIC-8",
+        "VSSOP-8"
+      ],
       "datasheet_url": "https://www.ti.com/lit/ds/symlink/ne555.pdf",
       "app_notes": [
         "Pin 5 (CTRL) is commonly bypassed to GND with a 10nF cap when unused.",
         "Tie RESET (pin 4) to VCC when the reset function is not needed."
       ],
       "pins": [
-        { "number": "1", "name": "GND", "type": "PowerInput" },
-        { "number": "2", "name": "TRIG", "type": "Input" },
-        { "number": "3", "name": "OUT", "type": "Output" },
-        { "number": "4", "name": "RESET", "type": "Input" },
-        { "number": "5", "name": "CTRL", "type": "Passive" },
-        { "number": "6", "name": "THRES", "type": "Input" },
-        { "number": "7", "name": "DISCH", "type": "Passive" },
-        { "number": "8", "name": "VCC", "type": "PowerInput" }
+        {
+          "number": "1",
+          "name": "GND",
+          "type": "PowerInput"
+        },
+        {
+          "number": "2",
+          "name": "TRIG",
+          "type": "Input"
+        },
+        {
+          "number": "3",
+          "name": "OUT",
+          "type": "Output"
+        },
+        {
+          "number": "4",
+          "name": "RESET",
+          "type": "Input"
+        },
+        {
+          "number": "5",
+          "name": "CTRL",
+          "type": "Passive"
+        },
+        {
+          "number": "6",
+          "name": "THRES",
+          "type": "Input"
+        },
+        {
+          "number": "7",
+          "name": "DISCH",
+          "type": "Passive"
+        },
+        {
+          "number": "8",
+          "name": "VCC",
+          "type": "PowerInput"
+        }
       ]
     },
     {
       "name": "74HC595",
-      "aliases": ["74HCT595", "SN74HC595", "74LV595"],
+      "aliases": [
+        "74HCT595",
+        "SN74HC595",
+        "74LV595"
+      ],
       "description": "8-bit serial-in / parallel-out shift register with output latch",
-      "footprints": ["DIP-16", "SOIC-16", "TSSOP-16"],
+      "footprints": [
+        "DIP-16",
+        "SOIC-16",
+        "TSSOP-16"
+      ],
       "datasheet_url": "https://www.ti.com/lit/ds/symlink/sn74hc595.pdf",
       "app_notes": [
         "Tie ~OE (pin 13) to GND to permanently enable the outputs.",
         "QH' (pin 9) chains into the next register's SER input."
       ],
       "pins": [
-        { "number": "1", "name": "QB", "type": "TriState" },
-        { "number": "2", "name": "QC", "type": "TriState" },
-        { "number": "3", "name": "QD", "type": "TriState" },
-        { "number": "4", "name": "QE", "type": "TriState" },
-        { "number": "5", "name": "QF", "type": "TriState" },
-        { "number": "6", "name": "QG", "type": "TriState" },
-        { "number": "7", "name": "QH", "type": "TriState" },
-        { "number": "8", "name": "GND", "type": "PowerInput" },
-        { "number": "9", "name": "QH'", "type": "Output" },
-        { "number": "10", "name": "~SRCLR", "type": "Input" },
-        { "number": "11", "name": "SRCLK", "type": "Input" },
-        { "number": "12", "name": "RCLK", "type": "Input" },
-        { "number": "13", "name": "~OE", "type": "Input" },
-        { "number": "14", "name": "SER", "type": "Input" },
-        { "number": "15", "name": "QA", "type": "TriState" },
-        { "number": "16", "name": "VCC", "type": "PowerInput" }
+        {
+          "number": "1",
+          "name": "QB",
+          "type": "TriState"
+        },
+        {
+          "number": "2",
+          "name": "QC",
+          "type": "TriState"
+        },
+        {
+          "number": "3",
+          "name": "QD",
+          "type": "TriState"
+        },
+        {
+          "number": "4",
+          "name": "QE",
+          "type": "TriState"
+        },
+        {
+          "number": "5",
+          "name": "QF",
+          "type": "TriState"
+        },
+        {
+          "number": "6",
+          "name": "QG",
+          "type": "TriState"
+        },
+        {
+          "number": "7",
+          "name": "QH",
+          "type": "TriState"
+        },
+        {
+          "number": "8",
+          "name": "GND",
+          "type": "PowerInput"
+        },
+        {
+          "number": "9",
+          "name": "QH'",
+          "type": "Output"
+        },
+        {
+          "number": "10",
+          "name": "~SRCLR",
+          "type": "Input"
+        },
+        {
+          "number": "11",
+          "name": "SRCLK",
+          "type": "Input"
+        },
+        {
+          "number": "12",
+          "name": "RCLK",
+          "type": "Input"
+        },
+        {
+          "number": "13",
+          "name": "~OE",
+          "type": "Input"
+        },
+        {
+          "number": "14",
+          "name": "SER",
+          "type": "Input"
+        },
+        {
+          "number": "15",
+          "name": "QA",
+          "type": "TriState"
+        },
+        {
+          "number": "16",
+          "name": "VCC",
+          "type": "PowerInput"
+        }
       ]
     },
     {
       "name": "74HC00",
-      "aliases": ["74HCT00", "SN74HC00"],
+      "aliases": [
+        "74HCT00",
+        "SN74HC00"
+      ],
       "description": "Quad 2-input NAND gate",
-      "footprints": ["DIP-14", "SOIC-14", "TSSOP-14"],
+      "footprints": [
+        "DIP-14",
+        "SOIC-14",
+        "TSSOP-14"
+      ],
       "datasheet_url": "https://www.ti.com/lit/ds/symlink/sn74hc00.pdf",
       "app_notes": [],
       "pins": [
-        { "number": "1", "name": "1A", "type": "Input" },
-        { "number": "2", "name": "1B", "type": "Input" },
-        { "number": "3", "name": "1Y", "type": "Output" },
-        { "number": "4", "name": "2A", "type": "Input" },
-        { "number": "5", "name": "2B", "type": "Input" },
-        { "number": "6", "name": "2Y", "type": "Output" },
-        { "number": "7", "name": "GND", "type": "PowerInput" },
-        { "number": "8", "name": "3Y", "type": "Output" },
-        { "number": "9", "name": "3A", "type": "Input" },
-        { "number": "10", "name": "3B", "type": "Input" },
-        { "number": "11", "name": "4Y", "type": "Output" },
-        { "number": "12", "name": "4A", "type": "Input" },
-        { "number": "13", "name": "4B", "type": "Input" },
-        { "number": "14", "name": "VCC", "type": "PowerInput" }
+        {
+          "number": "1",
+          "name": "1A",
+          "type": "Input"
+        },
+        {
+          "number": "2",
+          "name": "1B",
+          "type": "Input"
+        },
+        {
+          "number": "3",
+          "name": "1Y",
+          "type": "Output"
+        },
+        {
+          "number": "4",
+          "name": "2A",
+          "type": "Input"
+        },
+        {
+          "number": "5",
+          "name": "2B",
+          "type": "Input"
+        },
+        {
+          "number": "6",
+          "name": "2Y",
+          "type": "Output"
+        },
+        {
+          "number": "7",
+          "name": "GND",
+          "type": "PowerInput"
+        },
+        {
+          "number": "8",
+          "name": "3Y",
+          "type": "Output"
+        },
+        {
+          "number": "9",
+          "name": "3A",
+          "type": "Input"
+        },
+        {
+          "number": "10",
+          "name": "3B",
+          "type": "Input"
+        },
+        {
+          "number": "11",
+          "name": "4Y",
+          "type": "Output"
+        },
+        {
+          "number": "12",
+          "name": "4A",
+          "type": "Input"
+        },
+        {
+          "number": "13",
+          "name": "4B",
+          "type": "Input"
+        },
+        {
+          "number": "14",
+          "name": "VCC",
+          "type": "PowerInput"
+        }
       ]
     },
     {
       "name": "74HC02",
-      "aliases": ["74HCT02", "SN74HC02"],
+      "aliases": [
+        "74HCT02",
+        "SN74HC02"
+      ],
       "description": "Quad 2-input NOR gate",
-      "footprints": ["DIP-14", "SOIC-14", "TSSOP-14"],
+      "footprints": [
+        "DIP-14",
+        "SOIC-14",
+        "TSSOP-14"
+      ],
       "datasheet_url": "https://www.ti.com/lit/ds/symlink/sn74hc02.pdf",
       "app_notes": [],
       "pins": [
-        { "number": "1", "name": "1Y", "type": "Output" },
-        { "number": "2", "name": "1A", "type": "Input" },
-        { "number": "3", "name": "1B", "type": "Input" },
-        { "number": "4", "name": "2Y", "type": "Output" },
-        { "number": "5", "name": "2A", "type": "Input" },
-        { "number": "6", "name": "2B", "type": "Input" },
-        { "number": "7", "name": "GND", "type": "PowerInput" },
-        { "number": "8", "name": "3A", "type": "Input" },
-        { "number": "9", "name": "3B", "type": "Input" },
-        { "number": "10", "name": "3Y", "type": "Output" },
-        { "number": "11", "name": "4A", "type": "Input" },
-        { "number": "12", "name": "4B", "type": "Input" },
-        { "number": "13", "name": "4Y", "type": "Output" },
-        { "number": "14", "name": "VCC", "type": "PowerInput" }
+        {
+          "number": "1",
+          "name": "1Y",
+          "type": "Output"
+        },
+        {
+          "number": "2",
+          "name": "1A",
+          "type": "Input"
+        },
+        {
+          "number": "3",
+          "name": "1B",
+          "type": "Input"
+        },
+        {
+          "number": "4",
+          "name": "2Y",
+          "type": "Output"
+        },
+        {
+          "number": "5",
+          "name": "2A",
+          "type": "Input"
+        },
+        {
+          "number": "6",
+          "name": "2B",
+          "type": "Input"
+        },
+        {
+          "number": "7",
+          "name": "GND",
+          "type": "PowerInput"
+        },
+        {
+          "number": "8",
+          "name": "3A",
+          "type": "Input"
+        },
+        {
+          "number": "9",
+          "name": "3B",
+          "type": "Input"
+        },
+        {
+          "number": "10",
+          "name": "3Y",
+          "type": "Output"
+        },
+        {
+          "number": "11",
+          "name": "4A",
+          "type": "Input"
+        },
+        {
+          "number": "12",
+          "name": "4B",
+          "type": "Input"
+        },
+        {
+          "number": "13",
+          "name": "4Y",
+          "type": "Output"
+        },
+        {
+          "number": "14",
+          "name": "VCC",
+          "type": "PowerInput"
+        }
       ]
     },
     {
       "name": "74HC04",
-      "aliases": ["74HCT04", "SN74HC04"],
+      "aliases": [
+        "74HCT04",
+        "SN74HC04"
+      ],
       "description": "Hex inverter",
-      "footprints": ["DIP-14", "SOIC-14", "TSSOP-14"],
+      "footprints": [
+        "DIP-14",
+        "SOIC-14",
+        "TSSOP-14"
+      ],
       "datasheet_url": "https://www.ti.com/lit/ds/symlink/sn74hc04.pdf",
       "app_notes": [],
       "pins": [
-        { "number": "1", "name": "1A", "type": "Input" },
-        { "number": "2", "name": "1Y", "type": "Output" },
-        { "number": "3", "name": "2A", "type": "Input" },
-        { "number": "4", "name": "2Y", "type": "Output" },
-        { "number": "5", "name": "3A", "type": "Input" },
-        { "number": "6", "name": "3Y", "type": "Output" },
-        { "number": "7", "name": "GND", "type": "PowerInput" },
-        { "number": "8", "name": "4Y", "type": "Output" },
-        { "number": "9", "name": "4A", "type": "Input" },
-        { "number": "10", "name": "5Y", "type": "Output" },
-        { "number": "11", "name": "5A", "type": "Input" },
-        { "number": "12", "name": "6Y", "type": "Output" },
-        { "number": "13", "name": "6A", "type": "Input" },
-        { "number": "14", "name": "VCC", "type": "PowerInput" }
+        {
+          "number": "1",
+          "name": "1A",
+          "type": "Input"
+        },
+        {
+          "number": "2",
+          "name": "1Y",
+          "type": "Output"
+        },
+        {
+          "number": "3",
+          "name": "2A",
+          "type": "Input"
+        },
+        {
+          "number": "4",
+          "name": "2Y",
+          "type": "Output"
+        },
+        {
+          "number": "5",
+          "name": "3A",
+          "type": "Input"
+        },
+        {
+          "number": "6",
+          "name": "3Y",
+          "type": "Output"
+        },
+        {
+          "number": "7",
+          "name": "GND",
+          "type": "PowerInput"
+        },
+        {
+          "number": "8",
+          "name": "4Y",
+          "type": "Output"
+        },
+        {
+          "number": "9",
+          "name": "4A",
+          "type": "Input"
+        },
+        {
+          "number": "10",
+          "name": "5Y",
+          "type": "Output"
+        },
+        {
+          "number": "11",
+          "name": "5A",
+          "type": "Input"
+        },
+        {
+          "number": "12",
+          "name": "6Y",
+          "type": "Output"
+        },
+        {
+          "number": "13",
+          "name": "6A",
+          "type": "Input"
+        },
+        {
+          "number": "14",
+          "name": "VCC",
+          "type": "PowerInput"
+        }
       ]
     },
     {
       "name": "74HC08",
-      "aliases": ["74HCT08", "SN74HC08"],
+      "aliases": [
+        "74HCT08",
+        "SN74HC08"
+      ],
       "description": "Quad 2-input AND gate",
-      "footprints": ["DIP-14", "SOIC-14", "TSSOP-14"],
+      "footprints": [
+        "DIP-14",
+        "SOIC-14",
+        "TSSOP-14"
+      ],
       "datasheet_url": "https://www.ti.com/lit/ds/symlink/sn74hc08.pdf",
       "app_notes": [],
       "pins": [
-        { "number": "1", "name": "1A", "type": "Input" },
-        { "number": "2", "name": "1B", "type": "Input" },
-        { "number": "3", "name": "1Y", "type": "Output" },
-        { "number": "4", "name": "2A", "type": "Input" },
-        { "number": "5", "name": "2B", "type": "Input" },
-        { "number": "6", "name": "2Y", "type": "Output" },
-        { "number": "7", "name": "GND", "type": "PowerInput" },
-        { "number": "8", "name": "3Y", "type": "Output" },
-        { "number": "9", "name": "3A", "type": "Input" },
-        { "number": "10", "name": "3B", "type": "Input" },
-        { "number": "11", "name": "4Y", "type": "Output" },
-        { "number": "12", "name": "4A", "type": "Input" },
-        { "number": "13", "name": "4B", "type": "Input" },
-        { "number": "14", "name": "VCC", "type": "PowerInput" }
+        {
+          "number": "1",
+          "name": "1A",
+          "type": "Input"
+        },
+        {
+          "number": "2",
+          "name": "1B",
+          "type": "Input"
+        },
+        {
+          "number": "3",
+          "name": "1Y",
+          "type": "Output"
+        },
+        {
+          "number": "4",
+          "name": "2A",
+          "type": "Input"
+        },
+        {
+          "number": "5",
+          "name": "2B",
+          "type": "Input"
+        },
+        {
+          "number": "6",
+          "name": "2Y",
+          "type": "Output"
+        },
+        {
+          "number": "7",
+          "name": "GND",
+          "type": "PowerInput"
+        },
+        {
+          "number": "8",
+          "name": "3Y",
+          "type": "Output"
+        },
+        {
+          "number": "9",
+          "name": "3A",
+          "type": "Input"
+        },
+        {
+          "number": "10",
+          "name": "3B",
+          "type": "Input"
+        },
+        {
+          "number": "11",
+          "name": "4Y",
+          "type": "Output"
+        },
+        {
+          "number": "12",
+          "name": "4A",
+          "type": "Input"
+        },
+        {
+          "number": "13",
+          "name": "4B",
+          "type": "Input"
+        },
+        {
+          "number": "14",
+          "name": "VCC",
+          "type": "PowerInput"
+        }
       ]
     },
     {
       "name": "74HC14",
-      "aliases": ["74HCT14", "SN74HC14"],
+      "aliases": [
+        "74HCT14",
+        "SN74HC14"
+      ],
       "description": "Hex inverting Schmitt trigger",
-      "footprints": ["DIP-14", "SOIC-14", "TSSOP-14"],
+      "footprints": [
+        "DIP-14",
+        "SOIC-14",
+        "TSSOP-14"
+      ],
       "datasheet_url": "https://www.ti.com/lit/ds/symlink/sn74hc14.pdf",
       "app_notes": [],
       "pins": [
-        { "number": "1", "name": "1A", "type": "Input" },
-        { "number": "2", "name": "1Y", "type": "Output" },
-        { "number": "3", "name": "2A", "type": "Input" },
-        { "number": "4", "name": "2Y", "type": "Output" },
-        { "number": "5", "name": "3A", "type": "Input" },
-        { "number": "6", "name": "3Y", "type": "Output" },
-        { "number": "7", "name": "GND", "type": "PowerInput" },
-        { "number": "8", "name": "4Y", "type": "Output" },
-        { "number": "9", "name": "4A", "type": "Input" },
-        { "number": "10", "name": "5Y", "type": "Output" },
-        { "number": "11", "name": "5A", "type": "Input" },
-        { "number": "12", "name": "6Y", "type": "Output" },
-        { "number": "13", "name": "6A", "type": "Input" },
-        { "number": "14", "name": "VCC", "type": "PowerInput" }
+        {
+          "number": "1",
+          "name": "1A",
+          "type": "Input"
+        },
+        {
+          "number": "2",
+          "name": "1Y",
+          "type": "Output"
+        },
+        {
+          "number": "3",
+          "name": "2A",
+          "type": "Input"
+        },
+        {
+          "number": "4",
+          "name": "2Y",
+          "type": "Output"
+        },
+        {
+          "number": "5",
+          "name": "3A",
+          "type": "Input"
+        },
+        {
+          "number": "6",
+          "name": "3Y",
+          "type": "Output"
+        },
+        {
+          "number": "7",
+          "name": "GND",
+          "type": "PowerInput"
+        },
+        {
+          "number": "8",
+          "name": "4Y",
+          "type": "Output"
+        },
+        {
+          "number": "9",
+          "name": "4A",
+          "type": "Input"
+        },
+        {
+          "number": "10",
+          "name": "5Y",
+          "type": "Output"
+        },
+        {
+          "number": "11",
+          "name": "5A",
+          "type": "Input"
+        },
+        {
+          "number": "12",
+          "name": "6Y",
+          "type": "Output"
+        },
+        {
+          "number": "13",
+          "name": "6A",
+          "type": "Input"
+        },
+        {
+          "number": "14",
+          "name": "VCC",
+          "type": "PowerInput"
+        }
       ]
     },
     {
       "name": "74HC32",
-      "aliases": ["74HCT32", "SN74HC32"],
+      "aliases": [
+        "74HCT32",
+        "SN74HC32"
+      ],
       "description": "Quad 2-input OR gate",
-      "footprints": ["DIP-14", "SOIC-14", "TSSOP-14"],
+      "footprints": [
+        "DIP-14",
+        "SOIC-14",
+        "TSSOP-14"
+      ],
       "datasheet_url": "https://www.ti.com/lit/ds/symlink/sn74hc32.pdf",
       "app_notes": [],
       "pins": [
-        { "number": "1", "name": "1A", "type": "Input" },
-        { "number": "2", "name": "1B", "type": "Input" },
-        { "number": "3", "name": "1Y", "type": "Output" },
-        { "number": "4", "name": "2A", "type": "Input" },
-        { "number": "5", "name": "2B", "type": "Input" },
-        { "number": "6", "name": "2Y", "type": "Output" },
-        { "number": "7", "name": "GND", "type": "PowerInput" },
-        { "number": "8", "name": "3Y", "type": "Output" },
-        { "number": "9", "name": "3A", "type": "Input" },
-        { "number": "10", "name": "3B", "type": "Input" },
-        { "number": "11", "name": "4Y", "type": "Output" },
-        { "number": "12", "name": "4A", "type": "Input" },
-        { "number": "13", "name": "4B", "type": "Input" },
-        { "number": "14", "name": "VCC", "type": "PowerInput" }
+        {
+          "number": "1",
+          "name": "1A",
+          "type": "Input"
+        },
+        {
+          "number": "2",
+          "name": "1B",
+          "type": "Input"
+        },
+        {
+          "number": "3",
+          "name": "1Y",
+          "type": "Output"
+        },
+        {
+          "number": "4",
+          "name": "2A",
+          "type": "Input"
+        },
+        {
+          "number": "5",
+          "name": "2B",
+          "type": "Input"
+        },
+        {
+          "number": "6",
+          "name": "2Y",
+          "type": "Output"
+        },
+        {
+          "number": "7",
+          "name": "GND",
+          "type": "PowerInput"
+        },
+        {
+          "number": "8",
+          "name": "3Y",
+          "type": "Output"
+        },
+        {
+          "number": "9",
+          "name": "3A",
+          "type": "Input"
+        },
+        {
+          "number": "10",
+          "name": "3B",
+          "type": "Input"
+        },
+        {
+          "number": "11",
+          "name": "4Y",
+          "type": "Output"
+        },
+        {
+          "number": "12",
+          "name": "4A",
+          "type": "Input"
+        },
+        {
+          "number": "13",
+          "name": "4B",
+          "type": "Input"
+        },
+        {
+          "number": "14",
+          "name": "VCC",
+          "type": "PowerInput"
+        }
       ]
     },
     {
       "name": "74HC138",
-      "aliases": ["74HCT138", "SN74HC138"],
+      "aliases": [
+        "74HCT138",
+        "SN74HC138"
+      ],
       "description": "3-to-8 line decoder / demultiplexer",
-      "footprints": ["DIP-16", "SOIC-16", "TSSOP-16"],
+      "footprints": [
+        "DIP-16",
+        "SOIC-16",
+        "TSSOP-16"
+      ],
       "datasheet_url": "https://www.ti.com/lit/ds/symlink/sn74hc138.pdf",
       "app_notes": [],
       "pins": [
-        { "number": "1", "name": "A0", "type": "Input" },
-        { "number": "2", "name": "A1", "type": "Input" },
-        { "number": "3", "name": "A2", "type": "Input" },
-        { "number": "4", "name": "~E1", "type": "Input" },
-        { "number": "5", "name": "~E2", "type": "Input" },
-        { "number": "6", "name": "E3", "type": "Input" },
-        { "number": "7", "name": "~Y7", "type": "Output" },
-        { "number": "8", "name": "GND", "type": "PowerInput" },
-        { "number": "9", "name": "~Y6", "type": "Output" },
-        { "number": "10", "name": "~Y5", "type": "Output" },
-        { "number": "11", "name": "~Y4", "type": "Output" },
-        { "number": "12", "name": "~Y3", "type": "Output" },
-        { "number": "13", "name": "~Y2", "type": "Output" },
-        { "number": "14", "name": "~Y1", "type": "Output" },
-        { "number": "15", "name": "~Y0", "type": "Output" },
-        { "number": "16", "name": "VCC", "type": "PowerInput" }
+        {
+          "number": "1",
+          "name": "A0",
+          "type": "Input"
+        },
+        {
+          "number": "2",
+          "name": "A1",
+          "type": "Input"
+        },
+        {
+          "number": "3",
+          "name": "A2",
+          "type": "Input"
+        },
+        {
+          "number": "4",
+          "name": "~E1",
+          "type": "Input"
+        },
+        {
+          "number": "5",
+          "name": "~E2",
+          "type": "Input"
+        },
+        {
+          "number": "6",
+          "name": "E3",
+          "type": "Input"
+        },
+        {
+          "number": "7",
+          "name": "~Y7",
+          "type": "Output"
+        },
+        {
+          "number": "8",
+          "name": "GND",
+          "type": "PowerInput"
+        },
+        {
+          "number": "9",
+          "name": "~Y6",
+          "type": "Output"
+        },
+        {
+          "number": "10",
+          "name": "~Y5",
+          "type": "Output"
+        },
+        {
+          "number": "11",
+          "name": "~Y4",
+          "type": "Output"
+        },
+        {
+          "number": "12",
+          "name": "~Y3",
+          "type": "Output"
+        },
+        {
+          "number": "13",
+          "name": "~Y2",
+          "type": "Output"
+        },
+        {
+          "number": "14",
+          "name": "~Y1",
+          "type": "Output"
+        },
+        {
+          "number": "15",
+          "name": "~Y0",
+          "type": "Output"
+        },
+        {
+          "number": "16",
+          "name": "VCC",
+          "type": "PowerInput"
+        }
       ]
     },
     {
       "name": "ATtiny85",
-      "aliases": ["ATtiny25", "ATtiny45", "ATtiny85V"],
+      "aliases": [
+        "ATtiny25",
+        "ATtiny45",
+        "ATtiny85V"
+      ],
       "description": "8-bit AVR microcontroller, 8KB flash",
-      "footprints": ["DIP-8", "SOIC-8", "VSSOP-8"],
+      "footprints": [
+        "DIP-8",
+        "SOIC-8",
+        "VSSOP-8"
+      ],
       "datasheet_url": "https://ww1.microchip.com/downloads/en/DeviceDoc/Atmel-2586-AVR-8-bit-Microcontroller-ATtiny25-ATtiny45-ATtiny85_Datasheet.pdf",
       "app_notes": [
         "PB5 doubles as ~RESET; keep it high (10k pull-up) for normal operation."
       ],
       "pins": [
-        { "number": "1", "name": "PB5/~RESET", "type": "Bidirectional" },
-        { "number": "2", "name": "PB3", "type": "Bidirectional" },
-        { "number": "3", "name": "PB4", "type": "Bidirectional" },
-        { "number": "4", "name": "GND", "type": "PowerInput" },
-        { "number": "5", "name": "PB0", "type": "Bidirectional" },
-        { "number": "6", "name": "PB1", "type": "Bidirectional" },
-        { "number": "7", "name": "PB2", "type": "Bidirectional" },
-        { "number": "8", "name": "VCC", "type": "PowerInput" }
+        {
+          "number": "1",
+          "name": "PB5/~RESET",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "2",
+          "name": "PB3",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "3",
+          "name": "PB4",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "4",
+          "name": "GND",
+          "type": "PowerInput"
+        },
+        {
+          "number": "5",
+          "name": "PB0",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "6",
+          "name": "PB1",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "7",
+          "name": "PB2",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "8",
+          "name": "VCC",
+          "type": "PowerInput"
+        }
       ]
     },
     {
       "name": "ATtiny412",
-      "aliases": ["ATtiny212", "ATtiny402", "ATtiny202"],
+      "aliases": [
+        "ATtiny212",
+        "ATtiny402",
+        "ATtiny202"
+      ],
       "description": "tinyAVR 1-series microcontroller, 4KB flash, UPDI",
-      "footprints": ["SOIC-8"],
+      "footprints": [
+        "SOIC-8"
+      ],
       "datasheet_url": "https://ww1.microchip.com/downloads/en/DeviceDoc/ATtiny212-214-412-414-416-DataSheet-DS40002287A.pdf",
       "app_notes": [
         "PA0 is the UPDI programming pin; avoid loading it heavily."
       ],
       "pins": [
-        { "number": "1", "name": "VDD", "type": "PowerInput" },
-        { "number": "2", "name": "PA6", "type": "Bidirectional" },
-        { "number": "3", "name": "PA7", "type": "Bidirectional" },
-        { "number": "4", "name": "PA1", "type": "Bidirectional" },
-        { "number": "5", "name": "PA2", "type": "Bidirectional" },
-        { "number": "6", "name": "PA3", "type": "Bidirectional" },
-        { "number": "7", "name": "PA0/UPDI", "type": "Bidirectional" },
-        { "number": "8", "name": "GND", "type": "PowerInput" }
+        {
+          "number": "1",
+          "name": "VDD",
+          "type": "PowerInput"
+        },
+        {
+          "number": "2",
+          "name": "PA6",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "3",
+          "name": "PA7",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "4",
+          "name": "PA1",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "5",
+          "name": "PA2",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "6",
+          "name": "PA3",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "7",
+          "name": "PA0/UPDI",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "8",
+          "name": "GND",
+          "type": "PowerInput"
+        }
       ]
     },
     {
       "name": "ATmega328P",
-      "aliases": ["ATmega328", "ATmega168", "ATmega88", "ATmega328PB"],
+      "aliases": [
+        "ATmega328",
+        "ATmega168",
+        "ATmega88",
+        "ATmega328PB"
+      ],
       "description": "8-bit AVR microcontroller, 32KB flash (Arduino Uno)",
-      "footprints": ["DIP-28", "TQFP-32", "QFN-32", "MLF-32"],
+      "footprints": [
+        "DIP-28",
+        "TQFP-32",
+        "QFN-32",
+        "MLF-32"
+      ],
       "datasheet_url": "https://ww1.microchip.com/downloads/en/DeviceDoc/ATmega48A-PA-88A-PA-168A-PA-328-P-DS-DS40002061B.pdf",
       "app_notes": [
         "Decouple each VCC/AVCC pin with 100nF; add a 10uF bulk cap near the supply.",
         "AREF (analog reference) is usually bypassed to GND with 100nF."
       ],
       "pins": [
-        { "number": "1", "name": "PC6/~RESET", "type": "Bidirectional" },
-        { "number": "2", "name": "PD0/RXD", "type": "Bidirectional" },
-        { "number": "3", "name": "PD1/TXD", "type": "Bidirectional" },
-        { "number": "4", "name": "PD2", "type": "Bidirectional" },
-        { "number": "5", "name": "PD3", "type": "Bidirectional" },
-        { "number": "6", "name": "PD4", "type": "Bidirectional" },
-        { "number": "7", "name": "VCC", "type": "PowerInput" },
-        { "number": "8", "name": "GND", "type": "PowerInput" },
-        { "number": "9", "name": "PB6/XTAL1", "type": "Bidirectional" },
-        { "number": "10", "name": "PB7/XTAL2", "type": "Bidirectional" },
-        { "number": "11", "name": "PD5", "type": "Bidirectional" },
-        { "number": "12", "name": "PD6", "type": "Bidirectional" },
-        { "number": "13", "name": "PD7", "type": "Bidirectional" },
-        { "number": "14", "name": "PB0", "type": "Bidirectional" },
-        { "number": "15", "name": "PB1", "type": "Bidirectional" },
-        { "number": "16", "name": "PB2/SS", "type": "Bidirectional" },
-        { "number": "17", "name": "PB3/MOSI", "type": "Bidirectional" },
-        { "number": "18", "name": "PB4/MISO", "type": "Bidirectional" },
-        { "number": "19", "name": "PB5/SCK", "type": "Bidirectional" },
-        { "number": "20", "name": "AVCC", "type": "PowerInput" },
-        { "number": "21", "name": "AREF", "type": "Passive" },
-        { "number": "22", "name": "GND", "type": "PowerInput" },
-        { "number": "23", "name": "PC0/ADC0", "type": "Bidirectional" },
-        { "number": "24", "name": "PC1/ADC1", "type": "Bidirectional" },
-        { "number": "25", "name": "PC2/ADC2", "type": "Bidirectional" },
-        { "number": "26", "name": "PC3/ADC3", "type": "Bidirectional" },
-        { "number": "27", "name": "PC4/SDA", "type": "Bidirectional" },
-        { "number": "28", "name": "PC5/SCL", "type": "Bidirectional" }
+        {
+          "number": "1",
+          "name": "PC6/~RESET",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "2",
+          "name": "PD0/RXD",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "3",
+          "name": "PD1/TXD",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "4",
+          "name": "PD2",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "5",
+          "name": "PD3",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "6",
+          "name": "PD4",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "7",
+          "name": "VCC",
+          "type": "PowerInput"
+        },
+        {
+          "number": "8",
+          "name": "GND",
+          "type": "PowerInput"
+        },
+        {
+          "number": "9",
+          "name": "PB6/XTAL1",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "10",
+          "name": "PB7/XTAL2",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "11",
+          "name": "PD5",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "12",
+          "name": "PD6",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "13",
+          "name": "PD7",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "14",
+          "name": "PB0",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "15",
+          "name": "PB1",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "16",
+          "name": "PB2/SS",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "17",
+          "name": "PB3/MOSI",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "18",
+          "name": "PB4/MISO",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "19",
+          "name": "PB5/SCK",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "20",
+          "name": "AVCC",
+          "type": "PowerInput"
+        },
+        {
+          "number": "21",
+          "name": "AREF",
+          "type": "Passive"
+        },
+        {
+          "number": "22",
+          "name": "GND",
+          "type": "PowerInput"
+        },
+        {
+          "number": "23",
+          "name": "PC0/ADC0",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "24",
+          "name": "PC1/ADC1",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "25",
+          "name": "PC2/ADC2",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "26",
+          "name": "PC3/ADC3",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "27",
+          "name": "PC4/SDA",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "28",
+          "name": "PC5/SCL",
+          "type": "Bidirectional"
+        }
       ],
       "variants": [
         {
-          "footprints": ["TQFP-32", "QFN-32", "MLF-32"],
+          "footprints": [
+            "TQFP-32",
+            "QFN-32",
+            "MLF-32"
+          ],
           "pins": [
-            { "number": "1", "name": "PD3", "type": "Bidirectional" },
-            { "number": "2", "name": "PD4", "type": "Bidirectional" },
-            { "number": "3", "name": "GND", "type": "PowerInput" },
-            { "number": "4", "name": "VCC", "type": "PowerInput" },
-            { "number": "5", "name": "GND", "type": "PowerInput" },
-            { "number": "6", "name": "VCC", "type": "PowerInput" },
-            { "number": "7", "name": "PB6/XTAL1", "type": "Bidirectional" },
-            { "number": "8", "name": "PB7/XTAL2", "type": "Bidirectional" },
-            { "number": "9", "name": "PD5", "type": "Bidirectional" },
-            { "number": "10", "name": "PD6", "type": "Bidirectional" },
-            { "number": "11", "name": "PD7", "type": "Bidirectional" },
-            { "number": "12", "name": "PB0", "type": "Bidirectional" },
-            { "number": "13", "name": "PB1", "type": "Bidirectional" },
-            { "number": "14", "name": "PB2/SS", "type": "Bidirectional" },
-            { "number": "15", "name": "PB3/MOSI", "type": "Bidirectional" },
-            { "number": "16", "name": "PB4/MISO", "type": "Bidirectional" },
-            { "number": "17", "name": "PB5/SCK", "type": "Bidirectional" },
-            { "number": "18", "name": "AVCC", "type": "PowerInput" },
-            { "number": "19", "name": "ADC6", "type": "Input" },
-            { "number": "20", "name": "AREF", "type": "Passive" },
-            { "number": "21", "name": "GND", "type": "PowerInput" },
-            { "number": "22", "name": "ADC7", "type": "Input" },
-            { "number": "23", "name": "PC0/ADC0", "type": "Bidirectional" },
-            { "number": "24", "name": "PC1/ADC1", "type": "Bidirectional" },
-            { "number": "25", "name": "PC2/ADC2", "type": "Bidirectional" },
-            { "number": "26", "name": "PC3/ADC3", "type": "Bidirectional" },
-            { "number": "27", "name": "PC4/SDA", "type": "Bidirectional" },
-            { "number": "28", "name": "PC5/SCL", "type": "Bidirectional" },
-            { "number": "29", "name": "PC6/~RESET", "type": "Bidirectional" },
-            { "number": "30", "name": "PD0/RXD", "type": "Bidirectional" },
-            { "number": "31", "name": "PD1/TXD", "type": "Bidirectional" },
-            { "number": "32", "name": "PD2", "type": "Bidirectional" }
+            {
+              "number": "1",
+              "name": "PD3",
+              "type": "Bidirectional"
+            },
+            {
+              "number": "2",
+              "name": "PD4",
+              "type": "Bidirectional"
+            },
+            {
+              "number": "3",
+              "name": "GND",
+              "type": "PowerInput"
+            },
+            {
+              "number": "4",
+              "name": "VCC",
+              "type": "PowerInput"
+            },
+            {
+              "number": "5",
+              "name": "GND",
+              "type": "PowerInput"
+            },
+            {
+              "number": "6",
+              "name": "VCC",
+              "type": "PowerInput"
+            },
+            {
+              "number": "7",
+              "name": "PB6/XTAL1",
+              "type": "Bidirectional"
+            },
+            {
+              "number": "8",
+              "name": "PB7/XTAL2",
+              "type": "Bidirectional"
+            },
+            {
+              "number": "9",
+              "name": "PD5",
+              "type": "Bidirectional"
+            },
+            {
+              "number": "10",
+              "name": "PD6",
+              "type": "Bidirectional"
+            },
+            {
+              "number": "11",
+              "name": "PD7",
+              "type": "Bidirectional"
+            },
+            {
+              "number": "12",
+              "name": "PB0",
+              "type": "Bidirectional"
+            },
+            {
+              "number": "13",
+              "name": "PB1",
+              "type": "Bidirectional"
+            },
+            {
+              "number": "14",
+              "name": "PB2/SS",
+              "type": "Bidirectional"
+            },
+            {
+              "number": "15",
+              "name": "PB3/MOSI",
+              "type": "Bidirectional"
+            },
+            {
+              "number": "16",
+              "name": "PB4/MISO",
+              "type": "Bidirectional"
+            },
+            {
+              "number": "17",
+              "name": "PB5/SCK",
+              "type": "Bidirectional"
+            },
+            {
+              "number": "18",
+              "name": "AVCC",
+              "type": "PowerInput"
+            },
+            {
+              "number": "19",
+              "name": "ADC6",
+              "type": "Input"
+            },
+            {
+              "number": "20",
+              "name": "AREF",
+              "type": "Passive"
+            },
+            {
+              "number": "21",
+              "name": "GND",
+              "type": "PowerInput"
+            },
+            {
+              "number": "22",
+              "name": "ADC7",
+              "type": "Input"
+            },
+            {
+              "number": "23",
+              "name": "PC0/ADC0",
+              "type": "Bidirectional"
+            },
+            {
+              "number": "24",
+              "name": "PC1/ADC1",
+              "type": "Bidirectional"
+            },
+            {
+              "number": "25",
+              "name": "PC2/ADC2",
+              "type": "Bidirectional"
+            },
+            {
+              "number": "26",
+              "name": "PC3/ADC3",
+              "type": "Bidirectional"
+            },
+            {
+              "number": "27",
+              "name": "PC4/SDA",
+              "type": "Bidirectional"
+            },
+            {
+              "number": "28",
+              "name": "PC5/SCL",
+              "type": "Bidirectional"
+            },
+            {
+              "number": "29",
+              "name": "PC6/~RESET",
+              "type": "Bidirectional"
+            },
+            {
+              "number": "30",
+              "name": "PD0/RXD",
+              "type": "Bidirectional"
+            },
+            {
+              "number": "31",
+              "name": "PD1/TXD",
+              "type": "Bidirectional"
+            },
+            {
+              "number": "32",
+              "name": "PD2",
+              "type": "Bidirectional"
+            }
           ]
         }
       ]
     },
     {
       "name": "LM7805",
-      "aliases": ["L7805", "MC7805", "7805", "LM7805CT", "uA7805"],
+      "aliases": [
+        "L7805",
+        "MC7805",
+        "7805",
+        "LM7805CT",
+        "uA7805"
+      ],
       "description": "+5V 1A fixed linear voltage regulator",
-      "footprints": ["TO-220-3", "TO-263", "TO-252", "D2PAK", "DPAK"],
+      "footprints": [
+        "TO-220-3",
+        "TO-263",
+        "TO-252",
+        "D2PAK",
+        "DPAK"
+      ],
       "datasheet_url": "https://www.st.com/resource/en/datasheet/l7805.pdf",
       "app_notes": [
         "Recommended bypass: 0.33uF on the input and 0.1uF on the output to GND."
       ],
       "pins": [
-        { "number": "1", "name": "IN", "type": "PowerInput" },
-        { "number": "2", "name": "GND", "type": "PowerInput" },
-        { "number": "3", "name": "OUT", "type": "PowerOutput" }
+        {
+          "number": "1",
+          "name": "IN",
+          "type": "PowerInput"
+        },
+        {
+          "number": "2",
+          "name": "GND",
+          "type": "PowerInput"
+        },
+        {
+          "number": "3",
+          "name": "OUT",
+          "type": "PowerOutput"
+        }
       ]
     },
     {
       "name": "LM1117",
-      "aliases": ["AMS1117", "LD1117", "AMS1117-3.3", "AZ1117", "SPX1117"],
+      "aliases": [
+        "AMS1117",
+        "LD1117",
+        "AMS1117-3.3",
+        "AZ1117",
+        "SPX1117"
+      ],
       "description": "800mA low-dropout linear regulator (fixed or adjustable)",
-      "footprints": ["SOT-223", "TO-220-3", "SOT-89"],
+      "footprints": [
+        "SOT-223",
+        "TO-220-3",
+        "SOT-89"
+      ],
       "datasheet_url": "https://www.ti.com/lit/ds/symlink/lm1117.pdf",
       "app_notes": [
         "Needs a >=10uF tantalum/ceramic on the output for stability.",
@@ -376,148 +1304,1303 @@
         "The SOT-223 tab (pad 4) is electrically OUT — tie it to the output net."
       ],
       "pins": [
-        { "number": "1", "name": "ADJ/GND", "type": "PowerInput" },
-        { "number": "2", "name": "OUT", "type": "PowerOutput" },
-        { "number": "3", "name": "IN", "type": "PowerInput" }
+        {
+          "number": "1",
+          "name": "ADJ/GND",
+          "type": "PowerInput"
+        },
+        {
+          "number": "2",
+          "name": "OUT",
+          "type": "PowerOutput"
+        },
+        {
+          "number": "3",
+          "name": "IN",
+          "type": "PowerInput"
+        }
       ]
     },
     {
       "name": "AP2112",
-      "aliases": ["AP2112K", "AP2112K-3.3", "AP2112K-3.3TRG1"],
+      "aliases": [
+        "AP2112K",
+        "AP2112K-3.3",
+        "AP2112K-3.3TRG1"
+      ],
       "description": "600mA CMOS LDO with enable",
-      "footprints": ["SOT-23-5", "SOT-25"],
+      "footprints": [
+        "SOT-23-5",
+        "SOT-25"
+      ],
       "datasheet_url": "https://www.diodes.com/assets/Datasheets/AP2112.pdf",
       "app_notes": [
         "Tie EN (pin 3) to VIN to keep the regulator always enabled.",
         "1uF input and output ceramics are recommended."
       ],
       "pins": [
-        { "number": "1", "name": "VIN", "type": "PowerInput" },
-        { "number": "2", "name": "GND", "type": "PowerInput" },
-        { "number": "3", "name": "EN", "type": "Input" },
-        { "number": "4", "name": "NC", "type": "NotConnected" },
-        { "number": "5", "name": "VOUT", "type": "PowerOutput" }
+        {
+          "number": "1",
+          "name": "VIN",
+          "type": "PowerInput"
+        },
+        {
+          "number": "2",
+          "name": "GND",
+          "type": "PowerInput"
+        },
+        {
+          "number": "3",
+          "name": "EN",
+          "type": "Input"
+        },
+        {
+          "number": "4",
+          "name": "NC",
+          "type": "NotConnected"
+        },
+        {
+          "number": "5",
+          "name": "VOUT",
+          "type": "PowerOutput"
+        }
       ]
     },
     {
       "name": "LM358",
-      "aliases": ["LM358N", "LM358P", "LM2904", "LMV358", "LM358A"],
+      "aliases": [
+        "LM358N",
+        "LM358P",
+        "LM2904",
+        "LMV358",
+        "LM358A"
+      ],
       "description": "Dual general-purpose operational amplifier",
-      "footprints": ["DIP-8", "SOIC-8", "VSSOP-8", "TSSOP-8"],
+      "footprints": [
+        "DIP-8",
+        "SOIC-8",
+        "VSSOP-8",
+        "TSSOP-8"
+      ],
       "datasheet_url": "https://www.ti.com/lit/ds/symlink/lm358.pdf",
       "app_notes": [],
       "pins": [
-        { "number": "1", "name": "OUT1", "type": "Output" },
-        { "number": "2", "name": "IN1-", "type": "Input" },
-        { "number": "3", "name": "IN1+", "type": "Input" },
-        { "number": "4", "name": "V-", "type": "PowerInput" },
-        { "number": "5", "name": "IN2+", "type": "Input" },
-        { "number": "6", "name": "IN2-", "type": "Input" },
-        { "number": "7", "name": "OUT2", "type": "Output" },
-        { "number": "8", "name": "V+", "type": "PowerInput" }
+        {
+          "number": "1",
+          "name": "OUT1",
+          "type": "Output"
+        },
+        {
+          "number": "2",
+          "name": "IN1-",
+          "type": "Input"
+        },
+        {
+          "number": "3",
+          "name": "IN1+",
+          "type": "Input"
+        },
+        {
+          "number": "4",
+          "name": "V-",
+          "type": "PowerInput"
+        },
+        {
+          "number": "5",
+          "name": "IN2+",
+          "type": "Input"
+        },
+        {
+          "number": "6",
+          "name": "IN2-",
+          "type": "Input"
+        },
+        {
+          "number": "7",
+          "name": "OUT2",
+          "type": "Output"
+        },
+        {
+          "number": "8",
+          "name": "V+",
+          "type": "PowerInput"
+        }
       ]
     },
     {
       "name": "LM324",
-      "aliases": ["LM324N", "LM324A", "LM2902"],
+      "aliases": [
+        "LM324N",
+        "LM324A",
+        "LM2902"
+      ],
       "description": "Quad general-purpose operational amplifier",
-      "footprints": ["DIP-14", "SOIC-14", "TSSOP-14"],
+      "footprints": [
+        "DIP-14",
+        "SOIC-14",
+        "TSSOP-14"
+      ],
       "datasheet_url": "https://www.ti.com/lit/ds/symlink/lm324.pdf",
       "app_notes": [],
       "pins": [
-        { "number": "1", "name": "OUT1", "type": "Output" },
-        { "number": "2", "name": "IN1-", "type": "Input" },
-        { "number": "3", "name": "IN1+", "type": "Input" },
-        { "number": "4", "name": "V+", "type": "PowerInput" },
-        { "number": "5", "name": "IN2+", "type": "Input" },
-        { "number": "6", "name": "IN2-", "type": "Input" },
-        { "number": "7", "name": "OUT2", "type": "Output" },
-        { "number": "8", "name": "OUT3", "type": "Output" },
-        { "number": "9", "name": "IN3-", "type": "Input" },
-        { "number": "10", "name": "IN3+", "type": "Input" },
-        { "number": "11", "name": "V-", "type": "PowerInput" },
-        { "number": "12", "name": "IN4+", "type": "Input" },
-        { "number": "13", "name": "IN4-", "type": "Input" },
-        { "number": "14", "name": "OUT4", "type": "Output" }
+        {
+          "number": "1",
+          "name": "OUT1",
+          "type": "Output"
+        },
+        {
+          "number": "2",
+          "name": "IN1-",
+          "type": "Input"
+        },
+        {
+          "number": "3",
+          "name": "IN1+",
+          "type": "Input"
+        },
+        {
+          "number": "4",
+          "name": "V+",
+          "type": "PowerInput"
+        },
+        {
+          "number": "5",
+          "name": "IN2+",
+          "type": "Input"
+        },
+        {
+          "number": "6",
+          "name": "IN2-",
+          "type": "Input"
+        },
+        {
+          "number": "7",
+          "name": "OUT2",
+          "type": "Output"
+        },
+        {
+          "number": "8",
+          "name": "OUT3",
+          "type": "Output"
+        },
+        {
+          "number": "9",
+          "name": "IN3-",
+          "type": "Input"
+        },
+        {
+          "number": "10",
+          "name": "IN3+",
+          "type": "Input"
+        },
+        {
+          "number": "11",
+          "name": "V-",
+          "type": "PowerInput"
+        },
+        {
+          "number": "12",
+          "name": "IN4+",
+          "type": "Input"
+        },
+        {
+          "number": "13",
+          "name": "IN4-",
+          "type": "Input"
+        },
+        {
+          "number": "14",
+          "name": "OUT4",
+          "type": "Output"
+        }
       ]
     },
     {
       "name": "LM393",
-      "aliases": ["LM393N", "LM393P", "LM2903"],
+      "aliases": [
+        "LM393N",
+        "LM393P",
+        "LM2903"
+      ],
       "description": "Dual differential comparator (open-collector outputs)",
-      "footprints": ["DIP-8", "SOIC-8", "VSSOP-8", "TSSOP-8"],
+      "footprints": [
+        "DIP-8",
+        "SOIC-8",
+        "VSSOP-8",
+        "TSSOP-8"
+      ],
       "datasheet_url": "https://www.ti.com/lit/ds/symlink/lm393.pdf",
       "app_notes": [
         "Outputs are open-collector — each needs a pull-up resistor to its logic rail."
       ],
       "pins": [
-        { "number": "1", "name": "OUT1", "type": "OpenCollector" },
-        { "number": "2", "name": "IN1-", "type": "Input" },
-        { "number": "3", "name": "IN1+", "type": "Input" },
-        { "number": "4", "name": "GND", "type": "PowerInput" },
-        { "number": "5", "name": "IN2+", "type": "Input" },
-        { "number": "6", "name": "IN2-", "type": "Input" },
-        { "number": "7", "name": "OUT2", "type": "OpenCollector" },
-        { "number": "8", "name": "VCC", "type": "PowerInput" }
+        {
+          "number": "1",
+          "name": "OUT1",
+          "type": "OpenCollector"
+        },
+        {
+          "number": "2",
+          "name": "IN1-",
+          "type": "Input"
+        },
+        {
+          "number": "3",
+          "name": "IN1+",
+          "type": "Input"
+        },
+        {
+          "number": "4",
+          "name": "GND",
+          "type": "PowerInput"
+        },
+        {
+          "number": "5",
+          "name": "IN2+",
+          "type": "Input"
+        },
+        {
+          "number": "6",
+          "name": "IN2-",
+          "type": "Input"
+        },
+        {
+          "number": "7",
+          "name": "OUT2",
+          "type": "OpenCollector"
+        },
+        {
+          "number": "8",
+          "name": "VCC",
+          "type": "PowerInput"
+        }
       ]
     },
     {
       "name": "TL072",
-      "aliases": ["TL072CP", "TL082", "TL072H", "TL062"],
+      "aliases": [
+        "TL072CP",
+        "TL082",
+        "TL072H",
+        "TL062"
+      ],
       "description": "Dual low-noise JFET-input operational amplifier",
-      "footprints": ["DIP-8", "SOIC-8", "VSSOP-8"],
+      "footprints": [
+        "DIP-8",
+        "SOIC-8",
+        "VSSOP-8"
+      ],
       "datasheet_url": "https://www.ti.com/lit/ds/symlink/tl072.pdf",
       "app_notes": [],
       "pins": [
-        { "number": "1", "name": "OUT1", "type": "Output" },
-        { "number": "2", "name": "IN1-", "type": "Input" },
-        { "number": "3", "name": "IN1+", "type": "Input" },
-        { "number": "4", "name": "V-", "type": "PowerInput" },
-        { "number": "5", "name": "IN2+", "type": "Input" },
-        { "number": "6", "name": "IN2-", "type": "Input" },
-        { "number": "7", "name": "OUT2", "type": "Output" },
-        { "number": "8", "name": "V+", "type": "PowerInput" }
+        {
+          "number": "1",
+          "name": "OUT1",
+          "type": "Output"
+        },
+        {
+          "number": "2",
+          "name": "IN1-",
+          "type": "Input"
+        },
+        {
+          "number": "3",
+          "name": "IN1+",
+          "type": "Input"
+        },
+        {
+          "number": "4",
+          "name": "V-",
+          "type": "PowerInput"
+        },
+        {
+          "number": "5",
+          "name": "IN2+",
+          "type": "Input"
+        },
+        {
+          "number": "6",
+          "name": "IN2-",
+          "type": "Input"
+        },
+        {
+          "number": "7",
+          "name": "OUT2",
+          "type": "Output"
+        },
+        {
+          "number": "8",
+          "name": "V+",
+          "type": "PowerInput"
+        }
       ]
     },
     {
       "name": "LM386",
-      "aliases": ["LM386N", "LM386M"],
+      "aliases": [
+        "LM386N",
+        "LM386M"
+      ],
       "description": "Low-voltage audio power amplifier",
-      "footprints": ["DIP-8", "SOIC-8"],
+      "footprints": [
+        "DIP-8",
+        "SOIC-8"
+      ],
       "datasheet_url": "https://www.ti.com/lit/ds/symlink/lm386.pdf",
       "app_notes": [
         "Pins 1 and 8 set the gain (open = 20x, 10uF across them = 200x)."
       ],
       "pins": [
-        { "number": "1", "name": "GAIN", "type": "Passive" },
-        { "number": "2", "name": "IN-", "type": "Input" },
-        { "number": "3", "name": "IN+", "type": "Input" },
-        { "number": "4", "name": "GND", "type": "PowerInput" },
-        { "number": "5", "name": "VOUT", "type": "Output" },
-        { "number": "6", "name": "VS", "type": "PowerInput" },
-        { "number": "7", "name": "BYPASS", "type": "Passive" },
-        { "number": "8", "name": "GAIN", "type": "Passive" }
+        {
+          "number": "1",
+          "name": "GAIN",
+          "type": "Passive"
+        },
+        {
+          "number": "2",
+          "name": "IN-",
+          "type": "Input"
+        },
+        {
+          "number": "3",
+          "name": "IN+",
+          "type": "Input"
+        },
+        {
+          "number": "4",
+          "name": "GND",
+          "type": "PowerInput"
+        },
+        {
+          "number": "5",
+          "name": "VOUT",
+          "type": "Output"
+        },
+        {
+          "number": "6",
+          "name": "VS",
+          "type": "PowerInput"
+        },
+        {
+          "number": "7",
+          "name": "BYPASS",
+          "type": "Passive"
+        },
+        {
+          "number": "8",
+          "name": "GAIN",
+          "type": "Passive"
+        }
       ]
     },
     {
       "name": "BME280",
-      "aliases": ["BMP280", "BME280-3.3"],
+      "aliases": [
+        "BMP280",
+        "BME280-3.3"
+      ],
       "description": "Humidity / pressure / temperature sensor (I2C/SPI)",
-      "footprints": ["LGA-8", "BME280"],
+      "footprints": [
+        "LGA-8",
+        "BME280"
+      ],
       "datasheet_url": "https://www.bosch-sensortec.com/media/boschsensortec/downloads/datasheets/bst-bme280-ds002.pdf",
       "app_notes": [
         "Tie CSB high for I2C; SDO sets the I2C address LSB (low=0x76, high=0x77).",
         "BMP280 is pin-compatible (pressure/temperature only, no humidity)."
       ],
       "pins": [
-        { "number": "1", "name": "GND", "type": "PowerInput" },
-        { "number": "2", "name": "CSB", "type": "Input" },
-        { "number": "3", "name": "SDI/SDA", "type": "Bidirectional" },
-        { "number": "4", "name": "SCK/SCL", "type": "Input" },
-        { "number": "5", "name": "SDO/SAO", "type": "Bidirectional" },
-        { "number": "6", "name": "VDDIO", "type": "PowerInput" },
-        { "number": "7", "name": "GND", "type": "PowerInput" },
-        { "number": "8", "name": "VDD", "type": "PowerInput" }
+        {
+          "number": "1",
+          "name": "GND",
+          "type": "PowerInput"
+        },
+        {
+          "number": "2",
+          "name": "CSB",
+          "type": "Input"
+        },
+        {
+          "number": "3",
+          "name": "SDI/SDA",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "4",
+          "name": "SCK/SCL",
+          "type": "Input"
+        },
+        {
+          "number": "5",
+          "name": "SDO/SAO",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "6",
+          "name": "VDDIO",
+          "type": "PowerInput"
+        },
+        {
+          "number": "7",
+          "name": "GND",
+          "type": "PowerInput"
+        },
+        {
+          "number": "8",
+          "name": "VDD",
+          "type": "PowerInput"
+        }
+      ]
+    },
+    {
+      "name": "SN65HVD230",
+      "aliases": [
+        "SN65HVD230D",
+        "SN65HVD230DR",
+        "VP230",
+        "HVD230"
+      ],
+      "description": "TI 3.3-V CAN bus transceiver (ISO 11898-2), up to 1 Mbps, slope control",
+      "footprints": [
+        "SOIC-8"
+      ],
+      "datasheet_url": "https://www.ti.com/lit/ds/symlink/sn65hvd230.pdf",
+      "app_notes": [
+        "Decouple VCC (pin 3) to GND (pin 2) with a 100 nF ceramic close to the device.",
+        "Rs (pin 8) selects mode: tie to GND for high-speed, a ~10-100k resistor to GND for slope/EMI control, or pull to VCC for standby.",
+        "Vref (pin 5) is a VCC/2 reference output — leave open or lightly loaded; do not use as a supply.",
+        "120 ohm bus termination goes across CANH (pin 7) / CANL (pin 6) at the network end nodes."
+      ],
+      "pins": [
+        {
+          "number": "1",
+          "name": "D (TXD)",
+          "type": "Input"
+        },
+        {
+          "number": "2",
+          "name": "GND",
+          "type": "PowerInput"
+        },
+        {
+          "number": "3",
+          "name": "VCC",
+          "type": "PowerInput"
+        },
+        {
+          "number": "4",
+          "name": "R (RXD)",
+          "type": "Output"
+        },
+        {
+          "number": "5",
+          "name": "Vref",
+          "type": "Passive"
+        },
+        {
+          "number": "6",
+          "name": "CANL",
+          "type": "Passive"
+        },
+        {
+          "number": "7",
+          "name": "CANH",
+          "type": "Passive"
+        },
+        {
+          "number": "8",
+          "name": "Rs",
+          "type": "Input"
+        }
+      ]
+    },
+    {
+      "name": "TCAN1042HGV",
+      "aliases": [
+        "TCAN1042HGVDR",
+        "TCAN1042",
+        "TCAN1042V",
+        "TCAN1042HV",
+        "TCAN1042GV"
+      ],
+      "description": "TI CAN FD transceiver (ISO 11898-2:2016), up to 5 Mbps, with VIO level-shift and standby",
+      "footprints": [
+        "SOIC-8"
+      ],
+      "datasheet_url": "https://www.ti.com/lit/ds/symlink/tcan1042hgv.pdf",
+      "app_notes": [
+        "Decouple VCC (pin 3) to GND (pin 2) with a 100 nF ceramic close to the pin.",
+        "On the V/GV/HV/HGV variants, VIO (pin 5) is supplied from the MCU I/O rail (e.g. 3.3 V) and decoupled with 100 nF; on non-V variants pin 5 is NC.",
+        "STB (pin 8) selects mode: drive LOW for normal operation, HIGH for standby — do not leave floating (pull to GND for always-on).",
+        "120 ohm bus termination goes across CANH (pin 7) / CANL (pin 6) at the network end nodes."
+      ],
+      "pins": [
+        {
+          "number": "1",
+          "name": "TXD",
+          "type": "Input"
+        },
+        {
+          "number": "2",
+          "name": "GND",
+          "type": "PowerInput"
+        },
+        {
+          "number": "3",
+          "name": "VCC",
+          "type": "PowerInput"
+        },
+        {
+          "number": "4",
+          "name": "RXD",
+          "type": "Output"
+        },
+        {
+          "number": "5",
+          "name": "VIO",
+          "type": "PowerInput"
+        },
+        {
+          "number": "6",
+          "name": "CANL",
+          "type": "Passive"
+        },
+        {
+          "number": "7",
+          "name": "CANH",
+          "type": "Passive"
+        },
+        {
+          "number": "8",
+          "name": "STB",
+          "type": "Input"
+        }
+      ]
+    },
+    {
+      "name": "MCP2515",
+      "aliases": [
+        "MCP2515-I/SO",
+        "MCP2515-I/P",
+        "MCP2515T-I/SO"
+      ],
+      "description": "Microchip stand-alone CAN 2.0B controller with SPI interface",
+      "footprints": [
+        "SOIC-18",
+        "DIP-18"
+      ],
+      "datasheet_url": "https://ww1.microchip.com/downloads/aemDocuments/documents/APID/ProductDocuments/DataSheets/MCP2515-Family-Data-Sheet-DS20001801K.pdf",
+      "app_notes": [
+        "Decouple VDD (pin 18) to VSS (pin 9) with a 100 nF ceramic close to the device.",
+        "Connect a crystal/resonator (8-20 MHz typ.) across OSC1 (pin 8) / OSC2 (pin 7) with load caps to VSS; OSC1 may instead be driven by an external clock.",
+        "RESET (pin 17) is active-low — pull high (RC or MCU GPIO); do not leave floating.",
+        "TX0RTS/TX1RTS/TX2RTS (pins 4,5,6) have internal pull-ups and may be left open if unused; CS (pin 16) is the SPI chip-select."
+      ],
+      "pins": [
+        {
+          "number": "1",
+          "name": "TXCAN",
+          "type": "Output"
+        },
+        {
+          "number": "2",
+          "name": "RXCAN",
+          "type": "Input"
+        },
+        {
+          "number": "3",
+          "name": "CLKOUT/SOF",
+          "type": "Output"
+        },
+        {
+          "number": "4",
+          "name": "TX0RTS",
+          "type": "Input"
+        },
+        {
+          "number": "5",
+          "name": "TX1RTS",
+          "type": "Input"
+        },
+        {
+          "number": "6",
+          "name": "TX2RTS",
+          "type": "Input"
+        },
+        {
+          "number": "7",
+          "name": "OSC2",
+          "type": "Output"
+        },
+        {
+          "number": "8",
+          "name": "OSC1",
+          "type": "Input"
+        },
+        {
+          "number": "9",
+          "name": "VSS",
+          "type": "PowerInput"
+        },
+        {
+          "number": "10",
+          "name": "RX1BF",
+          "type": "Output"
+        },
+        {
+          "number": "11",
+          "name": "RX0BF",
+          "type": "Output"
+        },
+        {
+          "number": "12",
+          "name": "INT",
+          "type": "Output"
+        },
+        {
+          "number": "13",
+          "name": "SCK",
+          "type": "Input"
+        },
+        {
+          "number": "14",
+          "name": "SI",
+          "type": "Input"
+        },
+        {
+          "number": "15",
+          "name": "SO",
+          "type": "Output"
+        },
+        {
+          "number": "16",
+          "name": "CS",
+          "type": "Input"
+        },
+        {
+          "number": "17",
+          "name": "RESET",
+          "type": "Input"
+        },
+        {
+          "number": "18",
+          "name": "VDD",
+          "type": "PowerInput"
+        }
+      ]
+    },
+    {
+      "name": "TPS562200",
+      "aliases": [
+        "TPS562200DDC",
+        "TPS562200DDCR",
+        "TPS562200DDCT"
+      ],
+      "description": "TI 4.5-17 V input, 2 A synchronous step-down (buck) converter, 650 kHz",
+      "footprints": [
+        "SOT-23-6"
+      ],
+      "datasheet_url": "https://www.ti.com/lit/ds/symlink/tps562200.pdf",
+      "app_notes": [
+        "Connect a 0.1 uF bootstrap capacitor between VBST (pin 6) and SW (pin 2).",
+        "EN (pin 5) is active-high — pull up (via a VIN divider or a logic rail) to enable; it will not self-start floating.",
+        "Route the VFB (pin 4) divider from VOUT and tie the divider ground to device GND (pin 1) at a single (Kelvin) point.",
+        "Place the input cap (10 uF typ.) close to VIN (pin 3)-GND; the inductor connects at SW (pin 2)."
+      ],
+      "pins": [
+        {
+          "number": "1",
+          "name": "GND",
+          "type": "PowerInput"
+        },
+        {
+          "number": "2",
+          "name": "SW",
+          "type": "Output"
+        },
+        {
+          "number": "3",
+          "name": "VIN",
+          "type": "PowerInput"
+        },
+        {
+          "number": "4",
+          "name": "VFB",
+          "type": "Input"
+        },
+        {
+          "number": "5",
+          "name": "EN",
+          "type": "Input"
+        },
+        {
+          "number": "6",
+          "name": "VBST",
+          "type": "Passive"
+        }
+      ]
+    },
+    {
+      "name": "STM32G431CBT6",
+      "aliases": [
+        "STM32G431CB",
+        "STM32G431",
+        "STM32G431C8T6",
+        "STM32G431C6T6"
+      ],
+      "description": "ST Cortex-M4F MCU, 170 MHz, 128 KB flash, 32 KB RAM, LQFP-48",
+      "footprints": [
+        "LQFP-48"
+      ],
+      "datasheet_url": "https://www.st.com/resource/en/datasheet/stm32g431c6.pdf",
+      "app_notes": [
+        "Decouple every VDD pin (24, 36, 48) plus VBAT (1) and VDDA (21) to VSS with 100 nF each, with one bulk 4.7 uF near the supply entry.",
+        "BOOT0 is on PB8-BOOT0 (pin 45): pull LOW (~10k to VSS) to boot main flash; HIGH selects the system bootloader.",
+        "PG10-NRST (pin 7) is the reset pin — add a 100 nF cap to VSS and avoid loading it.",
+        "VDDA (21)/VSSA (19)/VREF+ (20) form the analog supply group — tie VREF+ to VDDA (or a clean reference) and VSSA to VSS at one point.",
+        "This is the LQFP-48 (CBT6) pad map; the UFQFPN-48 (CBU6) package has a DIFFERENT pin-number map — do not reuse this numbering for CBU6."
+      ],
+      "pins": [
+        {
+          "number": "1",
+          "name": "VBAT",
+          "type": "PowerInput"
+        },
+        {
+          "number": "2",
+          "name": "PC13",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "3",
+          "name": "PC14-OSC32_IN",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "4",
+          "name": "PC15-OSC32_OUT",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "5",
+          "name": "PF0-OSC_IN",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "6",
+          "name": "PF1-OSC_OUT",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "7",
+          "name": "PG10-NRST",
+          "type": "Input"
+        },
+        {
+          "number": "8",
+          "name": "PA0",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "9",
+          "name": "PA1",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "10",
+          "name": "PA2",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "11",
+          "name": "PA3",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "12",
+          "name": "PA4",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "13",
+          "name": "PA5",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "14",
+          "name": "PA6",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "15",
+          "name": "PA7",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "16",
+          "name": "PB0",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "17",
+          "name": "PB1",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "18",
+          "name": "PB2",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "19",
+          "name": "VSSA",
+          "type": "PowerInput"
+        },
+        {
+          "number": "20",
+          "name": "VREF+",
+          "type": "Passive"
+        },
+        {
+          "number": "21",
+          "name": "VDDA",
+          "type": "PowerInput"
+        },
+        {
+          "number": "22",
+          "name": "PB10",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "23",
+          "name": "VSS",
+          "type": "PowerInput"
+        },
+        {
+          "number": "24",
+          "name": "VDD",
+          "type": "PowerInput"
+        },
+        {
+          "number": "25",
+          "name": "PB11",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "26",
+          "name": "PB12",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "27",
+          "name": "PB13",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "28",
+          "name": "PB14",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "29",
+          "name": "PB15",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "30",
+          "name": "PA8",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "31",
+          "name": "PA9",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "32",
+          "name": "PA10",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "33",
+          "name": "PA11",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "34",
+          "name": "PA12",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "35",
+          "name": "VSS",
+          "type": "PowerInput"
+        },
+        {
+          "number": "36",
+          "name": "VDD",
+          "type": "PowerInput"
+        },
+        {
+          "number": "37",
+          "name": "PA13",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "38",
+          "name": "PA14",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "39",
+          "name": "PA15",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "40",
+          "name": "PB3",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "41",
+          "name": "PB4",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "42",
+          "name": "PB5",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "43",
+          "name": "PB6",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "44",
+          "name": "PB7",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "45",
+          "name": "PB8-BOOT0",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "46",
+          "name": "PB9",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "47",
+          "name": "VSS",
+          "type": "PowerInput"
+        },
+        {
+          "number": "48",
+          "name": "VDD",
+          "type": "PowerInput"
+        }
+      ]
+    },
+    {
+      "name": "RP2040",
+      "aliases": [
+        "RP2-B2",
+        "Raspberry Pi RP2040"
+      ],
+      "description": "Raspberry Pi dual-core Cortex-M0+ MCU, 133 MHz, 264 KB SRAM, QFN-56",
+      "footprints": [
+        "QFN-56"
+      ],
+      "datasheet_url": "https://datasheets.raspberrypi.com/rp2040/rp2040-datasheet.pdf",
+      "app_notes": [
+        "Decouple each IOVDD pin (1,10,22,33,42,49) and DVDD (23,50) with 100 nF; bulk caps on VREG_VIN (44) and VREG_VOUT (45, the 1.1 V core output that externally feeds DVDD).",
+        "USB_DP (47) and USB_DM (46) each need a 27 ohm series resistor; bus pull resistors are internal.",
+        "QSPI bank (QSPI_CSn 56, QSPI_SCLK 52, QSPI_SD0-3) connects to the external XIP flash; QSPI_CSn has an internal pull-up at reset.",
+        "RUN (26) is the active-low reset — tie to IOVDD (directly or via RC) if no external reset; TESTEN (19) must tie to GND; the center exposed pad is GND."
+      ],
+      "pins": [
+        {
+          "number": "1",
+          "name": "IOVDD",
+          "type": "PowerInput"
+        },
+        {
+          "number": "2",
+          "name": "GPIO0",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "3",
+          "name": "GPIO1",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "4",
+          "name": "GPIO2",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "5",
+          "name": "GPIO3",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "6",
+          "name": "GPIO4",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "7",
+          "name": "GPIO5",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "8",
+          "name": "GPIO6",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "9",
+          "name": "GPIO7",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "10",
+          "name": "IOVDD",
+          "type": "PowerInput"
+        },
+        {
+          "number": "11",
+          "name": "GPIO8",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "12",
+          "name": "GPIO9",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "13",
+          "name": "GPIO10",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "14",
+          "name": "GPIO11",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "15",
+          "name": "GPIO12",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "16",
+          "name": "GPIO13",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "17",
+          "name": "GPIO14",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "18",
+          "name": "GPIO15",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "19",
+          "name": "TESTEN",
+          "type": "Input"
+        },
+        {
+          "number": "20",
+          "name": "XIN",
+          "type": "Input"
+        },
+        {
+          "number": "21",
+          "name": "XOUT",
+          "type": "Output"
+        },
+        {
+          "number": "22",
+          "name": "IOVDD",
+          "type": "PowerInput"
+        },
+        {
+          "number": "23",
+          "name": "DVDD",
+          "type": "PowerInput"
+        },
+        {
+          "number": "24",
+          "name": "SWCLK",
+          "type": "Input"
+        },
+        {
+          "number": "25",
+          "name": "SWD",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "26",
+          "name": "RUN",
+          "type": "Input"
+        },
+        {
+          "number": "27",
+          "name": "GPIO16",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "28",
+          "name": "GPIO17",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "29",
+          "name": "GPIO18",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "30",
+          "name": "GPIO19",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "31",
+          "name": "GPIO20",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "32",
+          "name": "GPIO21",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "33",
+          "name": "IOVDD",
+          "type": "PowerInput"
+        },
+        {
+          "number": "34",
+          "name": "GPIO22",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "35",
+          "name": "GPIO23",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "36",
+          "name": "GPIO24",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "37",
+          "name": "GPIO25",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "38",
+          "name": "GPIO26/ADC0",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "39",
+          "name": "GPIO27/ADC1",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "40",
+          "name": "GPIO28/ADC2",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "41",
+          "name": "GPIO29/ADC3",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "42",
+          "name": "IOVDD",
+          "type": "PowerInput"
+        },
+        {
+          "number": "43",
+          "name": "ADC_AVDD",
+          "type": "PowerInput"
+        },
+        {
+          "number": "44",
+          "name": "VREG_VIN",
+          "type": "PowerInput"
+        },
+        {
+          "number": "45",
+          "name": "VREG_VOUT",
+          "type": "PowerOutput"
+        },
+        {
+          "number": "46",
+          "name": "USB_DM",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "47",
+          "name": "USB_DP",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "48",
+          "name": "USB_VDD",
+          "type": "PowerInput"
+        },
+        {
+          "number": "49",
+          "name": "IOVDD",
+          "type": "PowerInput"
+        },
+        {
+          "number": "50",
+          "name": "DVDD",
+          "type": "PowerInput"
+        },
+        {
+          "number": "51",
+          "name": "QSPI_SD3",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "52",
+          "name": "QSPI_SCLK",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "53",
+          "name": "QSPI_SD0",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "54",
+          "name": "QSPI_SD2",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "55",
+          "name": "QSPI_SD1",
+          "type": "Bidirectional"
+        },
+        {
+          "number": "56",
+          "name": "QSPI_CSn",
+          "type": "Bidirectional"
+        }
       ]
     }
   ]
