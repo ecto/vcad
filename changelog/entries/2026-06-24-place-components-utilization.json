@@ -1,0 +1,10 @@
+{
+  "id": "2026-06-24-place-components-utilization",
+  "version": "0.9.4",
+  "date": "2026-06-24",
+  "category": "feat",
+  "title": "place_components reports board utilization",
+  "summary": "place_components now returns a utilization report — board vs occupied area, % used, component bounding box, and an advisory right-sized outline — so over-large boards can be tightened in one step.",
+  "features": ["mcp", "ecad", "agents"],
+  "mcpTools": ["place_components"]
+}

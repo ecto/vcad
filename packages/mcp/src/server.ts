@@ -1104,7 +1104,10 @@ export async function createServer(
           "annular boards. Returns `placement_drc` — the pre-routing DRC subset " +
           "(shorts, pad clearance, courtyard overlaps, off-board parts); when " +
           "`placement_drc.clean` is false, fix the floorplan with set_placement " +
-          "before route_nets instead of routing on top of the fault.",
+          "before route_nets instead of routing on top of the fault. Also " +
+          "returns a `utilization` report (board vs occupied area, % used, " +
+          "component bounding box, and an advisory suggested_outline) so you can " +
+          "right-size an over-large board in one step.",
         inputSchema: placeComponentsSchema,
       },
       {

@@ -193,6 +193,89 @@ describe("ecad session flow", () => {
     }
   });
 
+  it("resolves connector families (JST/Molex/Tag-Connect/USB-C) end-to-end", async () => {
+    const comp = (ref: string, footprint: string, pinNums: number[]) => ({
+      ref,
+      value: "CONN",
+      footprint,
+      x: 0,
+      y: 0,
+      pins: pinNums.map((n) => ({ number: String(n), name: String(n), type: "Passive" })),
+    });
+
+    const created = out(
+      await createSchematic({
+        components: [
+          // The exact issue reproduction: a 2-pin JST-PH power connector.
+          comp("J1", "JST_PH_2", [1, 2]),
+          comp("J2", "Connector_JST:JST_SH_BM06B-SRSS-TB_1x06-1MP_P1.00mm_Horizontal", [
+            1, 2, 3, 4, 5, 6,
+          ]),
+          comp("J3", "Connector_Molex:Molex_PicoBlade_53261-0271_1x02-1MP_P1.25mm_Vertical", [
+            1, 2,
+          ]),
+          comp("J4", "Tag-Connect:TC2050-IDC-NL_2x05_P1.27mm", [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]),
+          comp("J5", "Connector_USB:USB_C_Receptacle_16pin", [
+            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
+          ]),
+        ],
+      }),
+    );
+    const id = created.document_id;
+    const placed = out(
+      await placeComponents({ document_id: id, board_width: 90, board_height: 70 }),
+    );
+
+    expect(placed.success).toBe(true);
+    // None of these should fall back to a placeholder anymore.
+    expect(placed.fallback_footprints ?? []).toEqual([]);
+    expect(placed.footprints_resolved).toBe(5);
+
+    const board = getPcbBoard(getSession(id));
+    const fp = (ref: string) => board.footprints.find((f) => f.ref === ref)!;
+
+    // JST-PH: 2 through-hole contacts, 2.0mm pitch — assemble-able, not a chip.
+    const j1 = fp("J1");
+    expect(j1.pads.length).toBe(2);
+    expect(j1.pads.every((p) => p.padType === "THT")).toBe(true);
+    const dx = Math.abs(j1.pads[0].position.x - j1.pads[1].position.x);
+    expect(Math.abs(dx - 2.0)).toBeLessThan(1e-6);
+    // Pads carry the schematic nets (here pin names 1/2 act as nets).
+    expect(j1.pads.find((p) => p.number === "1")!.net).toBe("1");
+
+    // JST-SH: 6 SMD contacts.
+    const j2 = fp("J2");
+    expect(j2.pads.length).toBe(6);
+    expect(j2.pads.every((p) => p.padType === "SMD")).toBe(true);
+
+    // Molex Pico-Blade: 2 SMD contacts — a part number must not read as a chip.
+    expect(fp("J3").pads.filter((p) => p.padType === "SMD").length).toBe(2);
+
+    // Tag-Connect TC2050: 10 bare-copper pads in two columns, no paste.
+    const j4 = fp("J4");
+    expect(j4.pads.length).toBe(10);
+    expect(j4.pads.every((p) => !p.layers.includes("FPaste"))).toBe(true);
+
+    // USB-C (16): 16 numeric contacts + 4 shield posts, all on a ~90×70 board.
+    const j5 = fp("J5");
+    const numeric = j5.pads.filter((p) => /^\d+$/.test(p.number));
+    const shields = j5.pads.filter((p) => p.number.startsWith("SH"));
+    expect(numeric.length).toBe(16);
+    expect(shields.length).toBe(4);
+    for (const p of j5.pads) {
+      expect(Math.abs(p.position.x)).toBeLessThan(10);
+      expect(Math.abs(p.position.y)).toBeLessThan(10);
+    }
+
+    // The densely-packed connector pads must not raise false clearance or
+    // manufacturing violations (the intra-footprint pad exemption + on-board
+    // geometry). Connectivity violations are expected — nothing is routed yet.
+    const drc = out(await runDrc({ document_id: id }));
+    expect(drc.success).toBe(true);
+    expect(drc.categories.clearance).toBe(0);
+    expect(drc.categories.manufacturing).toBe(0);
+  });
+
   it("inline pads escape hatch overrides the footprint engine", async () => {
     const created = out(
       await createSchematic({
@@ -1036,6 +1119,98 @@ describe("board shapes and radial placement", () => {
     expect(res.isError).toBe(true);
     expect(res.content[0].text).toContain("board_shape");
     expect(res.content[0].text).toContain("outline");
+  });
+});
+
+describe("place_components utilization", () => {
+  it("reports board utilization and a tighter rectangular outline", async () => {
+    const created = out(
+      await createSchematic({
+        components: [resistor("R1", 0), resistor("R2", 20)],
+      }),
+    );
+    const placed = out(
+      await placeComponents({
+        document_id: created.document_id,
+        board_width: 50,
+        board_height: 40,
+      }),
+    );
+
+    const u = placed.utilization;
+    expect(u).toBeDefined();
+    // Board area is exact from the rectangle outline.
+    expect(u.board_area_mm2).toBeCloseTo(2000, 1);
+    expect(u.component_area_mm2).toBeGreaterThan(0);
+    expect(u.component_area_mm2).toBeLessThan(u.board_area_mm2);
+    // % used is internally consistent and a small fraction (two 0805 parts).
+    expect(u.utilization_pct).toBeCloseTo(
+      Math.round((u.component_area_mm2 / u.board_area_mm2) * 1000) / 10,
+      1,
+    );
+    expect(u.utilization_pct).toBeGreaterThan(0);
+    expect(u.utilization_pct).toBeLessThan(100);
+
+    // Bounding box is positive and fits inside the board.
+    expect(u.bounding_box.w).toBeGreaterThan(0);
+    expect(u.bounding_box.h).toBeGreaterThan(0);
+    expect(u.bounding_box.x).toBeGreaterThanOrEqual(0);
+
+    // Suggested outline keeps the rect shape, encloses the parts, and is
+    // tighter than the over-large 50×40 board.
+    expect(u.suggested_outline.type).toBe("rect");
+    expect(u.suggested_outline.width).toBeGreaterThanOrEqual(u.bounding_box.w);
+    expect(u.suggested_outline.height).toBeGreaterThanOrEqual(u.bounding_box.h);
+    expect(u.suggested_outline.width).toBeLessThan(50);
+    expect(u.suggested_outline.note).toContain("edge clearance");
+  });
+
+  it("suggests an enclosing circle for a circular board", async () => {
+    const created = out(
+      await createSchematic({
+        components: Array.from({ length: 4 }, (_, i) => resistor(`R${i + 1}`, i * 8)),
+      }),
+    );
+    const placed = out(
+      await placeComponents({
+        document_id: created.document_id,
+        board_shape: { type: "circle", outer_diameter: 40 },
+      }),
+    );
+
+    const u = placed.utilization;
+    expect(u).toBeDefined();
+    // 64-gon inscribed in r=20 ≈ π·20² = 1257 mm².
+    expect(u.board_area_mm2).toBeGreaterThan(1200);
+    expect(u.board_area_mm2).toBeLessThan(1300);
+    expect(u.suggested_outline.type).toBe("circle");
+    expect(u.suggested_outline.outer_diameter).toBeGreaterThan(0);
+    expect(u.suggested_outline.outer_diameter).toBeLessThanOrEqual(40);
+    expect(u.suggested_outline.center).toBeDefined();
+  });
+
+  it("honors edge_margin when sizing the suggested outline", async () => {
+    const created = out(
+      await createSchematic({
+        components: [resistor("R1", 0), resistor("R2", 20)],
+      }),
+    );
+    const id = created.document_id;
+
+    // Zero margin → suggested width hugs the bounding box (rounded up to 0.5mm).
+    const tight = out(
+      await placeComponents({ document_id: id, board_width: 50, board_height: 40, edge_margin: 0 }),
+    ).utilization;
+    expect(tight.suggested_outline.width - tight.bounding_box.w).toBeGreaterThanOrEqual(0);
+    expect(tight.suggested_outline.width - tight.bounding_box.w).toBeLessThan(0.5);
+    expect(tight.suggested_outline.note).toContain("0mm");
+
+    // 5mm margin → ~10mm wider than the bounding box (both sides).
+    const loose = out(
+      await placeComponents({ document_id: id, board_width: 50, board_height: 40, edge_margin: 5 }),
+    ).utilization;
+    expect(loose.suggested_outline.width - loose.bounding_box.w).toBeGreaterThanOrEqual(10);
+    expect(loose.suggested_outline.width - loose.bounding_box.w).toBeLessThan(10.5);
   });
 });
 

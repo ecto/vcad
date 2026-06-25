@@ -1,0 +1,10 @@
+{
+  "id": "2026-06-24-connector-footprints",
+  "version": "0.9.4",
+  "date": "2026-06-24",
+  "category": "feat",
+  "title": "Connector footprints (JST, Molex, Tag-Connect, USB-C)",
+  "summary": "The parametric footprint engine now synthesizes real land patterns for JST PH/XH/EH/SH/GH, Molex Pico-Blade, Tag-Connect TC2030/TC2050, and a simplified USB-C receptacle instead of substituting a wrong 0805 placeholder.",
+  "features": ["pcb", "ecad", "footprints", "connectors", "drc"],
+  "mcpTools": ["place_components", "create_schematic", "run_drc"]
+}
