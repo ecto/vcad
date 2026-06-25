@@ -5,6 +5,7 @@ import { useElectronicsStore } from "../stores/electronics-store";
 import { useNotificationStore } from "../stores/notification-store";
 import { useLogStore } from "../stores/log-store";
 import { useChangelogStore } from "../stores/changelog-store";
+import { ensureNotRecording } from "@/lib/recording-guard";
 
 // Track last Escape time for double-tap emergency exit
 let lastEscapeTime = 0;
@@ -330,7 +331,7 @@ export function useKeyboardShortcuts() {
       if (e.altKey && (e.key === "r" || e.key === "R")) {
         e.preventDefault();
         const { raytraceAvailable, toggleRenderMode } = useUiStore.getState();
-        if (raytraceAvailable) {
+        if (raytraceAvailable && ensureNotRecording()) {
           toggleRenderMode();
         }
         return;

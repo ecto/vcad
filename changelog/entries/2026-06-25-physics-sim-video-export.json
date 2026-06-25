@@ -1,0 +1,10 @@
+{
+  "id": "2026-06-25-physics-sim-video-export",
+  "version": "0.9.4",
+  "date": "2026-06-25",
+  "category": "feat",
+  "title": "Record physics simulations to video",
+  "summary": "New Record button on the simulate toolbar captures the viewport to MP4 (or WebM where MP4 isn't supported) while the sim runs, including in raytraced mode. AI agents can request the same via the new `record_simulation` MCP tool, which returns an animated GIF of any active physics env.",
+  "features": ["physics", "simulation", "recording", "raytrace"],
+  "mcpTools": ["record_simulation"]
+}

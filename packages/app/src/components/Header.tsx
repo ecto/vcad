@@ -34,6 +34,7 @@ import { examples } from "@/data/examples";
 import { SignInButton, UserMenu, triggerSync, useAuthStore } from "@vcad/auth";
 import { useChangelogStore } from "@/stores/changelog-store";
 import { useNotificationStore } from "@/stores/notification-store";
+import { ensureNotRecording } from "@/lib/recording-guard";
 import { useDfmStore } from "@/stores/dfm-store";
 import { useAppCommands } from "@/hooks/useAppCommands";
 import { COMMAND_ICONS } from "@/lib/command-icons";
@@ -295,7 +296,10 @@ function RayTracingSubmenu() {
       }
     >
       <MenuItem
-        onSelect={() => { if (renderMode === "raytrace") toggleRenderMode(); }}
+        onSelect={() => {
+          if (!ensureNotRecording()) return;
+          if (renderMode === "raytrace") toggleRenderMode();
+        }}
       >
         <span className={renderMode === "standard" ? "text-brand" : "text-text"}>
           {t("menu.view.ray_tracing.off")}
@@ -305,6 +309,7 @@ function RayTracingSubmenu() {
         <MenuItem
           key={q}
           onSelect={() => {
+            if (renderMode !== "raytrace" && !ensureNotRecording()) return;
             if (renderMode !== "raytrace") toggleRenderMode();
             setRaytraceQuality(q);
           }}
