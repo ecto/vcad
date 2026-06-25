@@ -86,10 +86,10 @@ struct EditorView: View {
                         }
                     }
                     .padding(.bottom, 14)
-                    .animation(.smooth(duration: 0.3), value: model.source.isSandbox)
-                    .animation(.smooth(duration: 0.25), value: intent.draft.isEmpty)
-                    .animation(.smooth(duration: 0.25), value: model.sketching)
-                    .animation(.smooth(duration: 0.3), value: model.toolPlacement)
+                    .animation(Motion.smooth, value: model.source.isSandbox)
+                    .animation(Motion.smooth, value: intent.draft.isEmpty)
+                    .animation(Motion.panel, value: model.sketching)
+                    .animation(Motion.panel, value: model.toolPlacement)
                 }
                 .toolbar {
                     ToolbarItem(placement: .navigation) { BrandMark() }
@@ -358,9 +358,9 @@ struct ToolPaletteView: View {
             .transition(.opacity)
             if docked { Spacer(minLength: 0) }
         }
-        .animation(.snappy(duration: 0.26), value: model.toolTab)
-        .animation(.snappy(duration: 0.22), value: model.baseShape)
-        .animation(.snappy(duration: 0.22), value: model.modifier)
+        .animation(Motion.snappy, value: model.toolTab)
+        .animation(Motion.snappy, value: model.baseShape)
+        .animation(Motion.snappy, value: model.modifier)
 
         return Group {
             if docked {
@@ -578,10 +578,10 @@ struct FeatureTreeView: View {
         }
         .padding(6)
         .glassCard()
-        .animation(.snappy(duration: 0.18), value: model.selectedFeatureID)
-        .animation(.snappy(duration: 0.2), value: model.expandedFeatureIDs)
-        .animation(.snappy(duration: 0.2), value: model.hiddenParts)
-        .animation(.snappy(duration: 0.2), value: model.isolatedPart)
+        .animation(Motion.snappy, value: model.selectedFeatureID)
+        .animation(Motion.snappy, value: model.expandedFeatureIDs)
+        .animation(Motion.snappy, value: model.hiddenParts)
+        .animation(Motion.snappy, value: model.isolatedPart)
     }
 
     private var header: some View {
@@ -1693,23 +1693,24 @@ struct ViewportView: View {
     }
 
     private var orbitGesture: some Gesture {
-        // Drag orbits; ⇧-drag pans the look-at target.
+        // Drag orbits (with flick-to-spin momentum); ⇧-drag pans the look-at.
         DragGesture()
             .onChanged { value in
                 guard !model.draggingHandle else { return }
+                if model.lastDrag == .zero { model.beginOrbit() }   // grab → stop coasting
                 let dx = Float(value.translation.width - model.lastDrag.width)
                 let dy = Float(value.translation.height - model.lastDrag.height)
                 if NSEvent.modifierFlags.contains(.shift) {
                     model.panBy(dx: dx, dy: dy)
                 } else {
-                    model.azimuth -= dx * 0.01
-                    model.elevation = max(-1.45, min(1.45, model.elevation + dy * 0.01))
+                    model.orbitDrag(dx: dx, dy: dy)
                 }
                 model.lastDrag = value.translation
                 NSCursor.closedHand.set()        // grabbing to orbit/pan
             }
             .onEnded { _ in
                 model.lastDrag = .zero
+                model.endOrbit()                 // coast if the flick was fast
                 if !model.draggingHandle { NSCursor.arrow.set() }
             }
     }
@@ -1717,6 +1718,7 @@ struct ViewportView: View {
     private var zoomGesture: some Gesture {
         MagnifyGesture()
             .onChanged { value in
+                model.stopSpin()
                 model.distance = max(0.45, min(8.0, model.pinchBaseline / Float(value.magnification)))
             }
             .onEnded { _ in model.pinchBaseline = model.distance }
@@ -1742,6 +1744,7 @@ struct ViewportView: View {
     }
 
     private func pick(at p: CGPoint, viewSize: CGSize) {
+        model.stopSpin()                          // a tap settles the camera
         guard let (camKernel, dirKernel) = kernelRay(at: p, viewSize: viewSize) else { return }
 
         // Sketch mode: a tap drops a point on the sketch plane.

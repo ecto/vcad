@@ -6,6 +6,19 @@ import CVcadFFI
 
 // Model layer. The SwiftUI shell is in Shell.swift; kernel/streaming in Kernel.swift.
 
+/// One motion vocabulary for the whole app, so every surface moves with the same
+/// personality. Reach for these instead of ad-hoc `.snappy`/`.smooth` literals.
+enum Motion {
+    /// Selection, tab swaps, small state flips — quick and crisp.
+    static let snappy = Animation.snappy(duration: 0.22, extraBounce: 0.04)
+    /// Panels appearing / docking — a soft settle.
+    static let panel = Animation.spring(response: 0.4, dampingFraction: 0.84)
+    /// Content morphs, value-driven layout shifts.
+    static let smooth = Animation.smooth(duration: 0.3)
+    /// A small confident "pop" for things that materialize.
+    static let pop = Animation.spring(response: 0.32, dampingFraction: 0.7)
+}
+
 private let kSamplesDir = "/Users/cam/Developer/vcad/.claude/worktrees/great-bohr-4c355d"
 
 enum GeometrySource: Hashable, Identifiable {
@@ -210,8 +223,8 @@ final class EditorModel {
     }
 
     var toolTab: ToolTab = .create
-    /// Header (Borland-style top strip) vs footer (below the composer).
-    var toolPlacement: ToolPlacement = .header
+    /// Footer (single-row shelf below the composer) vs a Borland-style header.
+    var toolPlacement: ToolPlacement = .footer
     func cycleToolPlacement() {
         toolPlacement = toolPlacement == .header ? .footer : .header
     }
@@ -916,6 +929,60 @@ final class EditorModel {
         panOffset += (-dx * right + dy * up) * (distance * 0.0016)
     }
 
+    // MARK: inertial orbit — flick to spin, momentum decays to rest
+    nonisolated(unsafe) private var spinTimer: Timer?
+    @ObservationIgnored private var azVel: Float = 0      // rad/s
+    @ObservationIgnored private var elVel: Float = 0
+    @ObservationIgnored private var lastOrbitTime: Date?
+
+    /// A drag started — kill any running momentum and reset velocity tracking.
+    func beginOrbit() {
+        stopSpin()
+        lastOrbitTime = Date()
+        azVel = 0; elVel = 0
+    }
+
+    /// Incremental orbit from a drag delta; tracks angular velocity (low-pass
+    /// filtered) so the flick at release carries momentum.
+    func orbitDrag(dx: Float, dy: Float) {
+        let now = Date()
+        let dt = Float(now.timeIntervalSince(lastOrbitTime ?? now))
+        lastOrbitTime = now
+        let daz = -dx * 0.01
+        let before = elevation
+        azimuth += daz
+        elevation = max(-1.45, min(1.45, elevation + dy * 0.01))
+        let del = elevation - before
+        if dt > 1e-4, dt < 0.1 {
+            azVel = 0.6 * azVel + 0.4 * (daz / dt)
+            elVel = 0.6 * elVel + 0.4 * (del / dt)
+        }
+    }
+
+    /// Release — coast if the flick was fast enough.
+    func endOrbit() {
+        if abs(azVel) > 0.2 || abs(elVel) > 0.2 { startSpin() }
+    }
+
+    private func startSpin() {
+        stopSpin()
+        let dt: Float = 1.0 / 120.0
+        spinTimer = Timer.scheduledTimer(withTimeInterval: TimeInterval(dt), repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.azimuth += self.azVel * dt
+                let ne = max(-1.45, min(1.45, self.elevation + self.elVel * dt))
+                if ne != self.elevation { self.elevation = ne } else { self.elVel = 0 }
+                let decay: Float = 0.94
+                self.azVel *= decay; self.elVel *= decay
+                if abs(self.azVel) < 0.05, abs(self.elVel) < 0.05 { self.stopSpin() }
+            }
+        }
+    }
+
+    /// Stop coasting (also called when the user grabs / zooms / taps).
+    func stopSpin() { spinTimer?.invalidate(); spinTimer = nil }
+
     // Escape → deselect (documents only; never while renaming, so the rename
     // field's own Esc-cancel still works). Returns the event so other handlers
     // still see it.
@@ -944,6 +1011,7 @@ final class EditorModel {
         scrollMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
             MainActor.assumeIsolated {
                 guard let self, !self.draggingHandle else { return }
+                self.stopSpin()                       // zooming interrupts coasting
                 let dy = Float(event.scrollingDeltaY)
                 let k = Float(event.hasPreciseScrollingDeltas ? 0.004 : 0.04)
                 self.distance = max(0.45, min(8.0, self.distance * (1 - dy * k)))
@@ -968,6 +1036,7 @@ final class EditorModel {
         if let d = gripperDoc { vcad_doc_free(d) }
         if let m = scrollMonitor { NSEvent.removeMonitor(m) }
         if let m = keyMonitor { NSEvent.removeMonitor(m) }
+        spinTimer?.invalidate()
     }
 
     /// Clearance from the connector cutout to the nearest enclosure side wall —
