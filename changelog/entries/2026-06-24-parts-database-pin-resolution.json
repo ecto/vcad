@@ -1,0 +1,10 @@
+{
+  "id": "2026-06-24-parts-database-pin-resolution",
+  "version": "0.9.4",
+  "date": "2026-06-24",
+  "category": "feat",
+  "title": "Parts database: pins from part name + footprint",
+  "summary": "create_schematic accepts a `part` name (NE555, LM358, ATmega328P, ...) and auto-populates pin definitions from a curated jellybean database; resolve_part returns them too.",
+  "features": ["schematic", "ecad", "parts-database", "pcb"],
+  "mcpTools": ["create_schematic", "resolve_part"]
+}

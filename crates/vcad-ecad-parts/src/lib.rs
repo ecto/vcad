@@ -12,14 +12,29 @@
 //! assert_eq!(part.value, "10k");
 //! assert_eq!(part.derived.footprint.pads.len(), 2);
 //! ```
+//!
+//! Named **jellybean** ICs (NE555, op-amps, logic, MCUs, ...) — whose pinouts
+//! are published facts, not formulas — live in the curated [`jellybean`]
+//! database. [`jellybean::resolve_part_def`] turns `("NE555", "SOIC-8")` into
+//! its eight pins, so a caller never hand-types pin numbers and types.
+//!
+//! ```
+//! let part = vcad_ecad_parts::resolve_part_def("NE555", Some("SOIC-8")).unwrap();
+//! assert_eq!(part.pins.len(), 8);
+//! assert_eq!(part.pins[2].name, "OUT");
+//! ```
 
 #![warn(missing_docs)]
 
 pub mod catalog;
 pub mod eseries;
+pub mod jellybean;
 pub mod query;
 pub mod spec;
 
 pub use catalog::{resolve, search, ComponentClass, ResolvedPart};
+pub use jellybean::{
+    jellybean_names, jellybean_summaries, resolve_part_def, PartPin, ResolvedPartDef,
+};
 pub use query::ParsedQuery;
 pub use spec::SpecValue;
