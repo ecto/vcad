@@ -1,0 +1,10 @@
+{
+  "id": "2026-06-25-import-kicad",
+  "version": "0.9.4",
+  "date": "2026-06-25",
+  "category": "feat",
+  "title": "Import existing KiCad boards via MCP",
+  "summary": "New import_kicad tool parses a .kicad_pcb (outline, footprints, pads, nets, design rules, traces/vias/zones) into a live session, returning a document_id ready for render_pcb, run_drc, get_pad_positions, route_nets, and export_gerber. import_eagle is a clear not-yet-supported stub pointing at KiCad export.",
+  "features": ["ecad", "pcb", "import"],
+  "mcpTools": ["import_kicad", "import_eagle"]
+}

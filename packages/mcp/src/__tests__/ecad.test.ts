@@ -38,6 +38,7 @@ import {
   unconnectedPinSeverity,
 } from "../tools/ecad.js";
 import { renderRatsnest, renderStackup } from "../tools/render.js";
+import { importKicad, importEagle } from "../tools/import-pcb.js";
 import { documents, getSession, openDocument } from "../tools/session.js";
 import { openInBrowser } from "../tools/share.js";
 
@@ -205,6 +206,62 @@ describe("footprint discovery", () => {
   it("search_footprints errors on an empty query", async () => {
     const res = await searchFootprints({ query: "  " });
     expect((res as { isError?: boolean }).isError).toBe(true);
+  });
+});
+
+describe("import_kicad / import_eagle", () => {
+  // Minimal KiCad board (mirrors the kernel parser's own fixture): 2 nets,
+  // a 100x80 outline, one 0805 with 2 pads, one trace, one via.
+  const MINIMAL_KICAD = `(kicad_pcb (version 20221018) (generator test)
+  (general (thickness 1.6))
+  (layers (0 "F.Cu" signal) (31 "B.Cu" signal) (44 "Edge.Cuts" user))
+  (net 0 "")
+  (net 1 "VCC")
+  (net 2 "GND")
+  (gr_line (start 0 0) (end 100 0) (layer "Edge.Cuts") (width 0.05))
+  (gr_line (start 100 0) (end 100 80) (layer "Edge.Cuts") (width 0.05))
+  (gr_line (start 100 80) (end 0 80) (layer "Edge.Cuts") (width 0.05))
+  (gr_line (start 0 80) (end 0 0) (layer "Edge.Cuts") (width 0.05))
+  (footprint "R_0805" (layer "F.Cu") (at 25 40)
+    (fp_text reference "R1" (at 0 0) (layer "F.SilkS"))
+    (pad "1" smd rect (at -1 0) (size 1 1.2) (layers "F.Cu" "F.Paste" "F.Mask") (net 1 "VCC"))
+    (pad "2" smd rect (at 1 0) (size 1 1.2) (layers "F.Cu" "F.Paste" "F.Mask") (net 2 "GND"))
+  )
+  (segment (start 25 40) (end 50 40) (width 0.25) (layer "F.Cu") (net 1))
+  (via (at 50 40) (size 0.8) (drill 0.4) (layers "F.Cu" "B.Cu") (net 1))
+)`;
+
+  it("imports a KiCad board into a live, tool-ready session", async () => {
+    const content_base64 = Buffer.from(MINIMAL_KICAD, "utf8").toString("base64");
+    const res = out(await importKicad({ content_base64, name: "Imported" }));
+    expect(res.success).toBe(true);
+    expect(res.document_id).toBeTruthy();
+    expect(res.summary.footprints).toBe(1);
+    expect(res.summary.nets).toBe(2);
+    expect(res.summary.outline_vertices).toBe(4);
+    expect(res.summary.traces).toBe(1);
+    expect(res.summary.vias).toBe(1);
+
+    // The returned id drives the rest of the toolchain: the board is queryable.
+    const board = getPcbBoard(getSession(res.document_id));
+    expect(board.footprints[0]!.ref).toBe("R1");
+    const pads = out(await getPadPositions({ document_id: res.document_id }));
+    expect(pads.count).toBe(2);
+  });
+
+  it("errors clearly on unparseable content and missing input", async () => {
+    const bad = await importKicad({
+      content_base64: Buffer.from("not a kicad file", "utf8").toString("base64"),
+    });
+    expect((bad as { isError?: boolean }).isError).toBe(true);
+    const none = await importKicad({});
+    expect((none as { isError?: boolean }).isError).toBe(true);
+  });
+
+  it("import_eagle returns a not-yet-supported stub pointing at import_kicad", () => {
+    const res = importEagle({ filename: "board.brd" });
+    expect((res as { isError?: boolean }).isError).toBe(true);
+    expect(res.content[0].text).toContain("import_kicad");
   });
 });
 

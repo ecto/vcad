@@ -34,6 +34,12 @@ import {
   listEvalTasksSchema,
 } from "./tools/verify.js";
 import { importStep, importStepSchema } from "./tools/import.js";
+import {
+  importKicad,
+  importKicadSchema,
+  importEagle,
+  importEagleSchema,
+} from "./tools/import-pcb.js";
 import { openInBrowser, openInBrowserSchema } from "./tools/share.js";
 import {
   openDocument,
@@ -353,6 +359,7 @@ const serverInfoSchema = {
 const GEOMETRY_TOOLS = new Set([
   "create_cad_loon",
   "import_step",
+  "import_kicad",
   "open_document",
   "get_document",
   // Opens a web doc (from a "Continue in Claude" share token) as a live session
@@ -392,6 +399,7 @@ const SWITCH_DOC_WRITERS = new Set<string>([
   "open_document",
   "create_cad_loon",
   "import_step",
+  "import_kicad",
   "create_schematic",
   "sheet_metal_create",
   // Seeds a new session from a web doc's geometry — persist it to the user's
@@ -504,6 +512,8 @@ const TOOL_PACKS: Record<string, readonly string[]> = {
     "add_motor_winding",
     "winding_layout",
     "board_from_solid",
+    "import_kicad",
+    "import_eagle",
     "run_drc",
     "run_erc",
     "export_gerber",
@@ -1021,6 +1031,24 @@ export async function createServer(
           "Supports AP203/AP214 STEP files commonly exported from Fusion 360, SolidWorks, Onshape, etc.",
         inputSchema: importStepSchema,
         _meta: UI_META,
+      },
+      {
+        name: "import_kicad",
+        description:
+          "Import an existing KiCad .kicad_pcb board into a live session — board " +
+          "outline, footprints with pads + nets, design rules, and any routed " +
+          "traces/vias/zones. Returns a document_id ready for render_pcb, " +
+          "run_drc, get_pad_positions, route_nets, and export_gerber. Pass " +
+          "content_base64 on hosted servers.",
+        inputSchema: importKicadSchema,
+        _meta: UI_META,
+      },
+      {
+        name: "import_eagle",
+        description:
+          "Import an Eagle .brd file (not yet supported). Export your board from " +
+          "Eagle as KiCad (.kicad_pcb) and use import_kicad instead.",
+        inputSchema: importEagleSchema,
       },
       {
         name: "open_in_browser",
@@ -1786,6 +1814,14 @@ export async function createServer(
 
         case "import_step":
           result = importStep(args, engine);
+          break;
+
+        case "import_kicad":
+          result = (await importKicad(args)) as unknown as typeof result;
+          break;
+
+        case "import_eagle":
+          result = importEagle(args) as unknown as typeof result;
           break;
 
         case "open_in_browser":
