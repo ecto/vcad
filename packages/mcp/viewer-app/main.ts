@@ -377,6 +377,31 @@ interface LoadOpts {
   afterLoad?: () => void;
 }
 
+// The studio IBL is tuned bright for hero metallic CAD parts; on a PCB's
+// copper — and on any low-roughness metal — it blows reflections into a wet,
+// glassy sheet. Scale every loaded material's environment response down and
+// floor the roughness so reflections read as a soft sheen rather than chrome.
+// Applied after GLTF import, so it rides on top of whatever the GLB carries
+// (including KHR_materials_clearcoat soldermask).
+const ENV_MAP_INTENSITY = 0.5;
+const MIN_ROUGHNESS = 0.3;
+
+function tameMaterials(root: THREE.Object3D): void {
+  root.traverse((child) => {
+    const mesh = child as THREE.Mesh;
+    if (!mesh.isMesh || !mesh.material) return;
+    const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+    for (const m of mats) {
+      const std = m as THREE.MeshStandardMaterial;
+      // MeshStandard/Physical only — Basic/Line materials have no IBL.
+      if (std.envMapIntensity === undefined) continue;
+      std.envMapIntensity = ENV_MAP_INTENSITY;
+      std.roughness = Math.max(std.roughness, MIN_ROUGHNESS);
+      std.needsUpdate = true;
+    }
+  });
+}
+
 function loadGlb(base64Data: string, opts?: LoadOpts): void {
   const binary = atob(base64Data);
   const bytes = new Uint8Array(binary.length);
@@ -393,6 +418,7 @@ function loadGlb(base64Data: string, opts?: LoadOpts): void {
       // leaves the current model untouched).
       clearModel();
       currentModel = gltf.scene;
+      tameMaterials(currentModel);
       modelGroup.add(currentModel);
       hasModel = true;
       updateAxesVisibility();
@@ -1442,6 +1468,7 @@ if (location.hash.startsWith("#dev")) {
     cap.rotation.x = Math.PI / 2;
     cap.position.z = 40;
     sample.add(flange, boss, cap);
+    tameMaterials(sample);
     modelGroup.add(sample);
     currentModel = sample;
     hasModel = true;
