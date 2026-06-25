@@ -391,6 +391,59 @@ enum DocEdit {
         (json["nodes"] as? [String: Any])?[String(nodeId)].flatMap { $0 as? [String: Any] }?["op"] as? [String: Any]
     }
 
+    /// The `partIndex`-th visible root's translate offset, if its root node is a
+    /// Translate (else nil — the part sits at its authored position).
+    static func rootTranslateOffset(_ json: [String: Any], partIndex: Int) -> (Double, Double, Double)? {
+        guard let childId = rootNodeId(json, partIndex: partIndex),
+              let node = (json["nodes"] as? [String: Any])?[String(childId)] as? [String: Any],
+              let op = node["op"] as? [String: Any], (op["type"] as? String) == "Translate",
+              let o = op["offset"] as? [String: Any] else { return nil }
+        return ((o["x"] as? NSNumber)?.doubleValue ?? 0,
+                (o["y"] as? NSNumber)?.doubleValue ?? 0,
+                (o["z"] as? NSNumber)?.doubleValue ?? 0)
+    }
+
+    /// Set the part's world translation — updating its root Translate in place, or
+    /// wrapping the root in a fresh "Move" Translate the first time (so the gizmo
+    /// never nests Translates).
+    static func setRootTranslate(_ json: inout [String: Any], partIndex: Int,
+                                 _ x: Double, _ y: Double, _ z: Double) {
+        guard let childId = rootNodeId(json, partIndex: partIndex),
+              var nodes = json["nodes"] as? [String: Any] else { return }
+        let off: [String: Any] = ["x": x, "y": y, "z": z]
+        if var node = nodes[String(childId)] as? [String: Any],
+           var op = node["op"] as? [String: Any], (op["type"] as? String) == "Translate" {
+            op["offset"] = off
+            node["op"] = op
+            nodes[String(childId)] = node
+            json["nodes"] = nodes
+        } else {
+            let id = nextNodeId(json)
+            nodes[String(id)] = ["id": id, "name": "Move",
+                                 "op": ["type": "Translate", "child": childId, "offset": off]]
+            json["nodes"] = nodes
+            setRootNode(&json, partIndex: partIndex, nodeId: id)
+        }
+    }
+
+    private static func rootNodeId(_ json: [String: Any], partIndex: Int) -> Int? {
+        guard let roots = json["roots"] as? [[String: Any]] else { return nil }
+        var vis = 0
+        for r in roots where (r["visible"] as? Bool) ?? true {
+            if vis == partIndex { return (r["root"] as? NSNumber)?.intValue }
+            vis += 1
+        }
+        return nil
+    }
+    private static func setRootNode(_ json: inout [String: Any], partIndex: Int, nodeId: Int) {
+        guard var roots = json["roots"] as? [[String: Any]] else { return }
+        var vis = 0
+        for (i, r) in roots.enumerated() where (r["visible"] as? Bool) ?? true {
+            if vis == partIndex { roots[i]["root"] = nodeId; json["roots"] = roots; return }
+            vis += 1
+        }
+    }
+
     /// Assign a material to the `partIndex`-th visible root, and ensure the
     /// document carries a definition for the key (from the preset table) so it
     /// renders + survives save/reload.

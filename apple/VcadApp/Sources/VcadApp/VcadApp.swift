@@ -30,6 +30,10 @@ struct VcadApp: App {
             MainActor.assumeIsolated { matSmoke(path: path) }
             exit(0)
         }
+        if let path = ProcessInfo.processInfo.environment["VCAD_GIZMO_SMOKE"] {
+            MainActor.assumeIsolated { gizmoSmoke(path: path) }
+            exit(0)
+        }
     }
 
     var body: some Scene {
@@ -120,6 +124,23 @@ private func fmt3(_ v: SIMD3<Float>) -> String {
 private func rgb(_ c: NSColor) -> String {
     let s = c.usingColorSpace(.sRGB) ?? c
     return String(format: "(%.2f, %.2f, %.2f)", s.redComponent, s.greenComponent, s.blueComponent)
+}
+
+/// Gizmo translate: move part 0 by +50 in X via the root Translate, confirm the
+/// bbox shifts, then undo back.
+@MainActor private func gizmoSmoke(path: String) {
+    func emit(_ s: String) { FileHandle.standardError.write(Data((s + "\n").utf8)) }
+    let m = EditorModel()
+    m.source = .document(path: path, label: "gizmo")
+    guard m.usesDocumentTree, m.reevalDocumentMeshes() != nil else { emit("[VCAD_GIZMO] load failed"); return }
+    let c0 = m.gizmoCenterKernel() ?? .zero
+    emit("[VCAD_GIZMO] loaded · part0 center \(fmt3(c0)) · bbox \(fmt3(m.sizeMM))")
+    guard var json = m.documentJSON else { return }
+    DocEdit.setRootTranslate(&json, partIndex: 0, 50, 0, 0)
+    m.documentJSON = json
+    _ = m.reevalDocumentMeshes()
+    let c1 = m.gizmoCenterKernel() ?? .zero
+    emit("[VCAD_GIZMO] +50 X · part0 center \(fmt3(c1)) (Δx \(String(format: "%.1f", c1.x - c0.x)))")
 }
 
 /// Sketch → extrude authoring: draw a 40×40 square on XY, extrude 12mm, verify

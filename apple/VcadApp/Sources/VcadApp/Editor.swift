@@ -694,6 +694,96 @@ final class EditorModel {
         exitSketch()
     }
 
+    // MARK: transform gizmo (drag a part along an axis to translate it)
+
+    /// Last viewport size, so a targeted handle drag can rebuild the kernel ray.
+    @ObservationIgnored var viewSize: CGSize = .zero
+    /// Viewport should reposition the gizmo (selection changed / drag ended).
+    var gizmoDirty = false
+    @ObservationIgnored private var gizmoPart: Int?
+    @ObservationIgnored private var gizmoAxis: SIMD3<Float> = .zero
+    @ObservationIgnored private var gizmoBase: (Double, Double, Double) = (0, 0, 0)
+    @ObservationIgnored private var gizmoStartCenter: SIMD3<Float> = .zero
+    @ObservationIgnored private var gizmoT0: Float = 0
+
+    /// Show the gizmo for a single selected part (not while sketching/multi-select).
+    var showsGizmo: Bool {
+        usesDocumentTree && !sketching && multiSelectedParts.isEmpty && selectedPartIndex != nil
+    }
+    /// Selected part center in kernel coords (gizmo origin).
+    func gizmoCenterKernel() -> SIMD3<Float>? {
+        guard let pi = selectedPartIndex, pi < docPartMeshes.count else { return nil }
+        let m = docPartMeshes[pi]
+        return (m.lo + m.hi) / 2
+    }
+    /// Arm length scaled to the part.
+    func gizmoArmLength() -> Float {
+        guard let pi = selectedPartIndex, pi < docPartMeshes.count else { return 12 }
+        let d = docPartMeshes[pi].hi - docPartMeshes[pi].lo
+        return max(8, 0.55 * max(d.x, max(d.y, d.z)))
+    }
+
+    func beginGizmoDrag(axis: SIMD3<Float>, ray: (o: SIMD3<Float>, d: SIMD3<Float>)) {
+        guard let pi = selectedPartIndex, let json = documentJSON, let c = gizmoCenterKernel() else { return }
+        pushUndo()
+        gizmoPart = pi
+        gizmoAxis = axis
+        gizmoStartCenter = c
+        gizmoBase = DocEdit.rootTranslateOffset(json, partIndex: pi) ?? (0, 0, 0)
+        gizmoT0 = Self.axisParam(rayO: ray.o, rayD: ray.d, center: c, axis: axis)
+    }
+    func gizmoDragTo(ray: (o: SIMD3<Float>, d: SIMD3<Float>)) {
+        guard let pi = gizmoPart, var json = documentJSON else { return }
+        let t = Self.axisParam(rayO: ray.o, rayD: ray.d, center: gizmoStartCenter, axis: gizmoAxis)
+        let delta = t - gizmoT0
+        DocEdit.setRootTranslate(&json, partIndex: pi,
+                                 gizmoBase.0 + Double(gizmoAxis.x * delta),
+                                 gizmoBase.1 + Double(gizmoAxis.y * delta),
+                                 gizmoBase.2 + Double(gizmoAxis.z * delta))
+        documentJSON = json
+        documentDirty = true
+        if let g = DocumentGraph.parse(json) { documentGraph = g; featureNodes = g.featureRoots() }
+        docParamDirty = true        // in-place re-eval → smooth
+    }
+    func endGizmoDrag() {
+        gizmoPart = nil
+        gizmoDirty = true           // snap the gizmo to the part's new center
+    }
+    /// Whether a ray passes through the gizmo (so a tap on it doesn't deselect).
+    func rayHitsGizmo(originKernel o: SIMD3<Float>, dirKernel d: SIMD3<Float>) -> Bool {
+        guard showsGizmo, let c = gizmoCenterKernel() else { return false }
+        let len = gizmoArmLength()
+        let pad = max(0.6, len * 0.035) * 5
+        for ax in [SIMD3<Float>(1, 0, 0), SIMD3<Float>(0, 1, 0), SIMD3<Float>(0, 0, 1)] {
+            let lo = simd_min(c, c + ax * len) - SIMD3<Float>(repeating: pad)
+            let hi = simd_max(c, c + ax * len) + SIMD3<Float>(repeating: pad)
+            if Self.rayAABB(o: o, d: d, lo: lo, hi: hi) != nil { return true }
+        }
+        return false
+    }
+
+    func gizmoAxis(for name: String) -> SIMD3<Float>? {
+        switch name {
+        case "gizmoX": return SIMD3(1, 0, 0)
+        case "gizmoY": return SIMD3(0, 1, 0)
+        case "gizmoZ": return SIMD3(0, 0, 1)
+        default: return nil
+        }
+    }
+
+    /// Param `t` along the axis line (center + t·axis) closest to the ray — the
+    /// standard closest-point-between-two-lines solution (axis is a unit vector).
+    private static func axisParam(rayO: SIMD3<Float>, rayD: SIMD3<Float>,
+                                  center: SIMD3<Float>, axis: SIMD3<Float>) -> Float {
+        let w0 = rayO - center
+        let b = simd_dot(rayD, axis)
+        let d = simd_dot(rayD, w0)
+        let e = simd_dot(axis, w0)
+        let denom = 1 - b * b
+        if abs(denom) < 1e-5 { return e }       // ray ∥ axis → fall back to projection
+        return (e - b * d) / denom
+    }
+
     // MARK: save
 
     func saveDocument() {

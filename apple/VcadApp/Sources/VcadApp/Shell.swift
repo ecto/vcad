@@ -1144,7 +1144,7 @@ struct ViewportView: View {
              model.source, model.selectedFeatureID, model.baseShape, model.modifier,
              model.pickDirty, model.connectorX, model.hoveredHandle, model.panOffset,
              model.copperDirty, model.copperStale, model.visibilityDirty, model.selectionDirty,
-             model.docParamDirty, model.sketchDirty, model.hoverDirty)
+             model.docParamDirty, model.sketchDirty, model.hoverDirty, model.gizmoDirty)
 
         return GeometryReader { geo in
           RealityView { content in
@@ -1234,8 +1234,13 @@ struct ViewportView: View {
             }
             if model.selectionDirty || model.hoverDirty {
                 applySelectionHighlight(content)
+                if model.selectionDirty { rebuildGizmo(content) }   // move to new selection
                 model.selectionDirty = false
                 model.hoverDirty = false
+            }
+            if model.gizmoDirty {
+                rebuildGizmo(content)
+                model.gizmoDirty = false
             }
 
             // Sketch overlay: rebuild the in-progress profile + rubber-band on
@@ -1388,6 +1393,9 @@ struct ViewportView: View {
         }
         if model.source.isGripper {
             centering.addChild(buildCopperRoot(model.routeGripperCopper()))
+        }
+        if model.showsGizmo {
+            centering.addChild(buildGizmo())
         }
 
         let zUp = Entity()
@@ -1626,6 +1634,51 @@ struct ViewportView: View {
         return root
     }
 
+    // MARK: transform gizmo overlay
+
+    /// Three axis arms (X red / Y green / Z blue) at the selected part's center.
+    /// Each arm carries collision + input target so `handleDrag` can grab it.
+    private func buildGizmo() -> Entity {
+        let root = Entity(); root.name = "gizmoRoot"
+        guard let c = model.gizmoCenterKernel() else { return root }
+        let len = model.gizmoArmLength()
+        let r = max(0.6, len * 0.035)
+        let axes: [(name: String, dir: SIMD3<Float>, color: NSColor)] = [
+            ("gizmoX", SIMD3(1, 0, 0), .systemRed),
+            ("gizmoY", SIMD3(0, 1, 0), .systemGreen),
+            ("gizmoZ", SIMD3(0, 0, 1), .systemBlue),
+        ]
+        for a in axes {
+            let arm = ModelEntity(mesh: .generateBox(size: SIMD3(len, r * 1.6, r * 1.6)),
+                                  materials: [UnlitMaterial(color: a.color)])
+            arm.name = a.name
+            arm.position = c + a.dir * (len / 2)
+            arm.orientation = simd_quatf(from: SIMD3(1, 0, 0), to: a.dir)
+            arm.components.set(CollisionComponent(shapes: [ShapeResource.generateBox(size: SIMD3(len, r * 5, r * 5))]))
+            arm.components.set(InputTargetComponent())
+            root.addChild(arm)
+            let tip = ModelEntity(mesh: .generateSphere(radius: r * 2.1),
+                                  materials: [UnlitMaterial(color: a.color)])
+            tip.position = c + a.dir * len
+            tip.name = a.name        // grabbing the tip drags the same axis
+            tip.components.set(CollisionComponent(shapes: [ShapeResource.generateSphere(radius: r * 3)]))
+            tip.components.set(InputTargetComponent())
+            root.addChild(tip)
+        }
+        let hub = ModelEntity(mesh: .generateSphere(radius: r * 1.7),
+                              materials: [UnlitMaterial(color: NSColor.white)])
+        hub.position = c
+        root.addChild(hub)
+        return root
+    }
+
+    private func rebuildGizmo(_ content: RealityViewCameraContent) {
+        guard let root = content.entities.first(where: { $0.name == "geomRoot" }),
+              let centering = root.findEntity(named: "centering") else { return }
+        centering.findEntity(named: "gizmoRoot")?.removeFromParent()
+        if model.showsGizmo { centering.addChild(buildGizmo()) }
+    }
+
     // MARK: feature-tree sync (visibility + selection highlight)
 
     /// Enable/disable part entities to honor the tree's eye toggles + isolate.
@@ -1665,6 +1718,21 @@ struct ViewportView: View {
         DragGesture()
             .targetedToAnyEntity()
             .onChanged { value in
+                // Transform gizmo: drag an axis arm to translate the part. Uses
+                // the kernel ray from the live cursor + closest-point-on-axis.
+                if let axis = model.gizmoAxis(for: value.entity.name) {
+                    NSCursor.closedHand.set()
+                    if !model.draggingHandle {
+                        model.draggingHandle = true
+                        if let ray = kernelRay(at: value.startLocation, viewSize: model.viewSize) {
+                            model.beginGizmoDrag(axis: axis, ray: ray)
+                        }
+                    }
+                    if let ray = kernelRay(at: value.location, viewSize: model.viewSize) {
+                        model.gizmoDragTo(ray: ray)
+                    }
+                    return
+                }
                 let isHandle = value.entity.name == "connectorHandle" || value.entity.name == "filletHandle"
                 if isHandle { NSCursor.closedHand.set() }
                 if value.entity.name == "connectorHandle" {
@@ -1687,6 +1755,7 @@ struct ViewportView: View {
             .onEnded { _ in
                 if model.draggingHandle { NSCursor.arrow.set() }
                 model.draggingHandle = false
+                model.endGizmoDrag()
                 // Connector settled → re-route the copper once (gripper only).
                 if model.source.isGripper { model.copperDirty = true }
             }
@@ -1744,6 +1813,7 @@ struct ViewportView: View {
     }
 
     private func pick(at p: CGPoint, viewSize: CGSize) {
+        model.viewSize = viewSize                 // keep fresh for gizmo drags
         model.stopSpin()                          // a tap settles the camera
         guard let (camKernel, dirKernel) = kernelRay(at: p, viewSize: viewSize) else { return }
 
@@ -1763,8 +1833,8 @@ struct ViewportView: View {
                pi < model.featureNodes.count {
                 if cmd { model.toggleMultiSelect(part: pi, featureID: model.featureNodes[pi].id) }
                 else { model.selectFeature(model.featureNodes[pi].id) }
-            } else if !cmd {
-                model.deselectAll()
+            } else if !cmd, !model.rayHitsGizmo(originKernel: camKernel, dirKernel: dirKernel) {
+                model.deselectAll()        // empty space (but not a tap on the gizmo)
             }
             return
         }
@@ -1791,6 +1861,7 @@ struct ViewportView: View {
     // MARK: hover (cursor + a scale pop on the draggable handles)
 
     private func hover(_ phase: HoverPhase, viewSize: CGSize) {
+        model.viewSize = viewSize                 // keep fresh for gizmo drags
         // Sketch mode: track the cursor on the plane for the rubber-band preview.
         if model.sketching {
             if case .active(let point) = phase,
