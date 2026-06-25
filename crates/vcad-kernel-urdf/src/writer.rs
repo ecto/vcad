@@ -252,6 +252,25 @@ impl<'a> UrdfWriter<'a> {
                 };
                 Ok((geometry, None))
             }
+            CsgOp::Torus {
+                major_radius,
+                minor_radius,
+                ..
+            } => {
+                // URDF has no native torus; approximate the swept volume as a
+                // thin cylinder whose radius is the outer ring (R + r) and
+                // whose height is 2r (the tube diameter).
+                let geometry = Geometry {
+                    box_geom: None,
+                    cylinder: Some(CylinderGeom {
+                        radius: (major_radius + minor_radius) / 1000.0,
+                        length: (2.0 * minor_radius) / 1000.0,
+                    }),
+                    sphere: None,
+                    mesh: None,
+                };
+                Ok((geometry, None))
+            }
             CsgOp::Translate { child, offset } => {
                 let (geometry, _) = self.node_to_geometry(*child)?;
                 let origin = Some(Origin {

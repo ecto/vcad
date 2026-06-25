@@ -152,6 +152,16 @@ fn migrate_node(
             params.insert("segments".to_string(), Value::F64(*segments as f64));
             Some(create(crdt, ctx, "cone", params))
         }
+        CsgOp::Torus {
+            major_radius,
+            minor_radius,
+            segments,
+        } => {
+            params.insert("major_radius".to_string(), Value::F64(*major_radius));
+            params.insert("minor_radius".to_string(), Value::F64(*minor_radius));
+            params.insert("segments".to_string(), Value::F64(*segments as f64));
+            Some(create(crdt, ctx, "torus", params))
+        }
         // Boolean ops: migrate both operands first so their feature ids
         // exist before the boolean feature that references them.
         CsgOp::Union { left, right } => {

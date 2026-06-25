@@ -424,6 +424,12 @@ fn evaluate_op_timed(
             *segments,
         ))),
 
+        CsgOp::Torus {
+            major_radius,
+            minor_radius,
+            segments,
+        } => Ok(Some(Solid::torus(*major_radius, *minor_radius, *segments))),
+
         CsgOp::Empty => Ok(Some(Solid::empty())),
 
         CsgOp::Union { left, right } => {
@@ -1261,6 +1267,7 @@ fn op_name(op: &CsgOp) -> String {
         CsgOp::Cylinder { .. } => "Cylinder",
         CsgOp::Sphere { .. } => "Sphere",
         CsgOp::Cone { .. } => "Cone",
+        CsgOp::Torus { .. } => "Torus",
         CsgOp::Empty => "Empty",
         CsgOp::Union { .. } => "Union",
         CsgOp::Difference { .. } => "Difference",

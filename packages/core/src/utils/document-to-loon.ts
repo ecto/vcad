@@ -214,6 +214,9 @@ function opToLoon(op: CsgOp, doc: Document): OpResult {
         `[cone ${f(op.radius_bottom)} ${f(op.radius_top)} ${f(op.height)}]`,
       );
 
+    case "Torus":
+      return ok(`[torus ${f(op.major_radius)} ${f(op.minor_radius)}]`);
+
     case "Empty":
       return ok("Empty");
 

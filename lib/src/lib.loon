@@ -21,6 +21,7 @@
   [Cylinder f64 f64]
   [Sphere f64]
   [Cone f64 f64 f64]
+  [Torus f64 f64]
   ; Empty (identity for union)
   Empty
   ; Booleans
@@ -82,6 +83,7 @@
 [let cylinder [fn [r h] [Cylinder r h]]]
 [let sphere [fn [r] [Sphere r]]]
 [let cone [fn [r-bottom r-top h] [Cone r-bottom r-top h]]]
+[let torus [fn [major-r minor-r] [Torus major-r minor-r]]]
 
 ; Booleans (subject-last: [pipe body [difference tool]] → subtract tool from body)
 [let union [fn [other s] [Union s other]]]

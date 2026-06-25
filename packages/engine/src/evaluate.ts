@@ -654,6 +654,9 @@ function evaluateOp(
         op.segments || undefined,
       );
 
+    case "Torus":
+      return Solid.torus(op.major_radius, op.minor_radius, op.segments || undefined);
+
     case "Empty":
       return Solid.empty();
 

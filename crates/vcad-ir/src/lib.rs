@@ -624,6 +624,19 @@ pub enum CsgOp {
         /// Number of circular segments (0 = auto).
         segments: u32,
     },
+    #[tool(
+        category = "primitive",
+        ai_hint = "Axis along Z. Use for rings, donuts, O-rings, gaskets, fillets-as-primitives."
+    )]
+    /// Torus centered at origin with axis along Z.
+    Torus {
+        /// Major radius — distance from the central axis to the tube center.
+        major_radius: f64,
+        /// Minor radius — radius of the tube cross-section.
+        minor_radius: f64,
+        /// Number of circular segments per ring (0 = auto).
+        segments: u32,
+    },
     #[tool(hidden)]
     /// Empty geometry (identity for union).
     Empty,

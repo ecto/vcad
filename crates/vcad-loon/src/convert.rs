@@ -502,6 +502,7 @@ fn is_solid_tag(tag: &str) -> bool {
             | "Cylinder"
             | "Sphere"
             | "Cone"
+            | "Torus"
             | "Empty"
             | "Union"
             | "Difference"
@@ -621,6 +622,14 @@ impl ConvertCtx {
                     radius_bottom: self.f64_val(&fields[0])?,
                     radius_top: self.f64_val(&fields[1])?,
                     height: self.f64_val(&fields[2])?,
+                    segments: 0,
+                }
+            }
+            "Torus" => {
+                assert_fields(tag, fields, 2)?;
+                CsgOp::Torus {
+                    major_radius: self.f64_val(&fields[0])?,
+                    minor_radius: self.f64_val(&fields[1])?,
                     segments: 0,
                 }
             }

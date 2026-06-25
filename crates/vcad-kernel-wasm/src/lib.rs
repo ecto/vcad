@@ -482,6 +482,14 @@ impl Solid {
         }
     }
 
+    /// Create a torus centered at origin with axis along Z.
+    #[wasm_bindgen(js_name = torus)]
+    pub fn torus(major_radius: f64, minor_radius: f64, segments: Option<u32>) -> Solid {
+        Solid {
+            inner: vcad_kernel::Solid::torus(major_radius, minor_radius, segments.unwrap_or(32)),
+        }
+    }
+
     /// Create a solid by extruding a 2D sketch profile.
     ///
     /// Takes a sketch profile and extrusion direction as JS objects.

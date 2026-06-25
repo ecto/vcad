@@ -686,6 +686,15 @@ impl PhysicsWorld {
                 *height,
                 if *segments == 0 { 32 } else { *segments },
             ),
+            vcad_ir::CsgOp::Torus {
+                major_radius,
+                minor_radius,
+                segments,
+            } => vcad_kernel::Solid::torus(
+                *major_radius,
+                *minor_radius,
+                if *segments == 0 { 32 } else { *segments },
+            ),
             _ => {
                 // For other operations, create a small placeholder
                 vcad_kernel::Solid::cube(10.0, 10.0, 10.0)

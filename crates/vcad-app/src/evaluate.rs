@@ -79,6 +79,11 @@ fn evaluate_node(doc: &Document, node_id: NodeId) -> Result<Option<Solid>> {
             height,
             segments,
         } => Some(Solid::cone(*radius_bottom, *radius_top, *height, *segments)),
+        CsgOp::Torus {
+            major_radius,
+            minor_radius,
+            segments,
+        } => Some(Solid::torus(*major_radius, *minor_radius, *segments)),
         CsgOp::Union { left, right } => {
             let l = evaluate_node(doc, *left)?;
             let r = evaluate_node(doc, *right)?;

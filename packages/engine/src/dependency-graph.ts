@@ -10,6 +10,7 @@ function getChildNodeIds(op: CsgOp): NodeId[] {
     case "Cylinder":
     case "Sphere":
     case "Cone":
+    case "Torus":
     case "Empty":
     case "Sketch2D":
     case "ImportedMesh":

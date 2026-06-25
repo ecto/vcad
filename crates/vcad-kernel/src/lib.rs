@@ -212,6 +212,21 @@ impl Solid {
         }
     }
 
+    /// Create a torus centered at origin with axis along Z.
+    ///
+    /// `major_radius` is the distance from the central axis to the tube center;
+    /// `minor_radius` is the tube cross-section radius.
+    pub fn torus(major_radius: f64, minor_radius: f64, segments: u32) -> Self {
+        Self {
+            repr: SolidRepr::BRep(Box::new(vcad_kernel_primitives::make_torus(
+                major_radius,
+                minor_radius,
+                segments,
+            ))),
+            segments,
+        }
+    }
+
     // =========================================================================
     // CSG boolean operations
     // =========================================================================

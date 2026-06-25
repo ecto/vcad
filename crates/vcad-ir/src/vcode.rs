@@ -1803,6 +1803,20 @@ where
             })
         }
 
+        "TO" => {
+            if parts.len() != 3 {
+                return Err(VCodeParseError {
+                    line: line_num,
+                    message: format!("TO requires 2 args, got {}", parts.len() - 1),
+                });
+            }
+            Ok(CsgOp::Torus {
+                major_radius: parse_f64(parts[1], line_num)?,
+                minor_radius: parse_f64(parts[2], line_num)?,
+                segments: 0,
+            })
+        }
+
         "U" => {
             if parts.len() != 3 {
                 return Err(VCodeParseError {
@@ -2228,6 +2242,15 @@ fn format_op(
         } => Ok(format!(
             "K {} {} {}{}",
             radius_bottom, radius_top, height, name_suffix
+        )),
+
+        CsgOp::Torus {
+            major_radius,
+            minor_radius,
+            ..
+        } => Ok(format!(
+            "TO {} {}{}",
+            major_radius, minor_radius, name_suffix
         )),
 
         CsgOp::Empty => Ok(format!("C 0 0 0{}", name_suffix)),

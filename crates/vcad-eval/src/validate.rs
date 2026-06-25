@@ -66,6 +66,7 @@ fn validate_op(doc: &Document, node_id: NodeId, op: &CsgOp) -> Result<(), EvalEr
         | CsgOp::Cylinder { .. }
         | CsgOp::Sphere { .. }
         | CsgOp::Cone { .. }
+        | CsgOp::Torus { .. }
         | CsgOp::Empty
         | CsgOp::Sketch2D { .. }
         | CsgOp::Text2D { .. }
@@ -107,6 +108,7 @@ fn csg_op_name(op: &CsgOp) -> &'static str {
         CsgOp::Cylinder { .. } => "Cylinder",
         CsgOp::Sphere { .. } => "Sphere",
         CsgOp::Cone { .. } => "Cone",
+        CsgOp::Torus { .. } => "Torus",
         CsgOp::Empty => "Empty",
         CsgOp::Union { .. } => "Union",
         CsgOp::Difference { .. } => "Difference",

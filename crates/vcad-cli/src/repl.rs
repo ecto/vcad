@@ -562,6 +562,7 @@ fn op_type_name(op: &CsgOp) -> &'static str {
         CsgOp::Cylinder { .. } => "cylinder",
         CsgOp::Sphere { .. } => "sphere",
         CsgOp::Cone { .. } => "cone",
+        CsgOp::Torus { .. } => "torus",
         CsgOp::Union { .. } => "union",
         CsgOp::Difference { .. } => "difference",
         CsgOp::Intersection { .. } => "intersection",

@@ -3,9 +3,11 @@
 //! B-rep primitive solid construction for the vcad kernel.
 //!
 //! Constructs valid B-rep topology + geometry for standard CAD primitives:
-//! cube (box), cylinder, sphere, and cone.
+//! cube (box), cylinder, sphere, cone, and torus.
 
-use vcad_kernel_geom::{Circle3d, CylinderSurface, GeometryStore, Line3d, Plane, SphereSurface};
+use vcad_kernel_geom::{
+    Circle3d, CylinderSurface, GeometryStore, Line3d, Plane, SphereSurface, TorusSurface,
+};
 use vcad_kernel_math::{Point3, Vec3};
 use vcad_kernel_topo::{HalfEdgeId, Orientation, ShellType, SolidId, Topology};
 
@@ -452,6 +454,68 @@ pub fn make_cone(radius_bottom: f64, radius_top: f64, height: f64, _segments: u3
     }
 }
 
+/// Build a B-rep torus centered at origin with axis along Z.
+///
+/// `major_radius` is the distance from the central axis to the tube center;
+/// `minor_radius` is the radius of the tube cross-section.
+///
+/// Topology:
+/// - 1 toroidal face
+/// - 2 edges (the u-seam: major circle at v=0; the v-seam: tube cross-section at u=0)
+/// - 1 vertex at the seam intersection at (R+r, 0, 0)
+/// - 1 shell, 1 solid
+///
+/// `segments` controls tessellation quality but doesn't affect the B-rep structure.
+pub fn make_torus(major_radius: f64, minor_radius: f64, _segments: u32) -> BRepSolid {
+    let mut topo = Topology::new();
+    let mut geom = GeometryStore::new();
+
+    let torus_surf = TorusSurface::new(major_radius, minor_radius);
+    let surf_idx = geom.add_surface(Box::new(torus_surf));
+
+    // Single corner vertex where the u-seam and v-seam meet (at u=0, v=0).
+    let v_corner = topo.add_vertex(Point3::new(major_radius + minor_radius, 0.0, 0.0));
+
+    // Four half-edges around the parametric boundary [0, 2π] × [0, 2π]:
+    //   he_u_fwd: along v=0, u: 0 → 2π (the major circle at v=0)
+    //   he_v_fwd: along u=2π, v: 0 → 2π (the tube cross-section at u=0/2π)
+    //   he_u_bwd: along v=2π, u: 2π → 0 (same major circle, reversed)
+    //   he_v_bwd: along u=0, v: 2π → 0 (same tube circle, reversed)
+    let he_u_fwd = topo.add_half_edge(v_corner);
+    let he_v_fwd = topo.add_half_edge(v_corner);
+    let he_u_bwd = topo.add_half_edge(v_corner);
+    let he_v_bwd = topo.add_half_edge(v_corner);
+
+    let torus_loop = topo.add_loop(&[he_u_fwd, he_v_fwd, he_u_bwd, he_v_bwd]);
+    let torus_face = topo.add_face(torus_loop, surf_idx, Orientation::Forward);
+
+    // Edge pairing: each seam is one edge with two opposing half-edges.
+    topo.add_edge(he_u_fwd, he_u_bwd);
+    topo.add_edge(he_v_fwd, he_v_bwd);
+
+    // 3D curves backing the seams.
+    // u-seam: major circle of radius (R+r) in the XY plane at z=0.
+    geom.add_curve_3d(Box::new(Circle3d::new(
+        Point3::origin(),
+        major_radius + minor_radius,
+    )));
+    // v-seam: tube cross-section, a circle of radius r in the XZ plane at (R, 0, 0).
+    geom.add_curve_3d(Box::new(Circle3d::with_normal(
+        Point3::new(major_radius, 0.0, 0.0),
+        minor_radius,
+        Vec3::new(0.0, 1.0, 0.0),
+    )));
+
+    let shell = topo.add_shell(vec![torus_face], ShellType::Outer);
+    let solid_id = topo.add_solid(shell);
+
+    BRepSolid {
+        topology: topo,
+        geometry: geom,
+        solid_id,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -550,5 +614,40 @@ mod tests {
         let brep = make_cone(5.0, 5.0, 10.0, 32);
         // Should fall back to cylinder
         assert_eq!(brep.topology.faces.len(), 3);
+    }
+
+    #[test]
+    fn test_torus_topology() {
+        let brep = make_torus(10.0, 3.0, 32);
+        let topo = &brep.topology;
+        assert_eq!(topo.vertices.len(), 1); // single seam-intersection vertex
+        assert_eq!(topo.faces.len(), 1); // single toroidal face
+        assert_eq!(topo.edges.len(), 2); // u-seam (major circle) + v-seam (tube circle)
+        assert_eq!(topo.half_edges.len(), 4);
+        assert_eq!(topo.shells.len(), 1);
+        assert_eq!(topo.solids.len(), 1);
+    }
+
+    #[test]
+    fn test_torus_geometry() {
+        let brep = make_torus(10.0, 3.0, 32);
+        // Exactly one surface: the torus itself.
+        assert_eq!(brep.geometry.surfaces.len(), 1);
+        assert_eq!(
+            brep.geometry.surfaces[0].surface_type(),
+            vcad_kernel_geom::SurfaceKind::Torus
+        );
+    }
+
+    #[test]
+    fn test_torus_vertex_at_outer_seam() {
+        let brep = make_torus(10.0, 3.0, 32);
+        let positions: Vec<_> = brep.topology.vertices.values().map(|v| v.point).collect();
+        assert_eq!(positions.len(), 1);
+        let p = positions[0];
+        // Vertex sits at (R+r, 0, 0).
+        assert!((p.x - 13.0).abs() < 1e-12);
+        assert!(p.y.abs() < 1e-12);
+        assert!(p.z.abs() < 1e-12);
     }
 }

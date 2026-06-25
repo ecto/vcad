@@ -195,6 +195,16 @@ fn apply_to_op(op: &mut CsgOp, key: &BindingKey, value: f64) -> Result<(), Resol
             "segments" => *segments = value.round().max(0.0) as u32,
             _ => return bad("Cone"),
         },
+        CsgOp::Torus {
+            major_radius,
+            minor_radius,
+            segments,
+        } => match path {
+            "major_radius" => *major_radius = value,
+            "minor_radius" => *minor_radius = value,
+            "segments" => *segments = value.round().max(0.0) as u32,
+            _ => return bad("Torus"),
+        },
         CsgOp::Translate { offset, .. } => {
             let sub =
                 path.strip_prefix("offset.")

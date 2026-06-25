@@ -212,6 +212,16 @@ fn op_to_loon(op: &CsgOp, doc: &Document) -> OpResult {
             fmt_f64(*height)
         )),
 
+        CsgOp::Torus {
+            major_radius,
+            minor_radius,
+            ..
+        } => OpResult::Ok(format!(
+            "[torus {} {}]",
+            fmt_f64(*major_radius),
+            fmt_f64(*minor_radius)
+        )),
+
         CsgOp::Empty => OpResult::Ok("Empty".to_string()),
 
         CsgOp::Union { left, right } => OpResult::Ok(format!(
