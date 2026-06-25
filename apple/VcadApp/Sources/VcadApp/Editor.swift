@@ -705,6 +705,9 @@ final class EditorModel {
     @ObservationIgnored private var gizmoBase: (Double, Double, Double) = (0, 0, 0)
     @ObservationIgnored private var gizmoStartCenter: SIMD3<Float> = .zero
     @ObservationIgnored private var gizmoT0: Float = 0
+    /// Live displacement of the part during a gizmo drag, so the viewport can
+    /// slide the gizmo along with the part instead of leaving it at the start.
+    @ObservationIgnored var gizmoLiveOffset: SIMD3<Float> = .zero
 
     /// Show the gizmo for a single selected part (not while sketching/multi-select).
     var showsGizmo: Bool {
@@ -731,11 +734,13 @@ final class EditorModel {
         gizmoStartCenter = c
         gizmoBase = DocEdit.rootTranslateOffset(json, partIndex: pi) ?? (0, 0, 0)
         gizmoT0 = Self.axisParam(rayO: ray.o, rayD: ray.d, center: c, axis: axis)
+        gizmoLiveOffset = .zero
     }
     func gizmoDragTo(ray: (o: SIMD3<Float>, d: SIMD3<Float>)) {
         guard let pi = gizmoPart, var json = documentJSON else { return }
         let t = Self.axisParam(rayO: ray.o, rayD: ray.d, center: gizmoStartCenter, axis: gizmoAxis)
         let delta = t - gizmoT0
+        gizmoLiveOffset = gizmoAxis * delta        // slide the gizmo with the part
         DocEdit.setRootTranslate(&json, partIndex: pi,
                                  gizmoBase.0 + Double(gizmoAxis.x * delta),
                                  gizmoBase.1 + Double(gizmoAxis.y * delta),
@@ -747,7 +752,8 @@ final class EditorModel {
     }
     func endGizmoDrag() {
         gizmoPart = nil
-        gizmoDirty = true           // snap the gizmo to the part's new center
+        gizmoLiveOffset = .zero
+        gizmoDirty = true           // rebuild the gizmo at the part's new center
     }
     /// Whether a ray passes through the gizmo (so a tap on it doesn't deselect).
     func rayHitsGizmo(originKernel o: SIMD3<Float>, dirKernel d: SIMD3<Float>) -> Bool {

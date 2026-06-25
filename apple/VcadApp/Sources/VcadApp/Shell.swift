@@ -1222,6 +1222,9 @@ struct ViewportView: View {
                     for (i, m) in meshes.enumerated() {
                         (centering.findEntity(named: "part\(i)") as? ModelEntity)?.model?.mesh = m
                     }
+                    // Slide the gizmo with the part (don't rebuild — that would
+                    // destroy the arm the drag is holding).
+                    centering.findEntity(named: "gizmoRoot")?.position = model.gizmoLiveOffset
                 }
                 model.docParamDirty = false
             }
@@ -1636,37 +1639,47 @@ struct ViewportView: View {
 
     // MARK: transform gizmo overlay
 
-    /// Three axis arms (X red / Y green / Z blue) at the selected part's center.
-    /// Each arm carries collision + input target so `handleDrag` can grab it.
+    /// A refined translate gizmo: thin cylinder shafts with cone arrowheads in
+    /// muted axis colors, an invisible full-length hit proxy per axis (so the
+    /// drag target persists), and a small pearl hub. X red / Y green / Z blue.
     private func buildGizmo() -> Entity {
         let root = Entity(); root.name = "gizmoRoot"
         guard let c = model.gizmoCenterKernel() else { return root }
         let len = model.gizmoArmLength()
-        let r = max(0.6, len * 0.035)
+        let shaftR = max(0.3, len * 0.016)
+        let headLen = len * 0.2
+        let headR = shaftR * 2.8
+        let shaftLen = len - headLen
         let axes: [(name: String, dir: SIMD3<Float>, color: NSColor)] = [
-            ("gizmoX", SIMD3(1, 0, 0), .systemRed),
-            ("gizmoY", SIMD3(0, 1, 0), .systemGreen),
-            ("gizmoZ", SIMD3(0, 0, 1), .systemBlue),
+            ("gizmoX", SIMD3(1, 0, 0), NSColor(srgbRed: 0.95, green: 0.30, blue: 0.34, alpha: 1)),
+            ("gizmoY", SIMD3(0, 1, 0), NSColor(srgbRed: 0.42, green: 0.80, blue: 0.44, alpha: 1)),
+            ("gizmoZ", SIMD3(0, 0, 1), NSColor(srgbRed: 0.32, green: 0.58, blue: 0.98, alpha: 1)),
         ]
         for a in axes {
-            let arm = ModelEntity(mesh: .generateBox(size: SIMD3(len, r * 1.6, r * 1.6)),
-                                  materials: [UnlitMaterial(color: a.color)])
-            arm.name = a.name
-            arm.position = c + a.dir * (len / 2)
-            arm.orientation = simd_quatf(from: SIMD3(1, 0, 0), to: a.dir)
-            arm.components.set(CollisionComponent(shapes: [ShapeResource.generateBox(size: SIMD3(len, r * 5, r * 5))]))
-            arm.components.set(InputTargetComponent())
-            root.addChild(arm)
-            let tip = ModelEntity(mesh: .generateSphere(radius: r * 2.1),
-                                  materials: [UnlitMaterial(color: a.color)])
-            tip.position = c + a.dir * len
-            tip.name = a.name        // grabbing the tip drags the same axis
-            tip.components.set(CollisionComponent(shapes: [ShapeResource.generateSphere(radius: r * 3)]))
-            tip.components.set(InputTargetComponent())
-            root.addChild(tip)
+            let mat = UnlitMaterial(color: a.color)
+            let rot = simd_quatf(from: SIMD3(0, 1, 0), to: a.dir)   // RealityKit shapes are +Y-up
+
+            let shaft = ModelEntity(mesh: .generateCylinder(height: shaftLen, radius: shaftR), materials: [mat])
+            shaft.orientation = rot
+            shaft.position = c + a.dir * (shaftLen / 2)
+            root.addChild(shaft)
+
+            let head = ModelEntity(mesh: .generateCone(height: headLen, radius: headR), materials: [mat])
+            head.orientation = rot
+            head.position = c + a.dir * (shaftLen + headLen / 2)
+            root.addChild(head)
+
+            // Invisible full-length grab proxy — outlives per-frame rebuilds.
+            let hit = ModelEntity()
+            hit.name = a.name
+            hit.orientation = rot
+            hit.position = c + a.dir * (len / 2)
+            hit.components.set(CollisionComponent(shapes: [.generateBox(size: SIMD3(headR * 2.6, len, headR * 2.6))]))
+            hit.components.set(InputTargetComponent())
+            root.addChild(hit)
         }
-        let hub = ModelEntity(mesh: .generateSphere(radius: r * 1.7),
-                              materials: [UnlitMaterial(color: NSColor.white)])
+        let hub = ModelEntity(mesh: .generateSphere(radius: shaftR * 2.4),
+                              materials: [UnlitMaterial(color: NSColor(white: 0.95, alpha: 1))])
         hub.position = c
         root.addChild(hub)
         return root
