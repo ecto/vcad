@@ -567,6 +567,90 @@ describe("route_nets idempotency", () => {
     expect(second).toEqual(first);
     expect(third).toEqual(first);
   });
+
+  // J1's pad world positions before a move — header at rotation 0, so pad world
+  // is just footprint origin + pad offset.
+  const j1PadWorld = (board: Pcb) => {
+    const fp = board.footprints.find((f) => f.ref === "J1")!;
+    return fp.pads.map((p) => ({ x: fp.position.x + p.position.x, y: fp.position.y + p.position.y }));
+  };
+  const j1Nets = new Set(["VCC", "GND", "SIG2", "SIG3"]);
+  const nearAny = (p: Vec2, pts: Vec2[]) => pts.some((q) => Math.hypot(p.x - q.x, p.y - q.y) < 1.5);
+
+  it("re-routing after set_placement leaves no orphaned copper at the old position", async () => {
+    const id = await buildBoard();
+    out(await routeNets({ document_id: id }));
+    const oldPads = j1PadWorld(getPcbBoard(getSession(id)));
+
+    // Move J1 across the board, then re-route the whole board.
+    out(await setPlacement({ document_id: id, placements: [{ ref: "J1", x: 45, y: 30 }] }));
+    out(await routeNets({ document_id: id }));
+
+    const board = getPcbBoard(getSession(id));
+    const orphans = board.traces.filter(
+      (t) => j1Nets.has(t.net) && (nearAny(t.start, oldPads) || nearAny(t.end, oldPads)),
+    );
+    expect(orphans.length).toBe(0);
+  });
+
+  it("a scoped re-route sweeps stale copper on unfiltered nets whose pads moved", async () => {
+    const id = await buildBoard();
+    out(await routeNets({ document_id: id }));
+    const oldPads = j1PadWorld(getPcbBoard(getSession(id)));
+
+    // Move J1, then re-route ONLY SIG2. The unfiltered J1 nets (VCC/GND/SIG3)
+    // are now stale; route_nets must detect and rip them, not leave dead copper.
+    out(await setPlacement({ document_id: id, placements: [{ ref: "J1", x: 45, y: 30 }] }));
+    const r = out(await routeNets({ document_id: id, nets: ["SIG2"] }));
+
+    const board = getPcbBoard(getSession(id));
+    const stale = board.traces.filter(
+      (t) => ["VCC", "GND", "SIG3"].includes(t.net) && (nearAny(t.start, oldPads) || nearAny(t.end, oldPads)),
+    );
+    expect(stale.length).toBe(0);
+    // And it reports the cleanup it did, so the agent isn't blind to it.
+    expect(r.traces_removed).toBeGreaterThan(0);
+    expect((r.stale_nets_cleared as string[]).sort()).toContain("GND");
+  });
+
+  it("does not flag a freshly-routed board as stale (no spurious rip-up)", async () => {
+    const id = await buildBoard();
+    out(await routeNets({ document_id: id }));
+    // No move — a second scoped route on a clean board must not report any
+    // stale-net cleanup (detection is false-positive-free on clean copper).
+    const r = out(await routeNets({ document_id: id, nets: ["SIG2"] }));
+    expect(r.stale_nets_cleared).toBeUndefined();
+  });
+
+  it("the stale sweep never rips coil/winding copper (free spiral, no pads)", async () => {
+    const id = await buildBoard();
+    // A standalone coil on its own net — a free spiral whose terminals dangle by
+    // design and whose net has no pads. It must survive every route_nets call.
+    const coil = out(
+      addCoil({
+        document_id: id,
+        center: { x: 25, y: 17 },
+        turns: 4,
+        inner_radius: 3,
+        outer_radius: 8,
+        trace_width: 0.3,
+        clearance: 0.3,
+        net: "COIL",
+      }),
+    );
+    const coilTraces = coil.traces_added as number;
+    expect(coilTraces).toBeGreaterThan(20);
+    out(await routeNets({ document_id: id }));
+
+    // Move a part and do a scoped re-route — the coil net is not listed and has
+    // dangling ends, but the sweep must leave it intact.
+    out(await setPlacement({ document_id: id, placements: [{ ref: "J1", x: 45, y: 30 }] }));
+    const r = out(await routeNets({ document_id: id, nets: ["SIG2"] }));
+
+    const board = getPcbBoard(getSession(id));
+    expect(board.traces.filter((t) => t.net === "COIL").length).toBe(coilTraces);
+    expect((r.stale_nets_cleared as string[] | undefined) ?? []).not.toContain("COIL");
+  });
 });
 
 describe("schematic label diagnostics", () => {

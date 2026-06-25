@@ -588,7 +588,14 @@ export const routeNetsSchema = {
     nets: {
       type: "array" as const,
       items: { type: "string" as const },
-      description: "Net IDs to route (empty = route all)",
+      description:
+        "Net IDs to route (empty = route all). Re-running is safe and " +
+        "self-cleaning: routing rips up the prior copper on each net first and " +
+        "lays a complete fresh route, so trace counts don't grow across " +
+        "iterations. After a set_placement move, nets whose pads no longer sit " +
+        "under their copper are detected as stale and re-routed too (even if not " +
+        "listed here); the result reports `traces_removed`/`vias_removed` and " +
+        "`stale_nets_cleared` so the cleanup is visible.",
     },
     trace_width: {
       type: "number" as const,
@@ -1733,6 +1740,111 @@ export async function placeComponents(args: Record<string, unknown>) {
   };
 }
 
+/** Pad center in board-world coordinates, matching the kernel router's
+ *  transform (ratsnest.rs / auto.rs): translate by the footprint origin and
+ *  rotate the pad offset by the footprint rotation only. The router lands trace
+ *  endpoints exactly on these points, so copper can be matched to pads by
+ *  coincidence. */
+function padWorld(fp: Footprint, pad: Pad): Vec2 {
+  const ang = ((fp.rotation ?? 0) * Math.PI) / 180;
+  const cos = Math.cos(ang);
+  const sin = Math.sin(ang);
+  return {
+    x: fp.position.x + pad.position.x * cos - pad.position.y * sin,
+    y: fp.position.y + pad.position.x * sin + pad.position.y * cos,
+  };
+}
+
+/** Find nets whose existing copper is *stale* — left behind by a footprint that
+ *  moved (via set_placement) after the net was routed, so the route no longer
+ *  matches the board. A net is flagged when either tell-tale shows up:
+ *
+ *  1. A *loose* trace endpoint: in a clean route every endpoint lands on a pad
+ *     of its net, on a via, or on another trace's endpoint (a junction). A
+ *     dangling end that anchors to nothing is copper to a pad that moved away.
+ *  2. An *uncovered* pad: a current pad with no trace endpoint or via on it.
+ *     This catches the case where a transition via sits on the pad's *old*
+ *     location and masks the loose end (a both-ends-via'd net), which (1) misses.
+ *     Pads that connect through a same-net copper pour are exempt — they
+ *     legitimately carry no trace.
+ *
+ *  Only routable nets (>=2 pads) are considered — the same set route_nets owns.
+ *  Free-form copper that isn't a pad-to-pad route (a coil/winding spiral, whose
+ *  terminals dangle by design) lives on nets with <2 pads and is left alone.
+ *
+ *  The router lands endpoints/vias on pad centers to floating-point precision,
+ *  so the tight tolerance never trips on a freshly-routed board — a non-empty
+ *  result means a pad genuinely moved out from under its copper. */
+function detectStaleNets(pcb: Pcb): Set<string> {
+  const TOL = 0.05; // mm — far tighter than a pad pitch, far looser than float error
+  const near = (a: Vec2, b: Vec2) => Math.abs(a.x - b.x) < TOL && Math.abs(a.y - b.y) < TOL;
+
+  const padsByNet = new Map<string, { pos: Vec2; layers: PcbLayer[] }[]>();
+  for (const fp of pcb.footprints) {
+    for (const pad of fp.pads) {
+      if (!pad.net) continue;
+      const arr = padsByNet.get(pad.net) ?? [];
+      arr.push({ pos: padWorld(fp, pad), layers: pad.layers });
+      padsByNet.set(pad.net, arr);
+    }
+  }
+  const viasByNet = new Map<string, Vec2[]>();
+  for (const v of pcb.vias) {
+    const arr = viasByNet.get(v.net) ?? [];
+    arr.push(v.position);
+    viasByNet.set(v.net, arr);
+  }
+  const tracesByNet = new Map<string, Trace[]>();
+  for (const t of pcb.traces) {
+    const arr = tracesByNet.get(t.net) ?? [];
+    arr.push(t);
+    tracesByNet.set(t.net, arr);
+  }
+  // Layers each net floods with a copper pour — pads on these layers connect
+  // through the plane, so "no trace on this pad" is expected, not stale.
+  const zoneLayersByNet = new Map<string, Set<PcbLayer>>();
+  for (const z of pcb.zones) {
+    const set = zoneLayersByNet.get(z.net) ?? new Set<PcbLayer>();
+    set.add(z.layer);
+    zoneLayersByNet.set(z.net, set);
+  }
+
+  const stale = new Set<string>();
+  for (const [net, traces] of tracesByNet) {
+    const pads = padsByNet.get(net) ?? [];
+    const vias = viasByNet.get(net) ?? [];
+    // Only pad-to-pad routes can go stale from a moved pad; skip coils/windings
+    // and other free copper (their nets have <2 pads).
+    if (pads.length < 2) continue;
+
+    // (1) Any loose trace endpoint?
+    const anchored = (p: Vec2, selfIdx: number): boolean => {
+      if (pads.some((q) => near(p, q.pos))) return true;
+      if (vias.some((q) => near(p, q))) return true;
+      for (let j = 0; j < traces.length; j++) {
+        if (j === selfIdx) continue;
+        if (near(p, traces[j].start) || near(p, traces[j].end)) return true;
+      }
+      return false;
+    };
+    let isStale = traces.some((t, i) => !anchored(t.start, i) || !anchored(t.end, i));
+
+    // (2) Any current pad uncovered by copper (and not on a same-net pour)?
+    if (!isStale) {
+      const zoneLayers = zoneLayersByNet.get(net);
+      isStale = pads.some((pad) => {
+        if (zoneLayers && pad.layers.some((l) => zoneLayers.has(l))) return false;
+        const onTrace = traces.some((t) => near(pad.pos, t.start) || near(pad.pos, t.end));
+        const onVia = vias.some((v) => near(pad.pos, v));
+        return !onTrace && !onVia;
+      });
+    }
+
+    if (isStale) stale.add(net);
+  }
+  return stale;
+}
+
 /** Route nets on a PCB with the kernel autorouter (obstacle-avoiding). */
 export async function routeNets(args: Record<string, unknown>) {
   const ctx = resolveDocInput(args);
@@ -1770,6 +1882,17 @@ export async function routeNets(args: Record<string, unknown>) {
     nets: [...netConnections.entries()].map(([name, connections]) => ({ name, connections })),
   };
 
+  // A footprint moved by set_placement after its nets were routed leaves the old
+  // copper dangling (traces that no longer land on any pad). Moving a part
+  // invalidates its nets' routes, so those nets are "affected" and must be
+  // re-routed even when the caller didn't name them — without this, a *scoped*
+  // re-route (`nets: [...]`) leaves orphaned copper on the nets it didn't touch.
+  // Fold the stale nets into the route set. With no filter we already re-route
+  // every net, so this only changes scoped calls.
+  const staleNets = detectStaleNets(pcb);
+  const effectiveFilter =
+    netsFilter.length > 0 ? [...new Set([...netsFilter, ...staleNets])] : netsFilter;
+
   // Rip up existing copper on the nets we're about to (re)route. route_all is
   // authoritative: it returns a *complete* fresh routing for every target net,
   // so appending it on top of last run's copper would (a) stack duplicate
@@ -1779,17 +1902,24 @@ export async function routeNets(args: Record<string, unknown>) {
   // no-kernel fallback below misfires — chaining naive straight segments over
   // the clean route. Re-running route_nets must *replace* the prior route, not
   // add to it. Scope the rip-up to exactly the nets route_all will route — nets
-  // with >=2 pads, intersected with `netsFilter` — so hand-routes on other nets
-  // (e.g. add_coil copper) survive.
+  // with >=2 pads, intersected with `effectiveFilter` — so hand-routes on other
+  // nets (e.g. add_coil copper) survive.
   const targetNets = new Set<string>();
   for (const [net, conns] of netConnections) {
     if (conns.length < 2) continue;
-    if (netsFilter.length > 0 && !netsFilter.includes(net)) continue;
+    if (effectiveFilter.length > 0 && !effectiveFilter.includes(net)) continue;
     targetNets.add(net);
   }
+
+  let tracesRemoved = 0;
+  let viasRemoved = 0;
   if (targetNets.size > 0) {
+    const beforeT = pcb.traces.length;
+    const beforeV = pcb.vias.length;
     pcb.traces = pcb.traces.filter((t) => !targetNets.has(t.net));
     pcb.vias = pcb.vias.filter((v) => !targetNets.has(v.net));
+    tracesRemoved = beforeT - pcb.traces.length;
+    viasRemoved = beforeV - pcb.vias.length;
   }
 
   const rats = await computeRatsnest(pcb, netlist);
@@ -1808,7 +1938,7 @@ export async function routeNets(args: Record<string, unknown>) {
   // confirm a power/phase net actually routed at its class width without
   // re-reading the board.
   const realizedWidths: Record<string, number> = {};
-  const result = await routeAll(pcb, width, netsFilter);
+  const result = await routeAll(pcb, width, effectiveFilter);
   const routedSomething =
     result.traces.length > 0 || result.vias.length > 0 || result.unrouted_nets.length > 0;
 
@@ -1844,7 +1974,7 @@ export async function routeNets(args: Record<string, unknown>) {
     // behavior; flagged because it may cross copper).
     for (const [netId, conns] of netConnections) {
       if (conns.length < 2) continue;
-      if (netsFilter.length > 0 && !netsFilter.includes(netId)) continue;
+      if (effectiveFilter.length > 0 && !effectiveFilter.includes(netId)) continue;
       const positions = conns.map((c) => {
         const fp = pcb.footprints.find((f) => f.ref === c.component_ref)!;
         const pad = fp.pads.find((p) => p.number === c.pin_number)!;
@@ -1876,6 +2006,15 @@ export async function routeNets(args: Record<string, unknown>) {
       `${fallbackNets.size} net(s) used direct fallback segments that may cross other copper — run run_drc to verify`,
     );
   }
+  // Stale nets the caller didn't ask for but we ripped up and re-routed because a
+  // pad had moved out from under their copper. Surface them so a scoped re-route
+  // is honest about the extra cleanup it did.
+  const staleCleared = [...staleNets].filter((n) => !netsFilter.includes(n));
+  if (netsFilter.length > 0 && staleCleared.length > 0) {
+    warnings.push(
+      `ripped up orphaned copper on ${staleCleared.length} net(s) whose pads moved after the last route and re-routed them: ${staleCleared.join(", ")}`,
+    );
+  }
 
   const receiptField: Record<string, unknown> = {};
   if (wantReceipt && beforeSnap) {
@@ -1895,6 +2034,13 @@ export async function routeNets(args: Record<string, unknown>) {
           success: true,
           nets_routed: routedNets.size,
           traces_added: tracesAdded,
+          // Copper hygiene: re-routing rips the prior route up first, so a
+          // re-route reports both what it removed and what it laid — `added`
+          // alone reads like monotonic growth even when copper is being
+          // replaced, not stacked.
+          ...(tracesRemoved > 0 ? { traces_removed: tracesRemoved } : {}),
+          ...(viasRemoved > 0 ? { vias_removed: viasRemoved } : {}),
+          ...(staleCleared.length > 0 ? { stale_nets_cleared: staleCleared } : {}),
           ...(Object.keys(realizedWidths).length > 0
             ? { track_widths_mm: realizedWidths }
             : {}),
