@@ -351,6 +351,40 @@ describe("route_nets locked_nets", () => {
   });
 });
 
+describe("route_nets strategy", () => {
+  const mkBoard = async () => {
+    const created = out(
+      await createSchematic({
+        components: [resistor("R1", 0), resistor("R2", 20), resistor("R3", 40)],
+        nets: { GND: ["R1.1", "R2.1", "R3.1"], SIG: ["R1.2", "R2.2"] },
+      }),
+    );
+    const id = created.document_id;
+    await placeComponents({ document_id: id, board_width: 60, board_height: 30 });
+    return id;
+  };
+
+  it("every strategy routes the board fully (no coverage regression vs auto)", async () => {
+    for (const strategy of ["auto", "power_first", "fanout_desc", "fanout_asc"]) {
+      const id = await mkBoard();
+      const res = out(await routeNets({ document_id: id, strategy }));
+      expect(res.success, `strategy ${strategy}`).toBe(true);
+      expect(res.nets_routed, `strategy ${strategy}`).toBeGreaterThanOrEqual(2);
+      expect(res.unrouted_nets ?? [], `strategy ${strategy}`).toEqual([]);
+    }
+  });
+
+  it("power_first stitches a plane power net first and still routes signals", async () => {
+    const id = await mkBoard();
+    await addZone({ document_id: id, net: "GND", layer: "BCu", fill_board: true });
+    const res = out(await routeNets({ document_id: id, strategy: "power_first" }));
+    expect(res.success).toBe(true);
+    expect(res.plane_stitched).toContain("GND");
+    const board = getPcbBoard(getSession(id));
+    expect(board.traces.some((t) => t.net === "SIG")).toBe(true);
+  });
+});
+
 describe("route_nets plane stitching", () => {
   it("reports nets connected through a copper plane in plane_stitched", async () => {
     const created = out(

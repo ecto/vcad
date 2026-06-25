@@ -639,6 +639,15 @@ export const routeNetsSchema = {
         "self-cleaning would otherwise delete. Copper on these nets survives " +
         "across route_nets passes; the kernel still routes every other net.",
     },
+    strategy: {
+      type: "string" as const,
+      description:
+        "Net ordering: 'auto' (default — one negotiated whole-board pass, best " +
+        "quality), 'power_first' (route power/plane nets before signals), " +
+        "'fanout_desc' (high pin-count nets first, to claim channels), or " +
+        "'fanout_asc'. Non-auto strategies route in priority tiers, each tier " +
+        "seeing the previous tiers' copper as obstacles.",
+    },
     trace_width: {
       type: "number" as const,
       description:
@@ -2515,6 +2524,10 @@ function detectStaleNets(pcb: Pcb): Set<string> {
   return stale;
 }
 
+/** Heuristic power/ground net names, for the `power_first` routing strategy. */
+const POWER_NET_RE =
+  /(^|[_\-/])(A?D?GND|VCC|VDD[A]?|VBAT|VBUS|VIN|VOUT|VSYS|VREF|PWR|POWER|\d+V\d*)(\d*)([_\-/]|$)/i;
+
 /** Route nets on a PCB with the kernel autorouter (obstacle-avoiding). */
 export async function routeNets(args: Record<string, unknown>) {
   const ctx = resolveDocInput(args);
@@ -2629,18 +2642,35 @@ export async function routeNets(args: Record<string, unknown>) {
       routeFilter = [...allRoutable];
     }
   }
-  const result = await routeAll(pcb, width, routeFilter);
-  const routedSomething =
-    result.traces.length > 0 || result.vias.length > 0 || result.unrouted_nets.length > 0;
+  // Nets connected through a copper plane (a zone) are stitched to the plane
+  // with vias by the kernel, not trace-routed — same rule as the kernel's
+  // plane_layers (a net with a zone of >=3 vertices). Also feeds `power_first`.
+  const planeNets = new Set<string>();
+  for (const z of pcb.zones) {
+    if (z.net && z.outline.length >= 3) planeNets.add(z.net);
+  }
 
-  if (routedSomething) {
+  // Net ordering strategy. "auto" (default) routes the whole board in one
+  // negotiated pass (best quality, kernel-global rip-up). The explicit
+  // strategies route in priority tiers — each tier's copper becomes the next
+  // tier's obstacle, so earlier (higher-priority) nets claim channels first.
+  const strategy = String(args.strategy ?? "auto");
+  const isPowerNet = (n: string) => planeNets.has(n) || POWER_NET_RE.test(n);
+  const tierOf = (n: string): number => {
+    if (strategy === "power_first") return isPowerNet(n) ? 0 : 1;
+    if (strategy === "fanout_desc") return -(netConnections.get(n)?.length ?? 0);
+    if (strategy === "fanout_asc") return netConnections.get(n)?.length ?? 0;
+    return 0;
+  };
+
+  const applyRoute = (result: Awaited<ReturnType<typeof routeAll>>) => {
     for (const t of result.traces) {
       pcb.traces.push({
         start: { x: t.start.x, y: t.start.y },
         end: { x: t.end.x, y: t.end.y },
         width: t.width,
-        // The kernel returns the layer as a string ("FCu"/"BCu"); it is always
-        // a valid PcbLayer value.
+        // The kernel returns the layer as a string ("FCu"/"BCu"); always a
+        // valid PcbLayer value.
         layer: t.layer as PcbLayer,
         net: t.net,
       });
@@ -2659,7 +2689,37 @@ export async function routeNets(args: Record<string, unknown>) {
     }
     for (const n of result.routed_nets) routedNets.add(n);
     for (const n of result.unrouted_nets) unroutedNets.add(n);
-  } else if (rats.length === 0) {
+  };
+
+  let routedSomething = false;
+  if (strategy === "auto") {
+    const result = await routeAll(pcb, width, routeFilter);
+    routedSomething =
+      result.traces.length > 0 || result.vias.length > 0 || result.unrouted_nets.length > 0;
+    if (routedSomething) applyRoute(result);
+  } else {
+    // Route higher-priority tiers first, each against the growing board.
+    const universe =
+      routeFilter.length > 0
+        ? routeFilter
+        : [...netConnections.keys()].filter((n) => !lockedNets.has(n));
+    const tiers = [...new Set(universe.map(tierOf))].sort((a, b) => a - b);
+    for (const tier of tiers) {
+      const nets = universe.filter((n) => tierOf(n) === tier);
+      if (nets.length === 0) continue;
+      const result = await routeAll(pcb, width, nets);
+      if (
+        result.traces.length > 0 ||
+        result.vias.length > 0 ||
+        result.unrouted_nets.length > 0
+      ) {
+        routedSomething = true;
+        applyRoute(result);
+      }
+    }
+  }
+
+  if (!routedSomething && rats.length === 0) {
     // No kernel at all: computeRatsnest returns [] and the auto-router is empty
     // — chain pads directly so the tool still produces connectivity (legacy
     // behavior; flagged because it may cross copper).
@@ -2687,14 +2747,6 @@ export async function routeNets(args: Record<string, unknown>) {
     }
   }
 
-  // Nets connected through a copper plane (a zone): the kernel stitches their
-  // pads to the plane with vias instead of trace-routing them. Surface which
-  // routed nets that was — same rule as the kernel's plane_layers (a net with a
-  // zone of >=3 vertices) — so the strategy is visible, not implicit.
-  const planeNets = new Set<string>();
-  for (const z of pcb.zones) {
-    if (z.net && z.outline.length >= 3) planeNets.add(z.net);
-  }
   const planeStitched = [...routedNets].filter((n) => planeNets.has(n)).sort();
 
   const warnings: string[] = [];
