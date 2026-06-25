@@ -1146,6 +1146,21 @@ export async function createSchematic(args: Record<string, unknown>) {
   const labelsInput = (args.labels as Array<Record<string, unknown>>) || [];
   const netsInput = (args.nets as Record<string, string[]>) || undefined;
 
+  // Validate a coordinate field, throwing on non-finite input rather than
+  // silently producing NaN that would propagate into schematic geometry.
+  const coord = (v: unknown, where: string): number => {
+    if (typeof v !== "number" || !Number.isFinite(v)) {
+      throw new Error(
+        `create_schematic: ${where} must be a finite number, got ${JSON.stringify(v)}`,
+      );
+    }
+    return v;
+  };
+  const coordOpt = (v: unknown, where: string): number => {
+    if (v === undefined || v === null) return 0;
+    return coord(v, where);
+  };
+
   const warnings: string[] = [];
   // Parts auto-resolved from the database, echoed back so the caller sees what
   // got pinned (and any datasheet / application notes).
@@ -1198,11 +1213,14 @@ export async function createSchematic(args: Record<string, unknown>) {
     const explicitPins = (c.pins as Array<Record<string, unknown>>) || [];
     const pins: SchematicPin[] =
       explicitPins.length > 0
-        ? explicitPins.map((p) => ({
+        ? explicitPins.map((p, j) => ({
             number: p.number as string,
             name: p.name as string,
             pin_type: (p.type as SchematicPin["pin_type"]) || "Passive",
-            position: { x: (p.x as number) || 0, y: (p.y as number) || 0 },
+            position: {
+              x: coordOpt(p.x, `components[${i}].pins[${j}].x`),
+              y: coordOpt(p.y, `components[${i}].pins[${j}].y`),
+            },
           }))
         : def
           ? def.pins.map((p) => ({
@@ -1222,8 +1240,11 @@ export async function createSchematic(args: Record<string, unknown>) {
       ref: c.ref as string,
       value: (c.value as string) || (c.part as string) || def?.name || "",
       footprintId: c.footprint as string,
-      position: { x: c.x as number, y: c.y as number },
-      rotation: (c.rotation as number) || 0,
+      position: {
+        x: coord(c.x, `components[${i}].x`),
+        y: coord(c.y, `components[${i}].y`),
+      },
+      rotation: coordOpt(c.rotation, `components[${i}].rotation`),
       pins,
       ...(Object.keys(properties).length > 0 ? { properties } : {}),
       // Inline-pad escape hatch: explicit footprint geometry that bypasses the
@@ -1257,14 +1278,14 @@ export async function createSchematic(args: Record<string, unknown>) {
     }
   });
 
-  const wires: SchematicWire[] = wiresInput.map((w) => ({
-    start: { x: w.x1 as number, y: w.y1 as number },
-    end: { x: w.x2 as number, y: w.y2 as number },
+  const wires: SchematicWire[] = wiresInput.map((w, i) => ({
+    start: { x: coord(w.x1, `wires[${i}].x1`), y: coord(w.y1, `wires[${i}].y1`) },
+    end: { x: coord(w.x2, `wires[${i}].x2`), y: coord(w.y2, `wires[${i}].y2`) },
   }));
 
-  const labels: SchematicLabel[] = labelsInput.map((l) => ({
+  const labels: SchematicLabel[] = labelsInput.map((l, i) => ({
     name: l.name as string,
-    position: { x: l.x as number, y: l.y as number },
+    position: { x: coord(l.x, `labels[${i}].x`), y: coord(l.y, `labels[${i}].y`) },
     scope: ((l.scope as string) || "Global") as SchematicLabel["scope"],
   }));
 
