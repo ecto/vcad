@@ -430,6 +430,14 @@ fn evaluate_op_timed(
             segments,
         } => Ok(Some(Solid::torus(*major_radius, *minor_radius, *segments))),
 
+        CsgOp::Wedge { size } => Ok(Some(Solid::wedge(size.x, size.y, size.z))),
+
+        CsgOp::Prism {
+            sides,
+            radius,
+            height,
+        } => Ok(Some(Solid::prism(*sides, *radius, *height))),
+
         CsgOp::Empty => Ok(Some(Solid::empty())),
 
         CsgOp::Union { left, right } => {
@@ -468,6 +476,20 @@ fn evaluate_op_timed(
             let (composed, inner_child) = collect_transform_chain(op, nodes);
             let c = eval_child(inner_child, cache)?;
             Ok(c.map(|s| s.apply_transform(&composed)))
+        }
+
+        CsgOp::Mirror {
+            child,
+            plane_origin,
+            plane_normal,
+        } => {
+            let c = eval_child(*child, cache)?;
+            Ok(c.map(|s| {
+                s.mirror(
+                    [plane_origin.x, plane_origin.y, plane_origin.z],
+                    [plane_normal.x, plane_normal.y, plane_normal.z],
+                )
+            }))
         }
 
         CsgOp::LinearPattern {
@@ -1268,6 +1290,9 @@ fn op_name(op: &CsgOp) -> String {
         CsgOp::Sphere { .. } => "Sphere",
         CsgOp::Cone { .. } => "Cone",
         CsgOp::Torus { .. } => "Torus",
+        CsgOp::Wedge { .. } => "Wedge",
+        CsgOp::Prism { .. } => "Prism",
+        CsgOp::Mirror { .. } => "Mirror",
         CsgOp::Empty => "Empty",
         CsgOp::Union { .. } => "Union",
         CsgOp::Difference { .. } => "Difference",

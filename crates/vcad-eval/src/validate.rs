@@ -44,6 +44,7 @@ fn validate_op(doc: &Document, node_id: NodeId, op: &CsgOp) -> Result<(), EvalEr
         CsgOp::Translate { child, .. }
         | CsgOp::Rotate { child, .. }
         | CsgOp::Scale { child, .. }
+        | CsgOp::Mirror { child, .. }
         | CsgOp::LinearPattern { child, .. }
         | CsgOp::CircularPattern { child, .. }
         | CsgOp::Shell { child, .. }
@@ -67,6 +68,8 @@ fn validate_op(doc: &Document, node_id: NodeId, op: &CsgOp) -> Result<(), EvalEr
         | CsgOp::Sphere { .. }
         | CsgOp::Cone { .. }
         | CsgOp::Torus { .. }
+        | CsgOp::Wedge { .. }
+        | CsgOp::Prism { .. }
         | CsgOp::Empty
         | CsgOp::Sketch2D { .. }
         | CsgOp::Text2D { .. }
@@ -109,6 +112,9 @@ fn csg_op_name(op: &CsgOp) -> &'static str {
         CsgOp::Sphere { .. } => "Sphere",
         CsgOp::Cone { .. } => "Cone",
         CsgOp::Torus { .. } => "Torus",
+        CsgOp::Wedge { .. } => "Wedge",
+        CsgOp::Prism { .. } => "Prism",
+        CsgOp::Mirror { .. } => "Mirror",
         CsgOp::Empty => "Empty",
         CsgOp::Union { .. } => "Union",
         CsgOp::Difference { .. } => "Difference",

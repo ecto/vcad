@@ -22,6 +22,8 @@
   [Sphere f64]
   [Cone f64 f64 f64]
   [Torus f64 f64]
+  [Wedge f64 f64 f64]
+  [Prism f64 f64 f64]
   ; Empty (identity for union)
   Empty
   ; Booleans
@@ -32,6 +34,7 @@
   [Translate Solid f64 f64 f64]
   [Rotate Solid f64 f64 f64]
   [Scale Solid f64 f64 f64]
+  [Mirror Solid f64 f64 f64 f64 f64 f64]
   ; Features
   [Extrude Sketch f64 f64 f64]
   [Revolve Sketch f64 f64 f64 f64 f64 f64 f64]
@@ -84,6 +87,8 @@
 [let sphere [fn [r] [Sphere r]]]
 [let cone [fn [r-bottom r-top h] [Cone r-bottom r-top h]]]
 [let torus [fn [major-r minor-r] [Torus major-r minor-r]]]
+[let wedge [fn [x y z] [Wedge x y z]]]
+[let prism [fn [sides radius height] [Prism sides radius height]]]
 
 ; Booleans (subject-last: [pipe body [difference tool]] → subtract tool from body)
 [let union [fn [other s] [Union s other]]]
@@ -94,6 +99,8 @@
 [let translate [fn [x y z s] [Translate s x y z]]]
 [let rotate [fn [rx ry rz s] [Rotate s rx ry rz]]]
 [let scale [fn [sx sy sz s] [Scale s sx sy sz]]]
+; mirror across a plane through (ox,oy,oz) with normal (nx,ny,nz)
+[let mirror [fn [ox oy oz nx ny nz s] [Mirror s ox oy oz nx ny nz]]]
 
 ; Sketch (no subject — creates new geometry)
 [let sketch [fn [ox oy oz xx xy xz yx yy yz segs]

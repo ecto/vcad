@@ -227,6 +227,39 @@ impl Solid {
         }
     }
 
+    /// Create a right-triangular-prism wedge. See
+    /// [`vcad_kernel_primitives::make_wedge`] for geometry details.
+    pub fn wedge(sx: f64, sy: f64, sz: f64) -> Self {
+        Self {
+            repr: SolidRepr::BRep(Box::new(vcad_kernel_primitives::make_wedge(sx, sy, sz))),
+            segments: 32,
+        }
+    }
+
+    /// Create an `n`-gonal right prism centred on the Z axis.
+    ///
+    /// `sides` must be >= 3; the polygon's circumradius is `radius`, and the
+    /// prism extrudes `height` along +Z.
+    pub fn prism(sides: u32, radius: f64, height: f64) -> Self {
+        Self {
+            repr: SolidRepr::BRep(Box::new(vcad_kernel_primitives::make_prism(
+                sides, radius, height,
+            ))),
+            segments: sides,
+        }
+    }
+
+    /// Mirror the solid across a plane defined by a point on the plane and
+    /// a normal vector. Routes through [`apply_transform`] with a reflection
+    /// matrix, so face / triangle winding is automatically reversed to
+    /// preserve outward normals.
+    pub fn mirror(&self, plane_origin: [f64; 3], plane_normal: [f64; 3]) -> Solid {
+        let p0 = Point3::new(plane_origin[0], plane_origin[1], plane_origin[2]);
+        let n = Vec3::new(plane_normal[0], plane_normal[1], plane_normal[2]);
+        let t = Transform::reflection(p0, n);
+        self.apply_transform(&t)
+    }
+
     // =========================================================================
     // CSG boolean operations
     // =========================================================================

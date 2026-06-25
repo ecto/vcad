@@ -657,6 +657,24 @@ function evaluateOp(
     case "Torus":
       return Solid.torus(op.major_radius, op.minor_radius, op.segments || undefined);
 
+    case "Wedge":
+      return Solid.wedge(op.size.x, op.size.y, op.size.z);
+
+    case "Prism":
+      return Solid.prism(op.sides, op.radius, op.height);
+
+    case "Mirror": {
+      const child = evaluateNode(op.child, nodes, Solid, cache, depth + 1);
+      return child.mirror(
+        op.plane_origin.x,
+        op.plane_origin.y,
+        op.plane_origin.z,
+        op.plane_normal.x,
+        op.plane_normal.y,
+        op.plane_normal.z,
+      );
+    }
+
     case "Empty":
       return Solid.empty();
 

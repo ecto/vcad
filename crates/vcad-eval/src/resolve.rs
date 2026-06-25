@@ -205,6 +205,51 @@ fn apply_to_op(op: &mut CsgOp, key: &BindingKey, value: f64) -> Result<(), Resol
             "segments" => *segments = value.round().max(0.0) as u32,
             _ => return bad("Torus"),
         },
+        CsgOp::Wedge { size } => {
+            let sub = path
+                .strip_prefix("size.")
+                .ok_or_else(|| ResolvePatchError::UnknownField {
+                    key: key.clone(),
+                    op_name: "Wedge",
+                })?;
+            apply_vec3(size, sub, value).ok_or_else(|| ResolvePatchError::UnknownField {
+                key: key.clone(),
+                op_name: "Wedge",
+            })?;
+        }
+        CsgOp::Prism {
+            sides,
+            radius,
+            height,
+        } => match path {
+            "sides" => *sides = value.round().max(3.0) as u32,
+            "radius" => *radius = value,
+            "height" => *height = value,
+            _ => return bad("Prism"),
+        },
+        CsgOp::Mirror {
+            plane_origin,
+            plane_normal,
+            ..
+        } => {
+            if let Some(sub) = path.strip_prefix("plane_origin.") {
+                apply_vec3(plane_origin, sub, value).ok_or_else(|| {
+                    ResolvePatchError::UnknownField {
+                        key: key.clone(),
+                        op_name: "Mirror",
+                    }
+                })?;
+            } else if let Some(sub) = path.strip_prefix("plane_normal.") {
+                apply_vec3(plane_normal, sub, value).ok_or_else(|| {
+                    ResolvePatchError::UnknownField {
+                        key: key.clone(),
+                        op_name: "Mirror",
+                    }
+                })?;
+            } else {
+                return bad("Mirror");
+            }
+        }
         CsgOp::Translate { offset, .. } => {
             let sub =
                 path.strip_prefix("offset.")

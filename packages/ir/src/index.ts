@@ -312,6 +312,31 @@ export interface TorusOp {
   segments: number;
 }
 
+export interface WedgeOp {
+  type: "Wedge";
+  /** Wedge size: leg along +X, extrusion along +Y, leg along +Z. */
+  size: Vec3;
+}
+
+export interface PrismOp {
+  type: "Prism";
+  /** Number of polygon sides (>= 3). */
+  sides: number;
+  /** Polygon circumradius. */
+  radius: number;
+  /** Extrusion height along +Z. */
+  height: number;
+}
+
+export interface MirrorOp {
+  type: "Mirror";
+  child: NodeId;
+  /** A point lying on the mirror plane. */
+  plane_origin: Vec3;
+  /** Normal of the mirror plane (need not be unit). */
+  plane_normal: Vec3;
+}
+
 export interface EmptyOp {
   type: "Empty";
 }
@@ -585,6 +610,9 @@ export type CsgOp =
   | SphereOp
   | ConeOp
   | TorusOp
+  | WedgeOp
+  | PrismOp
+  | MirrorOp
   | EmptyOp
   | UnionOp
   | DifferenceOp
@@ -1648,6 +1676,12 @@ function formatOp(op: CsgOp, idMap: Map<number, number>, name?: string): string 
       return `K ${op.radius_bottom} ${op.radius_top} ${op.height}${nameSuffix}`;
     case 'Torus':
       return `TO ${op.major_radius} ${op.minor_radius}${nameSuffix}`;
+    case 'Wedge':
+      return `W ${op.size.x} ${op.size.y} ${op.size.z}${nameSuffix}`;
+    case 'Prism':
+      return `PR ${op.sides} ${op.radius} ${op.height}${nameSuffix}`;
+    case 'Mirror':
+      return `MI ${idMap.get(op.child)} ${op.plane_origin.x} ${op.plane_origin.y} ${op.plane_origin.z} ${op.plane_normal.x} ${op.plane_normal.y} ${op.plane_normal.z}${nameSuffix}`;
     case 'Empty':
       return `C 0 0 0${nameSuffix}`;
     case 'Union':
@@ -2282,6 +2316,18 @@ function parseGeometryOpcode(opcode: string, parts: string[], lineNum: number, l
     case 'TO':
       if (parts.length !== 3) throw new VCodeParseError(lineNum, `TO requires 2 args, got ${parts.length - 1}`);
       return { type: 'Torus', major_radius: parseFloatArg(parts[1], lineNum, 'major_radius'), minor_radius: parseFloatArg(parts[2], lineNum, 'minor_radius'), segments: 0 };
+
+    case 'W':
+      if (parts.length !== 4) throw new VCodeParseError(lineNum, `W requires 3 args, got ${parts.length - 1}`);
+      return { type: 'Wedge', size: { x: parseFloatArg(parts[1], lineNum, 'sx'), y: parseFloatArg(parts[2], lineNum, 'sy'), z: parseFloatArg(parts[3], lineNum, 'sz') } };
+
+    case 'PR':
+      if (parts.length !== 4) throw new VCodeParseError(lineNum, `PR requires 3 args, got ${parts.length - 1}`);
+      return { type: 'Prism', sides: parseIntArg(parts[1], lineNum, 'sides'), radius: parseFloatArg(parts[2], lineNum, 'radius'), height: parseFloatArg(parts[3], lineNum, 'height') };
+
+    case 'MI':
+      if (parts.length !== 8) throw new VCodeParseError(lineNum, `MI requires 7 args, got ${parts.length - 1}`);
+      return { type: 'Mirror', child: parseIntArg(parts[1], lineNum, 'child'), plane_origin: { x: parseFloatArg(parts[2], lineNum, 'ox'), y: parseFloatArg(parts[3], lineNum, 'oy'), z: parseFloatArg(parts[4], lineNum, 'oz') }, plane_normal: { x: parseFloatArg(parts[5], lineNum, 'nx'), y: parseFloatArg(parts[6], lineNum, 'ny'), z: parseFloatArg(parts[7], lineNum, 'nz') } };
 
     case 'U':
       if (parts.length !== 3) throw new VCodeParseError(lineNum, `U requires 2 args, got ${parts.length - 1}`);

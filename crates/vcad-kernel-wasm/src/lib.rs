@@ -490,6 +490,43 @@ impl Solid {
         }
     }
 
+    /// Create a right-triangular-prism wedge with corner at origin.
+    #[wasm_bindgen(js_name = wedge)]
+    pub fn wedge(sx: f64, sy: f64, sz: f64) -> Solid {
+        Solid {
+            inner: vcad_kernel::Solid::wedge(sx, sy, sz),
+        }
+    }
+
+    /// Create a regular n-gonal right prism centered on Z.
+    #[wasm_bindgen(js_name = prism)]
+    pub fn prism(sides: u32, radius: f64, height: f64) -> Solid {
+        Solid {
+            inner: vcad_kernel::Solid::prism(sides, radius, height),
+        }
+    }
+
+    /// Mirror the solid across a plane through `(origin_x, origin_y, origin_z)`
+    /// with the given plane normal. Triangle / face winding is automatically
+    /// reversed to preserve outward normals.
+    #[wasm_bindgen(js_name = mirror)]
+    pub fn mirror(
+        &self,
+        origin_x: f64,
+        origin_y: f64,
+        origin_z: f64,
+        normal_x: f64,
+        normal_y: f64,
+        normal_z: f64,
+    ) -> Solid {
+        Solid {
+            inner: self.inner.mirror(
+                [origin_x, origin_y, origin_z],
+                [normal_x, normal_y, normal_z],
+            ),
+        }
+    }
+
     /// Create a solid by extruding a 2D sketch profile.
     ///
     /// Takes a sketch profile and extrusion direction as JS objects.

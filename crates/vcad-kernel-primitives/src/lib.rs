@@ -156,6 +156,249 @@ pub fn make_cube(sx: f64, sy: f64, sz: f64) -> BRepSolid {
     }
 }
 
+/// Build a right-triangular-prism wedge with the right-angle corner at the
+/// origin, legs `sx` along +X and `sz` along +Z, extruded `sy` along +Y.
+///
+/// The cross-section in the XZ plane is a right triangle with vertices
+/// `(0, 0)`, `(sx, 0)`, `(0, sz)`. Extrusion along +Y produces a solid with
+/// 6 vertices, 5 faces (2 triangular end-caps + 3 rectangular sides — the
+/// bottom z=0, the back x=0, and the sloped hypotenuse face), and 9 edges.
+pub fn make_wedge(sx: f64, sy: f64, sz: f64) -> BRepSolid {
+    let mut topo = Topology::new();
+    let mut geom = GeometryStore::new();
+
+    // 6 vertices: triangle at y=0, triangle at y=sy.
+    let v0 = topo.add_vertex(Point3::new(0.0, 0.0, 0.0));
+    let v1 = topo.add_vertex(Point3::new(sx, 0.0, 0.0));
+    let v2 = topo.add_vertex(Point3::new(0.0, 0.0, sz));
+    let v3 = topo.add_vertex(Point3::new(0.0, sy, 0.0));
+    let v4 = topo.add_vertex(Point3::new(sx, sy, 0.0));
+    let v5 = topo.add_vertex(Point3::new(0.0, sy, sz));
+
+    let mut all_faces = Vec::new();
+    let mut he_map: std::collections::HashMap<
+        (vcad_kernel_topo::VertexId, vcad_kernel_topo::VertexId),
+        HalfEdgeId,
+    > = std::collections::HashMap::new();
+
+    // Each face: (vertex order CCW from outside, plane origin, x_dir, y_dir).
+    // Plane normal = x_dir × y_dir must point OUT of the solid.
+    let face_verts: Vec<(Vec<vcad_kernel_topo::VertexId>, Point3, Vec3, Vec3)> = vec![
+        // Bottom (z=0, normal -Z): walk v0→v3→v4→v1
+        (
+            vec![v0, v3, v4, v1],
+            Point3::new(0.0, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+            Vec3::new(1.0, 0.0, 0.0),
+        ),
+        // Back (x=0, normal -X): walk v0→v2→v5→v3
+        (
+            vec![v0, v2, v5, v3],
+            Point3::new(0.0, 0.0, 0.0),
+            Vec3::new(0.0, 0.0, 1.0),
+            Vec3::new(0.0, 1.0, 0.0),
+        ),
+        // Hypotenuse (sloped, outward normal in +X+Z): walk v1→v4→v5→v2
+        (
+            vec![v1, v4, v5, v2],
+            Point3::new(sx, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+            Vec3::new(-sx, 0.0, sz),
+        ),
+        // Triangle cap at y=0 (normal -Y): walk v0→v1→v2
+        (
+            vec![v0, v1, v2],
+            Point3::new(0.0, 0.0, 0.0),
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(0.0, 0.0, 1.0),
+        ),
+        // Triangle cap at y=sy (normal +Y): walk v3→v5→v4
+        (
+            vec![v3, v5, v4],
+            Point3::new(0.0, sy, 0.0),
+            Vec3::new(0.0, 0.0, 1.0),
+            Vec3::new(1.0, 0.0, 0.0),
+        ),
+    ];
+
+    for (verts, origin, x_dir, y_dir) in face_verts.iter() {
+        let surf_idx = geom.add_surface(Box::new(Plane::new(*origin, *x_dir, *y_dir)));
+        let mut hes = Vec::with_capacity(verts.len());
+        for j in 0..verts.len() {
+            let he = topo.add_half_edge(verts[j]);
+            hes.push(he);
+            he_map.insert((verts[j], verts[(j + 1) % verts.len()]), he);
+        }
+        let loop_id = topo.add_loop(&hes);
+        let face_id = topo.add_face(loop_id, surf_idx, Orientation::Forward);
+        all_faces.push(face_id);
+    }
+
+    // Pair twin half-edges.
+    let mut paired = std::collections::HashSet::new();
+    for &(v_from, v_to) in he_map.keys() {
+        if paired.contains(&(v_to, v_from)) {
+            continue;
+        }
+        if let Some(&he2) = he_map.get(&(v_to, v_from)) {
+            let he1 = he_map[&(v_from, v_to)];
+            topo.add_edge(he1, he2);
+            paired.insert((v_from, v_to));
+        }
+    }
+
+    // 3D edge curves.
+    for &face_id in &all_faces {
+        let face = &topo.faces[face_id];
+        for he_id in topo.loop_half_edges(face.outer_loop).collect::<Vec<_>>() {
+            let origin = topo.vertices[topo.half_edges[he_id].origin].point;
+            let dest_id = topo.half_edge_dest(he_id);
+            let dest = topo.vertices[dest_id].point;
+            geom.add_curve_3d(Box::new(Line3d::from_points(origin, dest)));
+        }
+    }
+
+    let shell = topo.add_shell(all_faces, ShellType::Outer);
+    let solid_id = topo.add_solid(shell);
+
+    BRepSolid {
+        topology: topo,
+        geometry: geom,
+        solid_id,
+    }
+}
+
+/// Build an `n`-gonal right prism centred on the Z axis with `circumradius`
+/// in the XY plane and `height` along +Z. A regular n-gon (the circumradius
+/// is the distance from centre to each vertex) is extruded.
+///
+/// The prism has `2*sides` vertices, `sides + 2` faces (`sides` rectangular
+/// side panels + top and bottom n-gon caps), and `3*sides` edges.
+///
+/// Requires `sides >= 3`. With `sides = 3` you get a triangular prism, with
+/// `sides = 6` a hex-nut blank, etc.
+pub fn make_prism(sides: u32, circumradius: f64, height: f64) -> BRepSolid {
+    assert!(sides >= 3, "make_prism: sides must be >= 3, got {sides}");
+
+    let mut topo = Topology::new();
+    let mut geom = GeometryStore::new();
+
+    let n = sides as usize;
+    // Bottom and top n-gon vertices.
+    let mut v_bot = Vec::with_capacity(n);
+    let mut v_top = Vec::with_capacity(n);
+    for i in 0..n {
+        let theta = 2.0 * std::f64::consts::PI * (i as f64) / (n as f64);
+        let x = circumradius * theta.cos();
+        let y = circumradius * theta.sin();
+        v_bot.push(topo.add_vertex(Point3::new(x, y, 0.0)));
+        v_top.push(topo.add_vertex(Point3::new(x, y, height)));
+    }
+
+    let mut all_faces = Vec::new();
+    let mut he_map: std::collections::HashMap<
+        (vcad_kernel_topo::VertexId, vcad_kernel_topo::VertexId),
+        HalfEdgeId,
+    > = std::collections::HashMap::new();
+
+    // Side faces: each rectangle is v_bot[i], v_bot[i+1], v_top[i+1], v_top[i].
+    // Plane: origin at bottom edge midpoint, x_dir along the edge (+CCW),
+    // y_dir = +Z. Normal points radially outward.
+    for i in 0..n {
+        let j = (i + 1) % n;
+        let p0 = topo.vertices[v_bot[i]].point;
+        let p1 = topo.vertices[v_bot[j]].point;
+        let x_dir = Vec3::new(p1.x - p0.x, p1.y - p0.y, 0.0);
+        let y_dir = Vec3::new(0.0, 0.0, 1.0);
+
+        let surf_idx = geom.add_surface(Box::new(Plane::new(p0, x_dir, y_dir)));
+
+        let order = [v_bot[i], v_bot[j], v_top[j], v_top[i]];
+        let mut hes = Vec::with_capacity(4);
+        for k in 0..4 {
+            let he = topo.add_half_edge(order[k]);
+            hes.push(he);
+            he_map.insert((order[k], order[(k + 1) % 4]), he);
+        }
+        let loop_id = topo.add_loop(&hes);
+        let face_id = topo.add_face(loop_id, surf_idx, Orientation::Forward);
+        all_faces.push(face_id);
+    }
+
+    // Bottom cap (z=0, normal -Z): walk v_bot in reverse order so the loop is CCW from below.
+    {
+        let plane = Plane::new(
+            Point3::new(0.0, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+            Vec3::new(1.0, 0.0, 0.0),
+        );
+        let surf_idx = geom.add_surface(Box::new(plane));
+        let order: Vec<_> = (0..n).rev().map(|i| v_bot[i]).collect();
+        let mut hes = Vec::with_capacity(n);
+        for k in 0..n {
+            let he = topo.add_half_edge(order[k]);
+            hes.push(he);
+            he_map.insert((order[k], order[(k + 1) % n]), he);
+        }
+        let loop_id = topo.add_loop(&hes);
+        let face_id = topo.add_face(loop_id, surf_idx, Orientation::Forward);
+        all_faces.push(face_id);
+    }
+
+    // Top cap (z=height, normal +Z): walk v_top forward.
+    {
+        let plane = Plane::new(
+            Point3::new(0.0, 0.0, height),
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+        );
+        let surf_idx = geom.add_surface(Box::new(plane));
+        let order: Vec<_> = (0..n).map(|i| v_top[i]).collect();
+        let mut hes = Vec::with_capacity(n);
+        for k in 0..n {
+            let he = topo.add_half_edge(order[k]);
+            hes.push(he);
+            he_map.insert((order[k], order[(k + 1) % n]), he);
+        }
+        let loop_id = topo.add_loop(&hes);
+        let face_id = topo.add_face(loop_id, surf_idx, Orientation::Forward);
+        all_faces.push(face_id);
+    }
+
+    // Pair twin half-edges.
+    let mut paired = std::collections::HashSet::new();
+    for &(v_from, v_to) in he_map.keys() {
+        if paired.contains(&(v_to, v_from)) {
+            continue;
+        }
+        if let Some(&he2) = he_map.get(&(v_to, v_from)) {
+            let he1 = he_map[&(v_from, v_to)];
+            topo.add_edge(he1, he2);
+            paired.insert((v_from, v_to));
+        }
+    }
+
+    // 3D edge curves.
+    for &face_id in &all_faces {
+        let face = &topo.faces[face_id];
+        for he_id in topo.loop_half_edges(face.outer_loop).collect::<Vec<_>>() {
+            let origin = topo.vertices[topo.half_edges[he_id].origin].point;
+            let dest_id = topo.half_edge_dest(he_id);
+            let dest = topo.vertices[dest_id].point;
+            geom.add_curve_3d(Box::new(Line3d::from_points(origin, dest)));
+        }
+    }
+
+    let shell = topo.add_shell(all_faces, ShellType::Outer);
+    let solid_id = topo.add_solid(shell);
+
+    BRepSolid {
+        topology: topo,
+        geometry: geom,
+        solid_id,
+    }
+}
+
 /// Build a B-rep cylinder with the given radius and height, axis along Z.
 ///
 /// The cylinder has:
@@ -649,5 +892,56 @@ mod tests {
         assert!((p.x - 13.0).abs() < 1e-12);
         assert!(p.y.abs() < 1e-12);
         assert!(p.z.abs() < 1e-12);
+    }
+
+    #[test]
+    fn test_wedge_topology() {
+        let brep = make_wedge(10.0, 20.0, 30.0);
+        let topo = &brep.topology;
+        assert_eq!(topo.vertices.len(), 6);
+        assert_eq!(topo.faces.len(), 5); // bottom + back + hypotenuse + 2 triangle caps
+        assert_eq!(topo.edges.len(), 9);
+        // 3 quads × 4 + 2 triangles × 3 = 18 half-edges
+        assert_eq!(topo.half_edges.len(), 18);
+        assert_eq!(topo.shells.len(), 1);
+        assert_eq!(topo.solids.len(), 1);
+    }
+
+    #[test]
+    fn test_wedge_geometry() {
+        let brep = make_wedge(10.0, 20.0, 30.0);
+        assert_eq!(brep.geometry.surfaces.len(), 5);
+        for s in &brep.geometry.surfaces {
+            assert_eq!(s.surface_type(), vcad_kernel_geom::SurfaceKind::Plane);
+        }
+    }
+
+    #[test]
+    fn test_prism_triangular() {
+        let brep = make_prism(3, 5.0, 10.0);
+        let topo = &brep.topology;
+        assert_eq!(topo.vertices.len(), 6); // 3 bottom + 3 top
+        assert_eq!(topo.faces.len(), 5); // 3 sides + 2 caps
+        assert_eq!(topo.edges.len(), 9); // 3 bottom + 3 top + 3 vertical
+    }
+
+    #[test]
+    fn test_prism_hex_nut() {
+        // Classic hex-nut blank: 6-gon prism.
+        let brep = make_prism(6, 8.0, 4.0);
+        let topo = &brep.topology;
+        assert_eq!(topo.vertices.len(), 12);
+        assert_eq!(topo.faces.len(), 8); // 6 sides + 2 caps
+        assert_eq!(topo.edges.len(), 18);
+        // Every face is planar.
+        for s in &brep.geometry.surfaces {
+            assert_eq!(s.surface_type(), vcad_kernel_geom::SurfaceKind::Plane);
+        }
+    }
+
+    #[test]
+    #[should_panic(expected = "sides must be >= 3")]
+    fn test_prism_rejects_too_few_sides() {
+        let _ = make_prism(2, 5.0, 10.0);
     }
 }

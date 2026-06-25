@@ -217,6 +217,12 @@ function opToLoon(op: CsgOp, doc: Document): OpResult {
     case "Torus":
       return ok(`[torus ${f(op.major_radius)} ${f(op.minor_radius)}]`);
 
+    case "Wedge":
+      return ok(`[wedge ${f(op.size.x)} ${f(op.size.y)} ${f(op.size.z)}]`);
+
+    case "Prism":
+      return ok(`[prism ${op.sides} ${f(op.radius)} ${f(op.height)}]`);
+
     case "Empty":
       return ok("Empty");
 
@@ -242,6 +248,11 @@ function opToLoon(op: CsgOp, doc: Document): OpResult {
     case "Scale":
       return ok(
         `[scale ${f(op.factor.x)} ${f(op.factor.y)} ${f(op.factor.z)} ${ref(op.child, doc)}]`,
+      );
+
+    case "Mirror":
+      return ok(
+        `[mirror ${f(op.plane_origin.x)} ${f(op.plane_origin.y)} ${f(op.plane_origin.z)} ${f(op.plane_normal.x)} ${f(op.plane_normal.y)} ${f(op.plane_normal.z)} ${ref(op.child, doc)}]`,
       );
 
     case "Fillet":
@@ -363,6 +374,7 @@ function getChildIds(op: CsgOp): NodeId[] {
     case "Translate":
     case "Rotate":
     case "Scale":
+    case "Mirror":
     case "Fillet":
     case "Chamfer":
     case "Shell":

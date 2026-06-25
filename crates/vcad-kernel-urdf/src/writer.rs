@@ -271,6 +271,34 @@ impl<'a> UrdfWriter<'a> {
                 };
                 Ok((geometry, None))
             }
+            CsgOp::Wedge { size } => {
+                // URDF has no native wedge; approximate as a bounding box.
+                let geometry = Geometry {
+                    box_geom: Some(BoxGeom {
+                        size: format!("{} {} {}", size.x / 1000.0, size.y / 1000.0, size.z / 1000.0),
+                    }),
+                    cylinder: None,
+                    sphere: None,
+                    mesh: None,
+                };
+                Ok((geometry, None))
+            }
+            CsgOp::Prism {
+                radius, height, ..
+            } => {
+                // URDF has no n-gonal prism; approximate as a cylinder whose
+                // radius equals the polygon circumradius.
+                let geometry = Geometry {
+                    box_geom: None,
+                    cylinder: Some(CylinderGeom {
+                        radius: radius / 1000.0,
+                        length: height / 1000.0,
+                    }),
+                    sphere: None,
+                    mesh: None,
+                };
+                Ok((geometry, None))
+            }
             CsgOp::Translate { child, offset } => {
                 let (geometry, _) = self.node_to_geometry(*child)?;
                 let origin = Some(Origin {
@@ -336,6 +364,13 @@ impl<'a> UrdfWriter<'a> {
                     mesh.scale = Some(format!("{} {} {}", factor.x, factor.y, factor.z));
                 }
                 Ok((geometry, origin))
+            }
+            CsgOp::Mirror { child, .. } => {
+                // URDF has no native reflection. Pass the child geometry
+                // through; for a mesh-based link, callers who need the
+                // mirrored shape should bake the reflection into the mesh
+                // before export.
+                self.node_to_geometry(*child)
             }
             CsgOp::Empty => {
                 // Empty geometry - create tiny placeholder

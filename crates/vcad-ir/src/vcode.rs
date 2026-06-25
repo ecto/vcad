@@ -1817,6 +1817,36 @@ where
             })
         }
 
+        "W" => {
+            if parts.len() != 4 {
+                return Err(VCodeParseError {
+                    line: line_num,
+                    message: format!("W requires 3 args, got {}", parts.len() - 1),
+                });
+            }
+            Ok(CsgOp::Wedge {
+                size: Vec3::new(
+                    parse_f64(parts[1], line_num)?,
+                    parse_f64(parts[2], line_num)?,
+                    parse_f64(parts[3], line_num)?,
+                ),
+            })
+        }
+
+        "PR" => {
+            if parts.len() != 4 {
+                return Err(VCodeParseError {
+                    line: line_num,
+                    message: format!("PR requires 3 args, got {}", parts.len() - 1),
+                });
+            }
+            Ok(CsgOp::Prism {
+                sides: parse_u64(parts[1], line_num)? as u32,
+                radius: parse_f64(parts[2], line_num)?,
+                height: parse_f64(parts[3], line_num)?,
+            })
+        }
+
         "U" => {
             if parts.len() != 3 {
                 return Err(VCodeParseError {
@@ -1903,6 +1933,28 @@ where
                     parse_f64(parts[2], line_num)?,
                     parse_f64(parts[3], line_num)?,
                     parse_f64(parts[4], line_num)?,
+                ),
+            })
+        }
+
+        "MI" => {
+            if parts.len() != 8 {
+                return Err(VCodeParseError {
+                    line: line_num,
+                    message: format!("MI requires 7 args, got {}", parts.len() - 1),
+                });
+            }
+            Ok(CsgOp::Mirror {
+                child: parse_u64(parts[1], line_num)?,
+                plane_origin: Vec3::new(
+                    parse_f64(parts[2], line_num)?,
+                    parse_f64(parts[3], line_num)?,
+                    parse_f64(parts[4], line_num)?,
+                ),
+                plane_normal: Vec3::new(
+                    parse_f64(parts[5], line_num)?,
+                    parse_f64(parts[6], line_num)?,
+                    parse_f64(parts[7], line_num)?,
                 ),
             })
         }
@@ -2150,6 +2202,7 @@ fn get_children(op: &CsgOp) -> Vec<u64> {
         CsgOp::Translate { child, .. }
         | CsgOp::Rotate { child, .. }
         | CsgOp::Scale { child, .. }
+        | CsgOp::Mirror { child, .. }
         | CsgOp::LinearPattern { child, .. }
         | CsgOp::CircularPattern { child, .. }
         | CsgOp::Shell { child, .. }
@@ -2253,6 +2306,20 @@ fn format_op(
             major_radius, minor_radius, name_suffix
         )),
 
+        CsgOp::Wedge { size } => Ok(format!(
+            "W {} {} {}{}",
+            size.x, size.y, size.z, name_suffix
+        )),
+
+        CsgOp::Prism {
+            sides,
+            radius,
+            height,
+        } => Ok(format!(
+            "PR {} {} {}{}",
+            sides, radius, height, name_suffix
+        )),
+
         CsgOp::Empty => Ok(format!("C 0 0 0{}", name_suffix)),
 
         CsgOp::Union { left, right } => {
@@ -2321,6 +2388,28 @@ fn format_op(
             Ok(format!(
                 "X {} {} {} {}{}",
                 c, factor.x, factor.y, factor.z, name_suffix
+            ))
+        }
+
+        CsgOp::Mirror {
+            child,
+            plane_origin,
+            plane_normal,
+        } => {
+            let c = id_map.get(child).ok_or_else(|| VCodeParseError {
+                line: 0,
+                message: format!("unknown node {}", child),
+            })?;
+            Ok(format!(
+                "MI {} {} {} {} {} {} {}{}",
+                c,
+                plane_origin.x,
+                plane_origin.y,
+                plane_origin.z,
+                plane_normal.x,
+                plane_normal.y,
+                plane_normal.z,
+                name_suffix
             ))
         }
 

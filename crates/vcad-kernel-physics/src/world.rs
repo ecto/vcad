@@ -695,6 +695,14 @@ impl PhysicsWorld {
                 *minor_radius,
                 if *segments == 0 { 32 } else { *segments },
             ),
+            vcad_ir::CsgOp::Wedge { size } => {
+                vcad_kernel::Solid::wedge(size.x, size.y, size.z)
+            }
+            vcad_ir::CsgOp::Prism {
+                sides,
+                radius,
+                height,
+            } => vcad_kernel::Solid::prism(*sides, *radius, *height),
             _ => {
                 // For other operations, create a small placeholder
                 vcad_kernel::Solid::cube(10.0, 10.0, 10.0)

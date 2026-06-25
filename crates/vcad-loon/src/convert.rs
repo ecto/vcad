@@ -503,6 +503,8 @@ fn is_solid_tag(tag: &str) -> bool {
             | "Sphere"
             | "Cone"
             | "Torus"
+            | "Wedge"
+            | "Prism"
             | "Empty"
             | "Union"
             | "Difference"
@@ -510,6 +512,7 @@ fn is_solid_tag(tag: &str) -> bool {
             | "Translate"
             | "Rotate"
             | "Scale"
+            | "Mirror"
             | "Extrude"
             | "Revolve"
             | "Shell"
@@ -633,6 +636,20 @@ impl ConvertCtx {
                     segments: 0,
                 }
             }
+            "Wedge" => {
+                assert_fields(tag, fields, 3)?;
+                CsgOp::Wedge {
+                    size: self.vec3(fields, 0)?,
+                }
+            }
+            "Prism" => {
+                assert_fields(tag, fields, 3)?;
+                CsgOp::Prism {
+                    sides: self.f64_val(&fields[0])?.round().max(3.0) as u32,
+                    radius: self.f64_val(&fields[1])?,
+                    height: self.f64_val(&fields[2])?,
+                }
+            }
             "Empty" => CsgOp::Empty,
 
             // Booleans
@@ -678,6 +695,16 @@ impl ConvertCtx {
                 CsgOp::Scale {
                     child,
                     factor: self.vec3(fields, 1)?,
+                }
+            }
+            "Mirror" => {
+                // [Mirror solid ox oy oz nx ny nz]
+                assert_fields(tag, fields, 7)?;
+                let child = self.convert_solid(&fields[0])?;
+                CsgOp::Mirror {
+                    child,
+                    plane_origin: self.vec3(fields, 1)?,
+                    plane_normal: self.vec3(fields, 4)?,
                 }
             }
 
