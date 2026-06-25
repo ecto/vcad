@@ -209,6 +209,23 @@ describe("footprint discovery", () => {
   });
 });
 
+describe("catalog parts (create_schematic resolves added FC parts)", () => {
+  it("resolves TCAN1042 pins from the database without explicit pins", async () => {
+    const created = out(
+      await createSchematic({
+        components: [{ ref: "U1", part: "TCAN1042HGV", footprint: "SOIC-8", x: 0, y: 0 }],
+        nets: { GND: ["U1.2"], "3V3": ["U1.3"] },
+      }),
+    );
+    expect(created.success).toBe(true);
+    const comp = getSession(created.document_id).schematic!.components[0]!;
+    expect(comp.pins.length).toBe(8);
+    const names = comp.pins.map((p) => p.name);
+    expect(names).toContain("CANH");
+    expect(names).toContain("CANL");
+  });
+});
+
 describe("import_kicad / import_eagle", () => {
   // Minimal KiCad board (mirrors the kernel parser's own fixture): 2 nets,
   // a 100x80 outline, one 0805 with 2 pads, one trace, one via.
