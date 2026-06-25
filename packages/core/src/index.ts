@@ -123,6 +123,9 @@ export type {
   SimulationObservation,
 } from "./stores/simulation-store.js";
 
+export { useRecordingStore } from "./stores/recording-store.js";
+export type { RecordingState, RecordingStatus } from "./stores/recording-store.js";
+
 export { useChatStore } from "./stores/chat-store.js";
 export type {
   ChatState,

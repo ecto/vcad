@@ -1,9 +1,40 @@
 import SwiftUI
 import AppKit
+import simd
 
 @main
 struct VcadApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
+
+    init() {
+        // Headless smoke hook (matches VCAD_GRIPPER/VCAD_ROUTE): dump the parsed
+        // feature tree of a .vcad to stderr and exit — verifies the DAG parser
+        // without driving the GUI. e.g. VCAD_DUMP_TREE=examples/plate.vcad
+        if let path = ProcessInfo.processInfo.environment["VCAD_DUMP_TREE"] {
+            dumpFeatureTree(path: path)
+            exit(0)
+        }
+        if let path = ProcessInfo.processInfo.environment["VCAD_EDIT_SMOKE"] {
+            MainActor.assumeIsolated { editSmoke(path: path) }
+            exit(0)
+        }
+        if let path = ProcessInfo.processInfo.environment["VCAD_AUTHOR_SMOKE"] {
+            MainActor.assumeIsolated { authorSmoke(path: path) }
+            exit(0)
+        }
+        if let path = ProcessInfo.processInfo.environment["VCAD_SKETCH_SMOKE"] {
+            MainActor.assumeIsolated { sketchSmoke(path: path) }
+            exit(0)
+        }
+        if let path = ProcessInfo.processInfo.environment["VCAD_MAT_SMOKE"] {
+            MainActor.assumeIsolated { matSmoke(path: path) }
+            exit(0)
+        }
+        if let path = ProcessInfo.processInfo.environment["VCAD_GIZMO_SMOKE"] {
+            MainActor.assumeIsolated { gizmoSmoke(path: path) }
+            exit(0)
+        }
+    }
 
     var body: some Scene {
         WindowGroup {
@@ -12,6 +43,168 @@ struct VcadApp: App {
         }
         .windowStyle(.automatic)
     }
+}
+
+/// Print a document's parsed feature tree (used by the VCAD_DUMP_TREE hook).
+private func dumpFeatureTree(path: String) {
+    guard let g = DocumentGraph.load(path: path) else {
+        FileHandle.standardError.write(Data("[VCAD_TREE] parse failed: \(path)\n".utf8))
+        return
+    }
+    var out = "[VCAD_TREE] \(path) — \(g.visibleRoots.count) part(s)\n"
+    func walk(_ node: FeatureNode, _ depth: Int) {
+        let pad = String(repeating: "  ", count: depth)
+        let part = node.partIndex.map { " [part \($0)]" } ?? ""
+        let detail = node.detail.map { " — \($0)" } ?? ""
+        out += "\(pad)• \(node.name) (\(node.opType))\(detail)\(part)\n"
+        for c in node.children { walk(c, depth + 1) }
+    }
+    for r in g.featureRoots() { walk(r, 0) }
+    FileHandle.standardError.write(Data(out.utf8))
+}
+
+/// Exercise the edit → re-eval → undo → export pipeline headlessly.
+@MainActor private func editSmoke(path: String) {
+    func emit(_ s: String) { FileHandle.standardError.write(Data((s + "\n").utf8)) }
+    func find(_ nodes: [FeatureNode], _ op: String) -> FeatureNode? {
+        for n in nodes {
+            if n.opType == op { return n }
+            if let f = find(n.children, op) { return f }
+        }
+        return nil
+    }
+    let m = EditorModel()
+    m.source = .document(path: path, label: "smoke")
+    guard m.usesDocumentTree, m.reevalDocumentMeshes() != nil else {
+        emit("[VCAD_EDIT] no renderable geometry for \(path) (e.g. an assembly the scene eval can't handle)")
+        return
+    }
+    let before = m.sizeMM
+    emit("[VCAD_EDIT] loaded: bbox \(fmt3(before)) · tris \(m.triangleCount) · canUndo \(m.canUndo)")
+
+    guard let cube = find(m.featureNodes, "Cube") else { emit("[VCAD_EDIT] no Cube to edit"); return }
+    m.editVec(nodeId: cube.nodeId, key: "size", axis: "x", value: 200, snapshot: true)
+    _ = m.reevalDocumentMeshes()
+    emit("[VCAD_EDIT] after size.x=200 on '\(cube.name)': bbox \(fmt3(m.sizeMM)) · tris \(m.triangleCount) · canUndo \(m.canUndo)")
+
+    m.undo()
+    _ = m.reevalDocumentMeshes()
+    emit("[VCAD_EDIT] after undo: bbox \(fmt3(m.sizeMM)) · canRedo \(m.canRedo)")
+
+    let stl = URL(fileURLWithPath: "/tmp/vcad_edit_smoke.stl")
+    let ok = m.exportSTL(to: stl)
+    let size = (try? Data(contentsOf: stl))?.count ?? 0
+    emit("[VCAD_EDIT] STL export: \(ok) · \(size) bytes")
+}
+
+private func fmt3(_ v: SIMD3<Float>) -> String {
+    String(format: "%.1f×%.1f×%.1f", abs(v.x), abs(v.y), abs(v.z))
+}
+
+/// Material assignment + persistence: set part 0 to copper, verify the resolved
+/// color, save, reload, and confirm the assignment + definition round-trip.
+@MainActor private func matSmoke(path: String) {
+    func emit(_ s: String) { FileHandle.standardError.write(Data((s + "\n").utf8)) }
+    let m = EditorModel()
+    m.source = .document(path: path, label: "mat")
+    guard m.usesDocumentTree else { emit("[VCAD_MAT] load failed"); return }
+    let before = m.resolvedMaterial(forPart: 0).color
+    emit("[VCAD_MAT] part0 material '\(m.materialName(forPart: 0) ?? "—")' color \(rgb(before))")
+    m.setPartMaterial(0, "copper")
+    let after = m.resolvedMaterial(forPart: 0).color
+    emit("[VCAD_MAT] → copper: key '\(m.materialName(forPart: 0) ?? "—")' color \(rgb(after))")
+    let out = URL(fileURLWithPath: "/tmp/vcad_mat.vcad")
+    m.saveDocumentAs(out)
+    if let g = DocumentGraph.load(path: out.path) {
+        let hasDef = g.materials["copper"] != nil
+        emit("[VCAD_MAT] reloaded: part0 key '\(g.visibleRoots.first?.material ?? "—")' · copper def present \(hasDef)")
+    } else { emit("[VCAD_MAT] reload failed") }
+}
+
+private func rgb(_ c: NSColor) -> String {
+    let s = c.usingColorSpace(.sRGB) ?? c
+    return String(format: "(%.2f, %.2f, %.2f)", s.redComponent, s.greenComponent, s.blueComponent)
+}
+
+/// Gizmo translate: move part 0 by +50 in X via the root Translate, confirm the
+/// bbox shifts, then undo back.
+@MainActor private func gizmoSmoke(path: String) {
+    func emit(_ s: String) { FileHandle.standardError.write(Data((s + "\n").utf8)) }
+    let m = EditorModel()
+    m.source = .document(path: path, label: "gizmo")
+    guard m.usesDocumentTree, m.reevalDocumentMeshes() != nil else { emit("[VCAD_GIZMO] load failed"); return }
+    let c0 = m.gizmoCenterKernel() ?? .zero
+    emit("[VCAD_GIZMO] loaded · part0 center \(fmt3(c0)) · bbox \(fmt3(m.sizeMM))")
+    guard var json = m.documentJSON else { return }
+    DocEdit.setRootTranslate(&json, partIndex: 0, 50, 0, 0)
+    m.documentJSON = json
+    _ = m.reevalDocumentMeshes()
+    let c1 = m.gizmoCenterKernel() ?? .zero
+    emit("[VCAD_GIZMO] +50 X · part0 center \(fmt3(c1)) (Δx \(String(format: "%.1f", c1.x - c0.x)))")
+
+    // Rotate-about-center: 90° about Z should swap the footprint + hold the center.
+    let r = EditorModel()
+    r.source = .document(path: path, label: "rot")
+    _ = r.reevalDocumentMeshes()
+    let rc0 = r.gizmoCenterKernel() ?? .zero
+    let before = r.sizeMM
+    guard var rj = r.documentJSON, let rot = DocEdit.wrapRotate(&rj, partIndex: 0,
+                                                                Double(rc0.x), Double(rc0.y), Double(rc0.z)) else { return }
+    DocEdit.setRotateAngle(&rj, rotNodeId: rot, axisIndex: 2, degrees: 90)
+    r.documentJSON = rj
+    _ = r.reevalDocumentMeshes()
+    let rc1 = r.gizmoCenterKernel() ?? .zero
+    emit("[VCAD_GIZMO] rotate 90°Z · bbox \(fmt3(before)) → \(fmt3(r.sizeMM)) · center \(fmt3(rc0)) → \(fmt3(rc1))")
+}
+
+/// Sketch → extrude authoring: draw a 40×40 square on XY, extrude 12mm, verify
+/// the kernel builds a 40×40×12 solid.
+@MainActor private func sketchSmoke(path: String) {
+    func emit(_ s: String) { FileHandle.standardError.write(Data((s + "\n").utf8)) }
+    let m = EditorModel()
+    m.source = .document(path: path, label: "sketch")
+    guard m.usesDocumentTree else { emit("[VCAD_SKETCH] load failed"); return }
+    let parts0 = m.featureNodes.count
+    m.enterSketch()
+    m.setSketchTool(.rectangle)
+    m.sketchTap(SIMD2(0, 0))         // corner
+    m.sketchTap(SIMD2(40, 40))       // opposite corner
+    m.sketchExtrudeDepth = 12
+    emit("[VCAD_SKETCH] profile verts \(m.sketchVerts.count) closed \(m.sketchClosed) canFinish \(m.canFinishSketch)")
+    m.finishSketch()
+    _ = m.reevalDocumentMeshes()
+    emit("[VCAD_SKETCH] extruded → \(m.featureNodes.count) parts (was \(parts0)) · last op '\(m.featureNodes.last?.opType ?? "?")' · bbox \(fmt3(m.sizeMM)) · tris \(m.triangleCount) · sketching \(m.sketching)")
+}
+
+/// Exercise the authoring pipeline: add a primitive, apply a fillet, save,
+/// reload — confirming round-trip authoring through the kernel.
+@MainActor private func authorSmoke(path: String) {
+    func emit(_ s: String) { FileHandle.standardError.write(Data((s + "\n").utf8)) }
+    let m = EditorModel()
+    m.source = .document(path: path, label: "author")
+    guard m.usesDocumentTree else { emit("[VCAD_AUTHOR] load failed"); return }
+    let parts0 = m.featureNodes.count
+    emit("[VCAD_AUTHOR] loaded \(parts0) part(s)")
+
+    m.addPrimitive(.cylinder)
+    _ = m.reevalDocumentMeshes()
+    emit("[VCAD_AUTHOR] +cylinder → \(m.featureNodes.count) parts · tris \(m.triangleCount)")
+
+    m.selectedFeatureID = m.featureNodes.first?.id
+    m.applyModifierToSelected(.fillet)
+    _ = m.reevalDocumentMeshes()
+    let rootOp = m.selectedFeatureNode?.opType ?? "?"
+    emit("[VCAD_AUTHOR] fillet part 0 → root op now '\(rootOp)' · tris \(m.triangleCount)")
+
+    m.multiSelectedParts = [0, 1]
+    m.combineSelected(.difference)
+    _ = m.reevalDocumentMeshes()
+    emit("[VCAD_AUTHOR] subtract parts 0,1 → \(m.featureNodes.count) part(s), root op '\(m.featureNodes.first?.opType ?? "?")' · tris \(m.triangleCount)")
+
+    let out = URL(fileURLWithPath: "/tmp/vcad_authored.vcad")
+    m.saveDocumentAs(out)
+    let reloaded = DocumentGraph.load(path: out.path)
+    emit("[VCAD_AUTHOR] saved + reloaded: \(reloaded?.visibleRoots.count ?? -1) part(s), parses=\(reloaded != nil)")
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {

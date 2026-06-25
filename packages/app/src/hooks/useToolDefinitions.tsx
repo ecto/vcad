@@ -49,6 +49,7 @@ import {
   useSketchStore,
   useEngineStore,
   useSimulationStore,
+  useRecordingStore,
   exportStlBlob,
   exportGltfBlob,
   exportStepBlob,
@@ -221,6 +222,11 @@ export function useToolDefinitions(): {
   const stopSim = useSimulationStore((s) => s.stop);
   const stepSim = useSimulationStore((s) => s.step);
   const setPlaybackSpeed = useSimulationStore((s) => s.setPlaybackSpeed);
+
+  // Recording
+  const recordingStatus = useRecordingStore((s) => s.status);
+  const startRecording = useRecordingStore((s) => s.start);
+  const stopRecording = useRecordingStore((s) => s.stop);
 
   // Onboarding (guided flow pulses)
   const guidedFlowActive = useOnboardingStore((s) => s.guidedFlowActive);
@@ -564,6 +570,49 @@ export function useToolDefinitions(): {
           hasJoints && simMode !== "running" && physicsAvailable && !sketchActive,
         iconColor: color("simulate"),
         onClick: stepSim,
+      },
+      {
+        id: "simulate-record",
+        tab: "simulate",
+        label:
+          recordingStatus === "recording" || recordingStatus === "paused"
+            ? "Stop Recording"
+            : recordingStatus === "saving"
+              ? "Saving…"
+              : "Record",
+        tooltip: !hasJoints
+          ? "Record (add joints to simulate)"
+          : !physicsAvailable
+            ? "Record (physics unavailable)"
+            : recordingStatus === "recording" || recordingStatus === "paused"
+              ? "Stop recording and save video"
+              : recordingStatus === "saving"
+                ? "Saving recording…"
+                : "Record simulation to video file",
+        icon: Circle,
+        enabled:
+          hasJoints &&
+          physicsAvailable &&
+          !sketchActive &&
+          recordingStatus !== "saving",
+        active:
+          recordingStatus === "recording" || recordingStatus === "paused",
+        pulse: recordingStatus === "recording",
+        iconColor:
+          recordingStatus === "recording" || recordingStatus === "paused"
+            ? "text-red-500"
+            : color("simulate"),
+        onClick: () => {
+          if (recordingStatus === "recording" || recordingStatus === "paused") {
+            stopRecording();
+          } else if (recordingStatus === "idle") {
+            startRecording();
+            if (simMode !== "running") {
+              analytics.physicsSimulationRun();
+              playSim();
+            }
+          }
+        },
       },
     ];
 
