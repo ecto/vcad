@@ -652,10 +652,15 @@ fn tint_ramp(color: [f64; 3]) -> [[u8; 3]; 4] {
     let mx = color[0].max(color[1]).max(color[2]).max(1e-3);
     let mn = color[0].min(color[1]).min(color[2]);
     let sat = (mx - mn) / mx; // HSV saturation
-                              // Restrained: navy is the brand, so the tint is a gentle hue nudge that
-                              // differentiates materials in an assembly without muddying into grey
-                              // (navy and warm metals are near-complementary, so a heavy blend would).
-    let k = (sat * 0.3).clamp(0.0, 0.2); // tint strength
+                              // The blend strength is the material's saturation directly, capped
+                              // just under 1 so a thin navy shading remains for lighting tone.
+                              // Achromatic materials (steel, aluminium, default) → k≈0 → navy
+                              // ramp untouched. Chromatic materials (brass, copper, gold, pure
+                              // red) → k near the cap → the material's hue actually drives the
+                              // rendered colour. The previous `(sat * 0.3).clamp(0, 0.2)` capped
+                              // every preset at ≤20% material contribution, so even fully
+                              // saturated red rendered as navy with the faintest pink hint.
+    let k = sat.clamp(0.0, 0.85);
     let ml = luma(color).max(1e-3);
     let mut out = RAMP;
     for stop in out.iter_mut() {
@@ -1922,6 +1927,64 @@ mod tests {
                 }
             )
             .is_err());
+        }
+    }
+
+    /// `tint_ramp` was previously capped at k ≤ 0.2 — even fully-saturated
+    /// material colours rendered as the default navy with the faintest hint
+    /// of hue. This pins the contract that a saturated material actually
+    /// shifts the ramp towards itself: pure red must read as warm, pure
+    /// green as cool, and pure red and pure green must differ visibly.
+    #[test]
+    fn tint_ramp_respects_saturated_materials() {
+        let navy_ramp = RAMP;
+        let red = tint_ramp([1.0, 0.0, 0.0]);
+        let green = tint_ramp([0.0, 1.0, 0.0]);
+
+        // Pure red shifts the highlight to look red-dominant.
+        let red_hi = red[3]; // brightest stop
+        assert!(
+            red_hi[0] > red_hi[2],
+            "pure red ramp highlight should have R>B, got {:?}",
+            red_hi
+        );
+
+        // Pure green shifts towards green-dominant.
+        let green_hi = green[3];
+        assert!(
+            green_hi[1] > green_hi[2],
+            "pure green ramp highlight should have G>B, got {:?}",
+            green_hi
+        );
+
+        // Two distinct saturated colours produce visibly distinct ramps —
+        // the old code returned ramps within ~5/255 of each other.
+        let mut max_delta = 0i32;
+        for (r, g) in red.iter().zip(green.iter()) {
+            for c in 0..3 {
+                let d = (r[c] as i32 - g[c] as i32).abs();
+                if d > max_delta {
+                    max_delta = d;
+                }
+            }
+        }
+        assert!(
+            max_delta > 60,
+            "saturated red vs green ramps should differ by >60/255, got {}",
+            max_delta
+        );
+
+        // Achromatic materials (zero saturation) leave navy essentially
+        // untouched — the brand-look contract documented above the
+        // function still holds.
+        let achromatic = tint_ramp([0.5, 0.5, 0.5]);
+        for (a, n) in achromatic.iter().zip(navy_ramp.iter()) {
+            for c in 0..3 {
+                assert_eq!(
+                    a[c], n[c],
+                    "achromatic material must not shift the navy ramp"
+                );
+            }
         }
     }
 }
