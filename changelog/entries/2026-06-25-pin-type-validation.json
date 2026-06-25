@@ -1,0 +1,10 @@
+{
+  "id": "2026-06-25-pin-type-validation",
+  "version": "0.9.4",
+  "date": "2026-06-25",
+  "category": "fix",
+  "title": "create_schematic validates pin types up front",
+  "summary": "An invalid pin electrical type (e.g. 'BiDirectional') is now rejected at create_schematic time with a 'did you mean' suggestion, instead of failing later as an opaque serde error in render_view or route_nets.",
+  "features": ["schematic", "ecad", "pcb"],
+  "mcpTools": ["create_schematic"]
+}

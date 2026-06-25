@@ -1210,6 +1210,96 @@ export function appNotesForPin(
 }
 
 /** Create a schematic from component, wire, and netlist definitions. */
+// ============================================================================
+// Pin-type validation
+// ============================================================================
+
+/**
+ * Valid pin electrical types — mirrors the `PinType` enum in
+ * `crates/vcad-ir/src/ecad.rs`. The compile-time assertions below fail the
+ * build if this list drifts from the IR union (a missing or misspelled
+ * variant), keeping Rust the single source of truth in spirit.
+ */
+const PIN_TYPES = [
+  "Input",
+  "Output",
+  "Bidirectional",
+  "TriState",
+  "Passive",
+  "PowerInput",
+  "PowerOutput",
+  "OpenCollector",
+  "OpenEmitter",
+  "NotConnected",
+  "Free",
+] as const satisfies readonly SchematicPin["pin_type"][];
+// Drift guard: if the IR adds a PinType variant not listed above, the union
+// `_MissingPinType` stops being `never` and this assignment fails to compile.
+type _MissingPinType = Exclude<SchematicPin["pin_type"], (typeof PIN_TYPES)[number]>;
+const _pinTypesAreExhaustive: _MissingPinType extends never ? true : false = true;
+void _pinTypesAreExhaustive;
+
+/** Cheap Levenshtein edit distance, for "did you mean" suggestions. */
+function editDistance(a: string, b: string): number {
+  const m = a.length;
+  const n = b.length;
+  if (m === 0) return n;
+  if (n === 0) return m;
+  let prev = Array.from({ length: n + 1 }, (_, i) => i);
+  let curr = new Array<number>(n + 1);
+  for (let i = 1; i <= m; i++) {
+    curr[0] = i;
+    for (let j = 1; j <= n; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      curr[j] = Math.min(prev[j] + 1, curr[j - 1] + 1, prev[j - 1] + cost);
+    }
+    [prev, curr] = [curr, prev];
+  }
+  return prev[n];
+}
+
+/** Closest candidate to `input` by case-insensitive edit distance. */
+function closestCandidate(
+  input: string,
+  candidates: readonly string[],
+): string | undefined {
+  const low = input.toLowerCase();
+  let best: string | undefined;
+  let bestD = Infinity;
+  for (const c of candidates) {
+    const d = editDistance(low, c.toLowerCase());
+    if (d < bestD) {
+      bestD = d;
+      best = c;
+    }
+  }
+  return best;
+}
+
+/**
+ * Validate a caller-supplied pin electrical type against the `PinType` enum,
+ * defaulting empty/absent to "Passive". Throws an actionable error (with a
+ * fuzzy "did you mean" hint and a case correction) on an unknown variant, so a
+ * typo like "BiDirectional" fails at create_schematic time instead of surfacing
+ * later as an opaque serde error in render_view / route_nets / export_gerber.
+ */
+function validatePinType(raw: unknown, where: string): SchematicPin["pin_type"] {
+  if (raw === undefined || raw === null || raw === "") return "Passive";
+  const s = String(raw);
+  if ((PIN_TYPES as readonly string[]).includes(s)) {
+    return s as SchematicPin["pin_type"];
+  }
+  // A pure casing slip (e.g. "BiDirectional" → "Bidirectional") gets a precise
+  // suggestion; otherwise fall back to the nearest variant by edit distance.
+  const cased = PIN_TYPES.find((t) => t.toLowerCase() === s.toLowerCase());
+  const suggestion = cased ?? closestCandidate(s, PIN_TYPES);
+  throw new Error(
+    `Invalid pin type "${s}" on ${where}` +
+      (suggestion ? ` — did you mean "${suggestion}"?` : "") +
+      ` Valid pin types: ${PIN_TYPES.join(", ")}.`,
+  );
+}
+
 export async function createSchematic(args: Record<string, unknown>) {
   const title = (args.title as string) || undefined;
   const componentsInput = (args.components as Array<Record<string, unknown>>) || [];
@@ -1272,7 +1362,10 @@ export async function createSchematic(args: Record<string, unknown>) {
         ? explicitPins.map((p) => ({
             number: p.number as string,
             name: p.name as string,
-            pin_type: (p.type as SchematicPin["pin_type"]) || "Passive",
+            pin_type: validatePinType(
+              p.type,
+              `${(c.ref as string) ?? "?"}.${(p.number as string) ?? "?"}`,
+            ),
             position: { x: (p.x as number) || 0, y: (p.y as number) || 0 },
           }))
         : def

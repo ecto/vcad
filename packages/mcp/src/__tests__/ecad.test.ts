@@ -73,6 +73,88 @@ const resistor = (ref: string, x: number, pinNames: [string, string] = ["~", "~"
   ],
 });
 
+describe("pin-type validation (create_schematic)", () => {
+  it("accepts valid PinType variants verbatim", async () => {
+    const created = out(
+      await createSchematic({
+        components: [
+          {
+            ref: "U1",
+            value: "X",
+            footprint: "SOIC-8",
+            x: 0,
+            y: 0,
+            pins: [
+              { number: "1", name: "A", type: "Bidirectional", x: 0, y: 0 },
+              { number: "2", name: "B", type: "PowerInput", x: 0, y: 1 },
+              { number: "3", name: "C", type: "OpenCollector", x: 0, y: 2 },
+            ],
+          },
+        ],
+      }),
+    );
+    expect(created.success).toBe(true);
+    const doc = getSession(created.document_id);
+    expect(doc.schematic!.components[0]!.pins.map((p) => p.pin_type)).toEqual([
+      "Bidirectional",
+      "PowerInput",
+      "OpenCollector",
+    ]);
+  });
+
+  it("rejects a mis-cased pin type with a precise case correction", async () => {
+    await expect(
+      createSchematic({
+        components: [
+          {
+            ref: "U1",
+            footprint: "SOIC-8",
+            x: 0,
+            y: 0,
+            pins: [{ number: "34", name: "D", type: "BiDirectional", x: 0, y: 0 }],
+          },
+        ],
+      }),
+    ).rejects.toThrow(
+      /Invalid pin type "BiDirectional" on U1\.34.*did you mean "Bidirectional"/,
+    );
+  });
+
+  it("rejects an unknown pin type with a fuzzy suggestion and the valid list", async () => {
+    await expect(
+      createSchematic({
+        components: [
+          {
+            ref: "R9",
+            footprint: "Resistor_SMD:R_0805",
+            x: 0,
+            y: 0,
+            pins: [{ number: "1", name: "~", type: "Passiv", x: 0, y: 0 }],
+          },
+        ],
+      }),
+    ).rejects.toThrow(/did you mean "Passive".*Valid pin types:/);
+  });
+
+  it("defaults an absent pin type to Passive", async () => {
+    const created = out(
+      await createSchematic({
+        components: [
+          {
+            ref: "R1",
+            footprint: "Resistor_SMD:R_0805",
+            x: 0,
+            y: 0,
+            pins: [{ number: "1", name: "~", x: 0, y: 0 }],
+          },
+        ],
+      }),
+    );
+    const doc = getSession(created.document_id);
+    expect(doc.schematic!.components[0]!.pins[0]!.pin_type).toBe("Passive");
+  });
+});
+
 describe("ecad session flow", () => {
   it("create_schematic opens a session and returns the resolved netlist, not the document", async () => {
     const created = out(
