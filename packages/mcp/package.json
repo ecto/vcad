@@ -31,7 +31,8 @@
     "@vcad/ir": "*"
   },
   "optionalDependencies": {
-    "@resvg/resvg-js": "^2.6.2"
+    "@resvg/resvg-js": "^2.6.2",
+    "gifenc": "^1.0.3"
   },
   "devDependencies": {
     "@modelcontextprotocol/ext-apps": "^1.7.4",

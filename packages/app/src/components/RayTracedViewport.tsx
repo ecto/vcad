@@ -31,6 +31,34 @@ let latestCameraState: CameraState | null = null;
  */
 let invalidateFromSync: (() => void) | null = null;
 
+/**
+ * The mounted overlay canvas. Exposed so the video recorder can call
+ * `captureStream` on it directly — the overlay sits on top of the R3F WebGL
+ * canvas and is the only surface that shows raytraced pixels.
+ */
+let overlayCanvasEl: HTMLCanvasElement | null = null;
+
+/**
+ * Forces a single raytrace render at the standard tier, bypassing the
+ * draft→standard→high refinement scheduler. The recorder calls this once per
+ * captured video frame so animation is visible in the recording (the normal
+ * scheduler only fires renders on camera change).
+ */
+let forceRenderFn: (() => void) | null = null;
+
+/** Returns the live raytrace overlay canvas, or null when not mounted. */
+export function getRayTracedOverlayCanvas(): HTMLCanvasElement | null {
+  return overlayCanvasEl;
+}
+
+/**
+ * Trigger a single immediate raytrace render at the standard tier.
+ * No-op if the overlay isn't mounted. Safe to call from outside React.
+ */
+export function triggerRaytraceRender(): void {
+  forceRenderFn?.();
+}
+
 function setCameraStateCallback(cb: ((state: CameraState) => void) | null) {
   cameraStateCallback = cb;
 }
@@ -542,6 +570,31 @@ export function RayTracedViewportOverlay() {
 
   // Backwards-compat alias used by the camera-state callback below.
   const doRender = runRefinement;
+
+  // Expose the overlay canvas so the video recorder can captureStream it.
+  // (Module-level pointer because the recorder hook lives inside the R3F
+  // Canvas tree and the overlay does not — sharing through context would
+  // require lifting state up past the Canvas boundary.)
+  useEffect(() => {
+    overlayCanvasEl = canvasRef.current;
+    return () => {
+      if (overlayCanvasEl === canvasRef.current) overlayCanvasEl = null;
+    };
+  });
+
+  // Expose a one-shot render hook for the recorder. Each call renders the
+  // current camera state at the standard tier (no refinement chain) so a
+  // single recorder tick produces a single fresh frame — animation is
+  // visible without waiting for the draft→standard→high pyramid.
+  useEffect(() => {
+    forceRenderFn = () => {
+      const state = lastCameraStateRef.current;
+      if (state) doRenderAtTier(state, "standard");
+    };
+    return () => {
+      forceRenderFn = null;
+    };
+  }, [doRenderAtTier]);
 
   // Register callback for camera updates. Each new camera state cancels
   // the in-progress refinement and starts a new one — the user gets an
