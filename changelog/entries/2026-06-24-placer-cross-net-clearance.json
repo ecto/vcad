@@ -1,0 +1,10 @@
+{
+  "id": "2026-06-24-placer-cross-net-clearance",
+  "version": "0.9.4",
+  "date": "2026-06-24",
+  "category": "fix",
+  "title": "Force-directed placement no longer bakes in cross-net shorts",
+  "summary": "place_components with strategy:force_directed now legalizes different-net pad overlaps to clearance instead of settling components on top of each other, and reports placement_conflicts with success:false when a board is too tight to separate them.",
+  "features": ["pcb", "placement", "drc"],
+  "mcpTools": ["place_components"]
+}

@@ -1,10 +1,15 @@
 // swift-tools-version: 6.0
 import PackageDescription
+import Foundation
 
-// Absolute path to the directory holding libvcad_ffi.a (built by
-// scripts/build-ffi.sh from crates/vcad-ffi). Hardcoded for local dev; a real
-// build would resolve this via an xcframework or an env var.
-let ffiLibDir = "/Users/cam/Developer/vcad/.claude/worktrees/elated-mclaren-925de7/apple/VcadApp/Libs"
+// Directory holding libvcad_ffi.a (built by build-ffi.sh from crates/vcad-ffi).
+// Derived from the manifest's own location so it stays correct across worktrees
+// instead of pinning to one checkout; a shipping build would resolve this via an
+// xcframework or an env var.
+let ffiLibDir = URL(fileURLWithPath: #filePath)
+    .deletingLastPathComponent()
+    .appendingPathComponent("Libs")
+    .path
 
 let package = Package(
     name: "VcadApp",
