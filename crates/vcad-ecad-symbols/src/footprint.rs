@@ -853,8 +853,7 @@ fn rows_cols(s: &str) -> Option<(u32, u32)> {
         // (`1x02-1MP`) still parses to its 2 contacts. Body sizes like
         // `5x5mm`/`3.9x4.9mm` are still rejected — `mm`/`.` fail the digit-run
         // boundary on the other side.
-        let after_ok =
-            run_end == s.len() || bytes[run_end] == b'_' || bytes[run_end] == b'-';
+        let after_ok = run_end == s.len() || bytes[run_end] == b'_' || bytes[run_end] == b'-';
         if !before_ok || !after_ok {
             continue;
         }
@@ -1087,7 +1086,9 @@ fn match_family(base: &str, pin_count: u32) -> Option<(FootprintTemplate, &'stat
     // --- Molex Pico-Blade (53048 / 53261), 1.25 mm SMD ---------------------
     // No bare-count marker — the part number after the family token is digits,
     // so size off the `RxC` token or the declared count (never `uint_after`).
-    if base.contains("PicoBlade") || base.contains("Pico-Blade") || base.contains("53048")
+    if base.contains("PicoBlade")
+        || base.contains("Pico-Blade")
+        || base.contains("53048")
         || base.contains("53261")
     {
         let pins = rows_cols(base)
@@ -1796,18 +1797,52 @@ mod tests {
     fn jst_pitch_and_tech_by_family() {
         // (id, declared, family, pitch, through-hole?)
         for (id, n, fam, pitch, tht) in [
-            ("Connector_JST:JST_PH_B2B-PH-K_1x04_P2.00mm_Vertical", 4, "JST-PH", 2.0, true),
-            ("Connector_JST:JST_XH_B5B-XH-A_1x05_P2.50mm_Vertical", 5, "JST-XH", 2.5, true),
-            ("Connector_JST:JST_EH_B3B-EH-A_1x03_P2.50mm_Vertical", 3, "JST-EH", 2.5, true),
-            ("Connector_JST:JST_SH_BM06B-SRSS-TB_1x06-1MP_P1.00mm_Horizontal", 6, "JST-SH", 1.0, false),
-            ("Connector_JST:JST_GH_SM04B-GHS-TB_1x04-1MP_P1.25mm_Horizontal", 4, "JST-GH", 1.25, false),
+            (
+                "Connector_JST:JST_PH_B2B-PH-K_1x04_P2.00mm_Vertical",
+                4,
+                "JST-PH",
+                2.0,
+                true,
+            ),
+            (
+                "Connector_JST:JST_XH_B5B-XH-A_1x05_P2.50mm_Vertical",
+                5,
+                "JST-XH",
+                2.5,
+                true,
+            ),
+            (
+                "Connector_JST:JST_EH_B3B-EH-A_1x03_P2.50mm_Vertical",
+                3,
+                "JST-EH",
+                2.5,
+                true,
+            ),
+            (
+                "Connector_JST:JST_SH_BM06B-SRSS-TB_1x06-1MP_P1.00mm_Horizontal",
+                6,
+                "JST-SH",
+                1.0,
+                false,
+            ),
+            (
+                "Connector_JST:JST_GH_SM04B-GHS-TB_1x04-1MP_P1.25mm_Horizontal",
+                4,
+                "JST-GH",
+                1.25,
+                false,
+            ),
         ] {
             let r = resolve_footprint(id, n);
             assert!(r.matched, "{id} should match");
             assert_eq!(r.family.as_deref(), Some(fam), "{id}");
             let fp = r.template.unwrap();
             assert_eq!(fp.pads.len(), n as usize, "{id}: one pad per contact");
-            assert_eq!(positions_unique(&fp), n as usize, "{id}: pads must not stack");
+            assert_eq!(
+                positions_unique(&fp),
+                n as usize,
+                "{id}: pads must not stack"
+            );
             let want = if tht { PadType::THT } else { PadType::SMD };
             assert!(fp.pads.iter().all(|p| p.pad_type == want), "{id}: pad tech");
             // Adjacent contacts sit one pitch apart along the row.
@@ -1826,7 +1861,11 @@ mod tests {
         let p1 = fp.pads.iter().find(|p| p.number == "1").unwrap();
         assert!(matches!(p1.shape, PadShape::Rect { .. }), "pad 1 squared");
         for p in fp.pads.iter().filter(|p| p.number != "1") {
-            assert!(matches!(p.shape, PadShape::Circle { .. }), "pad {} round", p.number);
+            assert!(
+                matches!(p.shape, PadShape::Circle { .. }),
+                "pad {} round",
+                p.number
+            );
         }
     }
 
@@ -1874,8 +1913,11 @@ mod tests {
             assert_eq!(fp.pads.len(), want, "{id}: pad count");
             assert_eq!(positions_unique(&fp), want, "{id}: pads must not stack");
             // Two columns at ±0.635mm (1.27mm pitch).
-            let cols: std::collections::BTreeSet<i64> =
-                fp.pads.iter().map(|p| (p.position.x * 1000.0) as i64).collect();
+            let cols: std::collections::BTreeSet<i64> = fp
+                .pads
+                .iter()
+                .map(|p| (p.position.x * 1000.0) as i64)
+                .collect();
             assert_eq!(cols.len(), 2, "{id}: exactly two columns");
             // Spring-pin pads get a mask opening but never solder paste.
             assert!(
@@ -1899,15 +1941,22 @@ mod tests {
             assert_eq!(r.family.as_deref(), Some("USB-C"));
             let fp = r.template.unwrap();
             // Exactly `signal` numeric contacts (1..=signal) + 4 shield posts.
-            let numeric: Vec<u32> =
-                fp.pads.iter().filter_map(|p| p.number.parse::<u32>().ok()).collect();
+            let numeric: Vec<u32> = fp
+                .pads
+                .iter()
+                .filter_map(|p| p.number.parse::<u32>().ok())
+                .collect();
             assert_eq!(numeric.len(), signal as usize, "{signal}: signal contacts");
             assert_eq!(
                 (1..=signal).filter(|n| numeric.contains(n)).count(),
                 signal as usize,
                 "{signal}: contacts numbered 1..={signal}"
             );
-            let shields = fp.pads.iter().filter(|p| p.number.starts_with("SH")).count();
+            let shields = fp
+                .pads
+                .iter()
+                .filter(|p| p.number.starts_with("SH"))
+                .count();
             assert_eq!(shields, 4, "{signal}: four shield/mount posts");
             // Signal contacts are SMD in two rows; posts are through-hole.
             let rows: std::collections::BTreeSet<i64> = fp
@@ -1926,7 +1975,10 @@ mod tests {
                 .collect();
             xs.sort_by(|a, b| a.partial_cmp(b).unwrap());
             if xs.len() >= 2 {
-                assert!((xs[1] - xs[0] - pitch).abs() < 1e-6, "{signal}: pitch {pitch}");
+                assert!(
+                    (xs[1] - xs[0] - pitch).abs() < 1e-6,
+                    "{signal}: pitch {pitch}"
+                );
             }
             assert_no_pad_overlap(&fp);
             assert_on_board(&fp, 8.0);
@@ -1936,7 +1988,10 @@ mod tests {
     #[test]
     fn pin_header_1xn_resolves() {
         // The issue's `PinHeader_1x{n}_P2.54mm` form (already supported — lock it).
-        let r = resolve_footprint("Connector_PinHeader_2.54mm:PinHeader_1x06_P2.54mm_Vertical", 6);
+        let r = resolve_footprint(
+            "Connector_PinHeader_2.54mm:PinHeader_1x06_P2.54mm_Vertical",
+            6,
+        );
         assert!(r.matched);
         assert_eq!(r.family.as_deref(), Some("PinHeader"));
         let fp = r.template.unwrap();
@@ -1948,7 +2003,10 @@ mod tests {
     fn unknown_footprint_note_points_to_escape_hatch() {
         // Discoverability: the fallback must tell the caller how to fix it.
         let note = resolve_footprint("Vendor:WhoKnows", 3).note;
-        assert!(note.contains("pads"), "note should mention the `pads` hatch: {note}");
+        assert!(
+            note.contains("pads"),
+            "note should mention the `pads` hatch: {note}"
+        );
         let note2 = resolve_footprint("Vendor:TwoPin", 2).note;
         assert!(note2.contains("pads"), "2-pin note should too: {note2}");
     }
