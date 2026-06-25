@@ -254,9 +254,16 @@ final class EditorModel {
     /// Part under the cursor (documents) — drives a subtle hover highlight.
     var hoveredPartIndex: Int?
     var hoverDirty = false
-    /// Per-part kernel-space AABBs, index-aligned with the rendered parts —
-    /// the cheap basis for picking a part in the viewport (tap → select row).
-    @ObservationIgnored var docPartBounds: [(min: SIMD3<Float>, max: SIMD3<Float>)] = []
+    /// Per-part kernel-space triangle meshes (+ AABB), index-aligned with the
+    /// rendered parts — the basis for precise ray-triangle hover/pick. The AABB
+    /// is a broadphase cull before the triangle test.
+    struct PickMesh {
+        var positions: [SIMD3<Float>]
+        var indices: [UInt32]
+        var lo: SIMD3<Float>
+        var hi: SIMD3<Float>
+    }
+    @ObservationIgnored var docPartMeshes: [PickMesh] = []
 
     var usesDocumentTree: Bool { documentGraph != nil && !featureNodes.isEmpty }
 
@@ -268,7 +275,7 @@ final class EditorModel {
         multiSelectedParts = []
         hoveredPartIndex = nil
         expandedFeatureIDs.removeAll()
-        docPartBounds = []
+        docPartMeshes = []
         documentJSON = nil
         undoStack.removeAll(); redoStack.removeAll()
         renamingFeatureID = nil
@@ -411,15 +418,44 @@ final class EditorModel {
     func documentBaseColor(_ i: Int) -> NSColor { Self.partColors[i % Self.partColors.count] }
     static let brandPink = NSColor(srgbRed: 0.976, green: 0.149, blue: 0.447, alpha: 1.0)
 
-    /// Ray-pick a document part by its AABB (kernel coords) — nearest entry
-    /// wins. Coarse (box, not triangle) but robust and ample for selection.
+    /// Ray-pick a document part by its actual triangles (kernel coords) — the
+    /// nearest surface hit wins. An AABB test culls parts the ray misses, and
+    /// skips parts whose box is already farther than the best surface hit.
     func pickDocumentPart(originKernel o: SIMD3<Float>, dirKernel d: SIMD3<Float>) -> Int? {
         var best: (i: Int, t: Float)?
-        for (i, b) in docPartBounds.enumerated() where isPartVisible(i) {
-            guard let t = Self.rayAABB(o: o, d: d, lo: b.min, hi: b.max) else { continue }
-            if best == nil || t < best!.t { best = (i, t) }
+        for (i, pm) in docPartMeshes.enumerated() where isPartVisible(i) {
+            guard let tBox = Self.rayAABB(o: o, d: d, lo: pm.lo, hi: pm.hi) else { continue }
+            if let b = best, tBox > b.t { continue }      // whole box is behind a closer hit
+            var localBest: Float?
+            let pos = pm.positions, ind = pm.indices
+            var k = 0
+            while k + 2 < ind.count {
+                let a = pos[Int(ind[k])], b2 = pos[Int(ind[k + 1])], c = pos[Int(ind[k + 2])]
+                if let t = Self.rayTriangle(o: o, d: d, a: a, b: b2, c: c),
+                   localBest == nil || t < localBest! { localBest = t }
+                k += 3
+            }
+            if let lt = localBest, best == nil || lt < best!.t { best = (i, lt) }
         }
         return best?.i
+    }
+
+    /// Möller–Trumbore ray-triangle intersection → hit distance, or nil.
+    private static func rayTriangle(o: SIMD3<Float>, d: SIMD3<Float>,
+                                    a: SIMD3<Float>, b: SIMD3<Float>, c: SIMD3<Float>) -> Float? {
+        let e1 = b - a, e2 = c - a
+        let p = cross(d, e2)
+        let det = simd_dot(e1, p)
+        if abs(det) < 1e-7 { return nil }
+        let inv = 1 / det
+        let tv = o - a
+        let u = simd_dot(tv, p) * inv
+        if u < -1e-5 || u > 1 + 1e-5 { return nil }
+        let q = cross(tv, e1)
+        let v = simd_dot(d, q) * inv
+        if v < -1e-5 || u + v > 1 + 1e-5 { return nil }
+        let t = simd_dot(e2, q) * inv
+        return t > 1e-5 ? t : nil
     }
 
     /// Slab test → entry distance along the ray, or nil if it misses.
@@ -754,7 +790,7 @@ final class EditorModel {
         defer { vcad_scene_free(scene) }
         let count = vcad_scene_part_count(scene)
         var meshes: [MeshResource] = []
-        var bounds: [(min: SIMD3<Float>, max: SIMD3<Float>)] = []
+        var picks: [PickMesh] = []
         var lo = SIMD3<Float>(repeating: .greatestFiniteMagnitude)
         var hi = SIMD3<Float>(repeating: -.greatestFiniteMagnitude)
         var tris = 0
@@ -764,10 +800,11 @@ final class EditorModel {
             lo = simd_min(lo, km.minBound); hi = simd_max(hi, km.maxBound)
             tris += km.triangleCount
             meshes.append(km.resource(name: "part\(i)"))
-            bounds.append((km.minBound, km.maxBound))
+            picks.append(PickMesh(positions: km.positions, indices: km.indices,
+                                  lo: km.minBound, hi: km.maxBound))
         }
         guard !meshes.isEmpty else { return nil }
-        docPartBounds = bounds
+        docPartMeshes = picks
         solveMillis = Date().timeIntervalSince(start) * 1000
         triangleCount = tris
         partCount = meshes.count
@@ -1423,7 +1460,7 @@ final class EditorModel {
     private func sceneFromHandle(_ scene: OpaquePointer, start: Date) -> RenderScene {
         let count = vcad_scene_part_count(scene)
         var meshes: [(MeshResource, NSColor)] = []
-        var bounds: [(min: SIMD3<Float>, max: SIMD3<Float>)] = []
+        var picks: [PickMesh] = []
         var lo = SIMD3<Float>(repeating: .greatestFiniteMagnitude)
         var hi = SIMD3<Float>(repeating: -.greatestFiniteMagnitude)
         var tris = 0
@@ -1434,11 +1471,12 @@ final class EditorModel {
             tris += km.triangleCount
             meshes.append((km.resource(name: "part\(i)"), Self.partColors[i % Self.partColors.count]))
             // Index-aligned with `meshes` (and thus the rendered part entities),
-            // so a viewport tap maps back to the right feature-tree row.
-            bounds.append((km.minBound, km.maxBound))
+            // so a viewport ray maps back to the right feature-tree row.
+            picks.append(PickMesh(positions: km.positions, indices: km.indices,
+                                  lo: km.minBound, hi: km.maxBound))
         }
         guard !meshes.isEmpty else { return .empty }
-        docPartBounds = bounds
+        docPartMeshes = picks
 
         solveMillis = Date().timeIntervalSince(start) * 1000
         triangleCount = tris
