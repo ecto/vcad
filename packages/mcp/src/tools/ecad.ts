@@ -1138,6 +1138,77 @@ function coilWireLengthMm(turns: number, innerR: number, outerR: number): number
 // Tool implementations
 // ============================================================================
 
+/** A pin with no net, enriched with handling guidance from the parts database. */
+export interface UnconnectedPin {
+  /** `${ref}.${number}` — the pin reference (e.g. "U1.5"). */
+  ref: string;
+  /** Pin name from the resolved part (e.g. "CTRL"); "~" when unnamed. */
+  pin_name: string;
+  /** Electrical pin type (PinType variant, e.g. "Input", "PowerInput"). */
+  pin_type: string;
+  /** How much leaving this pin open should worry the caller. */
+  severity: "info" | "warning";
+  /** Datasheet application notes that reference this specific pin, if any. */
+  app_notes?: string[];
+}
+
+/**
+ * Severity of leaving a pin of the given type unconnected. A floating signal
+ * input or an unconnected power input is usually a real mistake (a chip with no
+ * supply, or a logic input left to drift), so those are warnings; spare
+ * outputs, passives, and open-collector pins are informational.
+ */
+export function unconnectedPinSeverity(pinType: string): "info" | "warning" {
+  return pinType === "PowerInput" || pinType === "Input" ? "warning" : "info";
+}
+
+/**
+ * Power/ground rail names that appear incidentally in application-note prose
+ * ("bypass to GND", "decouple VCC") and would otherwise over-match. An
+ * unconnected rail pin is already surfaced by its `warning` severity, so prose
+ * matching doesn't need to flag it too.
+ */
+const RAIL_PIN_NAMES = new Set([
+  "GND",
+  "VCC",
+  "VDD",
+  "VSS",
+  "VEE",
+  "AVCC",
+  "AVDD",
+  "AGND",
+  "DGND",
+  "VDDIO",
+]);
+
+/** Escape a string for literal use inside a RegExp. */
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * Select the application notes that refer to a specific pin. A note matches when
+ * it cites the pin by number ("pin 5", "pad 4") or names one of the pin's name
+ * tokens — compound names like "PB5/~RESET" are split and overline markers
+ * (`~`, `!`, `#`) dropped, so a note mentioning just "PB5" or "RESET" still
+ * matches. Common power/ground rails are excluded from name matching.
+ */
+export function appNotesForPin(
+  notes: string[],
+  pin: { number: string; name: string },
+): string[] {
+  const numRe = new RegExp(
+    `\\b(?:pin|pins|pad|pads)\\s*${escapeRegExp(pin.number)}\\b`,
+    "i",
+  );
+  const nameRes = (pin.name || "")
+    .split(/[\s/,]+/)
+    .map((t) => t.replace(/[~!#]/g, "").trim())
+    .filter((t) => t.length >= 2 && !RAIL_PIN_NAMES.has(t.toUpperCase()))
+    .map((t) => new RegExp(`\\b${escapeRegExp(t)}\\b`, "i"));
+  return notes.filter((n) => numRe.test(n) || nameRes.some((re) => re.test(n)));
+}
+
 /** Create a schematic from component, wire, and netlist definitions. */
 export async function createSchematic(args: Record<string, unknown>) {
   const title = (args.title as string) || undefined;
@@ -1320,13 +1391,31 @@ export async function createSchematic(args: Record<string, unknown>) {
   for (const [name, pins] of derived.nets) netsPreview[name] = pins;
 
   const connectedPins = new Set(derived.netByPin.keys());
-  const unconnected: string[] = [];
+  // Datasheet app-notes by ref, so an unconnected pin on a known part can carry
+  // the relevant handling guidance instead of a bare reference.
+  const appNotesByRef = new Map<string, string[]>();
+  for (const rp of resolvedParts) {
+    if (rp.app_notes && rp.app_notes.length > 0) {
+      appNotesByRef.set(rp.ref, rp.app_notes);
+    }
+  }
+  const unconnected: UnconnectedPin[] = [];
   for (const comp of components) {
+    const partNotes = appNotesByRef.get(comp.ref);
     for (const pin of comp.pins) {
       if (pin.pin_type === "NotConnected") continue;
-      if (!connectedPins.has(pinKey(comp.ref, pin.number))) {
-        unconnected.push(`${comp.ref}.${pin.number}`);
+      if (connectedPins.has(pinKey(comp.ref, pin.number))) continue;
+      const entry: UnconnectedPin = {
+        ref: `${comp.ref}.${pin.number}`,
+        pin_name: pin.name,
+        pin_type: pin.pin_type,
+        severity: unconnectedPinSeverity(pin.pin_type),
+      };
+      if (partNotes) {
+        const hints = appNotesForPin(partNotes, pin);
+        if (hints.length > 0) entry.app_notes = hints;
       }
+      unconnected.push(entry);
     }
   }
 

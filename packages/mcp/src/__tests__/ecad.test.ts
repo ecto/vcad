@@ -30,6 +30,8 @@ import {
   parseNetPair,
   summarizePlacementDrc,
   boardFromSolid,
+  appNotesForPin,
+  unconnectedPinSeverity,
 } from "../tools/ecad.js";
 import { documents, getSession, openDocument } from "../tools/session.js";
 import { openInBrowser } from "../tools/share.js";
@@ -83,11 +85,87 @@ describe("ecad session flow", () => {
     expect(created.document_id).toBeTruthy();
     expect(created.document).toBeUndefined();
     expect(created.nets.MID.sort()).toEqual(["R1.2", "R2.1"]);
-    // Pins not in any net are reported immediately.
-    expect(created.unconnected_pins.sort()).toEqual(["R1.1", "R2.2"]);
+    // Pins not in any net are reported immediately, enriched with name + severity.
+    expect(
+      created.unconnected_pins.map((p: { ref: string }) => p.ref).sort(),
+    ).toEqual(["R1.1", "R2.2"]);
+    expect(
+      created.unconnected_pins.every(
+        (p: { severity: string; pin_type: string }) =>
+          p.severity === "info" && p.pin_type === "Passive",
+      ),
+    ).toBe(true);
 
     const doc = getSession(created.document_id);
     expect(doc.schematic?.nets).toEqual({ MID: ["R1.2", "R2.1"] });
+  });
+
+  it("enriches unconnected pins on a known part with severity and datasheet app-notes", async () => {
+    const created = out(
+      await createSchematic({
+        // NE555 resolves its 8 pins from the parts database; wire only the
+        // supply rails so CTRL/RESET/etc. stay open and get flagged.
+        components: [{ ref: "U1", part: "NE555", footprint: "DIP-8", x: 0, y: 0 }],
+        nets: { GND: ["U1.1"], VCC: ["U1.8"] },
+      }),
+    );
+    expect(created.success).toBe(true);
+    const byRef: Record<
+      string,
+      { pin_name: string; pin_type: string; severity: string; app_notes?: string[] }
+    > = Object.fromEntries(
+      (created.unconnected_pins as Array<{ ref: string }>).map((p) => [
+        (p as { ref: string }).ref,
+        p,
+      ]),
+    );
+
+    // CTRL (pin 5, Passive) → info, carrying its own bypass note.
+    expect(byRef["U1.5"]).toMatchObject({
+      pin_name: "CTRL",
+      pin_type: "Passive",
+      severity: "info",
+    });
+    expect((byRef["U1.5"].app_notes ?? []).join(" ")).toContain("CTRL");
+
+    // RESET (pin 4, Input) → warning, with its own note and NOT CTRL's.
+    expect(byRef["U1.4"]).toMatchObject({ pin_name: "RESET", severity: "warning" });
+    const resetNotes = (byRef["U1.4"].app_notes ?? []).join(" ");
+    expect(resetNotes).toContain("RESET");
+    expect(resetNotes).not.toContain("CTRL");
+
+    // Wired supply pins are not reported at all.
+    expect(byRef["U1.1"]).toBeUndefined();
+    expect(byRef["U1.8"]).toBeUndefined();
+  });
+
+  it("appNotesForPin matches by pin number, name token, and skips power rails", () => {
+    const ne555 = [
+      "Pin 5 (CTRL) is commonly bypassed to GND with a 10nF cap when unused.",
+      "Tie RESET (pin 4) to VCC when the reset function is not needed.",
+    ];
+    // By number ("pin 5") and by name token ("CTRL") — same single note.
+    expect(appNotesForPin(ne555, { number: "5", name: "CTRL" })).toEqual([ne555[0]]);
+    expect(appNotesForPin(ne555, { number: "4", name: "RESET" })).toEqual([ne555[1]]);
+    // GND (pin 1) is named incidentally in note 0 but is a rail → no match.
+    expect(appNotesForPin(ne555, { number: "1", name: "GND" })).toEqual([]);
+    // VCC (pin 8) likewise appears in note 1 but is a rail → no match.
+    expect(appNotesForPin(ne555, { number: "8", name: "VCC" })).toEqual([]);
+    // Compound names split on "/" and overline markers are stripped.
+    expect(
+      appNotesForPin(["PB5 doubles as ~RESET; keep it high for normal operation."], {
+        number: "1",
+        name: "PB5/~RESET",
+      }),
+    ).toHaveLength(1);
+  });
+
+  it("unconnectedPinSeverity warns on floating inputs and power, else info", () => {
+    expect(unconnectedPinSeverity("PowerInput")).toBe("warning");
+    expect(unconnectedPinSeverity("Input")).toBe("warning");
+    expect(unconnectedPinSeverity("Passive")).toBe("info");
+    expect(unconnectedPinSeverity("Output")).toBe("info");
+    expect(unconnectedPinSeverity("OpenCollector")).toBe("info");
   });
 
   it("place → route → drc → gerber all work against the session id", async () => {
