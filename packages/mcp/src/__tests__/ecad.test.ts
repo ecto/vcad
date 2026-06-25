@@ -18,6 +18,7 @@ import {
   addCoilArray,
   windingLayout,
   addTrace,
+  getPadPositions,
   addVia,
   setStackup,
   setPlacement,
@@ -152,6 +153,84 @@ describe("pin-type validation (create_schematic)", () => {
     );
     const doc = getSession(created.document_id);
     expect(doc.schematic!.components[0]!.pins[0]!.pin_type).toBe("Passive");
+  });
+});
+
+describe("get_pad_positions", () => {
+  interface PadPos {
+    ref: string;
+    pin: string;
+    x: number;
+    y: number;
+    net: string | null;
+    layer: string | null;
+  }
+
+  it("returns absolute board-frame coordinates matching the footprint transform", async () => {
+    const created = out(
+      await createSchematic({
+        components: [resistor("R1", 0), resistor("R2", 20)],
+        nets: { MID: ["R1.2", "R2.1"] },
+      }),
+    );
+    const id = created.document_id;
+    await placeComponents({ document_id: id, board_width: 40, board_height: 20 });
+
+    const res = out(await getPadPositions({ document_id: id }));
+    expect(res.success).toBe(true);
+    expect(res.count).toBeGreaterThan(0);
+    expect((res.pads as PadPos[]).length).toBe(res.count);
+
+    // Cross-check each returned pad against the stored footprint geometry,
+    // recomputing the absolute position with the documented transform so a
+    // regression in the rotation/offset math fails loudly.
+    const board = getPcbBoard(getSession(id));
+    const byKey = new Map(
+      (res.pads as PadPos[]).map((p) => [`${p.ref}.${p.pin}`, p]),
+    );
+    for (const fp of board.footprints) {
+      const t = ((fp.rotation ?? 0) * Math.PI) / 180;
+      for (const pad of fp.pads) {
+        const ex =
+          fp.position.x + pad.position.x * Math.cos(t) - pad.position.y * Math.sin(t);
+        const ey =
+          fp.position.y + pad.position.x * Math.sin(t) + pad.position.y * Math.cos(t);
+        const got = byKey.get(`${fp.ref}.${pad.number}`);
+        expect(got).toBeTruthy();
+        expect(got!.x).toBeCloseTo(ex, 3);
+        expect(got!.y).toBeCloseTo(ey, 3);
+        expect(got!.layer).toMatch(/Cu$/);
+      }
+    }
+  });
+
+  it("filters by net and by ref", async () => {
+    const created = out(
+      await createSchematic({
+        components: [resistor("R1", 0), resistor("R2", 20)],
+        nets: { MID: ["R1.2", "R2.1"] },
+      }),
+    );
+    const id = created.document_id;
+    await placeComponents({ document_id: id, board_width: 40, board_height: 20 });
+
+    const mid = out(await getPadPositions({ document_id: id, net: "MID" }));
+    expect(mid.count).toBe(2);
+    expect((mid.pads as PadPos[]).every((p) => p.net === "MID")).toBe(true);
+    expect((mid.pads as PadPos[]).map((p) => `${p.ref}.${p.pin}`).sort()).toEqual([
+      "R1.2",
+      "R2.1",
+    ]);
+
+    const r1 = out(await getPadPositions({ document_id: id, ref: "R1" }));
+    expect(r1.count).toBe(2);
+    expect((r1.pads as PadPos[]).every((p) => p.ref === "R1")).toBe(true);
+  });
+
+  it("errors when the document has no PCB", async () => {
+    const created = out(await createSchematic({ components: [resistor("R1", 0)] }));
+    const res = await getPadPositions({ document_id: created.document_id });
+    expect((res as { isError?: boolean }).isError).toBe(true);
   });
 });
 

@@ -4673,6 +4673,114 @@ export function windingLayout(args: Record<string, unknown>) {
 }
 
 // ============================================================================
+// get_pad_positions — absolute board-frame pad coordinates (read-only)
+// ============================================================================
+
+/** JSON Schema for get_pad_positions tool. */
+export const getPadPositionsSchema = {
+  type: "object" as const,
+  properties: {
+    ...docInputProperties,
+    net: {
+      type: "string" as const,
+      description:
+        "Optional net filter — return only pads on this net (e.g. 'GND', 'IMU_CS').",
+    },
+    ref: {
+      type: "string" as const,
+      description:
+        "Optional reference-designator filter — return only pads on this component (e.g. 'U1').",
+    },
+  },
+  required: ["document_id"],
+};
+
+/** Copper layers a pad sits on, in board order (drops paste/mask/silk). */
+function padCopperLayers(pad: Pad): PcbLayer[] {
+  return pad.layers.filter((l) => /Cu$/.test(l));
+}
+
+/**
+ * Return every footprint pad's absolute board-frame (x, y), copper layer, and
+ * net — the primitive manual routing (add_trace / add_via / add_via_array)
+ * needs so trace endpoints land exactly on pads instead of being eyeballed from
+ * component centers. Read-only; mutates nothing.
+ *
+ * Coordinates compose the footprint placement with the pad's local offset,
+ * applying the footprint rotation — the same transform Gerber and
+ * pick-and-place export use: worldX = fp.x + padX·cosθ − padY·sinθ,
+ * worldY = fp.y + padX·sinθ + padY·cosθ. Optional `net` and `ref` filters
+ * narrow the result for targeted routing.
+ */
+export function getPadPositions(args: Record<string, unknown>) {
+  const ctx = resolveDocInput(args);
+  const pcb = getDocPcb(ctx.doc);
+  if (!pcb) {
+    return ecadError(
+      "Document has no PCB — run place_components first (or open a document that has a board)",
+    );
+  }
+
+  const netFilter = args.net != null ? String(args.net) : undefined;
+  const refFilter = args.ref != null ? String(args.ref) : undefined;
+
+  const pads: Array<{
+    ref: string;
+    pin: string;
+    x: number;
+    y: number;
+    rotation: number;
+    net: string | null;
+    layer: string | null;
+    layers: string[];
+    pad_type: string;
+    pad_shape: Pad["shape"];
+  }> = [];
+
+  for (const fp of pcb.footprints) {
+    if (refFilter !== undefined && fp.ref !== refFilter) continue;
+    const theta = ((fp.rotation ?? 0) * Math.PI) / 180;
+    const cos = Math.cos(theta);
+    const sin = Math.sin(theta);
+    for (const pad of fp.pads) {
+      const net = pad.net ?? null;
+      if (netFilter !== undefined && net !== netFilter) continue;
+      const lx = pad.position.x * cos - pad.position.y * sin;
+      const ly = pad.position.x * sin + pad.position.y * cos;
+      const copper = padCopperLayers(pad);
+      pads.push({
+        ref: fp.ref,
+        pin: pad.number,
+        x: round3(fp.position.x + lx),
+        y: round3(fp.position.y + ly),
+        rotation: round3((fp.rotation ?? 0) + (pad.rotation ?? 0)),
+        net,
+        layer: copper[0] ?? null,
+        layers: copper,
+        pad_type: pad.padType,
+        pad_shape: pad.shape,
+      });
+    }
+  }
+
+  return {
+    content: [
+      {
+        type: "text" as const,
+        text: JSON.stringify({
+          success: true,
+          count: pads.length,
+          ...(netFilter !== undefined ? { net: netFilter } : {}),
+          ...(refFilter !== undefined ? { ref: refFilter } : {}),
+          pads,
+          ...docResultPayload(ctx),
+        }),
+      },
+    ],
+  };
+}
+
+// ============================================================================
 // add_trace — push straight copper segments between consecutive points
 // ============================================================================
 

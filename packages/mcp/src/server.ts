@@ -156,6 +156,8 @@ import {
   boardFromSolidSchema,
   addTrace,
   addTraceSchema,
+  getPadPositions,
+  getPadPositionsSchema,
   addVia,
   addViaSchema,
   setStackup,
@@ -471,6 +473,7 @@ const TOOL_PACKS: Record<string, readonly string[]> = {
     "create_schematic",
     "place_components",
     "route_nets",
+    "get_pad_positions",
     "add_trace",
     "add_via",
     "add_via_array",
@@ -1160,6 +1163,16 @@ export async function createServer(
         inputSchema: boardFromSolidSchema,
       },
       {
+        name: "get_pad_positions",
+        description:
+          "Return every footprint pad's absolute board-frame (x, y), copper " +
+          "layer, and net — the coordinates manual routing (add_trace / " +
+          "add_via / add_via_array) needs so trace endpoints land exactly on " +
+          "pads instead of being eyeballed from component centers. Read-only. " +
+          "Optional `net` / `ref` filters narrow the result for targeted routing.",
+        inputSchema: getPadPositionsSchema,
+      },
+      {
         name: "add_trace",
         description:
           "Lay an explicit copper trace: a polyline of segments on a layer, " +
@@ -1774,6 +1787,10 @@ export async function createServer(
 
         case "board_from_solid":
           result = boardFromSolid(args, engine);
+          break;
+
+        case "get_pad_positions":
+          result = getPadPositions(args);
           break;
 
         case "add_trace":
