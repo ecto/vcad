@@ -1639,9 +1639,20 @@ struct ViewportView: View {
 
     // MARK: transform gizmo overlay
 
-    /// A refined translate gizmo: thin cylinder shafts with cone arrowheads in
-    /// muted axis colors, an invisible full-length hit proxy per axis (so the
-    /// drag target persists), and a small pearl hub. X red / Y green / Z blue.
+    private static let gizmoX = NSColor(srgbRed: 0.95, green: 0.30, blue: 0.34, alpha: 1)
+    private static let gizmoY = NSColor(srgbRed: 0.42, green: 0.80, blue: 0.44, alpha: 1)
+    private static let gizmoZ = NSColor(srgbRed: 0.32, green: 0.58, blue: 0.98, alpha: 1)
+
+    private func brighten(_ c: NSColor) -> NSColor {
+        let s = c.usingColorSpace(.sRGB) ?? c
+        return NSColor(srgbRed: min(1, s.redComponent * 1.2 + 0.18),
+                       green: min(1, s.greenComponent * 1.2 + 0.18),
+                       blue: min(1, s.blueComponent * 1.2 + 0.18), alpha: 1)
+    }
+
+    /// A refined translate gizmo: cylinder shafts + cone arrowheads (axis drag),
+    /// corner squares (plane drag), a pearl hub, and invisible full-length grab
+    /// proxies. The hovered handle brightens + thickens. X red / Y green / Z blue.
     private func buildGizmo() -> Entity {
         let root = Entity(); root.name = "gizmoRoot"
         guard let c = model.gizmoCenterKernel() else { return root }
@@ -1650,34 +1661,56 @@ struct ViewportView: View {
         let headLen = len * 0.2
         let headR = shaftR * 2.8
         let shaftLen = len - headLen
+        let hov = model.hoveredGizmoHandle
+
         let axes: [(name: String, dir: SIMD3<Float>, color: NSColor)] = [
-            ("gizmoX", SIMD3(1, 0, 0), NSColor(srgbRed: 0.95, green: 0.30, blue: 0.34, alpha: 1)),
-            ("gizmoY", SIMD3(0, 1, 0), NSColor(srgbRed: 0.42, green: 0.80, blue: 0.44, alpha: 1)),
-            ("gizmoZ", SIMD3(0, 0, 1), NSColor(srgbRed: 0.32, green: 0.58, blue: 0.98, alpha: 1)),
+            ("gizmoX", SIMD3(1, 0, 0), Self.gizmoX),
+            ("gizmoY", SIMD3(0, 1, 0), Self.gizmoY),
+            ("gizmoZ", SIMD3(0, 0, 1), Self.gizmoZ),
         ]
         for a in axes {
-            let mat = UnlitMaterial(color: a.color)
-            let rot = simd_quatf(from: SIMD3(0, 1, 0), to: a.dir)   // RealityKit shapes are +Y-up
+            let on = hov == a.name
+            let mat = UnlitMaterial(color: on ? brighten(a.color) : a.color)
+            let rot = simd_quatf(from: SIMD3(0, 1, 0), to: a.dir)
+            let k: Float = on ? 1.3 : 1.0
 
-            let shaft = ModelEntity(mesh: .generateCylinder(height: shaftLen, radius: shaftR), materials: [mat])
-            shaft.orientation = rot
-            shaft.position = c + a.dir * (shaftLen / 2)
+            let shaft = ModelEntity(mesh: .generateCylinder(height: shaftLen, radius: shaftR * k), materials: [mat])
+            shaft.orientation = rot; shaft.position = c + a.dir * (shaftLen / 2)
             root.addChild(shaft)
-
-            let head = ModelEntity(mesh: .generateCone(height: headLen, radius: headR), materials: [mat])
-            head.orientation = rot
-            head.position = c + a.dir * (shaftLen + headLen / 2)
+            let head = ModelEntity(mesh: .generateCone(height: headLen, radius: headR * k), materials: [mat])
+            head.orientation = rot; head.position = c + a.dir * (shaftLen + headLen / 2)
             root.addChild(head)
 
-            // Invisible full-length grab proxy — outlives per-frame rebuilds.
             let hit = ModelEntity()
-            hit.name = a.name
-            hit.orientation = rot
-            hit.position = c + a.dir * (len / 2)
+            hit.name = a.name; hit.orientation = rot; hit.position = c + a.dir * (len / 2)
             hit.components.set(CollisionComponent(shapes: [.generateBox(size: SIMD3(headR * 2.6, len, headR * 2.6))]))
             hit.components.set(InputTargetComponent())
             root.addChild(hit)
         }
+
+        // Plane handles — a square in the corner of each axis pair (normal colored).
+        let pOff = model.gizmoPlaneOffset, pSize = model.gizmoPlaneSize
+        let planes: [(name: String, a: SIMD3<Float>, b: SIMD3<Float>, color: NSColor)] = [
+            ("planeXY", SIMD3(1, 0, 0), SIMD3(0, 1, 0), Self.gizmoZ),
+            ("planeYZ", SIMD3(0, 1, 0), SIMD3(0, 0, 1), Self.gizmoX),
+            ("planeXZ", SIMD3(1, 0, 0), SIMD3(0, 0, 1), Self.gizmoY),
+        ]
+        for p in planes {
+            let on = hov == p.name
+            let n = simd_normalize(simd_cross(p.a, p.b))
+            let rot = simd_quatf(from: SIMD3(0, 0, 1), to: n)
+            let center = c + (p.a + p.b) * pOff
+            let mat = UnlitMaterial(color: (on ? brighten(p.color) : p.color).withAlphaComponent(on ? 0.7 : 0.4))
+            let sq = ModelEntity(mesh: .generateBox(size: SIMD3(pSize, pSize, max(0.2, pSize * 0.05))), materials: [mat])
+            sq.orientation = rot; sq.position = center
+            root.addChild(sq)
+            let hit = ModelEntity()
+            hit.name = p.name; hit.orientation = rot; hit.position = center
+            hit.components.set(CollisionComponent(shapes: [.generateBox(size: SIMD3(pSize * 1.25, pSize * 1.25, pSize * 0.6))]))
+            hit.components.set(InputTargetComponent())
+            root.addChild(hit)
+        }
+
         let hub = ModelEntity(mesh: .generateSphere(radius: shaftR * 2.4),
                               materials: [UnlitMaterial(color: NSColor(white: 0.95, alpha: 1))])
         hub.position = c
@@ -1731,14 +1764,14 @@ struct ViewportView: View {
         DragGesture()
             .targetedToAnyEntity()
             .onChanged { value in
-                // Transform gizmo: drag an axis arm to translate the part. Uses
-                // the kernel ray from the live cursor + closest-point-on-axis.
-                if let axis = model.gizmoAxis(for: value.entity.name) {
+                // Transform gizmo: drag an axis arm or plane handle to translate
+                // the part. Kernel ray from the live cursor → closest-point math.
+                if model.gizmoHandle(for: value.entity.name) != nil {
                     NSCursor.closedHand.set()
                     if !model.draggingHandle {
                         model.draggingHandle = true
                         if let ray = kernelRay(at: value.startLocation, viewSize: model.viewSize) {
-                            model.beginGizmoDrag(axis: axis, ray: ray)
+                            model.beginGizmoDrag(handle: value.entity.name, ray: ray)
                         }
                     }
                     if let ray = kernelRay(at: value.location, viewSize: model.viewSize) {
@@ -1893,12 +1926,23 @@ struct ViewportView: View {
         if model.usesDocumentTree {
             switch phase {
             case .active(let point):
-                let pi = kernelRay(at: point, viewSize: viewSize).flatMap {
-                    model.pickDocumentPart(originKernel: $0.o, dirKernel: $0.d)
+                let ray = kernelRay(at: point, viewSize: viewSize)
+                // Gizmo handles win over part hover (they sit on top). Never
+                // re-highlight mid-drag — that would rebuild the grabbed arm.
+                let gh = (model.showsGizmo && !model.draggingHandle) ? ray.flatMap {
+                    model.hitGizmoHandle(originKernel: $0.o, dirKernel: $0.d)
+                } : nil
+                if gh != model.hoveredGizmoHandle { model.hoveredGizmoHandle = gh; model.gizmoDirty = true }
+                if gh != nil {
+                    if model.hoveredPartIndex != nil { model.hoveredPartIndex = nil; model.hoverDirty = true }
+                    NSCursor.openHand.set()
+                    return
                 }
+                let pi = ray.flatMap { model.pickDocumentPart(originKernel: $0.o, dirKernel: $0.d) }
                 if pi != model.hoveredPartIndex { model.hoveredPartIndex = pi; model.hoverDirty = true }
                 (pi != nil ? NSCursor.pointingHand : NSCursor.arrow).set()
             case .ended:
+                if model.hoveredGizmoHandle != nil { model.hoveredGizmoHandle = nil; model.gizmoDirty = true }
                 if model.hoveredPartIndex != nil { model.hoveredPartIndex = nil; model.hoverDirty = true }
                 NSCursor.arrow.set()
             }

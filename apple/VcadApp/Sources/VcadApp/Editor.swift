@@ -694,20 +694,47 @@ final class EditorModel {
         exitSketch()
     }
 
-    // MARK: transform gizmo (drag a part along an axis to translate it)
+    // MARK: transform gizmo (drag a part to translate it — axis + plane handles)
 
     /// Last viewport size, so a targeted handle drag can rebuild the kernel ray.
     @ObservationIgnored var viewSize: CGSize = .zero
-    /// Viewport should reposition the gizmo (selection changed / drag ended).
+    /// Viewport should reposition / re-highlight the gizmo.
     var gizmoDirty = false
+    /// The handle under the cursor ("gizmoX" / "planeXY" / …), for hover + cursor.
+    var hoveredGizmoHandle: String?
     @ObservationIgnored private var gizmoPart: Int?
-    @ObservationIgnored private var gizmoAxis: SIMD3<Float> = .zero
+    @ObservationIgnored private var gizmoActive: GizmoHandle?
     @ObservationIgnored private var gizmoBase: (Double, Double, Double) = (0, 0, 0)
     @ObservationIgnored private var gizmoStartCenter: SIMD3<Float> = .zero
     @ObservationIgnored private var gizmoT0: Float = 0
-    /// Live displacement of the part during a gizmo drag, so the viewport can
-    /// slide the gizmo along with the part instead of leaving it at the start.
+    @ObservationIgnored private var gizmoStartPlane: SIMD3<Float> = .zero
+    /// Live displacement of the part during a drag, so the viewport can slide the
+    /// gizmo with it instead of leaving it at the grab point.
     @ObservationIgnored var gizmoLiveOffset: SIMD3<Float> = .zero
+
+    enum GizmoHandle {
+        case axis(SIMD3<Float>)
+        case plane(SIMD3<Float>, SIMD3<Float>)   // two in-plane unit axes
+    }
+    func gizmoHandle(for name: String) -> GizmoHandle? {
+        switch name {
+        case "gizmoX": return .axis(SIMD3(1, 0, 0))
+        case "gizmoY": return .axis(SIMD3(0, 1, 0))
+        case "gizmoZ": return .axis(SIMD3(0, 0, 1))
+        case "planeXY": return .plane(SIMD3(1, 0, 0), SIMD3(0, 1, 0))
+        case "planeYZ": return .plane(SIMD3(0, 1, 0), SIMD3(0, 0, 1))
+        case "planeXZ": return .plane(SIMD3(1, 0, 0), SIMD3(0, 0, 1))
+        default: return nil
+        }
+    }
+    static let gizmoAxisDefs: [(name: String, dir: SIMD3<Float>)] = [
+        ("gizmoX", SIMD3(1, 0, 0)), ("gizmoY", SIMD3(0, 1, 0)), ("gizmoZ", SIMD3(0, 0, 1)),
+    ]
+    static let gizmoPlaneDefs: [(name: String, a: SIMD3<Float>, b: SIMD3<Float>)] = [
+        ("planeXY", SIMD3(1, 0, 0), SIMD3(0, 1, 0)),
+        ("planeYZ", SIMD3(0, 1, 0), SIMD3(0, 0, 1)),
+        ("planeXZ", SIMD3(1, 0, 0), SIMD3(0, 0, 1)),
+    ]
 
     /// Show the gizmo for a single selected part (not while sketching/multi-select).
     var showsGizmo: Bool {
@@ -719,32 +746,48 @@ final class EditorModel {
         let m = docPartMeshes[pi]
         return (m.lo + m.hi) / 2
     }
-    /// Arm length scaled to the part.
+    /// Arm length — reaches past the part so the arrowheads clear the geometry.
     func gizmoArmLength() -> Float {
-        guard let pi = selectedPartIndex, pi < docPartMeshes.count else { return 12 }
+        guard let pi = selectedPartIndex, pi < docPartMeshes.count else { return 14 }
         let d = docPartMeshes[pi].hi - docPartMeshes[pi].lo
-        return max(8, 0.55 * max(d.x, max(d.y, d.z)))
+        return max(10, 0.5 * max(d.x, max(d.y, d.z)) + 0.22 * (d.x + d.y + d.z) / 3)
     }
+    var gizmoPlaneOffset: Float { gizmoArmLength() * 0.34 }
+    var gizmoPlaneSize: Float { gizmoArmLength() * 0.17 }
 
-    func beginGizmoDrag(axis: SIMD3<Float>, ray: (o: SIMD3<Float>, d: SIMD3<Float>)) {
-        guard let pi = selectedPartIndex, let json = documentJSON, let c = gizmoCenterKernel() else { return }
+    func beginGizmoDrag(handle name: String, ray: (o: SIMD3<Float>, d: SIMD3<Float>)) {
+        guard let pi = selectedPartIndex, let json = documentJSON,
+              let c = gizmoCenterKernel(), let h = gizmoHandle(for: name) else { return }
         pushUndo()
         gizmoPart = pi
-        gizmoAxis = axis
+        gizmoActive = h
         gizmoStartCenter = c
         gizmoBase = DocEdit.rootTranslateOffset(json, partIndex: pi) ?? (0, 0, 0)
-        gizmoT0 = Self.axisParam(rayO: ray.o, rayD: ray.d, center: c, axis: axis)
         gizmoLiveOffset = .zero
+        switch h {
+        case .axis(let ax):
+            gizmoT0 = Self.axisParam(rayO: ray.o, rayD: ray.d, center: c, axis: ax)
+        case .plane(let a, let b):
+            let n = simd_normalize(simd_cross(a, b))
+            gizmoStartPlane = Self.rayPlane(o: ray.o, d: ray.d, point: c, normal: n) ?? c
+        }
     }
     func gizmoDragTo(ray: (o: SIMD3<Float>, d: SIMD3<Float>)) {
-        guard let pi = gizmoPart, var json = documentJSON else { return }
-        let t = Self.axisParam(rayO: ray.o, rayD: ray.d, center: gizmoStartCenter, axis: gizmoAxis)
-        let delta = t - gizmoT0
-        gizmoLiveOffset = gizmoAxis * delta        // slide the gizmo with the part
+        guard let pi = gizmoPart, var json = documentJSON, let h = gizmoActive else { return }
+        var off = SIMD3<Float>.zero
+        switch h {
+        case .axis(let ax):
+            off = ax * (Self.axisParam(rayO: ray.o, rayD: ray.d, center: gizmoStartCenter, axis: ax) - gizmoT0)
+        case .plane(let a, let b):
+            let n = simd_normalize(simd_cross(a, b))
+            guard let p = Self.rayPlane(o: ray.o, d: ray.d, point: gizmoStartCenter, normal: n) else { return }
+            off = p - gizmoStartPlane
+        }
+        gizmoLiveOffset = off
         DocEdit.setRootTranslate(&json, partIndex: pi,
-                                 gizmoBase.0 + Double(gizmoAxis.x * delta),
-                                 gizmoBase.1 + Double(gizmoAxis.y * delta),
-                                 gizmoBase.2 + Double(gizmoAxis.z * delta))
+                                 gizmoBase.0 + Double(off.x),
+                                 gizmoBase.1 + Double(off.y),
+                                 gizmoBase.2 + Double(off.z))
         documentJSON = json
         documentDirty = true
         if let g = DocumentGraph.parse(json) { documentGraph = g; featureNodes = g.featureRoots() }
@@ -752,29 +795,34 @@ final class EditorModel {
     }
     func endGizmoDrag() {
         gizmoPart = nil
+        gizmoActive = nil
         gizmoLiveOffset = .zero
-        gizmoDirty = true           // rebuild the gizmo at the part's new center
-    }
-    /// Whether a ray passes through the gizmo (so a tap on it doesn't deselect).
-    func rayHitsGizmo(originKernel o: SIMD3<Float>, dirKernel d: SIMD3<Float>) -> Bool {
-        guard showsGizmo, let c = gizmoCenterKernel() else { return false }
-        let len = gizmoArmLength()
-        let pad = max(0.6, len * 0.035) * 5
-        for ax in [SIMD3<Float>(1, 0, 0), SIMD3<Float>(0, 1, 0), SIMD3<Float>(0, 0, 1)] {
-            let lo = simd_min(c, c + ax * len) - SIMD3<Float>(repeating: pad)
-            let hi = simd_max(c, c + ax * len) + SIMD3<Float>(repeating: pad)
-            if Self.rayAABB(o: o, d: d, lo: lo, hi: hi) != nil { return true }
-        }
-        return false
+        gizmoDirty = true
     }
 
-    func gizmoAxis(for name: String) -> SIMD3<Float>? {
-        switch name {
-        case "gizmoX": return SIMD3(1, 0, 0)
-        case "gizmoY": return SIMD3(0, 1, 0)
-        case "gizmoZ": return SIMD3(0, 0, 1)
-        default: return nil
+    /// Nearest gizmo handle the ray hits, or nil — drives hover + tap-protection.
+    func hitGizmoHandle(originKernel o: SIMD3<Float>, dirKernel d: SIMD3<Float>) -> String? {
+        guard showsGizmo, let c = gizmoCenterKernel() else { return nil }
+        let len = gizmoArmLength()
+        let pad = max(0.6, len * 0.045)
+        var best: (name: String, t: Float)?
+        func consider(_ name: String, _ lo: SIMD3<Float>, _ hi: SIMD3<Float>) {
+            if let t = Self.rayAABB(o: o, d: d, lo: lo, hi: hi), best == nil || t < best!.t { best = (name, t) }
         }
+        for a in Self.gizmoAxisDefs {
+            consider(a.name, simd_min(c, c + a.dir * len) - SIMD3(repeating: pad),
+                     simd_max(c, c + a.dir * len) + SIMD3(repeating: pad))
+        }
+        let off = gizmoPlaneOffset, hs = gizmoPlaneSize / 2 + pad
+        for p in Self.gizmoPlaneDefs {
+            let pc = c + (p.a + p.b) * off
+            consider(p.name, pc - SIMD3(repeating: hs), pc + SIMD3(repeating: hs))
+        }
+        return best?.name
+    }
+    /// Whether a ray hits the gizmo (so a tap on it doesn't deselect).
+    func rayHitsGizmo(originKernel o: SIMD3<Float>, dirKernel d: SIMD3<Float>) -> Bool {
+        hitGizmoHandle(originKernel: o, dirKernel: d) != nil
     }
 
     /// Param `t` along the axis line (center + t·axis) closest to the ray — the
@@ -788,6 +836,14 @@ final class EditorModel {
         let denom = 1 - b * b
         if abs(denom) < 1e-5 { return e }       // ray ∥ axis → fall back to projection
         return (e - b * d) / denom
+    }
+
+    /// Ray ∩ plane (through `point`, with `normal`) → world point, or nil if ∥.
+    private static func rayPlane(o: SIMD3<Float>, d: SIMD3<Float>,
+                                 point: SIMD3<Float>, normal: SIMD3<Float>) -> SIMD3<Float>? {
+        let denom = simd_dot(d, normal)
+        if abs(denom) < 1e-6 { return nil }
+        return o + d * (simd_dot(point - o, normal) / denom)
     }
 
     // MARK: save
