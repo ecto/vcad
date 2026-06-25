@@ -1,0 +1,10 @@
+{
+  "id": "2026-06-24-route-nets-stale-copper",
+  "version": "0.9.4",
+  "date": "2026-06-24",
+  "category": "fix",
+  "title": "route_nets rips up stale copper after a part moves",
+  "summary": "Re-routing after set_placement now detects nets whose pads moved out from under their copper, rips up the orphaned traces, and re-routes them — even nets you didn't list — and reports traces_removed / vias_removed / stale_nets_cleared so the cleanup is visible.",
+  "features": ["pcb", "routing", "drc"],
+  "mcpTools": ["route_nets"]
+}

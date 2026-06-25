@@ -294,6 +294,123 @@ describe("ecad session flow", () => {
     expect(d).toBeGreaterThan(8);
   });
 
+  it("force_directed never bakes a cross-net pad short into the board", async () => {
+    // A tightly-netted NE555-style cluster: the net-attraction can pull
+    // different-net pads on top of each other (a VCC/GND short) before any
+    // routing. Placement must legalize that away, not ship success with a short.
+    const r = (ref: string) => ({
+      ref,
+      value: "1k",
+      footprint: "Resistor_SMD:R_0805",
+      x: 0,
+      y: 0,
+      pins: [
+        { number: "1", name: "~", type: "Passive" },
+        { number: "2", name: "~", type: "Passive" },
+      ],
+    });
+    const twoPin = (ref: string, value: string, footprint: string) => ({
+      ref,
+      value,
+      footprint,
+      x: 0,
+      y: 0,
+      pins: [
+        { number: "1", name: "~", type: "Passive" },
+        { number: "2", name: "~", type: "Passive" },
+      ],
+    });
+    const created = out(
+      await createSchematic({
+        components: [
+          {
+            ref: "U1",
+            value: "NE555",
+            footprint: "Package_SO:SOIC-8_3.9x4.9mm_P1.27mm",
+            x: 0,
+            y: 0,
+            pins: Array.from({ length: 8 }, (_, i) => ({
+              number: String(i + 1),
+              name: ["GND", "TRIG", "OUT", "RESET", "CTRL", "THR", "DIS", "VCC"][i],
+              type: "Passive",
+            })),
+          },
+          r("R1"),
+          r("R2"),
+          r("R3"),
+          twoPin("C1", "10uF", "Capacitor_SMD:C_1206"),
+          twoPin("C2", "10nF", "Capacitor_SMD:C_0805"),
+          twoPin("D1", "LED", "LED_SMD:LED_0805"),
+          twoPin("J1", "PWR", "Connector_PinHeader_2.54mm:PinHeader_1x02_P2.54mm"),
+        ],
+        nets: {
+          VCC: ["J1.1", "U1.8", "U1.4", "R1.1"],
+          GND: ["J1.2", "U1.1", "C1.2", "C2.2", "R3.2"],
+          DIS: ["U1.7", "R1.2", "R2.1"],
+          THR: ["U1.6", "U1.2", "R2.2", "C1.1"],
+          CTRL: ["U1.5", "C2.1"],
+          OUT: ["U1.3", "D1.1"],
+          LEDK: ["D1.2", "R3.1"],
+        },
+      }),
+    );
+    const id = created.document_id;
+    const placed = out(
+      await placeComponents({
+        document_id: id,
+        board_shape: { outer_diameter: 25, type: "circle" },
+        strategy: "force_directed",
+      }),
+    );
+    expect(placed.success).toBe(true);
+    expect(placed.placement_conflicts).toBeUndefined();
+
+    // The DRC oracle: before any routing, no copper-to-copper clearance or short
+    // violations may exist (the only legal violations are unrouted ratsnest).
+    const drc = out(await runDrc({ document_id: id, detail: "full" }));
+    const shorts = (drc.details ?? []).filter((v: { rule: string }) => v.rule === "Short");
+    expect(shorts).toHaveLength(0);
+    expect(drc.categories.clearance).toBe(0);
+  });
+
+  it("force_directed reports cross-net conflicts it can't fit (no false success)", async () => {
+    // Four 1x02 headers (~4.5mm wide) sharing a common net on a 5mm board:
+    // there is physically no way to separate every different-net pad. The placer
+    // must report the unresolved pairs and refuse to claim success.
+    const hdr = (ref: string) => ({
+      ref,
+      value: "H",
+      footprint: "Connector_PinHeader_2.54mm:PinHeader_1x02_P2.54mm",
+      x: 0,
+      y: 0,
+      pins: [
+        { number: "1", name: "~", type: "Passive" },
+        { number: "2", name: "~", type: "Passive" },
+      ],
+    });
+    const comps = ["J1", "J2", "J3", "J4"].map(hdr);
+    const nets: Record<string, string[]> = { COMMON: comps.map((c) => `${c.ref}.1`) };
+    comps.forEach((c) => (nets[`SIG_${c.ref}`] = [`${c.ref}.2`]));
+    const created = out(await createSchematic({ components: comps, nets }));
+    const placed = out(
+      await placeComponents({
+        document_id: created.document_id,
+        board_width: 5,
+        board_height: 5,
+        strategy: "force_directed",
+      }),
+    );
+    expect(placed.success).toBe(false);
+    expect(placed.placement_conflicts.length).toBeGreaterThan(0);
+    // Each reported conflict is a genuine sub-clearance gap (clearance is 0.2mm).
+    for (const c of placed.placement_conflicts) {
+      expect(c.gap).toBeLessThan(0.2);
+      expect(c.a).toBeTruthy();
+      expect(c.b).toBeTruthy();
+    }
+    expect(placed.warnings.some((w: string) => /cross-net pad overlap/i.test(w))).toBe(true);
+  });
+
   it("route_nets honors per-net-class width and reports realized widths", async () => {
     const created = out(
       await createSchematic({
@@ -667,6 +784,90 @@ describe("route_nets idempotency", () => {
 
     expect(second).toEqual(first);
     expect(third).toEqual(first);
+  });
+
+  // J1's pad world positions before a move — header at rotation 0, so pad world
+  // is just footprint origin + pad offset.
+  const j1PadWorld = (board: Pcb) => {
+    const fp = board.footprints.find((f) => f.ref === "J1")!;
+    return fp.pads.map((p) => ({ x: fp.position.x + p.position.x, y: fp.position.y + p.position.y }));
+  };
+  const j1Nets = new Set(["VCC", "GND", "SIG2", "SIG3"]);
+  const nearAny = (p: Vec2, pts: Vec2[]) => pts.some((q) => Math.hypot(p.x - q.x, p.y - q.y) < 1.5);
+
+  it("re-routing after set_placement leaves no orphaned copper at the old position", async () => {
+    const id = await buildBoard();
+    out(await routeNets({ document_id: id }));
+    const oldPads = j1PadWorld(getPcbBoard(getSession(id)));
+
+    // Move J1 across the board, then re-route the whole board.
+    out(await setPlacement({ document_id: id, placements: [{ ref: "J1", x: 45, y: 30 }] }));
+    out(await routeNets({ document_id: id }));
+
+    const board = getPcbBoard(getSession(id));
+    const orphans = board.traces.filter(
+      (t) => j1Nets.has(t.net) && (nearAny(t.start, oldPads) || nearAny(t.end, oldPads)),
+    );
+    expect(orphans.length).toBe(0);
+  });
+
+  it("a scoped re-route sweeps stale copper on unfiltered nets whose pads moved", async () => {
+    const id = await buildBoard();
+    out(await routeNets({ document_id: id }));
+    const oldPads = j1PadWorld(getPcbBoard(getSession(id)));
+
+    // Move J1, then re-route ONLY SIG2. The unfiltered J1 nets (VCC/GND/SIG3)
+    // are now stale; route_nets must detect and rip them, not leave dead copper.
+    out(await setPlacement({ document_id: id, placements: [{ ref: "J1", x: 45, y: 30 }] }));
+    const r = out(await routeNets({ document_id: id, nets: ["SIG2"] }));
+
+    const board = getPcbBoard(getSession(id));
+    const stale = board.traces.filter(
+      (t) => ["VCC", "GND", "SIG3"].includes(t.net) && (nearAny(t.start, oldPads) || nearAny(t.end, oldPads)),
+    );
+    expect(stale.length).toBe(0);
+    // And it reports the cleanup it did, so the agent isn't blind to it.
+    expect(r.traces_removed).toBeGreaterThan(0);
+    expect((r.stale_nets_cleared as string[]).sort()).toContain("GND");
+  });
+
+  it("does not flag a freshly-routed board as stale (no spurious rip-up)", async () => {
+    const id = await buildBoard();
+    out(await routeNets({ document_id: id }));
+    // No move — a second scoped route on a clean board must not report any
+    // stale-net cleanup (detection is false-positive-free on clean copper).
+    const r = out(await routeNets({ document_id: id, nets: ["SIG2"] }));
+    expect(r.stale_nets_cleared).toBeUndefined();
+  });
+
+  it("the stale sweep never rips coil/winding copper (free spiral, no pads)", async () => {
+    const id = await buildBoard();
+    // A standalone coil on its own net — a free spiral whose terminals dangle by
+    // design and whose net has no pads. It must survive every route_nets call.
+    const coil = out(
+      addCoil({
+        document_id: id,
+        center: { x: 25, y: 17 },
+        turns: 4,
+        inner_radius: 3,
+        outer_radius: 8,
+        trace_width: 0.3,
+        clearance: 0.3,
+        net: "COIL",
+      }),
+    );
+    const coilTraces = coil.traces_added as number;
+    expect(coilTraces).toBeGreaterThan(20);
+    out(await routeNets({ document_id: id }));
+
+    // Move a part and do a scoped re-route — the coil net is not listed and has
+    // dangling ends, but the sweep must leave it intact.
+    out(await setPlacement({ document_id: id, placements: [{ ref: "J1", x: 45, y: 30 }] }));
+    const r = out(await routeNets({ document_id: id, nets: ["SIG2"] }));
+
+    const board = getPcbBoard(getSession(id));
+    expect(board.traces.filter((t) => t.net === "COIL").length).toBe(coilTraces);
+    expect((r.stale_nets_cleared as string[] | undefined) ?? []).not.toContain("COIL");
   });
 });
 
