@@ -1,0 +1,10 @@
+{
+  "id": "2026-06-25-render-stackup",
+  "version": "0.9.4",
+  "date": "2026-06-25",
+  "category": "feat",
+  "title": "render_stackup renders layers individually",
+  "summary": "New MCP tool renders each copper layer of a multilayer board to its own image (framed by the board edge), so inner planes are legible instead of buried under an all-layers composite. Returns one image per layer plus a layer index.",
+  "features": ["ecad", "pcb", "render"],
+  "mcpTools": ["render_stackup"]
+}

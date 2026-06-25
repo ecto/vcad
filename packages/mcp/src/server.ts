@@ -16,7 +16,16 @@ import { commandRegistry } from "@vcad/core";
 import type { Document } from "@vcad/ir";
 import { exportCad, exportCadSchema } from "./tools/export.js";
 import { inspectCad, inspectCadSchema } from "./tools/inspect.js";
-import { renderView, renderViewSchema, renderPcb, renderPcbSchema } from "./tools/render.js";
+import {
+  renderView,
+  renderViewSchema,
+  renderPcb,
+  renderPcbSchema,
+  renderRatsnest,
+  renderRatsnestSchema,
+  renderStackup,
+  renderStackupSchema,
+} from "./tools/render.js";
 import { recordSimulation, recordSimulationSchema } from "./tools/record.js";
 import {
   verifyPart,
@@ -499,6 +508,8 @@ const TOOL_PACKS: Record<string, readonly string[]> = {
     "run_erc",
     "export_gerber",
     "render_pcb",
+    "render_ratsnest",
+    "render_stackup",
     "calc_impedance",
     "size_impedance",
     "size_pdn",
@@ -1324,6 +1335,24 @@ export async function createServer(
         inputSchema: renderPcbSchema,
       },
       {
+        name: "render_ratsnest",
+        description:
+          "Render the board with its unrouted-connection ratsnest (per-net MST " +
+          "airwires) overlaid as dashed lines — judge placement quality and " +
+          "crossing density BEFORE routing. Returns a PNG plus the airwire " +
+          "(unconnected-pair) count.",
+        inputSchema: renderRatsnestSchema,
+      },
+      {
+        name: "render_stackup",
+        description:
+          "Render each copper layer of a multilayer board to its own image " +
+          "(with the board edge for framing), so inner planes are legible " +
+          "instead of buried under an all-layers composite. Returns one image " +
+          "per layer plus a layer→image index.",
+        inputSchema: renderStackupSchema,
+      },
+      {
         name: "run_drc",
         description:
           "Run Design Rule Check (DRC) on a PCB. " +
@@ -1889,6 +1918,14 @@ export async function createServer(
 
         case "render_pcb":
           result = (await renderPcb(args)) as unknown as typeof result;
+          break;
+
+        case "render_ratsnest":
+          result = (await renderRatsnest(args)) as unknown as typeof result;
+          break;
+
+        case "render_stackup":
+          result = (await renderStackup(args)) as unknown as typeof result;
           break;
 
         case "save_document":

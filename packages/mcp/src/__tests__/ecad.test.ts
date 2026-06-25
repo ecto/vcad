@@ -37,6 +37,7 @@ import {
   appNotesForPin,
   unconnectedPinSeverity,
 } from "../tools/ecad.js";
+import { renderRatsnest, renderStackup } from "../tools/render.js";
 import { documents, getSession, openDocument } from "../tools/session.js";
 import { openInBrowser } from "../tools/share.js";
 
@@ -204,6 +205,51 @@ describe("footprint discovery", () => {
   it("search_footprints errors on an empty query", async () => {
     const res = await searchFootprints({ query: "  " });
     expect((res as { isError?: boolean }).isError).toBe(true);
+  });
+});
+
+describe("render_ratsnest / render_stackup", () => {
+  it("render_ratsnest overlays airwires and reports the unconnected-pair count", async () => {
+    const created = out(
+      await createSchematic({
+        components: [resistor("R1", 0), resistor("R2", 20), resistor("R3", 40)],
+        nets: { GND: ["R1.1", "R2.1", "R3.1"], SIG: ["R1.2", "R2.2"] },
+      }),
+    );
+    const id = created.document_id;
+    await placeComponents({ document_id: id, board_width: 60, board_height: 30 });
+
+    const res = await renderRatsnest({ document_id: id });
+    const image = res.content.find((c) => c.type === "image");
+    expect(image, "expected a PNG image block (is @resvg/resvg-js installed?)").toBeDefined();
+    const textBlock = res.content.find((c) => c.type === "text") as
+      | { text: string }
+      | undefined;
+    const meta = JSON.parse(textBlock!.text);
+    // Nothing routed yet → every net connection is an airwire (GND 3 pads → 2,
+    // SIG 2 pads → 1).
+    expect(meta.airwires).toBeGreaterThan(0);
+    expect(meta.format).toBe("png");
+  });
+
+  it("render_stackup returns one image per copper layer plus an index", async () => {
+    const created = out(
+      await createSchematic({
+        components: [resistor("R1", 0), resistor("R2", 20)],
+        nets: { N: ["R1.2", "R2.1"] },
+      }),
+    );
+    const id = created.document_id;
+    await placeComponents({ document_id: id, board_width: 40, board_height: 20 });
+
+    const res = await renderStackup({ document_id: id });
+    const images = res.content.filter((c) => c.type === "image");
+    expect(images.length).toBeGreaterThanOrEqual(2); // at least F.Cu + B.Cu
+    const textBlock = res.content.find((c) => c.type === "text") as
+      | { text: string }
+      | undefined;
+    const meta = JSON.parse(textBlock!.text);
+    expect(meta.layers.length).toBe(images.length);
   });
 });
 
