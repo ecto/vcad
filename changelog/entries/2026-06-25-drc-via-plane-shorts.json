@@ -1,0 +1,10 @@
+{
+  "id": "2026-06-25-drc-via-plane-shorts",
+  "version": "0.9.4",
+  "date": "2026-06-25",
+  "category": "fix",
+  "title": "DRC no longer false-shorts vias through planes",
+  "summary": "A foreign-net via or trace crossing an inner-layer copper pour is no longer reported as a short — fabrication always anti-pads it, so a plane connects only to its own net. Removes the cascade of spurious shorts on 4-layer boards with tight or zero plane clearance.",
+  "features": ["ecad", "pcb", "drc"],
+  "mcpTools": ["run_drc", "route_nets", "place_components"]
+}
