@@ -1,0 +1,10 @@
+{
+  "id": "2026-06-25-route-nets-plane-stitched",
+  "version": "0.9.4",
+  "date": "2026-06-25",
+  "category": "feat",
+  "title": "route_nets reports plane-stitched nets",
+  "summary": "Nets connected through a copper-pour plane (the router stitches each pad to the plane with a via instead of star-routing traces) are now surfaced as plane_stitched in the route_nets result, so the routing strategy applied to power/ground nets is visible.",
+  "features": ["ecad", "pcb", "routing"],
+  "mcpTools": ["route_nets"]
+}

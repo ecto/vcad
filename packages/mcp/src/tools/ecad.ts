@@ -2687,6 +2687,16 @@ export async function routeNets(args: Record<string, unknown>) {
     }
   }
 
+  // Nets connected through a copper plane (a zone): the kernel stitches their
+  // pads to the plane with vias instead of trace-routing them. Surface which
+  // routed nets that was — same rule as the kernel's plane_layers (a net with a
+  // zone of >=3 vertices) — so the strategy is visible, not implicit.
+  const planeNets = new Set<string>();
+  for (const z of pcb.zones) {
+    if (z.net && z.outline.length >= 3) planeNets.add(z.net);
+  }
+  const planeStitched = [...routedNets].filter((n) => planeNets.has(n)).sort();
+
   const warnings: string[] = [];
   if (unroutedNets.size > 0) {
     warnings.push(
@@ -2734,6 +2744,7 @@ export async function routeNets(args: Record<string, unknown>) {
           ...(viasRemoved > 0 ? { vias_removed: viasRemoved } : {}),
           ...(staleCleared.length > 0 ? { stale_nets_cleared: staleCleared } : {}),
           ...(lockedNets.size > 0 ? { locked_nets: [...lockedNets] } : {}),
+          ...(planeStitched.length > 0 ? { plane_stitched: planeStitched } : {}),
           ...(Object.keys(realizedWidths).length > 0
             ? { track_widths_mm: realizedWidths }
             : {}),

@@ -351,6 +351,29 @@ describe("route_nets locked_nets", () => {
   });
 });
 
+describe("route_nets plane stitching", () => {
+  it("reports nets connected through a copper plane in plane_stitched", async () => {
+    const created = out(
+      await createSchematic({
+        components: [resistor("R1", 0), resistor("R2", 20), resistor("R3", 40)],
+        nets: { GND: ["R1.1", "R2.1", "R3.1"], SIG: ["R1.2", "R2.2"] },
+      }),
+    );
+    const id = created.document_id;
+    await placeComponents({ document_id: id, board_width: 60, board_height: 30 });
+    // GND copper plane on the back layer — pads get stitched to it with vias.
+    await addZone({ document_id: id, net: "GND", layer: "BCu", fill_board: true });
+
+    const res = out(await routeNets({ document_id: id }));
+    expect(res.success).toBe(true);
+    expect(res.plane_stitched).toContain("GND");
+    expect((res.plane_stitched as string[]).includes("SIG")).toBe(false);
+    // GND pads were stitched to the plane with vias, not star-routed as traces.
+    const board = getPcbBoard(getSession(id));
+    expect(board.vias.some((v) => v.net === "GND")).toBe(true);
+  });
+});
+
 describe("set_board_outline", () => {
   it("resizes the outline, keeps component positions, and flags off-board parts", async () => {
     const created = out(

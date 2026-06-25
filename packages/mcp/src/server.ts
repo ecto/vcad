@@ -1126,9 +1126,12 @@ export async function createServer(
       {
         name: "route_nets",
         description:
-          "Route electrical nets on the PCB with copper traces. " +
-          "Connects pads belonging to the same net. Mutates the session " +
-          "document (pass document_id).",
+          "Route electrical nets on the PCB with copper traces. Connects pads " +
+          "belonging to the same net. A net with a copper-pour zone (a plane) " +
+          "is connected by stitching each pad to the plane with a via instead " +
+          "of tracing it — those nets come back in `plane_stitched`. " +
+          "`locked_nets` preserves hand-placed copper from rip-up. Mutates the " +
+          "session document (pass document_id).",
         inputSchema: routeNetsSchema,
       },
       {
