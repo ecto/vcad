@@ -35,7 +35,7 @@ pub fn closest_point_uv(surface: &dyn Surface, point: &Point3, tolerance: f64) -
                 return None;
             }
             let d_norm = d / len;
-            let v = d_norm.dot(sphere.axis.as_ref()).asin();
+            let v = d_norm.dot(sphere.axis.as_ref()).clamp(-1.0, 1.0).asin();
             let cos_v = v.cos();
             if cos_v.abs() < 1e-15 {
                 return Some(Point2::new(0.0, v));

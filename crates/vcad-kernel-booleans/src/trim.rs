@@ -567,7 +567,7 @@ pub fn project_point_to_uv(surface: &dyn Surface, point: &Point3) -> Point2 {
                 let d = (point - sph.center).normalize();
                 let ref_dir = sph.ref_dir.as_ref();
                 let y_dir = sph.axis.as_ref().cross(ref_dir);
-                let v = d.dot(sph.axis.as_ref()).asin(); // latitude
+                let v = d.dot(sph.axis.as_ref()).clamp(-1.0, 1.0).asin(); // latitude
                 let cos_v = v.cos();
                 let u = if cos_v.abs() < 1e-12 {
                     0.0 // at pole
