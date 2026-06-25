@@ -107,7 +107,7 @@ impl Transform {
         }
         let n = plane_normal / len;
         let z = Vec3::new(0.0, 0.0, 1.0);
-        let dot = n.dot(&z).clamp(-1.0, 1.0);
+        let dot = n.dot(z).clamp(-1.0, 1.0);
 
         // Rotation that takes `n` onto `+Z`. Three cases by dot:
         //   dot ≈  1: n is already +Z — no rotation needed.
@@ -118,7 +118,7 @@ impl Transform {
         } else if dot < -1.0 + 1e-12 {
             Self::rotation_x(std::f64::consts::PI)
         } else {
-            let axis_vec = n.cross(&z);
+            let axis_vec = n.cross(z);
             let axis = Dir3::new_normalize(axis_vec);
             Self::rotation_about_axis(&axis, dot.acos())
         };

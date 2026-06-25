@@ -423,6 +423,22 @@ export class Solid {
      */
     static cone(radius_bottom: number, radius_top: number, height: number, segments?: number | null): Solid;
     /**
+     * Create a torus centered at origin with axis along Z.
+     */
+    static torus(major_radius: number, minor_radius: number, segments?: number | null): Solid;
+    /**
+     * Create a right-triangular-prism wedge with corner at origin.
+     */
+    static wedge(sx: number, sy: number, sz: number): Solid;
+    /**
+     * Create a regular n-gonal right prism centered on Z.
+     */
+    static prism(sides: number, radius: number, height: number): Solid;
+    /**
+     * Mirror the solid across a plane.
+     */
+    mirror(origin_x: number, origin_y: number, origin_z: number, normal_x: number, normal_y: number, normal_z: number): Solid;
+    /**
      * Create a box with corner at origin and dimensions (sx, sy, sz).
      */
     static cube(sx: number, sy: number, sz: number): Solid;
