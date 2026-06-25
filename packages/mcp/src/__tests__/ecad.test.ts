@@ -293,6 +293,123 @@ describe("ecad session flow", () => {
     expect(d).toBeGreaterThan(8);
   });
 
+  it("force_directed never bakes a cross-net pad short into the board", async () => {
+    // A tightly-netted NE555-style cluster: the net-attraction can pull
+    // different-net pads on top of each other (a VCC/GND short) before any
+    // routing. Placement must legalize that away, not ship success with a short.
+    const r = (ref: string) => ({
+      ref,
+      value: "1k",
+      footprint: "Resistor_SMD:R_0805",
+      x: 0,
+      y: 0,
+      pins: [
+        { number: "1", name: "~", type: "Passive" },
+        { number: "2", name: "~", type: "Passive" },
+      ],
+    });
+    const twoPin = (ref: string, value: string, footprint: string) => ({
+      ref,
+      value,
+      footprint,
+      x: 0,
+      y: 0,
+      pins: [
+        { number: "1", name: "~", type: "Passive" },
+        { number: "2", name: "~", type: "Passive" },
+      ],
+    });
+    const created = out(
+      await createSchematic({
+        components: [
+          {
+            ref: "U1",
+            value: "NE555",
+            footprint: "Package_SO:SOIC-8_3.9x4.9mm_P1.27mm",
+            x: 0,
+            y: 0,
+            pins: Array.from({ length: 8 }, (_, i) => ({
+              number: String(i + 1),
+              name: ["GND", "TRIG", "OUT", "RESET", "CTRL", "THR", "DIS", "VCC"][i],
+              type: "Passive",
+            })),
+          },
+          r("R1"),
+          r("R2"),
+          r("R3"),
+          twoPin("C1", "10uF", "Capacitor_SMD:C_1206"),
+          twoPin("C2", "10nF", "Capacitor_SMD:C_0805"),
+          twoPin("D1", "LED", "LED_SMD:LED_0805"),
+          twoPin("J1", "PWR", "Connector_PinHeader_2.54mm:PinHeader_1x02_P2.54mm"),
+        ],
+        nets: {
+          VCC: ["J1.1", "U1.8", "U1.4", "R1.1"],
+          GND: ["J1.2", "U1.1", "C1.2", "C2.2", "R3.2"],
+          DIS: ["U1.7", "R1.2", "R2.1"],
+          THR: ["U1.6", "U1.2", "R2.2", "C1.1"],
+          CTRL: ["U1.5", "C2.1"],
+          OUT: ["U1.3", "D1.1"],
+          LEDK: ["D1.2", "R3.1"],
+        },
+      }),
+    );
+    const id = created.document_id;
+    const placed = out(
+      await placeComponents({
+        document_id: id,
+        board_shape: { outer_diameter: 25, type: "circle" },
+        strategy: "force_directed",
+      }),
+    );
+    expect(placed.success).toBe(true);
+    expect(placed.placement_conflicts).toBeUndefined();
+
+    // The DRC oracle: before any routing, no copper-to-copper clearance or short
+    // violations may exist (the only legal violations are unrouted ratsnest).
+    const drc = out(await runDrc({ document_id: id, detail: "full" }));
+    const shorts = (drc.details ?? []).filter((v: { rule: string }) => v.rule === "Short");
+    expect(shorts).toHaveLength(0);
+    expect(drc.categories.clearance).toBe(0);
+  });
+
+  it("force_directed reports cross-net conflicts it can't fit (no false success)", async () => {
+    // Four 1x02 headers (~4.5mm wide) sharing a common net on a 5mm board:
+    // there is physically no way to separate every different-net pad. The placer
+    // must report the unresolved pairs and refuse to claim success.
+    const hdr = (ref: string) => ({
+      ref,
+      value: "H",
+      footprint: "Connector_PinHeader_2.54mm:PinHeader_1x02_P2.54mm",
+      x: 0,
+      y: 0,
+      pins: [
+        { number: "1", name: "~", type: "Passive" },
+        { number: "2", name: "~", type: "Passive" },
+      ],
+    });
+    const comps = ["J1", "J2", "J3", "J4"].map(hdr);
+    const nets: Record<string, string[]> = { COMMON: comps.map((c) => `${c.ref}.1`) };
+    comps.forEach((c) => (nets[`SIG_${c.ref}`] = [`${c.ref}.2`]));
+    const created = out(await createSchematic({ components: comps, nets }));
+    const placed = out(
+      await placeComponents({
+        document_id: created.document_id,
+        board_width: 5,
+        board_height: 5,
+        strategy: "force_directed",
+      }),
+    );
+    expect(placed.success).toBe(false);
+    expect(placed.placement_conflicts.length).toBeGreaterThan(0);
+    // Each reported conflict is a genuine sub-clearance gap (clearance is 0.2mm).
+    for (const c of placed.placement_conflicts) {
+      expect(c.gap).toBeLessThan(0.2);
+      expect(c.a).toBeTruthy();
+      expect(c.b).toBeTruthy();
+    }
+    expect(placed.warnings.some((w: string) => /cross-net pad overlap/i.test(w))).toBe(true);
+  });
+
   it("route_nets honors per-net-class width and reports realized widths", async () => {
     const created = out(
       await createSchematic({
