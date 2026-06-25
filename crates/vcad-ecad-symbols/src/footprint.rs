@@ -16,8 +16,11 @@
 //! SC-70/SOT-353/-363, SOIC/SO/SOP/SSOP/TSSOP/MSOP/VSSOP, QFP/LQFP/TQFP/PQFP,
 //! QFN/DFN/SON (with thermal pad), DPAK/D2PAK (TO-252/TO-263), SOD/DO-214
 //! (SMA/SMB/SMC) two-terminal SMD, DIP, pin headers/sockets, screw terminals,
-//! and radial electrolytic caps. Anything else falls back to a *compact grid*
-//! of pads sized to stay on the board, flagged `matched: false`.
+//! radial electrolytic caps, and wire-to-board / programming / USB connectors:
+//! JST PH/XH/EH (THT) and SH/GH (SMD), Molex Pico-Blade (SMD), Tag-Connect
+//! TC2030/TC2050 spring-pin pads, and a simplified USB-C receptacle. Anything
+//! else falls back to a *compact grid* of pads sized to stay on the board,
+//! flagged `matched: false`.
 
 use serde::{Deserialize, Serialize};
 use vcad_ir::ecad::*;
@@ -86,6 +89,49 @@ fn circle_tht(num: &str, x: f64, y: f64, pad_dia: f64, drill_dia: f64) -> Pad {
             PcbLayer::FMask,
             PcbLayer::BMask,
         ],
+    }
+}
+
+/// Rectangular through-hole pad (a drilled hole inside a square/rect copper
+/// land). Used to square off pin 1 of a connector for polarity, the classic
+/// "pin 1 is the only non-round pad" convention.
+fn rect_tht(num: &str, x: f64, y: f64, w: f64, h: f64, drill_dia: f64) -> Pad {
+    Pad {
+        number: num.to_string(),
+        pad_type: PadType::THT,
+        shape: PadShape::Rect {
+            width: w,
+            height: h,
+        },
+        position: Vec2::new(x, y),
+        rotation: 0.0,
+        drill: Some(DrillSpec {
+            diameter: drill_dia,
+            oval: false,
+            oval_height: None,
+        }),
+        net: None,
+        layers: vec![
+            PcbLayer::FCu,
+            PcbLayer::BCu,
+            PcbLayer::FMask,
+            PcbLayer::BMask,
+        ],
+    }
+}
+
+/// Bare-copper round SMD test pad: front copper + mask opening but **no paste**
+/// — a spring-pin (pogo) target that should never get a solder-stencil aperture.
+fn smd_test_pad(num: &str, x: f64, y: f64, dia: f64) -> Pad {
+    Pad {
+        number: num.to_string(),
+        pad_type: PadType::SMD,
+        shape: PadShape::Circle { diameter: dia },
+        position: Vec2::new(x, y),
+        rotation: 0.0,
+        drill: None,
+        net: None,
+        layers: vec![PcbLayer::FCu, PcbLayer::FMask],
     }
 }
 
@@ -538,6 +584,168 @@ fn radial_electrolytic(pitch: f64, body_dia: f64) -> FootprintTemplate {
 }
 
 // ============================================================================
+// Wire-to-board connectors (JST PH/XH/EH/SH/GH, Molex Pico-Blade): single row
+// ============================================================================
+
+/// Pad style for a single-row wire-to-board connector.
+#[derive(Clone, Copy)]
+enum ConnPad {
+    /// Through-hole: round pads (pin 1 squared off), drilled `drill`.
+    Tht {
+        /// Copper land diameter (and pin-1 square edge), mm.
+        pad: f64,
+        /// Drill hole diameter, mm.
+        drill: f64,
+    },
+    /// Surface-mount: rectangular pads, `w` across the row × `h` along the body.
+    Smd {
+        /// Pad width (across the pin row), mm.
+        w: f64,
+        /// Pad height (along the connector body), mm.
+        h: f64,
+    },
+}
+
+/// One row of `pins` contacts spaced `pitch` apart along x, pin 1 at the left
+/// (−x). Pin 1 is squared off (THT) and flagged with a silk dot so the polarity
+/// survives assembly. Mounting/boss tabs are omitted — the contact lands are
+/// what routing and DRC operate on.
+fn linear_connector(name: String, pins: u32, pitch: f64, pad: ConnPad) -> FootprintTemplate {
+    let n = pins.max(1);
+    let span = (n as f64 - 1.0) * pitch;
+    let mut pads = Vec::new();
+    for i in 0..n {
+        let x = -span / 2.0 + i as f64 * pitch;
+        let num = (i + 1).to_string();
+        match pad {
+            ConnPad::Tht { pad, drill } => {
+                if i == 0 {
+                    pads.push(rect_tht(&num, x, 0.0, pad, pad, drill));
+                } else {
+                    pads.push(circle_tht(&num, x, 0.0, pad, drill));
+                }
+            }
+            ConnPad::Smd { w, h } => pads.push(rect_smd(&num, x, 0.0, w, h)),
+        }
+    }
+    let pad_h = match pad {
+        ConnPad::Tht { pad, .. } => pad,
+        ConnPad::Smd { h, .. } => h,
+    };
+    let half_w = span / 2.0 + pitch * 0.7;
+    let half_h = pad_h / 2.0 + 0.9;
+    let mut graphics = silk_rect(-half_w, -half_h, half_w, half_h);
+    graphics.push(pin1_dot(-span / 2.0 - pitch * 0.45, half_h + 0.3));
+    graphics.push(courtyard(half_w + 0.25, half_h + 0.25));
+    FootprintTemplate {
+        name,
+        pads,
+        graphics,
+    }
+}
+
+// ============================================================================
+// Tag-Connect spring-pin programming pads (TC2030 = 6, TC2050 = 10)
+// ============================================================================
+
+/// Two columns of bare-copper SMD pads at 1.27 mm pitch that a Tag-Connect
+/// spring-pin cable lands on. `pins` is rounded down to an even count; pads are
+/// numbered 1,2 / 3,4 / … down the rows (KiCad 2×N order). The locating/leg
+/// holes are mechanical and omitted — the copper is what gets routed.
+fn tag_connect(pins: u32) -> FootprintTemplate {
+    let pitch = 1.27;
+    let per_col = (pins.max(2) / 2).max(1);
+    let col_x = pitch / 2.0;
+    let top = (per_col as f64 - 1.0) / 2.0 * pitch;
+    // Round contacts a touch under the pitch so neighbours keep a real gap
+    // (no overlap → no spurious clearance flags inside the dense pad field).
+    let dia = 0.8;
+    let mut pads = Vec::new();
+    let mut num = 1u32;
+    for r in 0..per_col {
+        let y = top - r as f64 * pitch;
+        pads.push(smd_test_pad(&num.to_string(), -col_x, y, dia));
+        num += 1;
+        pads.push(smd_test_pad(&num.to_string(), col_x, y, dia));
+        num += 1;
+    }
+    let half_w = col_x + dia / 2.0 + 0.6;
+    let half_h = top + dia / 2.0 + 0.6;
+    let mut graphics = silk_rect(-half_w, -half_h, half_w, half_h);
+    graphics.push(pin1_dot(-col_x - dia / 2.0 - 0.4, top));
+    graphics.push(courtyard(half_w + 0.25, half_h + 0.25));
+    FootprintTemplate {
+        name: format!("TagConnect-{}", per_col * 2),
+        pads,
+        graphics,
+    }
+}
+
+// ============================================================================
+// USB-C receptacle (simplified): 2 SMD contact rows + 4 THT shield posts
+// ============================================================================
+
+/// Simplified USB-C receptacle: `signal` SMD contacts split across two rows
+/// (front/back) plus four through-hole shield/retention posts at the corners.
+/// Contact pitch tightens with the count (≤8 → 1.0, ≤16 → 0.8, else 0.5 mm) to
+/// approximate the common 6/16/24-pin variants. Posts are numbered SH1–SH4 so
+/// they map to no declared pin and stay clear of the signal nets (mechanical).
+/// This is an approximation — use inline `pads` when exact A1/B1 geometry and
+/// numbering matter.
+fn usb_c(signal: u32) -> FootprintTemplate {
+    let n = signal.max(2);
+    let per_row = n.div_ceil(2);
+    let pitch = if n <= 8 {
+        1.0
+    } else if n <= 16 {
+        0.8
+    } else {
+        0.5
+    };
+    let row_y = 1.45;
+    let span = (per_row as f64 - 1.0) * pitch;
+    let pad_w = (pitch * 0.6).clamp(0.3, 0.7);
+    let mut pads = Vec::new();
+    let mut num = 1u32;
+    // Front row (−y) then back row (+y), each left→right; numbering continues.
+    for &ry in &[-row_y, row_y] {
+        for i in 0..per_row {
+            if num > n {
+                break;
+            }
+            let x = -span / 2.0 + i as f64 * pitch;
+            pads.push(rect_smd(&num.to_string(), x, ry, pad_w, 1.1));
+            num += 1;
+        }
+    }
+    // Shield / mounting posts (through-hole), one per corner.
+    let post_x = span / 2.0 + 1.7;
+    let post_y = 1.9;
+    for (k, (sx, sy)) in [(-1.0, -1.0), (1.0, -1.0), (-1.0, 1.0), (1.0, 1.0)]
+        .iter()
+        .enumerate()
+    {
+        pads.push(circle_tht(
+            &format!("SH{}", k + 1),
+            sx * post_x,
+            sy * post_y,
+            1.7,
+            1.0,
+        ));
+    }
+    let half_w = post_x + 1.0;
+    let half_h = post_y + 1.0;
+    let mut graphics = silk_rect(-half_w, -half_h, half_w, half_h);
+    graphics.push(pin1_dot(-span / 2.0 - 0.6, -row_y - 0.7));
+    graphics.push(courtyard(half_w + 0.25, half_h + 0.25));
+    FootprintTemplate {
+        name: format!("USB-C-{signal}"),
+        pads,
+        graphics,
+    }
+}
+
+// ============================================================================
 // Generic compact fallback (replaces the off-board single-column placeholder)
 // ============================================================================
 
@@ -641,7 +849,11 @@ fn rows_cols(s: &str) -> Option<(u32, u32)> {
             continue;
         }
         let before_ok = run_start == 0 || bytes[run_start - 1] == b'_';
-        let after_ok = run_end == s.len() || bytes[run_end] == b'_';
+        // Accept a trailing `_` *or* `-` so KiCad's mounting-pad suffix
+        // (`1x02-1MP`) still parses to its 2 contacts. Body sizes like
+        // `5x5mm`/`3.9x4.9mm` are still rejected — `mm`/`.` fail the digit-run
+        // boundary on the other side.
+        let after_ok = run_end == s.len() || bytes[run_end] == b'_' || bytes[run_end] == b'-';
         if !before_ok || !after_ok {
             continue;
         }
@@ -650,6 +862,26 @@ fn rows_cols(s: &str) -> Option<(u32, u32)> {
         return Some((rows, cols));
     }
     None
+}
+
+/// Contact count for a connector: prefer a KiCad `RxC` token (`1x02`, `2x05`),
+/// then a count immediately after `count_marker` (the bare `JST_PH_2` form),
+/// then the caller-declared `pin_count`. `count_marker` must include the
+/// trailing `_` (e.g. `"JST_PH_"`) so it only fires on the bare-count form and
+/// never grabs a part-number digit run.
+fn connector_pins(base: &str, count_marker: &str, declared: u32) -> u32 {
+    if let Some((r, c)) = rows_cols(base) {
+        let n = r * c;
+        if n > 0 {
+            return n;
+        }
+    }
+    if let Some(n) = uint_after(base, count_marker) {
+        if n > 0 {
+            return n;
+        }
+    }
+    declared
 }
 
 /// Pin count from a family marker (`"QFN-40"` → 40), falling back to the
@@ -757,6 +989,122 @@ fn match_family(base: &str, pin_count: u32) -> Option<(FootprintTemplate, &'stat
         let pitch = float_after(base, "_P").unwrap_or(5.0);
         let body = float_after(base, "_D").unwrap_or(6.3);
         return Some((radial_electrolytic(pitch, body), "Electrolytic"));
+    }
+
+    // --- USB-C receptacle (simplified) -------------------------------------
+    // Matched before the IC families so a "..._SO..."-ish vendor token can't
+    // hijack it; geometry is approximate (see `usb_c`).
+    if base.contains("USB_C")
+        || base.contains("USB-C")
+        || base.contains("Type-C")
+        || base.contains("TYPE-C")
+        || base.contains("TypeC")
+    {
+        // KiCad USB-C ids don't carry a clean contact count, so trust the
+        // declared pin count; default to the full 24-contact receptacle.
+        let signal = if pin_count >= 2 { pin_count } else { 24 };
+        return Some((usb_c(signal), "USB-C"));
+    }
+
+    // --- Tag-Connect spring-pin programming pads ---------------------------
+    if base.contains("Tag-Connect")
+        || base.contains("TagConnect")
+        || base.contains("TC2030")
+        || base.contains("TC2050")
+    {
+        let pins = rows_cols(base)
+            .map(|(r, c)| r * c)
+            .filter(|&n| n >= 2)
+            .or(if base.contains("TC2050") {
+                Some(10)
+            } else if base.contains("TC2030") {
+                Some(6)
+            } else {
+                None
+            })
+            .unwrap_or(pin_count.max(6));
+        return Some((tag_connect(pins), "Tag-Connect"));
+    }
+
+    // --- Single-row wire-to-board: JST PH/XH/EH (THT), SH/GH (SMD) ----------
+    for (marker, count_marker, pitch_default, pad, label) in [
+        (
+            "JST_PH",
+            "JST_PH_",
+            2.0,
+            ConnPad::Tht {
+                pad: 1.7,
+                drill: 1.0,
+            },
+            "JST-PH",
+        ),
+        (
+            "JST_XH",
+            "JST_XH_",
+            2.5,
+            ConnPad::Tht {
+                pad: 1.7,
+                drill: 1.0,
+            },
+            "JST-XH",
+        ),
+        (
+            "JST_EH",
+            "JST_EH_",
+            2.5,
+            ConnPad::Tht {
+                pad: 1.7,
+                drill: 1.0,
+            },
+            "JST-EH",
+        ),
+        (
+            "JST_SH",
+            "JST_SH_",
+            1.0,
+            ConnPad::Smd { w: 0.6, h: 1.55 },
+            "JST-SH",
+        ),
+        (
+            "JST_GH",
+            "JST_GH_",
+            1.25,
+            ConnPad::Smd { w: 0.7, h: 1.55 },
+            "JST-GH",
+        ),
+    ] {
+        if base.contains(marker) {
+            let pins = connector_pins(base, count_marker, pin_count).max(2);
+            let pitch = float_after(base, "_P").unwrap_or(pitch_default);
+            return Some((
+                linear_connector(format!("{label}-{pins}"), pins, pitch, pad),
+                label,
+            ));
+        }
+    }
+
+    // --- Molex Pico-Blade (53048 / 53261), 1.25 mm SMD ---------------------
+    // No bare-count marker — the part number after the family token is digits,
+    // so size off the `RxC` token or the declared count (never `uint_after`).
+    if base.contains("PicoBlade")
+        || base.contains("Pico-Blade")
+        || base.contains("53048")
+        || base.contains("53261")
+    {
+        let pins = rows_cols(base)
+            .map(|(r, c)| r * c)
+            .filter(|&n| n >= 2)
+            .unwrap_or(pin_count.max(2));
+        let pitch = float_after(base, "_P").unwrap_or(1.25);
+        return Some((
+            linear_connector(
+                format!("Molex-PicoBlade-{pins}"),
+                pins,
+                pitch,
+                ConnPad::Smd { w: 0.8, h: 1.6 },
+            ),
+            "Molex-PicoBlade",
+        ));
     }
 
     // --- SOT family (SOT-223 before SOT-23 due to substring overlap) -------
@@ -1049,14 +1397,20 @@ pub fn resolve_footprint(name: &str, pin_count: u32) -> FootprintResolution {
             template: Some(chip("0805")),
             matched: false,
             family: None,
-            note: format!("unrecognized footprint '{base}'; substituted a 0805 chip placeholder"),
+            note: format!(
+                "unrecognized footprint '{base}'; substituted a 0805 chip placeholder. \
+                 Pass a recognized KiCad footprint id (chip/SOIC/QFN/QFP/SOT/DPAK/JST/Molex/\
+                 USB-C/Tag-Connect/pin-header/screw-terminal) or inline `pads` geometry to fix."
+            ),
         },
         n => FootprintResolution {
             template: Some(grid_fallback(n)),
             matched: false,
             family: None,
             note: format!(
-                "unrecognized footprint '{base}'; substituted a compact {n}-pad grid placeholder"
+                "unrecognized footprint '{base}'; substituted a compact {n}-pad grid placeholder. \
+                 Pass a recognized KiCad footprint id (chip/SOIC/QFN/QFP/SOT/DPAK/JST/Molex/\
+                 USB-C/Tag-Connect/pin-header/screw-terminal) or inline `pads` geometry to fix."
             ),
         },
     }
@@ -1088,6 +1442,38 @@ mod tests {
         p.sort();
         p.dedup();
         p.len()
+    }
+
+    /// Pad bounding-box half-extents (w/2, h/2) for an overlap test.
+    fn pad_half(p: &Pad) -> (f64, f64) {
+        match p.shape {
+            PadShape::Circle { diameter } => (diameter / 2.0, diameter / 2.0),
+            PadShape::Rect { width, height }
+            | PadShape::Oval { width, height }
+            | PadShape::RoundRect { width, height, .. } => (width / 2.0, height / 2.0),
+            PadShape::Custom { .. } => (0.5, 0.5),
+        }
+    }
+
+    /// No two copper lands in a footprint may physically overlap. The
+    /// `positions_unique` check only catches *coincident centres*; a pad taller
+    /// than its pitch still has a distinct centre yet overlaps its neighbour and
+    /// surfaces as a 0 mm clearance in DRC. AABB-disjoint (touching is allowed).
+    fn assert_no_pad_overlap(fp: &FootprintTemplate) {
+        for (i, a) in fp.pads.iter().enumerate() {
+            for b in fp.pads.iter().skip(i + 1) {
+                let (ax, ay) = pad_half(a);
+                let (bx, by) = pad_half(b);
+                let dx = (a.position.x - b.position.x).abs();
+                let dy = (a.position.y - b.position.y).abs();
+                let overlap = dx < ax + bx - 1e-6 && dy < ay + by - 1e-6;
+                assert!(
+                    !overlap,
+                    "pads {} and {} overlap in {}",
+                    a.number, b.number, fp.name
+                );
+            }
+        }
     }
 
     /// No pad may sit outside a generous bounding box for its package — this is
@@ -1382,5 +1768,246 @@ mod tests {
                 .len(),
             8
         );
+    }
+
+    // ------------------------------------------------------------------
+    // Connectors
+    // ------------------------------------------------------------------
+
+    /// The exact reproduction from the issue: a 2-pin JST-PH used to fall back
+    /// to a 0805 chip placeholder. It must now resolve to a real 2-contact THT
+    /// land at 2.0 mm pitch.
+    #[test]
+    fn jst_ph_repro_resolves_not_placeholder() {
+        let r = resolve_footprint("JST_PH_2", 2);
+        assert!(r.matched, "JST_PH_2 must resolve, got {:?}", r);
+        assert_eq!(r.family.as_deref(), Some("JST-PH"));
+        let fp = r.template.unwrap();
+        assert_eq!(fp.pads.len(), 2, "2 contacts");
+        assert!(
+            fp.pads.iter().all(|p| p.pad_type == PadType::THT),
+            "JST-PH is through-hole"
+        );
+        let dx = (fp.pads[0].position.x - fp.pads[1].position.x).abs();
+        assert!((dx - 2.0).abs() < 1e-6, "pitch must be 2.0mm, got {dx}");
+        assert_on_board(&fp, 4.0);
+    }
+
+    #[test]
+    fn jst_pitch_and_tech_by_family() {
+        // (id, declared, family, pitch, through-hole?)
+        for (id, n, fam, pitch, tht) in [
+            (
+                "Connector_JST:JST_PH_B2B-PH-K_1x04_P2.00mm_Vertical",
+                4,
+                "JST-PH",
+                2.0,
+                true,
+            ),
+            (
+                "Connector_JST:JST_XH_B5B-XH-A_1x05_P2.50mm_Vertical",
+                5,
+                "JST-XH",
+                2.5,
+                true,
+            ),
+            (
+                "Connector_JST:JST_EH_B3B-EH-A_1x03_P2.50mm_Vertical",
+                3,
+                "JST-EH",
+                2.5,
+                true,
+            ),
+            (
+                "Connector_JST:JST_SH_BM06B-SRSS-TB_1x06-1MP_P1.00mm_Horizontal",
+                6,
+                "JST-SH",
+                1.0,
+                false,
+            ),
+            (
+                "Connector_JST:JST_GH_SM04B-GHS-TB_1x04-1MP_P1.25mm_Horizontal",
+                4,
+                "JST-GH",
+                1.25,
+                false,
+            ),
+        ] {
+            let r = resolve_footprint(id, n);
+            assert!(r.matched, "{id} should match");
+            assert_eq!(r.family.as_deref(), Some(fam), "{id}");
+            let fp = r.template.unwrap();
+            assert_eq!(fp.pads.len(), n as usize, "{id}: one pad per contact");
+            assert_eq!(
+                positions_unique(&fp),
+                n as usize,
+                "{id}: pads must not stack"
+            );
+            let want = if tht { PadType::THT } else { PadType::SMD };
+            assert!(fp.pads.iter().all(|p| p.pad_type == want), "{id}: pad tech");
+            // Adjacent contacts sit one pitch apart along the row.
+            let mut xs: Vec<f64> = fp.pads.iter().map(|p| p.position.x).collect();
+            xs.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            assert!((xs[1] - xs[0] - pitch).abs() < 1e-6, "{id}: pitch {pitch}");
+            assert_no_pad_overlap(&fp);
+            assert_on_board(&fp, 10.0);
+        }
+    }
+
+    #[test]
+    fn jst_pin1_is_squared_for_polarity() {
+        // THT connectors square off pad 1 (Rect) and round the rest (Circle).
+        let fp = resolve_footprint("JST_PH_4", 4).template.unwrap();
+        let p1 = fp.pads.iter().find(|p| p.number == "1").unwrap();
+        assert!(matches!(p1.shape, PadShape::Rect { .. }), "pad 1 squared");
+        for p in fp.pads.iter().filter(|p| p.number != "1") {
+            assert!(
+                matches!(p.shape, PadShape::Circle { .. }),
+                "pad {} round",
+                p.number
+            );
+        }
+    }
+
+    #[test]
+    fn jst_kicad_mounting_pad_suffix_counts_contacts() {
+        // `1x02-1MP` (1 mounting pad) must still parse to 2 *contacts*, not the
+        // mounting tab and not the part-number digits.
+        let fp = resolve_footprint(
+            "Connector_JST:JST_PH_S2B-PH-SM4-TB_1x02-1MP_P2.00mm_Horizontal",
+            2,
+        )
+        .template
+        .unwrap();
+        assert_eq!(fp.pads.len(), 2);
+    }
+
+    #[test]
+    fn molex_picoblade_smd_125() {
+        let r = resolve_footprint(
+            "Connector_Molex:Molex_PicoBlade_53261-0271_1x02-1MP_P1.25mm_Vertical",
+            2,
+        );
+        assert!(r.matched);
+        assert_eq!(r.family.as_deref(), Some("Molex-PicoBlade"));
+        let fp = r.template.unwrap();
+        assert_eq!(fp.pads.len(), 2);
+        assert!(fp.pads.iter().all(|p| p.pad_type == PadType::SMD));
+        let dx = (fp.pads[0].position.x - fp.pads[1].position.x).abs();
+        assert!((dx - 1.25).abs() < 1e-6, "1.25mm pitch, got {dx}");
+        // A Molex part number must not be read as a chip code.
+        assert_ne!(fp.name, "0805");
+    }
+
+    #[test]
+    fn tag_connect_two_columns_no_paste() {
+        for (id, declared, want) in [
+            ("Tag-Connect:TC2050-IDC-NL_2x05_P1.27mm", 10, 10),
+            ("Tag-Connect:TC2030-IDC-NL_2x03_P1.27mm", 6, 6),
+            ("TC2050", 0, 10), // count derived from the name, not declared
+        ] {
+            let r = resolve_footprint(id, declared);
+            assert!(r.matched, "{id}");
+            assert_eq!(r.family.as_deref(), Some("Tag-Connect"), "{id}");
+            let fp = r.template.unwrap();
+            assert_eq!(fp.pads.len(), want, "{id}: pad count");
+            assert_eq!(positions_unique(&fp), want, "{id}: pads must not stack");
+            // Two columns at ±0.635mm (1.27mm pitch).
+            let cols: std::collections::BTreeSet<i64> = fp
+                .pads
+                .iter()
+                .map(|p| (p.position.x * 1000.0) as i64)
+                .collect();
+            assert_eq!(cols.len(), 2, "{id}: exactly two columns");
+            // Spring-pin pads get a mask opening but never solder paste.
+            assert!(
+                fp.pads
+                    .iter()
+                    .all(|p| !p.layers.contains(&PcbLayer::FPaste)),
+                "{id}: pogo pads must not carry paste"
+            );
+            // The dense 1.27mm pad field must not self-overlap (regression: pads
+            // taller than the pitch overlapped and tripped DRC at 0mm).
+            assert_no_pad_overlap(&fp);
+            assert_on_board(&fp, 6.0);
+        }
+    }
+
+    #[test]
+    fn usb_c_signal_rows_plus_shield_posts() {
+        for (signal, pitch) in [(6u32, 1.0), (16, 0.8), (24, 0.5)] {
+            let r = resolve_footprint("Connector_USB:USB_C_Receptacle_Simplified", signal);
+            assert!(r.matched, "USB-C {signal}");
+            assert_eq!(r.family.as_deref(), Some("USB-C"));
+            let fp = r.template.unwrap();
+            // Exactly `signal` numeric contacts (1..=signal) + 4 shield posts.
+            let numeric: Vec<u32> = fp
+                .pads
+                .iter()
+                .filter_map(|p| p.number.parse::<u32>().ok())
+                .collect();
+            assert_eq!(numeric.len(), signal as usize, "{signal}: signal contacts");
+            assert_eq!(
+                (1..=signal).filter(|n| numeric.contains(n)).count(),
+                signal as usize,
+                "{signal}: contacts numbered 1..={signal}"
+            );
+            let shields = fp
+                .pads
+                .iter()
+                .filter(|p| p.number.starts_with("SH"))
+                .count();
+            assert_eq!(shields, 4, "{signal}: four shield/mount posts");
+            // Signal contacts are SMD in two rows; posts are through-hole.
+            let rows: std::collections::BTreeSet<i64> = fp
+                .pads
+                .iter()
+                .filter(|p| p.number.parse::<u32>().is_ok())
+                .map(|p| (p.position.y * 100.0) as i64)
+                .collect();
+            assert_eq!(rows.len(), 2, "{signal}: two contact rows");
+            // Contact pitch tightens with the count.
+            let mut xs: Vec<f64> = fp
+                .pads
+                .iter()
+                .filter(|p| p.position.y < 0.0 && p.number.parse::<u32>().is_ok())
+                .map(|p| p.position.x)
+                .collect();
+            xs.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            if xs.len() >= 2 {
+                assert!(
+                    (xs[1] - xs[0] - pitch).abs() < 1e-6,
+                    "{signal}: pitch {pitch}"
+                );
+            }
+            assert_no_pad_overlap(&fp);
+            assert_on_board(&fp, 8.0);
+        }
+    }
+
+    #[test]
+    fn pin_header_1xn_resolves() {
+        // The issue's `PinHeader_1x{n}_P2.54mm` form (already supported — lock it).
+        let r = resolve_footprint(
+            "Connector_PinHeader_2.54mm:PinHeader_1x06_P2.54mm_Vertical",
+            6,
+        );
+        assert!(r.matched);
+        assert_eq!(r.family.as_deref(), Some("PinHeader"));
+        let fp = r.template.unwrap();
+        assert_eq!(fp.pads.len(), 6);
+        assert!(fp.pads.iter().all(|p| p.pad_type == PadType::THT));
+    }
+
+    #[test]
+    fn unknown_footprint_note_points_to_escape_hatch() {
+        // Discoverability: the fallback must tell the caller how to fix it.
+        let note = resolve_footprint("Vendor:WhoKnows", 3).note;
+        assert!(
+            note.contains("pads"),
+            "note should mention the `pads` hatch: {note}"
+        );
+        let note2 = resolve_footprint("Vendor:TwoPin", 2).note;
+        assert!(note2.contains("pads"), "2-pin note should too: {note2}");
     }
 }

@@ -192,6 +192,89 @@ describe("ecad session flow", () => {
     }
   });
 
+  it("resolves connector families (JST/Molex/Tag-Connect/USB-C) end-to-end", async () => {
+    const comp = (ref: string, footprint: string, pinNums: number[]) => ({
+      ref,
+      value: "CONN",
+      footprint,
+      x: 0,
+      y: 0,
+      pins: pinNums.map((n) => ({ number: String(n), name: String(n), type: "Passive" })),
+    });
+
+    const created = out(
+      await createSchematic({
+        components: [
+          // The exact issue reproduction: a 2-pin JST-PH power connector.
+          comp("J1", "JST_PH_2", [1, 2]),
+          comp("J2", "Connector_JST:JST_SH_BM06B-SRSS-TB_1x06-1MP_P1.00mm_Horizontal", [
+            1, 2, 3, 4, 5, 6,
+          ]),
+          comp("J3", "Connector_Molex:Molex_PicoBlade_53261-0271_1x02-1MP_P1.25mm_Vertical", [
+            1, 2,
+          ]),
+          comp("J4", "Tag-Connect:TC2050-IDC-NL_2x05_P1.27mm", [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]),
+          comp("J5", "Connector_USB:USB_C_Receptacle_16pin", [
+            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16,
+          ]),
+        ],
+      }),
+    );
+    const id = created.document_id;
+    const placed = out(
+      await placeComponents({ document_id: id, board_width: 90, board_height: 70 }),
+    );
+
+    expect(placed.success).toBe(true);
+    // None of these should fall back to a placeholder anymore.
+    expect(placed.fallback_footprints ?? []).toEqual([]);
+    expect(placed.footprints_resolved).toBe(5);
+
+    const board = getPcbBoard(getSession(id));
+    const fp = (ref: string) => board.footprints.find((f) => f.ref === ref)!;
+
+    // JST-PH: 2 through-hole contacts, 2.0mm pitch — assemble-able, not a chip.
+    const j1 = fp("J1");
+    expect(j1.pads.length).toBe(2);
+    expect(j1.pads.every((p) => p.padType === "THT")).toBe(true);
+    const dx = Math.abs(j1.pads[0].position.x - j1.pads[1].position.x);
+    expect(Math.abs(dx - 2.0)).toBeLessThan(1e-6);
+    // Pads carry the schematic nets (here pin names 1/2 act as nets).
+    expect(j1.pads.find((p) => p.number === "1")!.net).toBe("1");
+
+    // JST-SH: 6 SMD contacts.
+    const j2 = fp("J2");
+    expect(j2.pads.length).toBe(6);
+    expect(j2.pads.every((p) => p.padType === "SMD")).toBe(true);
+
+    // Molex Pico-Blade: 2 SMD contacts — a part number must not read as a chip.
+    expect(fp("J3").pads.filter((p) => p.padType === "SMD").length).toBe(2);
+
+    // Tag-Connect TC2050: 10 bare-copper pads in two columns, no paste.
+    const j4 = fp("J4");
+    expect(j4.pads.length).toBe(10);
+    expect(j4.pads.every((p) => !p.layers.includes("FPaste"))).toBe(true);
+
+    // USB-C (16): 16 numeric contacts + 4 shield posts, all on a ~90×70 board.
+    const j5 = fp("J5");
+    const numeric = j5.pads.filter((p) => /^\d+$/.test(p.number));
+    const shields = j5.pads.filter((p) => p.number.startsWith("SH"));
+    expect(numeric.length).toBe(16);
+    expect(shields.length).toBe(4);
+    for (const p of j5.pads) {
+      expect(Math.abs(p.position.x)).toBeLessThan(10);
+      expect(Math.abs(p.position.y)).toBeLessThan(10);
+    }
+
+    // The densely-packed connector pads must not raise false clearance or
+    // manufacturing violations (the intra-footprint pad exemption + on-board
+    // geometry). Connectivity violations are expected — nothing is routed yet.
+    const drc = out(await runDrc({ document_id: id }));
+    expect(drc.success).toBe(true);
+    expect(drc.categories.clearance).toBe(0);
+    expect(drc.categories.manufacturing).toBe(0);
+  });
+
   it("inline pads escape hatch overrides the footprint engine", async () => {
     const created = out(
       await createSchematic({
