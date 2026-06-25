@@ -234,6 +234,72 @@ describe("get_pad_positions", () => {
   });
 });
 
+describe("route_nets locked_nets", () => {
+  const hasDetour = (pcb: Pcb) =>
+    pcb.traces.some(
+      (t) =>
+        t.net === "MID" &&
+        Math.abs(t.start.x - 1) < 1e-6 &&
+        Math.abs(t.start.y - 9) < 1e-6,
+    );
+
+  it("preserves hand-placed copper on a locked net", async () => {
+    const created = out(
+      await createSchematic({
+        components: [resistor("R1", 0), resistor("R2", 20), resistor("R3", 40)],
+        nets: { MID: ["R1.2", "R2.1"], NETB: ["R2.2", "R3.1"] },
+      }),
+    );
+    const id = created.document_id;
+    await placeComponents({ document_id: id, board_width: 60, board_height: 20 });
+
+    // A distinctive detour the autorouter would never reproduce.
+    await addTrace({
+      document_id: id,
+      net: "MID",
+      layer: "FCu",
+      points: [
+        { x: 1, y: 9 },
+        { x: 1, y: 1 },
+        { x: 9, y: 1 },
+      ],
+    });
+    expect(hasDetour(getPcbBoard(getSession(id)))).toBe(true);
+
+    const res = out(await routeNets({ document_id: id, locked_nets: ["MID"] }));
+    expect(res.success).toBe(true);
+    expect(res.locked_nets).toEqual(["MID"]);
+    // The locked net's copper is neither ripped up nor re-routed.
+    expect(res.traces_removed ?? 0).toBe(0);
+    expect(hasDetour(getPcbBoard(getSession(id)))).toBe(true);
+  });
+
+  it("rips up the same net when it is not locked (control)", async () => {
+    const created = out(
+      await createSchematic({
+        components: [resistor("R1", 0), resistor("R2", 20)],
+        nets: { MID: ["R1.2", "R2.1"] },
+      }),
+    );
+    const id = created.document_id;
+    await placeComponents({ document_id: id, board_width: 40, board_height: 20 });
+    await addTrace({
+      document_id: id,
+      net: "MID",
+      layer: "FCu",
+      points: [
+        { x: 1, y: 9 },
+        { x: 1, y: 1 },
+      ],
+    });
+    expect(hasDetour(getPcbBoard(getSession(id)))).toBe(true);
+
+    const res = out(await routeNets({ document_id: id }));
+    expect(res.traces_removed).toBeGreaterThan(0);
+    expect(hasDetour(getPcbBoard(getSession(id)))).toBe(false);
+  });
+});
+
 describe("ecad session flow", () => {
   it("create_schematic opens a session and returns the resolved netlist, not the document", async () => {
     const created = out(

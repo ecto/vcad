@@ -629,6 +629,16 @@ export const routeNetsSchema = {
         "listed here); the result reports `traces_removed`/`vias_removed` and " +
         "`stale_nets_cleared` so the cleanup is visible.",
     },
+    locked_nets: {
+      type: "array" as const,
+      items: { type: "string" as const },
+      description:
+        "Nets whose existing copper is preserved — never ripped up or " +
+        "re-routed by this call. Use for hand-routed traces/vias (e.g. a " +
+        "manual via bridge, or a stitched plane net) that the autorouter's " +
+        "self-cleaning would otherwise delete. Copper on these nets survives " +
+        "across route_nets passes; the kernel still routes every other net.",
+    },
     trace_width: {
       type: "number" as const,
       description:
@@ -2511,6 +2521,9 @@ export async function routeNets(args: Record<string, unknown>) {
   const doc = ctx.doc;
   const traceWidth = (args.trace_width as number) || undefined;
   const netsFilter = (args.nets as string[]) || [];
+  const lockedNets = new Set<string>(
+    ((args.locked_nets as string[]) || []).map(String),
+  );
 
   const pcb = getDocPcb(doc);
   if (!pcb) {
@@ -2567,6 +2580,7 @@ export async function routeNets(args: Record<string, unknown>) {
   const targetNets = new Set<string>();
   for (const [net, conns] of netConnections) {
     if (conns.length < 2) continue;
+    if (lockedNets.has(net)) continue; // preserve hand-placed copper
     if (effectiveFilter.length > 0 && !effectiveFilter.includes(net)) continue;
     targetNets.add(net);
   }
@@ -2598,7 +2612,24 @@ export async function routeNets(args: Record<string, unknown>) {
   // confirm a power/phase net actually routed at its class width without
   // re-reading the board.
   const realizedWidths: Record<string, number> = {};
-  const result = await routeAll(pcb, width, effectiveFilter);
+  // Nets the kernel should route: the effective set minus any the caller
+  // locked. A locked net is neither ripped up (above) nor re-routed here, so
+  // its hand-placed copper stays exactly as authored. An empty effectiveFilter
+  // means "route everything", so to subtract locked nets we make the all-set
+  // explicit; with no locked nets it stays empty (behavior unchanged).
+  let routeFilter = effectiveFilter;
+  if (lockedNets.size > 0) {
+    if (effectiveFilter.length > 0) {
+      routeFilter = effectiveFilter.filter((n) => !lockedNets.has(n));
+    } else {
+      const allRoutable = new Set<string>();
+      for (const [net, conns] of netConnections) {
+        if (conns.length >= 2 && !lockedNets.has(net)) allRoutable.add(net);
+      }
+      routeFilter = [...allRoutable];
+    }
+  }
+  const result = await routeAll(pcb, width, routeFilter);
   const routedSomething =
     result.traces.length > 0 || result.vias.length > 0 || result.unrouted_nets.length > 0;
 
@@ -2634,6 +2665,7 @@ export async function routeNets(args: Record<string, unknown>) {
     // behavior; flagged because it may cross copper).
     for (const [netId, conns] of netConnections) {
       if (conns.length < 2) continue;
+      if (lockedNets.has(netId)) continue; // never reroute a locked net
       if (effectiveFilter.length > 0 && !effectiveFilter.includes(netId)) continue;
       const positions = conns.map((c) => {
         const fp = pcb.footprints.find((f) => f.ref === c.component_ref)!;
@@ -2701,6 +2733,7 @@ export async function routeNets(args: Record<string, unknown>) {
           ...(tracesRemoved > 0 ? { traces_removed: tracesRemoved } : {}),
           ...(viasRemoved > 0 ? { vias_removed: viasRemoved } : {}),
           ...(staleCleared.length > 0 ? { stale_nets_cleared: staleCleared } : {}),
+          ...(lockedNets.size > 0 ? { locked_nets: [...lockedNets] } : {}),
           ...(Object.keys(realizedWidths).length > 0
             ? { track_widths_mm: realizedWidths }
             : {}),
