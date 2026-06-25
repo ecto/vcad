@@ -998,6 +998,10 @@ export const useDocumentStore = create<DocumentState>((set, get) => ({
       engine.set_param(partId, "radius_top", JSON.stringify(crdtF64(o.radius_top as number)));
       engine.set_param(partId, "height", JSON.stringify(crdtF64(o.height as number)));
       lastResult = engine.set_param(partId, "segments", JSON.stringify(crdtF64(o.segments as number)));
+    } else if (o.type === "Torus" && "major_radius" in o) {
+      engine.set_param(partId, "major_radius", JSON.stringify(crdtF64(o.major_radius as number)));
+      engine.set_param(partId, "minor_radius", JSON.stringify(crdtF64(o.minor_radius as number)));
+      lastResult = engine.set_param(partId, "segments", JSON.stringify(crdtF64(o.segments as number)));
     }
     if (lastResult) {
       set(applyLegacyResult(lastResult));

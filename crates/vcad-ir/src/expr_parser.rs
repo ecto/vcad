@@ -568,10 +568,16 @@ fn call_builtin(name: &str, args: &[Ast], env: &HashMap<String, f64>) -> Result<
         }
         "asin" => {
             arity(name, args, 1)?;
+            if !(-1.0..=1.0).contains(&v[0]) {
+                return Err(EvalError::MathDomain("asin argument out of [-1, 1]"));
+            }
             Ok(v[0].asin())
         }
         "acos" => {
             arity(name, args, 1)?;
+            if !(-1.0..=1.0).contains(&v[0]) {
+                return Err(EvalError::MathDomain("acos argument out of [-1, 1]"));
+            }
             Ok(v[0].acos())
         }
         "atan" => {
