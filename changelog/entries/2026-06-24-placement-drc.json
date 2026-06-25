@@ -1,0 +1,10 @@
+{
+  "id": "2026-06-24-placement-drc",
+  "version": "0.9.4",
+  "date": "2026-06-24",
+  "category": "feat",
+  "title": "place_components surfaces a pre-routing DRC",
+  "summary": "place_components now returns placement_drc — shorts (with the offending nets and refs), pad clearance, courtyard overlaps, and off-board parts — so an agent can fix the floorplan with set_placement before routing on top of a fault instead of only discovering it at run_drc.",
+  "features": ["pcb", "drc", "placer"],
+  "mcpTools": ["place_components"]
+}

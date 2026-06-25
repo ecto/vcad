@@ -1088,7 +1088,10 @@ export async function createServer(
           "(board_width/height), circle with optional center bore " +
           "(board_shape — e.g. a motor stator), or any polygon (outline, e.g. " +
           "from board_from_solid). strategy=radial rings components for " +
-          "annular boards.",
+          "annular boards. Returns `placement_drc` — the pre-routing DRC subset " +
+          "(shorts, pad clearance, courtyard overlaps, off-board parts); when " +
+          "`placement_drc.clean` is false, fix the floorplan with set_placement " +
+          "before route_nets instead of routing on top of the fault.",
         inputSchema: placeComponentsSchema,
       },
       {
@@ -1175,7 +1178,9 @@ export async function createServer(
           "floorplan realizer the auto-placer (grid/force_directed/radial) can't " +
           "express: thermal rings, a quiet IMU corner, rim connectors. Batch; " +
           "sets position/rotation/side and warns on off-board, in-cutout, or " +
-          "stacked landings. Mutates the session document.",
+          "stacked landings. Mutates the session document. Returns the updated " +
+          "`placement_drc` (same shape as place_components) so a move can be " +
+          "re-checked in one call without running run_drc.",
         inputSchema: setPlacementSchema,
         _meta: UI_META,
       },
@@ -1764,7 +1769,7 @@ export async function createServer(
           break;
 
         case "set_placement":
-          result = setPlacement(args);
+          result = await setPlacement(args);
           break;
 
         case "add_zone":
