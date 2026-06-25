@@ -1088,7 +1088,10 @@ export async function createServer(
           "(board_width/height), circle with optional center bore " +
           "(board_shape — e.g. a motor stator), or any polygon (outline, e.g. " +
           "from board_from_solid). strategy=radial rings components for " +
-          "annular boards.",
+          "annular boards. Returns a `utilization` report (board vs occupied " +
+          "area, % used, component bounding box, and an advisory " +
+          "suggested_outline) so you can right-size an over-large board in one " +
+          "step instead of guessing.",
         inputSchema: placeComponentsSchema,
       },
       {
