@@ -333,7 +333,11 @@ pub fn run_pack(pcb: &Pcb, profile: PcbFabProfile, pack: &PcbRulePack) -> PcbDfm
         &|r| check_copper_to_edge(pcb, r),
         &mut results,
     );
-    run("hole_to_hole", &|r| check_hole_to_hole(pcb, r), &mut results);
+    run(
+        "hole_to_hole",
+        &|r| check_hole_to_hole(pcb, r),
+        &mut results,
+    );
     run(
         "soldermask_dam",
         &|r| check_soldermask(pcb, r, "soldermask_dam", "min_mm"),
@@ -344,7 +348,11 @@ pub fn run_pack(pcb: &Pcb, profile: PcbFabProfile, pack: &PcbRulePack) -> PcbDfm
         &|r| check_soldermask(pcb, r, "soldermask_sliver", "min_mm"),
         &mut results,
     );
-    run("silk_over_pad", &|r| check_silk_over_pad(pcb, r), &mut results);
+    run(
+        "silk_over_pad",
+        &|r| check_silk_over_pad(pcb, r),
+        &mut results,
+    );
     run("acid_trap", &|r| check_acid_trap(pcb, r), &mut results);
     run("via_in_pad", &|r| check_via_in_pad(pcb, r), &mut results);
     run(
@@ -530,7 +538,10 @@ fn pad_min_dimension(pad: &Pad) -> f64 {
 
 /// Absolute board-frame center of a pad on its footprint.
 fn pad_center(fp: &vcad_ir::ecad::Footprint, pad: &Pad) -> Vec2 {
-    Vec2::new(fp.position.x + pad.position.x, fp.position.y + pad.position.y)
+    Vec2::new(
+        fp.position.x + pad.position.x,
+        fp.position.y + pad.position.y,
+    )
 }
 
 /// Assemble a "minimum metric" rule result (smaller is worse).
@@ -588,7 +599,11 @@ fn check_min_trace_width(pcb: &Pcb, rule: &Rule, oz: f64) -> PcbDfmRuleResult {
         worst = worst.min(a.width);
         if a.width < limit - EPS {
             violations += 1;
-            push_loc(&mut locs, a.center, format!("net '{}' arc {:.3}mm", a.net, a.width));
+            push_loc(
+                &mut locs,
+                a.center,
+                format!("net '{}' arc {:.3}mm", a.net, a.width),
+            );
         }
     }
 
@@ -640,14 +655,8 @@ fn check_min_clearance(pcb: &Pcb, rule: &Rule, oz: f64) -> PcbDfmRuleResult {
                 worst = worst.min(d);
                 if d < limit - EPS {
                     violations += 1;
-                    let pa = Vec2::new(
-                        (a.min[0] + a.max[0]) / 2.0,
-                        (a.min[1] + a.max[1]) / 2.0,
-                    );
-                    let pb = Vec2::new(
-                        (b.min[0] + b.max[0]) / 2.0,
-                        (b.min[1] + b.max[1]) / 2.0,
-                    );
+                    let pa = Vec2::new((a.min[0] + a.max[0]) / 2.0, (a.min[1] + a.max[1]) / 2.0);
+                    let pb = Vec2::new((b.min[0] + b.max[0]) / 2.0, (b.min[1] + b.max[1]) / 2.0);
                     push_loc(
                         &mut locs,
                         midpoint(pa, pb),
@@ -690,7 +699,11 @@ fn check_min_drill(pcb: &Pcb, rule: &Rule) -> PcbDfmRuleResult {
         worst = worst.min(via.drill);
         if via.drill < limit - EPS {
             violations += 1;
-            push_loc(&mut locs, via.position, format!("via drill {:.3}mm", via.drill));
+            push_loc(
+                &mut locs,
+                via.position,
+                format!("via drill {:.3}mm", via.drill),
+            );
         }
     }
     for fp in &pcb.footprints {
@@ -703,7 +716,10 @@ fn check_min_drill(pcb: &Pcb, rule: &Rule) -> PcbDfmRuleResult {
                     push_loc(
                         &mut locs,
                         pad_center(fp, pad),
-                        format!("{} pad {} drill {:.3}mm", fp.reference, pad.number, drill.diameter),
+                        format!(
+                            "{} pad {} drill {:.3}mm",
+                            fp.reference, pad.number, drill.diameter
+                        ),
                     );
                 }
             }
@@ -822,20 +838,26 @@ fn check_copper_to_edge(pcb: &Pcb, rule: &Rule) -> PcbDfmRuleResult {
     let mut locs = Vec::new();
     let mut applicable = false;
 
-    let observe = |p: Vec2, halo: f64, label: String, locs: &mut Vec<DfmLocation>| -> (f64, usize) {
-        let eff = dist_to_edges(p) - halo;
-        let mut v = 0;
-        if eff < limit - EPS {
-            v = 1;
-            push_loc(locs, p, label);
-        }
-        (eff, v)
-    };
+    let observe =
+        |p: Vec2, halo: f64, label: String, locs: &mut Vec<DfmLocation>| -> (f64, usize) {
+            let eff = dist_to_edges(p) - halo;
+            let mut v = 0;
+            if eff < limit - EPS {
+                v = 1;
+                push_loc(locs, p, label);
+            }
+            (eff, v)
+        };
 
     for t in &pcb.traces {
         applicable = true;
         for pt in [t.start, t.end] {
-            let (eff, v) = observe(pt, t.width / 2.0, format!("trace net '{}'", t.net), &mut locs);
+            let (eff, v) = observe(
+                pt,
+                t.width / 2.0,
+                format!("trace net '{}'", t.net),
+                &mut locs,
+            );
             worst = worst.min(eff);
             violations += v;
         }
@@ -1049,14 +1071,20 @@ fn silk_segments(fp: &vcad_ir::ecad::Footprint) -> Vec<(Vec2, Vec2, f64, bool)> 
     for g in &fp.graphics {
         match g {
             FootprintGraphic::Line {
-                start, end, width, layer,
+                start,
+                end,
+                width,
+                layer,
             } => {
                 if let Some(front) = side(*layer) {
                     out.push((to_world(*start), to_world(*end), *width, front));
                 }
             }
             FootprintGraphic::Rect {
-                start, end, width, layer,
+                start,
+                end,
+                width,
+                layer,
             } => {
                 if let Some(front) = side(*layer) {
                     let corners = [
@@ -1076,7 +1104,9 @@ fn silk_segments(fp: &vcad_ir::ecad::Footprint) -> Vec<(Vec2, Vec2, f64, bool)> 
                 }
             }
             FootprintGraphic::Polygon {
-                vertices, width, layer,
+                vertices,
+                width,
+                layer,
             } => {
                 if let Some(front) = side(*layer) {
                     let n = vertices.len();
@@ -1091,18 +1121,34 @@ fn silk_segments(fp: &vcad_ir::ecad::Footprint) -> Vec<(Vec2, Vec2, f64, bool)> 
                 }
             }
             FootprintGraphic::Circle {
-                center, radius, width, layer,
-            } => {
-                if let Some(front) = side(*layer) {
-                    sample_arc(*center, *radius, 0.0, 360.0, *width, front, to_world, &mut out);
-                }
-            }
-            FootprintGraphic::Arc {
-                center, radius, start_angle, end_angle, width, layer,
+                center,
+                radius,
+                width,
+                layer,
             } => {
                 if let Some(front) = side(*layer) {
                     sample_arc(
-                        *center, *radius, *start_angle, *end_angle, *width, front, to_world,
+                        *center, *radius, 0.0, 360.0, *width, front, to_world, &mut out,
+                    );
+                }
+            }
+            FootprintGraphic::Arc {
+                center,
+                radius,
+                start_angle,
+                end_angle,
+                width,
+                layer,
+            } => {
+                if let Some(front) = side(*layer) {
+                    sample_arc(
+                        *center,
+                        *radius,
+                        *start_angle,
+                        *end_angle,
+                        *width,
+                        front,
+                        to_world,
                         &mut out,
                     );
                 }
@@ -1132,7 +1178,10 @@ fn sample_arc(
     let mut prev = None;
     for k in 0..=steps {
         let t = a0 + (a1 - a0) * (k as f64 / steps as f64);
-        let p = to_world(Vec2::new(center.x + radius * t.cos(), center.y + radius * t.sin()));
+        let p = to_world(Vec2::new(
+            center.x + radius * t.cos(),
+            center.y + radius * t.sin(),
+        ));
         if let Some(prev) = prev {
             out.push((prev, p, width, front));
         }
@@ -1508,7 +1557,10 @@ mod tests {
 
     #[test]
     fn profile_parsing_tolerates_prefixes() {
-        assert_eq!(PcbFabProfile::from_str("pcb_jlcpcb"), Some(PcbFabProfile::Jlcpcb));
+        assert_eq!(
+            PcbFabProfile::from_str("pcb_jlcpcb"),
+            Some(PcbFabProfile::Jlcpcb)
+        );
         assert_eq!(PcbFabProfile::from_str("JLC"), Some(PcbFabProfile::Jlcpcb));
         assert_eq!(
             PcbFabProfile::from_str("generic-2layer"),
@@ -1531,7 +1583,11 @@ mod tests {
         let report = check_dfm(&pcb, PcbFabProfile::Jlcpcb, None).unwrap();
         assert_eq!(report.profile, "jlcpcb");
         assert_eq!(report.copper_weight_oz, 1.0);
-        assert!(report.passed, "clean board should pass: {:#?}", report.rules);
+        assert!(
+            report.passed,
+            "clean board should pass: {:#?}",
+            report.rules
+        );
         assert!(find(&report, "min_trace_width").passed);
     }
 
@@ -1640,13 +1696,20 @@ mod tests {
         let jlc = check_dfm(&pcb, PcbFabProfile::Jlcpcb, None).unwrap();
         let vip = find(&jlc, "via_in_pad");
         assert!(!vip.passed);
-        assert_eq!(vip.severity, DfmSeverity::Warning, "JLC: warning (POFV add-on)");
+        assert_eq!(
+            vip.severity,
+            DfmSeverity::Warning,
+            "JLC: warning (POFV add-on)"
+        );
         // JLC keeps `passed` true overall because via-in-pad is only a warning.
         // The generic 2-layer pack escalates it to an error.
         let gen2 = check_dfm(&pcb, PcbFabProfile::Generic2Layer, None).unwrap();
         let vip2 = find(&gen2, "via_in_pad");
         assert_eq!(vip2.severity, DfmSeverity::Error);
-        assert!(!gen2.passed, "generic-2layer treats via-in-pad as a hard error");
+        assert!(
+            !gen2.passed,
+            "generic-2layer treats via-in-pad as a hard error"
+        );
     }
 
     #[test]
