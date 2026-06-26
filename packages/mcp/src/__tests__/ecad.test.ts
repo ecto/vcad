@@ -23,6 +23,7 @@ import {
   windingLayout,
   addTrace,
   getPadPositions,
+  getFootprint,
   describePcb,
   listFootprints,
   searchFootprints,
@@ -483,6 +484,92 @@ describe("get_pad_positions", () => {
   });
 });
 
+describe("get_footprint", () => {
+  const conn = (ref: string, footprint: string, pins: number[]) => ({
+    ref,
+    value: "CONN",
+    footprint,
+    x: 0,
+    y: 0,
+    pins: pins.map((n) => ({ number: String(n), name: String(n), type: "Passive" })),
+  });
+
+  it("resolves a footprint id PRE-placement in the local frame", async () => {
+    const r = out(await getFootprint({ footprint: "Connector_JST:JST_PH_2", pins: 2 }));
+    expect(r.success).toBe(true);
+    expect(r.mode).toBe("resolved");
+    expect(r.family).toBe("JST-PH");
+    expect(r.matched).toBe(true);
+    expect(r.generated).toBe(true);
+    expect(r.rotation_convention).toMatch(/counter-clockwise/i);
+    expect(r.rotation_convention).toMatch(/degrees/i);
+    expect(r.count).toBe(2);
+    // No placement → board frame equals local frame (origin 0,0, rot 0).
+    expect(r.origin).toMatchObject({ x: 0, y: 0, rotation: 0, side: "front" });
+    for (const p of r.pads) {
+      expect(p.board.x).toBeCloseTo(p.local.x, 6);
+      expect(p.board.y).toBeCloseTo(p.local.y, 6);
+      expect(p.pad_type).toBe("THT");
+      expect(p.drill_mm).toBeGreaterThan(0);
+    }
+    // Courtyard AABB is reported in both frames.
+    expect(r.courtyard.local).not.toBeNull();
+    expect(r.courtyard.board).not.toBeNull();
+    expect(r.courtyard.local.max.x).toBeGreaterThan(r.courtyard.local.min.x);
+  });
+
+  it("projects pads into a hypothetical board placement (origin + CCW rotation)", async () => {
+    const flat = out(await getFootprint({ footprint: "Connector_JST:JST_PH_2", pins: 2 }));
+    const rotated = out(
+      await getFootprint({
+        footprint: "Connector_JST:JST_PH_2",
+        pins: 2,
+        at: { x: 10, y: 5 },
+        rotation: 90,
+      }),
+    );
+    expect(rotated.origin).toMatchObject({ x: 10, y: 5, rotation: 90 });
+    // A pad at local (lx, ly) maps to (10 - ly, 5 + lx) under a 90° CCW rotation.
+    for (let i = 0; i < flat.pads.length; i++) {
+      const lp = flat.pads[i].local;
+      const bp = rotated.pads[i].board;
+      expect(bp.x).toBeCloseTo(10 - lp.y, 3);
+      expect(bp.y).toBeCloseTo(5 + lp.x, 3);
+    }
+  });
+
+  it("reads a PLACED footprint's real transform, nets, and courtyard", async () => {
+    const created = out(
+      await createSchematic({ components: [conn("J1", "JST_PH_3", [1, 2, 3])] }),
+    );
+    const id = created.document_id;
+    await placeComponents({ document_id: id, board_width: 40, board_height: 30 });
+
+    const r = out(await getFootprint({ document_id: id, ref: "J1" }));
+    expect(r.mode).toBe("placed");
+    expect(r.ref).toBe("J1");
+    expect(r.generated).toBe(true); // synthesized by the engine at placement
+
+    // Board-frame pad coords agree with get_pad_positions (shared transform).
+    const pads = out(await getPadPositions({ document_id: id, ref: "J1" }));
+    const byPin = new Map(
+      (pads.pads as Array<{ pin: string; x: number; y: number }>).map((p) => [p.pin, p]),
+    );
+    for (const p of r.pads) {
+      const ref = byPin.get(p.pin)!;
+      expect(p.board.x).toBeCloseTo(ref.x, 3);
+      expect(p.board.y).toBeCloseTo(ref.y, 3);
+      expect(p.net).toBe(p.pin); // pin names act as nets here
+    }
+    expect(r.courtyard.local).not.toBeNull();
+  });
+
+  it("errors when neither ref nor footprint is given", async () => {
+    const res = await getFootprint({});
+    expect((res as { isError?: boolean }).isError).toBe(true);
+  });
+});
+
 describe("describe_pcb", () => {
   it("returns a compact structured snapshot of the routed board", async () => {
     const created = out(
@@ -559,6 +646,120 @@ describe("describe_pcb", () => {
     const created = out(await createSchematic({ components: [resistor("R1", 0)] }));
     const res = await describePcb({ document_id: created.document_id });
     expect((res as { isError?: boolean }).isError).toBe(true);
+  });
+});
+
+describe("THT drill sizing (drill = lead + ~0.2mm)", () => {
+  const conn = (ref: string, footprint: string, pins: number[]) => ({
+    ref,
+    value: "X",
+    footprint,
+    x: 0,
+    y: 0,
+    pins: pins.map((n) => ({ number: String(n), name: "~", type: "Passive" })),
+  });
+
+  it("emits fab-buildable drills for headers and JST connectors, DRC-clean", async () => {
+    const created = out(
+      await createSchematic({
+        components: [
+          conn("J1", "Connector_PinHeader_2.54mm:PinHeader_1x04_P2.54mm_Vertical", [1, 2, 3, 4]),
+          conn("J2", "JST_PH_2", [1, 2]),
+        ],
+      }),
+    );
+    const id = created.document_id;
+    await placeComponents({ document_id: id, board_width: 60, board_height: 40 });
+    const board = getPcbBoard(getSession(id));
+    const drill = (ref: string) =>
+      board.footprints.find((f) => f.ref === ref)!.pads.map((p) => p.drill!.diameter);
+
+    // 2.54mm header: standard 1.0mm drill, not the old pitch-scaled 1.016mm.
+    for (const d of drill("J1")) expect(d).toBeLessThanOrEqual(1.0 + 1e-9);
+    // JST-PH 0.5mm post → 0.7mm drill, not the old flat 1.0mm.
+    for (const d of drill("J2")) expect(d).toBeCloseTo(0.7, 6);
+
+    // No self-inflicted hole-to-hole / annular / drill manufacturing flags.
+    const drc = out(await runDrc({ document_id: id, detail: "full" }));
+    type V = { rule: string };
+    const mfg = (drc.details as V[]).filter((v) =>
+      ["HoleToHole", "MinDrill", "AnnularRing"].includes(v.rule),
+    );
+    expect(mfg).toEqual([]);
+  });
+});
+
+describe("DRC provenance + generated tagging", () => {
+  const header = (ref: string, footprint: string, pins: number[]) => ({
+    ref,
+    value: "HDR",
+    footprint,
+    x: 0,
+    y: 0,
+    pins: pins.map((n) => ({ number: String(n), name: "~", type: "Passive" })),
+  });
+
+  it("tags generated-footprint manufacturing artifacts apart from real faults", async () => {
+    const created = out(
+      await createSchematic({
+        components: [
+          header("J1", "Connector_PinHeader_2.54mm:PinHeader_1x04_P2.54mm_Vertical", [1, 2, 3, 4]),
+        ],
+      }),
+    );
+    const id = created.document_id;
+    await placeComponents({ document_id: id, board_width: 40, board_height: 30 });
+
+    // Force a manufacturing fault on the generated land pattern: demand a drill
+    // larger than the header's pads carry. Every THT pad now trips MinDrill.
+    await setDesignRules({ document_id: id, min_drill: 1.5 });
+
+    const drc = out(await runDrc({ document_id: id, detail: "full" }));
+    expect(drc.success).toBe(true);
+
+    // Summary surfaces the trustworthy split.
+    expect(drc.byProvenance).toBeDefined();
+    expect(drc.generatedArtifacts).toBeGreaterThan(0);
+    expect(drc.realViolations).toBe(drc.violations - drc.generatedArtifacts);
+    expect(
+      drc.byProvenance.intra_footprint +
+        drc.byProvenance.inter_component +
+        drc.byProvenance.routing,
+    ).toBe(drc.violations);
+
+    // Every violation carries provenance + generated.
+    type V = { rule: string; provenance: string; generated: boolean };
+    for (const v of drc.details as V[]) {
+      expect(["intra_footprint", "inter_component", "routing"]).toContain(v.provenance);
+      expect(typeof v.generated).toBe("boolean");
+    }
+
+    // The drill faults are intra-footprint and flagged as generated artifacts.
+    const drills = (drc.details as V[]).filter((v) => v.rule === "MinDrill");
+    expect(drills.length).toBe(4);
+    expect(drills.every((v) => v.provenance === "intra_footprint")).toBe(true);
+    expect(drills.every((v) => v.generated === true)).toBe(true);
+  });
+
+  it("tags routing/connectivity violations as routing, not generated", async () => {
+    const created = out(
+      await createSchematic({
+        components: [resistor("R1", 0), resistor("R2", 20)],
+        nets: { MID: ["R1.2", "R2.1"] },
+      }),
+    );
+    const id = created.document_id;
+    await placeComponents({ document_id: id, board_width: 40, board_height: 20 });
+
+    // Nothing routed → the MID net is unconnected: a routing-provenance, real
+    // (not-generated) violation.
+    const drc = out(await runDrc({ document_id: id, detail: "full" }));
+    type V = { rule: string; provenance: string; generated: boolean };
+    const unrouted = (drc.details as V[]).filter((v) => v.rule === "UnconnectedNet");
+    expect(unrouted.length).toBeGreaterThan(0);
+    expect(unrouted.every((v) => v.provenance === "routing")).toBe(true);
+    expect(unrouted.every((v) => v.generated === false)).toBe(true);
+    expect(drc.byProvenance.routing).toBeGreaterThanOrEqual(unrouted.length);
   });
 });
 

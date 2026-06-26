@@ -37,6 +37,10 @@ export type DrcRuleType =
 
 export type DrcSeverity = "Error" | "Warning";
 
+/** Where a DRC violation originates — separates synthesized land-pattern
+ *  artifacts from genuine layout faults. Mirrors the Rust `DrcProvenance`. */
+export type DrcProvenance = "intra_footprint" | "inter_component" | "routing";
+
 export interface DrcViolationResult {
   rule: DrcRuleType;
   severity: DrcSeverity;
@@ -44,6 +48,10 @@ export interface DrcViolationResult {
   message: string;
   actual: number;
   required: number;
+  /** Footprint-internal, between two components, or routing/board-level. */
+  provenance: DrcProvenance;
+  /** True when a generated (synthesized) footprint land pattern is involved. */
+  generated: boolean;
 }
 
 export type ErcSeverity = "Error" | "Warning";

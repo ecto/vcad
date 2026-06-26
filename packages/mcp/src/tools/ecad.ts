@@ -2409,14 +2409,20 @@ export async function placeComponents(args: Record<string, unknown>) {
 
     let pads: Pad[];
     let graphics: NonNullable<Footprint["graphics"]> = [];
+    // Provenance marker the DRC engine reads to tag violations: "inline" pads
+    // are author-supplied, "generated" land patterns are synthesized by the
+    // parametric engine (and so are candidate footprint artifacts, not faults).
+    let padSource: "inline" | "generated";
 
     if (comp.pads && comp.pads.length > 0) {
       // (1) Inline override — author-supplied geometry.
       pads = comp.pads.map((pad) => applyNet(comp, pad));
+      padSource = "inline";
     } else if (resolution?.template) {
       // (2) Engine result — real family match or compact placeholder.
       pads = resolution.template.pads.map((pad) => applyNet(comp, pad));
       graphics = resolution.template.graphics;
+      padSource = "generated";
       if (!resolution.matched) {
         fallbackFootprints.push({
           ref: comp.ref,
@@ -2434,6 +2440,7 @@ export async function placeComponents(args: Record<string, unknown>) {
         net: netIdForPin(comp, pin),
         layers: ["FCu", "FPaste", "FMask"] as PcbLayer[],
       }));
+      padSource = "generated";
       fallbackFootprints.push({
         ref: comp.ref,
         footprint: comp.footprintId,
@@ -2450,6 +2457,7 @@ export async function placeComponents(args: Record<string, unknown>) {
       front: true,
       pads,
       ...(graphics.length > 0 ? { graphics } : {}),
+      properties: { padSource },
     };
   });
 
@@ -3153,6 +3161,10 @@ export async function routeNets(args: Record<string, unknown>) {
 
 /** A single DRC violation, structurally compatible with both the kernel
  *  result and the scalar fallback (which omits actual/required). */
+/** Where a violation comes from — lets a caller discount footprint artifacts
+ *  from the headline count. Mirrors the kernel `DrcProvenance` (snake_case). */
+type DrcProvenance = "intra_footprint" | "inter_component" | "routing";
+
 interface DrcViol {
   rule: string;
   severity: string;
@@ -3160,6 +3172,10 @@ interface DrcViol {
   position?: Vec2;
   actual?: number;
   required?: number;
+  /** Footprint-internal, between components, or routing/board-level. */
+  provenance?: DrcProvenance;
+  /** True when a generated (synthesized) footprint land pattern is involved. */
+  generated?: boolean;
 }
 
 /** Per (rule, net-pair) rollup. netB is "" for single-net rules. */
@@ -3202,6 +3218,15 @@ interface DrcCategories {
   manufacturing: number;
 }
 
+/** Counts split by where the conflict originates, so a caller can tell a
+ *  synthesized land-pattern artifact (intra_footprint, usually generated) from
+ *  a real placement (inter_component) or routing fault. */
+interface DrcProvenanceCounts {
+  intra_footprint: number;
+  inter_component: number;
+  routing: number;
+}
+
 /** Summary-first DRC payload: counts + worst-case + a capped representative
  *  sample by default; the full violation array only when detail==="full". */
 interface DrcSummary {
@@ -3211,6 +3236,14 @@ interface DrcSummary {
   warnings: number;
   /** Counts split into connectivity (incomplete) vs clearance/manufacturing (illegal). */
   categories: DrcCategories;
+  /** Counts split by origin (footprint-internal / between-components / routing). */
+  byProvenance: DrcProvenanceCounts;
+  /** Violations involving a generated (synthesized) footprint land pattern —
+   *  candidate artifacts, NOT necessarily real faults. */
+  generatedArtifacts: number;
+  /** Violations the headline count should be judged on: total minus generated
+   *  land-pattern artifacts. */
+  realViolations: number;
   byRule: Record<string, number>;
   byNetPair: DrcNetPairCount[];
   worstClearance:
@@ -3332,12 +3365,28 @@ export function aggregateDrc(
     categories[DRC_CATEGORY[rule] ?? "manufacturing"] += count;
   }
 
+  // Provenance breakdown + the trustworthy "real vs artifact" split. A missing
+  // provenance (e.g. kernel-less fallback path) is treated as routing.
+  const byProvenance: DrcProvenanceCounts = {
+    intra_footprint: 0,
+    inter_component: 0,
+    routing: 0,
+  };
+  let generatedArtifacts = 0;
+  for (const v of violations) {
+    byProvenance[v.provenance ?? "routing"] += 1;
+    if (v.generated) generatedArtifacts += 1;
+  }
+
   const summary: DrcSummary = {
     success: true,
     violations: violations.length,
     errors: violations.filter((v) => v.severity === "Error").length,
     warnings: violations.filter((v) => v.severity === "Warning").length,
     categories,
+    byProvenance,
+    generatedArtifacts,
+    realViolations: violations.length - generatedArtifacts,
     byRule,
     byNetPair,
     worstClearance: worst,
@@ -6258,6 +6307,291 @@ export function getPadPositions(args: Record<string, unknown>) {
 }
 
 // ============================================================================
+// get_footprint — introspect a land pattern in BOTH local and board frames
+// ============================================================================
+
+/** Local-frame courtyard AABB of a footprint: prefer an explicit courtyard
+ *  graphic (FCrtYd/BCrtYd rect), else the pad bounding box. Null when empty. */
+function localCourtyardAabb(
+  pads: Pad[],
+  graphics: Footprint["graphics"],
+): { min: Vec2; max: Vec2 } | null {
+  for (const g of graphics ?? []) {
+    if (g.type === "Rect" && (g.layer === "FCrtYd" || g.layer === "BCrtYd")) {
+      return {
+        min: { x: Math.min(g.start.x, g.end.x), y: Math.min(g.start.y, g.end.y) },
+        max: { x: Math.max(g.start.x, g.end.x), y: Math.max(g.start.y, g.end.y) },
+      };
+    }
+  }
+  // Fall back to the pad bounding box (half-extent of each pad's copper).
+  if (pads.length === 0) return null;
+  const half = (shape: Pad["shape"]): { hx: number; hy: number } => {
+    switch (shape.type) {
+      case "Circle":
+        return { hx: shape.diameter / 2, hy: shape.diameter / 2 };
+      case "Rect":
+      case "Oval":
+      case "RoundRect":
+        return { hx: shape.width / 2, hy: shape.height / 2 };
+      default:
+        return { hx: 0.5, hy: 0.5 };
+    }
+  };
+  let minX = Infinity,
+    minY = Infinity,
+    maxX = -Infinity,
+    maxY = -Infinity;
+  for (const p of pads) {
+    const { hx, hy } = half(p.shape);
+    minX = Math.min(minX, p.position.x - hx);
+    minY = Math.min(minY, p.position.y - hy);
+    maxX = Math.max(maxX, p.position.x + hx);
+    maxY = Math.max(maxY, p.position.y + hy);
+  }
+  return { min: { x: minX, y: minY }, max: { x: maxX, y: maxY } };
+}
+
+/** Map a footprint-local point into the board frame: rotate CCW by `rotDeg`
+ *  about the origin, then translate to `origin`. Back-side mirrors local X
+ *  first (KiCad convention) so a flipped connector lands correctly. */
+function toBoardFrame(
+  local: Vec2,
+  origin: Vec2,
+  rotDeg: number,
+  front: boolean,
+): Vec2 {
+  const theta = (rotDeg * Math.PI) / 180;
+  const cos = Math.cos(theta);
+  const sin = Math.sin(theta);
+  const lx = front ? local.x : -local.x;
+  return {
+    x: round3(origin.x + lx * cos - local.y * sin),
+    y: round3(origin.y + lx * sin + local.y * cos),
+  };
+}
+
+/** Board-frame AABB of a local AABB under a placement — recomputed from the
+ *  four transformed corners (rotation can tilt the box). */
+function boardCourtyardAabb(
+  local: { min: Vec2; max: Vec2 } | null,
+  origin: Vec2,
+  rotDeg: number,
+  front: boolean,
+): { min: Vec2; max: Vec2 } | null {
+  if (!local) return null;
+  const corners: Vec2[] = [
+    { x: local.min.x, y: local.min.y },
+    { x: local.max.x, y: local.min.y },
+    { x: local.max.x, y: local.max.y },
+    { x: local.min.x, y: local.max.y },
+  ].map((c) => toBoardFrame(c, origin, rotDeg, front));
+  return {
+    min: { x: Math.min(...corners.map((c) => c.x)), y: Math.min(...corners.map((c) => c.y)) },
+    max: { x: Math.max(...corners.map((c) => c.x)), y: Math.max(...corners.map((c) => c.y)) },
+  };
+}
+
+/** JSON Schema for get_footprint tool. */
+export const getFootprintSchema = {
+  type: "object" as const,
+  properties: {
+    ...docInputProperties,
+    footprint: {
+      type: "string" as const,
+      description:
+        "Footprint id to resolve PRE-placement (KiCad-style, e.g. " +
+        "'Connector_JST:JST_PH_2' or 'QFN-40_5x5mm_P0.4mm'). Returns the " +
+        "land pattern in the footprint-local frame; pass `at`/`rotation` to " +
+        "also project it into a hypothetical board placement.",
+    },
+    pins: {
+      type: "number" as const,
+      description:
+        "Declared pin count, used to resolve fallback geometry and parse the " +
+        "count when the id omits it (footprint mode). Defaults to a count " +
+        "parsed from the id, else 2.",
+    },
+    ref: {
+      type: "string" as const,
+      description:
+        "Reference designator of a PLACED footprint to introspect (e.g. 'J1') " +
+        "— reads its real board-frame transform, nets, and courtyard from the " +
+        "session document. Requires document_id. Use instead of `footprint`.",
+    },
+    at: {
+      ...vec2Schema,
+      description:
+        "Hypothetical placement origin (board mm) for the board-frame " +
+        "projection in `footprint` mode. Defaults to (0,0).",
+    },
+    rotation: {
+      type: "number" as const,
+      description:
+        "Hypothetical placement rotation in degrees, CCW about the origin " +
+        "(footprint mode). Defaults to 0.",
+    },
+    side: {
+      type: "string" as const,
+      enum: ["front", "back"],
+      description: "Hypothetical board side for the projection (footprint mode). Default 'front'.",
+    },
+  },
+  required: [],
+};
+
+const ROTATION_CONVENTION =
+  "Rotation is in degrees, counter-clockwise about the footprint origin. " +
+  "board = origin + R(rotation)·(localX, localY), where " +
+  "R(θ) = [[cosθ, -sinθ], [sinθ, cosθ]]. Back-side placements mirror local X first.";
+
+/**
+ * Introspect a footprint's land pattern in BOTH the footprint-local frame and
+ * the board frame, so an agent can see exactly where pads (especially connector
+ * pins) land instead of rendering and eyeballing. Two modes:
+ *
+ *  - `ref`: a footprint already placed on the session board — reports its real
+ *    origin/rotation/side, per-pad nets, and courtyard.
+ *  - `footprint`: a footprint id resolved by the parametric engine
+ *    pre-placement — reports the local land pattern, and (with `at`/`rotation`/
+ *    `side`) the board-frame projection for a hypothetical placement.
+ *
+ * Read-only. Shares the board-frame transform with get_pad_positions.
+ */
+export async function getFootprint(args: Record<string, unknown>) {
+  const refArg = args.ref != null ? String(args.ref) : undefined;
+  const fpArg = args.footprint != null ? String(args.footprint) : undefined;
+
+  if (!refArg && !fpArg) {
+    return ecadError("pass `ref` (a placed footprint) or `footprint` (an id to resolve)");
+  }
+
+  // ---- Mode 1: a placed footprint, read from the session board. ----
+  if (refArg) {
+    const ctx = resolveDocInput(args);
+    const pcb = getDocPcb(ctx.doc);
+    if (!pcb) {
+      return ecadError(
+        "Document has no PCB — run place_components first, or use `footprint` to resolve an id pre-placement",
+      );
+    }
+    const fp = pcb.footprints.find((f) => f.ref === refArg);
+    if (!fp) {
+      const have = pcb.footprints.map((f) => f.ref).join(", ");
+      return ecadError(`no footprint '${refArg}' on the board (have: ${have || "none"})`);
+    }
+    const origin = fp.position;
+    const rotation = fp.rotation ?? 0;
+    const front = fp.front ?? true;
+    const localCy = localCourtyardAabb(fp.pads, fp.graphics);
+    const pads = fp.pads.map((pad) => {
+      const local = { x: round3(pad.position.x), y: round3(pad.position.y) };
+      const board = toBoardFrame(pad.position, origin, rotation, front);
+      const copper = pad.layers.filter((l) => /Cu$/.test(l));
+      return {
+        pin: pad.number,
+        pad_type: pad.padType,
+        pad_shape: pad.shape,
+        net: pad.net ?? null,
+        layers: copper,
+        drill_mm: pad.drill?.diameter ?? null,
+        local: { ...local, rotation: round3(pad.rotation ?? 0) },
+        board: { ...board, rotation: round3(rotation + (pad.rotation ?? 0)) },
+      };
+    });
+    return {
+      content: [
+        {
+          type: "text" as const,
+          text: JSON.stringify({
+            success: true,
+            mode: "placed",
+            ref: fp.ref,
+            footprint: fp.footprintName,
+            value: fp.value,
+            generated: fp.properties?.padSource === "generated",
+            rotation_convention: ROTATION_CONVENTION,
+            origin: {
+              x: round3(origin.x),
+              y: round3(origin.y),
+              rotation: round3(rotation),
+              side: front ? "front" : "back",
+            },
+            courtyard: {
+              local: localCy,
+              board: boardCourtyardAabb(localCy, origin, rotation, front),
+            },
+            count: pads.length,
+            pads,
+            ...docResultPayload(ctx),
+          }),
+        },
+      ],
+    };
+  }
+
+  // ---- Mode 2: resolve a footprint id pre-placement (local frame + optional
+  //      hypothetical board projection). ----
+  const declared =
+    typeof args.pins === "number" && args.pins > 0 ? Math.round(args.pins as number) : 0;
+  const resolution = await resolveFootprint(fpArg!, declared);
+  if (!resolution || !resolution.template) {
+    return ecadError(
+      resolution?.note ??
+        `could not resolve footprint '${fpArg}' (kernel unavailable, or no pins to synthesize from — pass \`pins\`)`,
+    );
+  }
+  const template = resolution.template;
+  const at = (args.at as Vec2 | undefined) ?? { x: 0, y: 0 };
+  const rotation = typeof args.rotation === "number" ? (args.rotation as number) : 0;
+  const front = args.side !== "back";
+  const localCy = localCourtyardAabb(template.pads, template.graphics);
+  const pads = template.pads.map((pad) => {
+    const local = { x: round3(pad.position.x), y: round3(pad.position.y) };
+    const board = toBoardFrame(pad.position, at, rotation, front);
+    const copper = pad.layers.filter((l) => /Cu$/.test(l));
+    return {
+      pin: pad.number,
+      pad_type: pad.padType,
+      pad_shape: pad.shape,
+      layers: copper,
+      drill_mm: pad.drill?.diameter ?? null,
+      local: { ...local, rotation: round3(pad.rotation ?? 0) },
+      board: { ...board, rotation: round3(rotation + (pad.rotation ?? 0)) },
+    };
+  });
+  return {
+    content: [
+      {
+        type: "text" as const,
+        text: JSON.stringify({
+          success: true,
+          mode: "resolved",
+          footprint: fpArg,
+          resolved_name: template.name,
+          family: resolution.family,
+          matched: resolution.matched,
+          generated: true,
+          note: resolution.note,
+          rotation_convention: ROTATION_CONVENTION,
+          origin: {
+            x: round3(at.x),
+            y: round3(at.y),
+            rotation: round3(rotation),
+            side: front ? "front" : "back",
+          },
+          courtyard: {
+            local: localCy,
+            board: boardCourtyardAabb(localCy, at, rotation, front),
+          },
+          count: pads.length,
+          pads,
+        }),
+      },
+    ],
+  };
+}
+
 // describe_pcb — compact, structured snapshot of the session board
 // ============================================================================
 

@@ -198,6 +198,8 @@ import {
   addTraceSchema,
   getPadPositions,
   getPadPositionsSchema,
+  getFootprint,
+  getFootprintSchema,
   describePcb,
   describePcbSchema,
   addVia,
@@ -1444,6 +1446,18 @@ export async function createServer(
         inputSchema: getPadPositionsSchema,
       },
       {
+        name: "get_footprint",
+        description:
+          "Introspect ONE footprint's land pattern in BOTH the footprint-local " +
+          "and board frames — origin, courtyard AABB, and every pad (with the " +
+          "explicit rotation convention) — so connector/IC pad locations are " +
+          "known exactly instead of render-and-guessed. Two modes: `ref` reads " +
+          "a placed footprint (real transform + nets) from the session; " +
+          "`footprint` resolves an id PRE-placement (pass `at`/`rotation`/" +
+          "`side` to project a hypothetical placement). Read-only.",
+        inputSchema: getFootprintSchema,
+      },
+      {
         name: "describe_pcb",
         description:
           "Inspect the session PCB as compact, structured data: board size + " +
@@ -1627,8 +1641,13 @@ export async function createServer(
       {
         name: "run_drc",
         description:
-          "Run Design Rule Check (DRC) on a PCB. " +
-          "Checks clearance, trace width, drill size, annular ring, and edge clearance.",
+          "Run Design Rule Check (DRC) on a PCB. Checks clearance, trace width, " +
+          "drill size, annular ring, hole-to-hole, and edge clearance. Every " +
+          "violation is tagged with `provenance` (intra_footprint / " +
+          "inter_component / routing) and `generated` (involves a synthesized " +
+          "footprint land pattern); the summary adds `byProvenance`, " +
+          "`generatedArtifacts`, and `realViolations` so the headline count " +
+          "excludes footprint artifacts without hand-triage.",
         inputSchema: runDrcSchema,
       },
       {
@@ -2231,6 +2250,10 @@ export async function createServer(
 
         case "get_pad_positions":
           result = getPadPositions(args);
+          break;
+
+        case "get_footprint":
+          result = await getFootprint(args);
           break;
 
         case "describe_pcb":
