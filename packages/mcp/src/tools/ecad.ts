@@ -53,7 +53,7 @@ import {
   verifyReceipt as kernelVerifyReceipt,
 } from "@vcad/engine";
 import type { Engine, NetlistResult, TriangleMesh } from "@vcad/engine";
-import { registerSession, getSession } from "./session.js";
+import { registerSession, getSession, undoLastSnapshot, historyDepth } from "./session.js";
 import { sizePdnExact, ecadDiffEngineAvailable } from "../wasm/ecad-diff.js";
 
 /** Get PCB data from a document — checks PcbBoard nodes first, falls back to legacy doc.pcb */
@@ -5835,6 +5835,273 @@ export function addZone(args: Record<string, unknown>) {
           thermal_relief: reliefArg,
           zones_total: pcb.zones.length,
           ...docResultPayload(ctx),
+        }),
+      },
+    ],
+  };
+}
+
+// ============================================================================
+// delete_zone / delete_trace / delete_via — remove routed copper from the board
+// ============================================================================
+//
+// add_zone / add_trace / add_via are append-only — before these tools there was
+// no way to take a bad pour, trace, or via back out, so one wrong add_zone
+// forced a full session rebuild (re-sending the large create_schematic), which
+// violates the "never re-send the document" contract. These remove a single
+// element by index (or by an unambiguous net/layer match) and report a compact
+// `changed` diff of what left the board, mirroring the other mutators. For a
+// "take back the very last thing I did" the `undo` tool is the broader hammer.
+
+/** A removed (or, for undo, re-added) board element, for the `changed` diff. */
+interface PcbElementChange {
+  action: "removed" | "added";
+  kind: "zone" | "trace" | "traceArc" | "via";
+  index: number;
+  net: string;
+  layer?: string;
+}
+
+/** The copper layer of a board element for matching/reporting — vias span two
+ *  layers, so they report none (match by net/position instead). */
+function elementLayer(kind: PcbElementChange["kind"], el: Zone | Trace | Via): string | undefined {
+  return kind === "via" ? undefined : (el as Zone | Trace).layer;
+}
+
+/** Shared body for delete_zone / delete_trace / delete_via. Resolves the target
+ *  element (by `index`, or by an unambiguous net[/layer] match), splices it out,
+ *  and returns the standard result with a `changed: [{action:'removed', …}]`. */
+function deletePcbElement(args: Record<string, unknown>, kind: "zone" | "trace" | "via") {
+  const ctx = resolveDocInput(args);
+  const pcb = getDocPcb(ctx.doc);
+  const fail = ecadError;
+  if (!pcb) {
+    return fail(
+      "Document has no PCB — run place_components first (or open a document that has a board)",
+    );
+  }
+
+  // The collection is one of three element arrays; treat it generically for
+  // index/splice and read net/layer per element for matching + reporting.
+  const coll = (kind === "zone" ? pcb.zones : kind === "trace" ? pcb.traces : pcb.vias) as Array<
+    Zone | Trace | Via
+  >;
+  const plural = `${kind}s`;
+  if (coll.length === 0) return fail(`board has no ${plural} to delete`);
+
+  const wantNet = args.net != null ? String(args.net) : undefined;
+  const wantLayer = args.layer != null ? String(args.layer) : undefined;
+  const hasIndex = typeof args.index === "number";
+  const matchesFilter = (el: Zone | Trace | Via): boolean =>
+    (wantNet === undefined || el.net === wantNet) &&
+    (wantLayer === undefined || elementLayer(kind, el) === wantLayer);
+
+  let index: number;
+  if (hasIndex) {
+    index = args.index as number;
+    if (!Number.isInteger(index) || index < 0 || index >= coll.length) {
+      return fail(`index ${index} out of range — board has ${coll.length} ${plural} (0..${coll.length - 1})`);
+    }
+    // When a net/layer is also given, it's a guard against deleting the wrong
+    // element — confirm the indexed element actually matches.
+    if (!matchesFilter(coll[index]!)) {
+      const el = coll[index]!;
+      const got = elementLayer(kind, el) ? `${el.net}/${elementLayer(kind, el)}` : el.net;
+      return fail(`${kind} at index ${index} is on ${got}, not the net/layer you specified`);
+    }
+  } else if (wantNet !== undefined || wantLayer !== undefined) {
+    const matches = coll.flatMap((el, i) => (matchesFilter(el) ? [i] : []));
+    const sel = [wantNet, wantLayer].filter(Boolean).join("/");
+    if (matches.length === 0) return fail(`no ${kind} matches ${sel}`);
+    if (matches.length > 1) {
+      return fail(
+        `${matches.length} ${plural} match ${sel} (indices ${matches.join(", ")}) — pass \`index\` to pick one`,
+      );
+    }
+    index = matches[0]!;
+  } else {
+    return fail(`pass \`index\` (0..${coll.length - 1}) or a \`net\` to identify the ${kind} to delete`);
+  }
+
+  const [removed] = coll.splice(index, 1);
+  const change: PcbElementChange = {
+    action: "removed",
+    kind,
+    index,
+    net: removed!.net,
+    ...(elementLayer(kind, removed!) ? { layer: elementLayer(kind, removed!) } : {}),
+  };
+
+  return {
+    content: [
+      {
+        type: "text" as const,
+        text: JSON.stringify({
+          success: true,
+          deleted: change,
+          [`${plural}_total`]: coll.length,
+          changed: [change],
+          ...docResultPayload(ctx),
+        }),
+      },
+    ],
+  };
+}
+
+/** Shared JSON-Schema props for the per-element delete tools. */
+const deleteElementProps = {
+  ...docInputProperties,
+  index: {
+    type: "number" as const,
+    description: "Zero-based position in the board's collection (the order add_* appended them).",
+  },
+  net: {
+    type: "string" as const,
+    description:
+      "Net filter. With `index`, a guard (the indexed element must be on this net); without it, identifies the element when exactly one matches.",
+  },
+};
+
+/** JSON Schema for delete_zone. */
+export const deleteZoneSchema = {
+  type: "object" as const,
+  properties: {
+    ...deleteElementProps,
+    layer: { type: "string" as const, description: "Copper-layer filter (e.g. 'FCu', 'BCu')." },
+  },
+  required: ["document_id"],
+};
+
+/** Remove a copper pour (zone) from the board — the take-back for a bad
+ *  add_zone, without rebuilding the session. Mutates the session document. */
+export function deleteZone(args: Record<string, unknown>) {
+  return deletePcbElement(args, "zone");
+}
+
+/** JSON Schema for delete_trace. */
+export const deleteTraceSchema = {
+  type: "object" as const,
+  properties: {
+    ...deleteElementProps,
+    layer: { type: "string" as const, description: "Copper-layer filter (e.g. 'FCu', 'BCu')." },
+  },
+  required: ["document_id"],
+};
+
+/** Remove a single routed trace segment from the board. Mutates the session. */
+export function deleteTrace(args: Record<string, unknown>) {
+  return deletePcbElement(args, "trace");
+}
+
+/** JSON Schema for delete_via. */
+export const deleteViaSchema = {
+  type: "object" as const,
+  properties: { ...deleteElementProps },
+  required: ["document_id"],
+};
+
+/** Remove a single via from the board. Mutates the session document. */
+export function deleteVia(args: Record<string, unknown>) {
+  return deletePcbElement(args, "via");
+}
+
+// ============================================================================
+// undo — rewind the last mutation on a session (snapshot stack)
+// ============================================================================
+
+/** Multiset diff of two element arrays (before vs after), keyed by full JSON so
+ *  identical-but-reordered elements don't show as churn. Emits removed entries
+ *  first, then added — enough to describe what an undo (or any swap) did. */
+function diffElementArray(
+  kind: PcbElementChange["kind"],
+  before: Array<Zone | Trace | Via>,
+  after: Array<Zone | Trace | Via>,
+): PcbElementChange[] {
+  const countKeys = (arr: Array<Zone | Trace | Via>) => {
+    const m = new Map<string, number>();
+    for (const el of arr) m.set(JSON.stringify(el), (m.get(JSON.stringify(el)) ?? 0) + 1);
+    return m;
+  };
+  const beforeKeys = countKeys(before);
+  const afterKeys = countKeys(after);
+  const out: PcbElementChange[] = [];
+  const describe = (action: "removed" | "added", el: Zone | Trace | Via, index: number) => ({
+    action,
+    kind,
+    index,
+    net: el.net,
+    ...(elementLayer(kind, el) ? { layer: elementLayer(kind, el) } : {}),
+  });
+  before.forEach((el, i) => {
+    const key = JSON.stringify(el);
+    if ((afterKeys.get(key) ?? 0) > 0) afterKeys.set(key, afterKeys.get(key)! - 1);
+    else out.push(describe("removed", el, i));
+  });
+  after.forEach((el, i) => {
+    const key = JSON.stringify(el);
+    if ((beforeKeys.get(key) ?? 0) > 0) beforeKeys.set(key, beforeKeys.get(key)! - 1);
+    else out.push(describe("added", el, i));
+  });
+  return out;
+}
+
+/** Board-element diff between two PCBs (or null when neither has a board). */
+function diffPcbElements(before: Pcb | null, after: Pcb | null): PcbElementChange[] {
+  if (!before || !after) return [];
+  return [
+    ...diffElementArray("zone", before.zones ?? [], after.zones ?? []),
+    ...diffElementArray("trace", before.traces ?? [], after.traces ?? []),
+    ...diffElementArray("traceArc", (before.traceArcs ?? []) as never, (after.traceArcs ?? []) as never),
+    ...diffElementArray("via", before.vias ?? [], after.vias ?? []),
+  ];
+}
+
+/** JSON Schema for the undo tool. */
+export const undoSchema = {
+  type: "object" as const,
+  properties: {
+    document_id: {
+      type: "string" as const,
+      description: "Session id whose last mutation to rewind.",
+    },
+  },
+  required: ["document_id"],
+};
+
+/**
+ * Rewind the most recent mutation on a session by restoring the snapshot taken
+ * before it. The dispatch layer snapshots the whole Document before every
+ * mutating tool, so this generalizes across the board: it takes back the last
+ * add_zone / add_trace / add_via / delete_* / route_nets / place_components —
+ * or a CAD create/update/delete — without re-sending the document. Repeated
+ * calls walk further back through the stack. Reports a compact `changed` diff
+ * of the board elements the rewind moved (when the session has a PCB).
+ */
+export function undo(args: Record<string, unknown>) {
+  const id = args.document_id ? String(args.document_id) : "";
+  if (!id) return ecadError("undo needs a `document_id` (the session to rewind)");
+  // Resolve first so a bad/foreign id throws the pinned "Unknown document_id"
+  // before any state is touched — ownership is enforced here.
+  const current = getSession(id);
+  const beforePcb = getDocPcb(current);
+  const beforePcbCopy = beforePcb ? (JSON.parse(JSON.stringify(beforePcb)) as Pcb) : null;
+
+  const restored = undoLastSnapshot(id);
+  if (!restored) {
+    return ecadError("nothing to undo — no mutation has been recorded for this session");
+  }
+  const changed = diffPcbElements(beforePcbCopy, getDocPcb(restored));
+
+  return {
+    content: [
+      {
+        type: "text" as const,
+        text: JSON.stringify({
+          success: true,
+          undone: true,
+          remaining_undos: historyDepth(id),
+          changed,
+          document_id: id,
         }),
       },
     ],
