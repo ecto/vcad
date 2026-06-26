@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, beforeEach } from "vitest";
-import { Engine, resolveFootprint } from "@vcad/engine";
+import { Engine, resolveFootprint, parseKicadPcb } from "@vcad/engine";
 import type { Document, Pcb, Vec2 } from "@vcad/ir";
 import { createDocument } from "@vcad/ir";
 import {
@@ -9,6 +9,7 @@ import {
   runDrc,
   runErc,
   exportGerber,
+  exportKicad,
   calcImpedance,
   sizeImpedance,
   sizePdn,
@@ -27,6 +28,10 @@ import {
   setPlacement,
   setBoardOutline,
   addZone,
+  deleteZone,
+  deleteTrace,
+  deleteVia,
+  undo,
   setDesignRules,
   sizeTraceForCurrent,
   addViaArray,
@@ -40,7 +45,13 @@ import {
 } from "../tools/ecad.js";
 import { renderRatsnest, renderStackup } from "../tools/render.js";
 import { importKicad, importEagle } from "../tools/import-pcb.js";
-import { documents, getSession, openDocument, registerSession } from "../tools/session.js";
+import {
+  documents,
+  getSession,
+  openDocument,
+  recordHistorySnapshot,
+  registerSession,
+} from "../tools/session.js";
 import { openInBrowser } from "../tools/share.js";
 
 let engine: Engine;
@@ -805,6 +816,50 @@ describe("ecad session flow", () => {
     const gerber = out(await exportGerber({ document_id: id }));
     expect(gerber.success).toBe(true);
     expect(gerber.files.length).toBeGreaterThan(0);
+
+    // Native KiCad board export round-trips back through the importer.
+    const kicad = out(
+      await exportKicad({ document_id: id, filename: "out.kicad_pcb" }),
+    );
+    expect(kicad.success).toBe(true);
+    expect(kicad.format).toBe("kicad_pcb");
+    expect(kicad.document_id).toBe(id);
+    expect(typeof kicad.content).toBe("string");
+    expect(kicad.content).toContain("(kicad_pcb");
+    expect(kicad.content).toContain('(generator "vcad")');
+    // The routed net and a placed footprint survive into the file.
+    expect(kicad.content).toContain('"MID"');
+    expect(kicad.content).toContain("(segment");
+
+    const reimported = await parseKicadPcb(kicad.content);
+    expect(reimported).not.toBeNull();
+    expect(reimported!.footprints.length).toBe(2);
+    const refs = reimported!.footprints.map((fp) => fp.ref).sort();
+    expect(refs).toEqual(["R1", "R2"]);
+    expect(reimported!.traces.length).toBeGreaterThan(0);
+  });
+
+  it("export_kicad writes a .kicad_sch schematic and rejects unknown extensions", async () => {
+    const created = out(
+      await createSchematic({
+        components: [resistor("R1", 0), resistor("R2", 20)],
+        nets: { MID: ["R1.2", "R2.1"] },
+      }),
+    );
+    const id = created.document_id;
+
+    const sch = out(
+      await exportKicad({ document_id: id, filename: "sheet.kicad_sch" }),
+    );
+    expect(sch.success).toBe(true);
+    expect(sch.format).toBe("kicad_sch");
+    expect(sch.content).toContain("(kicad_sch");
+    expect(sch.content).toContain("(lib_symbols");
+    expect(sch.content).toContain('(lib_id "vcad:R1")');
+
+    // An unsupported extension is a clean tool error, not a throw.
+    const bad = await exportKicad({ document_id: id, filename: "nope.brd" });
+    expect(bad.isError).toBe(true);
   });
 
   it("parametric footprint engine resolves QFN/DPAK on-board and reports unknowns", async () => {
@@ -1055,6 +1110,96 @@ describe("ecad session flow", () => {
     // Two DPAK courtyards (~6mm radius each) must not be stacked despite sharing
     // a net — size-aware repulsion holds them well apart.
     expect(d).toBeGreaterThan(8);
+  });
+
+  it("force_directed keeps large edge components fully on-board (extent-aware clamp)", async () => {
+    // Cram nine LQFP-64 (~12mm body, ~6mm half-extent) onto a board too small to
+    // space them at their courtyard radius. Repulsion slams the perimeter parts
+    // hard against the placement clamp. The old clamp pinned each *center* to the
+    // raw bounds, so an edge part's 6mm body hung ~half off the board (and over
+    // its neighbor) — many DRC round-trips. The fix insets the clamp by each
+    // part's half-extent, so the whole courtyard stays on the board.
+    const lqfp = (ref: string) => ({
+      ref,
+      value: "MCU",
+      footprint: "Package_QFP:LQFP-64_10x10mm_P0.5mm",
+      x: 0,
+      y: 0,
+      // The parametric engine builds all 64 pads from the footprint id; a few
+      // pins are enough to declare the part.
+      pins: [1, 2, 3, 4].map((n) => ({ number: String(n), name: String(n), type: "Passive" })),
+    });
+    const W = 30;
+    const H = 30;
+    const created = out(
+      await createSchematic({
+        components: ["U1", "U2", "U3", "U4", "U5", "U6", "U7", "U8", "U9"].map(lqfp),
+      }),
+    );
+    const id = created.document_id;
+    out(
+      await placeComponents({
+        document_id: id,
+        board_width: W,
+        board_height: H,
+        strategy: "force_directed",
+      }),
+    );
+    const board = getPcbBoard(getSession(id));
+
+    /** Absolute copper bounding box of a placed footprint (pad land extents). */
+    const padHalf = (shape: { type: string } & Record<string, number>): number =>
+      shape.type === "Circle"
+        ? shape.diameter / 2
+        : shape.type === "Rect" || shape.type === "Oval" || shape.type === "RoundRect"
+          ? Math.max(shape.width, shape.height) / 2
+          : 0.5;
+    const bbox = (fp: (typeof board.footprints)[number]) => {
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      for (const p of fp.pads) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const h = padHalf(p.shape as any);
+        minX = Math.min(minX, fp.position.x + p.position.x - h);
+        minY = Math.min(minY, fp.position.y + p.position.y - h);
+        maxX = Math.max(maxX, fp.position.x + p.position.x + h);
+        maxY = Math.max(maxY, fp.position.y + p.position.y + h);
+      }
+      return { minX, minY, maxX, maxY };
+    };
+
+    // Every part's full courtyard lands inside the (0,0)→(W,H) outline. The 0.01mm
+    // tolerance absorbs the footprint-build position rounding.
+    const eps = 0.02;
+    for (const fp of board.footprints) {
+      const b = bbox(fp);
+      expect(b.minX).toBeGreaterThanOrEqual(-eps);
+      expect(b.minY).toBeGreaterThanOrEqual(-eps);
+      expect(b.maxX).toBeLessThanOrEqual(W + eps);
+      expect(b.maxY).toBeLessThanOrEqual(H + eps);
+    }
+  });
+
+  it("placement_drc flags an off-board part as clean:false so the agent can branch", async () => {
+    // After placement, a part shoved past the outline must flip placement_drc to
+    // clean:false (with its ref in off_board) — the cheap pre-routing signal an
+    // agent branches on before route_nets, instead of discovering it at run_drc.
+    const created = out(
+      await createSchematic({
+        components: [resistor("R1", 0), resistor("R2", 20)],
+        nets: { MID: ["R1.2", "R2.1"] },
+      }),
+    );
+    const id = created.document_id;
+    out(await placeComponents({ document_id: id, board_width: 40, board_height: 40 }));
+    const board = getPcbBoard(getSession(id));
+    // On-board placement is clean.
+    expect((await summarizePlacementDrc(board)).clean).toBe(true);
+    // Push R2 off the outline → clean:false, R2 reported off_board.
+    board.footprints.find((f) => f.ref === "R2")!.position = { x: 80, y: 80 };
+    const drc = await summarizePlacementDrc(board);
+    expect(drc.clean).toBe(false);
+    expect(drc.off_board).toContain("R2");
+    expect(drc.off_board).not.toContain("R1");
   });
 
   it("force_directed never bakes a cross-net pad short into the board", async () => {
@@ -1730,6 +1875,87 @@ describe("schematic label diagnostics", () => {
     // The wired (rotated) pin must not be flagged; the two open pins are.
     expect(unconnected.join(" ")).not.toContain("R1 pin 2");
     expect(unconnected).toHaveLength(2);
+  });
+});
+
+describe("run_erc kernel pin-type & power rules", () => {
+  /** A 1-pin IC whose single pin carries a real electrical type. */
+  const ic = (ref: string, x: number, type: string, name = "P") => ({
+    ref,
+    value: ref,
+    footprint: "SOIC-8",
+    x,
+    y: 0,
+    pins: [{ number: "1", name, type, x: 0, y: 0 }],
+  });
+
+  it("flags two outputs driving one net (data-driven nets)", async () => {
+    const created = out(
+      await createSchematic({
+        components: [ic("U1", 0, "Output", "OUT"), ic("U2", 40, "Output", "OUT")],
+        nets: { BUS: ["U1.1", "U2.1"] },
+      }),
+    );
+    const erc = out(await runErc({ document_id: created.document_id }));
+    expect(erc.verified).toBe(true);
+    const conflicts = (erc.details as Array<{ message: string; severity: string }>).filter((d) =>
+      d.message.includes("multiple outputs"),
+    );
+    expect(conflicts).toHaveLength(1);
+    expect(conflicts[0]!.severity).toBe("Error");
+    expect(erc.errors).toBeGreaterThanOrEqual(1);
+  });
+
+  it("flags a power input with no driver as floating power", async () => {
+    const created = out(
+      await createSchematic({
+        components: [ic("U1", 0, "PowerInput", "VCC"), resistor("R1", 40)],
+        nets: { SENSE: ["U1.1", "R1.1"] },
+      }),
+    );
+    const erc = out(await runErc({ document_id: created.document_id }));
+    expect(erc.verified).toBe(true);
+    const floating = (erc.details as Array<{ message: string; severity: string }>).filter((d) =>
+      d.message.includes("no power source"),
+    );
+    expect(floating).toHaveLength(1);
+    expect(floating[0]!.severity).toBe("Warning");
+  });
+
+  it("does not flag a power input on a recognized power net", async () => {
+    const created = out(
+      await createSchematic({
+        components: [ic("U1", 0, "PowerInput", "VCC"), resistor("R1", 40)],
+        nets: { VCC: ["U1.1", "R1.1"] },
+      }),
+    );
+    const erc = out(await runErc({ document_id: created.document_id }));
+    expect(erc.verified).toBe(true);
+    expect(
+      (erc.details as Array<{ message: string }>).filter((d) =>
+        d.message.includes("no power source"),
+      ),
+    ).toEqual([]);
+  });
+
+  it("reports an unconnected power pin once, never doubled as floating power", async () => {
+    const created = out(
+      await createSchematic({
+        components: [ic("U1", 0, "PowerInput", "VCC")],
+      }),
+    );
+    const erc = out(await runErc({ document_id: created.document_id }));
+    expect(erc.verified).toBe(true);
+    const unconnected = (erc.details as Array<{ message: string; severity: string }>).filter((d) =>
+      d.message.includes("Unconnected pin"),
+    );
+    expect(unconnected).toHaveLength(1);
+    expect(unconnected[0]!.severity).toBe("Error");
+    expect(
+      (erc.details as Array<{ message: string }>).filter((d) =>
+        d.message.includes("no power source"),
+      ),
+    ).toEqual([]);
   });
 });
 
@@ -3330,6 +3556,152 @@ describe("add_zone", () => {
   });
 });
 
+describe("delete_zone / delete_trace / delete_via", () => {
+  it("deletes a zone by index and reports a changed diff", async () => {
+    const id = await boardWithTwoResistors();
+    out(await addZone({ document_id: id, net: "GND", layer: "BCu", fill_board: true }));
+    out(await addZone({ document_id: id, net: "VBAT", layer: "FCu", fill_board: true }));
+    expect(getPcbBoard(getSession(id)).zones).toHaveLength(2);
+
+    const res = out(await deleteZone({ document_id: id, index: 0 }));
+    expect(res.success).toBe(true);
+    expect(res.deleted).toMatchObject({
+      action: "removed",
+      kind: "zone",
+      index: 0,
+      net: "GND",
+      layer: "BCu",
+    });
+    expect(res.changed).toEqual([res.deleted]);
+    expect(res.zones_total).toBe(1);
+
+    // The surviving pour is the one we didn't delete.
+    const board = getPcbBoard(getSession(id));
+    expect(board.zones).toHaveLength(1);
+    expect(board.zones[0].net).toBe("VBAT");
+  });
+
+  it("deletes a zone by an unambiguous net match", async () => {
+    const id = await boardWithTwoResistors();
+    out(await addZone({ document_id: id, net: "GND", fill_board: true }));
+    const res = out(await deleteZone({ document_id: id, net: "GND" }));
+    expect(res.success).toBe(true);
+    expect(getPcbBoard(getSession(id)).zones).toHaveLength(0);
+  });
+
+  it("rejects a bad index, an ambiguous net, and a missing selector", async () => {
+    const id = await boardWithTwoResistors();
+    out(await addZone({ document_id: id, net: "GND", layer: "FCu", fill_board: true }));
+    out(await addZone({ document_id: id, net: "GND", layer: "BCu", fill_board: true }));
+
+    expect(isErr(await deleteZone({ document_id: id, index: 9 }))).toBe(true);
+    // Two GND zones → net alone is ambiguous; the error names the layer fix.
+    expect(isErr(await deleteZone({ document_id: id, net: "GND" }))).toBe(true);
+    // No index and no net at all → nothing to identify.
+    expect(isErr(await deleteZone({ document_id: id }))).toBe(true);
+
+    // Layer disambiguates → the FCu pour survives.
+    const ok = out(await deleteZone({ document_id: id, net: "GND", layer: "BCu" }));
+    expect(ok.success).toBe(true);
+    const board = getPcbBoard(getSession(id));
+    expect(board.zones).toHaveLength(1);
+    expect(board.zones[0].layer).toBe("FCu");
+  });
+
+  it("guards an index against a mismatched net", async () => {
+    const id = await boardWithTwoResistors();
+    out(await addZone({ document_id: id, net: "GND", fill_board: true }));
+    // Index 0 IS the GND zone — asking to delete a 'VBAT' one there is a mistake.
+    expect(isErr(await deleteZone({ document_id: id, index: 0, net: "VBAT" }))).toBe(true);
+    expect(getPcbBoard(getSession(id)).zones).toHaveLength(1);
+  });
+
+  it("deletes a trace and a via by index", async () => {
+    const id = await boardWithTwoResistors();
+    out(
+      await addTrace({
+        document_id: id,
+        net: "MID",
+        points: [
+          { x: 0, y: 0 },
+          { x: 5, y: 0 },
+        ],
+      }),
+    );
+    out(await addVia({ document_id: id, net: "MID", position: { x: 5, y: 0 } }));
+    expect(getPcbBoard(getSession(id)).traces.length).toBeGreaterThanOrEqual(1);
+    expect(getPcbBoard(getSession(id)).vias).toHaveLength(1);
+
+    const dt = out(await deleteTrace({ document_id: id, index: 0 }));
+    expect(dt.deleted).toMatchObject({ kind: "trace", net: "MID" });
+    expect(getPcbBoard(getSession(id)).traces).toHaveLength(0);
+
+    const dv = out(await deleteVia({ document_id: id, index: 0 }));
+    expect(dv.deleted).toMatchObject({ kind: "via", net: "MID" });
+    expect(getPcbBoard(getSession(id)).vias).toHaveLength(0);
+  });
+});
+
+describe("undo (snapshot rewind)", () => {
+  it("rewinds the last mutation and reports what the rewind removed", async () => {
+    const id = await boardWithTwoResistors();
+    // The dispatch layer snapshots before each mutation — simulate that here.
+    recordHistorySnapshot(id);
+    out(await addZone({ document_id: id, net: "GND", fill_board: true }));
+    expect(getPcbBoard(getSession(id)).zones).toHaveLength(1);
+
+    const res = out(await undo({ document_id: id }));
+    expect(res.success).toBe(true);
+    expect(res.undone).toBe(true);
+    // The pour is gone — the board is back to its pre-add state.
+    expect(getPcbBoard(getSession(id)).zones).toHaveLength(0);
+    expect(res.changed).toEqual([
+      expect.objectContaining({ action: "removed", kind: "zone", net: "GND" }),
+    ]);
+  });
+
+  it("walks back multiple steps, then reports nothing left to undo", async () => {
+    const id = await boardWithTwoResistors();
+    recordHistorySnapshot(id);
+    out(await addZone({ document_id: id, net: "GND", fill_board: true }));
+    recordHistorySnapshot(id);
+    out(
+      await addTrace({
+        document_id: id,
+        net: "MID",
+        points: [
+          { x: 0, y: 0 },
+          { x: 5, y: 0 },
+        ],
+      }),
+    );
+    expect(getPcbBoard(getSession(id)).traces.length).toBeGreaterThanOrEqual(1);
+
+    // First undo drops the trace; the zone stays.
+    const u1 = out(await undo({ document_id: id }));
+    expect(u1.remaining_undos).toBe(1);
+    expect(getPcbBoard(getSession(id)).traces).toHaveLength(0);
+    expect(getPcbBoard(getSession(id)).zones).toHaveLength(1);
+
+    // Second undo drops the zone.
+    out(await undo({ document_id: id }));
+    expect(getPcbBoard(getSession(id)).zones).toHaveLength(0);
+
+    // Stack is empty now.
+    expect(isErr(await undo({ document_id: id }))).toBe(true);
+  });
+
+  it("throws on an unknown document and errors with nothing recorded", async () => {
+    // An unknown id throws the pinned getSession error (the dispatch layer
+    // turns thrown errors into structured results); consistent with the rest
+    // of the ECAD surface.
+    expect(() => undo({ document_id: "doc_nope" })).toThrow(/Unknown document_id/);
+    const id = await boardWithTwoResistors();
+    // Known session, but no snapshot was recorded for it yet → graceful error.
+    expect(isErr(await undo({ document_id: id }))).toBe(true);
+  });
+});
+
 describe("set_design_rules", () => {
   it("writes default rules and a net class that DRC then reads", async () => {
     const id = await boardWithTwoResistors();
@@ -3470,5 +3842,82 @@ describe("new PCB tools survive the kernel pipeline", () => {
     const gerber = out(await exportGerber({ document_id: id }));
     expect(gerber.success).toBe(true);
     expect(gerber.files.length).toBeGreaterThan(0);
+  });
+});
+
+describe("set_design_rules ordering tolerance (buffering)", () => {
+  const powerSchematic = () =>
+    createSchematic({
+      components: [
+        {
+          ref: "J1",
+          value: "PWR",
+          footprint: "Connector_PinHeader_2.54mm:PinHeader_1x02_P2.54mm",
+          x: 0,
+          y: 0,
+          pins: [
+            { number: "1", name: "V", type: "Passive" },
+            { number: "2", name: "G", type: "Passive" },
+          ],
+        },
+        resistor("R1", 15),
+        resistor("R2", 30),
+      ],
+      nets: { VBAT: ["J1.1", "R1.1"], SIG: ["R1.2", "R2.1"] },
+    });
+
+  it("guides to place_components instead of dead-ending when there's no board yet", async () => {
+    const created = out(await powerSchematic());
+    const id = created.document_id;
+    // set_design_rules BEFORE the board exists used to fail with a bare error.
+    const res = await setDesignRules({ document_id: id, clearance: 0.3 });
+    expect(res.isError).toBeUndefined();
+    const body = out(res);
+    expect(body.success).toBe(true);
+    expect(body.buffered).toBe(true);
+    // It carries a recovery action pointing at the canonical next step.
+    expect(body.next_actions[0].tool).toBe("place_components");
+    expect(res.structuredContent?.next_actions?.[0].tool).toBe("place_components");
+  });
+
+  it("replays buffered rules onto the board when place_components runs", async () => {
+    const created = out(await powerSchematic());
+    const id = created.document_id;
+    // Rules first (no board), then place — the buffered rules must land.
+    out(
+      await setDesignRules({
+        document_id: id,
+        clearance: 0.35,
+        track_width: 0.3,
+        classes: [{ name: "power", nets: ["VBAT"], track_width: 1.5 }],
+      }),
+    );
+    const placed = out(await placeComponents({ document_id: id, board_width: 50, board_height: 40 }));
+    expect(placed.buffered_design_rules_applied).toBe(true);
+
+    const board = getPcbBoard(getSession(id));
+    expect(board.rules.defaultRules.clearance).toBeCloseTo(0.35, 5);
+    expect(board.rules.defaultRules.traceWidth).toBeCloseTo(0.3, 5);
+    expect((board.rules.classRules ?? []).map((c) => c.name)).toContain("power");
+    expect(board.rules.netClassAssignments?.power).toEqual(["VBAT"]);
+
+    // And the buffered rules actually drive routing — VBAT routes at its class width.
+    const routed = out(await routeNets({ document_id: id }));
+    expect(routed.success).toBe(true);
+    if (routed.track_widths_mm?.VBAT !== undefined) {
+      expect(routed.track_widths_mm.VBAT).toBeCloseTo(1.5, 1);
+    }
+  });
+
+  it("still fails fast on a malformed early call (no fields, or a class with no nets)", async () => {
+    const created = out(await powerSchematic());
+    const id = created.document_id;
+    const empty = await setDesignRules({ document_id: id });
+    expect(empty.isError).toBe(true);
+    const badClass = await setDesignRules({
+      document_id: id,
+      classes: [{ name: "power", nets: [] }],
+    });
+    expect(badClass.isError).toBe(true);
   });
 });

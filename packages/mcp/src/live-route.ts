@@ -27,6 +27,7 @@ import {
 } from "./session-store.js";
 import { appendOverlay, listEvents } from "./tools/live.js";
 import { generateGlbPreview } from "./tools/preview.js";
+import { getRuntimeFlag } from "./edge-config.js";
 import { LIVE_HTML } from "./live-html.generated.js";
 import type { Engine } from "@vcad/engine";
 
@@ -105,8 +106,10 @@ export async function handleLiveRequest(
   const url = new URL(req.url ?? "/", `https://${req.headers.host ?? "localhost"}`);
   if (!url.pathname.startsWith("/live/")) return false;
 
-  // A new public read/append surface — off unless explicitly enabled.
-  if (process.env.VCAD_LIVE_WINDOW !== "1") {
+  // A new public read/append surface — off unless explicitly enabled. Read the
+  // flag from Edge Config (env fallback) so a warm instance honors a flip
+  // without a redeploy.
+  if (!(await getRuntimeFlag("VCAD_LIVE_WINDOW"))) {
     text(res, 404, "Not Found");
     return true;
   }

@@ -1,0 +1,18 @@
+{
+  "id": "2026-06-26-export-kicad-native",
+  "version": "0.9.4",
+  "date": "2026-06-26",
+  "category": "feat",
+  "title": "Export native, editable KiCad files",
+  "summary": "New export_kicad MCP tool writes a session as a native KiCad 9 .kicad_pcb board or .kicad_sch schematic, so a human can open the agent's design in KiCad to finish routing and re-import — closing the round trip.",
+  "features": [
+    "ecad",
+    "pcb",
+    "schematic",
+    "kicad",
+    "export"
+  ],
+  "mcpTools": [
+    "export_kicad"
+  ]
+}

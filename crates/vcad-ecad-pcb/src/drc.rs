@@ -39,6 +39,12 @@ pub enum DrcRuleType {
     Keepout,
     /// Two distinct nets are electrically connected (a short).
     Short,
+    /// A single net's realized copper forms more than one galvanically-isolated
+    /// group (the schematic says one node; the board built several islands).
+    NetIslands,
+    /// An SMD pad names a copper-plane net but has no galvanic path to that
+    /// plane — it needs a stitching via (or a dog-bone escape via on fine pitch).
+    UnstitchedPad,
 }
 
 /// DRC violation severity.
@@ -1070,6 +1076,8 @@ fn check_connectivity(pcb: &Pcb, net_ties: &NetTieGroups, violations: &mut Vec<D
 
     detect_shorts(&nodes, &mut dsu, net_ties, violations);
     detect_unrouted(pcb, &nodes, &mut dsu, net_ties, violations);
+    detect_net_islands(pcb, &nodes, &mut dsu, violations);
+    detect_unstitched_pads(pcb, &nodes, &mut dsu, violations);
 }
 
 /// Build connectivity nodes from all copper on the board.
@@ -1146,17 +1154,74 @@ fn build_conn_nodes(pcb: &Pcb) -> Vec<ConnNode> {
         if rings.iter().all(|r| r.len() < 3) {
             continue;
         }
-        let pos = polygon_centroid(&zone.outline);
-        nodes.push(ConnNode {
-            geom: NodeGeom::Pour(rings),
-            layers: single_layer_mask(zone.layer),
-            net: zone.net.clone(),
-            pad: None,
-            pos,
-        });
+        // A pour can flood into several physically-disjoint pieces (clearance
+        // voids carve it up). `fill_zones` emits each piece as a CCW outer ring
+        // immediately followed by its CW holes, so each piece becomes its own
+        // connectivity node — otherwise a plane that fractured into N islands
+        // would read as a single connected node and hide that N-1 of them stitch
+        // to nothing.
+        let layer = single_layer_mask(zone.layer);
+        for island in split_pour_islands(&rings) {
+            let pos = island
+                .first()
+                .map(|outer| polygon_centroid(outer))
+                .unwrap_or_else(|| polygon_centroid(&zone.outline));
+            nodes.push(ConnNode {
+                geom: NodeGeom::Pour(island),
+                layers: layer,
+                net: zone.net.clone(),
+                pad: None,
+                pos,
+            });
+        }
     }
 
     nodes
+}
+
+/// Signed area of a closed polygon (positive for counter-clockwise winding).
+fn polygon_signed_area(ring: &[Vec2]) -> f64 {
+    let n = ring.len();
+    if n < 3 {
+        return 0.0;
+    }
+    let mut a = 0.0;
+    for i in 0..n {
+        let p = ring[i];
+        let q = ring[(i + 1) % n];
+        a += p.x * q.y - q.x * p.y;
+    }
+    a / 2.0
+}
+
+/// Split a zone's filled rings into physically-disjoint copper islands.
+///
+/// [`crate::copper_pour::fill_zones`] emits copper as CCW outer rings (positive
+/// signed area) each immediately followed by its CW clearance-void holes
+/// (negative area). Each CCW outer therefore begins a new island, and the holes
+/// that follow it belong to that island — so the returned ring sets keep the
+/// even-odd fill semantics [`copper_touches_pour`] relies on. If no CCW outer is
+/// found (an unexpected winding), the whole ring set is returned as one island
+/// so a pour is never silently dropped from connectivity.
+fn split_pour_islands(rings: &[Vec<Vec2>]) -> Vec<Vec<Vec<Vec2>>> {
+    let mut islands: Vec<Vec<Vec<Vec2>>> = Vec::new();
+    for ring in rings {
+        if ring.len() < 3 {
+            continue;
+        }
+        if polygon_signed_area(ring) >= 0.0 {
+            islands.push(vec![ring.clone()]);
+        } else if let Some(last) = islands.last_mut() {
+            last.push(ring.clone());
+        }
+    }
+    if islands.is_empty() {
+        let all: Vec<Vec<Vec2>> = rings.iter().filter(|r| r.len() >= 3).cloned().collect();
+        if !all.is_empty() {
+            islands.push(all);
+        }
+    }
+    islands
 }
 
 /// Emit a `Short` violation for any component carrying ≥2 distinct declared
@@ -1266,6 +1331,254 @@ fn detect_unrouted(
     }
 
     let _ = pcb;
+}
+
+/// Reconcile each net's intended single node against the copper actually built.
+///
+/// Walks every piece of copper carrying a declared net — traces, pads, vias and
+/// each disjoint same-net zone island — and groups them by the connectivity
+/// union-find (vias bridge layers, copper that touches merges). A net whose
+/// realized copper includes a group that reaches **none of its pads** — stranded
+/// copper, the canonical case being a poured power plane that stitched to
+/// nothing and fractured into islands — is reported as `NetIslands` with the
+/// total island count and the pads per island.
+///
+/// This is the check the flight-controller session lacked. [`detect_unrouted`]
+/// (`UnconnectedNet`) already flags pads that aren't mutually routed — a routing
+/// to-do — but it only counts pad-bearing groups, so a pad-less floating plane
+/// is invisible to it. `NetIslands` is the complement: it fires only when a net
+/// has more total copper islands than pad groups, i.e. some copper connects to
+/// nothing. Firing only on stranded copper keeps it strictly additive to
+/// `UnconnectedNet` (a plain unrouted net is not double-reported) so the real
+/// defect isn't buried under one-per-net noise on a freshly-placed board.
+fn detect_net_islands(
+    pcb: &Pcb,
+    nodes: &[ConnNode],
+    dsu: &mut Dsu,
+    violations: &mut Vec<DrcViolation>,
+) {
+    /// One galvanically-connected group of a net's copper.
+    struct Island {
+        root: usize,
+        pads: Vec<String>,
+        has_pad: bool,
+        pos: Vec2,
+    }
+
+    // net id → its islands, in first-seen order for deterministic numbering.
+    let mut by_net: HashMap<String, Vec<Island>> = HashMap::new();
+    for (i, node) in nodes.iter().enumerate() {
+        if node.net.is_empty() {
+            continue;
+        }
+        let root = dsu.find(i);
+        let islands = by_net.entry(node.net.clone()).or_default();
+        let island = match islands.iter_mut().find(|isl| isl.root == root) {
+            Some(isl) => isl,
+            None => {
+                islands.push(Island {
+                    root,
+                    pads: Vec::new(),
+                    has_pad: false,
+                    pos: node.pos,
+                });
+                islands.last_mut().expect("just pushed")
+            }
+        };
+        if let Some((fp, pad)) = &node.pad {
+            island.pads.push(format!("{fp}.{pad}"));
+            island.has_pad = true;
+        }
+    }
+
+    // Prefer the human-readable net name in the message, fall back to the id.
+    let net_name: HashMap<&str, &str> = pcb
+        .nets
+        .iter()
+        .map(|n| (n.id.as_str(), n.name.as_str()))
+        .collect();
+
+    // Deterministic output: nets sorted by id.
+    let mut net_ids: Vec<&String> = by_net.keys().collect();
+    net_ids.sort();
+
+    for net_id in net_ids {
+        let islands = &by_net[net_id];
+        if islands.len() < 2 {
+            continue;
+        }
+        // Only fire when some group reaches none of the net's pads — stranded
+        // copper. A net whose every island carries a pad is "pads not all
+        // routed together", which is `UnconnectedNet`'s job; flagging it here too
+        // would double-report every unrouted net.
+        let pad_groups = islands.iter().filter(|isl| isl.has_pad).count();
+        if islands.len() <= pad_groups {
+            continue;
+        }
+        let label = net_name
+            .get(net_id.as_str())
+            .copied()
+            .filter(|n| !n.is_empty())
+            .unwrap_or(net_id.as_str());
+        let detail = islands
+            .iter()
+            .enumerate()
+            .map(|(idx, isl)| describe_island(idx + 1, isl.has_pad, &isl.pads))
+            .collect::<Vec<_>>()
+            .join("; ");
+        violations.push(DrcViolation {
+            rule: DrcRuleType::NetIslands,
+            severity: DrcSeverity::Error,
+            position: islands[0].pos,
+            // The lowercase `net '<label>'` token lets the MCP summary attribute
+            // this violation to the right net when it buckets by net-pair.
+            message: format!(
+                "Disjoint net '{label}': realized as {} disjoint copper islands — {detail}",
+                islands.len()
+            ),
+            actual: islands.len() as f64,
+            required: 1.0,
+        });
+    }
+}
+
+/// Compact, deterministic description of one net island for the violation
+/// message (sorted pad list, capped, or a "copper only" note when pad-less).
+fn describe_island(n: usize, has_pad: bool, pads: &[String]) -> String {
+    if !has_pad {
+        return format!("#{n} (copper only, no pads)");
+    }
+    let mut pads = pads.to_vec();
+    pads.sort();
+    pads.dedup();
+    const CAP: usize = 8;
+    if pads.len() > CAP {
+        format!(
+            "#{n} [{}, +{} more]",
+            pads[..CAP].join(", "),
+            pads.len() - CAP
+        )
+    } else {
+        format!("#{n} [{}]", pads.join(", "))
+    }
+}
+
+/// Emit an `UnstitchedPad` violation for any SMD pad that names a copper-plane
+/// net but has no galvanic path to that plane.
+///
+/// An inner power/ground plane (a poured zone) only reaches an SMD pad on an
+/// outer layer through a stitching via — pour two of them and an SMD `+3V3` pad
+/// connects to *nothing* until a via bridges the layers. This is the first-class
+/// signal for that: it names the exact pad and suggests where to drop the via,
+/// rather than rolling the whole net up into one opaque `UnconnectedNet`.
+///
+/// Scope: SMD pads only (a THT pad's plated barrel already bridges to an inner
+/// plane), whose net owns a plane on a layer the pad is *not* on (a pad already
+/// on its plane layer floods straight in), and whose connectivity component does
+/// not contain any same-net plane. Galvanic path is read straight off the same
+/// union-find the short/unrouted checks use, so a stitching via that reaches the
+/// plane clears the violation automatically.
+fn detect_unstitched_pads(
+    pcb: &Pcb,
+    nodes: &[ConnNode],
+    dsu: &mut Dsu,
+    violations: &mut Vec<DrcViolation>,
+) {
+    // Plane layers each net owns (a declared zone with a real outline).
+    let mut plane_layers: HashMap<String, u16> = HashMap::new();
+    for zone in &pcb.zones {
+        if zone.net.is_empty() || zone.outline.len() < 3 {
+            continue;
+        }
+        *plane_layers.entry(zone.net.clone()).or_default() |= single_layer_mask(zone.layer);
+    }
+    if plane_layers.is_empty() {
+        return;
+    }
+
+    // Component roots that hold a plane (pour) of each net.
+    let mut plane_roots: HashMap<String, Vec<usize>> = HashMap::new();
+    for (i, node) in nodes.iter().enumerate() {
+        if matches!(node.geom, NodeGeom::Pour(_)) && !node.net.is_empty() {
+            let root = dsu.find(i);
+            plane_roots.entry(node.net.clone()).or_default().push(root);
+        }
+    }
+
+    // Map each pad node to its component root, keyed by (footprint ref, pad num).
+    let mut pad_root: HashMap<(String, String), usize> = HashMap::new();
+    for (i, node) in nodes.iter().enumerate() {
+        if let Some(id) = &node.pad {
+            pad_root.insert(id.clone(), dsu.find(i));
+        }
+    }
+
+    let via_r = pcb.rules.default_rules.via_diameter / 2.0;
+    let suggest_offset =
+        via_r + pcb.rules.default_rules.clearance + pcb.rules.default_rules.trace_width / 2.0;
+
+    for fp in &pcb.footprints {
+        let (sin_r, cos_r) = fp.rotation.to_radians().sin_cos();
+        for pad in &fp.pads {
+            if pad.pad_type != PadType::SMD {
+                continue;
+            }
+            let Some(net) = pad.net.as_ref().filter(|n| !n.is_empty()) else {
+                continue;
+            };
+            let Some(&pl_mask) = plane_layers.get(net) else {
+                continue;
+            };
+            // A pad already on one of its plane layers floods straight into the
+            // plane — it needs no stitching via (a void/thermal gap there is a
+            // different defect, caught by the pour fill / clearance checks).
+            let pad_mask = pad
+                .layers
+                .iter()
+                .fold(0u16, |m, &l| m | single_layer_mask(l));
+            if pad_mask & pl_mask != 0 {
+                continue;
+            }
+            // Galvanic path: is the pad's component one that holds this net's
+            // plane? A stitching via makes it so; without one it is not.
+            let Some(&root) = pad_root.get(&(fp.reference.clone(), pad.number.clone())) else {
+                continue;
+            };
+            let stitched = plane_roots
+                .get(net)
+                .is_some_and(|roots| roots.contains(&root));
+            if stitched {
+                continue;
+            }
+
+            // Suggested escape: radially outward from the footprint origin (the
+            // open side for a perimeter QFP/QFN pad). Falls back to +X for a pad
+            // sitting on the origin.
+            let off_x = pad.position.x * cos_r - pad.position.y * sin_r;
+            let off_y = pad.position.x * sin_r + pad.position.y * cos_r;
+            let mag = (off_x * off_x + off_y * off_y).sqrt();
+            let (ex, ey) = if mag > 1e-9 {
+                (off_x / mag, off_y / mag)
+            } else {
+                (1.0, 0.0)
+            };
+            let pad_pt = Vec2::new(fp.position.x + off_x, fp.position.y + off_y);
+
+            violations.push(DrcViolation {
+                rule: DrcRuleType::UnstitchedPad,
+                severity: DrcSeverity::Error,
+                position: pad_pt,
+                message: format!(
+                    "Unstitched pad {}.{} on plane net '{}': no via reaches the \
+                     plane — drop a stitching via near the pad, escaping ~{:.2}mm \
+                     along ({:.2}, {:.2}) if the pitch is too fine for an at-pad via",
+                    fp.reference, pad.number, net, suggest_offset, ex, ey
+                ),
+                actual: 0.0,
+                required: 1.0,
+            });
+        }
+    }
 }
 
 /// A simple disjoint-set (union-find) with path compression + union by size.
@@ -2976,5 +3289,295 @@ mod tests {
             .expect("3V3 is poured + power-named");
         assert_eq!(v33.islands, 2, "two disjoint pours");
         assert!(!v33.continuous);
+    }
+
+    // ----- NetIslands DRC rule -----
+
+    /// A power net whose inner-layer plane stitches to nothing is two
+    /// galvanically-isolated copper groups — the exact defect the FC session
+    /// missed. Adding the stitching via merges the plane into the net and the
+    /// violation clears. (The plane island carries no pads; its FCu pads form
+    /// the other island.)
+    #[test]
+    fn net_islands_flags_unstitched_plane() {
+        let mut pcb = clean_pcb();
+        pcb.traces.clear();
+        pcb.vias.clear();
+        pcb.nets.push(Net {
+            id: "3".to_string(),
+            name: "3V3".to_string(),
+        });
+        // Two 3V3 pads joined by an FCu trace — one connected group.
+        pcb.footprints.push(footprint(
+            "U1",
+            (20.0, 40.0),
+            0.0,
+            vec![smd_pad("1", (0.0, 0.0), "3")],
+        ));
+        pcb.footprints.push(footprint(
+            "U2",
+            (40.0, 40.0),
+            0.0,
+            vec![smd_pad("1", (0.0, 0.0), "3")],
+        ));
+        pcb.traces.push(trace((20.0, 40.0), (40.0, 40.0), "3"));
+        // A 3V3 plane on In1Cu that connects to nothing — no stitching via.
+        pcb.zones.push(Zone {
+            outline: pcb.outline.vertices.clone(),
+            holes: vec![],
+            net: "3".to_string(),
+            layer: PcbLayer::In1Cu,
+            clearance: 0.2,
+            min_area: 0.0,
+            fill_type: ZoneFillType::Solid,
+            thermal_relief: ThermalReliefStyle::Relief,
+            thermal_gap: Some(0.5),
+            thermal_spoke_width: Some(0.5),
+            priority: 0,
+        });
+
+        let islands: Vec<_> = check_drc(&pcb)
+            .into_iter()
+            .filter(|v| v.rule == DrcRuleType::NetIslands && v.message.contains("3V3"))
+            .collect();
+        assert_eq!(
+            islands.len(),
+            1,
+            "exactly one NetIslands violation for 3V3, got: {islands:?}"
+        );
+        assert_eq!(
+            islands[0].actual, 2.0,
+            "FCu pad group + floating plane = 2 islands"
+        );
+        assert!(
+            islands[0].message.contains("U1.1") && islands[0].message.contains("U2.1"),
+            "island pad list should name the pads: {}",
+            islands[0].message
+        );
+        assert!(
+            islands[0].message.contains("copper only"),
+            "the floating plane island should be pad-less: {}",
+            islands[0].message
+        );
+
+        // Stitch the plane to the net with a via FCu→In1Cu over the trace.
+        pcb.vias.push(Via {
+            position: Vec2::new(30.0, 40.0),
+            diameter: 0.8,
+            drill: 0.4,
+            start_layer: PcbLayer::FCu,
+            end_layer: PcbLayer::In1Cu,
+            net: "3".to_string(),
+        });
+        let after: Vec<_> = check_drc(&pcb)
+            .into_iter()
+            .filter(|v| v.rule == DrcRuleType::NetIslands)
+            .collect();
+        assert!(
+            after.is_empty(),
+            "a stitched plane should be one island, got: {after:?}"
+        );
+    }
+
+    /// The island count is faithful: three mutually-disconnected stubs on one
+    /// net report exactly three islands, even with no pads (a case
+    /// `UnconnectedNet`, which only counts pad groups, would miss entirely).
+    #[test]
+    fn net_islands_counts_every_disjoint_group() {
+        let mut pcb = clean_pcb();
+        pcb.traces.clear();
+        pcb.vias.clear();
+        pcb.nets.push(Net {
+            id: "9".to_string(),
+            name: "SIG".to_string(),
+        });
+        // Three short FCu stubs 30mm apart — far beyond the touch threshold.
+        pcb.traces.push(trace((10.0, 10.0), (15.0, 10.0), "9"));
+        pcb.traces.push(trace((10.0, 40.0), (15.0, 40.0), "9"));
+        pcb.traces.push(trace((10.0, 70.0), (15.0, 70.0), "9"));
+
+        let islands: Vec<_> = check_drc(&pcb)
+            .into_iter()
+            .filter(|v| v.rule == DrcRuleType::NetIslands && v.message.contains("SIG"))
+            .collect();
+        assert_eq!(islands.len(), 1, "one rolled-up violation per net");
+        assert_eq!(
+            islands[0].actual, 3.0,
+            "three disjoint stubs = three islands"
+        );
+    }
+
+    /// A correctly routed net (every piece of its copper galvanically joined)
+    /// produces no NetIslands violation — it is realized as one island.
+    #[test]
+    fn net_islands_clean_for_connected_net() {
+        let mut pcb = clean_pcb();
+        pcb.traces.clear();
+        pcb.vias.clear();
+        pcb.footprints.push(footprint(
+            "J1",
+            (10.0, 40.0),
+            0.0,
+            vec![smd_pad("1", (0.0, 0.0), "1")],
+        ));
+        pcb.footprints.push(footprint(
+            "J2",
+            (30.0, 40.0),
+            0.0,
+            vec![smd_pad("1", (0.0, 0.0), "1")],
+        ));
+        pcb.traces.push(trace((10.0, 40.0), (30.0, 40.0), "1"));
+
+        assert!(
+            !check_drc(&pcb)
+                .iter()
+                .any(|v| v.rule == DrcRuleType::NetIslands),
+            "a fully connected net is one island"
+        );
+    }
+
+    /// Unit-level: a pour that floods into two physically-disjoint pieces splits
+    /// into two island ring sets, each preserving its outer + hole rings.
+    #[test]
+    fn split_pour_islands_separates_disjoint_pieces() {
+        // CCW square A, its CW hole, then CCW square B (a second island).
+        let square = |ox: f64, oy: f64| {
+            vec![
+                Vec2::new(ox, oy),
+                Vec2::new(ox + 5.0, oy),
+                Vec2::new(ox + 5.0, oy + 5.0),
+                Vec2::new(ox, oy + 5.0),
+            ]
+        };
+        // Hole is the same square wound clockwise (reverse order).
+        let mut hole = square(1.0, 1.0);
+        hole.reverse();
+        let rings = vec![square(0.0, 0.0), hole, square(20.0, 0.0)];
+        let islands = split_pour_islands(&rings);
+        assert_eq!(islands.len(), 2, "two CCW outers ⇒ two islands");
+        assert_eq!(islands[0].len(), 2, "first island keeps its outer + hole");
+        assert_eq!(islands[1].len(), 1, "second island is a bare outer");
+    }
+
+    /// Helper: a whole-board plane pour for `net` on `layer`.
+    fn plane_zone(outline: &[Vec2], net: &str, layer: PcbLayer) -> Zone {
+        Zone {
+            outline: outline.to_vec(),
+            holes: vec![],
+            net: net.to_string(),
+            layer,
+            clearance: 0.2,
+            min_area: 0.0,
+            fill_type: ZoneFillType::Solid,
+            thermal_relief: ThermalReliefStyle::Relief,
+            thermal_gap: Some(0.5),
+            thermal_spoke_width: Some(0.5),
+            priority: 0,
+        }
+    }
+
+    /// An SMD pad naming an inner-plane net, with no stitching via, has no
+    /// galvanic path to its plane — a first-class Unstitched-Pad violation that
+    /// names the exact pad and a suggested escape vector (not just an opaque
+    /// net-wide UnconnectedNet).
+    #[test]
+    fn unstitched_smd_pad_on_plane_flagged() {
+        let mut pcb = clean_pcb();
+        pcb.traces.clear();
+        pcb.vias.clear();
+        pcb.nets.push(Net {
+            id: "3".to_string(),
+            name: "3V3".to_string(),
+        });
+        let outline = pcb.outline.vertices.clone();
+        pcb.zones.push(plane_zone(&outline, "3", PcbLayer::In1Cu));
+        // One SMD pad on FCu naming the +3V3 plane net, no via.
+        pcb.footprints = vec![footprint(
+            "U1",
+            (50.0, 40.0),
+            0.0,
+            vec![smd_pad("1", (0.0, 0.0), "3")],
+        )];
+
+        let v = check_drc(&pcb);
+        let unstitched: Vec<_> = v
+            .iter()
+            .filter(|x| x.rule == DrcRuleType::UnstitchedPad)
+            .collect();
+        assert_eq!(
+            unstitched.len(),
+            1,
+            "expected one Unstitched-Pad, got: {:?}",
+            v.iter().map(|x| (&x.rule, &x.message)).collect::<Vec<_>>()
+        );
+        assert!(
+            unstitched[0].message.contains("U1.1") && unstitched[0].message.contains("'3'"),
+            "violation must name the pad and plane net: {}",
+            unstitched[0].message
+        );
+    }
+
+    /// Dropping a same-net stitching via at the pad bridges FCu→In1Cu and clears
+    /// the Unstitched-Pad violation — read straight off the connectivity union.
+    #[test]
+    fn stitching_via_clears_unstitched_pad() {
+        let mut pcb = clean_pcb();
+        pcb.traces.clear();
+        pcb.vias.clear();
+        pcb.nets.push(Net {
+            id: "3".to_string(),
+            name: "3V3".to_string(),
+        });
+        let outline = pcb.outline.vertices.clone();
+        pcb.zones.push(plane_zone(&outline, "3", PcbLayer::In1Cu));
+        pcb.footprints = vec![footprint(
+            "U1",
+            (50.0, 40.0),
+            0.0,
+            vec![smd_pad("1", (0.0, 0.0), "3")],
+        )];
+        // The stitching via: a +3V3 through-via at the pad reaching the In1Cu plane.
+        pcb.vias.push(Via {
+            position: Vec2::new(50.0, 40.0),
+            diameter: 0.8,
+            drill: 0.4,
+            start_layer: PcbLayer::FCu,
+            end_layer: PcbLayer::BCu,
+            net: "3".to_string(),
+        });
+
+        let unstitched = check_drc(&pcb)
+            .into_iter()
+            .filter(|x| x.rule == DrcRuleType::UnstitchedPad)
+            .count();
+        assert_eq!(unstitched, 0, "a stitching via must clear the violation");
+    }
+
+    /// A THT pad's plated barrel already bridges to an inner plane, so the rule
+    /// is scoped to SMD pads: a THT pad naming a plane net is never flagged.
+    #[test]
+    fn tht_pad_on_plane_not_flagged() {
+        let mut pcb = clean_pcb();
+        pcb.traces.clear();
+        pcb.vias.clear();
+        pcb.nets.push(Net {
+            id: "3".to_string(),
+            name: "3V3".to_string(),
+        });
+        let outline = pcb.outline.vertices.clone();
+        pcb.zones.push(plane_zone(&outline, "3", PcbLayer::In1Cu));
+        let mut th = smd_pad("1", (0.0, 0.0), "3");
+        th.pad_type = PadType::THT;
+        th.layers = vec![PcbLayer::FCu, PcbLayer::BCu];
+        pcb.footprints = vec![footprint("J1", (50.0, 40.0), 0.0, vec![th])];
+
+        let unstitched = check_drc(&pcb)
+            .into_iter()
+            .filter(|x| x.rule == DrcRuleType::UnstitchedPad)
+            .count();
+        assert_eq!(
+            unstitched, 0,
+            "THT pads bridge layers — never Unstitched-Pad"
+        );
     }
 }

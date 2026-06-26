@@ -1,0 +1,18 @@
+{
+  "id": "2026-06-26-pcb-plane-stitching-drc",
+  "version": "0.9.4",
+  "date": "2026-06-26",
+  "category": "feat",
+  "title": "Auto-stitch SMD pads to power planes + Unstitched-Pad DRC",
+  "summary": "route_nets now drops a stitching via from every SMD pad to its same-net copper plane — escaping into a dog-bone fan-out on sub-0.65mm-pitch pads — and a new Unstitched-Pad DRC rule flags any plane-net pad with no galvanic path.",
+  "features": [
+    "ecad",
+    "pcb",
+    "drc",
+    "autorouter"
+  ],
+  "mcpTools": [
+    "route_nets",
+    "run_drc"
+  ]
+}

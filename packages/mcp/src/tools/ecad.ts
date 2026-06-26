@@ -35,6 +35,8 @@ import { getNodePcb, getPcbNodeIds, buildEntry, agentView } from "@vcad/core";
 import {
   computeRatsnest,
   exportFabFiles,
+  exportKicadPcb,
+  exportKicadSch,
   resolveFootprint,
   generateNetlist,
   isEcadAvailable,
@@ -42,6 +44,7 @@ import {
   routeDiffPair as kernelRouteDiffPair,
   critiqueRoute as kernelCritiqueRoute,
   runDrc as kernelRunDrc,
+  checkErc as kernelCheckErc,
   evaluateMotor,
   airgapFluxDensity,
   resolvePart as kernelResolvePart,
@@ -54,14 +57,142 @@ import {
   netContinuity as kernelNetContinuity,
 } from "@vcad/engine";
 import type { Engine, NetlistResult, TriangleMesh, NetContinuity } from "@vcad/engine";
-import { registerSession, getSession } from "./session.js";
+import { registerSession, getSession, undoLastSnapshot, historyDepth } from "./session.js";
+import type { NextAction } from "./next-actions.js";
 import { sizePdnExact, ecadDiffEngineAvailable } from "../wasm/ecad-diff.js";
+import { maxInlineExportBytes } from "./remote.js";
 
 /** Get PCB data from a document — checks PcbBoard nodes first, falls back to legacy doc.pcb */
 function getDocPcb(doc: Document): Pcb | null {
   const nodeIds = getPcbNodeIds(doc);
   if (nodeIds.length > 0) return getNodePcb(doc, nodeIds[0]!);
   return (doc as Document & { pcb?: Pcb }).pcb ?? null;
+}
+
+/**
+ * Design-rule args supplied by set_design_rules *before* the board existed.
+ * Stashed on the in-memory document and replayed when place_components builds
+ * the board, so an agent can set rules in any order. An untyped extension (like
+ * the legacy `pcb?` field above) — it round-trips through JSON persistence but
+ * isn't part of the IR schema.
+ */
+type DocWithPendingRules = Document & {
+  __pendingDesignRules?: Record<string, unknown>;
+};
+
+/** The board's starting design rules — JLCPCB-ish 2-layer defaults. */
+function defaultDesignRules(): DesignRules {
+  return {
+    defaultRules: {
+      name: "Default",
+      traceWidth: 0.25,
+      clearance: 0.2,
+      viaDiameter: 0.8,
+      viaDrill: 0.4,
+    },
+    edgeClearance: 0.5,
+    holeToHole: 0.5,
+    minAnnularRing: 0.15,
+    minDrill: 0.2,
+  };
+}
+
+/** Strip the document handle from buffered args so we stash only the rules. */
+function stripDocArgs(args: Record<string, unknown>): Record<string, unknown> {
+  const rest: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(args)) {
+    if (k === "document" || k === "document_id") continue;
+    rest[k] = v;
+  }
+  return rest;
+}
+
+/**
+ * Apply set_design_rules-style args to a DesignRules object in place. Shared by
+ * set_design_rules (which writes pcb.rules directly) and place_components (which
+ * replays rules buffered before the board existed). Returns what changed plus
+ * any warnings; an `error` means the args were malformed (e.g. a class with no
+ * nets) and nothing meaningful should be persisted.
+ */
+function applyDesignRuleArgs(
+  rules: DesignRules,
+  knownNets: Set<string>,
+  args: Record<string, unknown>,
+  opts: { checkNets?: boolean } = {},
+): { touched: boolean; warnings: string[]; classNames?: string[]; error?: string } {
+  // When validating a call made before the board exists (the buffered probe),
+  // there's no netlist yet — skip the "net not on the board" warning so it
+  // doesn't fire spuriously on every buffered class.
+  const checkNets = opts.checkNets ?? true;
+  const dr = rules.defaultRules;
+  const warnings: string[] = [];
+  let touched = false;
+
+  const num = (k: string) => (typeof args[k] === "number" ? (args[k] as number) : undefined);
+  const requirePos = (k: string, v: number | undefined): boolean => {
+    if (v === undefined) return false;
+    if (!(v > 0)) {
+      warnings.push(`${k} must be > 0 — ignored`);
+      return false;
+    }
+    return true;
+  };
+
+  const clearance = num("clearance");
+  if (requirePos("clearance", clearance)) { dr.clearance = clearance!; touched = true; }
+  const trackWidth = num("track_width");
+  if (requirePos("track_width", trackWidth)) { dr.traceWidth = trackWidth!; touched = true; }
+  const viaDiameter = num("via_diameter");
+  if (requirePos("via_diameter", viaDiameter)) { dr.viaDiameter = viaDiameter!; touched = true; }
+  const viaDrill = num("via_drill");
+  if (requirePos("via_drill", viaDrill)) { dr.viaDrill = viaDrill!; touched = true; }
+  const dpg = num("diff_pair_gap");
+  if (requirePos("diff_pair_gap", dpg)) { dr.diffPairGap = dpg!; touched = true; }
+  const dpw = num("diff_pair_width");
+  if (requirePos("diff_pair_width", dpw)) { dr.diffPairWidth = dpw!; touched = true; }
+
+  const edgeClr = num("edge_clearance");
+  if (requirePos("edge_clearance", edgeClr)) { rules.edgeClearance = edgeClr!; touched = true; }
+  const h2h = num("hole_to_hole");
+  if (requirePos("hole_to_hole", h2h)) { rules.holeToHole = h2h!; touched = true; }
+  const minAnnular = num("min_annular_ring");
+  if (requirePos("min_annular_ring", minAnnular)) { rules.minAnnularRing = minAnnular!; touched = true; }
+  const minDrill = num("min_drill");
+  if (requirePos("min_drill", minDrill)) { rules.minDrill = minDrill!; touched = true; }
+
+  let classNames: string[] | undefined;
+  if (Array.isArray(args.classes)) {
+    const classesIn = args.classes as Array<Record<string, unknown>>;
+    const classRules: NetClassRules[] = [];
+    const assignments: Record<string, string[]> = {};
+    for (const c of classesIn) {
+      const name = String(c.name ?? "");
+      const nets = Array.isArray(c.nets) ? (c.nets as unknown[]).map(String) : [];
+      if (!name) return { touched, warnings, error: "each class needs a `name`" };
+      if (nets.length === 0)
+        return { touched, warnings, error: `class "${name}" needs a non-empty nets array` };
+      const unknown = checkNets ? nets.filter((id) => !knownNets.has(id)) : [];
+      if (unknown.length > 0) {
+        warnings.push(`class "${name}" references nets not on the board: ${unknown.join(", ")}`);
+      }
+      classRules.push({
+        name,
+        traceWidth: typeof c.track_width === "number" ? (c.track_width as number) : dr.traceWidth,
+        clearance: typeof c.clearance === "number" ? (c.clearance as number) : dr.clearance,
+        viaDiameter: typeof c.via_diameter === "number" ? (c.via_diameter as number) : dr.viaDiameter,
+        viaDrill: typeof c.via_drill === "number" ? (c.via_drill as number) : dr.viaDrill,
+        ...(typeof c.diff_pair_gap === "number" ? { diffPairGap: c.diff_pair_gap as number } : {}),
+        ...(typeof c.diff_pair_width === "number" ? { diffPairWidth: c.diff_pair_width as number } : {}),
+      });
+      assignments[name] = nets;
+    }
+    rules.classRules = classRules;
+    rules.netClassAssignments = assignments;
+    classNames = classRules.map((c) => c.name);
+    touched = true;
+  }
+
+  return { touched, warnings, classNames };
 }
 
 /** Standard `{ content, isError }` failure result for ECAD tools. */
@@ -736,6 +867,32 @@ export const exportGerberSchema = {
         "Resolved on the MCP server's filesystem — on hosted/sandboxed servers " +
         "the write may fail, in which case file contents are returned inline " +
         "instead. When omitted, file contents are always returned inline.",
+    },
+  },
+  required: [],
+};
+
+/** JSON Schema for export_kicad tool. */
+export const exportKicadSchema = {
+  type: "object" as const,
+  properties: {
+    ...docInputProperties,
+    filename: {
+      type: "string" as const,
+      description:
+        "Output filename ending in .kicad_pcb (board) or .kicad_sch (schematic). " +
+        "The extension selects what is exported: .kicad_pcb writes the session's " +
+        "board (footprints, pads, nets, traces, vias, zones, layers, outline) as a " +
+        "native, editable KiCad 9 file a human can open and finish routing; " +
+        ".kicad_sch writes the session's schematic. Defaults to board.kicad_pcb.",
+    },
+    output_dir: {
+      type: "string" as const,
+      description:
+        "Directory to write the file to (created if missing). Resolved on the MCP " +
+        "server's filesystem — on hosted/sandboxed servers the write may fail or be " +
+        "invisible, in which case the file content is returned inline instead. When " +
+        "omitted, the content is returned inline (subject to a size cap).",
     },
   },
   required: [],
@@ -1671,8 +1828,25 @@ function forceDirectedRefine(
     }
 
     for (let i = 0; i < positions.length; i++) {
-      positions[i].x = Math.min(bounds.maxX, Math.max(bounds.minX, positions[i].x + forces[i].x));
-      positions[i].y = Math.min(bounds.maxY, Math.max(bounds.minY, positions[i].y + forces[i].y));
+      // Clamp the component's *courtyard* inside the board, not just its center:
+      // inset each axis by the component's half-extent (reusing the size-aware
+      // `extents` the repulsion pass above already computes) so a large part —
+      // e.g. an LQFP-64 — pushed against an edge lands fully on-board instead of
+      // hanging half off and overlapping its neighbors. If a part is wider than
+      // the available inset span (range inverts), fall back to the plain bounds
+      // clamp — the cross-net legalizer below handles and reports the genuinely
+      // too-tight board rather than stacking every part on the midpoint.
+      const ext = extents[i];
+      const loX = bounds.minX + ext;
+      const hiX = bounds.maxX - ext;
+      const loY = bounds.minY + ext;
+      const hiY = bounds.maxY - ext;
+      const nx = positions[i].x + forces[i].x;
+      const ny = positions[i].y + forces[i].y;
+      positions[i].x =
+        hiX >= loX ? Math.min(hiX, Math.max(loX, nx)) : Math.min(bounds.maxX, Math.max(bounds.minX, nx));
+      positions[i].y =
+        hiY >= loY ? Math.min(hiY, Math.max(loY, ny)) : Math.min(bounds.maxY, Math.max(bounds.minY, ny));
     }
   }
 }
@@ -1927,21 +2101,8 @@ export async function placeComponents(args: Record<string, unknown>) {
     ],
   };
 
-  const defaultRules: NetClassRules = {
-    name: "Default",
-    traceWidth: 0.25,
-    clearance: 0.2,
-    viaDiameter: 0.8,
-    viaDrill: 0.4,
-  };
-
-  const rules: DesignRules = {
-    defaultRules,
-    edgeClearance: 0.5,
-    holeToHole: 0.5,
-    minAnnularRing: 0.15,
-    minDrill: 0.2,
-  };
+  const rules: DesignRules = defaultDesignRules();
+  const defaultRules = rules.defaultRules;
 
   // Grid placement sized to the outline's bounding box: split the usable
   // area into cells so every component lands inside it regardless of size.
@@ -2214,6 +2375,23 @@ export async function placeComponents(args: Record<string, unknown>) {
     };
   });
 
+  // Replay any design rules the agent set before the board existed (buffered by
+  // set_design_rules). Applied here — once `nets` is populated — so net-class
+  // assignments validate against the real netlist. Malformed buffered args are
+  // surfaced as a warning rather than failing placement.
+  let bufferedRulesApplied = false;
+  const pending = (doc as DocWithPendingRules).__pendingDesignRules;
+  if (pending) {
+    const applied = applyDesignRuleArgs(rules, new Set(nets.map((nn) => nn.id)), pending);
+    if (applied.error) {
+      warnings.push(`buffered design rules ignored: ${applied.error}`);
+    } else {
+      bufferedRulesApplied = applied.touched;
+      warnings.push(...applied.warnings.map((w) => `design rule: ${w}`));
+    }
+    delete (doc as DocWithPendingRules).__pendingDesignRules;
+  }
+
   const pcb: Pcb = {
     outline,
     stackup,
@@ -2332,6 +2510,8 @@ export async function placeComponents(args: Record<string, unknown>) {
             ...(cutouts && cutouts.length > 0 ? { cutouts: cutouts.length } : {}),
           },
           ...(utilization ? { utilization } : {}),
+          // Design rules set before the board existed were replayed onto it.
+          ...(bufferedRulesApplied ? { buffered_design_rules_applied: true } : {}),
           nets: netsSummary,
           ...docResultPayload(ctx),
         }),
@@ -2598,7 +2778,7 @@ export async function routeNets(args: Record<string, unknown>) {
 
   // Receipt: snapshot DRC before the (non-idempotent) route so the after-diff
   // can attribute exactly what this call fixed and what it introduced.
-  const wantReceipt = args.receipt === true;
+  const wantReceipt = Boolean(args.receipt);
   const beforeSnap = wantReceipt ? await drcPcb(pcb, "full", 500) : null;
 
   // Synthesize a netlist from pad assignments so the kernel ratsnest can
@@ -2663,6 +2843,7 @@ export async function routeNets(args: Record<string, unknown>) {
   const fallbackNets = new Set<string>();
   const unroutedNets = new Set<string>();
   let tracesAdded = 0;
+  let viasAdded = 0;
 
   // Auto-route the whole board in the kernel: every net is routed against one
   // growing clearance oracle and retried on the back layer with transition vias
@@ -2734,6 +2915,7 @@ export async function routeNets(args: Record<string, unknown>) {
         endLayer: "BCu",
         net: v.net,
       });
+      viasAdded++;
     }
     for (const n of result.routed_nets) routedNets.add(n);
     for (const n of result.unrouted_nets) unroutedNets.add(n);
@@ -2825,7 +3007,21 @@ export async function routeNets(args: Record<string, unknown>) {
       { tool: "route_nets", args: { nets: netsFilter, trace_width: traceWidth }, before: beforeSnap, after },
       0,
     );
-    receiptField.receipt = agentView(entry, ctx.documentId ?? "");
+    const shortPairs: [string, string][] = [];
+    for (const bp of after.byNetPair) {
+      if (bp.rule === "Short" && bp.nets[0] && bp.nets[1]) shortPairs.push(bp.nets);
+    }
+    receiptField.receipt = {
+      ...agentView(entry, ctx.documentId ?? ""),
+      nets_routed: [...routedNets].sort(),
+      nets_unrouted: [...unroutedNets].sort(),
+      traces_added: tracesAdded,
+      traces_removed: tracesRemoved,
+      vias_added: viasAdded,
+      vias_removed: viasRemoved,
+      plane_stitched: planeStitched,
+      short_pairs: shortPairs,
+    };
   }
 
   return {
@@ -2886,10 +3082,14 @@ interface DrcNetPairCount {
 
 /** Group each DRC rule by what it means for the board, so callers can tell an
  *  *incomplete* layout (ratsnest left to route) from an *illegal* one (copper
- *  conflicts / fab-rule breaks). UnconnectedNet is the only "incomplete" rule —
- *  it's a to-do, not a defect. */
+ *  conflicts / fab-rule breaks). UnconnectedNet and UnstitchedPad are
+ *  "incomplete" rules (route it / stitch it). NetIslands is a hard defect (a
+ *  net's copper built as ≥2 galvanically-isolated islands); it carries Error
+ *  severity regardless of bucket. */
 const DRC_CATEGORY: Record<string, "connectivity" | "clearance" | "manufacturing"> = {
   UnconnectedNet: "connectivity",
+  UnstitchedPad: "connectivity",
+  NetIslands: "connectivity",
   Clearance: "clearance",
   Short: "clearance",
   MinTraceWidth: "manufacturing",
@@ -3415,12 +3615,50 @@ export async function runErc(args: Record<string, unknown>) {
     }
   }
 
+  // Kernel ERC: pin-type conflicts (output driving output) and floating power
+  // inputs. These rules need a netlist; the kernel's own netlist is
+  // coordinate-only, so we hand it the *derived* connectivity (which also
+  // bridges global labels and the explicit `nets` map) re-expressed as an
+  // explicit netlist over only the connected pins. That keeps these rules
+  // judging exactly the nets create_schematic reported — and, because
+  // unconnected pins are excluded, a stray power pin is reported once (above),
+  // never doubled here.
+  const kernelOutcome = await kernelCheckErc(synthesizeNettedSheet(sheet, derived));
+  let verified = false;
+  let unverifiedReason: string | undefined;
+  if (kernelOutcome.status === "ok") {
+    verified = true;
+    for (const v of kernelOutcome.violations) {
+      if (!isPinTypeOrPowerViolation(v.message)) continue;
+      violations.push({
+        severity: v.severity,
+        message: v.message,
+        ...(v.position ? { position: v.position } : {}),
+      });
+    }
+  } else if (kernelOutcome.status === "unavailable") {
+    // Fail closed: the kernel rules did not run, so the schematic is not
+    // verified for pin-type/power conflicts — never report this as clean.
+    unverifiedReason =
+      "kernel ECAD WASM unavailable — pin-type conflict and floating-power rules were not evaluated";
+  } else {
+    unverifiedReason = `kernel ERC could not parse the schematic: ${kernelOutcome.message}`;
+  }
+
+  // Errors first, then by message — matches the kernel's ordering convention.
+  violations.sort((a, b) => {
+    const sev = (a.severity === "Error" ? 0 : 1) - (b.severity === "Error" ? 0 : 1);
+    return sev !== 0 ? sev : a.message.localeCompare(b.message);
+  });
+
   return {
     content: [
       {
         type: "text" as const,
         text: JSON.stringify({
           success: true,
+          verified,
+          ...(unverifiedReason ? { unverified_reason: unverifiedReason } : {}),
           violations: violations.length,
           errors: violations.filter(v => v.severity === "Error").length,
           warnings: violations.filter(v => v.severity === "Warning").length,
@@ -3428,6 +3666,46 @@ export async function runErc(args: Record<string, unknown>) {
         }),
       },
     ],
+  };
+}
+
+/** A kernel ERC message we own here vs. one already reported by the TS checks
+ *  above (duplicate-ref, unconnected). The kernel's pin-type and power messages
+ *  are pinned by its own unit tests ("multiple outputs", "no power source"). */
+function isPinTypeOrPowerViolation(message: string): boolean {
+  return message.startsWith("Pin conflict on net") || message.includes("has no power source");
+}
+
+/**
+ * Re-express derived connectivity as a kernel-consumable sheet: the explicit
+ * `nets` map carries every connected pin's net, wires/labels are dropped (the
+ * map already encodes them), and each component keeps only its connected pins
+ * so the kernel's per-pin netlist never invents singleton nets for open pins.
+ * Pin electrical types are preserved verbatim, which is what gives the kernel's
+ * pin-type and power rules signal.
+ */
+function synthesizeNettedSheet(sheet: SchematicSheet, derived: DerivedNets): SchematicSheet {
+  const connectedByRef = new Map<string, Set<string>>();
+  for (const key of derived.netByPin.keys()) {
+    const sep = key.indexOf(PIN_SEP);
+    const ref = key.slice(0, sep);
+    const pin = key.slice(sep + 1);
+    let set = connectedByRef.get(ref);
+    if (!set) connectedByRef.set(ref, (set = new Set()));
+    set.add(pin);
+  }
+  const nets: Record<string, string[]> = {};
+  for (const [name, pins] of derived.nets) nets[name] = pins;
+  return {
+    ...sheet,
+    wires: [],
+    labels: [],
+    junctions: [],
+    components: sheet.components.map((comp) => ({
+      ...comp,
+      pins: comp.pins.filter((pin) => connectedByRef.get(comp.ref)?.has(pin.number)),
+    })),
+    nets,
   };
 }
 
@@ -3513,6 +3791,117 @@ export async function exportGerber(args: Record<string, unknown>) {
         }),
       },
     ],
+  };
+}
+
+/**
+ * Export the session's board or schematic as a native, editable KiCad 9 file.
+ *
+ * `.kicad_pcb` serializes the board (the inverse of import_pcb); `.kicad_sch`
+ * serializes the schematic. The point is a round trip: a human can open the
+ * agent's design in KiCad to finish routing the nets the autorouter couldn't
+ * close, then re-import. Large outputs respect the inline byte cap — over the
+ * cap, the caller is steered to `output_dir` or open_in_browser.
+ */
+export async function exportKicad(args: Record<string, unknown>) {
+  const { doc, documentId } = resolveDocInput(args);
+  const filename =
+    typeof args.filename === "string" && args.filename.trim()
+      ? (args.filename as string)
+      : "board.kicad_pcb";
+  const outputDir = args.output_dir as string | undefined;
+
+  const ext = filename.toLowerCase().split(".").pop();
+  let content: string | null;
+  let format: "kicad_pcb" | "kicad_sch";
+
+  if (ext === "kicad_sch") {
+    format = "kicad_sch";
+    const sheet = (doc as Document & { schematic?: SchematicSheet }).schematic;
+    if (!sheet) {
+      return ecadError(
+        "Document has no schematic to export. Create one with create_schematic.",
+      );
+    }
+    content = await exportKicadSch(sheet);
+  } else if (ext === "kicad_pcb") {
+    format = "kicad_pcb";
+    const pcb = getDocPcb(doc);
+    if (!pcb) {
+      return ecadError("Document has no PCB to export.");
+    }
+    content = await exportKicadPcb(pcb);
+  } else {
+    return ecadError(
+      `Unsupported KiCad extension '.${ext ?? ""}'. Use .kicad_pcb (board) or .kicad_sch (schematic).`,
+    );
+  }
+
+  if (content === null) {
+    return ecadError("KiCad export unavailable (kernel WASM not loaded)");
+  }
+
+  const bytes = Buffer.byteLength(content, "utf8");
+
+  // Disk path: write to output_dir when provided and the host allows it.
+  if (outputDir) {
+    try {
+      const fs = await import("node:fs/promises");
+      const { resolveWithinRoot } = await import("./safe-path.js");
+      const dir = resolveWithinRoot(outputDir);
+      await fs.mkdir(dir, { recursive: true });
+      const path = resolveWithinRoot(filename, dir);
+      await fs.writeFile(path, content, "utf8");
+      const payload = { success: true, filename, format, bytes, path, ...(documentId ? { document_id: documentId } : {}) };
+      return {
+        content: [{ type: "text" as const, text: JSON.stringify(payload) }],
+        structuredContent: { export_kicad: payload },
+      };
+    } catch (e) {
+      // Sandboxed/hosted host — fall through to inline delivery below.
+      const reason = e instanceof Error ? e.message : String(e);
+      const cap = maxInlineExportBytes();
+      if (bytes > cap) {
+        return ecadError(
+          `Could not write to '${outputDir}' (${reason}) and the ${bytes}-byte file is over the ${cap}-byte inline cap. ` +
+            "Use open_in_browser, or a writable output_dir.",
+        );
+      }
+      const payload = {
+        success: true,
+        filename,
+        format,
+        bytes,
+        content,
+        note_delivery: `Could not write to '${outputDir}' (${reason}); file content returned inline.`,
+        ...(documentId ? { document_id: documentId } : {}),
+      };
+      return {
+        content: [{ type: "text" as const, text: JSON.stringify(payload) }],
+        structuredContent: { export_kicad: payload },
+      };
+    }
+  }
+
+  // Inline path: bounded so the file does not flood the model's context.
+  const cap = maxInlineExportBytes();
+  if (bytes > cap) {
+    return ecadError(
+      `KiCad file is ${bytes} bytes — over the ${cap}-byte inline limit. ` +
+        "Pass output_dir to write it to disk, or use open_in_browser.",
+    );
+  }
+  const payload = {
+    success: true,
+    filename,
+    format,
+    bytes,
+    content,
+    ...(documentId ? { document_id: documentId } : {}),
+  };
+  return {
+    content: [{ type: "text" as const, text: JSON.stringify(payload) }],
+    structuredContent: { export_kicad: payload },
   };
 }
 
@@ -5987,6 +6376,273 @@ export function addZone(args: Record<string, unknown>) {
 }
 
 // ============================================================================
+// delete_zone / delete_trace / delete_via — remove routed copper from the board
+// ============================================================================
+//
+// add_zone / add_trace / add_via are append-only — before these tools there was
+// no way to take a bad pour, trace, or via back out, so one wrong add_zone
+// forced a full session rebuild (re-sending the large create_schematic), which
+// violates the "never re-send the document" contract. These remove a single
+// element by index (or by an unambiguous net/layer match) and report a compact
+// `changed` diff of what left the board, mirroring the other mutators. For a
+// "take back the very last thing I did" the `undo` tool is the broader hammer.
+
+/** A removed (or, for undo, re-added) board element, for the `changed` diff. */
+interface PcbElementChange {
+  action: "removed" | "added";
+  kind: "zone" | "trace" | "traceArc" | "via";
+  index: number;
+  net: string;
+  layer?: string;
+}
+
+/** The copper layer of a board element for matching/reporting — vias span two
+ *  layers, so they report none (match by net/position instead). */
+function elementLayer(kind: PcbElementChange["kind"], el: Zone | Trace | Via): string | undefined {
+  return kind === "via" ? undefined : (el as Zone | Trace).layer;
+}
+
+/** Shared body for delete_zone / delete_trace / delete_via. Resolves the target
+ *  element (by `index`, or by an unambiguous net[/layer] match), splices it out,
+ *  and returns the standard result with a `changed: [{action:'removed', …}]`. */
+function deletePcbElement(args: Record<string, unknown>, kind: "zone" | "trace" | "via") {
+  const ctx = resolveDocInput(args);
+  const pcb = getDocPcb(ctx.doc);
+  const fail = ecadError;
+  if (!pcb) {
+    return fail(
+      "Document has no PCB — run place_components first (or open a document that has a board)",
+    );
+  }
+
+  // The collection is one of three element arrays; treat it generically for
+  // index/splice and read net/layer per element for matching + reporting.
+  const coll = (kind === "zone" ? pcb.zones : kind === "trace" ? pcb.traces : pcb.vias) as Array<
+    Zone | Trace | Via
+  >;
+  const plural = `${kind}s`;
+  if (coll.length === 0) return fail(`board has no ${plural} to delete`);
+
+  const wantNet = args.net != null ? String(args.net) : undefined;
+  const wantLayer = args.layer != null ? String(args.layer) : undefined;
+  const hasIndex = typeof args.index === "number";
+  const matchesFilter = (el: Zone | Trace | Via): boolean =>
+    (wantNet === undefined || el.net === wantNet) &&
+    (wantLayer === undefined || elementLayer(kind, el) === wantLayer);
+
+  let index: number;
+  if (hasIndex) {
+    index = args.index as number;
+    if (!Number.isInteger(index) || index < 0 || index >= coll.length) {
+      return fail(`index ${index} out of range — board has ${coll.length} ${plural} (0..${coll.length - 1})`);
+    }
+    // When a net/layer is also given, it's a guard against deleting the wrong
+    // element — confirm the indexed element actually matches.
+    if (!matchesFilter(coll[index]!)) {
+      const el = coll[index]!;
+      const got = elementLayer(kind, el) ? `${el.net}/${elementLayer(kind, el)}` : el.net;
+      return fail(`${kind} at index ${index} is on ${got}, not the net/layer you specified`);
+    }
+  } else if (wantNet !== undefined || wantLayer !== undefined) {
+    const matches = coll.flatMap((el, i) => (matchesFilter(el) ? [i] : []));
+    const sel = [wantNet, wantLayer].filter(Boolean).join("/");
+    if (matches.length === 0) return fail(`no ${kind} matches ${sel}`);
+    if (matches.length > 1) {
+      return fail(
+        `${matches.length} ${plural} match ${sel} (indices ${matches.join(", ")}) — pass \`index\` to pick one`,
+      );
+    }
+    index = matches[0]!;
+  } else {
+    return fail(`pass \`index\` (0..${coll.length - 1}) or a \`net\` to identify the ${kind} to delete`);
+  }
+
+  const [removed] = coll.splice(index, 1);
+  const change: PcbElementChange = {
+    action: "removed",
+    kind,
+    index,
+    net: removed!.net,
+    ...(elementLayer(kind, removed!) ? { layer: elementLayer(kind, removed!) } : {}),
+  };
+
+  return {
+    content: [
+      {
+        type: "text" as const,
+        text: JSON.stringify({
+          success: true,
+          deleted: change,
+          [`${plural}_total`]: coll.length,
+          changed: [change],
+          ...docResultPayload(ctx),
+        }),
+      },
+    ],
+  };
+}
+
+/** Shared JSON-Schema props for the per-element delete tools. */
+const deleteElementProps = {
+  ...docInputProperties,
+  index: {
+    type: "number" as const,
+    description: "Zero-based position in the board's collection (the order add_* appended them).",
+  },
+  net: {
+    type: "string" as const,
+    description:
+      "Net filter. With `index`, a guard (the indexed element must be on this net); without it, identifies the element when exactly one matches.",
+  },
+};
+
+/** JSON Schema for delete_zone. */
+export const deleteZoneSchema = {
+  type: "object" as const,
+  properties: {
+    ...deleteElementProps,
+    layer: { type: "string" as const, description: "Copper-layer filter (e.g. 'FCu', 'BCu')." },
+  },
+  required: ["document_id"],
+};
+
+/** Remove a copper pour (zone) from the board — the take-back for a bad
+ *  add_zone, without rebuilding the session. Mutates the session document. */
+export function deleteZone(args: Record<string, unknown>) {
+  return deletePcbElement(args, "zone");
+}
+
+/** JSON Schema for delete_trace. */
+export const deleteTraceSchema = {
+  type: "object" as const,
+  properties: {
+    ...deleteElementProps,
+    layer: { type: "string" as const, description: "Copper-layer filter (e.g. 'FCu', 'BCu')." },
+  },
+  required: ["document_id"],
+};
+
+/** Remove a single routed trace segment from the board. Mutates the session. */
+export function deleteTrace(args: Record<string, unknown>) {
+  return deletePcbElement(args, "trace");
+}
+
+/** JSON Schema for delete_via. */
+export const deleteViaSchema = {
+  type: "object" as const,
+  properties: { ...deleteElementProps },
+  required: ["document_id"],
+};
+
+/** Remove a single via from the board. Mutates the session document. */
+export function deleteVia(args: Record<string, unknown>) {
+  return deletePcbElement(args, "via");
+}
+
+// ============================================================================
+// undo — rewind the last mutation on a session (snapshot stack)
+// ============================================================================
+
+/** Multiset diff of two element arrays (before vs after), keyed by full JSON so
+ *  identical-but-reordered elements don't show as churn. Emits removed entries
+ *  first, then added — enough to describe what an undo (or any swap) did. */
+function diffElementArray(
+  kind: PcbElementChange["kind"],
+  before: Array<Zone | Trace | Via>,
+  after: Array<Zone | Trace | Via>,
+): PcbElementChange[] {
+  const countKeys = (arr: Array<Zone | Trace | Via>) => {
+    const m = new Map<string, number>();
+    for (const el of arr) m.set(JSON.stringify(el), (m.get(JSON.stringify(el)) ?? 0) + 1);
+    return m;
+  };
+  const beforeKeys = countKeys(before);
+  const afterKeys = countKeys(after);
+  const out: PcbElementChange[] = [];
+  const describe = (action: "removed" | "added", el: Zone | Trace | Via, index: number) => ({
+    action,
+    kind,
+    index,
+    net: el.net,
+    ...(elementLayer(kind, el) ? { layer: elementLayer(kind, el) } : {}),
+  });
+  before.forEach((el, i) => {
+    const key = JSON.stringify(el);
+    if ((afterKeys.get(key) ?? 0) > 0) afterKeys.set(key, afterKeys.get(key)! - 1);
+    else out.push(describe("removed", el, i));
+  });
+  after.forEach((el, i) => {
+    const key = JSON.stringify(el);
+    if ((beforeKeys.get(key) ?? 0) > 0) beforeKeys.set(key, beforeKeys.get(key)! - 1);
+    else out.push(describe("added", el, i));
+  });
+  return out;
+}
+
+/** Board-element diff between two PCBs (or null when neither has a board). */
+function diffPcbElements(before: Pcb | null, after: Pcb | null): PcbElementChange[] {
+  if (!before || !after) return [];
+  return [
+    ...diffElementArray("zone", before.zones ?? [], after.zones ?? []),
+    ...diffElementArray("trace", before.traces ?? [], after.traces ?? []),
+    ...diffElementArray("traceArc", (before.traceArcs ?? []) as never, (after.traceArcs ?? []) as never),
+    ...diffElementArray("via", before.vias ?? [], after.vias ?? []),
+  ];
+}
+
+/** JSON Schema for the undo tool. */
+export const undoSchema = {
+  type: "object" as const,
+  properties: {
+    document_id: {
+      type: "string" as const,
+      description: "Session id whose last mutation to rewind.",
+    },
+  },
+  required: ["document_id"],
+};
+
+/**
+ * Rewind the most recent mutation on a session by restoring the snapshot taken
+ * before it. The dispatch layer snapshots the whole Document before every
+ * mutating tool, so this generalizes across the board: it takes back the last
+ * add_zone / add_trace / add_via / delete_* / route_nets / place_components —
+ * or a CAD create/update/delete — without re-sending the document. Repeated
+ * calls walk further back through the stack. Reports a compact `changed` diff
+ * of the board elements the rewind moved (when the session has a PCB).
+ */
+export function undo(args: Record<string, unknown>) {
+  const id = args.document_id ? String(args.document_id) : "";
+  if (!id) return ecadError("undo needs a `document_id` (the session to rewind)");
+  // Resolve first so a bad/foreign id throws the pinned "Unknown document_id"
+  // before any state is touched — ownership is enforced here.
+  const current = getSession(id);
+  const beforePcb = getDocPcb(current);
+  const beforePcbCopy = beforePcb ? (JSON.parse(JSON.stringify(beforePcb)) as Pcb) : null;
+
+  const restored = undoLastSnapshot(id);
+  if (!restored) {
+    return ecadError("nothing to undo — no mutation has been recorded for this session");
+  }
+  const changed = diffPcbElements(beforePcbCopy, getDocPcb(restored));
+
+  return {
+    content: [
+      {
+        type: "text" as const,
+        text: JSON.stringify({
+          success: true,
+          undone: true,
+          remaining_undos: historyDepth(id),
+          changed,
+          document_id: id,
+        }),
+      },
+    ],
+  };
+}
+
+// ============================================================================
 // set_design_rules — configurable DRC rules + net classes
 // ============================================================================
 
@@ -6050,85 +6706,55 @@ export function setDesignRules(args: Record<string, unknown>) {
     content: [{ type: "text" as const, text: `Error: ${text}` }],
     isError: true as const,
   });
+
+  // No board yet: don't dead-end. Validate the shape (so a class with no nets or
+  // an empty call still fails fast), then buffer the rules on the document and
+  // replay them when place_components builds the board. The agent can set rules
+  // in any order; the canonical next step (place_components) rides back as a
+  // next_action so it stays discoverable.
   if (!pcb) {
-    return fail(
-      "Document has no PCB — run place_components first (or open a document that has a board)",
-    );
+    const probe = applyDesignRuleArgs(defaultDesignRules(), new Set<string>(), args, {
+      checkNets: false,
+    });
+    if (probe.error) return fail(probe.error);
+    if (!probe.touched) {
+      return fail("provide at least one rule field (clearance, track_width, …) or `classes`");
+    }
+    (ctx.doc as DocWithPendingRules).__pendingDesignRules = stripDocArgs(args);
+    const next: NextAction[] = [
+      {
+        action:
+          "No board yet — these design rules are buffered and apply automatically when the board is built. Run place_components next.",
+        tool: "place_components",
+        ...(ctx.documentId ? { args: { document_id: ctx.documentId } } : {}),
+      },
+    ];
+    return {
+      content: [
+        {
+          type: "text" as const,
+          text: JSON.stringify({
+            success: true,
+            buffered: true,
+            ...(probe.classNames ? { classes: probe.classNames } : {}),
+            ...(probe.warnings.length > 0 ? { warnings: probe.warnings } : {}),
+            next_actions: next,
+            ...docResultPayload(ctx),
+          }),
+        },
+      ],
+      structuredContent: { next_actions: next },
+    };
   }
 
   const rules = pcb.rules;
-  const dr = rules.defaultRules;
-  const warnings: string[] = [];
-  let touched = false;
-
-  const num = (k: string) => (typeof args[k] === "number" ? (args[k] as number) : undefined);
-  const requirePos = (k: string, v: number | undefined): boolean => {
-    if (v === undefined) return false;
-    if (!(v > 0)) {
-      warnings.push(`${k} must be > 0 — ignored`);
-      return false;
-    }
-    return true;
-  };
-
-  const clearance = num("clearance");
-  if (requirePos("clearance", clearance)) { dr.clearance = clearance!; touched = true; }
-  const trackWidth = num("track_width");
-  if (requirePos("track_width", trackWidth)) { dr.traceWidth = trackWidth!; touched = true; }
-  const viaDiameter = num("via_diameter");
-  if (requirePos("via_diameter", viaDiameter)) { dr.viaDiameter = viaDiameter!; touched = true; }
-  const viaDrill = num("via_drill");
-  if (requirePos("via_drill", viaDrill)) { dr.viaDrill = viaDrill!; touched = true; }
-  const dpg = num("diff_pair_gap");
-  if (requirePos("diff_pair_gap", dpg)) { dr.diffPairGap = dpg!; touched = true; }
-  const dpw = num("diff_pair_width");
-  if (requirePos("diff_pair_width", dpw)) { dr.diffPairWidth = dpw!; touched = true; }
-
-  const edgeClr = num("edge_clearance");
-  if (requirePos("edge_clearance", edgeClr)) { rules.edgeClearance = edgeClr!; touched = true; }
-  const h2h = num("hole_to_hole");
-  if (requirePos("hole_to_hole", h2h)) { rules.holeToHole = h2h!; touched = true; }
-  const minAnnular = num("min_annular_ring");
-  if (requirePos("min_annular_ring", minAnnular)) { rules.minAnnularRing = minAnnular!; touched = true; }
-  const minDrill = num("min_drill");
-  if (requirePos("min_drill", minDrill)) { rules.minDrill = minDrill!; touched = true; }
-
-  let classNames: string[] | undefined;
-  if (Array.isArray(args.classes)) {
-    const classesIn = args.classes as Array<Record<string, unknown>>;
-    const classRules: NetClassRules[] = [];
-    const assignments: Record<string, string[]> = {};
-    const knownNets = new Set(pcb.nets.map((n) => n.id));
-    for (const c of classesIn) {
-      const name = String(c.name ?? "");
-      const nets = Array.isArray(c.nets) ? (c.nets as unknown[]).map(String) : [];
-      if (!name) return fail("each class needs a `name`");
-      if (nets.length === 0) return fail(`class "${name}" needs a non-empty nets array`);
-      const unknown = nets.filter((id) => !knownNets.has(id));
-      if (unknown.length > 0) {
-        warnings.push(`class "${name}" references nets not on the board: ${unknown.join(", ")}`);
-      }
-      classRules.push({
-        name,
-        traceWidth: typeof c.track_width === "number" ? (c.track_width as number) : dr.traceWidth,
-        clearance: typeof c.clearance === "number" ? (c.clearance as number) : dr.clearance,
-        viaDiameter: typeof c.via_diameter === "number" ? (c.via_diameter as number) : dr.viaDiameter,
-        viaDrill: typeof c.via_drill === "number" ? (c.via_drill as number) : dr.viaDrill,
-        ...(typeof c.diff_pair_gap === "number" ? { diffPairGap: c.diff_pair_gap as number } : {}),
-        ...(typeof c.diff_pair_width === "number" ? { diffPairWidth: c.diff_pair_width as number } : {}),
-      });
-      assignments[name] = nets;
-    }
-    rules.classRules = classRules;
-    rules.netClassAssignments = assignments;
-    classNames = classRules.map((c) => c.name);
-    touched = true;
-  }
-
-  if (!touched) {
+  const res = applyDesignRuleArgs(rules, new Set(pcb.nets.map((n) => n.id)), args);
+  if (res.error) return fail(res.error);
+  if (!res.touched) {
     return fail("provide at least one rule field (clearance, track_width, …) or `classes`");
   }
 
+  const dr = rules.defaultRules;
   return {
     content: [
       {
@@ -6145,8 +6771,8 @@ export function setDesignRules(args: Record<string, unknown>) {
             min_annular_ring: rules.minAnnularRing,
             min_drill: rules.minDrill,
           },
-          ...(classNames ? { classes: classNames } : {}),
-          ...(warnings.length > 0 ? { warnings } : {}),
+          ...(res.classNames ? { classes: res.classNames } : {}),
+          ...(res.warnings.length > 0 ? { warnings: res.warnings } : {}),
           ...docResultPayload(ctx),
         }),
       },

@@ -5367,6 +5367,38 @@ mod ecad_wasm {
         serde_wasm_bindgen::to_value(&pcb).map_err(|e| JsError::new(&e.to_string()))
     }
 
+    /// Export a `Pcb` to a native, editable KiCad 9 `.kicad_pcb` board file.
+    ///
+    /// The inverse of [`parse_kicad_pcb`]: footprints, pads, nets, traces,
+    /// vias, zones, the layer table, and the board outline are serialized back
+    /// to S-expressions a human can open and finish in KiCad.
+    ///
+    /// # Arguments
+    /// * `pcb_json` - JSON-serialized `Pcb` struct
+    ///
+    /// # Returns
+    /// The `.kicad_pcb` file content as a string.
+    #[wasm_bindgen(js_name = exportKicadPcb)]
+    pub fn export_kicad_pcb(pcb_json: &str) -> Result<String, JsError> {
+        let pcb: Pcb = serde_json::from_str(pcb_json).map_err(|e| JsError::new(&e.to_string()))?;
+        Ok(vcad_ecad_symbols::write_kicad_pcb(&pcb))
+    }
+
+    /// Export a `SchematicSheet` to a native, editable KiCad 9 `.kicad_sch`
+    /// schematic file.
+    ///
+    /// # Arguments
+    /// * `sheet_json` - JSON-serialized `SchematicSheet` struct
+    ///
+    /// # Returns
+    /// The `.kicad_sch` file content as a string.
+    #[wasm_bindgen(js_name = exportKicadSch)]
+    pub fn export_kicad_sch(sheet_json: &str) -> Result<String, JsError> {
+        let sheet: SchematicSheet =
+            serde_json::from_str(sheet_json).map_err(|e| JsError::new(&e.to_string()))?;
+        Ok(vcad_ecad_symbols::write_kicad_sch(&sheet))
+    }
+
     /// Return all builtin symbol definitions.
     ///
     /// # Returns
