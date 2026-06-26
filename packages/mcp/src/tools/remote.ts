@@ -23,3 +23,18 @@ export function maxInlineExportBytes(): number {
   const n = raw ? parseInt(raw, 10) : NaN;
   return Number.isFinite(n) && n > 0 ? n : 4 * 1024 * 1024;
 }
+
+/**
+ * Cap on the TEXT payload a tool may return inline before it is offloaded to
+ * the artifact store (export_gerber's fab bundle, import_step's IR document).
+ * Much tighter than {@link maxInlineExportBytes}: that one bounds a single
+ * base64 binary, this one bounds text that lands directly in the model's
+ * tool-output token budget. A ~12-file / ~168 KB Gerber bundle blows that
+ * budget, so the default (64 KiB) offloads it; small bundles stay inline.
+ * Override with MCP_MAX_INLINE_ARTIFACT_BYTES.
+ */
+export function maxInlineArtifactBytes(): number {
+  const raw = process.env.MCP_MAX_INLINE_ARTIFACT_BYTES;
+  const n = raw ? parseInt(raw, 10) : NaN;
+  return Number.isFinite(n) && n > 0 ? n : 64 * 1024;
+}

@@ -8,7 +8,9 @@ import type { Engine, TriangleMesh } from "@vcad/engine";
 import { readFileSync, existsSync, statSync } from "node:fs";
 import { basename } from "node:path";
 import { resolveWithinRoot } from "./safe-path.js";
-import { isRemoteDeployment } from "./remote.js";
+import { isRemoteDeployment, maxInlineArtifactBytes } from "./remote.js";
+import { storeArtifact } from "./artifact-store.js";
+import { registerSession } from "./session.js";
 
 // Cap STEP imports at 100 MB to prevent a remote caller from pinning memory.
 const MAX_STEP_BYTES = 100 * 1024 * 1024;
@@ -169,18 +171,55 @@ export function importStep(
     },
   };
 
+  const summary = {
+    bodies: meshes.length,
+    total_triangles: meshes.reduce((sum, m) => sum + m.indices.length / 3, 0),
+    total_vertices: meshes.reduce((sum, m) => sum + m.positions.length / 3, 0),
+  };
+
+  // A real STEP import is megabytes of mesh JSON — far past the tool-output
+  // token budget if echoed inline. Over the cap, keep the IR out of context:
+  // register it as a session (the agent continues by document_id, which every
+  // CAD tool accepts) and offload the full IR to the artifact store for
+  // download. Small imports keep the inline `document` for backward compat.
+  const inline = JSON.stringify({ document: doc, summary }, null, 2);
+  const cap = maxInlineArtifactBytes();
+  if (Buffer.byteLength(inline, "utf8") > cap) {
+    const documentId = registerSession(doc);
+    const handle = storeArtifact([
+      { name: `${partName}.vcad`, content: JSON.stringify(doc) },
+    ]);
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify(
+            {
+              document_id: documentId,
+              summary,
+              artifact_id: handle.artifact_id,
+              artifact_url: handle.artifact_url,
+              manifest: handle.manifest,
+              expires_at: handle.expires_at,
+              note:
+                "Imported geometry is large; the full IR was kept out of context. " +
+                "Continue editing via document_id (every CAD tool accepts it), or " +
+                "download the document at artifact_url. The inline `document` was " +
+                "omitted to stay under the tool-output limit.",
+            },
+            null,
+            2,
+          ),
+        },
+      ],
+    };
+  }
+
   return {
     content: [
       {
         type: "text",
-        text: JSON.stringify({
-          document: doc,
-          summary: {
-            bodies: meshes.length,
-            total_triangles: meshes.reduce((sum, m) => sum + m.indices.length / 3, 0),
-            total_vertices: meshes.reduce((sum, m) => sum + m.positions.length / 3, 0),
-          },
-        }, null, 2),
+        text: inline,
       },
     ],
   };

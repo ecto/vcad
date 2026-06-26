@@ -1,0 +1,17 @@
+{
+  "id": "2026-06-26-drc-unverifiable-not-clean",
+  "version": "0.9.4",
+  "date": "2026-06-26",
+  "category": "fix",
+  "title": "DRC/ERC report 'unverifiable' instead of false-clean",
+  "summary": "When the kernel can't parse a board or schematic (e.g. a malformed layer name like 'In1.Cu'), run_drc, run_erc, and critique_route now return an errored 'unverifiable' result with the offending field — instead of a dangerous '0 violations / clean' a user could ship on.",
+  "features": [
+    "ecad",
+    "pcb"
+  ],
+  "mcpTools": [
+    "run_drc",
+    "run_erc",
+    "critique_route"
+  ]
+}

@@ -33,8 +33,13 @@ export function useReceiptRecorder() {
     let cancelled = false;
 
     const timer = setTimeout(async () => {
-      const violations = (await runDrc(pcb)) as unknown as DrcViolation[];
+      const outcome = await runDrc(pcb);
       if (cancelled) return;
+      // An `errored` board was never DRC'd — recording a clean snapshot of it
+      // would bake a false-clean into the Receipt. Skip this tick; the next
+      // valid eval re-seeds.
+      if (outcome.status !== "ok") return;
+      const violations = outcome.value as unknown as DrcViolation[];
       const after = snapshotFromViolations(violations);
       const store = useElectronicsStore.getState();
 
