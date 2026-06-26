@@ -17,7 +17,8 @@ pub use package::{
 
 pub mod receipt;
 pub use receipt::{
-    DrcSummary, PartReceiptLine, Receipt, ReceiptStatus, RuleCount, SourcingLine, SourcingSnapshot,
+    DrcSummary, PartReceiptLine, PowerIntegrityLine, Receipt, ReceiptStatus, RuleCount,
+    SourcingLine, SourcingSnapshot,
 };
 
 // ============================================================================

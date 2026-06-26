@@ -151,6 +151,7 @@ export {
   runPcbDfm,
   getPcbDfmPack,
   critiqueRoute,
+  netContinuity,
   runErc,
   checkErc,
   generateNetlist,
@@ -217,6 +218,8 @@ export type {
   FootprintCompat,
   Alternative,
   Substitution,
+  NetContinuity,
+  NetIsland,
 } from "./ecad.js";
 
 // Parts library

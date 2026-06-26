@@ -5055,6 +5055,18 @@ mod ecad_wasm {
         serde_wasm_bindgen::to_value(&critique).map_err(|e| JsError::new(&e.to_string()))
     }
 
+    /// Galvanic-continuity analysis for one net's *realized* copper: island
+    /// count, pad coverage, stitching vias, and the worst stranded island. The
+    /// realized-geometry check that gates power/PDN and impedance verdicts — a
+    /// closed-form PASS is only meaningful if the copper is a single continuous
+    /// conductor.
+    #[wasm_bindgen(js_name = ecadNetContinuity)]
+    pub fn ecad_net_continuity(pcb_json: &str, net: &str) -> Result<JsValue, JsError> {
+        let pcb: Pcb = serde_json::from_str(pcb_json).map_err(|e| JsError::new(&e.to_string()))?;
+        let continuity = vcad_ecad_pcb::analyze_net_continuity(&pcb, net);
+        serde_wasm_bindgen::to_value(&continuity).map_err(|e| JsError::new(&e.to_string()))
+    }
+
     /// Evaluate first-order analytical motor performance from a JSON
     /// `MotorSpec`: torque constant Kt, back-EMF constant Ke, no-load speed,
     /// stall torque, and a speed–torque curve. Lets an agent ask "is this motor

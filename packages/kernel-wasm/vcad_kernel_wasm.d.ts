@@ -1564,6 +1564,15 @@ export function ecadJellybeanManifest(): string;
 export function ecadLayerZ(layer: string, thickness: number, explosion: number): number;
 
 /**
+ * Galvanic-continuity analysis for one net's *realized* copper: island
+ * count, pad coverage, stitching vias, and the worst stranded island. The
+ * realized-geometry check that gates power/PDN and impedance verdicts — a
+ * closed-form PASS is only meaningful if the copper is a single continuous
+ * conductor.
+ */
+export function ecadNetContinuity(pcb_json: string, net: string): any;
+
+/**
  * Get the net for a wire based on endpoint proximity to component pins.
  *
  * # Arguments
@@ -2552,23 +2561,6 @@ export interface InitOutput {
     readonly solid_fillet: (a: number, b: number) => number;
     readonly solid_shell: (a: number, b: number) => number;
     readonly getCompiledModule: () => any;
-    readonly __wbg_circuitsim_free: (a: number, b: number) => void;
-    readonly circuitsim_dt: (a: number) => number;
-    readonly circuitsim_new: (a: number, b: number) => [number, number, number];
-    readonly circuitsim_observe: (a: number) => [number, number, number];
-    readonly circuitsim_reset: (a: number) => void;
-    readonly circuitsim_setValue: (a: number, b: number, c: number) => void;
-    readonly circuitsim_step: (a: number, b: number) => [number, number, number];
-    readonly checkSheetMetal: (a: number, b: number, c: number, d: number) => [number, number];
-    readonly costSheetMetal: (a: number, b: number, c: number, d: number, e: number) => [number, number];
-    readonly evaluateSheetMetalChain: (a: number, b: number) => [number, number];
-    readonly getSheetMetalBendTable: () => [number, number];
-    readonly getSheetMetalMaterials: () => [number, number];
-    readonly getSheetMetalShopCatalog: (a: number, b: number) => [number, number];
-    readonly nestSheetMetalParts: (a: number, b: number, c: number, d: number) => [number, number];
-    readonly nestedSheetMetalDxf: (a: number, b: number) => [number, number];
-    readonly sheetMetalFoldedStep: (a: number, b: number) => [number, number];
-    readonly sheetMetalSequence: (a: number, b: number) => [number, number];
     readonly __wbg_get_wasmcamsettings_feed_rate: (a: number) => number;
     readonly __wbg_get_wasmcamsettings_plunge_rate: (a: number) => number;
     readonly __wbg_get_wasmcamsettings_retract_z: (a: number) => number;
@@ -2594,47 +2586,16 @@ export interface InitOutput {
     readonly camGenerateRoughing3d: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => [number, number, number, number];
     readonly camGetDefaultTools: () => [number, number, number, number];
     readonly camToolpathStats: (a: number, b: number) => [number, number, number];
-    readonly ecadAirgapFluxDensity: (a: number, b: number) => [number, number, number];
-    readonly ecadBuildReceipt: (a: number, b: number) => [number, number, number];
-    readonly ecadBuiltinSymbols: () => [number, number, number];
-    readonly ecadCheckDrc: (a: number, b: number) => [number, number, number];
-    readonly ecadCheckErc: (a: number, b: number) => [number, number, number];
-    readonly ecadComponentMeshes: (a: number, b: number) => [number, number, number];
-    readonly ecadComputeRatsnest: (a: number, b: number, c: number, d: number) => [number, number, number];
-    readonly ecadCritiqueRoute: (a: number, b: number, c: number, d: number) => [number, number, number];
-    readonly ecadDfmCheck: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
-    readonly ecadDfmDefaultPack: (a: number, b: number) => [number, number, number, number];
-    readonly ecadEvaluateMotor: (a: number, b: number) => [number, number, number];
-    readonly ecadExportFab: (a: number, b: number) => [number, number, number];
-    readonly ecadFillZones: (a: number, b: number) => [number, number, number];
-    readonly ecadFindAlternatives: (a: number, b: number) => [number, number, number];
-    readonly ecadFootprintForName: (a: number, b: number, c: number) => [number, number, number];
-    readonly ecadGenerateNetlist: (a: number, b: number) => [number, number, number];
-    readonly ecadGetSymbol: (a: number, b: number) => [number, number, number];
-    readonly ecadJellybeanManifest: () => [number, number];
-    readonly ecadLayerZ: (a: number, b: number, c: number, d: number) => number;
-    readonly ecadNetForWire: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
-    readonly ecadPartsManifest: () => [number, number];
-    readonly ecadPcbPreviewMeshes: (a: number, b: number) => [number, number, number];
-    readonly ecadResolveFootprint: (a: number, b: number, c: number) => [number, number, number];
-    readonly ecadResolvePart: (a: number, b: number) => [number, number, number];
-    readonly ecadResolvePartDef: (a: number, b: number, c: number, d: number) => [number, number, number];
-    readonly ecadRouteAll: (a: number, b: number, c: number, d: number, e: number) => [number, number, number];
-    readonly ecadRouteDiffPair: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
-    readonly ecadRouteNet: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => [number, number, number];
-    readonly ecadRouteNetMaze: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number) => [number, number, number];
-    readonly ecadRouteNetShove: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => [number, number, number];
-    readonly ecadSearchParts: (a: number, b: number, c: number) => [number, number, number];
-    readonly ecadSnapToGridOrPin: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
-    readonly ecadVerifyReceipt: (a: number, b: number, c: number, d: number) => [number, number, number];
-    readonly ecadVerifySubstitution: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
-    readonly exportKicadPcb: (a: number, b: number) => [number, number, number, number];
-    readonly exportKicadSch: (a: number, b: number) => [number, number, number, number];
     readonly isCamAvailable: () => number;
-    readonly parseKicadPcb: (a: number, b: number) => [number, number, number];
     readonly wasmcamsettings_fromJson: (a: number, b: number) => [number, number, number];
     readonly wasmcamsettings_new: () => number;
-    readonly isEcadAvailable: () => number;
+    readonly digitizeSketch: (a: number, b: number, c: number, d: number) => [number, number, number, number];
+    readonly digitizeText: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
+    readonly isEmbroideryAvailable: () => number;
+    readonly readEmbroideryDst: (a: number, b: number) => [number, number, number, number];
+    readonly readEmbroideryPes: (a: number, b: number) => [number, number, number, number];
+    readonly writeEmbroideryDst: (a: number, b: number) => [number, number, number, number];
+    readonly writeEmbroideryPes: (a: number, b: number) => [number, number, number, number];
     readonly __wbg_wasmkeybindings_free: (a: number, b: number) => void;
     readonly __wbg_wasmsketchsession_free: (a: number, b: number) => void;
     readonly sketchCircleSegments: (a: number, b: number, c: number, d: number) => [number, number, number, number];
@@ -2676,6 +2637,62 @@ export interface InitOutput {
     readonly wasmsketchsession_solve: (a: number) => number;
     readonly wasmsketchsession_toggleSelection: (a: number, b: number) => void;
     readonly wasmsketchsession_undo: (a: number) => number;
+    readonly checkSheetMetal: (a: number, b: number, c: number, d: number) => [number, number];
+    readonly costSheetMetal: (a: number, b: number, c: number, d: number, e: number) => [number, number];
+    readonly evaluateSheetMetalChain: (a: number, b: number) => [number, number];
+    readonly getSheetMetalBendTable: () => [number, number];
+    readonly getSheetMetalMaterials: () => [number, number];
+    readonly getSheetMetalShopCatalog: (a: number, b: number) => [number, number];
+    readonly nestSheetMetalParts: (a: number, b: number, c: number, d: number) => [number, number];
+    readonly nestedSheetMetalDxf: (a: number, b: number) => [number, number];
+    readonly sheetMetalFoldedStep: (a: number, b: number) => [number, number];
+    readonly sheetMetalSequence: (a: number, b: number) => [number, number];
+    readonly __wbg_circuitsim_free: (a: number, b: number) => void;
+    readonly circuitsim_dt: (a: number) => number;
+    readonly circuitsim_new: (a: number, b: number) => [number, number, number];
+    readonly circuitsim_observe: (a: number) => [number, number, number];
+    readonly circuitsim_reset: (a: number) => void;
+    readonly circuitsim_setValue: (a: number, b: number, c: number) => void;
+    readonly circuitsim_step: (a: number, b: number) => [number, number, number];
+    readonly ecadAirgapFluxDensity: (a: number, b: number) => [number, number, number];
+    readonly ecadBuildReceipt: (a: number, b: number) => [number, number, number];
+    readonly ecadBuiltinSymbols: () => [number, number, number];
+    readonly ecadCheckDrc: (a: number, b: number) => [number, number, number];
+    readonly ecadCheckErc: (a: number, b: number) => [number, number, number];
+    readonly ecadComponentMeshes: (a: number, b: number) => [number, number, number];
+    readonly ecadComputeRatsnest: (a: number, b: number, c: number, d: number) => [number, number, number];
+    readonly ecadCritiqueRoute: (a: number, b: number, c: number, d: number) => [number, number, number];
+    readonly ecadDfmCheck: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
+    readonly ecadDfmDefaultPack: (a: number, b: number) => [number, number, number, number];
+    readonly ecadEvaluateMotor: (a: number, b: number) => [number, number, number];
+    readonly ecadExportFab: (a: number, b: number) => [number, number, number];
+    readonly ecadFillZones: (a: number, b: number) => [number, number, number];
+    readonly ecadFindAlternatives: (a: number, b: number) => [number, number, number];
+    readonly ecadFootprintForName: (a: number, b: number, c: number) => [number, number, number];
+    readonly ecadGenerateNetlist: (a: number, b: number) => [number, number, number];
+    readonly ecadGetSymbol: (a: number, b: number) => [number, number, number];
+    readonly ecadJellybeanManifest: () => [number, number];
+    readonly ecadLayerZ: (a: number, b: number, c: number, d: number) => number;
+    readonly ecadNetContinuity: (a: number, b: number, c: number, d: number) => [number, number, number];
+    readonly ecadNetForWire: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
+    readonly ecadPartsManifest: () => [number, number];
+    readonly ecadPcbPreviewMeshes: (a: number, b: number) => [number, number, number];
+    readonly ecadResolveFootprint: (a: number, b: number, c: number) => [number, number, number];
+    readonly ecadResolvePart: (a: number, b: number) => [number, number, number];
+    readonly ecadResolvePartDef: (a: number, b: number, c: number, d: number) => [number, number, number];
+    readonly ecadRouteAll: (a: number, b: number, c: number, d: number, e: number) => [number, number, number];
+    readonly ecadRouteDiffPair: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
+    readonly ecadRouteNet: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => [number, number, number];
+    readonly ecadRouteNetMaze: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number) => [number, number, number];
+    readonly ecadRouteNetShove: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => [number, number, number];
+    readonly ecadSearchParts: (a: number, b: number, c: number) => [number, number, number];
+    readonly ecadSnapToGridOrPin: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
+    readonly ecadVerifyReceipt: (a: number, b: number, c: number, d: number) => [number, number, number];
+    readonly ecadVerifySubstitution: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
+    readonly exportKicadPcb: (a: number, b: number) => [number, number, number, number];
+    readonly exportKicadSch: (a: number, b: number) => [number, number, number, number];
+    readonly isEcadAvailable: () => number;
+    readonly parseKicadPcb: (a: number, b: number) => [number, number, number];
     readonly __wbg_get_slicersettings_first_layer_height: (a: number) => number;
     readonly __wbg_get_slicersettings_infill_density: (a: number) => number;
     readonly __wbg_get_slicersettings_infill_pattern: (a: number) => number;
@@ -2747,13 +2764,6 @@ export interface InitOutput {
     readonly wasmdocumentengine_set_visible: (a: number, b: number, c: number, d: number) => any;
     readonly wasmdocumentengine_undo: (a: number) => any;
     readonly wasmdocumentengine_update_feature: (a: number, b: number, c: number, d: number, e: number) => any;
-    readonly digitizeSketch: (a: number, b: number, c: number, d: number) => [number, number, number, number];
-    readonly digitizeText: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
-    readonly isEmbroideryAvailable: () => number;
-    readonly readEmbroideryDst: (a: number, b: number) => [number, number, number, number];
-    readonly readEmbroideryPes: (a: number, b: number) => [number, number, number, number];
-    readonly writeEmbroideryDst: (a: number, b: number) => [number, number, number, number];
-    readonly writeEmbroideryPes: (a: number, b: number) => [number, number, number, number];
     readonly wasm_bindgen__closure__destroy__h30743bca3150d93c: (a: number, b: number) => void;
     readonly wasm_bindgen__closure__destroy__hfdadf281ff0f1c56: (a: number, b: number) => void;
     readonly wasm_bindgen__convert__closures_____invoke__h3c7e771ac0cfa72e: (a: number, b: number, c: any, d: any) => void;

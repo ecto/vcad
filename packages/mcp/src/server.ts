@@ -1726,7 +1726,9 @@ export async function createServer(
         description:
           "Calculate trace impedance using IPC-2141 formulas. " +
           "Supports microstrip, stripline, and differential pair configurations. " +
-          "Returns Z0, effective Er, and propagation delay.",
+          "Returns Z0, effective Er, and propagation delay. Pass document_id + " +
+          "net to gate the number on realized copper: an impedance for a trace " +
+          "that isn't actually routed/continuous is blocked, not reported.",
         inputSchema: calcImpedanceSchema,
       },
       {
@@ -1748,7 +1750,9 @@ export async function createServer(
           "Solves G·V=I for node voltages and drives drop→budget with a bounded " +
           "gradient tuner; returns per-segment widths AS DATA with drops " +
           "recomputed from a forward solve, and flags any node it can't meet " +
-          "within the width bounds. Pure: no board, no mutation.",
+          "within the width bounds. Pure by default; pass document_id + net to " +
+          "REFUSE a PASS when that power plane isn't galvanically continuous " +
+          "(returns coverage %, stitching-via count, and the worst island).",
         inputSchema: sizePdnSchema,
       },
       {
@@ -2384,7 +2388,7 @@ export async function createServer(
           break;
 
         case "calc_impedance":
-          result = calcImpedance(args);
+          result = await calcImpedance(args);
           break;
 
         case "size_impedance":
@@ -2392,7 +2396,7 @@ export async function createServer(
           break;
 
         case "size_pdn":
-          result = sizePdn(args);
+          result = await sizePdn(args);
           break;
 
         case "calc_coil":
