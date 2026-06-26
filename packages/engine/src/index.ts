@@ -150,7 +150,9 @@ export {
   runDrc,
   runPcbDfm,
   getPcbDfmPack,
+  tryRunDrc,
   critiqueRoute,
+  netContinuity,
   runErc,
   checkErc,
   generateNetlist,
@@ -161,6 +163,7 @@ export {
   routeDiffPair,
   fillZones,
   exportFabFiles,
+  tryExportFabFiles,
   parseKicadPcb,
   exportKicadPcb,
   exportKicadSch,
@@ -170,6 +173,7 @@ export {
   computeRatsnest,
   componentMeshes,
   pcbPreviewMeshes,
+  tryPcbPreviewMeshes,
   createCircuitSim,
   evaluateMotor,
   airgapFluxDensity,
@@ -184,6 +188,7 @@ export {
   verifyReceipt,
 } from "./ecad.js";
 export type {
+  EcadProbe,
   DrcViolationResult,
   PcbFabProfile,
   PcbDfmSeverity,
@@ -217,6 +222,8 @@ export type {
   FootprintCompat,
   Alternative,
   Substitution,
+  NetContinuity,
+  NetIsland,
 } from "./ecad.js";
 
 // Parts library

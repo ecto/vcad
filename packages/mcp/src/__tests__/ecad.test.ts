@@ -1,14 +1,17 @@
 import { describe, it, expect, beforeAll, beforeEach } from "vitest";
 import { Engine, resolveFootprint, parseKicadPcb } from "@vcad/engine";
-import type { Document, Pcb, Vec2 } from "@vcad/ir";
+import type { Document, Pcb, SchematicSheet, Vec2 } from "@vcad/ir";
+import { createDocument } from "@vcad/ir";
 import {
   createSchematic,
   placeComponents,
   routeNets,
+  critiqueRoute,
   runDrc,
   runErc,
   exportGerber,
   exportKicad,
+  validateForFab,
   calcImpedance,
   sizeImpedance,
   sizePdn,
@@ -51,6 +54,7 @@ import {
   getSession,
   openDocument,
   recordHistorySnapshot,
+  registerSession,
 } from "../tools/session.js";
 import { openInBrowser } from "../tools/share.js";
 
@@ -90,6 +94,69 @@ const resistor = (ref: string, x: number, pinNames: [string, string] = ["~", "~"
     { number: "2", name: pinNames[1], type: "Passive", x: 5, y: 0 },
   ],
 });
+
+/**
+ * Register a session holding a hand-built board with a single power net "PWR"
+ * on two SMD pads. When `continuous`, a trace ties the pads into one galvanic
+ * island; otherwise they're stranded (the +3V3-into-islands failure shape).
+ * Returns the document_id for the realized-copper gate tests.
+ */
+function registerPwrBoard(continuous: boolean): string {
+  const fp = (ref: string, x: number) => ({
+    ref,
+    value: "X",
+    footprintName: "test:pad",
+    position: { x, y: 25 },
+    rotation: 0,
+    front: true,
+    pads: [
+      {
+        number: "1",
+        padType: "SMD",
+        shape: { type: "Rect", width: 1.5, height: 1.5 },
+        position: { x: 0, y: 0 },
+        layers: ["FCu"],
+        net: "PWR",
+      },
+    ],
+  });
+  const pcb = {
+    outline: {
+      vertices: [
+        { x: 0, y: 0 },
+        { x: 50, y: 0 },
+        { x: 50, y: 50 },
+        { x: 0, y: 50 },
+      ],
+      cutouts: [],
+      thickness: 1.6,
+    },
+    stackup: {
+      layers: [
+        { layer: "FCu", copperThickness: 0.035, dielectricThickness: 1.5, dielectricEr: 4.5, material: "FR4" },
+      ],
+    },
+    nets: [{ id: "PWR", name: "PWR" }],
+    rules: {
+      defaultRules: { name: "Default", traceWidth: 0.25, clearance: 0.2, viaDiameter: 0.8, viaDrill: 0.4 },
+      classRules: [],
+      netClassAssignments: {},
+      edgeClearance: 0.3,
+      holeToHole: 0.5,
+      minAnnularRing: 0.15,
+      minDrill: 0.2,
+    },
+    footprints: [fp("U1", 10), fp("U2", 40)],
+    traces: continuous
+      ? [{ start: { x: 10, y: 25 }, end: { x: 40, y: 25 }, width: 0.5, layer: "FCu", net: "PWR" }]
+      : [],
+    vias: [],
+    zones: [],
+  } as unknown as Pcb;
+  const doc = createDocument();
+  (doc as Document & { pcb?: Pcb }).pcb = pcb;
+  return registerSession(doc);
+}
 
 describe("pin-type validation (create_schematic)", () => {
   it("accepts valid PinType variants verbatim", async () => {
@@ -1192,6 +1259,113 @@ describe("ecad session flow", () => {
     // An unsupported extension is a clean tool error, not a throw.
     const bad = await exportKicad({ document_id: id, filename: "nope.brd" });
     expect(bad.isError).toBe(true);
+  });
+
+  it("export_gerber blocks a dirty (unconnected-net) board and returns the DRC summary", async () => {
+    const created = out(
+      await createSchematic({
+        components: [resistor("R1", 0), resistor("R2", 20)],
+        nets: { MID: ["R1.2", "R2.1"] },
+      }),
+    );
+    const id = created.document_id;
+    out(await placeComponents({ document_id: id, board_width: 50, board_height: 50 }));
+    // Deliberately NOT routed → MID's two pads sit in disjoint copper groups,
+    // so DRC reports an UnconnectedNet error and the board is not fab-clean.
+
+    const blocked = out(await exportGerber({ document_id: id })); // require_clean_drc defaults true
+    expect(blocked.success).toBe(false);
+    expect(blocked.blocked).toBe(true);
+    expect(blocked.drc.errors).toBeGreaterThan(0);
+    expect(blocked.drc.byRule.UnconnectedNet).toBeGreaterThan(0);
+    expect(blocked.files).toBeUndefined();
+
+    // Opting out of the gate still emits the bundle (caller forced a dirty export).
+    const forced = out(
+      await exportGerber({ document_id: id, require_clean_drc: false }),
+    );
+    expect(forced.success).toBe(true);
+    expect(forced.files.length).toBeGreaterThan(0);
+  });
+
+  it("export_gerber exports a clean routed board under the default DRC gate", async () => {
+    const created = out(
+      await createSchematic({
+        components: [resistor("R1", 0), resistor("R2", 20)],
+        nets: { MID: ["R1.2", "R2.1"] },
+      }),
+    );
+    const id = created.document_id;
+    out(await placeComponents({ document_id: id, board_width: 50, board_height: 50 }));
+    expect(out(await routeNets({ document_id: id })).success).toBe(true);
+
+    const gerber = out(await exportGerber({ document_id: id }));
+    expect(gerber.success).toBe(true);
+    expect(gerber.files.length).toBeGreaterThan(0);
+  });
+
+  it("validate_for_fab passes a clean routed board (ready)", async () => {
+    const created = out(
+      await createSchematic({
+        components: [resistor("R1", 0), resistor("R2", 20)],
+        nets: { MID: ["R1.2", "R2.1"] },
+      }),
+    );
+    const id = created.document_id;
+    out(await placeComponents({ document_id: id, board_width: 50, board_height: 50 }));
+    out(await routeNets({ document_id: id }));
+
+    const v = out(await validateForFab({ document_id: id }));
+    expect(v.ready).toBe(true);
+    expect(v.verdict).toBe("ready");
+    expect(v.drc.status).toBe("clean");
+    expect(v.renderable.ok).toBe(true);
+    expect(v.gerber_exportable.ok).toBe(true);
+    expect(v.blockers).toHaveLength(0);
+    expect(v.unverifiable).toHaveLength(0);
+  });
+
+  it("validate_for_fab blocks a dirty board and names the DRC errors", async () => {
+    const created = out(
+      await createSchematic({
+        components: [resistor("R1", 0), resistor("R2", 20)],
+        nets: { MID: ["R1.2", "R2.1"] },
+      }),
+    );
+    const id = created.document_id;
+    out(await placeComponents({ document_id: id, board_width: 50, board_height: 50 }));
+
+    const v = out(await validateForFab({ document_id: id }));
+    expect(v.ready).toBe(false);
+    expect(v.verdict).toBe("blocked");
+    expect(v.drc.status).toBe("violations");
+    expect(v.blockers.some((b: string) => b.startsWith("DRC:"))).toBe(true);
+    expect(v.suggested_fixes.length).toBeGreaterThan(0);
+  });
+
+  it("validate_for_fab reports a serialization blocker with the exact failing field", async () => {
+    const created = out(
+      await createSchematic({
+        components: [resistor("R1", 0), resistor("R2", 20)],
+        nets: { MID: ["R1.2", "R2.1"] },
+      }),
+    );
+    const id = created.document_id;
+    out(await placeComponents({ document_id: id, board_width: 50, board_height: 50 }));
+    out(await routeNets({ document_id: id }));
+
+    // Corrupt the board so the kernel can no longer deserialize it: drop a
+    // required field. Gerber serialization must surface 'thickness' by name, and
+    // — fail-closed — DRC must read 'unverifiable', never clean.
+    const board = getPcbBoard(getSession(id));
+    delete (board.outline as { thickness?: number }).thickness;
+
+    const v = out(await validateForFab({ document_id: id }));
+    expect(v.ready).toBe(false);
+    expect(v.gerber_exportable.ok).toBe(false);
+    expect(v.gerber_exportable.field).toBe("thickness");
+    expect(v.blockers.some((b: string) => b.includes("thickness"))).toBe(true);
+    expect(v.drc.status).toBe("unverifiable");
   });
 
   it("parametric footprint engine resolves QFN/DPAK on-board and reports unknowns", async () => {
@@ -3085,7 +3259,7 @@ describe("run_drc summary aggregation", () => {
 });
 
 describe("size_impedance", () => {
-  it("solves single-ended microstrip width for 50Ω, and calc_impedance re-verifies it", () => {
+  it("solves single-ended microstrip width for 50Ω, and calc_impedance re-verifies it", async () => {
     const stack = { dielectric_height: 0.2, dielectric_er: 4.3, copper_thickness: 0.035 };
     const r = out(sizeImpedance({ trace_type: "microstrip", target_z0: 50, ...stack }));
     expect(r.success).toBe(true);
@@ -3095,7 +3269,7 @@ describe("size_impedance", () => {
     expect(r.width_mm).toBeLessThan(1);
     expect(r.measured.recomputed_from_geometry).toBe(true);
     // One model, one number: calc_impedance at the solved width agrees.
-    const v = out(calcImpedance({ trace_type: "microstrip", trace_width: r.width_mm, ...stack }));
+    const v = out(await calcImpedance({ trace_type: "microstrip", trace_width: r.width_mm, ...stack }));
     expect(Math.abs(v.z0 - 50)).toBeLessThan(2.5);
     expect(r.document_id).toBeUndefined();
   });
@@ -3108,7 +3282,7 @@ describe("size_impedance", () => {
     expect(Math.abs(r.measured.z0 - 50)).toBeLessThan(2.5);
   });
 
-  it("solves a differential pair for 90Ω diff / 50Ω SE and re-verifies both", () => {
+  it("solves a differential pair for 90Ω diff / 50Ω SE and re-verifies both", async () => {
     const stack = { dielectric_height: 0.2, dielectric_er: 4.3 };
     const r = out(
       sizeImpedance({ trace_type: "diff_microstrip", target_diff_z0: 90, target_z0: 50, ...stack }),
@@ -3118,7 +3292,7 @@ describe("size_impedance", () => {
     expect(Math.abs(r.measured.diff_z0 - 90)).toBeLessThan(4.5);
     expect(r.spacing_mm).toBeGreaterThan(0);
     const v = out(
-      calcImpedance({ trace_type: "diff_microstrip", trace_width: r.width_mm, spacing: r.spacing_mm, ...stack }),
+      await calcImpedance({ trace_type: "diff_microstrip", trace_width: r.width_mm, spacing: r.spacing_mm, ...stack }),
     );
     expect(Math.abs(v.z_diff - 90)).toBeLessThan(5);
   });
@@ -3172,8 +3346,8 @@ describe("size_pdn", () => {
     targets,
   });
 
-  it("sizes segment widths so the load node meets its IR-drop budget", () => {
-    const r = out(sizePdn(bridge([{ node: 3, max_drop: 0.015 }])));
+  it("sizes segment widths so the load node meets its IR-drop budget", async () => {
+    const r = out(await sizePdn(bridge([{ node: 3, max_drop: 0.015 }])));
     expect(r.success).toBe(true);
     expect(r.within_budget).toBe(true);
     expect(r.widths_mm).toHaveLength(5);
@@ -3181,19 +3355,21 @@ describe("size_pdn", () => {
     expect(r.measured_drops_v[0]).toBeLessThanOrEqual(0.015 * 1.05);
     expect(r.measured_drops_v[0]).toBeGreaterThan(0); // a real drop, mesh is solved
     expect(r.document_id).toBeUndefined();
+    // No board referenced → model-only, clearly labelled (never an implied PASS).
+    expect(r.realized_check).toMatch(/model-only/i);
   });
 
-  it("flags a budget it cannot meet within the width bounds", () => {
+  it("flags a budget it cannot meet within the width bounds", async () => {
     // An impossibly tight budget at realistic max widths -> over_budget reported.
-    const r = out(sizePdn({ ...bridge([{ node: 3, max_drop: 1e-5 }]), max_width: 0.5 }));
+    const r = out(await sizePdn({ ...bridge([{ node: 3, max_drop: 1e-5 }]), max_width: 0.5 }));
     expect(r.within_budget).toBe(false);
     expect(r.over_budget.length).toBeGreaterThan(0);
     expect(r.active_constraints).toContain("max_width");
   });
 
-  it("rejects a singular (disconnected) mesh", () => {
+  it("rejects a singular (disconnected) mesh", async () => {
     // Node 3 has no path to the reference (node 0).
-    const res = sizePdn({
+    const res = await sizePdn({
       nodes: 4,
       edges: [{ a: 0, b: 1, length: 10 }],
       loads: [{ node: 3, current: 1.0 }],
@@ -3205,7 +3381,7 @@ describe("size_pdn", () => {
 
   it("engine:'exact' routes into the Rust adjoint engine via WASM (when built)", async () => {
     const { ecadDiffEngineAvailable } = await import("../wasm/ecad-diff.js");
-    const r = out(sizePdn({ ...bridge([{ node: 3, max_drop: 0.015 }]), engine: "exact" }));
+    const r = out(await sizePdn({ ...bridge([{ node: 3, max_drop: 0.015 }]), engine: "exact" }));
     if (ecadDiffEngineAvailable()) {
       // The Rust engine (implicit-function adjoint) sized the mesh.
       expect(r.engine).toBe("rust-adjoint");
@@ -3218,12 +3394,99 @@ describe("size_pdn", () => {
     }
   });
 
-  it("wider bounds let it meet a tighter budget than narrow bounds", () => {
-    const tight = out(sizePdn({ ...bridge([{ node: 3, max_drop: 0.008 }]), max_width: 0.3 }));
-    const roomy = out(sizePdn({ ...bridge([{ node: 3, max_drop: 0.008 }]), max_width: 5 }));
+  it("wider bounds let it meet a tighter budget than narrow bounds", async () => {
+    const tight = out(await sizePdn({ ...bridge([{ node: 3, max_drop: 0.008 }]), max_width: 0.3 }));
+    const roomy = out(await sizePdn({ ...bridge([{ node: 3, max_drop: 0.008 }]), max_width: 5 }));
     expect(roomy.within_budget).toBe(true);
     // The constrained run does no better than the roomy one.
     expect(roomy.measured_drops_v[0]).toBeLessThanOrEqual(tight.measured_drops_v[0] + 1e-9);
+  });
+
+  it("a usage error when only one of document_id / net is given", async () => {
+    const res = await sizePdn({ ...bridge([{ node: 3, max_drop: 0.015 }]), net: "+3V3" });
+    expect(res.isError).toBe(true);
+    expect(res.content[0].text).toMatch(/document_id and net/i);
+  });
+
+  it("certifies a PASS against a galvanically-continuous plane", async () => {
+    const id = registerPwrBoard(true);
+    const r = out(
+      await sizePdn({ ...bridge([{ node: 3, max_drop: 0.015 }]), document_id: id, net: "PWR" }),
+    );
+    expect(r.within_budget).toBe(true);
+    expect(r.blocked).toBeUndefined();
+    expect(r.realized_verified).toBe(true);
+    expect(r.realized_plane.continuous).toBe(true);
+    expect(r.realized_plane.coverage_pct).toBe(100);
+  });
+
+  it("REFUSES a PASS on a disconnected plane, reporting coverage + worst island", async () => {
+    const id = registerPwrBoard(false);
+    const r = out(
+      await sizePdn({ ...bridge([{ node: 3, max_drop: 0.015 }]), document_id: id, net: "PWR" }),
+    );
+    // A closed-form PASS on a dead plane is refused, not reported.
+    expect(r.blocked).toBe(true);
+    expect(r.verdict).toBe("blocked");
+    expect(r.within_budget).toBe(false);
+    expect(r.unverifiable_reason).toMatch(/disconnected plane/i);
+    expect(r.realized_plane.islands).toBe(2);
+    expect(r.realized_plane.coverage_pct).toBe(50);
+    expect(r.realized_plane.connected_pads).toBe(1);
+    expect(r.realized_plane.total_pads).toBe(2);
+    expect(r.realized_plane.stitching_vias).toBe(0);
+    expect(r.realized_plane.worst_island.pad_count).toBe(1);
+  });
+});
+
+describe("calc_impedance realized-trace gate", () => {
+  it("certifies the impedance when the trace is realized as continuous copper", async () => {
+    const id = registerPwrBoard(true);
+    const v = out(
+      await calcImpedance({
+        trace_type: "microstrip",
+        trace_width: 0.3,
+        dielectric_height: 0.2,
+        document_id: id,
+        net: "PWR",
+      }),
+    );
+    expect(v.z0).toBeGreaterThan(0);
+    expect(v.blocked).toBeUndefined();
+    expect(v.realized_verified).toBe(true);
+  });
+
+  it("blocks an impedance for a trace split into islands", async () => {
+    const id = registerPwrBoard(false);
+    const v = out(
+      await calcImpedance({
+        trace_type: "microstrip",
+        trace_width: 0.3,
+        dielectric_height: 0.2,
+        document_id: id,
+        net: "PWR",
+      }),
+    );
+    // The model number is still computed, but it is not certified.
+    expect(v.z0).toBeGreaterThan(0);
+    expect(v.blocked).toBe(true);
+    expect(v.realized_plane.continuous).toBe(false);
+  });
+
+  it("blocks an impedance for a net with no realized copper", async () => {
+    const id = registerPwrBoard(true);
+    const v = out(
+      await calcImpedance({
+        trace_type: "microstrip",
+        trace_width: 0.3,
+        dielectric_height: 0.2,
+        document_id: id,
+        net: "GHOST",
+      }),
+    );
+    expect(v.blocked).toBe(true);
+    expect(v.realized_plane.realized).toBe(false);
+    expect(v.summary).toMatch(/no realized copper/i);
   });
 });
 
@@ -3572,6 +3835,42 @@ describe("ecad pipeline behaviors (session flow)", () => {
     expect(res.message).toContain("returning contents inline");
     expect(res.files.length).toBeGreaterThan(0);
     expect(res.files[0].content).toBeTruthy();
+  });
+
+  it("export_gerber offloads a large bundle to an artifact (URL + manifest), keeps a small one inline", async () => {
+    const created = out(
+      await createSchematic({ components: [resistor("R1", 0, ["A", "B"])] }),
+    );
+    const id = created.document_id;
+    out(await placeComponents({ document_id: id, board_width: 30, board_height: 30 }));
+
+    // Small bundle under the default cap → stays inline.
+    const small = out(await exportGerber({ document_id: id }));
+    expect(small.success).toBe(true);
+    expect(Array.isArray(small.files)).toBe(true);
+    expect(small.files.length).toBeGreaterThan(0);
+    expect(small.artifact_url).toBeUndefined();
+
+    // Force the SAME bundle over the cap → offloaded to the artifact store.
+    process.env.MCP_MAX_INLINE_ARTIFACT_BYTES = "10";
+    try {
+      const big = out(await exportGerber({ document_id: id }));
+      expect(big.success).toBe(true);
+      // No inline files — only the handle travels.
+      expect(big.files).toBeUndefined();
+      expect(big.artifact_url).toMatch(/\/artifacts\/art_/);
+      expect(big.artifact_id).toMatch(/^art_/);
+      expect(Array.isArray(big.manifest)).toBe(true);
+      expect(big.manifest.length).toBe(small.files.length);
+      for (const entry of big.manifest) {
+        expect(typeof entry.file).toBe("string");
+        expect(entry.bytes).toBeGreaterThan(0);
+        expect(entry.sha256).toMatch(/^[0-9a-f]{64}$/);
+      }
+      expect(big.fab_artifact.artifact_id).toBe(big.artifact_id);
+    } finally {
+      delete process.env.MCP_MAX_INLINE_ARTIFACT_BYTES;
+    }
   });
 
   it("open_in_browser produces a URL for PCB documents", async () => {
@@ -4085,6 +4384,126 @@ describe("new PCB tools survive the kernel pipeline", () => {
     const gerber = out(await exportGerber({ document_id: id }));
     expect(gerber.success).toBe(true);
     expect(gerber.files.length).toBeGreaterThan(0);
+  });
+});
+
+// ===========================================================================
+// Unverifiable ≠ clean — a board/schematic the kernel can't deserialize (e.g. a
+// dotted layer name 'In1.Cu' that should be 'In1Cu') must surface as an error
+// the agent branches on, NEVER as a passing "0 violations / clean" result.
+// ===========================================================================
+describe("run_drc / run_erc / critique_route surface 'unverifiable', not false-clean", () => {
+  /** A minimal valid board, used as the base for the malformed fixtures. */
+  const validPcb: Pcb = {
+    outline: {
+      vertices: [
+        { x: 0, y: 0 },
+        { x: 10, y: 0 },
+        { x: 10, y: 10 },
+        { x: 0, y: 10 },
+      ],
+      thickness: 1.6,
+    },
+    stackup: { layers: [{ layer: "FCu" }, { layer: "BCu" }] },
+    nets: [],
+    rules: {
+      defaultRules: {
+        name: "default",
+        traceWidth: 0.2,
+        clearance: 0.2,
+        viaDiameter: 0.6,
+        viaDrill: 0.3,
+      },
+      edgeClearance: 0.2,
+      holeToHole: 0.25,
+      minAnnularRing: 0.05,
+      minDrill: 0.2,
+    },
+    footprints: [],
+    traces: [],
+    vias: [],
+    zones: [],
+  };
+
+  // A trace on a dotted layer name — serde refuses the whole board.
+  const malformedPcb = {
+    ...validPcb,
+    traces: [
+      { start: { x: 1, y: 1 }, end: { x: 5, y: 1 }, width: 0.2, layer: "In1.Cu", net: "GND" },
+    ],
+  } as unknown as Pcb;
+
+  const malformedSheet = {
+    components: [
+      {
+        ref: "R1",
+        value: "10k",
+        footprintId: "Resistor_SMD:R_0805",
+        position: { x: 0, y: 0 },
+        rotation: 0,
+        mirror: false,
+        pins: [{ number: "1", name: "1", pin_type: "Inputt", position: { x: 0, y: 0 } }],
+      },
+    ],
+    wires: [],
+    junctions: [],
+    labels: [],
+  } as unknown as SchematicSheet;
+
+  /** Inline document carrying a raw (possibly malformed) PCB. */
+  function docWithPcb(pcb: Pcb): Document {
+    return { ...createDocument(), pcb } as unknown as Document;
+  }
+  /** Inline document carrying a raw (possibly malformed) schematic. */
+  function docWithSchematic(schematic: SchematicSheet): Document {
+    return { ...createDocument(), schematic } as unknown as Document;
+  }
+
+  /** Permissive view of a tool result — the unverifiable arm carries
+   *  `structuredContent`/`isError` the success arm doesn't. */
+  type AnyResult = {
+    isError?: boolean;
+    content: Array<{ type: string; text: string }>;
+    structuredContent?: {
+      verifiable?: boolean;
+      status?: string;
+      offending_field?: string;
+      next_actions?: string[];
+    };
+  };
+  const asResult = (r: unknown) => r as AnyResult;
+
+  it("run_drc returns isError + verifiable:false (not success) for a malformed board", async () => {
+    const result = asResult(await runDrc({ document: docWithPcb(malformedPcb) }));
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent?.verifiable).toBe(false);
+    expect(result.structuredContent?.status).toBe("errored");
+    expect(result.structuredContent?.offending_field).toBe("In1.Cu");
+    expect(result.structuredContent?.next_actions?.length).toBeGreaterThan(0);
+    // The text must NOT read as a clean pass.
+    const text = result.content[0]!.text;
+    expect(text).toMatch(/UNVERIFIABLE/);
+    expect(text).not.toMatch(/"success":\s*true/);
+  });
+
+  it("run_drc still passes for a board the kernel can parse", async () => {
+    const result = asResult(await runDrc({ document: docWithPcb(validPcb) }));
+    expect(result.isError).toBeFalsy();
+    expect(out(result).success).toBe(true);
+  });
+
+  it("critique_route returns isError + verifiable:false for a malformed board", async () => {
+    const result = asResult(await critiqueRoute({ document: docWithPcb(malformedPcb), net: "GND" }));
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent?.verifiable).toBe(false);
+    expect(result.structuredContent?.offending_field).toBe("In1.Cu");
+  });
+
+  it("run_erc returns isError + verifiable:false for a malformed schematic", async () => {
+    const result = asResult(await runErc({ document: docWithSchematic(malformedSheet) }));
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent?.verifiable).toBe(false);
+    expect(result.structuredContent?.offending_field).toBe("Inputt");
   });
 });
 

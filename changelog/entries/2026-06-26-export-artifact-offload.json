@@ -1,0 +1,20 @@
+{
+  "id": "2026-06-26-export-artifact-offload",
+  "version": "0.9.4",
+  "date": "2026-06-26",
+  "category": "fix",
+  "title": "Large fab/CAD exports offload to a URL instead of overflowing",
+  "summary": "export_gerber, export_cad, and import_step now write oversized results to an artifact store and return { artifact_url, manifest } instead of an inline blob that blew the tool-output limit; quote_manufacturing and place_order accept the handle so fab files never transit model context.",
+  "features": [
+    "ecad",
+    "pcb",
+    "fabricate"
+  ],
+  "mcpTools": [
+    "export_gerber",
+    "export_cad",
+    "import_step",
+    "quote_manufacturing",
+    "place_order"
+  ]
+}

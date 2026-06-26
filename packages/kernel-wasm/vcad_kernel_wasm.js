@@ -3807,6 +3807,28 @@ export function ecadLayerZ(layer, thickness, explosion) {
 }
 
 /**
+ * Galvanic-continuity analysis for one net's *realized* copper: island
+ * count, pad coverage, stitching vias, and the worst stranded island. The
+ * realized-geometry check that gates power/PDN and impedance verdicts — a
+ * closed-form PASS is only meaningful if the copper is a single continuous
+ * conductor.
+ * @param {string} pcb_json
+ * @param {string} net
+ * @returns {any}
+ */
+export function ecadNetContinuity(pcb_json, net) {
+    const ptr0 = passStringToWasm0(pcb_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(net, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.ecadNetContinuity(ptr0, len0, ptr1, len1);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+
+/**
  * Get the net for a wire based on endpoint proximity to component pins.
  *
  * # Arguments
@@ -4803,7 +4825,7 @@ export function isCamAvailable() {
  * @returns {boolean}
  */
 export function isEcadAvailable() {
-    const ret = wasm.isCamAvailable();
+    const ret = wasm.isEcadAvailable();
     return ret !== 0;
 }
 
@@ -7812,12 +7834,12 @@ function __wbg_get_imports() {
             arg0.writeTexture(arg1, arg2, arg3, arg4);
         },
         __wbindgen_cast_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 2437, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 2438, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 2445, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 2446, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h30743bca3150d93c, wasm_bindgen__convert__closures_____invoke__hcf7d3eaee8800b37);
             return ret;
         },
         __wbindgen_cast_0000000000000002: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 3221, function: Function { arguments: [Externref], shim_idx: 3222, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 3229, function: Function { arguments: [Externref], shim_idx: 3230, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__hfdadf281ff0f1c56, wasm_bindgen__convert__closures_____invoke__h9bdf540eb7e61590);
             return ret;
         },

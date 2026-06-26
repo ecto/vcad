@@ -196,6 +196,19 @@ export interface DebitResult {
   idempotent?: boolean;
 }
 
+/**
+ * A reference to a stored fab bundle (Gerbers, drill, P&P, BOM) in the artifact
+ * store. Metadata only — bytes never travel through model context, only this
+ * handle. The downstream fab-submission worker fetches the files from
+ * artifact_url; the manifest's per-file sha256 lets it verify what it sends.
+ */
+export interface FabArtifactRef {
+  artifact_id: string;
+  artifact_url: string;
+  bytes: number;
+  manifest: Array<{ file: string; bytes: number; sha256: string }>;
+}
+
 /** The persisted order lifecycle row. */
 export interface Order {
   order_id: string;
@@ -208,6 +221,9 @@ export interface Order {
   currency: string;
   ship_to: unknown | null;
   events: Array<{ state: OrderState; at: string; note?: string }>;
+  /** Fab files bound to this order, kept out of context (set when an artifact
+   *  handle is passed to quote_manufacturing / place_order). */
+  fab_artifact?: FabArtifactRef | null;
   created_at: string;
   updated_at: string;
 }

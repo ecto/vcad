@@ -9,6 +9,7 @@ import { toStlBytes } from "../export/stl.js";
 import { toGlbBytes } from "../export/glb.js";
 import { resolveWithinRoot } from "./safe-path.js";
 import { isRemoteDeployment, maxInlineExportBytes } from "./remote.js";
+import { storeArtifact } from "./artifact-store.js";
 
 interface ExportInput {
   ir: Document;
@@ -20,7 +21,9 @@ interface ExportInput {
  * inline on remote deployments. On serverless hosts (Vercel) the
  * function filesystem is read-only — a writeFileSync there throws EROFS
  * and the bytes would be invisible to the caller anyway — so the bytes
- * ride back in the tool result instead.
+ * ride back in the tool result instead. A binary over the inline cap is
+ * offloaded to the artifact store and only a { artifact_url, manifest }
+ * handle is returned, so it never overflows the model's context.
  */
 function deliver(
   filename: string,
@@ -31,10 +34,22 @@ function deliver(
   if (isRemoteDeployment()) {
     const cap = maxInlineExportBytes();
     if (bytes.length > cap) {
-      throw new Error(
-        `Export is ${bytes.length} bytes — over the ${cap} byte inline limit for this hosted server. ` +
-          "Use open_in_browser to hand the document to vcad.io and export from there.",
-      );
+      const handle = storeArtifact([{ name: filename, content: bytes }]);
+      payload = {
+        filename,
+        bytes: bytes.length,
+        artifact_id: handle.artifact_id,
+        artifact_url: handle.artifact_url,
+        manifest: handle.manifest,
+        expires_at: handle.expires_at,
+        note_delivery:
+          `Export is ${bytes.length} bytes — over the ${cap}-byte inline limit; ` +
+          "written to the artifact store. Download it at artifact_url, or pass " +
+          "artifact_id to quote_manufacturing / place_order so the bytes never " +
+          "transit model context.",
+        ...extra,
+      };
+      return { content: [{ type: "text", text: JSON.stringify(payload) }] };
     }
     payload = {
       filename,

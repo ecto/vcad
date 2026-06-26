@@ -90,6 +90,29 @@ export interface FilledZoneResult {
 }
 
 // ---------------------------------------------------------------------------
+// Three-state verification outcome
+// ---------------------------------------------------------------------------
+
+/**
+ * Outcome of a kernel verification wrapper (DRC / ERC / route critique).
+ *
+ * The kernel can fail to even *deserialize* its input — e.g. a malformed layer
+ * name like `"In1.Cu"` (it must be `"In1Cu"`). When that happens the board was
+ * never actually checked, so reporting "0 violations / clean" is a dangerous
+ * false-clean a caller could ship on. This type forces callers to branch on
+ * three distinct states instead of collapsing the error into an empty result:
+ *
+ * - `{ status: "ok", value }`  — the kernel ran. `value` may itself be an empty
+ *   list (genuinely clean) or carry violations.
+ * - `{ status: "errored", … }` — the kernel could not parse/run the input.
+ *   NEVER treat this as clean. `offending_field` names the bad token when it can
+ *   be recovered from the error message (e.g. the malformed layer).
+ */
+export type VerifyOutcome<T> =
+  | { status: "ok"; value: T }
+  | { status: "errored"; reason: string; offending_field?: string };
+
+// ---------------------------------------------------------------------------
 // Lazy WASM loader
 // ---------------------------------------------------------------------------
 
@@ -110,6 +133,43 @@ async function loadEcadWasm(): Promise<typeof wasmModule | null> {
   }
 }
 
+/** serde's unknown-variant / unknown-field / missing-field errors name the
+ *  offending token in backticks, e.g. ``unknown variant `In1.Cu`, expected one
+ *  of …``. Pull it out so callers can point the user straight at the bad field. */
+function offendingFieldFromError(message: string): string | undefined {
+  const m =
+    /unknown variant `([^`]+)`/.exec(message) ??
+    /unknown field `([^`]+)`/.exec(message) ??
+    /missing field `([^`]+)`/.exec(message);
+  return m ? m[1] : undefined;
+}
+
+/**
+ * Invoke a kernel WASM verification function, mapping a missing kernel or a
+ * thrown deserialize/eval error into a distinct `errored` {@link VerifyOutcome}
+ * — never a false-clean empty result. `label` names the check for logs and the
+ * surfaced reason.
+ */
+async function verifyWithKernel<T>(
+  label: string,
+  call: (wasm: NonNullable<typeof wasmModule>) => T,
+): Promise<VerifyOutcome<T>> {
+  const wasm = await loadEcadWasm();
+  if (!wasm) {
+    return { status: "errored", reason: `${label} unavailable: kernel WASM not loaded` };
+  }
+  try {
+    return { status: "ok", value: call(wasm) };
+  } catch (e) {
+    const reason = e instanceof Error ? e.message : String(e);
+    console.warn(`[ECAD] ${label} failed:`, e);
+    const offending = offendingFieldFromError(reason);
+    return offending
+      ? { status: "errored", reason, offending_field: offending }
+      : { status: "errored", reason };
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
@@ -120,15 +180,48 @@ export async function isEcadAvailable(): Promise<boolean> {
   return wasm !== null;
 }
 
-/** Run Design Rule Check on a PCB. */
-export async function runDrc(pcb: Pcb): Promise<DrcViolationResult[]> {
+/**
+ * Run Design Rule Check on a PCB.
+ *
+ * Returns a three-state {@link VerifyOutcome}: `ok` (the kernel ran — the value
+ * is clean when empty, or carries violations) vs `errored` (the kernel could
+ * not parse the board, e.g. a malformed layer name). Crucially it never reports
+ * a parse failure as a clean/empty result — that false-clean is exactly what a
+ * caller could ship on.
+ */
+export async function runDrc(pcb: Pcb): Promise<VerifyOutcome<DrcViolationResult[]>> {
+  return verifyWithKernel(
+    "DRC",
+    (wasm) => wasm.ecadCheckDrc(JSON.stringify(pcb)) as DrcViolationResult[],
+  );
+}
+
+/**
+ * Discriminated outcome for fab-readiness probes that must distinguish a real
+ * pass from an *unverifiable* one. Surface the kernel error verbatim so callers
+ * can fail closed and quote the exact failing field.
+ *
+ * - `unavailable`: the ECAD kernel WASM isn't loaded (or predates the binding).
+ * - `error`: the kernel ran but threw — almost always a serde parse failure
+ *   whose message names the offending field (e.g. ``missing field `thickness```).
+ */
+export type EcadProbe<T> =
+  | { ok: true; value: T }
+  | { ok: false; reason: "unavailable" | "error"; message: string };
+
+/**
+ * Run DRC, surfacing failures as an {@link EcadProbe} instead of swallowing them.
+ * Use this (not `runDrc`) anywhere a parse failure must read as *unverifiable*.
+ */
+export async function tryRunDrc(pcb: Pcb): Promise<EcadProbe<DrcViolationResult[]>> {
   const wasm = await loadEcadWasm();
-  if (!wasm) return [];
+  if (!wasm) {
+    return { ok: false, reason: "unavailable", message: "ECAD kernel WASM not loaded" };
+  }
   try {
-    return wasm.ecadCheckDrc(JSON.stringify(pcb)) as DrcViolationResult[];
+    return { ok: true, value: wasm.ecadCheckDrc(JSON.stringify(pcb)) as DrcViolationResult[] };
   } catch (e) {
-    console.warn("[ECAD] DRC failed:", e);
-    return [];
+    return { ok: false, reason: "error", message: e instanceof Error ? e.message : String(e) };
   }
 }
 
@@ -212,14 +305,59 @@ export interface NetCritique {
   drc_issues: string[];
 }
 
-/** Audit a single net's routing quality (length, vias, margin, DRC issues). */
-export async function critiqueRoute(pcb: Pcb, net: string): Promise<NetCritique | null> {
+/**
+ * Audit a single net's routing quality (length, vias, margin, DRC issues).
+ *
+ * Returns a three-state {@link VerifyOutcome}: `ok` with the critique, or
+ * `errored` when the kernel could not parse the board (or isn't loaded). A
+ * parse failure is never silently reported as "no critique".
+ */
+export async function critiqueRoute(
+  pcb: Pcb,
+  net: string,
+): Promise<VerifyOutcome<NetCritique>> {
+  return verifyWithKernel(
+    "Route critique",
+    (wasm) => wasm.ecadCritiqueRoute(JSON.stringify(pcb), net) as NetCritique,
+  );
+}
+
+/** One galvanic island of a net's copper. */
+export interface NetIsland {
+  pad_count: number;
+  node_count: number;
+  position: Vec2;
+}
+
+/** Galvanic-continuity analysis for one net's realized copper — the
+ *  realized-geometry check that gates power/PDN and impedance verdicts. */
+export interface NetContinuity {
+  net: string;
+  /** Disjoint galvanic islands: 0 = no copper, 1 = continuous, ≥2 = split. */
+  islands: number;
+  total_pads: number;
+  connected_pads: number;
+  /** connected_pads / total_pads, in [0, 1]. */
+  coverage: number;
+  /** Stitching vias on the net. */
+  vias: number;
+  /** True when the net has at least one piece of realized copper. */
+  realized: boolean;
+  /** True when the net's copper forms exactly one galvanic island. */
+  continuous: boolean;
+  /** Largest stranded (non-main) island when split; null otherwise. */
+  worst_island: NetIsland | null;
+}
+
+/** Analyze a net's realized-copper galvanic continuity (islands, pad coverage,
+ *  stitching vias, worst stranded island). Returns null if WASM is unavailable. */
+export async function netContinuity(pcb: Pcb, net: string): Promise<NetContinuity | null> {
   const wasm = await loadEcadWasm();
   if (!wasm) return null;
   try {
-    return wasm.ecadCritiqueRoute(JSON.stringify(pcb), net) as NetCritique;
+    return wasm.ecadNetContinuity(JSON.stringify(pcb), net) as NetContinuity;
   } catch (e) {
-    console.warn("[ECAD] Route critique failed:", e);
+    console.warn("[ECAD] Net continuity failed:", e);
     return null;
   }
 }
@@ -239,10 +377,11 @@ export type ErcOutcome =
 /**
  * Run the kernel Electrical Rule Check, reporting whether it actually executed.
  *
- * Unlike {@link runErc} (which collapses every failure to `[]`), this keeps
- * "kernel not loaded" and "kernel rejected the sheet" distinct from "kernel ran
- * clean", so verification surfaces can fail closed instead of presenting an
- * unevaluated schematic as passing.
+ * Keeps "kernel not loaded" and "kernel rejected the sheet" distinct from
+ * "kernel ran clean", so verification surfaces (and the pin-type/floating-power
+ * rules in the MCP run_erc tool) can fail closed instead of presenting an
+ * unevaluated schematic as passing. {@link runErc} adapts this to the shared
+ * {@link VerifyOutcome} shape.
  */
 export async function checkErc(sheet: SchematicSheet): Promise<ErcOutcome> {
   const wasm = await loadEcadWasm();
@@ -257,10 +396,29 @@ export async function checkErc(sheet: SchematicSheet): Promise<ErcOutcome> {
   }
 }
 
-/** Run Electrical Rule Check on a schematic. Empty list on any failure. */
-export async function runErc(sheet: SchematicSheet): Promise<ErcViolationResult[]> {
+/**
+ * Run Electrical Rule Check on a schematic.
+ *
+ * Returns a three-state {@link VerifyOutcome} consistent with {@link runDrc} /
+ * {@link critiqueRoute}: `ok` (clean when empty, or with violations) vs
+ * `errored` when the kernel was unavailable or could not parse the schematic.
+ * Never reports a parse failure as a clean/empty result. Delegates to
+ * {@link checkErc}, folding its `unavailable`/`error` states onto `errored`.
+ */
+export async function runErc(
+  sheet: SchematicSheet,
+): Promise<VerifyOutcome<ErcViolationResult[]>> {
   const outcome = await checkErc(sheet);
-  return outcome.status === "ok" ? outcome.violations : [];
+  if (outcome.status === "ok") return { status: "ok", value: outcome.violations };
+  const reason =
+    outcome.status === "unavailable"
+      ? "ERC unavailable: kernel WASM not loaded"
+      : outcome.message;
+  const offending =
+    outcome.status === "error" ? offendingFieldFromError(outcome.message) : undefined;
+  return offending
+    ? { status: "errored", reason, offending_field: offending }
+    : { status: "errored", reason };
 }
 
 /** Inputs for the analytical motor evaluator (mirrors `vcad_ecad_sim::MotorSpec`). */
@@ -533,13 +691,28 @@ export interface FabFile {
  * distinguish "no kernel" from "export failed".
  */
 export async function exportFabFiles(pcb: Pcb): Promise<FabFile[] | null> {
+  const probe = await tryExportFabFiles(pcb);
+  if (probe.ok) return probe.value;
+  if (probe.reason === "error") console.warn("[ECAD] Fab export failed:", probe.message);
+  return null;
+}
+
+/**
+ * Attempt fabrication-file serialization, surfacing the kernel error instead of
+ * collapsing it to `null`. The error message is the serde failure verbatim — so
+ * a readiness gate can report the exact field the board can't serialize on
+ * (`missing field \`thickness\``, `invalid type: null, expected f64`, …) rather
+ * than a blank "export failed". See {@link EcadProbe}.
+ */
+export async function tryExportFabFiles(pcb: Pcb): Promise<EcadProbe<FabFile[]>> {
   const wasm = await loadEcadWasm();
-  if (!wasm) return null;
+  if (!wasm) {
+    return { ok: false, reason: "unavailable", message: "ECAD kernel WASM not loaded" };
+  }
   try {
-    return wasm.ecadExportFab(JSON.stringify(pcb)) as FabFile[];
+    return { ok: true, value: wasm.ecadExportFab(JSON.stringify(pcb)) as FabFile[] };
   } catch (e) {
-    console.warn("[ECAD] Fab export failed:", e);
-    return null;
+    return { ok: false, reason: "error", message: e instanceof Error ? e.message : String(e) };
   }
 }
 
@@ -794,13 +967,37 @@ export interface PcbPreviewMesh {
  * when the ECAD WASM is unavailable or the build predates the binding.
  */
 export async function pcbPreviewMeshes(pcb: Pcb): Promise<PcbPreviewMesh[]> {
+  const probe = await tryPcbPreviewMeshes(pcb);
+  if (probe.ok) return probe.value;
+  if (probe.reason === "error") console.warn("[ECAD] pcbPreviewMeshes failed:", probe.message);
+  return [];
+}
+
+/**
+ * Attempt to build the layered preview meshes, surfacing failures. An `error`
+ * means the board solid trapped during evaluation (the geometry can't be
+ * visualized); an `ok` result with an empty array means the kernel ran but the
+ * board produced no renderable geometry. A readiness gate treats both as a
+ * renderability blocker rather than a silent empty preview. See {@link EcadProbe}.
+ */
+export async function tryPcbPreviewMeshes(
+  pcb: Pcb,
+): Promise<EcadProbe<PcbPreviewMesh[]>> {
   const wasm = await loadEcadWasm();
-  if (!wasm || typeof wasm.ecadPcbPreviewMeshes !== "function") return [];
+  if (!wasm || typeof wasm.ecadPcbPreviewMeshes !== "function") {
+    return {
+      ok: false,
+      reason: "unavailable",
+      message: "PCB preview-mesh binding unavailable (kernel WASM missing or predates it)",
+    };
+  }
   try {
-    return wasm.ecadPcbPreviewMeshes(JSON.stringify(pcb)) as PcbPreviewMesh[];
+    return {
+      ok: true,
+      value: wasm.ecadPcbPreviewMeshes(JSON.stringify(pcb)) as PcbPreviewMesh[],
+    };
   } catch (e) {
-    console.warn("[ECAD] pcbPreviewMeshes failed:", e);
-    return [];
+    return { ok: false, reason: "error", message: e instanceof Error ? e.message : String(e) };
   }
 }
 

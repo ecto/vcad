@@ -1176,19 +1176,12 @@ fn pours_touch(a: &[Vec<Vec2>], b: &[Vec<Vec2>]) -> bool {
 /// Connectivity flood-fill: detects shorts (one component, ≥2 distinct nets)
 /// and unrouted nets (one net split across ≥2 components).
 fn check_connectivity(pcb: &Pcb, net_ties: &NetTieGroups, violations: &mut Vec<DrcViolation>) {
-    let nodes = build_conn_nodes(pcb);
+    // Union-find over geometric touch (same-layer, overlapping/touching) — the
+    // same graph `analyze_net_continuity` reads, so DRC and the realized-plane
+    // gates agree on what is connected.
+    let (nodes, mut dsu) = build_connectivity(pcb);
     if nodes.is_empty() {
         return;
-    }
-
-    // Union-find over geometric touch (same-layer, overlapping/touching).
-    let mut dsu = Dsu::new(nodes.len());
-    for i in 0..nodes.len() {
-        for j in (i + 1)..nodes.len() {
-            if nodes[i].touches(&nodes[j]) {
-                dsu.union(i, j);
-            }
-        }
     }
 
     detect_shorts(&nodes, &mut dsu, net_ties, violations);
@@ -1741,6 +1734,206 @@ impl Dsu {
         self.parent[small] = big;
         self.size[big] += self.size[small];
     }
+}
+
+// ===========================================================================
+// Net galvanic-continuity analysis (realized-copper verification)
+// ===========================================================================
+
+/// One galvanic island of a net's copper — a maximal set of the net's copper
+/// that is electrically continuous (a single connected blob).
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct NetIsland {
+    /// Pads of the net that land in this island.
+    pub pad_count: usize,
+    /// Total copper nodes (traces, vias, pads, pour fragments) in this island.
+    pub node_count: usize,
+    /// Representative position (mm) for locating the island on the board.
+    pub position: Vec2,
+}
+
+/// Galvanic-continuity analysis for a single net's *realized* copper.
+///
+/// Built from the same union-find over geometric copper touch that DRC uses to
+/// flag shorts and unrouted nets, so a verdict here is the same physical
+/// connectivity DRC sees. This is the check that gates a power/PDN or impedance
+/// PASS: a closed-form number is only meaningful if the copper it describes is
+/// actually a single continuous conductor.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct NetContinuity {
+    /// The analyzed net.
+    pub net: String,
+    /// Number of disjoint galvanic islands the net's copper forms. `0` = the
+    /// net has no realized copper; `1` = fully continuous; `≥2` = a split
+    /// (electrically open) plane/trace.
+    pub islands: usize,
+    /// Total pads assigned to this net on the board.
+    pub total_pads: usize,
+    /// Pads landing in the largest island (the "main" plane/conductor).
+    pub connected_pads: usize,
+    /// `connected_pads / total_pads`, in `[0, 1]`. `1.0` when the net has no
+    /// pads (nothing to strand).
+    pub coverage: f64,
+    /// Vias on this net — the stitching vias that bridge layers/islands.
+    pub vias: usize,
+    /// True when the net has at least one piece of realized copper.
+    pub realized: bool,
+    /// True when the net's copper forms exactly one galvanic island.
+    pub continuous: bool,
+    /// The largest island that is NOT the main plane — the biggest stranded
+    /// chunk — when the net is split (`islands ≥ 2`); `None` otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub worst_island: Option<NetIsland>,
+}
+
+/// Run the board-wide union-find over geometric copper touch (the same graph
+/// [`check_connectivity`] builds) and return the nodes alongside it, so callers
+/// can analyze one or many nets without rebuilding the connectivity.
+fn build_connectivity(pcb: &Pcb) -> (Vec<ConnNode>, Dsu) {
+    let nodes = build_conn_nodes(pcb);
+    let mut dsu = Dsu::new(nodes.len());
+    for i in 0..nodes.len() {
+        for j in (i + 1)..nodes.len() {
+            if nodes[i].touches(&nodes[j]) {
+                dsu.union(i, j);
+            }
+        }
+    }
+    (nodes, dsu)
+}
+
+/// Compute one net's continuity from a pre-built connectivity graph.
+fn continuity_of(pcb: &Pcb, nodes: &[ConnNode], dsu: &mut Dsu, net: &str) -> NetContinuity {
+    // Group this net's copper nodes by union-find root: (pads, nodes, pos).
+    let mut groups: HashMap<usize, (usize, usize, Vec2)> = HashMap::new();
+    for (i, node) in nodes.iter().enumerate() {
+        if node.net != net {
+            continue;
+        }
+        let root = dsu.find(i);
+        let entry = groups.entry(root).or_insert((0, 0, node.pos));
+        entry.1 += 1;
+        if node.pad.is_some() {
+            entry.0 += 1;
+        }
+    }
+
+    // Stitching vias come straight from the net's via list — `build_conn_nodes`
+    // doesn't tag a node as a via, and a via is exactly a `pcb.vias` entry.
+    let vias = pcb.vias.iter().filter(|v| v.net == net).count();
+    let total_pads = pcb
+        .footprints
+        .iter()
+        .flat_map(|f| &f.pads)
+        .filter(|p| p.net.as_deref() == Some(net))
+        .count();
+
+    let islands = groups.len();
+    // Rank islands by pad count (then node count): the main plane is the one
+    // most loads connect to; the worst island is the largest stranded chunk.
+    let mut ranked: Vec<(usize, usize, Vec2)> = groups.into_values().collect();
+    ranked.sort_by(|a, b| b.0.cmp(&a.0).then(b.1.cmp(&a.1)));
+
+    let connected_pads = ranked.first().map(|g| g.0).unwrap_or(0);
+    let coverage = if total_pads == 0 {
+        1.0
+    } else {
+        connected_pads as f64 / total_pads as f64
+    };
+    let worst_island = if islands >= 2 {
+        ranked
+            .get(1)
+            .map(|&(pad_count, node_count, position)| NetIsland {
+                pad_count,
+                node_count,
+                position,
+            })
+    } else {
+        None
+    };
+
+    NetContinuity {
+        net: net.to_string(),
+        islands,
+        total_pads,
+        connected_pads,
+        coverage,
+        vias,
+        realized: islands >= 1,
+        continuous: islands == 1,
+        worst_island,
+    }
+}
+
+/// Analyze the galvanic continuity of one net's realized copper.
+///
+/// The verification leaf behind the power/PDN and impedance PASS-gates: returns
+/// how many disjoint islands the net's copper forms, what fraction of its pads
+/// reach the main plane, its stitching-via count, and the worst stranded
+/// island. `continuous` is the single bit those gates key off.
+pub fn analyze_net_continuity(pcb: &Pcb, net: &str) -> NetContinuity {
+    let (nodes, mut dsu) = build_connectivity(pcb);
+    continuity_of(pcb, &nodes, &mut dsu, net)
+}
+
+/// True if a net name looks like a power/ground rail — the nets whose copper is
+/// expected to be a continuous plane, so a [`build_receipt`](crate) verdict
+/// should check their realized continuity. Conservative + case-insensitive:
+/// well-known rail names, `V…`/`…V…` voltage tags (`+3V3`, `5V0`, `1V8`), and
+/// `GND`-family grounds.
+pub fn is_power_net(name: &str) -> bool {
+    let n = name.trim().to_ascii_uppercase();
+    let core = n.trim_start_matches(['+', '-']);
+    const RAILS: &[&str] = &[
+        "GND", "GROUND", "EARTH", "VSS", "VEE", "AGND", "DGND", "PGND", "SGND", "VCC", "VDD",
+        "VBAT", "VBUS", "VIN", "VOUT", "VREF", "VPP", "AVDD", "DVDD", "AVCC", "DVCC", "VDDA",
+        "VSSA", "VDDIO", "PWR", "POWER", "VSYS", "VRAW", "B+",
+    ];
+    if RAILS.iter().any(|r| core == *r || core.starts_with(r)) {
+        return true;
+    }
+    // Voltage tags: a digit adjacent to a 'V' (3V3, 5V, 1V8, 12V, 3.3V).
+    let bytes = core.as_bytes();
+    for (i, &b) in bytes.iter().enumerate() {
+        if b == b'V' {
+            let before = i > 0 && bytes[i - 1].is_ascii_digit();
+            let after = i + 1 < bytes.len() && bytes[i + 1].is_ascii_digit();
+            if before || after {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Continuity for every power-integrity-relevant net on the board: any net that
+/// is poured as a plane (has a zone) or whose name reads as a power/ground rail.
+/// Builds the connectivity graph once and analyzes each relevant net against it.
+pub fn analyze_power_integrity(pcb: &Pcb) -> Vec<NetContinuity> {
+    use std::collections::BTreeSet;
+
+    // Net names are stored verbatim on copper (id == name in vcad), so a
+    // declared `Net`'s name is also its copper key.
+    let mut relevant: BTreeSet<String> = BTreeSet::new();
+    for z in &pcb.zones {
+        if !z.net.is_empty() {
+            relevant.insert(z.net.clone());
+        }
+    }
+    for net in &pcb.nets {
+        if is_power_net(&net.name) {
+            relevant.insert(net.id.clone());
+        }
+    }
+    if relevant.is_empty() {
+        return Vec::new();
+    }
+
+    let (nodes, mut dsu) = build_connectivity(pcb);
+    relevant
+        .into_iter()
+        .map(|net| continuity_of(pcb, &nodes, &mut dsu, &net))
+        .collect()
 }
 
 /// Build a map of net ID to clearance from design rules.
@@ -3177,6 +3370,187 @@ mod tests {
             "\"routing\""
         );
     }
+
+    // ----- Net galvanic-continuity analysis -----
+
+    /// A net whose pads are all tied together by trace copper is a single
+    /// galvanic island: continuous, full pad coverage. A PASS may stand.
+    #[test]
+    fn continuity_single_plane_is_continuous() {
+        let mut pcb = clean_pcb();
+        pcb.traces.clear();
+        pcb.vias.clear();
+        pcb.footprints = vec![
+            footprint(
+                "U1",
+                (20.0, 40.0),
+                0.0,
+                vec![smd_pad("1", (0.0, 0.0), "3V3")],
+            ),
+            footprint(
+                "U2",
+                (35.0, 40.0),
+                0.0,
+                vec![smd_pad("1", (0.0, 0.0), "3V3")],
+            ),
+            footprint(
+                "U3",
+                (50.0, 40.0),
+                0.0,
+                vec![smd_pad("1", (0.0, 0.0), "3V3")],
+            ),
+        ];
+        pcb.traces = vec![
+            Trace {
+                start: Vec2::new(20.0, 40.0),
+                end: Vec2::new(35.0, 40.0),
+                width: 0.25,
+                layer: PcbLayer::FCu,
+                net: "3V3".to_string(),
+            },
+            Trace {
+                start: Vec2::new(35.0, 40.0),
+                end: Vec2::new(50.0, 40.0),
+                width: 0.25,
+                layer: PcbLayer::FCu,
+                net: "3V3".to_string(),
+            },
+        ];
+
+        let c = analyze_net_continuity(&pcb, "3V3");
+        assert!(c.realized, "net has copper");
+        assert!(c.continuous, "one connected blob");
+        assert_eq!(c.islands, 1);
+        assert_eq!(c.total_pads, 3);
+        assert_eq!(c.connected_pads, 3);
+        assert!((c.coverage - 1.0).abs() < 1e-9);
+        assert!(c.worst_island.is_none());
+    }
+
+    /// A net split into disjoint copper groups (the +3V3-into-N-islands failure)
+    /// is NOT continuous, and the analysis surfaces partial pad coverage plus
+    /// the worst stranded island — the stats a PASS-gate refuses on.
+    #[test]
+    fn continuity_split_plane_reports_coverage_and_worst_island() {
+        let mut pcb = clean_pcb();
+        pcb.traces.clear();
+        pcb.vias.clear();
+        // Three 3V3 pads; a trace ties two together, the third is stranded.
+        pcb.footprints = vec![
+            footprint(
+                "U1",
+                (20.0, 40.0),
+                0.0,
+                vec![smd_pad("1", (0.0, 0.0), "3V3")],
+            ),
+            footprint(
+                "U2",
+                (30.0, 40.0),
+                0.0,
+                vec![smd_pad("1", (0.0, 0.0), "3V3")],
+            ),
+            footprint(
+                "U3",
+                (80.0, 40.0),
+                0.0,
+                vec![smd_pad("1", (0.0, 0.0), "3V3")],
+            ),
+        ];
+        pcb.traces = vec![Trace {
+            start: Vec2::new(20.0, 40.0),
+            end: Vec2::new(30.0, 40.0),
+            width: 0.25,
+            layer: PcbLayer::FCu,
+            net: "3V3".to_string(),
+        }];
+
+        let c = analyze_net_continuity(&pcb, "3V3");
+        assert!(c.realized);
+        assert!(!c.continuous, "stranded pad => not a single plane");
+        assert_eq!(c.islands, 2);
+        assert_eq!(c.total_pads, 3);
+        assert_eq!(c.connected_pads, 2, "main island holds the two tied pads");
+        assert!((c.coverage - 2.0 / 3.0).abs() < 1e-9);
+        let worst = c.worst_island.expect("a stranded island exists");
+        assert_eq!(worst.pad_count, 1, "the stranded pad");
+    }
+
+    /// A net with no realized copper cannot be verified — `realized` is false,
+    /// which the impedance/PDN gates treat as "unverifiable".
+    #[test]
+    fn continuity_unrealized_net_is_not_realized() {
+        let mut pcb = clean_pcb();
+        pcb.traces.clear();
+        pcb.vias.clear();
+        let c = analyze_net_continuity(&pcb, "NOWHERE");
+        assert_eq!(c.islands, 0);
+        assert!(!c.realized);
+        assert!(!c.continuous);
+        assert_eq!(c.total_pads, 0);
+    }
+
+    #[test]
+    fn power_net_name_heuristic() {
+        for t in [
+            "+3V3", "GND", "VCC", "3V3", "5V", "-12V", "VBUS", "1V8", "AGND", "vdd",
+        ] {
+            assert!(is_power_net(t), "{t} should read as power");
+        }
+        for f in ["SCL", "MISO", "RESET", "D0", "USB_DP", "CLK", "TX"] {
+            assert!(!is_power_net(f), "{f} should NOT read as power");
+        }
+    }
+
+    /// `analyze_power_integrity` auto-selects poured/power nets and flags a
+    /// plane that fragmented into multiple pours.
+    #[test]
+    fn power_integrity_flags_fragmented_pour() {
+        let mut pcb = clean_pcb();
+        pcb.traces.clear();
+        pcb.vias.clear();
+        pcb.nets.push(Net {
+            id: "3V3".to_string(),
+            name: "3V3".to_string(),
+        });
+        let zone = |verts: Vec<Vec2>| Zone {
+            outline: verts,
+            holes: vec![],
+            net: "3V3".to_string(),
+            layer: PcbLayer::FCu,
+            clearance: 0.2,
+            min_area: 0.0,
+            fill_type: ZoneFillType::Solid,
+            thermal_relief: ThermalReliefStyle::Relief,
+            thermal_gap: Some(0.5),
+            thermal_spoke_width: Some(0.5),
+            priority: 0,
+        };
+        // Two separate, non-touching 3V3 pours → two galvanic islands.
+        pcb.zones = vec![
+            zone(vec![
+                Vec2::new(5.0, 5.0),
+                Vec2::new(25.0, 5.0),
+                Vec2::new(25.0, 25.0),
+                Vec2::new(5.0, 25.0),
+            ]),
+            zone(vec![
+                Vec2::new(60.0, 50.0),
+                Vec2::new(90.0, 50.0),
+                Vec2::new(90.0, 70.0),
+                Vec2::new(60.0, 70.0),
+            ]),
+        ];
+
+        let report = analyze_power_integrity(&pcb);
+        let v33 = report
+            .iter()
+            .find(|c| c.net == "3V3")
+            .expect("3V3 is poured + power-named");
+        assert_eq!(v33.islands, 2, "two disjoint pours");
+        assert!(!v33.continuous);
+    }
+
+    // ----- NetIslands DRC rule -----
 
     /// A power net whose inner-layer plane stitches to nothing is two
     /// galvanically-isolated copper groups — the exact defect the FC session

@@ -8,6 +8,7 @@ import {
   listOrders,
 } from "../tools/order.js";
 import { InMemoryFabricateStore } from "../fabricate/store.js";
+import { storeArtifact, clearArtifacts } from "../tools/artifact-store.js";
 import { FulfillmentBroker } from "../fabricate/broker.js";
 import { applyMargin, MARGIN_RATE } from "../fabricate/pricing.js";
 import { digitalMetalAdapter } from "../fabricate/adapters/digitalmetal.js";
@@ -150,6 +151,50 @@ describe("fabricate quote loop (engine)", () => {
   });
   beforeEach(() => {
     documents.clear();
+    clearArtifacts();
+  });
+
+  it("binds a fab artifact handle to the quote/order without re-sending bytes", async () => {
+    const handle = storeArtifact([
+      { name: "top.gbr", content: "G04 top secret copper*" },
+      { name: "out.drl", content: "M48\n" },
+    ]);
+    const store = new InMemoryFabricateStore();
+    const res = await quoteManufacturing(
+      {
+        ir: cubeDoc(),
+        process: "cnc",
+        quantity: 5,
+        material: "aluminum",
+        fab_artifact_id: handle.artifact_id,
+      },
+      engine,
+      store,
+      null,
+    );
+    expect(res.isError).toBeFalsy();
+    const quote = JSON.parse(res.content[0].text);
+    expect(quote.fab_artifact.artifact_id).toBe(handle.artifact_id);
+    expect(quote.fab_artifact.files).toBe(2);
+    // The fab bytes never enter the tool result.
+    expect(res.content[0].text).not.toContain("G04 top secret");
+
+    // The binding is persisted on the order and visible via get_order_status.
+    const statusRes = await getOrderStatus({ order_id: quote.order_id }, store, null);
+    const status = JSON.parse(statusRes.content[0].text);
+    expect(status.fab_artifact.artifact_id).toBe(handle.artifact_id);
+    expect(status.fab_artifact.manifest).toHaveLength(2);
+  });
+
+  it("rejects an unknown fab artifact handle", async () => {
+    const res = await quoteManufacturing(
+      { ir: cubeDoc(), process: "cnc", quantity: 1, fab_artifact_id: "art_does_not_exist" },
+      engine,
+      new InMemoryFabricateStore(),
+      null,
+    );
+    expect(res.isError).toBe(true);
+    expect(res.content[0].text).toContain("Unknown or expired fab artifact");
   });
 
   it("quotes a real cube, hides fab cost, persists a QUOTED order, and reads it back", async () => {
