@@ -3029,6 +3029,15 @@ export async function routeNets(args: Record<string, unknown>) {
   const routedNets = new Set<string>();
   const fallbackNets = new Set<string>();
   const unroutedNets = new Set<string>();
+  // Per-unrouted-connection diagnostics from the kernel (blocking nets, the
+  // congested region, a suggested layer/via) — surfaced so the caller knows
+  // *why* a net stayed open and *where*, not just that it did.
+  type RouteDiagnostic = Awaited<ReturnType<typeof routeAll>>["diagnostics"][number];
+  const diagnostics: RouteDiagnostic[] = [];
+  // The kernel's own routability per route_all pass (connection-granular, exact).
+  // The default "auto" strategy is a single pass, so we forward its value
+  // verbatim as the authoritative figure rather than recomputing/rounding.
+  const kernelRoutabilities: number[] = [];
   let tracesAdded = 0;
   let viasAdded = 0;
 
@@ -3106,6 +3115,8 @@ export async function routeNets(args: Record<string, unknown>) {
     }
     for (const n of result.routed_nets) routedNets.add(n);
     for (const n of result.unrouted_nets) unroutedNets.add(n);
+    for (const d of result.diagnostics ?? []) diagnostics.push(d);
+    if (typeof result.routability === "number") kernelRoutabilities.push(result.routability);
   };
 
   let routedSomething = false;
@@ -3166,6 +3177,30 @@ export async function routeNets(args: Record<string, unknown>) {
 
   const planeStitched = [...routedNets].filter((n) => planeNets.has(n)).sort();
 
+  // Overall routability in [0, 1]: how close the board is to fully routed. A
+  // single-pass "auto" route forwards the kernel's exact connection-granular
+  // figure verbatim (authoritative — no divergence, no rounding). Tier
+  // strategies run several passes over disjoint net sets with no shared
+  // connection count, so there we fall back to a net-level estimate. Either way
+  // we keep full precision so small boards aren't misrepresented (2 of 3 reads
+  // 0.6667, not 0.67).
+  const attemptedNets = routedNets.size + unroutedNets.size;
+  const routability =
+    kernelRoutabilities.length === 1
+      ? kernelRoutabilities[0]
+      : attemptedNets === 0
+        ? 1
+        : routedNets.size / attemptedNets;
+  // Keep one diagnostic per still-unrouted net (the kernel may report several
+  // connections for a multi-pin net; the first is the most useful summary).
+  const dedupedDiagnostics: RouteDiagnostic[] = [];
+  const seenDiagNets = new Set<string>();
+  for (const d of diagnostics) {
+    if (!unroutedNets.has(d.net) || seenDiagNets.has(d.net)) continue;
+    seenDiagNets.add(d.net);
+    dedupedDiagnostics.push(d);
+  }
+
   const warnings: string[] = [];
   if (unroutedNets.size > 0) {
     warnings.push(
@@ -3224,6 +3259,7 @@ export async function routeNets(args: Record<string, unknown>) {
         text: JSON.stringify({
           success: true,
           nets_routed: routedNets.size,
+          routability,
           traces_added: tracesAdded,
           // Copper hygiene: re-routing rips the prior route up first, so a
           // re-route reports both what it removed and what it laid — `added`
@@ -3238,6 +3274,7 @@ export async function routeNets(args: Record<string, unknown>) {
             ? { track_widths_mm: realizedWidths }
             : {}),
           ...(unroutedNets.size > 0 ? { unrouted_nets: [...unroutedNets] } : {}),
+          ...(dedupedDiagnostics.length > 0 ? { unrouted_diagnostics: dedupedDiagnostics } : {}),
           ...(fallbackNets.size > 0 ? { fallback_nets: [...fallbackNets] } : {}),
           ...(warnings.length > 0 ? { warnings } : {}),
           ...receiptField,
@@ -6857,6 +6894,9 @@ export async function describePcb(args: Record<string, unknown>) {
 
   // --- DRC status (counts only; no sample) ---------------------------------
   const drcSummary = await drcPcb(pcb, "summary", 0);
+  // Unverifiable ≠ clean: when the kernel can't evaluate the board, report the
+  // status instead of fabricating zero-violation counts (same fail-closed
+  // semantics as run_drc, which returns ecadUnverifiable on `!success`).
   const drc = drcSummary.success
     ? {
         violations: drcSummary.violations,

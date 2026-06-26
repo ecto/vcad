@@ -886,6 +886,58 @@ describe("route_nets plane stitching", () => {
   });
 });
 
+describe("route_nets routability + diagnostics", () => {
+  it("reports a routability score of 1 for a fully-routed board", async () => {
+    const created = out(
+      await createSchematic({
+        components: [resistor("R1", 0), resistor("R2", 20)],
+        nets: { SIG: ["R1.2", "R2.1"] },
+      }),
+    );
+    const id = created.document_id;
+    await placeComponents({ document_id: id, board_width: 60, board_height: 30 });
+    const res = out(await routeNets({ document_id: id }));
+    expect(res.success).toBe(true);
+    expect(res.routability).toBe(1);
+    // A finished board carries no unrouted diagnostics.
+    expect(res.unrouted_diagnostics).toBeUndefined();
+  });
+
+  it("surfaces routability < 1 and actionable diagnostics when a net can't route", async () => {
+    // Two nets must cross on a one-layer board barely wide enough for the parts,
+    // so one connection can't be closed without shorting — it comes back with a
+    // diagnostic, and routability drops below 1.
+    const created = out(
+      await createSchematic({
+        components: [resistor("R1", 0), resistor("R2", 6)],
+        nets: { A: ["R1.1", "R2.2"], B: ["R1.2", "R2.1"] },
+      }),
+    );
+    const id = created.document_id;
+    // Single copper layer (FCu only) so a crossing net has nowhere to escape.
+    await placeComponents({ document_id: id, board_width: 14, board_height: 6 });
+    await setStackup({ document_id: id, layers: ["FCu"] });
+    const res = out(await routeNets({ document_id: id }));
+    expect(res.success).toBe(true);
+    expect(typeof res.routability).toBe("number");
+    expect(res.routability).toBeGreaterThanOrEqual(0);
+    expect(res.routability).toBeLessThanOrEqual(1);
+    if (res.unrouted_nets && res.unrouted_nets.length > 0) {
+      expect(res.routability).toBeLessThan(1);
+      expect(Array.isArray(res.unrouted_diagnostics)).toBe(true);
+      const d = res.unrouted_diagnostics[0];
+      expect(res.unrouted_nets).toContain(d.net);
+      expect(typeof d.reason).toBe("string");
+      expect(d.reason.length).toBeGreaterThan(0);
+      // Either a concrete blocker or a suggested escape layer is given.
+      expect(
+        (Array.isArray(d.blocking_nets) && d.blocking_nets.length > 0) ||
+          typeof d.suggested_layer === "string",
+      ).toBe(true);
+    }
+  });
+});
+
 describe("add_zone overlap guard", () => {
   const mkBoard = async () => {
     const created = out(

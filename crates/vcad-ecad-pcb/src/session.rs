@@ -174,6 +174,36 @@ impl RouteSession {
         self.dead = 0;
     }
 
+    /// Axis-aligned bounding boxes (`(min, max)` corners) of every live copper
+    /// element on `layer` belonging to a net other than `net`, restricted to the
+    /// query box `[lo, hi]`.
+    ///
+    /// Seeds the push-and-shove visibility router with the obstacles it must
+    /// detour around. The boxes are coarse (they over-approximate the true
+    /// copper), so any route built from them is re-validated with [`probe`]
+    /// before it is trusted — this is purely a candidate-generation helper.
+    ///
+    /// [`probe`]: RouteSession::probe
+    pub fn obstacles_in(
+        &self,
+        layer: PcbLayer,
+        net: &str,
+        lo: [f64; 2],
+        hi: [f64; 2],
+    ) -> Vec<(Vec2, Vec2)> {
+        self.tree
+            .locate_in_envelope_intersecting(&AABB::from_corners(lo, hi))
+            .filter(|se| self.live[se.id])
+            .filter(|se| se.elem.layer == layer && se.elem.net != net)
+            .map(|se| {
+                (
+                    Vec2::new(se.elem.min[0], se.elem.min[1]),
+                    Vec2::new(se.elem.max[0], se.elem.max[1]),
+                )
+            })
+            .collect()
+    }
+
     /// Probe a candidate geometry on `layer` belonging to `net` against all
     /// existing copper, requiring `clearance` mm to other nets.
     ///
