@@ -42,6 +42,7 @@ import {
   routeDiffPair as kernelRouteDiffPair,
   critiqueRoute as kernelCritiqueRoute,
   runDrc as kernelRunDrc,
+  checkErc as kernelCheckErc,
   evaluateMotor,
   airgapFluxDensity,
   resolvePart as kernelResolvePart,
@@ -54,6 +55,7 @@ import {
 } from "@vcad/engine";
 import type { Engine, NetlistResult, TriangleMesh } from "@vcad/engine";
 import { registerSession, getSession } from "./session.js";
+import type { NextAction } from "./next-actions.js";
 import { sizePdnExact, ecadDiffEngineAvailable } from "../wasm/ecad-diff.js";
 
 /** Get PCB data from a document — checks PcbBoard nodes first, falls back to legacy doc.pcb */
@@ -61,6 +63,132 @@ function getDocPcb(doc: Document): Pcb | null {
   const nodeIds = getPcbNodeIds(doc);
   if (nodeIds.length > 0) return getNodePcb(doc, nodeIds[0]!);
   return (doc as Document & { pcb?: Pcb }).pcb ?? null;
+}
+
+/**
+ * Design-rule args supplied by set_design_rules *before* the board existed.
+ * Stashed on the in-memory document and replayed when place_components builds
+ * the board, so an agent can set rules in any order. An untyped extension (like
+ * the legacy `pcb?` field above) — it round-trips through JSON persistence but
+ * isn't part of the IR schema.
+ */
+type DocWithPendingRules = Document & {
+  __pendingDesignRules?: Record<string, unknown>;
+};
+
+/** The board's starting design rules — JLCPCB-ish 2-layer defaults. */
+function defaultDesignRules(): DesignRules {
+  return {
+    defaultRules: {
+      name: "Default",
+      traceWidth: 0.25,
+      clearance: 0.2,
+      viaDiameter: 0.8,
+      viaDrill: 0.4,
+    },
+    edgeClearance: 0.5,
+    holeToHole: 0.5,
+    minAnnularRing: 0.15,
+    minDrill: 0.2,
+  };
+}
+
+/** Strip the document handle from buffered args so we stash only the rules. */
+function stripDocArgs(args: Record<string, unknown>): Record<string, unknown> {
+  const rest: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(args)) {
+    if (k === "document" || k === "document_id") continue;
+    rest[k] = v;
+  }
+  return rest;
+}
+
+/**
+ * Apply set_design_rules-style args to a DesignRules object in place. Shared by
+ * set_design_rules (which writes pcb.rules directly) and place_components (which
+ * replays rules buffered before the board existed). Returns what changed plus
+ * any warnings; an `error` means the args were malformed (e.g. a class with no
+ * nets) and nothing meaningful should be persisted.
+ */
+function applyDesignRuleArgs(
+  rules: DesignRules,
+  knownNets: Set<string>,
+  args: Record<string, unknown>,
+  opts: { checkNets?: boolean } = {},
+): { touched: boolean; warnings: string[]; classNames?: string[]; error?: string } {
+  // When validating a call made before the board exists (the buffered probe),
+  // there's no netlist yet — skip the "net not on the board" warning so it
+  // doesn't fire spuriously on every buffered class.
+  const checkNets = opts.checkNets ?? true;
+  const dr = rules.defaultRules;
+  const warnings: string[] = [];
+  let touched = false;
+
+  const num = (k: string) => (typeof args[k] === "number" ? (args[k] as number) : undefined);
+  const requirePos = (k: string, v: number | undefined): boolean => {
+    if (v === undefined) return false;
+    if (!(v > 0)) {
+      warnings.push(`${k} must be > 0 — ignored`);
+      return false;
+    }
+    return true;
+  };
+
+  const clearance = num("clearance");
+  if (requirePos("clearance", clearance)) { dr.clearance = clearance!; touched = true; }
+  const trackWidth = num("track_width");
+  if (requirePos("track_width", trackWidth)) { dr.traceWidth = trackWidth!; touched = true; }
+  const viaDiameter = num("via_diameter");
+  if (requirePos("via_diameter", viaDiameter)) { dr.viaDiameter = viaDiameter!; touched = true; }
+  const viaDrill = num("via_drill");
+  if (requirePos("via_drill", viaDrill)) { dr.viaDrill = viaDrill!; touched = true; }
+  const dpg = num("diff_pair_gap");
+  if (requirePos("diff_pair_gap", dpg)) { dr.diffPairGap = dpg!; touched = true; }
+  const dpw = num("diff_pair_width");
+  if (requirePos("diff_pair_width", dpw)) { dr.diffPairWidth = dpw!; touched = true; }
+
+  const edgeClr = num("edge_clearance");
+  if (requirePos("edge_clearance", edgeClr)) { rules.edgeClearance = edgeClr!; touched = true; }
+  const h2h = num("hole_to_hole");
+  if (requirePos("hole_to_hole", h2h)) { rules.holeToHole = h2h!; touched = true; }
+  const minAnnular = num("min_annular_ring");
+  if (requirePos("min_annular_ring", minAnnular)) { rules.minAnnularRing = minAnnular!; touched = true; }
+  const minDrill = num("min_drill");
+  if (requirePos("min_drill", minDrill)) { rules.minDrill = minDrill!; touched = true; }
+
+  let classNames: string[] | undefined;
+  if (Array.isArray(args.classes)) {
+    const classesIn = args.classes as Array<Record<string, unknown>>;
+    const classRules: NetClassRules[] = [];
+    const assignments: Record<string, string[]> = {};
+    for (const c of classesIn) {
+      const name = String(c.name ?? "");
+      const nets = Array.isArray(c.nets) ? (c.nets as unknown[]).map(String) : [];
+      if (!name) return { touched, warnings, error: "each class needs a `name`" };
+      if (nets.length === 0)
+        return { touched, warnings, error: `class "${name}" needs a non-empty nets array` };
+      const unknown = checkNets ? nets.filter((id) => !knownNets.has(id)) : [];
+      if (unknown.length > 0) {
+        warnings.push(`class "${name}" references nets not on the board: ${unknown.join(", ")}`);
+      }
+      classRules.push({
+        name,
+        traceWidth: typeof c.track_width === "number" ? (c.track_width as number) : dr.traceWidth,
+        clearance: typeof c.clearance === "number" ? (c.clearance as number) : dr.clearance,
+        viaDiameter: typeof c.via_diameter === "number" ? (c.via_diameter as number) : dr.viaDiameter,
+        viaDrill: typeof c.via_drill === "number" ? (c.via_drill as number) : dr.viaDrill,
+        ...(typeof c.diff_pair_gap === "number" ? { diffPairGap: c.diff_pair_gap as number } : {}),
+        ...(typeof c.diff_pair_width === "number" ? { diffPairWidth: c.diff_pair_width as number } : {}),
+      });
+      assignments[name] = nets;
+    }
+    rules.classRules = classRules;
+    rules.netClassAssignments = assignments;
+    classNames = classRules.map((c) => c.name);
+    touched = true;
+  }
+
+  return { touched, warnings, classNames };
 }
 
 /** Standard `{ content, isError }` failure result for ECAD tools. */
@@ -1644,8 +1772,25 @@ function forceDirectedRefine(
     }
 
     for (let i = 0; i < positions.length; i++) {
-      positions[i].x = Math.min(bounds.maxX, Math.max(bounds.minX, positions[i].x + forces[i].x));
-      positions[i].y = Math.min(bounds.maxY, Math.max(bounds.minY, positions[i].y + forces[i].y));
+      // Clamp the component's *courtyard* inside the board, not just its center:
+      // inset each axis by the component's half-extent (reusing the size-aware
+      // `extents` the repulsion pass above already computes) so a large part —
+      // e.g. an LQFP-64 — pushed against an edge lands fully on-board instead of
+      // hanging half off and overlapping its neighbors. If a part is wider than
+      // the available inset span (range inverts), fall back to the plain bounds
+      // clamp — the cross-net legalizer below handles and reports the genuinely
+      // too-tight board rather than stacking every part on the midpoint.
+      const ext = extents[i];
+      const loX = bounds.minX + ext;
+      const hiX = bounds.maxX - ext;
+      const loY = bounds.minY + ext;
+      const hiY = bounds.maxY - ext;
+      const nx = positions[i].x + forces[i].x;
+      const ny = positions[i].y + forces[i].y;
+      positions[i].x =
+        hiX >= loX ? Math.min(hiX, Math.max(loX, nx)) : Math.min(bounds.maxX, Math.max(bounds.minX, nx));
+      positions[i].y =
+        hiY >= loY ? Math.min(hiY, Math.max(loY, ny)) : Math.min(bounds.maxY, Math.max(bounds.minY, ny));
     }
   }
 }
@@ -1900,21 +2045,8 @@ export async function placeComponents(args: Record<string, unknown>) {
     ],
   };
 
-  const defaultRules: NetClassRules = {
-    name: "Default",
-    traceWidth: 0.25,
-    clearance: 0.2,
-    viaDiameter: 0.8,
-    viaDrill: 0.4,
-  };
-
-  const rules: DesignRules = {
-    defaultRules,
-    edgeClearance: 0.5,
-    holeToHole: 0.5,
-    minAnnularRing: 0.15,
-    minDrill: 0.2,
-  };
+  const rules: DesignRules = defaultDesignRules();
+  const defaultRules = rules.defaultRules;
 
   // Grid placement sized to the outline's bounding box: split the usable
   // area into cells so every component lands inside it regardless of size.
@@ -2187,6 +2319,23 @@ export async function placeComponents(args: Record<string, unknown>) {
     };
   });
 
+  // Replay any design rules the agent set before the board existed (buffered by
+  // set_design_rules). Applied here — once `nets` is populated — so net-class
+  // assignments validate against the real netlist. Malformed buffered args are
+  // surfaced as a warning rather than failing placement.
+  let bufferedRulesApplied = false;
+  const pending = (doc as DocWithPendingRules).__pendingDesignRules;
+  if (pending) {
+    const applied = applyDesignRuleArgs(rules, new Set(nets.map((nn) => nn.id)), pending);
+    if (applied.error) {
+      warnings.push(`buffered design rules ignored: ${applied.error}`);
+    } else {
+      bufferedRulesApplied = applied.touched;
+      warnings.push(...applied.warnings.map((w) => `design rule: ${w}`));
+    }
+    delete (doc as DocWithPendingRules).__pendingDesignRules;
+  }
+
   const pcb: Pcb = {
     outline,
     stackup,
@@ -2305,6 +2454,8 @@ export async function placeComponents(args: Record<string, unknown>) {
             ...(cutouts && cutouts.length > 0 ? { cutouts: cutouts.length } : {}),
           },
           ...(utilization ? { utilization } : {}),
+          // Design rules set before the board existed were replayed onto it.
+          ...(bufferedRulesApplied ? { buffered_design_rules_applied: true } : {}),
           nets: netsSummary,
           ...docResultPayload(ctx),
         }),
@@ -2859,11 +3010,14 @@ interface DrcNetPairCount {
 
 /** Group each DRC rule by what it means for the board, so callers can tell an
  *  *incomplete* layout (ratsnest left to route) from an *illegal* one (copper
- *  conflicts / fab-rule breaks). UnconnectedNet and UnstitchedPad are the
- *  "incomplete" rules — a to-do (route it / stitch it), not a defect. */
+ *  conflicts / fab-rule breaks). UnconnectedNet and UnstitchedPad are
+ *  "incomplete" rules (route it / stitch it). NetIslands is a hard defect (a
+ *  net's copper built as ≥2 galvanically-isolated islands); it carries Error
+ *  severity regardless of bucket. */
 const DRC_CATEGORY: Record<string, "connectivity" | "clearance" | "manufacturing"> = {
   UnconnectedNet: "connectivity",
   UnstitchedPad: "connectivity",
+  NetIslands: "connectivity",
   Clearance: "clearance",
   Short: "clearance",
   MinTraceWidth: "manufacturing",
@@ -3389,12 +3543,50 @@ export async function runErc(args: Record<string, unknown>) {
     }
   }
 
+  // Kernel ERC: pin-type conflicts (output driving output) and floating power
+  // inputs. These rules need a netlist; the kernel's own netlist is
+  // coordinate-only, so we hand it the *derived* connectivity (which also
+  // bridges global labels and the explicit `nets` map) re-expressed as an
+  // explicit netlist over only the connected pins. That keeps these rules
+  // judging exactly the nets create_schematic reported — and, because
+  // unconnected pins are excluded, a stray power pin is reported once (above),
+  // never doubled here.
+  const kernelOutcome = await kernelCheckErc(synthesizeNettedSheet(sheet, derived));
+  let verified = false;
+  let unverifiedReason: string | undefined;
+  if (kernelOutcome.status === "ok") {
+    verified = true;
+    for (const v of kernelOutcome.violations) {
+      if (!isPinTypeOrPowerViolation(v.message)) continue;
+      violations.push({
+        severity: v.severity,
+        message: v.message,
+        ...(v.position ? { position: v.position } : {}),
+      });
+    }
+  } else if (kernelOutcome.status === "unavailable") {
+    // Fail closed: the kernel rules did not run, so the schematic is not
+    // verified for pin-type/power conflicts — never report this as clean.
+    unverifiedReason =
+      "kernel ECAD WASM unavailable — pin-type conflict and floating-power rules were not evaluated";
+  } else {
+    unverifiedReason = `kernel ERC could not parse the schematic: ${kernelOutcome.message}`;
+  }
+
+  // Errors first, then by message — matches the kernel's ordering convention.
+  violations.sort((a, b) => {
+    const sev = (a.severity === "Error" ? 0 : 1) - (b.severity === "Error" ? 0 : 1);
+    return sev !== 0 ? sev : a.message.localeCompare(b.message);
+  });
+
   return {
     content: [
       {
         type: "text" as const,
         text: JSON.stringify({
           success: true,
+          verified,
+          ...(unverifiedReason ? { unverified_reason: unverifiedReason } : {}),
           violations: violations.length,
           errors: violations.filter(v => v.severity === "Error").length,
           warnings: violations.filter(v => v.severity === "Warning").length,
@@ -3402,6 +3594,46 @@ export async function runErc(args: Record<string, unknown>) {
         }),
       },
     ],
+  };
+}
+
+/** A kernel ERC message we own here vs. one already reported by the TS checks
+ *  above (duplicate-ref, unconnected). The kernel's pin-type and power messages
+ *  are pinned by its own unit tests ("multiple outputs", "no power source"). */
+function isPinTypeOrPowerViolation(message: string): boolean {
+  return message.startsWith("Pin conflict on net") || message.includes("has no power source");
+}
+
+/**
+ * Re-express derived connectivity as a kernel-consumable sheet: the explicit
+ * `nets` map carries every connected pin's net, wires/labels are dropped (the
+ * map already encodes them), and each component keeps only its connected pins
+ * so the kernel's per-pin netlist never invents singleton nets for open pins.
+ * Pin electrical types are preserved verbatim, which is what gives the kernel's
+ * pin-type and power rules signal.
+ */
+function synthesizeNettedSheet(sheet: SchematicSheet, derived: DerivedNets): SchematicSheet {
+  const connectedByRef = new Map<string, Set<string>>();
+  for (const key of derived.netByPin.keys()) {
+    const sep = key.indexOf(PIN_SEP);
+    const ref = key.slice(0, sep);
+    const pin = key.slice(sep + 1);
+    let set = connectedByRef.get(ref);
+    if (!set) connectedByRef.set(ref, (set = new Set()));
+    set.add(pin);
+  }
+  const nets: Record<string, string[]> = {};
+  for (const [name, pins] of derived.nets) nets[name] = pins;
+  return {
+    ...sheet,
+    wires: [],
+    labels: [],
+    junctions: [],
+    components: sheet.components.map((comp) => ({
+      ...comp,
+      pins: comp.pins.filter((pin) => connectedByRef.get(comp.ref)?.has(pin.number)),
+    })),
+    nets,
   };
 }
 
@@ -5906,85 +6138,55 @@ export function setDesignRules(args: Record<string, unknown>) {
     content: [{ type: "text" as const, text: `Error: ${text}` }],
     isError: true as const,
   });
+
+  // No board yet: don't dead-end. Validate the shape (so a class with no nets or
+  // an empty call still fails fast), then buffer the rules on the document and
+  // replay them when place_components builds the board. The agent can set rules
+  // in any order; the canonical next step (place_components) rides back as a
+  // next_action so it stays discoverable.
   if (!pcb) {
-    return fail(
-      "Document has no PCB — run place_components first (or open a document that has a board)",
-    );
+    const probe = applyDesignRuleArgs(defaultDesignRules(), new Set<string>(), args, {
+      checkNets: false,
+    });
+    if (probe.error) return fail(probe.error);
+    if (!probe.touched) {
+      return fail("provide at least one rule field (clearance, track_width, …) or `classes`");
+    }
+    (ctx.doc as DocWithPendingRules).__pendingDesignRules = stripDocArgs(args);
+    const next: NextAction[] = [
+      {
+        action:
+          "No board yet — these design rules are buffered and apply automatically when the board is built. Run place_components next.",
+        tool: "place_components",
+        ...(ctx.documentId ? { args: { document_id: ctx.documentId } } : {}),
+      },
+    ];
+    return {
+      content: [
+        {
+          type: "text" as const,
+          text: JSON.stringify({
+            success: true,
+            buffered: true,
+            ...(probe.classNames ? { classes: probe.classNames } : {}),
+            ...(probe.warnings.length > 0 ? { warnings: probe.warnings } : {}),
+            next_actions: next,
+            ...docResultPayload(ctx),
+          }),
+        },
+      ],
+      structuredContent: { next_actions: next },
+    };
   }
 
   const rules = pcb.rules;
-  const dr = rules.defaultRules;
-  const warnings: string[] = [];
-  let touched = false;
-
-  const num = (k: string) => (typeof args[k] === "number" ? (args[k] as number) : undefined);
-  const requirePos = (k: string, v: number | undefined): boolean => {
-    if (v === undefined) return false;
-    if (!(v > 0)) {
-      warnings.push(`${k} must be > 0 — ignored`);
-      return false;
-    }
-    return true;
-  };
-
-  const clearance = num("clearance");
-  if (requirePos("clearance", clearance)) { dr.clearance = clearance!; touched = true; }
-  const trackWidth = num("track_width");
-  if (requirePos("track_width", trackWidth)) { dr.traceWidth = trackWidth!; touched = true; }
-  const viaDiameter = num("via_diameter");
-  if (requirePos("via_diameter", viaDiameter)) { dr.viaDiameter = viaDiameter!; touched = true; }
-  const viaDrill = num("via_drill");
-  if (requirePos("via_drill", viaDrill)) { dr.viaDrill = viaDrill!; touched = true; }
-  const dpg = num("diff_pair_gap");
-  if (requirePos("diff_pair_gap", dpg)) { dr.diffPairGap = dpg!; touched = true; }
-  const dpw = num("diff_pair_width");
-  if (requirePos("diff_pair_width", dpw)) { dr.diffPairWidth = dpw!; touched = true; }
-
-  const edgeClr = num("edge_clearance");
-  if (requirePos("edge_clearance", edgeClr)) { rules.edgeClearance = edgeClr!; touched = true; }
-  const h2h = num("hole_to_hole");
-  if (requirePos("hole_to_hole", h2h)) { rules.holeToHole = h2h!; touched = true; }
-  const minAnnular = num("min_annular_ring");
-  if (requirePos("min_annular_ring", minAnnular)) { rules.minAnnularRing = minAnnular!; touched = true; }
-  const minDrill = num("min_drill");
-  if (requirePos("min_drill", minDrill)) { rules.minDrill = minDrill!; touched = true; }
-
-  let classNames: string[] | undefined;
-  if (Array.isArray(args.classes)) {
-    const classesIn = args.classes as Array<Record<string, unknown>>;
-    const classRules: NetClassRules[] = [];
-    const assignments: Record<string, string[]> = {};
-    const knownNets = new Set(pcb.nets.map((n) => n.id));
-    for (const c of classesIn) {
-      const name = String(c.name ?? "");
-      const nets = Array.isArray(c.nets) ? (c.nets as unknown[]).map(String) : [];
-      if (!name) return fail("each class needs a `name`");
-      if (nets.length === 0) return fail(`class "${name}" needs a non-empty nets array`);
-      const unknown = nets.filter((id) => !knownNets.has(id));
-      if (unknown.length > 0) {
-        warnings.push(`class "${name}" references nets not on the board: ${unknown.join(", ")}`);
-      }
-      classRules.push({
-        name,
-        traceWidth: typeof c.track_width === "number" ? (c.track_width as number) : dr.traceWidth,
-        clearance: typeof c.clearance === "number" ? (c.clearance as number) : dr.clearance,
-        viaDiameter: typeof c.via_diameter === "number" ? (c.via_diameter as number) : dr.viaDiameter,
-        viaDrill: typeof c.via_drill === "number" ? (c.via_drill as number) : dr.viaDrill,
-        ...(typeof c.diff_pair_gap === "number" ? { diffPairGap: c.diff_pair_gap as number } : {}),
-        ...(typeof c.diff_pair_width === "number" ? { diffPairWidth: c.diff_pair_width as number } : {}),
-      });
-      assignments[name] = nets;
-    }
-    rules.classRules = classRules;
-    rules.netClassAssignments = assignments;
-    classNames = classRules.map((c) => c.name);
-    touched = true;
-  }
-
-  if (!touched) {
+  const res = applyDesignRuleArgs(rules, new Set(pcb.nets.map((n) => n.id)), args);
+  if (res.error) return fail(res.error);
+  if (!res.touched) {
     return fail("provide at least one rule field (clearance, track_width, …) or `classes`");
   }
 
+  const dr = rules.defaultRules;
   return {
     content: [
       {
@@ -6001,8 +6203,8 @@ export function setDesignRules(args: Record<string, unknown>) {
             min_annular_ring: rules.minAnnularRing,
             min_drill: rules.minDrill,
           },
-          ...(classNames ? { classes: classNames } : {}),
-          ...(warnings.length > 0 ? { warnings } : {}),
+          ...(res.classNames ? { classes: res.classNames } : {}),
+          ...(res.warnings.length > 0 ? { warnings: res.warnings } : {}),
           ...docResultPayload(ctx),
         }),
       },

@@ -3,6 +3,8 @@ import {
   suggestNextActions,
   buildErrorResult,
   enrichErrorResult,
+  enrichSuccessResult,
+  happyPathNext,
 } from "../tools/next-actions.js";
 
 describe("suggestNextActions", () => {
@@ -189,5 +191,94 @@ describe("enrichErrorResult (for tools that return isError instead of throwing)"
     const result = { content: [{ type: "text", text: "ok" }], isError: false };
     enrichErrorResult(result, "create", {});
     expect(result.content[0].text).toBe("ok");
+  });
+});
+
+describe("happyPathNext (canonical PCB flow on success)", () => {
+  it("steers create_schematic toward place_components, then run_erc", () => {
+    const next = happyPathNext("create_schematic", "d");
+    expect(next.map((a) => a.tool)).toEqual(["place_components", "run_erc"]);
+    expect(next.every((a) => a.args && a.args.document_id === "d")).toBe(true);
+  });
+
+  it("steers place_components toward set_design_rules", () => {
+    const next = happyPathNext("place_components", "d");
+    expect(next.map((a) => a.tool)).toEqual(["set_design_rules"]);
+  });
+
+  it("steers set_design_rules toward a save_document checkpoint before add_zone, then route_nets", () => {
+    const next = happyPathNext("set_design_rules", "d");
+    expect(next.map((a) => a.tool)).toEqual(["save_document", "route_nets"]);
+    // The checkpoint names add_zone so 'save before you pour' is explicit.
+    expect(next[0].action.toLowerCase()).toContain("add_zone");
+    expect(next[0].action.toLowerCase()).toContain("save_document");
+  });
+
+  it("steers route_nets toward run_drc + render_pcb (cross-check)", () => {
+    const next = happyPathNext("route_nets", "d");
+    expect(next.map((a) => a.tool)).toEqual(["run_drc", "render_pcb"]);
+  });
+
+  it("returns nothing for a tool that isn't on the PCB flow", () => {
+    expect(happyPathNext("export_cad", "d")).toEqual([]);
+  });
+
+  it("omits args when no document_id is known", () => {
+    const next = happyPathNext("place_components");
+    expect(next[0].tool).toBe("set_design_rules");
+    expect(next[0].args).toBeUndefined();
+  });
+});
+
+describe("enrichSuccessResult (happy-path actions on success)", () => {
+  it("injects next_actions INTO a JSON success body, keeping it parseable", () => {
+    const result = {
+      content: [
+        { type: "text", text: JSON.stringify({ success: true, document_id: "doc_1" }) },
+      ],
+      isError: false,
+    };
+    // create_schematic mints the id server-side, so it isn't in args — the id is
+    // recovered from the result body.
+    enrichSuccessResult(result, "create_schematic", {});
+    const parsed = JSON.parse(result.content[0].text) as {
+      success: boolean;
+      next_actions: Array<{ tool?: string; args?: { document_id?: string } }>;
+    };
+    expect(parsed.success).toBe(true);
+    expect(parsed.next_actions.map((a) => a.tool)).toEqual(["place_components", "run_erc"]);
+    expect(parsed.next_actions[0].args?.document_id).toBe("doc_1");
+    expect(
+      (result as { structuredContent?: { next_actions?: unknown[] } }).structuredContent
+        ?.next_actions,
+    ).toHaveLength(2);
+  });
+
+  it("is a no-op on an error result (that's enrichErrorResult's job)", () => {
+    const result = {
+      content: [{ type: "text", text: JSON.stringify({ error: "boom" }) }],
+      isError: true,
+    };
+    enrichSuccessResult(result, "route_nets", { document_id: "d" });
+    expect(JSON.parse(result.content[0].text).next_actions).toBeUndefined();
+  });
+
+  it("is a no-op for a tool that isn't on the PCB flow", () => {
+    const result = { content: [{ type: "text", text: JSON.stringify({ ok: 1 }) }], isError: false };
+    enrichSuccessResult(result, "inspect_cad", { document_id: "d" });
+    expect(JSON.parse(result.content[0].text).next_actions).toBeUndefined();
+    expect((result as { structuredContent?: unknown }).structuredContent).toBeUndefined();
+  });
+
+  it("is idempotent — a buffered set_design_rules keeps its own place_components hint", () => {
+    // A buffered set_design_rules already carries next_actions → place_components;
+    // the generic save_document/route_nets hint must NOT overwrite it.
+    const result = {
+      content: [{ type: "text", text: JSON.stringify({ buffered: true, document_id: "d" }) }],
+      structuredContent: { next_actions: [{ action: "run place_components", tool: "place_components" }] },
+      isError: false,
+    };
+    enrichSuccessResult(result, "set_design_rules", { document_id: "d" });
+    expect(result.structuredContent.next_actions.map((a) => a.tool)).toEqual(["place_components"]);
   });
 });
