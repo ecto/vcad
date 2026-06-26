@@ -25,6 +25,7 @@ import { verifyAccessToken } from "./oauth.js";
 import { getViewerHtml, MCP_APP_MIME_TYPE } from "./viewer.js";
 import { flushTelemetry } from "./telemetry.js";
 import { handleLiveRequest } from "./live-route.js";
+import { handleArtifactRequest } from "./artifact-route.js";
 
 const PORT = parseInt(process.env.PORT || "8080", 10);
 
@@ -228,6 +229,12 @@ const httpServer = createHttpServer(async (req, res) => {
         "Cache-Control": "public, max-age=300",
       });
       res.end(getViewerHtml());
+      return;
+    }
+
+    // Artifact channel (/artifacts/*) — large export/fab bundles offloaded out
+    // of model context. Capability-keyed by the unguessable id in the path.
+    if (await handleArtifactRequest(req, res)) {
       return;
     }
 
