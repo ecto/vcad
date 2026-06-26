@@ -2571,7 +2571,7 @@ export async function routeNets(args: Record<string, unknown>) {
 
   // Receipt: snapshot DRC before the (non-idempotent) route so the after-diff
   // can attribute exactly what this call fixed and what it introduced.
-  const wantReceipt = args.receipt === true;
+  const wantReceipt = Boolean(args.receipt);
   const beforeSnap = wantReceipt ? await drcPcb(pcb, "full", 500) : null;
 
   // Synthesize a netlist from pad assignments so the kernel ratsnest can
@@ -2636,6 +2636,7 @@ export async function routeNets(args: Record<string, unknown>) {
   const fallbackNets = new Set<string>();
   const unroutedNets = new Set<string>();
   let tracesAdded = 0;
+  let viasAdded = 0;
 
   // Auto-route the whole board in the kernel: every net is routed against one
   // growing clearance oracle and retried on the back layer with transition vias
@@ -2707,6 +2708,7 @@ export async function routeNets(args: Record<string, unknown>) {
         endLayer: "BCu",
         net: v.net,
       });
+      viasAdded++;
     }
     for (const n of result.routed_nets) routedNets.add(n);
     for (const n of result.unrouted_nets) unroutedNets.add(n);
@@ -2798,7 +2800,21 @@ export async function routeNets(args: Record<string, unknown>) {
       { tool: "route_nets", args: { nets: netsFilter, trace_width: traceWidth }, before: beforeSnap, after },
       0,
     );
-    receiptField.receipt = agentView(entry, ctx.documentId ?? "");
+    const shortPairs: [string, string][] = [];
+    for (const bp of after.byNetPair) {
+      if (bp.rule === "Short" && bp.nets[0] && bp.nets[1]) shortPairs.push(bp.nets);
+    }
+    receiptField.receipt = {
+      ...agentView(entry, ctx.documentId ?? ""),
+      nets_routed: [...routedNets].sort(),
+      nets_unrouted: [...unroutedNets].sort(),
+      traces_added: tracesAdded,
+      traces_removed: tracesRemoved,
+      vias_added: viasAdded,
+      vias_removed: viasRemoved,
+      plane_stitched: planeStitched,
+      short_pairs: shortPairs,
+    };
   }
 
   return {
