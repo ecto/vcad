@@ -993,6 +993,96 @@ describe("ecad session flow", () => {
     expect(d).toBeGreaterThan(8);
   });
 
+  it("force_directed keeps large edge components fully on-board (extent-aware clamp)", async () => {
+    // Cram nine LQFP-64 (~12mm body, ~6mm half-extent) onto a board too small to
+    // space them at their courtyard radius. Repulsion slams the perimeter parts
+    // hard against the placement clamp. The old clamp pinned each *center* to the
+    // raw bounds, so an edge part's 6mm body hung ~half off the board (and over
+    // its neighbor) — many DRC round-trips. The fix insets the clamp by each
+    // part's half-extent, so the whole courtyard stays on the board.
+    const lqfp = (ref: string) => ({
+      ref,
+      value: "MCU",
+      footprint: "Package_QFP:LQFP-64_10x10mm_P0.5mm",
+      x: 0,
+      y: 0,
+      // The parametric engine builds all 64 pads from the footprint id; a few
+      // pins are enough to declare the part.
+      pins: [1, 2, 3, 4].map((n) => ({ number: String(n), name: String(n), type: "Passive" })),
+    });
+    const W = 30;
+    const H = 30;
+    const created = out(
+      await createSchematic({
+        components: ["U1", "U2", "U3", "U4", "U5", "U6", "U7", "U8", "U9"].map(lqfp),
+      }),
+    );
+    const id = created.document_id;
+    out(
+      await placeComponents({
+        document_id: id,
+        board_width: W,
+        board_height: H,
+        strategy: "force_directed",
+      }),
+    );
+    const board = getPcbBoard(getSession(id));
+
+    /** Absolute copper bounding box of a placed footprint (pad land extents). */
+    const padHalf = (shape: { type: string } & Record<string, number>): number =>
+      shape.type === "Circle"
+        ? shape.diameter / 2
+        : shape.type === "Rect" || shape.type === "Oval" || shape.type === "RoundRect"
+          ? Math.max(shape.width, shape.height) / 2
+          : 0.5;
+    const bbox = (fp: (typeof board.footprints)[number]) => {
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      for (const p of fp.pads) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const h = padHalf(p.shape as any);
+        minX = Math.min(minX, fp.position.x + p.position.x - h);
+        minY = Math.min(minY, fp.position.y + p.position.y - h);
+        maxX = Math.max(maxX, fp.position.x + p.position.x + h);
+        maxY = Math.max(maxY, fp.position.y + p.position.y + h);
+      }
+      return { minX, minY, maxX, maxY };
+    };
+
+    // Every part's full courtyard lands inside the (0,0)→(W,H) outline. The 0.01mm
+    // tolerance absorbs the footprint-build position rounding.
+    const eps = 0.02;
+    for (const fp of board.footprints) {
+      const b = bbox(fp);
+      expect(b.minX).toBeGreaterThanOrEqual(-eps);
+      expect(b.minY).toBeGreaterThanOrEqual(-eps);
+      expect(b.maxX).toBeLessThanOrEqual(W + eps);
+      expect(b.maxY).toBeLessThanOrEqual(H + eps);
+    }
+  });
+
+  it("placement_drc flags an off-board part as clean:false so the agent can branch", async () => {
+    // After placement, a part shoved past the outline must flip placement_drc to
+    // clean:false (with its ref in off_board) — the cheap pre-routing signal an
+    // agent branches on before route_nets, instead of discovering it at run_drc.
+    const created = out(
+      await createSchematic({
+        components: [resistor("R1", 0), resistor("R2", 20)],
+        nets: { MID: ["R1.2", "R2.1"] },
+      }),
+    );
+    const id = created.document_id;
+    out(await placeComponents({ document_id: id, board_width: 40, board_height: 40 }));
+    const board = getPcbBoard(getSession(id));
+    // On-board placement is clean.
+    expect((await summarizePlacementDrc(board)).clean).toBe(true);
+    // Push R2 off the outline → clean:false, R2 reported off_board.
+    board.footprints.find((f) => f.ref === "R2")!.position = { x: 80, y: 80 };
+    const drc = await summarizePlacementDrc(board);
+    expect(drc.clean).toBe(false);
+    expect(drc.off_board).toContain("R2");
+    expect(drc.off_board).not.toContain("R1");
+  });
+
   it("force_directed never bakes a cross-net pad short into the board", async () => {
     // A tightly-netted NE555-style cluster: the net-attraction can pull
     // different-net pads on top of each other (a VCC/GND short) before any

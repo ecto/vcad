@@ -1644,8 +1644,25 @@ function forceDirectedRefine(
     }
 
     for (let i = 0; i < positions.length; i++) {
-      positions[i].x = Math.min(bounds.maxX, Math.max(bounds.minX, positions[i].x + forces[i].x));
-      positions[i].y = Math.min(bounds.maxY, Math.max(bounds.minY, positions[i].y + forces[i].y));
+      // Clamp the component's *courtyard* inside the board, not just its center:
+      // inset each axis by the component's half-extent (reusing the size-aware
+      // `extents` the repulsion pass above already computes) so a large part —
+      // e.g. an LQFP-64 — pushed against an edge lands fully on-board instead of
+      // hanging half off and overlapping its neighbors. If a part is wider than
+      // the available inset span (range inverts), fall back to the plain bounds
+      // clamp — the cross-net legalizer below handles and reports the genuinely
+      // too-tight board rather than stacking every part on the midpoint.
+      const ext = extents[i];
+      const loX = bounds.minX + ext;
+      const hiX = bounds.maxX - ext;
+      const loY = bounds.minY + ext;
+      const hiY = bounds.maxY - ext;
+      const nx = positions[i].x + forces[i].x;
+      const ny = positions[i].y + forces[i].y;
+      positions[i].x =
+        hiX >= loX ? Math.min(hiX, Math.max(loX, nx)) : Math.min(bounds.maxX, Math.max(bounds.minX, nx));
+      positions[i].y =
+        hiY >= loY ? Math.min(hiY, Math.max(loY, ny)) : Math.min(bounds.maxY, Math.max(bounds.minY, ny));
     }
   }
 }
