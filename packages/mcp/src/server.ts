@@ -104,6 +104,9 @@ import {
   dispatchRegistryTool,
 } from "./tools/registry-dispatch.js";
 import { buildErrorResult, enrichErrorResult } from "./tools/next-actions.js";
+// Runtime config read from Vercel Edge Config so warm instances reflect a flag
+// flip or a fresh deploy WITHOUT a redeploy (see edge-config.ts).
+import { getStaleness } from "./edge-config.js";
 // Re-exported so the Vercel entry point (services/mcp/entry.ts) serves the live
 // window through the same handler as the standalone server (http.ts).
 export { handleLiveRequest } from "./live-route.js";
@@ -793,6 +796,27 @@ export async function createServer(
     `[mcp] vcad ${VERSION_WITH_BUILD} (instance ${INSTANCE_ID}) — ${dispatchableTools.size} kernel tools; kernel WASM ${kernelWasmLoaded ? "ok" : "UNAVAILABLE"}`,
   );
 
+  // Connect-time staleness: surface it in the `initialize` instructions so a
+  // client learns at handshake — before any tool call — whether this instance
+  // is behind the latest deployment. createServer runs per request on
+  // serverless, so the Edge Config read is effectively per-connection (and
+  // TTL-cached). When nothing is published (Edge Config unset), is_stale is
+  // false and no banner is added — identical to the pre-Edge-Config world.
+  let instructions = buildInstructions(kernelPrompt);
+  try {
+    const connectStaleness = await getStaleness(BUILD_SHA);
+    if (connectStaleness.is_stale) {
+      const want = connectStaleness.expected_build_sha?.slice(0, 7) ?? "newer";
+      instructions +=
+        `\n\n⚠️ STALE BUILD: this instance is ${SHORT_SHA} but the latest ` +
+        `deployment is ${want}. You may be pinned to a draining warm instance — ` +
+        `if a just-shipped tool or flag seems missing, reconnect to land on the ` +
+        `new build (or verify with \`server_info\` / \`curl https://mcp.vcad.io/health\`).`;
+    }
+  } catch {
+    // staleness is advisory; never block a connection on it
+  }
+
   const server = new Server(
     {
       name: "vcad",
@@ -810,8 +834,9 @@ export async function createServer(
       },
       // Protocol-native equivalent of the in-app chat system prompt:
       // workflow framing + the kernel's type catalog, material keys, and
-      // orientation semantics. Hosts surface this to the agent once.
-      instructions: buildInstructions(kernelPrompt),
+      // orientation semantics. Hosts surface this to the agent once. Carries a
+      // STALE BUILD banner when this instance is behind the latest deployment.
+      instructions,
     },
   );
 
@@ -1687,6 +1712,38 @@ export async function createServer(
     content: Array<{ type: string; text: string; annotations?: unknown }>;
     structuredContent?: Record<string, unknown>;
     isError?: boolean;
+    _meta?: Record<string, unknown>;
+  };
+
+  /**
+   * Stamp the running build/runtime identity onto EVERY tool result's `_meta`,
+   * not just `server_info`. Warm-instance staleness and version skew then show
+   * up inline on any call: two results with different instance_id/build_sha mean
+   * old instances are still draining behind a fresh deploy, and `is_stale` flags
+   * the instance you're pinned to as behind the latest deployment (compared to
+   * `expected_build_sha` from Edge Config). Merges under a namespaced key so it
+   * never clobbers another extension's `_meta`; best-effort — a stamp failure
+   * must never turn a successful call into an error.
+   */
+  const stampResultMeta = async (result: ToolResult): Promise<void> => {
+    if (!result || typeof result !== "object") return;
+    try {
+      const info = getBuildInfo();
+      const { expected_build_sha, is_stale } = await getStaleness(info.build_sha);
+      result._meta = {
+        ...result._meta,
+        "io.vcad/build": {
+          build_sha: info.build_sha,
+          instance_id: info.instance_id,
+          version_full: info.version_full,
+          uptime_s: info.uptime_s,
+          expected_build_sha,
+          is_stale,
+        },
+      };
+    } catch {
+      // identity stamping is observability, never load-bearing
+    }
   };
 
   // Handle tool calls
@@ -1704,6 +1761,7 @@ export async function createServer(
         isError: true,
       };
       fireToolAlert(name, args, disabledResult);
+      await stampResultMeta(disabledResult);
       return disabledResult;
     }
 
@@ -1712,7 +1770,7 @@ export async function createServer(
     // another tenant's doc), while anonymous/stdio callers share the
     // process-wide fallback. Everything below — hydrate, dispatch, persist —
     // must run inside it so the `documents` facade routes to the right cache.
-    return runInSessionScope(context.user, async (): Promise<ToolResult> => {
+    const scopedResult = await runInSessionScope(context.user, async (): Promise<ToolResult> => {
     // ── Hydrate ───────────────────────────────────────────────────────────
     // If the call names a session that isn't in the warm cache, rehydrate it
     // from the durable store BEFORE the (synchronous) tool reads it via
@@ -2052,13 +2110,19 @@ export async function createServer(
           result = await continueDocument(args, sessionStore);
           break;
 
-        case "server_info":
+        case "server_info": {
+          const buildInfo = getBuildInfo();
+          // expected_build_sha/is_stale come from Edge Config (per-request,
+          // TTL-cached): on a warm instance pinned behind a fresh deploy this
+          // flips to is_stale:true so the agent knows to reconnect.
+          const staleness = await getStaleness(buildInfo.build_sha);
           result = {
             content: [
               {
                 type: "text",
                 text: JSON.stringify({
-                  ...getBuildInfo(),
+                  ...buildInfo,
+                  ...staleness,
                   kernel_wasm: kernelWasmLoaded ? "ok" : "unavailable",
                   ...(kernelWasmMissing.length > 0
                     ? { kernel_wasm_missing_exports: kernelWasmMissing }
@@ -2071,6 +2135,7 @@ export async function createServer(
             ],
           };
           break;
+        }
 
         case "run_drc":
           result = await runDrc(args);
@@ -2231,6 +2296,10 @@ export async function createServer(
       return errorResult;
     }
     });
+    // Single chokepoint: stamp build identity on the way out so EVERY tool
+    // result — success, tool-reported error, or thrown error — carries it.
+    await stampResultMeta(scopedResult);
+    return scopedResult;
   });
 
   return server;
