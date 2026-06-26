@@ -58,6 +58,7 @@ import {
 import type { Engine, NetlistResult, TriangleMesh } from "@vcad/engine";
 import { registerSession, getSession, undoLastSnapshot, historyDepth } from "./session.js";
 import type { NextAction } from "./next-actions.js";
+import { computeEnclosureFitForBoard } from "./enclosure.js";
 import { sizePdnExact, ecadDiffEngineAvailable } from "../wasm/ecad-diff.js";
 import { maxInlineExportBytes } from "./remote.js";
 
@@ -7729,6 +7730,18 @@ export const buildReceiptSchema = {
       type: "string",
       description: "Session id holding the PCB to certify.",
     },
+    enclosure_document_id: {
+      type: "string",
+      description:
+        "Optional CAD session id holding the enclosure solid. When given, the " +
+        "Receipt also carries a cross-domain enclosure-fit verdict (board fits, " +
+        "components clear the lid, holes land on standoffs, connectors align) — " +
+        "proof the board fits its case, not just that copper passes DRC.",
+    },
+    clearance: {
+      type: "number",
+      description: "Enclosure-fit clearance in mm (default 0.5); only used with enclosure_document_id.",
+    },
   },
 } as const;
 
@@ -7809,8 +7822,11 @@ export async function verifySubstitution(args: Record<string, unknown>) {
   return { content: [{ type: "text" as const, text: JSON.stringify(sub) }] };
 }
 
-/** Build a re-runnable verification Receipt for the session's PCB. */
-export async function buildReceipt(args: Record<string, unknown>) {
+/** Build a re-runnable verification Receipt for the session's PCB. When an
+ *  `enclosure_document_id` is supplied (and `engine` is available), the Receipt
+ *  also carries a cross-domain enclosure-fit verdict — proof the board fits the
+ *  case it ships in, not just that copper passes DRC. */
+export async function buildReceipt(args: Record<string, unknown>, engine?: Engine) {
   const ctx = resolveDocInput(args);
   const pcb = getDocPcb(ctx.doc);
   if (!pcb) {
@@ -7826,13 +7842,42 @@ export async function buildReceipt(args: Record<string, unknown>) {
       isError: true,
     };
   }
+
+  // Optional cross-domain layer: cross-check the board against an enclosure.
+  let enclosureFit: Awaited<ReturnType<typeof computeEnclosureFitForBoard>>["report"] | undefined;
+  let enclosureFitError: string | undefined;
+  const enclosureId = args.enclosure_document_id ? String(args.enclosure_document_id) : "";
+  if (enclosureId) {
+    if (!engine) {
+      enclosureFitError = "enclosure-fit needs the kernel engine; unavailable in this context";
+    } else {
+      try {
+        const res = await computeEnclosureFitForBoard(pcb, getSession(enclosureId), engine, {
+          clearance: typeof args.clearance === "number" ? args.clearance : undefined,
+        });
+        if (res.report) enclosureFit = res.report;
+        else enclosureFitError = res.error;
+      } catch (e) {
+        enclosureFitError = e instanceof Error ? e.message : String(e);
+      }
+    }
+  }
+
   // The receipt rides in structuredContent so the inline viewer renders it
   // as an audit ledger (the only carrier ChatGPT's widget bridge exposes);
   // document_id lets the viewer also fetch the board GLB behind the ledger.
+  const textPayload = enclosureFit
+    ? { ...receipt, enclosure_fit: enclosureFit }
+    : enclosureFitError
+      ? { ...receipt, enclosure_fit_error: enclosureFitError }
+      : receipt;
   return {
-    content: [{ type: "text" as const, text: JSON.stringify(receipt) }],
+    content: [{ type: "text" as const, text: JSON.stringify(textPayload) }],
     structuredContent: {
       receipt,
+      ...(enclosureFit ? { enclosure_fit: enclosureFit } : {}),
+      ...(enclosureFitError ? { enclosure_fit_error: enclosureFitError } : {}),
+      ...(enclosureId ? { enclosure_document_id: enclosureId } : {}),
       ...(ctx.documentId ? { document_id: ctx.documentId } : {}),
     },
   };

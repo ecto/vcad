@@ -239,6 +239,7 @@ import {
   searchFootprints,
   searchFootprintsSchema,
 } from "./tools/ecad.js";
+import { checkEnclosureFit, checkEnclosureFitSchema } from "./tools/enclosure.js";
 import { createCadLoon, createCadLoonSchema } from "./tools/loon.js";
 import {
   dfmCheck,
@@ -649,6 +650,7 @@ const TOOL_PACKS: Record<string, readonly string[]> = {
     "add_motor_winding",
     "winding_layout",
     "board_from_solid",
+    "check_enclosure_fit",
     "import_kicad",
     "import_eagle",
     "run_drc",
@@ -1392,6 +1394,19 @@ export async function createServer(
           "the XY plane. Bridges solid modeling and PCB layout: feed the " +
           "returned `outline` to place_components.",
         inputSchema: boardFromSolidSchema,
+      },
+      {
+        name: "check_enclosure_fit",
+        description:
+          "Cross-check a board (board session) against the enclosure it ships " +
+          "in (a CAD session holding the case solid) — the verification axis no " +
+          "EDA tool has, because vcad owns both a BRep kernel and a PCB engine. " +
+          "Extracts the case cavity, standoffs, and wall cutouts from the solid " +
+          "mesh, then verifies: board fits with clearance, tall parts clear the " +
+          "lid, mounting holes land on standoffs, and connectors line up with " +
+          "the wall openings. Pass `derive:true` to also get a board outline + " +
+          "holes seeded from the cavity. Surfaced in build_receipt too.",
+        inputSchema: checkEnclosureFitSchema,
       },
       {
         name: "list_footprints",
@@ -2163,6 +2178,10 @@ export async function createServer(
           result = boardFromSolid(args, engine);
           break;
 
+        case "check_enclosure_fit":
+          result = await checkEnclosureFit(args, engine);
+          break;
+
         case "list_footprints":
           result = listFootprints(args);
           break;
@@ -2316,7 +2335,7 @@ export async function createServer(
           break;
 
         case "build_receipt":
-          result = await buildReceipt(args);
+          result = await buildReceipt(args, engine);
           break;
 
         case "verify_receipt":
