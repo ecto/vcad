@@ -165,6 +165,8 @@ import {
   runErcSchema,
   exportGerber,
   exportGerberSchema,
+  exportKicad,
+  exportKicadSchema,
   calcImpedance,
   calcImpedanceSchema,
   sizeImpedance,
@@ -1652,6 +1654,17 @@ export async function createServer(
         inputSchema: exportGerberSchema,
       },
       {
+        name: "export_kicad",
+        description:
+          "Export the session as a native, editable KiCad 9 file. " +
+          "filename ending in .kicad_pcb writes the board (footprints, pads, nets, " +
+          "traces, vias, zones, layers, outline); .kicad_sch writes the schematic. " +
+          "Unlike export_gerber (fab-only output), this round-trips: a human can open " +
+          "it in KiCad to finish routing nets the autorouter couldn't close, then " +
+          "re-import. Large files respect the inline byte cap (use output_dir for those).",
+        inputSchema: exportKicadSchema,
+      },
+      {
         name: "calc_impedance",
         description:
           "Calculate trace impedance using IPC-2141 formulas. " +
@@ -2259,6 +2272,10 @@ export async function createServer(
 
         case "export_gerber":
           result = await exportGerber(args);
+          break;
+
+        case "export_kicad":
+          result = await exportKicad(args);
           break;
 
         case "calc_impedance":

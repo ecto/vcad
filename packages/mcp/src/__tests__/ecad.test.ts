@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, beforeEach } from "vitest";
-import { Engine, resolveFootprint } from "@vcad/engine";
+import { Engine, resolveFootprint, parseKicadPcb } from "@vcad/engine";
 import type { Document, Pcb, Vec2 } from "@vcad/ir";
 import {
   createSchematic,
@@ -8,6 +8,7 @@ import {
   runDrc,
   runErc,
   exportGerber,
+  exportKicad,
   calcImpedance,
   sizeImpedance,
   sizePdn,
@@ -750,6 +751,50 @@ describe("ecad session flow", () => {
     const gerber = out(await exportGerber({ document_id: id }));
     expect(gerber.success).toBe(true);
     expect(gerber.files.length).toBeGreaterThan(0);
+
+    // Native KiCad board export round-trips back through the importer.
+    const kicad = out(
+      await exportKicad({ document_id: id, filename: "out.kicad_pcb" }),
+    );
+    expect(kicad.success).toBe(true);
+    expect(kicad.format).toBe("kicad_pcb");
+    expect(kicad.document_id).toBe(id);
+    expect(typeof kicad.content).toBe("string");
+    expect(kicad.content).toContain("(kicad_pcb");
+    expect(kicad.content).toContain('(generator "vcad")');
+    // The routed net and a placed footprint survive into the file.
+    expect(kicad.content).toContain('"MID"');
+    expect(kicad.content).toContain("(segment");
+
+    const reimported = await parseKicadPcb(kicad.content);
+    expect(reimported).not.toBeNull();
+    expect(reimported!.footprints.length).toBe(2);
+    const refs = reimported!.footprints.map((fp) => fp.ref).sort();
+    expect(refs).toEqual(["R1", "R2"]);
+    expect(reimported!.traces.length).toBeGreaterThan(0);
+  });
+
+  it("export_kicad writes a .kicad_sch schematic and rejects unknown extensions", async () => {
+    const created = out(
+      await createSchematic({
+        components: [resistor("R1", 0), resistor("R2", 20)],
+        nets: { MID: ["R1.2", "R2.1"] },
+      }),
+    );
+    const id = created.document_id;
+
+    const sch = out(
+      await exportKicad({ document_id: id, filename: "sheet.kicad_sch" }),
+    );
+    expect(sch.success).toBe(true);
+    expect(sch.format).toBe("kicad_sch");
+    expect(sch.content).toContain("(kicad_sch");
+    expect(sch.content).toContain("(lib_symbols");
+    expect(sch.content).toContain('(lib_id "vcad:R1")');
+
+    // An unsupported extension is a clean tool error, not a throw.
+    const bad = await exportKicad({ document_id: id, filename: "nope.brd" });
+    expect(bad.isError).toBe(true);
   });
 
   it("parametric footprint engine resolves QFN/DPAK on-board and reports unknowns", async () => {

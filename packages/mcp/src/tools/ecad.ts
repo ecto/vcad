@@ -35,6 +35,8 @@ import { getNodePcb, getPcbNodeIds, buildEntry, agentView } from "@vcad/core";
 import {
   computeRatsnest,
   exportFabFiles,
+  exportKicadPcb,
+  exportKicadSch,
   resolveFootprint,
   generateNetlist,
   isEcadAvailable,
@@ -57,6 +59,7 @@ import type { Engine, NetlistResult, TriangleMesh } from "@vcad/engine";
 import { registerSession, getSession, undoLastSnapshot, historyDepth } from "./session.js";
 import type { NextAction } from "./next-actions.js";
 import { sizePdnExact, ecadDiffEngineAvailable } from "../wasm/ecad-diff.js";
+import { maxInlineExportBytes } from "./remote.js";
 
 /** Get PCB data from a document — checks PcbBoard nodes first, falls back to legacy doc.pcb */
 function getDocPcb(doc: Document): Pcb | null {
@@ -863,6 +866,32 @@ export const exportGerberSchema = {
         "Resolved on the MCP server's filesystem — on hosted/sandboxed servers " +
         "the write may fail, in which case file contents are returned inline " +
         "instead. When omitted, file contents are always returned inline.",
+    },
+  },
+  required: [],
+};
+
+/** JSON Schema for export_kicad tool. */
+export const exportKicadSchema = {
+  type: "object" as const,
+  properties: {
+    ...docInputProperties,
+    filename: {
+      type: "string" as const,
+      description:
+        "Output filename ending in .kicad_pcb (board) or .kicad_sch (schematic). " +
+        "The extension selects what is exported: .kicad_pcb writes the session's " +
+        "board (footprints, pads, nets, traces, vias, zones, layers, outline) as a " +
+        "native, editable KiCad 9 file a human can open and finish routing; " +
+        ".kicad_sch writes the session's schematic. Defaults to board.kicad_pcb.",
+    },
+    output_dir: {
+      type: "string" as const,
+      description:
+        "Directory to write the file to (created if missing). Resolved on the MCP " +
+        "server's filesystem — on hosted/sandboxed servers the write may fail or be " +
+        "invisible, in which case the file content is returned inline instead. When " +
+        "omitted, the content is returned inline (subject to a size cap).",
     },
   },
   required: [],
@@ -3735,6 +3764,117 @@ export async function exportGerber(args: Record<string, unknown>) {
         }),
       },
     ],
+  };
+}
+
+/**
+ * Export the session's board or schematic as a native, editable KiCad 9 file.
+ *
+ * `.kicad_pcb` serializes the board (the inverse of import_pcb); `.kicad_sch`
+ * serializes the schematic. The point is a round trip: a human can open the
+ * agent's design in KiCad to finish routing the nets the autorouter couldn't
+ * close, then re-import. Large outputs respect the inline byte cap — over the
+ * cap, the caller is steered to `output_dir` or open_in_browser.
+ */
+export async function exportKicad(args: Record<string, unknown>) {
+  const { doc, documentId } = resolveDocInput(args);
+  const filename =
+    typeof args.filename === "string" && args.filename.trim()
+      ? (args.filename as string)
+      : "board.kicad_pcb";
+  const outputDir = args.output_dir as string | undefined;
+
+  const ext = filename.toLowerCase().split(".").pop();
+  let content: string | null;
+  let format: "kicad_pcb" | "kicad_sch";
+
+  if (ext === "kicad_sch") {
+    format = "kicad_sch";
+    const sheet = (doc as Document & { schematic?: SchematicSheet }).schematic;
+    if (!sheet) {
+      return ecadError(
+        "Document has no schematic to export. Create one with create_schematic.",
+      );
+    }
+    content = await exportKicadSch(sheet);
+  } else if (ext === "kicad_pcb") {
+    format = "kicad_pcb";
+    const pcb = getDocPcb(doc);
+    if (!pcb) {
+      return ecadError("Document has no PCB to export.");
+    }
+    content = await exportKicadPcb(pcb);
+  } else {
+    return ecadError(
+      `Unsupported KiCad extension '.${ext ?? ""}'. Use .kicad_pcb (board) or .kicad_sch (schematic).`,
+    );
+  }
+
+  if (content === null) {
+    return ecadError("KiCad export unavailable (kernel WASM not loaded)");
+  }
+
+  const bytes = Buffer.byteLength(content, "utf8");
+
+  // Disk path: write to output_dir when provided and the host allows it.
+  if (outputDir) {
+    try {
+      const fs = await import("node:fs/promises");
+      const { resolveWithinRoot } = await import("./safe-path.js");
+      const dir = resolveWithinRoot(outputDir);
+      await fs.mkdir(dir, { recursive: true });
+      const path = resolveWithinRoot(filename, dir);
+      await fs.writeFile(path, content, "utf8");
+      const payload = { success: true, filename, format, bytes, path, ...(documentId ? { document_id: documentId } : {}) };
+      return {
+        content: [{ type: "text" as const, text: JSON.stringify(payload) }],
+        structuredContent: { export_kicad: payload },
+      };
+    } catch (e) {
+      // Sandboxed/hosted host — fall through to inline delivery below.
+      const reason = e instanceof Error ? e.message : String(e);
+      const cap = maxInlineExportBytes();
+      if (bytes > cap) {
+        return ecadError(
+          `Could not write to '${outputDir}' (${reason}) and the ${bytes}-byte file is over the ${cap}-byte inline cap. ` +
+            "Use open_in_browser, or a writable output_dir.",
+        );
+      }
+      const payload = {
+        success: true,
+        filename,
+        format,
+        bytes,
+        content,
+        note_delivery: `Could not write to '${outputDir}' (${reason}); file content returned inline.`,
+        ...(documentId ? { document_id: documentId } : {}),
+      };
+      return {
+        content: [{ type: "text" as const, text: JSON.stringify(payload) }],
+        structuredContent: { export_kicad: payload },
+      };
+    }
+  }
+
+  // Inline path: bounded so the file does not flood the model's context.
+  const cap = maxInlineExportBytes();
+  if (bytes > cap) {
+    return ecadError(
+      `KiCad file is ${bytes} bytes — over the ${cap}-byte inline limit. ` +
+        "Pass output_dir to write it to disk, or use open_in_browser.",
+    );
+  }
+  const payload = {
+    success: true,
+    filename,
+    format,
+    bytes,
+    content,
+    ...(documentId ? { document_id: documentId } : {}),
+  };
+  return {
+    content: [{ type: "text" as const, text: JSON.stringify(payload) }],
+    structuredContent: { export_kicad: payload },
   };
 }
 
