@@ -274,58 +274,86 @@ pub struct SymbolDef {
 // ============================================================================
 
 /// PCB layer identifiers (KiCad-compatible).
+///
+/// Each variant carries a `serde(alias = …)` for the dotted KiCad spelling
+/// (`In1.Cu`, `Edge.Cuts`, …) so documents that were corrupted with those
+/// names still deserialize — and re-serialize back to the canonical form. The
+/// MCP write boundaries reject the dotted spellings outright (see
+/// `validateLayer` in `packages/mcp/src/tools/ecad.ts`); the aliases are only a
+/// safety net for data already on disk.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts-rs", ts(export, export_to = "bindings/"))]
 pub enum PcbLayer {
     // Copper layers
     /// Front copper.
+    #[serde(alias = "F.Cu")]
     FCu,
     /// Back copper.
+    #[serde(alias = "B.Cu")]
     BCu,
     /// Inner copper layer 1.
+    #[serde(alias = "In1.Cu")]
     In1Cu,
     /// Inner copper layer 2.
+    #[serde(alias = "In2.Cu")]
     In2Cu,
     /// Inner copper layer 3.
+    #[serde(alias = "In3.Cu")]
     In3Cu,
     /// Inner copper layer 4.
+    #[serde(alias = "In4.Cu")]
     In4Cu,
     /// Inner copper layer 5.
+    #[serde(alias = "In5.Cu")]
     In5Cu,
     /// Inner copper layer 6.
+    #[serde(alias = "In6.Cu")]
     In6Cu,
 
     // Mask/paste layers
     /// Front solder mask.
+    #[serde(alias = "F.SilkS")]
     FSilkS,
     /// Back solder mask.
+    #[serde(alias = "B.SilkS")]
     BSilkS,
     /// Front solder mask.
+    #[serde(alias = "F.Mask")]
     FMask,
     /// Back solder mask.
+    #[serde(alias = "B.Mask")]
     BMask,
     /// Front solder paste.
+    #[serde(alias = "F.Paste")]
     FPaste,
     /// Back solder paste.
+    #[serde(alias = "B.Paste")]
     BPaste,
 
     // Fabrication/documentation layers
     /// Front fabrication.
+    #[serde(alias = "F.Fab")]
     FFab,
     /// Back fabrication.
+    #[serde(alias = "B.Fab")]
     BFab,
     /// Front courtyard.
+    #[serde(alias = "F.CrtYd")]
     FCrtYd,
     /// Back courtyard.
+    #[serde(alias = "B.CrtYd")]
     BCrtYd,
 
     // Mechanical layers
     /// Edge cuts (board outline).
+    #[serde(alias = "Edge.Cuts")]
     EdgeCuts,
     /// User drawing layer.
+    #[serde(alias = "User.Drawings")]
     UserDrawings,
     /// User comments layer.
+    #[serde(alias = "User.Comments")]
     UserComments,
 }
 
@@ -1151,6 +1179,32 @@ mod tests {
         assert!(PcbLayer::In1Cu.is_copper());
         assert!(!PcbLayer::FSilkS.is_copper());
         assert!(!PcbLayer::EdgeCuts.is_copper());
+    }
+
+    #[test]
+    fn pcb_layer_serializes_canonical() {
+        // The wire form is always the canonical (dotless) variant name.
+        assert_eq!(serde_json::to_string(&PcbLayer::In1Cu).unwrap(), r#""In1Cu""#);
+        assert_eq!(serde_json::to_string(&PcbLayer::EdgeCuts).unwrap(), r#""EdgeCuts""#);
+    }
+
+    #[test]
+    fn pcb_layer_dotted_alias_deserializes() {
+        // Documents corrupted with the dotted KiCad spelling still load — and
+        // re-serialize back to the canonical form, healing the data on save.
+        for (dotted, want) in [
+            (r#""F.Cu""#, PcbLayer::FCu),
+            (r#""B.Cu""#, PcbLayer::BCu),
+            (r#""In1.Cu""#, PcbLayer::In1Cu),
+            (r#""In6.Cu""#, PcbLayer::In6Cu),
+            (r#""F.SilkS""#, PcbLayer::FSilkS),
+            (r#""Edge.Cuts""#, PcbLayer::EdgeCuts),
+        ] {
+            let got: PcbLayer = serde_json::from_str(dotted).unwrap();
+            assert_eq!(got, want, "alias {dotted} should map to {want:?}");
+            // Round-trips to the canonical spelling, not back to the dotted form.
+            assert!(!serde_json::to_string(&got).unwrap().contains('.'));
+        }
     }
 
     #[test]

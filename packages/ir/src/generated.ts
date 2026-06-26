@@ -1877,6 +1877,13 @@ netTies?: Array<NetTie>, };
 
 /**
  * PCB layer identifiers (KiCad-compatible).
+ *
+ * Each variant carries a `serde(alias = …)` for the dotted KiCad spelling
+ * (`In1.Cu`, `Edge.Cuts`, …) so documents that were corrupted with those
+ * names still deserialize — and re-serialize back to the canonical form. The
+ * MCP write boundaries reject the dotted spellings outright (see
+ * `validateLayer` in `packages/mcp/src/tools/ecad.ts`); the aliases are only a
+ * safety net for data already on disk.
  */
 export type PcbLayer = "FCu" | "BCu" | "In1Cu" | "In2Cu" | "In3Cu" | "In4Cu" | "In5Cu" | "In6Cu" | "FSilkS" | "BSilkS" | "FMask" | "BMask" | "FPaste" | "BPaste" | "FFab" | "BFab" | "FCrtYd" | "BCrtYd" | "EdgeCuts" | "UserDrawings" | "UserComments";
 
