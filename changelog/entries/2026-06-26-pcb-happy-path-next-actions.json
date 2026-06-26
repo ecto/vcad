@@ -1,0 +1,18 @@
+{
+  "id": "2026-06-26-pcb-happy-path-next-actions",
+  "version": "0.9.4",
+  "date": "2026-06-26",
+  "category": "feat",
+  "title": "PCB tools suggest the next step on success",
+  "summary": "MCP tool results now carry happy-path next_actions on success (create_schematic → place_components/run_erc, place_components → set_design_rules, route_nets → run_drc/render_pcb), and set_design_rules buffers rules set before the board exists instead of dead-ending.",
+  "features": [
+    "ecad",
+    "pcb"
+  ],
+  "mcpTools": [
+    "create_schematic",
+    "place_components",
+    "set_design_rules",
+    "route_nets"
+  ]
+}
