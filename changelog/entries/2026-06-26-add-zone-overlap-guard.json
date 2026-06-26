@@ -1,0 +1,15 @@
+{
+  "id": "2026-06-26-add-zone-overlap-guard",
+  "version": "0.9.4",
+  "date": "2026-06-26",
+  "category": "feat",
+  "title": "add_zone rejects shorting copper pours at author time",
+  "summary": "add_zone now fails fast when a pour overlaps an existing different-net pour on the same layer (a copper short), naming the conflicting net and overlap bbox in a zone_drc preview — instead of surfacing it only at post-route run_drc. Pass allow_overlap:true to override.",
+  "features": [
+    "ecad",
+    "pcb"
+  ],
+  "mcpTools": [
+    "add_zone"
+  ]
+}
