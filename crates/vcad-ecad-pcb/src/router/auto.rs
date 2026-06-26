@@ -377,6 +377,7 @@ fn try_route_fanout(
         placed,
         &via_pts,
         &mut spans,
+        false,
     ) {
         Some(e) => e,
         None => {
@@ -404,6 +405,7 @@ fn try_route_fanout(
         placed,
         &via_pts,
         &mut spans,
+        false,
     ) {
         Some(e) => e,
         None => {
@@ -471,6 +473,12 @@ struct Escape {
 /// is still clearance-legal there. Commits the stub and via to `session`,
 /// recording their spans in `spans`; returns `None` (committing nothing) when
 /// the pad cannot be escaped.
+///
+/// `force_fanout` skips the at-pad via entirely and goes straight to the
+/// dog-bone ring search. Set it for sub-0.65 mm-pitch pads: a 0.6 mm via can't
+/// physically land between 0.5 mm-pitch QFP/QFN pins, so the stitch must escape
+/// into the fan-out even when an at-pad via *would* probe clearance-legal (e.g.
+/// a fine-pitch pad whose neighbours share its net).
 #[allow(clippy::too_many_arguments)]
 fn escape_endpoint(
     session: &mut RouteSession,
@@ -485,6 +493,7 @@ fn escape_endpoint(
     placed: &[Placed],
     extra_vias: &[Vec2],
     spans: &mut Vec<SpanId>,
+    force_fanout: bool,
 ) -> Option<Escape> {
     let hw = w / 2.0;
 
@@ -508,21 +517,24 @@ fn escape_endpoint(
             .any(|&vp| dist(vp, p) < 0.05)
     };
 
-    // 1) Via straight on the pad.
-    if reused(pad_pt) {
-        return Some(Escape {
-            terminal: pad_pt,
-            stub: None,
-            via: None,
-        });
-    }
-    if via_legal(session, pad_pt) {
-        commit_via(session, net, pad_pt, via_r, copper, spans);
-        return Some(Escape {
-            terminal: pad_pt,
-            stub: None,
-            via: Some(pad_pt),
-        });
+    // 1) Via straight on the pad — unless the caller forces a fan-out because
+    //    the pad is too fine-pitch to take an at-pad drill.
+    if !force_fanout {
+        if reused(pad_pt) {
+            return Some(Escape {
+                terminal: pad_pt,
+                stub: None,
+                via: None,
+            });
+        }
+        if via_legal(session, pad_pt) {
+            commit_via(session, net, pad_pt, via_r, copper, spans);
+            return Some(Escape {
+                terminal: pad_pt,
+                stub: None,
+                via: Some(pad_pt),
+            });
+        }
     }
 
     // 2) Dog-bone: fan a stub + via radially out of the pad.
@@ -578,6 +590,10 @@ fn escape_endpoint(
 const ESCAPE_DIRS: usize = 16;
 /// Escape-via fan: how many increasing-radius rings to search before giving up.
 const ESCAPE_RINGS: usize = 10;
+/// Pads at or below this center-to-center pitch (mm) are too fine to take an
+/// at-pad stitching/escape via — the via must fan out into a dog-bone instead.
+/// 0.65 mm sits just above the 0.5 mm-pitch QFP/QFN floor and below 0.8 mm BGA.
+const FINE_PITCH_MM: f64 = 0.65;
 
 /// Commit a trace segment span on `layer`, returning its [`SpanId`].
 fn commit_seg(
@@ -738,6 +754,16 @@ fn stitch_planes(
                 fp.position.x + pad.position.x * c - pad.position.y * s,
                 fp.position.y + pad.position.x * s + pad.position.y * c,
             );
+            // A fine-pitch pad can't take an at-pad drill — force the dog-bone.
+            // Pitch is the nearest neighbour's spacing in the footprint's own
+            // frame (rotation/translation preserve relative distances).
+            let pitch = fp
+                .pads
+                .iter()
+                .filter(|o| !std::ptr::eq(*o, pad))
+                .map(|o| dist(pad.position, o.position))
+                .fold(f64::INFINITY, f64::min);
+            let fine_pitch = pitch < FINE_PITCH_MM;
             let clearance = session.clearance_for(net);
             let w = session.width_for(net, width);
             // Reuse a coincident same-net stitch via dropped for an earlier pad.
@@ -750,7 +776,7 @@ fn stitch_planes(
             let mut spans: Vec<SpanId> = Vec::new();
             match escape_endpoint(
                 session, pcb, net, pad_pt, pad_layer, w, clearance, via_r, &copper, placed, &extra,
-                &mut spans,
+                &mut spans, fine_pitch,
             ) {
                 Some(e) => {
                     if let Some((a, b)) = e.stub {
@@ -1370,5 +1396,80 @@ mod tests {
             "planes must connect their pads, still unconnected: {:?}",
             unconnected.iter().map(|v| &v.message).collect::<Vec<_>>()
         );
+    }
+
+    #[test]
+    fn stitches_fine_pitch_pad_with_escape_fanout_via() {
+        // Three 0.5 mm-pitch VCC pads over a VCC plane on In1Cu. Their neighbours
+        // share the net, so an *at-pad* stitching via would probe clearance-legal
+        // — yet a 0.6 mm via can't physically sit on a 0.5 mm-pitch pad. Stitching
+        // must therefore escape into a dog-bone: every via lands OFF its pad, and
+        // the plane still connects every pad.
+        let pcb0 = board4(
+            vec![fp(
+                "U1",
+                25.0,
+                15.0,
+                vec![
+                    small_pad("1", -0.5, 0.0, "VCC"),
+                    small_pad("2", 0.0, 0.0, "VCC"),
+                    small_pad("3", 0.5, 0.0, "VCC"),
+                ],
+            )],
+            vec![plane("VCC", PcbLayer::In1Cu)],
+        );
+
+        let r = route_all(&pcb0, 0.25, &[]);
+
+        let vias: Vec<_> = r.vias.iter().filter(|v| v.net == "VCC").collect();
+        assert_eq!(
+            vias.len(),
+            3,
+            "one stitch via per fine-pitch VCC pad, got {:?}",
+            vias.iter().map(|v| v.position).collect::<Vec<_>>()
+        );
+        // Each stitch via must sit OFF every pad — the escape-in-fanout, not on-pad.
+        let pads = [
+            Vec2::new(24.5, 15.0),
+            Vec2::new(25.0, 15.0),
+            Vec2::new(25.5, 15.0),
+        ];
+        for v in &vias {
+            assert!(
+                pads.iter().all(|p| dist(v.position, *p) > 0.1),
+                "fine-pitch stitch via must dog-bone off the pad, got on-pad {:?}",
+                v.position
+            );
+        }
+        // Dog-bone stub traces (pad → via) are emitted on net VCC.
+        assert!(
+            r.traces.iter().any(|t| t.net == "VCC"),
+            "expected dog-bone stub traces for the fanned VCC stitches"
+        );
+
+        // Applied board: short/clearance clean and every VCC pad is stitched.
+        let mut pcb = pcb0.clone();
+        apply(&mut pcb, &r);
+        let viols = check_drc(&pcb);
+        let bad = viols
+            .iter()
+            .filter(|v| {
+                matches!(
+                    v.rule,
+                    crate::drc::DrcRuleType::Short | crate::drc::DrcRuleType::Clearance
+                )
+            })
+            .count();
+        assert_eq!(
+            bad, 0,
+            "fine-pitch stitched board must be short/clearance clean"
+        );
+        let unstitched = viols
+            .iter()
+            .filter(|v| {
+                v.rule == crate::drc::DrcRuleType::UnstitchedPad && v.message.contains("VCC")
+            })
+            .count();
+        assert_eq!(unstitched, 0, "every fine-pitch VCC pad must be stitched");
     }
 }

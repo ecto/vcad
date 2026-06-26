@@ -160,6 +160,8 @@ export {
   fillZones,
   exportFabFiles,
   parseKicadPcb,
+  exportKicadPcb,
+  exportKicadSch,
   builtinSymbols,
   footprintForName,
   resolveFootprint,

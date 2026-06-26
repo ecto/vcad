@@ -130,6 +130,34 @@ cat > "$OUT/config.json" << 'EOF'
 }
 EOF
 
+# ── 7. Publish this commit as `expected_build_sha` to Edge Config ───
+# Lets a RUNNING instance learn a newer build exists and flag itself stale
+# (server_info.is_stale, every tool result's _meta, and the initialize banner) —
+# the fix for warm-instance staleness masking a fresh deploy. Edge Config is a
+# globally-replicated runtime KV, so this reaches every warm lambda within its
+# read TTL without a redeploy or a drain.
+#
+# Best-effort and fully gated: skipped (never fails the build) unless both
+# VERCEL_API_TOKEN and VERCEL_EDGE_CONFIG_ID are set in the project's env.
+# VERCEL_TEAM_ID is appended when present (required for team-scoped configs).
+if [ -n "${VERCEL_API_TOKEN:-}" ] && [ -n "${VERCEL_EDGE_CONFIG_ID:-}" ]; then
+  echo "[vcad-mcp] Publishing expected_build_sha=${BUILD_SHA:0:7} to Edge Config..."
+  EDGE_URL="https://api.vercel.com/v1/edge-config/${VERCEL_EDGE_CONFIG_ID}/items"
+  if [ -n "${VERCEL_TEAM_ID:-}" ]; then
+    EDGE_URL="${EDGE_URL}?teamId=${VERCEL_TEAM_ID}"
+  fi
+  set +e
+  curl -sS -X PATCH "$EDGE_URL" \
+    -H "Authorization: Bearer ${VERCEL_API_TOKEN}" \
+    -H "Content-Type: application/json" \
+    -d "{\"items\":[{\"operation\":\"upsert\",\"key\":\"expected_build_sha\",\"value\":\"${BUILD_SHA}\"}]}" \
+    -o /dev/null -w "  Edge Config PATCH → HTTP %{http_code}\n" \
+    || echo "  [vcad-mcp] Edge Config publish failed (non-fatal) — staleness detection degrades to env-only."
+  set -e
+else
+  echo "[vcad-mcp] Edge Config publish skipped (VERCEL_API_TOKEN / VERCEL_EDGE_CONFIG_ID unset)."
+fi
+
 echo "[vcad-mcp] Build complete."
 echo "  Bundle: $(ls -lh "$OUT/functions/mcp.func/index.mjs" | awk '{print $5}')"
 echo "  WASM:   $(ls -lh "$OUT/functions/mcp.func/vcad_kernel_wasm_bg.wasm" | awk '{print $5}')"

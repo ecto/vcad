@@ -1,0 +1,18 @@
+{
+  "id": "2026-06-26-delete-zone-and-undo",
+  "version": "0.9.4",
+  "date": "2026-06-26",
+  "category": "feat",
+  "title": "Remove copper pours/traces/vias and undo PCB edits",
+  "summary": "New delete_zone, delete_trace, and delete_via remove routed copper by index or net, and a new undo rewinds the last session mutation — no more full rebuild after a bad add_zone.",
+  "features": [
+    "ecad",
+    "pcb"
+  ],
+  "mcpTools": [
+    "delete_zone",
+    "delete_trace",
+    "delete_via",
+    "undo"
+  ]
+}
