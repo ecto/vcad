@@ -100,9 +100,8 @@ pub fn route_net_maze_cong(
     // History cost of entering a node (0 when the field is flat / absent), so a
     // flat field reproduces the congestion-unaware search exactly.
     let cong = congestion.filter(|c| !c.is_flat());
-    let node_cost = |node: usize| -> f64 {
-        cong.map(|c| c.cost_at(grid.world_of(node))).unwrap_or(0.0)
-    };
+    let node_cost =
+        |node: usize| -> f64 { cong.map(|c| c.cost_at(grid.world_of(node))).unwrap_or(0.0) };
 
     let path_nodes = astar(
         &grid,

@@ -191,7 +191,10 @@ mod tests {
         let first = c.cost_at(p);
         c.add_corridor(Vec2::new(2.0, 18.0), Vec2::new(34.0, 18.0), 0.5, 1.0);
         let second = c.cost_at(p);
-        assert!(second > first, "history must accumulate: {first} -> {second}");
+        assert!(
+            second > first,
+            "history must accumulate: {first} -> {second}"
+        );
     }
 
     #[test]

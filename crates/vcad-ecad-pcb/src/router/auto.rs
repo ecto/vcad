@@ -281,10 +281,7 @@ pub fn route_all_with_opts(
             best = Some((session, placed, pending));
         }
 
-        let fully_routed = best
-            .as_ref()
-            .map(|(_, _, p)| p.is_empty())
-            .unwrap_or(false);
+        let fully_routed = best.as_ref().map(|(_, _, p)| p.is_empty()).unwrap_or(false);
         if fully_routed || last_round {
             break;
         }
@@ -448,11 +445,7 @@ fn diagnose_unrouted(
         }
     }
     let mut blocking_nets: Vec<String> = block_freq.keys().cloned().collect();
-    blocking_nets.sort_by(|a, b| {
-        block_freq[b]
-            .cmp(&block_freq[a])
-            .then_with(|| a.cmp(b))
-    });
+    blocking_nets.sort_by(|a, b| block_freq[b].cmp(&block_freq[a]).then_with(|| a.cmp(b)));
 
     // The clearest layer (fewest blockers). When it has zero blockers the
     // connection should route there outright — suggest switching to it via a via.
@@ -1331,8 +1324,17 @@ fn ripup_pass(
         }
 
         // Route the previously-failed connection into the freed space.
-        let routed_target =
-            try_route(session, pcb, width, &net, from, to, placed, cong, use_push_shove);
+        let routed_target = try_route(
+            session,
+            pcb,
+            width,
+            &net,
+            from,
+            to,
+            placed,
+            cong,
+            use_push_shove,
+        );
         if let Some(p) = routed_target {
             placed.push(p);
         } else {
@@ -1341,8 +1343,17 @@ fn ripup_pass(
 
         // Re-route every victim; one that can't be placed becomes unrouted.
         for v in victims {
-            match try_route(session, pcb, width, &v.net, v.from, v.to, placed, cong, use_push_shove)
-            {
+            match try_route(
+                session,
+                pcb,
+                width,
+                &v.net,
+                v.from,
+                v.to,
+                placed,
+                cong,
+                use_push_shove,
+            ) {
                 Some(p) => placed.push(p),
                 None => still.push((v.net, v.from, v.to)),
             }
@@ -1964,7 +1975,12 @@ mod tests {
             let net = format!("N{i}");
             let yl = y0 + pitch * i as f64;
             let yr = y0 + pitch * (n - 1 - i) as f64;
-            fps.push(fp(&format!("L{i}"), 3.0, yl, vec![pad("1", 0.0, 0.0, &net)]));
+            fps.push(fp(
+                &format!("L{i}"),
+                3.0,
+                yl,
+                vec![pad("1", 0.0, 0.0, &net)],
+            ));
             fps.push(fp(
                 &format!("R{i}"),
                 side - 3.0,
@@ -2035,7 +2051,11 @@ mod tests {
         // The DRC-clean invariant holds through negotiation AND the push-shove
         // fallback: both outputs are short/clearance clean once applied.
         assert_eq!(bad_drc(&pcb, &baseline), 0, "baseline must be DRC-clean");
-        assert_eq!(bad_drc(&pcb, &negotiated), 0, "negotiated must be DRC-clean");
+        assert_eq!(
+            bad_drc(&pcb, &negotiated),
+            0,
+            "negotiated must be DRC-clean"
+        );
 
         // Routability is the routed fraction (one 2-pad connection per net here)
         // and rises with the extra closed nets.
@@ -2065,7 +2085,10 @@ mod tests {
                 "diagnostic net {} must be in the unrouted set",
                 d.net
             );
-            assert!(!d.reason.is_empty(), "diagnostic must explain the obstruction");
+            assert!(
+                !d.reason.is_empty(),
+                "diagnostic must explain the obstruction"
+            );
             assert!(
                 !d.blocking_nets.is_empty() || d.suggested_layer.is_some(),
                 "diagnostic must name a blocker or suggest a layer: {d:?}"
@@ -2100,7 +2123,10 @@ mod tests {
                 use_push_shove: false,
             },
         );
-        assert_eq!(a.routed_nets, b.routed_nets, "routing must be deterministic");
+        assert_eq!(
+            a.routed_nets, b.routed_nets,
+            "routing must be deterministic"
+        );
         assert_eq!(a.traces.len(), b.traces.len());
     }
 }
