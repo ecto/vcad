@@ -449,6 +449,37 @@ export async function parseKicadPcb(content: string): Promise<Pcb | null> {
   }
 }
 
+/**
+ * Export a Pcb to a native, editable KiCad 9 `.kicad_pcb` board file (the
+ * inverse of {@link parseKicadPcb}). Returns null if the ECAD WASM is
+ * unavailable so callers can distinguish "no kernel" from "export failed".
+ */
+export async function exportKicadPcb(pcb: Pcb): Promise<string | null> {
+  const wasm = await loadEcadWasm();
+  if (!wasm) return null;
+  try {
+    return wasm.exportKicadPcb(JSON.stringify(pcb)) as string;
+  } catch (e) {
+    console.warn("[ECAD] KiCad PCB export failed:", e);
+    return null;
+  }
+}
+
+/**
+ * Export a SchematicSheet to a native, editable KiCad 9 `.kicad_sch`
+ * schematic file. Returns null if the ECAD WASM is unavailable.
+ */
+export async function exportKicadSch(sheet: SchematicSheet): Promise<string | null> {
+  const wasm = await loadEcadWasm();
+  if (!wasm) return null;
+  try {
+    return wasm.exportKicadSch(JSON.stringify(sheet)) as string;
+  } catch (e) {
+    console.warn("[ECAD] KiCad schematic export failed:", e);
+    return null;
+  }
+}
+
 /** Fill copper pour zones on the PCB. */
 export async function fillZones(pcb: Pcb): Promise<FilledZoneResult[]> {
   const wasm = await loadEcadWasm();
