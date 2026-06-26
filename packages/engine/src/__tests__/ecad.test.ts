@@ -43,12 +43,14 @@ const validPcb: Pcb = {
   zones: [],
 };
 
-// Same board, but with a trace on a dotted layer name (`In1.Cu`). The kernel's
-// `PcbLayer` enum only knows `In1Cu`, so serde refuses the whole board — the
-// exact bug that used to deserialize-fail and get swallowed into a false-clean.
+// Same board, but with a trace on a completely unknown layer name. The kernel's
+// `PcbLayer` enum has no such variant, so serde refuses the whole board — tests
+// that a deserialize failure is surfaced as `errored`, not swallowed into a false-clean.
+// (Note: dotted KiCad forms like "In1.Cu" are now accepted via serde aliases and
+// auto-coerced to "In1Cu", so they no longer trigger this error path.)
 const malformedPcb = {
   ...validPcb,
-  traces: [{ start: { x: 1, y: 1 }, end: { x: 5, y: 1 }, width: 0.2, layer: "In1.Cu", net: "GND" }],
+  traces: [{ start: { x: 1, y: 1 }, end: { x: 5, y: 1 }, width: 0.2, layer: "UNKNOWN_LAYER", net: "GND" }],
 } as unknown as Pcb;
 
 /** A minimal valid schematic the kernel deserializes cleanly. */
@@ -90,8 +92,8 @@ describe("ecad verification wrappers — three-state outcome", () => {
     // empty violation list.
     expect(outcome.status).toBe("errored");
     if (outcome.status === "errored") {
-      expect(outcome.offending_field).toBe("In1.Cu");
-      expect(outcome.reason).toMatch(/In1\.Cu/);
+      expect(outcome.offending_field).toBe("UNKNOWN_LAYER");
+      expect(outcome.reason).toMatch(/UNKNOWN_LAYER/);
     }
   });
 
@@ -104,7 +106,7 @@ describe("ecad verification wrappers — three-state outcome", () => {
   it("critiqueRoute reports `errored` (NOT null) when the kernel can't parse the board", async () => {
     const outcome = await critiqueRoute(malformedPcb, "GND");
     expect(outcome.status).toBe("errored");
-    if (outcome.status === "errored") expect(outcome.offending_field).toBe("In1.Cu");
+    if (outcome.status === "errored") expect(outcome.offending_field).toBe("UNKNOWN_LAYER");
   });
 
   it("runErc reports `errored` (NOT clean) when the kernel can't parse the schematic", async () => {

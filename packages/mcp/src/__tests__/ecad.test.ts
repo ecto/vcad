@@ -4224,11 +4224,13 @@ describe("run_drc / run_erc / critique_route surface 'unverifiable', not false-c
     zones: [],
   };
 
-  // A trace on a dotted layer name — serde refuses the whole board.
+  // A trace on a completely unknown layer name — serde refuses the whole board.
+  // (Dotted KiCad forms like "In1.Cu" are now accepted via serde aliases and
+  // auto-coerced to "In1Cu", so they no longer trigger the kernel parse error.)
   const malformedPcb = {
     ...validPcb,
     traces: [
-      { start: { x: 1, y: 1 }, end: { x: 5, y: 1 }, width: 0.2, layer: "In1.Cu", net: "GND" },
+      { start: { x: 1, y: 1 }, end: { x: 5, y: 1 }, width: 0.2, layer: "UNKNOWN_LAYER", net: "GND" },
     ],
   } as unknown as Pcb;
 
@@ -4277,7 +4279,7 @@ describe("run_drc / run_erc / critique_route surface 'unverifiable', not false-c
     expect(result.isError).toBe(true);
     expect(result.structuredContent?.verifiable).toBe(false);
     expect(result.structuredContent?.status).toBe("errored");
-    expect(result.structuredContent?.offending_field).toBe("In1.Cu");
+    expect(result.structuredContent?.offending_field).toBe("UNKNOWN_LAYER");
     expect(result.structuredContent?.next_actions?.length).toBeGreaterThan(0);
     // The text must NOT read as a clean pass.
     const text = result.content[0]!.text;
@@ -4295,7 +4297,7 @@ describe("run_drc / run_erc / critique_route surface 'unverifiable', not false-c
     const result = asResult(await critiqueRoute({ document: docWithPcb(malformedPcb), net: "GND" }));
     expect(result.isError).toBe(true);
     expect(result.structuredContent?.verifiable).toBe(false);
-    expect(result.structuredContent?.offending_field).toBe("In1.Cu");
+    expect(result.structuredContent?.offending_field).toBe("UNKNOWN_LAYER");
   });
 
   it("run_erc returns isError + verifiable:false for a malformed schematic", async () => {
