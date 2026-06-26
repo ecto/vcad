@@ -1,0 +1,21 @@
+{
+  "id": "2026-06-26-pcb-layer-name-validation",
+  "version": "0.9.4",
+  "date": "2026-06-26",
+  "category": "fix",
+  "title": "PCB tools reject malformed copper-layer names",
+  "summary": "Every PCB write tool now validates layer names against the real enum, rejecting dotted KiCad forms like 'In1.Cu' with a did-you-mean instead of storing them and silently corrupting render_pcb/export_gerber.",
+  "features": [
+    "ecad",
+    "pcb"
+  ],
+  "mcpTools": [
+    "add_trace",
+    "add_via",
+    "add_via_array",
+    "add_zone",
+    "add_coil",
+    "add_motor_winding",
+    "set_stackup"
+  ]
+}

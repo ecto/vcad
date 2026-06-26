@@ -257,6 +257,100 @@ function ecadUnverifiable(
 }
 
 // ============================================================================
+// PCB layer name validation — the single gate guarding every write boundary
+// ============================================================================
+
+/**
+ * Every legal PCB layer name, in board order — the canonical serde variants of
+ * the Rust `PcbLayer` enum (crates/vcad-ir/src/ecad.rs). This is the single
+ * source of truth the write boundaries validate against. The old scattered
+ * `/Cu$/` regex checks let malformed dotted KiCad names (`In1.Cu`) slip through,
+ * which then corrupted documents and broke render_pcb / export_gerber.
+ */
+const PCB_LAYERS: readonly PcbLayer[] = [
+  "FCu", "BCu", "In1Cu", "In2Cu", "In3Cu", "In4Cu", "In5Cu", "In6Cu",
+  "FSilkS", "BSilkS", "FMask", "BMask", "FPaste", "BPaste",
+  "FFab", "BFab", "FCrtYd", "BCrtYd",
+  "EdgeCuts", "UserDrawings", "UserComments",
+];
+
+/** Fast membership test for any legal layer name. */
+const PCB_LAYER_SET: ReadonlySet<string> = new Set(PCB_LAYERS);
+
+/** Copper layers, in board order — the subset traces/vias/zones/coils sit on. */
+const COPPER_LAYERS: readonly PcbLayer[] = [
+  "FCu", "BCu", "In1Cu", "In2Cu", "In3Cu", "In4Cu", "In5Cu", "In6Cu",
+];
+
+/** Fast membership test for copper layers. */
+const COPPER_LAYER_SET: ReadonlySet<string> = new Set(COPPER_LAYERS);
+
+/** True when `layer` is a copper layer (FCu, BCu, In1Cu …). */
+function isCopperLayer(layer: string): boolean {
+  return COPPER_LAYER_SET.has(layer);
+}
+
+/**
+ * Suggest the canonical layer for a malformed name: dotted KiCad form
+ * (`In1.Cu`, `F.Cu`, `Edge.Cuts`) → its serde variant, plus a case-insensitive
+ * fallback. Returns undefined when nothing close matches.
+ */
+function suggestLayer(name: string): PcbLayer | undefined {
+  const dedotted = name.replace(/\./g, "");
+  if (PCB_LAYER_SET.has(dedotted)) return dedotted as PcbLayer;
+  const lower = name.toLowerCase();
+  const lowerDedot = dedotted.toLowerCase();
+  for (const l of PCB_LAYERS) {
+    const ll = l.toLowerCase();
+    if (ll === lower || ll === lowerDedot) return l;
+  }
+  return undefined;
+}
+
+/** Successful layer validation carries the canonical `PcbLayer`. */
+interface LayerOk {
+  layer: PcbLayer;
+}
+/** Failed layer validation carries a ready-to-return error message. */
+interface LayerErr {
+  error: string;
+}
+
+/**
+ * The single gate for a layer name at a write boundary. Accepts only the exact
+ * serde variant (`In1Cu`); a dotted KiCad name (`In1.Cu`) or any unknown string
+ * is rejected with a helpful message that names the closest legal value and
+ * lists them all. This is the durable fix for the malformed names that used to
+ * slip past the `/Cu$/` checks and corrupt documents (a `serde(alias=…)` on the
+ * Rust enum gives round-trip tolerance, but rejecting at the boundary is what
+ * keeps new corruption out).
+ */
+function validateLayer(raw: unknown): LayerOk | LayerErr {
+  const name = String(raw ?? "").trim();
+  if (!name) return { error: `layer is required; legal: ${PCB_LAYERS.join(", ")}` };
+  if (PCB_LAYER_SET.has(name)) return { layer: name as PcbLayer };
+  const suggestion = suggestLayer(name);
+  const hint = suggestion ? ` did you mean '${suggestion}'?` : "";
+  return { error: `layer '${name}' is not valid;${hint} Legal: ${PCB_LAYERS.join(", ")}` };
+}
+
+/**
+ * Like {@link validateLayer} but also requires a copper layer — for traces,
+ * vias, coils, and pours, which can only sit on copper. Rejects valid
+ * non-copper layers (e.g. `EdgeCuts`) with a copper-specific message.
+ */
+function validateCopperLayer(raw: unknown): LayerOk | LayerErr {
+  const res = validateLayer(raw);
+  if ("error" in res) return res;
+  if (!isCopperLayer(res.layer)) {
+    return {
+      error: `layer '${res.layer}' is not a copper layer; copper layers: ${COPPER_LAYERS.join(", ")}`,
+    };
+  }
+  return res;
+}
+
+// ============================================================================
 // Document resolution — session-based (document_id) with inline fallback
 // ============================================================================
 
@@ -2409,14 +2503,20 @@ export async function placeComponents(args: Record<string, unknown>) {
 
     let pads: Pad[];
     let graphics: NonNullable<Footprint["graphics"]> = [];
+    // Provenance marker the DRC engine reads to tag violations: "inline" pads
+    // are author-supplied, "generated" land patterns are synthesized by the
+    // parametric engine (and so are candidate footprint artifacts, not faults).
+    let padSource: "inline" | "generated";
 
     if (comp.pads && comp.pads.length > 0) {
       // (1) Inline override — author-supplied geometry.
       pads = comp.pads.map((pad) => applyNet(comp, pad));
+      padSource = "inline";
     } else if (resolution?.template) {
       // (2) Engine result — real family match or compact placeholder.
       pads = resolution.template.pads.map((pad) => applyNet(comp, pad));
       graphics = resolution.template.graphics;
+      padSource = "generated";
       if (!resolution.matched) {
         fallbackFootprints.push({
           ref: comp.ref,
@@ -2434,6 +2534,7 @@ export async function placeComponents(args: Record<string, unknown>) {
         net: netIdForPin(comp, pin),
         layers: ["FCu", "FPaste", "FMask"] as PcbLayer[],
       }));
+      padSource = "generated";
       fallbackFootprints.push({
         ref: comp.ref,
         footprint: comp.footprintId,
@@ -2450,6 +2551,7 @@ export async function placeComponents(args: Record<string, unknown>) {
       front: true,
       pads,
       ...(graphics.length > 0 ? { graphics } : {}),
+      properties: { padSource },
     };
   });
 
@@ -3176,6 +3278,10 @@ export async function routeNets(args: Record<string, unknown>) {
 
 /** A single DRC violation, structurally compatible with both the kernel
  *  result and the scalar fallback (which omits actual/required). */
+/** Where a violation comes from — lets a caller discount footprint artifacts
+ *  from the headline count. Mirrors the kernel `DrcProvenance` (snake_case). */
+type DrcProvenance = "intra_footprint" | "inter_component" | "routing";
+
 interface DrcViol {
   rule: string;
   severity: string;
@@ -3183,6 +3289,10 @@ interface DrcViol {
   position?: Vec2;
   actual?: number;
   required?: number;
+  /** Footprint-internal, between components, or routing/board-level. */
+  provenance?: DrcProvenance;
+  /** True when a generated (synthesized) footprint land pattern is involved. */
+  generated?: boolean;
 }
 
 /** Per (rule, net-pair) rollup. netB is "" for single-net rules. */
@@ -3225,6 +3335,15 @@ interface DrcCategories {
   manufacturing: number;
 }
 
+/** Counts split by where the conflict originates, so a caller can tell a
+ *  synthesized land-pattern artifact (intra_footprint, usually generated) from
+ *  a real placement (inter_component) or routing fault. */
+interface DrcProvenanceCounts {
+  intra_footprint: number;
+  inter_component: number;
+  routing: number;
+}
+
 /** Summary-first DRC payload: counts + worst-case + a capped representative
  *  sample by default; the full violation array only when detail==="full". */
 interface DrcSummary {
@@ -3234,6 +3353,14 @@ interface DrcSummary {
   warnings: number;
   /** Counts split into connectivity (incomplete) vs clearance/manufacturing (illegal). */
   categories: DrcCategories;
+  /** Counts split by origin (footprint-internal / between-components / routing). */
+  byProvenance: DrcProvenanceCounts;
+  /** Violations involving a generated (synthesized) footprint land pattern —
+   *  candidate artifacts, NOT necessarily real faults. */
+  generatedArtifacts: number;
+  /** Violations the headline count should be judged on: total minus generated
+   *  land-pattern artifacts. */
+  realViolations: number;
   byRule: Record<string, number>;
   byNetPair: DrcNetPairCount[];
   worstClearance:
@@ -3355,12 +3482,28 @@ export function aggregateDrc(
     categories[DRC_CATEGORY[rule] ?? "manufacturing"] += count;
   }
 
+  // Provenance breakdown + the trustworthy "real vs artifact" split. A missing
+  // provenance (e.g. kernel-less fallback path) is treated as routing.
+  const byProvenance: DrcProvenanceCounts = {
+    intra_footprint: 0,
+    inter_component: 0,
+    routing: 0,
+  };
+  let generatedArtifacts = 0;
+  for (const v of violations) {
+    byProvenance[v.provenance ?? "routing"] += 1;
+    if (v.generated) generatedArtifacts += 1;
+  }
+
   const summary: DrcSummary = {
     success: true,
     violations: violations.length,
     errors: violations.filter((v) => v.severity === "Error").length,
     warnings: violations.filter((v) => v.severity === "Warning").length,
     categories,
+    byProvenance,
+    generatedArtifacts,
+    realViolations: violations.length - generatedArtifacts,
     byRule,
     byNetPair,
     worstClearance: worst,
@@ -5334,7 +5477,6 @@ export function addCoil(args: Record<string, unknown>) {
   const outerR = args.outer_radius as number;
   const traceWidth = args.trace_width as number;
   const net = String(args.net ?? "");
-  const layer = ((args.layer as string) || "FCu") as PcbLayer;
   const direction = (args.direction as string) || "ccw";
   const startAngleDeg = (args.start_angle_deg as number) || 0;
   const segmentsPerTurn = Math.min(
@@ -5353,9 +5495,9 @@ export function addCoil(args: Record<string, unknown>) {
   if (!(outerR > innerR)) return fail("outer_radius must be > inner_radius");
   if (!(traceWidth > 0)) return fail("trace_width must be > 0");
   if (!net) return fail("net is required — coil copper must belong to a net");
-  if (!/Cu$/.test(layer)) {
-    return fail(`layer "${layer}" is not a copper layer (use FCu, BCu, In1Cu, ...)`);
-  }
+  const layerRes = validateCopperLayer((args.layer as string) || "FCu");
+  if ("error" in layerRes) return fail(layerRes.error);
+  const layer = layerRes.layer;
   if (direction !== "ccw" && direction !== "cw") {
     return fail(`direction must be "ccw" or "cw", got "${direction}"`);
   }
@@ -5414,9 +5556,8 @@ export function addCoil(args: Record<string, unknown>) {
   const layersIn = Array.isArray(args.layers) ? (args.layers as string[]) : undefined;
   if (layersIn && layersIn.length >= 2) {
     for (const l of layersIn) {
-      if (!/Cu$/.test(l)) {
-        return fail(`layers entry "${l}" is not a copper layer (use FCu, BCu, In1Cu, ...)`);
-      }
+      const lr = validateCopperLayer(l);
+      if ("error" in lr) return fail(`layers entry: ${lr.error}`);
     }
     const stitchVias: Array<{ position: Vec2; startLayer: PcbLayer; endLayer: PcbLayer }> = [];
     const perLayerLen = segLength(pts);
@@ -5501,7 +5642,9 @@ export function addCoil(args: Record<string, unknown>) {
 
   let via: { position: Vec2; startLayer: PcbLayer; endLayer: PcbLayer } | undefined;
   if (args.inner_via) {
-    const viaTo = ((args.via_to_layer as string) || "BCu") as PcbLayer;
+    const viaToRes = validateCopperLayer((args.via_to_layer as string) || "BCu");
+    if ("error" in viaToRes) return fail(`via_to_layer: ${viaToRes.error}`);
+    const viaTo = viaToRes.layer;
     const v = {
       position: pts[0],
       diameter: pcb.rules.defaultRules.viaDiameter,
@@ -6197,7 +6340,7 @@ export const getPadPositionsSchema = {
 
 /** Copper layers a pad sits on, in board order (drops paste/mask/silk). */
 function padCopperLayers(pad: Pad): PcbLayer[] {
-  return pad.layers.filter((l) => /Cu$/.test(l));
+  return pad.layers.filter((l) => isCopperLayer(l));
 }
 
 /**
@@ -6281,6 +6424,291 @@ export function getPadPositions(args: Record<string, unknown>) {
 }
 
 // ============================================================================
+// get_footprint — introspect a land pattern in BOTH local and board frames
+// ============================================================================
+
+/** Local-frame courtyard AABB of a footprint: prefer an explicit courtyard
+ *  graphic (FCrtYd/BCrtYd rect), else the pad bounding box. Null when empty. */
+function localCourtyardAabb(
+  pads: Pad[],
+  graphics: Footprint["graphics"],
+): { min: Vec2; max: Vec2 } | null {
+  for (const g of graphics ?? []) {
+    if (g.type === "Rect" && (g.layer === "FCrtYd" || g.layer === "BCrtYd")) {
+      return {
+        min: { x: Math.min(g.start.x, g.end.x), y: Math.min(g.start.y, g.end.y) },
+        max: { x: Math.max(g.start.x, g.end.x), y: Math.max(g.start.y, g.end.y) },
+      };
+    }
+  }
+  // Fall back to the pad bounding box (half-extent of each pad's copper).
+  if (pads.length === 0) return null;
+  const half = (shape: Pad["shape"]): { hx: number; hy: number } => {
+    switch (shape.type) {
+      case "Circle":
+        return { hx: shape.diameter / 2, hy: shape.diameter / 2 };
+      case "Rect":
+      case "Oval":
+      case "RoundRect":
+        return { hx: shape.width / 2, hy: shape.height / 2 };
+      default:
+        return { hx: 0.5, hy: 0.5 };
+    }
+  };
+  let minX = Infinity,
+    minY = Infinity,
+    maxX = -Infinity,
+    maxY = -Infinity;
+  for (const p of pads) {
+    const { hx, hy } = half(p.shape);
+    minX = Math.min(minX, p.position.x - hx);
+    minY = Math.min(minY, p.position.y - hy);
+    maxX = Math.max(maxX, p.position.x + hx);
+    maxY = Math.max(maxY, p.position.y + hy);
+  }
+  return { min: { x: minX, y: minY }, max: { x: maxX, y: maxY } };
+}
+
+/** Map a footprint-local point into the board frame: rotate CCW by `rotDeg`
+ *  about the origin, then translate to `origin`. Back-side mirrors local X
+ *  first (KiCad convention) so a flipped connector lands correctly. */
+function toBoardFrame(
+  local: Vec2,
+  origin: Vec2,
+  rotDeg: number,
+  front: boolean,
+): Vec2 {
+  const theta = (rotDeg * Math.PI) / 180;
+  const cos = Math.cos(theta);
+  const sin = Math.sin(theta);
+  const lx = front ? local.x : -local.x;
+  return {
+    x: round3(origin.x + lx * cos - local.y * sin),
+    y: round3(origin.y + lx * sin + local.y * cos),
+  };
+}
+
+/** Board-frame AABB of a local AABB under a placement — recomputed from the
+ *  four transformed corners (rotation can tilt the box). */
+function boardCourtyardAabb(
+  local: { min: Vec2; max: Vec2 } | null,
+  origin: Vec2,
+  rotDeg: number,
+  front: boolean,
+): { min: Vec2; max: Vec2 } | null {
+  if (!local) return null;
+  const corners: Vec2[] = [
+    { x: local.min.x, y: local.min.y },
+    { x: local.max.x, y: local.min.y },
+    { x: local.max.x, y: local.max.y },
+    { x: local.min.x, y: local.max.y },
+  ].map((c) => toBoardFrame(c, origin, rotDeg, front));
+  return {
+    min: { x: Math.min(...corners.map((c) => c.x)), y: Math.min(...corners.map((c) => c.y)) },
+    max: { x: Math.max(...corners.map((c) => c.x)), y: Math.max(...corners.map((c) => c.y)) },
+  };
+}
+
+/** JSON Schema for get_footprint tool. */
+export const getFootprintSchema = {
+  type: "object" as const,
+  properties: {
+    ...docInputProperties,
+    footprint: {
+      type: "string" as const,
+      description:
+        "Footprint id to resolve PRE-placement (KiCad-style, e.g. " +
+        "'Connector_JST:JST_PH_2' or 'QFN-40_5x5mm_P0.4mm'). Returns the " +
+        "land pattern in the footprint-local frame; pass `at`/`rotation` to " +
+        "also project it into a hypothetical board placement.",
+    },
+    pins: {
+      type: "number" as const,
+      description:
+        "Declared pin count, used to resolve fallback geometry and parse the " +
+        "count when the id omits it (footprint mode). Defaults to a count " +
+        "parsed from the id, else 2.",
+    },
+    ref: {
+      type: "string" as const,
+      description:
+        "Reference designator of a PLACED footprint to introspect (e.g. 'J1') " +
+        "— reads its real board-frame transform, nets, and courtyard from the " +
+        "session document. Requires document_id. Use instead of `footprint`.",
+    },
+    at: {
+      ...vec2Schema,
+      description:
+        "Hypothetical placement origin (board mm) for the board-frame " +
+        "projection in `footprint` mode. Defaults to (0,0).",
+    },
+    rotation: {
+      type: "number" as const,
+      description:
+        "Hypothetical placement rotation in degrees, CCW about the origin " +
+        "(footprint mode). Defaults to 0.",
+    },
+    side: {
+      type: "string" as const,
+      enum: ["front", "back"],
+      description: "Hypothetical board side for the projection (footprint mode). Default 'front'.",
+    },
+  },
+  required: [],
+};
+
+const ROTATION_CONVENTION =
+  "Rotation is in degrees, counter-clockwise about the footprint origin. " +
+  "board = origin + R(rotation)·(localX, localY), where " +
+  "R(θ) = [[cosθ, -sinθ], [sinθ, cosθ]]. Back-side placements mirror local X first.";
+
+/**
+ * Introspect a footprint's land pattern in BOTH the footprint-local frame and
+ * the board frame, so an agent can see exactly where pads (especially connector
+ * pins) land instead of rendering and eyeballing. Two modes:
+ *
+ *  - `ref`: a footprint already placed on the session board — reports its real
+ *    origin/rotation/side, per-pad nets, and courtyard.
+ *  - `footprint`: a footprint id resolved by the parametric engine
+ *    pre-placement — reports the local land pattern, and (with `at`/`rotation`/
+ *    `side`) the board-frame projection for a hypothetical placement.
+ *
+ * Read-only. Shares the board-frame transform with get_pad_positions.
+ */
+export async function getFootprint(args: Record<string, unknown>) {
+  const refArg = args.ref != null ? String(args.ref) : undefined;
+  const fpArg = args.footprint != null ? String(args.footprint) : undefined;
+
+  if (!refArg && !fpArg) {
+    return ecadError("pass `ref` (a placed footprint) or `footprint` (an id to resolve)");
+  }
+
+  // ---- Mode 1: a placed footprint, read from the session board. ----
+  if (refArg) {
+    const ctx = resolveDocInput(args);
+    const pcb = getDocPcb(ctx.doc);
+    if (!pcb) {
+      return ecadError(
+        "Document has no PCB — run place_components first, or use `footprint` to resolve an id pre-placement",
+      );
+    }
+    const fp = pcb.footprints.find((f) => f.ref === refArg);
+    if (!fp) {
+      const have = pcb.footprints.map((f) => f.ref).join(", ");
+      return ecadError(`no footprint '${refArg}' on the board (have: ${have || "none"})`);
+    }
+    const origin = fp.position;
+    const rotation = fp.rotation ?? 0;
+    const front = fp.front ?? true;
+    const localCy = localCourtyardAabb(fp.pads, fp.graphics);
+    const pads = fp.pads.map((pad) => {
+      const local = { x: round3(pad.position.x), y: round3(pad.position.y) };
+      const board = toBoardFrame(pad.position, origin, rotation, front);
+      const copper = pad.layers.filter((l) => /Cu$/.test(l));
+      return {
+        pin: pad.number,
+        pad_type: pad.padType,
+        pad_shape: pad.shape,
+        net: pad.net ?? null,
+        layers: copper,
+        drill_mm: pad.drill?.diameter ?? null,
+        local: { ...local, rotation: round3(pad.rotation ?? 0) },
+        board: { ...board, rotation: round3(rotation + (pad.rotation ?? 0)) },
+      };
+    });
+    return {
+      content: [
+        {
+          type: "text" as const,
+          text: JSON.stringify({
+            success: true,
+            mode: "placed",
+            ref: fp.ref,
+            footprint: fp.footprintName,
+            value: fp.value,
+            generated: fp.properties?.padSource === "generated",
+            rotation_convention: ROTATION_CONVENTION,
+            origin: {
+              x: round3(origin.x),
+              y: round3(origin.y),
+              rotation: round3(rotation),
+              side: front ? "front" : "back",
+            },
+            courtyard: {
+              local: localCy,
+              board: boardCourtyardAabb(localCy, origin, rotation, front),
+            },
+            count: pads.length,
+            pads,
+            ...docResultPayload(ctx),
+          }),
+        },
+      ],
+    };
+  }
+
+  // ---- Mode 2: resolve a footprint id pre-placement (local frame + optional
+  //      hypothetical board projection). ----
+  const declared =
+    typeof args.pins === "number" && args.pins > 0 ? Math.round(args.pins as number) : 0;
+  const resolution = await resolveFootprint(fpArg!, declared);
+  if (!resolution || !resolution.template) {
+    return ecadError(
+      resolution?.note ??
+        `could not resolve footprint '${fpArg}' (kernel unavailable, or no pins to synthesize from — pass \`pins\`)`,
+    );
+  }
+  const template = resolution.template;
+  const at = (args.at as Vec2 | undefined) ?? { x: 0, y: 0 };
+  const rotation = typeof args.rotation === "number" ? (args.rotation as number) : 0;
+  const front = args.side !== "back";
+  const localCy = localCourtyardAabb(template.pads, template.graphics);
+  const pads = template.pads.map((pad) => {
+    const local = { x: round3(pad.position.x), y: round3(pad.position.y) };
+    const board = toBoardFrame(pad.position, at, rotation, front);
+    const copper = pad.layers.filter((l) => /Cu$/.test(l));
+    return {
+      pin: pad.number,
+      pad_type: pad.padType,
+      pad_shape: pad.shape,
+      layers: copper,
+      drill_mm: pad.drill?.diameter ?? null,
+      local: { ...local, rotation: round3(pad.rotation ?? 0) },
+      board: { ...board, rotation: round3(rotation + (pad.rotation ?? 0)) },
+    };
+  });
+  return {
+    content: [
+      {
+        type: "text" as const,
+        text: JSON.stringify({
+          success: true,
+          mode: "resolved",
+          footprint: fpArg,
+          resolved_name: template.name,
+          family: resolution.family,
+          matched: resolution.matched,
+          generated: true,
+          note: resolution.note,
+          rotation_convention: ROTATION_CONVENTION,
+          origin: {
+            x: round3(at.x),
+            y: round3(at.y),
+            rotation: round3(rotation),
+            side: front ? "front" : "back",
+          },
+          courtyard: {
+            local: localCy,
+            board: boardCourtyardAabb(localCy, at, rotation, front),
+          },
+          count: pads.length,
+          pads,
+        }),
+      },
+    ],
+  };
+}
+
 // describe_pcb — compact, structured snapshot of the session board
 // ============================================================================
 
@@ -6587,7 +7015,6 @@ export function addTrace(args: Record<string, unknown>) {
 
   const points = Array.isArray(args.points) ? (args.points as Vec2[]) : undefined;
   const net = String(args.net ?? "");
-  const layer = ((args.layer as string) || "FCu") as PcbLayer;
   const width = (args.width as number) ?? pcb.rules.defaultRules.traceWidth;
 
   if (!points || points.length < 2) return fail("points must be an array of >= 2 {x, y}");
@@ -6597,9 +7024,9 @@ export function addTrace(args: Record<string, unknown>) {
     }
   }
   if (!net) return fail("net is required — copper must belong to a net");
-  if (!/Cu$/.test(layer)) {
-    return fail(`layer "${layer}" is not a copper layer (use FCu, BCu, In1Cu, ...)`);
-  }
+  const layerRes = validateCopperLayer((args.layer as string) || "FCu");
+  if ("error" in layerRes) return fail(layerRes.error);
+  const layer = layerRes.layer;
   if (!(width > 0)) return fail("width must be > 0");
 
   if (!pcb.nets.some((n) => n.id === net)) {
@@ -6675,8 +7102,6 @@ export function addVia(args: Record<string, unknown>) {
 
   const position = args.position as Vec2;
   const net = String(args.net ?? "");
-  const startLayer = ((args.start_layer as string) || "FCu") as PcbLayer;
-  const endLayer = ((args.end_layer as string) || "BCu") as PcbLayer;
   const diameter = (args.diameter as number) ?? pcb.rules.defaultRules.viaDiameter;
   const drill = (args.drill as number) ?? pcb.rules.defaultRules.viaDrill;
 
@@ -6684,8 +7109,12 @@ export function addVia(args: Record<string, unknown>) {
     return fail("position must be {x, y} in mm");
   }
   if (!net) return fail("net is required — a via must belong to a net");
-  if (!/Cu$/.test(startLayer)) return fail(`start_layer "${startLayer}" is not a copper layer`);
-  if (!/Cu$/.test(endLayer)) return fail(`end_layer "${endLayer}" is not a copper layer`);
+  const startRes = validateCopperLayer((args.start_layer as string) || "FCu");
+  if ("error" in startRes) return fail(`start_layer: ${startRes.error}`);
+  const startLayer = startRes.layer;
+  const endRes = validateCopperLayer((args.end_layer as string) || "BCu");
+  if ("error" in endRes) return fail(`end_layer: ${endRes.error}`);
+  const endLayer = endRes.layer;
 
   if (!pcb.nets.some((n) => n.id === net)) {
     pcb.nets.push({ id: net, name: net });
@@ -6781,20 +7210,24 @@ export function setStackup(args: Record<string, unknown>) {
   if (copperOz != null) {
     const t = round3(copperOz * OZ_TO_MM);
     for (const l of stackup) {
-      if (/Cu$/.test(l.layer)) l.copperThickness = t;
+      if (isCopperLayer(l.layer)) l.copperThickness = t;
     }
   }
 
   // 2) Per-layer overrides; create copper-layer entries that are missing.
   for (const ov of perLayer ?? []) {
-    const layerName = String(ov.layer ?? "");
-    if (!layerName) return fail("each layers entry needs a `layer`");
+    if (ov.layer == null || String(ov.layer).trim() === "") {
+      return fail("each layers entry needs a `layer`");
+    }
+    const layerRes = validateLayer(ov.layer);
+    if ("error" in layerRes) return fail(layerRes.error);
+    const layerName = layerRes.layer;
     let entry = stackup.find((l) => l.layer === layerName);
     if (!entry) {
-      if (!/Cu$/.test(layerName)) {
+      if (!isCopperLayer(layerName)) {
         return fail(`cannot create non-copper layer "${layerName}" — only copper layers are auto-added`);
       }
-      entry = { layer: layerName as PcbLayer } as StackupLayer;
+      entry = { layer: layerName } as StackupLayer;
       stackup.push(entry);
     }
     if (ov.copper_thickness_mm != null) {
@@ -7063,11 +7496,10 @@ export function addZone(args: Record<string, unknown>) {
   }
 
   const net = String(args.net ?? "");
-  const layer = ((args.layer as string) || "FCu") as PcbLayer;
   if (!net) return fail("net is required — a pour must belong to a net");
-  if (!/Cu$/.test(layer)) {
-    return fail(`layer "${layer}" is not a copper layer (use FCu, BCu, In1Cu, ...)`);
-  }
+  const layerRes = validateCopperLayer((args.layer as string) || "FCu");
+  if ("error" in layerRes) return fail(layerRes.error);
+  const layer = layerRes.layer;
 
   const reliefArg = (args.thermal_relief as string) || "Relief";
   if (!["Direct", "Relief", "None"].includes(reliefArg)) {
@@ -7743,13 +8175,15 @@ export function addViaArray(args: Record<string, unknown>) {
   }
 
   const net = String(args.net ?? "");
-  const startLayer = ((args.start_layer as string) || "FCu") as PcbLayer;
-  const endLayer = ((args.end_layer as string) || "BCu") as PcbLayer;
   const diameter = (args.diameter as number) ?? pcb.rules.defaultRules.viaDiameter;
   const drill = (args.drill as number) ?? pcb.rules.defaultRules.viaDrill;
   if (!net) return fail("net is required — a via must belong to a net");
-  if (!/Cu$/.test(startLayer)) return fail(`start_layer "${startLayer}" is not a copper layer`);
-  if (!/Cu$/.test(endLayer)) return fail(`end_layer "${endLayer}" is not a copper layer`);
+  const startRes = validateCopperLayer((args.start_layer as string) || "FCu");
+  if ("error" in startRes) return fail(`start_layer: ${startRes.error}`);
+  const startLayer = startRes.layer;
+  const endRes = validateCopperLayer((args.end_layer as string) || "BCu");
+  if ("error" in endRes) return fail(`end_layer: ${endRes.error}`);
+  const endLayer = endRes.layer;
 
   const explicitPoints = Array.isArray(args.points)
     ? (args.points as Array<Record<string, unknown>>)
@@ -7928,8 +8362,6 @@ export function addMotorWinding(args: Record<string, unknown>) {
   const traceWidth = args.trace_width as number;
   const turnsPerCoil = (args.turns_per_coil as number) ?? 1;
   const connection = (args.connection as string) === "delta" ? "delta" : "wye";
-  const copperLayer = ((args.copper_layer as string) || "FCu") as PcbLayer;
-  const returnLayer = ((args.return_layer as string) || "BCu") as PcbLayer;
 
   if (!center || typeof center.x !== "number" || typeof center.y !== "number") {
     return fail("center must be {x, y} in mm");
@@ -7937,8 +8369,12 @@ export function addMotorWinding(args: Record<string, unknown>) {
   if (!(pitchRadius >= 0)) return fail("pitch_radius must be >= 0");
   if (!(outerR > innerR)) return fail("outer_radius must be > inner_radius");
   if (!(traceWidth > 0)) return fail("trace_width must be > 0");
-  if (!/Cu$/.test(copperLayer)) return fail(`copper_layer "${copperLayer}" is not a copper layer`);
-  if (!/Cu$/.test(returnLayer)) return fail(`return_layer "${returnLayer}" is not a copper layer`);
+  const copperRes = validateCopperLayer((args.copper_layer as string) || "FCu");
+  if ("error" in copperRes) return fail(`copper_layer: ${copperRes.error}`);
+  const copperLayer = copperRes.layer;
+  const returnRes = validateCopperLayer((args.return_layer as string) || "BCu");
+  if ("error" in returnRes) return fail(`return_layer: ${returnRes.error}`);
+  const returnLayer = returnRes.layer;
 
   // a. Plan the winding.
   const planRes = windingLayout({

@@ -120,6 +120,26 @@ fn rect_tht(num: &str, x: f64, y: f64, w: f64, h: f64, drill_dia: f64) -> Pad {
     }
 }
 
+/// Finished plated-through-hole drill for a round lead of nominal diameter
+/// `lead_dia` (mm).
+///
+/// IPC-2222 Class-2 wants the finished hole ≈ `lead + 0.2 mm` (a ~0.1 mm radial
+/// gap), floored at a fab-practical 0.3 mm. Sizing the drill off the *lead*
+/// (not the pad pitch) is what keeps drilled holes from ballooning past the
+/// hole-to-hole rule on standard parts — the old `pitch * 0.4` heuristic emitted
+/// oversized holes (e.g. 1.0 mm on a 0.5 mm JST lead) that produced phantom
+/// hole-to-hole DRC violations when the auto-placer packed parts together.
+fn tht_drill(lead_dia: f64) -> f64 {
+    (lead_dia + 0.2).max(0.3)
+}
+
+/// Copper land diameter for a through-hole pad: its drill plus an annular ring
+/// of `ring` mm per side. A `ring >= 0.2` keeps the pad clear of the
+/// min-annular-ring DRC by construction.
+fn tht_pad(drill: f64, ring: f64) -> f64 {
+    drill + 2.0 * ring
+}
+
 /// Bare-copper round SMD test pad: front copper + mask opening but **no paste**
 /// — a spring-pin (pogo) target that should never get a solder-stencil aperture.
 fn smd_test_pad(num: &str, x: f64, y: f64, dia: f64) -> Pad {
@@ -405,6 +425,10 @@ fn dip(pins: u32) -> FootprintTemplate {
     let row_spacing = 7.62;
     let half = pins / 2;
     let top = (half as f64 - 1.0) / 2.0 * pitch;
+    // DIP IC leads are ~0.5mm round; drill the IPC gap (→ 0.7mm) with a wide
+    // hand-insert pad.
+    let drill = tht_drill(0.5);
+    let pad = tht_pad(drill, 0.45);
     let mut pads = Vec::new();
     for i in 0..half {
         let y = top - i as f64 * pitch;
@@ -412,8 +436,8 @@ fn dip(pins: u32) -> FootprintTemplate {
             &(i + 1).to_string(),
             -row_spacing / 2.0,
             y,
-            1.6,
-            0.8,
+            pad,
+            drill,
         ));
     }
     for i in 0..half {
@@ -422,8 +446,8 @@ fn dip(pins: u32) -> FootprintTemplate {
             &(half + i + 1).to_string(),
             row_spacing / 2.0,
             y,
-            1.6,
-            0.8,
+            pad,
+            drill,
         ));
     }
     let body_h = half as f64 * pitch + 1.0;
@@ -461,6 +485,7 @@ fn tab_package(
     let mut pads = Vec::new();
     let n = leads.len();
     let lead_y = th / 2.0 + 1.0; // leads project below the tab
+    let lead_drill = tht_drill((lw.min(lh) - 0.4).max(0.6)); // lead + 0.2mm IPC gap
     for (k, num) in leads.iter().enumerate() {
         let x = if n == 1 {
             0.0
@@ -468,7 +493,13 @@ fn tab_package(
             (k as f64 - (n as f64 - 1.0) / 2.0) * pitch
         };
         if tht {
-            pads.push(circle_tht(&num.to_string(), x, lead_y, lw.max(lh), 1.0));
+            pads.push(circle_tht(
+                &num.to_string(),
+                x,
+                lead_y,
+                lw.max(lh),
+                lead_drill,
+            ));
         } else {
             pads.push(rect_smd(&num.to_string(), x, lead_y, lw, lh));
         }
@@ -524,8 +555,14 @@ fn two_pad(name: String, span: f64, pad_w: f64, pad_h: f64) -> FootprintTemplate
 // ============================================================================
 
 fn pin_header(rows: u32, cols: u32, pitch: f64) -> FootprintTemplate {
-    let pad_dia = (pitch * 0.6).clamp(1.4, 2.5);
-    let drill = (pitch * 0.4).clamp(0.7, 1.2);
+    // Round-equivalent lead of the square header post: 2.54mm strips use ~0.8mm
+    // (a 0.64mm post needs the diagonal cleared), finer pitches proportionally
+    // smaller. Drill the IPC gap over that, pad keeps a 0.35mm ring — yielding
+    // the standard 1.0mm drill / 1.7mm pad on classic 2.54mm headers instead of
+    // the old pitch-scaled 1.016mm drill / 1.524mm pad.
+    let lead = (pitch * 0.315).clamp(0.5, 0.8);
+    let drill = tht_drill(lead);
+    let pad_dia = tht_pad(drill, 0.35);
     let mut pads = Vec::new();
     let mut num = 1u32;
     for c in 0..cols {
@@ -554,10 +591,14 @@ fn pin_header(rows: u32, cols: u32, pitch: f64) -> FootprintTemplate {
 }
 
 fn screw_terminal(positions: u32, pitch: f64) -> FootprintTemplate {
+    // Terminal blocks take a stripped wire ferrule (~1.1mm) — drill the gap,
+    // wide pad for the larger solder fillet.
+    let drill = tht_drill(1.1);
+    let pad = tht_pad(drill, 0.65);
     let mut pads = Vec::new();
     for i in 0..positions {
         let x = (i as f64 - (positions as f64 - 1.0) / 2.0) * pitch;
-        pads.push(circle_tht(&(i + 1).to_string(), x, 0.0, 2.6, 1.3));
+        pads.push(circle_tht(&(i + 1).to_string(), x, 0.0, pad, drill));
     }
     let half_w = (positions as f64) * pitch / 2.0 + 0.5;
     FootprintTemplate {
@@ -568,11 +609,14 @@ fn screw_terminal(positions: u32, pitch: f64) -> FootprintTemplate {
 }
 
 fn radial_electrolytic(pitch: f64, body_dia: f64) -> FootprintTemplate {
+    // Radial electrolytic leads are ~0.6mm round.
+    let drill = tht_drill(0.6);
+    let pad = tht_pad(drill, 0.4);
     FootprintTemplate {
         name: format!("CP_Radial_D{body_dia:.1}mm_P{pitch:.2}mm"),
         pads: vec![
-            circle_tht("1", -pitch / 2.0, 0.0, 1.8, 1.0),
-            circle_tht("2", pitch / 2.0, 0.0, 1.8, 1.0),
+            circle_tht("1", -pitch / 2.0, 0.0, pad, drill),
+            circle_tht("2", pitch / 2.0, 0.0, pad, drill),
         ],
         graphics: vec![FootprintGraphic::Circle {
             center: Vec2::new(0.0, 0.0),
@@ -753,6 +797,10 @@ fn grid_fallback(pins: u32) -> FootprintTemplate {
     let cols = (pins as f64).sqrt().ceil() as u32;
     let cols = cols.max(1);
     let pitch = 2.54;
+    // Unknown lead — assume a generic 0.6mm pin so the placeholder drills a
+    // fab-buildable hole rather than an oversized one.
+    let drill = tht_drill(0.6);
+    let pad = tht_pad(drill, 0.3);
     let mut pads = Vec::new();
     let rows = pins.div_ceil(cols);
     for n in 0..pins {
@@ -760,7 +808,7 @@ fn grid_fallback(pins: u32) -> FootprintTemplate {
         let c = n % cols;
         let x = (c as f64 - (cols as f64 - 1.0) / 2.0) * pitch;
         let y = (r as f64 - (rows as f64 - 1.0) / 2.0) * pitch;
-        pads.push(circle_tht(&(n + 1).to_string(), x, y, 1.6, 0.9));
+        pads.push(circle_tht(&(n + 1).to_string(), x, y, pad, drill));
     }
     FootprintTemplate {
         name: format!("Generic-{pins}pad"),
@@ -1028,13 +1076,16 @@ fn match_family(base: &str, pin_count: u32) -> Option<(FootprintTemplate, &'stat
 
     // --- Single-row wire-to-board: JST PH/XH/EH (THT), SH/GH (SMD) ----------
     for (marker, count_marker, pitch_default, pad, label) in [
+        // JST PH posts are ~0.5mm round, XH/EH ~0.6mm — drill the IPC gap over
+        // the lead (0.7 / 0.8mm) instead of a flat oversized 1.0mm, which had
+        // hole edges crowding neighbours once the placer packed connectors in.
         (
             "JST_PH",
             "JST_PH_",
             2.0,
             ConnPad::Tht {
-                pad: 1.7,
-                drill: 1.0,
+                pad: tht_pad(tht_drill(0.5), 0.3),
+                drill: tht_drill(0.5),
             },
             "JST-PH",
         ),
@@ -1043,8 +1094,8 @@ fn match_family(base: &str, pin_count: u32) -> Option<(FootprintTemplate, &'stat
             "JST_XH_",
             2.5,
             ConnPad::Tht {
-                pad: 1.7,
-                drill: 1.0,
+                pad: tht_pad(tht_drill(0.6), 0.3),
+                drill: tht_drill(0.6),
             },
             "JST-XH",
         ),
@@ -1053,8 +1104,8 @@ fn match_family(base: &str, pin_count: u32) -> Option<(FootprintTemplate, &'stat
             "JST_EH_",
             2.5,
             ConnPad::Tht {
-                pad: 1.7,
-                drill: 1.0,
+                pad: tht_pad(tht_drill(0.6), 0.3),
+                drill: tht_drill(0.6),
             },
             "JST-EH",
         ),
@@ -2009,5 +2060,112 @@ mod tests {
         );
         let note2 = resolve_footprint("Vendor:TwoPin", 2).note;
         assert!(note2.contains("pads"), "2-pin note should too: {note2}");
+    }
+
+    // ------------------------------------------------------------------------
+    // THT drill sizing (drill = lead + ~0.2mm, never oversized)
+    // ------------------------------------------------------------------------
+
+    /// Worst (smallest) intra-footprint hole-to-hole edge distance, mm — the
+    /// metric DRC's HoleToHole rule flags. `f64::MAX` when there are <2 holes.
+    fn worst_hole_to_hole(fp: &FootprintTemplate) -> f64 {
+        let holes: Vec<(Vec2, f64)> = fp
+            .pads
+            .iter()
+            .filter_map(|p| p.drill.as_ref().map(|d| (p.position, d.diameter / 2.0)))
+            .collect();
+        let mut worst = f64::MAX;
+        for i in 0..holes.len() {
+            for j in (i + 1)..holes.len() {
+                let dx = holes[i].0.x - holes[j].0.x;
+                let dy = holes[i].0.y - holes[j].0.y;
+                let edge = (dx * dx + dy * dy).sqrt() - holes[i].1 - holes[j].1;
+                worst = worst.min(edge);
+            }
+        }
+        worst
+    }
+
+    #[test]
+    fn tht_drill_follows_ipc_gap() {
+        // drill = lead + 0.2, floored at a fab-practical 0.3mm.
+        assert!((tht_drill(0.5) - 0.7).abs() < 1e-9);
+        assert!((tht_drill(0.6) - 0.8).abs() < 1e-9);
+        assert!((tht_drill(0.8) - 1.0).abs() < 1e-9);
+        assert_eq!(tht_drill(0.0), 0.3, "sub-fab leads floor at 0.3mm");
+    }
+
+    /// The fix from the issue: standard THT parts must drill fab-buildable holes
+    /// (≈ lead + 0.2mm) rather than the old pitch-scaled / flat oversized values.
+    #[test]
+    fn standard_tht_parts_are_not_oversized() {
+        // (id, declared pins, max acceptable drill mm) — each upper bound is the
+        // pre-fix value, so a regression to the old oversized drill trips this.
+        let cases = [
+            ("PinHeader_1x04_P2.54mm", 4, 1.0),   // was 1.016
+            ("JST_PH_2", 2, 0.7),                 // was 1.0
+            ("JST_XH_3", 3, 0.8),                 // was 1.0
+            ("CP_Radial_D6.3mm_P2.50mm", 2, 0.8), // was 1.0
+            ("Vendor:Mystery4PinXtal", 4, 0.8),   // grid fallback, was 0.9
+        ];
+        for (id, pins, max_drill) in cases {
+            let fp = resolve_footprint(id, pins).template.unwrap();
+            for pad in &fp.pads {
+                if let Some(d) = &pad.drill {
+                    assert!(
+                        d.diameter <= max_drill + 1e-9,
+                        "{id} pad {} drill {:.3}mm exceeds {max_drill}mm — oversized",
+                        pad.number,
+                        d.diameter
+                    );
+                    assert!(
+                        d.diameter >= 0.3,
+                        "{id} pad {} drill {:.3}mm below fab floor",
+                        pad.number,
+                        d.diameter
+                    );
+                }
+            }
+        }
+    }
+
+    /// Across every THT family the generator emits, drilled holes must clear the
+    /// default 0.5mm hole-to-hole rule and keep a >=0.15mm annular ring — so a
+    /// single standard part never self-flags a manufacturing DRC violation.
+    #[test]
+    fn generated_tht_footprints_pass_hole_and_ring_rules() {
+        let ids = [
+            ("PinHeader_1x04_P2.54mm", 4u32),
+            ("PinHeader_2x05_P2.54mm", 10),
+            ("PinHeader_1x40_P2.54mm", 40),
+            ("DIP-8", 8),
+            ("JST_PH_2", 2),
+            ("JST_PH_6", 6),
+            ("JST_XH_4", 4),
+            ("JST_EH_2", 2),
+            ("TerminalBlock_1x03_P5.08mm", 3),
+            ("CP_Radial_D6.3mm_P2.50mm", 2),
+            ("TO-220-3", 3),
+            ("Vendor:Mystery4PinXtal", 4), // generic grid fallback (THT)
+        ];
+        for (id, pins) in ids {
+            let fp = resolve_footprint(id, pins).template.unwrap();
+            assert!(
+                worst_hole_to_hole(&fp) >= 0.5 - 1e-9,
+                "{id}: intra-footprint hole-to-hole {:.3}mm < 0.5mm",
+                worst_hole_to_hole(&fp)
+            );
+            for pad in &fp.pads {
+                if let (PadShape::Circle { diameter }, Some(d)) = (&pad.shape, &pad.drill) {
+                    let ring = (diameter - d.diameter) / 2.0;
+                    assert!(
+                        ring >= 0.15 - 1e-9,
+                        "{id} pad {} annular ring {:.3}mm < 0.15mm",
+                        pad.number,
+                        ring
+                    );
+                }
+            }
+        }
     }
 }
