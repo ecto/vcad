@@ -24,59 +24,65 @@ import {
 
 /**
  * Generate a base64-encoded GLB preview from an IR document.
- * Returns null if the document cannot be evaluated or has no geometry.
+ * Returns null only when the document has no previewable geometry at all.
+ *
+ * Board roots are rendered from the layered PCB preview meshes, which are
+ * built straight from the PCB data (outline + footprints + pads) and never
+ * touch the BRep boolean pipeline. We build them *before* and independent of
+ * the scene eval, so a PCB session always previews — even when the canonical
+ * board solid fails to evaluate (e.g. a degenerate `board_from_solid` outline)
+ * or `engine.evaluate` throws outright. Otherwise such a session showed the
+ * viewer an empty grid despite having a fully-placed board.
  */
 export async function generateGlbPreview(
   doc: Document,
   engine: Engine,
 ): Promise<string | null> {
+  // Part-identity node names let the viewer map a click back to a part_id
+  // for selection context and "ask about this part".
+  const labels = buildPartLabels(doc);
+  // `scene.parts` is index-aligned with the visible roots.
+  const visibleRoots = doc.roots.filter((r) => r.visible !== false);
+
+  const meshes: GlbMesh[] = [];
+  // Roots already rendered from the PCB-data path — the scene loop skips them.
+  const handledBoards = new Set<number>();
+
+  for (let i = 0; i < visibleRoots.length; i++) {
+    const rootId = visibleRoots[i].root;
+    const node = doc.nodes[String(rootId)];
+    if (node?.op?.type !== "PcbBoard") continue;
+    const pcb = getNodePcb(doc, rootId);
+    const preview = pcb ? await pcbPreviewMeshes(pcb) : [];
+    // Empty preview (older kernel WASM lacks the binding) — leave the board
+    // for the scene loop, which renders its neutral merged slab instead.
+    if (preview.length === 0) continue;
+    handledBoards.add(Number(rootId));
+    pushPcbPreview(meshes, labels[i] ?? `part_${i}`, preview);
+  }
+
+  // Non-board geometry (and any board whose preview meshes were unavailable)
+  // comes from the normal scene eval. Wrapped so a single failing board — or a
+  // hard eval throw — can't blank a preview the PCB-data path already filled.
   try {
     const scene = engine.evaluate(doc);
-    if (!scene || scene.parts.length === 0) return null;
-
-    // Part-identity node names let the viewer map a click back to a
-    // part_id for selection context and "ask about this part".
-    const labels = buildPartLabels(doc);
-    // `scene.parts` is index-aligned with the visible roots.
-    const visibleRoots = doc.roots.filter((r) => r.visible !== false);
-
-    const meshes: GlbMesh[] = [];
-    for (let i = 0; i < scene.parts.length; i++) {
-      const part = scene.parts[i];
-      const name = labels[i] ?? `part_${i}`;
+    for (let i = 0; i < (scene?.parts.length ?? 0); i++) {
       const rootId = visibleRoots[i]?.root;
+      if (rootId !== undefined && handledBoards.has(Number(rootId))) continue;
+
+      const part = scene!.parts[i];
+      const name = labels[i] ?? `part_${i}`;
       const node = rootId !== undefined ? doc.nodes[String(rootId)] : undefined;
 
-      // A board root: replace the merged gray slab with colored layers.
+      // Old-WASM fallback: a board with no preview meshes still renders as the
+      // neutral merged slab rather than being dropped.
       if (node?.op?.type === "PcbBoard" && rootId !== undefined) {
         const pcb = getNodePcb(doc, rootId);
         const preview = pcb ? await pcbPreviewMeshes(pcb) : [];
         if (preview.length > 0) {
-          for (const pm of preview) {
-            const emissive = pm.emissive ?? [0, 0, 0];
-            const glows = emissive[0] > 0 || emissive[1] > 0 || emissive[2] > 0;
-            meshes.push({
-              // Keep the board's part identity on every sub-mesh so a click
-              // anywhere on the board still resolves to the PCB part.
-              name,
-              positions: pm.positions,
-              indices: pm.indices,
-              normals: pm.normals,
-              color: pm.color,
-              metallic: pm.metalness,
-              roughness: pm.roughness,
-              emissive,
-              // Push LED lenses past white so they read as "on" under the
-              // viewer's bright studio IBL.
-              emissiveStrength: glows ? 3.0 : 1,
-              clearcoat: pm.clearcoat ?? 0,
-              clearcoatRoughness: pm.clearcoat_roughness ?? 0,
-            });
-          }
+          pushPcbPreview(meshes, name, preview);
           continue;
         }
-        // Preview meshes unavailable (e.g. older kernel WASM) — fall through
-        // to the neutral merged board rather than dropping it.
       }
 
       meshes.push({
@@ -89,11 +95,44 @@ export async function generateGlbPreview(
         roughness: DEFAULT_MATERIAL.roughness,
       });
     }
-
-    return uint8ArrayToBase64(buildGlb(meshes, "preview"));
   } catch {
-    // Evaluation failures should not break tool responses
-    return null;
+    // Evaluation failures should not break the preview — PCB sessions still
+    // render from the board path above; a non-PCB doc that can't evaluate
+    // falls through to the empty-geometry signal below.
+  }
+
+  if (meshes.length === 0) return null;
+  return uint8ArrayToBase64(buildGlb(meshes, "preview"));
+}
+
+/**
+ * Push a board's layered preview meshes onto `meshes`, all carrying the
+ * board's part-identity `name` so a click anywhere on the board resolves to
+ * the PCB part.
+ */
+function pushPcbPreview(
+  meshes: GlbMesh[],
+  name: string,
+  preview: Awaited<ReturnType<typeof pcbPreviewMeshes>>,
+): void {
+  for (const pm of preview) {
+    const emissive = pm.emissive ?? [0, 0, 0];
+    const glows = emissive[0] > 0 || emissive[1] > 0 || emissive[2] > 0;
+    meshes.push({
+      name,
+      positions: pm.positions,
+      indices: pm.indices,
+      normals: pm.normals,
+      color: pm.color,
+      metallic: pm.metalness,
+      roughness: pm.roughness,
+      emissive,
+      // Push LED lenses past white so they read as "on" under the viewer's
+      // bright studio IBL.
+      emissiveStrength: glows ? 3.0 : 1,
+      clearcoat: pm.clearcoat ?? 0,
+      clearcoatRoughness: pm.clearcoat_roughness ?? 0,
+    });
   }
 }
 
