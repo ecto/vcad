@@ -16,7 +16,16 @@ import { commandRegistry } from "@vcad/core";
 import type { Document } from "@vcad/ir";
 import { exportCad, exportCadSchema } from "./tools/export.js";
 import { inspectCad, inspectCadSchema } from "./tools/inspect.js";
-import { renderView, renderViewSchema, renderPcb, renderPcbSchema } from "./tools/render.js";
+import {
+  renderView,
+  renderViewSchema,
+  renderPcb,
+  renderPcbSchema,
+  renderRatsnest,
+  renderRatsnestSchema,
+  renderStackup,
+  renderStackupSchema,
+} from "./tools/render.js";
 import { recordSimulation, recordSimulationSchema } from "./tools/record.js";
 import {
   verifyPart,
@@ -25,6 +34,12 @@ import {
   listEvalTasksSchema,
 } from "./tools/verify.js";
 import { importStep, importStepSchema } from "./tools/import.js";
+import {
+  importKicad,
+  importKicadSchema,
+  importEagle,
+  importEagleSchema,
+} from "./tools/import-pcb.js";
 import { openInBrowser, openInBrowserSchema } from "./tools/share.js";
 import {
   openDocument,
@@ -156,12 +171,16 @@ import {
   boardFromSolidSchema,
   addTrace,
   addTraceSchema,
+  getPadPositions,
+  getPadPositionsSchema,
   addVia,
   addViaSchema,
   setStackup,
   setStackupSchema,
   setPlacement,
   setPlacementSchema,
+  setBoardOutline,
+  setBoardOutlineSchema,
   addZone,
   addZoneSchema,
   setDesignRules,
@@ -186,6 +205,10 @@ import {
   buildReceiptSchema,
   verifyReceipt,
   verifyReceiptSchema,
+  listFootprints,
+  listFootprintsSchema,
+  searchFootprints,
+  searchFootprintsSchema,
 } from "./tools/ecad.js";
 import { createCadLoon, createCadLoonSchema } from "./tools/loon.js";
 import {
@@ -342,6 +365,7 @@ const serverInfoSchema = {
 const GEOMETRY_TOOLS = new Set([
   "create_cad_loon",
   "import_step",
+  "import_kicad",
   "open_document",
   "get_document",
   // Opens a web doc (from a "Continue in Claude" share token) as a live session
@@ -381,6 +405,7 @@ const SWITCH_DOC_WRITERS = new Set<string>([
   "open_document",
   "create_cad_loon",
   "import_step",
+  "import_kicad",
   "create_schematic",
   "sheet_metal_create",
   // Seeds a new session from a web doc's geometry — persist it to the user's
@@ -406,6 +431,7 @@ const SWITCH_DOC_WRITERS = new Set<string>([
   "add_zone",
   "set_stackup",
   "set_placement",
+  "set_board_outline",
   "set_design_rules",
 ]);
 
@@ -552,11 +578,13 @@ const TOOL_PACKS: Record<string, readonly string[]> = {
     "create_schematic",
     "place_components",
     "route_nets",
+    "get_pad_positions",
     "add_trace",
     "add_via",
     "add_via_array",
     "set_stackup",
     "set_placement",
+    "set_board_outline",
     "add_zone",
     "set_design_rules",
     "size_trace_for_current",
@@ -565,10 +593,14 @@ const TOOL_PACKS: Record<string, readonly string[]> = {
     "add_motor_winding",
     "winding_layout",
     "board_from_solid",
+    "import_kicad",
+    "import_eagle",
     "run_drc",
     "run_erc",
     "export_gerber",
     "render_pcb",
+    "render_ratsnest",
+    "render_stackup",
     "calc_impedance",
     "size_impedance",
     "size_pdn",
@@ -577,6 +609,8 @@ const TOOL_PACKS: Record<string, readonly string[]> = {
     "calc_rf",
     "calc_motor",
     "search_electronic_parts",
+    "list_footprints",
+    "search_footprints",
     "resolve_part",
     "find_alternatives",
     "verify_substitution",
@@ -1076,6 +1110,24 @@ export async function createServer(
         inputSchema: importStepSchema,
       },
       {
+        name: "import_kicad",
+        description:
+          "Import an existing KiCad .kicad_pcb board into a live session — board " +
+          "outline, footprints with pads + nets, design rules, and any routed " +
+          "traces/vias/zones. Returns a document_id ready for render_pcb, " +
+          "run_drc, get_pad_positions, route_nets, and export_gerber. Pass " +
+          "content_base64 on hosted servers.",
+        inputSchema: importKicadSchema,
+        _meta: UI_META,
+      },
+      {
+        name: "import_eagle",
+        description:
+          "Import an Eagle .brd file (not yet supported). Export your board from " +
+          "Eagle as KiCad (.kicad_pcb) and use import_kicad instead.",
+        inputSchema: importEagleSchema,
+      },
+      {
         name: "open_in_browser",
         description:
           "Generate a shareable URL to open a CAD document in vcad.io. " +
@@ -1190,9 +1242,12 @@ export async function createServer(
       {
         name: "route_nets",
         description:
-          "Route electrical nets on the PCB with copper traces. " +
-          "Connects pads belonging to the same net. Mutates the session " +
-          "document (pass document_id).",
+          "Route electrical nets on the PCB with copper traces. Connects pads " +
+          "belonging to the same net. A net with a copper-pour zone (a plane) " +
+          "is connected by stitching each pad to the plane with a via instead " +
+          "of tracing it — those nets come back in `plane_stitched`. " +
+          "`locked_nets` preserves hand-placed copper from rip-up. Mutates the " +
+          "session document (pass document_id).",
         inputSchema: routeNetsSchema,
       },
       {
@@ -1237,6 +1292,33 @@ export async function createServer(
         inputSchema: boardFromSolidSchema,
       },
       {
+        name: "list_footprints",
+        description:
+          "List the footprint families the parametric engine resolves, each " +
+          "with a canonical example id to drop into create_schematic's " +
+          "`footprint`. Optional `kind` filter (passive/ic/transistor/diode/" +
+          "power/connector). Use this instead of guessing id spellings.",
+        inputSchema: listFootprintsSchema,
+      },
+      {
+        name: "search_footprints",
+        description:
+          "Fuzzy-search footprint families by name/alias (e.g. 'SOIC 8', " +
+          "'jst', 'qfn') and get ranked matches with a canonical example id — " +
+          "resolve a footprint id without a failed create_schematic round-trip.",
+        inputSchema: searchFootprintsSchema,
+      },
+      {
+        name: "get_pad_positions",
+        description:
+          "Return every footprint pad's absolute board-frame (x, y), copper " +
+          "layer, and net — the coordinates manual routing (add_trace / " +
+          "add_via / add_via_array) needs so trace endpoints land exactly on " +
+          "pads instead of being eyeballed from component centers. Read-only. " +
+          "Optional `net` / `ref` filters narrow the result for targeted routing.",
+        inputSchema: getPadPositionsSchema,
+      },
+      {
         name: "add_trace",
         description:
           "Lay an explicit copper trace: a polyline of segments on a layer, " +
@@ -1273,6 +1355,18 @@ export async function createServer(
           "`placement_drc` (same shape as place_components) so a move can be " +
           "re-checked in one call without running run_drc.",
         inputSchema: setPlacementSchema,
+      },
+      {
+        name: "set_board_outline",
+        description:
+          "Resize or reshape the board outline in place — rectangle " +
+          "(board_width/height), circle/annulus (board_shape), or any polygon " +
+          "(outline) — WITHOUT re-placing components, traces, vias, or zones. " +
+          "Unlike re-running place_components, the floorplan is preserved; any " +
+          "footprint whose origin ends up off the new board is reported in " +
+          "`off_board` rather than silently relocated. Mutates the session document.",
+        inputSchema: setBoardOutlineSchema,
+        _meta: UI_META,
       },
       {
         name: "add_zone",
@@ -1338,6 +1432,24 @@ export async function createServer(
           "[\"F.Cu\", \"F.SilkS\", \"Edge_Cuts\"]); returns a PNG. Complements " +
           "the isometric render_view and numeric run_drc.",
         inputSchema: renderPcbSchema,
+      },
+      {
+        name: "render_ratsnest",
+        description:
+          "Render the board with its unrouted-connection ratsnest (per-net MST " +
+          "airwires) overlaid as dashed lines — judge placement quality and " +
+          "crossing density BEFORE routing. Returns a PNG plus the airwire " +
+          "(unconnected-pair) count.",
+        inputSchema: renderRatsnestSchema,
+      },
+      {
+        name: "render_stackup",
+        description:
+          "Render each copper layer of a multilayer board to its own image " +
+          "(with the board edge for framing), so inner planes are legible " +
+          "instead of buried under an all-layers composite. Returns one image " +
+          "per layer plus a layer→image index.",
+        inputSchema: renderStackupSchema,
       },
       {
         name: "run_drc",
@@ -1780,6 +1892,14 @@ export async function createServer(
           result = importStep(args, engine);
           break;
 
+        case "import_kicad":
+          result = (await importKicad(args)) as unknown as typeof result;
+          break;
+
+        case "import_eagle":
+          result = importEagle(args) as unknown as typeof result;
+          break;
+
         case "open_in_browser":
           result = openInBrowser(args);
           break;
@@ -1852,6 +1972,18 @@ export async function createServer(
           result = boardFromSolid(args, engine);
           break;
 
+        case "list_footprints":
+          result = listFootprints(args);
+          break;
+
+        case "search_footprints":
+          result = searchFootprints(args);
+          break;
+
+        case "get_pad_positions":
+          result = getPadPositions(args);
+          break;
+
         case "add_trace":
           result = addTrace(args);
           break;
@@ -1866,6 +1998,10 @@ export async function createServer(
 
         case "set_placement":
           result = await setPlacement(args);
+          break;
+
+        case "set_board_outline":
+          result = setBoardOutline(args);
           break;
 
         case "add_zone":
@@ -1894,6 +2030,14 @@ export async function createServer(
 
         case "render_pcb":
           result = (await renderPcb(args)) as unknown as typeof result;
+          break;
+
+        case "render_ratsnest":
+          result = (await renderRatsnest(args)) as unknown as typeof result;
+          break;
+
+        case "render_stackup":
+          result = (await renderStackup(args)) as unknown as typeof result;
           break;
 
         case "save_document":

@@ -909,6 +909,20 @@ impl ConnNode {
         if self.layers & other.layers == 0 {
             return false;
         }
+        // A copper pour is poured for a single net, and fabrication always
+        // carves an anti-pad around every *other*-net via / pad / trace that
+        // crosses it — a plane never galvanically connects to foreign-net
+        // copper. Model that directly: a pour connects only to same-net copper.
+        // Relying solely on the polygonized clearance hole is fragile — a
+        // sub-clearance anti-pad around a small via can vanish in the boolean,
+        // making a through-plane via read as inside the plane and cascade into
+        // spurious N² net-pair shorts. (Genuine proximity to the plane is still
+        // caught by the Clearance rule.)
+        let a_pour = matches!(self.geom, NodeGeom::Pour(_));
+        let b_pour = matches!(other.geom, NodeGeom::Pour(_));
+        if (a_pour ^ b_pour) && self.net != other.net {
+            return false;
+        }
         node_geoms_touch(&self.geom, &other.geom)
     }
 }
@@ -1574,6 +1588,146 @@ mod tests {
             keepouts: vec![],
             net_ties: vec![],
         }
+    }
+
+    /// A foreign-net through-via passing through an inner-layer plane must NOT
+    /// be flagged as a short at ANY clearance — including the degenerate
+    /// near-zero anti-pad where the polygonized clearance hole would vanish.
+    /// Real 4-layer fabrication anti-pads the via, so the plane never connects
+    /// to it. Before the net-aware pour fix, small/zero clearance produced a
+    /// cascade of spurious shorts (every via false-joined through the plane).
+    #[test]
+    fn via_through_foreign_plane_is_not_short() {
+        for clr in [0.0_f64, 0.001, 0.05, 0.2] {
+            let mut pcb = clean_pcb();
+            pcb.nets.push(Net {
+                id: "3".to_string(),
+                name: "3V3".to_string(),
+            });
+            // 3V3 plane flooding the whole board on inner layer In2Cu.
+            pcb.zones.push(Zone {
+                outline: pcb.outline.vertices.clone(),
+                holes: vec![],
+                net: "3".to_string(),
+                layer: PcbLayer::In2Cu,
+                clearance: clr,
+                min_area: 0.0,
+                fill_type: ZoneFillType::Solid,
+                thermal_relief: ThermalReliefStyle::Relief,
+                thermal_gap: Some(0.5),
+                thermal_spoke_width: Some(0.5),
+                priority: 0,
+            });
+            // A GND (net "2") through-via FCu->BCu that physically passes
+            // through the In2Cu 3V3 plane.
+            pcb.vias.push(Via {
+                position: Vec2::new(70.0, 40.0),
+                diameter: 0.8,
+                drill: 0.4,
+                start_layer: PcbLayer::FCu,
+                end_layer: PcbLayer::BCu,
+                net: "2".to_string(),
+            });
+
+            let shorts: Vec<_> = check_drc(&pcb)
+                .into_iter()
+                .filter(|v| matches!(v.rule, DrcRuleType::Short))
+                .collect();
+            assert!(
+                shorts.is_empty(),
+                "via through a foreign plane must not short (clearance={clr}): {:?}",
+                shorts
+            );
+        }
+    }
+
+    /// Guard against over-suppression: a genuine cross-net copper contact on the
+    /// plane layer is still reported as a short.
+    #[test]
+    fn real_short_still_detected_with_plane() {
+        let mut pcb = clean_pcb();
+        pcb.nets.push(Net {
+            id: "3".to_string(),
+            name: "3V3".to_string(),
+        });
+        pcb.zones.push(Zone {
+            outline: pcb.outline.vertices.clone(),
+            holes: vec![],
+            net: "3".to_string(),
+            layer: PcbLayer::In2Cu,
+            clearance: 0.2,
+            min_area: 0.0,
+            fill_type: ZoneFillType::Solid,
+            thermal_relief: ThermalReliefStyle::Relief,
+            thermal_gap: Some(0.5),
+            thermal_spoke_width: Some(0.5),
+            priority: 0,
+        });
+        // A 3V3 trace on FCu crossing the existing GND trace ((20,50)-(50,50)).
+        pcb.traces.push(Trace {
+            start: Vec2::new(35.0, 45.0),
+            end: Vec2::new(35.0, 55.0),
+            width: 0.25,
+            layer: PcbLayer::FCu,
+            net: "3".to_string(),
+        });
+        let shorts: Vec<_> = check_drc(&pcb)
+            .into_iter()
+            .filter(|v| matches!(v.rule, DrcRuleType::Short))
+            .collect();
+        assert!(
+            shorts
+                .iter()
+                .any(|v| v.message.contains("'2'") && v.message.contains("'3'")),
+            "a real GND/3V3 contact must still be flagged: {:?}",
+            shorts
+        );
+    }
+
+    /// A foreign-net trace lying over a pour on the SAME layer is NOT a short:
+    /// the pour is generated with a clearance void around all foreign copper, so
+    /// it never galvanically connects to another net. A signal trace crossing a
+    /// ground pour is the everyday case, not a defect (inadequate spacing would
+    /// be a Clearance concern). This guards the pour-only-same-net rule against
+    /// a regression that re-introduces the false short.
+    #[test]
+    fn same_layer_foreign_trace_over_pour_is_not_short() {
+        let mut pcb = clean_pcb();
+        pcb.nets.push(Net {
+            id: "3".to_string(),
+            name: "3V3".to_string(),
+        });
+        // GND (net "2") pour flooding the board on FCu.
+        pcb.zones.push(Zone {
+            outline: pcb.outline.vertices.clone(),
+            holes: vec![],
+            net: "2".to_string(),
+            layer: PcbLayer::FCu,
+            clearance: 0.2,
+            min_area: 0.0,
+            fill_type: ZoneFillType::Solid,
+            thermal_relief: ThermalReliefStyle::Relief,
+            thermal_gap: Some(0.5),
+            thermal_spoke_width: Some(0.5),
+            priority: 0,
+        });
+        // A 3V3 (net "3") signal trace on FCu, inside the GND pour area.
+        pcb.traces.push(Trace {
+            start: Vec2::new(20.0, 65.0),
+            end: Vec2::new(60.0, 65.0),
+            width: 0.25,
+            layer: PcbLayer::FCu,
+            net: "3".to_string(),
+        });
+        let shorts: Vec<_> = check_drc(&pcb)
+            .into_iter()
+            .filter(|v| matches!(v.rule, DrcRuleType::Short))
+            .collect();
+        assert!(
+            shorts.is_empty(),
+            "a signal trace over a same-layer foreign pour must not short (the pour voids around it): {:?}",
+            shorts
+        );
     }
 
     #[test]

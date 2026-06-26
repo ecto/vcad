@@ -1,0 +1,16 @@
+{
+  "id": "2026-06-25-route-nets-locked-nets",
+  "version": "0.9.4",
+  "date": "2026-06-25",
+  "category": "feat",
+  "title": "route_nets can lock nets from rip-up",
+  "summary": "route_nets accepts locked_nets: hand-routed traces/vias on those nets are never ripped up or re-routed, so manual via bridges survive subsequent autorouter passes.",
+  "features": [
+    "ecad",
+    "pcb",
+    "routing"
+  ],
+  "mcpTools": [
+    "route_nets"
+  ]
+}

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, beforeEach } from "vitest";
-import { Engine } from "@vcad/engine";
+import { Engine, resolveFootprint } from "@vcad/engine";
 import type { Document, Pcb, Vec2 } from "@vcad/ir";
 import {
   createSchematic,
@@ -18,9 +18,13 @@ import {
   addCoilArray,
   windingLayout,
   addTrace,
+  getPadPositions,
+  listFootprints,
+  searchFootprints,
   addVia,
   setStackup,
   setPlacement,
+  setBoardOutline,
   addZone,
   setDesignRules,
   sizeTraceForCurrent,
@@ -33,6 +37,8 @@ import {
   appNotesForPin,
   unconnectedPinSeverity,
 } from "../tools/ecad.js";
+import { renderRatsnest, renderStackup } from "../tools/render.js";
+import { importKicad, importEagle } from "../tools/import-pcb.js";
 import { documents, getSession, openDocument } from "../tools/session.js";
 import { openInBrowser } from "../tools/share.js";
 
@@ -71,6 +77,538 @@ const resistor = (ref: string, x: number, pinNames: [string, string] = ["~", "~"
     { number: "1", name: pinNames[0], type: "Passive", x: -5, y: 0 },
     { number: "2", name: pinNames[1], type: "Passive", x: 5, y: 0 },
   ],
+});
+
+describe("pin-type validation (create_schematic)", () => {
+  it("accepts valid PinType variants verbatim", async () => {
+    const created = out(
+      await createSchematic({
+        components: [
+          {
+            ref: "U1",
+            value: "X",
+            footprint: "SOIC-8",
+            x: 0,
+            y: 0,
+            pins: [
+              { number: "1", name: "A", type: "Bidirectional", x: 0, y: 0 },
+              { number: "2", name: "B", type: "PowerInput", x: 0, y: 1 },
+              { number: "3", name: "C", type: "OpenCollector", x: 0, y: 2 },
+            ],
+          },
+        ],
+      }),
+    );
+    expect(created.success).toBe(true);
+    const doc = getSession(created.document_id);
+    expect(doc.schematic!.components[0]!.pins.map((p) => p.pin_type)).toEqual([
+      "Bidirectional",
+      "PowerInput",
+      "OpenCollector",
+    ]);
+  });
+
+  it("rejects a mis-cased pin type with a precise case correction", async () => {
+    await expect(
+      createSchematic({
+        components: [
+          {
+            ref: "U1",
+            footprint: "SOIC-8",
+            x: 0,
+            y: 0,
+            pins: [{ number: "34", name: "D", type: "BiDirectional", x: 0, y: 0 }],
+          },
+        ],
+      }),
+    ).rejects.toThrow(
+      /Invalid pin type "BiDirectional" on U1\.34.*did you mean "Bidirectional"/,
+    );
+  });
+
+  it("rejects an unknown pin type with a fuzzy suggestion and the valid list", async () => {
+    await expect(
+      createSchematic({
+        components: [
+          {
+            ref: "R9",
+            footprint: "Resistor_SMD:R_0805",
+            x: 0,
+            y: 0,
+            pins: [{ number: "1", name: "~", type: "Passiv", x: 0, y: 0 }],
+          },
+        ],
+      }),
+    ).rejects.toThrow(/did you mean "Passive".*Valid pin types:/);
+  });
+
+  it("defaults an absent pin type to Passive", async () => {
+    const created = out(
+      await createSchematic({
+        components: [
+          {
+            ref: "R1",
+            footprint: "Resistor_SMD:R_0805",
+            x: 0,
+            y: 0,
+            pins: [{ number: "1", name: "~", x: 0, y: 0 }],
+          },
+        ],
+      }),
+    );
+    const doc = getSession(created.document_id);
+    expect(doc.schematic!.components[0]!.pins[0]!.pin_type).toBe("Passive");
+  });
+});
+
+describe("footprint discovery", () => {
+  interface FamilyOut {
+    family: string;
+    example: string;
+    kind: string;
+    aliases: string[];
+  }
+
+  it("list_footprints returns families with example ids, filterable by kind", async () => {
+    const all = out(await listFootprints({}));
+    expect(all.success).toBe(true);
+    expect(all.count).toBeGreaterThan(20);
+    const conn = out(await listFootprints({ kind: "connector" }));
+    expect((conn.families as FamilyOut[]).length).toBeGreaterThan(0);
+    expect((conn.families as FamilyOut[]).every((f) => f.kind === "connector")).toBe(true);
+    expect((conn.families as FamilyOut[]).map((f) => f.family)).toContain("USB-C");
+  });
+
+  it("every advertised example id resolves to a real family (drift guard)", async () => {
+    const all = out(await listFootprints({}));
+    // Reach into the same examples list the tool advertises and resolve each
+    // through the kernel — keeps the TS catalog honest against footprint.rs.
+    for (const fam of all.families as Array<{ family: string; example: string }>) {
+      // Resolve each advertised example through the kernel and assert a real
+      // (non-fallback) match. The id carries its own count for most families;
+      // a generous 8 covers the count-less ones.
+      const res = await resolveFootprint(fam.example, 8);
+      expect(res, `resolver unavailable for ${fam.example}`).toBeTruthy();
+      expect(res!.matched, `${fam.family} example "${fam.example}" must match a real family, got note: ${res!.note}`).toBe(true);
+    }
+  });
+
+  it("search_footprints ranks the obvious family first", async () => {
+    const soic = out(await searchFootprints({ query: "SOIC 8" }));
+    expect(soic.count).toBeGreaterThan(0);
+    expect(soic.matches[0].family).toBe("SOIC");
+    const jst = out(await searchFootprints({ query: "jst" }));
+    expect((jst.matches as Array<{ family: string }>).every((m) => m.family.startsWith("JST"))).toBe(true);
+    const qfn = out(await searchFootprints({ query: "qfn" }));
+    expect(qfn.matches[0].family).toBe("QFN");
+  });
+
+  it("search_footprints errors on an empty query", async () => {
+    const res = await searchFootprints({ query: "  " });
+    expect((res as { isError?: boolean }).isError).toBe(true);
+  });
+});
+
+describe("catalog parts (create_schematic resolves added FC parts)", () => {
+  it("resolves TCAN1042 pins from the database without explicit pins", async () => {
+    const created = out(
+      await createSchematic({
+        components: [{ ref: "U1", part: "TCAN1042HGV", footprint: "SOIC-8", x: 0, y: 0 }],
+        nets: { GND: ["U1.2"], "3V3": ["U1.3"] },
+      }),
+    );
+    expect(created.success).toBe(true);
+    const comp = getSession(created.document_id).schematic!.components[0]!;
+    expect(comp.pins.length).toBe(8);
+    const names = comp.pins.map((p) => p.name);
+    expect(names).toContain("CANH");
+    expect(names).toContain("CANL");
+  });
+});
+
+describe("import_kicad / import_eagle", () => {
+  // Minimal KiCad board (mirrors the kernel parser's own fixture): 2 nets,
+  // a 100x80 outline, one 0805 with 2 pads, one trace, one via.
+  const MINIMAL_KICAD = `(kicad_pcb (version 20221018) (generator test)
+  (general (thickness 1.6))
+  (layers (0 "F.Cu" signal) (31 "B.Cu" signal) (44 "Edge.Cuts" user))
+  (net 0 "")
+  (net 1 "VCC")
+  (net 2 "GND")
+  (gr_line (start 0 0) (end 100 0) (layer "Edge.Cuts") (width 0.05))
+  (gr_line (start 100 0) (end 100 80) (layer "Edge.Cuts") (width 0.05))
+  (gr_line (start 100 80) (end 0 80) (layer "Edge.Cuts") (width 0.05))
+  (gr_line (start 0 80) (end 0 0) (layer "Edge.Cuts") (width 0.05))
+  (footprint "R_0805" (layer "F.Cu") (at 25 40)
+    (fp_text reference "R1" (at 0 0) (layer "F.SilkS"))
+    (pad "1" smd rect (at -1 0) (size 1 1.2) (layers "F.Cu" "F.Paste" "F.Mask") (net 1 "VCC"))
+    (pad "2" smd rect (at 1 0) (size 1 1.2) (layers "F.Cu" "F.Paste" "F.Mask") (net 2 "GND"))
+  )
+  (segment (start 25 40) (end 50 40) (width 0.25) (layer "F.Cu") (net 1))
+  (via (at 50 40) (size 0.8) (drill 0.4) (layers "F.Cu" "B.Cu") (net 1))
+)`;
+
+  it("imports a KiCad board into a live, tool-ready session", async () => {
+    const content_base64 = Buffer.from(MINIMAL_KICAD, "utf8").toString("base64");
+    const res = out(await importKicad({ content_base64, name: "Imported" }));
+    expect(res.success).toBe(true);
+    expect(res.document_id).toBeTruthy();
+    expect(res.summary.footprints).toBe(1);
+    expect(res.summary.nets).toBe(2);
+    expect(res.summary.outline_vertices).toBe(4);
+    expect(res.summary.traces).toBe(1);
+    expect(res.summary.vias).toBe(1);
+
+    // The returned id drives the rest of the toolchain: the board is queryable.
+    const board = getPcbBoard(getSession(res.document_id));
+    expect(board.footprints[0]!.ref).toBe("R1");
+    const pads = out(await getPadPositions({ document_id: res.document_id }));
+    expect(pads.count).toBe(2);
+  });
+
+  it("errors clearly on unparseable content and missing input", async () => {
+    const bad = await importKicad({
+      content_base64: Buffer.from("not a kicad file", "utf8").toString("base64"),
+    });
+    expect((bad as { isError?: boolean }).isError).toBe(true);
+    const none = await importKicad({});
+    expect((none as { isError?: boolean }).isError).toBe(true);
+  });
+
+  it("import_eagle returns a not-yet-supported stub pointing at import_kicad", () => {
+    const res = importEagle({ filename: "board.brd" });
+    expect((res as { isError?: boolean }).isError).toBe(true);
+    expect(res.content[0].text).toContain("import_kicad");
+  });
+});
+
+describe("render_ratsnest / render_stackup", () => {
+  it("render_ratsnest overlays airwires and reports the unconnected-pair count", async () => {
+    const created = out(
+      await createSchematic({
+        components: [resistor("R1", 0), resistor("R2", 20), resistor("R3", 40)],
+        nets: { GND: ["R1.1", "R2.1", "R3.1"], SIG: ["R1.2", "R2.2"] },
+      }),
+    );
+    const id = created.document_id;
+    await placeComponents({ document_id: id, board_width: 60, board_height: 30 });
+
+    const res = await renderRatsnest({ document_id: id });
+    const image = res.content.find((c) => c.type === "image");
+    expect(image, "expected a PNG image block (is @resvg/resvg-js installed?)").toBeDefined();
+    const textBlock = res.content.find((c) => c.type === "text") as
+      | { text: string }
+      | undefined;
+    const meta = JSON.parse(textBlock!.text);
+    // Nothing routed yet → every net connection is an airwire (GND 3 pads → 2,
+    // SIG 2 pads → 1).
+    expect(meta.airwires).toBeGreaterThan(0);
+    expect(meta.format).toBe("png");
+  });
+
+  it("render_stackup returns one image per copper layer plus an index", async () => {
+    const created = out(
+      await createSchematic({
+        components: [resistor("R1", 0), resistor("R2", 20)],
+        nets: { N: ["R1.2", "R2.1"] },
+      }),
+    );
+    const id = created.document_id;
+    await placeComponents({ document_id: id, board_width: 40, board_height: 20 });
+
+    const res = await renderStackup({ document_id: id });
+    const images = res.content.filter((c) => c.type === "image");
+    expect(images.length).toBeGreaterThanOrEqual(2); // at least F.Cu + B.Cu
+    const textBlock = res.content.find((c) => c.type === "text") as
+      | { text: string }
+      | undefined;
+    const meta = JSON.parse(textBlock!.text);
+    expect(meta.layers.length).toBe(images.length);
+  });
+});
+
+describe("get_pad_positions", () => {
+  interface PadPos {
+    ref: string;
+    pin: string;
+    x: number;
+    y: number;
+    net: string | null;
+    layer: string | null;
+  }
+
+  it("returns absolute board-frame coordinates matching the footprint transform", async () => {
+    const created = out(
+      await createSchematic({
+        components: [resistor("R1", 0), resistor("R2", 20)],
+        nets: { MID: ["R1.2", "R2.1"] },
+      }),
+    );
+    const id = created.document_id;
+    await placeComponents({ document_id: id, board_width: 40, board_height: 20 });
+
+    const res = out(await getPadPositions({ document_id: id }));
+    expect(res.success).toBe(true);
+    expect(res.count).toBeGreaterThan(0);
+    expect((res.pads as PadPos[]).length).toBe(res.count);
+
+    // Cross-check each returned pad against the stored footprint geometry,
+    // recomputing the absolute position with the documented transform so a
+    // regression in the rotation/offset math fails loudly.
+    const board = getPcbBoard(getSession(id));
+    const byKey = new Map(
+      (res.pads as PadPos[]).map((p) => [`${p.ref}.${p.pin}`, p]),
+    );
+    for (const fp of board.footprints) {
+      const t = ((fp.rotation ?? 0) * Math.PI) / 180;
+      for (const pad of fp.pads) {
+        const ex =
+          fp.position.x + pad.position.x * Math.cos(t) - pad.position.y * Math.sin(t);
+        const ey =
+          fp.position.y + pad.position.x * Math.sin(t) + pad.position.y * Math.cos(t);
+        const got = byKey.get(`${fp.ref}.${pad.number}`);
+        expect(got).toBeTruthy();
+        expect(got!.x).toBeCloseTo(ex, 3);
+        expect(got!.y).toBeCloseTo(ey, 3);
+        expect(got!.layer).toMatch(/Cu$/);
+      }
+    }
+  });
+
+  it("filters by net and by ref", async () => {
+    const created = out(
+      await createSchematic({
+        components: [resistor("R1", 0), resistor("R2", 20)],
+        nets: { MID: ["R1.2", "R2.1"] },
+      }),
+    );
+    const id = created.document_id;
+    await placeComponents({ document_id: id, board_width: 40, board_height: 20 });
+
+    const mid = out(await getPadPositions({ document_id: id, net: "MID" }));
+    expect(mid.count).toBe(2);
+    expect((mid.pads as PadPos[]).every((p) => p.net === "MID")).toBe(true);
+    expect((mid.pads as PadPos[]).map((p) => `${p.ref}.${p.pin}`).sort()).toEqual([
+      "R1.2",
+      "R2.1",
+    ]);
+
+    const r1 = out(await getPadPositions({ document_id: id, ref: "R1" }));
+    expect(r1.count).toBe(2);
+    expect((r1.pads as PadPos[]).every((p) => p.ref === "R1")).toBe(true);
+  });
+
+  it("errors when the document has no PCB", async () => {
+    const created = out(await createSchematic({ components: [resistor("R1", 0)] }));
+    const res = await getPadPositions({ document_id: created.document_id });
+    expect((res as { isError?: boolean }).isError).toBe(true);
+  });
+});
+
+describe("route_nets locked_nets", () => {
+  const hasDetour = (pcb: Pcb) =>
+    pcb.traces.some(
+      (t) =>
+        t.net === "MID" &&
+        Math.abs(t.start.x - 1) < 1e-6 &&
+        Math.abs(t.start.y - 9) < 1e-6,
+    );
+
+  it("preserves hand-placed copper on a locked net", async () => {
+    const created = out(
+      await createSchematic({
+        components: [resistor("R1", 0), resistor("R2", 20), resistor("R3", 40)],
+        nets: { MID: ["R1.2", "R2.1"], NETB: ["R2.2", "R3.1"] },
+      }),
+    );
+    const id = created.document_id;
+    await placeComponents({ document_id: id, board_width: 60, board_height: 20 });
+
+    // A distinctive detour the autorouter would never reproduce.
+    await addTrace({
+      document_id: id,
+      net: "MID",
+      layer: "FCu",
+      points: [
+        { x: 1, y: 9 },
+        { x: 1, y: 1 },
+        { x: 9, y: 1 },
+      ],
+    });
+    expect(hasDetour(getPcbBoard(getSession(id)))).toBe(true);
+
+    const res = out(await routeNets({ document_id: id, locked_nets: ["MID"] }));
+    expect(res.success).toBe(true);
+    expect(res.locked_nets).toEqual(["MID"]);
+    // The locked net's copper is neither ripped up nor re-routed.
+    expect(res.traces_removed ?? 0).toBe(0);
+    expect(hasDetour(getPcbBoard(getSession(id)))).toBe(true);
+  });
+
+  it("rips up the same net when it is not locked (control)", async () => {
+    const created = out(
+      await createSchematic({
+        components: [resistor("R1", 0), resistor("R2", 20)],
+        nets: { MID: ["R1.2", "R2.1"] },
+      }),
+    );
+    const id = created.document_id;
+    await placeComponents({ document_id: id, board_width: 40, board_height: 20 });
+    await addTrace({
+      document_id: id,
+      net: "MID",
+      layer: "FCu",
+      points: [
+        { x: 1, y: 9 },
+        { x: 1, y: 1 },
+      ],
+    });
+    expect(hasDetour(getPcbBoard(getSession(id)))).toBe(true);
+
+    const res = out(await routeNets({ document_id: id }));
+    expect(res.traces_removed).toBeGreaterThan(0);
+    expect(hasDetour(getPcbBoard(getSession(id)))).toBe(false);
+  });
+});
+
+describe("route_nets strategy", () => {
+  const mkBoard = async () => {
+    const created = out(
+      await createSchematic({
+        components: [resistor("R1", 0), resistor("R2", 20), resistor("R3", 40)],
+        nets: { GND: ["R1.1", "R2.1", "R3.1"], SIG: ["R1.2", "R2.2"] },
+      }),
+    );
+    const id = created.document_id;
+    await placeComponents({ document_id: id, board_width: 60, board_height: 30 });
+    return id;
+  };
+
+  it("every strategy routes the board fully (no coverage regression vs auto)", async () => {
+    for (const strategy of ["auto", "power_first", "fanout_desc", "fanout_asc"]) {
+      const id = await mkBoard();
+      const res = out(await routeNets({ document_id: id, strategy }));
+      expect(res.success, `strategy ${strategy}`).toBe(true);
+      expect(res.nets_routed, `strategy ${strategy}`).toBeGreaterThanOrEqual(2);
+      expect(res.unrouted_nets ?? [], `strategy ${strategy}`).toEqual([]);
+    }
+  });
+
+  it("power_first stitches a plane power net first and still routes signals", async () => {
+    const id = await mkBoard();
+    await addZone({ document_id: id, net: "GND", layer: "BCu", fill_board: true });
+    const res = out(await routeNets({ document_id: id, strategy: "power_first" }));
+    expect(res.success).toBe(true);
+    expect(res.plane_stitched).toContain("GND");
+    const board = getPcbBoard(getSession(id));
+    expect(board.traces.some((t) => t.net === "SIG")).toBe(true);
+  });
+});
+
+describe("route_nets plane stitching", () => {
+  it("reports nets connected through a copper plane in plane_stitched", async () => {
+    const created = out(
+      await createSchematic({
+        components: [resistor("R1", 0), resistor("R2", 20), resistor("R3", 40)],
+        nets: { GND: ["R1.1", "R2.1", "R3.1"], SIG: ["R1.2", "R2.2"] },
+      }),
+    );
+    const id = created.document_id;
+    await placeComponents({ document_id: id, board_width: 60, board_height: 30 });
+    // GND copper plane on the back layer — pads get stitched to it with vias.
+    await addZone({ document_id: id, net: "GND", layer: "BCu", fill_board: true });
+
+    const res = out(await routeNets({ document_id: id }));
+    expect(res.success).toBe(true);
+    expect(res.plane_stitched).toContain("GND");
+    expect((res.plane_stitched as string[]).includes("SIG")).toBe(false);
+    // GND pads were stitched to the plane with vias, not star-routed as traces.
+    const board = getPcbBoard(getSession(id));
+    expect(board.vias.some((v) => v.net === "GND")).toBe(true);
+  });
+});
+
+describe("set_board_outline", () => {
+  it("resizes the outline, keeps component positions, and flags off-board parts", async () => {
+    const created = out(
+      await createSchematic({
+        components: [resistor("R1", 0), resistor("R2", 20)],
+        nets: { MID: ["R1.2", "R2.1"] },
+      }),
+    );
+    const id = created.document_id;
+    await placeComponents({ document_id: id, board_width: 60, board_height: 40 });
+
+    const before = getPcbBoard(getSession(id));
+    const posBefore = before.footprints
+      .map((f) => ({ ref: f.ref, x: f.position.x, y: f.position.y }))
+      .sort((a, b) => a.ref.localeCompare(b.ref));
+
+    // Shrink the width just below the rightmost footprint so it is guaranteed
+    // off-board; a tall height keeps Y from being the limiting axis.
+    const maxX = Math.max(...posBefore.map((p) => p.x));
+    const newW = Math.max(1, maxX - 0.5);
+    const res = out(
+      await setBoardOutline({ document_id: id, board_width: newW, board_height: 100 }),
+    );
+    expect(res.success).toBe(true);
+    expect(res.outline.width).toBeCloseTo(newW, 3);
+    expect(res.components_kept).toBe(2);
+
+    const after = getPcbBoard(getSession(id));
+    // Positions untouched (this is the whole point — no re-placement).
+    const posAfter = after.footprints
+      .map((f) => ({ ref: f.ref, x: f.position.x, y: f.position.y }))
+      .sort((a, b) => a.ref.localeCompare(b.ref));
+    expect(posAfter).toEqual(posBefore);
+    // The outline really changed.
+    const xs = after.outline.vertices.map((v) => v.x);
+    expect(Math.max(...xs) - Math.min(...xs)).toBeCloseTo(newW, 3);
+    // Off-board set matches exactly the footprints whose origin is now outside.
+    const offX = posAfter
+      .filter((p) => p.x < 0 || p.x > newW)
+      .map((p) => p.ref)
+      .sort();
+    expect(offX.length).toBeGreaterThan(0);
+    expect(((res.off_board as string[]) ?? []).slice().sort()).toEqual(offX);
+  });
+
+  it("accepts an explicit polygon outline and preserves the current thickness", async () => {
+    const created = out(await createSchematic({ components: [resistor("R1", 0)] }));
+    const id = created.document_id;
+    await placeComponents({
+      document_id: id,
+      board_width: 30,
+      board_height: 30,
+      board_thickness: 2.0,
+    });
+    const res = out(
+      await setBoardOutline({
+        document_id: id,
+        outline: {
+          vertices: [
+            { x: 0, y: 0 },
+            { x: 50, y: 0 },
+            { x: 50, y: 50 },
+            { x: 0, y: 50 },
+          ],
+        },
+      }),
+    );
+    expect(res.success).toBe(true);
+    expect(res.outline.thickness).toBeCloseTo(2.0, 3);
+    const after = getPcbBoard(getSession(id));
+    expect(after.outline.thickness).toBeCloseTo(2.0, 3);
+    expect(after.outline.vertices.length).toBe(4);
+  });
+
+  it("errors when no outline is specified", async () => {
+    const created = out(await createSchematic({ components: [resistor("R1", 0)] }));
+    const id = created.document_id;
+    await placeComponents({ document_id: id, board_width: 20, board_height: 20 });
+    const res = await setBoardOutline({ document_id: id });
+    expect((res as { isError?: boolean }).isError).toBe(true);
+  });
 });
 
 describe("ecad session flow", () => {

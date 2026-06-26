@@ -423,22 +423,6 @@ export class Solid {
      */
     static cone(radius_bottom: number, radius_top: number, height: number, segments?: number | null): Solid;
     /**
-     * Create a torus centered at origin with axis along Z.
-     */
-    static torus(major_radius: number, minor_radius: number, segments?: number | null): Solid;
-    /**
-     * Create a right-triangular-prism wedge with corner at origin.
-     */
-    static wedge(sx: number, sy: number, sz: number): Solid;
-    /**
-     * Create a regular n-gonal right prism centered on Z.
-     */
-    static prism(sides: number, radius: number, height: number): Solid;
-    /**
-     * Mirror the solid across a plane.
-     */
-    mirror(origin_x: number, origin_y: number, origin_z: number, normal_x: number, normal_y: number, normal_z: number): Solid;
-    /**
      * Create a box with corner at origin and dimensions (sx, sy, sz).
      */
     static cube(sx: number, sy: number, sz: number): Solid;
@@ -514,9 +498,19 @@ export class Solid {
      */
     static loft(profiles_json: string, closed?: boolean | null): Solid;
     /**
+     * Mirror the solid across a plane through `(origin_x, origin_y, origin_z)`
+     * with the given plane normal. Triangle / face winding is automatically
+     * reversed to preserve outward normals.
+     */
+    mirror(origin_x: number, origin_y: number, origin_z: number, normal_x: number, normal_y: number, normal_z: number): Solid;
+    /**
      * Get the number of triangles in the tessellated mesh.
      */
     numTriangles(): number;
+    /**
+     * Create a regular n-gonal right prism centered on Z.
+     */
+    static prism(sides: number, radius: number, height: number): Solid;
     /**
      * Project the solid to a 2D view for technical drawing.
      *
@@ -623,6 +617,10 @@ export class Solid {
      */
     toStepBuffer(): Uint8Array;
     /**
+     * Create a torus centered at origin with axis along Z.
+     */
+    static torus(major_radius: number, minor_radius: number, segments?: number | null): Solid;
+    /**
      * Translate the solid by (x, y, z).
      */
     translate(x: number, y: number, z: number): Solid;
@@ -634,6 +632,10 @@ export class Solid {
      * Compute the volume of the solid.
      */
     volume(): number;
+    /**
+     * Create a right-triangular-prism wedge with corner at origin.
+     */
+    static wedge(sx: number, sy: number, sz: number): Solid;
 }
 
 /**
@@ -2444,7 +2446,9 @@ export interface InitOutput {
     readonly solid_intersection: (a: number, b: number) => number;
     readonly solid_isEmpty: (a: number) => number;
     readonly solid_loft: (a: number, b: number, c: number) => [number, number, number];
+    readonly solid_mirror: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => number;
     readonly solid_numTriangles: (a: number) => number;
+    readonly solid_prism: (a: number, b: number, c: number) => number;
     readonly solid_projectView: (a: number, b: number, c: number, d: number) => any;
     readonly solid_rotate: (a: number, b: number, c: number, d: number) => number;
     readonly solid_runDfm: (a: number, b: number, c: number, d: number, e: number, f: bigint) => [number, number, number, number];
@@ -2456,9 +2460,11 @@ export interface InitOutput {
     readonly solid_sweepLine: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number) => [number, number, number];
     readonly solid_textExtrude: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number, o: number, p: number, q: number, r: number, s: number) => [number, number, number];
     readonly solid_toStepBuffer: (a: number) => [number, number, number, number];
+    readonly solid_torus: (a: number, b: number, c: number) => number;
     readonly solid_translate: (a: number, b: number, c: number, d: number) => number;
     readonly solid_union: (a: number, b: number) => number;
     readonly solid_volume: (a: number) => number;
+    readonly solid_wedge: (a: number, b: number, c: number) => number;
     readonly solveForwardKinematics: (a: number, b: number) => [number, number, number];
     readonly textBounds: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => [number, number, number];
     readonly toVCode: (a: number, b: number) => [number, number, number, number];

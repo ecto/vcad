@@ -1,0 +1,15 @@
+{
+  "id": "2026-06-25-set-board-outline",
+  "version": "0.9.4",
+  "date": "2026-06-25",
+  "category": "feat",
+  "title": "set_board_outline resizes the board in place",
+  "summary": "New set_board_outline changes the board outline (rectangle, circle, or polygon) without re-placing components; footprints that end up off the board are reported in off_board.",
+  "features": [
+    "ecad",
+    "pcb"
+  ],
+  "mcpTools": [
+    "set_board_outline"
+  ]
+}

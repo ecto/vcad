@@ -1,0 +1,16 @@
+{
+  "id": "2026-06-25-route-nets-strategy",
+  "version": "0.9.4",
+  "date": "2026-06-25",
+  "category": "feat",
+  "title": "route_nets accepts an ordering strategy",
+  "summary": "route_nets gains a strategy hint (power_first, fanout_desc, fanout_asc) that routes nets in priority tiers, each seeing prior tiers' copper as obstacles; default 'auto' is unchanged.",
+  "features": [
+    "ecad",
+    "pcb",
+    "routing"
+  ],
+  "mcpTools": [
+    "route_nets"
+  ]
+}

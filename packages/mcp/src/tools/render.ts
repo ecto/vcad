@@ -12,7 +12,8 @@
  * inspect_cad gives numbers, render_view shows the part.
  */
 
-import { getKernelWasm, resetKernelWasm } from "@vcad/engine";
+import { getKernelWasm, resetKernelWasm, computeRatsnest } from "@vcad/engine";
+import type { NetlistResult } from "@vcad/engine";
 import { getNodePcb, getPcbNodeIds } from "@vcad/core";
 import type { Document, Pcb } from "@vcad/ir";
 import { getSession } from "./session.js";
@@ -409,4 +410,354 @@ export async function renderPcb(
       },
     ],
   };
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// render_ratsnest — board render + airwire overlay (judge placement pre-route)
+// ───────────────────────────────────────────────────────────────────────────
+
+/** Margin (mm) the kernel PCB renderer pads the viewBox with — mirrored here so
+ *  injected airwires share its pixel transform. Keep in sync with MARGIN_MM in
+ *  crates/vcad-render/src/pcb.rs. */
+const PCB_MARGIN_MM = 2.0;
+
+/** Brand-pink airwire stroke. */
+const RATSNEST_COLOR = "#F92672";
+
+interface BoardBounds {
+  minX: number;
+  minY: number;
+  maxX: number;
+  maxY: number;
+}
+
+/** Replicates `board_bounds` in crates/vcad-render/src/pcb.rs: outline bbox,
+ *  falling back to all geometry, then a fixed extent — so the TS-side airwire
+ *  transform matches the kernel render exactly. */
+function boardBounds(pcb: Pcb): BoardBounds {
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  const add = (x: number, y: number) => {
+    minX = Math.min(minX, x);
+    minY = Math.min(minY, y);
+    maxX = Math.max(maxX, x);
+    maxY = Math.max(maxY, y);
+  };
+  const valid = () =>
+    Number.isFinite(minX) && Number.isFinite(minY) && maxX >= minX && maxY >= minY;
+  for (const v of pcb.outline.vertices) add(v.x, v.y);
+  if (valid()) return { minX, minY, maxX, maxY };
+  for (const t of pcb.traces) {
+    add(t.start.x, t.start.y);
+    add(t.end.x, t.end.y);
+  }
+  for (const v of pcb.vias) add(v.position.x, v.position.y);
+  for (const fp of pcb.footprints) add(fp.position.x, fp.position.y);
+  if (valid()) return { minX, minY, maxX, maxY };
+  return { minX: 0, minY: 0, maxX: 100, maxY: 100 };
+}
+
+/** Build a pad-derived netlist for the kernel ratsnest (net → pin refs). */
+function netlistFromPads(pcb: Pcb): NetlistResult {
+  const m = new Map<string, Array<{ component_ref: string; pin_number: string }>>();
+  for (const fp of pcb.footprints) {
+    for (const pad of fp.pads) {
+      if (!pad.net) continue;
+      const conns = m.get(pad.net) ?? [];
+      conns.push({ component_ref: fp.ref, pin_number: pad.number });
+      m.set(pad.net, conns);
+    }
+  }
+  return { nets: [...m.entries()].map(([name, connections]) => ({ name, connections })) };
+}
+
+export const renderRatsnestSchema = {
+  type: "object" as const,
+  properties: {
+    document_id: {
+      type: "string" as const,
+      description: "Session id of a board (from create_schematic / place_components).",
+    },
+    layers: {
+      type: "array" as const,
+      items: { type: "string" as const },
+      description:
+        'Base layers drawn under the airwires. Default: ["F.Cu", "F.SilkS", "Edge_Cuts"].',
+    },
+    width_px: {
+      type: "number" as const,
+      description: "Target raster width in pixels (default 900, clamped 64–2048).",
+    },
+  },
+  required: ["document_id"],
+};
+
+/**
+ * Render the board with the unrouted-connection ratsnest (per-net MST airwires)
+ * overlaid as dashed lines — so an agent can judge placement quality and
+ * crossing density BEFORE committing to a route pass. Reuses the kernel ratsnest
+ * and PCB renderer; airwires are injected in the renderer's own pixel transform.
+ */
+export async function renderRatsnest(
+  args: Record<string, unknown>,
+): Promise<RenderViewResult> {
+  const documentId = String(args.document_id ?? "");
+  const doc = getSession(documentId);
+  const pcb = docPcb(doc);
+  if (!pcb) {
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify({
+            error: "document has no PCB — run place_components first (or open a board)",
+            document_id: documentId,
+          }),
+        },
+      ],
+      isError: true,
+    };
+  }
+
+  const layers =
+    Array.isArray(args.layers) && args.layers.length > 0
+      ? (args.layers as unknown[]).map(String)
+      : ["F.Cu", "F.SilkS", "Edge_Cuts"];
+  const widthRaw = Number(args.width_px ?? 900);
+  const widthPx = Math.min(
+    2048,
+    Math.max(64, Number.isFinite(widthRaw) ? Math.round(widthRaw) : 900),
+  );
+
+  const wasm = (await getKernelWasm()) as unknown as {
+    render_pcb_svg?: (pcbJson: string, layersJson: string, scale: number) => string;
+  };
+  if (typeof wasm.render_pcb_svg !== "function") {
+    return {
+      content: [
+        {
+          type: "text",
+          text: "render_ratsnest unavailable: kernel WASM build predates render_pcb_svg — rebuild vcad-kernel-wasm.",
+        },
+      ],
+      isError: true,
+    };
+  }
+
+  let svg: string;
+  try {
+    svg = wasm.render_pcb_svg(JSON.stringify(pcb), JSON.stringify(layers), SVG_SCALE);
+  } catch (e) {
+    if (e instanceof WebAssembly.RuntimeError) {
+      resetKernelWasm(`render_pcb_svg trapped: ${e.message}`);
+    }
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify({
+            error: `ratsnest render failed: ${e instanceof Error ? e.message : String(e)}`,
+            document_id: documentId,
+          }),
+        },
+      ],
+      isError: true,
+    };
+  }
+
+  // Compute the airwires and inject them in the kernel renderer's pixel space.
+  const lines = await computeRatsnest(pcb, netlistFromPads(pcb));
+  const b = boardBounds(pcb);
+  const margin = PCB_MARGIN_MM * SVG_SCALE;
+  const tx = (x: number) => (x - b.minX) * SVG_SCALE + margin;
+  const ty = (y: number) => (b.maxY - y) * SVG_SCALE + margin;
+  const dash = `${(SVG_SCALE * 1.5).toFixed(2)},${(SVG_SCALE * 1.0).toFixed(2)}`;
+  let overlay = `<g stroke="${RATSNEST_COLOR}" stroke-width="${Math.max(0.6, SVG_SCALE * 0.35).toFixed(2)}" stroke-dasharray="${dash}" opacity="0.85" fill="none">`;
+  for (const l of lines) {
+    overlay += `<line x1="${tx(l.from.x).toFixed(2)}" y1="${ty(l.from.y).toFixed(2)}" x2="${tx(l.to.x).toFixed(2)}" y2="${ty(l.to.y).toFixed(2)}"/>`;
+  }
+  overlay += "</g>";
+  svg = svg.replace("</svg>", `${overlay}</svg>`);
+
+  const meta = {
+    document_id: documentId,
+    layers,
+    width_px: widthPx,
+    airwires: lines.length,
+  };
+
+  const raster = await rasterize(svg, widthPx);
+  if (raster.png) {
+    return {
+      content: [
+        { type: "image", data: raster.png.toString("base64"), mimeType: "image/png" },
+        { type: "text", text: JSON.stringify({ ...meta, format: "png" }) },
+      ],
+    };
+  }
+  const note =
+    raster.reason === "module-missing"
+      ? "Install @resvg/resvg-js for PNG output; returning raw SVG."
+      : `PNG ${raster.reason}; returning raw SVG.`;
+  const svgBytes = Buffer.byteLength(svg, "utf8");
+  return {
+    content: [
+      {
+        type: "text",
+        text: JSON.stringify({
+          ...meta,
+          format: "svg",
+          note,
+          ...(svgBytes <= MAX_INLINE_SVG_BYTES
+            ? { svg }
+            : { svg_omitted: `SVG is ${svgBytes} bytes (inline cap ${MAX_INLINE_SVG_BYTES}).` }),
+        }),
+      },
+    ],
+  };
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// render_stackup — one image per copper layer (read inner planes legibly)
+// ───────────────────────────────────────────────────────────────────────────
+
+const COPPER_LAYERS = [
+  "FCu",
+  "In1Cu",
+  "In2Cu",
+  "In3Cu",
+  "In4Cu",
+  "In5Cu",
+  "In6Cu",
+  "BCu",
+] as const;
+
+export const renderStackupSchema = {
+  type: "object" as const,
+  properties: {
+    document_id: {
+      type: "string" as const,
+      description: "Session id of a board (from create_schematic / place_components).",
+    },
+    width_px: {
+      type: "number" as const,
+      description: "Per-layer raster width in pixels (default 700, clamped 64–2048).",
+    },
+  },
+  required: ["document_id"],
+};
+
+/**
+ * Render each copper layer of a multilayer board to its own image (with the
+ * board edge for framing) — so inner planes are legible instead of being
+ * buried under an all-layers composite. Returns one image content block per
+ * layer plus a text index mapping layer → image position.
+ */
+export async function renderStackup(
+  args: Record<string, unknown>,
+): Promise<RenderViewResult> {
+  const documentId = String(args.document_id ?? "");
+  const doc = getSession(documentId);
+  const pcb = docPcb(doc);
+  if (!pcb) {
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify({
+            error: "document has no PCB — run place_components first (or open a board)",
+            document_id: documentId,
+          }),
+        },
+      ],
+      isError: true,
+    };
+  }
+
+  const widthRaw = Number(args.width_px ?? 700);
+  const widthPx = Math.min(
+    2048,
+    Math.max(64, Number.isFinite(widthRaw) ? Math.round(widthRaw) : 700),
+  );
+
+  const wasm = (await getKernelWasm()) as unknown as {
+    render_pcb_svg?: (pcbJson: string, layersJson: string, scale: number) => string;
+  };
+  if (typeof wasm.render_pcb_svg !== "function") {
+    return {
+      content: [
+        {
+          type: "text",
+          text: "render_stackup unavailable: kernel WASM build predates render_pcb_svg — rebuild vcad-kernel-wasm.",
+        },
+      ],
+      isError: true,
+    };
+  }
+
+  // Copper layers actually present: from the stackup, falling back to the two
+  // outer layers when the stackup is unspecified.
+  const declared = new Set(pcb.stackup.layers.map((l) => String(l.layer)));
+  const present = COPPER_LAYERS.filter((l) => declared.has(l));
+  const copper: string[] = present.length > 0 ? [...present] : ["FCu", "BCu"];
+
+  const pcbJson = JSON.stringify(pcb);
+  const content: ContentBlock[] = [];
+  const index: Array<{ layer: string; image_index: number }> = [];
+  let resvgMissing = false;
+  for (const layer of copper) {
+    let svg: string;
+    try {
+      svg = wasm.render_pcb_svg(pcbJson, JSON.stringify([layer, "EdgeCuts"]), SVG_SCALE);
+    } catch (e) {
+      if (e instanceof WebAssembly.RuntimeError) {
+        resetKernelWasm(`render_pcb_svg trapped: ${e.message}`);
+      }
+      continue;
+    }
+    const raster = await rasterize(svg, widthPx);
+    if (raster.png) {
+      index.push({ layer, image_index: content.length });
+      content.push({
+        type: "image",
+        data: raster.png.toString("base64"),
+        mimeType: "image/png",
+      });
+    } else if (raster.reason === "module-missing") {
+      resvgMissing = true;
+      break;
+    }
+  }
+
+  if (content.length === 0) {
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify({
+            document_id: documentId,
+            format: "svg",
+            note: resvgMissing
+              ? "Install @resvg/resvg-js for per-layer PNG output."
+              : "No copper layers rendered.",
+            layers: copper,
+          }),
+        },
+      ],
+      isError: resvgMissing ? undefined : true,
+    };
+  }
+
+  content.push({
+    type: "text",
+    text: JSON.stringify({
+      document_id: documentId,
+      width_px: widthPx,
+      format: "png",
+      layers: index,
+    }),
+  });
+  return { content };
 }

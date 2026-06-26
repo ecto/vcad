@@ -1,0 +1,17 @@
+{
+  "id": "2026-06-25-render-ratsnest",
+  "version": "0.9.4",
+  "date": "2026-06-25",
+  "category": "feat",
+  "title": "render_ratsnest shows pre-route airwires",
+  "summary": "New render_ratsnest overlays the unrouted-connection ratsnest (per-net MST airwires) as dashed lines over the board, so placement and crossing density can be judged before routing.",
+  "features": [
+    "ecad",
+    "pcb",
+    "render",
+    "routing"
+  ],
+  "mcpTools": [
+    "render_ratsnest"
+  ]
+}

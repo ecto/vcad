@@ -1,0 +1,16 @@
+{
+  "id": "2026-06-25-render-stackup",
+  "version": "0.9.4",
+  "date": "2026-06-25",
+  "category": "feat",
+  "title": "render_stackup renders layers individually",
+  "summary": "New render_stackup renders each copper layer of a multilayer board to its own framed image, so inner planes are legible instead of buried under an all-layers composite.",
+  "features": [
+    "ecad",
+    "pcb",
+    "render"
+  ],
+  "mcpTools": [
+    "render_stackup"
+  ]
+}
