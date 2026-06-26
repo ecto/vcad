@@ -124,6 +124,73 @@ export async function runDrc(pcb: Pcb): Promise<DrcViolationResult[]> {
   }
 }
 
+// ---------------------------------------------------------------------------
+// PCB Design-for-Manufacturing (fab-profile capability checks)
+// ---------------------------------------------------------------------------
+
+/** Supported PCB fab profiles (mirrors `vcad_ecad_pcb::PcbFabProfile`). */
+export type PcbFabProfile = "jlcpcb" | "pcbway" | "generic_2layer" | "generic_4layer";
+
+/** DFM severity tier (mirrors `vcad_ecad_pcb::dfm::DfmSeverity`). */
+export type PcbDfmSeverity = "error" | "warning" | "info";
+
+/** A representative location of a DFM finding (board mm). */
+export interface PcbDfmLocation {
+  x: number;
+  y: number;
+  label: string;
+}
+
+/** Pass/fail verdict for one DFM rule (mirrors `PcbDfmRuleResult`). */
+export interface PcbDfmRuleResult {
+  rule: string;
+  passed: boolean;
+  applicable: boolean;
+  severity: PcbDfmSeverity;
+  units: string;
+  limit: number;
+  measured: number | null;
+  violations: number;
+  message: string;
+  locations: PcbDfmLocation[];
+}
+
+/** Full DFM verdict for a board against one fab profile (mirrors `PcbDfmReport`). */
+export interface PcbDfmReport {
+  profile: string;
+  profile_name: string;
+  pack_version: string;
+  copper_weight_oz: number;
+  copper_layer_count: number;
+  passed: boolean;
+  error_count: number;
+  warning_count: number;
+  rules: PcbDfmRuleResult[];
+}
+
+/**
+ * Run PCB Design-for-Manufacturing checks against a fab profile. Where DRC
+ * validates a board against its own declared rules, this validates the geometry
+ * against a fab house's published process capability. Returns null only if the
+ * ECAD WASM is unavailable; an unknown profile throws.
+ */
+export async function runPcbDfm(
+  pcb: Pcb,
+  profile: PcbFabProfile,
+  rulePackToml?: string,
+): Promise<PcbDfmReport | null> {
+  const wasm = await loadEcadWasm();
+  if (!wasm || typeof wasm.ecadDfmCheck !== "function") return null;
+  return wasm.ecadDfmCheck(JSON.stringify(pcb), profile, rulePackToml ?? "") as PcbDfmReport;
+}
+
+/** Return the bundled default DFM rule-pack TOML for a fab profile. */
+export async function getPcbDfmPack(profile: PcbFabProfile): Promise<string | null> {
+  const wasm = await loadEcadWasm();
+  if (!wasm || typeof wasm.ecadDfmDefaultPack !== "function") return null;
+  return wasm.ecadDfmDefaultPack(profile) as string;
+}
+
 /** Read-only audit of one net's routing. */
 export interface NetCritique {
   net: string;

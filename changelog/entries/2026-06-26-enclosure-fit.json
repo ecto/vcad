@@ -1,0 +1,18 @@
+{
+  "id": "2026-06-26-enclosure-fit",
+  "version": "0.9.4",
+  "date": "2026-06-26",
+  "category": "feat",
+  "title": "Cross-domain check: does the board fit its case?",
+  "summary": "New check_enclosure_fit tool co-verifies a PCB against the enclosure it ships in — board fits with clearance, components clear the lid, mounting holes land on standoffs, connectors align to wall cutouts — surfaced in build_receipt and shown end-to-end by the F405 flight-controller showcase.",
+  "features": [
+    "ecad",
+    "pcb",
+    "cad",
+    "verification"
+  ],
+  "mcpTools": [
+    "check_enclosure_fit",
+    "build_receipt"
+  ]
+}
