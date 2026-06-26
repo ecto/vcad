@@ -76,9 +76,10 @@ const COPPER_BARE: [f32; 3] = [0.72, 0.45, 0.30];
 // Silkscreen white.
 const SILK_WHITE: [f32; 3] = [0.92, 0.92, 0.88];
 
-// Clearcoat for the glossy soldermask.
+// Clearcoat for the glossy soldermask. A low clearcoat roughness gives the
+// wet, anodized sheen of a freshly-coated board under studio lighting.
 const MASK_CLEARCOAT: f32 = 1.0;
-const MASK_CLEARCOAT_ROUGH: f32 = 0.08;
+const MASK_CLEARCOAT_ROUGH: f32 = 0.05;
 
 // Silk line width and reference-designator text height (mm).
 const SILK_LINE_WIDTH: f64 = 0.15;
@@ -126,7 +127,9 @@ pub fn pcb_preview_meshes(pcb: &Pcb) -> Vec<PcbPreviewMesh> {
         }
     }
     if !signal.is_empty() {
-        out.push(signal.finish("copper", COPPER_ENIG, 0.9, 0.30));
+        // Tight, instrument-grade ENIG gold: high metalness, low roughness so
+        // the studio key light reads as a crisp specular streak on each trace.
+        out.push(signal.finish("copper", COPPER_ENIG, 0.92, 0.24));
     }
     // Copper pours / zones (slightly darker + rougher than signal copper).
     let mut pour = MeshBuf::default();

@@ -82,7 +82,7 @@ export function PcbViaMesh({ pcb, activeNet, hoveredNet, explosion }: Props) {
         frustumCulled={false}
       >
         <cylinderGeometry args={[0.5, 0.5, 1, 16]} />
-        <meshStandardMaterial vertexColors roughness={0.3} metalness={0.7} />
+        <meshStandardMaterial vertexColors roughness={0.32} metalness={0.4} envMapIntensity={1.5} />
       </instancedMesh>
       <instancedMesh
         ref={drillRef}

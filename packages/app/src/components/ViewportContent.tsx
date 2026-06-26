@@ -1656,8 +1656,10 @@ export function ViewportContent({
         </GizmoHelper>
       )}
 
-      {/* Environment lighting (3D mode only) */}
-      {!isPcbMode && environmentPreset && (
+      {/* Environment lighting (3D + PCB modes — metallic copper, ENIG pads,
+          and the clearcoat soldermask all need an IBL to reflect, or they
+          read flat/plastic). */}
+      {environmentPreset && (
         <Suspense fallback={null}>
           <Environment
             preset={environmentPreset as "studio" | "warehouse" | "apartment" | "park" | "city" | "dawn" | "night" | "sunset" | "forest"}
@@ -1680,8 +1682,9 @@ export function ViewportContent({
           that cost and froze the render loop for ~10s on boot. 256 is
           still plenty for a smooth prefiltered reflection because
           roughness 0.1+ reads from higher mips anyway. Only active
-          when the user hasn't selected an explicit environment preset. */}
-      {!isPcbMode && !environmentPreset && (
+          when the user hasn't selected an explicit environment preset.
+          Now also lights PCB mode so the board reads as a product shot. */}
+      {!environmentPreset && (
         <Environment resolution={256} frames={1} background={false}>
           {/* Backdrop: near-black in dark theme, warm studio wall in
               light theme. Kept as a flat color (not a shader gradient)

@@ -1,0 +1,10 @@
+{
+  "id": "2026-06-25-pcb-studio-graphite-render",
+  "version": "0.9.4",
+  "date": "2026-06-25",
+  "category": "feat",
+  "title": "World-class dark PCB render (Studio Graphite)",
+  "summary": "render_pcb now defaults to a dark, high-contrast editor view: copper-as-accent palette, drilled-hole halos, haloed reference designators + value labels, a recessive ratsnest for unrouted nets, and a brand-pink net/ref highlight (e.g. highlight:{nets:['GND']}).",
+  "features": ["pcb", "ecad", "render", "agent-eyes"],
+  "mcpTools": ["render_pcb"]
+}

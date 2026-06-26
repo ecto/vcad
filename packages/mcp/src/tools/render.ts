@@ -94,7 +94,11 @@ type RasterOutcome =
  *  module and a genuine rasterization failure are distinct outcomes so
  *  the fallback note never tells the agent to install a dependency that
  *  is present but failing. */
-async function rasterize(svg: string, widthPx: number): Promise<RasterOutcome> {
+async function rasterize(
+  svg: string,
+  widthPx: number,
+  background = "white",
+): Promise<RasterOutcome> {
   let ResvgCtor: typeof import("@resvg/resvg-js").Resvg;
   try {
     ({ Resvg: ResvgCtor } = await import("@resvg/resvg-js"));
@@ -111,7 +115,7 @@ async function rasterize(svg: string, widthPx: number): Promise<RasterOutcome> {
   try {
     const resvg = new ResvgCtor(svg, {
       fitTo: { mode: "width", value: widthPx },
-      background: "white",
+      background,
     });
     return { png: resvg.render().asPng() };
   } catch (e) {
@@ -291,7 +295,36 @@ export const renderPcbSchema = {
     },
     width_px: {
       type: "number" as const,
-      description: "Target raster width in pixels (default 900, clamped 64–2048).",
+      description: "Target raster width in pixels (default 1200, clamped 64–2048).",
+    },
+    theme: {
+      type: "string" as const,
+      enum: ["dark", "light"],
+      description:
+        'Color theme. "dark" (default) is the high-contrast "Studio Graphite" editor look; "light" is the legacy white/green fabrication look.',
+    },
+    highlight: {
+      type: "object" as const,
+      properties: {
+        nets: { type: "array" as const, items: { type: "string" as const } },
+        refs: { type: "array" as const, items: { type: "string" as const } },
+      },
+      description:
+        'Focus a subset: highlighted nets/refs recolor to brand pink with a glow and everything else dims. E.g. {"nets":["GND"]} to trace a net, {"refs":["U1"]} to spotlight a part.',
+    },
+    net_labels: {
+      type: "boolean" as const,
+      description:
+        "Annotate routed copper with net names (off by default; useful as a verification overlay).",
+    },
+    values: {
+      type: "boolean" as const,
+      description: "Draw component value labels (on by default, zoom-gated).",
+    },
+    hero: {
+      type: "boolean" as const,
+      description:
+        "Marketing/hero still: adds a copper bloom. Off by default — never use for verification renders (glow misrepresents copper extents).",
     },
   },
   required: ["document_id"],
@@ -330,14 +363,36 @@ export async function renderPcb(
       ? (args.layers as unknown[]).map(String)
       : ["F.Cu", "F.SilkS", "Edge_Cuts"];
 
-  const widthRaw = Number(args.width_px ?? 900);
+  const widthRaw = Number(args.width_px ?? 1200);
   const widthPx = Math.min(
     2048,
-    Math.max(64, Number.isFinite(widthRaw) ? Math.round(widthRaw) : 900),
+    Math.max(64, Number.isFinite(widthRaw) ? Math.round(widthRaw) : 1200),
   );
+
+  // Assemble the "Studio Graphite" render options.
+  const theme = args.theme === "light" ? "light" : "dark";
+  const hl = (args.highlight ?? {}) as { nets?: unknown; refs?: unknown };
+  const asStrings = (v: unknown): string[] =>
+    Array.isArray(v) ? v.map(String) : [];
+  const opts: Record<string, unknown> = { theme };
+  if (typeof args.net_labels === "boolean") opts.netLabels = args.net_labels;
+  if (typeof args.values === "boolean") opts.values = args.values;
+  if (typeof args.hero === "boolean") opts.hero = args.hero;
+  const hlNets = asStrings(hl.nets);
+  const hlRefs = asStrings(hl.refs);
+  if (hlNets.length > 0 || hlRefs.length > 0) {
+    opts.highlight = { nets: hlNets, refs: hlRefs };
+  }
+  const optsJson = JSON.stringify(opts);
 
   const wasm = (await getKernelWasm()) as unknown as {
     render_pcb_svg?: (pcbJson: string, layersJson: string, scale: number) => string;
+    render_pcb_svg_opts?: (
+      pcbJson: string,
+      layersJson: string,
+      scale: number,
+      optsJson: string,
+    ) => string;
   };
   if (typeof wasm.render_pcb_svg !== "function") {
     return {
@@ -353,7 +408,14 @@ export async function renderPcb(
 
   let svg: string;
   try {
-    svg = wasm.render_pcb_svg(JSON.stringify(pcb), JSON.stringify(layers), SVG_SCALE);
+    const pcbJson = JSON.stringify(pcb);
+    const layersJson = JSON.stringify(layers);
+    // Prefer the options-aware binding (theme/highlight/labels); fall back to
+    // the 3-arg form on an older WASM build (which now also defaults to dark).
+    svg =
+      typeof wasm.render_pcb_svg_opts === "function"
+        ? wasm.render_pcb_svg_opts(pcbJson, layersJson, SVG_SCALE, optsJson)
+        : wasm.render_pcb_svg(pcbJson, layersJson, SVG_SCALE);
   } catch (e) {
     // A kernel trap here would otherwise leave the shared instance in an
     // undefined state and break every other session — recover it in place.
@@ -375,14 +437,20 @@ export async function renderPcb(
     };
   }
 
-  const raster = await rasterize(svg, widthPx);
+  const raster = await rasterize(svg, widthPx, theme === "light" ? "white" : "#0E1014");
   if (raster.png) {
     return {
       content: [
         { type: "image", data: raster.png.toString("base64"), mimeType: "image/png" },
         {
           type: "text",
-          text: JSON.stringify({ document_id: documentId, layers, width_px: widthPx, format: "png" }),
+          text: JSON.stringify({
+            document_id: documentId,
+            layers,
+            width_px: widthPx,
+            theme,
+            format: "png",
+          }),
         },
       ],
     };

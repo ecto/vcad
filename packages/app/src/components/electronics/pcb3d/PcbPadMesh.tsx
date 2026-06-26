@@ -166,7 +166,7 @@ export function PcbPadMesh({ pcb, layers, activeNet, hoveredNet, explosion }: Pr
           frustumCulled={false}
         >
           <boxGeometry args={[1, 1, 1]} />
-          <meshStandardMaterial vertexColors roughness={0.3} metalness={0.7} />
+          <meshStandardMaterial vertexColors roughness={0.32} metalness={0.4} envMapIntensity={1.5} />
         </instancedMesh>
       )}
 
@@ -178,7 +178,7 @@ export function PcbPadMesh({ pcb, layers, activeNet, hoveredNet, explosion }: Pr
           frustumCulled={false}
         >
           <boxGeometry args={[1, 1, 1]} />
-          <meshStandardMaterial vertexColors roughness={0.3} metalness={0.7} />
+          <meshStandardMaterial vertexColors roughness={0.32} metalness={0.4} envMapIntensity={1.5} />
         </instancedMesh>
       )}
 

@@ -72,7 +72,8 @@ export function PcbTraceMesh({ pcb, layers, activeNet, hoveredNet, explosion }: 
       <meshStandardMaterial
         vertexColors
         roughness={0.4}
-        metalness={0.6}
+        metalness={0.3}
+        envMapIntensity={1.4}
         side={THREE.DoubleSide}
       />
     </instancedMesh>
