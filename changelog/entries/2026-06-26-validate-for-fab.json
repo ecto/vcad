@@ -1,0 +1,16 @@
+{
+  "id": "2026-06-26-validate-for-fab",
+  "version": "0.9.4",
+  "date": "2026-06-26",
+  "category": "feat",
+  "title": "validate_for_fab readiness gate + clean-DRC export guard",
+  "summary": "New validate_for_fab tool returns one fail-closed verdict (DRC, renderability, Gerber serialization, unsupported features, blockers, fixes), and export_gerber now blocks a dirty or unverifiable board by default.",
+  "features": [
+    "ecad",
+    "pcb"
+  ],
+  "mcpTools": [
+    "validate_for_fab",
+    "export_gerber"
+  ]
+}

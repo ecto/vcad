@@ -172,6 +172,8 @@ import {
   exportGerberSchema,
   exportKicad,
   exportKicadSchema,
+  validateForFab,
+  validateForFabSchema,
   calcImpedance,
   calcImpedanceSchema,
   sizeImpedance,
@@ -661,6 +663,7 @@ const TOOL_PACKS: Record<string, readonly string[]> = {
     "run_drc",
     "run_erc",
     "export_gerber",
+    "validate_for_fab",
     "render_pcb",
     "render_ratsnest",
     "render_stackup",
@@ -715,7 +718,7 @@ function buildInstructions(kernelPrompt: string | null): string {
     "- Ship with `export_cad` (STL/GLB/STEP) or `open_in_browser` (vcad.io deep link).",
     "- Fix in place: when geometry is wrong, prefer `update` on the offending node over deleting parts and starting over.",
     "",
-    "PCB workflow: `create_schematic` (declare connectivity as data via `nets`) → `place_components` → `route_nets` / `add_coil` / `add_coil_array` → `run_drc` → `export_gerber`. All take the `document_id` from create_schematic and mutate that session — never re-send the document. `board_from_solid` turns a solid part (e.g. an enclosure or stator disc in a CAD session) into an outline polygon for `place_components`. For motors, plan the winding first with `winding_layout` (slots + poles → per-coil phase/polarity/winding-factor, as data — it touches no board), then realize it with `add_coil_array`. `run_drc` returns a summary by default (counts by rule + net-pair, worst clearance, a capped sample); pass `detail:'full'` for every violation.",
+    "PCB workflow: `create_schematic` (declare connectivity as data via `nets`) → `place_components` → `route_nets` / `add_coil` / `add_coil_array` → `run_drc` → `validate_for_fab` → `export_gerber`. All take the `document_id` from create_schematic and mutate that session — never re-send the document. `validate_for_fab` is the single 'is this board ready?' gate (DRC + renderability + Gerber serialization + blockers, all fail-closed); `export_gerber` enforces a clean DRC by default and blocks a dirty board. `board_from_solid` turns a solid part (e.g. an enclosure or stator disc in a CAD session) into an outline polygon for `place_components`. For motors, plan the winding first with `winding_layout` (slots + poles → per-coil phase/polarity/winding-factor, as data — it touches no board), then realize it with `add_coil_array`. `run_drc` returns a summary by default (counts by rule + net-pair, worst clearance, a capped sample); pass `detail:'full'` for every violation.",
   ].join("\n");
   if (!kernelPrompt) return header;
   const sections = new Map<string, string>();
@@ -1707,7 +1710,10 @@ export async function createServer(
         name: "export_gerber",
         description:
           "Export Gerber RS-274X fabrication files from a PCB design. " +
-          "Generates copper layer files, drill file, pick-and-place CSV, and BOM.",
+          "Generates copper layer files, drill file, pick-and-place CSV, and BOM. " +
+          "Gated on a clean DRC by default (require_clean_drc) — a dirty or " +
+          "unverifiable board is BLOCKED with its DRC summary instead of emitting " +
+          "an invalid bundle. Run validate_for_fab first for the full readiness verdict.",
         inputSchema: exportGerberSchema,
       },
       {
@@ -1720,6 +1726,18 @@ export async function createServer(
           "it in KiCad to finish routing nets the autorouter couldn't close, then " +
           "re-import. Large files respect the inline byte cap (use output_dir for those).",
         inputSchema: exportKicadSchema,
+      },
+      {
+        name: "validate_for_fab",
+        description:
+          "The single 'is this board ready to fabricate?' oracle. Runs the whole " +
+          "readiness gate in one call and returns ONE structured verdict: DRC " +
+          "(fail-closed — a board that won't parse is 'unverifiable', never clean), " +
+          "renderability, Gerber-exportability (attempts serialization; names the " +
+          "exact failing field when it can't), unsupported features, the precise " +
+          "blockers, and suggested fixes. Read-only. Use before export_gerber / " +
+          "quote_manufacturing to know — not guess — whether the board is shippable.",
+        inputSchema: validateForFabSchema,
       },
       {
         name: "calc_impedance",
@@ -2381,6 +2399,10 @@ export async function createServer(
 
         case "export_kicad":
           result = await exportKicad(args);
+          break;
+
+        case "validate_for_fab":
+          result = await validateForFab(args);
           break;
 
         case "calc_impedance":

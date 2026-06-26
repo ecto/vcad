@@ -150,6 +150,7 @@ export {
   runDrc,
   runPcbDfm,
   getPcbDfmPack,
+  tryRunDrc,
   critiqueRoute,
   runErc,
   checkErc,
@@ -161,6 +162,7 @@ export {
   routeDiffPair,
   fillZones,
   exportFabFiles,
+  tryExportFabFiles,
   parseKicadPcb,
   exportKicadPcb,
   exportKicadSch,
@@ -170,6 +172,7 @@ export {
   computeRatsnest,
   componentMeshes,
   pcbPreviewMeshes,
+  tryPcbPreviewMeshes,
   createCircuitSim,
   evaluateMotor,
   airgapFluxDensity,
@@ -184,6 +187,7 @@ export {
   verifyReceipt,
 } from "./ecad.js";
 export type {
+  EcadProbe,
   DrcViolationResult,
   PcbFabProfile,
   PcbDfmSeverity,

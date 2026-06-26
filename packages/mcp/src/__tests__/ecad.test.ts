@@ -11,6 +11,7 @@ import {
   runErc,
   exportGerber,
   exportKicad,
+  validateForFab,
   calcImpedance,
   sizeImpedance,
   sizePdn,
@@ -993,6 +994,113 @@ describe("ecad session flow", () => {
     // An unsupported extension is a clean tool error, not a throw.
     const bad = await exportKicad({ document_id: id, filename: "nope.brd" });
     expect(bad.isError).toBe(true);
+  });
+
+  it("export_gerber blocks a dirty (unconnected-net) board and returns the DRC summary", async () => {
+    const created = out(
+      await createSchematic({
+        components: [resistor("R1", 0), resistor("R2", 20)],
+        nets: { MID: ["R1.2", "R2.1"] },
+      }),
+    );
+    const id = created.document_id;
+    out(await placeComponents({ document_id: id, board_width: 50, board_height: 50 }));
+    // Deliberately NOT routed → MID's two pads sit in disjoint copper groups,
+    // so DRC reports an UnconnectedNet error and the board is not fab-clean.
+
+    const blocked = out(await exportGerber({ document_id: id })); // require_clean_drc defaults true
+    expect(blocked.success).toBe(false);
+    expect(blocked.blocked).toBe(true);
+    expect(blocked.drc.errors).toBeGreaterThan(0);
+    expect(blocked.drc.byRule.UnconnectedNet).toBeGreaterThan(0);
+    expect(blocked.files).toBeUndefined();
+
+    // Opting out of the gate still emits the bundle (caller forced a dirty export).
+    const forced = out(
+      await exportGerber({ document_id: id, require_clean_drc: false }),
+    );
+    expect(forced.success).toBe(true);
+    expect(forced.files.length).toBeGreaterThan(0);
+  });
+
+  it("export_gerber exports a clean routed board under the default DRC gate", async () => {
+    const created = out(
+      await createSchematic({
+        components: [resistor("R1", 0), resistor("R2", 20)],
+        nets: { MID: ["R1.2", "R2.1"] },
+      }),
+    );
+    const id = created.document_id;
+    out(await placeComponents({ document_id: id, board_width: 50, board_height: 50 }));
+    expect(out(await routeNets({ document_id: id })).success).toBe(true);
+
+    const gerber = out(await exportGerber({ document_id: id }));
+    expect(gerber.success).toBe(true);
+    expect(gerber.files.length).toBeGreaterThan(0);
+  });
+
+  it("validate_for_fab passes a clean routed board (ready)", async () => {
+    const created = out(
+      await createSchematic({
+        components: [resistor("R1", 0), resistor("R2", 20)],
+        nets: { MID: ["R1.2", "R2.1"] },
+      }),
+    );
+    const id = created.document_id;
+    out(await placeComponents({ document_id: id, board_width: 50, board_height: 50 }));
+    out(await routeNets({ document_id: id }));
+
+    const v = out(await validateForFab({ document_id: id }));
+    expect(v.ready).toBe(true);
+    expect(v.verdict).toBe("ready");
+    expect(v.drc.status).toBe("clean");
+    expect(v.renderable.ok).toBe(true);
+    expect(v.gerber_exportable.ok).toBe(true);
+    expect(v.blockers).toHaveLength(0);
+    expect(v.unverifiable).toHaveLength(0);
+  });
+
+  it("validate_for_fab blocks a dirty board and names the DRC errors", async () => {
+    const created = out(
+      await createSchematic({
+        components: [resistor("R1", 0), resistor("R2", 20)],
+        nets: { MID: ["R1.2", "R2.1"] },
+      }),
+    );
+    const id = created.document_id;
+    out(await placeComponents({ document_id: id, board_width: 50, board_height: 50 }));
+
+    const v = out(await validateForFab({ document_id: id }));
+    expect(v.ready).toBe(false);
+    expect(v.verdict).toBe("blocked");
+    expect(v.drc.status).toBe("violations");
+    expect(v.blockers.some((b: string) => b.startsWith("DRC:"))).toBe(true);
+    expect(v.suggested_fixes.length).toBeGreaterThan(0);
+  });
+
+  it("validate_for_fab reports a serialization blocker with the exact failing field", async () => {
+    const created = out(
+      await createSchematic({
+        components: [resistor("R1", 0), resistor("R2", 20)],
+        nets: { MID: ["R1.2", "R2.1"] },
+      }),
+    );
+    const id = created.document_id;
+    out(await placeComponents({ document_id: id, board_width: 50, board_height: 50 }));
+    out(await routeNets({ document_id: id }));
+
+    // Corrupt the board so the kernel can no longer deserialize it: drop a
+    // required field. Gerber serialization must surface 'thickness' by name, and
+    // — fail-closed — DRC must read 'unverifiable', never clean.
+    const board = getPcbBoard(getSession(id));
+    delete (board.outline as { thickness?: number }).thickness;
+
+    const v = out(await validateForFab({ document_id: id }));
+    expect(v.ready).toBe(false);
+    expect(v.gerber_exportable.ok).toBe(false);
+    expect(v.gerber_exportable.field).toBe("thickness");
+    expect(v.blockers.some((b: string) => b.includes("thickness"))).toBe(true);
+    expect(v.drc.status).toBe("unverifiable");
   });
 
   it("parametric footprint engine resolves QFN/DPAK on-board and reports unknowns", async () => {
