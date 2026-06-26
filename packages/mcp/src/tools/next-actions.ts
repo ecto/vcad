@@ -214,6 +214,113 @@ interface MutableResult {
   isError?: boolean;
 }
 
+/**
+ * The success side of the same idea: emit `next_actions` on a SUCCEEDING tool so
+ * the canonical PCB flow is discoverable from a good result, not only by tripping
+ * over an ordering error (set_design_rules before the board exists, …). Keyed by
+ * the tool that just succeeded → the ordered next steps. Returns `[]` for any
+ * tool not on the happy path, so non-PCB tools are untouched.
+ *
+ *   create_schematic → place_components, then run_erc
+ *   place_components → set_design_rules
+ *   set_design_rules → save_document (checkpoint before add_zone), then route_nets
+ *   route_nets       → run_drc + render_pcb (cross-check)
+ */
+export function happyPathNext(toolName: string, docId?: string): NextAction[] {
+  const withDoc = (a: NextAction): NextAction =>
+    docId ? { ...a, args: { document_id: docId } } : a;
+  switch (toolName) {
+    case "create_schematic":
+      return [
+        withDoc({
+          action: "Place the components to create the board.",
+          tool: "place_components",
+        }),
+        withDoc({
+          action:
+            "Check the schematic for electrical errors (unconnected pins, conflicting drivers).",
+          tool: "run_erc",
+        }),
+      ];
+    case "place_components":
+      return [
+        withDoc({
+          action:
+            "Set the design rules (clearances, net classes) before routing — power/HV nets want a wider class than signals.",
+          tool: "set_design_rules",
+        }),
+      ];
+    case "set_design_rules":
+      return [
+        withDoc({
+          action:
+            "Checkpoint the board with save_document before pouring copper zones (add_zone) — a zone fill is a heavy, hard-to-undo edit.",
+          tool: "save_document",
+        }),
+        withDoc({ action: "Route the nets.", tool: "route_nets" }),
+      ];
+    case "route_nets":
+      return [
+        withDoc({
+          action: "Run DRC to check the routed board against the design rules.",
+          tool: "run_drc",
+        }),
+        withDoc({
+          action: "Render the board to visually cross-check the layout.",
+          tool: "render_pcb",
+        }),
+      ];
+    default:
+      return [];
+  }
+}
+
+/**
+ * Attach happy-path `next_actions` to a SUCCEEDING tool result (the mirror of
+ * enrichErrorResult). No-op unless the tool is on the canonical PCB flow and the
+ * result doesn't already carry next_actions (a buffered set_design_rules ships
+ * its own place_components hint and must be left alone). The document_id is read
+ * from the result body first — create_schematic mints the id server-side, so it
+ * isn't in `args` — then falls back to the call args.
+ */
+export function enrichSuccessResult(
+  result: MutableResult,
+  toolName: string,
+  args: Record<string, unknown>,
+): void {
+  if (result.isError) return;
+  if (result.structuredContent && "next_actions" in result.structuredContent) return;
+
+  const block = result.content.find((b) => b.type === "text");
+  let docId = docIdOf(args);
+  let parsedBody: Record<string, unknown> | undefined;
+  if (block) {
+    try {
+      const parsed = JSON.parse(block.text) as Record<string, unknown>;
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        parsedBody = parsed;
+        if (typeof parsed.document_id === "string") docId = parsed.document_id;
+      }
+    } catch {
+      // not a JSON body — append a parseable tail instead
+    }
+  }
+
+  const next = happyPathNext(toolName, docId);
+  if (!next.length) return;
+
+  if (parsedBody && block) {
+    parsedBody.next_actions = next;
+    block.text = JSON.stringify(parsedBody);
+  } else if (block) {
+    block.text = `${block.text}\nnext_actions: ${JSON.stringify(next)}`;
+  }
+  result.structuredContent = {
+    ...(result.structuredContent ?? {}),
+    next_actions: next,
+  };
+}
+
 /** Errors that should NOT get a generic recovery floor — either not recoverable
  *  (disabled pack / unknown tool / ordering off) or self-explanatory with their
  *  own instruction (a spend awaiting human approval must NOT be retried, and a

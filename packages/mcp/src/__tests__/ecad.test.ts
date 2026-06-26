@@ -3409,3 +3409,80 @@ describe("new PCB tools survive the kernel pipeline", () => {
     expect(gerber.files.length).toBeGreaterThan(0);
   });
 });
+
+describe("set_design_rules ordering tolerance (buffering)", () => {
+  const powerSchematic = () =>
+    createSchematic({
+      components: [
+        {
+          ref: "J1",
+          value: "PWR",
+          footprint: "Connector_PinHeader_2.54mm:PinHeader_1x02_P2.54mm",
+          x: 0,
+          y: 0,
+          pins: [
+            { number: "1", name: "V", type: "Passive" },
+            { number: "2", name: "G", type: "Passive" },
+          ],
+        },
+        resistor("R1", 15),
+        resistor("R2", 30),
+      ],
+      nets: { VBAT: ["J1.1", "R1.1"], SIG: ["R1.2", "R2.1"] },
+    });
+
+  it("guides to place_components instead of dead-ending when there's no board yet", async () => {
+    const created = out(await powerSchematic());
+    const id = created.document_id;
+    // set_design_rules BEFORE the board exists used to fail with a bare error.
+    const res = await setDesignRules({ document_id: id, clearance: 0.3 });
+    expect(res.isError).toBeUndefined();
+    const body = out(res);
+    expect(body.success).toBe(true);
+    expect(body.buffered).toBe(true);
+    // It carries a recovery action pointing at the canonical next step.
+    expect(body.next_actions[0].tool).toBe("place_components");
+    expect(res.structuredContent?.next_actions?.[0].tool).toBe("place_components");
+  });
+
+  it("replays buffered rules onto the board when place_components runs", async () => {
+    const created = out(await powerSchematic());
+    const id = created.document_id;
+    // Rules first (no board), then place — the buffered rules must land.
+    out(
+      await setDesignRules({
+        document_id: id,
+        clearance: 0.35,
+        track_width: 0.3,
+        classes: [{ name: "power", nets: ["VBAT"], track_width: 1.5 }],
+      }),
+    );
+    const placed = out(await placeComponents({ document_id: id, board_width: 50, board_height: 40 }));
+    expect(placed.buffered_design_rules_applied).toBe(true);
+
+    const board = getPcbBoard(getSession(id));
+    expect(board.rules.defaultRules.clearance).toBeCloseTo(0.35, 5);
+    expect(board.rules.defaultRules.traceWidth).toBeCloseTo(0.3, 5);
+    expect((board.rules.classRules ?? []).map((c) => c.name)).toContain("power");
+    expect(board.rules.netClassAssignments?.power).toEqual(["VBAT"]);
+
+    // And the buffered rules actually drive routing — VBAT routes at its class width.
+    const routed = out(await routeNets({ document_id: id }));
+    expect(routed.success).toBe(true);
+    if (routed.track_widths_mm?.VBAT !== undefined) {
+      expect(routed.track_widths_mm.VBAT).toBeCloseTo(1.5, 1);
+    }
+  });
+
+  it("still fails fast on a malformed early call (no fields, or a class with no nets)", async () => {
+    const created = out(await powerSchematic());
+    const id = created.document_id;
+    const empty = await setDesignRules({ document_id: id });
+    expect(empty.isError).toBe(true);
+    const badClass = await setDesignRules({
+      document_id: id,
+      classes: [{ name: "power", nets: [] }],
+    });
+    expect(badClass.isError).toBe(true);
+  });
+});
