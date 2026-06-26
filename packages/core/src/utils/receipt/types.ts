@@ -45,7 +45,7 @@ export type Cause =
   | "placement" // pad-to-pad across two components — where they were placed
   | "routing" // trace-to-trace clearance or a copper short — laid by the router
   | "via" // hole-to-hole / drill — a via the router dropped
-  | "connectivity" // an unrouted net (UnconnectedNet)
+  | "connectivity" // an unrouted net (UnconnectedNet) or unstitched plane pad (UnstitchedPad)
   | "unknown";
 
 /** A violation's fate across one mutation. */
