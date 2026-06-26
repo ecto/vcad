@@ -4189,6 +4189,7 @@ function applyRealizedGate(
     payload.realized_check = `not verified against realized copper — ${gate.reason}`;
     return;
   }
+  if (gate.kind !== "ok") return;
   const c = gate.continuity;
   payload.realized_plane = realizedPlaneReport(c);
   const reason = planeBlockReason(c, opts.conductor);
