@@ -38,6 +38,9 @@ import {
   pcbPreviewMeshes,
   exportKicadPcb,
   exportKicadSch,
+  tryExportFabFiles,
+  tryRunDrc,
+  tryPcbPreviewMeshes,
   resolveFootprint,
   generateNetlist,
   isEcadAvailable,
@@ -56,8 +59,9 @@ import {
   verifySubstitution as kernelVerifySubstitution,
   buildReceipt as kernelBuildReceipt,
   verifyReceipt as kernelVerifyReceipt,
+  netContinuity as kernelNetContinuity,
 } from "@vcad/engine";
-import type { Engine, NetlistResult, TriangleMesh } from "@vcad/engine";
+import type { Engine, NetlistResult, TriangleMesh, NetContinuity } from "@vcad/engine";
 import { registerSession, getSession, undoLastSnapshot, historyDepth } from "./session.js";
 import type { NextAction } from "./next-actions.js";
 import { computeEnclosureFitForBoard } from "./enclosure.js";
@@ -921,6 +925,27 @@ export const exportGerberSchema = {
         "pass that artifact_id to quote_manufacturing / place_order so the fab " +
         "files never transit model context.",
     },
+    require_clean_drc: {
+      type: "boolean" as const,
+      description:
+        "Gate the export on a clean DRC (default TRUE). When set, the board is " +
+        "DRC-checked first and the export is BLOCKED — returning `blocked:true` " +
+        "plus the DRC summary — if it has any errors (shorts, clearance, " +
+        "unconnected nets, fab-rule breaks) or the check is unverifiable " +
+        "(fail-closed: a board that won't even parse never counts as clean). " +
+        "Set false only to force a Gerber bundle from a board you know is dirty; " +
+        "the resulting files would otherwise fabricate an invalid board. Use " +
+        "validate_for_fab first for the full readiness verdict.",
+    },
+  },
+  required: [],
+};
+
+/** JSON Schema for validate_for_fab tool. */
+export const validateForFabSchema = {
+  type: "object" as const,
+  properties: {
+    ...docInputProperties,
   },
   required: [],
 };
@@ -1173,6 +1198,19 @@ export const calcImpedanceSchema = {
       type: "number" as const,
       description: "Spacing between traces in mm (for differential pairs)",
     },
+    document_id: {
+      type: "string" as const,
+      description:
+        "Optional: session id of a PCB to verify against. With `net`, the " +
+        "impedance is only certified when that net's trace is actually realized " +
+        "as continuous copper — a split/unrouted trace returns a blocked result.",
+    },
+    net: {
+      type: "string" as const,
+      description:
+        "Optional: the board net this trace carries. Requires `document_id`; " +
+        "gates the impedance number on the trace being galvanically realized.",
+    },
   },
   required: ["trace_width", "dielectric_height"],
 };
@@ -1275,6 +1313,19 @@ export const sizePdnSchema = {
         "'ts' (default) uses the JS solver; 'exact' routes into the Rust " +
         "kernel engine (implicit-function adjoint) via WASM when available, " +
         "falling back to 'ts' if the artifact is absent.",
+    },
+    document_id: {
+      type: "string" as const,
+      description:
+        "Optional: session id of a PCB this PDN mesh represents. With `net`, the " +
+        "sizing PASS is gated on that power plane being galvanically continuous " +
+        "— a plane split into islands returns a blocked result with coverage stats.",
+    },
+    net: {
+      type: "string" as const,
+      description:
+        "Optional: the power net this PDN mesh models (e.g. '+3V3'). Requires " +
+        "`document_id`; refuses to certify a PASS on a disconnected plane.",
     },
   },
   required: ["nodes", "edges", "loads", "targets"],
@@ -3696,6 +3747,42 @@ export function summarizeZoneDrc(
   return { clean: overlaps.length === 0, overlaps };
 }
 
+/**
+ * A fail-closed DRC verdict for the fab-readiness gate. Unlike {@link drcPcb}
+ * (which swallows a kernel failure into "0 violations" and looks clean), this
+ * runs DRC through the error-surfacing {@link tryRunDrc} probe so a board that
+ * can't be parsed/checked reads as `unverifiable` — NEVER `clean`.
+ *
+ * - `clean`: DRC ran and found no errors.
+ * - `violations`: DRC ran and found ≥1 error (short, clearance, unconnected
+ *   net, fab-rule break). The summary carries counts + a representative sample.
+ * - `unverifiable`: DRC could not run (kernel missing, or the board threw a
+ *   serde/parse trap). `reason` explains; the board is not certifiable.
+ */
+export type DrcVerdict =
+  | { status: "clean"; summary: DrcSummary }
+  | { status: "violations"; summary: DrcSummary }
+  | { status: "unverifiable"; reason: string };
+
+/** Run the fail-closed DRC verdict against a PCB (shared by validate_for_fab
+ *  and the export_gerber clean-DRC gate, so they can never disagree). */
+export async function drcVerdict(pcb: Pcb, sampleSize = 20): Promise<DrcVerdict> {
+  const probe = await tryRunDrc(pcb);
+  if (!probe.ok) {
+    return {
+      status: "unverifiable",
+      reason:
+        probe.reason === "unavailable"
+          ? `DRC engine unavailable (${probe.message}) — cannot certify the board`
+          : `DRC could not run — the board failed to serialize/parse: ${probe.message}`,
+    };
+  }
+  const summary = aggregateDrc(probe.value as unknown as DrcViol[], sampleSize, "summary");
+  // Unconnected nets are Error severity in the kernel, so `errors` already
+  // captures the "board with unconnected nets" case the fab gate must block.
+  return { status: summary.errors === 0 ? "clean" : "violations", summary };
+}
+
 /** Run DRC against a session/inline document and return the summary-first payload. */
 export async function runDrc(args: Record<string, unknown>) {
   const { doc } = resolveDocInput(args);
@@ -3890,6 +3977,38 @@ export async function exportGerber(args: Record<string, unknown>) {
   const validity = validatePcb(pcb);
   if (!validity.valid) {
     return pcbValidationError("export_gerber", validity, args.document_id ? String(args.document_id) : undefined);
+  }
+
+  // Clean-DRC gate (default ON for agents): never emit a fab bundle from a board
+  // that isn't DRC-clean. Fail closed — an unverifiable board (won't parse) is
+  // blocked too, since shipping Gerbers we couldn't certify is the failure mode
+  // this guards against. Pass require_clean_drc:false to force a known-dirty export.
+  const requireCleanDrc = args.require_clean_drc !== false;
+  if (requireCleanDrc) {
+    const verdict = await drcVerdict(pcb);
+    if (verdict.status !== "clean") {
+      const blocker =
+        verdict.status === "unverifiable"
+          ? verdict.reason
+          : `${verdict.summary.errors} DRC error(s) must be resolved before fabrication`;
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: JSON.stringify({
+              success: false,
+              blocked: true,
+              reason: blocker,
+              drc: verdict.status === "unverifiable" ? { status: "unverifiable" } : verdict.summary,
+              hint:
+                "Resolve the DRC errors (run run_drc / validate_for_fab for details), or " +
+                "re-run export_gerber with require_clean_drc:false to force the bundle anyway.",
+            }),
+          },
+        ],
+        isError: true,
+      };
+    }
   }
 
   const files = await exportFabFiles(pcb);
@@ -4115,6 +4234,178 @@ export async function exportKicad(args: Record<string, unknown>) {
   };
 }
 
+// ============================================================================
+// validate_for_fab — the single fab-readiness oracle
+// ============================================================================
+
+/** Pull the offending field name out of a serde error message, when it names
+ *  one (`missing field \`thickness\``, `unknown field \`foo\``). Returns null
+ *  for location-only messages (`invalid type: null, expected f64 at …`). */
+function extractSerdeField(message: string): string | null {
+  const m = /(?:missing|unknown) field `([^`]+)`/.exec(message);
+  return m ? m[1]! : null;
+}
+
+/** A feature present on the board that the fab/export pipeline can't faithfully
+ *  represent — surfaced loudly rather than silently producing a wrong bundle. */
+interface UnsupportedFeature {
+  feature: string;
+  count: number;
+  detail: string;
+  fix: string;
+}
+
+/** True for a via that spans the outer copper pair (a normal through-via). */
+function isThroughVia(via: Via): boolean {
+  const a = via.startLayer;
+  const b = via.endLayer;
+  return (a === "FCu" && b === "BCu") || (a === "BCu" && b === "FCu");
+}
+
+/** Scan the board for features the Gerber/Excellon export can't faithfully
+ *  produce. Heuristic and intentionally narrow — it flags the known-unsupported
+ *  set, not "everything that could ever be wrong". Today: blind/buried vias,
+ *  which our drill writer collapses to plain through-holes. */
+function detectUnsupportedFeatures(pcb: Pcb): UnsupportedFeature[] {
+  const out: UnsupportedFeature[] = [];
+
+  const blindBuried = pcb.vias.filter((v) => !isThroughVia(v));
+  if (blindBuried.length > 0) {
+    out.push({
+      feature: "blind/buried via",
+      count: blindBuried.length,
+      detail:
+        `${blindBuried.length} via(s) span inner layers (not FCu↔BCu). The Excellon ` +
+        "drill export drills every via straight through, so blind/buried vias would " +
+        "fabricate as through-holes — electrically wrong.",
+      fix: "Re-route these connections with through-vias (FCu↔BCu), or split the board so no via needs controlled depth.",
+    });
+  }
+
+  return out;
+}
+
+/**
+ * Full fab-readiness gate in one verdict. Runs every check an agent would
+ * otherwise have to assemble by hand — DRC (fail-closed), renderability, and
+ * actual Gerber serialization — plus a scan for unsupported features, then
+ * rolls them into one `ready` boolean with the exact blockers and suggested
+ * fixes. Read-only: it mutates nothing.
+ *
+ * Fail-closed throughout: a board that can't be parsed/serialized is reported
+ * `unverifiable` (never silently "clean" or "ready").
+ */
+export async function validateForFab(args: Record<string, unknown>) {
+  const ctx = resolveDocInput(args);
+  const pcb = getDocPcb(ctx.doc);
+  if (!pcb) {
+    return {
+      content: [{ type: "text" as const, text: "Error: Document has no PCB" }],
+      isError: true,
+    };
+  }
+
+  const blockers: string[] = [];
+  const unverifiable: string[] = [];
+  const fixes: string[] = [];
+
+  // 1. DRC — fail-closed: a parse failure is 'unverifiable', not clean.
+  const drc = await drcVerdict(pcb);
+  let drcPayload: Record<string, unknown>;
+  if (drc.status === "unverifiable") {
+    unverifiable.push(`DRC: ${drc.reason}`);
+    drcPayload = { status: "unverifiable", reason: drc.reason };
+    fixes.push("Make the board serialize/parse, then re-run validate_for_fab for a real DRC verdict.");
+  } else {
+    drcPayload = { status: drc.status, ...drc.summary };
+    if (drc.status === "violations") {
+      const topRules = Object.entries(drc.summary.byRule)
+        .sort((a, b) => b[1] - a[1])
+        .map(([rule, n]) => `${rule}×${n}`)
+        .join(", ");
+      blockers.push(`DRC: ${drc.summary.errors} error(s) — ${topRules}`);
+      if (drc.summary.categories.connectivity > 0)
+        fixes.push("Route the remaining nets (route_nets) — unconnected nets can't fabricate.");
+      if (drc.summary.categories.clearance > 0)
+        fixes.push("Resolve clearance/short violations (move pads apart or reroute).");
+      if (drc.summary.categories.manufacturing > 0)
+        fixes.push("Meet the fab rules (widen traces, enlarge drills/annular rings) — see set_design_rules / run_drc.");
+    }
+  }
+
+  // 2. Renderability — can the board geometry be evaluated/visualized?
+  const render = await tryPcbPreviewMeshes(pcb);
+  let renderPayload: Record<string, unknown>;
+  if (render.ok) {
+    if (render.value.length > 0) {
+      renderPayload = { ok: true, meshes: render.value.length };
+    } else {
+      renderPayload = { ok: false, reason: "preview produced no geometry (board solid did not evaluate)" };
+      blockers.push("Renderability: the board produced no preview geometry (empty board solid).");
+      fixes.push("Check the board outline has ≥3 valid vertices and a positive thickness.");
+    }
+  } else if (render.reason === "error") {
+    renderPayload = { ok: false, reason: render.message };
+    blockers.push(`Renderability: board geometry failed to evaluate — ${render.message}`);
+  } else {
+    renderPayload = { ok: false, unverifiable: true, reason: render.message };
+    unverifiable.push(`Renderability: ${render.message}`);
+  }
+
+  // 3. Gerber-exportability — actually attempt serialization; on failure report
+  //    the exact field if the serde error names one.
+  const gerber = await tryExportFabFiles(pcb);
+  let gerberPayload: Record<string, unknown>;
+  if (gerber.ok) {
+    gerberPayload = { ok: true, files: gerber.value.length };
+  } else if (gerber.reason === "error") {
+    const field = extractSerdeField(gerber.message);
+    gerberPayload = { ok: false, ...(field ? { field } : {}), reason: gerber.message };
+    blockers.push(
+      `Gerber export: serialization failed${field ? ` on field '${field}'` : ""} — ${gerber.message}`,
+    );
+    fixes.push(
+      field
+        ? `Provide a valid '${field}' on the board so the fab serializer accepts it.`
+        : "Fix the malformed board field the serializer rejected (see the error above).",
+    );
+  } else {
+    gerberPayload = { ok: false, unverifiable: true, reason: gerber.message };
+    unverifiable.push(`Gerber export: ${gerber.message}`);
+  }
+
+  // 4. Unsupported features — present in the IR but not faithfully fabricable.
+  const unsupported = detectUnsupportedFeatures(pcb);
+  for (const u of unsupported) {
+    blockers.push(`Unsupported feature — ${u.detail}`);
+    fixes.push(u.fix);
+  }
+
+  // Fail-closed: ready only when nothing is blocked AND nothing is unverifiable.
+  const ready = blockers.length === 0 && unverifiable.length === 0;
+  const verdict = ready ? "ready" : blockers.length > 0 ? "blocked" : "unverifiable";
+
+  return {
+    content: [
+      {
+        type: "text" as const,
+        text: JSON.stringify({
+          ready,
+          verdict,
+          ...docResultPayload(ctx),
+          drc: drcPayload,
+          renderable: renderPayload,
+          gerber_exportable: gerberPayload,
+          unsupported_features: unsupported,
+          blockers,
+          unverifiable,
+          suggested_fixes: [...new Set(fixes)],
+        }),
+      },
+    ],
+  };
+}
+
 /** Calculate trace impedance. */
 // ----------------------------------------------------------------------------
 // Impedance physics — pure closed-form leaves (IPC-2141-style).
@@ -4300,7 +4591,121 @@ function seedScan(
   return best.x;
 }
 
-export function calcImpedance(args: Record<string, unknown>) {
+// ============================================================================
+// Realized-copper gate — a closed-form PASS is only trustworthy if the copper
+// it describes is actually one continuous conductor. The PI/SI calculators are
+// pure by default; when a caller ties a result to a board net (document_id +
+// net), we verify the realized plane/trace before letting a PASS stand. A PASS
+// on a split/absent plane is worse than no number — it is actively misleading.
+// ============================================================================
+
+/** Outcome of resolving the realized-copper context for a calculator call. */
+type RealizedGate =
+  | { kind: "none" }
+  | { kind: "incomplete"; message: string }
+  | { kind: "unchecked"; reason: string }
+  | { kind: "ok"; continuity: NetContinuity };
+
+/**
+ * Resolve the realized-copper continuity of a board net referenced alongside a
+ * pure calculator call. `document_id` + `net` are both required to verify; one
+ * without the other is a usage error, and neither means "model-only".
+ */
+async function resolveRealizedNet(args: Record<string, unknown>): Promise<RealizedGate> {
+  const id = args.document_id ? String(args.document_id) : "";
+  const net = typeof args.net === "string" ? args.net.trim() : "";
+  if (!id && !net) return { kind: "none" };
+  if (!id || !net) {
+    return {
+      kind: "incomplete",
+      message:
+        "pass BOTH document_id and net to verify against realized copper (got only one)",
+    };
+  }
+  let pcb: Pcb | null = null;
+  try {
+    pcb = getDocPcb(getSession(id));
+  } catch (e) {
+    return { kind: "unchecked", reason: (e as Error).message };
+  }
+  if (!pcb) return { kind: "unchecked", reason: `document '${id}' has no PCB` };
+  const continuity = await kernelNetContinuity(pcb, net);
+  if (!continuity) return { kind: "unchecked", reason: "continuity engine unavailable" };
+  return { kind: "ok", continuity };
+}
+
+/** Compact, agent-facing summary of a net's realized-plane continuity. */
+function realizedPlaneReport(c: NetContinuity): Record<string, unknown> {
+  return {
+    net: c.net,
+    realized: c.realized,
+    continuous: c.continuous,
+    islands: c.islands,
+    coverage_pct: Math.round(c.coverage * 1000) / 10,
+    connected_pads: c.connected_pads,
+    total_pads: c.total_pads,
+    stitching_vias: c.vias,
+    ...(c.worst_island
+      ? {
+          worst_island: {
+            pad_count: c.worst_island.pad_count,
+            node_count: c.worst_island.node_count,
+            position: c.worst_island.position,
+          },
+        }
+      : {}),
+  };
+}
+
+/** Why a net's realized copper fails verification, or null if it's sound. */
+function planeBlockReason(c: NetContinuity, conductor: string): string | null {
+  if (!c.realized) {
+    return `net '${c.net}' has no realized copper — there is no ${conductor} to verify`;
+  }
+  if (!c.continuous) {
+    const pct = Math.round(c.coverage * 1000) / 10;
+    return `net '${c.net}' copper is split into ${c.islands} galvanic islands (only ${pct}% of pads reach the main plane) — an electrically open ${conductor}`;
+  }
+  return null;
+}
+
+/**
+ * Apply the realized-copper gate to a calculator payload. Attaches the realized
+ * plane report, and — when the plane/trace is split or absent — REFUSES the
+ * verdict: flips `passKey` (if any) to false and stamps a blocked result with
+ * coverage stats, stitching-via count, and the worst island, replacing the
+ * model summary. Mutates `payload` in place.
+ */
+function applyRealizedGate(
+  payload: Record<string, unknown>,
+  gate: RealizedGate,
+  opts: { conductor: string; noun: string; passKey?: string },
+): void {
+  if (gate.kind === "none") {
+    payload.realized_check =
+      "model-only — pass document_id + net to verify the number against realized copper";
+    return;
+  }
+  if (gate.kind === "unchecked") {
+    payload.realized_check = `not verified against realized copper — ${gate.reason}`;
+    return;
+  }
+  if (gate.kind !== "ok") return;
+  const c = gate.continuity;
+  payload.realized_plane = realizedPlaneReport(c);
+  const reason = planeBlockReason(c, opts.conductor);
+  if (!reason) {
+    payload.realized_verified = true;
+    return;
+  }
+  if (opts.passKey) payload[opts.passKey] = false;
+  payload.blocked = true;
+  payload.verdict = "blocked";
+  payload.unverifiable_reason = "unverifiable on disconnected plane";
+  payload.summary = `${opts.noun} NOT certified — ${reason}. Stitch the copper (add_via / route_nets), then re-run; a closed-form PASS on a dead plane would mislead.`;
+}
+
+export async function calcImpedance(args: Record<string, unknown>) {
   const traceWidth = args.trace_width as number;
   const copperThickness = (args.copper_thickness as number) || 0.035;
   const dielectricHeight = args.dielectric_height as number;
@@ -4347,6 +4752,12 @@ export function calcImpedance(args: Record<string, unknown>) {
     result.z_diff = Math.round(zDiff * 100) / 100;
     result.spacing = spacing;
   }
+
+  // Gate on realized copper: an impedance for a trace that isn't actually
+  // realized (unrouted / split) is a number with nothing behind it.
+  const gate = await resolveRealizedNet(args);
+  if (gate.kind === "incomplete") return ecadError(gate.message);
+  applyRealizedGate(result, gate, { conductor: "trace", noun: "Impedance" });
 
   return {
     content: [
@@ -4499,7 +4910,7 @@ export function sizeImpedance(args: Record<string, unknown>) {
  * forward solve. The Rust `PdnSystem` is the scalable kernel backend (analytic
  * implicit-function adjoint); this is the agent-facing path for small meshes.
  */
-export function sizePdn(args: Record<string, unknown>) {
+export async function sizePdn(args: Record<string, unknown>) {
   const fail = ecadError;
 
   const nodes = Math.round(args.nodes as number);
@@ -4518,6 +4929,19 @@ export function sizePdn(args: Record<string, unknown>) {
   if (!Array.isArray(edges) || edges.length === 0) return fail("provide at least one edge");
   if (!Array.isArray(targets) || targets.length === 0) return fail("provide at least one target");
   if (!(maxW > minW)) return fail("max_width must be > min_width");
+
+  // Realized-copper gate: if this PDN mesh is tied to a board net, the sizing
+  // PASS is only certified when that power plane is galvanically continuous.
+  const gate = await resolveRealizedNet(args);
+  if (gate.kind === "incomplete") return fail(gate.message);
+  const respondPdn = (payload: Record<string, unknown>) => {
+    applyRealizedGate(payload, gate, {
+      conductor: "plane",
+      noun: "PDN sizing",
+      passKey: "within_budget",
+    });
+    return { content: [{ type: "text" as const, text: JSON.stringify(payload) }] };
+  };
 
   // Optionally route into the Rust kernel engine (implicit-function adjoint)
   // via WASM. Falls through to the TS solver if the artifact isn't available.
@@ -4541,27 +4965,20 @@ export function sizePdn(args: Record<string, unknown>) {
       const overBudget = targets
         .map((tg, i) => ({ node: tg.node, drop: r6(drops[i]!), budget: tg.max_drop }))
         .filter((x) => x.drop > x.budget * (1 + tolPct / 100));
-      return {
-        content: [
-          {
-            type: "text" as const,
-            text: JSON.stringify({
-              success: true,
-              engine: "rust-adjoint",
-              summary: withinBudget
-                ? `sized ${widths.length} segment(s) via the Rust adjoint engine; all ${targets.length} node(s) within budget`
-                : `Rust engine: ${overBudget.length} node(s) over budget within the width bounds`,
-              within_budget: withinBudget,
-              tolerance_pct: tolPct,
-              widths_mm: widths,
-              measured_drops_v: drops.map(r6),
-              targets,
-              converged: exact.converged,
-              ...(overBudget.length ? { over_budget: overBudget } : {}),
-            }),
-          },
-        ],
-      };
+      return respondPdn({
+        success: true,
+        engine: "rust-adjoint",
+        summary: withinBudget
+          ? `sized ${widths.length} segment(s) via the Rust adjoint engine; all ${targets.length} node(s) within budget`
+          : `Rust engine: ${overBudget.length} node(s) over budget within the width bounds`,
+        within_budget: withinBudget,
+        tolerance_pct: tolPct,
+        widths_mm: widths,
+        measured_drops_v: drops.map(r6),
+        targets,
+        converged: exact.converged,
+        ...(overBudget.length ? { over_budget: overBudget } : {}),
+      });
     }
   }
 
@@ -4656,26 +5073,19 @@ export function sizePdn(args: Record<string, unknown>) {
         active.includes("max_width") ? "widen max_width or shorten segments" : "mesh-limited"
       }`;
 
-  return {
-    content: [
-      {
-        type: "text" as const,
-        text: JSON.stringify({
-          success: true,
-          summary,
-          within_budget: withinBudget,
-          tolerance_pct: tolPct,
-          widths_mm: widths.map(r4),
-          continuous_widths_mm: cont.map(r4),
-          measured_drops_v: measured.map(r6),
-          targets,
-          fab_grid_mm: grid,
-          ...(active.length ? { active_constraints: active } : {}),
-          ...(overBudget.length ? { over_budget: overBudget } : {}),
-        }),
-      },
-    ],
-  };
+  return respondPdn({
+    success: true,
+    summary,
+    within_budget: withinBudget,
+    tolerance_pct: tolPct,
+    widths_mm: widths.map(r4),
+    continuous_widths_mm: cont.map(r4),
+    measured_drops_v: measured.map(r6),
+    targets,
+    fab_grid_mm: grid,
+    ...(active.length ? { active_constraints: active } : {}),
+    ...(overBudget.length ? { over_budget: overBudget } : {}),
+  });
 }
 
 // ============================================================================
@@ -8492,6 +8902,16 @@ export async function buildReceipt(args: Record<string, unknown>, engine?: Engin
       isError: true,
     };
   }
+  // Surface realized-plane continuity at the top: a split power plane is an
+  // open PDN even with a clean clearance/short DRC, so the receipt's verdict
+  // must not read "clean" while a +3V3 plane sits in 15 islands.
+  const power = receipt.power_integrity ?? [];
+  const brokenPlanes = power.filter((p) => !p.continuous);
+  const powerIntegrityOk = brokenPlanes.length === 0;
+  const planeWarnings = brokenPlanes.map(
+    (p) =>
+      `net '${p.net}': ${p.islands} galvanic islands, ${Math.round(p.coverage * 1000) / 10}% pad coverage (${p.connected_pads}/${p.total_pads}), ${p.vias} stitching via(s)`,
+  );
 
   // Optional cross-domain layer: cross-check the board against an enclosure.
   let enclosureFit: Awaited<ReturnType<typeof computeEnclosureFitForBoard>>["report"] | undefined;
@@ -8525,6 +8945,8 @@ export async function buildReceipt(args: Record<string, unknown>, engine?: Engin
     content: [{ type: "text" as const, text: JSON.stringify(textPayload) }],
     structuredContent: {
       receipt,
+      power_integrity_ok: powerIntegrityOk,
+      ...(planeWarnings.length ? { disconnected_planes: planeWarnings } : {}),
       ...(enclosureFit ? { enclosure_fit: enclosureFit } : {}),
       ...(enclosureFitError ? { enclosure_fit_error: enclosureFitError } : {}),
       ...(enclosureId ? { enclosure_document_id: enclosureId } : {}),

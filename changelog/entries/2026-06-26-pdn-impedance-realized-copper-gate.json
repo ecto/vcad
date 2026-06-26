@@ -1,0 +1,19 @@
+{
+  "id": "2026-06-26-pdn-impedance-realized-copper-gate",
+  "version": "0.9.4",
+  "date": "2026-06-26",
+  "category": "fix",
+  "title": "PDN / impedance verdicts gated on realized copper",
+  "summary": "size_pdn and calc_impedance now refuse to certify a PASS when the referenced net's copper is a split or absent plane/trace, reporting coverage %, stitching-via count, and the worst island; build_receipt records per-net plane continuity.",
+  "features": [
+    "ecad",
+    "pcb",
+    "power-integrity",
+    "signal-integrity"
+  ],
+  "mcpTools": [
+    "size_pdn",
+    "calc_impedance",
+    "build_receipt"
+  ]
+}

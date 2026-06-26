@@ -87,6 +87,31 @@ pub struct SourcingLine {
     pub currency: Option<String>,
 }
 
+/// Realized-copper continuity for one power/plane net, captured in a receipt.
+///
+/// A split power plane is an electrically *open* PDN even when DRC reports zero
+/// clearance/short violations, so the receipt records continuity explicitly
+/// rather than letting a closed-form sizing PASS imply a healthy plane.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "bindings/"))]
+pub struct PowerIntegrityLine {
+    /// Net name.
+    pub net: String,
+    /// Number of disjoint galvanic islands the net's copper forms (1 = sound).
+    pub islands: u32,
+    /// True when the net's copper forms a single continuous island.
+    pub continuous: bool,
+    /// Pads reaching the main island / total pads, in `[0, 1]`.
+    pub coverage: f64,
+    /// Pads on the net's main (largest) island.
+    pub connected_pads: u32,
+    /// Total pads assigned to the net.
+    pub total_pads: u32,
+    /// Stitching vias on the net.
+    pub vias: u32,
+}
+
 /// A sourcing snapshot — informational, never gates the DRC verdict.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
@@ -109,6 +134,11 @@ pub struct Receipt {
     pub drc_backend: String,
     /// The canonicalized DRC summary.
     pub drc: DrcSummary,
+    /// Realized-copper continuity for power/plane nets. Empty when the board has
+    /// none. A `continuous: false` line means a sized/closed-form PDN verdict
+    /// for that net is unverifiable — the plane is electrically open.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub power_integrity: Vec<PowerIntegrityLine>,
     /// Per-part provenance.
     pub parts: Vec<PartReceiptLine>,
     /// Optional sourcing snapshot (separate from the DRC verdict).

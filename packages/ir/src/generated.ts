@@ -1963,6 +1963,43 @@ toneMapping?: ToneMapping,
 exposure?: number, };
 
 /**
+ * Realized-copper continuity for one power/plane net, captured in a receipt.
+ *
+ * A split power plane is an electrically *open* PDN even when DRC reports zero
+ * clearance/short violations, so the receipt records continuity explicitly
+ * rather than letting a closed-form sizing PASS imply a healthy plane.
+ */
+export type PowerIntegrityLine = { 
+/**
+ * Net name.
+ */
+net: string, 
+/**
+ * Number of disjoint galvanic islands the net's copper forms (1 = sound).
+ */
+islands: number, 
+/**
+ * True when the net's copper forms a single continuous island.
+ */
+continuous: boolean, 
+/**
+ * Pads reaching the main island / total pads, in `[0, 1]`.
+ */
+coverage: number, 
+/**
+ * Pads on the net's main (largest) island.
+ */
+connected_pads: number, 
+/**
+ * Total pads assigned to the net.
+ */
+total_pads: number, 
+/**
+ * Stitching vias on the net.
+ */
+vias: number, };
+
+/**
  * A re-runnable verification receipt for a board.
  */
 export type Receipt = { 
@@ -1982,6 +2019,12 @@ drc_backend: string,
  * The canonicalized DRC summary.
  */
 drc: DrcSummary, 
+/**
+ * Realized-copper continuity for power/plane nets. Empty when the board has
+ * none. A `continuous: false` line means a sized/closed-form PDN verdict
+ * for that net is unverifiable — the plane is electrically open.
+ */
+power_integrity: Array<PowerIntegrityLine>, 
 /**
  * Per-part provenance.
  */

@@ -188,6 +188,35 @@ export async function runDrc(pcb: Pcb): Promise<VerifyOutcome<DrcViolationResult
   );
 }
 
+/**
+ * Discriminated outcome for fab-readiness probes that must distinguish a real
+ * pass from an *unverifiable* one. Surface the kernel error verbatim so callers
+ * can fail closed and quote the exact failing field.
+ *
+ * - `unavailable`: the ECAD kernel WASM isn't loaded (or predates the binding).
+ * - `error`: the kernel ran but threw — almost always a serde parse failure
+ *   whose message names the offending field (e.g. ``missing field `thickness```).
+ */
+export type EcadProbe<T> =
+  | { ok: true; value: T }
+  | { ok: false; reason: "unavailable" | "error"; message: string };
+
+/**
+ * Run DRC, surfacing failures as an {@link EcadProbe} instead of swallowing them.
+ * Use this (not `runDrc`) anywhere a parse failure must read as *unverifiable*.
+ */
+export async function tryRunDrc(pcb: Pcb): Promise<EcadProbe<DrcViolationResult[]>> {
+  const wasm = await loadEcadWasm();
+  if (!wasm) {
+    return { ok: false, reason: "unavailable", message: "ECAD kernel WASM not loaded" };
+  }
+  try {
+    return { ok: true, value: wasm.ecadCheckDrc(JSON.stringify(pcb)) as DrcViolationResult[] };
+  } catch (e) {
+    return { ok: false, reason: "error", message: e instanceof Error ? e.message : String(e) };
+  }
+}
+
 // ---------------------------------------------------------------------------
 // PCB Design-for-Manufacturing (fab-profile capability checks)
 // ---------------------------------------------------------------------------
@@ -283,6 +312,46 @@ export async function critiqueRoute(
     "Route critique",
     (wasm) => wasm.ecadCritiqueRoute(JSON.stringify(pcb), net) as NetCritique,
   );
+}
+
+/** One galvanic island of a net's copper. */
+export interface NetIsland {
+  pad_count: number;
+  node_count: number;
+  position: Vec2;
+}
+
+/** Galvanic-continuity analysis for one net's realized copper — the
+ *  realized-geometry check that gates power/PDN and impedance verdicts. */
+export interface NetContinuity {
+  net: string;
+  /** Disjoint galvanic islands: 0 = no copper, 1 = continuous, ≥2 = split. */
+  islands: number;
+  total_pads: number;
+  connected_pads: number;
+  /** connected_pads / total_pads, in [0, 1]. */
+  coverage: number;
+  /** Stitching vias on the net. */
+  vias: number;
+  /** True when the net has at least one piece of realized copper. */
+  realized: boolean;
+  /** True when the net's copper forms exactly one galvanic island. */
+  continuous: boolean;
+  /** Largest stranded (non-main) island when split; null otherwise. */
+  worst_island: NetIsland | null;
+}
+
+/** Analyze a net's realized-copper galvanic continuity (islands, pad coverage,
+ *  stitching vias, worst stranded island). Returns null if WASM is unavailable. */
+export async function netContinuity(pcb: Pcb, net: string): Promise<NetContinuity | null> {
+  const wasm = await loadEcadWasm();
+  if (!wasm) return null;
+  try {
+    return wasm.ecadNetContinuity(JSON.stringify(pcb), net) as NetContinuity;
+  } catch (e) {
+    console.warn("[ECAD] Net continuity failed:", e);
+    return null;
+  }
 }
 
 /**
@@ -645,13 +714,28 @@ export interface FabFile {
  * distinguish "no kernel" from "export failed".
  */
 export async function exportFabFiles(pcb: Pcb): Promise<FabFile[] | null> {
+  const probe = await tryExportFabFiles(pcb);
+  if (probe.ok) return probe.value;
+  if (probe.reason === "error") console.warn("[ECAD] Fab export failed:", probe.message);
+  return null;
+}
+
+/**
+ * Attempt fabrication-file serialization, surfacing the kernel error instead of
+ * collapsing it to `null`. The error message is the serde failure verbatim — so
+ * a readiness gate can report the exact field the board can't serialize on
+ * (`missing field \`thickness\``, `invalid type: null, expected f64`, …) rather
+ * than a blank "export failed". See {@link EcadProbe}.
+ */
+export async function tryExportFabFiles(pcb: Pcb): Promise<EcadProbe<FabFile[]>> {
   const wasm = await loadEcadWasm();
-  if (!wasm) return null;
+  if (!wasm) {
+    return { ok: false, reason: "unavailable", message: "ECAD kernel WASM not loaded" };
+  }
   try {
-    return wasm.ecadExportFab(JSON.stringify(pcb)) as FabFile[];
+    return { ok: true, value: wasm.ecadExportFab(JSON.stringify(pcb)) as FabFile[] };
   } catch (e) {
-    console.warn("[ECAD] Fab export failed:", e);
-    return null;
+    return { ok: false, reason: "error", message: e instanceof Error ? e.message : String(e) };
   }
 }
 
@@ -906,13 +990,37 @@ export interface PcbPreviewMesh {
  * when the ECAD WASM is unavailable or the build predates the binding.
  */
 export async function pcbPreviewMeshes(pcb: Pcb): Promise<PcbPreviewMesh[]> {
+  const probe = await tryPcbPreviewMeshes(pcb);
+  if (probe.ok) return probe.value;
+  if (probe.reason === "error") console.warn("[ECAD] pcbPreviewMeshes failed:", probe.message);
+  return [];
+}
+
+/**
+ * Attempt to build the layered preview meshes, surfacing failures. An `error`
+ * means the board solid trapped during evaluation (the geometry can't be
+ * visualized); an `ok` result with an empty array means the kernel ran but the
+ * board produced no renderable geometry. A readiness gate treats both as a
+ * renderability blocker rather than a silent empty preview. See {@link EcadProbe}.
+ */
+export async function tryPcbPreviewMeshes(
+  pcb: Pcb,
+): Promise<EcadProbe<PcbPreviewMesh[]>> {
   const wasm = await loadEcadWasm();
-  if (!wasm || typeof wasm.ecadPcbPreviewMeshes !== "function") return [];
+  if (!wasm || typeof wasm.ecadPcbPreviewMeshes !== "function") {
+    return {
+      ok: false,
+      reason: "unavailable",
+      message: "PCB preview-mesh binding unavailable (kernel WASM missing or predates it)",
+    };
+  }
   try {
-    return wasm.ecadPcbPreviewMeshes(JSON.stringify(pcb)) as PcbPreviewMesh[];
+    return {
+      ok: true,
+      value: wasm.ecadPcbPreviewMeshes(JSON.stringify(pcb)) as PcbPreviewMesh[],
+    };
   } catch (e) {
-    console.warn("[ECAD] pcbPreviewMeshes failed:", e);
-    return [];
+    return { ok: false, reason: "error", message: e instanceof Error ? e.message : String(e) };
   }
 }
 
