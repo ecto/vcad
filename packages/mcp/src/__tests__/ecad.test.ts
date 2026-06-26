@@ -1,11 +1,12 @@
 import { describe, it, expect, beforeAll, beforeEach } from "vitest";
 import { Engine, resolveFootprint, parseKicadPcb } from "@vcad/engine";
-import type { Document, Pcb, Vec2 } from "@vcad/ir";
+import type { Document, Pcb, SchematicSheet, Vec2 } from "@vcad/ir";
 import { createDocument } from "@vcad/ir";
 import {
   createSchematic,
   placeComponents,
   routeNets,
+  critiqueRoute,
   runDrc,
   runErc,
   exportGerber,
@@ -21,6 +22,7 @@ import {
   windingLayout,
   addTrace,
   getPadPositions,
+  describePcb,
   listFootprints,
   searchFootprints,
   addVia,
@@ -480,6 +482,85 @@ describe("get_pad_positions", () => {
   });
 });
 
+describe("describe_pcb", () => {
+  it("returns a compact structured snapshot of the routed board", async () => {
+    const created = out(
+      await createSchematic({
+        components: [resistor("R1", 0), resistor("R2", 20), resistor("R3", 40)],
+        nets: { MID: ["R1.2", "R2.1"], GND: ["R2.2", "R3.1"] },
+      }),
+    );
+    const id = created.document_id;
+    await placeComponents({ document_id: id, board_width: 60, board_height: 30 });
+    await routeNets({ document_id: id });
+    await addZone({ document_id: id, net: "GND", layer: "BCu", fill_board: true });
+
+    const d = out(await describePcb({ document_id: id }));
+    expect(d.success).toBe(true);
+
+    // Board size echoes what place_components built.
+    expect(d.board.width).toBeCloseTo(60, 3);
+    expect(d.board.height).toBeCloseTo(30, 3);
+    expect(d.board.outline_vertices).toBe(4);
+    expect(d.board.area_mm2).toBeCloseTo(1800, 0);
+
+    // Stackup: canonical layer names + copper weight (default 0.035mm ≈ 1oz).
+    expect(d.stackup.copper_layers).toBe(2);
+    const fcu = d.stackup.layers.find((l: { layer: string }) => l.layer === "FCu");
+    expect(fcu).toBeTruthy();
+    expect(fcu.copper_oz).toBeCloseTo(1, 1);
+
+    // Nets reported as data, not just a count.
+    expect(d.nets.count).toBe(2);
+    expect([...d.nets.names].sort()).toEqual(["GND", "MID"]);
+
+    // Design rules surface the default net class + fab limits.
+    expect(d.design_rules.default.name).toBe("Default");
+    expect(d.design_rules.default.traceWidth).toBeGreaterThan(0);
+    expect(d.design_rules.minDrill).toBeGreaterThan(0);
+
+    // Zone reported by { net, layer, bbox, fill }.
+    expect(d.zones.length).toBe(1);
+    expect(d.zones[0].net).toBe("GND");
+    expect(d.zones[0].layer).toBe("BCu");
+    expect(d.zones[0].bbox).toBeTruthy();
+    expect(d.zones[0].fill).toBeTruthy();
+
+    // Routed copper counted by net and by layer; the per-net tally totals the
+    // segment + arc counts so the breakdown is internally consistent.
+    expect(d.traces.segments).toBeGreaterThan(0);
+    const traceTally = Object.values(d.traces.by_net).reduce(
+      (a, b) => a + (b as number),
+      0,
+    );
+    expect(d.traces.segments + d.traces.arcs).toBe(traceTally);
+    expect(Object.keys(d.traces.by_layer).length).toBeGreaterThan(0);
+
+    // Components / pads (3 resistors × 2 pads).
+    expect(d.components.count).toBe(3);
+    expect(d.components.pads).toBe(6);
+
+    // DRC status present and structured.
+    expect(d.drc).toHaveProperty("categories");
+    expect(d.drc).toHaveProperty("byRule");
+    expect(typeof d.drc.clean).toBe("boolean");
+
+    // The export/render probe actually serialized the board — the only check
+    // that catches a DRC-clean-but-unexportable board. WASM is loaded in tests.
+    expect(d.exportability.wasm_available).toBe(true);
+    expect(d.exportability.gerber_exportable).toBe(true);
+    expect(d.exportability.gerber_file_count).toBeGreaterThan(0);
+    expect(d.exportability.renderable).toBe(true);
+    expect(d.exportability.preview_mesh_count).toBeGreaterThan(0);
+  });
+
+  it("errors when the document has no PCB", async () => {
+    const created = out(await createSchematic({ components: [resistor("R1", 0)] }));
+    const res = await describePcb({ document_id: created.document_id });
+    expect((res as { isError?: boolean }).isError).toBe(true);
+  });
+});
+
 describe("route_nets locked_nets", () => {
   const hasDetour = (pcb: Pcb) =>
     pcb.traces.some(
@@ -600,6 +681,122 @@ describe("route_nets plane stitching", () => {
     // GND pads were stitched to the plane with vias, not star-routed as traces.
     const board = getPcbBoard(getSession(id));
     expect(board.vias.some((v) => v.net === "GND")).toBe(true);
+  });
+});
+
+describe("add_zone overlap guard", () => {
+  const mkBoard = async () => {
+    const created = out(
+      await createSchematic({
+        components: [resistor("R1", 0), resistor("R2", 20)],
+        nets: { GND: ["R1.1", "R2.1"], SIG: ["R1.2", "R2.2"] },
+      }),
+    );
+    const id = created.document_id;
+    await placeComponents({ document_id: id, board_width: 60, board_height: 60 });
+    return id;
+  };
+
+  // Axis-aligned rectangle as a CCW outline.
+  const rect = (x0: number, y0: number, x1: number, y1: number) => [
+    { x: x0, y: y0 },
+    { x: x1, y: y0 },
+    { x: x1, y: y1 },
+    { x: x0, y: y1 },
+  ];
+
+  const in2Zones = (id: string) =>
+    getPcbBoard(getSession(id)).zones.filter((z) => z.layer === "In2Cu");
+
+  it("rejects a different-net pour overlapping an existing pour on the same layer", async () => {
+    const id = await mkBoard();
+    const first = out(
+      await addZone({ document_id: id, net: "3V3", layer: "In2Cu", outline: rect(0, 0, 20, 20) }),
+    );
+    expect(first.success).toBe(true);
+    expect(first.zone_drc.clean).toBe(true);
+
+    const second = out(
+      await addZone({ document_id: id, net: "5V", layer: "In2Cu", outline: rect(10, 10, 30, 30) }),
+    );
+    expect(second.success).toBe(false);
+    expect(second.zone_drc.clean).toBe(false);
+    expect(second.zone_drc.overlaps).toHaveLength(1);
+    expect(second.zone_drc.overlaps[0].layer).toBe("In2Cu");
+    expect([...second.zone_drc.overlaps[0].nets].sort()).toEqual(["3V3", "5V"]);
+    expect(second.zone_drc.overlaps[0].bbox).toEqual({
+      min: { x: 10, y: 10 },
+      max: { x: 20, y: 20 },
+    });
+    expect(second.error).toMatch(/short/i);
+    expect(second.error).toContain("5V");
+    expect(second.error).toContain("3V3");
+    // The shorting pour was NOT committed — only the first zone remains.
+    expect(in2Zones(id)).toHaveLength(1);
+  });
+
+  it("rejects two full-board planes of different nets on the same layer (coincident outlines)", async () => {
+    const id = await mkBoard();
+    await addZone({ document_id: id, net: "GND", layer: "In2Cu", fill_board: true });
+    const power = out(
+      await addZone({ document_id: id, net: "VBAT", layer: "In2Cu", fill_board: true }),
+    );
+    expect(power.success).toBe(false);
+    expect(power.zone_drc.overlaps).toHaveLength(1);
+    expect([...power.zone_drc.overlaps[0].nets].sort()).toEqual(["GND", "VBAT"]);
+    expect(in2Zones(id)).toHaveLength(1);
+  });
+
+  it("authors the overlapping pour anyway when allow_overlap is set", async () => {
+    const id = await mkBoard();
+    await addZone({ document_id: id, net: "3V3", layer: "In2Cu", outline: rect(0, 0, 20, 20) });
+    const forced = out(
+      await addZone({
+        document_id: id,
+        net: "5V",
+        layer: "In2Cu",
+        outline: rect(10, 10, 30, 30),
+        allow_overlap: true,
+      }),
+    );
+    expect(forced.success).toBe(true);
+    expect(forced.zone_drc.clean).toBe(false);
+    expect(forced.zone_drc.overlaps).toHaveLength(1);
+    // Both pours are present — the caller opted in to the overlap.
+    expect(in2Zones(id)).toHaveLength(2);
+  });
+
+  it("allows a same-net pour overlapping on the same layer (planes merge)", async () => {
+    const id = await mkBoard();
+    await addZone({ document_id: id, net: "GND", layer: "In2Cu", outline: rect(0, 0, 20, 20) });
+    const same = out(
+      await addZone({ document_id: id, net: "GND", layer: "In2Cu", outline: rect(10, 10, 30, 30) }),
+    );
+    expect(same.success).toBe(true);
+    expect(same.zone_drc.clean).toBe(true);
+    expect(same.zone_drc.overlaps).toEqual([]);
+    expect(in2Zones(id)).toHaveLength(2);
+  });
+
+  it("allows overlapping different-net pours on different layers", async () => {
+    const id = await mkBoard();
+    await addZone({ document_id: id, net: "3V3", layer: "In2Cu", outline: rect(0, 0, 20, 20) });
+    const other = out(
+      await addZone({ document_id: id, net: "5V", layer: "In1Cu", outline: rect(10, 10, 30, 30) }),
+    );
+    expect(other.success).toBe(true);
+    expect(other.zone_drc.clean).toBe(true);
+  });
+
+  it("allows non-overlapping different-net pours on the same layer", async () => {
+    const id = await mkBoard();
+    await addZone({ document_id: id, net: "3V3", layer: "In2Cu", outline: rect(0, 0, 20, 20) });
+    const apart = out(
+      await addZone({ document_id: id, net: "5V", layer: "In2Cu", outline: rect(25, 0, 45, 20) }),
+    );
+    expect(apart.success).toBe(true);
+    expect(apart.zone_drc.clean).toBe(true);
+    expect(apart.zone_drc.overlaps).toEqual([]);
   });
 });
 
@@ -3842,6 +4039,126 @@ describe("new PCB tools survive the kernel pipeline", () => {
     const gerber = out(await exportGerber({ document_id: id }));
     expect(gerber.success).toBe(true);
     expect(gerber.files.length).toBeGreaterThan(0);
+  });
+});
+
+// ===========================================================================
+// Unverifiable ≠ clean — a board/schematic the kernel can't deserialize (e.g. a
+// dotted layer name 'In1.Cu' that should be 'In1Cu') must surface as an error
+// the agent branches on, NEVER as a passing "0 violations / clean" result.
+// ===========================================================================
+describe("run_drc / run_erc / critique_route surface 'unverifiable', not false-clean", () => {
+  /** A minimal valid board, used as the base for the malformed fixtures. */
+  const validPcb: Pcb = {
+    outline: {
+      vertices: [
+        { x: 0, y: 0 },
+        { x: 10, y: 0 },
+        { x: 10, y: 10 },
+        { x: 0, y: 10 },
+      ],
+      thickness: 1.6,
+    },
+    stackup: { layers: [{ layer: "FCu" }, { layer: "BCu" }] },
+    nets: [],
+    rules: {
+      defaultRules: {
+        name: "default",
+        traceWidth: 0.2,
+        clearance: 0.2,
+        viaDiameter: 0.6,
+        viaDrill: 0.3,
+      },
+      edgeClearance: 0.2,
+      holeToHole: 0.25,
+      minAnnularRing: 0.05,
+      minDrill: 0.2,
+    },
+    footprints: [],
+    traces: [],
+    vias: [],
+    zones: [],
+  };
+
+  // A trace on a dotted layer name — serde refuses the whole board.
+  const malformedPcb = {
+    ...validPcb,
+    traces: [
+      { start: { x: 1, y: 1 }, end: { x: 5, y: 1 }, width: 0.2, layer: "In1.Cu", net: "GND" },
+    ],
+  } as unknown as Pcb;
+
+  const malformedSheet = {
+    components: [
+      {
+        ref: "R1",
+        value: "10k",
+        footprintId: "Resistor_SMD:R_0805",
+        position: { x: 0, y: 0 },
+        rotation: 0,
+        mirror: false,
+        pins: [{ number: "1", name: "1", pin_type: "Inputt", position: { x: 0, y: 0 } }],
+      },
+    ],
+    wires: [],
+    junctions: [],
+    labels: [],
+  } as unknown as SchematicSheet;
+
+  /** Inline document carrying a raw (possibly malformed) PCB. */
+  function docWithPcb(pcb: Pcb): Document {
+    return { ...createDocument(), pcb } as unknown as Document;
+  }
+  /** Inline document carrying a raw (possibly malformed) schematic. */
+  function docWithSchematic(schematic: SchematicSheet): Document {
+    return { ...createDocument(), schematic } as unknown as Document;
+  }
+
+  /** Permissive view of a tool result — the unverifiable arm carries
+   *  `structuredContent`/`isError` the success arm doesn't. */
+  type AnyResult = {
+    isError?: boolean;
+    content: Array<{ type: string; text: string }>;
+    structuredContent?: {
+      verifiable?: boolean;
+      status?: string;
+      offending_field?: string;
+      next_actions?: string[];
+    };
+  };
+  const asResult = (r: unknown) => r as AnyResult;
+
+  it("run_drc returns isError + verifiable:false (not success) for a malformed board", async () => {
+    const result = asResult(await runDrc({ document: docWithPcb(malformedPcb) }));
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent?.verifiable).toBe(false);
+    expect(result.structuredContent?.status).toBe("errored");
+    expect(result.structuredContent?.offending_field).toBe("In1.Cu");
+    expect(result.structuredContent?.next_actions?.length).toBeGreaterThan(0);
+    // The text must NOT read as a clean pass.
+    const text = result.content[0]!.text;
+    expect(text).toMatch(/UNVERIFIABLE/);
+    expect(text).not.toMatch(/"success":\s*true/);
+  });
+
+  it("run_drc still passes for a board the kernel can parse", async () => {
+    const result = asResult(await runDrc({ document: docWithPcb(validPcb) }));
+    expect(result.isError).toBeFalsy();
+    expect(out(result).success).toBe(true);
+  });
+
+  it("critique_route returns isError + verifiable:false for a malformed board", async () => {
+    const result = asResult(await critiqueRoute({ document: docWithPcb(malformedPcb), net: "GND" }));
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent?.verifiable).toBe(false);
+    expect(result.structuredContent?.offending_field).toBe("In1.Cu");
+  });
+
+  it("run_erc returns isError + verifiable:false for a malformed schematic", async () => {
+    const result = asResult(await runErc({ document: docWithSchematic(malformedSheet) }));
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent?.verifiable).toBe(false);
+    expect(result.structuredContent?.offending_field).toBe("Inputt");
   });
 });
 

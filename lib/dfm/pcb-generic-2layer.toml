@@ -1,0 +1,63 @@
+schema = "vcad.dfm/1"
+version = "1"
+process = "pcb"
+profile = "generic_2layer"
+name = "Generic 2-layer (conservative / proto-safe)"
+notes = """
+Conservative floor that almost any 2-layer fab house can hit on a budget process,
+including low-cost proto and in-house etching. Wider trace/space (8mil) and bigger
+drills than the named-house packs. Via-in-pad is an error — assume no fill service.
+"""
+
+[rules.min_trace_width]
+severity = "error"
+oz1_mm = 0.2
+oz2_mm = 0.3
+oz3_mm = 0.4
+
+[rules.min_clearance]
+severity = "error"
+oz1_mm = 0.2
+oz2_mm = 0.3
+oz3_mm = 0.4
+
+[rules.min_drill]
+severity = "error"
+min_mm = 0.3
+
+[rules.min_annular_ring]
+severity = "error"
+min_mm = 0.15
+
+[rules.copper_to_edge]
+severity = "error"
+min_mm = 0.3
+
+[rules.hole_to_hole]
+severity = "error"
+min_mm = 0.6
+
+[rules.soldermask_dam]
+severity = "warning"
+min_mm = 0.15
+expansion_mm = 0.075
+
+[rules.soldermask_sliver]
+severity = "warning"
+min_mm = 0.2
+expansion_mm = 0.075
+
+[rules.silk_over_pad]
+severity = "warning"
+clearance_mm = 0.2
+
+[rules.acid_trap]
+severity = "warning"
+min_angle_deg = 90.0
+
+[rules.via_in_pad]
+severity = "error"
+
+[rules.max_copper_layers]
+severity = "error"
+max = 2
