@@ -757,4 +757,106 @@ mod tests {
             "explicit-net pin flagged unconnected: {violations:?}"
         );
     }
+
+    #[test]
+    fn output_conflict_via_explicit_nets() {
+        // Two Output pins joined purely by the explicit `nets` map (no wires,
+        // no coincident coordinates) — the data-driven authoring path. The
+        // pin-type rule must still see the conflict.
+        let mut nets = std::collections::BTreeMap::new();
+        nets.insert(
+            "BUS".to_string(),
+            vec!["U1.1".to_string(), "U2.1".to_string()],
+        );
+        let sheet = SchematicSheet {
+            nets: Some(nets),
+            title: None,
+            components: vec![
+                make_simple_component(
+                    "U1",
+                    Vec2::new(0.0, 0.0),
+                    vec![SchematicPin {
+                        number: "1".to_string(),
+                        name: "OUT".to_string(),
+                        pin_type: PinType::Output,
+                        position: Vec2::new(0.0, 0.0),
+                    }],
+                ),
+                make_simple_component(
+                    "U2",
+                    Vec2::new(100.0, 100.0),
+                    vec![SchematicPin {
+                        number: "1".to_string(),
+                        name: "OUT".to_string(),
+                        pin_type: PinType::Output,
+                        position: Vec2::new(0.0, 0.0),
+                    }],
+                ),
+            ],
+            wires: vec![],
+            junctions: vec![],
+            labels: vec![],
+        };
+
+        let violations = check_erc(&sheet);
+        let conflict = violations
+            .iter()
+            .find(|v| v.message.contains("multiple outputs"));
+        assert!(
+            conflict.is_some(),
+            "Expected output-output conflict on explicit net BUS, got: {violations:?}"
+        );
+        assert_eq!(conflict.unwrap().severity, ErcSeverity::Error);
+    }
+
+    #[test]
+    fn floating_power_via_explicit_nets() {
+        // A PowerInput pin joined to a Passive pin by the explicit `nets` map,
+        // on a net that is neither power-named nor driven by a PowerOutput.
+        // The floating-power rule must fire on the data-driven netlist.
+        let mut nets = std::collections::BTreeMap::new();
+        nets.insert(
+            "SENSE".to_string(),
+            vec!["U1.1".to_string(), "R1.1".to_string()],
+        );
+        let sheet = SchematicSheet {
+            nets: Some(nets),
+            title: None,
+            components: vec![
+                make_simple_component(
+                    "U1",
+                    Vec2::new(0.0, 0.0),
+                    vec![SchematicPin {
+                        number: "1".to_string(),
+                        name: "VCC".to_string(),
+                        pin_type: PinType::PowerInput,
+                        position: Vec2::new(0.0, 0.0),
+                    }],
+                ),
+                make_simple_component(
+                    "R1",
+                    Vec2::new(100.0, 0.0),
+                    vec![SchematicPin {
+                        number: "1".to_string(),
+                        name: "~".to_string(),
+                        pin_type: PinType::Passive,
+                        position: Vec2::new(0.0, 0.0),
+                    }],
+                ),
+            ],
+            wires: vec![],
+            junctions: vec![],
+            labels: vec![],
+        };
+
+        let violations = check_erc(&sheet);
+        let pwr = violations
+            .iter()
+            .find(|v| v.message.contains("no power source"));
+        assert!(
+            pwr.is_some(),
+            "Expected floating-power warning on explicit net SENSE, got: {violations:?}"
+        );
+        assert_eq!(pwr.unwrap().severity, ErcSeverity::Warning);
+    }
 }

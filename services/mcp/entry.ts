@@ -15,6 +15,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import {
   createServer,
   getBuildInfo,
+  sessionStoreInfo,
   flushTelemetry,
   handleLiveRequest,
 } from "@vcad/mcp/server";
@@ -103,6 +104,10 @@ export default async function handler(
       sendJson(res, 200, {
         status: "ok",
         ...getBuildInfo(),
+        // durable:false here means SUPABASE_SERVICE_ROLE_KEY is unset on this
+        // prod deploy → open sessions are in-memory only and a redeploy drops
+        // them. Verifiable with `curl https://mcp.vcad.io/health`.
+        ...sessionStoreInfo(),
         engine: !!engine,
         timestamp: new Date().toISOString(),
       });

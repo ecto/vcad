@@ -29,7 +29,10 @@ export type DrcRuleType =
   | "UnconnectedNet"
   | "SilkscreenClearance"
   | "CourtyardOverlap"
-  | "AcidTrap";
+  | "AcidTrap"
+  | "Keepout"
+  | "Short"
+  | "NetIslands";
 
 export type DrcSeverity = "Error" | "Warning";
 
@@ -215,19 +218,62 @@ export async function critiqueRoute(
 }
 
 /**
+ * Outcome of a kernel ERC run, kept fail-closed: `unavailable` (kernel WASM
+ * not loaded) and `error` (kernel rejected the sheet) are distinct from `ok`
+ * with an empty list (kernel ran and found nothing). A caller that only sees
+ * `ok` can treat the schematic as verified; the other two mean "unverifiable",
+ * never "clean".
+ */
+export type ErcOutcome =
+  | { status: "ok"; violations: ErcViolationResult[] }
+  | { status: "unavailable" }
+  | { status: "error"; message: string };
+
+/**
+ * Run the kernel Electrical Rule Check, reporting whether it actually executed.
+ *
+ * Keeps "kernel not loaded" and "kernel rejected the sheet" distinct from
+ * "kernel ran clean", so verification surfaces (and the pin-type/floating-power
+ * rules in the MCP run_erc tool) can fail closed instead of presenting an
+ * unevaluated schematic as passing. {@link runErc} adapts this to the shared
+ * {@link VerifyOutcome} shape.
+ */
+export async function checkErc(sheet: SchematicSheet): Promise<ErcOutcome> {
+  const wasm = await loadEcadWasm();
+  if (!wasm) return { status: "unavailable" };
+  try {
+    const violations = wasm.ecadCheckErc(JSON.stringify(sheet)) as ErcViolationResult[];
+    return { status: "ok", violations };
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    console.warn("[ECAD] ERC failed:", e);
+    return { status: "error", message };
+  }
+}
+
+/**
  * Run Electrical Rule Check on a schematic.
  *
- * Returns a three-state {@link VerifyOutcome}: `ok` (clean when empty, or with
- * violations) vs `errored` when the kernel could not parse the schematic. Never
- * reports a parse failure as a clean/empty result.
+ * Returns a three-state {@link VerifyOutcome} consistent with {@link runDrc} /
+ * {@link critiqueRoute}: `ok` (clean when empty, or with violations) vs
+ * `errored` when the kernel was unavailable or could not parse the schematic.
+ * Never reports a parse failure as a clean/empty result. Delegates to
+ * {@link checkErc}, folding its `unavailable`/`error` states onto `errored`.
  */
 export async function runErc(
   sheet: SchematicSheet,
 ): Promise<VerifyOutcome<ErcViolationResult[]>> {
-  return verifyWithKernel(
-    "ERC",
-    (wasm) => wasm.ecadCheckErc(JSON.stringify(sheet)) as ErcViolationResult[],
-  );
+  const outcome = await checkErc(sheet);
+  if (outcome.status === "ok") return { status: "ok", value: outcome.violations };
+  const reason =
+    outcome.status === "unavailable"
+      ? "ERC unavailable: kernel WASM not loaded"
+      : outcome.message;
+  const offending =
+    outcome.status === "error" ? offendingFieldFromError(outcome.message) : undefined;
+  return offending
+    ? { status: "errored", reason, offending_field: offending }
+    : { status: "errored", reason };
 }
 
 /** Inputs for the analytical motor evaluator (mirrors `vcad_ecad_sim::MotorSpec`). */

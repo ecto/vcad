@@ -336,6 +336,69 @@ function unwrapDocument(content: unknown): Document | null {
   return null;
 }
 
+// ─── Durability self-report (boot warning + server_info / /health) ────────────
+//
+// The hosted MCP runs as a serverless function: with no durable store, every
+// open session lives only in the instance's memory and a redeploy / cold start
+// silently drops it (this happened in prod — an open board was lost on
+// redeploy). The helpers below make that condition observable instead of
+// silent: a loud boot warning, and a `durable` flag surfaced in both
+// `server_info` and the `/health` endpoint.
+
+/** True when the session store will persist across serverless instances — i.e.
+ *  the Supabase env `createSessionStore` needs is present. Mirrors the factory's
+ *  env check exactly so the two can't drift. When false, every store degrades to
+ *  in-memory and a redeploy drops every open session. */
+export function isSessionStoreDurable(): boolean {
+  const url = (process.env.SUPABASE_URL || "").replace(/\/+$/, "");
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
+  return !!(url && key);
+}
+
+/** True on a hosted production deploy: Vercel prod (`VERCEL_ENV=production`) or
+ *  `NODE_ENV=production` for the standalone Node/Fly server. Used to decide
+ *  whether a non-durable store is a loud boot error (prod) or the expected
+ *  local/stdio mode (quiet). */
+export function isProductionDeploy(): boolean {
+  return (
+    process.env.VERCEL_ENV === "production" ||
+    process.env.NODE_ENV === "production"
+  );
+}
+
+/** Durability state for `server_info` and the `/health` endpoint, so the
+ *  condition is observable over the wire without reading logs. */
+export function sessionStoreInfo(): {
+  durable: boolean;
+  session_store: "supabase" | "in-memory";
+  production: boolean;
+} {
+  const durable = isSessionStoreDurable();
+  return {
+    durable,
+    session_store: durable ? "supabase" : "in-memory",
+    production: isProductionDeploy(),
+  };
+}
+
+/** Loud boot-time warning when a PRODUCTION deploy is running WITHOUT a durable
+ *  session store: sessions are in-memory only and a redeploy / cold start drops
+ *  every open board. Returns true if it warned (so the smoke test can assert the
+ *  condition fires). No-op outside production, or when durable — stdio/local
+ *  stays quiet. */
+export function warnIfSessionStoreNotDurable(): boolean {
+  if (!isProductionDeploy() || isSessionStoreDurable()) return false;
+  console.error(
+    "[vcad-mcp] ████ SESSION DURABILITY DEGRADED ████ " +
+      "SUPABASE_SERVICE_ROLE_KEY is not set on this PRODUCTION deploy — MCP " +
+      "sessions are IN-MEMORY ONLY and will be LOST on the next redeploy or " +
+      "cold start (an open board has been lost this way before). server_info " +
+      "and /health report durable:false. Set SUPABASE_URL + " +
+      "SUPABASE_SERVICE_ROLE_KEY on this deploy and redeploy to fix.",
+  );
+  return true;
+}
+
 /**
  * Choose the store impl from env + the per-connection user. With Supabase env
  * present: a signed-in user gets the user-owned `documents` store (also renders
