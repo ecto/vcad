@@ -42,6 +42,7 @@ import {
   routeDiffPair as kernelRouteDiffPair,
   critiqueRoute as kernelCritiqueRoute,
   runDrc as kernelRunDrc,
+  checkErc as kernelCheckErc,
   evaluateMotor,
   airgapFluxDensity,
   resolvePart as kernelResolvePart,
@@ -3388,12 +3389,50 @@ export async function runErc(args: Record<string, unknown>) {
     }
   }
 
+  // Kernel ERC: pin-type conflicts (output driving output) and floating power
+  // inputs. These rules need a netlist; the kernel's own netlist is
+  // coordinate-only, so we hand it the *derived* connectivity (which also
+  // bridges global labels and the explicit `nets` map) re-expressed as an
+  // explicit netlist over only the connected pins. That keeps these rules
+  // judging exactly the nets create_schematic reported — and, because
+  // unconnected pins are excluded, a stray power pin is reported once (above),
+  // never doubled here.
+  const kernelOutcome = await kernelCheckErc(synthesizeNettedSheet(sheet, derived));
+  let verified = false;
+  let unverifiedReason: string | undefined;
+  if (kernelOutcome.status === "ok") {
+    verified = true;
+    for (const v of kernelOutcome.violations) {
+      if (!isPinTypeOrPowerViolation(v.message)) continue;
+      violations.push({
+        severity: v.severity,
+        message: v.message,
+        ...(v.position ? { position: v.position } : {}),
+      });
+    }
+  } else if (kernelOutcome.status === "unavailable") {
+    // Fail closed: the kernel rules did not run, so the schematic is not
+    // verified for pin-type/power conflicts — never report this as clean.
+    unverifiedReason =
+      "kernel ECAD WASM unavailable — pin-type conflict and floating-power rules were not evaluated";
+  } else {
+    unverifiedReason = `kernel ERC could not parse the schematic: ${kernelOutcome.message}`;
+  }
+
+  // Errors first, then by message — matches the kernel's ordering convention.
+  violations.sort((a, b) => {
+    const sev = (a.severity === "Error" ? 0 : 1) - (b.severity === "Error" ? 0 : 1);
+    return sev !== 0 ? sev : a.message.localeCompare(b.message);
+  });
+
   return {
     content: [
       {
         type: "text" as const,
         text: JSON.stringify({
           success: true,
+          verified,
+          ...(unverifiedReason ? { unverified_reason: unverifiedReason } : {}),
           violations: violations.length,
           errors: violations.filter(v => v.severity === "Error").length,
           warnings: violations.filter(v => v.severity === "Warning").length,
@@ -3401,6 +3440,46 @@ export async function runErc(args: Record<string, unknown>) {
         }),
       },
     ],
+  };
+}
+
+/** A kernel ERC message we own here vs. one already reported by the TS checks
+ *  above (duplicate-ref, unconnected). The kernel's pin-type and power messages
+ *  are pinned by its own unit tests ("multiple outputs", "no power source"). */
+function isPinTypeOrPowerViolation(message: string): boolean {
+  return message.startsWith("Pin conflict on net") || message.includes("has no power source");
+}
+
+/**
+ * Re-express derived connectivity as a kernel-consumable sheet: the explicit
+ * `nets` map carries every connected pin's net, wires/labels are dropped (the
+ * map already encodes them), and each component keeps only its connected pins
+ * so the kernel's per-pin netlist never invents singleton nets for open pins.
+ * Pin electrical types are preserved verbatim, which is what gives the kernel's
+ * pin-type and power rules signal.
+ */
+function synthesizeNettedSheet(sheet: SchematicSheet, derived: DerivedNets): SchematicSheet {
+  const connectedByRef = new Map<string, Set<string>>();
+  for (const key of derived.netByPin.keys()) {
+    const sep = key.indexOf(PIN_SEP);
+    const ref = key.slice(0, sep);
+    const pin = key.slice(sep + 1);
+    let set = connectedByRef.get(ref);
+    if (!set) connectedByRef.set(ref, (set = new Set()));
+    set.add(pin);
+  }
+  const nets: Record<string, string[]> = {};
+  for (const [name, pins] of derived.nets) nets[name] = pins;
+  return {
+    ...sheet,
+    wires: [],
+    labels: [],
+    junctions: [],
+    components: sheet.components.map((comp) => ({
+      ...comp,
+      pins: comp.pins.filter((pin) => connectedByRef.get(comp.ref)?.has(pin.number)),
+    })),
+    nets,
   };
 }
 
