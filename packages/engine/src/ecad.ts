@@ -148,16 +148,43 @@ export async function critiqueRoute(pcb: Pcb, net: string): Promise<NetCritique 
   }
 }
 
-/** Run Electrical Rule Check on a schematic. */
-export async function runErc(sheet: SchematicSheet): Promise<ErcViolationResult[]> {
+/**
+ * Outcome of a kernel ERC run, kept fail-closed: `unavailable` (kernel WASM
+ * not loaded) and `error` (kernel rejected the sheet) are distinct from `ok`
+ * with an empty list (kernel ran and found nothing). A caller that only sees
+ * `ok` can treat the schematic as verified; the other two mean "unverifiable",
+ * never "clean".
+ */
+export type ErcOutcome =
+  | { status: "ok"; violations: ErcViolationResult[] }
+  | { status: "unavailable" }
+  | { status: "error"; message: string };
+
+/**
+ * Run the kernel Electrical Rule Check, reporting whether it actually executed.
+ *
+ * Unlike {@link runErc} (which collapses every failure to `[]`), this keeps
+ * "kernel not loaded" and "kernel rejected the sheet" distinct from "kernel ran
+ * clean", so verification surfaces can fail closed instead of presenting an
+ * unevaluated schematic as passing.
+ */
+export async function checkErc(sheet: SchematicSheet): Promise<ErcOutcome> {
   const wasm = await loadEcadWasm();
-  if (!wasm) return [];
+  if (!wasm) return { status: "unavailable" };
   try {
-    return wasm.ecadCheckErc(JSON.stringify(sheet)) as ErcViolationResult[];
+    const violations = wasm.ecadCheckErc(JSON.stringify(sheet)) as ErcViolationResult[];
+    return { status: "ok", violations };
   } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
     console.warn("[ECAD] ERC failed:", e);
-    return [];
+    return { status: "error", message };
   }
+}
+
+/** Run Electrical Rule Check on a schematic. Empty list on any failure. */
+export async function runErc(sheet: SchematicSheet): Promise<ErcViolationResult[]> {
+  const outcome = await checkErc(sheet);
+  return outcome.status === "ok" ? outcome.violations : [];
 }
 
 /** Inputs for the analytical motor evaluator (mirrors `vcad_ecad_sim::MotorSpec`). */

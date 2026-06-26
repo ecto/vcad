@@ -1759,6 +1759,87 @@ describe("schematic label diagnostics", () => {
   });
 });
 
+describe("run_erc kernel pin-type & power rules", () => {
+  /** A 1-pin IC whose single pin carries a real electrical type. */
+  const ic = (ref: string, x: number, type: string, name = "P") => ({
+    ref,
+    value: ref,
+    footprint: "SOIC-8",
+    x,
+    y: 0,
+    pins: [{ number: "1", name, type, x: 0, y: 0 }],
+  });
+
+  it("flags two outputs driving one net (data-driven nets)", async () => {
+    const created = out(
+      await createSchematic({
+        components: [ic("U1", 0, "Output", "OUT"), ic("U2", 40, "Output", "OUT")],
+        nets: { BUS: ["U1.1", "U2.1"] },
+      }),
+    );
+    const erc = out(await runErc({ document_id: created.document_id }));
+    expect(erc.verified).toBe(true);
+    const conflicts = (erc.details as Array<{ message: string; severity: string }>).filter((d) =>
+      d.message.includes("multiple outputs"),
+    );
+    expect(conflicts).toHaveLength(1);
+    expect(conflicts[0]!.severity).toBe("Error");
+    expect(erc.errors).toBeGreaterThanOrEqual(1);
+  });
+
+  it("flags a power input with no driver as floating power", async () => {
+    const created = out(
+      await createSchematic({
+        components: [ic("U1", 0, "PowerInput", "VCC"), resistor("R1", 40)],
+        nets: { SENSE: ["U1.1", "R1.1"] },
+      }),
+    );
+    const erc = out(await runErc({ document_id: created.document_id }));
+    expect(erc.verified).toBe(true);
+    const floating = (erc.details as Array<{ message: string; severity: string }>).filter((d) =>
+      d.message.includes("no power source"),
+    );
+    expect(floating).toHaveLength(1);
+    expect(floating[0]!.severity).toBe("Warning");
+  });
+
+  it("does not flag a power input on a recognized power net", async () => {
+    const created = out(
+      await createSchematic({
+        components: [ic("U1", 0, "PowerInput", "VCC"), resistor("R1", 40)],
+        nets: { VCC: ["U1.1", "R1.1"] },
+      }),
+    );
+    const erc = out(await runErc({ document_id: created.document_id }));
+    expect(erc.verified).toBe(true);
+    expect(
+      (erc.details as Array<{ message: string }>).filter((d) =>
+        d.message.includes("no power source"),
+      ),
+    ).toEqual([]);
+  });
+
+  it("reports an unconnected power pin once, never doubled as floating power", async () => {
+    const created = out(
+      await createSchematic({
+        components: [ic("U1", 0, "PowerInput", "VCC")],
+      }),
+    );
+    const erc = out(await runErc({ document_id: created.document_id }));
+    expect(erc.verified).toBe(true);
+    const unconnected = (erc.details as Array<{ message: string; severity: string }>).filter((d) =>
+      d.message.includes("Unconnected pin"),
+    );
+    expect(unconnected).toHaveLength(1);
+    expect(unconnected[0]!.severity).toBe("Error");
+    expect(
+      (erc.details as Array<{ message: string }>).filter((d) =>
+        d.message.includes("no power source"),
+      ),
+    ).toEqual([]);
+  });
+});
+
 describe("board shapes and radial placement", () => {
   it("creates a circular board with a center bore and rings components radially", async () => {
     const created = out(
