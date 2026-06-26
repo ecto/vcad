@@ -26,6 +26,10 @@ import {
   setPlacement,
   setBoardOutline,
   addZone,
+  deleteZone,
+  deleteTrace,
+  deleteVia,
+  undo,
   setDesignRules,
   sizeTraceForCurrent,
   addViaArray,
@@ -39,7 +43,12 @@ import {
 } from "../tools/ecad.js";
 import { renderRatsnest, renderStackup } from "../tools/render.js";
 import { importKicad, importEagle } from "../tools/import-pcb.js";
-import { documents, getSession, openDocument } from "../tools/session.js";
+import {
+  documents,
+  getSession,
+  openDocument,
+  recordHistorySnapshot,
+} from "../tools/session.js";
 import { openInBrowser } from "../tools/share.js";
 
 let engine: Engine;
@@ -3345,6 +3354,152 @@ describe("add_zone", () => {
 
     const bad = await addZone({ document_id: id, net: "X", outline: [{ x: 0, y: 0 }] });
     expect(isErr(bad)).toBe(true);
+  });
+});
+
+describe("delete_zone / delete_trace / delete_via", () => {
+  it("deletes a zone by index and reports a changed diff", async () => {
+    const id = await boardWithTwoResistors();
+    out(await addZone({ document_id: id, net: "GND", layer: "BCu", fill_board: true }));
+    out(await addZone({ document_id: id, net: "VBAT", layer: "FCu", fill_board: true }));
+    expect(getPcbBoard(getSession(id)).zones).toHaveLength(2);
+
+    const res = out(await deleteZone({ document_id: id, index: 0 }));
+    expect(res.success).toBe(true);
+    expect(res.deleted).toMatchObject({
+      action: "removed",
+      kind: "zone",
+      index: 0,
+      net: "GND",
+      layer: "BCu",
+    });
+    expect(res.changed).toEqual([res.deleted]);
+    expect(res.zones_total).toBe(1);
+
+    // The surviving pour is the one we didn't delete.
+    const board = getPcbBoard(getSession(id));
+    expect(board.zones).toHaveLength(1);
+    expect(board.zones[0].net).toBe("VBAT");
+  });
+
+  it("deletes a zone by an unambiguous net match", async () => {
+    const id = await boardWithTwoResistors();
+    out(await addZone({ document_id: id, net: "GND", fill_board: true }));
+    const res = out(await deleteZone({ document_id: id, net: "GND" }));
+    expect(res.success).toBe(true);
+    expect(getPcbBoard(getSession(id)).zones).toHaveLength(0);
+  });
+
+  it("rejects a bad index, an ambiguous net, and a missing selector", async () => {
+    const id = await boardWithTwoResistors();
+    out(await addZone({ document_id: id, net: "GND", layer: "FCu", fill_board: true }));
+    out(await addZone({ document_id: id, net: "GND", layer: "BCu", fill_board: true }));
+
+    expect(isErr(await deleteZone({ document_id: id, index: 9 }))).toBe(true);
+    // Two GND zones → net alone is ambiguous; the error names the layer fix.
+    expect(isErr(await deleteZone({ document_id: id, net: "GND" }))).toBe(true);
+    // No index and no net at all → nothing to identify.
+    expect(isErr(await deleteZone({ document_id: id }))).toBe(true);
+
+    // Layer disambiguates → the FCu pour survives.
+    const ok = out(await deleteZone({ document_id: id, net: "GND", layer: "BCu" }));
+    expect(ok.success).toBe(true);
+    const board = getPcbBoard(getSession(id));
+    expect(board.zones).toHaveLength(1);
+    expect(board.zones[0].layer).toBe("FCu");
+  });
+
+  it("guards an index against a mismatched net", async () => {
+    const id = await boardWithTwoResistors();
+    out(await addZone({ document_id: id, net: "GND", fill_board: true }));
+    // Index 0 IS the GND zone — asking to delete a 'VBAT' one there is a mistake.
+    expect(isErr(await deleteZone({ document_id: id, index: 0, net: "VBAT" }))).toBe(true);
+    expect(getPcbBoard(getSession(id)).zones).toHaveLength(1);
+  });
+
+  it("deletes a trace and a via by index", async () => {
+    const id = await boardWithTwoResistors();
+    out(
+      await addTrace({
+        document_id: id,
+        net: "MID",
+        points: [
+          { x: 0, y: 0 },
+          { x: 5, y: 0 },
+        ],
+      }),
+    );
+    out(await addVia({ document_id: id, net: "MID", position: { x: 5, y: 0 } }));
+    expect(getPcbBoard(getSession(id)).traces.length).toBeGreaterThanOrEqual(1);
+    expect(getPcbBoard(getSession(id)).vias).toHaveLength(1);
+
+    const dt = out(await deleteTrace({ document_id: id, index: 0 }));
+    expect(dt.deleted).toMatchObject({ kind: "trace", net: "MID" });
+    expect(getPcbBoard(getSession(id)).traces).toHaveLength(0);
+
+    const dv = out(await deleteVia({ document_id: id, index: 0 }));
+    expect(dv.deleted).toMatchObject({ kind: "via", net: "MID" });
+    expect(getPcbBoard(getSession(id)).vias).toHaveLength(0);
+  });
+});
+
+describe("undo (snapshot rewind)", () => {
+  it("rewinds the last mutation and reports what the rewind removed", async () => {
+    const id = await boardWithTwoResistors();
+    // The dispatch layer snapshots before each mutation — simulate that here.
+    recordHistorySnapshot(id);
+    out(await addZone({ document_id: id, net: "GND", fill_board: true }));
+    expect(getPcbBoard(getSession(id)).zones).toHaveLength(1);
+
+    const res = out(await undo({ document_id: id }));
+    expect(res.success).toBe(true);
+    expect(res.undone).toBe(true);
+    // The pour is gone — the board is back to its pre-add state.
+    expect(getPcbBoard(getSession(id)).zones).toHaveLength(0);
+    expect(res.changed).toEqual([
+      expect.objectContaining({ action: "removed", kind: "zone", net: "GND" }),
+    ]);
+  });
+
+  it("walks back multiple steps, then reports nothing left to undo", async () => {
+    const id = await boardWithTwoResistors();
+    recordHistorySnapshot(id);
+    out(await addZone({ document_id: id, net: "GND", fill_board: true }));
+    recordHistorySnapshot(id);
+    out(
+      await addTrace({
+        document_id: id,
+        net: "MID",
+        points: [
+          { x: 0, y: 0 },
+          { x: 5, y: 0 },
+        ],
+      }),
+    );
+    expect(getPcbBoard(getSession(id)).traces.length).toBeGreaterThanOrEqual(1);
+
+    // First undo drops the trace; the zone stays.
+    const u1 = out(await undo({ document_id: id }));
+    expect(u1.remaining_undos).toBe(1);
+    expect(getPcbBoard(getSession(id)).traces).toHaveLength(0);
+    expect(getPcbBoard(getSession(id)).zones).toHaveLength(1);
+
+    // Second undo drops the zone.
+    out(await undo({ document_id: id }));
+    expect(getPcbBoard(getSession(id)).zones).toHaveLength(0);
+
+    // Stack is empty now.
+    expect(isErr(await undo({ document_id: id }))).toBe(true);
+  });
+
+  it("throws on an unknown document and errors with nothing recorded", async () => {
+    // An unknown id throws the pinned getSession error (the dispatch layer
+    // turns thrown errors into structured results); consistent with the rest
+    // of the ECAD surface.
+    expect(() => undo({ document_id: "doc_nope" })).toThrow(/Unknown document_id/);
+    const id = await boardWithTwoResistors();
+    // Known session, but no snapshot was recorded for it yet → graceful error.
+    expect(isErr(await undo({ document_id: id }))).toBe(true);
   });
 });
 

@@ -59,6 +59,7 @@ import {
   persistSession,
   dropSession,
   runInSessionScope,
+  recordHistorySnapshot,
 } from "./tools/session.js";
 import {
   continueDocument,
@@ -198,6 +199,14 @@ import {
   setBoardOutlineSchema,
   addZone,
   addZoneSchema,
+  deleteZone,
+  deleteZoneSchema,
+  deleteTrace,
+  deleteTraceSchema,
+  deleteVia,
+  deleteViaSchema,
+  undo,
+  undoSchema,
   setDesignRules,
   setDesignRulesSchema,
   sizeTraceForCurrent,
@@ -408,6 +417,11 @@ const GEOMETRY_TOOLS = new Set([
   "add_coil_array",
   "add_trace",
   "add_via",
+  // Removing copper / rewinding a mutation changes the board — re-render it.
+  "delete_zone",
+  "delete_trace",
+  "delete_via",
+  "undo",
   "set_stackup",
   "add_motor_winding",
   // Materializes a saved board into a live session — show it like open_document.
@@ -457,6 +471,10 @@ const SWITCH_DOC_WRITERS = new Set<string>([
   "add_via",
   "add_via_array",
   "add_zone",
+  "delete_zone",
+  "delete_trace",
+  "delete_via",
+  "undo",
   "set_stackup",
   "set_placement",
   "set_board_outline",
@@ -616,6 +634,9 @@ const TOOL_PACKS: Record<string, readonly string[]> = {
     "set_placement",
     "set_board_outline",
     "add_zone",
+    "delete_zone",
+    "delete_trace",
+    "delete_via",
     "set_design_rules",
     "size_trace_for_current",
     "add_coil",
@@ -1432,6 +1453,42 @@ export async function createServer(
         inputSchema: addZoneSchema,
       },
       {
+        name: "delete_zone",
+        description:
+          "Remove a copper pour from the board — the take-back for a bad add_zone, " +
+          "without rebuilding the session. Target by `index` (0-based, the add " +
+          "order) or by `net`/`layer` when exactly one zone matches. Returns a " +
+          "`changed` diff of what was removed. To undo the very last mutation of " +
+          "any kind, use `undo` instead. Mutates the session document.",
+        inputSchema: deleteZoneSchema,
+      },
+      {
+        name: "delete_trace",
+        description:
+          "Remove a single routed trace segment by `index` (0-based, the add " +
+          "order) or by an unambiguous `net`/`layer` match. The take-back for a " +
+          "stray add_trace. Returns a `changed` diff. Mutates the session document.",
+        inputSchema: deleteTraceSchema,
+      },
+      {
+        name: "delete_via",
+        description:
+          "Remove a single via by `index` (0-based, the add order) or by an " +
+          "unambiguous `net` match. The take-back for a stray add_via. Returns a " +
+          "`changed` diff. Mutates the session document.",
+        inputSchema: deleteViaSchema,
+      },
+      {
+        name: "undo",
+        description:
+          "Rewind the most recent mutation on a session — the snapshot taken " +
+          "before the last add_zone / add_trace / add_via / delete_* / route_nets " +
+          "/ place_components (or a CAD create/update/delete) is restored, without " +
+          "re-sending the document. Repeated calls walk further back. Returns a " +
+          "`changed` diff of the board elements the rewind moved.",
+        inputSchema: undoSchema,
+      },
+      {
         name: "set_design_rules",
         description:
           "Set the board design rules run_drc enforces (clearance, track width, " +
@@ -1782,6 +1839,15 @@ export async function createServer(
       }
     }
 
+    // ── Undo snapshot ─────────────────────────────────────────────────────
+    // Snapshot the document BEFORE any mutation of an existing session, so
+    // `undo` can rewind it. Gated to writers that target a resident session
+    // (creators mint a fresh id and have nothing prior to restore); `undo`
+    // itself is excluded so it walks the stack back rather than re-pushing.
+    if (incomingId && name !== "undo" && isDocWriter(name) && documents.has(incomingId)) {
+      recordHistorySnapshot(incomingId);
+    }
+
     // Inner dispatch. Encloses BOTH the registry path and the switch so the
     // single persist site below covers every writer — the registry path used
     // to early-return straight out of the handler, skipping post-processing.
@@ -2060,6 +2126,22 @@ export async function createServer(
 
         case "add_zone":
           result = addZone(args);
+          break;
+
+        case "delete_zone":
+          result = deleteZone(args);
+          break;
+
+        case "delete_trace":
+          result = deleteTrace(args);
+          break;
+
+        case "delete_via":
+          result = deleteVia(args);
+          break;
+
+        case "undo":
+          result = undo(args);
           break;
 
         case "set_design_rules":
