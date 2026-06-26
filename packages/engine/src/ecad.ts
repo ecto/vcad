@@ -37,6 +37,10 @@ export type DrcRuleType =
 
 export type DrcSeverity = "Error" | "Warning";
 
+/** Where a DRC violation originates — separates synthesized land-pattern
+ *  artifacts from genuine layout faults. Mirrors the Rust `DrcProvenance`. */
+export type DrcProvenance = "intra_footprint" | "inter_component" | "routing";
+
 export interface DrcViolationResult {
   rule: DrcRuleType;
   severity: DrcSeverity;
@@ -44,6 +48,10 @@ export interface DrcViolationResult {
   message: string;
   actual: number;
   required: number;
+  /** Footprint-internal, between two components, or routing/board-level. */
+  provenance: DrcProvenance;
+  /** True when a generated (synthesized) footprint land pattern is involved. */
+  generated: boolean;
 }
 
 export type ErcSeverity = "Error" | "Warning";
@@ -604,12 +612,36 @@ export interface RoutedVia {
   net: string;
 }
 
+/** Why a connection could not be routed, and where — so an agent or human can
+ *  act on it instead of staring at a bare "unrouted" list. */
+export interface UnroutedDiagnostic {
+  net: string;
+  from: Vec2;
+  to: Vec2;
+  /** Other nets blocking the corridor, most-blocking first. */
+  blocking_nets: string[];
+  /** Min corner of the congested region (mm). */
+  region_min: Vec2;
+  /** Max corner of the congested region (mm). */
+  region_max: Vec2;
+  /** A copper layer with the best chance (fewest blockers), if any is clearer. */
+  suggested_layer?: string;
+  /** Where dropping a via to `suggested_layer` would likely help. */
+  suggested_via?: Vec2;
+  /** Human-readable explanation of the obstruction. */
+  reason: string;
+}
+
 /** Result of {@link routeAll}. */
 export interface RouteAllResult {
   traces: RoutedTrace[];
   vias: RoutedVia[];
   routed_nets: string[];
   unrouted_nets: string[];
+  /** Per-unrouted-connection diagnostics; empty when fully routed. */
+  diagnostics: UnroutedDiagnostic[];
+  /** Fraction of attempted connections routed, in [0, 1]. */
+  routability: number;
 }
 
 /**
@@ -627,7 +659,14 @@ export async function routeAll(
   width: number,
   netsFilter: string[] = [],
 ): Promise<RouteAllResult> {
-  const empty: RouteAllResult = { traces: [], vias: [], routed_nets: [], unrouted_nets: [] };
+  const empty: RouteAllResult = {
+    traces: [],
+    vias: [],
+    routed_nets: [],
+    unrouted_nets: [],
+    diagnostics: [],
+    routability: 1,
+  };
   const wasm = await loadEcadWasm();
   if (!wasm) return empty;
   try {

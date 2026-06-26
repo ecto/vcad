@@ -1645,11 +1645,13 @@ export function ecadResolvePartDef(name: string, footprint?: string | null): any
  * Auto-route the whole board over the incremental oracle.
  *
  * Computes the MST ratsnest and routes every unrouted net against a single
- * growing route session, retrying on the back layer with transition vias
+ * growing route session, with PathFinder-style negotiated congestion layered
+ * over the bounded rip-up, retrying on the back layer with transition vias
  * that are probed on both layers before being committed. Returns
- * `{ traces, vias, routed_nets, unrouted_nets }`; every returned trace and
- * via is clearance-legal, or the net is reported unrouted — the router
- * never emits copper that shorts.
+ * `{ traces, vias, routed_nets, unrouted_nets, diagnostics, routability }`;
+ * every returned trace and via is clearance-legal, or the net is reported
+ * unrouted (with a diagnostic naming the blockers, the congested region, and
+ * a suggested layer/via) — the router never emits copper that shorts.
  */
 export function ecadRouteAll(pcb_json: string, width: number, nets_filter_json: string): any;
 

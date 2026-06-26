@@ -56,6 +56,26 @@ pub enum DrcSeverity {
     Warning,
 }
 
+/// Where a DRC violation originates — lets a caller separate synthesized
+/// land-pattern artifacts from genuine layout faults instead of hand-triaging
+/// the raw count. Serializes snake_case (`intra_footprint` / `inter_component`
+/// / `routing`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DrcProvenance {
+    /// Both elements lie within one footprint's land pattern (pad↔pad of a
+    /// single footprint, or a pad's own drill / annular ring). On a generated
+    /// footprint these are land-pattern artifacts, not board faults.
+    IntraFootprint,
+    /// The conflict is between two distinct placed components (cross-footprint
+    /// pad clearance / hole-to-hole, or a courtyard overlap) — a placement
+    /// fault.
+    InterComponent,
+    /// A trace, via, zone, board edge, keepout, or net connectivity is involved
+    /// — board-level routing, not footprint geometry.
+    Routing,
+}
+
 /// A DRC violation found during checking.
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct DrcViolation {
@@ -71,6 +91,31 @@ pub struct DrcViolation {
     pub actual: f64,
     /// Required value from design rules (mm).
     pub required: f64,
+    /// Origin class — footprint-internal, between components, or routing.
+    pub provenance: DrcProvenance,
+    /// True when a generated (synthesized) footprint land pattern is involved.
+    /// Lets callers discount footprint artifacts from the headline count.
+    pub generated: bool,
+}
+
+/// True when a footprint's land pattern was synthesized by the parametric
+/// engine (marked `padSource = "generated"` at placement) rather than authored
+/// inline or imported. Drives the `generated` flag on violations it touches.
+fn fp_is_generated(fp: &Footprint) -> bool {
+    fp.properties
+        .get("padSource")
+        .map(|s| s == "generated")
+        .unwrap_or(false)
+}
+
+/// Classify a footprint-involved conflict: the same ref on both sides is
+/// internal to one land pattern; two different refs is a placement collision.
+fn fp_pair_provenance(a_ref: &str, b_ref: &str) -> DrcProvenance {
+    if a_ref == b_ref {
+        DrcProvenance::IntraFootprint
+    } else {
+        DrcProvenance::InterComponent
+    }
 }
 
 /// Run all DRC checks on a PCB and return violations.
@@ -188,6 +233,8 @@ fn check_courtyard_overlap(pcb: &Pcb, violations: &mut Vec<DrcViolation>) {
                     ),
                     actual: ox.max(0.0),
                     required: 0.0,
+                    provenance: DrcProvenance::InterComponent,
+                    generated: fp_is_generated(fa) || fp_is_generated(fb),
                 });
             }
         }
@@ -357,6 +404,8 @@ fn check_clearance(
                     ),
                     actual: dist,
                     required,
+                    provenance: DrcProvenance::Routing,
+                    generated: false,
                 });
             }
         }
@@ -383,10 +432,12 @@ fn check_pad_clearance(
         layers: &'a [vcad_ir::ecad::PcbLayer],
         fp_ref: &'a str,
         number: &'a str,
+        generated: bool,
     }
 
     let mut boxes: Vec<PadBox> = Vec::new();
     for fp in &pcb.footprints {
+        let generated = fp_is_generated(fp);
         for pad in &fp.pads {
             // Pads without a net can't short two nets together.
             let Some(net) = pad.net.as_deref() else {
@@ -404,6 +455,7 @@ fn check_pad_clearance(
                 layers: &pad.layers,
                 fp_ref: &fp.reference,
                 number: &pad.number,
+                generated,
             });
         }
     }
@@ -464,6 +516,8 @@ fn check_pad_clearance(
                     ),
                     actual: dist,
                     required: clearance,
+                    provenance: fp_pair_provenance(a.fp_ref, b.fp_ref),
+                    generated: a.generated || b.generated,
                 });
             }
         }
@@ -492,6 +546,8 @@ fn check_min_trace_width(pcb: &Pcb, violations: &mut Vec<DrcViolation>) {
                 ),
                 actual: trace.width,
                 required: min_width,
+                provenance: DrcProvenance::Routing,
+                generated: false,
             });
         }
     }
@@ -514,12 +570,15 @@ fn check_min_drill(pcb: &Pcb, violations: &mut Vec<DrcViolation>) {
                 ),
                 actual: via.drill,
                 required: min_drill,
+                provenance: DrcProvenance::Routing,
+                generated: false,
             });
         }
     }
 
     // Check pad drills
     for footprint in &pcb.footprints {
+        let generated = fp_is_generated(footprint);
         for pad in &footprint.pads {
             if let Some(drill) = &pad.drill {
                 if drill.diameter < min_drill - 1e-6 {
@@ -537,6 +596,8 @@ fn check_min_drill(pcb: &Pcb, violations: &mut Vec<DrcViolation>) {
                         ),
                         actual: drill.diameter,
                         required: min_drill,
+                        provenance: DrcProvenance::IntraFootprint,
+                        generated,
                     });
                 }
             }
@@ -574,6 +635,8 @@ fn check_edge_clearance(pcb: &Pcb, violations: &mut Vec<DrcViolation>) {
                     ),
                     actual: effective_dist,
                     required: edge_clearance,
+                    provenance: DrcProvenance::Routing,
+                    generated: false,
                 });
                 break; // one violation per trace
             }
@@ -595,6 +658,8 @@ fn check_edge_clearance(pcb: &Pcb, violations: &mut Vec<DrcViolation>) {
                 ),
                 actual: effective_dist,
                 required: edge_clearance,
+                provenance: DrcProvenance::Routing,
+                generated: false,
             });
         }
     }
@@ -604,21 +669,38 @@ fn check_edge_clearance(pcb: &Pcb, violations: &mut Vec<DrcViolation>) {
 fn check_hole_to_hole(pcb: &Pcb, violations: &mut Vec<DrcViolation>) {
     let min_spacing = pcb.rules.hole_to_hole;
 
-    // Collect all hole positions and radii
-    let mut holes: Vec<(Vec2, f64)> = Vec::new();
-
-    for via in &pcb.vias {
-        holes.push((via.position, via.drill / 2.0));
+    /// Where a drilled hole came from — drives the violation's provenance.
+    struct Hole {
+        pos: Vec2,
+        radius: f64,
+        /// `Some(footprint)` for a pad hole (with its generated flag); `None`
+        /// for a via (routing).
+        fp: Option<(usize, bool)>,
     }
 
-    for footprint in &pcb.footprints {
+    let mut holes: Vec<Hole> = Vec::new();
+
+    for via in &pcb.vias {
+        holes.push(Hole {
+            pos: via.position,
+            radius: via.drill / 2.0,
+            fp: None,
+        });
+    }
+
+    for (fi, footprint) in pcb.footprints.iter().enumerate() {
+        let generated = fp_is_generated(footprint);
         for pad in &footprint.pads {
             if let Some(drill) = &pad.drill {
                 let abs_pos = Vec2::new(
                     footprint.position.x + pad.position.x,
                     footprint.position.y + pad.position.y,
                 );
-                holes.push((abs_pos, drill.diameter / 2.0));
+                holes.push(Hole {
+                    pos: abs_pos,
+                    radius: drill.diameter / 2.0,
+                    fp: Some((fi, generated)),
+                });
             }
         }
     }
@@ -626,16 +708,29 @@ fn check_hole_to_hole(pcb: &Pcb, violations: &mut Vec<DrcViolation>) {
     // O(n^2) check — fine for typical PCB sizes; use spatial index for large boards
     for i in 0..holes.len() {
         for j in (i + 1)..holes.len() {
-            let dx = holes[i].0.x - holes[j].0.x;
-            let dy = holes[i].0.y - holes[j].0.y;
+            let dx = holes[i].pos.x - holes[j].pos.x;
+            let dy = holes[i].pos.y - holes[j].pos.y;
             let center_dist = (dx * dx + dy * dy).sqrt();
-            let edge_dist = center_dist - holes[i].1 - holes[j].1;
+            let edge_dist = center_dist - holes[i].radius - holes[j].radius;
 
             if edge_dist < min_spacing - 1e-6 {
                 let mid = Vec2::new(
-                    (holes[i].0.x + holes[j].0.x) / 2.0,
-                    (holes[i].0.y + holes[j].0.y) / 2.0,
+                    (holes[i].pos.x + holes[j].pos.x) / 2.0,
+                    (holes[i].pos.y + holes[j].pos.y) / 2.0,
                 );
+                // A via on either side makes it a routing conflict; two pad
+                // holes of one footprint are intra, of two footprints inter.
+                let (provenance, generated) = match (holes[i].fp, holes[j].fp) {
+                    (Some((a, ga)), Some((b, gb))) => (
+                        if a == b {
+                            DrcProvenance::IntraFootprint
+                        } else {
+                            DrcProvenance::InterComponent
+                        },
+                        ga || gb,
+                    ),
+                    _ => (DrcProvenance::Routing, false),
+                };
                 violations.push(DrcViolation {
                     rule: DrcRuleType::HoleToHole,
                     severity: DrcSeverity::Error,
@@ -646,6 +741,8 @@ fn check_hole_to_hole(pcb: &Pcb, violations: &mut Vec<DrcViolation>) {
                     ),
                     actual: edge_dist,
                     required: min_spacing,
+                    provenance,
+                    generated,
                 });
             }
         }
@@ -667,12 +764,15 @@ fn check_annular_ring(pcb: &Pcb, violations: &mut Vec<DrcViolation>) {
                 message: format!("Via annular ring {:.3}mm < {:.3}mm", ring, min_ring),
                 actual: ring,
                 required: min_ring,
+                provenance: DrcProvenance::Routing,
+                generated: false,
             });
         }
     }
 
     // Check THT pads
     for footprint in &pcb.footprints {
+        let generated = fp_is_generated(footprint);
         for pad in &footprint.pads {
             if pad.pad_type != PadType::THT {
                 continue;
@@ -695,6 +795,8 @@ fn check_annular_ring(pcb: &Pcb, violations: &mut Vec<DrcViolation>) {
                         ),
                         actual: ring,
                         required: min_ring,
+                        provenance: DrcProvenance::IntraFootprint,
+                        generated,
                     });
                 }
             }
@@ -731,6 +833,8 @@ fn check_keepout(pcb: &Pcb, violations: &mut Vec<DrcViolation>) {
                         ),
                         actual: 0.0,
                         required: 0.0,
+                        provenance: DrcProvenance::Routing,
+                        generated: false,
                     });
                 }
             }
@@ -756,6 +860,8 @@ fn check_keepout(pcb: &Pcb, violations: &mut Vec<DrcViolation>) {
                         ),
                         actual: 0.0,
                         required: 0.0,
+                        provenance: DrcProvenance::Routing,
+                        generated: false,
                     });
                 }
             }
@@ -792,6 +898,10 @@ fn check_keepout(pcb: &Pcb, violations: &mut Vec<DrcViolation>) {
                         ),
                         actual: 0.0,
                         required: 0.0,
+                        // A real placement fault against a board region — not a
+                        // land-pattern artifact, so never flagged `generated`.
+                        provenance: DrcProvenance::Routing,
+                        generated: false,
                     });
                 }
             }
@@ -1272,6 +1382,8 @@ fn detect_shorts(
                     message: format!("Short: nets '{}' and '{}' are connected by copper", na, nb),
                     actual: 0.0,
                     required: 0.0,
+                    provenance: DrcProvenance::Routing,
+                    generated: false,
                 });
             }
         }
@@ -1327,6 +1439,8 @@ fn detect_unrouted(
             ),
             actual: comps.len() as f64,
             required: 1.0,
+            provenance: DrcProvenance::Routing,
+            generated: false,
         });
     }
 
@@ -1438,6 +1552,8 @@ fn detect_net_islands(
             ),
             actual: islands.len() as f64,
             required: 1.0,
+            provenance: DrcProvenance::Routing,
+            generated: false,
         });
     }
 }
@@ -1576,6 +1692,8 @@ fn detect_unstitched_pads(
                 ),
                 actual: 0.0,
                 required: 1.0,
+                provenance: DrcProvenance::Routing,
+                generated: false,
             });
         }
     }
@@ -3109,6 +3227,147 @@ mod tests {
             unrouted.is_empty(),
             "via should bridge FCu/BCu pads on same net, got: {:?}",
             unrouted
+        );
+    }
+
+    // ------------------------------------------------------------------------
+    // Provenance + generated tagging
+    // ------------------------------------------------------------------------
+
+    /// A THT footprint with one drilled, netted pad. `generated` marks it as a
+    /// synthesized land pattern via the `padSource` property the placer sets.
+    fn tht_fp(reference: &str, at: Vec2, drill: f64, net: &str, generated: bool) -> Footprint {
+        let mut properties = std::collections::HashMap::new();
+        if generated {
+            properties.insert("padSource".to_string(), "generated".to_string());
+        }
+        Footprint {
+            reference: reference.to_string(),
+            value: "X".to_string(),
+            footprint_name: "fp".to_string(),
+            position: at,
+            rotation: 0.0,
+            front: true,
+            pads: vec![Pad {
+                number: "1".to_string(),
+                pad_type: PadType::THT,
+                shape: PadShape::Circle { diameter: 1.6 },
+                position: Vec2::new(0.0, 0.0),
+                rotation: 0.0,
+                drill: Some(vcad_ir::ecad::DrillSpec {
+                    diameter: drill,
+                    oval: false,
+                    oval_height: None,
+                }),
+                net: Some(net.to_string()),
+                layers: vec![
+                    PcbLayer::FCu,
+                    PcbLayer::BCu,
+                    PcbLayer::FMask,
+                    PcbLayer::BMask,
+                ],
+            }],
+            graphics: vec![],
+            model_3d: None,
+            properties,
+        }
+    }
+
+    /// Every violation carries a provenance, and a via drill fault is routing.
+    #[test]
+    fn via_drill_fault_is_routing_provenance() {
+        let mut pcb = clean_pcb();
+        pcb.vias.push(Via {
+            position: Vec2::new(30.0, 60.0),
+            diameter: 0.6,
+            drill: 0.15,
+            start_layer: PcbLayer::FCu,
+            end_layer: PcbLayer::BCu,
+            net: "2".to_string(),
+        });
+        let v = check_drc(&pcb);
+        let d = v.iter().find(|v| v.rule == DrcRuleType::MinDrill).unwrap();
+        assert_eq!(d.provenance, DrcProvenance::Routing);
+        assert!(
+            !d.generated,
+            "a via is never a generated footprint artifact"
+        );
+    }
+
+    /// Two drilled holes of the *same* footprint placed too close are an
+    /// intra-footprint hole-to-hole — and inherit the footprint's generated flag.
+    #[test]
+    fn intra_footprint_hole_to_hole_is_tagged_generated() {
+        let mut pcb = clean_pcb();
+        let mut fp = tht_fp("J1", Vec2::new(40.0, 40.0), 0.9, "1", true);
+        // Add a second hole 1.0mm away — edge = 1.0 - 0.9 = 0.1 < 0.5.
+        let mut p2 = fp.pads[0].clone();
+        p2.number = "2".to_string();
+        p2.position = Vec2::new(1.0, 0.0);
+        p2.net = Some("2".to_string());
+        fp.pads.push(p2);
+        pcb.footprints.push(fp);
+
+        let v = check_drc(&pcb);
+        let h = v
+            .iter()
+            .find(|v| v.rule == DrcRuleType::HoleToHole)
+            .unwrap();
+        assert_eq!(h.provenance, DrcProvenance::IntraFootprint);
+        assert!(
+            h.generated,
+            "generated footprint's own land pattern artifact"
+        );
+    }
+
+    /// Holes from two different footprints that crowd report inter_component,
+    /// and the generated flag is the OR of the two footprints' flags.
+    #[test]
+    fn inter_component_hole_to_hole_distinguishes_generated() {
+        // One generated, one author-placed; nearest holes 1.0mm apart (edge 0.1).
+        let mut pcb = clean_pcb();
+        pcb.footprints
+            .push(tht_fp("J1", Vec2::new(40.0, 40.0), 0.9, "1", true));
+        pcb.footprints
+            .push(tht_fp("J2", Vec2::new(41.0, 40.0), 0.9, "2", false));
+        let v = check_drc(&pcb);
+        let h = v
+            .iter()
+            .find(|v| v.rule == DrcRuleType::HoleToHole)
+            .unwrap();
+        assert_eq!(h.provenance, DrcProvenance::InterComponent);
+        assert!(h.generated, "one side is generated → flagged generated");
+
+        // Both author-placed → same conflict, but NOT a generated artifact.
+        let mut pcb2 = clean_pcb();
+        pcb2.footprints
+            .push(tht_fp("J1", Vec2::new(40.0, 40.0), 0.9, "1", false));
+        pcb2.footprints
+            .push(tht_fp("J2", Vec2::new(41.0, 40.0), 0.9, "2", false));
+        let v2 = check_drc(&pcb2);
+        let h2 = v2
+            .iter()
+            .find(|v| v.rule == DrcRuleType::HoleToHole)
+            .unwrap();
+        assert_eq!(h2.provenance, DrcProvenance::InterComponent);
+        assert!(
+            !h2.generated,
+            "neither side generated → real fault, not artifact"
+        );
+    }
+
+    /// Provenance serializes snake_case so the MCP layer can group by it.
+    #[test]
+    fn provenance_serializes_snake_case() {
+        let json = serde_json::to_string(&DrcProvenance::IntraFootprint).unwrap();
+        assert_eq!(json, "\"intra_footprint\"");
+        assert_eq!(
+            serde_json::to_string(&DrcProvenance::InterComponent).unwrap(),
+            "\"inter_component\""
+        );
+        assert_eq!(
+            serde_json::to_string(&DrcProvenance::Routing).unwrap(),
+            "\"routing\""
         );
     }
 

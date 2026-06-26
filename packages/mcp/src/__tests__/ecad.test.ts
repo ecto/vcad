@@ -23,6 +23,7 @@ import {
   windingLayout,
   addTrace,
   getPadPositions,
+  getFootprint,
   describePcb,
   listFootprints,
   searchFootprints,
@@ -483,6 +484,92 @@ describe("get_pad_positions", () => {
   });
 });
 
+describe("get_footprint", () => {
+  const conn = (ref: string, footprint: string, pins: number[]) => ({
+    ref,
+    value: "CONN",
+    footprint,
+    x: 0,
+    y: 0,
+    pins: pins.map((n) => ({ number: String(n), name: String(n), type: "Passive" })),
+  });
+
+  it("resolves a footprint id PRE-placement in the local frame", async () => {
+    const r = out(await getFootprint({ footprint: "Connector_JST:JST_PH_2", pins: 2 }));
+    expect(r.success).toBe(true);
+    expect(r.mode).toBe("resolved");
+    expect(r.family).toBe("JST-PH");
+    expect(r.matched).toBe(true);
+    expect(r.generated).toBe(true);
+    expect(r.rotation_convention).toMatch(/counter-clockwise/i);
+    expect(r.rotation_convention).toMatch(/degrees/i);
+    expect(r.count).toBe(2);
+    // No placement → board frame equals local frame (origin 0,0, rot 0).
+    expect(r.origin).toMatchObject({ x: 0, y: 0, rotation: 0, side: "front" });
+    for (const p of r.pads) {
+      expect(p.board.x).toBeCloseTo(p.local.x, 6);
+      expect(p.board.y).toBeCloseTo(p.local.y, 6);
+      expect(p.pad_type).toBe("THT");
+      expect(p.drill_mm).toBeGreaterThan(0);
+    }
+    // Courtyard AABB is reported in both frames.
+    expect(r.courtyard.local).not.toBeNull();
+    expect(r.courtyard.board).not.toBeNull();
+    expect(r.courtyard.local.max.x).toBeGreaterThan(r.courtyard.local.min.x);
+  });
+
+  it("projects pads into a hypothetical board placement (origin + CCW rotation)", async () => {
+    const flat = out(await getFootprint({ footprint: "Connector_JST:JST_PH_2", pins: 2 }));
+    const rotated = out(
+      await getFootprint({
+        footprint: "Connector_JST:JST_PH_2",
+        pins: 2,
+        at: { x: 10, y: 5 },
+        rotation: 90,
+      }),
+    );
+    expect(rotated.origin).toMatchObject({ x: 10, y: 5, rotation: 90 });
+    // A pad at local (lx, ly) maps to (10 - ly, 5 + lx) under a 90° CCW rotation.
+    for (let i = 0; i < flat.pads.length; i++) {
+      const lp = flat.pads[i].local;
+      const bp = rotated.pads[i].board;
+      expect(bp.x).toBeCloseTo(10 - lp.y, 3);
+      expect(bp.y).toBeCloseTo(5 + lp.x, 3);
+    }
+  });
+
+  it("reads a PLACED footprint's real transform, nets, and courtyard", async () => {
+    const created = out(
+      await createSchematic({ components: [conn("J1", "JST_PH_3", [1, 2, 3])] }),
+    );
+    const id = created.document_id;
+    await placeComponents({ document_id: id, board_width: 40, board_height: 30 });
+
+    const r = out(await getFootprint({ document_id: id, ref: "J1" }));
+    expect(r.mode).toBe("placed");
+    expect(r.ref).toBe("J1");
+    expect(r.generated).toBe(true); // synthesized by the engine at placement
+
+    // Board-frame pad coords agree with get_pad_positions (shared transform).
+    const pads = out(await getPadPositions({ document_id: id, ref: "J1" }));
+    const byPin = new Map(
+      (pads.pads as Array<{ pin: string; x: number; y: number }>).map((p) => [p.pin, p]),
+    );
+    for (const p of r.pads) {
+      const ref = byPin.get(p.pin)!;
+      expect(p.board.x).toBeCloseTo(ref.x, 3);
+      expect(p.board.y).toBeCloseTo(ref.y, 3);
+      expect(p.net).toBe(p.pin); // pin names act as nets here
+    }
+    expect(r.courtyard.local).not.toBeNull();
+  });
+
+  it("errors when neither ref nor footprint is given", async () => {
+    const res = await getFootprint({});
+    expect((res as { isError?: boolean }).isError).toBe(true);
+  });
+});
+
 describe("describe_pcb", () => {
   it("returns a compact structured snapshot of the routed board", async () => {
     const created = out(
@@ -559,6 +646,120 @@ describe("describe_pcb", () => {
     const created = out(await createSchematic({ components: [resistor("R1", 0)] }));
     const res = await describePcb({ document_id: created.document_id });
     expect((res as { isError?: boolean }).isError).toBe(true);
+  });
+});
+
+describe("THT drill sizing (drill = lead + ~0.2mm)", () => {
+  const conn = (ref: string, footprint: string, pins: number[]) => ({
+    ref,
+    value: "X",
+    footprint,
+    x: 0,
+    y: 0,
+    pins: pins.map((n) => ({ number: String(n), name: "~", type: "Passive" })),
+  });
+
+  it("emits fab-buildable drills for headers and JST connectors, DRC-clean", async () => {
+    const created = out(
+      await createSchematic({
+        components: [
+          conn("J1", "Connector_PinHeader_2.54mm:PinHeader_1x04_P2.54mm_Vertical", [1, 2, 3, 4]),
+          conn("J2", "JST_PH_2", [1, 2]),
+        ],
+      }),
+    );
+    const id = created.document_id;
+    await placeComponents({ document_id: id, board_width: 60, board_height: 40 });
+    const board = getPcbBoard(getSession(id));
+    const drill = (ref: string) =>
+      board.footprints.find((f) => f.ref === ref)!.pads.map((p) => p.drill!.diameter);
+
+    // 2.54mm header: standard 1.0mm drill, not the old pitch-scaled 1.016mm.
+    for (const d of drill("J1")) expect(d).toBeLessThanOrEqual(1.0 + 1e-9);
+    // JST-PH 0.5mm post → 0.7mm drill, not the old flat 1.0mm.
+    for (const d of drill("J2")) expect(d).toBeCloseTo(0.7, 6);
+
+    // No self-inflicted hole-to-hole / annular / drill manufacturing flags.
+    const drc = out(await runDrc({ document_id: id, detail: "full" }));
+    type V = { rule: string };
+    const mfg = (drc.details as V[]).filter((v) =>
+      ["HoleToHole", "MinDrill", "AnnularRing"].includes(v.rule),
+    );
+    expect(mfg).toEqual([]);
+  });
+});
+
+describe("DRC provenance + generated tagging", () => {
+  const header = (ref: string, footprint: string, pins: number[]) => ({
+    ref,
+    value: "HDR",
+    footprint,
+    x: 0,
+    y: 0,
+    pins: pins.map((n) => ({ number: String(n), name: "~", type: "Passive" })),
+  });
+
+  it("tags generated-footprint manufacturing artifacts apart from real faults", async () => {
+    const created = out(
+      await createSchematic({
+        components: [
+          header("J1", "Connector_PinHeader_2.54mm:PinHeader_1x04_P2.54mm_Vertical", [1, 2, 3, 4]),
+        ],
+      }),
+    );
+    const id = created.document_id;
+    await placeComponents({ document_id: id, board_width: 40, board_height: 30 });
+
+    // Force a manufacturing fault on the generated land pattern: demand a drill
+    // larger than the header's pads carry. Every THT pad now trips MinDrill.
+    await setDesignRules({ document_id: id, min_drill: 1.5 });
+
+    const drc = out(await runDrc({ document_id: id, detail: "full" }));
+    expect(drc.success).toBe(true);
+
+    // Summary surfaces the trustworthy split.
+    expect(drc.byProvenance).toBeDefined();
+    expect(drc.generatedArtifacts).toBeGreaterThan(0);
+    expect(drc.realViolations).toBe(drc.violations - drc.generatedArtifacts);
+    expect(
+      drc.byProvenance.intra_footprint +
+        drc.byProvenance.inter_component +
+        drc.byProvenance.routing,
+    ).toBe(drc.violations);
+
+    // Every violation carries provenance + generated.
+    type V = { rule: string; provenance: string; generated: boolean };
+    for (const v of drc.details as V[]) {
+      expect(["intra_footprint", "inter_component", "routing"]).toContain(v.provenance);
+      expect(typeof v.generated).toBe("boolean");
+    }
+
+    // The drill faults are intra-footprint and flagged as generated artifacts.
+    const drills = (drc.details as V[]).filter((v) => v.rule === "MinDrill");
+    expect(drills.length).toBe(4);
+    expect(drills.every((v) => v.provenance === "intra_footprint")).toBe(true);
+    expect(drills.every((v) => v.generated === true)).toBe(true);
+  });
+
+  it("tags routing/connectivity violations as routing, not generated", async () => {
+    const created = out(
+      await createSchematic({
+        components: [resistor("R1", 0), resistor("R2", 20)],
+        nets: { MID: ["R1.2", "R2.1"] },
+      }),
+    );
+    const id = created.document_id;
+    await placeComponents({ document_id: id, board_width: 40, board_height: 20 });
+
+    // Nothing routed → the MID net is unconnected: a routing-provenance, real
+    // (not-generated) violation.
+    const drc = out(await runDrc({ document_id: id, detail: "full" }));
+    type V = { rule: string; provenance: string; generated: boolean };
+    const unrouted = (drc.details as V[]).filter((v) => v.rule === "UnconnectedNet");
+    expect(unrouted.length).toBeGreaterThan(0);
+    expect(unrouted.every((v) => v.provenance === "routing")).toBe(true);
+    expect(unrouted.every((v) => v.generated === false)).toBe(true);
+    expect(drc.byProvenance.routing).toBeGreaterThanOrEqual(unrouted.length);
   });
 });
 
@@ -682,6 +883,58 @@ describe("route_nets plane stitching", () => {
     // GND pads were stitched to the plane with vias, not star-routed as traces.
     const board = getPcbBoard(getSession(id));
     expect(board.vias.some((v) => v.net === "GND")).toBe(true);
+  });
+});
+
+describe("route_nets routability + diagnostics", () => {
+  it("reports a routability score of 1 for a fully-routed board", async () => {
+    const created = out(
+      await createSchematic({
+        components: [resistor("R1", 0), resistor("R2", 20)],
+        nets: { SIG: ["R1.2", "R2.1"] },
+      }),
+    );
+    const id = created.document_id;
+    await placeComponents({ document_id: id, board_width: 60, board_height: 30 });
+    const res = out(await routeNets({ document_id: id }));
+    expect(res.success).toBe(true);
+    expect(res.routability).toBe(1);
+    // A finished board carries no unrouted diagnostics.
+    expect(res.unrouted_diagnostics).toBeUndefined();
+  });
+
+  it("surfaces routability < 1 and actionable diagnostics when a net can't route", async () => {
+    // Two nets must cross on a one-layer board barely wide enough for the parts,
+    // so one connection can't be closed without shorting — it comes back with a
+    // diagnostic, and routability drops below 1.
+    const created = out(
+      await createSchematic({
+        components: [resistor("R1", 0), resistor("R2", 6)],
+        nets: { A: ["R1.1", "R2.2"], B: ["R1.2", "R2.1"] },
+      }),
+    );
+    const id = created.document_id;
+    // Single copper layer (FCu only) so a crossing net has nowhere to escape.
+    await placeComponents({ document_id: id, board_width: 14, board_height: 6 });
+    await setStackup({ document_id: id, layers: ["FCu"] });
+    const res = out(await routeNets({ document_id: id }));
+    expect(res.success).toBe(true);
+    expect(typeof res.routability).toBe("number");
+    expect(res.routability).toBeGreaterThanOrEqual(0);
+    expect(res.routability).toBeLessThanOrEqual(1);
+    if (res.unrouted_nets && res.unrouted_nets.length > 0) {
+      expect(res.routability).toBeLessThan(1);
+      expect(Array.isArray(res.unrouted_diagnostics)).toBe(true);
+      const d = res.unrouted_diagnostics[0];
+      expect(res.unrouted_nets).toContain(d.net);
+      expect(typeof d.reason).toBe("string");
+      expect(d.reason.length).toBeGreaterThan(0);
+      // Either a concrete blocker or a suggested escape layer is given.
+      expect(
+        (Array.isArray(d.blocking_nets) && d.blocking_nets.length > 0) ||
+          typeof d.suggested_layer === "string",
+      ).toBe(true);
+    }
   });
 });
 
@@ -4224,11 +4477,13 @@ describe("run_drc / run_erc / critique_route surface 'unverifiable', not false-c
     zones: [],
   };
 
-  // A trace on a dotted layer name — serde refuses the whole board.
+  // A trace on a completely unknown layer name — serde refuses the whole board.
+  // (Dotted KiCad forms like "In1.Cu" are now accepted via serde aliases and
+  // auto-coerced to "In1Cu", so they no longer trigger the kernel parse error.)
   const malformedPcb = {
     ...validPcb,
     traces: [
-      { start: { x: 1, y: 1 }, end: { x: 5, y: 1 }, width: 0.2, layer: "In1.Cu", net: "GND" },
+      { start: { x: 1, y: 1 }, end: { x: 5, y: 1 }, width: 0.2, layer: "UNKNOWN_LAYER", net: "GND" },
     ],
   } as unknown as Pcb;
 
@@ -4277,7 +4532,7 @@ describe("run_drc / run_erc / critique_route surface 'unverifiable', not false-c
     expect(result.isError).toBe(true);
     expect(result.structuredContent?.verifiable).toBe(false);
     expect(result.structuredContent?.status).toBe("errored");
-    expect(result.structuredContent?.offending_field).toBe("In1.Cu");
+    expect(result.structuredContent?.offending_field).toBe("UNKNOWN_LAYER");
     expect(result.structuredContent?.next_actions?.length).toBeGreaterThan(0);
     // The text must NOT read as a clean pass.
     const text = result.content[0]!.text;
@@ -4295,7 +4550,7 @@ describe("run_drc / run_erc / critique_route surface 'unverifiable', not false-c
     const result = asResult(await critiqueRoute({ document: docWithPcb(malformedPcb), net: "GND" }));
     expect(result.isError).toBe(true);
     expect(result.structuredContent?.verifiable).toBe(false);
-    expect(result.structuredContent?.offending_field).toBe("In1.Cu");
+    expect(result.structuredContent?.offending_field).toBe("UNKNOWN_LAYER");
   });
 
   it("run_erc returns isError + verifiable:false for a malformed schematic", async () => {
@@ -4380,5 +4635,158 @@ describe("set_design_rules ordering tolerance (buffering)", () => {
       classes: [{ name: "power", nets: [] }],
     });
     expect(badClass.isError).toBe(true);
+  });
+});
+
+describe("layer-name validation at write boundaries", () => {
+  /** Error text of a failed tool result (the content block isn't JSON). */
+  const errText = (r: { content: Array<{ text: string }> }) => r.content[0].text;
+
+  it("add_trace rejects the dotted KiCad form with a did-you-mean + legal list", async () => {
+    const id = await boardWithTwoResistors();
+    const res = await addTrace({
+      document_id: id,
+      net: "MID",
+      layer: "In1.Cu",
+      points: [
+        { x: 1, y: 1 },
+        { x: 9, y: 1 },
+      ],
+    });
+    expect(isErr(res)).toBe(true);
+    const t = errText(res);
+    expect(t).toContain("'In1.Cu' is not valid");
+    expect(t).toContain("did you mean 'In1Cu'");
+    expect(t).toContain("Legal: FCu, BCu, In1Cu");
+    // No corrupt copper landed on the board.
+    expect(getPcbBoard(getSession(id)).traces.some((tr) => tr.layer === ("In1.Cu" as never))).toBe(
+      false,
+    );
+  });
+
+  it("add_trace rejects an entirely unknown layer with the legal list", async () => {
+    const id = await boardWithTwoResistors();
+    const res = await addTrace({
+      document_id: id,
+      net: "MID",
+      layer: "TopCopper",
+      points: [
+        { x: 1, y: 1 },
+        { x: 9, y: 1 },
+      ],
+    });
+    expect(isErr(res)).toBe(true);
+    expect(errText(res)).toContain("'TopCopper' is not valid");
+    expect(errText(res)).toContain("Legal:");
+  });
+
+  it("add_trace rejects a valid but non-copper layer", async () => {
+    const id = await boardWithTwoResistors();
+    const res = await addTrace({
+      document_id: id,
+      net: "MID",
+      layer: "EdgeCuts",
+      points: [
+        { x: 1, y: 1 },
+        { x: 9, y: 1 },
+      ],
+    });
+    expect(isErr(res)).toBe(true);
+    expect(errText(res)).toContain("not a copper layer");
+  });
+
+  it("add_trace still accepts the canonical layer name", async () => {
+    const id = await boardWithTwoResistors();
+    const res = out(
+      await addTrace({
+        document_id: id,
+        net: "MID",
+        layer: "In1Cu",
+        points: [
+          { x: 1, y: 1 },
+          { x: 9, y: 1 },
+        ],
+      }),
+    );
+    expect(res.success).toBe(true);
+    expect(res.layer).toBe("In1Cu");
+  });
+
+  it("add_via rejects a dotted start_layer", async () => {
+    const id = await boardWithTwoResistors();
+    const res = await addVia({
+      document_id: id,
+      net: "MID",
+      position: { x: 10, y: 10 },
+      start_layer: "F.Cu",
+    });
+    expect(isErr(res)).toBe(true);
+    expect(errText(res)).toContain("start_layer");
+    expect(errText(res)).toContain("did you mean 'FCu'");
+  });
+
+  it("add_zone rejects a dotted layer", async () => {
+    const id = await boardWithTwoResistors();
+    const res = await addZone({ document_id: id, net: "GND", layer: "B.Cu", fill_board: true });
+    expect(isErr(res)).toBe(true);
+    expect(errText(res)).toContain("did you mean 'BCu'");
+    expect(getPcbBoard(getSession(id)).zones).toHaveLength(0);
+  });
+
+  it("add_via_array rejects a dotted end_layer", async () => {
+    const id = await boardWithTwoResistors();
+    const res = await addViaArray({
+      document_id: id,
+      net: "GND",
+      region: { x: 15, y: 15, w: 4, h: 4 },
+      end_layer: "In2.Cu",
+    });
+    expect(isErr(res)).toBe(true);
+    expect(errText(res)).toContain("end_layer");
+    expect(errText(res)).toContain("did you mean 'In2Cu'");
+  });
+
+  it("set_stackup rejects a dotted layer in a per-layer override", async () => {
+    const id = await boardWithTwoResistors();
+    const res = await setStackup({
+      document_id: id,
+      layers: [{ layer: "In1.Cu", copper_oz: 2 }],
+    });
+    expect(isErr(res)).toBe(true);
+    expect(errText(res)).toContain("did you mean 'In1Cu'");
+  });
+
+  it("add_coil rejects a dotted layer", async () => {
+    const id = await boardWithTwoResistors();
+    const res = await addCoil({
+      document_id: id,
+      center: { x: 25, y: 25 },
+      turns: 3,
+      inner_radius: 2,
+      outer_radius: 8,
+      trace_width: 0.3,
+      net: "MID",
+      layer: "In3.Cu",
+    });
+    expect(isErr(res)).toBe(true);
+    expect(errText(res)).toContain("did you mean 'In3Cu'");
+  });
+
+  it("add_motor_winding rejects a dotted copper_layer", async () => {
+    const id = await boardWithTwoResistors();
+    const res = await addMotorWinding({
+      document_id: id,
+      slots: 9,
+      poles: 6,
+      center: { x: 25, y: 25 },
+      pitch_radius: 15,
+      inner_radius: 2,
+      outer_radius: 5,
+      trace_width: 0.3,
+      copper_layer: "F.Cu",
+    });
+    expect(isErr(res)).toBe(true);
+    expect(errText(res)).toContain("copper_layer");
+    expect(errText(res)).toContain("did you mean 'FCu'");
   });
 });

@@ -1,0 +1,10 @@
+{
+  "id": "2026-06-26-get-footprint-tool",
+  "version": "0.9.4",
+  "date": "2026-06-26",
+  "category": "feat",
+  "title": "get_footprint: introspect a land pattern's pads + courtyard",
+  "summary": "New MCP tool returns a footprint's origin, courtyard AABB, and every pad in both footprint-local and board frames (with the explicit CCW rotation convention), for a placed ref or a resolved id pre-placement — so connector/IC pad locations are known exactly instead of render-and-guessed.",
+  "features": ["pcb", "ecad", "footprints", "introspection"],
+  "mcpTools": ["get_footprint"]
+}
