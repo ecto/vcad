@@ -27,6 +27,7 @@ export type DrcRuleType =
   | "EdgeClearance"
   | "HoleToHole"
   | "UnconnectedNet"
+  | "UnstitchedPad"
   | "SilkscreenClearance"
   | "CourtyardOverlap"
   | "AcidTrap";

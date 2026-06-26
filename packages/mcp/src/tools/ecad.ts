@@ -2859,10 +2859,11 @@ interface DrcNetPairCount {
 
 /** Group each DRC rule by what it means for the board, so callers can tell an
  *  *incomplete* layout (ratsnest left to route) from an *illegal* one (copper
- *  conflicts / fab-rule breaks). UnconnectedNet is the only "incomplete" rule —
- *  it's a to-do, not a defect. */
+ *  conflicts / fab-rule breaks). UnconnectedNet and UnstitchedPad are the
+ *  "incomplete" rules — a to-do (route it / stitch it), not a defect. */
 const DRC_CATEGORY: Record<string, "connectivity" | "clearance" | "manufacturing"> = {
   UnconnectedNet: "connectivity",
+  UnstitchedPad: "connectivity",
   Clearance: "clearance",
   Short: "clearance",
   MinTraceWidth: "manufacturing",
