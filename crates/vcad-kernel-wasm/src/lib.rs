@@ -23,17 +23,24 @@ use wasmosis::module;
 #[cfg(feature = "ts-rs")]
 use ts_rs::TS;
 
-/// Version string for verifying correct WASM build is loaded in browser.
-/// Format: `<crate-version>-<git-short-sha>[-dirty]`. Emitted by build.rs.
-const KERNEL_VERSION: &str = concat!(
-    env!("CARGO_PKG_VERSION"),
-    "-",
-    env!("VCAD_KERNEL_BUILD_REV")
-);
+/// Version string for verifying the correct WASM build is loaded in browser.
+///
+/// Deliberately the crate version *only* — NOT the git short-SHA. The committed
+/// `*_bg.wasm` is a build cache for environments with no Rust toolchain (the
+/// Vercel MCP deploy, fast local dev), so its bytes must be reproducible:
+/// identical kernel source must compile to identical bytes regardless of which
+/// commit (or dirty tree) built it. Baking `git rev-parse HEAD` into the binary
+/// broke that — every commit produced different bytes, so the artifact
+/// conflicted on *every* merge even when no kernel source had changed.
+///
+/// To still answer "which build is running?", report the deploy commit at
+/// runtime from the server environment (e.g. the MCP `server_info`/health
+/// payload), where it identifies the deployment without poisoning the artifact.
+const KERNEL_VERSION: &str = env!("CARGO_PKG_VERSION");
 
-/// Get the kernel version string.
-/// Use this in browser console to verify the correct WASM build is loaded:
-/// `kernelWasm.get_kernel_version()` returns `<crate-version>-<sha>[-dirty]`.
+/// Get the kernel version string (the crate version).
+/// Use this in the browser console to confirm the WASM loaded:
+/// `kernelWasm.get_kernel_version()` returns `<crate-version>`.
 #[wasm_bindgen]
 pub fn get_kernel_version() -> String {
     KERNEL_VERSION.to_string()

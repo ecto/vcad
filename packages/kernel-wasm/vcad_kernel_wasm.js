@@ -4690,9 +4690,9 @@ export function get_default_dfm_pack(process) {
 }
 
 /**
- * Get the kernel version string.
- * Use this in browser console to verify the correct WASM build is loaded:
- * `kernelWasm.get_kernel_version()` returns `<crate-version>-<sha>[-dirty]`.
+ * Get the kernel version string (the crate version).
+ * Use this in the browser console to confirm the WASM loaded:
+ * `kernelWasm.get_kernel_version()` returns `<crate-version>`.
  * @returns {string}
  */
 export function get_kernel_version() {
@@ -8436,3 +8436,13 @@ async function __wbg_init(module_or_path) {
 }
 
 export { initSync, __wbg_init as default };
+
+// vcad: trap-recovery hook (appended by packages/kernel-wasm build).
+// Dropping the cached `wasm`/`wasmModule` bindings lets a subsequent
+// initSync()/default() re-instantiate a fresh instance in place, so the
+// wasm-singleton can recover from a panic trap instead of poisoning the
+// process. See packages/engine/src/wasm-singleton.ts (resetKernelWasm).
+export function __vcad_reset_wasm() {
+    wasm = undefined;
+    wasmModule = undefined;
+}
