@@ -103,7 +103,11 @@ import {
   registryDispatchableNames,
   dispatchRegistryTool,
 } from "./tools/registry-dispatch.js";
-import { buildErrorResult, enrichErrorResult } from "./tools/next-actions.js";
+import {
+  buildErrorResult,
+  enrichErrorResult,
+  enrichSuccessResult,
+} from "./tools/next-actions.js";
 // Re-exported so the Vercel entry point (services/mcp/entry.ts) serves the live
 // window through the same handler as the standalone server (http.ts).
 export { handleLiveRequest } from "./live-route.js";
@@ -2170,8 +2174,11 @@ export async function createServer(
 
       // Tools that RETURN {isError:true} (the ECAD / sheet-metal / DFM surface)
       // never reach the throw-catch below, so enrich them here — every failure
-      // carries next_actions, not just the ones that throw.
+      // carries next_actions, not just the ones that throw. Successes on the
+      // canonical PCB flow carry happy-path next_actions too, so the order of
+      // operations is discoverable without first tripping over an ordering error.
       if (result.isError) enrichErrorResult(result, name, args);
+      else enrichSuccessResult(result, name, args);
 
       // ── Persist ─────────────────────────────────────────────────────────
       // After a creator/mutator settles, write the (possibly newly-minted)
