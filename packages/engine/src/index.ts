@@ -150,6 +150,7 @@ export {
   runDrc,
   critiqueRoute,
   runErc,
+  checkErc,
   generateNetlist,
   routeNet,
   routeNetShove,
@@ -181,6 +182,7 @@ export {
 export type {
   DrcViolationResult,
   ErcViolationResult,
+  ErcOutcome,
   NetlistResult,
   NetlistNet,
   NetConnection,

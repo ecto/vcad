@@ -25,6 +25,7 @@ import { verifyAccessToken } from "./oauth.js";
 import { getViewerHtml, MCP_APP_MIME_TYPE } from "./viewer.js";
 import { flushTelemetry } from "./telemetry.js";
 import { handleLiveRequest } from "./live-route.js";
+import { sessionStoreInfo } from "./session-store.js";
 
 const PORT = parseInt(process.env.PORT || "8080", 10);
 
@@ -237,13 +238,16 @@ const httpServer = createHttpServer(async (req, res) => {
       return;
     }
 
-    // Health check
+    // Health check. `durable` / `session_store` make the session-durability
+    // state observable with a plain curl — durable:false means a redeploy will
+    // drop open sessions (service-role key unset).
     if (path === "/health") {
       const eng = await getEngine();
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({
         status: "ok",
         engine: !!eng,
+        ...sessionStoreInfo(),
         timestamp: new Date().toISOString(),
       }));
       return;
