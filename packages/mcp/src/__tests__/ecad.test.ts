@@ -3528,6 +3528,42 @@ describe("ecad pipeline behaviors (session flow)", () => {
     expect(res.files[0].content).toBeTruthy();
   });
 
+  it("export_gerber offloads a large bundle to an artifact (URL + manifest), keeps a small one inline", async () => {
+    const created = out(
+      await createSchematic({ components: [resistor("R1", 0, ["A", "B"])] }),
+    );
+    const id = created.document_id;
+    out(await placeComponents({ document_id: id, board_width: 30, board_height: 30 }));
+
+    // Small bundle under the default cap → stays inline.
+    const small = out(await exportGerber({ document_id: id }));
+    expect(small.success).toBe(true);
+    expect(Array.isArray(small.files)).toBe(true);
+    expect(small.files.length).toBeGreaterThan(0);
+    expect(small.artifact_url).toBeUndefined();
+
+    // Force the SAME bundle over the cap → offloaded to the artifact store.
+    process.env.MCP_MAX_INLINE_ARTIFACT_BYTES = "10";
+    try {
+      const big = out(await exportGerber({ document_id: id }));
+      expect(big.success).toBe(true);
+      // No inline files — only the handle travels.
+      expect(big.files).toBeUndefined();
+      expect(big.artifact_url).toMatch(/\/artifacts\/art_/);
+      expect(big.artifact_id).toMatch(/^art_/);
+      expect(Array.isArray(big.manifest)).toBe(true);
+      expect(big.manifest.length).toBe(small.files.length);
+      for (const entry of big.manifest) {
+        expect(typeof entry.file).toBe("string");
+        expect(entry.bytes).toBeGreaterThan(0);
+        expect(entry.sha256).toMatch(/^[0-9a-f]{64}$/);
+      }
+      expect(big.fab_artifact.artifact_id).toBe(big.artifact_id);
+    } finally {
+      delete process.env.MCP_MAX_INLINE_ARTIFACT_BYTES;
+    }
+  });
+
   it("open_in_browser produces a URL for PCB documents", async () => {
     const created = out(
       await createSchematic({ components: [resistor("R1", 0, ["A", "B"])] }),

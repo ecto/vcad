@@ -17,6 +17,7 @@
  */
 
 import { CREATE_PARAM_HINTS } from "./registry-dispatch.js";
+import { VALID_LAYERS } from "./pcb-validate.js";
 
 /** One recovery step. */
 export interface NextAction {
@@ -171,6 +172,27 @@ export function suggestNextActions(
       });
     }
     if (actions.length) return actions;
+  }
+
+  // PCB serde / layer-validation failures. These surface when a malformed
+  // layer name (e.g. "F.Cu" instead of "FCu") poisons the board and the
+  // kernel rejects it during render/export/DRC serialization.
+  const pcbSerdeMatch = detectPcbSerdeError(message);
+  if (pcbSerdeMatch) {
+    const accepted = [...VALID_LAYERS];
+    const actions: NextAction[] = [
+      {
+        action: pcbSerdeMatch.hint,
+        tool: "set_stackup",
+        ...(docId ? { args: { document_id: docId } } : {}),
+      },
+    ];
+    if (pcbSerdeMatch.field) {
+      actions.push({
+        action: `Offending field: ${pcbSerdeMatch.field}. Value: "${pcbSerdeMatch.value ?? "unknown"}". Accepted layer names: ${accepted.join(", ")}.`,
+      });
+    }
+    return actions;
   }
 
   // Floor: inspect current state, then retry with corrected arguments.
@@ -387,4 +409,59 @@ export function enrichErrorResult(
     ...(result.structuredContent ?? {}),
     next_actions: next,
   };
+}
+
+// ── PCB serde error detection ──────────────────────────────────────────────
+
+interface PcbSerdeHint {
+  hint: string;
+  field?: string;
+  value?: string;
+}
+
+/** @internal exported for tests */
+export function detectPcbSerdeError(message: string): PcbSerdeHint | null {
+  const lower = message.toLowerCase();
+
+  // Rust serde: 'unknown variant `F.Cu`, expected one of ...'
+  const unknownVariant = /unknown variant [`"]([^`"]+)[`"]/i.exec(message);
+  if (unknownVariant && /layer|cu|silk|mask|paste|fab|crt|edge/i.test(unknownVariant[1]!)) {
+    return {
+      hint: `The board has a malformed layer name "${unknownVariant[1]}". Fix it with set_stackup (use serde names like "FCu", not dotted "F.Cu").`,
+      field: "pcb.stackup.layers[].layer",
+      value: unknownVariant[1],
+    };
+  }
+
+  // Our validatePcb pre-flight: 'not a valid PcbLayer'
+  if (lower.includes("not a valid pcblayer")) {
+    const fieldMatch = /field[`": ]+([^`",]+)/i.exec(message);
+    const valueMatch = /value[`": ]+([^`",]+)/i.exec(message);
+    return {
+      hint: `The board has an invalid layer name. Fix the stackup with set_stackup using valid serde names (e.g. "FCu", "BCu", "In1Cu").`,
+      field: fieldMatch?.[1],
+      value: valueMatch?.[1],
+    };
+  }
+
+  // Kernel WASM serde wrapper: 'pcb json: ...'
+  if (lower.startsWith("pcb json:") || lower.includes("pcb json:")) {
+    const detail = message.replace(/^.*pcb json:\s*/i, "");
+    return {
+      hint: `The board failed kernel deserialization: ${detail}. The document is still safe — read it, fix the offending field, and retry.`,
+    };
+  }
+
+  // Generic serde/JSON parse failures on PCB tools
+  if (
+    (lower.includes("deserialize") || lower.includes("invalid type") ||
+     lower.includes("missing field")) &&
+    (lower.includes("pcb") || lower.includes("layer") || lower.includes("stackup"))
+  ) {
+    return {
+      hint: `The board contains invalid data that fails deserialization. Read the document, check stackup/layer fields for typos, and fix with set_stackup.`,
+    };
+  }
+
+  return null;
 }

@@ -5,7 +5,9 @@ import {
   enrichErrorResult,
   enrichSuccessResult,
   happyPathNext,
+  detectPcbSerdeError,
 } from "../tools/next-actions.js";
+import { VALID_LAYERS } from "../tools/pcb-validate.js";
 
 describe("suggestNextActions", () => {
   it("steers a kernel trap toward different inputs (no blind retry tool)", () => {
@@ -280,5 +282,96 @@ describe("enrichSuccessResult (happy-path actions on success)", () => {
     };
     enrichSuccessResult(result, "set_design_rules", { document_id: "d" });
     expect(result.structuredContent.next_actions.map((a) => a.tool)).toEqual(["place_components"]);
+  });
+});
+
+describe("PCB serde / layer error detection", () => {
+  it("detects a Rust serde 'unknown variant' for a dotted layer name", () => {
+    const hint = detectPcbSerdeError(
+      'pcb json: unknown variant `F.Cu`, expected one of `FCu`, `BCu`, ...',
+    );
+    expect(hint).not.toBeNull();
+    expect(hint!.value).toBe("F.Cu");
+    expect(hint!.field).toContain("layer");
+    expect(hint!.hint).toContain("malformed layer name");
+    expect(hint!.hint).toContain("set_stackup");
+  });
+
+  it("detects a 'pcb json:' deserialization wrapper", () => {
+    const hint = detectPcbSerdeError("pcb json: missing field `outline`");
+    expect(hint).not.toBeNull();
+    expect(hint!.hint).toContain("kernel deserialization");
+  });
+
+  it("detects validatePcb 'not a valid PcbLayer' messages", () => {
+    const hint = detectPcbSerdeError(
+      '"In1.Cu" is not a valid PcbLayer — serde will reject this',
+    );
+    expect(hint).not.toBeNull();
+    expect(hint!.hint).toContain("set_stackup");
+  });
+
+  it("returns null for unrelated errors", () => {
+    expect(detectPcbSerdeError("weird failure")).toBeNull();
+    expect(detectPcbSerdeError("missing part_id")).toBeNull();
+  });
+
+  it("suggestNextActions routes a serde layer error to set_stackup (not the generic floor)", () => {
+    const actions = suggestNextActions(
+      "render_pcb",
+      { document_id: "d" },
+      'pcb json: unknown variant `F.Cu`, expected one of `FCu`, `BCu`',
+    );
+    expect(actions[0].tool).toBe("set_stackup");
+    expect(actions[0].args).toEqual({ document_id: "d" });
+    expect(actions[0].action).toContain("F.Cu");
+    // Must NOT fall through to the generic "Inspect the current state" floor.
+    expect(actions.some((a) => a.action.includes("Inspect the current state"))).toBe(false);
+  });
+
+  it("suggestNextActions routes a validatePcb error to set_stackup", () => {
+    const actions = suggestNextActions(
+      "export_gerber",
+      { document_id: "d" },
+      '"In1.Cu" is not a valid PcbLayer — serde will reject this',
+    );
+    expect(actions[0].tool).toBe("set_stackup");
+    expect(actions.some((a) => a.action.includes("Inspect the current state"))).toBe(false);
+  });
+
+  it("suggestNextActions includes accepted layer names in second action", () => {
+    const actions = suggestNextActions(
+      "render_pcb",
+      { document_id: "d" },
+      'pcb json: unknown variant `F.Cu`, expected one of `FCu`, `BCu`',
+    );
+    expect(actions.length).toBeGreaterThan(1);
+    const acceptedAction = actions.find((a) => a.action.includes("Accepted layer names"));
+    expect(acceptedAction).toBeDefined();
+    expect(acceptedAction!.action).toContain("FCu");
+    expect(acceptedAction!.action).toContain("BCu");
+  });
+
+  it("enrichErrorResult attaches PCB-specific next_actions to a validation error body", () => {
+    const result = {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify({
+            error: '"F.Cu" is not a valid PcbLayer — serde will reject this',
+            subsystem: "layer_parse",
+            field: "pcb.stackup.layers[0].layer",
+            value: "F.Cu",
+          }),
+        },
+      ],
+      isError: true,
+    };
+    enrichErrorResult(result, "render_pcb", { document_id: "d" });
+    const parsed = JSON.parse(result.content[0].text) as {
+      next_actions: Array<{ tool?: string; action: string }>;
+    };
+    expect(parsed.next_actions[0].tool).toBe("set_stackup");
+    expect(parsed.next_actions[0].action).toContain("set_stackup");
   });
 });

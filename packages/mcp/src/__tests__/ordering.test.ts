@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { authorizeSpend, placeOrder } from "../tools/ordering.js";
 import { InMemoryFabricateStore } from "../fabricate/store.js";
+import { storeArtifact, clearArtifacts } from "../tools/artifact-store.js";
 import type { Order, SpendAuthorization } from "../fabricate/types.js";
 import type { AuthUser } from "../oauth.js";
 import type { SessionEvent, SessionEventStore, StoredSessionEvent } from "../session-store.js";
@@ -71,6 +72,63 @@ describe("Fabricate ordering — enabled (test-mode)", () => {
   afterEach(() => {
     if (prev === undefined) delete process.env.VCAD_FABRICATE_ORDERING;
     else process.env.VCAD_FABRICATE_ORDERING = prev;
+    clearArtifacts();
+  });
+
+  it("binds a fab artifact handle to the placed order (handle on the spine, not bytes)", async () => {
+    const user: AuthUser = { sub: "u-artifact", email: "x@y.z" };
+    const store = new InMemoryFabricateStore();
+    const es = new RecordingEventStore();
+    await store.saveOrder(makeOrder(), 4000, user.sub);
+    const handle = storeArtifact([
+      { name: "top.gbr", content: "G04 fab copper*" },
+      { name: "out.drl", content: "M48\n" },
+    ]);
+
+    const a = json(await authorizeSpend({ order_id: "ord_1" }, store, es, user));
+    store.approveAuthorizationForTest(a.authorization_id, user.sub);
+    store.creditWalletForTest(user.sub, 10000);
+
+    const res = await placeOrder(
+      { order_id: "ord_1", authorization_id: a.authorization_id, fab_artifact_id: handle.artifact_id },
+      store,
+      es,
+      user,
+    );
+    expect(res.isError).toBeFalsy();
+    const out = json(res);
+    expect(out.state).toBe("PAID");
+    expect(out.fab_artifact.artifact_id).toBe(handle.artifact_id);
+    expect(out.fab_artifact.files).toBe(2);
+    // The fab bytes never appear in the tool result.
+    expect(text(res)).not.toContain("G04 fab copper");
+
+    // The durable spine event carries the handle (for the fab-submission worker).
+    const placed = es.events.find((e) => e.type === "order_placed");
+    expect(placed).toBeTruthy();
+    expect(
+      (placed!.payload as { fab_artifact?: { artifact_id?: string } }).fab_artifact?.artifact_id,
+    ).toBe(handle.artifact_id);
+  });
+
+  it("rejects a place_order with an unknown fab artifact handle before any debit", async () => {
+    const user: AuthUser = { sub: "u-badart", email: "x@y.z" };
+    const store = new InMemoryFabricateStore();
+    await store.saveOrder(makeOrder(), 4000, user.sub);
+    const a = json(await authorizeSpend({ order_id: "ord_1" }, store, new RecordingEventStore(), user));
+    store.approveAuthorizationForTest(a.authorization_id, user.sub);
+    store.creditWalletForTest(user.sub, 10000);
+
+    const res = await placeOrder(
+      { order_id: "ord_1", authorization_id: a.authorization_id, fab_artifact_id: "art_missing" },
+      store,
+      new RecordingEventStore(),
+      user,
+    );
+    expect(res.isError).toBe(true);
+    expect(text(res)).toContain("Unknown or expired fab artifact");
+    // No money moved — the order is still QUOTED.
+    expect((await store.getOrder("ord_1", user.sub))?.state).toBe("QUOTED");
   });
 
   it("runs propose → (human approve) → place: debits once, moves to PAID, emits spine events", async () => {

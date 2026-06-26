@@ -62,8 +62,11 @@ import type { Engine, NetlistResult, TriangleMesh, NetContinuity } from "@vcad/e
 import { registerSession, getSession, undoLastSnapshot, historyDepth } from "./session.js";
 import type { NextAction } from "./next-actions.js";
 import { computeEnclosureFitForBoard } from "./enclosure.js";
+import { validatePcb, pcbValidationError } from "./pcb-validate.js";
 import { sizePdnExact, ecadDiffEngineAvailable } from "../wasm/ecad-diff.js";
-import { maxInlineExportBytes } from "./remote.js";
+import { bundleBytes, storeArtifact } from "./artifact-store.js";
+import { maxInlineArtifactBytes, maxInlineExportBytes } from "./remote.js";
+import type { FabFile } from "@vcad/engine";
 
 /** Get PCB data from a document — checks PcbBoard nodes first, falls back to legacy doc.pcb */
 function getDocPcb(doc: Document): Pcb | null {
@@ -912,8 +915,12 @@ export const exportGerberSchema = {
       description:
         "Directory to write the fabrication files to (created if missing). " +
         "Resolved on the MCP server's filesystem — on hosted/sandboxed servers " +
-        "the write may fail, in which case file contents are returned inline " +
-        "instead. When omitted, file contents are always returned inline.",
+        "the write may fail. When omitted (or the write fails), a small bundle " +
+        "is returned inline, but a bundle over the inline byte cap (~168 KB " +
+        "Gerber sets exceed it) is written to the artifact store and the result " +
+        "carries { artifact_url, manifest, artifact_id } instead of the files — " +
+        "pass that artifact_id to quote_manufacturing / place_order so the fab " +
+        "files never transit model context.",
     },
   },
   required: [],
@@ -3884,6 +3891,11 @@ export async function exportGerber(args: Record<string, unknown>) {
     };
   }
 
+  const validity = validatePcb(pcb);
+  if (!validity.valid) {
+    return pcbValidationError("export_gerber", validity, args.document_id ? String(args.document_id) : undefined);
+  }
+
   const files = await exportFabFiles(pcb);
   if (files === null) {
     return {
@@ -3924,32 +3936,72 @@ export async function exportGerber(args: Record<string, unknown>) {
         ],
       };
     } catch (e) {
-      // Sandboxed/hosted servers can't write arbitrary paths — fall back to
-      // inline content so the caller still gets the files.
+      // Sandboxed/hosted servers can't write arbitrary paths — fall through to
+      // the inline/offload decision so the caller still gets the files.
       const reason = e instanceof Error ? e.message : String(e);
-      return {
-        content: [
-          {
-            type: "text" as const,
-            text: JSON.stringify({
-              success: true,
-              message: `Generated ${files.length} fabrication files (could not write to '${outputDir}': ${reason}; returning contents inline)`,
-              files,
-            }),
-          },
-        ],
-      };
+      return deliverFabFiles(files, `could not write to '${outputDir}': ${reason}`);
     }
   }
 
+  return deliverFabFiles(files);
+}
+
+/**
+ * Return a fab bundle to the caller without overflowing the model's context.
+ * Under the inline cap the files ride back inline (today's behavior); over it,
+ * the bundle is written to the artifact store and only a compact
+ * { artifact_url, manifest } handle is returned. A ~168 KB Gerber bundle is
+ * over the default cap, so it offloads by default — the whole point: the fab
+ * files stop transiting model context and an order can reference them by id.
+ */
+function deliverFabFiles(files: FabFile[], diskFailReason?: string) {
+  const total = bundleBytes(files);
+  const cap = maxInlineArtifactBytes();
+  const base = diskFailReason
+    ? `Generated ${files.length} fabrication files (${diskFailReason})`
+    : `Generated ${files.length} fabrication files`;
+
+  if (total <= cap) {
+    return {
+      content: [
+        {
+          type: "text" as const,
+          text: JSON.stringify({
+            success: true,
+            message: `${base}; returning contents inline`,
+            bytes: total,
+            files,
+          }),
+        },
+      ],
+    };
+  }
+
+  const handle = storeArtifact(files);
   return {
     content: [
       {
         type: "text" as const,
         text: JSON.stringify({
           success: true,
-          message: `Generated ${files.length} fabrication files`,
-          files,
+          message: `${base}; ${total} bytes exceeds the ${cap}-byte inline limit — written to the artifact store`,
+          bytes: total,
+          artifact_id: handle.artifact_id,
+          artifact_url: handle.artifact_url,
+          manifest: handle.manifest,
+          expires_at: handle.expires_at,
+          // The handle quote_manufacturing / place_order accept verbatim, so the
+          // fab files reach an order without ever re-entering model context.
+          fab_artifact: {
+            artifact_id: handle.artifact_id,
+            artifact_url: handle.artifact_url,
+            bytes: handle.bytes,
+            manifest: handle.manifest,
+          },
+          note:
+            "Fab files are at artifact_url (the manifest lists each file with bytes + sha256; " +
+            "download one at <artifact_url>/<file>). Pass artifact_id to quote_manufacturing / " +
+            "place_order so the bundle never transits model context.",
         }),
       },
     ],
@@ -6121,12 +6173,15 @@ export async function describePcb(args: Record<string, unknown>) {
         categories: drcSummary.categories,
         byRule: drcSummary.byRule,
         worstClearance: drcSummary.worstClearance,
-        clean:
-          drcSummary.categories.clearance +
-            drcSummary.categories.manufacturing ===
-          0,
+        // `clean` ignores connectivity (unrouted nets are a to-do, not a defect) —
+        // same semantics as placement_drc.clean.
+        clean: drcSummary.categories.clearance + drcSummary.categories.manufacturing === 0,
       }
-    : { unverifiable: true, reason: drcSummary.reason };
+    : {
+        unverifiable: true,
+        reason: drcSummary.reason,
+        ...(drcSummary.offending_field ? { offending_field: drcSummary.offending_field } : {}),
+      };
 
   // --- Exportability / renderability probe ---------------------------------
   // Actually serialize the board for fab + preview and report success. This is
@@ -8546,6 +8601,10 @@ export async function buildReceipt(args: Record<string, unknown>, engine?: Engin
       isError: true,
     };
   }
+  const validity = validatePcb(pcb);
+  if (!validity.valid) {
+    return pcbValidationError("build_receipt", validity, args.document_id ? String(args.document_id) : undefined);
+  }
   const receipt = await kernelBuildReceipt(pcb);
   if (!receipt) {
     return {
@@ -8631,6 +8690,10 @@ export async function verifyReceipt(args: Record<string, unknown>) {
       content: [{ type: "text" as const, text: "Error: Document has no PCB" }],
       isError: true,
     };
+  }
+  const validity = validatePcb(pcb);
+  if (!validity.valid) {
+    return pcbValidationError("verify_receipt", validity, args.document_id ? String(args.document_id) : undefined);
   }
   const receipt = args.receipt as Receipt | undefined;
   if (!receipt || typeof receipt !== "object" || !receipt.board_hash) {

@@ -20,8 +20,9 @@
 import { randomUUID } from "node:crypto";
 import type { AuthUser } from "../oauth.js";
 import { ownerId, type FabricateStore } from "../fabricate/store.js";
+import { resolveArtifactRef } from "./artifact-store.js";
 import type { SessionEventStore } from "../session-store.js";
-import type { SpendAuthorization } from "../fabricate/types.js";
+import type { FabArtifactRef, SpendAuthorization } from "../fabricate/types.js";
 
 type ToolResult = { content: Array<{ type: "text"; text: string }>; isError?: boolean };
 
@@ -156,6 +157,15 @@ export const placeOrderSchema = {
       type: "string" as const,
       description: "Optional. Reuse to retry safely; defaults to a per-order key.",
     },
+    fab_artifact_id: {
+      type: "string" as const,
+      description:
+        "Optional artifact id (or artifact_url) of the fab bundle from " +
+        "export_gerber / export_cad. Binds the exact files to the placed order " +
+        "by reference (recorded on the durable spine for the fab-submission " +
+        "worker) WITHOUT re-sending them through model context. Defaults to the " +
+        "artifact already bound on the order at quote time.",
+    },
   },
   required: ["order_id", "authorization_id"],
 };
@@ -211,6 +221,20 @@ export async function placeOrder(
   // spend. A 'consumed' authz with no matching prior debit is rejected there
   // (authz_not_authorized), so a stale authz can't place a fresh charge.
 
+  // Bind the fab bundle by reference (provided handle, else whatever the quote
+  // bound). A provided-but-unresolvable handle fails BEFORE any money moves.
+  const fabHandle = typeof args.fab_artifact_id === "string" ? args.fab_artifact_id : "";
+  let fabArtifact: FabArtifactRef | null = order.fab_artifact ?? null;
+  if (fabHandle) {
+    const ref = resolveArtifactRef(fabHandle);
+    if (!ref) {
+      return err(
+        `Unknown or expired fab artifact "${fabHandle}". Re-run export_gerber / export_cad and pass the artifact_id it returns.`,
+      );
+    }
+    fabArtifact = ref;
+  }
+
   const debit = await store.debit({
     userId: owner,
     amountMinor: order.amount_total_minor,
@@ -234,6 +258,9 @@ export async function placeOrder(
     amount_minor: order.amount_total_minor,
     fab: order.fab,
     idempotent: debit.idempotent ?? false,
+    // The handle, never the bytes — the fab-submission worker fetches the files
+    // from the artifact store; the manifest's sha256 verifies what it sends.
+    fab_artifact: fabArtifact,
   });
 
   return ok({
@@ -242,7 +269,18 @@ export async function placeOrder(
     amount_usd: toUsd(order.amount_total_minor),
     fab: order.fab,
     idempotent: debit.idempotent ?? false,
+    fab_artifact: fabArtifact
+      ? {
+          artifact_id: fabArtifact.artifact_id,
+          artifact_url: fabArtifact.artifact_url,
+          bytes: fabArtifact.bytes,
+          files: fabArtifact.manifest.length,
+        }
+      : null,
     note:
-      "Paid via atomic wallet debit. Fab submission runs in a follow-up outbox slice; the order rests at PAID until then. Track with get_order_status.",
+      "Paid via atomic wallet debit. Fab submission runs in a follow-up outbox slice; the order rests at PAID until then. Track with get_order_status." +
+      (fabArtifact
+        ? " The fab bundle is bound by reference (artifact_id); the worker fetches it from the artifact store, so the files never transit model context."
+        : ""),
   });
 }

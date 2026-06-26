@@ -18,6 +18,7 @@ import {
   sessionStoreInfo,
   flushTelemetry,
   handleLiveRequest,
+  handleArtifactRequest,
 } from "@vcad/mcp/server";
 import {
   getOAuthConfig,
@@ -125,6 +126,13 @@ export default async function handler(
   // user's account even while /mcp stays open during the MCP_REQUIRE_AUTH
   // transition. verifyAccessToken is a local HMAC verify — no network.
   const user = verifyAccessToken(req);
+
+  // Artifact channel (/artifacts/*) — large export/fab bundles offloaded out of
+  // model context, fetched here by their unguessable id. Public, no auth (the
+  // id is the capability), like /live geometry.
+  if (await handleArtifactRequest(req, res)) {
+    return;
+  }
 
   // Live review window (/live/*) — shared, flag-gated handler (VCAD_LIVE_WINDOW).
   // Returns true once it has written a response; falls through otherwise.

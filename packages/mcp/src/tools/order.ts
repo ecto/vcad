@@ -21,9 +21,11 @@ import { measureDocument } from "../fabricate/geometry.js";
 import { FulfillmentBroker } from "../fabricate/broker.js";
 import { toDfmProcess, catalogMaterial } from "../fabricate/process-map.js";
 import { ownerId, type FabricateStore } from "../fabricate/store.js";
+import { resolveArtifactRef } from "./artifact-store.js";
 import {
   PROCESSES,
   type DfmSummary,
+  type FabArtifactRef,
   type GeometryMetrics,
   type Order,
   type OrderState,
@@ -73,6 +75,15 @@ export const quoteManufacturingSchema = {
       type: "number" as const,
       description: "PCB only: board area override when geometry can't recover it.",
     },
+    fab_artifact_id: {
+      type: "string" as const,
+      description:
+        "Optional artifact id (or artifact_url) of a fab bundle returned by " +
+        "export_gerber / export_cad. Binds those files to the order WITHOUT " +
+        "re-sending them through model context — the files stay in the artifact " +
+        "store and are fetched at fab-submission time. The manifest's per-file " +
+        "sha256 is recorded so the order is traceable to the exact bytes.",
+    },
   },
   required: ["process", "quantity"],
 };
@@ -115,6 +126,21 @@ export async function quoteManufacturing(
     return err(
       "Provide either `ir` (inline Document — stateless, serverless-safe) or `document_id` (an open session).",
     );
+  }
+
+  // Optional fab-bundle handle: bind the export to the order by reference, so
+  // the files never re-enter model context. Resolved up front so a stale/expired
+  // handle fails the quote cleanly rather than silently dropping the binding.
+  const fabHandle = typeof args.fab_artifact_id === "string" ? args.fab_artifact_id : "";
+  let fabArtifact: FabArtifactRef | null = null;
+  if (fabHandle) {
+    const ref = resolveArtifactRef(fabHandle);
+    if (!ref) {
+      return err(
+        `Unknown or expired fab artifact "${fabHandle}". Re-run export_gerber / export_cad and pass the artifact_id it returns.`,
+      );
+    }
+    fabArtifact = ref;
   }
 
   // Stateless when `ir` is supplied: no session lookup, so it's immune to the
@@ -203,6 +229,7 @@ export async function quoteManufacturing(
     currency: "USD",
     ship_to: (args.ship_to as unknown) ?? null,
     events: [{ state: "QUOTED", at: now.toISOString(), note: "quote_manufacturing" }],
+    fab_artifact: fabArtifact,
     created_at: now.toISOString(),
     updated_at: now.toISOString(),
   };
@@ -260,9 +287,20 @@ export async function quoteManufacturing(
     margin_hidden: true,
     orderable: result.recommended.orderable,
     expires_at: expiresAt,
+    fab_artifact: fabArtifact
+      ? {
+          artifact_id: fabArtifact.artifact_id,
+          artifact_url: fabArtifact.artifact_url,
+          bytes: fabArtifact.bytes,
+          files: fabArtifact.manifest.length,
+        }
+      : null,
     note:
       "Phase 0: quote-only. Prices are local ESTIMATES (no binding fab quote yet) and ordering/payment ships in Phase 1. " +
-      "An order row was created at state QUOTED — see it with get_order_status / list_orders.",
+      "An order row was created at state QUOTED — see it with get_order_status / list_orders." +
+      (fabArtifact
+        ? " Fab files are bound by reference (artifact_id) — they stay in the artifact store and never transit model context."
+        : ""),
   });
 }
 
@@ -298,6 +336,7 @@ export async function getOrderStatus(
     total_amount_usd: toUsd(order.amount_total_minor),
     currency: order.currency,
     tracking: null,
+    fab_artifact: order.fab_artifact ?? null,
     events: order.events,
   });
 }
