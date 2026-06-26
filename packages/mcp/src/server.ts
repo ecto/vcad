@@ -188,6 +188,8 @@ import {
   addTraceSchema,
   getPadPositions,
   getPadPositionsSchema,
+  describePcb,
+  describePcbSchema,
   addVia,
   addViaSchema,
   setStackup,
@@ -609,6 +611,7 @@ const TOOL_PACKS: Record<string, readonly string[]> = {
     "place_components",
     "route_nets",
     "get_pad_positions",
+    "describe_pcb",
     "add_trace",
     "add_via",
     "add_via_array",
@@ -1080,7 +1083,7 @@ export async function createServer(
       {
         name: "dfm_check",
         description:
-          "Run Design-for-Manufacturing checks against an open session document for a chosen process (cnc_3axis, fdm, sla, injection, sheet_metal, casting_sand, casting_investment). Returns a structured report with severities, measurements, face references, and suggested fixes. Each rule's threshold is sourced from a TOML pack at lib/dfm/<process>.toml — pass `rule_pack_toml` to override.",
+          "Run Design-for-Manufacturing checks against an open session document. For solid parts pick a mechanical process (cnc_3axis, fdm, sla, injection, sheet_metal, casting_sand, casting_investment) and get back severities, measurements, face references, and suggested fixes. For PCB documents pick a fab profile (pcb_jlcpcb, pcb_pcbway, pcb_generic_2layer, pcb_generic_4layer) to check the board against that fab's published process capability — min annular ring, min drill, min trace/space by copper weight, copper-to-edge, soldermask dam/sliver, silk-over-pad, acid traps, and via-in-pad — returning a per-rule pass/fail report naming the profile. Each rule's threshold is sourced from a TOML pack at lib/dfm/<process>.toml — pass `rule_pack_toml` to override.",
         inputSchema: dfmCheckSchema,
       },
       {
@@ -1371,6 +1374,18 @@ export async function createServer(
           "pads instead of being eyeballed from component centers. Read-only. " +
           "Optional `net` / `ref` filters narrow the result for targeted routing.",
         inputSchema: getPadPositionsSchema,
+      },
+      {
+        name: "describe_pcb",
+        description:
+          "Inspect the session PCB as compact, structured data: board size + " +
+          "outline, stackup (layer names + copper weights), net classes / " +
+          "design rules, zones (net/layer/bbox/fill), trace & via counts by net " +
+          "and layer, component count, the current DRC status, and an " +
+          "exportability/renderability probe that actually serializes the board " +
+          "for fab + 3D preview — surfacing the 'DRC-clean but unexportable' " +
+          "state get_document/read can't see. Read-only.",
+        inputSchema: describePcbSchema,
       },
       {
         name: "add_trace",
@@ -2036,6 +2051,10 @@ export async function createServer(
 
         case "get_pad_positions":
           result = getPadPositions(args);
+          break;
+
+        case "describe_pcb":
+          result = await describePcb(args);
           break;
 
         case "add_trace":
