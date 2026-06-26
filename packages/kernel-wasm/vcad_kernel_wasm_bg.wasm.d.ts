@@ -75,6 +75,7 @@ export const raytracer_setTheme: (a: number, b: number) => void;
 export const raytracer_uploadSolid: (a: number, b: number) => [number, number];
 export const renderBakeMesh: (a: number, b: number) => [number, number, number, number];
 export const render_pcb_svg: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
+export const render_pcb_svg_opts: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number, number, number];
 export const render_svg: (a: number, b: number, c: number) => [number, number, number, number];
 export const render_svg_view: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
 export const sectionMesh: (a: any, b: number, c: number, d: number, e: number) => any;
