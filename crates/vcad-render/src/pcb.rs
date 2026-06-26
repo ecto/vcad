@@ -586,7 +586,14 @@ fn push_filled_polygon(out: &mut String, xf: &Xf, pts: &[Vec2], fill: &str) {
 }
 
 /// Append a stroked (outline-only) polygon ring with opacity.
-fn push_ring_outline(out: &mut String, xf: &Xf, pts: &[Vec2], color: &str, width_px: f64, opacity: f64) {
+fn push_ring_outline(
+    out: &mut String,
+    xf: &Xf,
+    pts: &[Vec2],
+    color: &str,
+    width_px: f64,
+    opacity: f64,
+) {
     if pts.len() < 3 {
         return;
     }
@@ -622,7 +629,15 @@ fn draw_trace_arc(out: &mut String, xf: &Xf, a: &TraceArc, color: &str) {
 /// board-space centre, `rot` the total rotation in degrees. If the pad is
 /// through-hole (`pad.drill`), a drilled bore + inner shadow ring is punched
 /// using palette `p`.
-fn draw_pad(out: &mut String, xf: &Xf, pad: &Pad, origin: Vec2, rot: f64, color: &str, p: &Palette) {
+fn draw_pad(
+    out: &mut String,
+    xf: &Xf,
+    pad: &Pad,
+    origin: Vec2,
+    rot: f64,
+    color: &str,
+    p: &Palette,
+) {
     match &pad.shape {
         PadShape::Circle { diameter } => {
             let (cx, cy) = xf.pt(origin.x, origin.y);
@@ -801,7 +816,14 @@ fn draw_text(out: &mut String, xf: &Xf, run: &TextRun, halo: &str) {
 
 /// Draw a footprint graphic (silkscreen / fabrication / courtyard). Stroke-font
 /// text gets the two-pass halo via palette `p`.
-fn draw_graphic(out: &mut String, xf: &Xf, g: &FootprintGraphic, origin: Vec2, frot: f64, p: &Palette) {
+fn draw_graphic(
+    out: &mut String,
+    xf: &Xf,
+    g: &FootprintGraphic,
+    origin: Vec2,
+    frot: f64,
+    p: &Palette,
+) {
     match g {
         FootprintGraphic::Line {
             start,
@@ -1068,7 +1090,12 @@ pub fn render_pcb_svg(pcb: &Pcb, layers: &[PcbLayer], scale: f64) -> String {
 /// outline still produces a small framed SVG.
 ///
 /// [`Pcb`]: vcad_ir::ecad::Pcb
-pub fn render_pcb_svg_opts(pcb: &Pcb, layers: &[PcbLayer], scale: f64, opts: &PcbRenderOpts) -> String {
+pub fn render_pcb_svg_opts(
+    pcb: &Pcb,
+    layers: &[PcbLayer],
+    scale: f64,
+    opts: &PcbRenderOpts,
+) -> String {
     let scale = if scale.is_finite() && scale > 0.0 {
         scale
     } else {
@@ -1098,7 +1125,11 @@ pub fn render_pcb_svg_opts(pcb: &Pcb, layers: &[PcbLayer], scale: f64, opts: &Pc
 
     // Per-element style: returns (color, opacity, filter) given a base colour
     // and whether the element matches the active highlight.
-    let style = |base: &'static str, matched: bool, back_dim: bool, copper: bool| -> (&'static str, f64, Option<&'static str>) {
+    let style = |base: &'static str,
+                 matched: bool,
+                 back_dim: bool,
+                 copper: bool|
+     -> (&'static str, f64, Option<&'static str>) {
         let mut op = 1.0;
         if back_dim {
             op *= BACK_COPPER_OPACITY;
@@ -1106,7 +1137,11 @@ pub fn render_pcb_svg_opts(pcb: &Pcb, layers: &[PcbLayer], scale: f64, opts: &Pc
         if hl_on && !matched {
             op *= HIGHLIGHT_DIM;
         }
-        let color = if hl_on && matched { pal.highlight } else { base };
+        let color = if hl_on && matched {
+            pal.highlight
+        } else {
+            base
+        };
         let filter = if hl_on && matched {
             Some("hl")
         } else if opts.hero && copper {
@@ -1166,7 +1201,11 @@ pub fn render_pcb_svg_opts(pcb: &Pcb, layers: &[PcbLayer], scale: f64, opts: &Pc
             let (color, op, filt) = style(layer_color(z.layer, &pal), matched, back_dim, true);
             let mut s = String::new();
             draw_zone(&mut s, &xf, &rings, color, pal.board_fill);
-            push_item(&mut items, layer_rank(z.layer).saturating_sub(1), wrap(s, op, filt));
+            push_item(
+                &mut items,
+                layer_rank(z.layer).saturating_sub(1),
+                wrap(s, op, filt),
+            );
         }
     }
 
@@ -1263,9 +1302,15 @@ pub fn render_pcb_svg_opts(pcb: &Pcb, layers: &[PcbLayer], scale: f64, opts: &Pc
             if fp.value.trim().is_empty() {
                 continue;
             }
-            let Some(anchor) = value_anchor(fp) else { continue };
+            let Some(anchor) = value_anchor(fp) else {
+                continue;
+            };
             let matched = hl_on && hl.reference(&fp.reference);
-            let op = if hl_on && !matched { HIGHLIGHT_DIM } else { 1.0 };
+            let op = if hl_on && !matched {
+                HIGHLIGHT_DIM
+            } else {
+                1.0
+            };
             let mut s = String::new();
             draw_text(
                 &mut s,
@@ -1307,7 +1352,9 @@ pub fn render_pcb_svg_opts(pcb: &Pcb, layers: &[PcbLayer], scale: f64, opts: &Pc
                 continue;
             }
             let mid = Vec2::new(0.5 * (t.start.x + t.end.x), 0.5 * (t.start.y + t.end.y));
-            let mut ang = (t.end.y - t.start.y).atan2(t.end.x - t.start.x).to_degrees();
+            let mut ang = (t.end.y - t.start.y)
+                .atan2(t.end.x - t.start.x)
+                .to_degrees();
             if ang > 90.0 {
                 ang -= 180.0;
             } else if ang < -90.0 {
@@ -1319,7 +1366,11 @@ pub fn render_pcb_svg_opts(pcb: &Pcb, layers: &[PcbLayer], scale: f64, opts: &Pc
                 pal.netname_f
             };
             let matched = hl_on && hl.net(net);
-            let op = if hl_on && !matched { HIGHLIGHT_DIM } else { 0.9 };
+            let op = if hl_on && !matched {
+                HIGHLIGHT_DIM
+            } else {
+                0.9
+            };
             let mut s = String::new();
             draw_text(
                 &mut s,
@@ -1392,7 +1443,11 @@ pub fn render_pcb_svg_opts(pcb: &Pcb, layers: &[PcbLayer], scale: f64, opts: &Pc
 /// layer names are rejected with an error listing the offender.
 ///
 /// [`Pcb`]: vcad_ir::ecad::Pcb
-pub fn render_pcb_svg_json(pcb_json: &str, layers_json: &str, scale: f64) -> Result<String, String> {
+pub fn render_pcb_svg_json(
+    pcb_json: &str,
+    layers_json: &str,
+    scale: f64,
+) -> Result<String, String> {
     render_pcb_svg_json_opts(pcb_json, layers_json, scale, "")
 }
 
@@ -1459,7 +1514,11 @@ fn parse_opts(opts_json: &str) -> Result<PcbRenderOpts, String> {
         let strs = |key: &str| -> Vec<String> {
             h.get(key)
                 .and_then(|x| x.as_array())
-                .map(|a| a.iter().filter_map(|e| e.as_str().map(String::from)).collect())
+                .map(|a| {
+                    a.iter()
+                        .filter_map(|e| e.as_str().map(String::from))
+                        .collect()
+                })
                 .unwrap_or_default()
         };
         opts.highlight.nets = strs("nets");
@@ -1600,8 +1659,14 @@ mod tests {
         assert!(svg.contains("<circle"), "expected a via circle");
         assert!(svg.contains(DARK.f_cu), "front copper colour present");
         assert!(svg.contains(DARK.edge_cuts), "edge-cut colour present");
-        assert!(svg.contains(DARK.board_fill), "board substrate fill present");
-        assert!(svg.contains(DARK.background), "dark page background present");
+        assert!(
+            svg.contains(DARK.board_fill),
+            "board substrate fill present"
+        );
+        assert!(
+            svg.contains(DARK.background),
+            "dark page background present"
+        );
         assert!(svg.contains("<polyline"), "expected silk text strokes");
         assert!(svg.contains(DARK.f_silk), "silk colour present");
         assert!(
@@ -1652,8 +1717,16 @@ mod tests {
         // 20mm × 15mm board + MARGIN_MM all sides, @ 8px/mm.
         let expect_w = (20.0 + 2.0 * MARGIN_MM) * 8.0;
         let expect_h = (15.0 + 2.0 * MARGIN_MM) * 8.0;
-        assert!((attr("width") - expect_w).abs() < 0.5, "w {}", attr("width"));
-        assert!((attr("height") - expect_h).abs() < 0.5, "h {}", attr("height"));
+        assert!(
+            (attr("width") - expect_w).abs() < 0.5,
+            "w {}",
+            attr("width")
+        );
+        assert!(
+            (attr("height") - expect_h).abs() < 0.5,
+            "h {}",
+            attr("height")
+        );
     }
 
     #[test]
