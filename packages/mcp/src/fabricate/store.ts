@@ -217,6 +217,11 @@ export class SupabaseFabricateStore implements FabricateStore {
   }
 
   async saveOrder(order: Order, fabCostMinor: number, userId: string): Promise<void> {
+    // `fab_artifact` is intentionally NOT written here — there is no orders
+    // column for it yet, and including an unknown key would fail the whole
+    // PostgREST insert. The durable cloud record of the fab bundle is the
+    // `order_placed` session-event (place_order); the handle is also re-suppliable
+    // at place_order time. A dedicated orders.fab_artifact column is the follow-up.
     const row = {
       id: order.order_id,
       user_id: userId,

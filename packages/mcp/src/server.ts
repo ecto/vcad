@@ -124,8 +124,10 @@ import {
 // flip or a fresh deploy WITHOUT a redeploy (see edge-config.ts).
 import { getStaleness } from "./edge-config.js";
 // Re-exported so the Vercel entry point (services/mcp/entry.ts) serves the live
-// window through the same handler as the standalone server (http.ts).
+// window and the artifact channel through the same handlers as the standalone
+// server (http.ts).
 export { handleLiveRequest } from "./live-route.js";
+export { handleArtifactRequest } from "./artifact-route.js";
 import {
   createRobotEnv,
   createRobotEnvSchema,
