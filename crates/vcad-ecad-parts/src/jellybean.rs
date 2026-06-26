@@ -447,8 +447,14 @@ mod tests {
             let def = resolve_part_def(name, Some(fp))
                 .unwrap_or_else(|| panic!("{name} did not resolve"));
             assert_eq!(def.pins.len(), n, "{name}/{fp} pin count");
-            assert!(def.footprint_known, "{name}/{fp} footprint should be curated");
-            assert!(def.datasheet_url.is_some(), "{name} should carry a datasheet");
+            assert!(
+                def.footprint_known,
+                "{name}/{fp} footprint should be curated"
+            );
+            assert!(
+                def.datasheet_url.is_some(),
+                "{name} should carry a datasheet"
+            );
             assert!(!def.app_notes.is_empty(), "{name} should carry app notes");
             assert!(
                 def.pins
