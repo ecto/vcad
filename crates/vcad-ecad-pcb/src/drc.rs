@@ -1348,7 +1348,10 @@ fn detect_unstitched_pads(
             // A pad already on one of its plane layers floods straight into the
             // plane — it needs no stitching via (a void/thermal gap there is a
             // different defect, caught by the pour fill / clearance checks).
-            let pad_mask = pad.layers.iter().fold(0u16, |m, &l| m | single_layer_mask(l));
+            let pad_mask = pad
+                .layers
+                .iter()
+                .fold(0u16, |m, &l| m | single_layer_mask(l));
             if pad_mask & pl_mask != 0 {
                 continue;
             }
@@ -2841,6 +2844,9 @@ mod tests {
             .into_iter()
             .filter(|x| x.rule == DrcRuleType::UnstitchedPad)
             .count();
-        assert_eq!(unstitched, 0, "THT pads bridge layers — never Unstitched-Pad");
+        assert_eq!(
+            unstitched, 0,
+            "THT pads bridge layers — never Unstitched-Pad"
+        );
     }
 }

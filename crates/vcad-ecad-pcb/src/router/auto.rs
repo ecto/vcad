@@ -1460,7 +1460,10 @@ mod tests {
                 )
             })
             .count();
-        assert_eq!(bad, 0, "fine-pitch stitched board must be short/clearance clean");
+        assert_eq!(
+            bad, 0,
+            "fine-pitch stitched board must be short/clearance clean"
+        );
         let unstitched = viols
             .iter()
             .filter(|v| {
