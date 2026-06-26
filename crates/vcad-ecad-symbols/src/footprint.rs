@@ -432,7 +432,13 @@ fn dip(pins: u32) -> FootprintTemplate {
     let mut pads = Vec::new();
     for i in 0..half {
         let y = top - i as f64 * pitch;
-        pads.push(circle_tht(&(i + 1).to_string(), -row_spacing / 2.0, y, pad, drill));
+        pads.push(circle_tht(
+            &(i + 1).to_string(),
+            -row_spacing / 2.0,
+            y,
+            pad,
+            drill,
+        ));
     }
     for i in 0..half {
         let y = -top + i as f64 * pitch;
@@ -479,9 +485,7 @@ fn tab_package(
     let mut pads = Vec::new();
     let n = leads.len();
     let lead_y = th / 2.0 + 1.0; // leads project below the tab
-    // Physical lead inside the copper land is ~0.4mm thinner than the pad; drill
-    // the IPC gap over it (→ ~1.0mm on a TO-220's 0.8mm lead).
-    let lead_drill = tht_drill((lw.min(lh) - 0.4).max(0.6));
+    let lead_drill = tht_drill((lw.min(lh) - 0.4).max(0.6)); // lead + 0.2mm IPC gap
     for (k, num) in leads.iter().enumerate() {
         let x = if n == 1 {
             0.0
@@ -489,7 +493,13 @@ fn tab_package(
             (k as f64 - (n as f64 - 1.0) / 2.0) * pitch
         };
         if tht {
-            pads.push(circle_tht(&num.to_string(), x, lead_y, lw.max(lh), lead_drill));
+            pads.push(circle_tht(
+                &num.to_string(),
+                x,
+                lead_y,
+                lw.max(lh),
+                lead_drill,
+            ));
         } else {
             pads.push(rect_smd(&num.to_string(), x, lead_y, lw, lh));
         }
@@ -2092,11 +2102,11 @@ mod tests {
         // (id, declared pins, max acceptable drill mm) — each upper bound is the
         // pre-fix value, so a regression to the old oversized drill trips this.
         let cases = [
-            ("PinHeader_1x04_P2.54mm", 4, 1.0), // was 1.016
-            ("JST_PH_2", 2, 0.7),               // was 1.0
-            ("JST_XH_3", 3, 0.8),               // was 1.0
+            ("PinHeader_1x04_P2.54mm", 4, 1.0),   // was 1.016
+            ("JST_PH_2", 2, 0.7),                 // was 1.0
+            ("JST_XH_3", 3, 0.8),                 // was 1.0
             ("CP_Radial_D6.3mm_P2.50mm", 2, 0.8), // was 1.0
-            ("Vendor:Mystery4PinXtal", 4, 0.8), // grid fallback, was 0.9
+            ("Vendor:Mystery4PinXtal", 4, 0.8),   // grid fallback, was 0.9
         ];
         for (id, pins, max_drill) in cases {
             let fp = resolve_footprint(id, pins).template.unwrap();
