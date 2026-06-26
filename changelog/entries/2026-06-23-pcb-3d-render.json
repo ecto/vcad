@@ -4,7 +4,7 @@
   "date": "2026-06-23",
   "category": "feat",
   "title": "Photoreal PCB 3D rendering",
-  "summary": "Populated boards now render with matte-black ICs, tin solder joints, glossy soldermask, a tan FR4 edge, ENIG copper, and emissive LEDs.",
+  "summary": "Populated boards render like a real PCB: deep-green satin soldermask over the copper, exposed ENIG gold pads, matte ICs, tin joints, a tan FR4 edge, and emissive LEDs.",
   "features": ["pcb", "rendering", "3d-viewer"],
   "mcpTools": ["render_pcb", "get_preview_glb"]
 }

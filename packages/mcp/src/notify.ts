@@ -79,6 +79,12 @@ export function fireToolAlert(
   args: Record<string, unknown>,
   result: { isError?: boolean },
 ): void {
+  // The viewer polls get_preview_version on a timer to self-refresh; counting
+  // it would swamp PostHog/Discord with non-user traffic. get_preview_glb is
+  // kept — it now fires ~once per real geometry change, which is exactly the
+  // signal for "is the live canvas working" / measuring the iframe-spam fix.
+  if (name === "get_preview_version") return;
+
   // PostHog telemetry is gated independently of the Discord webhook below.
   captureToolCall(name, args, result);
 

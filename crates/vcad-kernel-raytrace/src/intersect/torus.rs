@@ -220,7 +220,7 @@ fn solve_cubic(a: f64, b: f64, c: f64, d: f64) -> Vec<f64> {
     } else {
         // Three real roots (Vieta's trigonometric solution)
         let m = 2.0 * (-aa / 3.0).sqrt();
-        let theta = (3.0 * bb / (aa * m)).acos() / 3.0;
+        let theta = (3.0 * bb / (aa * m)).clamp(-1.0, 1.0).acos() / 3.0;
 
         roots.push(m * theta.cos() - shift);
         roots.push(m * (theta - 2.0 * PI / 3.0).cos() - shift);

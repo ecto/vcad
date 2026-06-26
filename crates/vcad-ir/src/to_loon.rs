@@ -212,6 +212,34 @@ fn op_to_loon(op: &CsgOp, doc: &Document) -> OpResult {
             fmt_f64(*height)
         )),
 
+        CsgOp::Torus {
+            major_radius,
+            minor_radius,
+            ..
+        } => OpResult::Ok(format!(
+            "[torus {} {}]",
+            fmt_f64(*major_radius),
+            fmt_f64(*minor_radius)
+        )),
+
+        CsgOp::Wedge { size } => OpResult::Ok(format!(
+            "[wedge {} {} {}]",
+            fmt_f64(size.x),
+            fmt_f64(size.y),
+            fmt_f64(size.z)
+        )),
+
+        CsgOp::Prism {
+            sides,
+            radius,
+            height,
+        } => OpResult::Ok(format!(
+            "[prism {} {} {}]",
+            sides,
+            fmt_f64(*radius),
+            fmt_f64(*height)
+        )),
+
         CsgOp::Empty => OpResult::Ok("Empty".to_string()),
 
         CsgOp::Union { left, right } => OpResult::Ok(format!(
@@ -253,6 +281,21 @@ fn op_to_loon(op: &CsgOp, doc: &Document) -> OpResult {
             fmt_f64(factor.x),
             fmt_f64(factor.y),
             fmt_f64(factor.z),
+            node_ref(*child, doc)
+        )),
+
+        CsgOp::Mirror {
+            child,
+            plane_origin,
+            plane_normal,
+        } => OpResult::Ok(format!(
+            "[mirror {} {} {} {} {} {} {}]",
+            fmt_f64(plane_origin.x),
+            fmt_f64(plane_origin.y),
+            fmt_f64(plane_origin.z),
+            fmt_f64(plane_normal.x),
+            fmt_f64(plane_normal.y),
+            fmt_f64(plane_normal.z),
             node_ref(*child, doc)
         )),
 
@@ -554,6 +597,7 @@ fn get_child_ids(op: &CsgOp) -> Vec<NodeId> {
         CsgOp::Translate { child, .. }
         | CsgOp::Rotate { child, .. }
         | CsgOp::Scale { child, .. }
+        | CsgOp::Mirror { child, .. }
         | CsgOp::Fillet { child, .. }
         | CsgOp::Chamfer { child, .. }
         | CsgOp::Shell { child, .. }

@@ -88,6 +88,57 @@ impl Transform {
         }
     }
 
+    /// Reflection across a plane defined by a point `plane_origin` lying on
+    /// the plane and a `plane_normal` (not necessarily unit — it is
+    /// normalised internally).
+    ///
+    /// Composed entirely from existing primitives:
+    /// `T(p0) · R⁻¹ · Scale(1, 1, −1) · R · T(−p0)`, where `R` rotates
+    /// `plane_normal` onto `+Z`. The determinant of the upper-left 3×3 is
+    /// −1, so callers like [`Solid::apply_transform`] will detect the
+    /// orientation flip and reverse face / triangle winding to preserve
+    /// outward normals.
+    pub fn reflection(plane_origin: Point3, plane_normal: Vec3) -> Self {
+        let len = plane_normal.norm();
+        // Degenerate normal → identity (the caller asked for reflection across
+        // a non-plane). Avoid NaN propagation.
+        if !len.is_finite() || len < 1e-12 {
+            return Self::identity();
+        }
+        let n = plane_normal / len;
+        let z = Vec3::new(0.0, 0.0, 1.0);
+        let dot = n.dot(z).clamp(-1.0, 1.0);
+
+        // Rotation that takes `n` onto `+Z`. Three cases by dot:
+        //   dot ≈  1: n is already +Z — no rotation needed.
+        //   dot ≈ −1: n is −Z — flip 180° around X (any horizontal axis works).
+        //   otherwise: rotate around (n × +Z), angle = acos(dot).
+        let r = if dot > 1.0 - 1e-12 {
+            Self::identity()
+        } else if dot < -1.0 + 1e-12 {
+            Self::rotation_x(std::f64::consts::PI)
+        } else {
+            let axis_vec = n.cross(z);
+            let axis = Dir3::new_normalize(axis_vec);
+            Self::rotation_about_axis(&axis, dot.acos())
+        };
+        let r_inv = r
+            .inverse()
+            .expect("rotation matrix is always invertible (det = ±1)");
+
+        let to_origin = Self::translation(-plane_origin.x, -plane_origin.y, -plane_origin.z);
+        let from_origin = Self::translation(plane_origin.x, plane_origin.y, plane_origin.z);
+        let flip_z = Self::scale(1.0, 1.0, -1.0);
+
+        // Apply in order: shift plane to origin → rotate n to +Z → flip Z →
+        // rotate back → shift back.
+        from_origin
+            .then(&r_inv)
+            .then(&flip_z)
+            .then(&r)
+            .then(&to_origin)
+    }
+
     /// Compose: `self` then `other` (self * other).
     pub fn then(&self, other: &Transform) -> Self {
         Self {

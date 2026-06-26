@@ -137,9 +137,71 @@ export async function getPreviewGlb(
 ): Promise<{ content: Array<{ type: "text"; text: string }> }> {
   const glbBase64 = await generateGlbPreview(doc, engine);
   if (!glbBase64) {
-    throw new Error("document produced no previewable geometry");
+    // No previewable geometry yet (e.g. a freshly opened empty document the
+    // agent is about to build into). Return a soft signal, not an error — the
+    // viewer shows "no geometry" and the self-refresh poll just waits for the
+    // next change, and routine empty previews don't inflate the tool error rate.
+    return {
+      content: [{ type: "text", text: JSON.stringify({ _vcad_glb: null }) }],
+    };
   }
   return {
-    content: [{ type: "text", text: JSON.stringify({ _vcad_glb: glbBase64 }) }],
+    content: [
+      {
+        type: "text",
+        text: JSON.stringify({ _vcad_glb: glbBase64, version: previewVersion(doc) }),
+      },
+    ],
+  };
+}
+
+/**
+ * A cheap, geometry-free change token for a document. FNV-1a over the IR
+ * JSON — no kernel evaluation, no tessellation — so the inline viewer can
+ * poll it on a timer to learn "did the document change?" without paying for
+ * a full GLB rebuild every tick. Stable across server instances because it
+ * hashes the (hydrated) IR, not in-process state.
+ */
+export function previewVersion(doc: Document): string {
+  const s = JSON.stringify(doc);
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return (h >>> 0).toString(36);
+}
+
+/** Schema for the app-only `get_preview_version` tool. */
+export const getPreviewVersionSchema = {
+  type: "object" as const,
+  properties: {
+    document_id: {
+      type: "string" as const,
+      description: "Session id of the document to version-check.",
+    },
+  },
+  required: ["document_id"],
+};
+
+/**
+ * Tool handler for `get_preview_version`: returns a cheap `{document_id,
+ * version}` change token (no geometry eval). The inline viewer polls this
+ * to self-refresh — it only re-fetches the heavy GLB when `version` changes.
+ *
+ * Like `get_preview_glb`, this is internal to the viewer (`visibility:
+ * ["app"]`) and excluded from usage telemetry so polling can't flood it.
+ */
+export function getPreviewVersion(
+  doc: Document,
+  docId: string,
+): { content: Array<{ type: "text"; text: string }> } {
+  return {
+    content: [
+      {
+        type: "text",
+        text: JSON.stringify({ document_id: docId, version: previewVersion(doc) }),
+      },
+    ],
   };
 }

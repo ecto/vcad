@@ -624,6 +624,41 @@ pub enum CsgOp {
         /// Number of circular segments (0 = auto).
         segments: u32,
     },
+    #[tool(
+        category = "primitive",
+        ai_hint = "Axis along Z. Use for rings, donuts, O-rings, gaskets, fillets-as-primitives."
+    )]
+    /// Torus centered at origin with axis along Z.
+    Torus {
+        /// Major radius — distance from the central axis to the tube center.
+        major_radius: f64,
+        /// Minor radius — radius of the tube cross-section.
+        minor_radius: f64,
+        /// Number of circular segments per ring (0 = auto).
+        segments: u32,
+    },
+    #[tool(
+        category = "primitive",
+        ai_hint = "Right-triangular-prism wedge. Corner at origin, legs along +X and +Z, extruded along +Y."
+    )]
+    /// Right-triangular-prism wedge with corner at origin.
+    Wedge {
+        /// Wedge size: leg along +X, extrusion length along +Y, leg along +Z.
+        size: Vec3,
+    },
+    #[tool(
+        category = "primitive",
+        ai_hint = "Regular n-gonal right prism on Z. Use for hex nuts (sides=6), triangular bars, etc."
+    )]
+    /// Regular n-gonal right prism centered on Z.
+    Prism {
+        /// Number of polygon sides (>= 3).
+        sides: u32,
+        /// Polygon circumradius (distance from center to each vertex).
+        radius: f64,
+        /// Extrusion height along +Z.
+        height: f64,
+    },
     #[tool(hidden)]
     /// Empty geometry (identity for union).
     Empty,
@@ -683,6 +718,20 @@ pub enum CsgOp {
         child: NodeId,
         /// Scale factors per axis.
         factor: Vec3,
+    },
+    #[tool(
+        category = "transform",
+        ai_hint = "Reflect across a plane. plane_origin is any point on the plane; plane_normal points outward."
+    )]
+    /// Reflection of the child across a plane.
+    Mirror {
+        /// Child node to mirror.
+        #[cfg_attr(feature = "ts-rs", ts(type = "number"))]
+        child: NodeId,
+        /// A point on the mirror plane.
+        plane_origin: Vec3,
+        /// Normal vector of the mirror plane (need not be unit).
+        plane_normal: Vec3,
     },
     #[tool(
         category = "sketch_op",
