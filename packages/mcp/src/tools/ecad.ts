@@ -60,7 +60,7 @@ import { registerSession, getSession, undoLastSnapshot, historyDepth } from "./s
 import type { NextAction } from "./next-actions.js";
 import { sizePdnExact, ecadDiffEngineAvailable } from "../wasm/ecad-diff.js";
 import { bundleBytes, storeArtifact } from "./artifact-store.js";
-import { maxInlineArtifactBytes } from "./remote.js";
+import { maxInlineArtifactBytes, maxInlineExportBytes } from "./remote.js";
 import type { FabFile } from "@vcad/engine";
 
 /** Get PCB data from a document — checks PcbBoard nodes first, falls back to legacy doc.pcb */
