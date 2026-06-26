@@ -10,6 +10,7 @@
 
 import type { AuthUser } from "../oauth.js";
 import type { ShareStore } from "../session-store.js";
+import { getRuntimeFlag } from "../edge-config.js";
 
 type ToolResult = { content: Array<{ type: "text"; text: string }>; isError?: boolean };
 
@@ -20,9 +21,11 @@ function err(message: string): ToolResult {
   return { content: [{ type: "text", text: JSON.stringify({ error: message }) }], isError: true };
 }
 
-/** True when the live window is enabled on this server at all. */
-export function liveWindowEnabled(): boolean {
-  return process.env.VCAD_LIVE_WINDOW === "1";
+/** True when the live window is enabled on this server at all. Reads the flag
+ *  from Edge Config (env fallback) so a warm instance picks up a flip without a
+ *  redeploy — async for that reason. */
+export async function liveWindowEnabled(): Promise<boolean> {
+  return getRuntimeFlag("VCAD_LIVE_WINDOW");
 }
 
 /** Public base URL of this MCP deployment (for building the shareable link). */
@@ -58,7 +61,7 @@ export async function shareSession(
 ): Promise<ToolResult> {
   const documentId = String((input as { document_id?: unknown })?.document_id ?? "");
   if (!documentId) return err("document_id is required.");
-  if (!liveWindowEnabled()) return err(DISABLED);
+  if (!(await liveWindowEnabled())) return err(DISABLED);
 
   await store.share(documentId, user?.sub ?? null);
   const link = `${liveBaseUrl()}/live/${encodeURIComponent(documentId)}`;

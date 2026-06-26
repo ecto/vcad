@@ -42,6 +42,9 @@ pub enum DrcRuleType {
     /// A single net's realized copper forms more than one galvanically-isolated
     /// group (the schematic says one node; the board built several islands).
     NetIslands,
+    /// An SMD pad names a copper-plane net but has no galvanic path to that
+    /// plane — it needs a stitching via (or a dog-bone escape via on fine pitch).
+    UnstitchedPad,
 }
 
 /// DRC violation severity.
@@ -1191,6 +1194,7 @@ fn check_connectivity(pcb: &Pcb, net_ties: &NetTieGroups, violations: &mut Vec<D
     detect_shorts(&nodes, &mut dsu, net_ties, violations);
     detect_unrouted(pcb, &nodes, &mut dsu, net_ties, violations);
     detect_net_islands(pcb, &nodes, &mut dsu, violations);
+    detect_unstitched_pads(pcb, &nodes, &mut dsu, violations);
 }
 
 /// Build connectivity nodes from all copper on the board.
@@ -1579,6 +1583,126 @@ fn describe_island(n: usize, has_pad: bool, pads: &[String]) -> String {
         )
     } else {
         format!("#{n} [{}]", pads.join(", "))
+    }
+}
+
+/// Emit an `UnstitchedPad` violation for any SMD pad that names a copper-plane
+/// net but has no galvanic path to that plane.
+///
+/// An inner power/ground plane (a poured zone) only reaches an SMD pad on an
+/// outer layer through a stitching via — pour two of them and an SMD `+3V3` pad
+/// connects to *nothing* until a via bridges the layers. This is the first-class
+/// signal for that: it names the exact pad and suggests where to drop the via,
+/// rather than rolling the whole net up into one opaque `UnconnectedNet`.
+///
+/// Scope: SMD pads only (a THT pad's plated barrel already bridges to an inner
+/// plane), whose net owns a plane on a layer the pad is *not* on (a pad already
+/// on its plane layer floods straight in), and whose connectivity component does
+/// not contain any same-net plane. Galvanic path is read straight off the same
+/// union-find the short/unrouted checks use, so a stitching via that reaches the
+/// plane clears the violation automatically.
+fn detect_unstitched_pads(
+    pcb: &Pcb,
+    nodes: &[ConnNode],
+    dsu: &mut Dsu,
+    violations: &mut Vec<DrcViolation>,
+) {
+    // Plane layers each net owns (a declared zone with a real outline).
+    let mut plane_layers: HashMap<String, u16> = HashMap::new();
+    for zone in &pcb.zones {
+        if zone.net.is_empty() || zone.outline.len() < 3 {
+            continue;
+        }
+        *plane_layers.entry(zone.net.clone()).or_default() |= single_layer_mask(zone.layer);
+    }
+    if plane_layers.is_empty() {
+        return;
+    }
+
+    // Component roots that hold a plane (pour) of each net.
+    let mut plane_roots: HashMap<String, Vec<usize>> = HashMap::new();
+    for (i, node) in nodes.iter().enumerate() {
+        if matches!(node.geom, NodeGeom::Pour(_)) && !node.net.is_empty() {
+            let root = dsu.find(i);
+            plane_roots.entry(node.net.clone()).or_default().push(root);
+        }
+    }
+
+    // Map each pad node to its component root, keyed by (footprint ref, pad num).
+    let mut pad_root: HashMap<(String, String), usize> = HashMap::new();
+    for (i, node) in nodes.iter().enumerate() {
+        if let Some(id) = &node.pad {
+            pad_root.insert(id.clone(), dsu.find(i));
+        }
+    }
+
+    let via_r = pcb.rules.default_rules.via_diameter / 2.0;
+    let suggest_offset =
+        via_r + pcb.rules.default_rules.clearance + pcb.rules.default_rules.trace_width / 2.0;
+
+    for fp in &pcb.footprints {
+        let (sin_r, cos_r) = fp.rotation.to_radians().sin_cos();
+        for pad in &fp.pads {
+            if pad.pad_type != PadType::SMD {
+                continue;
+            }
+            let Some(net) = pad.net.as_ref().filter(|n| !n.is_empty()) else {
+                continue;
+            };
+            let Some(&pl_mask) = plane_layers.get(net) else {
+                continue;
+            };
+            // A pad already on one of its plane layers floods straight into the
+            // plane — it needs no stitching via (a void/thermal gap there is a
+            // different defect, caught by the pour fill / clearance checks).
+            let pad_mask = pad
+                .layers
+                .iter()
+                .fold(0u16, |m, &l| m | single_layer_mask(l));
+            if pad_mask & pl_mask != 0 {
+                continue;
+            }
+            // Galvanic path: is the pad's component one that holds this net's
+            // plane? A stitching via makes it so; without one it is not.
+            let Some(&root) = pad_root.get(&(fp.reference.clone(), pad.number.clone())) else {
+                continue;
+            };
+            let stitched = plane_roots
+                .get(net)
+                .is_some_and(|roots| roots.contains(&root));
+            if stitched {
+                continue;
+            }
+
+            // Suggested escape: radially outward from the footprint origin (the
+            // open side for a perimeter QFP/QFN pad). Falls back to +X for a pad
+            // sitting on the origin.
+            let off_x = pad.position.x * cos_r - pad.position.y * sin_r;
+            let off_y = pad.position.x * sin_r + pad.position.y * cos_r;
+            let mag = (off_x * off_x + off_y * off_y).sqrt();
+            let (ex, ey) = if mag > 1e-9 {
+                (off_x / mag, off_y / mag)
+            } else {
+                (1.0, 0.0)
+            };
+            let pad_pt = Vec2::new(fp.position.x + off_x, fp.position.y + off_y);
+
+            violations.push(DrcViolation {
+                rule: DrcRuleType::UnstitchedPad,
+                severity: DrcSeverity::Error,
+                position: pad_pt,
+                message: format!(
+                    "Unstitched pad {}.{} on plane net '{}': no via reaches the \
+                     plane — drop a stitching via near the pad, escaping ~{:.2}mm \
+                     along ({:.2}, {:.2}) if the pitch is too fine for an at-pad via",
+                    fp.reference, pad.number, net, suggest_offset, ex, ey
+                ),
+                actual: 0.0,
+                required: 1.0,
+                provenance: DrcProvenance::Routing,
+                generated: false,
+            });
+        }
     }
 }
 
@@ -3195,5 +3319,127 @@ mod tests {
         assert_eq!(islands.len(), 2, "two CCW outers ⇒ two islands");
         assert_eq!(islands[0].len(), 2, "first island keeps its outer + hole");
         assert_eq!(islands[1].len(), 1, "second island is a bare outer");
+    }
+
+    /// Helper: a whole-board plane pour for `net` on `layer`.
+    fn plane_zone(outline: &[Vec2], net: &str, layer: PcbLayer) -> Zone {
+        Zone {
+            outline: outline.to_vec(),
+            holes: vec![],
+            net: net.to_string(),
+            layer,
+            clearance: 0.2,
+            min_area: 0.0,
+            fill_type: ZoneFillType::Solid,
+            thermal_relief: ThermalReliefStyle::Relief,
+            thermal_gap: Some(0.5),
+            thermal_spoke_width: Some(0.5),
+            priority: 0,
+        }
+    }
+
+    /// An SMD pad naming an inner-plane net, with no stitching via, has no
+    /// galvanic path to its plane — a first-class Unstitched-Pad violation that
+    /// names the exact pad and a suggested escape vector (not just an opaque
+    /// net-wide UnconnectedNet).
+    #[test]
+    fn unstitched_smd_pad_on_plane_flagged() {
+        let mut pcb = clean_pcb();
+        pcb.traces.clear();
+        pcb.vias.clear();
+        pcb.nets.push(Net {
+            id: "3".to_string(),
+            name: "3V3".to_string(),
+        });
+        let outline = pcb.outline.vertices.clone();
+        pcb.zones.push(plane_zone(&outline, "3", PcbLayer::In1Cu));
+        // One SMD pad on FCu naming the +3V3 plane net, no via.
+        pcb.footprints = vec![footprint(
+            "U1",
+            (50.0, 40.0),
+            0.0,
+            vec![smd_pad("1", (0.0, 0.0), "3")],
+        )];
+
+        let v = check_drc(&pcb);
+        let unstitched: Vec<_> = v
+            .iter()
+            .filter(|x| x.rule == DrcRuleType::UnstitchedPad)
+            .collect();
+        assert_eq!(
+            unstitched.len(),
+            1,
+            "expected one Unstitched-Pad, got: {:?}",
+            v.iter().map(|x| (&x.rule, &x.message)).collect::<Vec<_>>()
+        );
+        assert!(
+            unstitched[0].message.contains("U1.1") && unstitched[0].message.contains("'3'"),
+            "violation must name the pad and plane net: {}",
+            unstitched[0].message
+        );
+    }
+
+    /// Dropping a same-net stitching via at the pad bridges FCu→In1Cu and clears
+    /// the Unstitched-Pad violation — read straight off the connectivity union.
+    #[test]
+    fn stitching_via_clears_unstitched_pad() {
+        let mut pcb = clean_pcb();
+        pcb.traces.clear();
+        pcb.vias.clear();
+        pcb.nets.push(Net {
+            id: "3".to_string(),
+            name: "3V3".to_string(),
+        });
+        let outline = pcb.outline.vertices.clone();
+        pcb.zones.push(plane_zone(&outline, "3", PcbLayer::In1Cu));
+        pcb.footprints = vec![footprint(
+            "U1",
+            (50.0, 40.0),
+            0.0,
+            vec![smd_pad("1", (0.0, 0.0), "3")],
+        )];
+        // The stitching via: a +3V3 through-via at the pad reaching the In1Cu plane.
+        pcb.vias.push(Via {
+            position: Vec2::new(50.0, 40.0),
+            diameter: 0.8,
+            drill: 0.4,
+            start_layer: PcbLayer::FCu,
+            end_layer: PcbLayer::BCu,
+            net: "3".to_string(),
+        });
+
+        let unstitched = check_drc(&pcb)
+            .into_iter()
+            .filter(|x| x.rule == DrcRuleType::UnstitchedPad)
+            .count();
+        assert_eq!(unstitched, 0, "a stitching via must clear the violation");
+    }
+
+    /// A THT pad's plated barrel already bridges to an inner plane, so the rule
+    /// is scoped to SMD pads: a THT pad naming a plane net is never flagged.
+    #[test]
+    fn tht_pad_on_plane_not_flagged() {
+        let mut pcb = clean_pcb();
+        pcb.traces.clear();
+        pcb.vias.clear();
+        pcb.nets.push(Net {
+            id: "3".to_string(),
+            name: "3V3".to_string(),
+        });
+        let outline = pcb.outline.vertices.clone();
+        pcb.zones.push(plane_zone(&outline, "3", PcbLayer::In1Cu));
+        let mut th = smd_pad("1", (0.0, 0.0), "3");
+        th.pad_type = PadType::THT;
+        th.layers = vec![PcbLayer::FCu, PcbLayer::BCu];
+        pcb.footprints = vec![footprint("J1", (50.0, 40.0), 0.0, vec![th])];
+
+        let unstitched = check_drc(&pcb)
+            .into_iter()
+            .filter(|x| x.rule == DrcRuleType::UnstitchedPad)
+            .count();
+        assert_eq!(
+            unstitched, 0,
+            "THT pads bridge layers — never Unstitched-Pad"
+        );
     }
 }
