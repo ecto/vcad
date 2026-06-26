@@ -35,6 +35,7 @@ import { getNodePcb, getPcbNodeIds, buildEntry, agentView } from "@vcad/core";
 import {
   computeRatsnest,
   exportFabFiles,
+  pcbPreviewMeshes,
   resolveFootprint,
   generateNetlist,
   isEcadAvailable,
@@ -3477,6 +3478,52 @@ export async function summarizePlacementDrc(pcb: Pcb): Promise<PlacementDrc> {
   };
 }
 
+// ============================================================================
+// Author-time zone-overlap DRC — the one fault add_zone can create on its own
+// ============================================================================
+
+/** One copper-overlap conflict: the candidate pour shares copper with an
+ *  existing pour on the same layer that carries a different net. */
+export interface ZoneOverlap {
+  /** The copper layer both pours sit on. */
+  layer: PcbLayer;
+  /** `[candidate net, conflicting existing net]`. */
+  nets: [string, string];
+  /** Axis-aligned bounds of the overlapping copper region, board-local mm. */
+  bbox: { min: Vec2; max: Vec2 };
+}
+
+/** Pre-author DRC for a copper pour: would this outline overlap an existing
+ *  pour on the same layer with a different net? That overlap is a dead short
+ *  (the kernel's `pours_touch` Short rule), so `clean` is the single branch the
+ *  caller needs before committing the zone — the same shape philosophy as
+ *  {@link summarizePlacementDrc}. Pure-geometry (no kernel round-trip) because
+ *  the check must localize the conflict with a bbox and run at author time. */
+export interface ZoneDrc {
+  clean: boolean;
+  overlaps: ZoneOverlap[];
+}
+
+/** Compare a candidate pour outline against the existing zones, flagging every
+ *  same-layer / different-net pour whose copper it overlaps. Same-net pours
+ *  (intentional, they merge) and other-layer pours (separated by dielectric)
+ *  are never conflicts. */
+export function summarizeZoneDrc(
+  zones: Zone[],
+  candidate: { outline: Vec2[]; net: string; layer: PcbLayer },
+): ZoneDrc {
+  const overlaps: ZoneOverlap[] = [];
+  if (candidate.outline.length >= 3) {
+    for (const z of zones) {
+      if (z.layer !== candidate.layer || z.net === candidate.net) continue;
+      if (!z.outline || z.outline.length < 3) continue;
+      const bbox = polygonOverlapBbox(candidate.outline, z.outline);
+      if (bbox) overlaps.push({ layer: candidate.layer, nets: [candidate.net, z.net], bbox });
+    }
+  }
+  return { clean: overlaps.length === 0, overlaps };
+}
+
 /** Run DRC against a session/inline document and return the summary-first payload. */
 export async function runDrc(args: Record<string, unknown>) {
   const { doc } = resolveDocInput(args);
@@ -5478,6 +5525,264 @@ export function getPadPositions(args: Record<string, unknown>) {
 }
 
 // ============================================================================
+// describe_pcb — compact, structured snapshot of the session board
+// ============================================================================
+
+/** JSON Schema for describe_pcb tool. */
+export const describePcbSchema = {
+  type: "object" as const,
+  properties: {
+    ...docInputProperties,
+  },
+  required: ["document_id"],
+};
+
+/** Axis-aligned bounding box of a point set (rounded); null when empty. */
+function pointsBbox(
+  pts: Vec2[],
+): { minX: number; minY: number; maxX: number; maxY: number } | null {
+  if (pts.length === 0) return null;
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const p of pts) {
+    if (p.x < minX) minX = p.x;
+    if (p.y < minY) minY = p.y;
+    if (p.x > maxX) maxX = p.x;
+    if (p.y > maxY) maxY = p.y;
+  }
+  return {
+    minX: round3(minX),
+    minY: round3(minY),
+    maxX: round3(maxX),
+    maxY: round3(maxY),
+  };
+}
+
+/** Increment a string-keyed tally in place. */
+function tally(map: Record<string, number>, key: string): void {
+  map[key] = (map[key] ?? 0) + 1;
+}
+
+/** Cap on the number of net names echoed back (the rest are summarized by count). */
+const DESCRIBE_NET_NAME_CAP = 64;
+
+/**
+ * Return a lightweight, *structured* snapshot of the session PCB — board size +
+ * outline, stackup (canonical layer names + copper weights), net classes /
+ * design rules, zones (net/layer/bbox/fill), trace and via counts by net and by
+ * layer, component count, the current DRC status, and an
+ * exportability/renderability probe. Read-only; mutates nothing.
+ *
+ * Unlike get_document / read — which return only the opaque document_id for a
+ * PCB session — this lets an agent (or a human debugging a stuck session)
+ * actually inspect the board as data. The export/render probe serializes the
+ * board for fab output and 3D preview and reports whether each succeeds,
+ * surfacing the dangerous "DRC-clean but unexportable" state (e.g. a board
+ * solid that fails to evaluate) that no other inspection tool catches.
+ *
+ * Counts and small arrays only — never full trace/pad/zone geometry.
+ */
+export async function describePcb(args: Record<string, unknown>) {
+  const ctx = resolveDocInput(args);
+  const pcb = getDocPcb(ctx.doc);
+  if (!pcb) {
+    return ecadError(
+      "Document has no PCB — run place_components first (or open a document that has a board)",
+    );
+  }
+
+  // --- Board outline + size ------------------------------------------------
+  const verts = pcb.outline.vertices;
+  const bbox = pointsBbox(verts);
+  const cutouts = pcb.outline.cutouts ?? [];
+  const board = {
+    width: bbox ? round3(bbox.maxX - bbox.minX) : 0,
+    height: bbox ? round3(bbox.maxY - bbox.minY) : 0,
+    thickness: pcb.outline.thickness,
+    bbox,
+    outline_vertices: verts.length,
+    cutouts: cutouts.length,
+    // Outer polygon minus cutouts (shoelace, sign-agnostic).
+    area_mm2: round3(
+      Math.abs(loopSignedArea(verts)) -
+        cutouts.reduce((s, c) => s + Math.abs(loopSignedArea(c)), 0),
+    ),
+  };
+
+  // --- Stackup (canonical layer names + copper weight) ---------------------
+  // 1 oz/ft² of copper ≈ 0.035 mm; report both so a human reads "1 oz" while a
+  // tool keeps the exact thickness.
+  const OZ_PER_MM = 1 / 0.035;
+  const stackupLayers = pcb.stackup.layers.map((l) => ({
+    layer: l.layer,
+    ...(l.copperThickness != null
+      ? {
+          copper_thickness_mm: round3(l.copperThickness),
+          copper_oz: Math.round(l.copperThickness * OZ_PER_MM * 100) / 100,
+        }
+      : {}),
+    ...(l.dielectricThickness != null
+      ? { dielectric_mm: round3(l.dielectricThickness) }
+      : {}),
+    ...(l.dielectricEr != null ? { er: l.dielectricEr } : {}),
+    ...(l.material != null ? { material: l.material } : {}),
+  }));
+  const copperLayers = pcb.stackup.layers.filter((l) => /Cu$/.test(l.layer)).length;
+
+  // --- Design rules / net classes ------------------------------------------
+  const dr = pcb.rules;
+  const ruleClass = (c: NetClassRules) => ({
+    name: c.name,
+    traceWidth: c.traceWidth,
+    clearance: c.clearance,
+    viaDiameter: c.viaDiameter,
+    viaDrill: c.viaDrill,
+    ...(c.diffPairGap != null ? { diffPairGap: c.diffPairGap } : {}),
+    ...(c.diffPairWidth != null ? { diffPairWidth: c.diffPairWidth } : {}),
+  });
+  const netClassAssignments = dr.netClassAssignments
+    ? Object.fromEntries(
+        Object.entries(dr.netClassAssignments).map(([k, v]) => [k, v.length]),
+      )
+    : undefined;
+  const designRules = {
+    default: ruleClass(dr.defaultRules),
+    ...(dr.classRules && dr.classRules.length > 0
+      ? { classes: dr.classRules.map(ruleClass) }
+      : {}),
+    ...(netClassAssignments ? { netClassAssignments } : {}),
+    edgeClearance: dr.edgeClearance,
+    holeToHole: dr.holeToHole,
+    minAnnularRing: dr.minAnnularRing,
+    minDrill: dr.minDrill,
+  };
+
+  // --- Zones: { net, layer, bbox, fill } -----------------------------------
+  const zones = pcb.zones.map((z) => ({
+    net: z.net,
+    layer: z.layer,
+    bbox: pointsBbox(z.outline),
+    fill: z.fillType ?? "Solid",
+    ...(z.holes && z.holes.length > 0 ? { holes: z.holes.length } : {}),
+  }));
+
+  // --- Traces / vias: counts by net and by layer ---------------------------
+  const traceByNet: Record<string, number> = {};
+  const traceByLayer: Record<string, number> = {};
+  for (const t of pcb.traces) {
+    tally(traceByNet, t.net);
+    tally(traceByLayer, t.layer);
+  }
+  for (const a of pcb.traceArcs ?? []) {
+    tally(traceByNet, a.net);
+    tally(traceByLayer, a.layer);
+  }
+  const viaByNet: Record<string, number> = {};
+  const viaByLayer: Record<string, number> = {};
+  for (const v of pcb.vias) {
+    tally(viaByNet, v.net);
+    tally(viaByLayer, `${v.startLayer}-${v.endLayer}`);
+  }
+
+  // --- Components / footprints ---------------------------------------------
+  const fpByName: Record<string, number> = {};
+  let padCount = 0;
+  for (const fp of pcb.footprints) {
+    tally(fpByName, fp.footprintName);
+    padCount += fp.pads.length;
+  }
+
+  // --- DRC status (counts only; no sample) ---------------------------------
+  const drcSummary = await drcPcb(pcb, "summary", 0);
+  const drc = {
+    violations: drcSummary.violations,
+    errors: drcSummary.errors,
+    warnings: drcSummary.warnings,
+    categories: drcSummary.categories,
+    byRule: drcSummary.byRule,
+    worstClearance: drcSummary.worstClearance,
+    // `clean` ignores connectivity (unrouted nets are a to-do, not a defect) —
+    // same semantics as placement_drc.clean.
+    clean:
+      drcSummary.categories.clearance + drcSummary.categories.manufacturing === 0,
+  };
+
+  // --- Exportability / renderability probe ---------------------------------
+  // Actually serialize the board for fab + preview and report success. This is
+  // the only check that catches a board that passes DRC but cannot be exported
+  // or rendered (e.g. the board solid fails to evaluate). `null` means we could
+  // not determine it because the ECAD WASM was unavailable.
+  const wasmAvailable = await isEcadAvailable();
+  let gerberExportable: boolean | null = null;
+  let gerberFileCount = 0;
+  let renderable: boolean | null = null;
+  let previewMeshCount = 0;
+  if (wasmAvailable) {
+    const fab = await exportFabFiles(pcb);
+    gerberExportable = fab !== null && fab.length > 0;
+    gerberFileCount = fab?.length ?? 0;
+    const meshes = await pcbPreviewMeshes(pcb);
+    renderable = meshes.length > 0;
+    previewMeshCount = meshes.length;
+  }
+  const exportability = {
+    wasm_available: wasmAvailable,
+    gerber_exportable: gerberExportable,
+    gerber_file_count: gerberFileCount,
+    renderable,
+    preview_mesh_count: previewMeshCount,
+  };
+
+  const netNames = pcb.nets.map((n) => n.name);
+
+  return {
+    content: [
+      {
+        type: "text" as const,
+        text: JSON.stringify({
+          success: true,
+          board,
+          stackup: { layers: stackupLayers, copper_layers: copperLayers },
+          nets: {
+            count: pcb.nets.length,
+            names: netNames.slice(0, DESCRIBE_NET_NAME_CAP),
+            ...(netNames.length > DESCRIBE_NET_NAME_CAP
+              ? { names_truncated: true }
+              : {}),
+          },
+          design_rules: designRules,
+          zones,
+          traces: {
+            segments: pcb.traces.length,
+            arcs: (pcb.traceArcs ?? []).length,
+            by_net: traceByNet,
+            by_layer: traceByLayer,
+          },
+          vias: {
+            count: pcb.vias.length,
+            by_net: viaByNet,
+            by_layer: viaByLayer,
+          },
+          components: {
+            count: pcb.footprints.length,
+            pads: padCount,
+            by_footprint: fpByName,
+          },
+          ...(pcb.netTies && pcb.netTies.length > 0
+            ? { net_ties: pcb.netTies.length }
+            : {}),
+          drc,
+          exportability,
+          ...docResultPayload(ctx),
+        }),
+      },
+    ],
+  };
+}
+
+// ============================================================================
 // add_trace — push straight copper segments between consecutive points
 // ============================================================================
 
@@ -5962,6 +6267,14 @@ export const addZoneSchema = {
       type: "number" as const,
       description: "Higher-priority pours fill first and win overlaps (default 0)",
     },
+    allow_overlap: {
+      type: "boolean" as const,
+      description:
+        "Author the pour even if it overlaps an existing different-net pour on " +
+        "the same layer. Default false: such an overlap is a copper short and is " +
+        "rejected at author time (see the returned zone_drc). Only set true if a " +
+        "higher-priority pour will legitimately clip this one.",
+    },
   },
   required: ["document_id", "net"],
 };
@@ -6034,6 +6347,38 @@ export function addZone(args: Record<string, unknown>) {
   const outline = ensureCcw(rawOutline).map((v) => ({ x: round3(v.x), y: round3(v.y) }));
   const clearance = (args.clearance as number) ?? pcb.rules.defaultRules.clearance;
 
+  // Author-time copper-overlap guard. Two different-net pours sharing copper on
+  // the same layer is a dead short; the kernel reports it as a `Short` (via
+  // pours_touch in drc.rs), but only once run_drc runs — far too late if a
+  // power plane was split into 3V3/5V/VBAT islands that overlap. Catch it here
+  // and localize the conflict with a bbox so an agent can branch before routing.
+  const zoneDrc = summarizeZoneDrc(pcb.zones, { outline, net, layer });
+  if (!zoneDrc.clean && args.allow_overlap !== true) {
+    const others = [...new Set(zoneDrc.overlaps.map((o) => o.nets[1]))];
+    const { min, max } = zoneDrc.overlaps[0]!.bbox;
+    return {
+      content: [
+        {
+          type: "text" as const,
+          text: JSON.stringify({
+            success: false,
+            error:
+              `Copper pour on net '${net}' (${layer}) overlaps existing ` +
+              `different-net pour${others.length > 1 ? "s" : ""} ` +
+              `${others.map((n) => `'${n}'`).join(", ")} on the same layer — ` +
+              `this is a short. Overlap bbox: [${min.x}, ${min.y}] → ` +
+              `[${max.x}, ${max.y}]. Clip the pour, move it, give a contained ` +
+              `higher-priority pour precedence, or pass allow_overlap:true to ` +
+              `author it anyway.`,
+            zone_drc: zoneDrc,
+            ...docResultPayload(ctx),
+          }),
+        },
+      ],
+      isError: true as const,
+    };
+  }
+
   if (!pcb.nets.some((n) => n.id === net)) pcb.nets.push({ id: net, name: net });
 
   const zone: Zone = {
@@ -6067,6 +6412,7 @@ export function addZone(args: Record<string, unknown>) {
           clearance,
           thermal_relief: reliefArg,
           zones_total: pcb.zones.length,
+          zone_drc: zoneDrc,
           ...docResultPayload(ctx),
         }),
       },
@@ -6956,6 +7302,109 @@ function pointInPolygon(p: Vec2, poly: Vec2[]): boolean {
     }
   }
   return inside;
+}
+
+/** Proper interior crossing point of segments p1p2 and p3p4, or null. Parallel
+ *  / collinear segments and endpoint-only touches return null — two pours that
+ *  merely share a border are not an overlap. */
+function segmentCrossing(p1: Vec2, p2: Vec2, p3: Vec2, p4: Vec2): Vec2 | null {
+  const d1x = p2.x - p1.x;
+  const d1y = p2.y - p1.y;
+  const d2x = p4.x - p3.x;
+  const d2y = p4.y - p3.y;
+  const denom = d1x * d2y - d1y * d2x;
+  if (Math.abs(denom) < 1e-12) return null;
+  const t = ((p3.x - p1.x) * d2y - (p3.y - p1.y) * d2x) / denom;
+  const u = ((p3.x - p1.x) * d1y - (p3.y - p1.y) * d1x) / denom;
+  const eps = 1e-9;
+  if (t <= eps || t >= 1 - eps || u <= eps || u >= 1 - eps) return null;
+  return { x: p1.x + t * d1x, y: p1.y + t * d1y };
+}
+
+/** Area-weighted centroid of a simple polygon — guaranteed interior for convex
+ *  outlines (boards, plane islands); falls back to the vertex mean if the
+ *  signed area is degenerate. */
+function polygonCentroid(poly: Vec2[]): Vec2 {
+  let a = 0;
+  let cx = 0;
+  let cy = 0;
+  for (let i = 0; i < poly.length; i++) {
+    const p = poly[i]!;
+    const q = poly[(i + 1) % poly.length]!;
+    const cross = p.x * q.y - q.x * p.y;
+    a += cross;
+    cx += (p.x + q.x) * cross;
+    cy += (p.y + q.y) * cross;
+  }
+  if (Math.abs(a) < 1e-12) {
+    const n = poly.length || 1;
+    return {
+      x: poly.reduce((s, p) => s + p.x, 0) / n,
+      y: poly.reduce((s, p) => s + p.y, 0) / n,
+    };
+  }
+  a *= 0.5;
+  return { x: cx / (6 * a), y: cy / (6 * a) };
+}
+
+/** Intersection of the two polygons' axis-aligned bounding boxes, or null when
+ *  they don't overlap. Used as the localized fallback bbox when two outlines
+ *  coincide exactly (e.g. two `fill_board` planes) and produce no vertex or
+ *  edge witnesses. */
+function aabbIntersection(a: Vec2[], b: Vec2[]): { min: Vec2; max: Vec2 } | null {
+  const box = (poly: Vec2[]) => ({
+    minX: Math.min(...poly.map((p) => p.x)),
+    minY: Math.min(...poly.map((p) => p.y)),
+    maxX: Math.max(...poly.map((p) => p.x)),
+    maxY: Math.max(...poly.map((p) => p.y)),
+  });
+  const A = box(a);
+  const B = box(b);
+  const minX = Math.max(A.minX, B.minX);
+  const minY = Math.max(A.minY, B.minY);
+  const maxX = Math.min(A.maxX, B.maxX);
+  const maxY = Math.min(A.maxY, B.maxY);
+  if (minX > maxX || minY > maxY) return null;
+  return { min: { x: round3(minX), y: round3(minY) }, max: { x: round3(maxX), y: round3(maxY) } };
+}
+
+/** Bbox of the region where two simple polygons' interiors overlap, or null if
+ *  they don't. The witnesses (vertices of one polygon inside the other, plus
+ *  proper edge crossings) are exactly the vertices of the intersection region,
+ *  so their bbox bounds it tightly. When two outlines coincide exactly there are
+ *  no such witnesses, so a guaranteed-interior point + AABB overlap catches that
+ *  case and the AABB intersection localizes it. */
+function polygonOverlapBbox(a: Vec2[], b: Vec2[]): { min: Vec2; max: Vec2 } | null {
+  const witnesses: Vec2[] = [];
+  for (const p of a) if (pointInPolygon(p, b)) witnesses.push(p);
+  for (const p of b) if (pointInPolygon(p, a)) witnesses.push(p);
+  for (let i = 0; i < a.length; i++) {
+    const a1 = a[i]!;
+    const a2 = a[(i + 1) % a.length]!;
+    for (let j = 0; j < b.length; j++) {
+      const x = segmentCrossing(a1, a2, b[j]!, b[(j + 1) % b.length]!);
+      if (x) witnesses.push(x);
+    }
+  }
+  if (witnesses.length > 0) {
+    let minX = Infinity;
+    let minY = Infinity;
+    let maxX = -Infinity;
+    let maxY = -Infinity;
+    for (const w of witnesses) {
+      if (w.x < minX) minX = w.x;
+      if (w.y < minY) minY = w.y;
+      if (w.x > maxX) maxX = w.x;
+      if (w.y > maxY) maxY = w.y;
+    }
+    return { min: { x: round3(minX), y: round3(minY) }, max: { x: round3(maxX), y: round3(maxY) } };
+  }
+  // No vertex/edge witnesses: coincident or one-contains-the-other-by-boundary.
+  const inter = aabbIntersection(a, b);
+  if (inter && (pointInPolygon(polygonCentroid(a), b) || pointInPolygon(polygonCentroid(b), a))) {
+    return inter;
+  }
+  return null;
 }
 
 /**

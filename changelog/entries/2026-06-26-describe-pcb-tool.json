@@ -1,0 +1,15 @@
+{
+  "id": "2026-06-26-describe-pcb-tool",
+  "version": "0.9.4",
+  "date": "2026-06-26",
+  "category": "feat",
+  "title": "describe_pcb: inspect a PCB session as structured data",
+  "summary": "New describe_pcb MCP tool returns a compact, structured snapshot of the session board — size + outline, stackup, net classes / design rules, zones, trace & via counts by net and layer, component count, DRC status, and an export/render probe that surfaces the 'DRC-clean but unexportable' state get_document/read can't see.",
+  "features": [
+    "ecad",
+    "pcb"
+  ],
+  "mcpTools": [
+    "describe_pcb"
+  ]
+}
