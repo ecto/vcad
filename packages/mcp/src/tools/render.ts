@@ -17,6 +17,7 @@ import type { NetlistResult } from "@vcad/engine";
 import { getNodePcb, getPcbNodeIds } from "@vcad/core";
 import type { Document, Pcb } from "@vcad/ir";
 import { getSession } from "./session.js";
+import { validatePcb, pcbValidationError } from "./pcb-validate.js";
 
 export const renderViewSchema = {
   type: "object" as const,
@@ -359,6 +360,11 @@ export async function renderPcb(
     };
   }
 
+  const validity = validatePcb(pcb);
+  if (!validity.valid) {
+    return pcbValidationError("render_pcb", validity, documentId) as unknown as RenderViewResult;
+  }
+
   const layers =
     Array.isArray(args.layers) && args.layers.length > 0
       ? (args.layers as unknown[]).map(String)
@@ -589,6 +595,11 @@ export async function renderRatsnest(
     };
   }
 
+  const validity = validatePcb(pcb);
+  if (!validity.valid) {
+    return pcbValidationError("render_ratsnest", validity, documentId) as unknown as RenderViewResult;
+  }
+
   const layers =
     Array.isArray(args.layers) && args.layers.length > 0
       ? (args.layers as unknown[]).map(String)
@@ -742,6 +753,11 @@ export async function renderStackup(
       ],
       isError: true,
     };
+  }
+
+  const validity = validatePcb(pcb);
+  if (!validity.valid) {
+    return pcbValidationError("render_stackup", validity, documentId) as unknown as RenderViewResult;
   }
 
   const widthRaw = Number(args.width_px ?? 700);

@@ -61,6 +61,7 @@ import type { Engine, NetlistResult, TriangleMesh } from "@vcad/engine";
 import { registerSession, getSession, undoLastSnapshot, historyDepth } from "./session.js";
 import type { NextAction } from "./next-actions.js";
 import { computeEnclosureFitForBoard } from "./enclosure.js";
+import { validatePcb, pcbValidationError } from "./pcb-validate.js";
 import { sizePdnExact, ecadDiffEngineAvailable } from "../wasm/ecad-diff.js";
 import { bundleBytes, storeArtifact } from "./artifact-store.js";
 import { maxInlineArtifactBytes, maxInlineExportBytes } from "./remote.js";
@@ -3863,6 +3864,11 @@ export async function exportGerber(args: Record<string, unknown>) {
     };
   }
 
+  const validity = validatePcb(pcb);
+  if (!validity.valid) {
+    return pcbValidationError("export_gerber", validity, args.document_id ? String(args.document_id) : undefined);
+  }
+
   const files = await exportFabFiles(pcb);
   if (files === null) {
     return {
@@ -6013,18 +6019,23 @@ export async function describePcb(args: Record<string, unknown>) {
 
   // --- DRC status (counts only; no sample) ---------------------------------
   const drcSummary = await drcPcb(pcb, "summary", 0);
-  const drc = {
-    violations: drcSummary.violations,
-    errors: drcSummary.errors,
-    warnings: drcSummary.warnings,
-    categories: drcSummary.categories,
-    byRule: drcSummary.byRule,
-    worstClearance: drcSummary.worstClearance,
-    // `clean` ignores connectivity (unrouted nets are a to-do, not a defect) —
-    // same semantics as placement_drc.clean.
-    clean:
-      drcSummary.categories.clearance + drcSummary.categories.manufacturing === 0,
-  };
+  const drc = drcSummary.success
+    ? {
+        violations: drcSummary.violations,
+        errors: drcSummary.errors,
+        warnings: drcSummary.warnings,
+        categories: drcSummary.categories,
+        byRule: drcSummary.byRule,
+        worstClearance: drcSummary.worstClearance,
+        // `clean` ignores connectivity (unrouted nets are a to-do, not a defect) —
+        // same semantics as placement_drc.clean.
+        clean: drcSummary.categories.clearance + drcSummary.categories.manufacturing === 0,
+      }
+    : {
+        unverifiable: true,
+        reason: drcSummary.reason,
+        ...(drcSummary.offending_field ? { offending_field: drcSummary.offending_field } : {}),
+      };
 
   // --- Exportability / renderability probe ---------------------------------
   // Actually serialize the board for fab + preview and report success. This is
@@ -8444,6 +8455,10 @@ export async function buildReceipt(args: Record<string, unknown>, engine?: Engin
       isError: true,
     };
   }
+  const validity = validatePcb(pcb);
+  if (!validity.valid) {
+    return pcbValidationError("build_receipt", validity, args.document_id ? String(args.document_id) : undefined);
+  }
   const receipt = await kernelBuildReceipt(pcb);
   if (!receipt) {
     return {
@@ -8517,6 +8532,10 @@ export async function verifyReceipt(args: Record<string, unknown>) {
       content: [{ type: "text" as const, text: "Error: Document has no PCB" }],
       isError: true,
     };
+  }
+  const validity = validatePcb(pcb);
+  if (!validity.valid) {
+    return pcbValidationError("verify_receipt", validity, args.document_id ? String(args.document_id) : undefined);
   }
   const receipt = args.receipt as Receipt | undefined;
   if (!receipt || typeof receipt !== "object" || !receipt.board_hash) {
