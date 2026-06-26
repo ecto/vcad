@@ -65,10 +65,21 @@ import {
   continueDocumentSchema,
 } from "./tools/continue-doc.js";
 import {
+  checkpointDocument,
+  checkpointDocumentSchema,
+  branchFrom,
+  branchFromSchema,
+} from "./tools/checkpoint.js";
+import {
   createSessionStore,
   createSessionEventStore,
   createShareStore,
+  sessionStoreInfo,
+  warnIfSessionStoreNotDurable,
 } from "./session-store.js";
+// Re-exported so the Vercel entry (services/mcp/entry.ts) and standalone
+// /health (http.ts) report the same durability state as server_info.
+export { sessionStoreInfo } from "./session-store.js";
 import { createFabricateStore } from "./fabricate/store.js";
 import {
   quoteManufacturing,
@@ -352,6 +363,14 @@ export function getBuildInfo(): {
 // instance) — set once at module load.
 configureTelemetry(getBuildInfo());
 
+// Boot-time durability self-check (fires once per cold start, on every entry
+// point that imports this module — Vercel function, standalone HTTP, stdio). A
+// production deploy without a durable session store keeps sessions in-memory
+// only, so a redeploy drops every open board. Make that loud at boot; the same
+// state is observable over the wire via server_info / /health (durable:false).
+// No-op on stdio/local or when durable.
+warnIfSessionStoreNotDurable();
+
 /** Kernel WASM exports this server depends on; checked at startup so a stale or
  *  incomplete dist surfaces as a clear boot error rather than an opaque
  *  mid-call TypeError. Surfaced via `server_info`. */
@@ -389,6 +408,8 @@ const GEOMETRY_TOOLS = new Set([
   "add_motor_winding",
   // Materializes a saved board into a live session — show it like open_document.
   "load_document",
+  // Re-opens a checkpoint snapshot as a live session — seeded with geometry.
+  "branch_from",
 ]);
 
 /**
@@ -415,6 +436,9 @@ const SWITCH_DOC_WRITERS = new Set<string>([
   // local-disk read is a no-op on the serverless deploy, but on success
   // persisting the loaded doc to the user's account is desirable.
   "load_document",
+  // Forks/restores a checkpoint into a session; persist so the branch (or the
+  // in-place restore) survives a cold instance like every other session.
+  "branch_from",
   // CAD / sheet-metal / DFM mutators
   "place_part",
   "dfm_apply_fix",
@@ -479,6 +503,8 @@ const MOUNT_TOOLS = new Set<string>([
   "import_step",
   "load_document",
   "continue_document",
+  // Re-opens a checkpoint into a (new or restored) session — mount its canvas.
+  "branch_from",
   // PCB: place_components creates the first board geometry (create_schematic
   // has none yet, so it must NOT mount — the canvas would fetch an empty board)
   "place_components",
@@ -859,6 +885,28 @@ export async function createServer(
         inputSchema: loadDocumentSchema,
       },
       {
+        name: "checkpoint_document",
+        description:
+          "Snapshot a session's current state as a durable, restorable " +
+          "checkpoint. Returns a `checkpoint_id`. Use it at known-good milestones " +
+          "(post-schematic, post-place, post-route) so you can rewind with " +
+          "branch_from instead of rebuilding. The full IR is captured — the " +
+          "netlist (the most expensive, most stable artifact) is the anchor. On a " +
+          "durable deploy a checkpoint survives a redeploy; check server_info for " +
+          "durable:true.",
+        inputSchema: checkpointDocumentSchema,
+      },
+      {
+        name: "branch_from",
+        description:
+          "Re-open a checkpoint (from checkpoint_document). Omit `into` to BRANCH " +
+          "into a fresh session id — a variant to explore. Pass `into: <document_id>` " +
+          "to RESTORE the checkpoint into an existing session in place (same id). " +
+          "The cheap undo for a bad route or place: rewind to a good state rather " +
+          "than rebuilding the netlist.",
+        inputSchema: branchFromSchema,
+      },
+      {
         name: "continue_document",
         description:
           "Open the user's vcad.io part as an editing session from a 'Continue " +
@@ -882,9 +930,11 @@ export async function createServer(
         name: "server_info",
         description:
           "Report the running build's identity: version, git sha (if stamped), " +
-          "tool count, enabled packs, and whether the kernel WASM loaded. Call " +
-          "this to confirm a tool exists in THIS build before assuming a stale " +
-          "or version-skewed deploy.",
+          "tool count, enabled packs, whether the kernel WASM loaded, and whether " +
+          "sessions are durable (`durable` — survive a redeploy/cold start, vs. " +
+          "in-memory only). Call this to confirm a tool exists in THIS build " +
+          "before assuming a stale or version-skewed deploy, and to check " +
+          "durable:true before relying on checkpoints across a long session.",
         inputSchema: serverInfoSchema,
       },
       // ── vcad Fabricate: order custom-manufactured parts ───────
@@ -2052,6 +2102,14 @@ export async function createServer(
           result = await continueDocument(args, sessionStore);
           break;
 
+        case "checkpoint_document":
+          result = await checkpointDocument(args, sessionStore);
+          break;
+
+        case "branch_from":
+          result = await branchFrom(args, sessionStore);
+          break;
+
         case "server_info":
           result = {
             content: [
@@ -2059,6 +2117,7 @@ export async function createServer(
                 type: "text",
                 text: JSON.stringify({
                   ...getBuildInfo(),
+                  ...sessionStoreInfo(),
                   kernel_wasm: kernelWasmLoaded ? "ok" : "unavailable",
                   ...(kernelWasmMissing.length > 0
                     ? { kernel_wasm_missing_exports: kernelWasmMissing }
