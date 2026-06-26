@@ -71,6 +71,10 @@ impl Congestion {
     /// True while no history has been deposited — the maze can then skip the
     /// per-step cost lookup entirely (and round one reproduces baseline routing).
     pub fn is_flat(&self) -> bool {
+        // Exact `== 0.0` is intentional and safe: cells start at exactly 0.0
+        // (`vec![0.0; ..]`) and only ever increase, by the strictly-positive
+        // `amount` in `add_corridor`. So 0.0 is an exact sentinel for "untouched"
+        // — never the result of arithmetic that could land just shy of zero.
         self.history.iter().all(|&h| h == 0.0)
     }
 

@@ -2072,12 +2072,16 @@ mod tests {
             baseline.routability
         );
 
-        // Every still-open net carries an actionable diagnostic: which nets block
-        // it, where, and which layer/via might help.
+        // Every still-open net carries an actionable diagnostic, and every
+        // diagnostic names a still-open net. A multi-connection net can yield
+        // several diagnostics (one per failed connection), so assert the net
+        // *sets* coincide rather than the raw counts — the latter only happens to
+        // match here because every net in this fixture is a single connection.
+        let diag_nets: BTreeSet<&String> = negotiated.diagnostics.iter().map(|d| &d.net).collect();
+        let unrouted_set: BTreeSet<&String> = negotiated.unrouted_nets.iter().collect();
         assert_eq!(
-            negotiated.diagnostics.len(),
-            negotiated.unrouted_nets.len(),
-            "one diagnostic per unrouted net"
+            diag_nets, unrouted_set,
+            "diagnostics must cover exactly the unrouted nets"
         );
         for d in &negotiated.diagnostics {
             assert!(
@@ -2098,14 +2102,24 @@ mod tests {
         }
     }
 
-    /// `negotiation_rounds == 1` must reproduce the historical greedy + rip-up
-    /// router byte-for-byte (same routed set, same trace count) — the negotiated
-    /// path is purely additive over a faithful baseline.
+    /// Baseline fidelity: on a board that routes fully, the negotiated default
+    /// (`route_all`) reduces *exactly* to the historical greedy + rip-up baseline
+    /// (`negotiation_rounds == 1, use_push_shove == false`). Negotiation only
+    /// engages when a round leaves nets unrouted, so an easy board stops after
+    /// round 0 — which IS the baseline path — and the default adds nothing. This
+    /// pins the "purely additive over a faithful baseline" claim to an observable
+    /// equality, not merely to determinism.
     #[test]
-    fn round_one_reproduces_baseline() {
-        let n = 16usize;
-        let pcb = crossing_bus(32.0, n, 1.7);
-        let a = route_all_with_opts(
+    fn negotiation_default_reduces_to_baseline_on_easy_board() {
+        // Two well-separated nets, each a clear front-layer shot — no crossing,
+        // no congestion, so both paths route fully and must coincide.
+        let pcb = board(vec![
+            fp("R1", 10.0, 8.0, vec![pad("1", 0.0, 0.0, "A")]),
+            fp("R2", 40.0, 8.0, vec![pad("1", 0.0, 0.0, "A")]),
+            fp("R3", 10.0, 22.0, vec![pad("1", 0.0, 0.0, "B")]),
+            fp("R4", 40.0, 22.0, vec![pad("1", 0.0, 0.0, "B")]),
+        ]);
+        let baseline = route_all_with_opts(
             &pcb,
             0.25,
             &[],
@@ -2114,19 +2128,35 @@ mod tests {
                 use_push_shove: false,
             },
         );
-        let b = route_all_with_opts(
-            &pcb,
-            0.25,
-            &[],
-            &RouteOptions {
-                negotiation_rounds: 1,
-                use_push_shove: false,
-            },
+        let default = route_all(&pcb, 0.25, &[]);
+
+        // Precondition: the board routes fully on both paths (so negotiation
+        // never engages and the two are expected to be identical).
+        assert!(
+            baseline.unrouted_nets.is_empty() && default.unrouted_nets.is_empty(),
+            "easy board must route fully on both paths"
         );
+        // Same outcome AND the same copper — the default laid nothing extra.
+        assert_eq!(default.routed_nets, baseline.routed_nets);
+        assert_eq!(default.unrouted_nets, baseline.unrouted_nets);
         assert_eq!(
-            a.routed_nets, b.routed_nets,
-            "routing must be deterministic"
+            default.traces.len(),
+            baseline.traces.len(),
+            "default must lay the same copper as the baseline on an easy board"
         );
+        assert_eq!(default.vias.len(), baseline.vias.len());
+    }
+
+    /// Routing is deterministic — same board, same options, byte-stable result.
+    /// (Load-bearing for reproducible builds and route caching.)
+    #[test]
+    fn routing_is_deterministic() {
+        let pcb = crossing_bus(32.0, 16, 1.7);
+        let a = route_all(&pcb, 0.25, &[]);
+        let b = route_all(&pcb, 0.25, &[]);
+        assert_eq!(a.routed_nets, b.routed_nets);
+        assert_eq!(a.unrouted_nets, b.unrouted_nets);
         assert_eq!(a.traces.len(), b.traces.len());
+        assert_eq!(a.vias.len(), b.vias.len());
     }
 }
