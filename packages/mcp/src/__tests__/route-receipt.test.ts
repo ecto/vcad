@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll, beforeEach } from "vitest";
 import { Engine } from "@vcad/engine";
+import { getNodePcb, getPcbNodeIds } from "@vcad/core";
 import { createSchematic, placeComponents, routeNets } from "../tools/ecad.js";
 import { documents } from "../tools/session.js";
 
@@ -58,7 +59,7 @@ async function placedBoard(): Promise<string> {
 }
 
 describe("route_nets receipt — the agent gets a verdict instead of {document_id}", () => {
-  it("returns a receipt verdict, and a second route reports the silent short regression", async () => {
+  it("returns a receipt with routing-specific fields", async () => {
     const id = await placedBoard();
 
     const r1 = out(await routeNets({ document_id: id, receipt: true }));
@@ -66,17 +67,28 @@ describe("route_nets receipt — the agent gets a verdict instead of {document_i
     expect(r1.nets_routed).toBeGreaterThan(0);
     expect(r1.receipt).toBeDefined();
     expect(r1.receipt.tool).toBe("route_nets");
-    expect(r1.receipt.credited).toBeGreaterThanOrEqual(5); // closed the unrouted nets
+    expect(r1.receipt.credited).toBeGreaterThanOrEqual(5);
     expect(["improved", "improved-with-regressions"]).toContain(r1.receipt.verdict);
     expect(r1.receipt.headline).toBeTruthy();
     expect(r1.receipt.coverage).toBe("full");
 
-    // A second route may or may not change the board (kernel-dependent: a clean
-    // re-route is a no-op; a non-idempotent one stacks copper into shorts — see
-    // issue #277). Either way the receipt must faithfully reflect what actually
-    // happened: its verdict and shorts count must agree with its own DRC delta.
-    // The catastrophic attribution itself is locked deterministically in
-    // receipt.test.ts over captured fixtures.
+    // Routing-specific fields must always be present in the receipt
+    expect(Array.isArray(r1.receipt.nets_routed)).toBe(true);
+    expect(r1.receipt.nets_routed.length).toBeGreaterThan(0);
+    expect(Array.isArray(r1.receipt.nets_unrouted)).toBe(true);
+    expect(typeof r1.receipt.traces_added).toBe("number");
+    expect(r1.receipt.traces_added).toBeGreaterThan(0);
+    expect(typeof r1.receipt.traces_removed).toBe("number");
+    expect(typeof r1.receipt.vias_added).toBe("number");
+    expect(typeof r1.receipt.vias_removed).toBe("number");
+    expect(Array.isArray(r1.receipt.plane_stitched)).toBe(true);
+    expect(Array.isArray(r1.receipt.short_pairs)).toBe(true);
+  });
+
+  it("second route receipt is consistent with its own DRC delta", async () => {
+    const id = await placedBoard();
+    out(await routeNets({ document_id: id, receipt: true }));
+
     const r2 = out(await routeNets({ document_id: id, receipt: true }));
     const delta = r2.receipt.deltaByRule as Record<string, number>;
     expect(r2.receipt.shortsIntroduced).toBe(Math.max(0, delta.Short ?? 0));
@@ -85,6 +97,64 @@ describe("route_nets receipt — the agent gets a verdict instead of {document_i
     } else {
       expect(["no-op", "improved", "clean"]).toContain(r2.receipt.verdict);
     }
+    // Routing fields present on re-route too
+    expect(Array.isArray(r2.receipt.nets_routed)).toBe(true);
+    expect(typeof r2.receipt.traces_removed).toBe("number");
+    expect(r2.receipt.traces_removed).toBeGreaterThanOrEqual(0);
+  });
+
+  it("receipt works with string-coerced receipt flag", async () => {
+    const id = await placedBoard();
+    // MCP clients may send receipt as a string "true" instead of boolean true
+    const r = out(await routeNets({ document_id: id, receipt: "true" }));
+    expect(r.receipt).toBeDefined();
+    expect(r.receipt.tool).toBe("route_nets");
+    expect(Array.isArray(r.receipt.nets_routed)).toBe(true);
+  });
+
+  it("reports shorts when a cross-net trace is injected before re-route", async () => {
+    const id = await placedBoard();
+    out(await routeNets({ document_id: id }));
+
+    // Inject a trace that bridges VCC and GND — a hard short
+    const doc = documents.get(id)!;
+    const nodeIds = getPcbNodeIds(doc);
+    const pcb = nodeIds.length > 0 ? getNodePcb(doc, nodeIds[0]!) : null;
+    expect(pcb).not.toBeNull();
+    if (!pcb) return;
+
+    const vccPad = pcb.footprints
+      .flatMap((fp) => fp.pads.filter((p) => p.net === "VCC").map((p) => ({
+        x: fp.position.x + p.position.x,
+        y: fp.position.y + p.position.y,
+      })))[0];
+    const gndPad = pcb.footprints
+      .flatMap((fp) => fp.pads.filter((p) => p.net === "GND").map((p) => ({
+        x: fp.position.x + p.position.x,
+        y: fp.position.y + p.position.y,
+      })))[0];
+    expect(vccPad).toBeDefined();
+    expect(gndPad).toBeDefined();
+    if (!vccPad || !gndPad) return;
+
+    // Add a shorting trace directly on the live PCB
+    pcb.traces.push({
+      start: vccPad,
+      end: gndPad,
+      width: 0.25,
+      layer: "FCu" as any,
+      net: "VCC",
+    });
+
+    // Re-route with receipt — the before DRC should see the short; the
+    // re-route rips up VCC copper (including the injected trace) and
+    // re-lays it clean, so the after DRC may or may not still have it.
+    // Either way the receipt must be populated and consistent.
+    const r = out(await routeNets({ document_id: id, receipt: true }));
+    expect(r.receipt).toBeDefined();
+    expect(Array.isArray(r.receipt.short_pairs)).toBe(true);
+    const delta = r.receipt.deltaByRule as Record<string, number>;
+    expect(r.receipt.shortsIntroduced).toBe(Math.max(0, delta.Short ?? 0));
   });
 
   it("is opt-in — no receipt field unless requested", async () => {
