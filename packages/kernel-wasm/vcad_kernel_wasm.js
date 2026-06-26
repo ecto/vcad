@@ -4692,9 +4692,9 @@ export function get_default_dfm_pack(process) {
 }
 
 /**
- * Get the kernel version string.
- * Use this in browser console to verify the correct WASM build is loaded:
- * `kernelWasm.get_kernel_version()` returns `<crate-version>-<sha>[-dirty]`.
+ * Get the kernel version string (the crate version).
+ * Use this in the browser console to confirm the WASM loaded:
+ * `kernelWasm.get_kernel_version()` returns `<crate-version>`.
  * @returns {string}
  */
 export function get_kernel_version() {

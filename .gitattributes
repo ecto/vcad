@@ -1,0 +1,18 @@
+# Generated WASM kernel artifacts.
+#
+# These are build outputs of `packages/kernel-wasm/scripts/build.mjs`
+# (wasm-pack over crates/vcad-kernel-wasm). They are committed only so
+# environments without a Rust toolchain — the Vercel MCP deploy, fast local
+# dev — can load the bindings without rebuilding.
+#
+# The compiled bytes are reproducible (the kernel no longer bakes the git SHA
+# into the binary — see KERNEL_VERSION in crates/vcad-kernel-wasm/src/lib.rs),
+# so identical kernel source produces identical artifacts and they DON'T
+# conflict across branches when no kernel source changed. When the kernel API
+# *does* change on two branches, the generated glue genuinely differs; mark it
+# binary so git never line-merges it into broken output — resolve by rebuilding
+# (`node packages/kernel-wasm/scripts/build.mjs`) from the merged source.
+packages/kernel-wasm/vcad_kernel_wasm_bg.wasm binary
+packages/kernel-wasm/vcad_kernel_wasm_bg.wasm.d.ts -diff -merge
+packages/kernel-wasm/vcad_kernel_wasm.js -diff -merge
+packages/kernel-wasm/vcad_kernel_wasm.d.ts -diff -merge
