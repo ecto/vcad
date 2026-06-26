@@ -1,0 +1,16 @@
+{
+  "id": "2026-06-26-pcb-negotiated-congestion",
+  "version": "0.9.4",
+  "date": "2026-06-26",
+  "category": "feat",
+  "title": "Negotiated-congestion autorouter closes more nets",
+  "summary": "The whole-board router now layers PathFinder-style negotiated congestion over its rip-up — persistently-contested regions accrue history cost and stuck nets get routing priority — so dense boards close more nets, and unrouted nets come back with diagnostics (blocking nets, congested region, suggested layer/via) plus a 0-1 routability score.",
+  "features": [
+    "ecad",
+    "pcb",
+    "autorouter"
+  ],
+  "mcpTools": [
+    "route_nets"
+  ]
+}

@@ -3892,11 +3892,13 @@ export function ecadResolvePartDef(name, footprint) {
  * Auto-route the whole board over the incremental oracle.
  *
  * Computes the MST ratsnest and routes every unrouted net against a single
- * growing route session, retrying on the back layer with transition vias
+ * growing route session, with PathFinder-style negotiated congestion layered
+ * over the bounded rip-up, retrying on the back layer with transition vias
  * that are probed on both layers before being committed. Returns
- * `{ traces, vias, routed_nets, unrouted_nets }`; every returned trace and
- * via is clearance-legal, or the net is reported unrouted — the router
- * never emits copper that shorts.
+ * `{ traces, vias, routed_nets, unrouted_nets, diagnostics, routability }`;
+ * every returned trace and via is clearance-legal, or the net is reported
+ * unrouted (with a diagnostic naming the blockers, the congested region, and
+ * a suggested layer/via) — the router never emits copper that shorts.
  * @param {string} pcb_json
  * @param {number} width
  * @param {string} nets_filter_json
@@ -5243,6 +5245,48 @@ export function render_pcb_svg(pcb_json, layers_json, scale) {
         return getStringFromWasm0(ptr3, len3);
     } finally {
         wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
+    }
+}
+
+/**
+ * Render a PCB with explicit render options (the "Studio Graphite" theme
+ * system). Backward-compatible companion to [`render_pcb_svg`]: the 3-arg
+ * form keeps working and now defaults to the dark theme.
+ *
+ * `opts_json` is an options object (empty string = defaults), e.g.
+ * `{"theme":"dark","values":true,"netLabels":false,"ratsnest":true,
+ *   "grid":true,"hero":false,"highlight":{"nets":["GND"],"refs":["U1"]}}`.
+ * `theme` is `"dark"` (default) or `"light"` (legacy fab look); `highlight`
+ * recolours the named nets/refs to the brand pink with a glow and dims the
+ * rest — the agent affordance for "show me net X".
+ * @param {string} pcb_json
+ * @param {string} layers_json
+ * @param {number} scale
+ * @param {string} opts_json
+ * @returns {string}
+ */
+export function render_pcb_svg_opts(pcb_json, layers_json, scale, opts_json) {
+    let deferred5_0;
+    let deferred5_1;
+    try {
+        const ptr0 = passStringToWasm0(pcb_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(layers_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passStringToWasm0(opts_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len2 = WASM_VECTOR_LEN;
+        const ret = wasm.render_pcb_svg_opts(ptr0, len0, ptr1, len1, scale, ptr2, len2);
+        var ptr4 = ret[0];
+        var len4 = ret[1];
+        if (ret[3]) {
+            ptr4 = 0; len4 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred5_0 = ptr4;
+        deferred5_1 = len4;
+        return getStringFromWasm0(ptr4, len4);
+    } finally {
+        wasm.__wbindgen_free(deferred5_0, deferred5_1, 1);
     }
 }
 
@@ -7642,12 +7686,12 @@ function __wbg_get_imports() {
             arg0.writeTexture(arg1, arg2, arg3, arg4);
         },
         __wbindgen_cast_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 2391, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 2392, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 2394, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 2395, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h30743bca3150d93c, wasm_bindgen__convert__closures_____invoke__hcf7d3eaee8800b37);
             return ret;
         },
         __wbindgen_cast_0000000000000002: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 3175, function: Function { arguments: [Externref], shim_idx: 3176, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 3178, function: Function { arguments: [Externref], shim_idx: 3179, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__hfdadf281ff0f1c56, wasm_bindgen__convert__closures_____invoke__h9bdf540eb7e61590);
             return ret;
         },

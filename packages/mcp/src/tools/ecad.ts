@@ -2635,6 +2635,11 @@ export async function routeNets(args: Record<string, unknown>) {
   const routedNets = new Set<string>();
   const fallbackNets = new Set<string>();
   const unroutedNets = new Set<string>();
+  // Per-unrouted-connection diagnostics from the kernel (blocking nets, the
+  // congested region, a suggested layer/via) — surfaced so the caller knows
+  // *why* a net stayed open and *where*, not just that it did.
+  type RouteDiagnostic = Awaited<ReturnType<typeof routeAll>>["diagnostics"][number];
+  const diagnostics: RouteDiagnostic[] = [];
   let tracesAdded = 0;
 
   // Auto-route the whole board in the kernel: every net is routed against one
@@ -2710,6 +2715,7 @@ export async function routeNets(args: Record<string, unknown>) {
     }
     for (const n of result.routed_nets) routedNets.add(n);
     for (const n of result.unrouted_nets) unroutedNets.add(n);
+    for (const d of result.diagnostics ?? []) diagnostics.push(d);
   };
 
   let routedSomething = false;
@@ -2770,6 +2776,21 @@ export async function routeNets(args: Record<string, unknown>) {
 
   const planeStitched = [...routedNets].filter((n) => planeNets.has(n)).sort();
 
+  // Overall routability: the fraction of attempted nets that closed. A bare
+  // count of unrouted nets doesn't say how close the board is to done; this does.
+  const attemptedNets = routedNets.size + unroutedNets.size;
+  const routability =
+    attemptedNets === 0 ? 1 : Math.round((routedNets.size / attemptedNets) * 100) / 100;
+  // Keep one diagnostic per still-unrouted net (the kernel may report several
+  // connections for a multi-pin net; the first is the most useful summary).
+  const dedupedDiagnostics: RouteDiagnostic[] = [];
+  const seenDiagNets = new Set<string>();
+  for (const d of diagnostics) {
+    if (!unroutedNets.has(d.net) || seenDiagNets.has(d.net)) continue;
+    seenDiagNets.add(d.net);
+    dedupedDiagnostics.push(d);
+  }
+
   const warnings: string[] = [];
   if (unroutedNets.size > 0) {
     warnings.push(
@@ -2808,6 +2829,7 @@ export async function routeNets(args: Record<string, unknown>) {
         text: JSON.stringify({
           success: true,
           nets_routed: routedNets.size,
+          routability,
           traces_added: tracesAdded,
           // Copper hygiene: re-routing rips the prior route up first, so a
           // re-route reports both what it removed and what it laid — `added`
@@ -2822,6 +2844,7 @@ export async function routeNets(args: Record<string, unknown>) {
             ? { track_widths_mm: realizedWidths }
             : {}),
           ...(unroutedNets.size > 0 ? { unrouted_nets: [...unroutedNets] } : {}),
+          ...(dedupedDiagnostics.length > 0 ? { unrouted_diagnostics: dedupedDiagnostics } : {}),
           ...(fallbackNets.size > 0 ? { fallback_nets: [...fallbackNets] } : {}),
           ...(warnings.length > 0 ? { warnings } : {}),
           ...receiptField,

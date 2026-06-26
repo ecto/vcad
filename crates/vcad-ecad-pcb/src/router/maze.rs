@@ -20,6 +20,7 @@ use vcad_ir::Vec2;
 use crate::session::RouteSession;
 use crate::spatial::{point_in_polygon, CopperGeom};
 
+use super::congestion::Congestion;
 use super::RouteResult;
 
 /// Largest grid dimension along either axis; pitch is coarsened to fit.
@@ -38,6 +39,10 @@ const BEND_PENALTY: f64 = 0.6;
 ///
 /// On success the result's `segments` form a clearance-legal polyline from
 /// `start` to `end`; on failure `success` is false and `segments` is empty.
+///
+/// Congestion-unaware convenience entry point: routes with a flat history field
+/// (the cheapest path that clears all copper). Use [`route_net_maze_cong`] to
+/// bias the search away from contested regions during negotiated routing.
 pub fn route_net_maze(
     session: &RouteSession,
     outline: &[Vec2],
@@ -46,6 +51,27 @@ pub fn route_net_maze(
     start: Vec2,
     end: Vec2,
     width: f64,
+) -> RouteResult {
+    route_net_maze_cong(session, outline, layer, net, start, end, width, None)
+}
+
+/// Route a single net, optionally biased by a PathFinder history-cost field.
+///
+/// Identical to [`route_net_maze`] but the A* step cost includes
+/// `congestion.cost_at(cell)` for every cell entered, so a route prefers to
+/// detour around regions the negotiation loop has marked as persistently
+/// contested. Legality is unchanged — congestion only adds cost, never relaxes
+/// the clearance constraint — so every emitted segment is still DRC-clean.
+#[allow(clippy::too_many_arguments)]
+pub fn route_net_maze_cong(
+    session: &RouteSession,
+    outline: &[Vec2],
+    layer: PcbLayer,
+    net: &str,
+    start: Vec2,
+    end: Vec2,
+    width: f64,
+    congestion: Option<&Congestion>,
 ) -> RouteResult {
     let clearance = session.clearance_for(net);
     let half_w = width / 2.0;
@@ -71,9 +97,21 @@ pub fn route_net_maze(
         legal_step(p, p)
     };
 
-    let path_nodes = astar(&grid, start_node, goal_node, &cell_ok, &|a, b| {
-        legal_step(grid.world_of(a), grid.world_of(b))
-    });
+    // History cost of entering a node (0 when the field is flat / absent), so a
+    // flat field reproduces the congestion-unaware search exactly.
+    let cong = congestion.filter(|c| !c.is_flat());
+    let node_cost = |node: usize| -> f64 {
+        cong.map(|c| c.cost_at(grid.world_of(node))).unwrap_or(0.0)
+    };
+
+    let path_nodes = astar(
+        &grid,
+        start_node,
+        goal_node,
+        &cell_ok,
+        &|a, b| legal_step(grid.world_of(a), grid.world_of(b)),
+        &node_cost,
+    );
 
     let Some(nodes) = path_nodes else {
         return RouteResult {
@@ -224,13 +262,15 @@ impl PartialOrd for State {
 }
 
 /// 8-connected A* on the grid. `cell_ok` tests node passability; `edge_ok`
-/// tests whether the step between two nodes is clearance-legal.
+/// tests whether the step between two nodes is clearance-legal; `node_cost`
+/// adds a PathFinder history penalty for entering a node (0 when uncongested).
 fn astar(
     grid: &Grid,
     start: usize,
     goal: usize,
     cell_ok: &dyn Fn(usize, usize) -> bool,
     edge_ok: &dyn Fn(usize, usize) -> bool,
+    node_cost: &dyn Fn(usize) -> f64,
 ) -> Option<Vec<usize>> {
     let n = grid.nx * grid.ny;
     if start >= n || goal >= n {
@@ -292,7 +332,8 @@ fn astar(
             } else {
                 0.0
             };
-            let tentative = g[node] + step + bend;
+            // PathFinder history penalty for routing through this cell.
+            let tentative = g[node] + step + bend + node_cost(nb);
             if tentative < g[nb] {
                 g[nb] = tentative;
                 came[nb] = node;
