@@ -34,6 +34,9 @@ export function classifyCause(v: DrcViolation): { cause: Cause; refs?: [string, 
   const m = v.message;
   if (/^\s*Short\b/i.test(m) || /connected by copper/i.test(m)) return { cause: "routing" };
   if (/Unconnected net/i.test(m)) return { cause: "connectivity" };
+  // An unstitched plane pad is a connectivity to-do (drop a stitching via), the
+  // same class as an unrouted net — not a footprint/placement defect.
+  if (/Unstitched pad/i.test(m)) return { cause: "connectivity" };
   // Pad-to-pad clearance: footprint (same refdes) vs placement (two parts).
   // Checked before the generic `trace` test so a net literally named "trace"
   // can't masquerade a footprint fault as routing.
