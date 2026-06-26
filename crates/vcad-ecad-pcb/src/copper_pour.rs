@@ -61,7 +61,19 @@ fn fill_zone(pcb: &Pcb, zone: &Zone) -> FilledZone {
     };
 
     // Clip: the union of every clearance void to remove from the pour.
-    let clips = collect_clearance_regions(pcb, zone);
+    let mut clips = collect_clearance_regions(pcb, zone);
+
+    // Board cutouts (mounting slots, internal openings) carry no copper — punch
+    // them out of every pour so a flood never fills a hole in the board (which
+    // would otherwise also ship as copper in the Gerber).
+    for cutout in &pcb.outline.cutouts {
+        if cutout.len() >= 3 {
+            clips.push(Poly {
+                outer: ccw(ring_to_pts(cutout)),
+                holes: vec![],
+            });
+        }
+    }
 
     let filled = if clips.is_empty() {
         vec![subject]

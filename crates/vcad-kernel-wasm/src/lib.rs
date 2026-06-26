@@ -152,6 +152,27 @@ pub fn render_pcb_svg(pcb_json: &str, layers_json: &str, scale: f64) -> Result<S
         .map_err(|e| JsError::new(&e))
 }
 
+/// Render a PCB with explicit render options (the "Studio Graphite" theme
+/// system). Backward-compatible companion to [`render_pcb_svg`]: the 3-arg
+/// form keeps working and now defaults to the dark theme.
+///
+/// `opts_json` is an options object (empty string = defaults), e.g.
+/// `{"theme":"dark","values":true,"netLabels":false,"ratsnest":true,
+///   "grid":true,"hero":false,"highlight":{"nets":["GND"],"refs":["U1"]}}`.
+/// `theme` is `"dark"` (default) or `"light"` (legacy fab look); `highlight`
+/// recolours the named nets/refs to the brand pink with a glow and dims the
+/// rest — the agent affordance for "show me net X".
+#[wasm_bindgen]
+pub fn render_pcb_svg_opts(
+    pcb_json: &str,
+    layers_json: &str,
+    scale: f64,
+    opts_json: &str,
+) -> Result<String, JsError> {
+    vcad_render::pcb::render_pcb_svg_json_opts(pcb_json, layers_json, scale, opts_json)
+        .map_err(|e| JsError::new(&e))
+}
+
 // =============================================================================
 // DFM (Design for Manufacturing)
 // =============================================================================
