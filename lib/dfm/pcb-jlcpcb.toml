@@ -1,0 +1,63 @@
+schema = "vcad.dfm/1"
+version = "1"
+process = "pcb"
+profile = "jlcpcb"
+name = "JLCPCB standard (1-2 layer, 1oz)"
+notes = """
+Tuned to JLCPCB's published standard process for 1-2 layer FR-4 at 1oz outer copper.
+Trace/space tighten with copper weight (etch undercut). Via-in-pad is a warning —
+JLCPCB only fills/caps vias-in-pad via the paid POFV add-on. Override per quote.
+"""
+
+[rules.min_trace_width]
+severity = "error"
+oz1_mm = 0.127
+oz2_mm = 0.20
+oz3_mm = 0.30
+
+[rules.min_clearance]
+severity = "error"
+oz1_mm = 0.127
+oz2_mm = 0.20
+oz3_mm = 0.30
+
+[rules.min_drill]
+severity = "error"
+min_mm = 0.2
+
+[rules.min_annular_ring]
+severity = "error"
+min_mm = 0.13
+
+[rules.copper_to_edge]
+severity = "error"
+min_mm = 0.2
+
+[rules.hole_to_hole]
+severity = "error"
+min_mm = 0.5
+
+[rules.soldermask_dam]
+severity = "warning"
+min_mm = 0.1
+expansion_mm = 0.05
+
+[rules.soldermask_sliver]
+severity = "warning"
+min_mm = 0.13
+expansion_mm = 0.05
+
+[rules.silk_over_pad]
+severity = "warning"
+clearance_mm = 0.15
+
+[rules.acid_trap]
+severity = "warning"
+min_angle_deg = 90.0
+
+[rules.via_in_pad]
+severity = "warning"
+
+[rules.max_copper_layers]
+severity = "error"
+max = 6

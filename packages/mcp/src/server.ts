@@ -1128,7 +1128,7 @@ export async function createServer(
       {
         name: "dfm_check",
         description:
-          "Run Design-for-Manufacturing checks against an open session document for a chosen process (cnc_3axis, fdm, sla, injection, sheet_metal, casting_sand, casting_investment). Returns a structured report with severities, measurements, face references, and suggested fixes. Each rule's threshold is sourced from a TOML pack at lib/dfm/<process>.toml — pass `rule_pack_toml` to override.",
+          "Run Design-for-Manufacturing checks against an open session document. For solid parts pick a mechanical process (cnc_3axis, fdm, sla, injection, sheet_metal, casting_sand, casting_investment) and get back severities, measurements, face references, and suggested fixes. For PCB documents pick a fab profile (pcb_jlcpcb, pcb_pcbway, pcb_generic_2layer, pcb_generic_4layer) to check the board against that fab's published process capability — min annular ring, min drill, min trace/space by copper weight, copper-to-edge, soldermask dam/sliver, silk-over-pad, acid traps, and via-in-pad — returning a per-rule pass/fail report naming the profile. Each rule's threshold is sourced from a TOML pack at lib/dfm/<process>.toml — pass `rule_pack_toml` to override.",
         inputSchema: dfmCheckSchema,
       },
       {

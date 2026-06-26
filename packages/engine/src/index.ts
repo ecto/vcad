@@ -148,6 +148,8 @@ export type { Ast as ExpressionAst } from "./expressions.js";
 export {
   isEcadAvailable,
   runDrc,
+  runPcbDfm,
+  getPcbDfmPack,
   critiqueRoute,
   runErc,
   checkErc,
@@ -183,6 +185,11 @@ export {
 } from "./ecad.js";
 export type {
   DrcViolationResult,
+  PcbFabProfile,
+  PcbDfmSeverity,
+  PcbDfmLocation,
+  PcbDfmRuleResult,
+  PcbDfmReport,
   ErcViolationResult,
   ErcOutcome,
   NetlistResult,

@@ -13,15 +13,22 @@
  * the FaceId→NodeId provenance refactor.
  */
 
-import type { Engine, DfmReport, DfmIssue, DfmProcess } from "@vcad/engine";
-import { runDfm } from "@vcad/engine";
-import type { Document, Node } from "@vcad/ir";
+import type {
+  Engine,
+  DfmReport,
+  DfmIssue,
+  DfmProcess,
+  PcbFabProfile,
+} from "@vcad/engine";
+import { runDfm, runPcbDfm } from "@vcad/engine";
+import type { Document, Node, Pcb } from "@vcad/ir";
+import { getNodePcb, getPcbNodeIds } from "@vcad/core";
 import { documents, getSession } from "./session.js";
 
 /** Most-recent report per session, used by explain / suggest / apply. */
 const lastReports = new Map<string, DfmReport>();
 
-const processEnum = [
+const mechanicalProcessEnum = [
   "cnc_3axis",
   "fdm",
   "sla",
@@ -30,6 +37,43 @@ const processEnum = [
   "casting_sand",
   "casting_investment",
 ] as const;
+
+/** PCB fab profiles, selected via `process` when the document is a board. */
+const pcbProcessEnum = [
+  "pcb_jlcpcb",
+  "pcb_pcbway",
+  "pcb_generic_2layer",
+  "pcb_generic_4layer",
+] as const;
+
+const processEnum = [...mechanicalProcessEnum, ...pcbProcessEnum] as const;
+
+/** Get the PCB from a document — PcbBoard nodes first, then legacy `doc.pcb`. */
+function getDocPcb(doc: Document): Pcb | null {
+  const nodeIds = getPcbNodeIds(doc);
+  if (nodeIds.length > 0) return getNodePcb(doc, nodeIds[0]!);
+  return (doc as Document & { pcb?: Pcb }).pcb ?? null;
+}
+
+/** Map a `process` value to a PCB fab profile, or null if it isn't a PCB one. */
+function pcbProfileFor(process: string): PcbFabProfile | null {
+  const norm = process.trim().toLowerCase().replace(/-/g, "_");
+  const bare = norm.startsWith("pcb_") ? norm.slice(4) : norm;
+  switch (bare) {
+    case "jlcpcb":
+    case "pcbway":
+    case "generic_2layer":
+    case "generic_4layer":
+      return bare;
+    default:
+      return null;
+  }
+}
+
+/** DFM score: 100 minus 30 per failed error, 10 per failed warning (floored at 0). */
+function dfmScore(errors: number, warnings: number): number {
+  return 100 - Math.min(100, errors * 30 + warnings * 10);
+}
 
 // ─── dfm_check ────────────────────────────────────────────────────────────
 
@@ -44,7 +88,12 @@ export const dfmCheckSchema = {
       type: "string" as const,
       enum: [...processEnum],
       description:
-        "Manufacturing process to evaluate against. Each process has its own bundled rule pack in lib/dfm/<process>.toml.",
+        "Manufacturing process (mechanical part) or PCB fab profile (board) to evaluate against. " +
+        "Mechanical: cnc_3axis, fdm, sla, injection, sheet_metal, casting_sand, casting_investment. " +
+        "PCB fab profiles: pcb_jlcpcb, pcb_pcbway, pcb_generic_2layer, pcb_generic_4layer — these run " +
+        "when the document is a PCB and check the board against that fab's published process capability " +
+        "(min annular ring, drill, trace/space by copper weight, copper-to-edge, soldermask dam/sliver, " +
+        "silk-over-pad, acid traps, via-in-pad). Each pack is bundled at lib/dfm/<process>.toml.",
     },
     rule_pack_toml: {
       type: "string" as const,
@@ -58,13 +107,61 @@ export const dfmCheckSchema = {
 export async function dfmCheck(
   input: unknown,
   _engine: Engine,
-): Promise<{ content: Array<{ type: "text"; text: string }> }> {
+): Promise<{ content: Array<{ type: "text"; text: string }>; isError?: boolean }> {
   const args = (input ?? {}) as Record<string, unknown>;
   const documentId = String(args.document_id ?? "");
-  const process = String(args.process ?? "fdm") as DfmProcess;
+  const process = String(args.process ?? "fdm");
   const rulePack = typeof args.rule_pack_toml === "string" ? args.rule_pack_toml : undefined;
   const doc = getSession(documentId);
-  const report = await runDfm(doc, { process, rulePack });
+
+  // PCB branch: a board document checked against a fab-house capability profile.
+  const profile = pcbProfileFor(process);
+  if (profile) {
+    const pcb = getDocPcb(doc);
+    if (!pcb) {
+      return {
+        isError: true,
+        content: [
+          {
+            type: "text",
+            text: `Document ${documentId} has no PCB. The pcb_* profiles only apply to board documents — use a mechanical process (e.g. fdm, cnc_3axis) for solid parts.`,
+          },
+        ],
+      };
+    }
+    const report = await runPcbDfm(pcb, profile, rulePack);
+    if (!report) {
+      return {
+        isError: true,
+        content: [
+          { type: "text", text: "PCB DFM unavailable (kernel WASM not loaded)." },
+        ],
+      };
+    }
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify(
+            {
+              kind: "pcb",
+              fab_profile: report.profile,
+              fab_profile_name: report.profile_name,
+              ...report,
+              rule_count: report.rules.length,
+              failed_rules: report.rules.filter((r) => !r.passed).map((r) => r.rule),
+              score: dfmScore(report.error_count, report.warning_count),
+            },
+            null,
+            2,
+          ),
+        },
+      ],
+    };
+  }
+
+  // Mechanical branch: a solid part checked against a process rule pack.
+  const report = await runDfm(doc, { process: process as DfmProcess, rulePack });
   lastReports.set(documentId, report);
   return {
     content: [
@@ -74,16 +171,10 @@ export async function dfmCheck(
           {
             ...report,
             issue_count: report.issues.length,
-            score:
-              100 -
-              Math.min(
-                100,
-                report.issues.reduce(
-                  (sum, i) =>
-                    sum + (i.severity === "error" ? 30 : i.severity === "warning" ? 10 : 0),
-                  0,
-                ),
-              ),
+            score: dfmScore(
+              report.issues.filter((i) => i.severity === "error").length,
+              report.issues.filter((i) => i.severity === "warning").length,
+            ),
           },
           null,
           2,

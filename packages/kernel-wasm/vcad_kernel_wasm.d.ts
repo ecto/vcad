@@ -1453,6 +1453,28 @@ export function ecadComputeRatsnest(pcb_json: string, netlist_json: string): any
 export function ecadCritiqueRoute(pcb_json: string, net: string): any;
 
 /**
+ * Run Design-for-Manufacturing checks on a PCB against a fab profile.
+ *
+ * Where DRC validates a board against its *own* declared design rules, DFM
+ * validates it against a fab house's published process capability
+ * (`jlcpcb`, `pcbway`, `generic_2layer`, `generic_4layer`). Returns a
+ * per-rule pass/fail report naming the profile.
+ *
+ * # Arguments
+ * * `pcb_json` - JSON-serialized `Pcb` struct
+ * * `profile` - fab profile id (a `pcb_` prefix is tolerated)
+ * * `rule_pack_toml` - optional TOML override of the bundled pack
+ *   (empty string ⇒ use the bundled default)
+ */
+export function ecadDfmCheck(pcb_json: string, profile: string, rule_pack_toml: string): any;
+
+/**
+ * Return the bundled default DFM rule-pack TOML for a fab profile, so a UI
+ * can show and tweak it.
+ */
+export function ecadDfmDefaultPack(profile: string): string;
+
+/**
  * Evaluate first-order analytical motor performance from a JSON
  * `MotorSpec`: torque constant Kt, back-EMF constant Ke, no-load speed,
  * stall torque, and a speed–torque curve. Lets an agent ask "is this motor
@@ -2580,6 +2602,8 @@ export interface InitOutput {
     readonly ecadComponentMeshes: (a: number, b: number) => [number, number, number];
     readonly ecadComputeRatsnest: (a: number, b: number, c: number, d: number) => [number, number, number];
     readonly ecadCritiqueRoute: (a: number, b: number, c: number, d: number) => [number, number, number];
+    readonly ecadDfmCheck: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
+    readonly ecadDfmDefaultPack: (a: number, b: number) => [number, number, number, number];
     readonly ecadEvaluateMotor: (a: number, b: number) => [number, number, number];
     readonly ecadExportFab: (a: number, b: number) => [number, number, number];
     readonly ecadFillZones: (a: number, b: number) => [number, number, number];
@@ -2611,13 +2635,6 @@ export interface InitOutput {
     readonly wasmcamsettings_fromJson: (a: number, b: number) => [number, number, number];
     readonly wasmcamsettings_new: () => number;
     readonly isEcadAvailable: () => number;
-    readonly digitizeSketch: (a: number, b: number, c: number, d: number) => [number, number, number, number];
-    readonly digitizeText: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
-    readonly isEmbroideryAvailable: () => number;
-    readonly readEmbroideryDst: (a: number, b: number) => [number, number, number, number];
-    readonly readEmbroideryPes: (a: number, b: number) => [number, number, number, number];
-    readonly writeEmbroideryDst: (a: number, b: number) => [number, number, number, number];
-    readonly writeEmbroideryPes: (a: number, b: number) => [number, number, number, number];
     readonly __wbg_wasmkeybindings_free: (a: number, b: number) => void;
     readonly __wbg_wasmsketchsession_free: (a: number, b: number) => void;
     readonly sketchCircleSegments: (a: number, b: number, c: number, d: number) => [number, number, number, number];
@@ -2730,6 +2747,13 @@ export interface InitOutput {
     readonly wasmdocumentengine_set_visible: (a: number, b: number, c: number, d: number) => any;
     readonly wasmdocumentengine_undo: (a: number) => any;
     readonly wasmdocumentengine_update_feature: (a: number, b: number, c: number, d: number, e: number) => any;
+    readonly digitizeSketch: (a: number, b: number, c: number, d: number) => [number, number, number, number];
+    readonly digitizeText: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
+    readonly isEmbroideryAvailable: () => number;
+    readonly readEmbroideryDst: (a: number, b: number) => [number, number, number, number];
+    readonly readEmbroideryPes: (a: number, b: number) => [number, number, number, number];
+    readonly writeEmbroideryDst: (a: number, b: number) => [number, number, number, number];
+    readonly writeEmbroideryPes: (a: number, b: number) => [number, number, number, number];
     readonly wasm_bindgen__closure__destroy__h30743bca3150d93c: (a: number, b: number) => void;
     readonly wasm_bindgen__closure__destroy__hfdadf281ff0f1c56: (a: number, b: number) => void;
     readonly wasm_bindgen__convert__closures_____invoke__h3c7e771ac0cfa72e: (a: number, b: number, c: any, d: any) => void;
