@@ -6036,18 +6036,23 @@ export async function describePcb(args: Record<string, unknown>) {
 
   // --- DRC status (counts only; no sample) ---------------------------------
   const drcSummary = await drcPcb(pcb, "summary", 0);
-  const drc = {
-    violations: drcSummary.violations,
-    errors: drcSummary.errors,
-    warnings: drcSummary.warnings,
-    categories: drcSummary.categories,
-    byRule: drcSummary.byRule,
-    worstClearance: drcSummary.worstClearance,
-    // `clean` ignores connectivity (unrouted nets are a to-do, not a defect) —
-    // same semantics as placement_drc.clean.
-    clean:
-      drcSummary.categories.clearance + drcSummary.categories.manufacturing === 0,
-  };
+  // Unverifiable ≠ clean: when the kernel can't evaluate the board, report the
+  // status instead of fabricating zero-violation counts (same fail-closed
+  // semantics as run_drc, which returns ecadUnverifiable on `!success`).
+  const drc = drcSummary.success
+    ? {
+        violations: drcSummary.violations,
+        errors: drcSummary.errors,
+        warnings: drcSummary.warnings,
+        categories: drcSummary.categories,
+        byRule: drcSummary.byRule,
+        worstClearance: drcSummary.worstClearance,
+        // `clean` ignores connectivity (unrouted nets are a to-do, not a defect) —
+        // same semantics as placement_drc.clean.
+        clean:
+          drcSummary.categories.clearance + drcSummary.categories.manufacturing === 0,
+      }
+    : { verifiable: false as const, status: drcSummary.status, reason: drcSummary.reason };
 
   // --- Exportability / renderability probe ---------------------------------
   // Actually serialize the board for fab + preview and report success. This is
