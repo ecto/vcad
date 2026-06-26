@@ -3567,65 +3567,6 @@ export function ecadCritiqueRoute(pcb_json, net) {
 }
 
 /**
- * Run Design-for-Manufacturing checks on a PCB against a fab profile.
- *
- * Where DRC validates a board against its *own* declared design rules, DFM
- * validates it against a fab house's published process capability
- * (`jlcpcb`, `pcbway`, `generic_2layer`, `generic_4layer`). Returns a
- * per-rule pass/fail report naming the profile.
- *
- * # Arguments
- * * `pcb_json` - JSON-serialized `Pcb` struct
- * * `profile` - fab profile id (a `pcb_` prefix is tolerated)
- * * `rule_pack_toml` - optional TOML override of the bundled pack
- *   (empty string ⇒ use the bundled default)
- * @param {string} pcb_json
- * @param {string} profile
- * @param {string} rule_pack_toml
- * @returns {any}
- */
-export function ecadDfmCheck(pcb_json, profile, rule_pack_toml) {
-    const ptr0 = passStringToWasm0(pcb_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-    const len0 = WASM_VECTOR_LEN;
-    const ptr1 = passStringToWasm0(profile, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-    const len1 = WASM_VECTOR_LEN;
-    const ptr2 = passStringToWasm0(rule_pack_toml, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-    const len2 = WASM_VECTOR_LEN;
-    const ret = wasm.ecadDfmCheck(ptr0, len0, ptr1, len1, ptr2, len2);
-    if (ret[2]) {
-        throw takeFromExternrefTable0(ret[1]);
-    }
-    return takeFromExternrefTable0(ret[0]);
-}
-
-/**
- * Return the bundled default DFM rule-pack TOML for a fab profile, so a UI
- * can show and tweak it.
- * @param {string} profile
- * @returns {string}
- */
-export function ecadDfmDefaultPack(profile) {
-    let deferred3_0;
-    let deferred3_1;
-    try {
-        const ptr0 = passStringToWasm0(profile, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        const len0 = WASM_VECTOR_LEN;
-        const ret = wasm.ecadDfmDefaultPack(ptr0, len0);
-        var ptr2 = ret[0];
-        var len2 = ret[1];
-        if (ret[3]) {
-            ptr2 = 0; len2 = 0;
-            throw takeFromExternrefTable0(ret[2]);
-        }
-        deferred3_0 = ptr2;
-        deferred3_1 = len2;
-        return getStringFromWasm0(ptr2, len2);
-    } finally {
-        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
-    }
-}
-
-/**
  * Evaluate first-order analytical motor performance from a JSON
  * `MotorSpec`: torque constant Kt, back-EMF constant Ke, no-load speed,
  * stall torque, and a speed–torque curve. Lets an agent ask "is this motor
@@ -4323,6 +4264,75 @@ export function evaluateVCode(vcode) {
         throw takeFromExternrefTable0(ret[1]);
     }
     return Solid.__wrap(ret[0]);
+}
+
+/**
+ * Export a `Pcb` to a native, editable KiCad 9 `.kicad_pcb` board file.
+ *
+ * The inverse of [`parse_kicad_pcb`]: footprints, pads, nets, traces,
+ * vias, zones, the layer table, and the board outline are serialized back
+ * to S-expressions a human can open and finish in KiCad.
+ *
+ * # Arguments
+ * * `pcb_json` - JSON-serialized `Pcb` struct
+ *
+ * # Returns
+ * The `.kicad_pcb` file content as a string.
+ * @param {string} pcb_json
+ * @returns {string}
+ */
+export function exportKicadPcb(pcb_json) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const ptr0 = passStringToWasm0(pcb_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.exportKicadPcb(ptr0, len0);
+        var ptr2 = ret[0];
+        var len2 = ret[1];
+        if (ret[3]) {
+            ptr2 = 0; len2 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred3_0 = ptr2;
+        deferred3_1 = len2;
+        return getStringFromWasm0(ptr2, len2);
+    } finally {
+        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+    }
+}
+
+/**
+ * Export a `SchematicSheet` to a native, editable KiCad 9 `.kicad_sch`
+ * schematic file.
+ *
+ * # Arguments
+ * * `sheet_json` - JSON-serialized `SchematicSheet` struct
+ *
+ * # Returns
+ * The `.kicad_sch` file content as a string.
+ * @param {string} sheet_json
+ * @returns {string}
+ */
+export function exportKicadSch(sheet_json) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const ptr0 = passStringToWasm0(sheet_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.exportKicadSch(ptr0, len0);
+        var ptr2 = ret[0];
+        var len2 = ret[1];
+        if (ret[3]) {
+            ptr2 = 0; len2 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred3_0 = ptr2;
+        deferred3_1 = len2;
+        return getStringFromWasm0(ptr2, len2);
+    } finally {
+        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+    }
 }
 
 /**
@@ -7743,12 +7753,12 @@ function __wbg_get_imports() {
             arg0.writeTexture(arg1, arg2, arg3, arg4);
         },
         __wbindgen_cast_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 2435, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 2436, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 2392, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 2393, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h30743bca3150d93c, wasm_bindgen__convert__closures_____invoke__hcf7d3eaee8800b37);
             return ret;
         },
         __wbindgen_cast_0000000000000002: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 3219, function: Function { arguments: [Externref], shim_idx: 3220, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 3176, function: Function { arguments: [Externref], shim_idx: 3177, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__hfdadf281ff0f1c56, wasm_bindgen__convert__closures_____invoke__h9bdf540eb7e61590);
             return ret;
         },

@@ -1,0 +1,10 @@
+{
+  "id": "2026-06-26-route-nets-receipt-fix",
+  "version": "0.9.4",
+  "date": "2026-06-26",
+  "category": "fix",
+  "title": "route_nets receipt always populated when requested",
+  "summary": "Fix receipt:true returning only {document_id} — robust boolean coercion + enrich receipt with nets routed/unrouted, trace/via counts, plane-stitched nets, and short net pairs.",
+  "features": ["pcb", "mcp", "receipt"],
+  "mcpTools": ["route_nets"]
+}

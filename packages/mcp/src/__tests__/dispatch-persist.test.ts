@@ -174,4 +174,49 @@ describe("dispatch persist wrapper (end-to-end through createServer)", () => {
     await client.close();
     await server.close();
   });
+
+  it("undo rewinds the last mutation through the real dispatch path", async () => {
+    installFake();
+    const { client, server } = await connect(engine, {
+      sub: "user-3",
+      email: "w@x.test",
+    });
+
+    // Build a board: create → place → pour. Each call runs in its own
+    // per-request scope (signed-in user), so the only way undo can work across
+    // calls is the process-global snapshot stack the dispatch layer maintains.
+    const created = await client.callTool({ name: "create_schematic", arguments: {} });
+    const id = JSON.parse(firstText(created)).document_id as string;
+    await client.callTool({
+      name: "place_components",
+      arguments: { document_id: id, board_width: 40, board_height: 20 },
+    });
+    const z = await client.callTool({
+      name: "add_zone",
+      arguments: { document_id: id, net: "GND", fill_board: true },
+    });
+    expect(JSON.parse(firstText(z)).zones_total).toBe(1);
+
+    // Undo the pour — the snapshot taken *before* add_zone is restored.
+    const u = await client.callTool({ name: "undo", arguments: { document_id: id } });
+    const undone = JSON.parse(firstText(u));
+    expect(undone.success).toBe(true);
+    expect(undone.changed).toEqual([
+      expect.objectContaining({ action: "removed", kind: "zone", net: "GND" }),
+    ]);
+
+    // The persisted/live session no longer has the pour.
+    const got = await client.callTool({
+      name: "get_document",
+      arguments: { document_id: id },
+    });
+    const doc = JSON.parse(firstText(got)) as {
+      nodes: Record<string, { op: { type: string; board?: { zones: unknown[] } } }>;
+    };
+    const pcbNode = Object.values(doc.nodes).find((n) => n.op.type === "PcbBoard");
+    expect(pcbNode?.op.board?.zones).toHaveLength(0);
+
+    await client.close();
+    await server.close();
+  });
 });
