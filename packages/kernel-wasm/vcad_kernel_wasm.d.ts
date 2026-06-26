@@ -1453,6 +1453,28 @@ export function ecadComputeRatsnest(pcb_json: string, netlist_json: string): any
 export function ecadCritiqueRoute(pcb_json: string, net: string): any;
 
 /**
+ * Run Design-for-Manufacturing checks on a PCB against a fab profile.
+ *
+ * Where DRC validates a board against its *own* declared design rules, DFM
+ * validates it against a fab house's published process capability
+ * (`jlcpcb`, `pcbway`, `generic_2layer`, `generic_4layer`). Returns a
+ * per-rule pass/fail report naming the profile.
+ *
+ * # Arguments
+ * * `pcb_json` - JSON-serialized `Pcb` struct
+ * * `profile` - fab profile id (a `pcb_` prefix is tolerated)
+ * * `rule_pack_toml` - optional TOML override of the bundled pack
+ *   (empty string ⇒ use the bundled default)
+ */
+export function ecadDfmCheck(pcb_json: string, profile: string, rule_pack_toml: string): any;
+
+/**
+ * Return the bundled default DFM rule-pack TOML for a fab profile, so a UI
+ * can show and tweak it.
+ */
+export function ecadDfmDefaultPack(profile: string): string;
+
+/**
  * Evaluate first-order analytical motor performance from a JSON
  * `MotorSpec`: torque constant Kt, back-EMF constant Ke, no-load speed,
  * stall torque, and a speed–torque curve. Lets an agent ask "is this motor
@@ -2530,13 +2552,6 @@ export interface InitOutput {
     readonly solid_fillet: (a: number, b: number) => number;
     readonly solid_shell: (a: number, b: number) => number;
     readonly getCompiledModule: () => any;
-    readonly __wbg_circuitsim_free: (a: number, b: number) => void;
-    readonly circuitsim_dt: (a: number) => number;
-    readonly circuitsim_new: (a: number, b: number) => [number, number, number];
-    readonly circuitsim_observe: (a: number) => [number, number, number];
-    readonly circuitsim_reset: (a: number) => void;
-    readonly circuitsim_setValue: (a: number, b: number, c: number) => void;
-    readonly circuitsim_step: (a: number, b: number) => [number, number, number];
     readonly __wbg_get_slicersettings_first_layer_height: (a: number) => number;
     readonly __wbg_get_slicersettings_infill_density: (a: number) => number;
     readonly __wbg_get_slicersettings_infill_pattern: (a: number) => number;
@@ -2641,6 +2656,8 @@ export interface InitOutput {
     readonly ecadComponentMeshes: (a: number, b: number) => [number, number, number];
     readonly ecadComputeRatsnest: (a: number, b: number, c: number, d: number) => [number, number, number];
     readonly ecadCritiqueRoute: (a: number, b: number, c: number, d: number) => [number, number, number];
+    readonly ecadDfmCheck: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
+    readonly ecadDfmDefaultPack: (a: number, b: number) => [number, number, number, number];
     readonly ecadEvaluateMotor: (a: number, b: number) => [number, number, number];
     readonly ecadExportFab: (a: number, b: number) => [number, number, number];
     readonly ecadFillZones: (a: number, b: number) => [number, number, number];
@@ -2689,6 +2706,13 @@ export interface InitOutput {
     readonly readEmbroideryPes: (a: number, b: number) => [number, number, number, number];
     readonly writeEmbroideryDst: (a: number, b: number) => [number, number, number, number];
     readonly writeEmbroideryPes: (a: number, b: number) => [number, number, number, number];
+    readonly __wbg_circuitsim_free: (a: number, b: number) => void;
+    readonly circuitsim_dt: (a: number) => number;
+    readonly circuitsim_new: (a: number, b: number) => [number, number, number];
+    readonly circuitsim_observe: (a: number) => [number, number, number];
+    readonly circuitsim_reset: (a: number) => void;
+    readonly circuitsim_setValue: (a: number, b: number, c: number) => void;
+    readonly circuitsim_step: (a: number, b: number) => [number, number, number];
     readonly __wbg_wasmkeybindings_free: (a: number, b: number) => void;
     readonly __wbg_wasmsketchsession_free: (a: number, b: number) => void;
     readonly sketchCircleSegments: (a: number, b: number, c: number, d: number) => [number, number, number, number];

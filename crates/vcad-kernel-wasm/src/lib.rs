@@ -5004,6 +5004,46 @@ mod ecad_wasm {
         serde_wasm_bindgen::to_value(&violations).map_err(|e| JsError::new(&e.to_string()))
     }
 
+    /// Run Design-for-Manufacturing checks on a PCB against a fab profile.
+    ///
+    /// Where DRC validates a board against its *own* declared design rules, DFM
+    /// validates it against a fab house's published process capability
+    /// (`jlcpcb`, `pcbway`, `generic_2layer`, `generic_4layer`). Returns a
+    /// per-rule pass/fail report naming the profile.
+    ///
+    /// # Arguments
+    /// * `pcb_json` - JSON-serialized `Pcb` struct
+    /// * `profile` - fab profile id (a `pcb_` prefix is tolerated)
+    /// * `rule_pack_toml` - optional TOML override of the bundled pack
+    ///   (empty string ⇒ use the bundled default)
+    #[wasm_bindgen(js_name = ecadDfmCheck)]
+    pub fn ecad_dfm_check(
+        pcb_json: &str,
+        profile: &str,
+        rule_pack_toml: &str,
+    ) -> Result<JsValue, JsError> {
+        let pcb: Pcb = serde_json::from_str(pcb_json).map_err(|e| JsError::new(&e.to_string()))?;
+        let prof = vcad_ecad_pcb::PcbFabProfile::from_str(profile)
+            .ok_or_else(|| JsError::new(&format!("unknown PCB fab profile: {profile}")))?;
+        let override_toml = if rule_pack_toml.trim().is_empty() {
+            None
+        } else {
+            Some(rule_pack_toml)
+        };
+        let report = vcad_ecad_pcb::check_dfm(&pcb, prof, override_toml)
+            .map_err(|e| JsError::new(&e.to_string()))?;
+        serde_wasm_bindgen::to_value(&report).map_err(|e| JsError::new(&e.to_string()))
+    }
+
+    /// Return the bundled default DFM rule-pack TOML for a fab profile, so a UI
+    /// can show and tweak it.
+    #[wasm_bindgen(js_name = ecadDfmDefaultPack)]
+    pub fn ecad_dfm_default_pack(profile: &str) -> Result<String, JsError> {
+        let prof = vcad_ecad_pcb::PcbFabProfile::from_str(profile)
+            .ok_or_else(|| JsError::new(&format!("unknown PCB fab profile: {profile}")))?;
+        Ok(prof.pack_toml().to_string())
+    }
+
     /// Audit one net's routing without mutating anything: length, via/layer
     /// count, the closest approach to other-net copper (via the router oracle),
     /// and any clearance/short/unconnected DRC issues it's involved in. The

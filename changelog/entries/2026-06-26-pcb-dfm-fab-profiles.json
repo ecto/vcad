@@ -1,0 +1,16 @@
+{
+  "id": "2026-06-26-pcb-dfm-fab-profiles",
+  "version": "0.9.4",
+  "date": "2026-06-26",
+  "category": "feat",
+  "title": "PCB DFM checks against fab-house profiles",
+  "summary": "dfm_check now grades PCB documents against JLCPCB, PCBWay, and generic 2/4-layer fab profiles — min annular ring, drill, trace/space by copper weight, copper-to-edge, soldermask dam/sliver, silk-over-pad, acid traps, and via-in-pad — returning a per-rule pass/fail naming the profile.",
+  "features": [
+    "ecad",
+    "pcb",
+    "dfm"
+  ],
+  "mcpTools": [
+    "dfm_check"
+  ]
+}

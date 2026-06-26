@@ -196,6 +196,8 @@ import {
   getPadPositionsSchema,
   getFootprint,
   getFootprintSchema,
+  describePcb,
+  describePcbSchema,
   addVia,
   addViaSchema,
   setStackup,
@@ -241,6 +243,7 @@ import {
   searchFootprints,
   searchFootprintsSchema,
 } from "./tools/ecad.js";
+import { checkEnclosureFit, checkEnclosureFitSchema } from "./tools/enclosure.js";
 import { createCadLoon, createCadLoonSchema } from "./tools/loon.js";
 import {
   dfmCheck,
@@ -634,6 +637,7 @@ const TOOL_PACKS: Record<string, readonly string[]> = {
     "place_components",
     "route_nets",
     "get_pad_positions",
+    "describe_pcb",
     "add_trace",
     "add_via",
     "add_via_array",
@@ -651,6 +655,7 @@ const TOOL_PACKS: Record<string, readonly string[]> = {
     "add_motor_winding",
     "winding_layout",
     "board_from_solid",
+    "check_enclosure_fit",
     "import_kicad",
     "import_eagle",
     "run_drc",
@@ -1130,7 +1135,7 @@ export async function createServer(
       {
         name: "dfm_check",
         description:
-          "Run Design-for-Manufacturing checks against an open session document for a chosen process (cnc_3axis, fdm, sla, injection, sheet_metal, casting_sand, casting_investment). Returns a structured report with severities, measurements, face references, and suggested fixes. Each rule's threshold is sourced from a TOML pack at lib/dfm/<process>.toml — pass `rule_pack_toml` to override.",
+          "Run Design-for-Manufacturing checks against an open session document. For solid parts pick a mechanical process (cnc_3axis, fdm, sla, injection, sheet_metal, casting_sand, casting_investment) and get back severities, measurements, face references, and suggested fixes. For PCB documents pick a fab profile (pcb_jlcpcb, pcb_pcbway, pcb_generic_2layer, pcb_generic_4layer) to check the board against that fab's published process capability — min annular ring, min drill, min trace/space by copper weight, copper-to-edge, soldermask dam/sliver, silk-over-pad, acid traps, and via-in-pad — returning a per-rule pass/fail report naming the profile. Each rule's threshold is sourced from a TOML pack at lib/dfm/<process>.toml — pass `rule_pack_toml` to override.",
         inputSchema: dfmCheckSchema,
       },
       {
@@ -1396,6 +1401,19 @@ export async function createServer(
         inputSchema: boardFromSolidSchema,
       },
       {
+        name: "check_enclosure_fit",
+        description:
+          "Cross-check a board (board session) against the enclosure it ships " +
+          "in (a CAD session holding the case solid) — the verification axis no " +
+          "EDA tool has, because vcad owns both a BRep kernel and a PCB engine. " +
+          "Extracts the case cavity, standoffs, and wall cutouts from the solid " +
+          "mesh, then verifies: board fits with clearance, tall parts clear the " +
+          "lid, mounting holes land on standoffs, and connectors line up with " +
+          "the wall openings. Pass `derive:true` to also get a board outline + " +
+          "holes seeded from the cavity. Surfaced in build_receipt too.",
+        inputSchema: checkEnclosureFitSchema,
+      },
+      {
         name: "list_footprints",
         description:
           "List the footprint families the parametric engine resolves, each " +
@@ -1433,6 +1451,18 @@ export async function createServer(
           "`footprint` resolves an id PRE-placement (pass `at`/`rotation`/" +
           "`side` to project a hypothetical placement). Read-only.",
         inputSchema: getFootprintSchema,
+      },
+      {
+        name: "describe_pcb",
+        description:
+          "Inspect the session PCB as compact, structured data: board size + " +
+          "outline, stackup (layer names + copper weights), net classes / " +
+          "design rules, zones (net/layer/bbox/fill), trace & via counts by net " +
+          "and layer, component count, the current DRC status, and an " +
+          "exportability/renderability probe that actually serializes the board " +
+          "for fab + 3D preview — surfacing the 'DRC-clean but unexportable' " +
+          "state get_document/read can't see. Read-only.",
+        inputSchema: describePcbSchema,
       },
       {
         name: "add_trace",
@@ -2182,6 +2212,10 @@ export async function createServer(
           result = boardFromSolid(args, engine);
           break;
 
+        case "check_enclosure_fit":
+          result = await checkEnclosureFit(args, engine);
+          break;
+
         case "list_footprints":
           result = listFootprints(args);
           break;
@@ -2196,6 +2230,10 @@ export async function createServer(
 
         case "get_footprint":
           result = await getFootprint(args);
+          break;
+
+        case "describe_pcb":
+          result = await describePcb(args);
           break;
 
         case "add_trace":
@@ -2339,7 +2377,7 @@ export async function createServer(
           break;
 
         case "build_receipt":
-          result = await buildReceipt(args);
+          result = await buildReceipt(args, engine);
           break;
 
         case "verify_receipt":
