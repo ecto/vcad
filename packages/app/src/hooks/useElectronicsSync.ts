@@ -70,8 +70,13 @@ export function useElectronicsSync() {
   useEffect(() => {
     if (!active || !pcb) return;
     const timer = setTimeout(async () => {
-      const violations = await runDrc(pcb);
-      useElectronicsStore.getState().setDrcViolations(violations);
+      // On an `errored` board (kernel couldn't parse it — e.g. a malformed
+      // layer name) the board was never checked, so don't paint a false-clean
+      // empty overlay; leave the prior overlay untouched until it parses again.
+      const outcome = await runDrc(pcb);
+      if (outcome.status === "ok") {
+        useElectronicsStore.getState().setDrcViolations(outcome.value);
+      }
     }, 300);
     return () => clearTimeout(timer);
   }, [pcb, active]);
@@ -80,8 +85,10 @@ export function useElectronicsSync() {
   useEffect(() => {
     if (!active || !schematic) return;
     const timer = setTimeout(async () => {
-      const violations = await runErc(schematic);
-      useElectronicsStore.getState().setErcViolations(violations);
+      const outcome = await runErc(schematic);
+      if (outcome.status === "ok") {
+        useElectronicsStore.getState().setErcViolations(outcome.value);
+      }
     }, 300);
     return () => clearTimeout(timer);
   }, [schematic, active]);

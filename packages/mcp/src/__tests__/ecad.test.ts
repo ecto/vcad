@@ -1,10 +1,12 @@
 import { describe, it, expect, beforeAll, beforeEach } from "vitest";
 import { Engine, resolveFootprint, parseKicadPcb } from "@vcad/engine";
-import type { Document, Pcb, Vec2 } from "@vcad/ir";
+import type { Document, Pcb, SchematicSheet, Vec2 } from "@vcad/ir";
+import { createDocument } from "@vcad/ir";
 import {
   createSchematic,
   placeComponents,
   routeNets,
+  critiqueRoute,
   runDrc,
   runErc,
   exportGerber,
@@ -3884,6 +3886,126 @@ describe("new PCB tools survive the kernel pipeline", () => {
     const gerber = out(await exportGerber({ document_id: id }));
     expect(gerber.success).toBe(true);
     expect(gerber.files.length).toBeGreaterThan(0);
+  });
+});
+
+// ===========================================================================
+// Unverifiable ≠ clean — a board/schematic the kernel can't deserialize (e.g. a
+// dotted layer name 'In1.Cu' that should be 'In1Cu') must surface as an error
+// the agent branches on, NEVER as a passing "0 violations / clean" result.
+// ===========================================================================
+describe("run_drc / run_erc / critique_route surface 'unverifiable', not false-clean", () => {
+  /** A minimal valid board, used as the base for the malformed fixtures. */
+  const validPcb: Pcb = {
+    outline: {
+      vertices: [
+        { x: 0, y: 0 },
+        { x: 10, y: 0 },
+        { x: 10, y: 10 },
+        { x: 0, y: 10 },
+      ],
+      thickness: 1.6,
+    },
+    stackup: { layers: [{ layer: "FCu" }, { layer: "BCu" }] },
+    nets: [],
+    rules: {
+      defaultRules: {
+        name: "default",
+        traceWidth: 0.2,
+        clearance: 0.2,
+        viaDiameter: 0.6,
+        viaDrill: 0.3,
+      },
+      edgeClearance: 0.2,
+      holeToHole: 0.25,
+      minAnnularRing: 0.05,
+      minDrill: 0.2,
+    },
+    footprints: [],
+    traces: [],
+    vias: [],
+    zones: [],
+  };
+
+  // A trace on a dotted layer name — serde refuses the whole board.
+  const malformedPcb = {
+    ...validPcb,
+    traces: [
+      { start: { x: 1, y: 1 }, end: { x: 5, y: 1 }, width: 0.2, layer: "In1.Cu", net: "GND" },
+    ],
+  } as unknown as Pcb;
+
+  const malformedSheet = {
+    components: [
+      {
+        ref: "R1",
+        value: "10k",
+        footprintId: "Resistor_SMD:R_0805",
+        position: { x: 0, y: 0 },
+        rotation: 0,
+        mirror: false,
+        pins: [{ number: "1", name: "1", pin_type: "Inputt", position: { x: 0, y: 0 } }],
+      },
+    ],
+    wires: [],
+    junctions: [],
+    labels: [],
+  } as unknown as SchematicSheet;
+
+  /** Inline document carrying a raw (possibly malformed) PCB. */
+  function docWithPcb(pcb: Pcb): Document {
+    return { ...createDocument(), pcb } as unknown as Document;
+  }
+  /** Inline document carrying a raw (possibly malformed) schematic. */
+  function docWithSchematic(schematic: SchematicSheet): Document {
+    return { ...createDocument(), schematic } as unknown as Document;
+  }
+
+  /** Permissive view of a tool result — the unverifiable arm carries
+   *  `structuredContent`/`isError` the success arm doesn't. */
+  type AnyResult = {
+    isError?: boolean;
+    content: Array<{ type: string; text: string }>;
+    structuredContent?: {
+      verifiable?: boolean;
+      status?: string;
+      offending_field?: string;
+      next_actions?: string[];
+    };
+  };
+  const asResult = (r: unknown) => r as AnyResult;
+
+  it("run_drc returns isError + verifiable:false (not success) for a malformed board", async () => {
+    const result = asResult(await runDrc({ document: docWithPcb(malformedPcb) }));
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent?.verifiable).toBe(false);
+    expect(result.structuredContent?.status).toBe("errored");
+    expect(result.structuredContent?.offending_field).toBe("In1.Cu");
+    expect(result.structuredContent?.next_actions?.length).toBeGreaterThan(0);
+    // The text must NOT read as a clean pass.
+    const text = result.content[0]!.text;
+    expect(text).toMatch(/UNVERIFIABLE/);
+    expect(text).not.toMatch(/"success":\s*true/);
+  });
+
+  it("run_drc still passes for a board the kernel can parse", async () => {
+    const result = asResult(await runDrc({ document: docWithPcb(validPcb) }));
+    expect(result.isError).toBeFalsy();
+    expect(out(result).success).toBe(true);
+  });
+
+  it("critique_route returns isError + verifiable:false for a malformed board", async () => {
+    const result = asResult(await critiqueRoute({ document: docWithPcb(malformedPcb), net: "GND" }));
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent?.verifiable).toBe(false);
+    expect(result.structuredContent?.offending_field).toBe("In1.Cu");
+  });
+
+  it("run_erc returns isError + verifiable:false for a malformed schematic", async () => {
+    const result = asResult(await runErc({ document: docWithSchematic(malformedSheet) }));
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent?.verifiable).toBe(false);
+    expect(result.structuredContent?.offending_field).toBe("Inputt");
   });
 });
 
