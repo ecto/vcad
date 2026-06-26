@@ -42,6 +42,7 @@ import {
   routeDiffPair as kernelRouteDiffPair,
   critiqueRoute as kernelCritiqueRoute,
   runDrc as kernelRunDrc,
+  runErc as kernelRunErc,
   evaluateMotor,
   airgapFluxDensity,
   resolvePart as kernelResolvePart,
@@ -67,6 +68,50 @@ function getDocPcb(doc: Document): Pcb | null {
 function ecadError(text: string) {
   return {
     content: [{ type: "text" as const, text: `Error: ${text}` }],
+    isError: true as const,
+  };
+}
+
+/**
+ * Tool result for "the kernel could not verify this input" — a state that is
+ * distinct from a clean pass. The board/schematic was never actually checked
+ * (e.g. a malformed layer name like `In1.Cu` that should be `In1Cu`), so it must
+ * NOT read as success: an agent that sees "0 violations" here could ship a board
+ * that was never verified. Reads as `verifiable: false`, carries the kernel
+ * `reason` and the `offending_field` when known, and a `next_actions` hint.
+ */
+function ecadUnverifiable(
+  check: string,
+  outcome: { reason: string; offending_field?: string },
+) {
+  const field = outcome.offending_field;
+  const next_actions = field
+    ? [
+        `The kernel does not recognize '${field}'. Fix it and re-run ${check}. ` +
+          `PCB layer names are un-dotted — e.g. 'In1Cu', not 'In1.Cu'.`,
+      ]
+    : [
+        `The kernel could not process the input — it may be malformed, or the ` +
+          `verification engine may be unavailable. Inspect 'reason', fix it, and re-run ${check}.`,
+      ];
+  const payload = {
+    status: "errored" as const,
+    verifiable: false as const,
+    check,
+    reason: outcome.reason,
+    ...(field ? { offending_field: field } : {}),
+    next_actions,
+  };
+  return {
+    content: [
+      {
+        type: "text" as const,
+        text:
+          `${check} could not run — this board is UNVERIFIABLE (NOT clean): ${outcome.reason}` +
+          (field ? ` (offending field: '${field}')` : ""),
+      },
+    ],
+    structuredContent: payload,
     isError: true as const,
   };
 }
@@ -2235,7 +2280,14 @@ export async function placeComponents(args: Record<string, unknown>) {
   // set_placement before routing on top of a fault — instead of only finding
   // out at run_drc, three steps later.
   const placementDrc = await summarizePlacementDrc(pcb);
-  if (!placementDrc.clean) {
+  if (placementDrc.unverifiable) {
+    const u = placementDrc.unverifiable;
+    warnings.push(
+      `placement could NOT be verified — the kernel rejected the board (${u.reason}` +
+        `${u.offending_field ? `, offending field '${u.offending_field}'` : ""}); ` +
+        `fix it before relying on DRC`,
+    );
+  } else if (!placementDrc.clean) {
     const parts: string[] = [];
     if (placementDrc.shorts.length > 0) parts.push(`${placementDrc.shorts.length} short(s)`);
     if (placementDrc.clearance_violations > 0)
@@ -2792,13 +2844,17 @@ export async function routeNets(args: Record<string, unknown>) {
   }
 
   const receiptField: Record<string, unknown> = {};
-  if (wantReceipt && beforeSnap) {
+  // Only build a receipt when both snapshots actually verified — a receipt
+  // diffed against an unverifiable (kernel-rejected) board would be meaningless.
+  if (wantReceipt && beforeSnap && beforeSnap.success) {
     const after = await drcPcb(pcb, "full", 500);
-    const entry = buildEntry(
-      { tool: "route_nets", args: { nets: netsFilter, trace_width: traceWidth }, before: beforeSnap, after },
-      0,
-    );
-    receiptField.receipt = agentView(entry, ctx.documentId ?? "");
+    if (after.success) {
+      const entry = buildEntry(
+        { tool: "route_nets", args: { nets: netsFilter, trace_width: traceWidth }, before: beforeSnap, after },
+        0,
+      );
+      receiptField.receipt = agentView(entry, ctx.documentId ?? "");
+    }
   }
 
   return {
@@ -2902,6 +2958,17 @@ interface DrcSummary {
   sampleCapped: boolean;
   detail: "summary" | "full";
   details?: DrcViol[];
+}
+
+/** DRC outcome that the kernel could not run because it refused the board (e.g.
+ *  a malformed layer name like `In1.Cu`). A *parse failure*, not a clean board —
+ *  surfacing it as "0 violations" would be a false-clean. Distinguished from
+ *  {@link DrcSummary} by `success: false` so every caller must branch on it. */
+export interface DrcUnverifiable {
+  success: false;
+  status: "errored";
+  reason: string;
+  offending_field?: string;
 }
 
 /** Pull net names out of a kernel DRC message (`... net 'A' ... net 'B' ...`).
@@ -3105,16 +3172,11 @@ export async function critiqueRoute(args: Record<string, unknown>) {
       isError: true,
     };
   }
-  const critique = await kernelCritiqueRoute(pcb, net);
-  if (!critique) {
-    return {
-      content: [
-        { type: "text" as const, text: "critique_route unavailable: kernel WASM not loaded" },
-      ],
-      isError: true,
-    };
-  }
-  return { content: [{ type: "text" as const, text: JSON.stringify(critique) }] };
+  const outcome = await kernelCritiqueRoute(pcb, net);
+  // Unverifiable ≠ "no issues". The kernel could not parse the board (or isn't
+  // loaded) — surface it as an error the agent can branch on, not a silent null.
+  if (outcome.status === "errored") return ecadUnverifiable("critique_route", outcome);
+  return { content: [{ type: "text" as const, text: JSON.stringify(outcome.value) }] };
 }
 
 /** Run DRC on a board and return the summary-first payload. Shared by the
@@ -3123,13 +3185,25 @@ export async function drcPcb(
   pcb: Pcb,
   detail: "summary" | "full" = "summary",
   sampleSize = 20,
-): Promise<DrcSummary> {
+): Promise<DrcSummary | DrcUnverifiable> {
   // Kernel DRC: copper clearance (trace↔copper and pad↔pad shorts), trace
   // width, drill, annular ring, edge clearance, hole-to-hole. Falls back to
   // basic scalar checks when the kernel WASM is unavailable.
   let violations: DrcViol[];
   if (await isEcadAvailable()) {
-    violations = (await kernelRunDrc(pcb)) as unknown as DrcViol[];
+    // The kernel can refuse a board it can't deserialize (e.g. a malformed
+    // layer name). That's NOT a clean board — propagate the errored outcome
+    // instead of swallowing it into an empty (false-clean) violation list.
+    const outcome = await kernelRunDrc(pcb);
+    if (outcome.status === "errored") {
+      return {
+        success: false,
+        status: "errored",
+        reason: outcome.reason,
+        ...(outcome.offending_field ? { offending_field: outcome.offending_field } : {}),
+      };
+    }
+    violations = outcome.value as unknown as DrcViol[];
   } else {
     violations = [];
 
@@ -3224,6 +3298,10 @@ export interface PlacementDrc {
   courtyard_overlaps: number;
   /** Refs of footprints placed off the board outline (or inside a cutout). */
   off_board: string[];
+  /** Present when the kernel could not check the board at all (e.g. a malformed
+   *  layer name). `clean` is forced `false` — an unverifiable floorplan is NOT a
+   *  clean one. */
+  unverifiable?: { reason: string; offending_field?: string };
 }
 
 /** Pull the two refs and two nets out of a pad↔pad clearance message:
@@ -3249,7 +3327,23 @@ function netPairKey(a: string, b: string): string {
  *  to fall through to a full route→DRC pass. */
 export async function summarizePlacementDrc(pcb: Pcb): Promise<PlacementDrc> {
   // `full` so we get every violation, not a capped sample.
-  const viols = (await drcPcb(pcb, "full")).details ?? [];
+  const drc = await drcPcb(pcb, "full");
+  // The kernel couldn't parse the board — report it as unverifiable (NOT clean)
+  // instead of letting an empty `.details` masquerade as a clean floorplan.
+  if (!drc.success) {
+    return {
+      clean: false,
+      shorts: [],
+      clearance_violations: 0,
+      courtyard_overlaps: 0,
+      off_board: [],
+      unverifiable: {
+        reason: drc.reason,
+        ...(drc.offending_field ? { offending_field: drc.offending_field } : {}),
+      },
+    };
+  }
+  const viols = drc.details ?? [];
 
   // Pad↔pad clearance messages carry both refs and nets. With no traces on the
   // board yet, every Clearance violation is pad↔pad.
@@ -3335,8 +3429,12 @@ export async function runDrc(args: Record<string, unknown>) {
   const detail: "summary" | "full" = args.detail === "full" ? "full" : "summary";
   const sampleSize =
     typeof args.sample_size === "number" ? Math.max(0, Math.round(args.sample_size)) : 20;
+  const summary = await drcPcb(pcb, detail, sampleSize);
+  // Unverifiable ≠ clean. The kernel could not parse the board, so report it as
+  // an error the agent can branch on — never as a passing "0 violations".
+  if (!summary.success) return ecadUnverifiable("run_drc", summary);
   return {
-    content: [{ type: "text" as const, text: JSON.stringify(await drcPcb(pcb, detail, sampleSize)) }],
+    content: [{ type: "text" as const, text: JSON.stringify(summary) }],
   };
 }
 
@@ -3352,6 +3450,19 @@ export async function runErc(args: Record<string, unknown>) {
   }
 
   const sheet = doc.schematic;
+
+  // Verifiability guard: when the kernel is available, let it try to deserialize
+  // the schematic first. If it can't (e.g. a malformed enum), the netlist-derived
+  // checks below would silently run on empty data and report a false-clean — so
+  // surface "unverifiable" instead. Skipped when the kernel isn't loaded, so the
+  // pure-TS checks still run in WASM-less environments.
+  if (await isEcadAvailable()) {
+    const ercOutcome = await kernelRunErc(sheet);
+    if (ercOutcome.status === "errored") {
+      return ecadUnverifiable("run_erc", ercOutcome);
+    }
+  }
+
   const violations: Array<{
     severity: string;
     message: string;

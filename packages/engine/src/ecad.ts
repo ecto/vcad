@@ -78,6 +78,29 @@ export interface FilledZoneResult {
 }
 
 // ---------------------------------------------------------------------------
+// Three-state verification outcome
+// ---------------------------------------------------------------------------
+
+/**
+ * Outcome of a kernel verification wrapper (DRC / ERC / route critique).
+ *
+ * The kernel can fail to even *deserialize* its input — e.g. a malformed layer
+ * name like `"In1.Cu"` (it must be `"In1Cu"`). When that happens the board was
+ * never actually checked, so reporting "0 violations / clean" is a dangerous
+ * false-clean a caller could ship on. This type forces callers to branch on
+ * three distinct states instead of collapsing the error into an empty result:
+ *
+ * - `{ status: "ok", value }`  — the kernel ran. `value` may itself be an empty
+ *   list (genuinely clean) or carry violations.
+ * - `{ status: "errored", … }` — the kernel could not parse/run the input.
+ *   NEVER treat this as clean. `offending_field` names the bad token when it can
+ *   be recovered from the error message (e.g. the malformed layer).
+ */
+export type VerifyOutcome<T> =
+  | { status: "ok"; value: T }
+  | { status: "errored"; reason: string; offending_field?: string };
+
+// ---------------------------------------------------------------------------
 // Lazy WASM loader
 // ---------------------------------------------------------------------------
 
@@ -98,6 +121,43 @@ async function loadEcadWasm(): Promise<typeof wasmModule | null> {
   }
 }
 
+/** serde's unknown-variant / unknown-field / missing-field errors name the
+ *  offending token in backticks, e.g. ``unknown variant `In1.Cu`, expected one
+ *  of …``. Pull it out so callers can point the user straight at the bad field. */
+function offendingFieldFromError(message: string): string | undefined {
+  const m =
+    /unknown variant `([^`]+)`/.exec(message) ??
+    /unknown field `([^`]+)`/.exec(message) ??
+    /missing field `([^`]+)`/.exec(message);
+  return m ? m[1] : undefined;
+}
+
+/**
+ * Invoke a kernel WASM verification function, mapping a missing kernel or a
+ * thrown deserialize/eval error into a distinct `errored` {@link VerifyOutcome}
+ * — never a false-clean empty result. `label` names the check for logs and the
+ * surfaced reason.
+ */
+async function verifyWithKernel<T>(
+  label: string,
+  call: (wasm: NonNullable<typeof wasmModule>) => T,
+): Promise<VerifyOutcome<T>> {
+  const wasm = await loadEcadWasm();
+  if (!wasm) {
+    return { status: "errored", reason: `${label} unavailable: kernel WASM not loaded` };
+  }
+  try {
+    return { status: "ok", value: call(wasm) };
+  } catch (e) {
+    const reason = e instanceof Error ? e.message : String(e);
+    console.warn(`[ECAD] ${label} failed:`, e);
+    const offending = offendingFieldFromError(reason);
+    return offending
+      ? { status: "errored", reason, offending_field: offending }
+      : { status: "errored", reason };
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
@@ -108,16 +168,20 @@ export async function isEcadAvailable(): Promise<boolean> {
   return wasm !== null;
 }
 
-/** Run Design Rule Check on a PCB. */
-export async function runDrc(pcb: Pcb): Promise<DrcViolationResult[]> {
-  const wasm = await loadEcadWasm();
-  if (!wasm) return [];
-  try {
-    return wasm.ecadCheckDrc(JSON.stringify(pcb)) as DrcViolationResult[];
-  } catch (e) {
-    console.warn("[ECAD] DRC failed:", e);
-    return [];
-  }
+/**
+ * Run Design Rule Check on a PCB.
+ *
+ * Returns a three-state {@link VerifyOutcome}: `ok` (the kernel ran — the value
+ * is clean when empty, or carries violations) vs `errored` (the kernel could
+ * not parse the board, e.g. a malformed layer name). Crucially it never reports
+ * a parse failure as a clean/empty result — that false-clean is exactly what a
+ * caller could ship on.
+ */
+export async function runDrc(pcb: Pcb): Promise<VerifyOutcome<DrcViolationResult[]>> {
+  return verifyWithKernel(
+    "DRC",
+    (wasm) => wasm.ecadCheckDrc(JSON.stringify(pcb)) as DrcViolationResult[],
+  );
 }
 
 /** Read-only audit of one net's routing. */
@@ -133,28 +197,37 @@ export interface NetCritique {
   drc_issues: string[];
 }
 
-/** Audit a single net's routing quality (length, vias, margin, DRC issues). */
-export async function critiqueRoute(pcb: Pcb, net: string): Promise<NetCritique | null> {
-  const wasm = await loadEcadWasm();
-  if (!wasm) return null;
-  try {
-    return wasm.ecadCritiqueRoute(JSON.stringify(pcb), net) as NetCritique;
-  } catch (e) {
-    console.warn("[ECAD] Route critique failed:", e);
-    return null;
-  }
+/**
+ * Audit a single net's routing quality (length, vias, margin, DRC issues).
+ *
+ * Returns a three-state {@link VerifyOutcome}: `ok` with the critique, or
+ * `errored` when the kernel could not parse the board (or isn't loaded). A
+ * parse failure is never silently reported as "no critique".
+ */
+export async function critiqueRoute(
+  pcb: Pcb,
+  net: string,
+): Promise<VerifyOutcome<NetCritique>> {
+  return verifyWithKernel(
+    "Route critique",
+    (wasm) => wasm.ecadCritiqueRoute(JSON.stringify(pcb), net) as NetCritique,
+  );
 }
 
-/** Run Electrical Rule Check on a schematic. */
-export async function runErc(sheet: SchematicSheet): Promise<ErcViolationResult[]> {
-  const wasm = await loadEcadWasm();
-  if (!wasm) return [];
-  try {
-    return wasm.ecadCheckErc(JSON.stringify(sheet)) as ErcViolationResult[];
-  } catch (e) {
-    console.warn("[ECAD] ERC failed:", e);
-    return [];
-  }
+/**
+ * Run Electrical Rule Check on a schematic.
+ *
+ * Returns a three-state {@link VerifyOutcome}: `ok` (clean when empty, or with
+ * violations) vs `errored` when the kernel could not parse the schematic. Never
+ * reports a parse failure as a clean/empty result.
+ */
+export async function runErc(
+  sheet: SchematicSheet,
+): Promise<VerifyOutcome<ErcViolationResult[]>> {
+  return verifyWithKernel(
+    "ERC",
+    (wasm) => wasm.ecadCheckErc(JSON.stringify(sheet)) as ErcViolationResult[],
+  );
 }
 
 /** Inputs for the analytical motor evaluator (mirrors `vcad_ecad_sim::MotorSpec`). */
