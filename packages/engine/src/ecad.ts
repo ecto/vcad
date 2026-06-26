@@ -29,7 +29,10 @@ export type DrcRuleType =
   | "UnconnectedNet"
   | "SilkscreenClearance"
   | "CourtyardOverlap"
-  | "AcidTrap";
+  | "AcidTrap"
+  | "Keepout"
+  | "Short"
+  | "NetIslands";
 
 export type DrcSeverity = "Error" | "Warning";
 

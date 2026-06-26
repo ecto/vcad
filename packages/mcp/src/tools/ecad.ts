@@ -3009,10 +3009,14 @@ interface DrcNetPairCount {
 
 /** Group each DRC rule by what it means for the board, so callers can tell an
  *  *incomplete* layout (ratsnest left to route) from an *illegal* one (copper
- *  conflicts / fab-rule breaks). UnconnectedNet is the only "incomplete" rule —
- *  it's a to-do, not a defect. */
+ *  conflicts / fab-rule breaks). UnconnectedNet is the benign "incomplete" rule
+ *  — a to-do, not a defect. NetIslands shares the connectivity domain but is a
+ *  hard defect (a net's copper built as ≥2 galvanically-isolated islands, e.g. a
+ *  power plane that stitched to nothing); it carries Error severity, so it lands
+ *  in `errors` regardless of bucket. */
 const DRC_CATEGORY: Record<string, "connectivity" | "clearance" | "manufacturing"> = {
   UnconnectedNet: "connectivity",
+  NetIslands: "connectivity",
   Clearance: "clearance",
   Short: "clearance",
   MinTraceWidth: "manufacturing",
