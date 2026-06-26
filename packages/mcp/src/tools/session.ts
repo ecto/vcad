@@ -116,6 +116,75 @@ export function getSession(documentId: string): Document {
   return doc;
 }
 
+// ─── Per-session undo history (in-memory snapshot stack) ──────────────────────
+//
+// The event spine (session_events) is an append-only telemetry/realtime log,
+// not a reconstruction fold: it records {tool, args, changed} — never enough to
+// rebuild geometry — and is a no-op without Supabase env (stdio/local). So undo
+// can't be "fold all-but-last event". Instead the dispatch layer snapshots the
+// document *before* each mutation onto this stack, and `undo` pops the last
+// snapshot back into the live session. Restoring a full snapshot is exact and
+// works identically on stdio, anonymous, and signed-in deployments.
+//
+// The stack is process-global (NOT per-request-scoped) so it survives across
+// the per-connection session scopes a signed-in user gets — a snapshot pushed
+// on call N must still be poppable on call N+1. It's keyed by the unguessable
+// document_id (the session capability), and a pop only ever writes back into a
+// session the caller already resolved via getSession, so it leaks nothing
+// cross-tenant. Depth is capped so a long editing session can't grow unbounded.
+
+/** Max snapshots retained per session — older edits drop off the bottom. */
+const MAX_HISTORY = 50;
+
+/** document_id → stack of pre-mutation Document snapshots (oldest first). */
+const sessionHistory = new Map<string, Document[]>();
+
+/** Deep clone a document — the same JSON round-trip openDocument uses, so a
+ *  later in-place mutation can never corrupt a retained snapshot. */
+function cloneDoc(doc: Document): Document {
+  return JSON.parse(JSON.stringify(doc)) as Document;
+}
+
+/**
+ * Push the current state of a session onto its undo stack, to be called by the
+ * dispatch layer right before a mutating tool runs. No-op when the session
+ * isn't resident (nothing to snapshot). Caps the stack at MAX_HISTORY by
+ * dropping the oldest entry.
+ */
+export function recordHistorySnapshot(documentId: string): void {
+  const doc = documents.get(documentId);
+  if (!doc) return;
+  const stack = sessionHistory.get(documentId) ?? [];
+  stack.push(cloneDoc(doc));
+  if (stack.length > MAX_HISTORY) stack.shift();
+  sessionHistory.set(documentId, stack);
+}
+
+/** Number of undo steps available for a session. */
+export function historyDepth(documentId: string): number {
+  return sessionHistory.get(documentId)?.length ?? 0;
+}
+
+/**
+ * Pop the last snapshot and restore it as the live session document. Returns
+ * the restored Document, or null when there's nothing to undo. The caller is
+ * expected to have already resolved the session (getSession) so ownership is
+ * enforced before any state is rewound.
+ */
+export function undoLastSnapshot(documentId: string): Document | null {
+  const stack = sessionHistory.get(documentId);
+  if (!stack || stack.length === 0) return null;
+  const snapshot = stack.pop()!;
+  if (stack.length === 0) sessionHistory.delete(documentId);
+  documents.set(documentId, snapshot);
+  return snapshot;
+}
+
+/** Drop a session's undo history (on close/drop) so it can't outlive the doc. */
+export function clearHistory(documentId: string): void {
+  sessionHistory.delete(documentId);
+}
+
 // ─── Durable cache ⇄ store bridge ─────────────────────────────────────────────
 //
 // The three helpers below are the ONLY async surface added for durability, and
@@ -156,6 +225,7 @@ export async function dropSession(
   documentId: string,
 ): Promise<void> {
   documents.delete(documentId);
+  clearHistory(documentId);
   await store.drop(documentId);
 }
 
@@ -234,6 +304,7 @@ export function closeDocument(args: Record<string, unknown>): {
 } {
   const id = String(args.document_id ?? "");
   const existed = documents.delete(id);
+  clearHistory(id);
   return {
     content: [
       {

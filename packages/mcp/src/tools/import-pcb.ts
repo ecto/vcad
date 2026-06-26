@@ -5,7 +5,8 @@
  * `parse_kicad_pcb`, WASM `parseKicadPcb`) into the vcad `Pcb` IR, wrapped in a
  * PcbBoard session document, and registered so the returned `document_id` flows
  * straight into render_pcb / run_drc / get_pad_positions / export_gerber /
- * route_nets. Eagle (.brd, XML) is a clear "not yet" stub.
+ * route_nets. The round-trip companion is export_kicad (native, editable
+ * .kicad_pcb / .kicad_sch out). Eagle (.brd, XML) is a clear "not yet" stub.
  */
 
 import type { Pcb } from "@vcad/ir";

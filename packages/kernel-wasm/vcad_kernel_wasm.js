@@ -4326,6 +4326,75 @@ export function evaluateVCode(vcode) {
 }
 
 /**
+ * Export a `Pcb` to a native, editable KiCad 9 `.kicad_pcb` board file.
+ *
+ * The inverse of [`parse_kicad_pcb`]: footprints, pads, nets, traces,
+ * vias, zones, the layer table, and the board outline are serialized back
+ * to S-expressions a human can open and finish in KiCad.
+ *
+ * # Arguments
+ * * `pcb_json` - JSON-serialized `Pcb` struct
+ *
+ * # Returns
+ * The `.kicad_pcb` file content as a string.
+ * @param {string} pcb_json
+ * @returns {string}
+ */
+export function exportKicadPcb(pcb_json) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const ptr0 = passStringToWasm0(pcb_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.exportKicadPcb(ptr0, len0);
+        var ptr2 = ret[0];
+        var len2 = ret[1];
+        if (ret[3]) {
+            ptr2 = 0; len2 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred3_0 = ptr2;
+        deferred3_1 = len2;
+        return getStringFromWasm0(ptr2, len2);
+    } finally {
+        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+    }
+}
+
+/**
+ * Export a `SchematicSheet` to a native, editable KiCad 9 `.kicad_sch`
+ * schematic file.
+ *
+ * # Arguments
+ * * `sheet_json` - JSON-serialized `SchematicSheet` struct
+ *
+ * # Returns
+ * The `.kicad_sch` file content as a string.
+ * @param {string} sheet_json
+ * @returns {string}
+ */
+export function exportKicadSch(sheet_json) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const ptr0 = passStringToWasm0(sheet_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.exportKicadSch(ptr0, len0);
+        var ptr2 = ret[0];
+        var len2 = ret[1];
+        if (ret[3]) {
+            ptr2 = 0; len2 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred3_0 = ptr2;
+        deferred3_1 = len2;
+        return getStringFromWasm0(ptr2, len2);
+    } finally {
+        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+    }
+}
+
+/**
  * Export a projected view to DXF format.
  *
  * Returns the DXF content as bytes.
@@ -7743,12 +7812,12 @@ function __wbg_get_imports() {
             arg0.writeTexture(arg1, arg2, arg3, arg4);
         },
         __wbindgen_cast_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 2435, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 2436, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 2437, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 2438, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h30743bca3150d93c, wasm_bindgen__convert__closures_____invoke__hcf7d3eaee8800b37);
             return ret;
         },
         __wbindgen_cast_0000000000000002: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 3219, function: Function { arguments: [Externref], shim_idx: 3220, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 3221, function: Function { arguments: [Externref], shim_idx: 3222, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__hfdadf281ff0f1c56, wasm_bindgen__convert__closures_____invoke__h9bdf540eb7e61590);
             return ret;
         },

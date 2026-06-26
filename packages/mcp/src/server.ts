@@ -59,6 +59,7 @@ import {
   persistSession,
   dropSession,
   runInSessionScope,
+  recordHistorySnapshot,
 } from "./tools/session.js";
 import {
   continueDocument,
@@ -119,6 +120,9 @@ import {
   enrichErrorResult,
   enrichSuccessResult,
 } from "./tools/next-actions.js";
+// Runtime config read from Vercel Edge Config so warm instances reflect a flag
+// flip or a fresh deploy WITHOUT a redeploy (see edge-config.ts).
+import { getStaleness } from "./edge-config.js";
 // Re-exported so the Vercel entry point (services/mcp/entry.ts) serves the live
 // window through the same handler as the standalone server (http.ts).
 export { handleLiveRequest } from "./live-route.js";
@@ -164,6 +168,8 @@ import {
   runErcSchema,
   exportGerber,
   exportGerberSchema,
+  exportKicad,
+  exportKicadSchema,
   calcImpedance,
   calcImpedanceSchema,
   sizeImpedance,
@@ -200,6 +206,14 @@ import {
   setBoardOutlineSchema,
   addZone,
   addZoneSchema,
+  deleteZone,
+  deleteZoneSchema,
+  deleteTrace,
+  deleteTraceSchema,
+  deleteVia,
+  deleteViaSchema,
+  undo,
+  undoSchema,
   setDesignRules,
   setDesignRulesSchema,
   sizeTraceForCurrent,
@@ -410,6 +424,11 @@ const GEOMETRY_TOOLS = new Set([
   "add_coil_array",
   "add_trace",
   "add_via",
+  // Removing copper / rewinding a mutation changes the board — re-render it.
+  "delete_zone",
+  "delete_trace",
+  "delete_via",
+  "undo",
   "set_stackup",
   "add_motor_winding",
   // Materializes a saved board into a live session — show it like open_document.
@@ -459,6 +478,10 @@ const SWITCH_DOC_WRITERS = new Set<string>([
   "add_via",
   "add_via_array",
   "add_zone",
+  "delete_zone",
+  "delete_trace",
+  "delete_via",
+  "undo",
   "set_stackup",
   "set_placement",
   "set_board_outline",
@@ -619,6 +642,9 @@ const TOOL_PACKS: Record<string, readonly string[]> = {
     "set_placement",
     "set_board_outline",
     "add_zone",
+    "delete_zone",
+    "delete_trace",
+    "delete_via",
     "set_design_rules",
     "size_trace_for_current",
     "add_coil",
@@ -826,6 +852,27 @@ export async function createServer(
     `[mcp] vcad ${VERSION_WITH_BUILD} (instance ${INSTANCE_ID}) — ${dispatchableTools.size} kernel tools; kernel WASM ${kernelWasmLoaded ? "ok" : "UNAVAILABLE"}`,
   );
 
+  // Connect-time staleness: surface it in the `initialize` instructions so a
+  // client learns at handshake — before any tool call — whether this instance
+  // is behind the latest deployment. createServer runs per request on
+  // serverless, so the Edge Config read is effectively per-connection (and
+  // TTL-cached). When nothing is published (Edge Config unset), is_stale is
+  // false and no banner is added — identical to the pre-Edge-Config world.
+  let instructions = buildInstructions(kernelPrompt);
+  try {
+    const connectStaleness = await getStaleness(BUILD_SHA);
+    if (connectStaleness.is_stale) {
+      const want = connectStaleness.expected_build_sha?.slice(0, 7) ?? "newer";
+      instructions +=
+        `\n\n⚠️ STALE BUILD: this instance is ${SHORT_SHA} but the latest ` +
+        `deployment is ${want}. You may be pinned to a draining warm instance — ` +
+        `if a just-shipped tool or flag seems missing, reconnect to land on the ` +
+        `new build (or verify with \`server_info\` / \`curl https://mcp.vcad.io/health\`).`;
+    }
+  } catch {
+    // staleness is advisory; never block a connection on it
+  }
+
   const server = new Server(
     {
       name: "vcad",
@@ -843,8 +890,9 @@ export async function createServer(
       },
       // Protocol-native equivalent of the in-app chat system prompt:
       // workflow framing + the kernel's type catalog, material keys, and
-      // orientation semantics. Hosts surface this to the agent once.
-      instructions: buildInstructions(kernelPrompt),
+      // orientation semantics. Hosts surface this to the agent once. Carries a
+      // STALE BUILD banner when this instance is behind the latest deployment.
+      instructions,
     },
   );
 
@@ -1447,6 +1495,42 @@ export async function createServer(
         inputSchema: addZoneSchema,
       },
       {
+        name: "delete_zone",
+        description:
+          "Remove a copper pour from the board — the take-back for a bad add_zone, " +
+          "without rebuilding the session. Target by `index` (0-based, the add " +
+          "order) or by `net`/`layer` when exactly one zone matches. Returns a " +
+          "`changed` diff of what was removed. To undo the very last mutation of " +
+          "any kind, use `undo` instead. Mutates the session document.",
+        inputSchema: deleteZoneSchema,
+      },
+      {
+        name: "delete_trace",
+        description:
+          "Remove a single routed trace segment by `index` (0-based, the add " +
+          "order) or by an unambiguous `net`/`layer` match. The take-back for a " +
+          "stray add_trace. Returns a `changed` diff. Mutates the session document.",
+        inputSchema: deleteTraceSchema,
+      },
+      {
+        name: "delete_via",
+        description:
+          "Remove a single via by `index` (0-based, the add order) or by an " +
+          "unambiguous `net` match. The take-back for a stray add_via. Returns a " +
+          "`changed` diff. Mutates the session document.",
+        inputSchema: deleteViaSchema,
+      },
+      {
+        name: "undo",
+        description:
+          "Rewind the most recent mutation on a session — the snapshot taken " +
+          "before the last add_zone / add_trace / add_via / delete_* / route_nets " +
+          "/ place_components (or a CAD create/update/delete) is restored, without " +
+          "re-sending the document. Repeated calls walk further back. Returns a " +
+          "`changed` diff of the board elements the rewind moved.",
+        inputSchema: undoSchema,
+      },
+      {
         name: "set_design_rules",
         description:
           "Set the board design rules run_drc enforces (clearance, track width, " +
@@ -1610,6 +1694,17 @@ export async function createServer(
         inputSchema: exportGerberSchema,
       },
       {
+        name: "export_kicad",
+        description:
+          "Export the session as a native, editable KiCad 9 file. " +
+          "filename ending in .kicad_pcb writes the board (footprints, pads, nets, " +
+          "traces, vias, zones, layers, outline); .kicad_sch writes the schematic. " +
+          "Unlike export_gerber (fab-only output), this round-trips: a human can open " +
+          "it in KiCad to finish routing nets the autorouter couldn't close, then " +
+          "re-import. Large files respect the inline byte cap (use output_dir for those).",
+        inputSchema: exportKicadSchema,
+      },
+      {
         name: "calc_impedance",
         description:
           "Calculate trace impedance using IPC-2141 formulas. " +
@@ -1756,6 +1851,38 @@ export async function createServer(
     content: Array<{ type: string; text: string; annotations?: unknown }>;
     structuredContent?: Record<string, unknown>;
     isError?: boolean;
+    _meta?: Record<string, unknown>;
+  };
+
+  /**
+   * Stamp the running build/runtime identity onto EVERY tool result's `_meta`,
+   * not just `server_info`. Warm-instance staleness and version skew then show
+   * up inline on any call: two results with different instance_id/build_sha mean
+   * old instances are still draining behind a fresh deploy, and `is_stale` flags
+   * the instance you're pinned to as behind the latest deployment (compared to
+   * `expected_build_sha` from Edge Config). Merges under a namespaced key so it
+   * never clobbers another extension's `_meta`; best-effort — a stamp failure
+   * must never turn a successful call into an error.
+   */
+  const stampResultMeta = async (result: ToolResult): Promise<void> => {
+    if (!result || typeof result !== "object") return;
+    try {
+      const info = getBuildInfo();
+      const { expected_build_sha, is_stale } = await getStaleness(info.build_sha);
+      result._meta = {
+        ...result._meta,
+        "io.vcad/build": {
+          build_sha: info.build_sha,
+          instance_id: info.instance_id,
+          version_full: info.version_full,
+          uptime_s: info.uptime_s,
+          expected_build_sha,
+          is_stale,
+        },
+      };
+    } catch {
+      // identity stamping is observability, never load-bearing
+    }
   };
 
   // Handle tool calls
@@ -1773,6 +1900,7 @@ export async function createServer(
         isError: true,
       };
       fireToolAlert(name, args, disabledResult);
+      await stampResultMeta(disabledResult);
       return disabledResult;
     }
 
@@ -1781,7 +1909,7 @@ export async function createServer(
     // another tenant's doc), while anonymous/stdio callers share the
     // process-wide fallback. Everything below — hydrate, dispatch, persist —
     // must run inside it so the `documents` facade routes to the right cache.
-    return runInSessionScope(context.user, async (): Promise<ToolResult> => {
+    const scopedResult = await runInSessionScope(context.user, async (): Promise<ToolResult> => {
     // ── Hydrate ───────────────────────────────────────────────────────────
     // If the call names a session that isn't in the warm cache, rehydrate it
     // from the durable store BEFORE the (synchronous) tool reads it via
@@ -1795,6 +1923,15 @@ export async function createServer(
       } catch {
         // Durable load failed — fall back to cache (no worse than today).
       }
+    }
+
+    // ── Undo snapshot ─────────────────────────────────────────────────────
+    // Snapshot the document BEFORE any mutation of an existing session, so
+    // `undo` can rewind it. Gated to writers that target a resident session
+    // (creators mint a fresh id and have nothing prior to restore); `undo`
+    // itself is excluded so it walks the stack back rather than re-pushing.
+    if (incomingId && name !== "undo" && isDocWriter(name) && documents.has(incomingId)) {
+      recordHistorySnapshot(incomingId);
     }
 
     // Inner dispatch. Encloses BOTH the registry path and the switch so the
@@ -2081,6 +2218,22 @@ export async function createServer(
           result = addZone(args);
           break;
 
+        case "delete_zone":
+          result = deleteZone(args);
+          break;
+
+        case "delete_trace":
+          result = deleteTrace(args);
+          break;
+
+        case "delete_via":
+          result = deleteVia(args);
+          break;
+
+        case "undo":
+          result = undo(args);
+          break;
+
         case "set_design_rules":
           result = setDesignRules(args);
           break;
@@ -2133,14 +2286,20 @@ export async function createServer(
           result = await branchFrom(args, sessionStore);
           break;
 
-        case "server_info":
+        case "server_info": {
+          const buildInfo = getBuildInfo();
+          // expected_build_sha/is_stale come from Edge Config (per-request,
+          // TTL-cached): on a warm instance pinned behind a fresh deploy this
+          // flips to is_stale:true so the agent knows to reconnect.
+          const staleness = await getStaleness(buildInfo.build_sha);
           result = {
             content: [
               {
                 type: "text",
                 text: JSON.stringify({
-                  ...getBuildInfo(),
+                  ...buildInfo,
                   ...sessionStoreInfo(),
+                  ...staleness,
                   kernel_wasm: kernelWasmLoaded ? "ok" : "unavailable",
                   ...(kernelWasmMissing.length > 0
                     ? { kernel_wasm_missing_exports: kernelWasmMissing }
@@ -2153,6 +2312,7 @@ export async function createServer(
             ],
           };
           break;
+        }
 
         case "run_drc":
           result = await runDrc(args);
@@ -2196,6 +2356,10 @@ export async function createServer(
 
         case "export_gerber":
           result = await exportGerber(args);
+          break;
+
+        case "export_kicad":
+          result = await exportKicad(args);
           break;
 
         case "calc_impedance":
@@ -2316,6 +2480,10 @@ export async function createServer(
       return errorResult;
     }
     });
+    // Single chokepoint: stamp build identity on the way out so EVERY tool
+    // result — success, tool-reported error, or thrown error — carries it.
+    await stampResultMeta(scopedResult);
+    return scopedResult;
   });
 
   return server;
