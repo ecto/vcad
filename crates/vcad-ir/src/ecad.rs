@@ -1184,8 +1184,14 @@ mod tests {
     #[test]
     fn pcb_layer_serializes_canonical() {
         // The wire form is always the canonical (dotless) variant name.
-        assert_eq!(serde_json::to_string(&PcbLayer::In1Cu).unwrap(), r#""In1Cu""#);
-        assert_eq!(serde_json::to_string(&PcbLayer::EdgeCuts).unwrap(), r#""EdgeCuts""#);
+        assert_eq!(
+            serde_json::to_string(&PcbLayer::In1Cu).unwrap(),
+            r#""In1Cu""#
+        );
+        assert_eq!(
+            serde_json::to_string(&PcbLayer::EdgeCuts).unwrap(),
+            r#""EdgeCuts""#
+        );
     }
 
     #[test]
