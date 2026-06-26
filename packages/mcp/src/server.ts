@@ -194,6 +194,8 @@ import {
   addTraceSchema,
   getPadPositions,
   getPadPositionsSchema,
+  describePcb,
+  describePcbSchema,
   addVia,
   addViaSchema,
   setStackup,
@@ -632,6 +634,7 @@ const TOOL_PACKS: Record<string, readonly string[]> = {
     "place_components",
     "route_nets",
     "get_pad_positions",
+    "describe_pcb",
     "add_trace",
     "add_via",
     "add_via_array",
@@ -1421,6 +1424,18 @@ export async function createServer(
         inputSchema: getPadPositionsSchema,
       },
       {
+        name: "describe_pcb",
+        description:
+          "Inspect the session PCB as compact, structured data: board size + " +
+          "outline, stackup (layer names + copper weights), net classes / " +
+          "design rules, zones (net/layer/bbox/fill), trace & via counts by net " +
+          "and layer, component count, the current DRC status, and an " +
+          "exportability/renderability probe that actually serializes the board " +
+          "for fab + 3D preview — surfacing the 'DRC-clean but unexportable' " +
+          "state get_document/read can't see. Read-only.",
+        inputSchema: describePcbSchema,
+      },
+      {
         name: "add_trace",
         description:
           "Lay an explicit copper trace: a polyline of segments on a layer, " +
@@ -2173,6 +2188,10 @@ export async function createServer(
 
         case "get_pad_positions":
           result = getPadPositions(args);
+          break;
+
+        case "describe_pcb":
+          result = await describePcb(args);
           break;
 
         case "add_trace":
