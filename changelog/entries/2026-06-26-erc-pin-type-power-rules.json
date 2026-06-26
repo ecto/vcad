@@ -1,0 +1,17 @@
+{
+  "id": "2026-06-26-erc-pin-type-power-rules",
+  "version": "0.9.4",
+  "date": "2026-06-26",
+  "category": "fix",
+  "title": "run_erc now checks pin-type conflicts and floating power",
+  "summary": "ERC invokes the kernel rules, so two outputs on one net flag a conflict and an undriven power input flags floating power; it fails closed (kernel unavailable or a parse error reports unverified, never clean).",
+  "features": [
+    "ecad",
+    "pcb",
+    "erc"
+  ],
+  "mcpTools": [
+    "run_erc",
+    "create_schematic"
+  ]
+}

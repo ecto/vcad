@@ -2157,6 +2157,20 @@ export function renderBakeMesh(input_json: string): string;
 export function render_pcb_svg(pcb_json: string, layers_json: string, scale: number): string;
 
 /**
+ * Render a PCB with explicit render options (the "Studio Graphite" theme
+ * system). Backward-compatible companion to [`render_pcb_svg`]: the 3-arg
+ * form keeps working and now defaults to the dark theme.
+ *
+ * `opts_json` is an options object (empty string = defaults), e.g.
+ * `{"theme":"dark","values":true,"netLabels":false,"ratsnest":true,
+ *   "grid":true,"hero":false,"highlight":{"nets":["GND"],"refs":["U1"]}}`.
+ * `theme` is `"dark"` (default) or `"light"` (legacy fab look); `highlight`
+ * recolours the named nets/refs to the brand pink with a glow and dims the
+ * rest — the agent affordance for "show me net X".
+ */
+export function render_pcb_svg_opts(pcb_json: string, layers_json: string, scale: number, opts_json: string): string;
+
+/**
  * Render raw `.vcad` document JSON to a drafting-style isometric SVG.
  *
  * Thin wrapper over `vcad_render::render_svg_str` — the same renderer the
@@ -2428,6 +2442,7 @@ export interface InitOutput {
     readonly raytracer_uploadSolid: (a: number, b: number) => [number, number];
     readonly renderBakeMesh: (a: number, b: number) => [number, number, number, number];
     readonly render_pcb_svg: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
+    readonly render_pcb_svg_opts: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number, number, number];
     readonly render_svg: (a: number, b: number, c: number) => [number, number, number, number];
     readonly render_svg_view: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
     readonly sectionMesh: (a: any, b: number, c: number, d: number, e: number) => any;
