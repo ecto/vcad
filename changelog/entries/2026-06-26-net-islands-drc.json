@@ -1,0 +1,16 @@
+{
+  "id": "2026-06-26-net-islands-drc",
+  "version": "0.9.4",
+  "date": "2026-06-26",
+  "category": "feat",
+  "title": "DRC flags nets realized as disjoint copper islands",
+  "summary": "run_drc now reconciles each net against the realized copper graph and reports NetIslands when a net has stranded copper (e.g. a power plane stitched to nothing), with the island count and the pads per island.",
+  "features": [
+    "ecad",
+    "pcb",
+    "drc"
+  ],
+  "mcpTools": [
+    "run_drc"
+  ]
+}

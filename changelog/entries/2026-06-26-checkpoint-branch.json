@@ -1,0 +1,17 @@
+{
+  "id": "2026-06-26-checkpoint-branch",
+  "version": "0.9.4",
+  "date": "2026-06-26",
+  "category": "feat",
+  "title": "Checkpoint & branch MCP design sessions",
+  "summary": "Agents can snapshot a known-good state (post-schematic, post-place, post-route) with checkpoint_document and rewind with branch_from — fork into a new session or restore in place — instead of rebuilding the netlist.",
+  "features": [
+    "mcp",
+    "ecad",
+    "pcb"
+  ],
+  "mcpTools": [
+    "checkpoint_document",
+    "branch_from"
+  ]
+}
