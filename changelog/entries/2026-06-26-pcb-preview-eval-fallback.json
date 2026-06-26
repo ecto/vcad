@@ -1,0 +1,15 @@
+{
+  "id": "2026-06-26-pcb-preview-eval-fallback",
+  "version": "0.9.4",
+  "date": "2026-06-26",
+  "category": "fix",
+  "title": "PCB preview never shows an empty viewport",
+  "summary": "The inline 3D viewer now renders the board from PCB data (outline, footprints, pads) independent of the BRep solid, so a placed board always previews even when its canonical solid fails to evaluate.",
+  "features": [
+    "ecad",
+    "pcb"
+  ],
+  "mcpTools": [
+    "place_components"
+  ]
+}

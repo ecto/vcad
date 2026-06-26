@@ -117,4 +117,36 @@ describe("PCB GLB preview", () => {
     const colors = gltf.materials.map((m) => m.pbrMetallicRoughness?.baseColorFactor);
     expect(colors.some((c) => near(c, [0.010, 0.060, 0.024]))).toBe(true);
   });
+
+  it("still previews a board when the BRep scene eval throws", async () => {
+    // The board's layered preview is built from the PCB data, not the BRep
+    // boolean pipeline — so a session whose canonical solid fails to evaluate
+    // (degenerate outline, kernel error) must still render the board instead
+    // of showing the viewer an empty grid.
+    const created = out(
+      await createSchematic({
+        components: [resistor("R1", 0), resistor("R2", 20)],
+        nets: { MID: ["R1.2", "R2.1"] },
+      }),
+    );
+    const id = created.document_id;
+    out(await placeComponents({ document_id: id, board_width: 40, board_height: 40 }));
+
+    // Stand in a kernel that throws on evaluate to simulate a failing solid.
+    const throwingEngine = {
+      evaluate() {
+        throw new Error("simulated kernel eval failure");
+      },
+    } as unknown as Engine;
+
+    const b64 = await generateGlbPreview(getSession(id), throwingEngine);
+    expect(b64).toBeTruthy();
+    const gltf = parseGlbJson(b64!);
+    expect(gltf.meshes.length).toBeGreaterThan(0);
+    // Soldermask color present → the real board layers rendered, not nothing.
+    const colors = gltf.materials.map((m) => m.pbrMetallicRoughness?.baseColorFactor);
+    expect(colors.some((c) => near(c, [0.010, 0.060, 0.024]))).toBe(true);
+    // Part identity preserved for click-to-select.
+    expect(gltf.nodes.some((n) => (n.name ?? "").includes("PCB Board"))).toBe(true);
+  });
 });
