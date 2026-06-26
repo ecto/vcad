@@ -257,6 +257,100 @@ function ecadUnverifiable(
 }
 
 // ============================================================================
+// PCB layer name validation — the single gate guarding every write boundary
+// ============================================================================
+
+/**
+ * Every legal PCB layer name, in board order — the canonical serde variants of
+ * the Rust `PcbLayer` enum (crates/vcad-ir/src/ecad.rs). This is the single
+ * source of truth the write boundaries validate against. The old scattered
+ * `/Cu$/` regex checks let malformed dotted KiCad names (`In1.Cu`) slip through,
+ * which then corrupted documents and broke render_pcb / export_gerber.
+ */
+const PCB_LAYERS: readonly PcbLayer[] = [
+  "FCu", "BCu", "In1Cu", "In2Cu", "In3Cu", "In4Cu", "In5Cu", "In6Cu",
+  "FSilkS", "BSilkS", "FMask", "BMask", "FPaste", "BPaste",
+  "FFab", "BFab", "FCrtYd", "BCrtYd",
+  "EdgeCuts", "UserDrawings", "UserComments",
+];
+
+/** Fast membership test for any legal layer name. */
+const PCB_LAYER_SET: ReadonlySet<string> = new Set(PCB_LAYERS);
+
+/** Copper layers, in board order — the subset traces/vias/zones/coils sit on. */
+const COPPER_LAYERS: readonly PcbLayer[] = [
+  "FCu", "BCu", "In1Cu", "In2Cu", "In3Cu", "In4Cu", "In5Cu", "In6Cu",
+];
+
+/** Fast membership test for copper layers. */
+const COPPER_LAYER_SET: ReadonlySet<string> = new Set(COPPER_LAYERS);
+
+/** True when `layer` is a copper layer (FCu, BCu, In1Cu …). */
+function isCopperLayer(layer: string): boolean {
+  return COPPER_LAYER_SET.has(layer);
+}
+
+/**
+ * Suggest the canonical layer for a malformed name: dotted KiCad form
+ * (`In1.Cu`, `F.Cu`, `Edge.Cuts`) → its serde variant, plus a case-insensitive
+ * fallback. Returns undefined when nothing close matches.
+ */
+function suggestLayer(name: string): PcbLayer | undefined {
+  const dedotted = name.replace(/\./g, "");
+  if (PCB_LAYER_SET.has(dedotted)) return dedotted as PcbLayer;
+  const lower = name.toLowerCase();
+  const lowerDedot = dedotted.toLowerCase();
+  for (const l of PCB_LAYERS) {
+    const ll = l.toLowerCase();
+    if (ll === lower || ll === lowerDedot) return l;
+  }
+  return undefined;
+}
+
+/** Successful layer validation carries the canonical `PcbLayer`. */
+interface LayerOk {
+  layer: PcbLayer;
+}
+/** Failed layer validation carries a ready-to-return error message. */
+interface LayerErr {
+  error: string;
+}
+
+/**
+ * The single gate for a layer name at a write boundary. Accepts only the exact
+ * serde variant (`In1Cu`); a dotted KiCad name (`In1.Cu`) or any unknown string
+ * is rejected with a helpful message that names the closest legal value and
+ * lists them all. This is the durable fix for the malformed names that used to
+ * slip past the `/Cu$/` checks and corrupt documents (a `serde(alias=…)` on the
+ * Rust enum gives round-trip tolerance, but rejecting at the boundary is what
+ * keeps new corruption out).
+ */
+function validateLayer(raw: unknown): LayerOk | LayerErr {
+  const name = String(raw ?? "").trim();
+  if (!name) return { error: `layer is required; legal: ${PCB_LAYERS.join(", ")}` };
+  if (PCB_LAYER_SET.has(name)) return { layer: name as PcbLayer };
+  const suggestion = suggestLayer(name);
+  const hint = suggestion ? ` did you mean '${suggestion}'?` : "";
+  return { error: `layer '${name}' is not valid;${hint} Legal: ${PCB_LAYERS.join(", ")}` };
+}
+
+/**
+ * Like {@link validateLayer} but also requires a copper layer — for traces,
+ * vias, coils, and pours, which can only sit on copper. Rejects valid
+ * non-copper layers (e.g. `EdgeCuts`) with a copper-specific message.
+ */
+function validateCopperLayer(raw: unknown): LayerOk | LayerErr {
+  const res = validateLayer(raw);
+  if ("error" in res) return res;
+  if (!isCopperLayer(res.layer)) {
+    return {
+      error: `layer '${res.layer}' is not a copper layer; copper layers: ${COPPER_LAYERS.join(", ")}`,
+    };
+  }
+  return res;
+}
+
+// ============================================================================
 // Document resolution — session-based (document_id) with inline fallback
 // ============================================================================
 
@@ -5360,7 +5454,6 @@ export function addCoil(args: Record<string, unknown>) {
   const outerR = args.outer_radius as number;
   const traceWidth = args.trace_width as number;
   const net = String(args.net ?? "");
-  const layer = ((args.layer as string) || "FCu") as PcbLayer;
   const direction = (args.direction as string) || "ccw";
   const startAngleDeg = (args.start_angle_deg as number) || 0;
   const segmentsPerTurn = Math.min(
@@ -5379,9 +5472,9 @@ export function addCoil(args: Record<string, unknown>) {
   if (!(outerR > innerR)) return fail("outer_radius must be > inner_radius");
   if (!(traceWidth > 0)) return fail("trace_width must be > 0");
   if (!net) return fail("net is required — coil copper must belong to a net");
-  if (!/Cu$/.test(layer)) {
-    return fail(`layer "${layer}" is not a copper layer (use FCu, BCu, In1Cu, ...)`);
-  }
+  const layerRes = validateCopperLayer((args.layer as string) || "FCu");
+  if ("error" in layerRes) return fail(layerRes.error);
+  const layer = layerRes.layer;
   if (direction !== "ccw" && direction !== "cw") {
     return fail(`direction must be "ccw" or "cw", got "${direction}"`);
   }
@@ -5440,9 +5533,8 @@ export function addCoil(args: Record<string, unknown>) {
   const layersIn = Array.isArray(args.layers) ? (args.layers as string[]) : undefined;
   if (layersIn && layersIn.length >= 2) {
     for (const l of layersIn) {
-      if (!/Cu$/.test(l)) {
-        return fail(`layers entry "${l}" is not a copper layer (use FCu, BCu, In1Cu, ...)`);
-      }
+      const lr = validateCopperLayer(l);
+      if ("error" in lr) return fail(`layers entry: ${lr.error}`);
     }
     const stitchVias: Array<{ position: Vec2; startLayer: PcbLayer; endLayer: PcbLayer }> = [];
     const perLayerLen = segLength(pts);
@@ -5527,7 +5619,9 @@ export function addCoil(args: Record<string, unknown>) {
 
   let via: { position: Vec2; startLayer: PcbLayer; endLayer: PcbLayer } | undefined;
   if (args.inner_via) {
-    const viaTo = ((args.via_to_layer as string) || "BCu") as PcbLayer;
+    const viaToRes = validateCopperLayer((args.via_to_layer as string) || "BCu");
+    if ("error" in viaToRes) return fail(`via_to_layer: ${viaToRes.error}`);
+    const viaTo = viaToRes.layer;
     const v = {
       position: pts[0],
       diameter: pcb.rules.defaultRules.viaDiameter,
@@ -6223,7 +6317,7 @@ export const getPadPositionsSchema = {
 
 /** Copper layers a pad sits on, in board order (drops paste/mask/silk). */
 function padCopperLayers(pad: Pad): PcbLayer[] {
-  return pad.layers.filter((l) => /Cu$/.test(l));
+  return pad.layers.filter((l) => isCopperLayer(l));
 }
 
 /**
@@ -6895,7 +6989,6 @@ export function addTrace(args: Record<string, unknown>) {
 
   const points = Array.isArray(args.points) ? (args.points as Vec2[]) : undefined;
   const net = String(args.net ?? "");
-  const layer = ((args.layer as string) || "FCu") as PcbLayer;
   const width = (args.width as number) ?? pcb.rules.defaultRules.traceWidth;
 
   if (!points || points.length < 2) return fail("points must be an array of >= 2 {x, y}");
@@ -6905,9 +6998,9 @@ export function addTrace(args: Record<string, unknown>) {
     }
   }
   if (!net) return fail("net is required — copper must belong to a net");
-  if (!/Cu$/.test(layer)) {
-    return fail(`layer "${layer}" is not a copper layer (use FCu, BCu, In1Cu, ...)`);
-  }
+  const layerRes = validateCopperLayer((args.layer as string) || "FCu");
+  if ("error" in layerRes) return fail(layerRes.error);
+  const layer = layerRes.layer;
   if (!(width > 0)) return fail("width must be > 0");
 
   if (!pcb.nets.some((n) => n.id === net)) {
@@ -6983,8 +7076,6 @@ export function addVia(args: Record<string, unknown>) {
 
   const position = args.position as Vec2;
   const net = String(args.net ?? "");
-  const startLayer = ((args.start_layer as string) || "FCu") as PcbLayer;
-  const endLayer = ((args.end_layer as string) || "BCu") as PcbLayer;
   const diameter = (args.diameter as number) ?? pcb.rules.defaultRules.viaDiameter;
   const drill = (args.drill as number) ?? pcb.rules.defaultRules.viaDrill;
 
@@ -6992,8 +7083,12 @@ export function addVia(args: Record<string, unknown>) {
     return fail("position must be {x, y} in mm");
   }
   if (!net) return fail("net is required — a via must belong to a net");
-  if (!/Cu$/.test(startLayer)) return fail(`start_layer "${startLayer}" is not a copper layer`);
-  if (!/Cu$/.test(endLayer)) return fail(`end_layer "${endLayer}" is not a copper layer`);
+  const startRes = validateCopperLayer((args.start_layer as string) || "FCu");
+  if ("error" in startRes) return fail(`start_layer: ${startRes.error}`);
+  const startLayer = startRes.layer;
+  const endRes = validateCopperLayer((args.end_layer as string) || "BCu");
+  if ("error" in endRes) return fail(`end_layer: ${endRes.error}`);
+  const endLayer = endRes.layer;
 
   if (!pcb.nets.some((n) => n.id === net)) {
     pcb.nets.push({ id: net, name: net });
@@ -7089,20 +7184,24 @@ export function setStackup(args: Record<string, unknown>) {
   if (copperOz != null) {
     const t = round3(copperOz * OZ_TO_MM);
     for (const l of stackup) {
-      if (/Cu$/.test(l.layer)) l.copperThickness = t;
+      if (isCopperLayer(l.layer)) l.copperThickness = t;
     }
   }
 
   // 2) Per-layer overrides; create copper-layer entries that are missing.
   for (const ov of perLayer ?? []) {
-    const layerName = String(ov.layer ?? "");
-    if (!layerName) return fail("each layers entry needs a `layer`");
+    if (ov.layer == null || String(ov.layer).trim() === "") {
+      return fail("each layers entry needs a `layer`");
+    }
+    const layerRes = validateLayer(ov.layer);
+    if ("error" in layerRes) return fail(layerRes.error);
+    const layerName = layerRes.layer;
     let entry = stackup.find((l) => l.layer === layerName);
     if (!entry) {
-      if (!/Cu$/.test(layerName)) {
+      if (!isCopperLayer(layerName)) {
         return fail(`cannot create non-copper layer "${layerName}" — only copper layers are auto-added`);
       }
-      entry = { layer: layerName as PcbLayer } as StackupLayer;
+      entry = { layer: layerName } as StackupLayer;
       stackup.push(entry);
     }
     if (ov.copper_thickness_mm != null) {
@@ -7371,11 +7470,10 @@ export function addZone(args: Record<string, unknown>) {
   }
 
   const net = String(args.net ?? "");
-  const layer = ((args.layer as string) || "FCu") as PcbLayer;
   if (!net) return fail("net is required — a pour must belong to a net");
-  if (!/Cu$/.test(layer)) {
-    return fail(`layer "${layer}" is not a copper layer (use FCu, BCu, In1Cu, ...)`);
-  }
+  const layerRes = validateCopperLayer((args.layer as string) || "FCu");
+  if ("error" in layerRes) return fail(layerRes.error);
+  const layer = layerRes.layer;
 
   const reliefArg = (args.thermal_relief as string) || "Relief";
   if (!["Direct", "Relief", "None"].includes(reliefArg)) {
@@ -8051,13 +8149,15 @@ export function addViaArray(args: Record<string, unknown>) {
   }
 
   const net = String(args.net ?? "");
-  const startLayer = ((args.start_layer as string) || "FCu") as PcbLayer;
-  const endLayer = ((args.end_layer as string) || "BCu") as PcbLayer;
   const diameter = (args.diameter as number) ?? pcb.rules.defaultRules.viaDiameter;
   const drill = (args.drill as number) ?? pcb.rules.defaultRules.viaDrill;
   if (!net) return fail("net is required — a via must belong to a net");
-  if (!/Cu$/.test(startLayer)) return fail(`start_layer "${startLayer}" is not a copper layer`);
-  if (!/Cu$/.test(endLayer)) return fail(`end_layer "${endLayer}" is not a copper layer`);
+  const startRes = validateCopperLayer((args.start_layer as string) || "FCu");
+  if ("error" in startRes) return fail(`start_layer: ${startRes.error}`);
+  const startLayer = startRes.layer;
+  const endRes = validateCopperLayer((args.end_layer as string) || "BCu");
+  if ("error" in endRes) return fail(`end_layer: ${endRes.error}`);
+  const endLayer = endRes.layer;
 
   const explicitPoints = Array.isArray(args.points)
     ? (args.points as Array<Record<string, unknown>>)
@@ -8236,8 +8336,6 @@ export function addMotorWinding(args: Record<string, unknown>) {
   const traceWidth = args.trace_width as number;
   const turnsPerCoil = (args.turns_per_coil as number) ?? 1;
   const connection = (args.connection as string) === "delta" ? "delta" : "wye";
-  const copperLayer = ((args.copper_layer as string) || "FCu") as PcbLayer;
-  const returnLayer = ((args.return_layer as string) || "BCu") as PcbLayer;
 
   if (!center || typeof center.x !== "number" || typeof center.y !== "number") {
     return fail("center must be {x, y} in mm");
@@ -8245,8 +8343,12 @@ export function addMotorWinding(args: Record<string, unknown>) {
   if (!(pitchRadius >= 0)) return fail("pitch_radius must be >= 0");
   if (!(outerR > innerR)) return fail("outer_radius must be > inner_radius");
   if (!(traceWidth > 0)) return fail("trace_width must be > 0");
-  if (!/Cu$/.test(copperLayer)) return fail(`copper_layer "${copperLayer}" is not a copper layer`);
-  if (!/Cu$/.test(returnLayer)) return fail(`return_layer "${returnLayer}" is not a copper layer`);
+  const copperRes = validateCopperLayer((args.copper_layer as string) || "FCu");
+  if ("error" in copperRes) return fail(`copper_layer: ${copperRes.error}`);
+  const copperLayer = copperRes.layer;
+  const returnRes = validateCopperLayer((args.return_layer as string) || "BCu");
+  if ("error" in returnRes) return fail(`return_layer: ${returnRes.error}`);
+  const returnLayer = returnRes.layer;
 
   // a. Plan the winding.
   const planRes = windingLayout({

@@ -4425,11 +4425,13 @@ describe("run_drc / run_erc / critique_route surface 'unverifiable', not false-c
     zones: [],
   };
 
-  // A trace on a dotted layer name — serde refuses the whole board.
+  // A trace on a completely unknown layer name — serde refuses the whole board.
+  // (Dotted KiCad forms like "In1.Cu" are now accepted via serde aliases and
+  // auto-coerced to "In1Cu", so they no longer trigger the kernel parse error.)
   const malformedPcb = {
     ...validPcb,
     traces: [
-      { start: { x: 1, y: 1 }, end: { x: 5, y: 1 }, width: 0.2, layer: "In1.Cu", net: "GND" },
+      { start: { x: 1, y: 1 }, end: { x: 5, y: 1 }, width: 0.2, layer: "UNKNOWN_LAYER", net: "GND" },
     ],
   } as unknown as Pcb;
 
@@ -4478,7 +4480,7 @@ describe("run_drc / run_erc / critique_route surface 'unverifiable', not false-c
     expect(result.isError).toBe(true);
     expect(result.structuredContent?.verifiable).toBe(false);
     expect(result.structuredContent?.status).toBe("errored");
-    expect(result.structuredContent?.offending_field).toBe("In1.Cu");
+    expect(result.structuredContent?.offending_field).toBe("UNKNOWN_LAYER");
     expect(result.structuredContent?.next_actions?.length).toBeGreaterThan(0);
     // The text must NOT read as a clean pass.
     const text = result.content[0]!.text;
@@ -4496,7 +4498,7 @@ describe("run_drc / run_erc / critique_route surface 'unverifiable', not false-c
     const result = asResult(await critiqueRoute({ document: docWithPcb(malformedPcb), net: "GND" }));
     expect(result.isError).toBe(true);
     expect(result.structuredContent?.verifiable).toBe(false);
-    expect(result.structuredContent?.offending_field).toBe("In1.Cu");
+    expect(result.structuredContent?.offending_field).toBe("UNKNOWN_LAYER");
   });
 
   it("run_erc returns isError + verifiable:false for a malformed schematic", async () => {
@@ -4581,5 +4583,158 @@ describe("set_design_rules ordering tolerance (buffering)", () => {
       classes: [{ name: "power", nets: [] }],
     });
     expect(badClass.isError).toBe(true);
+  });
+});
+
+describe("layer-name validation at write boundaries", () => {
+  /** Error text of a failed tool result (the content block isn't JSON). */
+  const errText = (r: { content: Array<{ text: string }> }) => r.content[0].text;
+
+  it("add_trace rejects the dotted KiCad form with a did-you-mean + legal list", async () => {
+    const id = await boardWithTwoResistors();
+    const res = await addTrace({
+      document_id: id,
+      net: "MID",
+      layer: "In1.Cu",
+      points: [
+        { x: 1, y: 1 },
+        { x: 9, y: 1 },
+      ],
+    });
+    expect(isErr(res)).toBe(true);
+    const t = errText(res);
+    expect(t).toContain("'In1.Cu' is not valid");
+    expect(t).toContain("did you mean 'In1Cu'");
+    expect(t).toContain("Legal: FCu, BCu, In1Cu");
+    // No corrupt copper landed on the board.
+    expect(getPcbBoard(getSession(id)).traces.some((tr) => tr.layer === ("In1.Cu" as never))).toBe(
+      false,
+    );
+  });
+
+  it("add_trace rejects an entirely unknown layer with the legal list", async () => {
+    const id = await boardWithTwoResistors();
+    const res = await addTrace({
+      document_id: id,
+      net: "MID",
+      layer: "TopCopper",
+      points: [
+        { x: 1, y: 1 },
+        { x: 9, y: 1 },
+      ],
+    });
+    expect(isErr(res)).toBe(true);
+    expect(errText(res)).toContain("'TopCopper' is not valid");
+    expect(errText(res)).toContain("Legal:");
+  });
+
+  it("add_trace rejects a valid but non-copper layer", async () => {
+    const id = await boardWithTwoResistors();
+    const res = await addTrace({
+      document_id: id,
+      net: "MID",
+      layer: "EdgeCuts",
+      points: [
+        { x: 1, y: 1 },
+        { x: 9, y: 1 },
+      ],
+    });
+    expect(isErr(res)).toBe(true);
+    expect(errText(res)).toContain("not a copper layer");
+  });
+
+  it("add_trace still accepts the canonical layer name", async () => {
+    const id = await boardWithTwoResistors();
+    const res = out(
+      await addTrace({
+        document_id: id,
+        net: "MID",
+        layer: "In1Cu",
+        points: [
+          { x: 1, y: 1 },
+          { x: 9, y: 1 },
+        ],
+      }),
+    );
+    expect(res.success).toBe(true);
+    expect(res.layer).toBe("In1Cu");
+  });
+
+  it("add_via rejects a dotted start_layer", async () => {
+    const id = await boardWithTwoResistors();
+    const res = await addVia({
+      document_id: id,
+      net: "MID",
+      position: { x: 10, y: 10 },
+      start_layer: "F.Cu",
+    });
+    expect(isErr(res)).toBe(true);
+    expect(errText(res)).toContain("start_layer");
+    expect(errText(res)).toContain("did you mean 'FCu'");
+  });
+
+  it("add_zone rejects a dotted layer", async () => {
+    const id = await boardWithTwoResistors();
+    const res = await addZone({ document_id: id, net: "GND", layer: "B.Cu", fill_board: true });
+    expect(isErr(res)).toBe(true);
+    expect(errText(res)).toContain("did you mean 'BCu'");
+    expect(getPcbBoard(getSession(id)).zones).toHaveLength(0);
+  });
+
+  it("add_via_array rejects a dotted end_layer", async () => {
+    const id = await boardWithTwoResistors();
+    const res = await addViaArray({
+      document_id: id,
+      net: "GND",
+      region: { x: 15, y: 15, w: 4, h: 4 },
+      end_layer: "In2.Cu",
+    });
+    expect(isErr(res)).toBe(true);
+    expect(errText(res)).toContain("end_layer");
+    expect(errText(res)).toContain("did you mean 'In2Cu'");
+  });
+
+  it("set_stackup rejects a dotted layer in a per-layer override", async () => {
+    const id = await boardWithTwoResistors();
+    const res = await setStackup({
+      document_id: id,
+      layers: [{ layer: "In1.Cu", copper_oz: 2 }],
+    });
+    expect(isErr(res)).toBe(true);
+    expect(errText(res)).toContain("did you mean 'In1Cu'");
+  });
+
+  it("add_coil rejects a dotted layer", async () => {
+    const id = await boardWithTwoResistors();
+    const res = await addCoil({
+      document_id: id,
+      center: { x: 25, y: 25 },
+      turns: 3,
+      inner_radius: 2,
+      outer_radius: 8,
+      trace_width: 0.3,
+      net: "MID",
+      layer: "In3.Cu",
+    });
+    expect(isErr(res)).toBe(true);
+    expect(errText(res)).toContain("did you mean 'In3Cu'");
+  });
+
+  it("add_motor_winding rejects a dotted copper_layer", async () => {
+    const id = await boardWithTwoResistors();
+    const res = await addMotorWinding({
+      document_id: id,
+      slots: 9,
+      poles: 6,
+      center: { x: 25, y: 25 },
+      pitch_radius: 15,
+      inner_radius: 2,
+      outer_radius: 5,
+      trace_width: 0.3,
+      copper_layer: "F.Cu",
+    });
+    expect(isErr(res)).toBe(true);
+    expect(errText(res)).toContain("copper_layer");
+    expect(errText(res)).toContain("did you mean 'FCu'");
   });
 });
