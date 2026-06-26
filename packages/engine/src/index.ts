@@ -238,6 +238,34 @@ export type {
   ActionType as PhysicsActionType,
 } from "./physics.js";
 
+// Cross-domain PCB ↔ enclosure verification (pure; no kernel dependency)
+export {
+  checkEnclosureFit,
+  deriveBoardFromCavity,
+  mountingHolesFromPcb,
+  connectorsFromPcb,
+  componentExtentsFromMeshes,
+  outlineAabb,
+  toWorld,
+} from "./enclosure-fit.js";
+export type {
+  EnclosureCavity,
+  EnclosureFeatures,
+  EnclosureFitInput,
+  EnclosureFitReport,
+  EnclosureFitCheck,
+  CheckStatus as EnclosureCheckStatus,
+  BoardPlacement,
+  MountingHole,
+  ConnectorRef,
+  ComponentExtent,
+  Standoff,
+  WallOpening,
+  WallEdge,
+  DeriveBoardOptions,
+} from "./enclosure-fit.js";
+export { extractEnclosureFeatures } from "./enclosure-mesh.js";
+
 /** Re-export Solid class for direct use */
 export type { Solid, WasmAnnotationLayer } from "@vcad/kernel-wasm";
 
