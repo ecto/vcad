@@ -3067,7 +3067,12 @@ mod tests {
                     oval_height: None,
                 }),
                 net: Some(net.to_string()),
-                layers: vec![PcbLayer::FCu, PcbLayer::BCu, PcbLayer::FMask, PcbLayer::BMask],
+                layers: vec![
+                    PcbLayer::FCu,
+                    PcbLayer::BCu,
+                    PcbLayer::FMask,
+                    PcbLayer::BMask,
+                ],
             }],
             graphics: vec![],
             model_3d: None,
@@ -3090,7 +3095,10 @@ mod tests {
         let v = check_drc(&pcb);
         let d = v.iter().find(|v| v.rule == DrcRuleType::MinDrill).unwrap();
         assert_eq!(d.provenance, DrcProvenance::Routing);
-        assert!(!d.generated, "a via is never a generated footprint artifact");
+        assert!(
+            !d.generated,
+            "a via is never a generated footprint artifact"
+        );
     }
 
     /// Two drilled holes of the *same* footprint placed too close are an
@@ -3108,9 +3116,15 @@ mod tests {
         pcb.footprints.push(fp);
 
         let v = check_drc(&pcb);
-        let h = v.iter().find(|v| v.rule == DrcRuleType::HoleToHole).unwrap();
+        let h = v
+            .iter()
+            .find(|v| v.rule == DrcRuleType::HoleToHole)
+            .unwrap();
         assert_eq!(h.provenance, DrcProvenance::IntraFootprint);
-        assert!(h.generated, "generated footprint's own land pattern artifact");
+        assert!(
+            h.generated,
+            "generated footprint's own land pattern artifact"
+        );
     }
 
     /// Holes from two different footprints that crowd report inter_component,
@@ -3124,7 +3138,10 @@ mod tests {
         pcb.footprints
             .push(tht_fp("J2", Vec2::new(41.0, 40.0), 0.9, "2", false));
         let v = check_drc(&pcb);
-        let h = v.iter().find(|v| v.rule == DrcRuleType::HoleToHole).unwrap();
+        let h = v
+            .iter()
+            .find(|v| v.rule == DrcRuleType::HoleToHole)
+            .unwrap();
         assert_eq!(h.provenance, DrcProvenance::InterComponent);
         assert!(h.generated, "one side is generated → flagged generated");
 
@@ -3135,9 +3152,15 @@ mod tests {
         pcb2.footprints
             .push(tht_fp("J2", Vec2::new(41.0, 40.0), 0.9, "2", false));
         let v2 = check_drc(&pcb2);
-        let h2 = v2.iter().find(|v| v.rule == DrcRuleType::HoleToHole).unwrap();
+        let h2 = v2
+            .iter()
+            .find(|v| v.rule == DrcRuleType::HoleToHole)
+            .unwrap();
         assert_eq!(h2.provenance, DrcProvenance::InterComponent);
-        assert!(!h2.generated, "neither side generated → real fault, not artifact");
+        assert!(
+            !h2.generated,
+            "neither side generated → real fault, not artifact"
+        );
     }
 
     /// Provenance serializes snake_case so the MCP layer can group by it.
