@@ -25,7 +25,10 @@ pub mod teardrop;
 
 pub use copper_pour::{fill_zones, FilledZone};
 pub use critique::{critique_net, NetCritique};
-pub use drc::{check_drc, DrcRuleType, DrcSeverity, DrcViolation};
+pub use drc::{
+    analyze_net_continuity, analyze_power_integrity, check_drc, is_power_net, DrcRuleType,
+    DrcSeverity, DrcViolation, NetContinuity, NetIsland,
+};
 pub use router::grid::GridRouter;
 pub use session::{Blocker, ProbeResult, RouteSession, SpanId};
 pub use spatial::{CopperElement, CopperGeom, SpatialIndex};

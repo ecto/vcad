@@ -145,6 +145,46 @@ export async function critiqueRoute(pcb: Pcb, net: string): Promise<NetCritique 
   }
 }
 
+/** One galvanic island of a net's copper. */
+export interface NetIsland {
+  pad_count: number;
+  node_count: number;
+  position: Vec2;
+}
+
+/** Galvanic-continuity analysis for one net's realized copper — the
+ *  realized-geometry check that gates power/PDN and impedance verdicts. */
+export interface NetContinuity {
+  net: string;
+  /** Disjoint galvanic islands: 0 = no copper, 1 = continuous, ≥2 = split. */
+  islands: number;
+  total_pads: number;
+  connected_pads: number;
+  /** connected_pads / total_pads, in [0, 1]. */
+  coverage: number;
+  /** Stitching vias on the net. */
+  vias: number;
+  /** True when the net has at least one piece of realized copper. */
+  realized: boolean;
+  /** True when the net's copper forms exactly one galvanic island. */
+  continuous: boolean;
+  /** Largest stranded (non-main) island when split; null otherwise. */
+  worst_island: NetIsland | null;
+}
+
+/** Analyze a net's realized-copper galvanic continuity (islands, pad coverage,
+ *  stitching vias, worst stranded island). Returns null if WASM is unavailable. */
+export async function netContinuity(pcb: Pcb, net: string): Promise<NetContinuity | null> {
+  const wasm = await loadEcadWasm();
+  if (!wasm) return null;
+  try {
+    return wasm.ecadNetContinuity(JSON.stringify(pcb), net) as NetContinuity;
+  } catch (e) {
+    console.warn("[ECAD] Net continuity failed:", e);
+    return null;
+  }
+}
+
 /** Run Electrical Rule Check on a schematic. */
 export async function runErc(sheet: SchematicSheet): Promise<ErcViolationResult[]> {
   const wasm = await loadEcadWasm();

@@ -8,9 +8,11 @@
 
 use std::collections::BTreeSet;
 
+use vcad_ecad_pcb::analyze_power_integrity;
 use vcad_ecad_pcb::drc::{check_drc, DrcViolation};
 use vcad_ir::ecad::{
-    DrcSummary, PartReceiptLine, Pcb, Receipt, ReceiptStatus, RuleCount, SourcingSnapshot,
+    DrcSummary, PartReceiptLine, Pcb, PowerIntegrityLine, Receipt, ReceiptStatus, RuleCount,
+    SourcingSnapshot,
 };
 
 /// FNV-1a 64-bit hash of a string, hex-encoded — deterministic and
@@ -152,11 +154,27 @@ pub fn build_receipt(pcb: &Pcb, sourcing: Option<SourcingSnapshot>) -> Receipt {
             mpn: f.properties.get("mpn").cloned(),
         })
         .collect();
+    // Realized-copper continuity for power/plane nets, so the durable proof
+    // records whether each plane is electrically continuous — a closed-form
+    // PASS never gets to imply a sound plane that isn't there.
+    let power_integrity = analyze_power_integrity(pcb)
+        .into_iter()
+        .map(|c| PowerIntegrityLine {
+            net: c.net,
+            islands: c.islands as u32,
+            continuous: c.continuous,
+            coverage: c.coverage,
+            connected_pads: c.connected_pads as u32,
+            total_pads: c.total_pads as u32,
+            vias: c.vias as u32,
+        })
+        .collect();
     Receipt {
         board_hash: fnv1a(&canonical_board(pcb)),
         design_rules_hash: fnv1a(&canonical_rules(pcb)),
         drc_backend: format!("vcad-ecad-pcb {}", env!("CARGO_PKG_VERSION")),
         drc,
+        power_integrity,
         parts,
         sourcing,
     }
@@ -327,5 +345,52 @@ mod tests {
         );
         // Verdict depends only on geometry/DRC, not the sourcing snapshot.
         assert_eq!(verify_receipt(&pcb, &with_src), ReceiptStatus::Holds);
+    }
+
+    /// The receipt records realized-copper continuity for power/plane nets, so a
+    /// fragmented ground plane is durable proof — not implied by a clean DRC.
+    #[test]
+    fn receipt_records_fragmented_power_plane() {
+        let mut pcb = board_with(vec![]);
+        pcb.nets.push(Net {
+            id: "GND".into(),
+            name: "GND".into(),
+        });
+        let zone = |v: Vec<Vec2>| Zone {
+            outline: v,
+            holes: vec![],
+            net: "GND".into(),
+            layer: PcbLayer::FCu,
+            clearance: 0.2,
+            min_area: 0.0,
+            fill_type: ZoneFillType::Solid,
+            thermal_relief: ThermalReliefStyle::Relief,
+            thermal_gap: Some(0.5),
+            thermal_spoke_width: Some(0.5),
+            priority: 0,
+        };
+        // Two non-touching GND pours → an electrically split plane.
+        pcb.zones = vec![
+            zone(vec![
+                Vec2::new(2.0, 2.0),
+                Vec2::new(12.0, 2.0),
+                Vec2::new(12.0, 12.0),
+                Vec2::new(2.0, 12.0),
+            ]),
+            zone(vec![
+                Vec2::new(30.0, 30.0),
+                Vec2::new(45.0, 30.0),
+                Vec2::new(45.0, 45.0),
+                Vec2::new(30.0, 45.0),
+            ]),
+        ];
+        let rcpt = build_receipt(&pcb, None);
+        let gnd = rcpt
+            .power_integrity
+            .iter()
+            .find(|p| p.net == "GND")
+            .expect("GND continuity recorded in receipt");
+        assert_eq!(gnd.islands, 2);
+        assert!(!gnd.continuous);
     }
 }

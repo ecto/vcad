@@ -149,6 +149,7 @@ export {
   isEcadAvailable,
   runDrc,
   critiqueRoute,
+  netContinuity,
   runErc,
   generateNetlist,
   routeNet,
@@ -206,6 +207,8 @@ export type {
   FootprintCompat,
   Alternative,
   Substitution,
+  NetContinuity,
+  NetIsland,
 } from "./ecad.js";
 
 // Parts library

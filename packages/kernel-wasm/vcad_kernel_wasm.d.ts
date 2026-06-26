@@ -1542,6 +1542,15 @@ export function ecadJellybeanManifest(): string;
 export function ecadLayerZ(layer: string, thickness: number, explosion: number): number;
 
 /**
+ * Galvanic-continuity analysis for one net's *realized* copper: island
+ * count, pad coverage, stitching vias, and the worst stranded island. The
+ * realized-geometry check that gates power/PDN and impedance verdicts — a
+ * closed-form PASS is only meaningful if the copper is a single continuous
+ * conductor.
+ */
+export function ecadNetContinuity(pcb_json: string, net: string): any;
+
+/**
  * Get the net for a wire based on endpoint proximity to component pins.
  *
  * # Arguments
@@ -2157,6 +2166,20 @@ export function renderBakeMesh(input_json: string): string;
 export function render_pcb_svg(pcb_json: string, layers_json: string, scale: number): string;
 
 /**
+ * Render a PCB with explicit render options (the "Studio Graphite" theme
+ * system). Backward-compatible companion to [`render_pcb_svg`]: the 3-arg
+ * form keeps working and now defaults to the dark theme.
+ *
+ * `opts_json` is an options object (empty string = defaults), e.g.
+ * `{"theme":"dark","values":true,"netLabels":false,"ratsnest":true,
+ *   "grid":true,"hero":false,"highlight":{"nets":["GND"],"refs":["U1"]}}`.
+ * `theme` is `"dark"` (default) or `"light"` (legacy fab look); `highlight`
+ * recolours the named nets/refs to the brand pink with a glow and dims the
+ * rest — the agent affordance for "show me net X".
+ */
+export function render_pcb_svg_opts(pcb_json: string, layers_json: string, scale: number, opts_json: string): string;
+
+/**
  * Render raw `.vcad` document JSON to a drafting-style isometric SVG.
  *
  * Thin wrapper over `vcad_render::render_svg_str` — the same renderer the
@@ -2428,6 +2451,7 @@ export interface InitOutput {
     readonly raytracer_uploadSolid: (a: number, b: number) => [number, number];
     readonly renderBakeMesh: (a: number, b: number) => [number, number, number, number];
     readonly render_pcb_svg: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
+    readonly render_pcb_svg_opts: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number, number, number];
     readonly render_svg: (a: number, b: number, c: number) => [number, number, number, number];
     readonly render_svg_view: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
     readonly sectionMesh: (a: any, b: number, c: number, d: number, e: number) => any;
@@ -2498,20 +2522,6 @@ export interface InitOutput {
     readonly nestedSheetMetalDxf: (a: number, b: number) => [number, number];
     readonly sheetMetalFoldedStep: (a: number, b: number) => [number, number];
     readonly sheetMetalSequence: (a: number, b: number) => [number, number];
-    readonly __wbg_circuitsim_free: (a: number, b: number) => void;
-    readonly circuitsim_dt: (a: number) => number;
-    readonly circuitsim_new: (a: number, b: number) => [number, number, number];
-    readonly circuitsim_observe: (a: number) => [number, number, number];
-    readonly circuitsim_reset: (a: number) => void;
-    readonly circuitsim_setValue: (a: number, b: number, c: number) => void;
-    readonly circuitsim_step: (a: number, b: number) => [number, number, number];
-    readonly digitizeSketch: (a: number, b: number, c: number, d: number) => [number, number, number, number];
-    readonly digitizeText: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
-    readonly isEmbroideryAvailable: () => number;
-    readonly readEmbroideryDst: (a: number, b: number) => [number, number, number, number];
-    readonly readEmbroideryPes: (a: number, b: number) => [number, number, number, number];
-    readonly writeEmbroideryDst: (a: number, b: number) => [number, number, number, number];
-    readonly writeEmbroideryPes: (a: number, b: number) => [number, number, number, number];
     readonly __wbg_get_slicersettings_first_layer_height: (a: number) => number;
     readonly __wbg_get_slicersettings_infill_density: (a: number) => number;
     readonly __wbg_get_slicersettings_infill_pattern: (a: number) => number;
@@ -2583,6 +2593,13 @@ export interface InitOutput {
     readonly wasmdocumentengine_set_visible: (a: number, b: number, c: number, d: number) => any;
     readonly wasmdocumentengine_undo: (a: number) => any;
     readonly wasmdocumentengine_update_feature: (a: number, b: number, c: number, d: number, e: number) => any;
+    readonly digitizeSketch: (a: number, b: number, c: number, d: number) => [number, number, number, number];
+    readonly digitizeText: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
+    readonly isEmbroideryAvailable: () => number;
+    readonly readEmbroideryDst: (a: number, b: number) => [number, number, number, number];
+    readonly readEmbroideryPes: (a: number, b: number) => [number, number, number, number];
+    readonly writeEmbroideryDst: (a: number, b: number) => [number, number, number, number];
+    readonly writeEmbroideryPes: (a: number, b: number) => [number, number, number, number];
     readonly __wbg_get_wasmcamsettings_feed_rate: (a: number) => number;
     readonly __wbg_get_wasmcamsettings_plunge_rate: (a: number) => number;
     readonly __wbg_get_wasmcamsettings_retract_z: (a: number) => number;
@@ -2625,6 +2642,7 @@ export interface InitOutput {
     readonly ecadGetSymbol: (a: number, b: number) => [number, number, number];
     readonly ecadJellybeanManifest: () => [number, number];
     readonly ecadLayerZ: (a: number, b: number, c: number, d: number) => number;
+    readonly ecadNetContinuity: (a: number, b: number, c: number, d: number) => [number, number, number];
     readonly ecadNetForWire: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
     readonly ecadPartsManifest: () => [number, number];
     readonly ecadPcbPreviewMeshes: (a: number, b: number) => [number, number, number];
@@ -2645,6 +2663,13 @@ export interface InitOutput {
     readonly wasmcamsettings_fromJson: (a: number, b: number) => [number, number, number];
     readonly wasmcamsettings_new: () => number;
     readonly isEcadAvailable: () => number;
+    readonly __wbg_circuitsim_free: (a: number, b: number) => void;
+    readonly circuitsim_dt: (a: number) => number;
+    readonly circuitsim_new: (a: number, b: number) => [number, number, number];
+    readonly circuitsim_observe: (a: number) => [number, number, number];
+    readonly circuitsim_reset: (a: number) => void;
+    readonly circuitsim_setValue: (a: number, b: number, c: number) => void;
+    readonly circuitsim_step: (a: number, b: number) => [number, number, number];
     readonly __wbg_wasmkeybindings_free: (a: number, b: number) => void;
     readonly __wbg_wasmsketchsession_free: (a: number, b: number) => void;
     readonly sketchCircleSegments: (a: number, b: number, c: number, d: number) => [number, number, number, number];

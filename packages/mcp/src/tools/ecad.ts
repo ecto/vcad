@@ -51,8 +51,9 @@ import {
   verifySubstitution as kernelVerifySubstitution,
   buildReceipt as kernelBuildReceipt,
   verifyReceipt as kernelVerifyReceipt,
+  netContinuity as kernelNetContinuity,
 } from "@vcad/engine";
-import type { Engine, NetlistResult, TriangleMesh } from "@vcad/engine";
+import type { Engine, NetlistResult, TriangleMesh, NetContinuity } from "@vcad/engine";
 import { registerSession, getSession } from "./session.js";
 import { sizePdnExact, ecadDiffEngineAvailable } from "../wasm/ecad-diff.js";
 
@@ -962,6 +963,19 @@ export const calcImpedanceSchema = {
       type: "number" as const,
       description: "Spacing between traces in mm (for differential pairs)",
     },
+    document_id: {
+      type: "string" as const,
+      description:
+        "Optional: session id of a PCB to verify against. With `net`, the " +
+        "impedance is only certified when that net's trace is actually realized " +
+        "as continuous copper — a split/unrouted trace returns a blocked result.",
+    },
+    net: {
+      type: "string" as const,
+      description:
+        "Optional: the board net this trace carries. Requires `document_id`; " +
+        "gates the impedance number on the trace being galvanically realized.",
+    },
   },
   required: ["trace_width", "dielectric_height"],
 };
@@ -1064,6 +1078,19 @@ export const sizePdnSchema = {
         "'ts' (default) uses the JS solver; 'exact' routes into the Rust " +
         "kernel engine (implicit-function adjoint) via WASM when available, " +
         "falling back to 'ts' if the artifact is absent.",
+    },
+    document_id: {
+      type: "string" as const,
+      description:
+        "Optional: session id of a PCB this PDN mesh represents. With `net`, the " +
+        "sizing PASS is gated on that power plane being galvanically continuous " +
+        "— a plane split into islands returns a blocked result with coverage stats.",
+    },
+    net: {
+      type: "string" as const,
+      description:
+        "Optional: the power net this PDN mesh models (e.g. '+3V3'). Requires " +
+        "`document_id`; refuses to certify a PASS on a disconnected plane.",
     },
   },
   required: ["nodes", "edges", "loads", "targets"],
@@ -3674,7 +3701,120 @@ function seedScan(
   return best.x;
 }
 
-export function calcImpedance(args: Record<string, unknown>) {
+// ============================================================================
+// Realized-copper gate — a closed-form PASS is only trustworthy if the copper
+// it describes is actually one continuous conductor. The PI/SI calculators are
+// pure by default; when a caller ties a result to a board net (document_id +
+// net), we verify the realized plane/trace before letting a PASS stand. A PASS
+// on a split/absent plane is worse than no number — it is actively misleading.
+// ============================================================================
+
+/** Outcome of resolving the realized-copper context for a calculator call. */
+type RealizedGate =
+  | { kind: "none" }
+  | { kind: "incomplete"; message: string }
+  | { kind: "unchecked"; reason: string }
+  | { kind: "ok"; continuity: NetContinuity };
+
+/**
+ * Resolve the realized-copper continuity of a board net referenced alongside a
+ * pure calculator call. `document_id` + `net` are both required to verify; one
+ * without the other is a usage error, and neither means "model-only".
+ */
+async function resolveRealizedNet(args: Record<string, unknown>): Promise<RealizedGate> {
+  const id = args.document_id ? String(args.document_id) : "";
+  const net = typeof args.net === "string" ? args.net.trim() : "";
+  if (!id && !net) return { kind: "none" };
+  if (!id || !net) {
+    return {
+      kind: "incomplete",
+      message:
+        "pass BOTH document_id and net to verify against realized copper (got only one)",
+    };
+  }
+  let pcb: Pcb | null = null;
+  try {
+    pcb = getDocPcb(getSession(id));
+  } catch (e) {
+    return { kind: "unchecked", reason: (e as Error).message };
+  }
+  if (!pcb) return { kind: "unchecked", reason: `document '${id}' has no PCB` };
+  const continuity = await kernelNetContinuity(pcb, net);
+  if (!continuity) return { kind: "unchecked", reason: "continuity engine unavailable" };
+  return { kind: "ok", continuity };
+}
+
+/** Compact, agent-facing summary of a net's realized-plane continuity. */
+function realizedPlaneReport(c: NetContinuity): Record<string, unknown> {
+  return {
+    net: c.net,
+    realized: c.realized,
+    continuous: c.continuous,
+    islands: c.islands,
+    coverage_pct: Math.round(c.coverage * 1000) / 10,
+    connected_pads: c.connected_pads,
+    total_pads: c.total_pads,
+    stitching_vias: c.vias,
+    ...(c.worst_island
+      ? {
+          worst_island: {
+            pad_count: c.worst_island.pad_count,
+            node_count: c.worst_island.node_count,
+            position: c.worst_island.position,
+          },
+        }
+      : {}),
+  };
+}
+
+/** Why a net's realized copper fails verification, or null if it's sound. */
+function planeBlockReason(c: NetContinuity, conductor: string): string | null {
+  if (!c.realized) {
+    return `net '${c.net}' has no realized copper — there is no ${conductor} to verify`;
+  }
+  if (!c.continuous) {
+    const pct = Math.round(c.coverage * 1000) / 10;
+    return `net '${c.net}' copper is split into ${c.islands} galvanic islands (only ${pct}% of pads reach the main plane) — an electrically open ${conductor}`;
+  }
+  return null;
+}
+
+/**
+ * Apply the realized-copper gate to a calculator payload. Attaches the realized
+ * plane report, and — when the plane/trace is split or absent — REFUSES the
+ * verdict: flips `passKey` (if any) to false and stamps a blocked result with
+ * coverage stats, stitching-via count, and the worst island, replacing the
+ * model summary. Mutates `payload` in place.
+ */
+function applyRealizedGate(
+  payload: Record<string, unknown>,
+  gate: RealizedGate,
+  opts: { conductor: string; noun: string; passKey?: string },
+): void {
+  if (gate.kind === "none") {
+    payload.realized_check =
+      "model-only — pass document_id + net to verify the number against realized copper";
+    return;
+  }
+  if (gate.kind === "unchecked") {
+    payload.realized_check = `not verified against realized copper — ${gate.reason}`;
+    return;
+  }
+  const c = gate.continuity;
+  payload.realized_plane = realizedPlaneReport(c);
+  const reason = planeBlockReason(c, opts.conductor);
+  if (!reason) {
+    payload.realized_verified = true;
+    return;
+  }
+  if (opts.passKey) payload[opts.passKey] = false;
+  payload.blocked = true;
+  payload.verdict = "blocked";
+  payload.unverifiable_reason = "unverifiable on disconnected plane";
+  payload.summary = `${opts.noun} NOT certified — ${reason}. Stitch the copper (add_via / route_nets), then re-run; a closed-form PASS on a dead plane would mislead.`;
+}
+
+export async function calcImpedance(args: Record<string, unknown>) {
   const traceWidth = args.trace_width as number;
   const copperThickness = (args.copper_thickness as number) || 0.035;
   const dielectricHeight = args.dielectric_height as number;
@@ -3721,6 +3861,12 @@ export function calcImpedance(args: Record<string, unknown>) {
     result.z_diff = Math.round(zDiff * 100) / 100;
     result.spacing = spacing;
   }
+
+  // Gate on realized copper: an impedance for a trace that isn't actually
+  // realized (unrouted / split) is a number with nothing behind it.
+  const gate = await resolveRealizedNet(args);
+  if (gate.kind === "incomplete") return ecadError(gate.message);
+  applyRealizedGate(result, gate, { conductor: "trace", noun: "Impedance" });
 
   return {
     content: [
@@ -3873,7 +4019,7 @@ export function sizeImpedance(args: Record<string, unknown>) {
  * forward solve. The Rust `PdnSystem` is the scalable kernel backend (analytic
  * implicit-function adjoint); this is the agent-facing path for small meshes.
  */
-export function sizePdn(args: Record<string, unknown>) {
+export async function sizePdn(args: Record<string, unknown>) {
   const fail = ecadError;
 
   const nodes = Math.round(args.nodes as number);
@@ -3892,6 +4038,19 @@ export function sizePdn(args: Record<string, unknown>) {
   if (!Array.isArray(edges) || edges.length === 0) return fail("provide at least one edge");
   if (!Array.isArray(targets) || targets.length === 0) return fail("provide at least one target");
   if (!(maxW > minW)) return fail("max_width must be > min_width");
+
+  // Realized-copper gate: if this PDN mesh is tied to a board net, the sizing
+  // PASS is only certified when that power plane is galvanically continuous.
+  const gate = await resolveRealizedNet(args);
+  if (gate.kind === "incomplete") return fail(gate.message);
+  const respondPdn = (payload: Record<string, unknown>) => {
+    applyRealizedGate(payload, gate, {
+      conductor: "plane",
+      noun: "PDN sizing",
+      passKey: "within_budget",
+    });
+    return { content: [{ type: "text" as const, text: JSON.stringify(payload) }] };
+  };
 
   // Optionally route into the Rust kernel engine (implicit-function adjoint)
   // via WASM. Falls through to the TS solver if the artifact isn't available.
@@ -3915,27 +4074,20 @@ export function sizePdn(args: Record<string, unknown>) {
       const overBudget = targets
         .map((tg, i) => ({ node: tg.node, drop: r6(drops[i]!), budget: tg.max_drop }))
         .filter((x) => x.drop > x.budget * (1 + tolPct / 100));
-      return {
-        content: [
-          {
-            type: "text" as const,
-            text: JSON.stringify({
-              success: true,
-              engine: "rust-adjoint",
-              summary: withinBudget
-                ? `sized ${widths.length} segment(s) via the Rust adjoint engine; all ${targets.length} node(s) within budget`
-                : `Rust engine: ${overBudget.length} node(s) over budget within the width bounds`,
-              within_budget: withinBudget,
-              tolerance_pct: tolPct,
-              widths_mm: widths,
-              measured_drops_v: drops.map(r6),
-              targets,
-              converged: exact.converged,
-              ...(overBudget.length ? { over_budget: overBudget } : {}),
-            }),
-          },
-        ],
-      };
+      return respondPdn({
+        success: true,
+        engine: "rust-adjoint",
+        summary: withinBudget
+          ? `sized ${widths.length} segment(s) via the Rust adjoint engine; all ${targets.length} node(s) within budget`
+          : `Rust engine: ${overBudget.length} node(s) over budget within the width bounds`,
+        within_budget: withinBudget,
+        tolerance_pct: tolPct,
+        widths_mm: widths,
+        measured_drops_v: drops.map(r6),
+        targets,
+        converged: exact.converged,
+        ...(overBudget.length ? { over_budget: overBudget } : {}),
+      });
     }
   }
 
@@ -4030,26 +4182,19 @@ export function sizePdn(args: Record<string, unknown>) {
         active.includes("max_width") ? "widen max_width or shorten segments" : "mesh-limited"
       }`;
 
-  return {
-    content: [
-      {
-        type: "text" as const,
-        text: JSON.stringify({
-          success: true,
-          summary,
-          within_budget: withinBudget,
-          tolerance_pct: tolPct,
-          widths_mm: widths.map(r4),
-          continuous_widths_mm: cont.map(r4),
-          measured_drops_v: measured.map(r6),
-          targets,
-          fab_grid_mm: grid,
-          ...(active.length ? { active_constraints: active } : {}),
-          ...(overBudget.length ? { over_budget: overBudget } : {}),
-        }),
-      },
-    ],
-  };
+  return respondPdn({
+    success: true,
+    summary,
+    within_budget: withinBudget,
+    tolerance_pct: tolPct,
+    widths_mm: widths.map(r4),
+    continuous_widths_mm: cont.map(r4),
+    measured_drops_v: measured.map(r6),
+    targets,
+    fab_grid_mm: grid,
+    ...(active.length ? { active_constraints: active } : {}),
+    ...(overBudget.length ? { over_budget: overBudget } : {}),
+  });
 }
 
 // ============================================================================
@@ -7200,6 +7345,17 @@ export async function buildReceipt(args: Record<string, unknown>) {
       isError: true,
     };
   }
+  // Surface realized-plane continuity at the top: a split power plane is an
+  // open PDN even with a clean clearance/short DRC, so the receipt's verdict
+  // must not read "clean" while a +3V3 plane sits in 15 islands.
+  const power = receipt.power_integrity ?? [];
+  const brokenPlanes = power.filter((p) => !p.continuous);
+  const powerIntegrityOk = brokenPlanes.length === 0;
+  const planeWarnings = brokenPlanes.map(
+    (p) =>
+      `net '${p.net}': ${p.islands} galvanic islands, ${Math.round(p.coverage * 1000) / 10}% pad coverage (${p.connected_pads}/${p.total_pads}), ${p.vias} stitching via(s)`,
+  );
+
   // The receipt rides in structuredContent so the inline viewer renders it
   // as an audit ledger (the only carrier ChatGPT's widget bridge exposes);
   // document_id lets the viewer also fetch the board GLB behind the ledger.
@@ -7207,6 +7363,8 @@ export async function buildReceipt(args: Record<string, unknown>) {
     content: [{ type: "text" as const, text: JSON.stringify(receipt) }],
     structuredContent: {
       receipt,
+      power_integrity_ok: powerIntegrityOk,
+      ...(planeWarnings.length ? { disconnected_planes: planeWarnings } : {}),
       ...(ctx.documentId ? { document_id: ctx.documentId } : {}),
     },
   };
