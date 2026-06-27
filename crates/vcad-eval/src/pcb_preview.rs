@@ -313,10 +313,12 @@ fn ring_segments(verts: &[Vec2]) -> Vec<vcad_ir::SketchSegment2D> {
 /// bottom (back parts), drawn as flat ribbons facing the viewer.
 fn add_footprint_silk(buf: &mut MeshBuf, fp: &Footprint, thickness: f64) {
     let front = fp.front;
-    let (z, up) = if front {
-        ((thickness + SILK_LIFT) as f32, true)
+    // Silk sits just above the board top (front parts) or below its bottom
+    // (back parts); ribbons are double-sided, so no per-element facing flag.
+    let z = if front {
+        (thickness + SILK_LIFT) as f32
     } else {
-        ((-SILK_LIFT) as f32, false)
+        (-SILK_LIFT) as f32
     };
 
     // Outline shapes defined on a silk layer.
@@ -326,7 +328,7 @@ fn add_footprint_silk(buf: &mut MeshBuf, fp: &Footprint, thickness: f64) {
             FootprintGraphic::Line {
                 start, end, layer, ..
             } if is_silk(*layer) => {
-                add_stroke(buf, (start.x, start.y), (end.x, end.y), hw, z, up);
+                add_stroke(buf, (start.x, start.y), (end.x, end.y), hw, z);
             }
             FootprintGraphic::Rect {
                 start, end, layer, ..
@@ -337,7 +339,6 @@ fn add_footprint_silk(buf: &mut MeshBuf, fp: &Footprint, thickness: f64) {
                     &[(x0, y0), (x1, y0), (x1, y1), (x0, y1), (x0, y0)],
                     hw,
                     z,
-                    up,
                 );
             }
             FootprintGraphic::Circle {
@@ -346,7 +347,7 @@ fn add_footprint_silk(buf: &mut MeshBuf, fp: &Footprint, thickness: f64) {
                 layer,
                 ..
             } if is_silk(*layer) => {
-                add_arc(buf, (center.x, center.y), *radius, 0.0, 360.0, hw, z, up);
+                add_arc(buf, (center.x, center.y), *radius, 0.0, 360.0, hw, z);
             }
             FootprintGraphic::Arc {
                 center,
@@ -364,7 +365,6 @@ fn add_footprint_silk(buf: &mut MeshBuf, fp: &Footprint, thickness: f64) {
                     *end_angle,
                     hw,
                     z,
-                    up,
                 );
             }
             FootprintGraphic::Polygon {
@@ -372,7 +372,7 @@ fn add_footprint_silk(buf: &mut MeshBuf, fp: &Footprint, thickness: f64) {
             } if is_silk(*layer) && vertices.len() >= 2 => {
                 let mut pts: Vec<(f64, f64)> = vertices.iter().map(|v| (v.x, v.y)).collect();
                 pts.push(pts[0]);
-                add_polyline(buf, &pts, hw, z, up);
+                add_polyline(buf, &pts, hw, z);
             }
             _ => {}
         }
@@ -389,7 +389,7 @@ fn add_footprint_silk(buf: &mut MeshBuf, fp: &Footprint, thickness: f64) {
         let stroke_hw = (SILK_TEXT_HEIGHT * 0.12).max(0.05) / 2.0;
         for poly in text_strokes(label, SILK_TEXT_HEIGHT) {
             let pts: Vec<(f64, f64)> = poly.into_iter().map(|(x, y)| (ox + x, oy + y)).collect();
-            add_polyline(buf, &pts, stroke_hw, z, up);
+            add_polyline(buf, &pts, stroke_hw, z);
         }
     }
 }
@@ -399,7 +399,7 @@ fn is_silk(layer: PcbLayer) -> bool {
 }
 
 /// Append a flat ribbon quad for one segment `a→b` of half-width `hw` at z.
-fn add_stroke(buf: &mut MeshBuf, a: (f64, f64), b: (f64, f64), hw: f64, z: f32, up: bool) {
+fn add_stroke(buf: &mut MeshBuf, a: (f64, f64), b: (f64, f64), hw: f64, z: f32) {
     let dx = b.0 - a.0;
     let dy = b.1 - a.1;
     let len = (dx * dx + dy * dy).sqrt();
@@ -408,30 +408,40 @@ fn add_stroke(buf: &mut MeshBuf, a: (f64, f64), b: (f64, f64), hw: f64, z: f32, 
     }
     let nx = -dy / len * hw;
     let ny = dx / len * hw;
-    let base = (buf.positions.len() / 3) as u32;
-    for &(px, py) in &[
+    let corners = [
         (a.0 + nx, a.1 + ny),
         (b.0 + nx, b.1 + ny),
         (b.0 - nx, b.1 - ny),
         (a.0 - nx, a.1 - ny),
-    ] {
+    ];
+    // Silk ribbons are zero-thickness flat quads. A single winding faces only
+    // one way, so a top-down camera sees the culled backface and the silk
+    // vanishes. Emit BOTH faces (up- and down-facing) on two separate vertex
+    // sets — separate sets so finish()'s per-vertex normals are a clean ±Z
+    // instead of cancelling to zero — so the layer reads from either side.
+    let top = (buf.positions.len() / 3) as u32;
+    for &(px, py) in &corners {
         buf.positions.push(px as f32);
         buf.positions.push(py as f32);
         buf.positions.push(z);
     }
-    if up {
-        buf.indices
-            .extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
-    } else {
-        buf.indices
-            .extend_from_slice(&[base, base + 2, base + 1, base, base + 3, base + 2]);
+    let bot = (buf.positions.len() / 3) as u32;
+    for &(px, py) in &corners {
+        buf.positions.push(px as f32);
+        buf.positions.push(py as f32);
+        buf.positions.push(z);
     }
+    // Up-facing (normal +Z) winding, then down-facing (normal -Z) winding.
+    buf.indices
+        .extend_from_slice(&[top, top + 2, top + 1, top, top + 3, top + 2]);
+    buf.indices
+        .extend_from_slice(&[bot, bot + 1, bot + 2, bot, bot + 2, bot + 3]);
 }
 
 /// Append ribbons for an open polyline.
-fn add_polyline(buf: &mut MeshBuf, pts: &[(f64, f64)], hw: f64, z: f32, up: bool) {
+fn add_polyline(buf: &mut MeshBuf, pts: &[(f64, f64)], hw: f64, z: f32) {
     for w in pts.windows(2) {
-        add_stroke(buf, w[0], w[1], hw, z, up);
+        add_stroke(buf, w[0], w[1], hw, z);
     }
 }
 
@@ -445,7 +455,6 @@ fn add_arc(
     end_deg: f64,
     hw: f64,
     z: f32,
-    up: bool,
 ) {
     if radius <= 1e-6 {
         return;
@@ -459,7 +468,7 @@ fn add_arc(
         let a = a0 + (a1 - a0) * (i as f64 / segs as f64);
         pts.push((center.0 + radius * a.cos(), center.1 + radius * a.sin()));
     }
-    add_polyline(buf, &pts, hw, z, up);
+    add_polyline(buf, &pts, hw, z);
 }
 
 /// Accumulates triangles into flat position/index/normal buffers.
@@ -795,6 +804,26 @@ mod tests {
         assert!(
             cu_max_z >= max_z,
             "copper {cu_max_z} should be >= board {max_z}"
+        );
+    }
+
+    #[test]
+    fn silkscreen_is_double_sided() {
+        // Silk is a flat, zero-thickness ribbon. A single winding faces only one
+        // way, so it backface-culls from the opposite side — which is exactly why
+        // it vanished from a top-down view. Both faces must be emitted, so the
+        // layer's per-vertex normals span +Z and -Z.
+        let pcb = board_with(vec![chip("R1", 10.0, 10.0)], vec![]);
+        let meshes = pcb_preview_meshes(&pcb);
+        let silk = meshes.iter().find(|m| m.role == "silkscreen").unwrap();
+        let nz: Vec<f32> = silk.normals.iter().skip(2).step_by(3).cloned().collect();
+        assert!(
+            nz.iter().any(|&n| n > 0.5),
+            "silk has no up-facing face (would cull from above)"
+        );
+        assert!(
+            nz.iter().any(|&n| n < -0.5),
+            "silk has no down-facing face (would cull from below)"
         );
     }
 }
