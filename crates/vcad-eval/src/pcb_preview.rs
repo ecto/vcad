@@ -399,7 +399,7 @@ fn is_silk(layer: PcbLayer) -> bool {
 }
 
 /// Append a flat ribbon quad for one segment `a→b` of half-width `hw` at z.
-fn add_stroke(buf: &mut MeshBuf, a: (f64, f64), b: (f64, f64), hw: f64, z: f32, up: bool) {
+fn add_stroke(buf: &mut MeshBuf, a: (f64, f64), b: (f64, f64), hw: f64, z: f32, _up: bool) {
     let dx = b.0 - a.0;
     let dy = b.1 - a.1;
     let len = (dx * dx + dy * dy).sqrt();
@@ -408,24 +408,34 @@ fn add_stroke(buf: &mut MeshBuf, a: (f64, f64), b: (f64, f64), hw: f64, z: f32, 
     }
     let nx = -dy / len * hw;
     let ny = dx / len * hw;
-    let base = (buf.positions.len() / 3) as u32;
-    for &(px, py) in &[
+    let corners = [
         (a.0 + nx, a.1 + ny),
         (b.0 + nx, b.1 + ny),
         (b.0 - nx, b.1 - ny),
         (a.0 - nx, a.1 - ny),
-    ] {
+    ];
+    // Silk ribbons are zero-thickness flat quads. A single winding faces only
+    // one way, so a top-down camera sees the culled backface and the silk
+    // vanishes. Emit BOTH faces (up- and down-facing) on two separate vertex
+    // sets — separate sets so finish()'s per-vertex normals are a clean ±Z
+    // instead of cancelling to zero — so the layer reads from either side.
+    let top = (buf.positions.len() / 3) as u32;
+    for &(px, py) in &corners {
         buf.positions.push(px as f32);
         buf.positions.push(py as f32);
         buf.positions.push(z);
     }
-    if up {
-        buf.indices
-            .extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
-    } else {
-        buf.indices
-            .extend_from_slice(&[base, base + 2, base + 1, base, base + 3, base + 2]);
+    let bot = (buf.positions.len() / 3) as u32;
+    for &(px, py) in &corners {
+        buf.positions.push(px as f32);
+        buf.positions.push(py as f32);
+        buf.positions.push(z);
     }
+    // Up-facing (normal +Z) winding, then down-facing (normal -Z) winding.
+    buf.indices
+        .extend_from_slice(&[top, top + 2, top + 1, top, top + 3, top + 2]);
+    buf.indices
+        .extend_from_slice(&[bot, bot + 1, bot + 2, bot, bot + 2, bot + 3]);
 }
 
 /// Append ribbons for an open polyline.
@@ -795,6 +805,26 @@ mod tests {
         assert!(
             cu_max_z >= max_z,
             "copper {cu_max_z} should be >= board {max_z}"
+        );
+    }
+
+    #[test]
+    fn silkscreen_is_double_sided() {
+        // Silk is a flat, zero-thickness ribbon. A single winding faces only one
+        // way, so it backface-culls from the opposite side — which is exactly why
+        // it vanished from a top-down view. Both faces must be emitted, so the
+        // layer's per-vertex normals span +Z and -Z.
+        let pcb = board_with(vec![chip("R1", 10.0, 10.0)], vec![]);
+        let meshes = pcb_preview_meshes(&pcb);
+        let silk = meshes.iter().find(|m| m.role == "silkscreen").unwrap();
+        let nz: Vec<f32> = silk.normals.iter().skip(2).step_by(3).cloned().collect();
+        assert!(
+            nz.iter().any(|&n| n > 0.5),
+            "silk has no up-facing face (would cull from above)"
+        );
+        assert!(
+            nz.iter().any(|&n| n < -0.5),
+            "silk has no down-facing face (would cull from below)"
         );
     }
 }
