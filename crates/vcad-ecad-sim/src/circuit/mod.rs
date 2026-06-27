@@ -138,27 +138,13 @@ impl CircuitEnv {
     /// no current, all nodes at 0 V.
     pub fn reset(&mut self) {
         self.time = 0.0;
-        for v in &mut self.cap_v {
-            *v = 0.0;
-        }
-        for i in &mut self.ind_i {
-            *i = 0.0;
-        }
-        for v in &mut self.nl_state {
-            *v = 0.0;
-        }
-        for v in &mut self.mech_omega {
-            *v = 0.0;
-        }
-        for v in &mut self.mech_theta {
-            *v = 0.0;
-        }
-        for v in &mut self.node_v {
-            *v = 0.0;
-        }
-        for i in &mut self.dev_i {
-            *i = 0.0;
-        }
+        self.cap_v.fill(0.0);
+        self.ind_i.fill(0.0);
+        self.nl_state.fill(0.0);
+        self.mech_omega.fill(0.0);
+        self.mech_theta.fill(0.0);
+        self.node_v.fill(0.0);
+        self.dev_i.fill(0.0);
     }
 
     /// The configured timestep (s).
