@@ -4158,8 +4158,10 @@ export async function exportGerber(args: Record<string, unknown>) {
               reason: blocker,
               drc: verdict.status === "unverifiable" ? { status: "unverifiable" } : verdict.summary,
               hint:
-                "Resolve the DRC errors (run run_drc / validate_for_fab for details), or " +
-                "re-run export_gerber with require_clean_drc:false to force the bundle anyway.",
+                "Resolve the DRC errors (run run_drc / validate_for_fab for details). " +
+                "To get editable files out of the dirty board now, use export_kicad " +
+                "(native .kicad_pcb/.kicad_sch — no DRC gate) or open_in_browser. " +
+                "Or re-run export_gerber with require_clean_drc:false to force the Gerber bundle anyway.",
             }),
           },
         ],
