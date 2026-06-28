@@ -1,0 +1,226 @@
+{
+  "schema_version": 0,
+  "task_id": "a5-hex-bolt-blank-01",
+  "task_sha256": "b349eb4218ce71cb8bac9c7ea456b3d6d7991caee0147367e7798a2387c3c476",
+  "checks": [
+    {
+      "n": 0,
+      "type": "valid_solid",
+      "params": {
+        "type": "valid_solid"
+      },
+      "result": "pass",
+      "details": {
+        "root_count": 1,
+        "solids_produced": 1
+      }
+    },
+    {
+      "n": 1,
+      "type": "bbox",
+      "params": {
+        "type": "bbox",
+        "min": [
+          -13.856,
+          -12,
+          0
+        ],
+        "max": [
+          13.856,
+          12,
+          60
+        ],
+        "tolerance_mm": 0.2
+      },
+      "result": "fail",
+      "details": {
+        "actual_max": [
+          0,
+          0,
+          60
+        ],
+        "actual_min": [
+          -27.711999893188477,
+          -27.711999893188477,
+          0
+        ],
+        "deviation_max": [
+          -13.856,
+          -12,
+          0
+        ],
+        "deviation_min": [
+          -13.855999893188477,
+          -15.711999893188477,
+          0
+        ],
+        "max_abs_deviation_mm": 15.711999893188477,
+        "tolerance_mm": 0.2
+      }
+    },
+    {
+      "n": 2,
+      "type": "mass_props",
+      "params": {
+        "type": "mass_props",
+        "volume_mm3": 14068.14,
+        "center_of_mass": [
+          0,
+          0,
+          22.1
+        ],
+        "tolerance_pct": 1.5
+      },
+      "result": "fail",
+      "details": {
+        "center_of_mass": {
+          "actual": [
+            -10.486635462428433,
+            -10.486635462428435,
+            20.232804224111337
+          ],
+          "bbox_diagonal_mm": 71.66526268814032,
+          "deviation": [
+            -10.486635462428433,
+            -10.486635462428435,
+            -1.8671957758886641
+          ],
+          "max_abs_deviation_mm": 10.486635462428435,
+          "pass": false,
+          "spec": [
+            0,
+            0,
+            22.1
+          ],
+          "tolerance_mm": 1.0749789403221046
+        },
+        "volume": {
+          "actual_mm3": 16139.459845114987,
+          "deviation_pct": 14.72348046802909,
+          "pass": false,
+          "spec_mm3": 14068.14,
+          "tolerance_pct": 1.5
+        }
+      }
+    },
+    {
+      "n": 3,
+      "type": "step_roundtrip",
+      "params": {
+        "type": "step_roundtrip",
+        "tolerance_pct": 1.5
+      },
+      "result": "pass",
+      "details": {
+        "per_solid": [
+          {
+            "bbox": {
+              "max_abs_deviation_mm": 0,
+              "original_max": [
+                0,
+                0,
+                60
+              ],
+              "original_min": [
+                -27.711999893188477,
+                -27.711999893188477,
+                0
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                0,
+                0,
+                60
+              ],
+              "roundtripped_min": [
+                -27.711999893188477,
+                -27.711999893188477,
+                0
+              ],
+              "tolerance_mm": 1.0749789403221046
+            },
+            "index": 0,
+            "pass": true,
+            "volume": {
+              "deviation_pct": 0,
+              "original_mm3": 16139.459845114987,
+              "pass": true,
+              "roundtripped_mm3": 16139.459845114987
+            }
+          }
+        ],
+        "tolerance_pct": 1.5
+      }
+    }
+  ],
+  "summary": {
+    "passed": false,
+    "checks_passed": 2,
+    "checks_total": 4,
+    "score": 0.5,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260628T003700Z-b9d9",
+  "model": {
+    "id": "wafer-direct-GLM-5.2",
+    "name": "Wafer (direct, GLM-5.2)",
+    "provider": "wafer",
+    "params": {
+      "mode": "direct",
+      "model": "GLM-5.2",
+      "max_tokens": 8000
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "a5-hex-bolt-blank-01",
+    "rendered": "Make a hex-head bolt blank as a single solid with no holes. The hexagonal head is a regular hexagonal prism with flat-to-flat distance 24mm and height 14mm, base on the XY plane (z = 0 to z = 14), centered on the Z axis, oriented so two flats are parallel to the X axis (flat-to-flat distance 24mm in the Y direction, so the head spans y in [-12, 12] and x in [-13.856, 13.856]). Directly above the head and concentric with it is a cylindrical shank of diameter 14mm and height 46mm (z = 14 to z = 60). The combined part is a single solid: hexagonal head at bottom, cylindrical shank extending upward. Output a single solid with no bores or holes.",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "wafer.chat.completions.create",
+        "args": {
+          "model": "GLM-5.2",
+          "max_tokens": 8000,
+          "system_chars": 3956,
+          "user_chars": 710,
+          "image_attachments": 0
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3874.173125
+      }
+    ],
+    "tokens": {
+      "input": 1498,
+      "output": 319,
+      "total": 1817
+    },
+    "wallclock_sec": 3.874173125
+  },
+  "output": {
+    "vcad_path": "20260628T003700Z-b9d9.vcad",
+    "vcad_sha256": "9f8f93dbe60a50823eeea3bf132a0e0f3a387eb9b6acb2ff862bd0ebdd63a72b",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-06-28T00:37:00.631Z",
+    "ended_at": "2026-06-28T00:37:04.515Z"
+  },
+  "signature": null
+}

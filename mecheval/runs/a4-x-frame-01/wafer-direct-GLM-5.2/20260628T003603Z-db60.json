@@ -1,0 +1,226 @@
+{
+  "schema_version": 0,
+  "task_id": "a4-x-frame-01",
+  "task_sha256": "984c72e685616e39f1a57a059ec6b4f41560402835e80466730906ced3fa2f3b",
+  "checks": [
+    {
+      "n": 0,
+      "type": "valid_solid",
+      "params": {
+        "type": "valid_solid"
+      },
+      "result": "pass",
+      "details": {
+        "root_count": 1,
+        "solids_produced": 1
+      }
+    },
+    {
+      "n": 1,
+      "type": "bbox",
+      "params": {
+        "type": "bbox",
+        "min": [
+          -50,
+          -50,
+          0
+        ],
+        "max": [
+          50,
+          50,
+          10
+        ],
+        "tolerance_mm": 0.05
+      },
+      "result": "pass",
+      "details": {
+        "actual_max": [
+          50,
+          50,
+          10
+        ],
+        "actual_min": [
+          -50,
+          -50,
+          0
+        ],
+        "deviation_max": [
+          0,
+          0,
+          0
+        ],
+        "deviation_min": [
+          0,
+          0,
+          0
+        ],
+        "max_abs_deviation_mm": 0,
+        "tolerance_mm": 0.05
+      }
+    },
+    {
+      "n": 2,
+      "type": "mass_props",
+      "params": {
+        "type": "mass_props",
+        "volume_mm3": 36000,
+        "center_of_mass": [
+          0,
+          0,
+          5
+        ],
+        "tolerance_pct": 0.5
+      },
+      "result": "pass",
+      "details": {
+        "center_of_mass": {
+          "actual": [
+            0,
+            0,
+            5
+          ],
+          "bbox_diagonal_mm": 141.77446878757826,
+          "deviation": [
+            0,
+            0,
+            0
+          ],
+          "max_abs_deviation_mm": 0,
+          "pass": true,
+          "spec": [
+            0,
+            0,
+            5
+          ],
+          "tolerance_mm": 0.7088723439378913
+        },
+        "volume": {
+          "actual_mm3": 36000,
+          "deviation_pct": 0,
+          "pass": true,
+          "spec_mm3": 36000,
+          "tolerance_pct": 0.5
+        }
+      }
+    },
+    {
+      "n": 3,
+      "type": "step_roundtrip",
+      "params": {
+        "type": "step_roundtrip",
+        "tolerance_pct": 0.5
+      },
+      "result": "pass",
+      "details": {
+        "per_solid": [
+          {
+            "bbox": {
+              "max_abs_deviation_mm": 0,
+              "original_max": [
+                50,
+                50,
+                10
+              ],
+              "original_min": [
+                -50,
+                -50,
+                0
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                50,
+                50,
+                10
+              ],
+              "roundtripped_min": [
+                -50,
+                -50,
+                0
+              ],
+              "tolerance_mm": 0.7088723439378913
+            },
+            "index": 0,
+            "pass": true,
+            "volume": {
+              "deviation_pct": 0,
+              "original_mm3": 36000,
+              "pass": true,
+              "roundtripped_mm3": 36000
+            }
+          }
+        ],
+        "tolerance_pct": 0.5
+      }
+    }
+  ],
+  "summary": {
+    "passed": true,
+    "checks_passed": 4,
+    "checks_total": 4,
+    "score": 1,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260628T003603Z-db60",
+  "model": {
+    "id": "wafer-direct-GLM-5.2",
+    "name": "Wafer (direct, GLM-5.2)",
+    "provider": "wafer",
+    "params": {
+      "mode": "direct",
+      "model": "GLM-5.2",
+      "max_tokens": 8000
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "a4-x-frame-01",
+    "rendered": "Make a cross-shaped frame in the XY plane by fusing two rectangular bars at right angles. Bar A is 100mm long along X, 20mm wide along Y, and 10mm tall along Z, centered in X and Y with its bottom face on the XY plane (so it spans x in [-50, 50], y in [-10, 10], z in [0, 10]). Bar B is 20mm wide along X, 100mm long along Y, and 10mm tall along Z, centered in X and Y with its bottom face on the XY plane (so it spans x in [-10, 10], y in [-50, 50], z in [0, 10]). Union the two bars into a single plus-sign-shaped solid; the central 20mm × 20mm × 10mm overlap is counted only once. Output a single solid.",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "wafer.chat.completions.create",
+        "args": {
+          "model": "GLM-5.2",
+          "max_tokens": 8000,
+          "system_chars": 3956,
+          "user_chars": 662,
+          "image_attachments": 0
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 5512.689708
+      }
+    ],
+    "tokens": {
+      "input": 1504,
+      "output": 316,
+      "total": 1820
+    },
+    "wallclock_sec": 5.512689708
+  },
+  "output": {
+    "vcad_path": "20260628T003603Z-db60.vcad",
+    "vcad_sha256": "5ee03a277114e73ad03423969e052eae923d50f068f2848aa2d35323a7909b0e",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-06-28T00:36:03.842Z",
+    "ended_at": "2026-06-28T00:36:09.368Z"
+  },
+  "signature": null
+}

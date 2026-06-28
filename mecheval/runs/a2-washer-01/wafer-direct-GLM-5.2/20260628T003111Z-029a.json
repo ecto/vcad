@@ -1,0 +1,286 @@
+{
+  "schema_version": 0,
+  "task_id": "a2-washer-01",
+  "task_sha256": "fea2171898f2fccb349f8b4864b17701307f12b5cffb10dc6d59415890ec618a",
+  "checks": [
+    {
+      "n": 0,
+      "type": "valid_solid",
+      "params": {
+        "type": "valid_solid"
+      },
+      "result": "pass",
+      "details": {
+        "root_count": 1,
+        "solids_produced": 1
+      }
+    },
+    {
+      "n": 1,
+      "type": "bbox",
+      "params": {
+        "type": "bbox",
+        "min": [
+          -25,
+          -25,
+          0
+        ],
+        "max": [
+          25,
+          25,
+          5
+        ],
+        "tolerance_mm": 0.1
+      },
+      "result": "pass",
+      "details": {
+        "actual_max": [
+          25,
+          25,
+          5
+        ],
+        "actual_min": [
+          -25,
+          -25,
+          0
+        ],
+        "deviation_max": [
+          0,
+          0,
+          0
+        ],
+        "deviation_min": [
+          0,
+          0,
+          0
+        ],
+        "max_abs_deviation_mm": 0,
+        "tolerance_mm": 0.1
+      }
+    },
+    {
+      "n": 2,
+      "type": "mass_props",
+      "params": {
+        "type": "mass_props",
+        "volume_mm3": 7363.11,
+        "center_of_mass": [
+          0,
+          0,
+          2.5
+        ],
+        "tolerance_pct": 1
+      },
+      "result": "pass",
+      "details": {
+        "center_of_mass": {
+          "actual": [
+            3.6084748290987127e-17,
+            7.563298804740383e-16,
+            2.499999999999993
+          ],
+          "bbox_diagonal_mm": 70.88723439378913,
+          "deviation": [
+            3.6084748290987127e-17,
+            7.563298804740383e-16,
+            -7.105427357601002e-15
+          ],
+          "max_abs_deviation_mm": 7.105427357601002e-15,
+          "pass": true,
+          "spec": [
+            0,
+            0,
+            2.5
+          ],
+          "tolerance_mm": 0.7088723439378913
+        },
+        "volume": {
+          "actual_mm3": 7351.285531437675,
+          "deviation_pct": 0.160590681958098,
+          "pass": true,
+          "spec_mm3": 7363.11,
+          "tolerance_pct": 1
+        }
+      }
+    },
+    {
+      "n": 3,
+      "type": "hole_count",
+      "params": {
+        "type": "hole_count",
+        "diameter_mm": 25,
+        "expected": 1,
+        "diameter_tolerance_mm": 0.1
+      },
+      "result": "pass",
+      "details": {
+        "actual": 1,
+        "diameter_mm": 25,
+        "diameter_tolerance_mm": 0.1,
+        "expected": 1,
+        "found": [
+          [
+            0,
+            0,
+            25
+          ]
+        ]
+      }
+    },
+    {
+      "n": 4,
+      "type": "hole_positions",
+      "params": {
+        "type": "hole_positions",
+        "diameter_mm": 25,
+        "positions": [
+          [
+            0,
+            0,
+            0
+          ]
+        ],
+        "tolerance_mm": 0.15
+      },
+      "result": "pass",
+      "details": {
+        "diameter_mm": 25,
+        "per_expected": [
+          {
+            "distance_mm": 0,
+            "matched_hole": [
+              0,
+              0
+            ],
+            "pass": true,
+            "spec_xy": [
+              0,
+              0
+            ]
+          }
+        ],
+        "tolerance_mm": 0.15,
+        "unmatched_extras": []
+      }
+    },
+    {
+      "n": 5,
+      "type": "step_roundtrip",
+      "params": {
+        "type": "step_roundtrip",
+        "tolerance_pct": 1
+      },
+      "result": "pass",
+      "details": {
+        "per_solid": [
+          {
+            "bbox": {
+              "max_abs_deviation_mm": 0,
+              "original_max": [
+                25,
+                25,
+                5
+              ],
+              "original_min": [
+                -25,
+                -25,
+                0
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                25,
+                25,
+                5
+              ],
+              "roundtripped_min": [
+                -25,
+                -25,
+                0
+              ],
+              "tolerance_mm": 0.7088723439378913
+            },
+            "index": 0,
+            "pass": true,
+            "volume": {
+              "deviation_pct": 0.5350273929438977,
+              "original_mm3": 7351.285531437676,
+              "pass": true,
+              "roundtripped_mm3": 7311.954140110963
+            }
+          }
+        ],
+        "tolerance_pct": 1
+      }
+    }
+  ],
+  "summary": {
+    "passed": true,
+    "checks_passed": 6,
+    "checks_total": 6,
+    "score": 1,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260628T003111Z-029a",
+  "model": {
+    "id": "wafer-direct-GLM-5.2",
+    "name": "Wafer (direct, GLM-5.2)",
+    "provider": "wafer",
+    "params": {
+      "mode": "direct",
+      "model": "GLM-5.2",
+      "max_tokens": 8000
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "a2-washer-01",
+    "rendered": "Make a flat circular washer. Outer diameter 50mm, inner diameter 25mm, thickness 5mm. Axis along Z, base on the XY plane (z = 0 to z = 5). The bore is a single concentric through-hole. Output a single solid.",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "wafer.chat.completions.create",
+        "args": {
+          "model": "GLM-5.2",
+          "max_tokens": 8000,
+          "system_chars": 3956,
+          "user_chars": 262,
+          "image_attachments": 0
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 12052.859417
+      }
+    ],
+    "tokens": {
+      "input": 1375,
+      "output": 191,
+      "total": 1566
+    },
+    "wallclock_sec": 12.052859417
+  },
+  "output": {
+    "vcad_path": "20260628T003111Z-029a.vcad",
+    "vcad_sha256": "52417d6e87b56cdb05f62161e31581618aeccbb57618ede72b03c38f4c9834c1",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-06-28T00:31:11.158Z",
+    "ended_at": "2026-06-28T00:31:23.240Z"
+  },
+  "signature": null
+}

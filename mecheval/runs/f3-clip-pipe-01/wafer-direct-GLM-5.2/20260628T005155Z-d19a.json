@@ -1,0 +1,313 @@
+{
+  "schema_version": 0,
+  "task_id": "f3-clip-pipe-01",
+  "task_sha256": "184a7303d5fca348365b3b62d8bd81a27ae37427dfbc33525a4d209492e08aea",
+  "checks": [
+    {
+      "n": 0,
+      "type": "valid_solid",
+      "params": {
+        "type": "valid_solid"
+      },
+      "result": "pass",
+      "details": {
+        "root_count": 1,
+        "solids_produced": 1
+      }
+    },
+    {
+      "n": 1,
+      "type": "interference_volume",
+      "params": {
+        "type": "interference_volume",
+        "host": "host_geometry",
+        "max_mm3": 5
+      },
+      "result": "pass",
+      "details": {
+        "interference_mm3": 0,
+        "max_mm3": 5
+      }
+    },
+    {
+      "n": 2,
+      "type": "contact_area",
+      "params": {
+        "type": "contact_area",
+        "host": "host_geometry",
+        "epsilon_mm": 0.4,
+        "min_mm2": 300
+      },
+      "result": "fail",
+      "details": {
+        "candidate_triangles": 254,
+        "contact_area_mm2": 0,
+        "epsilon_mm": 0.4,
+        "host_triangles": 256,
+        "min_mm2": 300
+      }
+    },
+    {
+      "n": 3,
+      "type": "envelope",
+      "params": {
+        "type": "envelope",
+        "max_mm": [
+          26.5,
+          26.5,
+          12.5
+        ]
+      },
+      "result": "pass",
+      "details": {
+        "bbox_max": [
+          12.845232963562012,
+          13,
+          20
+        ],
+        "bbox_min": [
+          -13,
+          -13,
+          10
+        ],
+        "extents_mm": [
+          25.84523296356201,
+          26,
+          10
+        ],
+        "max_mm": [
+          26.5,
+          26.5,
+          12.5
+        ]
+      }
+    },
+    {
+      "n": 4,
+      "type": "pull_retention_geometric",
+      "params": {
+        "type": "pull_retention_geometric",
+        "host": "host_geometry",
+        "direction": [
+          -1,
+          0,
+          0
+        ],
+        "displacement_mm": 4,
+        "min_interference_gain_mm3": 30
+      },
+      "result": "pass",
+      "details": {
+        "baseline_interference_mm3": 0,
+        "direction": [
+          -1,
+          0,
+          0
+        ],
+        "displacement_mm": 4,
+        "interference_gain_mm3": 46.461480458577476,
+        "min_interference_gain_mm3": 30,
+        "peak_interference_mm3": 46.461480458577476,
+        "samples": [
+          [
+            0.5,
+            0
+          ],
+          [
+            1,
+            6.461480458577474
+          ],
+          [
+            1.5,
+            13.12814712524414
+          ],
+          [
+            2,
+            19.79481379191081
+          ],
+          [
+            2.5,
+            26.461480458577473
+          ],
+          [
+            3,
+            33.12814712524414
+          ],
+          [
+            3.5,
+            39.794813791910805
+          ],
+          [
+            4,
+            46.461480458577476
+          ]
+        ]
+      }
+    },
+    {
+      "n": 5,
+      "type": "pull_force",
+      "params": {
+        "type": "pull_force",
+        "host": "host_geometry",
+        "force_n": 5,
+        "direction": [
+          -1,
+          0,
+          0
+        ],
+        "duration_sec": 0.25,
+        "max_drift_mm": 100000
+      },
+      "result": "pass",
+      "details": {
+        "drift_mm": null,
+        "max_drift_mm": 100000,
+        "warning": "physics simulation panicked; soft-pass per fit_physics caveat"
+      }
+    },
+    {
+      "n": 6,
+      "type": "dfm",
+      "params": {
+        "type": "dfm",
+        "rules": [
+          "min_wall_1.5mm",
+          "no_undercut"
+        ]
+      },
+      "result": "pass",
+      "details": {
+        "analysed_solid_count": 1,
+        "failing_issue_count": 0,
+        "failing_issues": [],
+        "issues_by_rule": {},
+        "legacy_rules_hint": [
+          "min_wall_1.5mm",
+          "no_undercut"
+        ],
+        "max_severity": "error",
+        "process": "fdm",
+        "rule_pack_version": "1",
+        "skipped_mesh_only_count": 0,
+        "total_issues": 0
+      }
+    }
+  ],
+  "summary": {
+    "passed": false,
+    "checks_passed": 6,
+    "checks_total": 7,
+    "score": 0.8571428571428571,
+    "anti_cheese_violated": false,
+    "limits_exceeded": [
+      "max_wallclock_sec: 345 > 240"
+    ]
+  },
+  "run_id": "20260628T005155Z-d19a",
+  "model": {
+    "id": "wafer-direct-GLM-5.2",
+    "name": "Wafer (direct, GLM-5.2)",
+    "provider": "wafer",
+    "params": {
+      "mode": "direct",
+      "model": "GLM-5.2",
+      "max_tokens": 8000
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "f3-clip-pipe-01",
+    "rendered": "Reference images of a vertical pipe (16mm OD, 30mm tall) are attached. Design a C-clip that wraps around the pipe at mid-height with a radial slot opening to the +X side. The slot must be narrower than the pipe diameter so the clip is form-locked: pulling the clip in the -X direction would force the slot edges to spread, which they cannot (the clip is rigid).\n\nRequirements:\n- Single solid, single-root .vcad.\n- The clip's internal bore must clear the 16mm pipe with 0.1–0.5mm radial clearance (so an internal diameter of 16.2–17.0mm).\n- The slot (opening on +X) must be no more than 4mm wide in the Y direction. The slot opens to the +X side and extends from the bore radially outward to the clip's outer surface.\n- The clip's outer diameter must be ≤ 26mm.\n- The clip's height (Z extent) must be 8–12mm.\n- Wall thickness everywhere ≥ 1.5mm.\n\nOutput the clip in the host frame: pipe axis +Z, pipe base at z=0, pipe top at z=30. Place the clip at z roughly 10..20 (mid-height of the pipe), centred on the pipe's axis in X/Y.",
+    "attachments": [
+      {
+        "kind": "reference_image",
+        "path": "assets/f3-clip-pipe-01/front.jpg",
+        "agent_visible": true,
+        "view": "front",
+        "image_kind": "render"
+      },
+      {
+        "kind": "reference_image",
+        "path": "assets/f3-clip-pipe-01/side.jpg",
+        "agent_visible": true,
+        "view": "side",
+        "image_kind": "render"
+      },
+      {
+        "kind": "reference_image",
+        "path": "assets/f3-clip-pipe-01/top.jpg",
+        "agent_visible": true,
+        "view": "top",
+        "image_kind": "render"
+      },
+      {
+        "kind": "host_geometry",
+        "path": "assets/f3-clip-pipe-01/host.vcad",
+        "agent_visible": false,
+        "frame": {
+          "origin": [
+            0,
+            0,
+            0
+          ],
+          "axis": [
+            0,
+            0,
+            1
+          ]
+        }
+      },
+      {
+        "kind": "known_dimensions",
+        "agent_visible": true,
+        "text": "The pipe is 16mm in diameter."
+      }
+    ]
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "wafer.chat.completions.create",
+        "args": {
+          "model": "GLM-5.2",
+          "max_tokens": 8000,
+          "system_chars": 3956,
+          "user_chars": 1084,
+          "image_attachments": 3
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 345424.041417
+      }
+    ],
+    "tokens": {
+      "input": 1638,
+      "output": 533,
+      "total": 2171
+    },
+    "wallclock_sec": 345.424041417
+  },
+  "output": {
+    "vcad_path": "20260628T005155Z-d19a.vcad",
+    "vcad_sha256": "258a274c51b1f545770ebd13bbce2575fa0bf4f993b071ac91cfa9cc7e25c7e5",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-06-28T00:51:55.150Z",
+    "ended_at": "2026-06-28T00:57:40.602Z"
+  },
+  "signature": null
+}

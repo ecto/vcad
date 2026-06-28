@@ -1,0 +1,19 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": { "id": 1, "name": "cap_body", "op": { "type": "Cylinder", "radius": 13, "height": 10, "segments": 64 } },
+    "2": { "id": 2, "name": "cap_body_pos", "op": { "type": "Translate", "child": 1, "offset": { "x": 0, "y": 0, "z": 19 } } },
+    "3": { "id": 3, "name": "main_bore", "op": { "type": "Cylinder", "radius": 12.2, "height": 8, "segments": 64 } },
+    "4": { "id": 4, "name": "main_bore_pos", "op": { "type": "Translate", "child": 3, "offset": { "x": 0, "y": 0, "z": 21 } } },
+    "5": { "id": 5, "name": "retention_lip", "op": { "type": "Cylinder", "radius": 11.7, "height": 2.5, "segments": 64 } },
+    "6": { "id": 6, "name": "retention_lip_pos", "op": { "type": "Translate", "child": 5, "offset": { "x": 0, "y": 0, "z": 19 } } },
+    "7": { "id": 7, "name": "lip_chamfer", "op": { "type": "Cone", "radius_bottom": 12.2, "radius_top": 11.7, "height": 1.5, "segments": 64 } },
+    "8": { "id": 8, "name": "lip_chamfer_pos", "op": { "type": "Translate", "child": 7, "offset": { "x": 0, "y": 0, "z": 19 } } },
+    "9": { "id": 9, "name": "cap_subtract_bore", "op": { "type": "Union", "left": 4, "right": 6 } },
+    "10": { "id": 10, "name": "cap_subtract_all", "op": { "type": "Union", "left": 9, "right": 8 } },
+    "11": { "id": 11, "name": "snap_cap", "op": { "type": "Difference", "left": 2, "right": 10 } }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [{ "root": 11, "material": "default" }]
+}

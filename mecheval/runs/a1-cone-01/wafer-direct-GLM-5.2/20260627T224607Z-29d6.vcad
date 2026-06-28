@@ -1,0 +1,9 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": { "id": 1, "name": "truncated_cone", "op": { "type": "Cone", "radius_bottom": 20, "radius_top": 10, "height": 30, "segments": 32 } }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [{ "root": 1, "material": "default" }]
+}

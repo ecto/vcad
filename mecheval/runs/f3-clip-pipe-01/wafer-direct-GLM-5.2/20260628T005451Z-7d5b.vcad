@@ -1,0 +1,17 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": { "id": 1, "name": "outer_cyl", "op": { "type": "Cylinder", "radius": 12, "height": 10, "segments": 64 } },
+    "2": { "id": 2, "name": "outer_cyl_centered", "op": { "type": "Translate", "child": 1, "offset": { "x": -12, "y": -12, "z": 0 } } },
+    "3": { "id": 3, "name": "bore_cyl", "op": { "type": "Cylinder", "radius": 8.4, "height": 10, "segments": 64 } },
+    "4": { "id": 4, "name": "bore_cyl_centered", "op": { "type": "Translate", "child": 3, "offset": { "x": -8.4, "y": -8.4, "z": 0 } } },
+    "5": { "id": 5, "name": "clip_ring", "op": { "type": "Difference", "left": 2, "right": 4 } },
+    "6": { "id": 6, "name": "slot_box", "op": { "type": "Cube", "size": { "x": 12, "y": 4, "z": 10 } } },
+    "7": { "id": 7, "name": "slot_box_pos", "op": { "type": "Translate", "child": 6, "offset": { "x": 8.4, "y": -2, "z": 0 } } },
+    "8": { "id": 8, "name": "clip_final", "op": { "type": "Difference", "left": 5, "right": 7 } },
+    "9": { "id": 9, "name": "clip_z15", "op": { "type": "Translate", "child": 8, "offset": { "x": 0, "y": 0, "z": 15 } } }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [{ "root": 9, "material": "default" }]
+}

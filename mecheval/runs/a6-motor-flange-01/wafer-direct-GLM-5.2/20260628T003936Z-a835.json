@@ -1,0 +1,412 @@
+{
+  "schema_version": 0,
+  "task_id": "a6-motor-flange-01",
+  "task_sha256": "fd389198a79e29b9d66444ba645b4cd0c310ad6484e0b4f2ddca5b479cd5ad62",
+  "checks": [
+    {
+      "n": 0,
+      "type": "valid_solid",
+      "params": {
+        "type": "valid_solid"
+      },
+      "result": "pass",
+      "details": {
+        "root_count": 1,
+        "solids_produced": 1
+      }
+    },
+    {
+      "n": 1,
+      "type": "bbox",
+      "params": {
+        "type": "bbox",
+        "min": [
+          -60,
+          -60,
+          0
+        ],
+        "max": [
+          60,
+          60,
+          18
+        ],
+        "tolerance_mm": 0.2
+      },
+      "result": "pass",
+      "details": {
+        "actual_max": [
+          60,
+          60,
+          18
+        ],
+        "actual_min": [
+          -60,
+          -60,
+          0
+        ],
+        "deviation_max": [
+          0,
+          0,
+          0
+        ],
+        "deviation_min": [
+          0,
+          0,
+          0
+        ],
+        "max_abs_deviation_mm": 0,
+        "tolerance_mm": 0.2
+      }
+    },
+    {
+      "n": 2,
+      "type": "mass_props",
+      "params": {
+        "type": "mass_props",
+        "volume_mm3": 142616.81,
+        "center_of_mass": [
+          0,
+          0,
+          7.24
+        ],
+        "tolerance_pct": 1.5
+      },
+      "result": "pass",
+      "details": {
+        "center_of_mass": {
+          "actual": [
+            -1.6808188477483577e-16,
+            -1.0943374264099092e-15,
+            7.237113361523488
+          ],
+          "bbox_diagonal_mm": 170.6575518399347,
+          "deviation": [
+            -1.6808188477483577e-16,
+            -1.0943374264099092e-15,
+            -0.002886638476511827
+          ],
+          "max_abs_deviation_mm": 0.002886638476511827,
+          "pass": true,
+          "spec": [
+            0,
+            0,
+            7.24
+          ],
+          "tolerance_mm": 2.5598632775990207
+        },
+        "volume": {
+          "actual_mm3": 141701.12701071007,
+          "deviation_pct": 0.6420582463525344,
+          "pass": true,
+          "spec_mm3": 142616.81,
+          "tolerance_pct": 1.5
+        }
+      }
+    },
+    {
+      "n": 3,
+      "type": "hole_count",
+      "params": {
+        "type": "hole_count",
+        "diameter_mm": 32,
+        "expected": 1,
+        "diameter_tolerance_mm": 0.15
+      },
+      "result": "pass",
+      "details": {
+        "actual": 1,
+        "diameter_mm": 32,
+        "diameter_tolerance_mm": 0.15,
+        "expected": 1,
+        "found": [
+          [
+            0,
+            0,
+            32
+          ]
+        ]
+      }
+    },
+    {
+      "n": 4,
+      "type": "hole_positions",
+      "params": {
+        "type": "hole_positions",
+        "diameter_mm": 32,
+        "positions": [
+          [
+            0,
+            0,
+            0
+          ]
+        ],
+        "tolerance_mm": 0.2
+      },
+      "result": "pass",
+      "details": {
+        "diameter_mm": 32,
+        "per_expected": [
+          {
+            "distance_mm": 0,
+            "matched_hole": [
+              0,
+              0
+            ],
+            "pass": true,
+            "spec_xy": [
+              0,
+              0
+            ]
+          }
+        ],
+        "tolerance_mm": 0.2,
+        "unmatched_extras": []
+      }
+    },
+    {
+      "n": 5,
+      "type": "hole_count",
+      "params": {
+        "type": "hole_count",
+        "diameter_mm": 9,
+        "expected": 4,
+        "diameter_tolerance_mm": 0.05
+      },
+      "result": "pass",
+      "details": {
+        "actual": 4,
+        "diameter_mm": 9,
+        "diameter_tolerance_mm": 0.05,
+        "expected": 4,
+        "found": [
+          [
+            48,
+            0,
+            9
+          ],
+          [
+            0,
+            48,
+            9
+          ],
+          [
+            -48,
+            0,
+            9
+          ],
+          [
+            0,
+            -48,
+            9
+          ]
+        ]
+      }
+    },
+    {
+      "n": 6,
+      "type": "hole_positions",
+      "params": {
+        "type": "hole_positions",
+        "diameter_mm": 9,
+        "positions": [
+          [
+            48,
+            0,
+            0
+          ],
+          [
+            0,
+            48,
+            0
+          ],
+          [
+            -48,
+            0,
+            0
+          ],
+          [
+            0,
+            -48,
+            0
+          ]
+        ],
+        "tolerance_mm": 0.2
+      },
+      "result": "pass",
+      "details": {
+        "diameter_mm": 9,
+        "per_expected": [
+          {
+            "distance_mm": 0,
+            "matched_hole": [
+              48,
+              0
+            ],
+            "pass": true,
+            "spec_xy": [
+              48,
+              0
+            ]
+          },
+          {
+            "distance_mm": 0,
+            "matched_hole": [
+              0,
+              48
+            ],
+            "pass": true,
+            "spec_xy": [
+              0,
+              48
+            ]
+          },
+          {
+            "distance_mm": 0,
+            "matched_hole": [
+              -48,
+              0
+            ],
+            "pass": true,
+            "spec_xy": [
+              -48,
+              0
+            ]
+          },
+          {
+            "distance_mm": 0,
+            "matched_hole": [
+              0,
+              -48
+            ],
+            "pass": true,
+            "spec_xy": [
+              0,
+              -48
+            ]
+          }
+        ],
+        "tolerance_mm": 0.2,
+        "unmatched_extras": []
+      }
+    },
+    {
+      "n": 7,
+      "type": "step_roundtrip",
+      "params": {
+        "type": "step_roundtrip",
+        "tolerance_pct": 1.5
+      },
+      "result": "pass",
+      "details": {
+        "per_solid": [
+          {
+            "bbox": {
+              "max_abs_deviation_mm": 0,
+              "original_max": [
+                60,
+                60,
+                18
+              ],
+              "original_min": [
+                -60,
+                -60,
+                0
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                60,
+                60,
+                18
+              ],
+              "roundtripped_min": [
+                -60,
+                -60,
+                0
+              ],
+              "tolerance_mm": 2.5598632775990207
+            },
+            "index": 0,
+            "pass": true,
+            "volume": {
+              "deviation_pct": 2.0538884249335537e-14,
+              "original_mm3": 141701.12701071022,
+              "pass": true,
+              "roundtripped_mm3": 141701.1270107102
+            }
+          }
+        ],
+        "tolerance_pct": 1.5
+      }
+    }
+  ],
+  "summary": {
+    "passed": true,
+    "checks_passed": 8,
+    "checks_total": 8,
+    "score": 1,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260628T003936Z-a835",
+  "model": {
+    "id": "wafer-direct-GLM-5.2",
+    "name": "Wafer (direct, GLM-5.2)",
+    "provider": "wafer",
+    "params": {
+      "mode": "direct",
+      "model": "GLM-5.2",
+      "max_tokens": 8000
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "a6-motor-flange-01",
+    "rendered": "Make a motor mounting flange as a single solid. The main flange is a disc of diameter 120mm and thickness 12mm, base on the XY plane (z = 0 to z = 12), centered on the Z axis. On top of the flange sits a coaxial register boss (spigot) of diameter 72mm and height 6mm (z = 12 to z = 18); this raised boss is used for accurate pilot location. A central through-bore of diameter 32mm runs along the Z axis through both the flange and the register boss (z = 0 to z = 18). Four mounting bolt holes of diameter 9mm, axes parallel to Z, pass through the flange only (z = 0 to z = 12), arranged on a bolt circle of diameter 96mm (radius 48mm) centered on the Z axis at 90-degree intervals: (48, 0), (0, 48), (-48, 0), (0, -48). Output a single solid.",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "wafer.chat.completions.create",
+        "args": {
+          "model": "GLM-5.2",
+          "max_tokens": 8000,
+          "system_chars": 3956,
+          "user_chars": 803,
+          "image_attachments": 0
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 8456.664917
+      }
+    ],
+    "tokens": {
+      "input": 1541,
+      "output": 837,
+      "total": 2378
+    },
+    "wallclock_sec": 8.456664917
+  },
+  "output": {
+    "vcad_path": "20260628T003936Z-a835.vcad",
+    "vcad_sha256": "5db08ae99245b20023a07867091e7827a55fa541878efce89a9f807e54037cad",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-06-28T00:39:36.191Z",
+    "ended_at": "2026-06-28T00:39:44.691Z"
+  },
+  "signature": null
+}

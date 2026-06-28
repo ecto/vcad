@@ -1,0 +1,226 @@
+{
+  "schema_version": 0,
+  "task_id": "a6-yoke-block-01",
+  "task_sha256": "b5ef575b6d36db34b3d1759e33c83b53a3d4b5ae0a763c2e42273f6b69933332",
+  "checks": [
+    {
+      "n": 0,
+      "type": "valid_solid",
+      "params": {
+        "type": "valid_solid"
+      },
+      "result": "pass",
+      "details": {
+        "root_count": 1,
+        "solids_produced": 1
+      }
+    },
+    {
+      "n": 1,
+      "type": "bbox",
+      "params": {
+        "type": "bbox",
+        "min": [
+          -40,
+          -20,
+          0
+        ],
+        "max": [
+          40,
+          20,
+          57
+        ],
+        "tolerance_mm": 0.1
+      },
+      "result": "pass",
+      "details": {
+        "actual_max": [
+          40,
+          20,
+          57
+        ],
+        "actual_min": [
+          -40,
+          -20,
+          0
+        ],
+        "deviation_max": [
+          0,
+          0,
+          0
+        ],
+        "deviation_min": [
+          0,
+          0,
+          0
+        ],
+        "max_abs_deviation_mm": 0,
+        "tolerance_mm": 0.1
+      }
+    },
+    {
+      "n": 2,
+      "type": "mass_props",
+      "params": {
+        "type": "mass_props",
+        "volume_mm3": 81674.78,
+        "center_of_mass": [
+          0,
+          0,
+          20.23
+        ],
+        "tolerance_pct": 1.5
+      },
+      "result": "pass",
+      "details": {
+        "center_of_mass": {
+          "actual": [
+            1.6329854892908641e-16,
+            -1.8985775894667222e-16,
+            20.231551109496117
+          ],
+          "bbox_diagonal_mm": 106.061303028013,
+          "deviation": [
+            1.6329854892908641e-16,
+            -1.8985775894667222e-16,
+            0.0015511094961162541
+          ],
+          "max_abs_deviation_mm": 0.0015511094961162541,
+          "pass": true,
+          "spec": [
+            0,
+            0,
+            20.23
+          ],
+          "tolerance_mm": 1.590919545420195
+        },
+        "volume": {
+          "actual_mm3": 81686.30838107213,
+          "deviation_pct": 0.014114982705959277,
+          "pass": true,
+          "spec_mm3": 81674.78,
+          "tolerance_pct": 1.5
+        }
+      }
+    },
+    {
+      "n": 3,
+      "type": "step_roundtrip",
+      "params": {
+        "type": "step_roundtrip",
+        "tolerance_pct": 1.5
+      },
+      "result": "pass",
+      "details": {
+        "per_solid": [
+          {
+            "bbox": {
+              "max_abs_deviation_mm": 0,
+              "original_max": [
+                40,
+                20,
+                57
+              ],
+              "original_min": [
+                -40,
+                -20,
+                0
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                40,
+                20,
+                57
+              ],
+              "roundtripped_min": [
+                -40,
+                -20,
+                0
+              ],
+              "tolerance_mm": 1.590919545420195
+            },
+            "index": 0,
+            "pass": true,
+            "volume": {
+              "deviation_pct": 0.027955839149571764,
+              "original_mm3": 81686.30838107213,
+              "pass": true,
+              "roundtripped_mm3": 81709.14447405036
+            }
+          }
+        ],
+        "tolerance_pct": 1.5
+      }
+    }
+  ],
+  "summary": {
+    "passed": true,
+    "checks_passed": 4,
+    "checks_total": 4,
+    "score": 1,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260628T004035Z-91fd",
+  "model": {
+    "id": "wafer-direct-GLM-5.2",
+    "name": "Wafer (direct, GLM-5.2)",
+    "provider": "wafer",
+    "params": {
+      "mode": "direct",
+      "model": "GLM-5.2",
+      "max_tokens": 8000
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "a6-yoke-block-01",
+    "rendered": "Make a fork yoke as a single solid. The base block is 80mm × 40mm × 12mm, centered in X and Y with its bottom face on the XY plane (x in [-40, 40], y in [-20, 20], z in [0, 12]). Two vertical tines (fork arms) rise from the base. The left tine is 14mm × 40mm × 45mm at x in [-40, -26], y in [-20, 20], z in [12, 57]. The right tine is 14mm × 40mm × 45mm at x in [26, 40], y in [-20, 20], z in [12, 57]. The gap between the tines (x in [-26, 26]) is open. Through both tines, drill a coaxial cross-bore of diameter 18mm whose axis is parallel to X, centered at y = 0, z = 44.5, passing through the left tine (x in [-40, -26]) and the right tine (x in [26, 40]). The cross-bore removes a cylindrical channel of diameter 18mm from each tine; the open gap between the tines is unaffected. Output a single solid.",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "wafer.chat.completions.create",
+        "args": {
+          "model": "GLM-5.2",
+          "max_tokens": 8000,
+          "system_chars": 3956,
+          "user_chars": 866,
+          "image_attachments": 0
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 6886.228041
+      }
+    ],
+    "tokens": {
+      "input": 1595,
+      "output": 687,
+      "total": 2282
+    },
+    "wallclock_sec": 6.886228041000001
+  },
+  "output": {
+    "vcad_path": "20260628T004035Z-91fd.vcad",
+    "vcad_sha256": "590da9f12dedece0d473194241992c5b0d610e0a1f3aa3717d4458f1bcef8a1c",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-06-28T00:40:35.031Z",
+    "ended_at": "2026-06-28T00:40:41.939Z"
+  },
+  "signature": null
+}

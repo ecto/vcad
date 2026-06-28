@@ -1,0 +1,25 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": { "id": 1, "name": "cyl_outer", "op": { "type": "Cylinder", "radius": 11.000, "height": 8, "segments": 32 } },
+    "2": { "id": 2, "name": "cyl_inner", "op": { "type": "Cylinder", "radius": 5.000, "height": 9, "segments": 32 } },
+    "3": { "id": 3, "name": "cube_half", "op": { "type": "Cube", "size": { "x": 30, "y": 30, "z": 8 } } },
+    "4": { "id": 4, "name": "cube_h1_p", "op": { "type": "Translate", "child": 3, "offset": { "x": -30, "y": -9.500, "z": 0 } } },
+    "5": { "id": 5, "name": "cube_h2_p", "op": { "type": "Translate", "child": 3, "offset": { "x": -30, "y": 9.500, "z": 0 } } },
+    "6": { "id": 6, "name": "cube_h3_p", "op": { "type": "Translate", "child": 3, "offset": { "x": 9.500, "y": -30, "z": 0 } } },
+    "7": { "id": 7, "name": "cube_h4_p", "op": { "type": "Translate", "child": 3, "offset": { "x": 9.500, "y": 0, "z": 0 } } },
+    "8": { "id": 8, "name": "cube_h5_p", "op": { "type": "Translate", "child": 3, "offset": { "x": -9.500, "y": 0, "z": 0 } } },
+    "9": { "id": 9, "name": "cube_h6_p", "op": { "type": "Translate", "child": 3, "offset": { "x": -9.500, "y": -30, "z": 0 } } },
+    "10": { "id": 10, "name": "cyl_outer_cube_h1", "op": { "type": "Difference", "left": 1, "right": 4 } },
+    "11": { "id": 11, "name": "cyl_outer_cube_h1_h2", "op": { "type": "Difference", "left": 10, "right": 5 } },
+    "12": { "id": 12, "name": "cyl_outer_cube_h1_h2_h3", "op": { "type": "Difference", "left": 11, "right": 6 } },
+    "13": { "id": 13, "name": "cyl_outer_cube_h1_h2_h3_h4", "op": { "type": "Difference", "left": 12, "right": 7 } },
+    "14": { "id": 14, "name": "cyl_outer_cube_h1_h2_h3_h4_h5", "op": { "type": "Difference", "left": 13, "right": 8 } },
+    "15": { "id": 15, "name": "hex_body", "op": { "type": "Difference", "left": 14, "right": 9 } },
+    "16": { "id": 16, "name": "hole_subtracted", "op": { "type": "Difference", "left": 15, "right": 2 } },
+    "17": { "id": 17, "name": "nut_body", "op": { "type": "Translate", "child": 16, "offset": { "x": -9.500, "y": -9.500, "z": 0 } } }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [{ "root": 17, "material": "default" }]
+}

@@ -1,0 +1,13 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": { "id": 1, "name": "collar_body", "op": { "type": "Cylinder", "radius": 20, "height": 28, "segments": 32 } },
+    "2": { "id": 2, "name": "bore", "op": { "type": "Cylinder", "radius": 10.2, "height": 30, "segments": 32 } },
+    "3": { "id": 3, "name": "bore_pos", "op": { "type": "Translate", "child": 2, "offset": { "x": -20, "y": -20, "z": -1 } } },
+    "4": { "id": 4, "name": "collar", "op": { "type": "Difference", "left": 1, "right": 3 } },
+    "5": { "id": 5, "name": "collar_centered", "op": { "type": "Translate", "child": 4, "offset": { "x": 0, "y": 0, "z": 10 } } }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [{ "root": 5, "material": "default" }]
+}

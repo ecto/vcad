@@ -1,0 +1,19 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": { "id": 1, "name": "plate", "op": { "type": "Cube", "size": { "x": 80, "y": 40, "z": 8 } } },
+    "2": { "id": 2, "name": "plate_t", "op": { "type": "Translate", "child": 1, "offset": { "x": -40, "y": -20, "z": 0 } } },
+    "3": { "id": 3, "name": "slot_rect", "op": { "type": "Cube", "size": { "x": 40, "y": 10, "z": 12 } } },
+    "4": { "id": 4, "name": "slot_rect_t", "op": { "type": "Translate", "child": 3, "offset": { "x": -20, "y": -5, "z": -2 } } },
+    "5": { "id": 5, "name": "slot_cyl_a", "op": { "type": "Cylinder", "radius": 5, "height": 12, "segments": 32 } },
+    "6": { "id": 6, "name": "slot_cyl_a_t", "op": { "type": "Translate", "child": 5, "offset": { "x": -20, "y": 0, "z": -2 } } },
+    "7": { "id": 7, "name": "slot_cyl_b", "op": { "type": "Cylinder", "radius": 5, "height": 12, "segments": 32 } },
+    "8": { "id": 8, "name": "slot_cyl_b_t", "op": { "type": "Translate", "child": 7, "offset": { "x": 20, "y": 0, "z": -2 } } },
+    "9": { "id": 9, "name": "slot_ab", "op": { "type": "Union", "left": 6, "right": 8 } },
+    "10": { "id": 10, "name": "slot", "op": { "type": "Union", "left": 4, "right": 9 } },
+    "11": { "id": 11, "name": "result", "op": { "type": "Difference", "left": 2, "right": 10 } }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [{ "root": 11, "material": "default" }]
+}

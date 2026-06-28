@@ -1,0 +1,32 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": { "id": 1, "name": "octagon_prism", "op": { "type": "Cube", "size": { "x": 42.6276, "y": 40, "z": 8 } } },
+    "2": { "id": 2, "name": "cube_top", "op": { "type": "Cube", "size": { "x": 30, "y": 42.6276, "z": 8 } } },
+    "3": { "id": 3, "name": "cube_top_p", "op": { "type": "Translate", "child": 2, "offset": { "x": 0, "y": -1.2638, "z": 0 } } },
+    "4": { "id": 4, "name": "octagon_unrot", "op": { "type": "Difference", "left": 1, "right": 3 } },
+    "5": { "id": 5, "name": "octagon_180", "op": { "type": "Rotate", "child": 4, "angles": { "x": 0, "y": 0, "z": 180 } } },
+    "6": { "id": 6, "name": "octagon_diff", "op": { "type": "Difference", "left": 4, "right": 5 } },
+    "7": { "id": 7, "name": "octagon", "op": { "type": "Translate", "child": 6, "offset": { "x": 0, "y": 0, "z": 0 } } },
+    "8": { "id": 8, "name": "hole0", "op": { "type": "Cylinder", "radius": 2.5, "height": 20, "segments": 32 } },
+    "9": { "id": 9, "name": "hole0_p", "op": { "type": "Translate", "child": 8, "offset": { "x": 15, "y": 0, "z": -6 } } },
+    "10": { "id": 10, "name": "hole1", "op": { "type": "Translate", "child": 8, "offset": { "x": 10.6066, "y": 10.6066, "z": -6 } } },
+    "11": { "id": 11, "name": "hole2", "op": { "type": "Translate", "child": 8, "offset": { "x": 0, "y": 15, "z": -6 } } },
+    "12": { "id": 12, "name": "hole3", "op": { "type": "Translate", "child": 8, "offset": { "x": -10.6066, "y": 10.6066, "z": -6 } } },
+    "13": { "id": 13, "name": "hole4", "op": { "type": "Translate", "child": 8, "offset": { "x": -15, "y": 0, "z": -6 } } },
+    "14": { "id": 14, "name": "hole5", "op": { "type": "Translate", "child": 8, "offset": { "x": -10.6066, "y": -10.6066, "z": -6 } } },
+    "15": { "id": 15, "name": "hole6", "op": { "type": "Translate", "child": 8, "offset": { "x": 0, "y": -15, "z": -6 } } },
+    "16": { "id": 16, "name": "hole7", "op": { "type": "Translate", "child": 8, "offset": { "x": 10.6066, "y": -10.6066, "z": -6 } } },
+    "17": { "id": 17, "name": "holes18", "op": { "type": "Union", "left": 9, "right": 10 } },
+    "18": { "id": 18, "name": "holes34", "op": { "type": "Union", "left": 11, "right": 12 } },
+    "19": { "id": 19, "name": "holes56", "op": { "type": "Union", "left": 13, "right": 14 } },
+    "20": { "id": 20, "name": "holes70", "op": { "type": "Union", "left": 15, "right": 16 } },
+    "21": { "id": 21, "name": "holes14", "op": { "type": "Union", "left": 17, "right": 18 } },
+    "22": { "id": 22, "name": "holes36", "op": { "type": "Union", "left": 19, "right": 20 } },
+    "23": { "id": 23, "name": "all_holes", "op": { "type": "Union", "left": 21, "right": 22 } },
+    "24": { "id": 24, "name": "flange", "op": { "type": "Difference", "left": 7, "right": 23 } }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [{ "root": 24, "material": "default" }]
+}

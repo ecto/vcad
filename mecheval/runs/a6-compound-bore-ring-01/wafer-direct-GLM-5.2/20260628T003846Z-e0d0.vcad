@@ -1,0 +1,15 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": { "id": 1, "name": "body", "op": { "type": "Cylinder", "radius": 40, "height": 50, "segments": 32 } },
+    "2": { "id": 2, "name": "body_centered", "op": { "type": "Translate", "child": 1, "offset": { "x": 0, "y": 0, "z": 0 } } },
+    "3": { "id": 3, "name": "lower_bore", "op": { "type": "Cylinder", "radius": 15, "height": 25, "segments": 32 } },
+    "4": { "id": 4, "name": "upper_bore", "op": { "type": "Cylinder", "radius": 25, "height": 25, "segments": 32 } },
+    "5": { "id": 5, "name": "upper_bore_pos", "op": { "type": "Translate", "child": 4, "offset": { "x": 0, "y": 0, "z": 25 } } },
+    "6": { "id": 6, "name": "bore_union", "op": { "type": "Union", "left": 3, "right": 5 } },
+    "7": { "id": 7, "name": "result", "op": { "type": "Difference", "left": 2, "right": 6 } }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [{ "root": 7, "material": "default" }]
+}

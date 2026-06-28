@@ -1,0 +1,70 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": { "id": 1, "name": "base_body", "op": { "type": "Cylinder", "radius": 0.04, "height": 0.04, "segments": 32 } },
+    "2": { "id": 2, "name": "base_centered", "op": { "type": "Translate", "child": 1, "offset": { "x": -0.04, "y": -0.04, "z": 0 } } },
+    "3": { "id": 3, "name": "link1", "op": { "type": "Cube", "size": { "x": 0.03, "y": 0.02, "z": 0.12 } } },
+    "4": { "id": 4, "name": "link1_centered", "op": { "type": "Translate", "child": 3, "offset": { "x": -0.015, "y": -0.01, "z": -0.06 } } },
+    "5": { "id": 5, "name": "link2", "op": { "type": "Cube", "size": { "x": 0.03, "y": 0.02, "z": 0.10 } } },
+    "6": { "id": 6, "name": "link2_centered", "op": { "type": "Translate", "child": 5, "offset": { "x": -0.015, "y": -0.01, "z": -0.05 } } },
+    "7": { "id": 7, "name": "ee", "op": { "type": "Sphere", "radius": 0.012, "segments": 32 } }
+  },
+  "materials": {
+    "aluminum": { "name": "aluminum", "density": 2700 },
+    "plastic": { "name": "plastic", "density": 1200 }
+  },
+  "part_materials": {
+    "1": "aluminum",
+    "4": "aluminum",
+    "6": "aluminum",
+    "7": "plastic"
+  },
+  "partDefs": {
+    "base": { "id": "base", "name": "Base", "root": 2 },
+    "link1": { "id": "link1", "name": "Link1", "root": 4 },
+    "link2": { "id": "link2", "name": "Link2", "root": 6 },
+    "ee": { "id": "ee", "name": "EndEffector", "root": 7 }
+  },
+  "instances": [
+    { "id": "inst_base", "partDefId": "base", "name": "Base", "tags": ["base"], "transform": { "translation": { "x": 0, "y": 0, "z": 0 }, "rotation": { "x": 0, "y": 0, "z": 0 }, "scale": { "x": 1, "y": 1, "z": 1 } } },
+    { "id": "inst_link1", "partDefId": "link1", "name": "Link1", "tags": [], "transform": { "translation": { "x": 0, "y": 0, "z": 0.04 }, "rotation": { "x": 0, "y": 0, "z": 0 }, "scale": { "x": 1, "y": 1, "z": 1 } } },
+    { "id": "inst_link2", "partDefId": "link2", "name": "Link2", "tags": [], "transform": { "translation": { "x": 0, "y": 0, "z": 0.16 }, "rotation": { "x": 0, "y": 0, "z": 0 }, "scale": { "x": 1, "y": 1, "z": 1 } } },
+    { "id": "inst_ee", "partDefId": "ee", "name": "EndEffector", "tags": ["tip"], "transform": { "translation": { "x": 0, "y": 0, "z": 0.26 }, "rotation": { "x": 0, "y": 0, "z": 0 }, "scale": { "x": 1, "y": 1, "z": 1 } } }
+  ],
+  "joints": [
+    {
+      "id": "j1",
+      "parentInstanceId": "inst_base",
+      "childInstanceId": "inst_link1",
+      "parentAnchor": { "x": 0, "y": 0, "z": 0.04 },
+      "childAnchor": { "x": 0, "y": 0, "z": 0 },
+      "kind": { "type": "Revolute", "axis": { "x": 0, "y": 1, "z": 0 }, "limits": [-90, 90] },
+      "state": 0
+    },
+    {
+      "id": "j2",
+      "parentInstanceId": "inst_link1",
+      "childInstanceId": "inst_link2",
+      "parentAnchor": { "x": 0, "y": 0, "z": 0.12 },
+      "childAnchor": { "x": 0, "y": 0, "z": 0 },
+      "kind": { "type": "Revolute", "axis": { "x": 0, "y": 1, "z": 0 }, "limits": [-90, 90] },
+      "state": 0
+    },
+    {
+      "id": "j3",
+      "parentInstanceId": "inst_link2",
+      "childInstanceId": "inst_ee",
+      "parentAnchor": { "x": 0, "y": 0, "z": 0.10 },
+      "childAnchor": { "x": 0, "y": 0, "z": 0 },
+      "kind": { "type": "Fixed" },
+      "state": 0
+    }
+  ],
+  "groundInstanceId": "inst_base",
+  "roots": [
+    { "root": 2, "material": "aluminum" },
+    { "root": 4, "material": "aluminum" },
+    { "root": 6, "material": "aluminum" },
+    { "root": 7, "material": "plastic" }
+  ]
+}

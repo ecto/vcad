@@ -1,0 +1,26 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": { "id": 1, "name": "flange", "op": { "type": "Cylinder", "radius": 40, "height": 10, "segments": 64 } },
+    "2": { "id": 2, "name": "shaft", "op": { "type": "Cylinder", "radius": 15, "height": 50, "segments": 64 } },
+    "3": { "id": 3, "name": "shaft_pos", "op": { "type": "Translate", "child": 2, "offset": { "x": 0, "y": 0, "z": 10 } } },
+    "4": { "id": 4, "name": "body", "op": { "type": "Union", "left": 1, "right": 3 } },
+    "5": { "id": 5, "name": "bore", "op": { "type": "Cylinder", "radius": 7.5, "height": 60, "segments": 64 } },
+    "6": { "id": 6, "name": "bore_sub", "op": { "type": "Difference", "left": 4, "right": 5 } },
+    "7": { "id": 7, "name": "bolt1", "op": { "type": "Cylinder", "radius": 3, "height": 10, "segments": 32 } },
+    "8": { "id": 8, "name": "bolt1_pos", "op": { "type": "Translate", "child": 7, "offset": { "x": 30, "y": 0, "z": 0 } } },
+    "9": { "id": 9, "name": "bolt2", "op": { "type": "Cylinder", "radius": 3, "height": 10, "segments": 32 } },
+    "10": { "id": 10, "name": "bolt2_pos", "op": { "type": "Translate", "child": 9, "offset": { "x": 0, "y": 30, "z": 0 } } },
+    "11": { "id": 11, "name": "bolt3", "op": { "type": "Cylinder", "radius": 3, "height": 10, "segments": 32 } },
+    "12": { "id": 12, "name": "bolt3_pos", "op": { "type": "Translate", "child": 11, "offset": { "x": -30, "y": 0, "z": 0 } } },
+    "13": { "id": 13, "name": "bolt4", "op": { "type": "Cylinder", "radius": 3, "height": 10, "segments": 32 } },
+    "14": { "id": 14, "name": "bolt4_pos", "op": { "type": "Translate", "child": 13, "offset": { "x": 0, "y": -30, "z": 0 } } },
+    "15": { "id": 15, "name": "bolts_12", "op": { "type": "Union", "left": 8, "right": 10 } },
+    "16": { "id": 16, "name": "bolts_34", "op": { "type": "Union", "left": 12, "right": 14 } },
+    "17": { "id": 17, "name": "all_bolts", "op": { "type": "Union", "left": 15, "right": 16 } },
+    "18": { "id": 18, "name": "result", "op": { "type": "Difference", "left": 6, "right": 17 } }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [{ "root": 18, "material": "default" }]
+}

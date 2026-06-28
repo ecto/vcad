@@ -1,0 +1,12 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": { "id": 1, "name": "outer", "op": { "type": "Cylinder", "radius": 15, "height": 40, "segments": 64 } },
+    "2": { "id": 2, "name": "bore",  "op": { "type": "Cylinder", "radius": 10, "height": 42, "segments": 64 } },
+    "3": { "id": 3, "name": "bore_t", "op": { "type": "Translate", "child": 2, "offset": { "x": 0, "y": 0, "z": -1 } } },
+    "4": { "id": 4, "name": "pipe",  "op": { "type": "Difference", "left": 1, "right": 3 } }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [{ "root": 4, "material": "default" }]
+}

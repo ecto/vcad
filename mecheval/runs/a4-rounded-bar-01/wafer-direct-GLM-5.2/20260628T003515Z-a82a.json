@@ -1,0 +1,226 @@
+{
+  "schema_version": 0,
+  "task_id": "a4-rounded-bar-01",
+  "task_sha256": "7d784df0d0a2093508ecd8afc9682f361b3ac3936400a370796a57e039c78acb",
+  "checks": [
+    {
+      "n": 0,
+      "type": "valid_solid",
+      "params": {
+        "type": "valid_solid"
+      },
+      "result": "pass",
+      "details": {
+        "root_count": 1,
+        "solids_produced": 1
+      }
+    },
+    {
+      "n": 1,
+      "type": "bbox",
+      "params": {
+        "type": "bbox",
+        "min": [
+          -40,
+          -10,
+          0
+        ],
+        "max": [
+          40,
+          10,
+          10
+        ],
+        "tolerance_mm": 0.2
+      },
+      "result": "fail",
+      "details": {
+        "actual_max": [
+          40,
+          10,
+          10
+        ],
+        "actual_min": [
+          -40,
+          -20,
+          0
+        ],
+        "deviation_max": [
+          0,
+          0,
+          0
+        ],
+        "deviation_min": [
+          0,
+          -10,
+          0
+        ],
+        "max_abs_deviation_mm": 10,
+        "tolerance_mm": 0.2
+      }
+    },
+    {
+      "n": 2,
+      "type": "mass_props",
+      "params": {
+        "type": "mass_props",
+        "volume_mm3": 15141.59,
+        "center_of_mass": [
+          0,
+          0,
+          5
+        ],
+        "tolerance_pct": 1
+      },
+      "result": "fail",
+      "details": {
+        "center_of_mass": {
+          "actual": [
+            -1.2357634302096508e-15,
+            -3.202479373025124,
+            4.999999999999998
+          ],
+          "bbox_diagonal_mm": 86.02325267042627,
+          "deviation": [
+            -1.2357634302096508e-15,
+            -3.202479373025124,
+            -1.7763568394002505e-15
+          ],
+          "max_abs_deviation_mm": 3.202479373025124,
+          "pass": false,
+          "spec": [
+            0,
+            0,
+            5
+          ],
+          "tolerance_mm": 0.8602325267042628
+        },
+        "volume": {
+          "actual_mm3": 16682.168072160013,
+          "deviation_pct": 10.174480171237057,
+          "pass": false,
+          "spec_mm3": 15141.59,
+          "tolerance_pct": 1
+        }
+      }
+    },
+    {
+      "n": 3,
+      "type": "step_roundtrip",
+      "params": {
+        "type": "step_roundtrip",
+        "tolerance_pct": 1
+      },
+      "result": "fail",
+      "details": {
+        "per_solid": [
+          {
+            "bbox": {
+              "max_abs_deviation_mm": 0,
+              "original_max": [
+                40,
+                10,
+                10
+              ],
+              "original_min": [
+                -40,
+                -20,
+                0
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                40,
+                10,
+                10
+              ],
+              "roundtripped_min": [
+                -40,
+                -20,
+                0
+              ],
+              "tolerance_mm": 0.8602325267042628
+            },
+            "index": 0,
+            "pass": false,
+            "volume": {
+              "deviation_pct": 9.058589853558406,
+              "original_mm3": 16682.168072160013,
+              "pass": false,
+              "roundtripped_mm3": 18193.33725649826
+            }
+          }
+        ],
+        "tolerance_pct": 1
+      }
+    }
+  ],
+  "summary": {
+    "passed": false,
+    "checks_passed": 1,
+    "checks_total": 4,
+    "score": 0.25,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260628T003515Z-a82a",
+  "model": {
+    "id": "wafer-direct-GLM-5.2",
+    "name": "Wafer (direct, GLM-5.2)",
+    "provider": "wafer",
+    "params": {
+      "mode": "direct",
+      "model": "GLM-5.2",
+      "max_tokens": 8000
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "a4-rounded-bar-01",
+    "rendered": "Make a flat bar with a stadium-shaped (rectangle with semicircular ends) footprint, extruded 10mm along Z. Total end-to-end length is 80mm along X; total width is 20mm along Y. The footprint is the union of a 60mm × 20mm rectangle (x in [-30, 30], y in [-10, 10]) and two semicircles of radius 10mm centered at (-30, 0) and (30, 0). The bottom face sits on the XY plane (z = 0 to z = 10). Output a single solid (no holes or other features).",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "wafer.chat.completions.create",
+        "args": {
+          "model": "GLM-5.2",
+          "max_tokens": 8000,
+          "system_chars": 3956,
+          "user_chars": 500,
+          "image_attachments": 0
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 7925.296125
+      }
+    ],
+    "tokens": {
+      "input": 1451,
+      "output": 409,
+      "total": 1860
+    },
+    "wallclock_sec": 7.925296125
+  },
+  "output": {
+    "vcad_path": "20260628T003515Z-a82a.vcad",
+    "vcad_sha256": "98b2463124d7a763210323e610aaed5ad12e70a8eef18d2c1319ab3761899a50",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-06-28T00:35:15.880Z",
+    "ended_at": "2026-06-28T00:35:23.813Z"
+  },
+  "signature": null
+}

@@ -1,0 +1,29 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": { "id": 1, "name": "cube", "op": { "type": "Cube", "size": { "x": 30, "y": 30, "z": 30 } } },
+    "2": { "id": 2, "name": "cube_centered", "op": { "type": "Translate", "child": 1, "offset": { "x": -15, "y": -15, "z": 0 } } },
+    "3": { "id": 3, "name": "hole", "op": { "type": "Cylinder", "radius": 1.5, "height": 34, "segments": 32 } },
+    "4": { "id": 4, "name": "hole_00", "op": { "type": "Translate", "child": 3, "offset": { "x": -8, "y": -8, "z": -2 } } },
+    "5": { "id": 5, "name": "hole_01", "op": { "type": "Translate", "child": 3, "offset": { "x": 0, "y": -8, "z": -2 } } },
+    "6": { "id": 6, "name": "hole_02", "op": { "type": "Translate", "child": 3, "offset": { "x": 8, "y": -8, "z": -2 } } },
+    "7": { "id": 7, "name": "hole_03", "op": { "type": "Translate", "child": 3, "offset": { "x": -8, "y": 0, "z": -2 } } },
+    "8": { "id": 8, "name": "hole_04", "op": { "type": "Translate", "child": 3, "offset": { "x": 0, "y": 0, "z": -2 } } },
+    "9": { "id": 9, "name": "hole_05", "op": { "type": "Translate", "child": 3, "offset": { "x": 8, "y": 0, "z": -2 } } },
+    "10": { "id": 10, "name": "hole_06", "op": { "type": "Translate", "child": 3, "offset": { "x": -8, "y": 8, "z": -2 } } },
+    "11": { "id": 11, "name": "hole_07", "op": { "type": "Translate", "child": 3, "offset": { "x": 0, "y": 8, "z": -2 } } },
+    "12": { "id": 12, "name": "hole_08", "op": { "type": "Translate", "child": 3, "offset": { "x": 8, "y": 8, "z": -2 } } },
+    "13": { "id": 13, "name": "sub_00", "op": { "type": "Difference", "left": 2, "right": 4 } },
+    "14": { "id": 14, "name": "sub_01", "op": { "type": "Difference", "left": 13, "right": 5 } },
+    "15": { "id": 15, "name": "sub_02", "op": { "type": "Difference", "left": 14, "right": 6 } },
+    "16": { "id": 16, "name": "sub_03", "op": { "type": "Difference", "left": 15, "right": 7 } },
+    "17": { "id": 17, "name": "sub_04", "op": { "type": "Difference", "left": 16, "right": 8 } },
+    "18": { "id": 18, "name": "sub_05", "op": { "type": "Difference", "left": 17, "right": 9 } },
+    "19": { "id": 19, "name": "sub_06", "op": { "type": "Difference", "left": 18, "right": 10 } },
+    "20": { "id": 20, "name": "sub_07", "op": { "type": "Difference", "left": 19, "right": 11 } },
+    "21": { "id": 21, "name": "result", "op": { "type": "Difference", "left": 20, "right": 12 } }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [{ "root": 21, "material": "default" }]
+}

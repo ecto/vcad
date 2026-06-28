@@ -1,0 +1,304 @@
+{
+  "schema_version": 0,
+  "task_id": "a2-mounting-rail-01",
+  "task_sha256": "e375cec77275714a18d10d9c88594fb0ae9f43f8219f01063480b2467d8705a3",
+  "checks": [
+    {
+      "n": 0,
+      "type": "valid_solid",
+      "params": {
+        "type": "valid_solid"
+      },
+      "result": "pass",
+      "details": {
+        "root_count": 1,
+        "solids_produced": 1
+      }
+    },
+    {
+      "n": 1,
+      "type": "bbox",
+      "params": {
+        "type": "bbox",
+        "min": [
+          -50,
+          -10,
+          0
+        ],
+        "max": [
+          50,
+          10,
+          8
+        ],
+        "tolerance_mm": 0.1
+      },
+      "result": "pass",
+      "details": {
+        "actual_max": [
+          50,
+          10,
+          8
+        ],
+        "actual_min": [
+          -50,
+          -10,
+          0
+        ],
+        "deviation_max": [
+          0,
+          0,
+          0
+        ],
+        "deviation_min": [
+          0,
+          0,
+          0
+        ],
+        "max_abs_deviation_mm": 0,
+        "tolerance_mm": 0.1
+      }
+    },
+    {
+      "n": 2,
+      "type": "mass_props",
+      "params": {
+        "type": "mass_props",
+        "volume_mm3": 15321.42,
+        "tolerance_pct": 0.5
+      },
+      "result": "pass",
+      "details": {
+        "volume": {
+          "actual_mm3": 15325.768021011163,
+          "deviation_pct": 0.02837870779055027,
+          "pass": true,
+          "spec_mm3": 15321.42,
+          "tolerance_pct": 0.5
+        }
+      }
+    },
+    {
+      "n": 3,
+      "type": "hole_count",
+      "params": {
+        "type": "hole_count",
+        "diameter_mm": 6,
+        "expected": 3,
+        "diameter_tolerance_mm": 0.05
+      },
+      "result": "pass",
+      "details": {
+        "actual": 3,
+        "diameter_mm": 6,
+        "diameter_tolerance_mm": 0.05,
+        "expected": 3,
+        "found": [
+          [
+            -40,
+            0,
+            6
+          ],
+          [
+            0,
+            0,
+            6
+          ],
+          [
+            40,
+            0,
+            6
+          ]
+        ]
+      }
+    },
+    {
+      "n": 4,
+      "type": "hole_positions",
+      "params": {
+        "type": "hole_positions",
+        "diameter_mm": 6,
+        "positions": [
+          [
+            -40,
+            0,
+            0
+          ],
+          [
+            0,
+            0,
+            0
+          ],
+          [
+            40,
+            0,
+            0
+          ]
+        ],
+        "tolerance_mm": 0.15
+      },
+      "result": "pass",
+      "details": {
+        "diameter_mm": 6,
+        "per_expected": [
+          {
+            "distance_mm": 0,
+            "matched_hole": [
+              -40,
+              0
+            ],
+            "pass": true,
+            "spec_xy": [
+              -40,
+              0
+            ]
+          },
+          {
+            "distance_mm": 0,
+            "matched_hole": [
+              0,
+              0
+            ],
+            "pass": true,
+            "spec_xy": [
+              0,
+              0
+            ]
+          },
+          {
+            "distance_mm": 0,
+            "matched_hole": [
+              40,
+              0
+            ],
+            "pass": true,
+            "spec_xy": [
+              40,
+              0
+            ]
+          }
+        ],
+        "tolerance_mm": 0.15,
+        "unmatched_extras": []
+      }
+    },
+    {
+      "n": 5,
+      "type": "step_roundtrip",
+      "params": {
+        "type": "step_roundtrip",
+        "tolerance_pct": 0.5
+      },
+      "result": "pass",
+      "details": {
+        "per_solid": [
+          {
+            "bbox": {
+              "max_abs_deviation_mm": 0,
+              "original_max": [
+                50,
+                10,
+                8
+              ],
+              "original_min": [
+                -50,
+                -10,
+                0
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                50,
+                10,
+                8
+              ],
+              "roundtripped_min": [
+                -50,
+                -10,
+                0
+              ],
+              "tolerance_mm": 0.5114684741017769
+            },
+            "index": 0,
+            "pass": true,
+            "volume": {
+              "deviation_pct": 1.5429479432076097e-13,
+              "original_mm3": 15325.768021011163,
+              "pass": true,
+              "roundtripped_mm3": 15325.768021011187
+            }
+          }
+        ],
+        "tolerance_pct": 0.5
+      }
+    }
+  ],
+  "summary": {
+    "passed": true,
+    "checks_passed": 6,
+    "checks_total": 6,
+    "score": 1,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260628T002954Z-ebfa",
+  "model": {
+    "id": "wafer-direct-GLM-5.2",
+    "name": "Wafer (direct, GLM-5.2)",
+    "provider": "wafer",
+    "params": {
+      "mode": "direct",
+      "model": "GLM-5.2",
+      "max_tokens": 8000
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "a2-mounting-rail-01",
+    "rendered": "Make a long rectangular mounting rail 100mm long (X) × 20mm wide (Y) × 8mm thick (Z). Center it in X and Y, with the bottom face on the XY plane (z = 0 to z = 8). Drill three through-holes of diameter 6mm, axes parallel to Z, evenly spaced along the centerline (y = 0) at x = -40, x = 0, and x = 40. Output a single solid.",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "wafer.chat.completions.create",
+        "args": {
+          "model": "GLM-5.2",
+          "max_tokens": 8000,
+          "system_chars": 3956,
+          "user_chars": 384,
+          "image_attachments": 0
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 10090.805875
+      }
+    ],
+    "tokens": {
+      "input": 1424,
+      "output": 608,
+      "total": 2032
+    },
+    "wallclock_sec": 10.090805875
+  },
+  "output": {
+    "vcad_path": "20260628T002954Z-ebfa.vcad",
+    "vcad_sha256": "41aa952b97c3bf5329e8ed83ac5d9af5c1904d7dddeeeadfe6f4fa81d9008956",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-06-28T00:29:54.007Z",
+    "ended_at": "2026-06-28T00:30:04.108Z"
+  },
+  "signature": null
+}

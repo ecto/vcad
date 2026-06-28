@@ -1,0 +1,19 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": { "id": 1, "name": "cap_body", "op": { "type": "Cylinder", "radius": 13.5, "height": 10, "segments": 64 } },
+    "2": { "id": 2, "name": "cap_body_pos", "op": { "type": "Translate", "child": 1, "offset": { "x": 0, "y": 0, "z": 19 } } },
+    "3": { "id": 3, "name": "main_bore", "op": { "type": "Cylinder", "radius": 12.1, "height": 10, "segments": 64 } },
+    "4": { "id": 4, "name": "main_bore_pos", "op": { "type": "Translate", "child": 3, "offset": { "x": 0, "y": 0, "z": 19 } } },
+    "5": { "id": 5, "name": "lip_relief", "op": { "type": "Cylinder", "radius": 13.0, "height": 1.2, "segments": 64 } },
+    "6": { "id": 6, "name": "lip_relief_pos", "op": { "type": "Translate", "child": 5, "offset": { "x": 0, "y": 0, "z": 19 } } },
+    "7": { "id": 7, "name": "lip_cut", "op": { "type": "Cylinder", "radius": 11.5, "height": 2.2, "segments": 64 } },
+    "8": { "id": 8, "name": "lip_cut_pos", "op": { "type": "Translate", "child": 7, "offset": { "x": 0, "y": 0, "z": 19 } } },
+    "9": { "id": 9, "name": "bore_minus_relief", "op": { "type": "Difference", "left": 4, "right": 6 } },
+    "10": { "id": 10, "name": "bore_with_lip_cut", "op": { "type": "Union", "left": 9, "right": 8 } },
+    "11": { "id": 11, "name": "cap_result", "op": { "type": "Difference", "left": 2, "right": 10 } }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [{ "root": 11, "material": "default" }]
+}

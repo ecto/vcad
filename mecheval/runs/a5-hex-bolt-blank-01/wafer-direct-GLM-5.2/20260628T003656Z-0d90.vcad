@@ -1,0 +1,69 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "hex_cylinder",
+      "op": {
+        "type": "Cylinder",
+        "radius": 13.856,
+        "height": 14,
+        "segments": 6
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": "hex_head",
+      "op": {
+        "type": "Rotate",
+        "child": 1,
+        "angles": { "x": 0, "y": 0, "z": 30 }
+      }
+    },
+    "3": {
+      "id": 3,
+      "name": "hex_head_translated",
+      "op": {
+        "type": "Translate",
+        "child": 2,
+        "offset": { "x": 0, "y": 0, "z": 0 }
+      }
+    },
+    "4": {
+      "id": 4,
+      "name": "shank_cylinder",
+      "op": {
+        "type": "Cylinder",
+        "radius": 7,
+        "height": 46,
+        "segments": 32
+      }
+    },
+    "5": {
+      "id": 5,
+      "name": "shank",
+      "op": {
+        "type": "Translate",
+        "child": 4,
+        "offset": { "x": 0, "y": 0, "z": 14 }
+      }
+    },
+    "6": {
+      "id": 6,
+      "name": "bolt_blank",
+      "op": {
+        "type": "Union",
+        "left": 3,
+        "right": 5
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 6,
+      "material": "default"
+    }
+  ]
+}

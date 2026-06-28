@@ -1,0 +1,19 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": { "id": 1, "name": "rail", "op": { "type": "Cube", "size": { "x": 100, "y": 20, "z": 8 } } },
+    "2": { "id": 2, "name": "rail_centered", "op": { "type": "Translate", "child": 1, "offset": { "x": -50, "y": -10, "z": 0 } } },
+    "3": { "id": 3, "name": "hole1", "op": { "type": "Cylinder", "radius": 3, "height": 12, "segments": 32 } },
+    "4": { "id": 4, "name": "hole1_p", "op": { "type": "Translate", "child": 3, "offset": { "x": -40, "y": 0, "z": -2 } } },
+    "5": { "id": 5, "name": "hole2", "op": { "type": "Cylinder", "radius": 3, "height": 12, "segments": 32 } },
+    "6": { "id": 6, "name": "hole2_p", "op": { "type": "Translate", "child": 5, "offset": { "x": 0, "y": 0, "z": -2 } } },
+    "7": { "id": 7, "name": "hole3", "op": { "type": "Cylinder", "radius": 3, "height": 12, "segments": 32 } },
+    "8": { "id": 8, "name": "hole3_p", "op": { "type": "Translate", "child": 7, "offset": { "x": 40, "y": 0, "z": -2 } } },
+    "9": { "id": 9, "name": "holes12", "op": { "type": "Union", "left": 4, "right": 6 } },
+    "10": { "id": 10, "name": "holes", "op": { "type": "Union", "left": 9, "right": 8 } },
+    "11": { "id": 11, "name": "rail_with_holes", "op": { "type": "Difference", "left": 2, "right": 10 } }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [{ "root": 11, "material": "default" }]
+}

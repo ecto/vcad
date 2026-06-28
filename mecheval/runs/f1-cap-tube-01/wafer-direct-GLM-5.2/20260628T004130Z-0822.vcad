@@ -1,0 +1,13 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": { "id": 1, "name": "flange", "op": { "type": "Cylinder", "radius": 17.5, "height": 2, "segments": 64 } },
+    "2": { "id": 2, "name": "flange_p", "op": { "type": "Translate", "child": 1, "offset": { "x": 0, "y": 0, "z": 30 } } },
+    "3": { "id": 3, "name": "register", "op": { "type": "Cylinder", "radius": 11.9, "height": 5, "segments": 64 } },
+    "4": { "id": 4, "name": "register_p", "op": { "type": "Translate", "child": 3, "offset": { "x": 0, "y": 0, "z": 25 } } },
+    "5": { "id": 5, "name": "cap", "op": { "type": "Union", "left": 2, "right": 4 } }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [{ "root": 5, "material": "default" }]
+}

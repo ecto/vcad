@@ -1,0 +1,14 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": { "id": 1, "name": "flange_disk", "op": { "type": "Cylinder", "radius": 17, "height": 2, "segments": 64 } },
+    "2": { "id": 2, "name": "register", "op": { "type": "Cylinder", "radius": 12.2, "height": 5, "segments": 64 } },
+    "3": { "id": 3, "name": "register_pos", "op": { "type": "Translate", "child": 2, "offset": { "x": 0, "y": 0, "z": -5 } } },
+    "4": { "id": 4, "name": "cap_body", "op": { "type": "Union", "left": 1, "right": 3 } },
+    "5": { "id": 5, "name": "bore_hole", "op": { "type": "Cylinder", "radius": 10.5, "height": 2, "segments": 64 } },
+    "6": { "id": 6, "name": "cap", "op": { "type": "Difference", "left": 4, "right": 5 } }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [{ "root": 6, "material": "default" }]
+}

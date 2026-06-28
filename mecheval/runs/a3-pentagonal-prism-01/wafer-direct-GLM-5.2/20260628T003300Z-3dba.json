@@ -1,0 +1,186 @@
+{
+  "schema_version": 0,
+  "task_id": "a3-pentagonal-prism-01",
+  "task_sha256": "1cd17baaa8bda61287e5f1ed5579c13048578eaad9ebc36cf5e2cca36c9a06a0",
+  "checks": [
+    {
+      "n": 0,
+      "type": "valid_solid",
+      "params": {
+        "type": "valid_solid"
+      },
+      "result": "fail",
+      "details": {
+        "error": "parse: Invalid JSON vcad file: missing field `sketch` at line 23 column 5",
+        "reason": "fatal evaluation error"
+      }
+    },
+    {
+      "n": 1,
+      "type": "bbox",
+      "params": {
+        "type": "bbox",
+        "min": [
+          -14.27,
+          -12.13,
+          0
+        ],
+        "max": [
+          14.27,
+          15,
+          25
+        ],
+        "tolerance_mm": 0.3
+      },
+      "result": "fail",
+      "details": {
+        "reason": "no valid solid to measure"
+      }
+    },
+    {
+      "n": 2,
+      "type": "mass_props",
+      "params": {
+        "type": "mass_props",
+        "volume_mm3": 12884.48,
+        "tolerance_pct": 1.5
+      },
+      "result": "fail",
+      "details": {
+        "reason": "no valid solid to measure"
+      }
+    },
+    {
+      "n": 3,
+      "type": "hole_count",
+      "params": {
+        "type": "hole_count",
+        "diameter_mm": 5,
+        "expected": 1,
+        "diameter_tolerance_mm": 0.05
+      },
+      "result": "fail",
+      "details": {
+        "actual": 0,
+        "diameter_mm": 5,
+        "diameter_tolerance_mm": 0.05,
+        "expected": 1,
+        "found": []
+      }
+    },
+    {
+      "n": 4,
+      "type": "hole_positions",
+      "params": {
+        "type": "hole_positions",
+        "diameter_mm": 5,
+        "positions": [
+          [
+            5,
+            0,
+            0
+          ]
+        ],
+        "tolerance_mm": 0.15
+      },
+      "result": "fail",
+      "details": {
+        "diameter_mm": 5,
+        "per_expected": [
+          {
+            "pass": false,
+            "reason": "no candidate cylindrical feature of this diameter remained unmatched",
+            "spec_xy": [
+              5,
+              0
+            ]
+          }
+        ],
+        "tolerance_mm": 0.15,
+        "unmatched_extras": []
+      }
+    },
+    {
+      "n": 5,
+      "type": "step_roundtrip",
+      "params": {
+        "type": "step_roundtrip",
+        "tolerance_pct": 1.5
+      },
+      "result": "fail",
+      "details": {
+        "reason": "no valid solid to round-trip"
+      }
+    }
+  ],
+  "summary": {
+    "passed": false,
+    "checks_passed": 0,
+    "checks_total": 6,
+    "score": 0,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260628T003300Z-3dba",
+  "model": {
+    "id": "wafer-direct-GLM-5.2",
+    "name": "Wafer (direct, GLM-5.2)",
+    "provider": "wafer",
+    "params": {
+      "mode": "direct",
+      "model": "GLM-5.2",
+      "max_tokens": 8000
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "a3-pentagonal-prism-01",
+    "rendered": "Make a regular pentagonal prism. The cross-section is a regular pentagon centered on the Z axis with circumradius 15mm (distance from center to each vertex). Orient the pentagon so one vertex points in the +Y direction. Height 25mm along Z, base on the XY plane (z = 0 to z = 25). Drill one through-hole of diameter 5mm, axis parallel to Z, with its axis offset 5mm in the +X direction from the center (so hole axis is at (x=5, y=0)). Output a single solid.",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "wafer.chat.completions.create",
+        "args": {
+          "model": "GLM-5.2",
+          "max_tokens": 8000,
+          "system_chars": 3956,
+          "user_chars": 522,
+          "image_attachments": 0
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 7255.965832999999
+      }
+    ],
+    "tokens": {
+      "input": 1441,
+      "output": 415,
+      "total": 1856
+    },
+    "wallclock_sec": 7.255965832999999
+  },
+  "output": {
+    "vcad_path": "20260628T003300Z-3dba.vcad",
+    "vcad_sha256": "1d2d8711ce2b2edd42728a41eb16c46ff46e513dbbe0b07668658ee745afd13d",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-06-28T00:33:00.978Z",
+    "ended_at": "2026-06-28T00:33:08.244Z"
+  },
+  "signature": null
+}

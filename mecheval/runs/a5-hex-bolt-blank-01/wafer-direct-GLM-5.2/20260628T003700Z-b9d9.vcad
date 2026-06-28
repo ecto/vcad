@@ -1,0 +1,13 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": { "id": 1, "name": "hex_head", "op": { "type": "Cylinder", "radius": 13.856, "height": 14, "segments": 6 } },
+    "2": { "id": 2, "name": "hex_head_centered", "op": { "type": "Translate", "child": 1, "offset": { "x": -13.856, "y": -13.856, "z": 0 } } },
+    "3": { "id": 3, "name": "shank", "op": { "type": "Cylinder", "radius": 7, "height": 46, "segments": 32 } },
+    "4": { "id": 4, "name": "shank_translated", "op": { "type": "Translate", "child": 3, "offset": { "x": -7, "y": -7, "z": 14 } } },
+    "5": { "id": 5, "name": "bolt_blank", "op": { "type": "Union", "left": 2, "right": 4 } }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [{ "root": 5, "material": "default" }]
+}

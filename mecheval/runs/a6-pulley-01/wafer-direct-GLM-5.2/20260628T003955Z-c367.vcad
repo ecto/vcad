@@ -1,0 +1,19 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": { "id": 1, "name": "bottom_flange", "op": { "type": "Cylinder", "radius": 40, "height": 8, "segments": 64 } },
+    "2": { "id": 2, "name": "bottom_flange_t", "op": { "type": "Translate", "child": 1, "offset": { "x": 0, "y": 0, "z": 0 } } },
+    "3": { "id": 3, "name": "groove_section", "op": { "type": "Cylinder", "radius": 25, "height": 24, "segments": 64 } },
+    "4": { "id": 4, "name": "groove_section_t", "op": { "type": "Translate", "child": 3, "offset": { "x": 0, "y": 0, "z": 8 } } },
+    "5": { "id": 5, "name": "top_flange", "op": { "type": "Cylinder", "radius": 40, "height": 8, "segments": 64 } },
+    "6": { "id": 6, "name": "top_flange_t", "op": { "type": "Translate", "child": 5, "offset": { "x": 0, "y": 0, "z": 32 } } },
+    "7": { "id": 7, "name": "body_bottom_groove", "op": { "type": "Union", "left": 2, "right": 4 } },
+    "8": { "id": 8, "name": "body", "op": { "type": "Union", "left": 7, "right": 6 } },
+    "9": { "id": 9, "name": "bore", "op": { "type": "Cylinder", "radius": 8, "height": 41, "segments": 64 } },
+    "10": { "id": 10, "name": "bore_t", "op": { "type": "Translate", "child": 9, "offset": { "x": 0, "y": 0, "z": -0.5 } } },
+    "11": { "id": 11, "name": "pulley", "op": { "type": "Difference", "left": 8, "right": 10 } }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [{ "root": 11, "material": "default" }]
+}

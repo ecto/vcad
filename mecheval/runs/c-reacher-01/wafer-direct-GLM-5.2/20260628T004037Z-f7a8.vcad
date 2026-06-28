@@ -1,0 +1,106 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": { "id": 1, "name": "base_body", "op": { "type": "Cylinder", "radius": 0.05, "height": 0.04, "segments": 32 } },
+    "2": { "id": 2, "name": "base_at_origin", "op": { "type": "Translate", "child": 1, "offset": { "x": 0, "y": 0, "z": 0 } } },
+    "3": { "id": 3, "name": "link1_geom", "op": { "type": "Cube", "size": { "x": 0.02, "y": 0.02, "z": 0.20 } } },
+    "4": { "id": 4, "name": "link1_centered", "op": { "type": "Translate", "child": 3, "offset": { "x": -0.01, "y": -0.01, "z": 0 } } },
+    "5": { "id": 5, "name": "link2_geom", "op": { "type": "Cube", "size": { "x": 0.02, "y": 0.02, "z": 0.15 } } },
+    "6": { "id": 6, "name": "link2_centered", "op": { "type": "Translate", "child": 5, "offset": { "x": -0.01, "y": -0.01, "z": 0 } } },
+    "7": { "id": 7, "name": "tip_geom", "op": { "type": "Sphere", "radius": 0.015, "segments": 24 } }
+  },
+  "materials": {
+    "steel": { "color": { "r": 0.6, "g": 0.6, "b": 0.6 }, "roughness": 0.5 },
+    "aluminum": { "color": { "r": 0.7, "g": 0.7, "b": 0.8 }, "roughness": 0.3 },
+    "rubber": { "color": { "r": 0.1, "g": 0.1, "b": 0.1 }, "roughness": 0.9 }
+  },
+  "part_materials": {
+    "2": "steel",
+    "4": "aluminum",
+    "6": "aluminum",
+    "7": "rubber"
+  },
+  "partDefs": {
+    "base": { "id": "base", "name": "base", "root": 2 },
+    "link1": { "id": "link1", "name": "link1", "root": 4 },
+    "link2": { "id": "link2", "name": "link2", "root": 6 },
+    "tip": { "id": "tip", "name": "tip", "root": 7 }
+  },
+  "instances": [
+    {
+      "id": "base_inst",
+      "partDefId": "base",
+      "name": "base",
+      "tags": ["base"],
+      "transform": {
+        "translation": { "x": 0, "y": 0, "z": 0 },
+        "rotation": { "x": 0, "y": 0, "z": 0 },
+        "scale": { "x": 1, "y": 1, "z": 1 }
+      }
+    },
+    {
+      "id": "link1_inst",
+      "partDefId": "link1",
+      "name": "link1",
+      "tags": [],
+      "transform": {
+        "translation": { "x": 0, "y": 0, "z": 0.04 },
+        "rotation": { "x": 0, "y": 0, "z": 45 },
+        "scale": { "x": 1, "y": 1, "z": 1 }
+      }
+    },
+    {
+      "id": "link2_inst",
+      "partDefId": "link2",
+      "name": "link2",
+      "tags": [],
+      "transform": {
+        "translation": { "x": 0.1414, "y": 0, "z": 0.1814 },
+        "rotation": { "x": 0, "y": 0, "z": 45 },
+        "scale": { "x": 1, "y": 1, "z": 1 }
+      }
+    },
+    {
+      "id": "tip_inst",
+      "partDefId": "tip",
+      "name": "tip",
+      "tags": ["tip"],
+      "transform": {
+        "translation": { "x": 0.2475, "y": 0, "z": 0.2875 },
+        "rotation": { "x": 0, "y": 0, "z": 0 },
+        "scale": { "x": 1, "y": 1, "z": 1 }
+      }
+    }
+  ],
+  "joints": [
+    {
+      "id": "j1",
+      "parentInstanceId": "base_inst",
+      "childInstanceId": "link1_inst",
+      "parentAnchor": { "x": 0, "y": 0, "z": 0.04 },
+      "childAnchor": { "x": 0, "y": 0, "z": 0 },
+      "kind": { "type": "Revolute", "axis": { "x": 0, "y": 0, "z": 1 }, "limits": [-180, 180] },
+      "state": 45
+    },
+    {
+      "id": "j2",
+      "parentInstanceId": "link1_inst",
+      "childInstanceId": "link2_inst",
+      "parentAnchor": { "x": 0, "y": 0, "z": 0.2 },
+      "childAnchor": { "x": 0, "y": 0, "z": 0 },
+      "kind": { "type": "Revolute", "axis": { "x": 0, "y": 0, "z": 1 }, "limits": [-180, 180] },
+      "state": 45
+    },
+    {
+      "id": "j3",
+      "parentInstanceId": "link2_inst",
+      "childInstanceId": "tip_inst",
+      "parentAnchor": { "x": 0, "y": 0, "z": 0.15 },
+      "childAnchor": { "x": 0, "y": 0, "z": 0 },
+      "kind": { "type": "Fixed" },
+      "state": 0
+    }
+  ],
+  "groundInstanceId": "base_inst",
+  "roots": []
+}

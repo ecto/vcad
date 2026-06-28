@@ -1,0 +1,200 @@
+{
+  "schema_version": 0,
+  "task_id": "a1-stepped-shaft-01",
+  "task_sha256": "0b362741f05ae51465629d87cf389069cec219be11f5e3718299a14c41a20458",
+  "checks": [
+    {
+      "n": 0,
+      "type": "valid_solid",
+      "params": {
+        "type": "valid_solid"
+      },
+      "result": "pass",
+      "details": {
+        "root_count": 1,
+        "solids_produced": 1
+      }
+    },
+    {
+      "n": 1,
+      "type": "bbox",
+      "params": {
+        "type": "bbox",
+        "min": [
+          -20,
+          -20,
+          0
+        ],
+        "max": [
+          20,
+          20,
+          25
+        ],
+        "tolerance_mm": 0.1
+      },
+      "result": "pass",
+      "details": {
+        "actual_max": [
+          20,
+          20,
+          25
+        ],
+        "actual_min": [
+          -20,
+          -20,
+          0
+        ],
+        "deviation_max": [
+          0,
+          0,
+          0
+        ],
+        "deviation_min": [
+          0,
+          0,
+          0
+        ],
+        "max_abs_deviation_mm": 0,
+        "tolerance_mm": 0.1
+      }
+    },
+    {
+      "n": 2,
+      "type": "mass_props",
+      "params": {
+        "type": "mass_props",
+        "volume_mm3": 17278.76,
+        "tolerance_pct": 1
+      },
+      "result": "pass",
+      "details": {
+        "volume": {
+          "actual_mm3": 17167.948359636033,
+          "deviation_pct": 0.6413170873602339,
+          "pass": true,
+          "spec_mm3": 17278.76,
+          "tolerance_pct": 1
+        }
+      }
+    },
+    {
+      "n": 3,
+      "type": "step_roundtrip",
+      "params": {
+        "type": "step_roundtrip",
+        "tolerance_pct": 1
+      },
+      "result": "pass",
+      "details": {
+        "per_solid": [
+          {
+            "bbox": {
+              "max_abs_deviation_mm": 0,
+              "original_max": [
+                20,
+                20,
+                25
+              ],
+              "original_min": [
+                -20,
+                -20,
+                0
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                20,
+                20,
+                25
+              ],
+              "roundtripped_min": [
+                -20,
+                -20,
+                0
+              ],
+              "tolerance_mm": 0.6184658438426491
+            },
+            "index": 0,
+            "pass": true,
+            "volume": {
+              "deviation_pct": 2.1190527434513086e-14,
+              "original_mm3": 17167.948359636033,
+              "pass": true,
+              "roundtripped_mm3": 17167.94835963603
+            }
+          }
+        ],
+        "tolerance_pct": 1
+      }
+    }
+  ],
+  "summary": {
+    "passed": true,
+    "checks_passed": 4,
+    "checks_total": 4,
+    "score": 1,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260627T224702Z-99c5",
+  "model": {
+    "id": "wafer-direct-GLM-5.2",
+    "name": "Wafer (direct, GLM-5.2)",
+    "provider": "wafer",
+    "params": {
+      "mode": "direct",
+      "model": "GLM-5.2",
+      "max_tokens": 8000
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "a1-stepped-shaft-01",
+    "rendered": "Make a stepped shaft along the Z axis: a base cylinder of diameter 40mm and height 10mm sitting on the XY plane (z = 0 to z = 10), with a smaller coaxial cylinder of diameter 20mm and height 15mm stacked directly on top (z = 10 to z = 25). The result is a single solid.",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "wafer.chat.completions.create",
+        "args": {
+          "model": "GLM-5.2",
+          "max_tokens": 8000,
+          "system_chars": 3956,
+          "user_chars": 331,
+          "image_attachments": 0
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 9226.5525
+      }
+    ],
+    "tokens": {
+      "input": 1395,
+      "output": 255,
+      "total": 1650
+    },
+    "wallclock_sec": 9.2265525
+  },
+  "output": {
+    "vcad_path": "20260627T224702Z-99c5.vcad",
+    "vcad_sha256": "c810686896bd1757aa1b8f94f2463f5695fabd4ad38ad8e245ebeeff380ba603",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-06-27T22:47:02.121Z",
+    "ended_at": "2026-06-27T22:47:11.354Z"
+  },
+  "signature": null
+}

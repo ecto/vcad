@@ -1,0 +1,13 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": { "id": 1, "name": "vertical_cyl", "op": { "type": "Cylinder", "radius": 10, "height": 40, "segments": 32 } },
+    "2": { "id": 2, "name": "horiz_cyl_base", "op": { "type": "Cylinder", "radius": 10, "height": 40, "segments": 32 } },
+    "3": { "id": 3, "name": "horiz_cyl_z", "op": { "type": "Translate", "child": 2, "offset": { "x": 0, "y": 0, "z": 20 } } },
+    "4": { "id": 4, "name": "horiz_cyl_rot", "op": { "type": "Rotate", "child": 3, "angles": { "x": 0, "y": 90, "z": 0 } } },
+    "5": { "id": 5, "name": "cross_shaft", "op": { "type": "Union", "left": 1, "right": 4 } }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [{ "root": 5, "material": "default" }]
+}

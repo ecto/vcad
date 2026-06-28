@@ -1,0 +1,260 @@
+{
+  "schema_version": 0,
+  "task_id": "a3-pentagonal-prism-01",
+  "task_sha256": "1cd17baaa8bda61287e5f1ed5579c13048578eaad9ebc36cf5e2cca36c9a06a0",
+  "checks": [
+    {
+      "n": 0,
+      "type": "valid_solid",
+      "params": {
+        "type": "valid_solid"
+      },
+      "result": "pass",
+      "details": {
+        "root_count": 1,
+        "solids_produced": 1
+      }
+    },
+    {
+      "n": 1,
+      "type": "bbox",
+      "params": {
+        "type": "bbox",
+        "min": [
+          -14.27,
+          -12.13,
+          0
+        ],
+        "max": [
+          14.27,
+          15,
+          25
+        ],
+        "tolerance_mm": 0.3
+      },
+      "result": "fail",
+      "details": {
+        "actual_max": [
+          14.953760147094727,
+          14.953760147094727,
+          25
+        ],
+        "actual_min": [
+          -14.953760147094727,
+          -14.953760147094727,
+          0
+        ],
+        "deviation_max": [
+          0.683760147094727,
+          -0.04623985290527344,
+          0
+        ],
+        "deviation_min": [
+          -0.683760147094727,
+          -2.823760147094726,
+          0
+        ],
+        "max_abs_deviation_mm": 2.823760147094726,
+        "tolerance_mm": 0.3
+      }
+    },
+    {
+      "n": 2,
+      "type": "mass_props",
+      "params": {
+        "type": "mass_props",
+        "volume_mm3": 12884.48,
+        "tolerance_pct": 1.5
+      },
+      "result": "fail",
+      "details": {
+        "volume": {
+          "actual_mm3": 17070.403475031395,
+          "deviation_pct": 32.48810565138365,
+          "pass": false,
+          "spec_mm3": 12884.48,
+          "tolerance_pct": 1.5
+        }
+      }
+    },
+    {
+      "n": 3,
+      "type": "hole_count",
+      "params": {
+        "type": "hole_count",
+        "diameter_mm": 5,
+        "expected": 1,
+        "diameter_tolerance_mm": 0.05
+      },
+      "result": "pass",
+      "details": {
+        "actual": 1,
+        "diameter_mm": 5,
+        "diameter_tolerance_mm": 0.05,
+        "expected": 1,
+        "found": [
+          [
+            5,
+            0,
+            5
+          ]
+        ]
+      }
+    },
+    {
+      "n": 4,
+      "type": "hole_positions",
+      "params": {
+        "type": "hole_positions",
+        "diameter_mm": 5,
+        "positions": [
+          [
+            5,
+            0,
+            0
+          ]
+        ],
+        "tolerance_mm": 0.15
+      },
+      "result": "pass",
+      "details": {
+        "diameter_mm": 5,
+        "per_expected": [
+          {
+            "distance_mm": 0,
+            "matched_hole": [
+              5,
+              0
+            ],
+            "pass": true,
+            "spec_xy": [
+              5,
+              0
+            ]
+          }
+        ],
+        "tolerance_mm": 0.15,
+        "unmatched_extras": []
+      }
+    },
+    {
+      "n": 5,
+      "type": "step_roundtrip",
+      "params": {
+        "type": "step_roundtrip",
+        "tolerance_pct": 1.5
+      },
+      "result": "pass",
+      "details": {
+        "per_solid": [
+          {
+            "bbox": {
+              "max_abs_deviation_mm": 0,
+              "original_max": [
+                14.953760147094727,
+                14.953760147094727,
+                25
+              ],
+              "original_min": [
+                -14.953760147094727,
+                -14.953760147094727,
+                0
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                14.953760147094727,
+                14.953760147094727,
+                25
+              ],
+              "roundtripped_min": [
+                -14.953760147094727,
+                -14.953760147094727,
+                0
+              ],
+              "tolerance_mm": 0.7369748276340985
+            },
+            "index": 0,
+            "pass": true,
+            "volume": {
+              "deviation_pct": 0,
+              "original_mm3": 17070.403475031395,
+              "pass": true,
+              "roundtripped_mm3": 17070.403475031395
+            }
+          }
+        ],
+        "tolerance_pct": 1.5
+      }
+    }
+  ],
+  "summary": {
+    "passed": false,
+    "checks_passed": 4,
+    "checks_total": 6,
+    "score": 0.6666666666666666,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260628T003308Z-1502",
+  "model": {
+    "id": "wafer-direct-GLM-5.2",
+    "name": "Wafer (direct, GLM-5.2)",
+    "provider": "wafer",
+    "params": {
+      "mode": "direct",
+      "model": "GLM-5.2",
+      "max_tokens": 8000
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "a3-pentagonal-prism-01",
+    "rendered": "Make a regular pentagonal prism. The cross-section is a regular pentagon centered on the Z axis with circumradius 15mm (distance from center to each vertex). Orient the pentagon so one vertex points in the +Y direction. Height 25mm along Z, base on the XY plane (z = 0 to z = 25). Drill one through-hole of diameter 5mm, axis parallel to Z, with its axis offset 5mm in the +X direction from the center (so hole axis is at (x=5, y=0)). Output a single solid.",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "wafer.chat.completions.create",
+        "args": {
+          "model": "GLM-5.2",
+          "max_tokens": 8000,
+          "system_chars": 3956,
+          "user_chars": 522,
+          "image_attachments": 0
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3520.2519169999996
+      }
+    ],
+    "tokens": {
+      "input": 1441,
+      "output": 310,
+      "total": 1751
+    },
+    "wallclock_sec": 3.5202519169999995
+  },
+  "output": {
+    "vcad_path": "20260628T003308Z-1502.vcad",
+    "vcad_sha256": "9cc652e5fe3da110d35682c501615298fe385f4a6e1a146578de36c69c7da20e",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-06-28T00:33:08.282Z",
+    "ended_at": "2026-06-28T00:33:11.822Z"
+  },
+  "signature": null
+}

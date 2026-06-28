@@ -1,0 +1,20 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": { "id": 1, "name": "base_block", "op": { "type": "Cube", "size": { "x": 80, "y": 40, "z": 12 } } },
+    "2": { "id": 2, "name": "base_centered", "op": { "type": "Translate", "child": 1, "offset": { "x": -40, "y": -20, "z": 0 } } },
+    "3": { "id": 3, "name": "left_tine", "op": { "type": "Cube", "size": { "x": 14, "y": 40, "z": 45 } } },
+    "4": { "id": 4, "name": "left_tine_pos", "op": { "type": "Translate", "child": 3, "offset": { "x": -40, "y": -20, "z": 12 } } },
+    "5": { "id": 5, "name": "right_tine", "op": { "type": "Cube", "size": { "x": 14, "y": 40, "z": 45 } } },
+    "6": { "id": 6, "name": "right_tine_pos", "op": { "type": "Translate", "child": 5, "offset": { "x": 26, "y": -20, "z": 12 } } },
+    "7": { "id": 7, "name": "base_left", "op": { "type": "Union", "left": 2, "right": 4 } },
+    "8": { "id": 8, "name": "base_left_right", "op": { "type": "Union", "left": 7, "right": 6 } },
+    "9": { "id": 9, "name": "cross_bore", "op": { "type": "Cylinder", "radius": 9, "height": 80, "segments": 64 } },
+    "10": { "id": 10, "name": "cross_bore_rotated", "op": { "type": "Rotate", "child": 9, "angles": { "x": 0, "y": 90, "z": 0 } } },
+    "11": { "id": 11, "name": "cross_bore_pos", "op": { "type": "Translate", "child": 10, "offset": { "x": -40, "y": 0, "z": 44.5 } } },
+    "12": { "id": 12, "name": "yoke_block", "op": { "type": "Difference", "left": 8, "right": 11 } }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [{ "root": 12, "material": "default" }]
+}

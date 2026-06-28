@@ -1,0 +1,277 @@
+{
+  "schema_version": 0,
+  "task_id": "a3-octagonal-flange-01",
+  "task_sha256": "91605c57469285ce67c864012910184c234cc0303f6a7c986d134cfba4df66d7",
+  "checks": [
+    {
+      "n": 0,
+      "type": "valid_solid",
+      "params": {
+        "type": "valid_solid"
+      },
+      "result": "fail",
+      "details": {
+        "error": "parse: Invalid JSON vcad file: missing field `type` at line 34 column 131",
+        "reason": "fatal evaluation error"
+      }
+    },
+    {
+      "n": 1,
+      "type": "bbox",
+      "params": {
+        "type": "bbox",
+        "min": [
+          -21.65,
+          -20,
+          0
+        ],
+        "max": [
+          21.65,
+          20,
+          8
+        ],
+        "tolerance_mm": 0.3
+      },
+      "result": "fail",
+      "details": {
+        "reason": "no valid solid to measure"
+      }
+    },
+    {
+      "n": 2,
+      "type": "mass_props",
+      "params": {
+        "type": "mass_props",
+        "volume_mm3": 9347.81,
+        "tolerance_pct": 1.5
+      },
+      "result": "fail",
+      "details": {
+        "reason": "no valid solid to measure"
+      }
+    },
+    {
+      "n": 3,
+      "type": "hole_count",
+      "params": {
+        "type": "hole_count",
+        "diameter_mm": 5,
+        "expected": 8,
+        "diameter_tolerance_mm": 0.05
+      },
+      "result": "fail",
+      "details": {
+        "actual": 0,
+        "diameter_mm": 5,
+        "diameter_tolerance_mm": 0.05,
+        "expected": 8,
+        "found": []
+      }
+    },
+    {
+      "n": 4,
+      "type": "hole_positions",
+      "params": {
+        "type": "hole_positions",
+        "diameter_mm": 5,
+        "positions": [
+          [
+            15,
+            0,
+            0
+          ],
+          [
+            10.61,
+            10.61,
+            0
+          ],
+          [
+            0,
+            15,
+            0
+          ],
+          [
+            -10.61,
+            10.61,
+            0
+          ],
+          [
+            -15,
+            0,
+            0
+          ],
+          [
+            -10.61,
+            -10.61,
+            0
+          ],
+          [
+            0,
+            -15,
+            0
+          ],
+          [
+            10.61,
+            -10.61,
+            0
+          ]
+        ],
+        "tolerance_mm": 0.2
+      },
+      "result": "fail",
+      "details": {
+        "diameter_mm": 5,
+        "per_expected": [
+          {
+            "pass": false,
+            "reason": "no candidate cylindrical feature of this diameter remained unmatched",
+            "spec_xy": [
+              15,
+              0
+            ]
+          },
+          {
+            "pass": false,
+            "reason": "no candidate cylindrical feature of this diameter remained unmatched",
+            "spec_xy": [
+              10.61,
+              10.61
+            ]
+          },
+          {
+            "pass": false,
+            "reason": "no candidate cylindrical feature of this diameter remained unmatched",
+            "spec_xy": [
+              0,
+              15
+            ]
+          },
+          {
+            "pass": false,
+            "reason": "no candidate cylindrical feature of this diameter remained unmatched",
+            "spec_xy": [
+              -10.61,
+              10.61
+            ]
+          },
+          {
+            "pass": false,
+            "reason": "no candidate cylindrical feature of this diameter remained unmatched",
+            "spec_xy": [
+              -15,
+              0
+            ]
+          },
+          {
+            "pass": false,
+            "reason": "no candidate cylindrical feature of this diameter remained unmatched",
+            "spec_xy": [
+              -10.61,
+              -10.61
+            ]
+          },
+          {
+            "pass": false,
+            "reason": "no candidate cylindrical feature of this diameter remained unmatched",
+            "spec_xy": [
+              0,
+              -15
+            ]
+          },
+          {
+            "pass": false,
+            "reason": "no candidate cylindrical feature of this diameter remained unmatched",
+            "spec_xy": [
+              10.61,
+              -10.61
+            ]
+          }
+        ],
+        "tolerance_mm": 0.2,
+        "unmatched_extras": []
+      }
+    },
+    {
+      "n": 5,
+      "type": "step_roundtrip",
+      "params": {
+        "type": "step_roundtrip",
+        "tolerance_pct": 1.5
+      },
+      "result": "fail",
+      "details": {
+        "reason": "no valid solid to round-trip"
+      }
+    }
+  ],
+  "summary": {
+    "passed": false,
+    "checks_passed": 0,
+    "checks_total": 6,
+    "score": 0,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260628T003225Z-4dd8",
+  "model": {
+    "id": "wafer-direct-GLM-5.2",
+    "name": "Wafer (direct, GLM-5.2)",
+    "provider": "wafer",
+    "params": {
+      "mode": "direct",
+      "model": "GLM-5.2",
+      "max_tokens": 8000
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "a3-octagonal-flange-01",
+    "rendered": "Make an octagonal prism flange. The outer cross-section is a regular octagon with flat-to-flat distance 40mm (apothem 20mm), oriented so two flats are parallel to the X axis (the top and bottom of the octagon). Height 8mm along Z, base on the XY plane (z = 0 to z = 8). Drill eight through-holes of diameter 5mm, axes parallel to Z, on a bolt circle of radius 15mm centered on the Z axis. The first bolt hole is on the +X axis, and the rest are evenly spaced every 45 degrees. Output a single solid.",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "wafer.chat.completions.create",
+        "args": {
+          "model": "GLM-5.2",
+          "max_tokens": 8000,
+          "system_chars": 3956,
+          "user_chars": 564,
+          "image_attachments": 0
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 60067.767792
+      }
+    ],
+    "tokens": {
+      "input": 1454,
+      "output": 3826,
+      "total": 5280
+    },
+    "wallclock_sec": 60.067767792
+  },
+  "output": {
+    "vcad_path": "20260628T003225Z-4dd8.vcad",
+    "vcad_sha256": "dcad7aade4c667926cc8d79396907d07760d6e49a8d50ae0f8a8938a3dc8ea16",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-06-28T00:32:25.011Z",
+    "ended_at": "2026-06-28T00:33:25.088Z"
+  },
+  "signature": null
+}

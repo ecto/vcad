@@ -1,0 +1,25 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": { "id": 1, "name": "base", "op": { "type": "Cube", "size": { "x": 80, "y": 80, "z": 10 } } },
+    "2": { "id": 2, "name": "base_t", "op": { "type": "Translate", "child": 1, "offset": { "x": -40, "y": -40, "z": 0 } } },
+    "3": { "id": 3, "name": "middle", "op": { "type": "Cube", "size": { "x": 60, "y": 60, "z": 10 } } },
+    "4": { "id": 4, "name": "middle_t", "op": { "type": "Translate", "child": 3, "offset": { "x": -30, "y": -30, "z": 10 } } },
+    "5": { "id": 5, "name": "top", "op": { "type": "Cube", "size": { "x": 40, "y": 40, "z": 10 } } },
+    "6": { "id": 6, "name": "top_t", "op": { "type": "Translate", "child": 5, "offset": { "x": -20, "y": -20, "z": 20 } } },
+    "7": { "id": 7, "name": "pyramid", "op": { "type": "Union", "left": 6, "right": 4 } },
+    "8": { "id": 8, "name": "pyramid_full", "op": { "type": "Union", "left": 7, "right": 2 } },
+    "9": { "id": 9, "name": "bolt", "op": { "type": "Cylinder", "radius": 3, "height": 12, "segments": 32 } },
+    "10": { "id": 10, "name": "bolt1", "op": { "type": "Translate", "child": 9, "offset": { "x": 30, "y": 30, "z": -1 } } },
+    "11": { "id": 11, "name": "bolt2", "op": { "type": "Translate", "child": 9, "offset": { "x": -30, "y": 30, "z": -1 } } },
+    "12": { "id": 12, "name": "bolt3", "op": { "type": "Translate", "child": 9, "offset": { "x": -30, "y": -30, "z": -1 } } },
+    "13": { "id": 13, "name": "bolt4", "op": { "type": "Translate", "child": 9, "offset": { "x": 30, "y": -30, "z": -1 } } },
+    "14": { "id": 14, "name": "holes", "op": { "type": "Union", "left": 10, "right": 11 } },
+    "15": { "id": 15, "name": "holes2", "op": { "type": "Union", "left": 14, "right": 12 } },
+    "16": { "id": 16, "name": "holes_all", "op": { "type": "Union", "left": 15, "right": 13 } },
+    "17": { "id": 17, "name": "result", "op": { "type": "Difference", "left": 8, "right": 16 } }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [{ "root": 17, "material": "default" }]
+}

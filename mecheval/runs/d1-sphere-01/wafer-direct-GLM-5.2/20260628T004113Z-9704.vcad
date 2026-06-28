@@ -1,0 +1,9 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": { "id": 1, "name": "sphere", "op": { "type": "Sphere", "radius": 15, "segments": 64 } }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [{ "root": 1, "material": "default" }]
+}

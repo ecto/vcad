@@ -1,0 +1,286 @@
+{
+  "schema_version": 0,
+  "task_id": "a6-pulley-01",
+  "task_sha256": "58d33316e6c4cd6c5ca0025c61d3cc3f0fff4bdb5fc2890ded726b414baaeada",
+  "checks": [
+    {
+      "n": 0,
+      "type": "valid_solid",
+      "params": {
+        "type": "valid_solid"
+      },
+      "result": "pass",
+      "details": {
+        "root_count": 1,
+        "solids_produced": 1
+      }
+    },
+    {
+      "n": 1,
+      "type": "bbox",
+      "params": {
+        "type": "bbox",
+        "min": [
+          -40,
+          -40,
+          0
+        ],
+        "max": [
+          40,
+          40,
+          40
+        ],
+        "tolerance_mm": 0.1
+      },
+      "result": "pass",
+      "details": {
+        "actual_max": [
+          40,
+          40,
+          40
+        ],
+        "actual_min": [
+          -40,
+          -40,
+          0
+        ],
+        "deviation_max": [
+          0,
+          0,
+          0
+        ],
+        "deviation_min": [
+          0,
+          0,
+          0
+        ],
+        "max_abs_deviation_mm": 0,
+        "tolerance_mm": 0.1
+      }
+    },
+    {
+      "n": 2,
+      "type": "mass_props",
+      "params": {
+        "type": "mass_props",
+        "volume_mm3": 119506.19,
+        "center_of_mass": [
+          0,
+          0,
+          20
+        ],
+        "tolerance_pct": 1
+      },
+      "result": "pass",
+      "details": {
+        "center_of_mass": {
+          "actual": [
+            2.7886302344008155e-16,
+            5.2644129994525644e-17,
+            20.000000000000036
+          ],
+          "bbox_diagonal_mm": 120,
+          "deviation": [
+            2.7886302344008155e-16,
+            5.2644129994525644e-17,
+            3.552713678800501e-14
+          ],
+          "max_abs_deviation_mm": 3.552713678800501e-14,
+          "pass": true,
+          "spec": [
+            0,
+            0,
+            20
+          ],
+          "tolerance_mm": 1.2
+        },
+        "volume": {
+          "actual_mm3": 119314.30502835651,
+          "deviation_pct": 0.16056488090156038,
+          "pass": true,
+          "spec_mm3": 119506.19,
+          "tolerance_pct": 1
+        }
+      }
+    },
+    {
+      "n": 3,
+      "type": "hole_count",
+      "params": {
+        "type": "hole_count",
+        "diameter_mm": 16,
+        "expected": 1,
+        "diameter_tolerance_mm": 0.1
+      },
+      "result": "pass",
+      "details": {
+        "actual": 1,
+        "diameter_mm": 16,
+        "diameter_tolerance_mm": 0.1,
+        "expected": 1,
+        "found": [
+          [
+            0,
+            0,
+            16
+          ]
+        ]
+      }
+    },
+    {
+      "n": 4,
+      "type": "hole_positions",
+      "params": {
+        "type": "hole_positions",
+        "diameter_mm": 16,
+        "positions": [
+          [
+            0,
+            0,
+            0
+          ]
+        ],
+        "tolerance_mm": 0.2
+      },
+      "result": "pass",
+      "details": {
+        "diameter_mm": 16,
+        "per_expected": [
+          {
+            "distance_mm": 0,
+            "matched_hole": [
+              0,
+              0
+            ],
+            "pass": true,
+            "spec_xy": [
+              0,
+              0
+            ]
+          }
+        ],
+        "tolerance_mm": 0.2,
+        "unmatched_extras": []
+      }
+    },
+    {
+      "n": 5,
+      "type": "step_roundtrip",
+      "params": {
+        "type": "step_roundtrip",
+        "tolerance_pct": 1
+      },
+      "result": "pass",
+      "details": {
+        "per_solid": [
+          {
+            "bbox": {
+              "max_abs_deviation_mm": 0,
+              "original_max": [
+                40,
+                40,
+                40
+              ],
+              "original_min": [
+                -40,
+                -40,
+                0
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                40,
+                40,
+                40
+              ],
+              "roundtripped_min": [
+                -40,
+                -40,
+                0
+              ],
+              "tolerance_mm": 1.2
+            },
+            "index": 0,
+            "pass": true,
+            "volume": {
+              "deviation_pct": 0.42903631954675375,
+              "original_mm3": 119314.30502835651,
+              "pass": true,
+              "roundtripped_mm3": 118802.40332537006
+            }
+          }
+        ],
+        "tolerance_pct": 1
+      }
+    }
+  ],
+  "summary": {
+    "passed": true,
+    "checks_passed": 6,
+    "checks_total": 6,
+    "score": 1,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260628T003955Z-c367",
+  "model": {
+    "id": "wafer-direct-GLM-5.2",
+    "name": "Wafer (direct, GLM-5.2)",
+    "provider": "wafer",
+    "params": {
+      "mode": "direct",
+      "model": "GLM-5.2",
+      "max_tokens": 8000
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "a6-pulley-01",
+    "rendered": "Make a flanged belt pulley as a single solid. The pulley has three coaxial sections stacked along Z, all centered on the Z axis, with the base on the XY plane. Bottom flange: a cylinder of diameter 80mm and height 8mm (z = 0 to z = 8). Belt groove section: a cylinder of diameter 50mm and height 24mm (z = 8 to z = 32). Top flange: a cylinder of diameter 80mm and height 8mm (z = 32 to z = 40). A central through-bore of diameter 16mm runs along the Z axis through the full height (z = 0 to z = 40). The three outer sections form the stepped outer profile of the pulley when unioned together; the belt rides in the groove between the two flanges. Output a single solid.",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "wafer.chat.completions.create",
+        "args": {
+          "model": "GLM-5.2",
+          "max_tokens": 8000,
+          "system_chars": 3956,
+          "user_chars": 724,
+          "image_attachments": 0
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 6603.437290999999
+      }
+    ],
+    "tokens": {
+      "input": 1503,
+      "output": 614,
+      "total": 2117
+    },
+    "wallclock_sec": 6.603437291
+  },
+  "output": {
+    "vcad_path": "20260628T003955Z-c367.vcad",
+    "vcad_sha256": "1a215eb66b9dbee5c9e1398800ffedddf736ac865bf5cee7f384d226cfe3b4f4",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-06-28T00:39:55.689Z",
+    "ended_at": "2026-06-28T00:40:02.340Z"
+  },
+  "signature": null
+}

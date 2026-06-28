@@ -1,0 +1,15 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": { "id": 1, "name": "rect", "op": { "type": "Cube", "size": { "x": 60, "y": 20, "z": 10 } } },
+    "2": { "id": 2, "name": "rect_t", "op": { "type": "Translate", "child": 1, "offset": { "x": -30, "y": -10, "z": 0 } } },
+    "3": { "id": 3, "name": "cyl", "op": { "type": "Cylinder", "radius": 10, "height": 10, "segments": 32 } },
+    "4": { "id": 4, "name": "cyl_left", "op": { "type": "Translate", "child": 3, "offset": { "x": -30, "y": -10, "z": 0 } } },
+    "5": { "id": 5, "name": "cyl_right", "op": { "type": "Translate", "child": 3, "offset": { "x": 30, "y": -10, "z": 0 } } },
+    "6": { "id": 6, "name": "end_union", "op": { "type": "Union", "left": 4, "right": 5 } },
+    "7": { "id": 7, "name": "bar", "op": { "type": "Union", "left": 2, "right": 6 } }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [{ "root": 7, "material": "default" }]
+}

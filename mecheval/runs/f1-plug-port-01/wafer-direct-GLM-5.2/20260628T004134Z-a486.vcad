@@ -1,0 +1,27 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "plug",
+      "op": {
+        "type": "Cylinder",
+        "radius": 7.85,
+        "height": 10,
+        "segments": 64
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": "plug_positioned",
+      "op": {
+        "type": "Translate",
+        "child": 1,
+        "offset": { "x": 25, "y": 25, "z": 5 }
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [{ "root": 2, "material": "default" }]
+}

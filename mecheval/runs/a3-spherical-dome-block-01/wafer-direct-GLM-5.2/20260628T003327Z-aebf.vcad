@@ -1,0 +1,16 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": { "id": 1, "name": "cube", "op": { "type": "Cube", "size": { "x": 40, "y": 40, "z": 40 } } },
+    "2": { "id": 2, "name": "cube_centered", "op": { "type": "Translate", "child": 1, "offset": { "x": -20, "y": -20, "z": 0 } } },
+    "3": { "id": 3, "name": "sphere", "op": { "type": "Sphere", "radius": 15, "segments": 32 } },
+    "4": { "id": 4, "name": "sphere_at_top", "op": { "type": "Translate", "child": 3, "offset": { "x": 0, "y": 0, "z": 40 } } },
+    "5": { "id": 5, "name": "half_space", "op": { "type": "Cube", "size": { "x": 1000, "y": 1000, "z": 500 } } },
+    "6": { "id": 6, "name": "half_space_pos", "op": { "type": "Translate", "child": 5, "offset": { "x": -500, "y": -500, "z": 40 } } },
+    "7": { "id": 7, "name": "hemisphere", "op": { "type": "Intersection", "left": 4, "right": 6 } },
+    "8": { "id": 8, "name": "dome_block", "op": { "type": "Union", "left": 2, "right": 7 } }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [{ "root": 8, "material": "default" }]
+}
