@@ -1039,10 +1039,25 @@ pub fn render_svg_str(raw_vcad: &str, scale: f64) -> Result<String, String> {
 /// Unlike [`render_svg_solids_view`], this path knows each part's material
 /// and tints the shading ramp accordingly.
 pub fn render_svg_str_view(raw_vcad: &str, scale: f64, view: View) -> Result<String, String> {
+    render_svg_str_view_opts(raw_vcad, scale, view, false)
+}
+
+/// Render raw `.vcad` document JSON to a self-contained SVG from `view`,
+/// optionally omitting the opaque paper background for a transparent render.
+///
+/// When `transparent` is true the vellum ground rect is skipped, so the
+/// SVG composites cleanly over any background; the soft contact shadow is
+/// still emitted (it is already semi-transparent).
+pub fn render_svg_str_view_opts(
+    raw_vcad: &str,
+    scale: f64,
+    view: View,
+    transparent: bool,
+) -> Result<String, String> {
     let tinted = evaluate_vcad(raw_vcad)?;
     let solids: Vec<Solid> = tinted.iter().map(|(s, _)| s.clone()).collect();
     let tints: Vec<Option<[f64; 3]>> = tinted.iter().map(|(_, t)| *t).collect();
-    render_svg_impl(&solids, &tints, scale, view)
+    render_svg_impl(&solids, &tints, scale, view, transparent)
 }
 
 /// Render pre-evaluated solids to a self-contained isometric SVG.
@@ -1065,15 +1080,17 @@ pub fn render_svg_solids(solids: &[Solid], scale: f64) -> Result<String, String>
 /// base navy ramp; use [`render_svg_str_view`] to honour document materials.
 pub fn render_svg_solids_view(solids: &[Solid], scale: f64, view: View) -> Result<String, String> {
     let tints = vec![None; solids.len()];
-    render_svg_impl(solids, &tints, scale, view)
+    render_svg_impl(solids, &tints, scale, view, false)
 }
 
 /// Shared SVG renderer; `tints[i]` optionally tints solid `i`'s ramp.
+/// When `transparent`, the opaque paper background rect is omitted.
 fn render_svg_impl(
     solids: &[Solid],
     tints: &[Option<[f64; 3]>],
     scale: f64,
     view: View,
+    transparent: bool,
 ) -> Result<String, String> {
     if solids.is_empty() {
         return Err("no solids produced".to_string());
@@ -1290,10 +1307,13 @@ fn render_svg_impl(
         r#"<defs><filter id="sh" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="{blur:.2}"/></filter>{gradients}</defs>"#
     ));
 
-    // Vellum ground — the warm paper the plate sits on.
-    out.push_str(&format!(
-        r#"<rect x="0" y="0" width="{w:.2}" height="{h:.2}" fill="{PAPER}"/>"#
-    ));
+    // Vellum ground — the warm paper the plate sits on. Skipped for a
+    // transparent render so the SVG composites over any background.
+    if !transparent {
+        out.push_str(&format!(
+            r#"<rect x="0" y="0" width="{w:.2}" height="{h:.2}" fill="{PAPER}"/>"#
+        ));
+    }
 
     // Contact shadow: a blurred ellipse under the part's footprint, so it
     // sits on the page instead of floating.

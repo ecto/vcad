@@ -1,7 +1,7 @@
 //! `vcad-render` CLI — project a `.vcad` to static line art.
 //!
 //! Usage:
-//!   vcad-render <path.vcad> [--view iso|front|side|top|hero] [--scale <px-per-mm>]
+//!   vcad-render <path.vcad> [--view iso|front|side|top|hero] [--scale <px-per-mm>] [--transparent]
 //!   vcad-render <path.vcad> --jpeg <out.jpg> [--view ...] [--size <px>] [--fill <frac>] [--quality <1-100>]
 //!
 //! Without `--jpeg`: a single self-contained `<svg>` on stdout.
@@ -13,7 +13,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 use std::str::FromStr;
 
-use vcad_render::{render_svg_str_view, View, DEFAULT_SCALE};
+use vcad_render::{render_svg_str_view_opts, View, DEFAULT_SCALE};
 
 struct Args {
     path: PathBuf,
@@ -23,12 +23,13 @@ struct Args {
     size: u32,
     fill: f64,
     quality: u8,
+    transparent: bool,
 }
 
 fn parse_args() -> Result<Args, String> {
     let mut args = std::env::args().skip(1);
     let path = args.next().ok_or(
-        "usage: vcad-render <path.vcad> [--view iso|front|side|top|hero] [--scale N] \
+        "usage: vcad-render <path.vcad> [--view iso|front|side|top|hero] [--scale N] [--transparent] \
          [--jpeg out.jpg [--size N] [--fill F] [--quality Q]]",
     )?;
     let mut out = Args {
@@ -39,6 +40,7 @@ fn parse_args() -> Result<Args, String> {
         size: 1024,
         fill: 0.6,
         quality: 92,
+        transparent: false,
     };
     while let Some(flag) = args.next() {
         let mut value = |name: &str| args.next().ok_or(format!("{name} needs a value"));
@@ -68,6 +70,9 @@ fn parse_args() -> Result<Args, String> {
                 out.quality = value("--quality")?
                     .parse()
                     .map_err(|e: std::num::ParseIntError| e.to_string())?;
+            }
+            "--transparent" => {
+                out.transparent = true;
             }
             other => return Err(format!("unknown flag: {}", other)),
         }
@@ -111,7 +116,8 @@ fn main() -> ExitCode {
 
     let result = match &args.jpeg {
         Some(out_path) => run_jpeg(&raw, &args, out_path),
-        None => render_svg_str_view(&raw, args.scale, args.view).map(|svg| println!("{}", svg)),
+        None => render_svg_str_view_opts(&raw, args.scale, args.view, args.transparent)
+            .map(|svg| println!("{}", svg)),
     };
 
     match result {
