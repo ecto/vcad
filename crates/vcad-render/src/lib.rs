@@ -267,7 +267,7 @@ fn canonicalize(mesh: &vcad_kernel::vcad_kernel_tessellate::TriangleMesh) -> Can
     let mut verts: Vec<[f64; 3]> = Vec::new();
     let mut canon: HashMap<(i64, i64, i64), usize> = HashMap::new();
     let mut tris: Vec<[usize; 3]> = Vec::new();
-    for chunk in mesh.indices.chunks_exact(3) {
+    for chunk in mesh.indices.as_chunks::<3>().0 {
         let mut tri = [0usize; 3];
         let mut ok = true;
         for i in 0..3 {
