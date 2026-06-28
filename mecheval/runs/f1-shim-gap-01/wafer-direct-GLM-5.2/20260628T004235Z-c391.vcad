@@ -1,0 +1,27 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "shim",
+      "op": {
+        "type": "Cube",
+        "size": { "x": 50, "y": 24, "z": 7.8 }
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": "shim_placed",
+      "op": {
+        "type": "Translate",
+        "child": 1,
+        "offset": { "x": 0, "y": 8, "z": 6.1 }
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    { "root": 2, "material": "default" }
+  ]
+}

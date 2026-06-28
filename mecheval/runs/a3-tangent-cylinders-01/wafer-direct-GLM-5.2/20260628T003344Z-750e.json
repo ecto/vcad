@@ -1,0 +1,200 @@
+{
+  "schema_version": 0,
+  "task_id": "a3-tangent-cylinders-01",
+  "task_sha256": "3c9319f74706d04c10463ebfaf7bf5e1720142b2d95e8558dda012feacc886dc",
+  "checks": [
+    {
+      "n": 0,
+      "type": "valid_solid",
+      "params": {
+        "type": "valid_solid"
+      },
+      "result": "pass",
+      "details": {
+        "root_count": 1,
+        "solids_produced": 1
+      }
+    },
+    {
+      "n": 1,
+      "type": "bbox",
+      "params": {
+        "type": "bbox",
+        "min": [
+          -25,
+          -25,
+          0
+        ],
+        "max": [
+          35,
+          25,
+          40
+        ],
+        "tolerance_mm": 0.2
+      },
+      "result": "pass",
+      "details": {
+        "actual_max": [
+          35,
+          25,
+          40
+        ],
+        "actual_min": [
+          -25,
+          -25,
+          0
+        ],
+        "deviation_max": [
+          0,
+          0,
+          0
+        ],
+        "deviation_min": [
+          0,
+          0,
+          0
+        ],
+        "max_abs_deviation_mm": 0,
+        "tolerance_mm": 0.2
+      }
+    },
+    {
+      "n": 2,
+      "type": "mass_props",
+      "params": {
+        "type": "mass_props",
+        "volume_mm3": 81681.41,
+        "tolerance_pct": 1
+      },
+      "result": "pass",
+      "details": {
+        "volume": {
+          "actual_mm3": 81157.57626201748,
+          "deviation_pct": 0.6413132902364495,
+          "pass": true,
+          "spec_mm3": 81681.41,
+          "tolerance_pct": 1
+        }
+      }
+    },
+    {
+      "n": 3,
+      "type": "step_roundtrip",
+      "params": {
+        "type": "step_roundtrip",
+        "tolerance_pct": 1
+      },
+      "result": "pass",
+      "details": {
+        "per_solid": [
+          {
+            "bbox": {
+              "max_abs_deviation_mm": 0,
+              "original_max": [
+                35,
+                25,
+                40
+              ],
+              "original_min": [
+                -25,
+                -25,
+                0
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                35,
+                25,
+                40
+              ],
+              "roundtripped_min": [
+                -25,
+                -25,
+                0
+              ],
+              "tolerance_mm": 0.8774964387392121
+            },
+            "index": 0,
+            "pass": true,
+            "volume": {
+              "deviation_pct": 0,
+              "original_mm3": 81157.57626201748,
+              "pass": true,
+              "roundtripped_mm3": 81157.57626201748
+            }
+          }
+        ],
+        "tolerance_pct": 1
+      }
+    }
+  ],
+  "summary": {
+    "passed": true,
+    "checks_passed": 4,
+    "checks_total": 4,
+    "score": 1,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260628T003344Z-750e",
+  "model": {
+    "id": "wafer-direct-GLM-5.2",
+    "name": "Wafer (direct, GLM-5.2)",
+    "provider": "wafer",
+    "params": {
+      "mode": "direct",
+      "model": "GLM-5.2",
+      "max_tokens": 8000
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "a3-tangent-cylinders-01",
+    "rendered": "Make a single solid consisting of two cylinders fused together. Big cylinder: outside diameter 50mm, axis along Z, base on the XY plane (z = 0 to z = 40), centered on the Z axis. Small cylinder: outside diameter 10mm, axis along Z, base on the XY plane (z = 0 to z = 40), positioned so that its outer surface is externally tangent to the big cylinder's outer surface on the +X side. The two cylinders share exactly one tangent line (no overlap, no gap). Output a single solid (the union of the two cylinders).",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "wafer.chat.completions.create",
+        "args": {
+          "model": "GLM-5.2",
+          "max_tokens": 8000,
+          "system_chars": 3956,
+          "user_chars": 575,
+          "image_attachments": 0
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 4900.141625
+      }
+    ],
+    "tokens": {
+      "input": 1444,
+      "output": 255,
+      "total": 1699
+    },
+    "wallclock_sec": 4.900141625
+  },
+  "output": {
+    "vcad_path": "20260628T003344Z-750e.vcad",
+    "vcad_sha256": "08f5c2c246625edc182852a82b6201964809d97b6ff3576b4299bf7507147d57",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-06-28T00:33:44.262Z",
+    "ended_at": "2026-06-28T00:33:49.175Z"
+  },
+  "signature": null
+}

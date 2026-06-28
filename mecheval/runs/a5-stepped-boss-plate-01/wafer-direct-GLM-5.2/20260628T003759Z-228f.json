@@ -1,0 +1,417 @@
+{
+  "schema_version": 0,
+  "task_id": "a5-stepped-boss-plate-01",
+  "task_sha256": "6aa883a9a3b0c7a65fa830410bbcea35123f4517c1a307cd325de77515325af8",
+  "checks": [
+    {
+      "n": 0,
+      "type": "valid_solid",
+      "params": {
+        "type": "valid_solid"
+      },
+      "result": "pass",
+      "details": {
+        "root_count": 1,
+        "solids_produced": 1
+      }
+    },
+    {
+      "n": 1,
+      "type": "bbox",
+      "params": {
+        "type": "bbox",
+        "min": [
+          -40,
+          -30,
+          0
+        ],
+        "max": [
+          40,
+          30,
+          18
+        ],
+        "tolerance_mm": 0.1
+      },
+      "result": "pass",
+      "details": {
+        "actual_max": [
+          40,
+          30,
+          18
+        ],
+        "actual_min": [
+          -40,
+          -30,
+          0
+        ],
+        "deviation_max": [
+          0,
+          0,
+          0
+        ],
+        "deviation_min": [
+          0,
+          0,
+          0
+        ],
+        "max_abs_deviation_mm": 0,
+        "tolerance_mm": 0.1
+      }
+    },
+    {
+      "n": 2,
+      "type": "mass_props",
+      "params": {
+        "type": "mass_props",
+        "volume_mm3": 51888.59,
+        "center_of_mass": [
+          0,
+          0,
+          6.31
+        ],
+        "tolerance_pct": 1
+      },
+      "result": "pass",
+      "details": {
+        "center_of_mass": {
+          "actual": [
+            0.06492331921911834,
+            0.06492339337233734,
+            6.313345263838513
+          ],
+          "bbox_diagonal_mm": 101.6070863670443,
+          "deviation": [
+            0.06492331921911834,
+            0.06492339337233734,
+            0.0033452638385131905
+          ],
+          "max_abs_deviation_mm": 0.06492339337233734,
+          "pass": true,
+          "spec": [
+            0,
+            0,
+            6.31
+          ],
+          "tolerance_mm": 1.016070863670443
+        },
+        "volume": {
+          "actual_mm3": 51925.21270959213,
+          "deviation_pct": 0.07057950426507047,
+          "pass": true,
+          "spec_mm3": 51888.59,
+          "tolerance_pct": 1
+        }
+      }
+    },
+    {
+      "n": 3,
+      "type": "hole_count",
+      "params": {
+        "type": "hole_count",
+        "diameter_mm": 18,
+        "expected": 1,
+        "diameter_tolerance_mm": 0.1
+      },
+      "result": "pass",
+      "details": {
+        "actual": 1,
+        "diameter_mm": 18,
+        "diameter_tolerance_mm": 0.1,
+        "expected": 1,
+        "found": [
+          [
+            0,
+            0,
+            18
+          ]
+        ]
+      }
+    },
+    {
+      "n": 4,
+      "type": "hole_positions",
+      "params": {
+        "type": "hole_positions",
+        "diameter_mm": 18,
+        "positions": [
+          [
+            0,
+            0,
+            0
+          ]
+        ],
+        "tolerance_mm": 0.2
+      },
+      "result": "pass",
+      "details": {
+        "diameter_mm": 18,
+        "per_expected": [
+          {
+            "distance_mm": 0,
+            "matched_hole": [
+              0,
+              0
+            ],
+            "pass": true,
+            "spec_xy": [
+              0,
+              0
+            ]
+          }
+        ],
+        "tolerance_mm": 0.2,
+        "unmatched_extras": []
+      }
+    },
+    {
+      "n": 5,
+      "type": "hole_count",
+      "params": {
+        "type": "hole_count",
+        "diameter_mm": 6,
+        "expected": 4,
+        "diameter_tolerance_mm": 0.05
+      },
+      "result": "pass",
+      "details": {
+        "actual": 4,
+        "diameter_mm": 6,
+        "diameter_tolerance_mm": 0.05,
+        "expected": 4,
+        "found": [
+          [
+            25,
+            19,
+            6
+          ],
+          [
+            -31,
+            19,
+            6
+          ],
+          [
+            -31,
+            -25,
+            6
+          ],
+          [
+            25,
+            -25,
+            6
+          ]
+        ]
+      }
+    },
+    {
+      "n": 6,
+      "type": "hole_positions",
+      "params": {
+        "type": "hole_positions",
+        "diameter_mm": 6,
+        "positions": [
+          [
+            28,
+            22,
+            0
+          ],
+          [
+            -28,
+            22,
+            0
+          ],
+          [
+            -28,
+            -22,
+            0
+          ],
+          [
+            28,
+            -22,
+            0
+          ]
+        ],
+        "tolerance_mm": 0.2
+      },
+      "result": "fail",
+      "details": {
+        "diameter_mm": 6,
+        "per_expected": [
+          {
+            "nearest_distance_mm": 4.242640687119285,
+            "pass": false,
+            "spec_xy": [
+              28,
+              22
+            ],
+            "tolerance_mm": 0.2
+          },
+          {
+            "nearest_distance_mm": 4.242640687119285,
+            "pass": false,
+            "spec_xy": [
+              -28,
+              22
+            ],
+            "tolerance_mm": 0.2
+          },
+          {
+            "nearest_distance_mm": 4.242640687119285,
+            "pass": false,
+            "spec_xy": [
+              -28,
+              -22
+            ],
+            "tolerance_mm": 0.2
+          },
+          {
+            "nearest_distance_mm": 4.242640687119285,
+            "pass": false,
+            "spec_xy": [
+              28,
+              -22
+            ],
+            "tolerance_mm": 0.2
+          }
+        ],
+        "tolerance_mm": 0.2,
+        "unmatched_extras": [
+          [
+            25,
+            19
+          ],
+          [
+            -31,
+            19
+          ],
+          [
+            -31,
+            -25
+          ],
+          [
+            25,
+            -25
+          ]
+        ]
+      }
+    },
+    {
+      "n": 7,
+      "type": "step_roundtrip",
+      "params": {
+        "type": "step_roundtrip",
+        "tolerance_pct": 1
+      },
+      "result": "pass",
+      "details": {
+        "per_solid": [
+          {
+            "bbox": {
+              "max_abs_deviation_mm": 0,
+              "original_max": [
+                40,
+                30,
+                18
+              ],
+              "original_min": [
+                -40,
+                -30,
+                0
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                40,
+                30,
+                18
+              ],
+              "roundtripped_min": [
+                -40,
+                -30,
+                0
+              ],
+              "tolerance_mm": 1.016070863670443
+            },
+            "index": 0,
+            "pass": true,
+            "volume": {
+              "deviation_pct": 0,
+              "original_mm3": 51925.21270959213,
+              "pass": true,
+              "roundtripped_mm3": 51925.21270959213
+            }
+          }
+        ],
+        "tolerance_pct": 1
+      }
+    }
+  ],
+  "summary": {
+    "passed": false,
+    "checks_passed": 7,
+    "checks_total": 8,
+    "score": 0.875,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260628T003759Z-228f",
+  "model": {
+    "id": "wafer-direct-GLM-5.2",
+    "name": "Wafer (direct, GLM-5.2)",
+    "provider": "wafer",
+    "params": {
+      "mode": "direct",
+      "model": "GLM-5.2",
+      "max_tokens": 8000
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "a5-stepped-boss-plate-01",
+    "rendered": "Make a stepped boss plate as a single solid. The base is a rectangular plate 80mm × 60mm × 10mm, centered in X and Y with its bottom face on the XY plane (x in [-40, 40], y in [-30, 30], z in [0, 10]). Centered on top of the base plate sits a rectangular boss 40mm × 30mm × 8mm (x in [-20, 20], y in [-15, 15], z in [10, 18]). A central through-bore of diameter 18mm, axis parallel to Z, passes through the entire assembly from bottom to top (z = 0 to z = 18), centered at the origin. Four corner bolt holes of diameter 6mm, axes parallel to Z, pass through the base plate only (z = 0 to z = 10), located at (28, 22), (-28, 22), (-28, -22), (28, -22). Output a single solid.",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "wafer.chat.completions.create",
+        "args": {
+          "model": "GLM-5.2",
+          "max_tokens": 8000,
+          "system_chars": 3956,
+          "user_chars": 741,
+          "image_attachments": 0
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 17829.531958
+      }
+    ],
+    "tokens": {
+      "input": 1539,
+      "output": 1117,
+      "total": 2656
+    },
+    "wallclock_sec": 17.829531958
+  },
+  "output": {
+    "vcad_path": "20260628T003759Z-228f.vcad",
+    "vcad_sha256": "e8ed8aa9d6e5e70d001c5947c820a7a7a94d7e088a71c731231887716b358ce6",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-06-28T00:37:59.023Z",
+    "ended_at": "2026-06-28T00:38:16.874Z"
+  },
+  "signature": null
+}

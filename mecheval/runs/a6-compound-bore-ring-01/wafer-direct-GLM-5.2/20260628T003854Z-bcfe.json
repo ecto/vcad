@@ -1,0 +1,226 @@
+{
+  "schema_version": 0,
+  "task_id": "a6-compound-bore-ring-01",
+  "task_sha256": "98e31f23f65c10806b0cadeac1aff38898d5c6476ed264311406e383576a3b40",
+  "checks": [
+    {
+      "n": 0,
+      "type": "valid_solid",
+      "params": {
+        "type": "valid_solid"
+      },
+      "result": "pass",
+      "details": {
+        "root_count": 1,
+        "solids_produced": 1
+      }
+    },
+    {
+      "n": 1,
+      "type": "bbox",
+      "params": {
+        "type": "bbox",
+        "min": [
+          -40,
+          -40,
+          0
+        ],
+        "max": [
+          40,
+          40,
+          50
+        ],
+        "tolerance_mm": 0.1
+      },
+      "result": "pass",
+      "details": {
+        "actual_max": [
+          40,
+          40,
+          50
+        ],
+        "actual_min": [
+          -40,
+          -40,
+          0
+        ],
+        "deviation_max": [
+          0,
+          0,
+          0
+        ],
+        "deviation_min": [
+          0,
+          0,
+          0
+        ],
+        "max_abs_deviation_mm": 0,
+        "tolerance_mm": 0.1
+      }
+    },
+    {
+      "n": 2,
+      "type": "mass_props",
+      "params": {
+        "type": "mass_props",
+        "volume_mm3": 184568.57,
+        "center_of_mass": [
+          0,
+          0,
+          22.87
+        ],
+        "tolerance_pct": 1
+      },
+      "result": "pass",
+      "details": {
+        "center_of_mass": {
+          "actual": [
+            5.296734142097422e-16,
+            -2.244532216426066e-15,
+            22.87170701789594
+          ],
+          "bbox_diagonal_mm": 123.69316876852982,
+          "deviation": [
+            5.296734142097422e-16,
+            -2.244532216426066e-15,
+            0.001707017895938634
+          ],
+          "max_abs_deviation_mm": 0.001707017895938634,
+          "pass": true,
+          "spec": [
+            0,
+            0,
+            22.87
+          ],
+          "tolerance_mm": 1.2369316876852983
+        },
+        "volume": {
+          "actual_mm3": 184300.54326200087,
+          "deviation_pct": 0.14521797400236774,
+          "pass": true,
+          "spec_mm3": 184568.57,
+          "tolerance_pct": 1
+        }
+      }
+    },
+    {
+      "n": 3,
+      "type": "step_roundtrip",
+      "params": {
+        "type": "step_roundtrip",
+        "tolerance_pct": 1
+      },
+      "result": "pass",
+      "details": {
+        "per_solid": [
+          {
+            "bbox": {
+              "max_abs_deviation_mm": 0,
+              "original_max": [
+                40,
+                40,
+                50
+              ],
+              "original_min": [
+                -40,
+                -40,
+                0
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                40,
+                40,
+                50
+              ],
+              "roundtripped_min": [
+                -40,
+                -40,
+                0
+              ],
+              "tolerance_mm": 1.2369316876852983
+            },
+            "index": 0,
+            "pass": true,
+            "volume": {
+              "deviation_pct": 0.582183566436969,
+              "original_mm3": 184300.54326200078,
+              "pass": true,
+              "roundtripped_mm3": 183227.57578627535
+            }
+          }
+        ],
+        "tolerance_pct": 1
+      }
+    }
+  ],
+  "summary": {
+    "passed": true,
+    "checks_passed": 4,
+    "checks_total": 4,
+    "score": 1,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260628T003854Z-bcfe",
+  "model": {
+    "id": "wafer-direct-GLM-5.2",
+    "name": "Wafer (direct, GLM-5.2)",
+    "provider": "wafer",
+    "params": {
+      "mode": "direct",
+      "model": "GLM-5.2",
+      "max_tokens": 8000
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "a6-compound-bore-ring-01",
+    "rendered": "Make a stepped-bore ring as a single solid. The outer body is a cylinder of diameter 80mm and height 50mm, base on the XY plane (z = 0 to z = 50), centered on the Z axis. From the bottom face, subtract a coaxial blind bore of diameter 30mm that extends 25mm deep (z = 0 to z = 25). From the top face, subtract a coaxial blind bore of diameter 50mm that extends 25mm deep (z = 25 to z = 50). The two bores meet exactly at z = 25, forming a stepped interior: a narrow (30mm) chamber below and a wide (50mm) chamber above, connected at the mid-plane. The outer wall is 25mm thick at the bottom half and 15mm thick at the top half. Output a single solid.",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "wafer.chat.completions.create",
+        "args": {
+          "model": "GLM-5.2",
+          "max_tokens": 8000,
+          "system_chars": 3956,
+          "user_chars": 717,
+          "image_attachments": 0
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3888.657334
+      }
+    ],
+    "tokens": {
+      "input": 1504,
+      "output": 345,
+      "total": 1849
+    },
+    "wallclock_sec": 3.888657334
+  },
+  "output": {
+    "vcad_path": "20260628T003854Z-bcfe.vcad",
+    "vcad_sha256": "b977d24e9708e79011ec3cb2941bd5ecdb07b7ddc167fb1cfd0d752e42db2207",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-06-28T00:38:54.000Z",
+    "ended_at": "2026-06-28T00:38:57.923Z"
+  },
+  "signature": null
+}

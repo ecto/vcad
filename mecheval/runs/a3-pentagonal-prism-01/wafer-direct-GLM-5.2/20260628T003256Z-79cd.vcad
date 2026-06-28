@@ -1,0 +1,12 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": { "id": 1, "name": "pent_prism", "op": { "type": "Prism", "sides": 5, "circumradius": 15, "height": 25, "rotation": 90 } },
+    "2": { "id": 2, "name": "hole_cyl", "op": { "type": "Cylinder", "radius": 2.5, "height": 30, "segments": 32 } },
+    "3": { "id": 3, "name": "hole_t", "op": { "type": "Translate", "child": 2, "offset": { "x": 5, "y": 0, "z": -2.5 } } },
+    "4": { "id": 4, "name": "result", "op": { "type": "Difference", "left": 1, "right": 3 } }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [{ "root": 4, "material": "default" }]
+}

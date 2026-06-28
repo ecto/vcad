@@ -1,0 +1,19 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": { "id": 1, "name": "plate", "op": { "type": "Cube", "size": { "x": 50, "y": 30, "z": 10 } } },
+    "2": { "id": 2, "name": "plate_centered", "op": { "type": "Translate", "child": 1, "offset": { "x": -25, "y": -15, "z": 0 } } },
+    "3": { "id": 3, "name": "hole_cylinder", "op": { "type": "Cylinder", "radius": 1.5, "height": 12, "segments": 32 } },
+    "4": { "id": 4, "name": "hole_hl", "op": { "type": "Translate", "child": 3, "offset": { "x": -20, "y": -10, "z": -1 } } },
+    "5": { "id": 5, "name": "hole_hr", "op": { "type": "Translate", "child": 3, "offset": { "x": 20, "y": -10, "z": -1 } } },
+    "6": { "id": 6, "name": "hole_ll", "op": { "type": "Translate", "child": 3, "offset": { "x": -20, "y": 10, "z": -1 } } },
+    "7": { "id": 7, "name": "hole_lr", "op": { "type": "Translate", "child": 3, "offset": { "x": 20, "y": 10, "z": -1 } } },
+    "8": { "id": 8, "name": "holes_union_1", "op": { "type": "Union", "left": 4, "right": 5 } },
+    "9": { "id": 9, "name": "holes_union_2", "op": { "type": "Union", "left": 8, "right": 6 } },
+    "10": { "id": 10, "name": "holes_union_all", "op": { "type": "Union", "left": 9, "right": 7 } },
+    "11": { "id": 11, "name": "result", "op": { "type": "Difference", "left": 2, "right": 10 } }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [{ "root": 11, "material": "default" }]
+}

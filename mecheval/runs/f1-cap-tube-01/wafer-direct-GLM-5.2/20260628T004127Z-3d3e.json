@@ -1,0 +1,245 @@
+{
+  "schema_version": 0,
+  "task_id": "f1-cap-tube-01",
+  "task_sha256": "693ed2250c5357b82e40a0ed23968e98aea26b0d3f4a95c7de7db5e6997430f5",
+  "checks": [
+    {
+      "n": 0,
+      "type": "valid_solid",
+      "params": {
+        "type": "valid_solid"
+      },
+      "result": "pass",
+      "details": {
+        "root_count": 1,
+        "solids_produced": 1
+      }
+    },
+    {
+      "n": 1,
+      "type": "interference_volume",
+      "params": {
+        "type": "interference_volume",
+        "host": "host_geometry",
+        "max_mm3": 2
+      },
+      "result": "fail",
+      "details": {
+        "interference_mm3": 338.7472298177086,
+        "max_mm3": 2
+      }
+    },
+    {
+      "n": 2,
+      "type": "contact_area",
+      "params": {
+        "type": "contact_area",
+        "host": "host_geometry",
+        "epsilon_mm": 0.4,
+        "min_mm2": 200
+      },
+      "result": "pass",
+      "details": {
+        "candidate_triangles": 512,
+        "contact_area_mm2": 2291.6950708037757,
+        "epsilon_mm": 0.4,
+        "host_triangles": 512,
+        "min_mm2": 200
+      }
+    },
+    {
+      "n": 3,
+      "type": "envelope",
+      "params": {
+        "type": "envelope",
+        "max_mm": [
+          35.5,
+          35.5,
+          8.5
+        ]
+      },
+      "result": "fail",
+      "details": {
+        "bbox_max": [
+          17.5,
+          17.5,
+          30
+        ],
+        "bbox_min": [
+          -17.5,
+          -17.5,
+          0
+        ],
+        "extents_mm": [
+          35,
+          35,
+          30
+        ],
+        "max_mm": [
+          35.5,
+          35.5,
+          8.5
+        ]
+      }
+    },
+    {
+      "n": 4,
+      "type": "mate_clearance",
+      "params": {
+        "type": "mate_clearance",
+        "host": "host_geometry",
+        "min_mm": 0,
+        "max_mm": 0.6
+      },
+      "result": "pass",
+      "details": {
+        "max_mm": 0.6,
+        "min_mm": 0,
+        "min_separation_mm": 0.1997589019902455
+      }
+    },
+    {
+      "n": 5,
+      "type": "dfm",
+      "params": {
+        "type": "dfm",
+        "rules": [
+          "min_wall_1.5mm",
+          "no_undercut"
+        ]
+      },
+      "result": "pass",
+      "details": {
+        "analysed_solid_count": 1,
+        "failing_issue_count": 0,
+        "failing_issues": [],
+        "issues_by_rule": {
+          "fdm.steep_overhang": 2
+        },
+        "legacy_rules_hint": [
+          "min_wall_1.5mm",
+          "no_undercut"
+        ],
+        "max_severity": "error",
+        "process": "fdm",
+        "rule_pack_version": "1",
+        "skipped_mesh_only_count": 0,
+        "total_issues": 2
+      }
+    }
+  ],
+  "summary": {
+    "passed": false,
+    "checks_passed": 4,
+    "checks_total": 6,
+    "score": 0.6666666666666666,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260628T004127Z-3d3e",
+  "model": {
+    "id": "wafer-direct-GLM-5.2",
+    "name": "Wafer (direct, GLM-5.2)",
+    "provider": "wafer",
+    "params": {
+      "mode": "direct",
+      "model": "GLM-5.2",
+      "max_tokens": 8000
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "f1-cap-tube-01",
+    "rendered": "Reference images of a thin-walled open tube are attached. Design a cap with two coaxial features that mates with the open top of the tube: a flange that overhangs and rests on the rim, plus a register (locating cylinder) that drops into the bore.\n\nRequirements:\n- Single solid, single-root .vcad. Both features are part of one body — emit one Union.\n- The flange must overhang the tube's outer diameter and have a thickness ≥ 1.5mm. Flange OD ≤ 35mm.\n- The register must enter the bore with 0.1–0.4mm radial clearance and have a length of 4–6mm.\n- Wall thicknesses ≥ 1.5mm (printability).\n- The tube bore is 24mm in diameter; the outer diameter is 30mm; the wall is 3mm; height is 30mm. (These follow from the stated dimension and what you can see in the images.)\n\nOutput the cap in the host's coordinate frame: the tube axis is +Z, the tube base sits at z = 0, the rim is at z = 30. Place the cap so its register drops into the bore from above (register at z ∈ ~[25, 30]) and its flange sits on top of the rim (flange at z ∈ ~[30, 32]).",
+    "attachments": [
+      {
+        "kind": "reference_image",
+        "path": "assets/f1-cap-tube-01/front.jpg",
+        "agent_visible": true,
+        "view": "front",
+        "image_kind": "render"
+      },
+      {
+        "kind": "reference_image",
+        "path": "assets/f1-cap-tube-01/side.jpg",
+        "agent_visible": true,
+        "view": "side",
+        "image_kind": "render"
+      },
+      {
+        "kind": "reference_image",
+        "path": "assets/f1-cap-tube-01/top.jpg",
+        "agent_visible": true,
+        "view": "top",
+        "image_kind": "render"
+      },
+      {
+        "kind": "host_geometry",
+        "path": "assets/f1-cap-tube-01/host.vcad",
+        "agent_visible": false,
+        "frame": {
+          "origin": [
+            0,
+            0,
+            0
+          ],
+          "axis": [
+            0,
+            0,
+            1
+          ]
+        }
+      },
+      {
+        "kind": "known_dimensions",
+        "agent_visible": true,
+        "text": "The tube has an outer diameter of 30mm."
+      }
+    ]
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "wafer.chat.completions.create",
+        "args": {
+          "model": "GLM-5.2",
+          "max_tokens": 8000,
+          "system_chars": 3956,
+          "user_chars": 1094,
+          "image_attachments": 3
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3362.04775
+      }
+    ],
+    "tokens": {
+      "input": 1647,
+      "output": 252,
+      "total": 1899
+    },
+    "wallclock_sec": 3.3620477500000003
+  },
+  "output": {
+    "vcad_path": "20260628T004127Z-3d3e.vcad",
+    "vcad_sha256": "f70925929f9234f992bb707551fb70df733366a06f26b8482a64050bbe4aa113",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-06-28T00:41:27.006Z",
+    "ended_at": "2026-06-28T00:41:30.396Z"
+  },
+  "signature": null
+}

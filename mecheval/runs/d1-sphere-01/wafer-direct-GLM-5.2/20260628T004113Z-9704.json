@@ -1,0 +1,178 @@
+{
+  "schema_version": 0,
+  "task_id": "d1-sphere-01",
+  "task_sha256": "0d4bc086658ca2370768157f43004b48445116b1ea29957840b8e0df8c4ab7a7",
+  "checks": [
+    {
+      "n": 0,
+      "type": "valid_solid",
+      "params": {
+        "type": "valid_solid"
+      },
+      "result": "pass",
+      "details": {
+        "root_count": 1,
+        "solids_produced": 1
+      }
+    },
+    {
+      "n": 1,
+      "type": "shape_similarity_chamfer",
+      "params": {
+        "type": "shape_similarity_chamfer",
+        "target": "target_mesh",
+        "max_chamfer_mm": 1
+      },
+      "result": "pass",
+      "details": {
+        "cand_to_target_max_mm": 0,
+        "cand_to_target_mean_mm": 0,
+        "cand_vertices": 1986,
+        "chamfer_mm": 0,
+        "max_chamfer_mm": 1,
+        "target_to_cand_max_mm": 0,
+        "target_to_cand_mean_mm": 0,
+        "target_vertices": 1986
+      }
+    },
+    {
+      "n": 2,
+      "type": "dfm",
+      "params": {
+        "type": "dfm",
+        "rules": [
+          "min_wall_1.5mm"
+        ]
+      },
+      "result": "pass",
+      "details": {
+        "analysed_solid_count": 1,
+        "failing_issue_count": 0,
+        "failing_issues": [],
+        "issues_by_rule": {},
+        "legacy_rules_hint": [
+          "min_wall_1.5mm"
+        ],
+        "max_severity": "error",
+        "process": "fdm",
+        "rule_pack_version": "1",
+        "skipped_mesh_only_count": 0,
+        "total_issues": 0
+      }
+    }
+  ],
+  "summary": {
+    "passed": true,
+    "checks_passed": 3,
+    "checks_total": 3,
+    "score": 1,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260628T004113Z-9704",
+  "model": {
+    "id": "wafer-direct-GLM-5.2",
+    "name": "Wafer (direct, GLM-5.2)",
+    "provider": "wafer",
+    "params": {
+      "mode": "direct",
+      "model": "GLM-5.2",
+      "max_tokens": 8000
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "d1-sphere-01",
+    "rendered": "Reference images of a 30mm-diameter spherical bead are attached. Design a .vcad that reproduces this shape as closely as possible. The grader will compare your output's tessellated mesh against the target sphere via bidirectional Chamfer distance, in millimetres; a symmetric average of 1mm or less passes.\n\nRequirements:\n- Single solid, single-root .vcad.\n- Centred on the origin (the target is centred at the origin).\n- Aim for smooth surface (use ≥ 32 segments on curved primitives).\n- The simplest correct answer is a 15mm-radius Sphere primitive at the origin.",
+    "attachments": [
+      {
+        "kind": "reference_image",
+        "path": "assets/d1-sphere-01/front.jpg",
+        "agent_visible": true,
+        "view": "front",
+        "image_kind": "render"
+      },
+      {
+        "kind": "reference_image",
+        "path": "assets/d1-sphere-01/side.jpg",
+        "agent_visible": true,
+        "view": "side",
+        "image_kind": "render"
+      },
+      {
+        "kind": "reference_image",
+        "path": "assets/d1-sphere-01/top.jpg",
+        "agent_visible": true,
+        "view": "top",
+        "image_kind": "render"
+      },
+      {
+        "kind": "target_mesh",
+        "path": "assets/d1-sphere-01/target.vcad",
+        "agent_visible": false,
+        "frame": {
+          "origin": [
+            0,
+            0,
+            0
+          ],
+          "axis": [
+            0,
+            0,
+            1
+          ]
+        }
+      },
+      {
+        "kind": "known_dimensions",
+        "agent_visible": true,
+        "text": "The sphere is 30mm in diameter."
+      }
+    ]
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "wafer.chat.completions.create",
+        "args": {
+          "model": "GLM-5.2",
+          "max_tokens": 8000,
+          "system_chars": 3956,
+          "user_chars": 620,
+          "image_attachments": 3
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3530.401
+      }
+    ],
+    "tokens": {
+      "input": 1484,
+      "output": 93,
+      "total": 1577
+    },
+    "wallclock_sec": 3.530401
+  },
+  "output": {
+    "vcad_path": "20260628T004113Z-9704.vcad",
+    "vcad_sha256": "e03bdfd5972dffd154fe8eec190c7c0dcf35ecfdbaa2dee1a7ed712e7ad93e82",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-06-28T00:41:13.596Z",
+    "ended_at": "2026-06-28T00:41:17.151Z"
+  },
+  "signature": null
+}

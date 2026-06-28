@@ -1,0 +1,386 @@
+{
+  "schema_version": 0,
+  "task_id": "a6-sprocket-blank-01",
+  "task_sha256": "23fd3e0ddb5f42d395033ee29a6e7681677ca56812d6731f2cba97f460d57da0",
+  "checks": [
+    {
+      "n": 0,
+      "type": "valid_solid",
+      "params": {
+        "type": "valid_solid"
+      },
+      "result": "pass",
+      "details": {
+        "root_count": 1,
+        "solids_produced": 1
+      }
+    },
+    {
+      "n": 1,
+      "type": "bbox",
+      "params": {
+        "type": "bbox",
+        "min": [
+          -50,
+          -50,
+          0
+        ],
+        "max": [
+          50,
+          50,
+          40
+        ],
+        "tolerance_mm": 0.2
+      },
+      "result": "pass",
+      "details": {
+        "actual_max": [
+          50,
+          50,
+          40
+        ],
+        "actual_min": [
+          -50,
+          -50,
+          0
+        ],
+        "deviation_max": [
+          0,
+          0,
+          0
+        ],
+        "deviation_min": [
+          0,
+          0,
+          0
+        ],
+        "max_abs_deviation_mm": 0,
+        "tolerance_mm": 0.2
+      }
+    },
+    {
+      "n": 2,
+      "type": "mass_props",
+      "params": {
+        "type": "mass_props",
+        "volume_mm3": 164184.76,
+        "tolerance_pct": 1.5
+      },
+      "result": "pass",
+      "details": {
+        "volume": {
+          "actual_mm3": 164368.4961569456,
+          "deviation_pct": 0.11190816793567347,
+          "pass": true,
+          "spec_mm3": 164184.76,
+          "tolerance_pct": 1.5
+        }
+      }
+    },
+    {
+      "n": 3,
+      "type": "hole_count",
+      "params": {
+        "type": "hole_count",
+        "diameter_mm": 20,
+        "expected": 1,
+        "diameter_tolerance_mm": 0.1
+      },
+      "result": "pass",
+      "details": {
+        "actual": 1,
+        "diameter_mm": 20,
+        "diameter_tolerance_mm": 0.1,
+        "expected": 1,
+        "found": [
+          [
+            0,
+            0,
+            20
+          ]
+        ]
+      }
+    },
+    {
+      "n": 4,
+      "type": "hole_positions",
+      "params": {
+        "type": "hole_positions",
+        "diameter_mm": 20,
+        "positions": [
+          [
+            0,
+            0,
+            0
+          ]
+        ],
+        "tolerance_mm": 0.2
+      },
+      "result": "pass",
+      "details": {
+        "diameter_mm": 20,
+        "per_expected": [
+          {
+            "distance_mm": 0,
+            "matched_hole": [
+              0,
+              0
+            ],
+            "pass": true,
+            "spec_xy": [
+              0,
+              0
+            ]
+          }
+        ],
+        "tolerance_mm": 0.2,
+        "unmatched_extras": []
+      }
+    },
+    {
+      "n": 5,
+      "type": "hole_count",
+      "params": {
+        "type": "hole_count",
+        "diameter_mm": 8,
+        "expected": 4,
+        "diameter_tolerance_mm": 0.05
+      },
+      "result": "pass",
+      "details": {
+        "actual": 4,
+        "diameter_mm": 8,
+        "diameter_tolerance_mm": 0.05,
+        "expected": 4,
+        "found": [
+          [
+            35,
+            0,
+            8
+          ],
+          [
+            0,
+            35,
+            8
+          ],
+          [
+            -35,
+            0,
+            8
+          ],
+          [
+            0,
+            -35,
+            8
+          ]
+        ]
+      }
+    },
+    {
+      "n": 6,
+      "type": "hole_positions",
+      "params": {
+        "type": "hole_positions",
+        "diameter_mm": 8,
+        "positions": [
+          [
+            35,
+            0,
+            0
+          ],
+          [
+            0,
+            35,
+            0
+          ],
+          [
+            -35,
+            0,
+            0
+          ],
+          [
+            0,
+            -35,
+            0
+          ]
+        ],
+        "tolerance_mm": 0.2
+      },
+      "result": "pass",
+      "details": {
+        "diameter_mm": 8,
+        "per_expected": [
+          {
+            "distance_mm": 0,
+            "matched_hole": [
+              35,
+              0
+            ],
+            "pass": true,
+            "spec_xy": [
+              35,
+              0
+            ]
+          },
+          {
+            "distance_mm": 0,
+            "matched_hole": [
+              0,
+              35
+            ],
+            "pass": true,
+            "spec_xy": [
+              0,
+              35
+            ]
+          },
+          {
+            "distance_mm": 0,
+            "matched_hole": [
+              -35,
+              0
+            ],
+            "pass": true,
+            "spec_xy": [
+              -35,
+              0
+            ]
+          },
+          {
+            "distance_mm": 0,
+            "matched_hole": [
+              0,
+              -35
+            ],
+            "pass": true,
+            "spec_xy": [
+              0,
+              -35
+            ]
+          }
+        ],
+        "tolerance_mm": 0.2,
+        "unmatched_extras": []
+      }
+    },
+    {
+      "n": 7,
+      "type": "step_roundtrip",
+      "params": {
+        "type": "step_roundtrip",
+        "tolerance_pct": 1.5
+      },
+      "result": "fail",
+      "details": {
+        "per_solid": [
+          {
+            "bbox": {
+              "max_abs_deviation_mm": 0,
+              "original_max": [
+                50,
+                50,
+                40
+              ],
+              "original_min": [
+                -50,
+                -50,
+                0
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                50,
+                50,
+                40
+              ],
+              "roundtripped_min": [
+                -50,
+                -50,
+                0
+              ],
+              "tolerance_mm": 2.2045407685048604
+            },
+            "index": 0,
+            "pass": false,
+            "volume": {
+              "deviation_pct": 4.056959561317623,
+              "original_mm3": 164368.49615694556,
+              "pass": false,
+              "roundtripped_mm3": 171036.85957757875
+            }
+          }
+        ],
+        "tolerance_pct": 1.5
+      }
+    }
+  ],
+  "summary": {
+    "passed": false,
+    "checks_passed": 7,
+    "checks_total": 8,
+    "score": 0.875,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260628T004000Z-f2bc",
+  "model": {
+    "id": "wafer-direct-GLM-5.2",
+    "name": "Wafer (direct, GLM-5.2)",
+    "provider": "wafer",
+    "params": {
+      "mode": "direct",
+      "model": "GLM-5.2",
+      "max_tokens": 8000
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "a6-sprocket-blank-01",
+    "rendered": "Make a sprocket blank as a single solid. The main disc is a cylinder of diameter 100mm and height 20mm, base on the XY plane (z = 0 to z = 20), centered on the Z axis. Concentric with the disc and sitting on top of it is a raised hub cylinder of diameter 40mm and height 20mm (z = 20 to z = 40). A central through-bore of diameter 20mm runs along the Z axis through the full height (z = 0 to z = 40). Cut a rectangular keyway slot through the entire height: the keyway is 6mm wide (x in [-3, 3]) and 6mm deep, starting at the bore wall and extending radially outward to y = 16 (so y in [10, 16], x in [-3, 3], z in [0, 40]). Four bolt holes of diameter 8mm, axes parallel to Z, pass through the disc only (z = 0 to z = 20), arranged on a bolt circle of diameter 70mm (radius 35mm) centered on the Z axis at 90-degree intervals: (35, 0), (0, 35), (-35, 0), (0, -35). Output a single solid.",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "wafer.chat.completions.create",
+        "args": {
+          "model": "GLM-5.2",
+          "max_tokens": 8000,
+          "system_chars": 3956,
+          "user_chars": 951,
+          "image_attachments": 0
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 16377.895125000003
+      }
+    ],
+    "tokens": {
+      "input": 1598,
+      "output": 1001,
+      "total": 2599
+    },
+    "wallclock_sec": 16.377895125000002
+  },
+  "output": {
+    "vcad_path": "20260628T004000Z-f2bc.vcad",
+    "vcad_sha256": "253aed232ce62858bd66012f2ce0e972839a477be2c5291cbf1b4cadfead2db0",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-06-28T00:40:00.635Z",
+    "ended_at": "2026-06-28T00:40:17.083Z"
+  },
+  "signature": null
+}

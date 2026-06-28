@@ -1,0 +1,326 @@
+{
+  "schema_version": 0,
+  "task_id": "a1-plate-01",
+  "task_sha256": "fedd0fa098bf5361d9bcda705012edac968fd2f1d9a3fc619c091aac83558b83",
+  "checks": [
+    {
+      "n": 0,
+      "type": "valid_solid",
+      "params": {
+        "type": "valid_solid"
+      },
+      "result": "pass",
+      "details": {
+        "root_count": 1,
+        "solids_produced": 1
+      }
+    },
+    {
+      "n": 1,
+      "type": "bbox",
+      "params": {
+        "type": "bbox",
+        "min": [
+          -25,
+          -15,
+          0
+        ],
+        "max": [
+          25,
+          15,
+          10
+        ],
+        "tolerance_mm": 0.1
+      },
+      "result": "pass",
+      "details": {
+        "actual_max": [
+          25,
+          15,
+          10
+        ],
+        "actual_min": [
+          -25,
+          -15,
+          0
+        ],
+        "deviation_max": [
+          0,
+          0,
+          0
+        ],
+        "deviation_min": [
+          0,
+          0,
+          0
+        ],
+        "max_abs_deviation_mm": 0,
+        "tolerance_mm": 0.1
+      }
+    },
+    {
+      "n": 2,
+      "type": "mass_props",
+      "params": {
+        "type": "mass_props",
+        "volume_mm3": 14717.3,
+        "tolerance_pct": 0.5
+      },
+      "result": "pass",
+      "details": {
+        "volume": {
+          "actual_mm3": 14719.070019769604,
+          "deviation_pct": 0.012026796828255961,
+          "pass": true,
+          "spec_mm3": 14717.3,
+          "tolerance_pct": 0.5
+        }
+      }
+    },
+    {
+      "n": 3,
+      "type": "hole_count",
+      "params": {
+        "type": "hole_count",
+        "diameter_mm": 3,
+        "expected": 4,
+        "diameter_tolerance_mm": 0.05
+      },
+      "result": "pass",
+      "details": {
+        "actual": 4,
+        "diameter_mm": 3,
+        "diameter_tolerance_mm": 0.05,
+        "expected": 4,
+        "found": [
+          [
+            -20,
+            -10,
+            3
+          ],
+          [
+            20,
+            -10,
+            3
+          ],
+          [
+            -20,
+            10,
+            3
+          ],
+          [
+            20,
+            10,
+            3
+          ]
+        ]
+      }
+    },
+    {
+      "n": 4,
+      "type": "hole_positions",
+      "params": {
+        "type": "hole_positions",
+        "diameter_mm": 3,
+        "positions": [
+          [
+            20,
+            10,
+            0
+          ],
+          [
+            -20,
+            10,
+            0
+          ],
+          [
+            -20,
+            -10,
+            0
+          ],
+          [
+            20,
+            -10,
+            0
+          ]
+        ],
+        "tolerance_mm": 0.1
+      },
+      "result": "pass",
+      "details": {
+        "diameter_mm": 3,
+        "per_expected": [
+          {
+            "distance_mm": 0,
+            "matched_hole": [
+              20,
+              10
+            ],
+            "pass": true,
+            "spec_xy": [
+              20,
+              10
+            ]
+          },
+          {
+            "distance_mm": 0,
+            "matched_hole": [
+              -20,
+              10
+            ],
+            "pass": true,
+            "spec_xy": [
+              -20,
+              10
+            ]
+          },
+          {
+            "distance_mm": 0,
+            "matched_hole": [
+              -20,
+              -10
+            ],
+            "pass": true,
+            "spec_xy": [
+              -20,
+              -10
+            ]
+          },
+          {
+            "distance_mm": 0,
+            "matched_hole": [
+              20,
+              -10
+            ],
+            "pass": true,
+            "spec_xy": [
+              20,
+              -10
+            ]
+          }
+        ],
+        "tolerance_mm": 0.1,
+        "unmatched_extras": []
+      }
+    },
+    {
+      "n": 5,
+      "type": "step_roundtrip",
+      "params": {
+        "type": "step_roundtrip",
+        "tolerance_pct": 0.1
+      },
+      "result": "pass",
+      "details": {
+        "per_solid": [
+          {
+            "bbox": {
+              "max_abs_deviation_mm": 0,
+              "original_max": [
+                25,
+                15,
+                10
+              ],
+              "original_min": [
+                -25,
+                -15,
+                0
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                25,
+                15,
+                10
+              ],
+              "roundtripped_min": [
+                -25,
+                -15,
+                0
+              ],
+              "tolerance_mm": 0.05916079783099616
+            },
+            "index": 0,
+            "pass": true,
+            "volume": {
+              "deviation_pct": 0,
+              "original_mm3": 14719.070019769604,
+              "pass": true,
+              "roundtripped_mm3": 14719.070019769604
+            }
+          }
+        ],
+        "tolerance_pct": 0.1
+      }
+    }
+  ],
+  "summary": {
+    "passed": true,
+    "checks_passed": 6,
+    "checks_total": 6,
+    "score": 1,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260627T224638Z-000a",
+  "model": {
+    "id": "wafer-direct-GLM-5.2",
+    "name": "Wafer (direct, GLM-5.2)",
+    "provider": "wafer",
+    "params": {
+      "mode": "direct",
+      "model": "GLM-5.2",
+      "max_tokens": 8000
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "a1-plate-01",
+    "rendered": "Make a 50mm × 30mm × 10mm rectangular plate. Center it in X and Y, with the bottom face on the XY plane (z = 0 to z = 10). Drill four cylindrical through-holes of diameter 3mm, axes parallel to Z, positioned 5mm in from each corner of the top face.",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "wafer.chat.completions.create",
+        "args": {
+          "model": "GLM-5.2",
+          "max_tokens": 8000,
+          "system_chars": 3956,
+          "user_chars": 302,
+          "image_attachments": 0
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 44403.746415999994
+      }
+    ],
+    "tokens": {
+      "input": 1389,
+      "output": 761,
+      "total": 2150
+    },
+    "wallclock_sec": 44.403746416
+  },
+  "output": {
+    "vcad_path": "20260627T224638Z-000a.vcad",
+    "vcad_sha256": "bedf22ee1c76b3999264e381dd86b8f3584036f8573480a7a64df7b434ce4c21",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-06-27T22:46:38.022Z",
+    "ended_at": "2026-06-27T22:47:22.444Z"
+  },
+  "signature": null
+}

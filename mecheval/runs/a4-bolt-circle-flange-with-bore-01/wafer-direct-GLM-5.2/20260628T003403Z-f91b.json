@@ -1,0 +1,422 @@
+{
+  "schema_version": 0,
+  "task_id": "a4-bolt-circle-flange-with-bore-01",
+  "task_sha256": "33b12253990b5195f437a7860d8bb23cc6aecef260562a70259d1210cd482458",
+  "checks": [
+    {
+      "n": 0,
+      "type": "valid_solid",
+      "params": {
+        "type": "valid_solid"
+      },
+      "result": "pass",
+      "details": {
+        "root_count": 1,
+        "solids_produced": 1
+      }
+    },
+    {
+      "n": 1,
+      "type": "bbox",
+      "params": {
+        "type": "bbox",
+        "min": [
+          -50,
+          -50,
+          0
+        ],
+        "max": [
+          50,
+          50,
+          12
+        ],
+        "tolerance_mm": 0.3
+      },
+      "result": "pass",
+      "details": {
+        "actual_max": [
+          50,
+          50,
+          12
+        ],
+        "actual_min": [
+          -50,
+          -50,
+          0
+        ],
+        "deviation_max": [
+          0,
+          0,
+          0
+        ],
+        "deviation_min": [
+          0,
+          0,
+          0
+        ],
+        "max_abs_deviation_mm": 0,
+        "tolerance_mm": 0.3
+      }
+    },
+    {
+      "n": 2,
+      "type": "mass_props",
+      "params": {
+        "type": "mass_props",
+        "volume_mm3": 75549.02,
+        "tolerance_pct": 1.5
+      },
+      "result": "pass",
+      "details": {
+        "volume": {
+          "actual_mm3": 76029.93539884222,
+          "deviation_pct": 0.6365607374420191,
+          "pass": true,
+          "spec_mm3": 75549.02,
+          "tolerance_pct": 1.5
+        }
+      }
+    },
+    {
+      "n": 3,
+      "type": "hole_count",
+      "params": {
+        "type": "hole_count",
+        "diameter_mm": 40,
+        "expected": 1,
+        "diameter_tolerance_mm": 0.1
+      },
+      "result": "pass",
+      "details": {
+        "actual": 1,
+        "diameter_mm": 40,
+        "diameter_tolerance_mm": 0.1,
+        "expected": 1,
+        "found": [
+          [
+            0,
+            0,
+            40
+          ]
+        ]
+      }
+    },
+    {
+      "n": 4,
+      "type": "hole_positions",
+      "params": {
+        "type": "hole_positions",
+        "diameter_mm": 40,
+        "positions": [
+          [
+            0,
+            0,
+            0
+          ]
+        ],
+        "tolerance_mm": 0.2
+      },
+      "result": "pass",
+      "details": {
+        "diameter_mm": 40,
+        "per_expected": [
+          {
+            "distance_mm": 0,
+            "matched_hole": [
+              0,
+              0
+            ],
+            "pass": true,
+            "spec_xy": [
+              0,
+              0
+            ]
+          }
+        ],
+        "tolerance_mm": 0.2,
+        "unmatched_extras": []
+      }
+    },
+    {
+      "n": 5,
+      "type": "hole_count",
+      "params": {
+        "type": "hole_count",
+        "diameter_mm": 8,
+        "expected": 6,
+        "diameter_tolerance_mm": 0.05
+      },
+      "result": "fail",
+      "details": {
+        "actual": 5,
+        "diameter_mm": 8,
+        "diameter_tolerance_mm": 0.05,
+        "expected": 6,
+        "found": [
+          [
+            37.5,
+            0,
+            8
+          ],
+          [
+            -18.749999999999993,
+            32.47595264191645,
+            8
+          ],
+          [
+            -37.5,
+            4.592425496802574e-15,
+            8
+          ],
+          [
+            -18.750000000000018,
+            -32.475952641916436,
+            8
+          ],
+          [
+            18.750000000000004,
+            -32.47595264191645,
+            8
+          ]
+        ]
+      }
+    },
+    {
+      "n": 6,
+      "type": "hole_positions",
+      "params": {
+        "type": "hole_positions",
+        "diameter_mm": 8,
+        "positions": [
+          [
+            37.5,
+            0,
+            0
+          ],
+          [
+            18.75,
+            32.476,
+            0
+          ],
+          [
+            -18.75,
+            32.476,
+            0
+          ],
+          [
+            -37.5,
+            0,
+            0
+          ],
+          [
+            -18.75,
+            -32.476,
+            0
+          ],
+          [
+            18.75,
+            -32.476,
+            0
+          ]
+        ],
+        "tolerance_mm": 0.2
+      },
+      "result": "fail",
+      "details": {
+        "diameter_mm": 8,
+        "per_expected": [
+          {
+            "distance_mm": 0,
+            "matched_hole": [
+              37.5,
+              0
+            ],
+            "pass": true,
+            "spec_xy": [
+              37.5,
+              0
+            ]
+          },
+          {
+            "nearest_distance_mm": 37.5000000000299,
+            "pass": false,
+            "spec_xy": [
+              18.75,
+              32.476
+            ],
+            "tolerance_mm": 0.2
+          },
+          {
+            "distance_mm": 0.000047358083548942886,
+            "matched_hole": [
+              -18.749999999999993,
+              32.47595264191645
+            ],
+            "pass": true,
+            "spec_xy": [
+              -18.75,
+              32.476
+            ]
+          },
+          {
+            "distance_mm": 4.592425496802574e-15,
+            "matched_hole": [
+              -37.5,
+              4.592425496802574e-15
+            ],
+            "pass": true,
+            "spec_xy": [
+              -37.5,
+              0
+            ]
+          },
+          {
+            "distance_mm": 0.00004735808356315374,
+            "matched_hole": [
+              -18.750000000000018,
+              -32.475952641916436
+            ],
+            "pass": true,
+            "spec_xy": [
+              -18.75,
+              -32.476
+            ]
+          },
+          {
+            "distance_mm": 0.000047358083548942886,
+            "matched_hole": [
+              18.750000000000004,
+              -32.47595264191645
+            ],
+            "pass": true,
+            "spec_xy": [
+              18.75,
+              -32.476
+            ]
+          }
+        ],
+        "tolerance_mm": 0.2,
+        "unmatched_extras": []
+      }
+    },
+    {
+      "n": 7,
+      "type": "step_roundtrip",
+      "params": {
+        "type": "step_roundtrip",
+        "tolerance_pct": 1.5
+      },
+      "result": "pass",
+      "details": {
+        "per_solid": [
+          {
+            "bbox": {
+              "max_abs_deviation_mm": 0,
+              "original_max": [
+                50,
+                50,
+                12
+              ],
+              "original_min": [
+                -50,
+                -50,
+                0
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                50,
+                50,
+                12
+              ],
+              "roundtripped_min": [
+                -50,
+                -50,
+                0
+              ],
+              "tolerance_mm": 2.1289433999052205
+            },
+            "index": 0,
+            "pass": true,
+            "volume": {
+              "deviation_pct": 0.5196646321836729,
+              "original_mm3": 76029.93539884222,
+              "pass": true,
+              "roundtripped_mm3": 75634.83471470235
+            }
+          }
+        ],
+        "tolerance_pct": 1.5
+      }
+    }
+  ],
+  "summary": {
+    "passed": false,
+    "checks_passed": 6,
+    "checks_total": 8,
+    "score": 0.75,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260628T003403Z-f91b",
+  "model": {
+    "id": "wafer-direct-GLM-5.2",
+    "name": "Wafer (direct, GLM-5.2)",
+    "provider": "wafer",
+    "params": {
+      "mode": "direct",
+      "model": "GLM-5.2",
+      "max_tokens": 8000
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "a4-bolt-circle-flange-with-bore-01",
+    "rendered": "Make a round flange as a single solid. The outer body is a cylinder of diameter 100mm and thickness 12mm, with its bottom face on the XY plane (z = 0 to z = 12), centered on the Z axis. A central through-bore of diameter 40mm runs along the Z axis through the full thickness. Six bolt holes of diameter 8mm, axes parallel to Z, are arranged on a bolt circle of diameter 75mm (radius 37.5mm) centered on the Z axis, passing through the full thickness. The first bolt hole is on the +X axis, and the remaining five are evenly spaced every 60 degrees. Output a single solid.",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "wafer.chat.completions.create",
+        "args": {
+          "model": "GLM-5.2",
+          "max_tokens": 8000,
+          "system_chars": 3956,
+          "user_chars": 648,
+          "image_attachments": 0
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 13259.88575
+      }
+    ],
+    "tokens": {
+      "input": 1468,
+      "output": 857,
+      "total": 2325
+    },
+    "wallclock_sec": 13.259885749999999
+  },
+  "output": {
+    "vcad_path": "20260628T003403Z-f91b.vcad",
+    "vcad_sha256": "f6c28a4bf2e39f360a8081b2cfcbbd7c54d593856586b9f79bc5b93f1f548fe3",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-06-28T00:34:03.382Z",
+    "ended_at": "2026-06-28T00:34:16.744Z"
+  },
+  "signature": null
+}

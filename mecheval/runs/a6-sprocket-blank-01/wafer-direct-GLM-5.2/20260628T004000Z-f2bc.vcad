@@ -1,0 +1,27 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": { "id": 1, "name": "main_disc", "op": { "type": "Cylinder", "radius": 50, "height": 20, "segments": 64 } },
+    "2": { "id": 2, "name": "hub_cyl", "op": { "type": "Cylinder", "radius": 20, "height": 20, "segments": 64 } },
+    "3": { "id": 3, "name": "hub", "op": { "type": "Translate", "child": 2, "offset": { "x": 0, "y": 0, "z": 20 } } },
+    "4": { "id": 4, "name": "body", "op": { "type": "Union", "left": 1, "right": 3 } },
+    "5": { "id": 5, "name": "bore_cyl", "op": { "type": "Cylinder", "radius": 10, "height": 42, "segments": 64 } },
+    "6": { "id": 6, "name": "bore", "op": { "type": "Translate", "child": 5, "offset": { "x": 0, "y": 0, "z": -1 } } },
+    "7": { "id": 7, "name": "keyway_box", "op": { "type": "Cube", "size": { "x": 6, "y": 6.5, "z": 42 } } },
+    "8": { "id": 8, "name": "keyway", "op": { "type": "Translate", "child": 7, "offset": { "x": -3, "y": 9.5, "z": -1 } } },
+    "9": { "id": 9, "name": "bolt_cyl", "op": { "type": "Cylinder", "radius": 4, "height": 22, "segments": 32 } },
+    "10": { "id": 10, "name": "bolt1", "op": { "type": "Translate", "child": 9, "offset": { "x": 35, "y": 0, "z": -1 } } },
+    "11": { "id": 11, "name": "bolt2", "op": { "type": "Translate", "child": 9, "offset": { "x": 0, "y": 35, "z": -1 } } },
+    "12": { "id": 12, "name": "bolt3", "op": { "type": "Translate", "child": 9, "offset": { "x": -35, "y": 0, "z": -1 } } },
+    "13": { "id": 13, "name": "bolt4", "op": { "type": "Translate", "child": 9, "offset": { "x": 0, "y": -35, "z": -1 } } },
+    "14": { "id": 14, "name": "bolts", "op": { "type": "Union", "left": 10, "right": 11 } },
+    "15": { "id": 15, "name": "bolts2", "op": { "type": "Union", "left": 14, "right": 12 } },
+    "16": { "id": 16, "name": "all_bolts", "op": { "type": "Union", "left": 15, "right": 13 } },
+    "17": { "id": 17, "name": "remove_bore", "op": { "type": "Difference", "left": 4, "right": 6 } },
+    "18": { "id": 18, "name": "remove_keyway", "op": { "type": "Difference", "left": 17, "right": 8 } },
+    "19": { "id": 19, "name": "result", "op": { "type": "Difference", "left": 18, "right": 16 } }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [{ "root": 19, "material": "default" }]
+}

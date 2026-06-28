@@ -1,0 +1,272 @@
+{
+  "schema_version": 0,
+  "task_id": "f2-spacer-shaft-sideways-01",
+  "task_sha256": "f3e26ccff41588c980399669c7031071baa1f9e0c197aea99d9492b128e0a4dd",
+  "checks": [
+    {
+      "n": 0,
+      "type": "valid_solid",
+      "params": {
+        "type": "valid_solid"
+      },
+      "result": "pass",
+      "details": {
+        "root_count": 1,
+        "solids_produced": 1
+      }
+    },
+    {
+      "n": 1,
+      "type": "interference_volume",
+      "params": {
+        "type": "interference_volume",
+        "host": "host_geometry",
+        "max_mm3": 1
+      },
+      "result": "fail",
+      "details": {
+        "interference_mm3": 11477.771241842287,
+        "max_mm3": 1
+      }
+    },
+    {
+      "n": 2,
+      "type": "contact_area",
+      "params": {
+        "type": "contact_area",
+        "host": "host_geometry",
+        "epsilon_mm": 0.3,
+        "min_mm2": 1500
+      },
+      "result": "pass",
+      "details": {
+        "candidate_triangles": 576,
+        "contact_area_mm2": 4728.144701079518,
+        "epsilon_mm": 0.3,
+        "host_triangles": 832,
+        "min_mm2": 1500
+      }
+    },
+    {
+      "n": 3,
+      "type": "envelope",
+      "params": {
+        "type": "envelope",
+        "max_mm": [
+          40.5,
+          40.5,
+          30.5
+        ]
+      },
+      "result": "pass",
+      "details": {
+        "bbox_max": [
+          20,
+          20,
+          30
+        ],
+        "bbox_min": [
+          -20,
+          -20,
+          0
+        ],
+        "extents_mm": [
+          40,
+          40,
+          30
+        ],
+        "max_mm": [
+          40.5,
+          40.5,
+          30.5
+        ]
+      }
+    },
+    {
+      "n": 4,
+      "type": "mate_clearance",
+      "params": {
+        "type": "mate_clearance",
+        "host": "host_geometry",
+        "min_mm": 0,
+        "max_mm": 0.5
+      },
+      "result": "pass",
+      "details": {
+        "max_mm": 0.5,
+        "min_mm": 0,
+        "min_separation_mm": 0
+      }
+    },
+    {
+      "n": 5,
+      "type": "gravity_hold",
+      "params": {
+        "type": "gravity_hold",
+        "host": "host_geometry",
+        "host_mass_kg": 0.5,
+        "gravity_dir": [
+          0,
+          -1,
+          0
+        ],
+        "duration_sec": 0.5,
+        "max_drift_mm": 2000
+      },
+      "result": "pass",
+      "details": {
+        "drift_mm": 22.204086344072135,
+        "duration_sec": 0.5,
+        "gravity_dir": [
+          0,
+          -1,
+          0
+        ],
+        "max_drift_mm": 2000
+      }
+    },
+    {
+      "n": 6,
+      "type": "dfm",
+      "params": {
+        "type": "dfm",
+        "rules": [
+          "min_wall_1.5mm",
+          "no_undercut"
+        ]
+      },
+      "result": "pass",
+      "details": {
+        "analysed_solid_count": 1,
+        "failing_issue_count": 0,
+        "failing_issues": [],
+        "issues_by_rule": {
+          "fdm.steep_overhang": 1
+        },
+        "legacy_rules_hint": [
+          "min_wall_1.5mm",
+          "no_undercut"
+        ],
+        "max_severity": "error",
+        "process": "fdm",
+        "rule_pack_version": "1",
+        "skipped_mesh_only_count": 0,
+        "total_issues": 1
+      }
+    }
+  ],
+  "summary": {
+    "passed": false,
+    "checks_passed": 6,
+    "checks_total": 7,
+    "score": 0.8571428571428571,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260628T004738Z-191e",
+  "model": {
+    "id": "wafer-direct-GLM-5.2",
+    "name": "Wafer (direct, GLM-5.2)",
+    "provider": "wafer",
+    "params": {
+      "mode": "direct",
+      "model": "GLM-5.2",
+      "max_tokens": 8000
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "f2-spacer-shaft-sideways-01",
+    "rendered": "Reference images of a stepped shaft are attached. The shaft has two coaxial flanges separated by a 20mm-diameter, 30mm-long waist. Design a tube spacer that fills the gap between flanges. Gravity acts sideways (along -Y, perpendicular to the shaft axis), pushing the spacer laterally; the waist must keep it from translating off the shaft.\n\nRequirements:\n- Single solid, single-root .vcad.\n- Bore clears the 20mm waist with 0.1–0.3mm radial clearance.\n- Outer diameter ≤ 40mm.\n- Length 29.5–30mm (fills the axial gap, with the flanges arresting any axial motion).\n- Wall thickness ≥ 1.5mm.\n\nOutput in host's frame: shaft axis +Z, bottom flange bottom face at z = 0, waist z = 10 to z = 40. Place spacer coaxial, z ∈ [10, 40].",
+    "attachments": [
+      {
+        "kind": "reference_image",
+        "path": "assets/f2-spacer-shaft-sideways-01/front.jpg",
+        "agent_visible": true,
+        "view": "front",
+        "image_kind": "render"
+      },
+      {
+        "kind": "reference_image",
+        "path": "assets/f2-spacer-shaft-sideways-01/side.jpg",
+        "agent_visible": true,
+        "view": "side",
+        "image_kind": "render"
+      },
+      {
+        "kind": "reference_image",
+        "path": "assets/f2-spacer-shaft-sideways-01/top.jpg",
+        "agent_visible": true,
+        "view": "top",
+        "image_kind": "render"
+      },
+      {
+        "kind": "host_geometry",
+        "path": "assets/f2-spacer-shaft-sideways-01/host.vcad",
+        "agent_visible": false,
+        "frame": {
+          "origin": [
+            0,
+            0,
+            0
+          ],
+          "axis": [
+            0,
+            0,
+            1
+          ]
+        }
+      },
+      {
+        "kind": "known_dimensions",
+        "agent_visible": true,
+        "text": "The bottom flange is 40mm in diameter."
+      }
+    ]
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "wafer.chat.completions.create",
+        "args": {
+          "model": "GLM-5.2",
+          "max_tokens": 8000,
+          "system_chars": 3956,
+          "user_chars": 795,
+          "image_attachments": 3
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 8610.33
+      }
+    ],
+    "tokens": {
+      "input": 1560,
+      "output": 247,
+      "total": 1807
+    },
+    "wallclock_sec": 8.61033
+  },
+  "output": {
+    "vcad_path": "20260628T004738Z-191e.vcad",
+    "vcad_sha256": "4fc83046c2f93b44de69323c42ef039d44be9904b8ef5f07585728d534c1c3b5",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-06-28T00:47:38.228Z",
+    "ended_at": "2026-06-28T00:47:46.909Z"
+  },
+  "signature": null
+}

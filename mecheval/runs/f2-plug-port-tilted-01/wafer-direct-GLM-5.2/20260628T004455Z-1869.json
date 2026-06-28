@@ -1,0 +1,272 @@
+{
+  "schema_version": 0,
+  "task_id": "f2-plug-port-tilted-01",
+  "task_sha256": "217cc2b5821e0df7a7edbf80bb804415b62397e6d71da1da1c1a6b884b61ea42",
+  "checks": [
+    {
+      "n": 0,
+      "type": "valid_solid",
+      "params": {
+        "type": "valid_solid"
+      },
+      "result": "pass",
+      "details": {
+        "root_count": 1,
+        "solids_produced": 1
+      }
+    },
+    {
+      "n": 1,
+      "type": "interference_volume",
+      "params": {
+        "type": "interference_volume",
+        "host": "host_geometry",
+        "max_mm3": 1
+      },
+      "result": "pass",
+      "details": {
+        "interference_mm3": 0,
+        "max_mm3": 1
+      }
+    },
+    {
+      "n": 2,
+      "type": "contact_area",
+      "params": {
+        "type": "contact_area",
+        "host": "host_geometry",
+        "epsilon_mm": 0.3,
+        "min_mm2": 350
+      },
+      "result": "pass",
+      "details": {
+        "candidate_triangles": 256,
+        "contact_area_mm2": 682.0008770166398,
+        "epsilon_mm": 0.3,
+        "host_triangles": 289,
+        "min_mm2": 350
+      }
+    },
+    {
+      "n": 3,
+      "type": "envelope",
+      "params": {
+        "type": "envelope",
+        "max_mm": [
+          16.5,
+          16.5,
+          10.5
+        ]
+      },
+      "result": "pass",
+      "details": {
+        "bbox_max": [
+          32.900001525878906,
+          32.900001525878906,
+          14.800000190734863
+        ],
+        "bbox_min": [
+          17.100000381469727,
+          17.100000381469727,
+          5
+        ],
+        "extents_mm": [
+          15.80000114440918,
+          15.80000114440918,
+          9.800000190734863
+        ],
+        "max_mm": [
+          16.5,
+          16.5,
+          10.5
+        ]
+      }
+    },
+    {
+      "n": 4,
+      "type": "mate_clearance",
+      "params": {
+        "type": "mate_clearance",
+        "host": "host_geometry",
+        "min_mm": 0,
+        "max_mm": 0.4
+      },
+      "result": "pass",
+      "details": {
+        "max_mm": 0.4,
+        "min_mm": 0,
+        "min_separation_mm": 0
+      }
+    },
+    {
+      "n": 5,
+      "type": "gravity_hold",
+      "params": {
+        "type": "gravity_hold",
+        "host": "host_geometry",
+        "host_mass_kg": 0.5,
+        "gravity_dir": [
+          -0.5,
+          0,
+          -0.866
+        ],
+        "duration_sec": 0.5,
+        "max_drift_mm": 2000
+      },
+      "result": "pass",
+      "details": {
+        "drift_mm": 1069.5983586862765,
+        "duration_sec": 0.5,
+        "gravity_dir": [
+          -0.5,
+          0,
+          -0.866
+        ],
+        "max_drift_mm": 2000
+      }
+    },
+    {
+      "n": 6,
+      "type": "dfm",
+      "params": {
+        "type": "dfm",
+        "rules": [
+          "min_wall_1.5mm",
+          "no_undercut"
+        ]
+      },
+      "result": "pass",
+      "details": {
+        "analysed_solid_count": 1,
+        "failing_issue_count": 0,
+        "failing_issues": [],
+        "issues_by_rule": {
+          "fdm.steep_overhang": 1
+        },
+        "legacy_rules_hint": [
+          "min_wall_1.5mm",
+          "no_undercut"
+        ],
+        "max_severity": "error",
+        "process": "fdm",
+        "rule_pack_version": "1",
+        "skipped_mesh_only_count": 0,
+        "total_issues": 1
+      }
+    }
+  ],
+  "summary": {
+    "passed": true,
+    "checks_passed": 7,
+    "checks_total": 7,
+    "score": 1,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260628T004455Z-1869",
+  "model": {
+    "id": "wafer-direct-GLM-5.2",
+    "name": "Wafer (direct, GLM-5.2)",
+    "provider": "wafer",
+    "params": {
+      "mode": "direct",
+      "model": "GLM-5.2",
+      "max_tokens": 8000
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "f2-plug-port-tilted-01",
+    "rendered": "Reference images of a rectangular block with a cylindrical recess in its top face are attached. Design a cylindrical plug that drops into the 16mm-diameter, 10mm-deep recess. Gravity is tilted (-Y and -Z components), exerting a horizontal force that would slide a loose plug sideways; the bore walls must constrain it.\n\nRequirements:\n- Single solid, single-root .vcad.\n- The plug's outer diameter clears the bore with 0.05–0.15mm radial clearance (so OD 15.7–15.9mm).\n- Plug height 9.5–10mm so the top is roughly flush.\n- Wall thickness ≥ 1.5mm.\n- Plain cylinder — no flange or head needed.\n\nOutput the plug in the host's frame: block corner at origin extending to (50, 50, 15); recess centred at (25, 25). Plug coaxial, base z≈5, top z≈15.",
+    "attachments": [
+      {
+        "kind": "reference_image",
+        "path": "assets/f2-plug-port-tilted-01/front.jpg",
+        "agent_visible": true,
+        "view": "front",
+        "image_kind": "render"
+      },
+      {
+        "kind": "reference_image",
+        "path": "assets/f2-plug-port-tilted-01/side.jpg",
+        "agent_visible": true,
+        "view": "side",
+        "image_kind": "render"
+      },
+      {
+        "kind": "reference_image",
+        "path": "assets/f2-plug-port-tilted-01/top.jpg",
+        "agent_visible": true,
+        "view": "top",
+        "image_kind": "render"
+      },
+      {
+        "kind": "host_geometry",
+        "path": "assets/f2-plug-port-tilted-01/host.vcad",
+        "agent_visible": false,
+        "frame": {
+          "origin": [
+            0,
+            0,
+            0
+          ],
+          "axis": [
+            0,
+            0,
+            1
+          ]
+        }
+      },
+      {
+        "kind": "known_dimensions",
+        "agent_visible": true,
+        "text": "The host block is 50mm × 50mm × 15mm tall."
+      }
+    ]
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "wafer.chat.completions.create",
+        "args": {
+          "model": "GLM-5.2",
+          "max_tokens": 8000,
+          "system_chars": 3956,
+          "user_chars": 805,
+          "image_attachments": 3
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 162536.404958
+      }
+    ],
+    "tokens": {
+      "input": 1568,
+      "output": 181,
+      "total": 1749
+    },
+    "wallclock_sec": 162.536404958
+  },
+  "output": {
+    "vcad_path": "20260628T004455Z-1869.vcad",
+    "vcad_sha256": "7e7f8947149ae8198d1cc8216aa14eb270fa219082413aecc87e42dc19c241b4",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-06-28T00:44:55.640Z",
+    "ended_at": "2026-06-28T00:47:38.196Z"
+  },
+  "signature": null
+}

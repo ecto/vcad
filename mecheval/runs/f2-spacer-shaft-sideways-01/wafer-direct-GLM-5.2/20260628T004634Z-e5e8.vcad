@@ -1,0 +1,12 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": { "id": 1, "name": "spacer_body", "op": { "type": "Cylinder", "radius": 17, "height": 30, "segments": 32 } },
+    "2": { "id": 2, "name": "bore", "op": { "type": "Cylinder", "radius": 10.1, "height": 31, "segments": 32 } },
+    "3": { "id": 3, "name": "spacer", "op": { "type": "Difference", "left": 1, "right": 2 } },
+    "4": { "id": 4, "name": "spacer_placed", "op": { "type": "Translate", "child": 3, "offset": { "x": 0, "y": 0, "z": 10 } } }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [{ "root": 4, "material": "default" }]
+}

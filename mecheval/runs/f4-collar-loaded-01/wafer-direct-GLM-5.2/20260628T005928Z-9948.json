@@ -1,0 +1,300 @@
+{
+  "schema_version": 0,
+  "task_id": "f4-collar-loaded-01",
+  "task_sha256": "1504fbf4519cc6ff2e2114bcfdc103a28cf99bb398b76c51d73b03aba267c5bc",
+  "checks": [
+    {
+      "n": 0,
+      "type": "valid_solid",
+      "params": {
+        "type": "valid_solid"
+      },
+      "result": "pass",
+      "details": {
+        "root_count": 1,
+        "solids_produced": 1
+      }
+    },
+    {
+      "n": 1,
+      "type": "interference_volume",
+      "params": {
+        "type": "interference_volume",
+        "host": "host_geometry",
+        "max_mm3": 1
+      },
+      "result": "pass",
+      "details": {
+        "interference_mm3": 0,
+        "max_mm3": 1
+      }
+    },
+    {
+      "n": 2,
+      "type": "contact_area",
+      "params": {
+        "type": "contact_area",
+        "host": "host_geometry",
+        "epsilon_mm": 0.4,
+        "min_mm2": 1500
+      },
+      "result": "pass",
+      "details": {
+        "candidate_triangles": 576,
+        "contact_area_mm2": 1784.964223025233,
+        "epsilon_mm": 0.4,
+        "host_triangles": 832,
+        "min_mm2": 1500
+      }
+    },
+    {
+      "n": 3,
+      "type": "envelope",
+      "params": {
+        "type": "envelope",
+        "max_mm": [
+          40.5,
+          40.5,
+          30.5
+        ]
+      },
+      "result": "pass",
+      "details": {
+        "bbox_max": [
+          19.899999618530273,
+          19.899999618530273,
+          39
+        ],
+        "bbox_min": [
+          -19.899999618530273,
+          -19.899999618530273,
+          11
+        ],
+        "extents_mm": [
+          39.79999923706055,
+          39.79999923706055,
+          28
+        ],
+        "max_mm": [
+          40.5,
+          40.5,
+          30.5
+        ]
+      }
+    },
+    {
+      "n": 4,
+      "type": "mate_clearance",
+      "params": {
+        "type": "mate_clearance",
+        "host": "host_geometry",
+        "min_mm": 0,
+        "max_mm": 0.6
+      },
+      "result": "pass",
+      "details": {
+        "max_mm": 0.6,
+        "min_mm": 0,
+        "min_separation_mm": 0.14999933812620786
+      }
+    },
+    {
+      "n": 5,
+      "type": "gravity_hold",
+      "params": {
+        "type": "gravity_hold",
+        "host": "host_geometry",
+        "host_mass_kg": 1,
+        "gravity_dir": [
+          0,
+          0,
+          -1
+        ],
+        "duration_sec": 0.5,
+        "max_drift_mm": 100
+      },
+      "result": "fail",
+      "details": {
+        "drift_mm": 443.55312329535457,
+        "duration_sec": 0.5,
+        "gravity_dir": [
+          0,
+          0,
+          -1
+        ],
+        "max_drift_mm": 100
+      }
+    },
+    {
+      "n": 6,
+      "type": "pull_force",
+      "params": {
+        "type": "pull_force",
+        "host": "host_geometry",
+        "force_n": 49,
+        "direction": [
+          0,
+          0,
+          -1
+        ],
+        "duration_sec": 0.25,
+        "max_drift_mm": 100
+      },
+      "result": "pass",
+      "details": {
+        "direction": [
+          0,
+          0,
+          -1
+        ],
+        "drift_mm": 25.686863901979198,
+        "duration_sec": 0.25,
+        "force_n": 49,
+        "max_drift_mm": 100
+      }
+    },
+    {
+      "n": 7,
+      "type": "dfm",
+      "params": {
+        "type": "dfm",
+        "rules": [
+          "min_wall_2.5mm",
+          "no_undercut"
+        ]
+      },
+      "result": "pass",
+      "details": {
+        "analysed_solid_count": 1,
+        "failing_issue_count": 0,
+        "failing_issues": [],
+        "issues_by_rule": {
+          "fdm.steep_overhang": 1
+        },
+        "legacy_rules_hint": [
+          "min_wall_2.5mm",
+          "no_undercut"
+        ],
+        "max_severity": "error",
+        "process": "fdm",
+        "rule_pack_version": "1",
+        "skipped_mesh_only_count": 0,
+        "total_issues": 1
+      }
+    }
+  ],
+  "summary": {
+    "passed": false,
+    "checks_passed": 7,
+    "checks_total": 8,
+    "score": 0.875,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260628T005928Z-9948",
+  "model": {
+    "id": "wafer-direct-GLM-5.2",
+    "name": "Wafer (direct, GLM-5.2)",
+    "provider": "wafer",
+    "params": {
+      "mode": "direct",
+      "model": "GLM-5.2",
+      "max_tokens": 8000
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "f4-collar-loaded-01",
+    "rendered": "Reference images of a stepped shaft are attached. The shaft has two coaxial flanges separated by a 20mm-diameter, 30mm-tall waist. Design a tube collar that sits on the waist between the flanges AND supports a 5kg payload hanging downward through it: gravity acts -Z, plus an additional 49N (≈5kg × 9.81 m/s²) pull-force in -Z represents the payload. The bottom flange must arrest both the collar's own weight and the payload load.\n\nRequirements:\n- Single solid, single-root .vcad.\n- The collar's bore must clear the 20mm waist with 0.1–0.3mm radial clearance.\n- The collar's outer diameter must not exceed the flange OD (40mm).\n- The collar's length must be 25–30mm.\n- Wall thickness ≥ 2.5mm — heavier than F1/F2/F3 (1.5mm) because this is a load-bearing part.\n- Solid (not hollow) cross-section preferred to maximise load path area.\n\nOutput the collar in the host's coordinate frame: shaft axis +Z, bottom flange's bottom face at z = 0, waist runs z = 10 to z = 40. Place the collar centred over the waist resting on (or just above) the bottom flange.",
+    "attachments": [
+      {
+        "kind": "reference_image",
+        "path": "assets/f4-collar-loaded-01/front.jpg",
+        "agent_visible": true,
+        "view": "front",
+        "image_kind": "render"
+      },
+      {
+        "kind": "reference_image",
+        "path": "assets/f4-collar-loaded-01/side.jpg",
+        "agent_visible": true,
+        "view": "side",
+        "image_kind": "render"
+      },
+      {
+        "kind": "reference_image",
+        "path": "assets/f4-collar-loaded-01/top.jpg",
+        "agent_visible": true,
+        "view": "top",
+        "image_kind": "render"
+      },
+      {
+        "kind": "host_geometry",
+        "path": "assets/f4-collar-loaded-01/host.vcad",
+        "agent_visible": false,
+        "frame": {
+          "origin": [
+            0,
+            0,
+            0
+          ],
+          "axis": [
+            0,
+            0,
+            1
+          ]
+        }
+      },
+      {
+        "kind": "known_dimensions",
+        "agent_visible": true,
+        "text": "The bottom flange is 40mm in diameter. The payload represents 5kg pulling downward (49N along -Z)."
+      }
+    ]
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "wafer.chat.completions.create",
+        "args": {
+          "model": "GLM-5.2",
+          "max_tokens": 8000,
+          "system_chars": 3956,
+          "user_chars": 1115,
+          "image_attachments": 3
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 13008.375417
+      }
+    ],
+    "tokens": {
+      "input": 1656,
+      "output": 313,
+      "total": 1969
+    },
+    "wallclock_sec": 13.008375417
+  },
+  "output": {
+    "vcad_path": "20260628T005928Z-9948.vcad",
+    "vcad_sha256": "a27c9c32f52f670159a429a0466c8de04e28f434c4afe211c9352509796879dc",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-06-28T00:59:28.026Z",
+    "ended_at": "2026-06-28T00:59:41.094Z"
+  },
+  "signature": null
+}

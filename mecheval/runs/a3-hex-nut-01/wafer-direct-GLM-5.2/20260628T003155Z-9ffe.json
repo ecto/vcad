@@ -1,0 +1,260 @@
+{
+  "schema_version": 0,
+  "task_id": "a3-hex-nut-01",
+  "task_sha256": "7a7b681fbc898d3aa4f21777ce05899d118d2aa1fb5e31a87d45c8963be74ea2",
+  "checks": [
+    {
+      "n": 0,
+      "type": "valid_solid",
+      "params": {
+        "type": "valid_solid"
+      },
+      "result": "pass",
+      "details": {
+        "root_count": 1,
+        "solids_produced": 1
+      }
+    },
+    {
+      "n": 1,
+      "type": "bbox",
+      "params": {
+        "type": "bbox",
+        "min": [
+          -10.97,
+          -9.5,
+          0
+        ],
+        "max": [
+          10.97,
+          9.5,
+          8
+        ],
+        "tolerance_mm": 0.2
+      },
+      "result": "fail",
+      "details": {
+        "actual_max": [
+          10.719765663146973,
+          10.719765663146973,
+          8
+        ],
+        "actual_min": [
+          -10.719765663146973,
+          -10.719765663146973,
+          0
+        ],
+        "deviation_max": [
+          -0.250234336853028,
+          1.2197656631469727,
+          0
+        ],
+        "deviation_min": [
+          0.250234336853028,
+          -1.2197656631469727,
+          0
+        ],
+        "max_abs_deviation_mm": 1.2197656631469727,
+        "tolerance_mm": 0.2
+      }
+    },
+    {
+      "n": 2,
+      "type": "mass_props",
+      "params": {
+        "type": "mass_props",
+        "volume_mm3": 1872.62,
+        "tolerance_pct": 1.5
+      },
+      "result": "fail",
+      "details": {
+        "volume": {
+          "actual_mm3": 2257.604754451049,
+          "deviation_pct": 20.55861597393219,
+          "pass": false,
+          "spec_mm3": 1872.62,
+          "tolerance_pct": 1.5
+        }
+      }
+    },
+    {
+      "n": 3,
+      "type": "hole_count",
+      "params": {
+        "type": "hole_count",
+        "diameter_mm": 10,
+        "expected": 1,
+        "diameter_tolerance_mm": 0.1
+      },
+      "result": "pass",
+      "details": {
+        "actual": 1,
+        "diameter_mm": 10,
+        "diameter_tolerance_mm": 0.1,
+        "expected": 1,
+        "found": [
+          [
+            0,
+            0,
+            10
+          ]
+        ]
+      }
+    },
+    {
+      "n": 4,
+      "type": "hole_positions",
+      "params": {
+        "type": "hole_positions",
+        "diameter_mm": 10,
+        "positions": [
+          [
+            0,
+            0,
+            0
+          ]
+        ],
+        "tolerance_mm": 0.15
+      },
+      "result": "pass",
+      "details": {
+        "diameter_mm": 10,
+        "per_expected": [
+          {
+            "distance_mm": 0,
+            "matched_hole": [
+              0,
+              0
+            ],
+            "pass": true,
+            "spec_xy": [
+              0,
+              0
+            ]
+          }
+        ],
+        "tolerance_mm": 0.15,
+        "unmatched_extras": []
+      }
+    },
+    {
+      "n": 5,
+      "type": "step_roundtrip",
+      "params": {
+        "type": "step_roundtrip",
+        "tolerance_pct": 1.5
+      },
+      "result": "pass",
+      "details": {
+        "per_solid": [
+          {
+            "bbox": {
+              "max_abs_deviation_mm": 0,
+              "original_max": [
+                10.719765663146973,
+                10.719765663146973,
+                8
+              ],
+              "original_min": [
+                -10.719765663146973,
+                -10.719765663146973,
+                0
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                10.719765663146973,
+                10.719765663146973,
+                8
+              ],
+              "roundtripped_min": [
+                -10.719765663146973,
+                -10.719765663146973,
+                0
+              ],
+              "tolerance_mm": 0.4703658964795521
+            },
+            "index": 0,
+            "pass": true,
+            "volume": {
+              "deviation_pct": 0,
+              "original_mm3": 2257.6047544510493,
+              "pass": true,
+              "roundtripped_mm3": 2257.6047544510493
+            }
+          }
+        ],
+        "tolerance_pct": 1.5
+      }
+    }
+  ],
+  "summary": {
+    "passed": false,
+    "checks_passed": 4,
+    "checks_total": 6,
+    "score": 0.6666666666666666,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260628T003155Z-9ffe",
+  "model": {
+    "id": "wafer-direct-GLM-5.2",
+    "name": "Wafer (direct, GLM-5.2)",
+    "provider": "wafer",
+    "params": {
+      "mode": "direct",
+      "model": "GLM-5.2",
+      "max_tokens": 8000
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "a3-hex-nut-01",
+    "rendered": "Make a hexagonal nut. The outer cross-section is a regular hexagon with flat-to-flat distance 19mm (so 19mm wrench fits), oriented so two flats are parallel to the X axis (the top and bottom of the hex). Height 8mm along Z, base on the XY plane (z = 0 to z = 8). Concentric central through-hole of diameter 10mm, axis along Z. Output a single solid.",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "wafer.chat.completions.create",
+        "args": {
+          "model": "GLM-5.2",
+          "max_tokens": 8000,
+          "system_chars": 3956,
+          "user_chars": 405,
+          "image_attachments": 0
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 8240.12075
+      }
+    ],
+    "tokens": {
+      "input": 1412,
+      "output": 311,
+      "total": 1723
+    },
+    "wallclock_sec": 8.24012075
+  },
+  "output": {
+    "vcad_path": "20260628T003155Z-9ffe.vcad",
+    "vcad_sha256": "c1272010f764f3dd6c437816626b69599f35e7e384f291b0139d52bfef0d2272",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-06-28T00:31:55.992Z",
+    "ended_at": "2026-06-28T00:32:04.252Z"
+  },
+  "signature": null
+}

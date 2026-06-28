@@ -1,0 +1,16 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": { "id": 1, "name": "clip_body", "op": { "type": "Cylinder", "radius": 12.5, "height": 10, "segments": 32 } },
+    "2": { "id": 2, "name": "clip_body_t", "op": { "type": "Translate", "child": 1, "offset": { "x": 0, "y": 0, "z": -5 } } },
+    "3": { "id": 3, "name": "bore", "op": { "type": "Cylinder", "radius": 8.25, "height": 12, "segments": 32 } },
+    "4": { "id": 4, "name": "bore_t", "op": { "type": "Translate", "child": 3, "offset": { "x": 0, "y": 0, "z": -6 } } },
+    "5": { "id": 5, "name": "with_bore", "op": { "type": "Difference", "left": 2, "right": 4 } },
+    "6": { "id": 6, "name": "slot_cutter", "op": { "type": "Cube", "size": { "x": 15, "y": 4, "z": 12 } } },
+    "7": { "id": 7, "name": "slot_cutter_t", "op": { "type": "Translate", "child": 6, "offset": { "x": -2.5, "y": -2, "z": -6 } } },
+    "8": { "id": 8, "name": "clip", "op": { "type": "Difference", "left": 5, "right": 7 } }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [{ "root": 8, "material": "default" }]
+}

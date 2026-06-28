@@ -1,0 +1,226 @@
+{
+  "schema_version": 0,
+  "task_id": "a5-hollow-cap-01",
+  "task_sha256": "b8167e7f075d7ee2bdc967ac9d85d54c953d8c104ede6c91d2130277e2203a80",
+  "checks": [
+    {
+      "n": 0,
+      "type": "valid_solid",
+      "params": {
+        "type": "valid_solid"
+      },
+      "result": "pass",
+      "details": {
+        "root_count": 1,
+        "solids_produced": 1
+      }
+    },
+    {
+      "n": 1,
+      "type": "bbox",
+      "params": {
+        "type": "bbox",
+        "min": [
+          -30,
+          -30,
+          0
+        ],
+        "max": [
+          30,
+          30,
+          50
+        ],
+        "tolerance_mm": 0.1
+      },
+      "result": "fail",
+      "details": {
+        "actual_max": [
+          0,
+          0,
+          50
+        ],
+        "actual_min": [
+          -60,
+          -60,
+          0
+        ],
+        "deviation_max": [
+          -30,
+          -30,
+          0
+        ],
+        "deviation_min": [
+          -30,
+          -30,
+          0
+        ],
+        "max_abs_deviation_mm": 30,
+        "tolerance_mm": 0.1
+      }
+    },
+    {
+      "n": 2,
+      "type": "mass_props",
+      "params": {
+        "type": "mass_props",
+        "volume_mm3": 58904.77,
+        "center_of_mass": [
+          0,
+          0,
+          19.4
+        ],
+        "tolerance_pct": 1
+      },
+      "result": "fail",
+      "details": {
+        "center_of_mass": {
+          "actual": [
+            -32.96052599554063,
+            -32.960525995540635,
+            18.078947369543545
+          ],
+          "bbox_diagonal_mm": 98.48857801796105,
+          "deviation": [
+            -32.96052599554063,
+            -32.960525995540635,
+            -1.3210526304564532
+          ],
+          "max_abs_deviation_mm": 32.960525995540635,
+          "pass": false,
+          "spec": [
+            0,
+            0,
+            19.4
+          ],
+          "tolerance_mm": 0.9848857801796105
+        },
+        "volume": {
+          "actual_mm3": 98845.76104981767,
+          "deviation_pct": 67.8060385429188,
+          "pass": false,
+          "spec_mm3": 58904.77,
+          "tolerance_pct": 1
+        }
+      }
+    },
+    {
+      "n": 3,
+      "type": "step_roundtrip",
+      "params": {
+        "type": "step_roundtrip",
+        "tolerance_pct": 1
+      },
+      "result": "pass",
+      "details": {
+        "per_solid": [
+          {
+            "bbox": {
+              "max_abs_deviation_mm": 0,
+              "original_max": [
+                0,
+                0,
+                50
+              ],
+              "original_min": [
+                -60,
+                -60,
+                0
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                0,
+                0,
+                50
+              ],
+              "roundtripped_min": [
+                -60,
+                -60,
+                0
+              ],
+              "tolerance_mm": 0.9848857801796105
+            },
+            "index": 0,
+            "pass": true,
+            "volume": {
+              "deviation_pct": 0,
+              "original_mm3": 98845.76104981767,
+              "pass": true,
+              "roundtripped_mm3": 98845.76104981767
+            }
+          }
+        ],
+        "tolerance_pct": 1
+      }
+    }
+  ],
+  "summary": {
+    "passed": false,
+    "checks_passed": 2,
+    "checks_total": 4,
+    "score": 0.5,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260628T003704Z-a505",
+  "model": {
+    "id": "wafer-direct-GLM-5.2",
+    "name": "Wafer (direct, GLM-5.2)",
+    "provider": "wafer",
+    "params": {
+      "mode": "direct",
+      "model": "GLM-5.2",
+      "max_tokens": 8000
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "a5-hollow-cap-01",
+    "rendered": "Make a hollow cylindrical cap (like a cup or thimble) as a single solid. The outer body is a cylinder of diameter 60mm and height 50mm, base on the XY plane (z = 0 to z = 50), centered on the Z axis. The inside of the cap is hollow: subtract a coaxial inner cylinder of diameter 50mm and height 42mm that opens from the top (z = 8 to z = 50), leaving a solid base wall 8mm thick at the bottom (z = 0 to z = 8) and a cylindrical wall 5mm thick all around. The top is open. Output a single solid.",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "wafer.chat.completions.create",
+        "args": {
+          "model": "GLM-5.2",
+          "max_tokens": 8000,
+          "system_chars": 3956,
+          "user_chars": 553,
+          "image_attachments": 0
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 3992.08375
+      }
+    ],
+    "tokens": {
+      "input": 1460,
+      "output": 305,
+      "total": 1765
+    },
+    "wallclock_sec": 3.99208375
+  },
+  "output": {
+    "vcad_path": "20260628T003704Z-a505.vcad",
+    "vcad_sha256": "be288e83aeb65cfc13153e29a60944235f5ed7d72bc89f3589b48d8f2550427a",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-06-28T00:37:04.093Z",
+    "ended_at": "2026-06-28T00:37:08.091Z"
+  },
+  "signature": null
+}

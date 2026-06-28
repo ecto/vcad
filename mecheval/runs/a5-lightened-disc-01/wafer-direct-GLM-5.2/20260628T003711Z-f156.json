@@ -1,0 +1,456 @@
+{
+  "schema_version": 0,
+  "task_id": "a5-lightened-disc-01",
+  "task_sha256": "06516ef0f89da8d56fd8714f0f1643884018b96383bbfa5ac0073d23b596f560",
+  "checks": [
+    {
+      "n": 0,
+      "type": "valid_solid",
+      "params": {
+        "type": "valid_solid"
+      },
+      "result": "pass",
+      "details": {
+        "root_count": 1,
+        "solids_produced": 1
+      }
+    },
+    {
+      "n": 1,
+      "type": "bbox",
+      "params": {
+        "type": "bbox",
+        "min": [
+          -60,
+          -60,
+          0
+        ],
+        "max": [
+          60,
+          60,
+          15
+        ],
+        "tolerance_mm": 0.2
+      },
+      "result": "pass",
+      "details": {
+        "actual_max": [
+          60,
+          60,
+          15
+        ],
+        "actual_min": [
+          -60,
+          -60,
+          0
+        ],
+        "deviation_max": [
+          0,
+          0,
+          0
+        ],
+        "deviation_min": [
+          0,
+          0,
+          0
+        ],
+        "max_abs_deviation_mm": 0,
+        "tolerance_mm": 0.2
+      }
+    },
+    {
+      "n": 2,
+      "type": "mass_props",
+      "params": {
+        "type": "mass_props",
+        "volume_mm3": 145848.66,
+        "center_of_mass": [
+          0,
+          0,
+          7.5
+        ],
+        "tolerance_pct": 1.5
+      },
+      "result": "pass",
+      "details": {
+        "center_of_mass": {
+          "actual": [
+            -3.3472740651018436e-16,
+            -9.372367382285162e-16,
+            7.499999999999987
+          ],
+          "bbox_diagonal_mm": 170.36725037400822,
+          "deviation": [
+            -3.3472740651018436e-16,
+            -9.372367382285162e-16,
+            -1.3322676295501878e-14
+          ],
+          "max_abs_deviation_mm": 1.3322676295501878e-14,
+          "pass": true,
+          "spec": [
+            0,
+            0,
+            7.5
+          ],
+          "tolerance_mm": 2.555508755610123
+        },
+        "volume": {
+          "actual_mm3": 144913.09391207658,
+          "deviation_pct": 0.641463615725657,
+          "pass": true,
+          "spec_mm3": 145848.66,
+          "tolerance_pct": 1.5
+        }
+      }
+    },
+    {
+      "n": 3,
+      "type": "hole_count",
+      "params": {
+        "type": "hole_count",
+        "diameter_mm": 22,
+        "expected": 1,
+        "diameter_tolerance_mm": 0.1
+      },
+      "result": "pass",
+      "details": {
+        "actual": 1,
+        "diameter_mm": 22,
+        "diameter_tolerance_mm": 0.1,
+        "expected": 1,
+        "found": [
+          [
+            0,
+            0,
+            22
+          ]
+        ]
+      }
+    },
+    {
+      "n": 4,
+      "type": "hole_positions",
+      "params": {
+        "type": "hole_positions",
+        "diameter_mm": 22,
+        "positions": [
+          [
+            0,
+            0,
+            0
+          ]
+        ],
+        "tolerance_mm": 0.2
+      },
+      "result": "pass",
+      "details": {
+        "diameter_mm": 22,
+        "per_expected": [
+          {
+            "distance_mm": 0,
+            "matched_hole": [
+              0,
+              0
+            ],
+            "pass": true,
+            "spec_xy": [
+              0,
+              0
+            ]
+          }
+        ],
+        "tolerance_mm": 0.2,
+        "unmatched_extras": []
+      }
+    },
+    {
+      "n": 5,
+      "type": "hole_count",
+      "params": {
+        "type": "hole_count",
+        "diameter_mm": 16,
+        "expected": 6,
+        "diameter_tolerance_mm": 0.05
+      },
+      "result": "pass",
+      "details": {
+        "actual": 6,
+        "diameter_mm": 16,
+        "diameter_tolerance_mm": 0.05,
+        "expected": 6,
+        "found": [
+          [
+            38,
+            0,
+            16
+          ],
+          [
+            19,
+            32.909,
+            16
+          ],
+          [
+            -19,
+            32.909,
+            16
+          ],
+          [
+            -38,
+            0,
+            16
+          ],
+          [
+            -19,
+            -32.909,
+            16
+          ],
+          [
+            19,
+            -32.909,
+            16
+          ]
+        ]
+      }
+    },
+    {
+      "n": 6,
+      "type": "hole_positions",
+      "params": {
+        "type": "hole_positions",
+        "diameter_mm": 16,
+        "positions": [
+          [
+            38,
+            0,
+            0
+          ],
+          [
+            19,
+            32.909,
+            0
+          ],
+          [
+            -19,
+            32.909,
+            0
+          ],
+          [
+            -38,
+            0,
+            0
+          ],
+          [
+            -19,
+            -32.909,
+            0
+          ],
+          [
+            19,
+            -32.909,
+            0
+          ]
+        ],
+        "tolerance_mm": 0.3
+      },
+      "result": "pass",
+      "details": {
+        "diameter_mm": 16,
+        "per_expected": [
+          {
+            "distance_mm": 0,
+            "matched_hole": [
+              38,
+              0
+            ],
+            "pass": true,
+            "spec_xy": [
+              38,
+              0
+            ]
+          },
+          {
+            "distance_mm": 0,
+            "matched_hole": [
+              19,
+              32.909
+            ],
+            "pass": true,
+            "spec_xy": [
+              19,
+              32.909
+            ]
+          },
+          {
+            "distance_mm": 0,
+            "matched_hole": [
+              -19,
+              32.909
+            ],
+            "pass": true,
+            "spec_xy": [
+              -19,
+              32.909
+            ]
+          },
+          {
+            "distance_mm": 0,
+            "matched_hole": [
+              -38,
+              0
+            ],
+            "pass": true,
+            "spec_xy": [
+              -38,
+              0
+            ]
+          },
+          {
+            "distance_mm": 0,
+            "matched_hole": [
+              -19,
+              -32.909
+            ],
+            "pass": true,
+            "spec_xy": [
+              -19,
+              -32.909
+            ]
+          },
+          {
+            "distance_mm": 0,
+            "matched_hole": [
+              19,
+              -32.909
+            ],
+            "pass": true,
+            "spec_xy": [
+              19,
+              -32.909
+            ]
+          }
+        ],
+        "tolerance_mm": 0.3,
+        "unmatched_extras": []
+      }
+    },
+    {
+      "n": 7,
+      "type": "step_roundtrip",
+      "params": {
+        "type": "step_roundtrip",
+        "tolerance_pct": 1.5
+      },
+      "result": "pass",
+      "details": {
+        "per_solid": [
+          {
+            "bbox": {
+              "max_abs_deviation_mm": 0,
+              "original_max": [
+                60,
+                60,
+                15
+              ],
+              "original_min": [
+                -60,
+                -60,
+                0
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                60,
+                60,
+                15
+              ],
+              "roundtripped_min": [
+                -60,
+                -60,
+                0
+              ],
+              "tolerance_mm": 2.555508755610123
+            },
+            "index": 0,
+            "pass": true,
+            "volume": {
+              "deviation_pct": 2.0083644390611058e-14,
+              "original_mm3": 144913.09391207658,
+              "pass": true,
+              "roundtripped_mm3": 144913.09391207655
+            }
+          }
+        ],
+        "tolerance_pct": 1.5
+      }
+    }
+  ],
+  "summary": {
+    "passed": true,
+    "checks_passed": 8,
+    "checks_total": 8,
+    "score": 1,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260628T003711Z-f156",
+  "model": {
+    "id": "wafer-direct-GLM-5.2",
+    "name": "Wafer (direct, GLM-5.2)",
+    "provider": "wafer",
+    "params": {
+      "mode": "direct",
+      "model": "GLM-5.2",
+      "max_tokens": 8000
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "a5-lightened-disc-01",
+    "rendered": "Make a lightened disc as a single solid. The outer disc is a cylinder of diameter 120mm and height 15mm, base on the XY plane (z = 0 to z = 15), centered on the Z axis. Subtract a central through-bore of diameter 22mm along the Z axis. Subtract six through-holes of diameter 16mm, axes parallel to Z, arranged on a bolt circle of diameter 76mm (radius 38mm) centered on the Z axis, evenly spaced every 60 degrees with the first hole on the +X axis: positions (38, 0), (19, 32.909), (-19, 32.909), (-38, 0), (-19, -32.909), (19, -32.909). All holes pass through the full disc height (z = 0 to z = 15). Output a single solid.",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "wafer.chat.completions.create",
+        "args": {
+          "model": "GLM-5.2",
+          "max_tokens": 8000,
+          "system_chars": 3956,
+          "user_chars": 686,
+          "image_attachments": 0
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 14865.014416
+      }
+    ],
+    "tokens": {
+      "input": 1510,
+      "output": 909,
+      "total": 2419
+    },
+    "wallclock_sec": 14.865014416
+  },
+  "output": {
+    "vcad_path": "20260628T003711Z-f156.vcad",
+    "vcad_sha256": "6e23b8ab9140e39bd778adbd056974ba7038a3721f591b1fcebf6d49a7dff349",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-06-28T00:37:11.516Z",
+    "ended_at": "2026-06-28T00:37:26.441Z"
+  },
+  "signature": null
+}

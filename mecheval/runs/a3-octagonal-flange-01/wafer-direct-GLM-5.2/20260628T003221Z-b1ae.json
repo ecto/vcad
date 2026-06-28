@@ -1,0 +1,356 @@
+{
+  "schema_version": 0,
+  "task_id": "a3-octagonal-flange-01",
+  "task_sha256": "91605c57469285ce67c864012910184c234cc0303f6a7c986d134cfba4df66d7",
+  "checks": [
+    {
+      "n": 0,
+      "type": "valid_solid",
+      "params": {
+        "type": "valid_solid"
+      },
+      "result": "pass",
+      "details": {
+        "root_count": 1,
+        "solids_produced": 1
+      }
+    },
+    {
+      "n": 1,
+      "type": "bbox",
+      "params": {
+        "type": "bbox",
+        "min": [
+          -21.65,
+          -20,
+          0
+        ],
+        "max": [
+          21.65,
+          20,
+          8
+        ],
+        "tolerance_mm": 0.3
+      },
+      "result": "fail",
+      "details": {
+        "actual_max": [
+          0,
+          0,
+          8
+        ],
+        "actual_min": [
+          -40,
+          -40,
+          0
+        ],
+        "deviation_max": [
+          -21.65,
+          -20,
+          0
+        ],
+        "deviation_min": [
+          -18.35,
+          -20,
+          0
+        ],
+        "max_abs_deviation_mm": 21.65,
+        "tolerance_mm": 0.3
+      }
+    },
+    {
+      "n": 2,
+      "type": "mass_props",
+      "params": {
+        "type": "mass_props",
+        "volume_mm3": 9347.81,
+        "tolerance_pct": 1.5
+      },
+      "result": "fail",
+      "details": {
+        "volume": {
+          "actual_mm3": 9898.029814341908,
+          "deviation_pct": 5.886082562032264,
+          "pass": false,
+          "spec_mm3": 9347.81,
+          "tolerance_pct": 1.5
+        }
+      }
+    },
+    {
+      "n": 3,
+      "type": "hole_count",
+      "params": {
+        "type": "hole_count",
+        "diameter_mm": 5,
+        "expected": 8,
+        "diameter_tolerance_mm": 0.05
+      },
+      "result": "fail",
+      "details": {
+        "actual": 1,
+        "diameter_mm": 5,
+        "diameter_tolerance_mm": 0.05,
+        "expected": 8,
+        "found": [
+          [
+            -10.606601717798211,
+            -10.606601717798211,
+            5
+          ]
+        ]
+      }
+    },
+    {
+      "n": 4,
+      "type": "hole_positions",
+      "params": {
+        "type": "hole_positions",
+        "diameter_mm": 5,
+        "positions": [
+          [
+            15,
+            0,
+            0
+          ],
+          [
+            10.61,
+            10.61,
+            0
+          ],
+          [
+            0,
+            15,
+            0
+          ],
+          [
+            -10.61,
+            10.61,
+            0
+          ],
+          [
+            -15,
+            0,
+            0
+          ],
+          [
+            -10.61,
+            -10.61,
+            0
+          ],
+          [
+            0,
+            -15,
+            0
+          ],
+          [
+            10.61,
+            -10.61,
+            0
+          ]
+        ],
+        "tolerance_mm": 0.2
+      },
+      "result": "fail",
+      "details": {
+        "diameter_mm": 5,
+        "per_expected": [
+          {
+            "nearest_distance_mm": 27.716385975338603,
+            "pass": false,
+            "spec_xy": [
+              15,
+              0
+            ],
+            "tolerance_mm": 0.2
+          },
+          {
+            "nearest_distance_mm": 30.00480589677854,
+            "pass": false,
+            "spec_xy": [
+              10.61,
+              10.61
+            ],
+            "tolerance_mm": 0.2
+          },
+          {
+            "nearest_distance_mm": 27.716385975338603,
+            "pass": false,
+            "spec_xy": [
+              0,
+              15
+            ],
+            "tolerance_mm": 0.2
+          },
+          {
+            "nearest_distance_mm": 21.216601989951172,
+            "pass": false,
+            "spec_xy": [
+              -10.61,
+              10.61
+            ],
+            "tolerance_mm": 0.2
+          },
+          {
+            "nearest_distance_mm": 11.480502970952692,
+            "pass": false,
+            "spec_xy": [
+              -15,
+              0
+            ],
+            "tolerance_mm": 0.2
+          },
+          {
+            "distance_mm": 0.004805896778539621,
+            "matched_hole": [
+              -10.606601717798211,
+              -10.606601717798211
+            ],
+            "pass": true,
+            "spec_xy": [
+              -10.61,
+              -10.61
+            ]
+          },
+          {
+            "pass": false,
+            "reason": "no candidate cylindrical feature of this diameter remained unmatched",
+            "spec_xy": [
+              0,
+              -15
+            ]
+          },
+          {
+            "pass": false,
+            "reason": "no candidate cylindrical feature of this diameter remained unmatched",
+            "spec_xy": [
+              10.61,
+              -10.61
+            ]
+          }
+        ],
+        "tolerance_mm": 0.2,
+        "unmatched_extras": []
+      }
+    },
+    {
+      "n": 5,
+      "type": "step_roundtrip",
+      "params": {
+        "type": "step_roundtrip",
+        "tolerance_pct": 1.5
+      },
+      "result": "pass",
+      "details": {
+        "per_solid": [
+          {
+            "bbox": {
+              "max_abs_deviation_mm": 0,
+              "original_max": [
+                0,
+                0,
+                8
+              ],
+              "original_min": [
+                -40,
+                -40,
+                0
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                0,
+                0,
+                8
+              ],
+              "roundtripped_min": [
+                -40,
+                -40,
+                0
+              ],
+              "tolerance_mm": 0.856971411425142
+            },
+            "index": 0,
+            "pass": true,
+            "volume": {
+              "deviation_pct": 0.3204355505428013,
+              "original_mm3": 9898.029814341908,
+              "pass": true,
+              "roundtripped_mm3": 9866.31300801343
+            }
+          }
+        ],
+        "tolerance_pct": 1.5
+      }
+    }
+  ],
+  "summary": {
+    "passed": false,
+    "checks_passed": 2,
+    "checks_total": 6,
+    "score": 0.3333333333333333,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260628T003221Z-b1ae",
+  "model": {
+    "id": "wafer-direct-GLM-5.2",
+    "name": "Wafer (direct, GLM-5.2)",
+    "provider": "wafer",
+    "params": {
+      "mode": "direct",
+      "model": "GLM-5.2",
+      "max_tokens": 8000
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "a3-octagonal-flange-01",
+    "rendered": "Make an octagonal prism flange. The outer cross-section is a regular octagon with flat-to-flat distance 40mm (apothem 20mm), oriented so two flats are parallel to the X axis (the top and bottom of the octagon). Height 8mm along Z, base on the XY plane (z = 0 to z = 8). Drill eight through-holes of diameter 5mm, axes parallel to Z, on a bolt circle of radius 15mm centered on the Z axis. The first bolt hole is on the +X axis, and the rest are evenly spaced every 45 degrees. Output a single solid.",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "wafer.chat.completions.create",
+        "args": {
+          "model": "GLM-5.2",
+          "max_tokens": 8000,
+          "system_chars": 3956,
+          "user_chars": 564,
+          "image_attachments": 0
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 16340.686292
+      }
+    ],
+    "tokens": {
+      "input": 1454,
+      "output": 1602,
+      "total": 3056
+    },
+    "wallclock_sec": 16.340686292
+  },
+  "output": {
+    "vcad_path": "20260628T003221Z-b1ae.vcad",
+    "vcad_sha256": "a677f3c8398d119c9fec79c2db1789756fbc50e52e5b0c8984c8d591b13e43d8",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-06-28T00:32:21.276Z",
+    "ended_at": "2026-06-28T00:32:37.639Z"
+  },
+  "signature": null
+}

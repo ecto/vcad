@@ -1,0 +1,14 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": { "id": 1, "name": "outer_body", "op": { "type": "Cylinder", "radius": 40, "height": 50, "segments": 32 } },
+    "2": { "id": 2, "name": "lower_bore", "op": { "type": "Cylinder", "radius": 15, "height": 25, "segments": 32 } },
+    "3": { "id": 3, "name": "upper_bore", "op": { "type": "Cylinder", "radius": 25, "height": 25, "segments": 32 } },
+    "4": { "id": 4, "name": "upper_bore_t", "op": { "type": "Translate", "child": 3, "offset": { "x": 0, "y": 0, "z": 25 } } },
+    "5": { "id": 5, "name": "combined_bore", "op": { "type": "Union", "left": 2, "right": 4 } },
+    "6": { "id": 6, "name": "ring", "op": { "type": "Difference", "left": 1, "right": 5 } }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [{ "root": 6, "material": "default" }]
+}

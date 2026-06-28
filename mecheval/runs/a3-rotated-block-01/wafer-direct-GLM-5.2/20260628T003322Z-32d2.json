@@ -1,0 +1,226 @@
+{
+  "schema_version": 0,
+  "task_id": "a3-rotated-block-01",
+  "task_sha256": "3fcbc632c20f9b4ba3a0a840a433e819eeac34f519272073adfc8e8be402d856",
+  "checks": [
+    {
+      "n": 0,
+      "type": "valid_solid",
+      "params": {
+        "type": "valid_solid"
+      },
+      "result": "pass",
+      "details": {
+        "root_count": 1,
+        "solids_produced": 1
+      }
+    },
+    {
+      "n": 1,
+      "type": "bbox",
+      "params": {
+        "type": "bbox",
+        "min": [
+          -24.82,
+          -24.81,
+          -15.62
+        ],
+        "max": [
+          24.82,
+          24.81,
+          15.62
+        ],
+        "tolerance_mm": 0.5
+      },
+      "result": "pass",
+      "details": {
+        "actual_max": [
+          24.820508075688775,
+          24.79519326998301,
+          15.609606734546091
+        ],
+        "actual_min": [
+          -24.82050807568877,
+          -24.795193269983006,
+          -15.609606734546091
+        ],
+        "deviation_max": [
+          0.0005080756887743121,
+          -0.014806730016989178,
+          -0.010393265453908285
+        ],
+        "deviation_min": [
+          -0.0005080756887707594,
+          0.01480673001699273,
+          0.010393265453908285
+        ],
+        "max_abs_deviation_mm": 0.01480673001699273,
+        "tolerance_mm": 0.5
+      }
+    },
+    {
+      "n": 2,
+      "type": "mass_props",
+      "params": {
+        "type": "mass_props",
+        "volume_mm3": 24000,
+        "center_of_mass": [
+          0,
+          0,
+          0
+        ],
+        "tolerance_pct": 0.5
+      },
+      "result": "pass",
+      "details": {
+        "center_of_mass": {
+          "actual": [
+            3.1013503987077635e-8,
+            -5.1886600387069154e-8,
+            -1.3902972218431773e-8
+          ],
+          "bbox_diagonal_mm": 76.79893366026195,
+          "deviation": [
+            3.1013503987077635e-8,
+            -5.1886600387069154e-8,
+            -1.3902972218431773e-8
+          ],
+          "max_abs_deviation_mm": 5.1886600387069154e-8,
+          "pass": true,
+          "spec": [
+            0,
+            0,
+            0
+          ],
+          "tolerance_mm": 0.3839946683013098
+        },
+        "volume": {
+          "actual_mm3": 24000.000604750214,
+          "deviation_pct": 0.0000025197925576018554,
+          "pass": true,
+          "spec_mm3": 24000,
+          "tolerance_pct": 0.5
+        }
+      }
+    },
+    {
+      "n": 3,
+      "type": "step_roundtrip",
+      "params": {
+        "type": "step_roundtrip",
+        "tolerance_pct": 0.5
+      },
+      "result": "pass",
+      "details": {
+        "per_solid": [
+          {
+            "bbox": {
+              "max_abs_deviation_mm": 3.552713678800501e-15,
+              "original_max": [
+                24.820508075688775,
+                24.79519326998301,
+                15.609606734546091
+              ],
+              "original_min": [
+                -24.82050807568877,
+                -24.795193269983006,
+                -15.609606734546091
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                24.82050807568877,
+                24.79519326998301,
+                15.60960673454609
+              ],
+              "roundtripped_min": [
+                -24.82050807568877,
+                -24.79519326998301,
+                -15.60960673454609
+              ],
+              "tolerance_mm": 0.3839946683013098
+            },
+            "index": 0,
+            "pass": true,
+            "volume": {
+              "deviation_pct": 0,
+              "original_mm3": 24000.000604750214,
+              "pass": true,
+              "roundtripped_mm3": 24000.000604750214
+            }
+          }
+        ],
+        "tolerance_pct": 0.5
+      }
+    }
+  ],
+  "summary": {
+    "passed": true,
+    "checks_passed": 4,
+    "checks_total": 4,
+    "score": 1,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260628T003322Z-32d2",
+  "model": {
+    "id": "wafer-direct-GLM-5.2",
+    "name": "Wafer (direct, GLM-5.2)",
+    "provider": "wafer",
+    "params": {
+      "mode": "direct",
+      "model": "GLM-5.2",
+      "max_tokens": 8000
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "a3-rotated-block-01",
+    "rendered": "Make a rectangular block 40mm long (X) × 30mm wide (Y) × 20mm tall (Z), centered at the origin BEFORE any rotation. Then rotate the block about its center by 30 degrees around the Z axis (the rotation matrix Rz(30°)), and after that rotate again by 15 degrees around the X axis (Rx(15°)). Both rotations are about the origin, which is the block's center. Output a single solid.",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "wafer.chat.completions.create",
+        "args": {
+          "model": "GLM-5.2",
+          "max_tokens": 8000,
+          "system_chars": 3956,
+          "user_chars": 439,
+          "image_attachments": 0
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 5247.233209
+      }
+    ],
+    "tokens": {
+      "input": 1417,
+      "output": 281,
+      "total": 1698
+    },
+    "wallclock_sec": 5.247233209
+  },
+  "output": {
+    "vcad_path": "20260628T003322Z-32d2.vcad",
+    "vcad_sha256": "3e20b79caae2d2ce8f946da8555b96c083f8271d4f075e0392bcec42ce211189",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-06-28T00:33:22.378Z",
+    "ended_at": "2026-06-28T00:33:27.630Z"
+  },
+  "signature": null
+}

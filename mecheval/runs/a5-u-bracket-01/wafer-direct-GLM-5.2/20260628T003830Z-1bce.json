@@ -1,0 +1,308 @@
+{
+  "schema_version": 0,
+  "task_id": "a5-u-bracket-01",
+  "task_sha256": "e2050e1f3a71142b2d57af79e0d6456ff5787d7d8ef7562b9279e97be1611d66",
+  "checks": [
+    {
+      "n": 0,
+      "type": "valid_solid",
+      "params": {
+        "type": "valid_solid"
+      },
+      "result": "pass",
+      "details": {
+        "root_count": 1,
+        "solids_produced": 1
+      }
+    },
+    {
+      "n": 1,
+      "type": "bbox",
+      "params": {
+        "type": "bbox",
+        "min": [
+          -50,
+          -15,
+          0
+        ],
+        "max": [
+          50,
+          15,
+          43
+        ],
+        "tolerance_mm": 0.1
+      },
+      "result": "pass",
+      "details": {
+        "actual_max": [
+          50,
+          15,
+          43
+        ],
+        "actual_min": [
+          -50,
+          -15,
+          0
+        ],
+        "deviation_max": [
+          0,
+          0,
+          0
+        ],
+        "deviation_min": [
+          0,
+          0,
+          0
+        ],
+        "max_abs_deviation_mm": 0,
+        "tolerance_mm": 0.1
+      }
+    },
+    {
+      "n": 2,
+      "type": "mass_props",
+      "params": {
+        "type": "mass_props",
+        "volume_mm3": 40347.61,
+        "center_of_mass": [
+          0,
+          0,
+          12.95
+        ],
+        "tolerance_pct": 1
+      },
+      "result": "pass",
+      "details": {
+        "center_of_mass": {
+          "actual": [
+            7.513285127003653e-17,
+            7.31958324482309e-17,
+            12.951559308427711
+          ],
+          "bbox_diagonal_mm": 112.91146974510606,
+          "deviation": [
+            7.513285127003653e-17,
+            7.31958324482309e-17,
+            0.001559308427712125
+          ],
+          "max_abs_deviation_mm": 0.001559308427712125,
+          "pass": true,
+          "spec": [
+            0,
+            0,
+            12.95
+          ],
+          "tolerance_mm": 1.1291146974510606
+        },
+        "volume": {
+          "actual_mm3": 40350.51185550843,
+          "deviation_pct": 0.007192137299894087,
+          "pass": true,
+          "spec_mm3": 40347.61,
+          "tolerance_pct": 1
+        }
+      }
+    },
+    {
+      "n": 3,
+      "type": "hole_count",
+      "params": {
+        "type": "hole_count",
+        "diameter_mm": 6,
+        "expected": 2,
+        "diameter_tolerance_mm": 0.05
+      },
+      "result": "pass",
+      "details": {
+        "actual": 2,
+        "diameter_mm": 6,
+        "diameter_tolerance_mm": 0.05,
+        "expected": 2,
+        "found": [
+          [
+            -25,
+            0,
+            6
+          ],
+          [
+            25,
+            0,
+            6
+          ]
+        ]
+      }
+    },
+    {
+      "n": 4,
+      "type": "hole_positions",
+      "params": {
+        "type": "hole_positions",
+        "diameter_mm": 6,
+        "positions": [
+          [
+            -25,
+            0,
+            0
+          ],
+          [
+            25,
+            0,
+            0
+          ]
+        ],
+        "tolerance_mm": 0.2
+      },
+      "result": "pass",
+      "details": {
+        "diameter_mm": 6,
+        "per_expected": [
+          {
+            "distance_mm": 0,
+            "matched_hole": [
+              -25,
+              0
+            ],
+            "pass": true,
+            "spec_xy": [
+              -25,
+              0
+            ]
+          },
+          {
+            "distance_mm": 0,
+            "matched_hole": [
+              25,
+              0
+            ],
+            "pass": true,
+            "spec_xy": [
+              25,
+              0
+            ]
+          }
+        ],
+        "tolerance_mm": 0.2,
+        "unmatched_extras": []
+      }
+    },
+    {
+      "n": 5,
+      "type": "step_roundtrip",
+      "params": {
+        "type": "step_roundtrip",
+        "tolerance_pct": 1
+      },
+      "result": "pass",
+      "details": {
+        "per_solid": [
+          {
+            "bbox": {
+              "max_abs_deviation_mm": 0,
+              "original_max": [
+                50,
+                15,
+                43
+              ],
+              "original_min": [
+                -50,
+                -15,
+                0
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                50,
+                15,
+                43
+              ],
+              "roundtripped_min": [
+                -50,
+                -15,
+                0
+              ],
+              "tolerance_mm": 1.1291146974510606
+            },
+            "index": 0,
+            "pass": true,
+            "volume": {
+              "deviation_pct": 0,
+              "original_mm3": 40350.51185550843,
+              "pass": true,
+              "roundtripped_mm3": 40350.51185550843
+            }
+          }
+        ],
+        "tolerance_pct": 1
+      }
+    }
+  ],
+  "summary": {
+    "passed": true,
+    "checks_passed": 6,
+    "checks_total": 6,
+    "score": 1,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260628T003830Z-1bce",
+  "model": {
+    "id": "wafer-direct-GLM-5.2",
+    "name": "Wafer (direct, GLM-5.2)",
+    "provider": "wafer",
+    "params": {
+      "mode": "direct",
+      "model": "GLM-5.2",
+      "max_tokens": 8000
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "a5-u-bracket-01",
+    "rendered": "Make a U-channel bracket as a single solid. The base is a rectangular plate 100mm × 30mm × 8mm with its bottom face on the XY plane, centered in X and Y (so it spans x in [-50, 50], y in [-15, 15], z in [0, 8]). From the left end of the base, a vertical leg rises: 8mm × 30mm × 35mm, at x in [-50, -42], y in [-15, 15], z in [8, 43]. A matching vertical leg rises from the right end: 8mm × 30mm × 35mm, at x in [42, 50], y in [-15, 15], z in [8, 43]. Drill two through-holes of diameter 6mm, axes parallel to Z, through the base only (z = 0 to z = 8), centered at (-25, 0) and (25, 0). Output a single solid.",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "wafer.chat.completions.create",
+        "args": {
+          "model": "GLM-5.2",
+          "max_tokens": 8000,
+          "system_chars": 3956,
+          "user_chars": 666,
+          "image_attachments": 0
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 7801.868958
+      }
+    ],
+    "tokens": {
+      "input": 1535,
+      "output": 759,
+      "total": 2294
+    },
+    "wallclock_sec": 7.801868958
+  },
+  "output": {
+    "vcad_path": "20260628T003830Z-1bce.vcad",
+    "vcad_sha256": "e00a37b9ecaf635b58556c63e30a6c60c47a9ee1aafa0051c8fee45b559f3f02",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-06-28T00:38:30.202Z",
+    "ended_at": "2026-06-28T00:38:38.018Z"
+  },
+  "signature": null
+}

@@ -1,0 +1,24 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": { "id": 1, "name": "body", "op": { "type": "Cylinder", "radius": 30, "height": 8, "segments": 64 } },
+    "2": { "id": 2, "name": "center_hole", "op": { "type": "Cylinder", "radius": 20, "height": 10, "segments": 64 } },
+    "3": { "id": 3, "name": "body_minus_center", "op": { "type": "Difference", "left": 1, "right": 2 } },
+    "4": { "id": 4, "name": "bolt_hole", "op": { "type": "Cylinder", "radius": 2.5, "height": 10, "segments": 32 } },
+    "5": { "id": 5, "name": "bolt_hole_0", "op": { "type": "Translate", "child": 4, "offset": { "x": 25, "y": 0, "z": -1 } } },
+    "6": { "id": 6, "name": "bolt_hole_1", "op": { "type": "Translate", "child": 4, "offset": { "x": 21.6506350946, "y": 12.5, "z": -1 } } },
+    "7": { "id": 7, "name": "bolt_hole_2", "op": { "type": "Translate", "child": 4, "offset": { "x": 12.5, "y": 21.6506350946, "z": -1 } } },
+    "8": { "id": 8, "name": "bolt_hole_3", "op": { "type": "Translate", "child": 4, "offset": { "x": -25, "y": 0, "z": -1 } } },
+    "9": { "id": 9, "name": "bolt_hole_4", "op": { "type": "Translate", "child": 4, "offset": { "x": -21.6506350946, "y": -12.5, "z": -1 } } },
+    "10": { "id": 10, "name": "bolt_hole_5", "op": { "type": "Translate", "child": 4, "offset": { "x": -12.5, "y": -21.6506350946, "z": -1 } } },
+    "11": { "id": 11, "name": "cut_0", "op": { "type": "Difference", "left": 3, "right": 5 } },
+    "12": { "id": 12, "name": "cut_1", "op": { "type": "Difference", "left": 11, "right": 6 } },
+    "13": { "id": 13, "name": "cut_2", "op": { "type": "Difference", "left": 12, "right": 7 } },
+    "14": { "id": 14, "name": "cut_3", "op": { "type": "Difference", "left": 13, "right": 8 } },
+    "15": { "id": 15, "name": "cut_4", "op": { "type": "Difference", "left": 14, "right": 9 } },
+    "16": { "id": 16, "name": "result", "op": { "type": "Difference", "left": 15, "right": 10 } }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [{ "root": 16, "material": "default" }]
+}

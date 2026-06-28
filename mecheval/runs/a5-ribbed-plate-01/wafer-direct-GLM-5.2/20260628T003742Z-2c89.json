@@ -1,0 +1,352 @@
+{
+  "schema_version": 0,
+  "task_id": "a5-ribbed-plate-01",
+  "task_sha256": "9b12379e05299981c47e0b5db4734c3daf789ed2046efa95a39064eaad6b39fc",
+  "checks": [
+    {
+      "n": 0,
+      "type": "valid_solid",
+      "params": {
+        "type": "valid_solid"
+      },
+      "result": "pass",
+      "details": {
+        "root_count": 1,
+        "solids_produced": 1
+      }
+    },
+    {
+      "n": 1,
+      "type": "bbox",
+      "params": {
+        "type": "bbox",
+        "min": [
+          -60,
+          -40,
+          0
+        ],
+        "max": [
+          60,
+          40,
+          20
+        ],
+        "tolerance_mm": 0.1
+      },
+      "result": "fail",
+      "details": {
+        "actual_max": [
+          60,
+          40,
+          20
+        ],
+        "actual_min": [
+          -60,
+          -40,
+          -1
+        ],
+        "deviation_max": [
+          0,
+          0,
+          0
+        ],
+        "deviation_min": [
+          0,
+          0,
+          -1
+        ],
+        "max_abs_deviation_mm": 1,
+        "tolerance_mm": 0.1
+      }
+    },
+    {
+      "n": 2,
+      "type": "mass_props",
+      "params": {
+        "type": "mass_props",
+        "volume_mm3": 120778.76,
+        "center_of_mass": [
+          0,
+          0,
+          12.78
+        ],
+        "tolerance_pct": 1
+      },
+      "result": "fail",
+      "details": {
+        "center_of_mass": {
+          "actual": [
+            -0.6083374021272947,
+            -2.510693477418941e-16,
+            12.458894872472575
+          ],
+          "bbox_diagonal_mm": 145.74292435655323,
+          "deviation": [
+            -0.6083374021272947,
+            -2.510693477418941e-16,
+            -0.32110512752742437
+          ],
+          "max_abs_deviation_mm": 0.6083374021272947,
+          "pass": true,
+          "spec": [
+            0,
+            0,
+            12.78
+          ],
+          "tolerance_mm": 1.4574292435655323
+        },
+        "volume": {
+          "actual_mm3": 132220.66697221363,
+          "deviation_pct": 9.473442989656156,
+          "pass": false,
+          "spec_mm3": 120778.76,
+          "tolerance_pct": 1
+        }
+      }
+    },
+    {
+      "n": 3,
+      "type": "hole_count",
+      "params": {
+        "type": "hole_count",
+        "diameter_mm": 8,
+        "expected": 4,
+        "diameter_tolerance_mm": 0.05
+      },
+      "result": "pass",
+      "details": {
+        "actual": 4,
+        "diameter_mm": 8,
+        "diameter_tolerance_mm": 0.05,
+        "expected": 4,
+        "found": [
+          [
+            -45,
+            30,
+            8
+          ],
+          [
+            45,
+            30,
+            8
+          ],
+          [
+            45,
+            -30,
+            8
+          ],
+          [
+            -45,
+            -30,
+            8
+          ]
+        ]
+      }
+    },
+    {
+      "n": 4,
+      "type": "hole_positions",
+      "params": {
+        "type": "hole_positions",
+        "diameter_mm": 8,
+        "positions": [
+          [
+            45,
+            30,
+            0
+          ],
+          [
+            -45,
+            30,
+            0
+          ],
+          [
+            -45,
+            -30,
+            0
+          ],
+          [
+            45,
+            -30,
+            0
+          ]
+        ],
+        "tolerance_mm": 0.2
+      },
+      "result": "pass",
+      "details": {
+        "diameter_mm": 8,
+        "per_expected": [
+          {
+            "distance_mm": 0,
+            "matched_hole": [
+              45,
+              30
+            ],
+            "pass": true,
+            "spec_xy": [
+              45,
+              30
+            ]
+          },
+          {
+            "distance_mm": 0,
+            "matched_hole": [
+              -45,
+              30
+            ],
+            "pass": true,
+            "spec_xy": [
+              -45,
+              30
+            ]
+          },
+          {
+            "distance_mm": 0,
+            "matched_hole": [
+              -45,
+              -30
+            ],
+            "pass": true,
+            "spec_xy": [
+              -45,
+              -30
+            ]
+          },
+          {
+            "distance_mm": 0,
+            "matched_hole": [
+              45,
+              -30
+            ],
+            "pass": true,
+            "spec_xy": [
+              45,
+              -30
+            ]
+          }
+        ],
+        "tolerance_mm": 0.2,
+        "unmatched_extras": []
+      }
+    },
+    {
+      "n": 5,
+      "type": "step_roundtrip",
+      "params": {
+        "type": "step_roundtrip",
+        "tolerance_pct": 1
+      },
+      "result": "fail",
+      "details": {
+        "per_solid": [
+          {
+            "bbox": {
+              "max_abs_deviation_mm": 0,
+              "original_max": [
+                60,
+                40,
+                20
+              ],
+              "original_min": [
+                -60,
+                -40,
+                -1
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                60,
+                40,
+                20
+              ],
+              "roundtripped_min": [
+                -60,
+                -40,
+                -1
+              ],
+              "tolerance_mm": 1.4574292435655323
+            },
+            "index": 0,
+            "pass": false,
+            "volume": {
+              "deviation_pct": 12.781518042932921,
+              "original_mm3": 132220.66697221363,
+              "pass": false,
+              "roundtripped_mm3": 115320.8585666739
+            }
+          }
+        ],
+        "tolerance_pct": 1
+      }
+    }
+  ],
+  "summary": {
+    "passed": false,
+    "checks_passed": 3,
+    "checks_total": 6,
+    "score": 0.5,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260628T003742Z-2c89",
+  "model": {
+    "id": "wafer-direct-GLM-5.2",
+    "name": "Wafer (direct, GLM-5.2)",
+    "provider": "wafer",
+    "params": {
+      "mode": "direct",
+      "model": "GLM-5.2",
+      "max_tokens": 8000
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "a5-ribbed-plate-01",
+    "rendered": "Make a ribbed plate as a single solid. The top plate is 120mm × 80mm × 10mm with its bottom face at z = 10 and top face at z = 20, centered in X and Y (x in [-60, 60], y in [-40, 40]). Three stiffening ribs run along the full length of the plate (along X) on the underside: each rib is 120mm long × 8mm wide × 10mm tall (z = 0 to z = 10). Rib A is centered at y = -24: it spans x in [-60, 60], y in [-28, -20], z in [0, 10]. Rib B is centered at y = 0: it spans x in [-60, 60], y in [-4, 4], z in [0, 10]. Rib C is centered at y = 24: it spans x in [-60, 60], y in [20, 28], z in [0, 10]. Four bolt holes of diameter 8mm, axes parallel to Z, pass through the entire assembly height (z = 0 to z = 20), located at the four corners: (45, 30), (-45, 30), (-45, -30), (45, -30). Output a single solid.",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "wafer.chat.completions.create",
+        "args": {
+          "model": "GLM-5.2",
+          "max_tokens": 8000,
+          "system_chars": 3956,
+          "user_chars": 857,
+          "image_attachments": 0
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 19604.803916
+      }
+    ],
+    "tokens": {
+      "input": 1607,
+      "output": 1059,
+      "total": 2666
+    },
+    "wallclock_sec": 19.604803916
+  },
+  "output": {
+    "vcad_path": "20260628T003742Z-2c89.vcad",
+    "vcad_sha256": "5a4c71c0e3f9629209b69e3a7b2cd6ffb45d42da36797eb9be43ee700f9cd60f",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-06-28T00:37:42.822Z",
+    "ended_at": "2026-06-28T00:38:02.456Z"
+  },
+  "signature": null
+}

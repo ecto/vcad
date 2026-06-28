@@ -1,0 +1,319 @@
+{
+  "schema_version": 0,
+  "task_id": "f3-cap-snap-bottle-01",
+  "task_sha256": "8e5bba962ed4e1875bba80e5e964336ebcb01ef020a2ac0ac954ebe81e69b13f",
+  "checks": [
+    {
+      "n": 0,
+      "type": "valid_solid",
+      "params": {
+        "type": "valid_solid"
+      },
+      "result": "pass",
+      "details": {
+        "root_count": 1,
+        "solids_produced": 1
+      }
+    },
+    {
+      "n": 1,
+      "type": "interference_volume",
+      "params": {
+        "type": "interference_volume",
+        "host": "host_geometry",
+        "max_mm3": 80
+      },
+      "result": "pass",
+      "details": {
+        "interference_mm3": 0,
+        "max_mm3": 80
+      }
+    },
+    {
+      "n": 2,
+      "type": "contact_area",
+      "params": {
+        "type": "contact_area",
+        "host": "host_geometry",
+        "epsilon_mm": 0.5,
+        "min_mm2": 50
+      },
+      "result": "pass",
+      "details": {
+        "candidate_triangles": 512,
+        "contact_area_mm2": 463.5128771849941,
+        "epsilon_mm": 0.5,
+        "host_triangles": 768,
+        "min_mm2": 50
+      }
+    },
+    {
+      "n": 3,
+      "type": "envelope",
+      "params": {
+        "type": "envelope",
+        "max_mm": [
+          28.5,
+          28.5,
+          12.5
+        ]
+      },
+      "result": "pass",
+      "details": {
+        "bbox_max": [
+          14,
+          14,
+          31
+        ],
+        "bbox_min": [
+          -14,
+          -14,
+          19
+        ],
+        "extents_mm": [
+          28,
+          28,
+          12
+        ],
+        "max_mm": [
+          28.5,
+          28.5,
+          12.5
+        ]
+      }
+    },
+    {
+      "n": 4,
+      "type": "pull_retention_geometric",
+      "params": {
+        "type": "pull_retention_geometric",
+        "host": "host_geometry",
+        "direction": [
+          0,
+          0,
+          1
+        ],
+        "displacement_mm": 3,
+        "min_interference_gain_mm3": 15
+      },
+      "result": "fail",
+      "details": {
+        "baseline_interference_mm3": 0,
+        "direction": [
+          0,
+          0,
+          1
+        ],
+        "displacement_mm": 3,
+        "interference_gain_mm3": 0,
+        "min_interference_gain_mm3": 15,
+        "peak_interference_mm3": 0,
+        "samples": [
+          [
+            0.375,
+            0
+          ],
+          [
+            0.75,
+            0
+          ],
+          [
+            1.125,
+            0
+          ],
+          [
+            1.5,
+            0
+          ],
+          [
+            1.875,
+            0
+          ],
+          [
+            2.25,
+            0
+          ],
+          [
+            2.625,
+            0
+          ],
+          [
+            3,
+            0
+          ]
+        ]
+      }
+    },
+    {
+      "n": 5,
+      "type": "pull_force",
+      "params": {
+        "type": "pull_force",
+        "host": "host_geometry",
+        "force_n": 5,
+        "direction": [
+          0,
+          0,
+          1
+        ],
+        "duration_sec": 0.25,
+        "max_drift_mm": 100000
+      },
+      "result": "pass",
+      "details": {
+        "direction": [
+          0,
+          0,
+          1
+        ],
+        "drift_mm": 77406.02657644876,
+        "duration_sec": 0.25,
+        "force_n": 5,
+        "max_drift_mm": 100000
+      }
+    },
+    {
+      "n": 6,
+      "type": "dfm",
+      "params": {
+        "type": "dfm",
+        "rules": [
+          "min_wall_1.5mm",
+          "no_undercut"
+        ]
+      },
+      "result": "pass",
+      "details": {
+        "analysed_solid_count": 1,
+        "failing_issue_count": 0,
+        "failing_issues": [],
+        "issues_by_rule": {
+          "fdm.steep_overhang": 1
+        },
+        "legacy_rules_hint": [
+          "min_wall_1.5mm",
+          "no_undercut"
+        ],
+        "max_severity": "error",
+        "process": "fdm",
+        "rule_pack_version": "1",
+        "skipped_mesh_only_count": 0,
+        "total_issues": 1
+      }
+    }
+  ],
+  "summary": {
+    "passed": false,
+    "checks_passed": 6,
+    "checks_total": 7,
+    "score": 0.8571428571428571,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260628T004929Z-a003",
+  "model": {
+    "id": "wafer-direct-GLM-5.2",
+    "name": "Wafer (direct, GLM-5.2)",
+    "provider": "wafer",
+    "params": {
+      "mode": "direct",
+      "model": "GLM-5.2",
+      "max_tokens": 8000
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "f3-cap-snap-bottle-01",
+    "rendered": "Reference images of a bottle neck are attached. The neck has a retention bead — an annular bump (12mm OD over a 3mm height) — between a 10mm-OD lower neck and a 10mm-OD upper stub. Design a snap-fit cap that pushes down over the bead from above and is captured by it: in the as-installed pose, the cap's internal retention lip must sit just below the bead so that pulling the cap upward forces the lip to climb back over the bead.\n\nRequirements:\n- Single solid, single-root .vcad.\n- The cap's main internal bore must clear the 12mm bead with 0.1–0.4mm radial clearance (so a main bore diameter of 24.2–24.8mm).\n- At the open bottom of the cap (below the main bore, opposite the closed roof), the bore must narrow to an internal retention lip whose diameter is 0.3–0.7mm smaller than the bead diameter (so a lip inner diameter of 23.3–23.7mm). The lip should be 0.8–1.5mm tall.\n- The cap's outer diameter must be ≤ 28mm.\n- The cap's overall height (axial extent) must be ≤ 12mm.\n- The wall thickness everywhere must be ≥ 1.5mm.\n\nOutput the cap in the host frame: neck axis is +Z, lower-neck base at z=0, bead at z=20..23, stub at z=23..27. Place the cap so its open bottom is at z=19 and the retention lip captures the bead from below — i.e. the lip's narrow inner section sits at roughly z=19..20.5.",
+    "attachments": [
+      {
+        "kind": "reference_image",
+        "path": "assets/f3-cap-snap-bottle-01/front.jpg",
+        "agent_visible": true,
+        "view": "front",
+        "image_kind": "render"
+      },
+      {
+        "kind": "reference_image",
+        "path": "assets/f3-cap-snap-bottle-01/side.jpg",
+        "agent_visible": true,
+        "view": "side",
+        "image_kind": "render"
+      },
+      {
+        "kind": "reference_image",
+        "path": "assets/f3-cap-snap-bottle-01/top.jpg",
+        "agent_visible": true,
+        "view": "top",
+        "image_kind": "render"
+      },
+      {
+        "kind": "host_geometry",
+        "path": "assets/f3-cap-snap-bottle-01/host.vcad",
+        "agent_visible": false,
+        "frame": {
+          "origin": [
+            0,
+            0,
+            0
+          ],
+          "axis": [
+            0,
+            0,
+            1
+          ]
+        }
+      },
+      {
+        "kind": "known_dimensions",
+        "agent_visible": true,
+        "text": "The lower neck is 20mm in diameter. The retention bead is 24mm in diameter and 3mm tall."
+      }
+    ]
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "wafer.chat.completions.create",
+        "args": {
+          "model": "GLM-5.2",
+          "max_tokens": 8000,
+          "system_chars": 3956,
+          "user_chars": 1363,
+          "image_attachments": 3
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 23111.190458999998
+      }
+    ],
+    "tokens": {
+      "input": 1737,
+      "output": 609,
+      "total": 2346
+    },
+    "wallclock_sec": 23.111190458999996
+  },
+  "output": {
+    "vcad_path": "20260628T004929Z-a003.vcad",
+    "vcad_sha256": "15ba89d72c062775a5a37e24f8658ba3b0ce65ef0a5d655bc20925ffb628117a",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-06-28T00:49:29.100Z",
+    "ended_at": "2026-06-28T00:49:52.265Z"
+  },
+  "signature": null
+}

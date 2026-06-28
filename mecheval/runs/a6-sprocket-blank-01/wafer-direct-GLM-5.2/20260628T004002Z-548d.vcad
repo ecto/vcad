@@ -1,0 +1,29 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": { "id": 1, "name": "main_disc", "op": { "type": "Cylinder", "radius": 50, "height": 20, "segments": 64 } },
+    "2": { "id": 2, "name": "hub", "op": { "type": "Cylinder", "radius": 20, "height": 20, "segments": 64 } },
+    "3": { "id": 3, "name": "hub_pos", "op": { "type": "Translate", "child": 2, "offset": { "x": 0, "y": 0, "z": 20 } } },
+    "4": { "id": 4, "name": "body", "op": { "type": "Union", "left": 1, "right": 3 } },
+    "5": { "id": 5, "name": "bore", "op": { "type": "Cylinder", "radius": 10, "height": 40, "segments": 32 } },
+    "6": { "id": 6, "name": "keyway", "op": { "type": "Cube", "size": { "x": 6, "y": 6, "z": 40 } } },
+    "7": { "id": 7, "name": "keyway_pos", "op": { "type": "Translate", "child": 6, "offset": { "x": -3, "y": 10, "z": 0 } } },
+    "8": { "id": 8, "name": "bolt_hole_a", "op": { "type": "Cylinder", "radius": 4, "height": 20, "segments": 32 } },
+    "9": { "id": 9, "name": "bolt_a_pos", "op": { "type": "Translate", "child": 8, "offset": { "x": 35, "y": 0, "z": 0 } } },
+    "10": { "id": 10, "name": "bolt_hole_b", "op": { "type": "Cylinder", "radius": 4, "height": 20, "segments": 32 } },
+    "11": { "id": 11, "name": "bolt_b_pos", "op": { "type": "Translate", "child": 10, "offset": { "x": 0, "y": 35, "z": 0 } } },
+    "12": { "id": 12, "name": "bolt_hole_c", "op": { "type": "Cylinder", "radius": 4, "height": 20, "segments": 32 } },
+    "13": { "id": 13, "name": "bolt_c_pos", "op": { "type": "Translate", "child": 12, "offset": { "x": -35, "y": 0, "z": 0 } } },
+    "14": { "id": 14, "name": "bolt_hole_d", "op": { "type": "Cylinder", "radius": 4, "height": 20, "segments": 32 } },
+    "15": { "id": 15, "name": "bolt_d_pos", "op": { "type": "Translate", "child": 14, "offset": { "x": 0, "y": -35, "z": 0 } } },
+    "16": { "id": 16, "name": "holes_ab", "op": { "type": "Union", "left": 9, "right": 11 } },
+    "17": { "id": 17, "name": "holes_cd", "op": { "type": "Union", "left": 13, "right": 15 } },
+    "18": { "id": 18, "name": "bolt_holes", "op": { "type": "Union", "left": 16, "right": 17 } },
+    "19": { "id": 19, "name": "bore_and_keyway", "op": { "type": "Union", "left": 5, "right": 7 } },
+    "20": { "id": 20, "name": "all_cut_features", "op": { "type": "Union", "left": 19, "right": 18 } },
+    "21": { "id": 21, "name": "sprocket_blank", "op": { "type": "Difference", "left": 4, "right": 20 } }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [{ "root": 21, "material": "default" }]
+}

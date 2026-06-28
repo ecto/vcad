@@ -1,0 +1,16 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": { "id": 1, "name": "cap_body", "op": { "type": "Cylinder", "radius": 13.5, "height": 12, "segments": 64 } },
+    "2": { "id": 2, "name": "main_bore", "op": { "type": "Cylinder", "radius": 12.1, "height": 9.5, "segments": 64 } },
+    "3": { "id": 3, "name": "main_bore_pos", "op": { "type": "Translate", "child": 2, "offset": { "x": 0, "y": 0, "z": 0 } } },
+    "4": { "id": 4, "name": "lip_bore", "op": { "type": "Cylinder", "radius": 11.6, "height": 2.5, "segments": 64 } },
+    "5": { "id": 5, "name": "cutout", "op": { "type": "Union", "left": 3, "right": 4 } },
+    "6": { "id": 6, "name": "chamfer_cone", "op": { "type": "Cone", "radius_bottom": 12.1, "radius_top": 11.6, "height": 1, "segments": 64 } },
+    "7": { "id": 7, "name": "chamfer_union", "op": { "type": "Union", "left": 5, "right": 6 } },
+    "8": { "id": 8, "name": "cap", "op": { "type": "Difference", "left": 1, "right": 7 } }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [{ "root": 8, "material": "default" }]
+}

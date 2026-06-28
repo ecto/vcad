@@ -1,0 +1,386 @@
+{
+  "schema_version": 0,
+  "task_id": "a4-flanged-shaft-01",
+  "task_sha256": "70d8d5eb7fc1d94167fdbf0c0241a820f8e76ed8652cfdfdb23800cf351eacf4",
+  "checks": [
+    {
+      "n": 0,
+      "type": "valid_solid",
+      "params": {
+        "type": "valid_solid"
+      },
+      "result": "pass",
+      "details": {
+        "root_count": 1,
+        "solids_produced": 1
+      }
+    },
+    {
+      "n": 1,
+      "type": "bbox",
+      "params": {
+        "type": "bbox",
+        "min": [
+          -40,
+          -40,
+          0
+        ],
+        "max": [
+          40,
+          40,
+          60
+        ],
+        "tolerance_mm": 0.2
+      },
+      "result": "pass",
+      "details": {
+        "actual_max": [
+          40,
+          40,
+          60
+        ],
+        "actual_min": [
+          -40,
+          -40,
+          0
+        ],
+        "deviation_max": [
+          0,
+          0,
+          0
+        ],
+        "deviation_min": [
+          0,
+          0,
+          0
+        ],
+        "max_abs_deviation_mm": 0,
+        "tolerance_mm": 0.2
+      }
+    },
+    {
+      "n": 2,
+      "type": "mass_props",
+      "params": {
+        "type": "mass_props",
+        "volume_mm3": 73874.55,
+        "tolerance_pct": 1.5
+      },
+      "result": "pass",
+      "details": {
+        "volume": {
+          "actual_mm3": 73755.93810602788,
+          "deviation_pct": 0.16055853331373254,
+          "pass": true,
+          "spec_mm3": 73874.55,
+          "tolerance_pct": 1.5
+        }
+      }
+    },
+    {
+      "n": 3,
+      "type": "hole_count",
+      "params": {
+        "type": "hole_count",
+        "diameter_mm": 15,
+        "expected": 1,
+        "diameter_tolerance_mm": 0.1
+      },
+      "result": "pass",
+      "details": {
+        "actual": 1,
+        "diameter_mm": 15,
+        "diameter_tolerance_mm": 0.1,
+        "expected": 1,
+        "found": [
+          [
+            0,
+            0,
+            15
+          ]
+        ]
+      }
+    },
+    {
+      "n": 4,
+      "type": "hole_positions",
+      "params": {
+        "type": "hole_positions",
+        "diameter_mm": 15,
+        "positions": [
+          [
+            0,
+            0,
+            0
+          ]
+        ],
+        "tolerance_mm": 0.2
+      },
+      "result": "pass",
+      "details": {
+        "diameter_mm": 15,
+        "per_expected": [
+          {
+            "distance_mm": 0,
+            "matched_hole": [
+              0,
+              0
+            ],
+            "pass": true,
+            "spec_xy": [
+              0,
+              0
+            ]
+          }
+        ],
+        "tolerance_mm": 0.2,
+        "unmatched_extras": []
+      }
+    },
+    {
+      "n": 5,
+      "type": "hole_count",
+      "params": {
+        "type": "hole_count",
+        "diameter_mm": 6,
+        "expected": 4,
+        "diameter_tolerance_mm": 0.05
+      },
+      "result": "pass",
+      "details": {
+        "actual": 4,
+        "diameter_mm": 6,
+        "diameter_tolerance_mm": 0.05,
+        "expected": 4,
+        "found": [
+          [
+            30,
+            0,
+            6
+          ],
+          [
+            0,
+            30,
+            6
+          ],
+          [
+            -30,
+            0,
+            6
+          ],
+          [
+            0,
+            -30,
+            6
+          ]
+        ]
+      }
+    },
+    {
+      "n": 6,
+      "type": "hole_positions",
+      "params": {
+        "type": "hole_positions",
+        "diameter_mm": 6,
+        "positions": [
+          [
+            30,
+            0,
+            0
+          ],
+          [
+            0,
+            30,
+            0
+          ],
+          [
+            -30,
+            0,
+            0
+          ],
+          [
+            0,
+            -30,
+            0
+          ]
+        ],
+        "tolerance_mm": 0.2
+      },
+      "result": "pass",
+      "details": {
+        "diameter_mm": 6,
+        "per_expected": [
+          {
+            "distance_mm": 0,
+            "matched_hole": [
+              30,
+              0
+            ],
+            "pass": true,
+            "spec_xy": [
+              30,
+              0
+            ]
+          },
+          {
+            "distance_mm": 0,
+            "matched_hole": [
+              0,
+              30
+            ],
+            "pass": true,
+            "spec_xy": [
+              0,
+              30
+            ]
+          },
+          {
+            "distance_mm": 0,
+            "matched_hole": [
+              -30,
+              0
+            ],
+            "pass": true,
+            "spec_xy": [
+              -30,
+              0
+            ]
+          },
+          {
+            "distance_mm": 0,
+            "matched_hole": [
+              0,
+              -30
+            ],
+            "pass": true,
+            "spec_xy": [
+              0,
+              -30
+            ]
+          }
+        ],
+        "tolerance_mm": 0.2,
+        "unmatched_extras": []
+      }
+    },
+    {
+      "n": 7,
+      "type": "step_roundtrip",
+      "params": {
+        "type": "step_roundtrip",
+        "tolerance_pct": 1.5
+      },
+      "result": "pass",
+      "details": {
+        "per_solid": [
+          {
+            "bbox": {
+              "max_abs_deviation_mm": 0,
+              "original_max": [
+                40,
+                40,
+                60
+              ],
+              "original_min": [
+                -40,
+                -40,
+                0
+              ],
+              "pass": true,
+              "roundtripped_max": [
+                40,
+                40,
+                60
+              ],
+              "roundtripped_min": [
+                -40,
+                -40,
+                0
+              ],
+              "tolerance_mm": 1.9209372712298545
+            },
+            "index": 0,
+            "pass": true,
+            "volume": {
+              "deviation_pct": 0.5223793989535649,
+              "original_mm3": 73755.93810602784,
+              "pass": true,
+              "roundtripped_mm3": 73370.65227985701
+            }
+          }
+        ],
+        "tolerance_pct": 1.5
+      }
+    }
+  ],
+  "summary": {
+    "passed": true,
+    "checks_passed": 8,
+    "checks_total": 8,
+    "score": 1,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260628T003446Z-d3d2",
+  "model": {
+    "id": "wafer-direct-GLM-5.2",
+    "name": "Wafer (direct, GLM-5.2)",
+    "provider": "wafer",
+    "params": {
+      "mode": "direct",
+      "model": "GLM-5.2",
+      "max_tokens": 8000
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "a4-flanged-shaft-01",
+    "rendered": "Make a flanged hollow shaft as a single solid. The base is a circular flange of outer diameter 80mm and thickness 10mm, with its bottom face on the XY plane (z = 0 to z = 10). Above the flange and concentric with it sits a cylindrical shaft of outer diameter 30mm extending 50mm upward (z = 10 to z = 60). A central through-bore of diameter 15mm runs along the Z axis through both the flange and the shaft (z = 0 to z = 60). The flange has four bolt holes of diameter 6mm, axes parallel to Z, on a bolt circle of diameter 60mm (radius 30mm) centered on the Z axis. The first bolt hole is on the +X axis; the others are spaced every 90 degrees. The bolt holes pass through the full flange thickness. Output a single solid.",
+    "attachments": []
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "wafer.chat.completions.create",
+        "args": {
+          "model": "GLM-5.2",
+          "max_tokens": 8000,
+          "system_chars": 3956,
+          "user_chars": 783,
+          "image_attachments": 0
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 7800.8528750000005
+      }
+    ],
+    "tokens": {
+      "input": 1512,
+      "output": 787,
+      "total": 2299
+    },
+    "wallclock_sec": 7.800852875
+  },
+  "output": {
+    "vcad_path": "20260628T003446Z-d3d2.vcad",
+    "vcad_sha256": "b9e22eb7bee1d1d5e48a575e606fa5fcf651e9af3a9ef4f97968dac5df3b3a21",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-06-28T00:34:46.218Z",
+    "ended_at": "2026-06-28T00:34:54.102Z"
+  },
+  "signature": null
+}

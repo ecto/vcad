@@ -1,0 +1,56 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "pent_prism_body",
+      "op": {
+        "type": "Extrude",
+        "poly": {
+          "vertices": [
+            { "x": 4.63527, "y": 14.27048 },
+            { "x": -12.13540, "y": 8.81677 },
+            { "x": -12.13540, "y": -8.81677 },
+            { "x": 4.63527, "y": -14.27048 },
+            { "x": 15.0, "y": 0.0 }
+          ],
+          "faces": [
+            [0, 1, 2, 3, 4]
+          ]
+        },
+        "height": 25
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": "hole",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 30,
+        "segments": 32
+      }
+    },
+    "3": {
+      "id": 3,
+      "name": "hole_offset",
+      "op": {
+        "type": "Translate",
+        "child": 2,
+        "offset": { "x": 5, "y": 0, "z": -2.5 }
+      }
+    },
+    "4": {
+      "id": 4,
+      "name": "result",
+      "op": {
+        "type": "Difference",
+        "left": 1,
+        "right": 3
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [{ "root": 4, "material": "default" }]
+}

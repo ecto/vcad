@@ -1,0 +1,229 @@
+{
+  "schema_version": 0,
+  "task_id": "f1-spacer-shaft-01",
+  "task_sha256": "e178c6198108113d8191402c83cf1ec3f925368454bc22f566fb0e2b4c46a90a",
+  "checks": [
+    {
+      "n": 0,
+      "type": "valid_solid",
+      "params": {
+        "type": "valid_solid"
+      },
+      "result": "pass",
+      "details": {
+        "root_count": 1,
+        "solids_produced": 1
+      }
+    },
+    {
+      "n": 1,
+      "type": "interference_volume",
+      "params": {
+        "type": "interference_volume",
+        "host": "host_geometry",
+        "max_mm3": 1
+      },
+      "result": "pass",
+      "details": {
+        "interference_mm3": 0,
+        "max_mm3": 1
+      }
+    },
+    {
+      "n": 2,
+      "type": "contact_area",
+      "params": {
+        "type": "contact_area",
+        "host": "host_geometry",
+        "epsilon_mm": 0.3,
+        "min_mm2": 1500
+      },
+      "result": "pass",
+      "details": {
+        "candidate_triangles": 576,
+        "contact_area_mm2": 4724.850470706623,
+        "epsilon_mm": 0.3,
+        "host_triangles": 832,
+        "min_mm2": 1500
+      }
+    },
+    {
+      "n": 3,
+      "type": "envelope",
+      "params": {
+        "type": "envelope",
+        "max_mm": [
+          40.5,
+          40.5,
+          30.5
+        ]
+      },
+      "result": "pass",
+      "details": {
+        "bbox_max": [
+          19.899999618530273,
+          19.899999618530273,
+          30
+        ],
+        "bbox_min": [
+          -19.899999618530273,
+          -19.899999618530273,
+          0
+        ],
+        "extents_mm": [
+          39.79999923706055,
+          39.79999923706055,
+          30
+        ],
+        "max_mm": [
+          40.5,
+          40.5,
+          30.5
+        ]
+      }
+    },
+    {
+      "n": 4,
+      "type": "dfm",
+      "params": {
+        "type": "dfm",
+        "rules": [
+          "min_wall_1.5mm",
+          "no_undercut"
+        ]
+      },
+      "result": "pass",
+      "details": {
+        "analysed_solid_count": 1,
+        "failing_issue_count": 0,
+        "failing_issues": [],
+        "issues_by_rule": {
+          "fdm.steep_overhang": 1
+        },
+        "legacy_rules_hint": [
+          "min_wall_1.5mm",
+          "no_undercut"
+        ],
+        "max_severity": "error",
+        "process": "fdm",
+        "rule_pack_version": "1",
+        "skipped_mesh_only_count": 0,
+        "total_issues": 1
+      }
+    }
+  ],
+  "summary": {
+    "passed": true,
+    "checks_passed": 5,
+    "checks_total": 5,
+    "score": 1,
+    "anti_cheese_violated": false,
+    "limits_exceeded": []
+  },
+  "run_id": "20260628T004244Z-cf03",
+  "model": {
+    "id": "wafer-direct-GLM-5.2",
+    "name": "Wafer (direct, GLM-5.2)",
+    "provider": "wafer",
+    "params": {
+      "mode": "direct",
+      "model": "GLM-5.2",
+      "max_tokens": 8000
+    }
+  },
+  "harness": {
+    "version": "0.0.1",
+    "commit": null,
+    "vcad_version": null,
+    "phyz_version": null,
+    "host": {
+      "os": "darwin-v20.19.0",
+      "arch": "arm64"
+    }
+  },
+  "submission_kind": "self-run",
+  "prompt": {
+    "seed": "f1-spacer-shaft-01",
+    "rendered": "Reference images of a stepped shaft are attached. The shaft has two coaxial flanges separated by a narrower middle waist. Design a tube spacer that slides down over the waist from above and rests on the bottom flange's top face, filling the axial gap between the flanges.\n\nRequirements:\n- Single solid, single-root .vcad.\n- The spacer's bore must clear the waist with 0.1–0.3mm radial clearance (so 20.2–20.6mm bore diameter for a 20mm waist).\n- The spacer's outer diameter must not exceed the flange outer diameter.\n- The spacer's length must fill the gap between the two flanges (≈30mm) without interfering with either flange.\n- Wall thickness ≥ 1.5mm (printability).\n\nOutput the spacer in the host's coordinate frame: the shaft axis is +Z, the bottom face of the bottom flange sits at z = 0, the waist runs z = 10 to z = 40. Place the spacer in this same frame so the grader can assemble it directly with the host.",
+    "attachments": [
+      {
+        "kind": "reference_image",
+        "path": "assets/f1-spacer-shaft-01/front.jpg",
+        "agent_visible": true,
+        "view": "front",
+        "image_kind": "render"
+      },
+      {
+        "kind": "reference_image",
+        "path": "assets/f1-spacer-shaft-01/side.jpg",
+        "agent_visible": true,
+        "view": "side",
+        "image_kind": "render"
+      },
+      {
+        "kind": "reference_image",
+        "path": "assets/f1-spacer-shaft-01/top.jpg",
+        "agent_visible": true,
+        "view": "top",
+        "image_kind": "render"
+      },
+      {
+        "kind": "host_geometry",
+        "path": "assets/f1-spacer-shaft-01/host.vcad",
+        "agent_visible": false,
+        "frame": {
+          "origin": [
+            0,
+            0,
+            0
+          ],
+          "axis": [
+            0,
+            0,
+            1
+          ]
+        }
+      },
+      {
+        "kind": "known_dimensions",
+        "agent_visible": true,
+        "text": "The bottom flange is 40mm in diameter."
+      }
+    ]
+  },
+  "trace": {
+    "tool_calls": [
+      {
+        "n": 0,
+        "tool": "wafer.chat.completions.create",
+        "args": {
+          "model": "GLM-5.2",
+          "max_tokens": 8000,
+          "system_chars": 3956,
+          "user_chars": 978,
+          "image_attachments": 3
+        },
+        "result_kind": "ok",
+        "wallclock_ms": 4361.479958
+      }
+    ],
+    "tokens": {
+      "input": 1587,
+      "output": 228,
+      "total": 1815
+    },
+    "wallclock_sec": 4.361479958
+  },
+  "output": {
+    "vcad_path": "20260628T004244Z-cf03.vcad",
+    "vcad_sha256": "c02eb570628d093dfe51df13f80ff5491793784d414fbd1f025134ebde8ee9cf",
+    "control_policy": null,
+    "renders": []
+  },
+  "sim": null,
+  "timestamps": {
+    "started_at": "2026-06-28T00:42:44.807Z",
+    "ended_at": "2026-06-28T00:42:49.206Z"
+  },
+  "signature": null
+}

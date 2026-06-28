@@ -1,0 +1,16 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": { "id": 1, "name": "cylinder", "op": { "type": "Cylinder", "radius": 20, "height": 60, "segments": 64 } },
+    "2": { "id": 2, "name": "cylinder_centered", "op": { "type": "Translate", "child": 1, "offset": { "x": 0, "y": 0, "z": 0 } } },
+    "3": { "id": 3, "name": "left_block", "op": { "type": "Cube", "size": { "x": 20, "y": 50, "z": 60 } } },
+    "4": { "id": 4, "name": "left_block_pos", "op": { "type": "Translate", "child": 3, "offset": { "x": -40, "y": -25, "z": 0 } } },
+    "5": { "id": 5, "name": "diff_left", "op": { "type": "Difference", "left": 2, "right": 4 } },
+    "6": { "id": 6, "name": "right_block", "op": { "type": "Cube", "size": { "x": 20, "y": 50, "z": 60 } } },
+    "7": { "id": 7, "name": "right_block_pos", "op": { "type": "Translate", "child": 6, "offset": { "x": 14, "y": -25, "z": 0 } } },
+    "8": { "id": 8, "name": "double_d_shaft", "op": { "type": "Difference", "left": 5, "right": 7 } }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [{ "root": 8, "material": "default" }]
+}

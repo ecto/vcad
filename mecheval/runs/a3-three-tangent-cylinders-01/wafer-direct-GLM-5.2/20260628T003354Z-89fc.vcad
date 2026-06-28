@@ -1,0 +1,16 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": { "id": 1, "name": "cyl0", "op": { "type": "Cylinder", "radius": 10, "height": 30, "segments": 64 } },
+    "2": { "id": 2, "name": "cylTop", "op": { "type": "Translate", "child": 1, "offset": { "x": 0, "y": 11.5470053837925, "z": 0 } } },
+    "3": { "id": 3, "name": "cyl1", "op": { "type": "Cylinder", "radius": 10, "height": 30, "segments": 64 } },
+    "4": { "id": 4, "name": "cylBL", "op": { "type": "Translate", "child": 3, "offset": { "x": -10, "y": -5.77350269189625, "z": 0 } } },
+    "5": { "id": 5, "name": "cyl2", "op": { "type": "Cylinder", "radius": 10, "height": 30, "segments": 64 } },
+    "6": { "id": 6, "name": "cylBR", "op": { "type": "Translate", "child": 5, "offset": { "x": 10, "y": -5.77350269189625, "z": 0 } } },
+    "7": { "id": 7, "name": "union01", "op": { "type": "Union", "left": 2, "right": 4 } },
+    "8": { "id": 8, "name": "result", "op": { "type": "Union", "left": 7, "right": 6 } }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [{ "root": 8, "material": "default" }]
+}

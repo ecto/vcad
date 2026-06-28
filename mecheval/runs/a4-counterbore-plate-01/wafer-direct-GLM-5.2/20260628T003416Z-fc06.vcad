@@ -1,0 +1,22 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": { "id": 1, "name": "plate", "op": { "type": "Cube", "size": { "x": 60, "y": 60, "z": 12 } } },
+    "2": { "id": 2, "name": "plate_centered", "op": { "type": "Translate", "child": 1, "offset": { "x": -30, "y": -30, "z": 0 } } },
+    "3": { "id": 3, "name": "clear_hole", "op": { "type": "Cylinder", "radius": 2, "height": 12, "segments": 32 } },
+    "4": { "id": 4, "name": "recess", "op": { "type": "Cylinder", "radius": 4, "height": 4, "segments": 32 } },
+    "5": { "id": 5, "name": "recess_pos", "op": { "type": "Translate", "child": 4, "offset": { "x": 0, "y": 0, "z": 8 } } },
+    "6": { "id": 6, "name": "cbore_tool_1", "op": { "type": "Union", "left": 3, "right": 5 } },
+    "7": { "id": 7, "name": "cbore_1", "op": { "type": "Translate", "child": 6, "offset": { "x": 20, "y": 20, "z": 0 } } },
+    "8": { "id": 8, "name": "cbore_2", "op": { "type": "Translate", "child": 6, "offset": { "x": -20, "y": 20, "z": 0 } } },
+    "9": { "id": 9, "name": "cbore_3", "op": { "type": "Translate", "child": 6, "offset": { "x": -20, "y": -20, "z": 0 } } },
+    "10": { "id": 10, "name": "cbore_4", "op": { "type": "Translate", "child": 6, "offset": { "x": 20, "y": -20, "z": 0 } } },
+    "11": { "id": 11, "name": "holes_12", "op": { "type": "Union", "left": 7, "right": 8 } },
+    "12": { "id": 12, "name": "holes_34", "op": { "type": "Union", "left": 9, "right": 10 } },
+    "13": { "id": 13, "name": "all_holes", "op": { "type": "Union", "left": 11, "right": 12 } },
+    "14": { "id": 14, "name": "result", "op": { "type": "Difference", "left": 2, "right": 13 } }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [{ "root": 14, "material": "default" }]
+}

@@ -1,0 +1,33 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": { "id": 1, "name": "flange", "op": { "type": "Cylinder", "radius": 50, "height": 10, "segments": 64 } },
+    "2": { "id": 2, "name": "hub", "op": { "type": "Cylinder", "radius": 20, "height": 20, "segments": 64 } },
+    "3": { "id": 3, "name": "hub_t", "op": { "type": "Translate", "child": 2, "offset": { "x": 0, "y": 0, "z": 10 } } },
+    "4": { "id": 4, "name": "body", "op": { "type": "Union", "left": 1, "right": 3 } },
+    "5": { "id": 5, "name": "bore", "op": { "type": "Cylinder", "radius": 9, "height": 35, "segments": 32 } },
+    "6": { "id": 6, "name": "bore_t", "op": { "type": "Translate", "child": 5, "offset": { "x": 0, "y": 0, "z": -2.5 } } },
+    "7": { "id": 7, "name": "bh1", "op": { "type": "Cylinder", "radius": 4, "height": 15, "segments": 32 } },
+    "8": { "id": 8, "name": "bh1_t", "op": { "type": "Translate", "child": 7, "offset": { "x": 37.5, "y": 0, "z": -2.5 } } },
+    "9": { "id": 9, "name": "bh2", "op": { "type": "Cylinder", "radius": 4, "height": 15, "segments": 32 } },
+    "10": { "id": 10, "name": "bh2_t", "op": { "type": "Translate", "child": 9, "offset": { "x": 18.75, "y": 32.476, "z": -2.5 } } },
+    "11": { "id": 11, "name": "bh3", "op": { "type": "Cylinder", "radius": 4, "height": 15, "segments": 32 } },
+    "12": { "id": 12, "name": "bh3_t", "op": { "type": "Translate", "child": 11, "offset": { "x": -18.75, "y": 32.476, "z": -2.5 } } },
+    "13": { "id": 13, "name": "bh4", "op": { "type": "Cylinder", "radius": 4, "height": 15, "segments": 32 } },
+    "14": { "id": 14, "name": "bh4_t", "op": { "type": "Translate", "child": 13, "offset": { "x": -37.5, "y": 0, "z": -2.5 } } },
+    "15": { "id": 15, "name": "bh5", "op": { "type": "Cylinder", "radius": 4, "height": 15, "segments": 32 } },
+    "16": { "id": 16, "name": "bh5_t", "op": { "type": "Translate", "child": 15, "offset": { "x": -18.75, "y": -32.476, "z": -2.5 } } },
+    "17": { "id": 17, "name": "bh6", "op": { "type": "Cylinder", "radius": 4, "height": 15, "segments": 32 } },
+    "18": { "id": 18, "name": "bh6_t", "op": { "type": "Translate", "child": 17, "offset": { "x": 18.75, "y": -32.476, "z": -2.5 } } },
+    "19": { "id": 19, "name": "bh_u1", "op": { "type": "Union", "left": 8, "right": 10 } },
+    "20": { "id": 20, "name": "bh_u2", "op": { "type": "Union", "left": 19, "right": 12 } },
+    "21": { "id": 21, "name": "bh_u3", "op": { "type": "Union", "left": 20, "right": 14 } },
+    "22": { "id": 22, "name": "bh_u4", "op": { "type": "Union", "left": 21, "right": 16 } },
+    "23": { "id": 23, "name": "bh_all", "op": { "type": "Union", "left": 22, "right": 18 } },
+    "24": { "id": 24, "name": "cut1", "op": { "type": "Difference", "left": 4, "right": 6 } },
+    "25": { "id": 25, "name": "result", "op": { "type": "Difference", "left": 24, "right": 23 } }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [{ "root": 25, "material": "default" }]
+}

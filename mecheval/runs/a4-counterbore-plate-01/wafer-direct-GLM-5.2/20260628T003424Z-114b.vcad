@@ -1,0 +1,28 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": { "id": 1, "name": "plate", "op": { "type": "Cube", "size": { "x": 60, "y": 60, "z": 12 } } },
+    "2": { "id": 2, "name": "plate_c", "op": { "type": "Translate", "child": 1, "offset": { "x": -30, "y": -30, "z": 0 } } },
+    "3": { "id": 3, "name": "clr_hole", "op": { "type": "Cylinder", "radius": 2, "height": 12, "segments": 32 } },
+    "4": { "id": 4, "name": "recess", "op": { "type": "Cylinder", "radius": 4, "height": 4, "segments": 32 } },
+    "5": { "id": 5, "name": "h1_clr", "op": { "type": "Translate", "child": 3, "offset": { "x": 20, "y": 20, "z": 0 } } },
+    "6": { "id": 6, "name": "h1_rec", "op": { "type": "Translate", "child": 4, "offset": { "x": 20, "y": 20, "z": 8 } } },
+    "7": { "id": 7, "name": "h2_clr", "op": { "type": "Translate", "child": 3, "offset": { "x": -20, "y": 20, "z": 0 } } },
+    "8": { "id": 8, "name": "h2_rec", "op": { "type": "Translate", "child": 4, "offset": { "x": -20, "y": 20, "z": 8 } } },
+    "9": { "id": 9, "name": "h3_clr", "op": { "type": "Translate", "child": 3, "offset": { "x": -20, "y": -20, "z": 0 } } },
+    "10": { "id": 10, "name": "h3_rec", "op": { "type": "Translate", "child": 4, "offset": { "x": -20, "y": -20, "z": 8 } } },
+    "11": { "id": 11, "name": "h4_clr", "op": { "type": "Translate", "child": 3, "offset": { "x": 20, "y": -20, "z": 0 } } },
+    "12": { "id": 12, "name": "h4_rec", "op": { "type": "Translate", "child": 4, "offset": { "x": 20, "y": -20, "z": 8 } } },
+    "13": { "id": 13, "name": "u_holes", "op": { "type": "Union", "left": 5, "right": 6 } },
+    "14": { "id": 14, "name": "u_holes2", "op": { "type": "Union", "left": 7, "right": 8 } },
+    "15": { "id": 15, "name": "u_holes3", "op": { "type": "Union", "left": 9, "right": 10 } },
+    "16": { "id": 16, "name": "u_holes4", "op": { "type": "Union", "left": 11, "right": 12 } },
+    "17": { "id": 17, "name": "u_a", "op": { "type": "Union", "left": 13, "right": 14 } },
+    "18": { "id": 18, "name": "u_b", "op": { "type": "Union", "left": 15, "right": 16 } },
+    "19": { "id": 19, "name": "all_holes", "op": { "type": "Union", "left": 17, "right": 18 } },
+    "20": { "id": 20, "name": "result", "op": { "type": "Difference", "left": 2, "right": 19 } }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [{ "root": 20, "material": "default" }]
+}
