@@ -207,7 +207,7 @@ fn vert(mesh: &TriangleMesh, i: u32) -> [f64; 3] {
 
 fn mesh_tris(mesh: &TriangleMesh) -> Vec<Tri> {
     let mut out = Vec::with_capacity(mesh.indices.len() / 3);
-    for tri in mesh.indices.as_chunks::<3>().0 {
+    for tri in mesh.indices.chunks_exact(3) {
         out.push(Tri {
             a: vert(mesh, tri[0]),
             b: vert(mesh, tri[1]),
