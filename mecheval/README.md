@@ -77,6 +77,16 @@ ANTHROPIC_API_KEY=sk-... node mecheval/harness/dist/cli.js \
   --task a1-cube-01 --solver claude-direct-claude-haiku-4-5-20251001
 ```
 
+Run a wafer.ai model — single-shot, prompt-only (OpenAI-compatible endpoint,
+defaults to GLM-5.2):
+
+```
+WAFER_API_KEY=wfr_... node mecheval/harness/dist/cli.js \
+  --task a1-cube-01 --solver wafer-direct          # GLM-5.2
+WAFER_API_KEY=wfr_... node mecheval/harness/dist/cli.js \
+  --task a1-cube-01 --solver wafer-direct-GLM-5.1  # override the model
+```
+
 Each run writes a forensic blob to `mecheval/runs/<task_id>/<model_id>/<run_id>.json`.
 
 ## License

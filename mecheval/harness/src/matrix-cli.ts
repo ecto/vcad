@@ -204,12 +204,13 @@ async function main(): Promise<number> {
 
   if (
     !args.dryRun &&
-    /^(claude|openai)/.test(args.solver) &&
+    /^(claude|openai|wafer)/.test(args.solver) &&
     !process.env.ANTHROPIC_API_KEY &&
-    !process.env.OPENAI_API_KEY
+    !process.env.OPENAI_API_KEY &&
+    !process.env.WAFER_API_KEY
   ) {
     console.error(
-      "refusing to start: no ANTHROPIC_API_KEY / OPENAI_API_KEY in the environment.",
+      "refusing to start: no ANTHROPIC_API_KEY / OPENAI_API_KEY / WAFER_API_KEY in the environment.",
     );
     return 2;
   }

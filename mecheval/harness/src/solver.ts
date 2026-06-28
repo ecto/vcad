@@ -127,12 +127,14 @@ export const defaultCubeSolver: Solver = {
 import { claudeDirectSolver, makeClaudeDirectSolver } from "./solvers/claude-direct.js";
 import { claudeMcpSolver, makeClaudeMcpSolver } from "./solvers/claude-mcp.js";
 import { openAiDirectSolver, makeOpenAiDirectSolver } from "./solvers/openai-direct.js";
+import { waferDirectSolver, makeWaferDirectSolver } from "./solvers/wafer-direct.js";
 
 /** Look up a solver by id. Currently ships:
  *  - default-cube           — baseline villain
  *  - claude-direct[-<m>]    — single-shot, prompt-only (Anthropic)
  *  - claude-mcp[-<m>]       — agentic, drives @vcad/mcp via MCP tool loop
  *  - openai-direct[-<m>]    — single-shot, prompt-only (OpenAI)
+ *  - wafer-direct[-<m>]     — single-shot, prompt-only (wafer.ai, default GLM-5.2)
  *
  *  SDKs (Anthropic, MCP, OpenAI) are loaded lazily inside `solve()`, so
  *  callers that only use DEFAULT_CUBE never pay for the import. */
@@ -150,7 +152,11 @@ export function getSolver(id: string): Solver {
   if (id.startsWith("openai-direct-")) {
     return makeOpenAiDirectSolver({ model: id.slice("openai-direct-".length) });
   }
+  if (id === "wafer-direct") return waferDirectSolver;
+  if (id.startsWith("wafer-direct-")) {
+    return makeWaferDirectSolver({ model: id.slice("wafer-direct-".length) });
+  }
   throw new Error(
-    `unknown solver "${id}". Available: "default-cube", "claude-direct[-<m>]", "claude-mcp[-<m>]", "openai-direct[-<m>]".`,
+    `unknown solver "${id}". Available: "default-cube", "claude-direct[-<m>]", "claude-mcp[-<m>]", "openai-direct[-<m>]", "wafer-direct[-<m>]".`,
   );
 }
