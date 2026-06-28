@@ -1536,12 +1536,8 @@ fn render_raytrace(app: &App, buffer: &mut RenderBuffer) {
         buffer.pixels[..size * 4].copy_from_slice(&pixels[..size * 4]);
     }
     // Clear pick_ids (ray tracing doesn't populate them yet)
-    for id in &mut buffer.pick_ids {
-        *id = 0;
-    }
-    for d in &mut buffer.depth {
-        *d = f32::INFINITY;
-    }
+    buffer.pick_ids.fill(0);
+    buffer.depth.fill(f32::INFINITY);
 }
 
 #[cfg(test)]
