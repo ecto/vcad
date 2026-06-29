@@ -69,11 +69,13 @@ class B {
     const c = this.cyl(name + "_raw", r, h, segments);
     return this.tr(name, c, cx, cy, baseZ);
   }
-  // Union a list of ids, left-folded.
+  // Union a list of ids, left-folded. Intermediate nodes are suffixed
+  // `_u<i>` so they never shadow the leaf node names (which often share
+  // the same `name` stem, e.g. boltCircle's `bolts_0`…`bolts_N`).
   unionAll(name, ids) {
     let acc = ids[0];
     for (let i = 1; i < ids.length; i++) {
-      acc = this.union(`${name}_${i}`, acc, ids[i]);
+      acc = this.union(`${name}_u${i}`, acc, ids[i]);
     }
     return acc;
   }
@@ -699,7 +701,12 @@ let written = 0;
 for (const [id, fn] of Object.entries(TASKS)) {
   const [b, rootOrRoots, materials] = fn();
   // Single-root tasks return a numeric root id; Fit composites return an
-  // array of { root, material } plus a materials map.
+  // array of { root, material } plus a materials map. Fail loudly if a
+  // composite forgets its materials map rather than emitting a corrupt
+  // `"materials": null` document.
+  if (Array.isArray(rootOrRoots) && (!materials || typeof materials !== "object")) {
+    throw new Error(`${id}: multi-root task must return a materials map as the third element`);
+  }
   const out = Array.isArray(rootOrRoots)
     ? b.serializeMulti(rootOrRoots, materials)
     : b.serialize(rootOrRoots);

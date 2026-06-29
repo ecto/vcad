@@ -103,7 +103,7 @@
     },
     "9": {
       "id": 9,
-      "name": "body_1",
+      "name": "body_u1",
       "op": {
         "type": "Union",
         "left": 2,
@@ -112,7 +112,7 @@
     },
     "10": {
       "id": 10,
-      "name": "body_2",
+      "name": "body_u2",
       "op": {
         "type": "Union",
         "left": 9,
@@ -121,7 +121,7 @@
     },
     "11": {
       "id": 11,
-      "name": "body_3",
+      "name": "body_u3",
       "op": {
         "type": "Union",
         "left": 10,
@@ -222,7 +222,7 @@
     },
     "20": {
       "id": 20,
-      "name": "holes_1",
+      "name": "holes_u1",
       "op": {
         "type": "Union",
         "left": 13,
@@ -231,7 +231,7 @@
     },
     "21": {
       "id": 21,
-      "name": "holes_2",
+      "name": "holes_u2",
       "op": {
         "type": "Union",
         "left": 20,
@@ -240,7 +240,7 @@
     },
     "22": {
       "id": 22,
-      "name": "holes_3",
+      "name": "holes_u3",
       "op": {
         "type": "Union",
         "left": 21,

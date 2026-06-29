@@ -78,7 +78,7 @@
     },
     "7": {
       "id": 7,
-      "name": "host_channel_1",
+      "name": "host_channel_u1",
       "op": {
         "type": "Union",
         "left": 2,
@@ -87,7 +87,7 @@
     },
     "8": {
       "id": 8,
-      "name": "host_channel_2",
+      "name": "host_channel_u2",
       "op": {
         "type": "Union",
         "left": 7,

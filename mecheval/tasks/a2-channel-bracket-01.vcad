@@ -78,7 +78,7 @@
     },
     "7": {
       "id": 7,
-      "name": "part_1",
+      "name": "part_u1",
       "op": {
         "type": "Union",
         "left": 2,
@@ -87,7 +87,7 @@
     },
     "8": {
       "id": 8,
-      "name": "part_2",
+      "name": "part_u2",
       "op": {
         "type": "Union",
         "left": 7,

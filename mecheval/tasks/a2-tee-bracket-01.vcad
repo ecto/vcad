@@ -131,7 +131,7 @@
     },
     "12": {
       "id": 12,
-      "name": "holes_1",
+      "name": "holes_u1",
       "op": {
         "type": "Union",
         "left": 7,
@@ -140,7 +140,7 @@
     },
     "13": {
       "id": 13,
-      "name": "holes_2",
+      "name": "holes_u2",
       "op": {
         "type": "Union",
         "left": 12,
