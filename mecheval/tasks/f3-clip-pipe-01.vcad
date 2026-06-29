@@ -1,0 +1,154 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "host_pipe_raw",
+      "op": {
+        "type": "Cylinder",
+        "radius": 8,
+        "height": 30,
+        "segments": 64
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": "host_pipe",
+      "op": {
+        "type": "Translate",
+        "child": 1,
+        "offset": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        }
+      }
+    },
+    "3": {
+      "id": 3,
+      "name": "acc_outer_raw",
+      "op": {
+        "type": "Cylinder",
+        "radius": 13,
+        "height": 10,
+        "segments": 64
+      }
+    },
+    "4": {
+      "id": 4,
+      "name": "acc_outer",
+      "op": {
+        "type": "Translate",
+        "child": 3,
+        "offset": {
+          "x": 0,
+          "y": 0,
+          "z": 10
+        }
+      }
+    },
+    "5": {
+      "id": 5,
+      "name": "acc_bore_raw",
+      "op": {
+        "type": "Cylinder",
+        "radius": 8.3,
+        "height": 12,
+        "segments": 64
+      }
+    },
+    "6": {
+      "id": 6,
+      "name": "acc_bore",
+      "op": {
+        "type": "Translate",
+        "child": 5,
+        "offset": {
+          "x": 0,
+          "y": 0,
+          "z": 9
+        }
+      }
+    },
+    "7": {
+      "id": 7,
+      "name": "acc_ring",
+      "op": {
+        "type": "Difference",
+        "left": 4,
+        "right": 6
+      }
+    },
+    "8": {
+      "id": 8,
+      "name": "acc_slot_raw",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 14,
+          "y": 4,
+          "z": 12
+        }
+      }
+    },
+    "9": {
+      "id": 9,
+      "name": "acc_slot",
+      "op": {
+        "type": "Translate",
+        "child": 8,
+        "offset": {
+          "x": 0,
+          "y": -2,
+          "z": 9
+        }
+      }
+    },
+    "10": {
+      "id": 10,
+      "name": "acc_clip",
+      "op": {
+        "type": "Difference",
+        "left": 7,
+        "right": 9
+      }
+    }
+  },
+  "materials": {
+    "host": {
+      "name": "host",
+      "color": [
+        0.58,
+        0.61,
+        0.66
+      ],
+      "metallic": 0.2,
+      "roughness": 0.7,
+      "density": 1000,
+      "friction": 0.6
+    },
+    "accessory": {
+      "name": "accessory",
+      "color": [
+        0.82,
+        0.55,
+        0.22
+      ],
+      "metallic": 0.8,
+      "roughness": 0.4,
+      "density": 1000,
+      "friction": 0.6
+    }
+  },
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 2,
+      "material": "host"
+    },
+    {
+      "root": 10,
+      "material": "accessory"
+    }
+  ]
+}

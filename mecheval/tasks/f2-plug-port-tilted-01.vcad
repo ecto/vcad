@@ -1,0 +1,122 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "host_block_raw",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 50,
+          "y": 50,
+          "z": 15
+        }
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": "host_block",
+      "op": {
+        "type": "Translate",
+        "child": 1,
+        "offset": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        }
+      }
+    },
+    "3": {
+      "id": 3,
+      "name": "host_recess_raw",
+      "op": {
+        "type": "Cylinder",
+        "radius": 8,
+        "height": 11,
+        "segments": 64
+      }
+    },
+    "4": {
+      "id": 4,
+      "name": "host_recess",
+      "op": {
+        "type": "Translate",
+        "child": 3,
+        "offset": {
+          "x": 25,
+          "y": 25,
+          "z": 5
+        }
+      }
+    },
+    "5": {
+      "id": 5,
+      "name": "host_port",
+      "op": {
+        "type": "Difference",
+        "left": 2,
+        "right": 4
+      }
+    },
+    "6": {
+      "id": 6,
+      "name": "acc_plug_raw",
+      "op": {
+        "type": "Cylinder",
+        "radius": 7.9,
+        "height": 10,
+        "segments": 64
+      }
+    },
+    "7": {
+      "id": 7,
+      "name": "acc_plug",
+      "op": {
+        "type": "Translate",
+        "child": 6,
+        "offset": {
+          "x": 25,
+          "y": 25,
+          "z": 5
+        }
+      }
+    }
+  },
+  "materials": {
+    "host": {
+      "name": "host",
+      "color": [
+        0.58,
+        0.61,
+        0.66
+      ],
+      "metallic": 0.2,
+      "roughness": 0.7,
+      "density": 1000,
+      "friction": 0.6
+    },
+    "accessory": {
+      "name": "accessory",
+      "color": [
+        0.82,
+        0.55,
+        0.22
+      ],
+      "metallic": 0.8,
+      "roughness": 0.4,
+      "density": 1000,
+      "friction": 0.6
+    }
+  },
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 5,
+      "material": "host"
+    },
+    {
+      "root": 7,
+      "material": "accessory"
+    }
+  ]
+}

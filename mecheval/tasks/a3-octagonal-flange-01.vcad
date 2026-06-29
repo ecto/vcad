@@ -1,0 +1,305 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "oct_raw",
+      "op": {
+        "type": "Prism",
+        "sides": 8,
+        "radius": 21.65,
+        "height": 8
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": "oct_rot",
+      "op": {
+        "type": "Rotate",
+        "child": 1,
+        "angles": {
+          "x": 0,
+          "y": 0,
+          "z": 22.5
+        }
+      }
+    },
+    "3": {
+      "id": 3,
+      "name": "oct",
+      "op": {
+        "type": "Translate",
+        "child": 2,
+        "offset": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        }
+      }
+    },
+    "4": {
+      "id": 4,
+      "name": "bolts_0_raw",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 10,
+        "segments": 32
+      }
+    },
+    "5": {
+      "id": 5,
+      "name": "bolts_0",
+      "op": {
+        "type": "Translate",
+        "child": 4,
+        "offset": {
+          "x": 15,
+          "y": 0,
+          "z": -1
+        }
+      }
+    },
+    "6": {
+      "id": 6,
+      "name": "bolts_1_raw",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 10,
+        "segments": 32
+      }
+    },
+    "7": {
+      "id": 7,
+      "name": "bolts_1",
+      "op": {
+        "type": "Translate",
+        "child": 6,
+        "offset": {
+          "x": 10.606601717798213,
+          "y": 10.606601717798211,
+          "z": -1
+        }
+      }
+    },
+    "8": {
+      "id": 8,
+      "name": "bolts_2_raw",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 10,
+        "segments": 32
+      }
+    },
+    "9": {
+      "id": 9,
+      "name": "bolts_2",
+      "op": {
+        "type": "Translate",
+        "child": 8,
+        "offset": {
+          "x": 9.18485099360515e-16,
+          "y": 15,
+          "z": -1
+        }
+      }
+    },
+    "10": {
+      "id": 10,
+      "name": "bolts_3_raw",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 10,
+        "segments": 32
+      }
+    },
+    "11": {
+      "id": 11,
+      "name": "bolts_3",
+      "op": {
+        "type": "Translate",
+        "child": 10,
+        "offset": {
+          "x": -10.606601717798211,
+          "y": 10.606601717798213,
+          "z": -1
+        }
+      }
+    },
+    "12": {
+      "id": 12,
+      "name": "bolts_4_raw",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 10,
+        "segments": 32
+      }
+    },
+    "13": {
+      "id": 13,
+      "name": "bolts_4",
+      "op": {
+        "type": "Translate",
+        "child": 12,
+        "offset": {
+          "x": -15,
+          "y": 1.83697019872103e-15,
+          "z": -1
+        }
+      }
+    },
+    "14": {
+      "id": 14,
+      "name": "bolts_5_raw",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 10,
+        "segments": 32
+      }
+    },
+    "15": {
+      "id": 15,
+      "name": "bolts_5",
+      "op": {
+        "type": "Translate",
+        "child": 14,
+        "offset": {
+          "x": -10.606601717798215,
+          "y": -10.606601717798211,
+          "z": -1
+        }
+      }
+    },
+    "16": {
+      "id": 16,
+      "name": "bolts_6_raw",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 10,
+        "segments": 32
+      }
+    },
+    "17": {
+      "id": 17,
+      "name": "bolts_6",
+      "op": {
+        "type": "Translate",
+        "child": 16,
+        "offset": {
+          "x": -2.7554552980815444e-15,
+          "y": -15,
+          "z": -1
+        }
+      }
+    },
+    "18": {
+      "id": 18,
+      "name": "bolts_7_raw",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 10,
+        "segments": 32
+      }
+    },
+    "19": {
+      "id": 19,
+      "name": "bolts_7",
+      "op": {
+        "type": "Translate",
+        "child": 18,
+        "offset": {
+          "x": 10.60660171779821,
+          "y": -10.606601717798215,
+          "z": -1
+        }
+      }
+    },
+    "20": {
+      "id": 20,
+      "name": "bolts_u1",
+      "op": {
+        "type": "Union",
+        "left": 5,
+        "right": 7
+      }
+    },
+    "21": {
+      "id": 21,
+      "name": "bolts_u2",
+      "op": {
+        "type": "Union",
+        "left": 20,
+        "right": 9
+      }
+    },
+    "22": {
+      "id": 22,
+      "name": "bolts_u3",
+      "op": {
+        "type": "Union",
+        "left": 21,
+        "right": 11
+      }
+    },
+    "23": {
+      "id": 23,
+      "name": "bolts_u4",
+      "op": {
+        "type": "Union",
+        "left": 22,
+        "right": 13
+      }
+    },
+    "24": {
+      "id": 24,
+      "name": "bolts_u5",
+      "op": {
+        "type": "Union",
+        "left": 23,
+        "right": 15
+      }
+    },
+    "25": {
+      "id": 25,
+      "name": "bolts_u6",
+      "op": {
+        "type": "Union",
+        "left": 24,
+        "right": 17
+      }
+    },
+    "26": {
+      "id": 26,
+      "name": "bolts_u7",
+      "op": {
+        "type": "Union",
+        "left": 25,
+        "right": 19
+      }
+    },
+    "27": {
+      "id": 27,
+      "name": "part",
+      "op": {
+        "type": "Difference",
+        "left": 3,
+        "right": 26
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 27,
+      "material": "default"
+    }
+  ]
+}

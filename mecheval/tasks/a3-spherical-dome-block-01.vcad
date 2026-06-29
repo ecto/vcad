@@ -1,0 +1,69 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "cube_raw",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 40,
+          "y": 40,
+          "z": 40
+        }
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": "cube",
+      "op": {
+        "type": "Translate",
+        "child": 1,
+        "offset": {
+          "x": -20,
+          "y": -20,
+          "z": 0
+        }
+      }
+    },
+    "3": {
+      "id": 3,
+      "name": "ball_raw",
+      "op": {
+        "type": "Sphere",
+        "radius": 15,
+        "segments": 64
+      }
+    },
+    "4": {
+      "id": 4,
+      "name": "dome",
+      "op": {
+        "type": "Translate",
+        "child": 3,
+        "offset": {
+          "x": 0,
+          "y": 0,
+          "z": 40
+        }
+      }
+    },
+    "5": {
+      "id": 5,
+      "name": "part",
+      "op": {
+        "type": "Union",
+        "left": 2,
+        "right": 4
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 5,
+      "material": "default"
+    }
+  ]
+}

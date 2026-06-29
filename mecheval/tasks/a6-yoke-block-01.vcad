@@ -78,7 +78,7 @@
     },
     "7": {
       "id": 7,
-      "name": "body_1",
+      "name": "body_u1",
       "op": {
         "type": "Union",
         "left": 2,
@@ -87,7 +87,7 @@
     },
     "8": {
       "id": 8,
-      "name": "body_2",
+      "name": "body_u2",
       "op": {
         "type": "Union",
         "left": 7,
