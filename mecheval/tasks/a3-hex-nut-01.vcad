@@ -3,30 +3,30 @@
   "nodes": {
     "1": {
       "id": 1,
-      "name": "head_raw",
+      "name": "hex_raw",
       "op": {
         "type": "Prism",
         "sides": 6,
-        "radius": 13.856406460551018,
-        "height": 14
+        "radius": 10.97,
+        "height": 8
       }
     },
     "2": {
       "id": 2,
-      "name": "head_rot",
+      "name": "hex_rot",
       "op": {
         "type": "Rotate",
         "child": 1,
         "angles": {
           "x": 0,
           "y": 0,
-          "z": 30
+          "z": 0
         }
       }
     },
     "3": {
       "id": 3,
-      "name": "head",
+      "name": "hex",
       "op": {
         "type": "Translate",
         "child": 2,
@@ -39,24 +39,24 @@
     },
     "4": {
       "id": 4,
-      "name": "shank_raw",
+      "name": "bore_raw",
       "op": {
         "type": "Cylinder",
-        "radius": 7,
-        "height": 46,
+        "radius": 5,
+        "height": 10,
         "segments": 64
       }
     },
     "5": {
       "id": 5,
-      "name": "shank",
+      "name": "bore",
       "op": {
         "type": "Translate",
         "child": 4,
         "offset": {
           "x": 0,
           "y": 0,
-          "z": 14
+          "z": -1
         }
       }
     },
@@ -64,7 +64,7 @@
       "id": 6,
       "name": "part",
       "op": {
-        "type": "Union",
+        "type": "Difference",
         "left": 3,
         "right": 5
       }

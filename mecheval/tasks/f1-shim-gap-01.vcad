@@ -1,0 +1,160 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "host_bottom_raw",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 50,
+          "y": 40,
+          "z": 6
+        }
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": "host_bottom",
+      "op": {
+        "type": "Translate",
+        "child": 1,
+        "offset": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        }
+      }
+    },
+    "3": {
+      "id": 3,
+      "name": "host_back_raw",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 50,
+          "y": 8,
+          "z": 8
+        }
+      }
+    },
+    "4": {
+      "id": 4,
+      "name": "host_back",
+      "op": {
+        "type": "Translate",
+        "child": 3,
+        "offset": {
+          "x": 0,
+          "y": 0,
+          "z": 6
+        }
+      }
+    },
+    "5": {
+      "id": 5,
+      "name": "host_top_raw",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 50,
+          "y": 40,
+          "z": 6
+        }
+      }
+    },
+    "6": {
+      "id": 6,
+      "name": "host_top",
+      "op": {
+        "type": "Translate",
+        "child": 5,
+        "offset": {
+          "x": 0,
+          "y": 0,
+          "z": 14
+        }
+      }
+    },
+    "7": {
+      "id": 7,
+      "name": "host_channel_1",
+      "op": {
+        "type": "Union",
+        "left": 2,
+        "right": 4
+      }
+    },
+    "8": {
+      "id": 8,
+      "name": "host_channel_2",
+      "op": {
+        "type": "Union",
+        "left": 7,
+        "right": 6
+      }
+    },
+    "9": {
+      "id": 9,
+      "name": "acc_shim_raw",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 48,
+          "y": 24,
+          "z": 7.8
+        }
+      }
+    },
+    "10": {
+      "id": 10,
+      "name": "acc_shim",
+      "op": {
+        "type": "Translate",
+        "child": 9,
+        "offset": {
+          "x": 1,
+          "y": 8,
+          "z": 6.1
+        }
+      }
+    }
+  },
+  "materials": {
+    "host": {
+      "name": "host",
+      "color": [
+        0.58,
+        0.61,
+        0.66
+      ],
+      "metallic": 0.2,
+      "roughness": 0.7,
+      "density": 1000,
+      "friction": 0.6
+    },
+    "accessory": {
+      "name": "accessory",
+      "color": [
+        0.82,
+        0.55,
+        0.22
+      ],
+      "metallic": 0.8,
+      "roughness": 0.4,
+      "density": 1000,
+      "friction": 0.6
+    }
+  },
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 8,
+      "material": "host"
+    },
+    {
+      "root": 10,
+      "material": "accessory"
+    }
+  ]
+}

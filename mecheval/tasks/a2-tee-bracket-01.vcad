@@ -1,0 +1,168 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "bar_raw",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 60,
+          "y": 20,
+          "z": 5
+        }
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": "bar",
+      "op": {
+        "type": "Translate",
+        "child": 1,
+        "offset": {
+          "x": -30,
+          "y": 0,
+          "z": 0
+        }
+      }
+    },
+    "3": {
+      "id": 3,
+      "name": "stem_raw",
+      "op": {
+        "type": "Cube",
+        "size": {
+          "x": 20,
+          "y": 30,
+          "z": 5
+        }
+      }
+    },
+    "4": {
+      "id": 4,
+      "name": "stem",
+      "op": {
+        "type": "Translate",
+        "child": 3,
+        "offset": {
+          "x": -10,
+          "y": 20,
+          "z": 0
+        }
+      }
+    },
+    "5": {
+      "id": 5,
+      "name": "body",
+      "op": {
+        "type": "Union",
+        "left": 2,
+        "right": 4
+      }
+    },
+    "6": {
+      "id": 6,
+      "name": "h_0_raw",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 7,
+        "segments": 64
+      }
+    },
+    "7": {
+      "id": 7,
+      "name": "h_0",
+      "op": {
+        "type": "Translate",
+        "child": 6,
+        "offset": {
+          "x": 0,
+          "y": 45,
+          "z": -1
+        }
+      }
+    },
+    "8": {
+      "id": 8,
+      "name": "h_1_raw",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 7,
+        "segments": 64
+      }
+    },
+    "9": {
+      "id": 9,
+      "name": "h_1",
+      "op": {
+        "type": "Translate",
+        "child": 8,
+        "offset": {
+          "x": -25,
+          "y": 10,
+          "z": -1
+        }
+      }
+    },
+    "10": {
+      "id": 10,
+      "name": "h_2_raw",
+      "op": {
+        "type": "Cylinder",
+        "radius": 2.5,
+        "height": 7,
+        "segments": 64
+      }
+    },
+    "11": {
+      "id": 11,
+      "name": "h_2",
+      "op": {
+        "type": "Translate",
+        "child": 10,
+        "offset": {
+          "x": 25,
+          "y": 10,
+          "z": -1
+        }
+      }
+    },
+    "12": {
+      "id": 12,
+      "name": "holes_1",
+      "op": {
+        "type": "Union",
+        "left": 7,
+        "right": 9
+      }
+    },
+    "13": {
+      "id": 13,
+      "name": "holes_2",
+      "op": {
+        "type": "Union",
+        "left": 12,
+        "right": 11
+      }
+    },
+    "14": {
+      "id": 14,
+      "name": "part",
+      "op": {
+        "type": "Difference",
+        "left": 5,
+        "right": 13
+      }
+    }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 14,
+      "material": "default"
+    }
+  ]
+}

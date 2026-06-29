@@ -1,0 +1,184 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "host_bot_flange_raw",
+      "op": {
+        "type": "Cylinder",
+        "radius": 20,
+        "height": 10,
+        "segments": 64
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": "host_bot_flange",
+      "op": {
+        "type": "Translate",
+        "child": 1,
+        "offset": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        }
+      }
+    },
+    "3": {
+      "id": 3,
+      "name": "host_waist_raw",
+      "op": {
+        "type": "Cylinder",
+        "radius": 10,
+        "height": 30,
+        "segments": 64
+      }
+    },
+    "4": {
+      "id": 4,
+      "name": "host_waist",
+      "op": {
+        "type": "Translate",
+        "child": 3,
+        "offset": {
+          "x": 0,
+          "y": 0,
+          "z": 10
+        }
+      }
+    },
+    "5": {
+      "id": 5,
+      "name": "host_top_flange_raw",
+      "op": {
+        "type": "Cylinder",
+        "radius": 20,
+        "height": 10,
+        "segments": 64
+      }
+    },
+    "6": {
+      "id": 6,
+      "name": "host_top_flange",
+      "op": {
+        "type": "Translate",
+        "child": 5,
+        "offset": {
+          "x": 0,
+          "y": 0,
+          "z": 40
+        }
+      }
+    },
+    "7": {
+      "id": 7,
+      "name": "host_shaft_1",
+      "op": {
+        "type": "Union",
+        "left": 2,
+        "right": 4
+      }
+    },
+    "8": {
+      "id": 8,
+      "name": "host_shaft_2",
+      "op": {
+        "type": "Union",
+        "left": 7,
+        "right": 6
+      }
+    },
+    "9": {
+      "id": 9,
+      "name": "acc_outer_raw",
+      "op": {
+        "type": "Cylinder",
+        "radius": 16,
+        "height": 28,
+        "segments": 64
+      }
+    },
+    "10": {
+      "id": 10,
+      "name": "acc_outer",
+      "op": {
+        "type": "Translate",
+        "child": 9,
+        "offset": {
+          "x": 0,
+          "y": 0,
+          "z": 10
+        }
+      }
+    },
+    "11": {
+      "id": 11,
+      "name": "acc_bore_raw",
+      "op": {
+        "type": "Cylinder",
+        "radius": 10.2,
+        "height": 30,
+        "segments": 64
+      }
+    },
+    "12": {
+      "id": 12,
+      "name": "acc_bore",
+      "op": {
+        "type": "Translate",
+        "child": 11,
+        "offset": {
+          "x": 0,
+          "y": 0,
+          "z": 9
+        }
+      }
+    },
+    "13": {
+      "id": 13,
+      "name": "acc_collar",
+      "op": {
+        "type": "Difference",
+        "left": 10,
+        "right": 12
+      }
+    }
+  },
+  "materials": {
+    "host": {
+      "name": "host",
+      "color": [
+        0.58,
+        0.61,
+        0.66
+      ],
+      "metallic": 0.2,
+      "roughness": 0.7,
+      "density": 1000,
+      "friction": 0.6
+    },
+    "accessory": {
+      "name": "accessory",
+      "color": [
+        0.82,
+        0.55,
+        0.22
+      ],
+      "metallic": 0.8,
+      "roughness": 0.4,
+      "density": 1000,
+      "friction": 0.6
+    }
+  },
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 8,
+      "material": "host"
+    },
+    {
+      "root": 13,
+      "material": "accessory"
+    }
+  ]
+}

@@ -1,0 +1,216 @@
+{
+  "version": "0.1",
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "host_neck_lower_raw",
+      "op": {
+        "type": "Cylinder",
+        "radius": 5,
+        "height": 20,
+        "segments": 64
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": "host_neck_lower",
+      "op": {
+        "type": "Translate",
+        "child": 1,
+        "offset": {
+          "x": 0,
+          "y": 0,
+          "z": 0
+        }
+      }
+    },
+    "3": {
+      "id": 3,
+      "name": "host_neck_bead_raw",
+      "op": {
+        "type": "Cylinder",
+        "radius": 6,
+        "height": 3,
+        "segments": 64
+      }
+    },
+    "4": {
+      "id": 4,
+      "name": "host_neck_bead",
+      "op": {
+        "type": "Translate",
+        "child": 3,
+        "offset": {
+          "x": 0,
+          "y": 0,
+          "z": 20
+        }
+      }
+    },
+    "5": {
+      "id": 5,
+      "name": "host_neck_stub_raw",
+      "op": {
+        "type": "Cylinder",
+        "radius": 5,
+        "height": 4,
+        "segments": 64
+      }
+    },
+    "6": {
+      "id": 6,
+      "name": "host_neck_stub",
+      "op": {
+        "type": "Translate",
+        "child": 5,
+        "offset": {
+          "x": 0,
+          "y": 0,
+          "z": 23
+        }
+      }
+    },
+    "7": {
+      "id": 7,
+      "name": "host_neck_1",
+      "op": {
+        "type": "Union",
+        "left": 2,
+        "right": 4
+      }
+    },
+    "8": {
+      "id": 8,
+      "name": "host_neck_2",
+      "op": {
+        "type": "Union",
+        "left": 7,
+        "right": 6
+      }
+    },
+    "9": {
+      "id": 9,
+      "name": "acc_body_raw",
+      "op": {
+        "type": "Cylinder",
+        "radius": 14,
+        "height": 12,
+        "segments": 64
+      }
+    },
+    "10": {
+      "id": 10,
+      "name": "acc_body",
+      "op": {
+        "type": "Translate",
+        "child": 9,
+        "offset": {
+          "x": 0,
+          "y": 0,
+          "z": 19
+        }
+      }
+    },
+    "11": {
+      "id": 11,
+      "name": "acc_main_bore_raw",
+      "op": {
+        "type": "Cylinder",
+        "radius": 12.25,
+        "height": 11,
+        "segments": 64
+      }
+    },
+    "12": {
+      "id": 12,
+      "name": "acc_main_bore",
+      "op": {
+        "type": "Translate",
+        "child": 11,
+        "offset": {
+          "x": 0,
+          "y": 0,
+          "z": 20.4
+        }
+      }
+    },
+    "13": {
+      "id": 13,
+      "name": "acc_lip_bore_raw",
+      "op": {
+        "type": "Cylinder",
+        "radius": 11.75,
+        "height": 1.6,
+        "segments": 64
+      }
+    },
+    "14": {
+      "id": 14,
+      "name": "acc_lip_bore",
+      "op": {
+        "type": "Translate",
+        "child": 13,
+        "offset": {
+          "x": 0,
+          "y": 0,
+          "z": 18.9
+        }
+      }
+    },
+    "15": {
+      "id": 15,
+      "name": "acc_cavity",
+      "op": {
+        "type": "Union",
+        "left": 12,
+        "right": 14
+      }
+    },
+    "16": {
+      "id": 16,
+      "name": "acc_cap",
+      "op": {
+        "type": "Difference",
+        "left": 10,
+        "right": 15
+      }
+    }
+  },
+  "materials": {
+    "host": {
+      "name": "host",
+      "color": [
+        0.58,
+        0.61,
+        0.66
+      ],
+      "metallic": 0.2,
+      "roughness": 0.7,
+      "density": 1000,
+      "friction": 0.6
+    },
+    "accessory": {
+      "name": "accessory",
+      "color": [
+        0.82,
+        0.55,
+        0.22
+      ],
+      "metallic": 0.8,
+      "roughness": 0.4,
+      "density": 1000,
+      "friction": 0.6
+    }
+  },
+  "part_materials": {},
+  "roots": [
+    {
+      "root": 8,
+      "material": "host"
+    },
+    {
+      "root": 16,
+      "material": "accessory"
+    }
+  ]
+}
