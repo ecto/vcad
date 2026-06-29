@@ -23,7 +23,7 @@ import {
   type PassKEntry,
   type RunMeta,
 } from "@mecheval/harness/pass_k";
-import { colors, copy, fonts, fontsHref, type TitleBlock } from "./tokens.js";
+import { copy, fonts, fontsHref, theme, type TitleBlock } from "./tokens.js";
 
 const PASS_K = 5;
 // Resolve REPO_ROOT relative to this script (mecheval/leaderboard/dist/build.js)
@@ -52,7 +52,7 @@ const RENDER_BIN =
 function renderVcad(vcadPath: string): string | null {
   if (!existsSync(RENDER_BIN)) return null;
   try {
-    return execFileSync(RENDER_BIN, [vcadPath], {
+    return execFileSync(RENDER_BIN, [vcadPath, "--transparent"], {
       encoding: "utf8",
       maxBuffer: 64 * 1024 * 1024,
       stdio: ["ignore", "pipe", "pipe"],
@@ -178,6 +178,101 @@ function modelDisplayName(modelId: string): string {
   return modelId;
 }
 
+/** Brand identity for a model id: a human label, the harness mode (mcp/
+ *  direct), and a brand colour for charts. Drives the leaderboard.
+ *  - "openai-direct-gpt-5"            → { label: "GPT-5", color: green }
+ *  - "claude-mcp-claude-opus-4-7"     → { label: "Claude Opus 4.7", mode: "mcp" }
+ *  - "wafer-direct-GLM-5.2"           → { label: "GLM-5.2", color: violet }
+ */
+function modelIdentity(modelId: string): {
+  label: string;
+  mode: "mcp" | "direct" | null;
+  color: string;
+  provider: "openai" | "anthropic" | "zhipu" | "google" | "meta" | null;
+} {
+  const lower = modelId.toLowerCase();
+  const provider =
+    lower.includes("gpt") || lower.startsWith("openai") ? "openai" as const
+    : lower.includes("claude") || lower.startsWith("anthropic") ? "anthropic" as const
+    : lower.includes("glm") || lower.startsWith("zhipu") ? "zhipu" as const
+    : lower.includes("gemini") || lower.startsWith("google") ? "google" as const
+    : lower.includes("llama") || lower.startsWith("meta") ? "meta" as const
+    : null;
+  // Brand-accurate accents.
+  const color =
+    provider === "openai" ? "#10a37f"
+    : provider === "anthropic" ? "#cc785c"
+    : provider === "zhipu" ? "#3859ff"
+    : provider === "google" ? "#1a73e8"
+    : provider === "meta" ? "#0866ff"
+    : "var(--accent)";
+
+  const tokens = modelId.split("-");
+  const mode = tokens.includes("mcp") ? "mcp" : tokens.includes("direct") ? "direct" : null;
+
+  if (modelId === "default-cube" || modelId === "DEFAULT_CUBE") {
+    return { label: "Default cube", mode, color: "var(--ink-faint)", provider: null };
+  }
+
+  // Drop provider + mode tokens, collapse a duplicated family token
+  // (e.g. "claude-direct-claude-opus" → "claude-opus"), and strip a
+  // trailing release-date stamp.
+  const drop = new Set(["openai", "anthropic", "google", "xai", "meta", "wafer", "zhipu", "direct", "mcp"]);
+  let parts = tokens.filter((t) => !drop.has(t.toLowerCase()));
+  parts = parts.filter((t, i) => i === 0 || t.toLowerCase() !== parts[i - 1].toLowerCase());
+  parts = parts.filter((t) => !/^\d{8}$/.test(t));
+
+  const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
+  const head = (parts[0] ?? "").toLowerCase();
+  let label: string;
+  if (head === "gpt") {
+    const rest = parts.slice(1);
+    const hasMini = rest[rest.length - 1]?.toLowerCase() === "mini";
+    const ver = (hasMini ? rest.slice(0, -1) : rest).join("-");
+    label = `GPT-${ver}${hasMini ? " mini" : ""}`.replace(/-$/, "");
+  } else if (head === "claude") {
+    // Drop the "Claude" prefix — the brand colour already signals the
+    // family, and the shorter "Opus 4.7" keeps labels on one line.
+    const tier = parts[1] ? cap(parts[1]) : "";
+    const ver = parts.slice(2).filter((x) => /^\d+$/.test(x)).join(".");
+    label = `${tier}${ver ? ` ${ver}` : ""}`.trim();
+  } else if (head === "glm") {
+    label = `GLM-${parts.slice(1).join(".")}`.replace(/-$/, "");
+  } else {
+    label = parts.map(cap).join(" ");
+  }
+
+  return { label: label || modelId, mode, color, provider };
+}
+
+/** An inline SVG mark for a model's provider, tinted to the brand colour
+ *  (via `fill:currentColor`, so callers set `color`). Returns a small
+ *  geometric glyph for known providers, else an empty string. */
+function providerMark(
+  provider: "openai" | "anthropic" | "zhipu" | "google" | "meta" | null,
+): string {
+  const open = `<svg class="brand-mark" viewBox="0 0 24 24" role="img" aria-hidden="true">`;
+  switch (provider) {
+    case "openai":
+      // OpenAI blossom mark.
+      return `${open}<path d="M22.28 9.82a5.98 5.98 0 0 0-.52-4.91 6.05 6.05 0 0 0-6.51-2.9A6.07 6.07 0 0 0 4.98 4.18a5.98 5.98 0 0 0-4 2.9 6.05 6.05 0 0 0 .75 7.1 5.98 5.98 0 0 0 .51 4.91 6.05 6.05 0 0 0 6.51 2.9A5.98 5.98 0 0 0 13.26 24a6.06 6.06 0 0 0 5.77-4.21 5.99 5.99 0 0 0 4-2.9 6.06 6.06 0 0 0-.75-7.07Zm-9.02 12.6a4.48 4.48 0 0 1-2.88-1.04l.14-.08 4.78-2.76a.79.79 0 0 0 .39-.68v-6.74l2.02 1.17a.07.07 0 0 1 .04.05v5.58a4.5 4.5 0 0 1-4.49 4.49ZM3.6 18.3a4.47 4.47 0 0 1-.53-3.01l.14.08 4.78 2.76a.77.77 0 0 0 .78 0l5.84-3.37v2.33a.08.08 0 0 1-.03.06L9.74 19.95a4.5 4.5 0 0 1-6.14-1.65ZM2.34 7.9a4.49 4.49 0 0 1 2.37-1.98v5.7a.77.77 0 0 0 .39.68l5.81 3.35-2.02 1.17a.08.08 0 0 1-.07 0l-4.83-2.79A4.5 4.5 0 0 1 2.34 7.9Zm16.6 3.85-5.84-3.39 2.02-1.16a.08.08 0 0 1 .07 0l4.83 2.79a4.49 4.49 0 0 1-.68 8.1v-5.67a.79.79 0 0 0-.4-.67Zm2.01-3.02-.14-.09-4.77-2.78a.78.78 0 0 0-.79 0L9.41 9.23V6.9a.07.07 0 0 1 .03-.06l4.83-2.79a4.5 4.5 0 0 1 6.68 4.66ZM8.31 12.86l-2.02-1.16a.08.08 0 0 1-.04-.06V6.07a4.5 4.5 0 0 1 7.38-3.45l-.14.08L8.7 5.46a.79.79 0 0 0-.39.68Zm1.1-2.37 2.6-1.5 2.61 1.5v3l-2.6 1.5-2.6-1.5Z"/></svg>`;
+    case "anthropic":
+      // Anthropic / Claude burst mark.
+      return `${open}<path d="M17.3 3.54h-3.67l6.7 16.92H24Zm-10.61 0L0 20.46h3.74l1.37-3.55h7l1.37 3.55h3.75L10.54 3.54Zm-.37 10.22 2.29-5.94 2.29 5.94Z"/></svg>`;
+    case "zhipu":
+      // GLM / Zhipu — angular Z lettermark.
+      return `${open}<path d="M5 3h14v3.4l-9.1 11.2H19V21H5v-3.4l9.1-11.2H5Z"/></svg>`;
+    case "google":
+      // Gemini — four-point spark.
+      return `${open}<path d="M12 2c.5 4.9 5.1 9.5 10 10-4.9.5-9.5 5.1-10 10-.5-4.9-5.1-9.5-10-10C6.9 11.5 11.5 6.9 12 2Z"/></svg>`;
+    case "meta":
+      // Llama / Meta — infinity-ish double loop, simplified to a spark.
+      return `${open}<circle cx="8" cy="12" r="5.2"/><circle cx="16" cy="12" r="5.2" fill="none" stroke="currentColor" stroke-width="2.6"/></svg>`;
+    default:
+      return "";
+  }
+}
+
 const fmtCompact = (n: number) =>
   n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M`
   : n >= 1_000 ? `${(n / 1_000).toFixed(1)}k`
@@ -189,382 +284,676 @@ function escape(s: string): string {
 
 function passKBadge(e: PassKEntry, k: number): string {
   if (e.pass_k === null) {
-    return `<span class="pending">${e.pass_count_in_recent_k}/${e.recent_k}*</span>`;
+    return `<span class="pill pill-pending">${e.pass_count_in_recent_k}/${e.recent_k}*</span>`;
   }
-  if (e.pass_k) return `<span class="pass">PASS</span>`;
-  return `<span class="fail">${e.pass_count_in_recent_k}/${e.recent_k}</span>`;
+  if (e.pass_k) return `<span class="pill pill-pass">PASS</span>`;
+  return `<span class="pill pill-fail">${e.pass_count_in_recent_k}/${e.recent_k}</span>`;
 }
 
 function outcomeBadge(o: string): string {
-  if (o === "pass") return `<span class="pass">pass</span>`;
-  if (o === "fail") return `<span class="fail">fail</span>`;
-  if (o === "error") return `<span class="fail">error</span>`;
-  return `<span class="pending">not impl</span>`;
+  if (o === "pass") return `<span class="pill pill-pass">pass</span>`;
+  if (o === "fail") return `<span class="pill pill-fail">fail</span>`;
+  if (o === "error") return `<span class="pill pill-fail">error</span>`;
+  return `<span class="pill pill-pending">not impl</span>`;
 }
 
 // ─── shared chrome ────────────────────────────────────────────────────────
 
+/** Emit semantic colour + system tokens as CSS custom properties for one
+ *  theme. Spacing, radius, shadow, and type scale are theme-independent and
+ *  declared once in :root below. */
+function cssVars(t: typeof theme.light | typeof theme.dark): string {
+  return [
+    `--ground:${t.ground}`,
+    `--surface:${t.surface}`,
+    `--sunken:${t.sunken}`,
+    `--ink:${t.ink}`,
+    `--ink-soft:${t.inkSoft}`,
+    `--ink-faint:${t.inkFaint}`,
+    `--rule:${t.rule}`,
+    `--rule-strong:${t.ruleStrong}`,
+    `--soft:${t.soft}`,
+    `--hover:${t.hover}`,
+    `--accent:${t.accent}`,
+    `--accent-deep:${t.accentDeep}`,
+    `--accent-soft:${t.accentSoft}`,
+    `--pass:${t.pass}`,
+    `--fail:${t.fail}`,
+    `--pending:${t.pending}`,
+    `--mat:${t.mat}`,
+    `--mat-rule:${t.matRule}`,
+    `--shadow:${t.shadow}`,
+    `--shadow-lift:${t.shadowLift}`,
+  ].join(";");
+}
+
 const STYLES = `
   :root {
-    --ink: ${colors.ink};
-    --ink-soft: ${colors.inkSoft};
-    --ground: ${colors.ground};
-    --rule: ${colors.rule};
-    --fail: ${colors.fail};
-    --pass: ${colors.pass};
-    --pending: ${colors.pending};
-    --soft: ${colors.soft};
-    --accent: ${colors.accent};
-    --serif: ${fonts.body};
+    ${cssVars(theme.light)};
+
+    --sans: ${fonts.body};
+    --mono: ${fonts.mono};
+
+    /* Spacing scale (4pt grid). */
+    --s1: 4px; --s2: 8px; --s3: 12px; --s4: 16px; --s5: 24px;
+    --s6: 32px; --s7: 48px; --s8: 64px; --s9: 96px;
+
+    --radius: 10px;
+    --radius-sm: 7px;
+    --radius-lg: 14px;
+    --maxw: 940px;
+    --ease: cubic-bezier(0.22, 0.61, 0.36, 1);
   }
 
-  /* Plain-HTML aesthetic: white page, black serif, blue underlined links. */
+  @media (prefers-color-scheme: dark) {
+    :root { ${cssVars(theme.dark)}; }
+  }
+
+  /* ─── reset & base ──────────────────────────────────────────────── */
   * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
   html, body {
     background: var(--ground);
     color: var(--ink);
-    font-family: var(--serif);
+    font-family: var(--sans);
     font-size: 16px;
-    line-height: 1.55;
+    line-height: 1.6;
     margin: 0;
     padding: 0;
+    font-feature-settings: "cv05" 1, "ss01" 1;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
   }
+  ::selection { background: color-mix(in srgb, var(--accent) 22%, transparent); }
+
   .sheet {
-    max-width: 900px;
-    margin: 32px auto;
-    padding: 0 28px 48px;
+    max-width: var(--maxw);
+    margin: 0 auto;
+    padding: var(--s9) var(--s6) var(--s8);
     position: relative;
-    background: var(--ground);
   }
-  /* Drafting corners disabled — plain-html mode. */
   .sheet::before, .sheet::after,
   .sheet > .corner-bl, .sheet > .corner-br { display: none; }
-
-  /* Title block hidden — plain-html mode. */
   .title-block { display: none; }
 
-  a { color: var(--accent); text-decoration: underline; }
-  a:visited { color: #551a8b; }
-
-  .crumb { font-size: 14px; margin: 0 0 14px; }
-  .crumb a { color: var(--accent); }
-
-  .tagline-main {
-    font-family: var(--serif);
-    font-size: 17px;
-    color: var(--ink);
-    margin: 6px 0 18px;
-    max-width: 640px;
-    line-height: 1.5;
+  /* ─── links ─────────────────────────────────────────────────────── */
+  a {
+    color: var(--accent);
+    text-decoration: none;
+    transition: color 0.15s var(--ease);
+  }
+  a:hover { color: var(--accent-deep); }
+  a:visited { color: var(--accent); }
+  :focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 3px;
+    border-radius: 4px;
   }
 
+  .crumb {
+    font-size: 13px; margin: 0 0 var(--s6);
+    color: var(--ink-faint);
+    letter-spacing: 0.01em;
+  }
+  .crumb a { color: var(--ink-soft); font-weight: 500; }
+  .crumb a:hover { color: var(--accent); }
+
+  /* ─── headings & editorial type ─────────────────────────────────── */
   h1 {
-    font-family: var(--serif);
-    font-size: 32px;
-    font-weight: bold;
-    margin: 0 0 6px;
+    font-family: var(--sans);
+    font-size: clamp(38px, 5vw, 52px);
+    font-weight: 600;
+    letter-spacing: -0.025em;
+    line-height: 1.05;
+    margin: 0 0 var(--s3);
     color: var(--ink);
   }
-  h1 .tier { font-size: 14px; color: var(--ink-soft); margin-left: 10px; vertical-align: middle; font-weight: normal; }
+  h1 .tier {
+    font-family: var(--mono);
+    font-size: 12px; color: var(--ink-faint);
+    margin-left: var(--s3); vertical-align: middle;
+    font-weight: 500; letter-spacing: 0;
+  }
 
   h2 {
-    font-family: var(--serif);
-    font-size: 22px;
-    font-weight: bold;
-    margin: 32px 0 10px;
-    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.09em;
+    margin: var(--s8) 0 var(--s4);
+    color: var(--ink-faint);
+    display: flex; align-items: center; gap: var(--s3);
+  }
+  h2::after {
+    content: ""; flex: 1; height: 1px;
+    background: var(--rule);
   }
 
-  .tagline { color: var(--ink-soft); margin-bottom: 20px; font-size: 14px; }
-  .meta { color: var(--ink-soft); font-size: 13px; margin: 16px 0 0; }
+  .tagline-main {
+    font-family: var(--sans);
+    font-size: clamp(17px, 2vw, 20px);
+    font-weight: 400;
+    color: var(--ink-soft);
+    margin: 0 0 var(--s5);
+    max-width: 36ch;
+    line-height: 1.5;
+  }
+  .tagline { color: var(--ink-soft); margin-bottom: var(--s5); font-size: 14px; }
+  .meta {
+    color: var(--ink-faint); font-size: 12px;
+    margin: var(--s5) 0 0; font-family: var(--mono);
+  }
 
-  /* Tables: classic plain-html with thin black rules. */
+  /* ─── data tables ───────────────────────────────────────────────── */
   table.board {
-    width: 100%; border-collapse: collapse;
-    font-size: 15px;
-    margin: 8px 0;
+    width: 100%; border-collapse: separate; border-spacing: 0;
+    font-size: 14.5px;
+    margin: var(--s2) 0;
   }
   table.board th {
-    text-align: right; padding: 6px 10px;
-    font-weight: bold;
-    border-bottom: 2px solid var(--ink);
+    text-align: right; padding: 10px 14px;
+    font-weight: 600; font-size: 11px;
+    text-transform: uppercase; letter-spacing: 0.06em;
+    border-bottom: 1px solid var(--rule);
+    color: var(--ink-faint);
+    white-space: nowrap;
+  }
+  table.board th:first-child, table.board th.left { text-align: left; padding-left: 0; }
+  table.board td {
+    padding: 11px 14px;
+    border-bottom: 1px solid var(--soft);
+    vertical-align: middle;
+  }
+  table.board td:first-child { padding-left: 0; }
+  table.board tbody tr:last-child td { border-bottom: none; }
+  table.board tbody tr { transition: background 0.12s var(--ease); }
+  table.board tbody tr:hover { background: var(--hover); }
+  td.id { white-space: nowrap; font-weight: 500; }
+  td.id a { font-family: var(--mono); font-size: 13px; font-weight: 500; }
+  td.num {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: "tnum" 1;
     color: var(--ink);
   }
-  table.board th:first-child,
-  table.board th.left { text-align: left; }
-  table.board td { padding: 5px 10px; border-bottom: 1px solid var(--soft); vertical-align: middle; }
-  table.board tr:last-child td { border-bottom: 1px solid var(--ink); }
-  td.id { white-space: nowrap; }
-  td.num { text-align: right; font-variant-numeric: tabular-nums; }
 
-  .pass { color: var(--pass); font-weight: bold; }
-  .fail { color: var(--fail); }
+  .pass { color: var(--pass); font-weight: 600; }
+  .fail { color: var(--fail); font-weight: 500; }
   .pending { color: var(--pending); }
 
-  .footnote { color: var(--ink-soft); margin-top: 14px; font-size: 14px; line-height: 1.5; }
-  .nodata { color: var(--ink-soft); padding: 16px 0; }
+  /* Status pills for the matrix + run rows. */
+  .pill {
+    display: inline-block; padding: 1px 8px;
+    border-radius: 999px; font-size: 11px; font-weight: 600;
+    letter-spacing: 0.04em; line-height: 1.6;
+  }
+  .pill-pass { color: var(--pass); background: color-mix(in srgb, var(--pass) 13%, transparent); }
+  .pill-fail { color: var(--fail); background: color-mix(in srgb, var(--fail) 12%, transparent); }
+  .pill-pending { color: var(--pending); background: color-mix(in srgb, var(--pending) 14%, transparent); }
+
+  .footnote {
+    color: var(--ink-soft); margin-top: var(--s4);
+    font-size: 13.5px; line-height: 1.6; max-width: 72ch;
+  }
+  .nodata { color: var(--ink-soft); padding: var(--s4) 0; }
 
   code {
-    font-family: "Courier New", Courier, monospace;
-    font-size: 0.92em;
-    background: transparent;
-    padding: 0;
+    font-family: var(--mono); font-size: 0.84em;
+    background: var(--sunken);
+    border: 1px solid var(--soft);
+    border-radius: 6px; padding: 1px 6px;
   }
   pre {
-    font-family: "Courier New", Courier, monospace;
-    background: transparent;
-    padding: 10px 12px; overflow-x: auto;
-    font-size: 13px; line-height: 1.5;
-    border: 1px solid var(--soft);
+    font-family: var(--mono);
+    background: var(--surface);
+    padding: var(--s4) var(--s5); overflow-x: auto;
+    font-size: 12.5px; line-height: 1.6;
+    border: 1px solid var(--rule);
+    border-radius: var(--radius);
     white-space: pre-wrap; word-break: break-word;
     color: var(--ink);
   }
+  pre code { background: none; border: none; padding: 0; font-size: 1em; }
 
-  details { margin: 8px 0; }
-  details summary { cursor: pointer; padding: 4px 0; color: var(--accent); }
+  details { margin: var(--s2) 0; }
+  details summary {
+    cursor: pointer; padding: var(--s1) 0; color: var(--accent);
+    font-weight: 500; font-size: 14px;
+  }
 
-  /* Matrix — plain table with thin black borders. */
-  .matrix table { border-collapse: collapse; margin: 8px 0; }
+  /* ─── the matrix: a gallery of reference renders ────────────────── */
+  .matrix table {
+    border-collapse: separate; border-spacing: 0; margin: var(--s2) 0;
+  }
   .matrix th, .matrix td {
-    border: 1px solid var(--ink); padding: 8px 10px; min-width: 110px; text-align: center;
-    font-size: 14px;
+    border-bottom: 1px solid var(--soft);
+    padding: 10px 12px; min-width: 104px; text-align: center;
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
   }
+  .matrix tbody tr:last-child td { border-bottom: none; }
   .matrix th {
-    font-weight: bold;
+    font-weight: 600; font-size: 11px;
+    text-transform: uppercase; letter-spacing: 0.05em;
+    color: var(--ink-faint);
+    border-bottom: 1px solid var(--rule);
   }
-  .matrix td.row-h { text-align: left; font-weight: normal; }
+  .matrix th a { font-family: var(--mono); font-size: 11px; color: var(--ink-soft); }
+  .matrix td.row-h { text-align: left; font-weight: 500; }
+  .matrix td.row-h a { font-family: var(--mono); font-size: 12px; }
   .matrix td.row-ref {
-    width: 110px; min-width: 110px; padding: 6px;
+    width: 116px; min-width: 116px; padding: 8px 12px 8px 0;
     vertical-align: middle;
-    position: sticky;
-    left: 0;
+    position: sticky; left: 0;
     background: var(--ground);
     z-index: 1;
   }
   .matrix th:first-child {
-    position: sticky;
-    left: 0;
+    position: sticky; left: 0;
     background: var(--ground);
     z-index: 2;
   }
-  /* border-collapse: collapse strips the borders off sticky cells
-     during scroll. Re-draw left + right with box-shadows that stay put. */
-  .matrix td.row-ref,
-  .matrix th:first-child {
-    box-shadow: 1px 0 0 0 var(--ink), -1px 0 0 0 var(--ink);
+  .matrix tbody tr:hover td { background: var(--hover); }
+  .matrix tbody tr:hover td.row-ref { background: var(--ground); }
+  .matrix .matrix-ref {
+    display: flex; align-items: center; justify-content: center;
+    height: 84px;
+    transition: opacity 0.16s var(--ease);
   }
-  .matrix .matrix-ref { display: flex; align-items: center; justify-content: center; height: 84px; }
-  .matrix .matrix-ref svg { width: 100px; height: 80px; }
-  .matrix .matrix-ref-empty { color: var(--ink-soft); font-size: 13px; text-align: center; }
+  .matrix .matrix-ref { opacity: 0.92; }
+  .matrix tbody tr:hover .matrix-ref { opacity: 1; }
+  .matrix .matrix-ref svg { width: 100px; height: 78px; }
+  .matrix .matrix-ref-empty { color: var(--ink-faint); font-size: 12px; text-align: center; }
   .matrix td a { display: block; }
+  .matrix td .pill { margin-bottom: 2px; }
+  .matrix td small { color: var(--ink-faint); font-size: 11px; }
 
-  /* Hero metric — single big percentage + sparkline above the stat row. */
-  .hero-metric {
-    display: flex;
+  /* ─── leaderboard column chart (vertical, brand-themed) ─────────── */
+  .vbars {
+    display: flex; align-items: flex-end;
+    gap: var(--s4);
+    padding: 30px 0 var(--s2);
+    margin: var(--s2) 0;
+    overflow-x: auto;
+  }
+  .vbar {
+    flex: 1 1 0; min-width: 76px;
+    display: flex; flex-direction: column; align-items: center;
+    text-decoration: none; color: inherit;
+  }
+  /* plot area — fixed-height reference for 0..1; bars share a bottom line */
+  .vbar-col {
+    width: 100%; height: 196px;
+    display: flex; flex-direction: column; justify-content: flex-end;
     align-items: center;
-    gap: 24px;
-    margin: 18px 0 10px;
-    padding: 14px 0;
-    border-top: 2px solid var(--ink);
+    overflow: visible;
+  }
+  .vbar-val {
+    font-variant-numeric: tabular-nums; font-weight: 600;
+    font-size: 14px; letter-spacing: -0.01em; color: var(--ink);
+    margin-bottom: 5px;
+  }
+  .vbar-fill {
+    width: 64%; max-width: 54px; min-height: 3px;
+    border-radius: 5px 5px 0 0;
+    background: var(--c, var(--accent));
+    opacity: 0.82;
+    transition: opacity 0.14s var(--ease), transform 0.14s var(--ease);
+    transform-origin: bottom;
+  }
+  .vbar:hover .vbar-fill { opacity: 1; transform: scaleY(1.015); }
+  .vbar.lead .vbar-fill {
+    opacity: 1;
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--c, var(--accent)) 55%, transparent),
+                0 6px 16px color-mix(in srgb, var(--c, var(--accent)) 30%, transparent);
+  }
+  .vbar-label {
+    margin-top: 11px; text-align: center; line-height: 1.25;
+    font-family: var(--mono); font-size: 11px; font-weight: 500;
+    color: var(--ink-soft);
+    max-width: 100%; word-break: break-word;
+    min-height: 30px;
+  }
+  .vbar:hover .vbar-label { color: var(--accent); }
+  .vbar.lead .vbar-label { color: var(--ink); font-weight: 700; }
+  .vbar-name {
+    display: inline-flex; align-items: center; gap: 5px;
+    justify-content: center; flex-wrap: wrap;
+  }
+  .brand-mark {
+    width: 13px; height: 13px; flex: none;
+    color: var(--c, var(--accent)); fill: currentColor;
+  }
+  .vbar-label .dot {
+    display: inline-block; width: 7px; height: 7px; border-radius: 50%;
+    background: var(--c, var(--accent)); vertical-align: baseline;
+  }
+  .vbar-label small {
+    display: block; margin-top: 3px;
+    font-size: 10px; color: var(--ink-faint); font-weight: 400;
+    font-variant-numeric: tabular-nums;
+  }
+  .vbar-label .mode {
+    display: inline-block; margin-top: 3px; font-size: 9px;
+    text-transform: uppercase; letter-spacing: 0.06em;
+    color: var(--ink-faint);
+  }
+
+  /* ─── hero ──────────────────────────────────────────────────────── */
+  .hero {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    align-items: center;
+    gap: var(--s7);
+    margin: 0 0 var(--s6);
+  }
+  .wordmark { display: flex; align-items: center; gap: 14px; }
+  .wordmark .dot {
+    width: 11px; height: 11px; border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 0 4px var(--accent-soft);
+    flex: none; margin-bottom: 2px;
+  }
+  .hero .mascot { align-self: center; }
+  .hero .mascot svg { height: 280px; width: auto; display: block; }
+
+  /* hero metric — a quiet figure, no frame */
+  .hero-metric {
+    display: flex; align-items: center; gap: var(--s6);
+    margin: var(--s6) 0 var(--s7);
+    padding: 0;
   }
   .hero-metric-num {
-    font-family: var(--serif);
-    font-size: 84px;
-    line-height: 1;
+    font-family: var(--sans);
+    font-size: clamp(52px, 7vw, 68px);
+    font-weight: 600; letter-spacing: -0.035em;
+    line-height: 0.94;
     color: var(--ink);
     font-variant-numeric: tabular-nums;
   }
   .hero-metric-meta { flex: 1; min-width: 0; }
   .hero-metric-label {
-    font-size: 14px;
-    color: var(--ink);
-    margin-bottom: 6px;
-    line-height: 1.4;
+    font-family: var(--sans); font-size: 14px;
+    color: var(--ink-soft); margin-bottom: var(--s2); line-height: 1.5;
   }
-  .hero-spark {
-    display: block;
-    color: var(--accent);
-  }
-  .hero-spark-single {
-    font-size: 13px;
-    color: var(--ink-soft);
-  }
+  .hero-spark { display: block; color: var(--accent); }
+  .hero-spark-single { font-size: 13px; color: var(--ink-faint); }
   .hero-metric-range {
-    font-size: 12px;
-    color: var(--ink-soft);
-    margin-top: 2px;
+    font-size: 11px; color: var(--ink-faint);
+    margin-top: var(--s1); font-family: var(--mono); letter-spacing: 0.02em;
   }
 
-  /* Stat row — plain serif numerals on rules. */
+  /* ─── stat strip — summary figures, no rules ────────────────────── */
   .stat-row {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    margin: 10px 0 28px;
-    border-top: 2px solid var(--ink);
-    border-bottom: 2px solid var(--ink);
+    display: grid; grid-template-columns: repeat(3, 1fr);
+    gap: var(--s7);
+    margin: 0 0 var(--s8);
   }
-  .stat-cell {
-    padding: 18px 22px 16px;
-    border-right: 1px solid var(--soft);
-  }
-  .stat-cell:last-child { border-right: none; }
+  .stat-cell { padding: 0; }
   .stat-num {
-    font-family: var(--serif);
-    font-size: 56px;
-    font-weight: normal;
-    line-height: 1;
-    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 40px; font-weight: 600; letter-spacing: -0.025em;
+    line-height: 1; color: var(--ink);
     font-variant-numeric: tabular-nums;
   }
-  .stat-num .stat-denom { color: var(--ink-soft); }
-  .stat-num.stat-num-text { font-size: 28px; }
+  .stat-num .stat-denom { color: var(--ink-faint); font-weight: 400; }
+  .stat-num.stat-num-text { font-size: 22px; }
   .stat-label {
-    font-family: var(--serif);
-    font-size: 14px;
-    color: var(--ink-soft);
-    margin-top: 8px;
+    font-size: 11px; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.06em;
+    color: var(--ink-faint); margin-top: var(--s3);
   }
+  .stat-label sup { letter-spacing: 0; }
 
-  /* Rank-1 row in the models table. */
-  table.board tbody tr.rank-1 td.id { font-weight: bold; }
-  table.board tbody tr.rank-1 td.id::before {
-    content: "▸ ";
-  }
+  /* leading row in the models table — text emphasis, no fill */
+  table.board tbody tr.rank-1 td.id a { font-weight: 700; color: var(--accent-deep); }
+  table.board tbody tr.rank-1 td.id::before { content: "▸ "; color: var(--accent); }
 
-  .checkrow { display: grid; grid-template-columns: 28px 200px 80px 1fr; gap: 10px; padding: 6px 0; border-bottom: 1px solid var(--soft); font-size: 14px; }
-  .checkrow .n { text-align: right; color: var(--ink-soft); }
-  .check-reason { color: var(--fail); font-size: 14px; margin-bottom: 4px; }
+  /* check / tool rows on detail pages */
+  .checkrow { display: grid; grid-template-columns: 28px 200px 80px 1fr; gap: var(--s3); padding: var(--s2) 0; border-bottom: 1px solid var(--soft); font-size: 14px; }
+  .checkrow .n { text-align: right; color: var(--ink-faint); font-family: var(--mono); font-size: 12px; }
+  .check-reason { color: var(--fail); font-size: 14px; margin-bottom: var(--s1); }
   .checkrow:last-child { border-bottom: none; }
-  .toolrow { display: grid; grid-template-columns: 28px 200px 70px 80px 1fr; gap: 10px; padding: 5px 0; border-bottom: 1px solid var(--soft); font-size: 14px; }
-  .toolrow .n { text-align: right; color: var(--ink-soft); }
-  .kvtable td { padding: 3px 12px 3px 0; vertical-align: top; font-size: 15px; }
-  .kvtable td.k { color: var(--ink-soft); white-space: nowrap; }
+  .toolrow { display: grid; grid-template-columns: 28px 200px 70px 80px 1fr; gap: var(--s3); padding: 6px 0; border-bottom: 1px solid var(--soft); font-size: 14px; }
+  .toolrow .n { text-align: right; color: var(--ink-faint); font-family: var(--mono); font-size: 12px; }
+  .kvtable td { padding: 4px 14px 4px 0; vertical-align: top; font-size: 14.5px; }
+  .kvtable td.k { color: var(--ink-faint); white-space: nowrap; }
 
-  /* Hero — wordmark + tagline on the left, robot mascot on the right. */
-  .hero {
-    display: grid;
-    grid-template-columns: 1fr auto;
-    align-items: end;
-    gap: 24px;
-    margin: 12px 0 4px;
-  }
-  .hero .mascot {
-    color: var(--ink);
-    margin-right: 4px;
-    align-self: end;
-  }
-  .hero .mascot svg {
-    height: 280px;
-    width: auto;
-    display: block;
-  }
-
+  /* ─── renders sit directly on the page — no frame, no fill ──────── */
   .run-render {
-    border: 1px solid var(--ink);
-    padding: 14px;
-    margin: 8px 0 4px;
-    display: flex;
-    justify-content: center;
+    padding: var(--s5) 0;
+    margin: var(--s2) 0 var(--s1);
+    display: flex; justify-content: center;
   }
-  .run-render svg {
-    max-height: 460px;
-    max-width: 100%;
-    display: block;
-  }
+  .run-render svg { max-height: 460px; max-width: 100%; display: block; }
 
-  /* Recent-attempts gallery on task pages. */
   .run-gallery {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-    gap: 10px;
-    margin: 8px 0 4px;
+    grid-template-columns: repeat(auto-fill, minmax(184px, 1fr));
+    gap: var(--s4); margin: var(--s2) 0 var(--s1);
   }
   .run-card {
     display: block;
-    border: 1px solid var(--ink);
-    text-decoration: none;
-    color: var(--ink);
+    text-decoration: none; color: var(--ink);
+    transition: opacity 0.16s var(--ease);
   }
+  .run-card:hover { opacity: 0.78; }
   .run-card-svg {
-    height: 160px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 10px;
+    height: 168px; display: flex; align-items: center; justify-content: center;
+    padding: var(--s3) 0;
     border-bottom: 1px solid var(--soft);
   }
   .run-card-svg svg { max-height: 140px; max-width: 100%; }
-  .run-card-empty { color: var(--ink-soft); font-size: 13px; }
+  .run-card-empty { color: var(--ink-faint); font-size: 13px; }
   .run-card-meta {
-    padding: 6px 8px;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    gap: 6px;
-    font-size: 14px;
+    padding: 9px 12px; display: flex; justify-content: space-between;
+    align-items: center; gap: var(--s2); font-size: 13.5px;
   }
-  .run-card-model {
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  }
+  .run-card-model { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); font-size: 12px; }
   .run-card-fail {
-    padding: 4px 8px 6px;
-    color: var(--fail);
-    font-size: 13px; line-height: 1.35;
-    border-top: 1px solid var(--soft);
+    padding: 6px 12px 9px; color: var(--fail);
+    font-size: 12.5px; line-height: 1.4; border-top: 1px solid var(--soft);
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
   .fail-summary { color: var(--fail); font-size: 14px; }
   .fail-summary code { color: var(--fail); }
-  .muted { color: var(--ink-soft); }
+  .muted { color: var(--ink-faint); }
 
-  /* Footer */
-  .footer {
-    border-top: 1px solid var(--ink);
-    margin-top: 40px;
-    padding: 14px 0 4px;
-    font-size: 14px;
-    color: var(--ink-soft);
-    display: flex;
-    justify-content: space-between;
-    flex-wrap: wrap;
-    gap: 16px;
+  /* ─── scatter chart ─────────────────────────────────────────────── */
+  .chart-frame {
+    padding: var(--s4) 0 var(--s2);
+    margin: var(--s2) 0;
   }
-  .footer a { color: var(--accent); }
-  .footer .stack b { color: var(--ink); font-weight: bold; }
+
+  /* ─── task page ─────────────────────────────────────────────────── */
+  .task-head { margin-bottom: var(--s5); }
+  .task-tags { margin-top: var(--s3); display: flex; flex-wrap: wrap; gap: var(--s4); }
+  .task-tags .tag {
+    font-family: var(--mono); font-size: 11.5px; color: var(--ink-faint);
+  }
+  .task-tags .tag::before { content: "#"; opacity: 0.45; }
+
+  .task-summary {
+    display: flex; flex-wrap: wrap; gap: var(--s8);
+    margin-top: var(--s6);
+  }
+  .task-summary .figure { display: flex; flex-direction: column; gap: var(--s1); }
+  .task-summary .figure b {
+    font-size: 26px; font-weight: 600; color: var(--ink);
+    font-variant-numeric: tabular-nums; letter-spacing: -0.015em; line-height: 1;
+  }
+  .task-summary .figure span {
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em;
+    color: var(--ink-faint);
+  }
+
+  .spec-grid {
+    display: grid; grid-template-columns: 1fr 0.82fr; gap: var(--s7);
+    align-items: start; margin-top: var(--s2);
+  }
+  .spec-label {
+    font-size: 11px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: 0.07em; color: var(--ink-faint); margin-bottom: var(--s4);
+  }
+  .prompt-prose {
+    font-size: 16px; line-height: 1.7; color: var(--ink);
+    margin: 0; max-width: 62ch;
+  }
+  .spec-expected .run-render { padding: 0; margin: 0; justify-content: center; }
+  .spec-expected .run-render svg { max-height: 360px; }
+
+  .check-list { margin: var(--s2) 0; }
+  .check-item {
+    display: grid; grid-template-columns: 24px 1fr; gap: var(--s3);
+    padding: 13px 0; border-bottom: 1px solid var(--soft); align-items: baseline;
+  }
+  .check-item:last-child { border-bottom: none; }
+  .check-num {
+    font-family: var(--mono); font-size: 12px; color: var(--ink-faint);
+    font-variant-numeric: tabular-nums; text-align: right;
+  }
+  .check-body { display: flex; flex-direction: column; gap: 4px; }
+  .check-title { font-weight: 600; font-size: 15px; color: var(--ink); }
+  .check-detail { font-family: var(--mono); font-size: 12.5px; color: var(--ink-soft); }
+
+  .mr-list { margin: var(--s2) 0; }
+  .mr {
+    display: grid; grid-template-columns: 16px 1fr auto auto;
+    align-items: center; gap: var(--s4);
+    padding: 12px 0; border-bottom: 1px solid var(--soft);
+    text-decoration: none; color: var(--ink);
+    transition: opacity 0.12s var(--ease);
+  }
+  .mr:last-child { border-bottom: none; }
+  .mr:hover { opacity: 0.62; }
+  .mr-mark { color: var(--c, var(--accent)); display: inline-flex; }
+  .mr-mark .brand-mark { width: 15px; height: 15px; }
+  .mr-mark .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--c, var(--accent)); display: inline-block; }
+  .mr-name { font-family: var(--mono); font-size: 13px; }
+  .mr-pass { font-variant-numeric: tabular-nums; font-size: 12px; color: var(--ink-faint); }
+  .mr-score {
+    font-variant-numeric: tabular-nums; font-weight: 600; font-size: 15px;
+    min-width: 3ch; text-align: right; color: var(--ink);
+  }
+  .mr.unsolved .mr-name, .mr.unsolved .mr-score { color: var(--ink-faint); }
+
+  /* ─── run detail page ───────────────────────────────────────────── */
+  .run-head { margin-bottom: var(--s5); }
+  .run-head h1 a { color: var(--ink); }
+  .run-head h1 a:hover { color: var(--accent); }
+  .run-verdict { margin-bottom: var(--s3); }
+  .verdict {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-size: 12px; font-weight: 700; letter-spacing: 0.04em;
+    text-transform: uppercase;
+    padding: 4px 11px 4px 9px; border-radius: 999px;
+  }
+  .verdict::before {
+    content: ""; width: 7px; height: 7px; border-radius: 50%;
+  }
+  .verdict-pass { color: var(--pass); background: color-mix(in srgb, var(--pass) 12%, transparent); }
+  .verdict-pass::before { background: var(--pass); }
+  .verdict-fail { color: var(--fail); background: color-mix(in srgb, var(--fail) 12%, transparent); }
+  .verdict-fail::before { background: var(--fail); }
+
+  .run-by {
+    display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2);
+    margin-top: var(--s3); font-size: 13px; color: var(--ink-soft);
+  }
+  .run-by-model { display: inline-flex; align-items: center; gap: 7px; }
+  .run-mark { color: var(--c, var(--accent)); display: inline-flex; }
+  .run-mark .brand-mark { width: 15px; height: 15px; }
+  .run-mark .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--c, var(--accent)); display: inline-block; }
+  .run-by-model a { font-weight: 600; color: var(--ink); }
+  .run-by-model a:hover { color: var(--accent); }
+  .run-id, .run-date { font-family: var(--mono); font-size: 12px; color: var(--ink-faint); }
+
+  /* run grading rows add a status column + a raw disclosure */
+  .check-item.run-check {
+    grid-template-columns: 24px 1fr auto;
+    align-items: start;
+  }
+  .check-status { align-self: center; }
+  .check-bad { color: var(--fail); }
+  .check-raw { grid-column: 2 / -1; margin-top: 2px; }
+  .check-raw summary { font-size: 12px; color: var(--ink-faint); }
+  .check-raw[open] summary { color: var(--accent); }
+
+  /* tool-call trace */
+  .tool-list { margin: var(--s2) 0; }
+  .tool-item {
+    display: grid; grid-template-columns: 28px 1fr auto auto;
+    align-items: baseline; gap: var(--s4);
+    padding: 10px 0; border-bottom: 1px solid var(--soft);
+  }
+  .tool-item:last-child { border-bottom: none; }
+  .tool-num { font-family: var(--mono); font-size: 12px; color: var(--ink-faint); text-align: right; font-variant-numeric: tabular-nums; }
+  .tool-name { font-family: var(--mono); font-size: 13px; color: var(--ink); }
+  .tool-kind { font-family: var(--mono); font-size: 11px; }
+  .tool-kind.ok { color: var(--pass); }
+  .tool-kind.bad { color: var(--fail); }
+  .tool-ms { font-variant-numeric: tabular-nums; font-size: 12px; color: var(--ink-faint); }
+  .tool-args { grid-column: 2 / -1; }
+  .tool-args summary { font-size: 12px; color: var(--ink-faint); }
+
+  /* ─── footer ────────────────────────────────────────────────────── */
+  .footer {
+    border-top: 1px solid var(--rule);
+    margin-top: var(--s8); padding: var(--s5) 0 var(--s1);
+    font-size: 13px; color: var(--ink-faint);
+    display: flex; justify-content: space-between; flex-wrap: wrap; gap: var(--s4);
+  }
+  .footer a { color: var(--ink-soft); font-weight: 500; }
+  .footer a:hover { color: var(--accent); }
+  .footer .stack b { color: var(--ink); font-weight: 700; }
 
   .scroll-x {
-    overflow-x: auto;
-    -webkit-overflow-scrolling: touch;
-    margin: 0 -4px;
-    padding: 0 4px;
+    overflow-x: auto; -webkit-overflow-scrolling: touch;
+    margin: 0 -4px; padding: 0 4px;
   }
   .scroll-x table { min-width: 560px; }
   .matrix.scroll-x table { min-width: 0; }
 
-  /* ─── mobile (< 720px) ─────────────────────────────────────────── */
-  @media (max-width: 720px) {
-    body { font-size: 15px; }
-    .sheet { padding: 0 14px 32px; margin: 16px auto; }
-    .hero {
-      grid-template-columns: 1fr;
-      gap: 12px;
-      align-items: start;
-    }
-    .hero .mascot { justify-self: center; margin-right: 0; }
-    .hero .mascot svg { height: 200px; }
-    .hero-metric { flex-direction: column; align-items: flex-start; gap: 10px; }
-    .hero-metric-num { font-size: 60px; }
-    .tagline-main { font-size: 16px; }
-    h1 { font-size: 28px; }
-    h2 { font-size: 19px; margin: 26px 0 8px; }
+  /* ─── motion: one quiet entrance, then stillness ────────────────── */
+  @keyframes rise {
+    from { opacity: 0; transform: translateY(10px); }
+    to   { opacity: 1; transform: none; }
+  }
+  .sheet > * { animation: rise 0.5s var(--ease) both; }
+  .sheet > *:nth-child(2) { animation-delay: 0.04s; }
+  .sheet > *:nth-child(3) { animation-delay: 0.08s; }
+  .sheet > *:nth-child(4) { animation-delay: 0.12s; }
+  .sheet > *:nth-child(n+5) { animation-delay: 0.16s; }
 
-    table.board th, table.board td { padding: 5px 7px; font-size: 13px; }
-    .matrix th, .matrix td { padding: 6px 7px; min-width: 84px; font-size: 13px; }
+  @media (prefers-reduced-motion: reduce) {
+    html { scroll-behavior: auto; }
+    .sheet > * { animation: none; }
+    * { transition: none !important; }
+  }
+
+  /* ─── mobile ────────────────────────────────────────────────────── */
+  @media (max-width: 760px) {
+    body { font-size: 15px; }
+    .sheet { padding: var(--s7) var(--s4) var(--s7); }
+    .hero { grid-template-columns: 1fr; gap: var(--s4); }
+    .hero .mascot { justify-self: center; }
+    .hero .mascot svg { height: 200px; }
+    .hero-metric { flex-direction: column; align-items: flex-start; gap: var(--s3); padding: var(--s5); }
+    h2 { margin: var(--s7) 0 var(--s4); }
+
+    .spec-grid { grid-template-columns: 1fr; gap: var(--s6); }
+    .task-summary { gap: var(--s5) var(--s6); }
+    .tool-item { grid-template-columns: 24px 1fr auto; }
+    .tool-item .tool-ms { grid-column: 2 / -1; text-align: left; }
+
+    table.board th, table.board td { padding: 10px 11px; font-size: 13px; }
+    .matrix th, .matrix td { padding: 7px 8px; min-width: 88px; font-size: 12.5px; }
 
     .checkrow {
       grid-template-columns: 24px 1fr;
-      grid-template-areas: "n head" ". status" ". detail";
-      gap: 4px 8px;
+      grid-template-areas: "n head" ". status" ". detail"; gap: 4px 8px;
     }
     .checkrow > :nth-child(1) { grid-area: n; }
     .checkrow > :nth-child(2) { grid-area: head; }
@@ -572,8 +961,7 @@ const STYLES = `
     .checkrow > :nth-child(4) { grid-area: detail; }
     .toolrow {
       grid-template-columns: 24px 1fr auto;
-      grid-template-areas: "n tool kind" ". time time" ". detail detail";
-      gap: 4px 8px;
+      grid-template-areas: "n tool kind" ". time time" ". detail detail"; gap: 4px 8px;
     }
     .toolrow > :nth-child(1) { grid-area: n; }
     .toolrow > :nth-child(2) { grid-area: tool; }
@@ -581,26 +969,18 @@ const STYLES = `
     .toolrow > :nth-child(4) { grid-area: time; text-align: left; }
     .toolrow > :nth-child(5) { grid-area: detail; }
 
-    .footer { flex-direction: column; gap: 6px; }
-
-    .stat-row { grid-template-columns: 1fr; }
-    .stat-cell {
-      border-right: none;
-      border-bottom: 1px solid var(--soft);
-      padding: 14px 6px;
-    }
-    .stat-cell:last-child { border-bottom: none; }
-    .stat-num { font-size: 40px; }
-    .stat-num.stat-num-text { font-size: 22px; }
-
-    .run-render { padding: 8px; }
+    .footer { flex-direction: column; gap: var(--s2); }
+    .stat-row { grid-template-columns: 1fr; gap: var(--s5); }
+    .stat-cell { padding: 0; }
+    .stat-num { font-size: 34px; }
+    .stat-num.stat-num-text { font-size: 21px; }
+    .run-render { padding: var(--s4); }
     .run-render svg { max-height: 320px; }
   }
 
-  @media (max-width: 380px) {
-    .sheet { padding: 0 10px 24px; }
-    .tagline-main { font-size: 15px; }
-    .hero .mascot svg { height: 160px; }
+  @media (max-width: 400px) {
+    .sheet { padding: var(--s6) var(--s4) var(--s6); }
+    .hero .mascot svg { height: 168px; }
   }
 `;
 
@@ -644,7 +1024,13 @@ function pageShell(
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="description" content="${escape(copy.tagline)}">
+<meta name="theme-color" content="${theme.light.ground}" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="${theme.dark.ground}" media="(prefers-color-scheme: dark)">
 <title>${escape(title)}</title>
+${fontsHref ? `<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="${fontsHref}">` : ""}
 <style>${STYLES}</style>
 </head>
 <body><main class="sheet">
@@ -657,22 +1043,50 @@ ${footerHtml()}
 
 // ─── tables ───────────────────────────────────────────────────────────────
 
+/** The headline leaderboard: a vertical column chart of mean score per
+ *  model, ranked, each bar themed by its provider's brand colour. Bars
+ *  scale to the full 0..1 score range so the field reads at a glance. */
+function modelBarChart(models: ModelSummary[], k: number): string {
+  const showLeader = models.length > 1;
+  const cols = models
+    .map((m, i) => {
+      const pct = Math.max(1.5, Math.min(100, m.mean_score * 100));
+      const passk =
+        m.pass_k_total > 0 ? `${m.pass_k_full}/${m.pass_k_total}` : "—";
+      const id = modelIdentity(m.model_id);
+      const meta = id.mode === "mcp" ? `${passk} · mcp` : passk;
+      const mark = providerMark(id.provider) || `<span class="dot"></span>`;
+      return `<a class="vbar${showLeader && i === 0 ? " lead" : ""}" href="model/${encodeURIComponent(m.model_id)}.html" style="--c:${id.color}" title="${escape(m.model_id)} · score ${fmtNum(m.mean_score)} · pass^${k} ${passk}">
+        <span class="vbar-col">
+          <span class="vbar-val">${fmtNum(m.mean_score)}</span>
+          <span class="vbar-fill" style="height:${pct.toFixed(1)}%"></span>
+        </span>
+        <span class="vbar-label"><span class="vbar-name">${mark}${escape(id.label)}</span><small>${meta}</small></span>
+      </a>`;
+    })
+    .join("");
+  return `<div class="vbars" role="list" aria-label="models ranked by mean score">${cols}</div>
+    <p class="footnote">Bar height is mean check-pass rate across the most recent ${k} attempts (0&ndash;1), coloured by provider. The figure under each bar is pass<sup>${k}</sup> &mdash; clean passes / pairs ready to score.</p>`;
+}
+
 function modelTable(models: ModelSummary[], k: number): string {
   // Highlight the leading model. Only meaningful with >1 row.
   const showLeader = models.length > 1;
   const rows = models
     .map(
-      (m, i) => `
+      (m, i) => {
+      const id = modelIdentity(m.model_id);
+      return `
       <tr class="${showLeader && i === 0 ? "rank-1" : ""}">
-        <td class="id"><a href="model/${encodeURIComponent(m.model_id)}.html">${escape(m.model_id)}</a></td>
+        <td class="id"><a href="model/${encodeURIComponent(m.model_id)}.html">${escape(id.label)}${id.mode === "mcp" ? ` <span class="muted">· mcp</span>` : ""}</a></td>
         <td class="num">${m.tasks_attempted}</td>
         <td class="num">${m.total_attempts}</td>
         <td class="num">${m.pass_k_total > 0 ? `${m.pass_k_full}/${m.pass_k_total}` : "—"}</td>
         <td class="num">${fmtNum(m.mean_score)}</td>
         <td class="num">${fmtCompact(m.mean_tokens)}</td>
         <td class="num">${fmtNum(m.mean_wallclock_sec, 1)}s</td>
-      </tr>`,
-    )
+      </tr>`;
+    })
     .join("");
   return `<div class="scroll-x"><table class="board">
     <thead><tr>
@@ -689,9 +1103,11 @@ function matrix(
   taskRefSvgs: Map<string, string | null>,
 ): string {
   const head = modelIds
-    .map(
-      (mid) => `<th><a href="model/${encodeURIComponent(mid)}.html">${escape(mid)}</a></th>`,
-    )
+    .map((mid) => {
+      const id = modelIdentity(mid);
+      const label = `${id.label}${id.mode === "mcp" ? " · mcp" : ""}`;
+      return `<th><a href="model/${encodeURIComponent(mid)}.html" title="${escape(mid)}">${escape(label)}</a></th>`;
+    })
     .join("");
   const body = taskIds
     .map((tid) => {
@@ -753,7 +1169,7 @@ function paretoScatter(
     PAD_L + ((Math.log10(Math.max(1, v)) - xLo) / (xHi - xLo)) * innerW;
   const yPos = (score: number) => PAD_T + (1 - score) * innerH;
 
-  const palette = ["#2c3e50", "#c0392b", "#27ae60", "#8e44ad", "#d68910"];
+  const palette = ["#2563eb", "#e0613a", "#1aa06d", "#8b5cf6", "#d4a017"];
   const modelIds = [...new Set(points.map((p) => p.model_id))];
   const colorOf = (m: string) =>
     palette[modelIds.indexOf(m) % palette.length];
@@ -776,8 +1192,8 @@ function paretoScatter(
           : p === 6 ? "1M"
           : `1e${p}`;
       return `
-        <line x1="${x}" y1="${PAD_T}" x2="${x}" y2="${H - PAD_B}" stroke="#dcd2c0" stroke-dasharray="2,3"/>
-        <text x="${x}" y="${H - PAD_B + 14}" text-anchor="middle" font-size="10" fill="#666">${lbl}</text>`;
+        <line x1="${x}" y1="${PAD_T}" x2="${x}" y2="${H - PAD_B}" style="stroke:var(--soft)" stroke-dasharray="2,4"/>
+        <text x="${x}" y="${H - PAD_B + 14}" text-anchor="middle" font-size="10" style="fill:var(--ink-faint)">${lbl}</text>`;
     })
     .join("");
 
@@ -785,8 +1201,8 @@ function paretoScatter(
     .map((v) => {
       const y = yPos(v);
       return `
-        <line x1="${PAD_L}" y1="${y}" x2="${W - PAD_R}" y2="${y}" stroke="#dcd2c0" stroke-dasharray="2,3"/>
-        <text x="${PAD_L - 8}" y="${y + 3}" text-anchor="end" font-size="10" fill="#666">${v.toFixed(2)}</text>`;
+        <line x1="${PAD_L}" y1="${y}" x2="${W - PAD_R}" y2="${y}" style="stroke:var(--soft)" stroke-dasharray="2,4"/>
+        <text x="${PAD_L - 8}" y="${y + 3}" text-anchor="end" font-size="10" style="fill:var(--ink-faint)">${v.toFixed(2)}</text>`;
     })
     .join("");
 
@@ -806,7 +1222,7 @@ function paretoScatter(
     frontier.length >= 2
       ? `<polyline points="${frontier
           .map((p) => `${xPos(xVal(p)).toFixed(1)},${yPos(p.mean_score_recent_k).toFixed(1)}`)
-          .join(" ")}" fill="none" stroke="${colors.accent}" stroke-width="1.6" stroke-dasharray="5,3" stroke-opacity="0.85"/>`
+          .join(" ")}" fill="none" style="stroke:var(--accent)" stroke-width="1.6" stroke-dasharray="5,3" stroke-opacity="0.85"/>`
       : "";
   const frontierIds = new Set(frontier.map((p) => `${p.model_id}::${p.task_id}`));
 
@@ -818,9 +1234,9 @@ function paretoScatter(
       const onFront = frontierIds.has(`${e.model_id}::${e.task_id}`);
       const tt = `${e.model_id} · ${e.task_id}\nscore=${e.mean_score_recent_k.toFixed(2)}\ntokens=${fmtCompact(e.mean_tokens_recent_k)} · wall=${e.mean_wallclock_recent_k.toFixed(1)}s\nattempts=${e.attempts}${onFront ? "\n(on pareto frontier)" : ""}`;
       const r = onFront ? 6.5 : 5;
-      const strokeColor = onFront ? colors.accent : color;
+      const strokeStyle = onFront ? "stroke:var(--accent)" : `stroke:${color}`;
       const strokeW = onFront ? 1.8 : 1.2;
-      return `<a href="run-link-${e.task_id}-${e.model_id}.html"><circle cx="${cx}" cy="${cy}" r="${r}" fill="${color}" fill-opacity="${onFront ? 0.85 : 0.55}" stroke="${strokeColor}" stroke-width="${strokeW}"><title>${escape(tt)}</title></circle></a>`;
+      return `<a href="run-link-${e.task_id}-${e.model_id}.html"><circle cx="${cx}" cy="${cy}" r="${r}" fill="${color}" fill-opacity="${onFront ? 0.9 : 0.62}" style="${strokeStyle}" stroke-width="${strokeW}"><title>${escape(tt)}</title></circle></a>`;
     })
     .join("");
 
@@ -836,23 +1252,23 @@ function paretoScatter(
       const cx = PAD_L + i * 250;
       return `<g transform="translate(${cx}, ${PAD_T - 12})">
         <circle cx="0" cy="0" r="4" fill="${colorOf(m)}"/>
-        <text x="9" y="3" font-size="10" fill="#333">${escape(m)}</text>
+        <text x="9" y="3" font-size="10" style="fill:var(--ink-soft)" font-family="${fonts.mono}">${escape(m)}</text>
       </g>`;
     })
     .join("");
 
   const xLabel = xKey === "tokens" ? "tokens (log)" : "wall-clock seconds (log)";
 
-  return `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="${xLabel} vs score scatter" style="border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule); background: rgba(0,0,0,0.015);">
+  return `<div class="chart-frame"><svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="${xLabel} vs score scatter">
     ${yAxisLines}
     ${xAxisLines}
-    <rect x="${PAD_L}" y="${PAD_T}" width="${innerW}" height="${innerH}" fill="none" stroke="#111"/>
-    <text x="${PAD_L + innerW / 2}" y="${H - 4}" text-anchor="middle" font-size="10" fill="#333">${xLabel}</text>
-    <text transform="translate(${PAD_L - 38}, ${PAD_T + innerH / 2}) rotate(-90)" text-anchor="middle" font-size="10" fill="#333">score</text>
+    <rect x="${PAD_L}" y="${PAD_T}" width="${innerW}" height="${innerH}" fill="none" style="stroke:var(--rule)"/>
+    <text x="${PAD_L + innerW / 2}" y="${H - 4}" text-anchor="middle" font-size="10" style="fill:var(--ink-soft)">${xLabel}</text>
+    <text transform="translate(${PAD_L - 38}, ${PAD_T + innerH / 2}) rotate(-90)" text-anchor="middle" font-size="10" style="fill:var(--ink-soft)">score</text>
     ${legend}
     ${frontierPath}
     ${dotsLinked}
-  </svg>`;
+  </svg></div>`;
 }
 
 function runsTable(runs: RunMeta[], pageKind: "task" | "model"): string {
@@ -865,8 +1281,8 @@ function runsTable(runs: RunMeta[], pageKind: "task" | "model"): string {
         ? `<a href="../model/${encodeURIComponent(r.model_id)}.html">${escape(r.model_id)}</a>`
         : `<a href="../task/${encodeURIComponent(r.task_id)}.html">${escape(r.task_id)}</a>`;
       const status = r.passed
-        ? `<span class="pass">PASS</span>`
-        : `<span class="fail">fail</span>`;
+        ? `<span class="pill pill-pass">PASS</span>`
+        : `<span class="pill pill-fail">fail</span>`;
       const failCell = r.first_fail
         ? `<span class="fail-summary"><code>${escape(r.first_fail.type)}</code> · ${escape(r.first_fail.reason)}</span>`
         : `<span class="muted">—</span>`;
@@ -998,7 +1414,7 @@ function indexPage(
   const passKAchieved = rankedModels.reduce((a, m) => a + m.pass_k_full, 0);
   const passKReady = rankedModels.reduce((a, m) => a + m.pass_k_total, 0);
   const leader = rankedModels[0];
-  const leaderName = leader ? modelDisplayName(leader.model_id) : "—";
+  const leaderName = leader ? modelIdentity(leader.model_id).label : "—";
 
   // Industry pass^k metric, with a daily time series for the sparkline.
   // Each run's date is parsed from the run_id prefix (YYYYMMDDTHHmmssZ).
@@ -1030,7 +1446,7 @@ function indexPage(
   const body = `
     <div class="hero">
       <div>
-        <h1>${escape(copy.brand)}</h1>
+        <div class="wordmark"><span class="dot"></span><h1>${escape(copy.brand)}</h1></div>
         <p class="tagline-main">${escape(copy.tagline)}</p>
         ${heroMetricHtml}
       </div>
@@ -1040,7 +1456,9 @@ function indexPage(
     ${rankedModels.length ? statRowHtml : ""}
 
     <h2>Models</h2>
-    ${rankedModels.length ? modelTable(rankedModels, k) : `<div class="nodata">no models yet</div>`}
+    ${rankedModels.length ? modelBarChart(rankedModels, k) : `<div class="nodata">no models yet</div>`}
+    ${rankedModels.length ? `<details style="margin-top: 18px;"><summary>Full table — tasks, runs, tokens, wall-clock</summary>
+    <div style="margin-top: 12px;">${modelTable(rankedModels, k)}</div></details>` : ""}
 
     <h2>Task &times; model matrix</h2>
     ${taskIds.length && modelIds.length ? matrix(taskIds, modelIds, byPair, k, taskRefSvgs) : `<div class="nodata">no run blobs found under <code>mecheval/runs/</code></div>`}
@@ -1114,6 +1532,79 @@ function recentAttemptsGallery(
     <div class="run-gallery">${cards}</div>`;
 }
 
+/** Compact number: integers stay whole, otherwise 1–2 decimals. */
+function fmtN(n: number): string {
+  if (Number.isInteger(n)) return String(n);
+  return Math.abs(n) >= 100 ? n.toFixed(1) : n.toFixed(2);
+}
+/** Format a numeric vector "x, y, z". */
+function fmtVec(a: unknown): string {
+  return Array.isArray(a)
+    ? a.map((x) => (typeof x === "number" ? fmtN(x) : String(x))).join(", ")
+    : String(a);
+}
+/** Turn a grader check object into a human-readable title + detail line,
+ *  so the task page reads as a spec rather than a JSON dump. Unknown
+ *  check types fall back to their name. */
+function describeCheck(
+  c: Record<string, unknown> & { type: string },
+): { title: string; detail: string } {
+  const n = (k: string) => (typeof c[k] === "number" ? fmtN(c[k] as number) : undefined);
+  switch (c.type) {
+    case "valid_solid":
+      return { title: "Valid solid", detail: "watertight, manifold body" };
+    case "bbox":
+      return {
+        title: "Bounding box",
+        detail: `[${fmtVec(c.min)}] → [${fmtVec(c.max)}] mm · ±${n("tolerance_mm")} mm`,
+      };
+    case "mass_props": {
+      const bits: string[] = [];
+      if (c.volume_mm3 != null) bits.push(`volume ${fmtN(c.volume_mm3 as number)} mm³`);
+      if (c.center_of_mass != null) bits.push(`COM [${fmtVec(c.center_of_mass)}]`);
+      if (c.tolerance_pct != null) bits.push(`±${n("tolerance_pct")}%`);
+      return { title: "Mass properties", detail: bits.join(" · ") };
+    }
+    case "hole_count":
+      return {
+        title: `Hole count · Ø${n("diameter_mm")} mm`,
+        detail: `${c.expected} expected · Ø ±${n("diameter_tolerance_mm")} mm`,
+      };
+    case "hole_positions": {
+      const cnt = Array.isArray(c.positions) ? c.positions.length : 0;
+      return {
+        title: `Hole positions · Ø${n("diameter_mm")} mm`,
+        detail: `${cnt} location${cnt === 1 ? "" : "s"} · ±${n("tolerance_mm")} mm`,
+      };
+    }
+    default:
+      return { title: c.type.replace(/_/g, " "), detail: "" };
+  }
+}
+
+/** Per-model results for a single task: pass count, best score, solved. */
+function taskModelResults(runs: RunMeta[]): Array<{
+  modelId: string;
+  passes: number;
+  total: number;
+  best: number;
+  solved: boolean;
+}> {
+  const byModel = new Map<string, RunMeta[]>();
+  for (const r of runs) {
+    const arr = byModel.get(r.model_id) ?? [];
+    arr.push(r);
+    byModel.set(r.model_id, arr);
+  }
+  return [...byModel.entries()]
+    .map(([modelId, rs]) => {
+      const passes = rs.filter((r) => r.passed).length;
+      const best = rs.reduce((m, r) => Math.max(m, r.score), 0);
+      return { modelId, passes, total: rs.length, best, solved: passes > 0 };
+    })
+    .sort((a, b) => Number(b.solved) - Number(a.solved) || b.best - a.best || a.modelId.localeCompare(b.modelId));
+}
+
 function taskPage(
   spec: TaskSpec | null,
   taskId: string,
@@ -1130,51 +1621,104 @@ function taskPage(
       { drawing: copy.brand, sheet: `TASK · ${taskId}`, scale: "—", project: taskId },
     );
   }
-  const checksHtml = spec.checks
-    .map(
-      (c, i) => `
-      <div class="checkrow">
-        <div class="n">${i}</div>
-        <div><code>${escape(c.type)}</code></div>
-        <div></div>
-        <div><pre style="margin: 0; padding: 6px 8px; font-size: 11px;">${escape(JSON.stringify(c, null, 2))}</pre></div>
-      </div>`,
-    )
-    .join("");
-  const acHtml = spec.anti_cheese && Object.keys(spec.anti_cheese).length
-    ? `<pre>${escape(JSON.stringify(spec.anti_cheese, null, 2))}</pre>`
-    : `<div class="nodata">none</div>`;
-  const limitsHtml = spec.limits && Object.keys(spec.limits).length
-    ? `<pre>${escape(JSON.stringify(spec.limits, null, 2))}</pre>`
-    : `<div class="nodata">none</div>`;
-  const refHtml = refSvg
-    ? `<h2>Expected</h2>
-       <div class="run-render">${refSvg}</div>`
+  // ── per-task model results (a mini leaderboard for this task) ──
+  const results = taskModelResults(runsForTask);
+  const solvedCount = results.filter((r) => r.solved).length;
+  const meanBest =
+    results.length ? results.reduce((a, r) => a + r.best, 0) / results.length : 0;
+
+  const resultsHtml = results.length
+    ? `<div class="mr-list">${results
+        .map((r) => {
+          const id = modelIdentity(r.modelId);
+          const mark = providerMark(id.provider) || `<span class="dot"></span>`;
+          return `<a class="mr${r.solved ? "" : " unsolved"}" href="../model/${encodeURIComponent(r.modelId)}.html" style="--c:${id.color}">
+            <span class="mr-mark">${mark}</span>
+            <span class="mr-name">${escape(id.label)}${id.mode === "mcp" ? ` <span class="muted">· mcp</span>` : ""}</span>
+            <span class="mr-pass">${r.passes}/${r.total} pass</span>
+            <span class="mr-score">${fmtNum(r.best)}</span>
+          </a>`;
+        })
+        .join("")}</div>`
+    : `<div class="nodata">no runs yet for this task</div>`;
+
+  // ── grading: human-readable checks + a collapsed raw spec ──
+  const checksHtml = spec.checks.length
+    ? `<div class="check-list">${spec.checks
+        .map((c, i) => {
+          const d = describeCheck(c);
+          return `<div class="check-item">
+            <span class="check-num">${i + 1}</span>
+            <span class="check-body">
+              <span class="check-title">${escape(d.title)}</span>
+              ${d.detail ? `<span class="check-detail">${escape(d.detail)}</span>` : ""}
+            </span>
+          </div>`;
+        })
+        .join("")}</div>`
+    : `<div class="nodata">no checks</div>`;
+
+  const rawSpec = {
+    checks: spec.checks,
+    ...(spec.anti_cheese && Object.keys(spec.anti_cheese).length ? { anti_cheese: spec.anti_cheese } : {}),
+    ...(spec.limits && Object.keys(spec.limits).length ? { limits: spec.limits } : {}),
+  };
+  const constraints: string[] = [];
+  if (spec.anti_cheese && Object.keys(spec.anti_cheese).length) {
+    constraints.push(`${Object.keys(spec.anti_cheese).length} anti-cheese rule${Object.keys(spec.anti_cheese).length === 1 ? "" : "s"}`);
+  }
+  if (spec.limits && Object.keys(spec.limits).length) {
+    constraints.push(`limits: ${Object.keys(spec.limits).join(", ")}`);
+  }
+
+  const tagsHtml = (spec.tags ?? []).length
+    ? `<div class="task-tags">${(spec.tags ?? [])
+        .map((t) => `<span class="tag">${escape(t)}</span>`)
+        .join("")}</div>`
     : "";
+
+  const expectedHtml = refSvg
+    ? `<div class="run-render">${refSvg}</div>`
+    : `<div class="nodata">no reference render</div>`;
+
   const body = `
-    <h1>${escape(spec.title)} <span class="tier">${escape(spec.suite)} · ${escape(spec.tier)} · ${escape(taskId)}</span></h1>
-    <div class="tagline">${escape((spec.tags ?? []).join(" · "))}</div>
+    <div class="task-head">
+      <h1>${escape(spec.title)} <span class="tier">${escape(spec.suite)} · ${escape(spec.tier)} · ${escape(taskId)}</span></h1>
+      ${tagsHtml}
+      <div class="task-summary">
+        <div class="figure"><b>${solvedCount} / ${results.length || 0}</b><span>models solve it</span></div>
+        <div class="figure"><b>${results.length ? fmtNum(meanBest) : "—"}</b><span>mean best score</span></div>
+        <div class="figure"><b>${spec.checks.length}</b><span>graded checks</span></div>
+      </div>
+    </div>
 
-    ${refHtml}
+    <h2>Specification</h2>
+    <div class="spec-grid">
+      <div class="spec-prompt">
+        <div class="spec-label">Prompt</div>
+        <p class="prompt-prose">${escape(spec.prompt)}</p>
+      </div>
+      <div class="spec-expected">
+        <div class="spec-label">Expected result</div>
+        ${expectedHtml}
+      </div>
+    </div>
 
-    <h2>Prompt</h2>
-    <pre>${escape(spec.prompt)}</pre>
+    <h2>What's graded</h2>
+    ${checksHtml}
+    ${constraints.length ? `<p class="footnote">${constraints.join(" · ")}.</p>` : ""}
+    <details style="margin-top: 12px;"><summary>Raw spec (checks${constraints.length ? ", anti-cheese, limits" : ""})</summary>
+    <pre>${escape(JSON.stringify(rawSpec, null, 2))}</pre></details>
 
-    <h2>Checks</h2>
-    ${checksHtml || `<div class="nodata">no checks</div>`}
-
-    <h2>Anti-cheese</h2>
-    ${acHtml}
-
-    <h2>Limits</h2>
-    ${limitsHtml}
+    <h2>Model results</h2>
+    ${resultsHtml}
 
     ${recentAttemptsGallery(runsForTask, runSvgs)}
 
-    <h2>Runs (${runsForTask.length})</h2>
-    ${runsForTask.length
+    <details style="margin-top: 22px;"><summary>All runs (${runsForTask.length})</summary>
+    <div style="margin-top: 12px;">${runsForTask.length
       ? runsTable(runsForTask, "task")
-      : `<div class="nodata">no runs yet for this task</div>`}
+      : `<div class="nodata">no runs yet for this task</div>`}</div></details>
   `;
   return pageShell(
     `mecheval — ${taskId}`,
@@ -1211,109 +1755,168 @@ function modelPage(modelId: string, runsForModel: RunMeta[]): string {
   );
 }
 
-function runPage(blob: FullBlob, vcad: string | null, vcadSvg: string | null): string {
+/** Pull a short, human-readable measured value out of a run check's
+ *  details, to sit beside the spec target ("got: …"). Best-effort. */
+function measuredValue(c: { type: string; details: Record<string, unknown> }): string | null {
+  const d = c.details ?? {};
+  const g = (k: string) => (d[k] != null ? d[k] : undefined);
+  switch (c.type) {
+    case "bbox": {
+      const lo = g("actual_min") ?? g("min");
+      const hi = g("actual_max") ?? g("max");
+      if (lo && hi) return `[${fmtVec(lo)}] → [${fmtVec(hi)}] mm`;
+      return null;
+    }
+    case "mass_props": {
+      const v = g("actual_volume_mm3") ?? g("volume_mm3");
+      return typeof v === "number" ? `volume ${fmtN(v)} mm³` : null;
+    }
+    case "hole_count": {
+      const n = g("actual") ?? g("found") ?? g("count");
+      return typeof n === "number" ? `${n} found` : null;
+    }
+    default:
+      return null;
+  }
+}
+
+function runPage(
+  blob: FullBlob,
+  vcad: string | null,
+  vcadSvg: string | null,
+  spec: TaskSpec | null,
+  refSvg: string | null,
+): string {
   const taskId = blob.task_id;
   const modelId = blob.model.id;
   const runId = blob.run_id;
+  const id = modelIdentity(modelId);
+  const mark = providerMark(id.provider) || `<span class="dot" style="--c:${id.color}"></span>`;
+  const passed = blob.summary.passed;
+  const dateStr = blob.timestamps.started_at.slice(0, 16).replace("T", " ");
+  const title = spec?.title ?? taskId;
 
-  const summaryHtml = `
-    <table class="kvtable">
-      <tr><td class="k">status</td><td>${blob.summary.passed ? `<span class="pass">PASS</span>` : `<span class="fail">fail</span>`}</td></tr>
-      <tr><td class="k">score</td><td>${fmtNum(blob.summary.score)} (${blob.summary.checks_passed}/${blob.summary.checks_total})</td></tr>
-      <tr><td class="k">submission</td><td>${escape(blob.submission_kind)}</td></tr>
-      <tr><td class="k">model</td><td>${escape(modelId)} (${escape(blob.model.provider)})</td></tr>
-      <tr><td class="k">started</td><td>${escape(blob.timestamps.started_at)}</td></tr>
-      <tr><td class="k">ended</td><td>${escape(blob.timestamps.ended_at)}</td></tr>
-      <tr><td class="k">tokens</td><td>${blob.trace.tokens.input.toLocaleString()} in · ${blob.trace.tokens.output.toLocaleString()} out · ${blob.trace.tokens.total.toLocaleString()} total</td></tr>
-      <tr><td class="k">wallclock</td><td>${fmtNum(blob.trace.wallclock_sec, 1)}s</td></tr>
-      <tr><td class="k">tool calls</td><td>${blob.trace.tool_calls.length}</td></tr>
-      <tr><td class="k">task hash</td><td><code>${escape(blob.task_sha256.slice(0, 16))}…</code></td></tr>
-      <tr><td class="k">vcad hash</td><td><code>${escape(blob.output.vcad_sha256.slice(0, 16))}…</code></td></tr>
-    </table>`;
+  // ── verdict + summary figures ──
+  const verdictHtml = passed
+    ? `<span class="verdict verdict-pass">Pass</span>`
+    : `<span class="verdict verdict-fail">Fail</span>`;
+  const summaryFigures = `
+    <div class="task-summary">
+      <div class="figure"><b>${blob.summary.checks_passed}<span class="muted"> / ${blob.summary.checks_total}</span></b><span>checks passed</span></div>
+      <div class="figure"><b>${fmtNum(blob.summary.score)}</b><span>score</span></div>
+      <div class="figure"><b>${fmtCompact(blob.trace.tokens.total)}</b><span>tokens</span></div>
+      <div class="figure"><b>${fmtNum(blob.trace.wallclock_sec, 1)}s</b><span>wall-clock</span></div>
+      <div class="figure"><b>${blob.trace.tool_calls.length}</b><span>tool calls</span></div>
+    </div>`;
 
-  const checksHtml = blob.checks
-    .map((c) => {
-      const summary = summarizeCheckFailure({
-        type: c.type,
-        result: c.result,
-        details: c.details,
-      });
-      const reasonHtml = summary
-        ? `<div class="check-reason">${escape(summary.reason)}</div>`
-        : "";
-      return `
-      <div class="checkrow">
-        <div class="n">${c.n}</div>
-        <div><code>${escape(c.type)}</code></div>
-        <div>${outcomeBadge(c.result)}</div>
-        <div>
-          ${reasonHtml}
-          <details>
-            <summary>params + details</summary>
-            <pre>params: ${escape(JSON.stringify(c.params, null, 2))}\n\ndetails: ${escape(JSON.stringify(c.details, null, 2))}</pre>
-          </details>
-        </div>
-      </div>`;
-    })
-    .join("");
+  // ── expected vs built renders, side by side ──
+  const builtHtml = vcadSvg
+    ? `<div class="run-render">${vcadSvg}</div>`
+    : `<div class="nodata">no render — vcad-render produced no geometry for this output</div>`;
+  const expectedCol = refSvg
+    ? `<div class="run-render">${refSvg}</div>`
+    : `<div class="nodata">no reference render</div>`;
 
+  // ── grading: merge spec targets with this run's results ──
+  const checksHtml = blob.checks.length
+    ? `<div class="check-list">${blob.checks
+        .map((c) => {
+          const specCheck = spec?.checks?.[c.n];
+          const desc = describeCheck(
+            (specCheck as (Record<string, unknown> & { type: string })) ?? { type: c.type },
+          );
+          const ok = c.result === "pass";
+          const statusPill = ok
+            ? `<span class="pill pill-pass">pass</span>`
+            : c.result === "fail"
+              ? `<span class="pill pill-fail">fail</span>`
+              : `<span class="pill pill-pending">${escape(c.result.replace("_", " "))}</span>`;
+          const reason = summarizeCheckFailure({ type: c.type, result: c.result, details: c.details });
+          const got = measuredValue(c);
+          const note = !ok && reason
+            ? `<span class="check-detail check-bad">${escape(reason.reason)}</span>`
+            : got
+              ? `<span class="check-detail">got: ${escape(got)}</span>`
+              : "";
+          return `<div class="check-item run-check">
+            <span class="check-num">${c.n + 1}</span>
+            <span class="check-body">
+              <span class="check-title">${escape(desc.title)}</span>
+              ${desc.detail ? `<span class="check-detail">${escape(desc.detail)}</span>` : ""}
+              ${note}
+            </span>
+            <span class="check-status">${statusPill}</span>
+            <details class="check-raw"><summary>raw</summary><pre>params: ${escape(JSON.stringify(c.params, null, 2))}\n\ndetails: ${escape(JSON.stringify(c.details, null, 2))}</pre></details>
+          </div>`;
+        })
+        .join("")}</div>`
+    : `<div class="nodata">no checks</div>`;
+
+  // ── tool-call trace ──
   const traceHtml = blob.trace.tool_calls.length
-    ? blob.trace.tool_calls
+    ? `<div class="tool-list">${blob.trace.tool_calls
         .map(
-          (tc) => `
-      <div class="toolrow">
-        <div class="n">${tc.n}</div>
-        <div><code>${escape(tc.tool)}</code></div>
-        <div class="num"><span class="${tc.result_kind === "ok" ? "pass" : "fail"}">${escape(tc.result_kind)}</span></div>
-        <div class="num">${tc.wallclock_ms.toFixed(0)}ms</div>
-        <div><details><summary>args</summary><pre>${escape(JSON.stringify(tc.args, null, 2))}</pre></details></div>
+          (tc) => `<div class="tool-item">
+        <span class="tool-num">${tc.n}</span>
+        <span class="tool-name">${escape(tc.tool)}</span>
+        <span class="tool-kind ${tc.result_kind === "ok" ? "ok" : "bad"}">${escape(tc.result_kind)}</span>
+        <span class="tool-ms">${tc.wallclock_ms.toFixed(0)} ms</span>
+        <details class="tool-args"><summary>args</summary><pre>${escape(JSON.stringify(tc.args, null, 2))}</pre></details>
       </div>`,
         )
-        .join("")
-    : `<div class="nodata">no tool calls (single-shot solver)</div>`;
-
-  const vcadHtml = vcad
-    ? `<pre>${escape(vcad)}</pre>`
-    : `<div class="nodata">.vcad not present beside this blob</div>`;
+        .join("")}</div>`
+    : `<div class="nodata">single-shot solver — no tool calls</div>`;
 
   const body = `
-    <h1>run ${escape(runId)}</h1>
-    <div class="tagline">
-      <a href="../../../task/${encodeURIComponent(taskId)}.html">${escape(taskId)}</a> ·
-      <a href="../../../model/${encodeURIComponent(modelId)}.html">${escape(modelId)}</a>
+    <div class="run-head">
+      <div class="run-verdict">${verdictHtml}</div>
+      <h1><a href="../../../task/${encodeURIComponent(taskId)}.html">${escape(title)}</a></h1>
+      <div class="run-by" style="--c:${id.color}">
+        <span class="run-by-model"><span class="run-mark">${mark}</span><a href="../../../model/${encodeURIComponent(modelId)}.html">${escape(id.label)}${id.mode === "mcp" ? ` <span class="muted">· mcp</span>` : ""}</a></span>
+        <span class="muted">·</span>
+        <span class="run-id">${escape(runId)}</span>
+        <span class="muted">·</span>
+        <span class="run-date">${escape(dateStr)}</span>
+      </div>
+      ${summaryFigures}
     </div>
 
-    <h2>Summary</h2>
-    ${summaryHtml}
+    <h2>Expected vs. built</h2>
+    <div class="spec-grid">
+      <div><div class="spec-label">Expected</div>${expectedCol}</div>
+      <div><div class="spec-label">${id.label} output</div>${builtHtml}</div>
+    </div>
+    ${vcadSvg ? `<p class="footnote">Isometric render of the model's actual <code>.vcad</code> output · <a href="${escape(runId)}.vcad" download>download .vcad</a></p>` : ""}
 
-    <h2>Prompt</h2>
-    <pre>${escape(blob.prompt.rendered)}</pre>
-
-    <h2>Checks</h2>
+    <h2>Grading</h2>
     ${checksHtml}
 
-    <h2>Tool calls</h2>
+    <h2>Process</h2>
     ${traceHtml}
 
-    <h2>What the model built</h2>
-    ${vcadSvg
-      ? `<div class="run-render">${vcadSvg}</div>
-         <p class="footnote">isometric render via <code>vcad-render</code> · the model's actual .vcad output, faceted at 28 segments per cylinder · <a href="${escape(runId)}.vcad" download>download ${escape(runId)}.vcad</a></p>`
-      : `<div class="nodata">no render available — vcad-render did not produce geometry for this attempt</div>`}
-
-    <h2>.vcad source</h2>
-    ${vcadHtml}
+    <details style="margin-top: 22px;"><summary>Prompt sent to the model</summary>
+    <p class="prompt-prose" style="margin-top: 12px;">${escape(blob.prompt.rendered)}</p></details>
+    <details style="margin-top: 12px;"><summary>.vcad source${vcad ? "" : " (unavailable)"}</summary>
+    ${vcad ? `<pre>${escape(vcad)}</pre>` : `<div class="nodata">.vcad not present beside this blob</div>`}</details>
+    <details style="margin-top: 12px;"><summary>Provenance</summary>
+    <table class="kvtable" style="margin-top: 12px;">
+      <tr><td class="k">submission</td><td>${escape(blob.submission_kind)}</td></tr>
+      <tr><td class="k">model id</td><td><code>${escape(modelId)}</code></td></tr>
+      <tr><td class="k">started</td><td>${escape(blob.timestamps.started_at)}</td></tr>
+      <tr><td class="k">ended</td><td>${escape(blob.timestamps.ended_at)}</td></tr>
+      <tr><td class="k">tokens</td><td>${blob.trace.tokens.input.toLocaleString()} in · ${blob.trace.tokens.output.toLocaleString()} out</td></tr>
+      <tr><td class="k">task hash</td><td><code>${escape(blob.task_sha256.slice(0, 16))}…</code></td></tr>
+      <tr><td class="k">vcad hash</td><td><code>${escape(blob.output.vcad_sha256.slice(0, 16))}…</code></td></tr>
+    </table></details>
   `;
   return pageShell(
-    `mecheval — ${taskId} / ${modelId} / ${runId}`,
-    `<a href="../../../index.html">← ${escape(copy.brand)}</a> / run / ${escape(taskId)} / ${escape(modelId)} / ${escape(runId)}`,
+    `mecheval — ${title} · ${id.label}`,
+    `<a href="../../../index.html">← ${escape(copy.brand)}</a> / <a href="../../../task/${encodeURIComponent(taskId)}.html">${escape(taskId)}</a> / ${escape(id.label)}`,
     body,
     {
       drawing: copy.brand,
       sheet: `RUN · ${runId}`,
-      scale: blob.summary.passed
-        ? "PASS"
-        : `${blob.summary.checks_passed}/${blob.summary.checks_total}`,
+      scale: passed ? "PASS" : `${blob.summary.checks_passed}/${blob.summary.checks_total}`,
       project: `${taskId} · ${modelDisplayName(modelId)}`,
     },
   );
@@ -1466,7 +2069,7 @@ async function main(): Promise<void> {
     if (vcadSvg) renderedRuns++;
     await writePage(
       `run/${r.task_id}/${r.model_id}/${r.run_id}.html`,
-      runPage(blob, vcad, vcadSvg),
+      runPage(blob, vcad, vcadSvg, taskSpecs.get(r.task_id) ?? null, taskRefSvgs.get(r.task_id) ?? null),
     );
     // Drop the .vcad file alongside the HTML so it can be linked.
     if (vcad) {

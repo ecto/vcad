@@ -106,8 +106,6 @@ const INK: &str = "#0b2742";
 /// Warm off-white "vellum" the drafting plate sits on (matches the raster
 /// path's matte background). The signature ground behind every render.
 const PAPER: &str = "#f4f3f1";
-/// Contact-shadow tint (cool near-black) for the blurred ground ellipse.
-const SHADOW: &str = "#1a2b3a";
 
 /// The vcad-Blue tonal ramp: deep-shadow → core navy → mid → ice highlight.
 /// Sampled by the shading term so curved surfaces read as a graded wash
@@ -1301,11 +1299,9 @@ fn render_svg_impl(
         r#"<svg xmlns="http://www.w3.org/2000/svg" width="{w:.2}" height="{h:.2}" viewBox="0 0 {w:.2} {h:.2}" role="img" aria-label="vcad render">"#
     ));
 
-    // Soft-shadow filter for the contact shadow + the Gouraud gradient defs.
+    // Gouraud gradient defs.
     let blur = ((w + h) * 0.008).clamp(1.0, 12.0);
-    out.push_str(&format!(
-        r#"<defs><filter id="sh" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="{blur:.2}"/></filter>{gradients}</defs>"#
-    ));
+    out.push_str(&format!(r#"<defs>{gradients}</defs>"#));
 
     // Vellum ground — the warm paper the plate sits on. Skipped for a
     // transparent render so the SVG composites over any background.
@@ -1314,16 +1310,6 @@ fn render_svg_impl(
             r#"<rect x="0" y="0" width="{w:.2}" height="{h:.2}" fill="{PAPER}"/>"#
         ));
     }
-
-    // Contact shadow: a blurred ellipse under the part's footprint, so it
-    // sits on the page instead of floating.
-    let foot_cx = (max_x - min_x) / 2.0 + PADDING_PX;
-    let foot_cy = (max_y - min_y) + PADDING_PX;
-    let foot_rx = ((max_x - min_x) / 2.0 * 0.94).max(1.0);
-    let foot_ry = (foot_rx * 0.13).max(1.0);
-    out.push_str(&format!(
-        r#"<ellipse cx="{foot_cx:.2}" cy="{foot_cy:.2}" rx="{foot_rx:.2}" ry="{foot_ry:.2}" fill="{SHADOW}" opacity="0.20" filter="url(#sh)"/>"#
-    ));
 
     // Filled polygons. Each is stroked with its own fill colour at a
     // hairline width so adjacent triangles overlap by a sub-pixel sliver —
