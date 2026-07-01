@@ -15,6 +15,7 @@ use vcad_kernel_primitives::BRepSolid;
 use vcad_kernel_topo::{FaceId, Orientation, Topology};
 
 mod creased_normals;
+pub mod frozen;
 mod render_bake;
 
 pub use creased_normals::{

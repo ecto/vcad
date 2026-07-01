@@ -7091,6 +7091,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "vcad-kernel-diff"
+version = "0.9.4"
+dependencies = [
+ "tang",
+ "vcad-kernel",
+ "vcad-kernel-geom",
+ "vcad-kernel-math",
+ "vcad-kernel-nurbs",
+ "vcad-kernel-primitives",
+ "vcad-kernel-sketch",
+ "vcad-kernel-tessellate",
+ "vcad-kernel-topo",
+]
+
+[[package]]
 name = "vcad-kernel-drafting"
 version = "0.9.4"
 dependencies = [
@@ -7268,6 +7283,7 @@ dependencies = [
 name = "vcad-kernel-tessellate"
 version = "0.9.4"
 dependencies = [
+ "tang",
  "vcad-kernel-geom",
  "vcad-kernel-math",
  "vcad-kernel-primitives",

@@ -20,6 +20,7 @@ members = [
     "crates/vcad-kernel-step",
     "crates/vcad-kernel",
     "crates/vcad-kernel-constraints",
+    "crates/vcad-kernel-diff",
     "crates/vcad-kernel-wasm",
     "crates/vcad-kernel-drafting",
     "crates/vcad-cli",
@@ -90,6 +91,7 @@ default-members = [
     "crates/vcad-kernel-step",
     "crates/vcad-kernel",
     "crates/vcad-kernel-constraints",
+    "crates/vcad-kernel-diff",
     "crates/vcad-kernel-wasm",
     "crates/vcad-kernel-drafting",
     "crates/vcad-cli",
@@ -177,6 +179,7 @@ vcad-kernel-shell = { path = "crates/vcad-kernel-shell", version = "0.9.4" }
 vcad-kernel-sheet = { path = "crates/vcad-kernel-sheet", version = "0.9.4" }
 vcad-kernel-step = { path = "crates/vcad-kernel-step", version = "0.9.4" }
 vcad-kernel-constraints = { path = "crates/vcad-kernel-constraints", version = "0.9.4" }
+vcad-kernel-diff = { path = "crates/vcad-kernel-diff", version = "0.9.4" }
 vcad-kernel-drafting = { path = "crates/vcad-kernel-drafting", version = "0.9.4" }
 vcad-kernel-gpu = { path = "crates/vcad-kernel-gpu", version = "0.9.4" }
 vcad-kernel-raytrace = { path = "crates/vcad-kernel-raytrace", version = "0.9.4" }
