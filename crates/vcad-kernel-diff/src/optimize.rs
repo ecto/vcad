@@ -102,12 +102,22 @@ pub fn objective_gradient(
 ) -> Result<(f64, Vec<f64>), DiffError> {
     let brep = build(theta);
     let plan = capture_plan(&brep, params)?;
-    let mut value = None;
+    let mut value: Option<f64> = None;
     let mut gradient = Vec::with_capacity(theta.len());
     for k in 0..theta.len() {
         let seam = evaluate_with_sensitivity(&brep, &plan, &seeding_for(&brep, k))?;
         let (j, dj) = objective(&seam);
-        value.get_or_insert(j);
+        match value {
+            // J depends only on positions, which are identical across
+            // seedings of the same plan — enforce it, since an objective
+            // that (incorrectly) reads velocities into its value would
+            // otherwise be silently truncated to parameter 0's answer.
+            Some(v) => debug_assert!(
+                (j - v).abs() <= 1e-9 * v.abs().max(1.0),
+                "objective value must not depend on which parameter is seeded ({v} vs {j})"
+            ),
+            None => value = Some(j),
+        }
         gradient.push(dj);
     }
     Ok((value.expect("at least one parameter"), gradient))

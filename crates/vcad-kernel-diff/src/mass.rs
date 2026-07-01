@@ -43,6 +43,10 @@ pub struct MassProperties<S> {
 /// exact θ-derivatives of every field (see
 /// [`mass_properties_with_derivative`]), or `Dual<Dual<f64>>` for second
 /// derivatives.
+///
+/// Precondition: the mesh must enclose a nonzero volume — the centroid and
+/// the parallel-axis shift divide by it, so a degenerate or inside-out
+/// mesh yields NaN/∞ fields rather than an error.
 pub fn mass_properties<S: Scalar>(
     positions: &[tang::Point3<S>],
     triangles: &[[u32; 3]],

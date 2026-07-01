@@ -442,7 +442,12 @@ fn solve3(m: [[f64; 3]; 3], b: [f64; 3]) -> Option<[f64; 3]> {
         .iter()
         .map(|row| row.iter().map(|v| v.abs()).fold(0.0, f64::max))
         .fold(0.0, f64::max);
-    if d.abs() < 1e-14 * scale.powi(3).max(f64::MIN_POSITIVE) {
+    // Relative singularity threshold: the determinant's roundoff floor is
+    // ~ε·scale³, and a legitimately independent system (the tangent
+    // pre-check already rejected near-parallel gradients) has |det| far
+    // above 1e-12·scale³ — so this margin rejects ill-conditioned systems
+    // early instead of letting Newton amplify noise and diverge.
+    if d.abs() < 1e-12 * scale.powi(3).max(f64::MIN_POSITIVE) {
         return None;
     }
     let mut out = [0.0; 3];
