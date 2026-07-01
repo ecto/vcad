@@ -25,7 +25,7 @@
     "@anthropic-ai/sdk": "^0.88.0",
     "@modelcontextprotocol/sdk": "^1.0.0",
     "@vcad/mcp": "*",
-    "openai": "^4.104.0"
+    "openai": "^6.45.0"
   },
   "devDependencies": {
     "@types/node": "^22",
