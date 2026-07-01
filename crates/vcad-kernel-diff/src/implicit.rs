@@ -19,7 +19,7 @@
 use vcad_kernel_geom::{CylinderSurface, Plane, SphereSurface, Surface, SurfaceKind};
 use vcad_kernel_math::{Point3, Vec3};
 
-use crate::{DiffError, SurfaceSeed};
+use crate::{downcast, DiffError, SurfaceSeed};
 
 /// One row of the implicit vertex system: `gradient · ẋ = rhs`.
 #[derive(Debug, Clone, Copy)]
@@ -30,44 +30,37 @@ pub struct ConstraintRow {
     pub rhs: f64,
 }
 
-fn downcast<T: 'static>(surface: &dyn Surface, kind: SurfaceKind) -> Result<&T, DiffError> {
-    surface
-        .as_any()
-        .downcast_ref::<T>()
-        .ok_or(DiffError::DowncastFailed(kind))
-}
-
-/// Build the constraint row contributed by `surface` (with its θ-seed) at
-/// vertex position `x`.
+/// The implicit form of a surface at `x`: `(g, ∇g, ∂g/∂θ)`.
 ///
-/// Implicit forms: plane `g = n·(x − o)`; cylinder `g = |radial|² − r²`;
-/// sphere `g = |x − c|² − r²`. Other kinds have no implicit form yet and
-/// return [`DiffError::UnsupportedConstraint`].
-pub fn constraint_row(
+/// Single source of truth for both [`constraint_row`] and
+/// [`surface_residual`], so incidence detection and the rows actually
+/// solved can never disagree. Implicit forms: plane `g = n·(x − o)`;
+/// cylinder `g = |radial|² − r²`; sphere `g = |x − c|² − r²`. Returns
+/// `Ok(None)` for kinds without an implicit form.
+fn implicit_terms(
     surface: &dyn Surface,
     seed: Option<SurfaceSeed>,
     x: &Point3,
-) -> Result<ConstraintRow, DiffError> {
+) -> Result<Option<(f64, Vec3, f64)>, DiffError> {
     let kind = surface.surface_type();
     match kind {
         SurfaceKind::Plane => {
             let plane = downcast::<Plane>(surface, kind)?;
             let n = *plane.normal_dir.as_ref();
+            let g = plane.signed_distance(x);
             let g_theta = match seed {
                 None => 0.0,
                 Some(SurfaceSeed::Translate { velocity }) => -n.dot(velocity),
                 Some(other) => return Err(DiffError::UnsupportedSeed { kind, seed: other }),
             };
-            Ok(ConstraintRow {
-                gradient: n,
-                rhs: -g_theta,
-            })
+            Ok(Some((g, n, g_theta)))
         }
         SurfaceKind::Cylinder => {
             let cyl = downcast::<CylinderSurface>(surface, kind)?;
             let a = *cyl.axis.as_ref();
             let d = *x - cyl.center;
             let radial = d - a * d.dot(a);
+            let g = radial.norm_squared() - cyl.radius * cyl.radius;
             let g_theta = match seed {
                 None => 0.0,
                 Some(SurfaceSeed::CylinderRadius { rate }) => -2.0 * cyl.radius * rate,
@@ -78,26 +71,38 @@ pub fn constraint_row(
                 }
                 Some(other) => return Err(DiffError::UnsupportedSeed { kind, seed: other }),
             };
-            Ok(ConstraintRow {
-                gradient: 2.0 * radial,
-                rhs: -g_theta,
-            })
+            Ok(Some((g, 2.0 * radial, g_theta)))
         }
         SurfaceKind::Sphere => {
             let sph = downcast::<SphereSurface>(surface, kind)?;
             let d = *x - sph.center;
+            let g = d.norm_squared() - sph.radius * sph.radius;
             let g_theta = match seed {
                 None => 0.0,
                 Some(SurfaceSeed::SphereRadius { rate }) => -2.0 * sph.radius * rate,
                 Some(SurfaceSeed::Translate { velocity }) => -2.0 * d.dot(velocity),
                 Some(other) => return Err(DiffError::UnsupportedSeed { kind, seed: other }),
             };
-            Ok(ConstraintRow {
-                gradient: 2.0 * d,
-                rhs: -g_theta,
-            })
+            Ok(Some((g, 2.0 * d, g_theta)))
         }
-        other => Err(DiffError::UnsupportedConstraint(other)),
+        _ => Ok(None),
+    }
+}
+
+/// Build the constraint row contributed by `surface` (with its θ-seed) at
+/// vertex position `x`. Kinds without an implicit form return
+/// [`DiffError::UnsupportedConstraint`].
+pub fn constraint_row(
+    surface: &dyn Surface,
+    seed: Option<SurfaceSeed>,
+    x: &Point3,
+) -> Result<ConstraintRow, DiffError> {
+    match implicit_terms(surface, seed, x)? {
+        Some((_g, gradient, g_theta)) => Ok(ConstraintRow {
+            gradient,
+            rhs: -g_theta,
+        }),
+        None => Err(DiffError::UnsupportedConstraint(surface.surface_type())),
     }
 }
 
@@ -112,35 +117,20 @@ pub fn constraint_row(
 /// seam loop), so constraint rows must be collected by incidence, not just
 /// by loop membership.
 pub fn surface_residual(surface: &dyn Surface, x: &Point3) -> Option<f64> {
-    let kind = surface.surface_type();
-    match kind {
-        SurfaceKind::Plane => {
-            let plane = surface.as_any().downcast_ref::<Plane>()?;
-            Some(plane.signed_distance(x).abs())
-        }
-        SurfaceKind::Cylinder => {
-            let cyl = surface.as_any().downcast_ref::<CylinderSurface>()?;
-            let a = *cyl.axis.as_ref();
-            let d = *x - cyl.center;
-            let radial = d - a * d.dot(a);
-            let g = radial.norm_squared() - cyl.radius * cyl.radius;
-            let grad = 2.0 * radial.norm();
-            (grad > f64::MIN_POSITIVE).then(|| (g / grad).abs())
-        }
-        SurfaceKind::Sphere => {
-            let sph = surface.as_any().downcast_ref::<SphereSurface>()?;
-            let d = *x - sph.center;
-            let g = d.norm_squared() - sph.radius * sph.radius;
-            let grad = 2.0 * d.norm();
-            (grad > f64::MIN_POSITIVE).then(|| (g / grad).abs())
-        }
-        _ => None,
-    }
+    let (g, grad, _) = implicit_terms(surface, None, x).ok()??;
+    let n = grad.norm();
+    (n > f64::MIN_POSITIVE).then(|| (g / n).abs())
 }
 
-/// Relative threshold below which an orthogonalized gradient counts as
-/// dependent on the rows already selected.
-const DEPENDENT_TOL: f64 = 1e-9;
+/// Threshold below which an orthogonalized (unit-gradient) row counts as
+/// dependent on the rows already selected. Deliberately coarse: accepting a
+/// nearly-dependent row divides its carried rhs by the tiny orthogonal
+/// residual, amplifying floating-point noise (e.g. two copies of the same
+/// moving plane whose normals differ by ~1e-8) into an O(‖v‖) garbage
+/// velocity along an arbitrary direction. Below this angle, treating the
+/// row as dependent — and checking its rhs for consistency instead — is
+/// the safe branch.
+const DEPENDENT_TOL: f64 = 1e-6;
 
 /// Absolute tolerance for the consistency residual of dependent rows
 /// (velocity units, mm per unit θ).
@@ -250,5 +240,30 @@ mod tests {
             solve_vertex_velocity(&rows),
             Err(DiffError::InconsistentConstraints { .. })
         ));
+    }
+
+    #[test]
+    fn nearly_dependent_row_does_not_amplify_noise() {
+        // Two copies of the same moving plane whose normals differ by ~1e-8
+        // (different construction paths): the second row must be treated as
+        // dependent-and-consistent, not divided by its tiny orthogonal
+        // residual into a garbage tangential velocity.
+        let n2 = (Vec3::z() + Vec3::new(1e-8, 0.0, 0.0)).normalize();
+        let seed_v = Vec3::z();
+        let rows = vec![
+            ConstraintRow {
+                gradient: Vec3::z(),
+                rhs: seed_v.z,
+            },
+            ConstraintRow {
+                gradient: n2,
+                rhs: n2.dot(seed_v),
+            },
+        ];
+        let v = solve_vertex_velocity(&rows).unwrap();
+        assert!(
+            (v - Vec3::z()).norm() < 1e-6,
+            "noise direction amplified: v = {v:?}"
+        );
     }
 }

@@ -169,6 +169,12 @@ pub enum FrozenError {
         /// The offending surface kind.
         kind: SurfaceKind,
     },
+    /// A face's topology has no frozen-capture support yet and dropping it
+    /// would silently freeze a non-watertight mesh with a wrong volume.
+    UnsupportedFace {
+        /// What made the face unsupported.
+        reason: &'static str,
+    },
     /// A node recipe referenced an entity missing from the B-rep (internal
     /// inconsistency; should be prevented by the signature check).
     RecipeOutOfRange,
@@ -194,6 +200,9 @@ impl std::fmt::Display for FrozenError {
             ),
             FrozenError::UnsupportedSurface { kind } => {
                 write!(f, "frozen capture unsupported for surface kind {kind:?}")
+            }
+            FrozenError::UnsupportedFace { reason } => {
+                write!(f, "frozen capture unsupported for face: {reason}")
             }
             FrozenError::RecipeOutOfRange => write!(f, "node recipe out of range for this B-rep"),
             FrozenError::CorrespondenceLost { node, distance } => write!(
@@ -273,9 +282,23 @@ pub fn signature_with_index(brep: &BRepSolid, ci: &CanonicalIndex) -> TopologySi
 
     let topo = &brep.topology;
     let mut loop_count = 0usize;
+    // Count edges reachable from the canonical walk, not the whole slotmap
+    // arena: the boolean pipeline can leave orphaned arena entities behind
+    // in rebuild-order-dependent numbers, which must not perturb the
+    // signature of the (isomorphic) solid.
+    let mut reachable_edges: std::collections::HashSet<vcad_kernel_topo::EdgeId> =
+        std::collections::HashSet::new();
     let mut face_hashes: Vec<u64> = Vec::with_capacity(ci.faces.len());
     for &face_id in &ci.faces {
         let face = &topo.faces[face_id];
+        let loops = std::iter::once(face.outer_loop).chain(face.inner_loops.iter().copied());
+        for loop_id in loops {
+            for he in topo.loop_half_edges(loop_id) {
+                if let Some(e) = topo.half_edges[he].edge {
+                    reachable_edges.insert(e);
+                }
+            }
+        }
         let surface = &brep.geometry.surfaces[face.surface_index];
         let mut h = FNV_OFFSET;
         fnv(
@@ -311,7 +334,7 @@ pub fn signature_with_index(brep: &BRepSolid, ci: &CanonicalIndex) -> TopologySi
 
     TopologySignature {
         vertices: ci.vertices.len(),
-        edges: topo.edges.len(),
+        edges: reachable_edges.len(),
         faces: ci.faces.len(),
         loops: loop_count,
         connectivity_hash: hash,
@@ -366,6 +389,21 @@ fn invert_uv(surface: &dyn Surface, p: &Point3) -> Result<Point2, FrozenError> {
 /// sample on a curved surface pins two DOF and follows the surface as it
 /// moves with θ (e.g. a cap-rim node bound to the cylinder wall stays on the
 /// moving trim); a sample on a plane pins only one DOF.
+///
+/// KNOWN LIMITATION: this ordering hard-codes the assumption that when a
+/// trim boundary moves, the *curved* surface is the one carrying θ (true
+/// for the M0–M2 parameters: extrude distance moves planes whose trims are
+/// θ-independent, hole radius moves the cylinder). The inverse case — a
+/// boundary node shared between a *moving plane* and a fixed curved surface
+/// (e.g. cylinder height as θ) — freezes the node on the fixed surface, so
+/// the frozen mesh no longer tracks the true solid at θ ± h and any QoI
+/// integral over it differentiates a slightly different body. The FD oracle
+/// replays the same recipes, so it agrees with the analytic side while both
+/// differ from the true CAD derivative. The correct general mechanism is a
+/// multi-surface boundary recipe (the `SurfaceUv` analogue of the implicit
+/// multi-row vertex solve) — later-milestone work. Until then, restrict θ
+/// choices to parameters whose moving trims live on curved surfaces or are
+/// carried by topology vertices.
 fn recipe_rank(recipe: &NodeRecipe, kind: SurfaceKind) -> u8 {
     match recipe {
         NodeRecipe::TopoVertex { .. } => 2,
@@ -444,14 +482,40 @@ pub fn capture_plan(
     let mut base_positions: Vec<Point3> = Vec::new();
     let mut node_kinds: Vec<SurfaceKind> = Vec::new();
     let mut triangles: Vec<[u32; 3]> = Vec::new();
-    let mut dedup: HashMap<[i64; 3], u32> = HashMap::new();
-    let quantize = |p: &Point3| -> [i64; 3] {
+    // Spatial hash for cross-face dedup. Lookup probes the 27 neighboring
+    // cells and merges on true distance, so two computations of the same
+    // logical node that straddle a cell boundary (f32 drift between two
+    // faces' paths) still merge — a straddle-split node would silently
+    // dodge the recipe-priority promotion below.
+    let mut dedup: HashMap<[i64; 3], Vec<u32>> = HashMap::new();
+    let cell = |p: &Point3| -> [i64; 3] {
         [
             (p.x / DEDUP_QUANTUM).round() as i64,
             (p.y / DEDUP_QUANTUM).round() as i64,
             (p.z / DEDUP_QUANTUM).round() as i64,
         ]
     };
+    let find_near =
+        |dedup: &HashMap<[i64; 3], Vec<u32>>, positions: &[Point3], p: &Point3| -> Option<u32> {
+            let c = cell(p);
+            let mut best: Option<(u32, f64)> = None;
+            for dx in -1..=1 {
+                for dy in -1..=1 {
+                    for dz in -1..=1 {
+                        let key = [c[0] + dx, c[1] + dy, c[2] + dz];
+                        for &idx in dedup.get(&key).into_iter().flatten() {
+                            let d2 = (positions[idx as usize] - *p).norm_squared();
+                            if d2 < DEDUP_QUANTUM * DEDUP_QUANTUM
+                                && best.map(|(_, bd)| d2 < bd).unwrap_or(true)
+                            {
+                                best = Some((idx, d2));
+                            }
+                        }
+                    }
+                }
+            }
+            best.map(|(idx, _)| idx)
+        };
 
     for (fi, &face_id) in ci.faces.iter().enumerate() {
         let face = &topo.faces[face_id];
@@ -459,6 +523,15 @@ pub fn capture_plan(
         let kind = surface.surface_type();
         let mesh = tessellate_face_for_capture(brep, face_id, params);
         if mesh.indices.is_empty() {
+            // A degenerate-cap loop that carries holes needs the CDT path
+            // `tessellate_brep` has inline but the per-face tessellator does
+            // not; silently dropping the face would freeze a non-watertight
+            // mesh with a plausibly wrong volume. Fail loudly instead.
+            if topo.loop_len(face.outer_loop) <= 1 && !face.inner_loops.is_empty() {
+                return Err(FrozenError::UnsupportedFace {
+                    reason: "degenerate single-vertex cap loop with inner loops (holes)",
+                });
+            }
             continue;
         }
 
@@ -524,9 +597,8 @@ pub fn capture_plan(
                 }
             };
 
-            let key = quantize(&position);
-            let idx = match dedup.get(&key) {
-                Some(&existing) => {
+            let idx = match find_near(&dedup, &base_positions, &position) {
+                Some(existing) => {
                     // Keep the higher-priority recipe for coincident nodes.
                     if recipe_rank(&recipe, kind)
                         > recipe_rank(&nodes[existing as usize], node_kinds[existing as usize])
@@ -542,7 +614,7 @@ pub fn capture_plan(
                     nodes.push(recipe);
                     base_positions.push(position);
                     node_kinds.push(kind);
-                    dedup.insert(key, new_idx);
+                    dedup.entry(cell(&position)).or_default().push(new_idx);
                     new_idx
                 }
             };
@@ -607,11 +679,17 @@ pub fn evaluate_plan(brep: &BRepSolid, plan: &FrozenPlan) -> Result<FrozenMesh, 
         let p = match *recipe {
             NodeRecipe::TopoVertex { .. } => {
                 let mut best: Option<(Point3, f64)> = None;
+                let mut second_d2 = f64::INFINITY;
                 for &vid in &ci.vertices {
                     let q = topo.vertices[vid].point;
                     let d2 = (q - anchor).norm_squared();
-                    if best.map(|(_, bd)| d2 < bd).unwrap_or(true) {
-                        best = Some((q, d2));
+                    match best {
+                        Some((_, bd)) if d2 < bd => {
+                            second_d2 = bd;
+                            best = Some((q, d2));
+                        }
+                        Some(_) => second_d2 = second_d2.min(d2),
+                        None => best = Some((q, d2)),
                     }
                 }
                 let (q, d2) = best.ok_or(FrozenError::RecipeOutOfRange)?;
@@ -619,6 +697,15 @@ pub fn evaluate_plan(brep: &BRepSolid, plan: &FrozenPlan) -> Result<FrozenMesh, 
                     return Err(FrozenError::CorrespondenceLost {
                         node: i,
                         distance: d2.sqrt(),
+                    });
+                }
+                // Ambiguous match: a second distinct vertex also inside the
+                // tolerance (a near-tangency pair) could bind differently at
+                // θ+h vs θ−h and silently corrupt the FD oracle. Refuse.
+                if second_d2 <= MATCH_TOL * MATCH_TOL && second_d2 > d2 {
+                    return Err(FrozenError::CorrespondenceLost {
+                        node: i,
+                        distance: second_d2.sqrt(),
                     });
                 }
                 q
@@ -648,7 +735,20 @@ pub fn evaluate_plan(brep: &BRepSolid, plan: &FrozenPlan) -> Result<FrozenMesh, 
                     }
                 };
                 let surface = &brep.geometry.surfaces[topo.faces[face_id].surface_index];
-                surface.evaluate(uv)
+                let p = surface.evaluate(uv);
+                // Verify EVERY node against its anchor, not just the slot's
+                // first: a wrong face match that agrees near one sample but
+                // diverges elsewhere (tangent surfaces, duplicated boolean
+                // surface copies, a rebuilt surface with a different frame)
+                // must error, not silently evaluate the wrong geometry.
+                let d2 = (p - anchor).norm_squared();
+                if d2 > MATCH_TOL * MATCH_TOL {
+                    return Err(FrozenError::CorrespondenceLost {
+                        node: i,
+                        distance: d2.sqrt(),
+                    });
+                }
+                p
             }
         };
         positions.push(p);
@@ -660,18 +760,28 @@ pub fn evaluate_plan(brep: &BRepSolid, plan: &FrozenPlan) -> Result<FrozenMesh, 
     })
 }
 
+/// Signed mesh volume via the divergence theorem (outward winding →
+/// positive), generic over the scalar type. This is the single volume
+/// integrator for the differentiable seam: the FD oracle evaluates it at
+/// `f64` and the analytic side at `Dual<f64>` (velocity-seeded points), so
+/// both sides of every FD-vs-analytic gate integrate with the same formula
+/// by construction.
+pub fn mesh_volume<S: tang::Scalar>(positions: &[tang::Point3<S>], triangles: &[[u32; 3]]) -> S {
+    let mut six_v = S::ZERO;
+    for t in triangles {
+        let a = &positions[t[0] as usize];
+        let b = &positions[t[1] as usize];
+        let c = &positions[t[2] as usize];
+        six_v += a.x * (b.y * c.z - b.z * c.y) - a.y * (b.x * c.z - b.z * c.x)
+            + a.z * (b.x * c.y - b.y * c.x);
+    }
+    six_v / S::from_f64(6.0)
+}
+
 impl FrozenMesh {
     /// Signed volume via the divergence theorem (outward winding → positive).
     pub fn volume(&self) -> f64 {
-        let mut six_v = 0.0;
-        for t in &self.triangles {
-            let a = &self.positions[t[0] as usize];
-            let b = &self.positions[t[1] as usize];
-            let c = &self.positions[t[2] as usize];
-            six_v += a.x * (b.y * c.z - b.z * c.y) - a.y * (b.x * c.z - b.z * c.x)
-                + a.z * (b.x * c.y - b.y * c.x);
-        }
-        six_v / 6.0
+        mesh_volume(&self.positions, &self.triangles)
     }
 
     /// Count of boundary (odd-parity) undirected edges. Zero for a

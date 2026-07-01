@@ -3,11 +3,11 @@
 
 use std::collections::{BTreeSet, HashMap};
 
-use tang::{Dual, Scalar};
+use tang::Dual;
 use vcad_kernel_math::{Point3, Vec3};
 use vcad_kernel_primitives::BRepSolid;
 use vcad_kernel_tessellate::frozen::{
-    canonical_index, signature_with_index, FrozenError, FrozenPlan, NodeRecipe,
+    canonical_index, mesh_volume, signature_with_index, FrozenError, FrozenPlan, NodeRecipe,
 };
 use vcad_kernel_topo::VertexId;
 
@@ -16,9 +16,16 @@ use crate::{
 };
 
 /// Incidence tolerance (mm) for treating a topology vertex as lying on a
-/// surface. Boolean/trim vertices land on their defining surfaces to
-/// machine precision; this is far above that and far below feature size.
-const INCIDENCE_TOL: f64 = 1e-6;
+/// surface. Must sit above the placement error of boolean/trim vertices on
+/// their defining surfaces (analytic intersections are ~machine precision;
+/// sampled-fallback intersections can be off by ~1e-6 mm — a missed
+/// incidence silently *loses* a constraint, so the tolerance errs high) and
+/// far below feature separation.
+const INCIDENCE_TOL: f64 = 1e-4;
+
+/// Tolerance (mm) for the structural capture-time-B-rep check: every
+/// resolved node must land on the plan's recorded base position.
+const ANCHOR_TOL: f64 = 1e-3;
 
 /// A frozen mesh with first-order sensitivities: node `i` of `positions`
 /// corresponds to node `i` of `velocities` (dx/dθ).
@@ -41,7 +48,11 @@ pub struct SeamMesh {
 /// θ): recipes resolve entities by capture-time traversal index, which is
 /// only meaningful on the B-rep the plan was captured from. Perturbed
 /// rebuilds are the FD oracle's business (`frozen::evaluate_plan`, which
-/// matches entities geometrically instead).
+/// matches entities geometrically instead). This contract is enforced, not
+/// just documented: every resolved node is checked against the plan's
+/// recorded base position, so a rebuilt B-rep whose (order-nondeterministic)
+/// enumeration permutes entities fails with `CorrespondenceLost` instead of
+/// silently binding recipes to the wrong geometry.
 ///
 /// - `SurfaceUv` nodes go through the lift-bridge: the face's surface is
 ///   lifted to `Dual<f64>` with its seed and evaluated at the frozen
@@ -65,6 +76,9 @@ pub fn evaluate_with_sensitivity(
         }
         .into());
     }
+    if plan.base_positions.len() != plan.nodes.len() {
+        return Err(FrozenError::RecipeOutOfRange.into());
+    }
 
     let topo = &brep.topology;
 
@@ -86,9 +100,21 @@ pub fn evaluate_with_sensitivity(
     // Lift each referenced face surface once (they are shared by many nodes).
     let mut lifted: HashMap<u32, crate::DualSurface> = HashMap::new();
 
+    let anchor_check = |node: usize, p: &Point3, anchor: &Point3| -> Result<(), DiffError> {
+        let d2 = (*p - *anchor).norm_squared();
+        if d2 > ANCHOR_TOL * ANCHOR_TOL {
+            return Err(FrozenError::CorrespondenceLost {
+                node,
+                distance: d2.sqrt(),
+            }
+            .into());
+        }
+        Ok(())
+    };
+
     let mut positions = Vec::with_capacity(plan.nodes.len());
     let mut velocities = Vec::with_capacity(plan.nodes.len());
-    for recipe in &plan.nodes {
+    for (i, recipe) in plan.nodes.iter().enumerate() {
         match *recipe {
             NodeRecipe::TopoVertex { vertex } => {
                 let vid = *ci
@@ -96,6 +122,7 @@ pub fn evaluate_with_sensitivity(
                     .get(vertex as usize)
                     .ok_or(FrozenError::RecipeOutOfRange)?;
                 let x = topo.vertices[vid].point;
+                anchor_check(i, &x, &plan.base_positions[i])?;
                 // Constraint set = topological adjacency ∪ geometric
                 // incidence. The union matters: after a boolean, a rim
                 // vertex may carry half-edges of only one of its two
@@ -132,6 +159,7 @@ pub fn evaluate_with_sensitivity(
                 }
                 let (p, vel) =
                     lifted[&face].evaluate_with_velocity(vcad_kernel_math::Point2::new(u, v));
+                anchor_check(i, &p, &plan.base_positions[i])?;
                 positions.push(p);
                 velocities.push(vel);
             }
@@ -146,26 +174,12 @@ pub fn evaluate_with_sensitivity(
     })
 }
 
-/// Signed mesh volume via the divergence theorem, generic over the scalar
-/// type — evaluate with `Dual<f64>` node positions to get the volume and
-/// its θ-derivative in one pass (and `Dual<Dual<f64>>` for second
-/// derivatives, for free, later).
-pub fn mesh_volume<S: Scalar>(positions: &[tang::Point3<S>], triangles: &[[u32; 3]]) -> S {
-    let mut six_v = S::ZERO;
-    for t in triangles {
-        let a = &positions[t[0] as usize];
-        let b = &positions[t[1] as usize];
-        let c = &positions[t[2] as usize];
-        six_v += a.x * (b.y * c.z - b.z * c.y) - a.y * (b.x * c.z - b.z * c.x)
-            + a.z * (b.x * c.y - b.y * c.x);
-    }
-    six_v / S::from_f64(6.0)
-}
-
 /// Volume and dV/dθ of a seam mesh: nodes are packed into `Dual<f64>`
-/// points (real = position, dual = velocity) and pushed through the generic
-/// volume integral, so `dV/dθ = Σ_i (∂V/∂x_i) · (dx_i/dθ)` falls out of
-/// dual arithmetic.
+/// points (real = position, dual = velocity) and pushed through the shared
+/// generic volume integral
+/// ([`vcad_kernel_tessellate::frozen::mesh_volume`] — the same integrator
+/// the FD oracle uses at `f64`), so
+/// `dV/dθ = Σ_i (∂V/∂x_i) · (dx_i/dθ)` falls out of dual arithmetic.
 pub fn volume_with_derivative(seam: &SeamMesh) -> (f64, f64) {
     let pts: Vec<tang::Point3<Dual<f64>>> = seam
         .positions

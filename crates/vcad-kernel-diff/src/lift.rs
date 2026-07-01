@@ -14,7 +14,7 @@ use vcad_kernel_geom::{
 use vcad_kernel_math::{Point2, Point3, Vec3};
 use vcad_kernel_nurbs::BSplineSurface;
 
-use crate::{DiffError, SurfaceSeed};
+use crate::{downcast, DiffError, SurfaceSeed};
 
 type D = Dual<f64>;
 
@@ -41,13 +41,6 @@ fn seed_point(p: &mut tang::Point3<D>, velocity: Vec3) {
     p.x.dual = velocity.x;
     p.y.dual = velocity.y;
     p.z.dual = velocity.z;
-}
-
-fn downcast<T: 'static>(surface: &dyn Surface, kind: SurfaceKind) -> Result<&T, DiffError> {
-    surface
-        .as_any()
-        .downcast_ref::<T>()
-        .ok_or(DiffError::DowncastFailed(kind))
 }
 
 /// Lift a stored (concrete, `f64`) surface to `Dual<f64>`, seeding the

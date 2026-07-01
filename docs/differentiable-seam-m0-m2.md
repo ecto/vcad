@@ -163,6 +163,50 @@ The topology-signature acceptance is exercised both synthetically
 perturbed into a through hole): both the frozen evaluation and the seam
 return `TopologyChanged`, never a mesh.
 
+## Known limitations (documented deliberately, in scope-fence order)
+
+An adversarial review pass hardened several correspondence paths (per-node
+anchor verification everywhere a recipe resolves, ambiguity detection in
+nearest-vertex matching, neighbor-cell probing in capture dedup so a
+quantization-cell straddle cannot silently split a seam node, reachable-only
+edge counting in the signature, dependent-row treatment of nearly-parallel
+constraint gradients so their rhs noise is not amplified, and a hard error
+for the degenerate-cap-with-holes face the per-face tessellator cannot
+mesh). What remains is known and deliberate:
+
+- **Recipe priority assumes the moving trim lives on the curved surface.**
+  `TopoVertex > SurfaceUv-on-curved > SurfaceUv-on-plane` is correct for
+  M0–M2's parameters, but a boundary node shared between a *moving plane*
+  and a *fixed* curved surface (e.g. cylinder **height** as θ, where the
+  rim is not a topology vertex ring) freezes on the fixed surface: the
+  frozen mesh then differentiates a slightly different body, and the FD
+  oracle — which replays the same recipes — agrees with the analytic side
+  while both differ from the true CAD derivative. The general fix is a
+  multi-surface boundary recipe (the `SurfaceUv` analogue of the implicit
+  multi-row vertex solve); until then θ must move curved surfaces or
+  topology-vertex-carried trims. Flagged loudly on `recipe_rank`.
+- **Geometric incidence uses unbounded implicit forms.** A vertex exactly
+  coincident with the *infinite extension* of an unrelated seeded surface
+  (coplanar step heights, coaxial equal-radius bores) picks up a spurious
+  constraint row: contradictions surface as a hard
+  `InconsistentConstraints` error (loud), but a compatible spurious row on
+  an otherwise under-determined vertex is silent. Bounded incidence needs
+  trim-region containment — the same machinery as the multi-surface recipe.
+- **Tolerances are absolute (mm) module constants.** `1e-3` matching/dedup
+  and `1e-4` incidence are correct for mm-scale parts; at ~10 m extents the
+  stock tessellator's `f32` rounding approaches the match tolerance, and a
+  legitimate parameter step larger than `MATCH_TOL` trips
+  `CorrespondenceLost` (re-capture instead). Making them plan-carried
+  options is mechanical when needed.
+- **The signature is a face-descriptor multiset.** A connectivity rewire
+  that preserves the multiset hashes equal by construction; the per-node
+  anchor checks are the backstop that turns such a rebuild into
+  `CorrespondenceLost` rather than silent garbage.
+- **`invert_uv` supports Plane/Cylinder/Sphere.** Cone/torus projection
+  exists in `vcad-kernel-booleans::trim` but that crate sits above
+  tessellate in the dependency graph; sharing it means moving it into
+  `-geom` — a follow-up refactor, out of the minimal-diff budget here.
+
 ## Sibling-repo caveat (local validation)
 
 This sandbox could not clone `ecto/loon` / `ecto/phyz` (session repo scope),

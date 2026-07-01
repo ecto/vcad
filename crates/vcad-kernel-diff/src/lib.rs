@@ -40,7 +40,20 @@ mod seam;
 pub use fd::{compare_velocities, fd_velocities, fd_volume_derivative, FdComparison};
 pub use implicit::{constraint_row, solve_vertex_velocity, surface_residual, ConstraintRow};
 pub use lift::{lift_surface, DualSurface};
-pub use seam::{evaluate_with_sensitivity, mesh_volume, volume_with_derivative, SeamMesh};
+pub use seam::{evaluate_with_sensitivity, volume_with_derivative, SeamMesh};
+pub use vcad_kernel_tessellate::frozen::mesh_volume;
+
+/// Downcast a `dyn Surface` to its concrete struct, with the store's
+/// reported kind carried into the error.
+pub(crate) fn downcast<T: 'static>(
+    surface: &dyn Surface,
+    kind: SurfaceKind,
+) -> Result<&T, DiffError> {
+    surface
+        .as_any()
+        .downcast_ref::<T>()
+        .ok_or(DiffError::DowncastFailed(kind))
+}
 
 /// Errors from the differentiable seam.
 #[derive(Debug)]
