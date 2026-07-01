@@ -119,6 +119,28 @@ pub enum NodeRecipe {
         /// Frozen v parameter.
         v: f64,
     },
+    /// The node lies on the intersection of two faces' surfaces (a trim
+    /// boundary that is not carried by a topology vertex, e.g. a cap-rim
+    /// ring). Its position is the Newton solution of
+    /// `{g_a(x) = 0, g_b(x) = 0, t·(x − anchor) = 0}` where `t` is the
+    /// intersection tangent — the frozen-parameter branch choice — so the
+    /// node tracks the moving trim no matter *which* of the two surfaces θ
+    /// moves. The per-face `(u, v)` are the capture-time samples, kept for
+    /// geometric face matching across rebuilds.
+    Boundary {
+        /// Canonical traversal index of the first face.
+        face_a: u32,
+        /// Capture-time u on face a.
+        ua: f64,
+        /// Capture-time v on face a.
+        va: f64,
+        /// Canonical traversal index of the second face.
+        face_b: u32,
+        /// Capture-time u on face b.
+        ub: f64,
+        /// Capture-time v on face b.
+        vb: f64,
+    },
 }
 
 /// A frozen tessellation: recipes for every node, frozen connectivity, and
@@ -188,6 +210,13 @@ pub enum FrozenError {
         /// Distance (mm) to the nearest candidate.
         distance: f64,
     },
+    /// The Newton solve for a [`NodeRecipe::Boundary`] node failed to
+    /// converge (tangent degenerate, singular system, or divergence): the
+    /// two surfaces no longer intersect cleanly near the anchor.
+    BoundarySolveFailed {
+        /// Index of the offending node.
+        node: usize,
+    },
 }
 
 impl std::fmt::Display for FrozenError {
@@ -209,6 +238,11 @@ impl std::fmt::Display for FrozenError {
                 f,
                 "no entity within matching tolerance of node {node}'s capture-time position \
                  (nearest at {distance:.3e} mm); node correspondence across the perturbation is lost"
+            ),
+            FrozenError::BoundarySolveFailed { node } => write!(
+                f,
+                "boundary node {node}: Newton solve on the two-surface intersection failed to \
+                 converge near the capture-time anchor"
             ),
         }
     }
@@ -384,40 +418,102 @@ fn invert_uv(surface: &dyn Surface, p: &Point3) -> Result<Point2, FrozenError> {
     }
 }
 
-/// Recipe priority when two faces contribute a coincident node: a topology
-/// vertex pins all three position DOF and tracks the kernel's own output; a
-/// sample on a curved surface pins two DOF and follows the surface as it
-/// moves with θ (e.g. a cap-rim node bound to the cylinder wall stays on the
-/// moving trim); a sample on a plane pins only one DOF.
+/// Preference between two same-surface `SurfaceUv` recipes for a coincident
+/// node: a sample on a curved surface pins two position DOF, a sample on a
+/// plane pins one. (Coincident nodes on *distinct* surfaces are upgraded to
+/// [`NodeRecipe::Boundary`] instead, which tracks the moving trim no matter
+/// which surface carries θ; a matched topology vertex always wins.)
+fn kind_rank(kind: SurfaceKind) -> u8 {
+    match kind {
+        SurfaceKind::Plane => 0,
+        _ => 1,
+    }
+}
+
+/// Solve a 3×3 linear system by Cramer's rule; `None` when near-singular.
+fn solve3(m: [[f64; 3]; 3], b: [f64; 3]) -> Option<[f64; 3]> {
+    let det = |m: &[[f64; 3]; 3]| -> f64 {
+        m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1])
+            - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0])
+            + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0])
+    };
+    let d = det(&m);
+    let scale = m
+        .iter()
+        .map(|row| row.iter().map(|v| v.abs()).fold(0.0, f64::max))
+        .fold(0.0, f64::max);
+    // Relative singularity threshold: the determinant's roundoff floor is
+    // ~ε·scale³, and a legitimately independent system (the tangent
+    // pre-check already rejected near-parallel gradients) has |det| far
+    // above 1e-12·scale³ — so this margin rejects ill-conditioned systems
+    // early instead of letting Newton amplify noise and diverge.
+    if d.abs() < 1e-12 * scale.powi(3).max(f64::MIN_POSITIVE) {
+        return None;
+    }
+    let mut out = [0.0; 3];
+    for (k, o) in out.iter_mut().enumerate() {
+        let mut mk = m;
+        for row in 0..3 {
+            mk[row][k] = b[row];
+        }
+        *o = det(&mk) / d;
+    }
+    Some(out)
+}
+
+/// Refine a boundary node onto the intersection of two surfaces: Newton on
+/// `{g_a(x) = 0, g_b(x) = 0, t·(x − anchor) = 0}`, where `t` is the
+/// intersection tangent (`∇g_a × ∇g_b`) at the anchor — the frozen-branch
+/// convention that pins the node's curve parameter.
 ///
-/// KNOWN LIMITATION: this ordering hard-codes the assumption that when a
-/// trim boundary moves, the *curved* surface is the one carrying θ (true
-/// for the M0–M2 parameters: extrude distance moves planes whose trims are
-/// θ-independent, hole radius moves the cylinder). The inverse case — a
-/// boundary node shared between a *moving plane* and a fixed curved surface
-/// (e.g. cylinder height as θ) — freezes the node on the fixed surface, so
-/// the frozen mesh no longer tracks the true solid at θ ± h and any QoI
-/// integral over it differentiates a slightly different body. The FD oracle
-/// replays the same recipes, so it agrees with the analytic side while both
-/// differ from the true CAD derivative. The correct general mechanism is a
-/// multi-surface boundary recipe (the `SurfaceUv` analogue of the implicit
-/// multi-row vertex solve) — later-milestone work. Until then, restrict θ
-/// choices to parameters whose moving trims live on curved surfaces or are
-/// carried by topology vertices.
-fn recipe_rank(recipe: &NodeRecipe, kind: SurfaceKind) -> u8 {
-    match recipe {
-        NodeRecipe::TopoVertex { .. } => 2,
-        NodeRecipe::SurfaceUv { .. } => match kind {
-            SurfaceKind::Plane => 0,
-            _ => 1,
-        },
+/// Returns `None` if either surface lacks an implicit form, the tangent is
+/// degenerate, the system is singular, or Newton fails to converge.
+pub fn refine_boundary_point(a: &dyn Surface, b: &dyn Surface, anchor: &Point3) -> Option<Point3> {
+    let (_, ga0) = vcad_kernel_geom::implicit_form(a, anchor)?;
+    let (_, gb0) = vcad_kernel_geom::implicit_form(b, anchor)?;
+    let t = ga0.cross(gb0);
+    let t_norm = t.norm();
+    if t_norm < 1e-12 * (ga0.norm() * gb0.norm()).max(f64::MIN_POSITIVE) {
+        return None; // (near-)tangent surfaces: no well-defined curve
+    }
+    let t = t / t_norm;
+
+    let mut x = *anchor;
+    for _ in 0..30 {
+        let (ga, na) = vcad_kernel_geom::implicit_form(a, &x)?;
+        let (gb, nb) = vcad_kernel_geom::implicit_form(b, &x)?;
+        let gt = t.dot(x - *anchor);
+        // Distance-like residuals (quadric g is not a signed distance).
+        let ra = ga / na.norm().max(f64::MIN_POSITIVE);
+        let rb = gb / nb.norm().max(f64::MIN_POSITIVE);
+        if ra.abs().max(rb.abs()).max(gt.abs()) < 1e-12 * (1.0 + x.coords_norm()) {
+            return Some(x);
+        }
+        let delta = solve3(
+            [[na.x, na.y, na.z], [nb.x, nb.y, nb.z], [t.x, t.y, t.z]],
+            [-ga, -gb, -gt],
+        )?;
+        x = Point3::new(x.x + delta[0], x.y + delta[1], x.z + delta[2]);
+    }
+    None
+}
+
+/// Small helper: Euclidean norm of a point's coordinates (for relative
+/// convergence thresholds).
+trait CoordsNorm {
+    fn coords_norm(&self) -> f64;
+}
+impl CoordsNorm for Point3 {
+    fn coords_norm(&self) -> f64 {
+        (self.x * self.x + self.y * self.y + self.z * self.z).sqrt()
     }
 }
 
 /// Per-face tessellation used by capture. Mirrors the face dispatch of the
 /// primary `tessellate_brep` entry point: degenerate single-vertex circular
-/// cap loops (primitive cylinder/cone caps) are sampled as disks; everything
-/// else goes through the stock per-face tessellator.
+/// cap loops (primitive cylinder caps, boolean-cut caps with holes) go
+/// through the shared `tessellate_degenerate_cap` helper; everything else
+/// through the stock per-face tessellator.
 fn tessellate_face_for_capture(
     brep: &BRepSolid,
     face_id: FaceId,
@@ -428,34 +524,8 @@ fn tessellate_face_for_capture(
     let surface = &brep.geometry.surfaces[face.surface_index];
     let reversed = face.orientation == Orientation::Reversed;
 
-    if surface.surface_type() == SurfaceKind::Plane
-        && topo.loop_len(face.outer_loop) <= 1
-        && face.inner_loops.is_empty()
-    {
-        // Degenerate cap: a full-circle edge anchored at one vertex.
-        let anchor = topo
-            .loop_half_edges(face.outer_loop)
-            .map(|he| topo.vertices[topo.half_edges[he].origin].point)
-            .next();
-        if let Some(v) = anchor {
-            let center = surface.evaluate(Point2::origin());
-            let r = (v - center).norm();
-            let x_dir = if r > 1e-12 {
-                (v - center).normalize()
-            } else {
-                surface.d_du(Point2::origin()).normalize()
-            };
-            let normal = surface.normal(Point2::origin());
-            let y_dir = normal.as_ref().cross(x_dir);
-            return crate::tessellate_disk_general(
-                center,
-                r,
-                x_dir,
-                y_dir,
-                params.circle_segments,
-                reversed,
-            );
-        }
+    if surface.surface_type() == SurfaceKind::Plane && topo.loop_len(face.outer_loop) <= 1 {
+        return crate::tessellate_degenerate_cap(brep, face_id, params, reversed);
     }
 
     crate::tessellate_face(topo, &brep.geometry, face_id, params)
@@ -599,13 +669,66 @@ pub fn capture_plan(
 
             let idx = match find_near(&dedup, &base_positions, &position) {
                 Some(existing) => {
-                    // Keep the higher-priority recipe for coincident nodes.
-                    if recipe_rank(&recipe, kind)
-                        > recipe_rank(&nodes[existing as usize], node_kinds[existing as usize])
+                    // Merge coincident contributions. A matched topology
+                    // vertex always wins; two samples on *distinct*
+                    // surfaces mark a trim-boundary node and upgrade to a
+                    // `Boundary` recipe (Newton-tracked intersection, so
+                    // the node follows the moving trim regardless of which
+                    // surface carries θ); same-surface duplicates keep the
+                    // higher-ranked sample.
+                    let e = existing as usize;
+                    let merged: Option<(NodeRecipe, Point3, SurfaceKind)> = match (nodes[e], recipe)
                     {
-                        nodes[existing as usize] = recipe;
-                        base_positions[existing as usize] = position;
-                        node_kinds[existing as usize] = kind;
+                        (NodeRecipe::TopoVertex { .. }, _) => None,
+                        (_, NodeRecipe::TopoVertex { .. }) => Some((recipe, position, kind)),
+                        (NodeRecipe::Boundary { .. }, _) | (_, NodeRecipe::Boundary { .. }) => None,
+                        (
+                            NodeRecipe::SurfaceUv {
+                                face: fa,
+                                u: ua,
+                                v: va,
+                            },
+                            NodeRecipe::SurfaceUv {
+                                face: fb,
+                                u: ub,
+                                v: vb,
+                            },
+                        ) => {
+                            let sidx_a = topo.faces[ci.faces[fa as usize]].surface_index;
+                            let sidx_b = topo.faces[ci.faces[fb as usize]].surface_index;
+                            let refined = (sidx_a != sidx_b)
+                                .then(|| {
+                                    let sa = brep.geometry.surfaces[sidx_a].as_ref();
+                                    let sb = brep.geometry.surfaces[sidx_b].as_ref();
+                                    refine_boundary_point(sa, sb, &base_positions[e])
+                                })
+                                .flatten();
+                            match refined {
+                                Some(p) => Some((
+                                    NodeRecipe::Boundary {
+                                        face_a: fa,
+                                        ua,
+                                        va,
+                                        face_b: fb,
+                                        ub,
+                                        vb,
+                                    },
+                                    p,
+                                    node_kinds[e],
+                                )),
+                                // Same surface, tangent surfaces, or no
+                                // implicit form: keep the higher rank.
+                                None if kind_rank(kind) > kind_rank(node_kinds[e]) => {
+                                    Some((recipe, position, kind))
+                                }
+                                None => None,
+                            }
+                        }
+                    };
+                    if let Some((r, p, k)) = merged {
+                        nodes[e] = r;
+                        base_positions[e] = p;
+                        node_kinds[e] = k;
                     }
                     existing
                 }
@@ -672,6 +795,40 @@ pub fn evaluate_plan(brep: &BRepSolid, plan: &FrozenPlan) -> Result<FrozenMesh, 
     let topo = &brep.topology;
     // Face slot (capture-time traversal index) → matched rebuilt face.
     let mut face_match: HashMap<u32, FaceId> = HashMap::new();
+    // Resolve a capture-time face slot to a rebuilt face: the face whose
+    // surface, evaluated at the frozen (u, v), lands nearest the node's
+    // capture-time anchor.
+    fn resolve_face(
+        brep: &BRepSolid,
+        ci: &CanonicalIndex,
+        face_match: &mut HashMap<u32, FaceId>,
+        slot: u32,
+        uv: Point2,
+        anchor: &Point3,
+        node: usize,
+    ) -> Result<FaceId, FrozenError> {
+        if let Some(&f) = face_match.get(&slot) {
+            return Ok(f);
+        }
+        let topo = &brep.topology;
+        let mut best: Option<(FaceId, f64)> = None;
+        for &fid in &ci.faces {
+            let surface = &brep.geometry.surfaces[topo.faces[fid].surface_index];
+            let d2 = (surface.evaluate(uv) - *anchor).norm_squared();
+            if best.map(|(_, bd)| d2 < bd).unwrap_or(true) {
+                best = Some((fid, d2));
+            }
+        }
+        let (fid, d2) = best.ok_or(FrozenError::RecipeOutOfRange)?;
+        if d2 > MATCH_TOL * MATCH_TOL {
+            return Err(FrozenError::CorrespondenceLost {
+                node,
+                distance: d2.sqrt(),
+            });
+        }
+        face_match.insert(slot, fid);
+        Ok(fid)
+    }
 
     let mut positions = Vec::with_capacity(plan.nodes.len());
     for (i, recipe) in plan.nodes.iter().enumerate() {
@@ -712,28 +869,7 @@ pub fn evaluate_plan(brep: &BRepSolid, plan: &FrozenPlan) -> Result<FrozenMesh, 
             }
             NodeRecipe::SurfaceUv { face, u, v } => {
                 let uv = Point2::new(u, v);
-                let face_id = match face_match.get(&face) {
-                    Some(&f) => f,
-                    None => {
-                        let mut best: Option<(FaceId, f64)> = None;
-                        for &fid in &ci.faces {
-                            let surface = &brep.geometry.surfaces[topo.faces[fid].surface_index];
-                            let d2 = (surface.evaluate(uv) - anchor).norm_squared();
-                            if best.map(|(_, bd)| d2 < bd).unwrap_or(true) {
-                                best = Some((fid, d2));
-                            }
-                        }
-                        let (fid, d2) = best.ok_or(FrozenError::RecipeOutOfRange)?;
-                        if d2 > MATCH_TOL * MATCH_TOL {
-                            return Err(FrozenError::CorrespondenceLost {
-                                node: i,
-                                distance: d2.sqrt(),
-                            });
-                        }
-                        face_match.insert(face, fid);
-                        fid
-                    }
-                };
+                let face_id = resolve_face(brep, &ci, &mut face_match, face, uv, &anchor, i)?;
                 let surface = &brep.geometry.surfaces[topo.faces[face_id].surface_index];
                 let p = surface.evaluate(uv);
                 // Verify EVERY node against its anchor, not just the slot's
@@ -741,6 +877,45 @@ pub fn evaluate_plan(brep: &BRepSolid, plan: &FrozenPlan) -> Result<FrozenMesh, 
                 // diverges elsewhere (tangent surfaces, duplicated boolean
                 // surface copies, a rebuilt surface with a different frame)
                 // must error, not silently evaluate the wrong geometry.
+                let d2 = (p - anchor).norm_squared();
+                if d2 > MATCH_TOL * MATCH_TOL {
+                    return Err(FrozenError::CorrespondenceLost {
+                        node: i,
+                        distance: d2.sqrt(),
+                    });
+                }
+                p
+            }
+            NodeRecipe::Boundary {
+                face_a,
+                ua,
+                va,
+                face_b,
+                ub,
+                vb,
+            } => {
+                let fa = resolve_face(
+                    brep,
+                    &ci,
+                    &mut face_match,
+                    face_a,
+                    Point2::new(ua, va),
+                    &anchor,
+                    i,
+                )?;
+                let fb = resolve_face(
+                    brep,
+                    &ci,
+                    &mut face_match,
+                    face_b,
+                    Point2::new(ub, vb),
+                    &anchor,
+                    i,
+                )?;
+                let sa = brep.geometry.surfaces[topo.faces[fa].surface_index].as_ref();
+                let sb = brep.geometry.surfaces[topo.faces[fb].surface_index].as_ref();
+                let p = refine_boundary_point(sa, sb, &anchor)
+                    .ok_or(FrozenError::BoundarySolveFailed { node: i })?;
                 let d2 = (p - anchor).norm_squared();
                 if d2 > MATCH_TOL * MATCH_TOL {
                     return Err(FrozenError::CorrespondenceLost {

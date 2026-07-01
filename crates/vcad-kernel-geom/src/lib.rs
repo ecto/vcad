@@ -1485,6 +1485,42 @@ impl Curve2d for Circle2d {
 }
 
 // =============================================================================
+// Implicit forms
+// =============================================================================
+
+/// The implicit form `g(x) = 0` of a surface, for the kinds that have one:
+/// returns `(g(p), ∇g(p))`.
+///
+/// Forms: plane `g = n·(x − o)`; cylinder `g = |radial|² − r²`; sphere
+/// `g = |x − c|² − r²`. Returns `None` for kinds without a closed implicit
+/// form. Consumers that need a distance-like quantity should divide by
+/// `|∇g|` (the quadric forms are not signed distances).
+pub fn implicit_form(surface: &dyn Surface, p: &Point3) -> Option<(f64, Vec3)> {
+    match surface.surface_type() {
+        SurfaceKind::Plane => {
+            let plane = surface.as_any().downcast_ref::<Plane>()?;
+            Some((plane.signed_distance(p), *plane.normal_dir.as_ref()))
+        }
+        SurfaceKind::Cylinder => {
+            let cyl = surface.as_any().downcast_ref::<CylinderSurface>()?;
+            let a = *cyl.axis.as_ref();
+            let d = *p - cyl.center;
+            let radial = d - a * d.dot(a);
+            Some((
+                radial.norm_squared() - cyl.radius * cyl.radius,
+                2.0 * radial,
+            ))
+        }
+        SurfaceKind::Sphere => {
+            let sph = surface.as_any().downcast_ref::<SphereSurface>()?;
+            let d = *p - sph.center;
+            Some((d.norm_squared() - sph.radius * sph.radius, 2.0 * d))
+        }
+        _ => None,
+    }
+}
+
+// =============================================================================
 // Geometry store
 // =============================================================================
 
