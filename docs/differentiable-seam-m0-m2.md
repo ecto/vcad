@@ -175,6 +175,10 @@ for the degenerate-cap-with-holes face the per-face tessellator cannot
 mesh). What remains is known and deliberate:
 
 - **Recipe priority assumes the moving trim lives on the curved surface.**
+  *(Resolved in M3: coincident nodes on two distinct surfaces are now
+  `NodeRecipe::Boundary` — a Newton-tracked intersection point — so the
+  node follows the moving trim regardless of which surface carries θ. See
+  `differentiable-seam-m3.md`.)*
   `TopoVertex > SurfaceUv-on-curved > SurfaceUv-on-plane` is correct for
   M0–M2's parameters, but a boundary node shared between a *moving plane*
   and a *fixed* curved surface (e.g. cylinder **height** as θ, where the

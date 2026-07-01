@@ -3771,6 +3771,128 @@ pub fn tessellate_disk(
     mesh
 }
 
+/// Tessellate a degenerate circular cap face: a planar face whose outer
+/// loop has ≤ 1 vertex (a full-circle edge anchored at one point), with or
+/// without inner loops (holes). Samples the outer circle into a
+/// `params.circle_segments`-gon; holes use the hole-aware CDT path.
+///
+/// Shared by [`tessellate_brep`] and the frozen-tessellation capture, so
+/// the two can never drift apart on this special case.
+fn tessellate_degenerate_cap(
+    brep: &BRepSolid,
+    face_id: FaceId,
+    params: &TessellationParams,
+    reversed: bool,
+) -> TriangleMesh {
+    let face = &brep.topology.faces[face_id];
+    // Degenerate cap face with ≤1 vertex — single degenerate edge
+    // forming a full circle. Sample the circle into a proper polygon.
+    let verts: Vec<_> = brep
+        .topology
+        .loop_half_edges(face.outer_loop)
+        .map(|he| brep.topology.vertices[brep.topology.half_edges[he].origin].point)
+        .collect();
+    let Some(&v) = verts.first() else {
+        return TriangleMesh::new();
+    };
+    let plane = &brep.geometry.surfaces[face.surface_index];
+    let center = plane.evaluate(Point2::origin());
+    let r = (v - center).norm();
+    let x_dir = if r > 1e-12 {
+        (v - center).normalize()
+    } else {
+        plane.d_du(Point2::origin()).normalize()
+    };
+    let normal = plane.normal(Point2::origin());
+    let y_dir = normal.as_ref().cross(x_dir);
+
+    if face.inner_loops.is_empty() {
+        return tessellate_disk_general(center, r, x_dir, y_dir, params.circle_segments, reversed);
+    }
+
+    // Degenerate outer loop WITH inner loops (holes) —
+    // e.g. a cylinder cap after boolean subtraction.
+    // Sample the outer circle into a polygon and use
+    // hole-aware CDT tessellation.
+    let n = params.circle_segments as usize;
+    let mut outer_3d = Vec::with_capacity(n);
+    for i in 0..n {
+        let theta = 2.0 * PI * (i as f64) / (n as f64);
+        let p = center + r * (theta.cos() * x_dir + theta.sin() * y_dir);
+        outer_3d.push(p);
+    }
+
+    let u_axis = x_dir;
+    let v_axis = y_dir;
+    let project = |p: &Point3| -> (f64, f64) {
+        let d = *p - center;
+        (d.dot(u_axis), d.dot(v_axis))
+    };
+
+    let outer_2d: Vec<(f64, f64)> = outer_3d.iter().map(&project).collect();
+
+    let mut inner_loops_3d: Vec<Vec<Point3>> = Vec::new();
+    let mut inner_loops_2d: Vec<Vec<(f64, f64)>> = Vec::new();
+    for &inner_loop in &face.inner_loops {
+        let iv: Vec<Point3> = brep
+            .topology
+            .loop_half_edges(inner_loop)
+            .map(|he| brep.topology.vertices[brep.topology.half_edges[he].origin].point)
+            .collect();
+        if iv.len() >= 3 {
+            let iv_2d: Vec<(f64, f64)> = iv.iter().map(&project).collect();
+            inner_loops_3d.push(iv);
+            inner_loops_2d.push(iv_2d);
+        }
+    }
+
+    // Normalize winding: outer CCW, inner CW
+    let outer_area = polygon_area_2d(&outer_2d);
+    let (outer_2d, outer_3d) = if outer_area < 0.0 {
+        let mut o2 = outer_2d;
+        let mut o3 = outer_3d;
+        o2.reverse();
+        o3.reverse();
+        (o2, o3)
+    } else {
+        (outer_2d, outer_3d)
+    };
+    for (i, hole_2d) in inner_loops_2d.iter_mut().enumerate() {
+        let hole_area = polygon_area_2d(hole_2d);
+        if hole_area > 0.0 {
+            inner_loops_3d[i].reverse();
+            hole_2d.reverse();
+        }
+    }
+
+    merge_overlapping_holes(&mut inner_loops_2d, &mut inner_loops_3d);
+
+    let mut face_mesh = triangulate_circular_cap_with_holes(
+        center,
+        r,
+        x_dir,
+        y_dir,
+        &outer_2d,
+        &inner_loops_2d,
+        &outer_3d,
+        &inner_loops_3d,
+        reversed,
+    );
+
+    // Add planar normals
+    let face_normal = if reversed { -normal } else { normal };
+    let (nx, ny, nz) = (
+        face_normal.x as f32,
+        face_normal.y as f32,
+        face_normal.z as f32,
+    );
+    for _ in 0..face_mesh.num_vertices() {
+        face_mesh.normals.extend_from_slice(&[nx, ny, nz]);
+    }
+
+    face_mesh
+}
+
 /// Full tessellation of a B-rep solid, using `segments` as a quality hint.
 ///
 /// This is the main entry point for converting a B-rep to a triangle mesh.
@@ -3891,122 +4013,8 @@ pub fn tessellate_brep(brep: &BRepSolid, segments: u32) -> TriangleMesh {
         match surface.surface_type() {
             SurfaceKind::Plane => {
                 if loop_len <= 1 {
-                    // Degenerate cap face with ≤1 vertex — single degenerate edge
-                    // forming a full circle. Sample the circle into a proper polygon.
-                    let verts: Vec<_> = brep
-                        .topology
-                        .loop_half_edges(face.outer_loop)
-                        .map(|he| brep.topology.vertices[brep.topology.half_edges[he].origin].point)
-                        .collect();
-                    if let Some(&v) = verts.first() {
-                        let plane = &brep.geometry.surfaces[face.surface_index];
-                        let center = plane.evaluate(Point2::origin());
-                        let r = (v - center).norm();
-                        let x_dir = if r > 1e-12 {
-                            (v - center).normalize()
-                        } else {
-                            plane.d_du(Point2::origin()).normalize()
-                        };
-                        let normal = plane.normal(Point2::origin());
-                        let y_dir = normal.as_ref().cross(x_dir);
-
-                        if face.inner_loops.is_empty() {
-                            let disk = tessellate_disk_general(
-                                center,
-                                r,
-                                x_dir,
-                                y_dir,
-                                params.circle_segments,
-                                reversed,
-                            );
-                            mesh.merge(&disk);
-                        } else {
-                            // Degenerate outer loop WITH inner loops (holes) —
-                            // e.g. a cylinder cap after boolean subtraction.
-                            // Sample the outer circle into a polygon and use
-                            // hole-aware CDT tessellation.
-                            let n = params.circle_segments as usize;
-                            let mut outer_3d = Vec::with_capacity(n);
-                            for i in 0..n {
-                                let theta = 2.0 * PI * (i as f64) / (n as f64);
-                                let p = center + r * (theta.cos() * x_dir + theta.sin() * y_dir);
-                                outer_3d.push(p);
-                            }
-
-                            let u_axis = x_dir;
-                            let v_axis = y_dir;
-                            let project = |p: &Point3| -> (f64, f64) {
-                                let d = *p - center;
-                                (d.dot(u_axis), d.dot(v_axis))
-                            };
-
-                            let outer_2d: Vec<(f64, f64)> = outer_3d.iter().map(&project).collect();
-
-                            let mut inner_loops_3d: Vec<Vec<Point3>> = Vec::new();
-                            let mut inner_loops_2d: Vec<Vec<(f64, f64)>> = Vec::new();
-                            for &inner_loop in &face.inner_loops {
-                                let iv: Vec<Point3> = brep
-                                    .topology
-                                    .loop_half_edges(inner_loop)
-                                    .map(|he| {
-                                        brep.topology.vertices[brep.topology.half_edges[he].origin]
-                                            .point
-                                    })
-                                    .collect();
-                                if iv.len() >= 3 {
-                                    let iv_2d: Vec<(f64, f64)> = iv.iter().map(&project).collect();
-                                    inner_loops_3d.push(iv);
-                                    inner_loops_2d.push(iv_2d);
-                                }
-                            }
-
-                            // Normalize winding: outer CCW, inner CW
-                            let outer_area = polygon_area_2d(&outer_2d);
-                            let (outer_2d, outer_3d) = if outer_area < 0.0 {
-                                let mut o2 = outer_2d;
-                                let mut o3 = outer_3d;
-                                o2.reverse();
-                                o3.reverse();
-                                (o2, o3)
-                            } else {
-                                (outer_2d, outer_3d)
-                            };
-                            for (i, hole_2d) in inner_loops_2d.iter_mut().enumerate() {
-                                let hole_area = polygon_area_2d(hole_2d);
-                                if hole_area > 0.0 {
-                                    inner_loops_3d[i].reverse();
-                                    hole_2d.reverse();
-                                }
-                            }
-
-                            merge_overlapping_holes(&mut inner_loops_2d, &mut inner_loops_3d);
-
-                            let mut face_mesh = triangulate_circular_cap_with_holes(
-                                center,
-                                r,
-                                x_dir,
-                                y_dir,
-                                &outer_2d,
-                                &inner_loops_2d,
-                                &outer_3d,
-                                &inner_loops_3d,
-                                reversed,
-                            );
-
-                            // Add planar normals
-                            let face_normal = if reversed { -normal } else { normal };
-                            let (nx, ny, nz) = (
-                                face_normal.x as f32,
-                                face_normal.y as f32,
-                                face_normal.z as f32,
-                            );
-                            for _ in 0..face_mesh.num_vertices() {
-                                face_mesh.normals.extend_from_slice(&[nx, ny, nz]);
-                            }
-
-                            mesh.merge(&face_mesh);
-                        }
-                    }
+                    let face_mesh = tessellate_degenerate_cap(brep, face_id, &params, reversed);
+                    mesh.merge(&face_mesh);
                 } else {
                     // Use winding-aware tessellation to handle faces with mismatched loop winding
                     let face_mesh = tessellate_planar_face_with_geom(

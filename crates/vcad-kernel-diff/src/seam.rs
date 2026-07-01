@@ -7,7 +7,8 @@ use tang::Dual;
 use vcad_kernel_math::{Point3, Vec3};
 use vcad_kernel_primitives::BRepSolid;
 use vcad_kernel_tessellate::frozen::{
-    canonical_index, mesh_volume, signature_with_index, FrozenError, FrozenPlan, NodeRecipe,
+    canonical_index, mesh_volume, refine_boundary_point, signature_with_index, FrozenError,
+    FrozenPlan, NodeRecipe,
 };
 use vcad_kernel_topo::VertexId;
 
@@ -169,6 +170,34 @@ pub fn evaluate_with_sensitivity(
                 anchor_check(i, &p, &plan.base_positions[i])?;
                 positions.push(p);
                 velocities.push(vel);
+            }
+            NodeRecipe::Boundary { face_a, face_b, .. } => {
+                // A trim-boundary node: position from the two-surface
+                // Newton refinement; velocity from the same two-row
+                // implicit system used for rim topology vertices, with the
+                // tangential DOF frozen. This is what makes the node track
+                // the moving trim regardless of which surface carries θ.
+                let sidx = |slot: u32| -> Result<usize, DiffError> {
+                    let face_id = *ci
+                        .faces
+                        .get(slot as usize)
+                        .ok_or(FrozenError::RecipeOutOfRange)?;
+                    Ok(topo.faces[face_id].surface_index)
+                };
+                let (sidx_a, sidx_b) = (sidx(face_a)?, sidx(face_b)?);
+                let sa = brep.geometry.surfaces[sidx_a].as_ref();
+                let sb = brep.geometry.surfaces[sidx_b].as_ref();
+                let anchor = plan.base_positions[i];
+                let x = refine_boundary_point(sa, sb, &anchor)
+                    .ok_or(FrozenError::BoundarySolveFailed { node: i })?;
+                anchor_check(i, &x, &anchor)?;
+                let rows = vec![
+                    constraint_row(sa, seeding.get(sidx_a), &x)?,
+                    constraint_row(sb, seeding.get(sidx_b), &x)?,
+                ];
+                let v = solve_vertex_velocity(&rows)?;
+                positions.push(x);
+                velocities.push(v);
             }
         }
     }

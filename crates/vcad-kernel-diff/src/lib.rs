@@ -32,14 +32,22 @@ use vcad_kernel_geom::{GeometryStore, Surface, SurfaceKind};
 use vcad_kernel_math::Vec3;
 use vcad_kernel_tessellate::frozen::FrozenError;
 
+mod contract;
 mod fd;
 mod implicit;
 mod lift;
+mod mass;
+mod optimize;
 mod seam;
 
+pub use contract::{contract_sensitivity, volume_gradient};
 pub use fd::{compare_velocities, fd_velocities, fd_volume_derivative, FdComparison};
 pub use implicit::{constraint_row, solve_vertex_velocity, surface_residual, ConstraintRow};
 pub use lift::{lift_surface, DualSurface};
+pub use mass::{mass_properties, mass_properties_with_derivative, MassProperties};
+pub use optimize::{
+    minimize, objective_gradient, IterateRecord, OptimizeOptions, OptimizeResult, StopReason,
+};
 pub use seam::{evaluate_with_sensitivity, volume_with_derivative, SeamMesh};
 pub use vcad_kernel_tessellate::frozen::mesh_volume;
 
