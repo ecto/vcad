@@ -621,7 +621,7 @@ pub fn capture_plan(
             *mapped = idx;
         }
 
-        for tri in mesh.indices.chunks_exact(3) {
+        for tri in mesh.indices.as_chunks::<3>().0 {
             let a = local_map[tri[0] as usize];
             let b = local_map[tri[1] as usize];
             let c = local_map[tri[2] as usize];

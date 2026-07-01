@@ -82,10 +82,16 @@ pub fn evaluate_with_sensitivity(
 
     let topo = &brep.topology;
 
-    // Adjacent surface indices per topology vertex (distinct indices only).
+    // Adjacent surface indices per topology vertex (distinct indices only),
+    // plus the set of surface indices actually referenced by the solid's
+    // faces — the geometric incidence scan below is restricted to the
+    // latter, so surfaces a boolean left in the store without a bounding
+    // face can never contribute a spurious constraint row.
     let mut adjacent: HashMap<VertexId, BTreeSet<usize>> = HashMap::new();
+    let mut referenced: BTreeSet<usize> = BTreeSet::new();
     for &face_id in &ci.faces {
         let face = &topo.faces[face_id];
+        referenced.insert(face.surface_index);
         let loops = std::iter::once(face.outer_loop).chain(face.inner_loops.iter().copied());
         for loop_id in loops {
             for he in topo.loop_half_edges(loop_id) {
@@ -129,8 +135,9 @@ pub fn evaluate_with_sensitivity(
                 // defining faces (the other keeps an untrimmed seam loop),
                 // so loop membership alone under-constrains it.
                 let mut incident: BTreeSet<usize> = adjacent.get(&vid).cloned().unwrap_or_default();
-                for (sidx, surface) in brep.geometry.surfaces.iter().enumerate() {
-                    if let Some(res) = surface_residual(surface.as_ref(), &x) {
+                for &sidx in &referenced {
+                    let surface = brep.geometry.surfaces[sidx].as_ref();
+                    if let Some(res) = surface_residual(surface, &x) {
                         if res < INCIDENCE_TOL {
                             incident.insert(sidx);
                         }
