@@ -1,0 +1,20 @@
+[package]
+name = "vcad-kernel-diff"
+description = "Differentiable seam: parameter sensitivities (dx/dθ) of frozen tessellations"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+tang = { workspace = true }
+vcad-kernel-math = { workspace = true }
+vcad-kernel-geom = { workspace = true }
+vcad-kernel-nurbs = { workspace = true }
+vcad-kernel-topo = { workspace = true }
+vcad-kernel-primitives = { workspace = true }
+vcad-kernel-tessellate = { workspace = true }
+
+[dev-dependencies]
+vcad-kernel-sketch = { workspace = true }
+vcad-kernel = { workspace = true }
