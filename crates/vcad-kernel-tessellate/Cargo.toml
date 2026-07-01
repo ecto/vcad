@@ -11,6 +11,7 @@ vcad-kernel-math = { workspace = true }
 vcad-kernel-topo = { workspace = true }
 vcad-kernel-geom = { workspace = true }
 vcad-kernel-primitives = { workspace = true }
+tang = { workspace = true }
 
 [dev-dependencies]
 vcad-kernel-step = { workspace = true }

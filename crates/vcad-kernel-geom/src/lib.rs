@@ -11,6 +11,9 @@ use std::f64::consts::PI;
 use tang::Scalar;
 use vcad_kernel_math::{Dir3, Point2, Point3, Transform, Vec2, Vec3};
 
+pub mod diff;
+pub use diff::{eval_surface_dual, SeedMismatch, SurfaceSeed};
+
 // =============================================================================
 // Surface types
 // =============================================================================
