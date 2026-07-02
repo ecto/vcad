@@ -20,7 +20,9 @@ use vcad_ir::molecule::MoleculeSystem;
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 struct MdConfig {
-    /// "lj" (default) or "mlip-stub".
+    /// "auto" (default), "lj", "bonds", or "mlip-stub". "auto" uses harmonic
+    /// bonds for a bonded molecule (input geometry = equilibrium) and
+    /// Lennard-Jones for an unbonded system (fluid / metal / ionic crystal).
     force_field: String,
     /// LJ well depth (eV).
     epsilon: f64,
@@ -47,7 +49,7 @@ struct MdConfig {
 impl Default for MdConfig {
     fn default() -> Self {
         Self {
-            force_field: "lj".into(),
+            force_field: "auto".into(),
             epsilon: 0.0103,
             sigma: 3.4,
             cutoff: 8.0,
@@ -62,9 +64,36 @@ impl Default for MdConfig {
     }
 }
 
-fn build_force_field(cfg: &MdConfig) -> Box<dyn ForceField> {
+/// Harmonic bonds whose per-bond equilibrium length is the current geometry, so
+/// the input structure is a stress-free minimum (atoms vibrate about it rather
+/// than snapping to an arbitrary uniform length).
+fn bonds_at_current_geometry(sys: &AtomSystem, k: f64) -> HarmonicBonds {
+    use crate::vec3;
+    let per_bond = sys
+        .bonds
+        .iter()
+        .map(|b| vec3::norm(vec3::sub(sys.positions[b.i], sys.positions[b.j])))
+        .collect();
+    HarmonicBonds {
+        k,
+        r0: 0.0,
+        per_bond,
+    }
+}
+
+fn build_force_field(cfg: &MdConfig, sys: &AtomSystem) -> Box<dyn ForceField> {
+    // Resolve "auto": bonded molecules → harmonic bonds; everything else → LJ.
+    let mode = if cfg.force_field == "auto" {
+        if sys.bonds.is_empty() {
+            "lj"
+        } else {
+            "bonds"
+        }
+    } else {
+        cfg.force_field.as_str()
+    };
     let mut terms: Vec<Box<dyn ForceField>> = Vec::new();
-    match cfg.force_field.as_str() {
+    match mode {
         "mlip-stub" => {
             use crate::mlip::{MlipPotential, PairwiseStubBackend};
             terms.push(Box::new(MlipPotential::new(PairwiseStubBackend {
@@ -72,16 +101,19 @@ fn build_force_field(cfg: &MdConfig) -> Box<dyn ForceField> {
                 ..Default::default()
             })));
         }
+        "bonds" => {
+            terms.push(Box::new(bonds_at_current_geometry(sys, cfg.bond_k)));
+        }
         _ => {
             terms.push(Box::new(LennardJones::monatomic(
                 cfg.epsilon,
                 cfg.sigma,
                 cfg.cutoff,
             )));
+            if cfg.use_bonds {
+                terms.push(Box::new(bonds_at_current_geometry(sys, cfg.bond_k)));
+            }
         }
-    }
-    if cfg.use_bonds {
-        terms.push(Box::new(HarmonicBonds::uniform(cfg.bond_k, cfg.bond_r0)));
     }
     if cfg.use_coulomb {
         terms.push(Box::new(Coulomb { cutoff: cfg.cutoff }));
@@ -125,8 +157,8 @@ pub fn atoms_minimize(
 ) -> Result<String, JsValue> {
     let mol: MoleculeSystem = serde_json::from_str(molecule_json).map_err(err)?;
     let cfg: MdConfig = parse_config(config_json)?;
-    let ff = build_force_field(&cfg);
     let mut sys = AtomSystem::from_ir(&mol).map_err(err)?;
+    let ff = build_force_field(&cfg, &sys);
     let opts = MinimizeOptions {
         max_iters,
         force_tol,
@@ -166,13 +198,16 @@ impl MdSim {
     pub fn new(molecule_json: &str, config_json: &str) -> Result<MdSim, JsValue> {
         let mol: MoleculeSystem = serde_json::from_str(molecule_json).map_err(err)?;
         let cfg = parse_config(config_json)?;
-        let ff = build_force_field(&cfg);
+        let sys = AtomSystem::from_ir(&mol).map_err(err)?;
+        let ff = build_force_field(&cfg, &sys);
         let mut env = MdEnv::new(&mol, ff, cfg.dt).map_err(err)?;
         if cfg.thermostat_k > 0.0 {
-            env = env.with_thermostat(Thermostat {
-                target_k: cfg.thermostat_k,
-                tau_fs: cfg.thermostat_tau,
-            });
+            env = env
+                .with_thermostat(Thermostat {
+                    target_k: cfg.thermostat_k,
+                    tau_fs: cfg.thermostat_tau,
+                })
+                .seeded(cfg.thermostat_k, 0x5EED_1234);
         }
         Ok(MdSim { env })
     }

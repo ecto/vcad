@@ -170,6 +170,49 @@ impl AtomSystem {
         ke / crate::units::FORCE_TO_ACCEL
     }
 
+    /// Seed velocities to a Maxwell-Boltzmann distribution at `target_k`,
+    /// deterministically from `seed` (xorshift PRNG — no `rand` dependency, so
+    /// results reproduce across platforms). Removes net center-of-mass drift and
+    /// rescales to hit the target temperature exactly.
+    pub fn seed_velocities(&mut self, target_k: f64, seed: u64) {
+        let n = self.len();
+        if n == 0 || target_k <= 0.0 {
+            return;
+        }
+        let mut s = seed ^ 0x9E37_79B9_7F4A_7C15;
+        let mut next = || {
+            // xorshift64* → uniform in [-0.5, 0.5)
+            s ^= s << 13;
+            s ^= s >> 7;
+            s ^= s << 17;
+            ((s >> 11) as f64) / ((1u64 << 53) as f64) - 0.5
+        };
+        for v in &mut self.velocities {
+            *v = [next(), next(), next()];
+        }
+        // Remove center-of-mass momentum.
+        let mut p = [0.0; 3];
+        let mut mtot = 0.0;
+        for i in 0..n {
+            vec3::add_assign(&mut p, vec3::scale(self.velocities[i], self.masses[i]));
+            mtot += self.masses[i];
+        }
+        if mtot > 0.0 {
+            let vcom = vec3::scale(p, 1.0 / mtot);
+            for v in &mut self.velocities {
+                *v = vec3::sub(*v, vcom);
+            }
+        }
+        // Rescale to exactly the target temperature.
+        let cur = self.temperature();
+        if cur > 1e-12 {
+            let lambda = (target_k / cur).sqrt();
+            for v in &mut self.velocities {
+                *v = vec3::scale(*v, lambda);
+            }
+        }
+    }
+
     /// Instantaneous temperature in K from the kinetic energy, using
     /// `3N` degrees of freedom (no constraints removed).
     pub fn temperature(&self) -> f64 {

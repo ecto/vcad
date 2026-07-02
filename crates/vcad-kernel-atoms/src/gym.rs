@@ -32,6 +32,7 @@ pub struct MdEnv<F: ForceField> {
     initial: MoleculeSystem,
     dt: f64,
     thermostat: Option<Thermostat>,
+    seed: Option<(f64, u64)>,
     step_count: usize,
 }
 
@@ -45,6 +46,7 @@ impl<F: ForceField> MdEnv<F> {
             initial: mol.clone(),
             dt,
             thermostat: None,
+            seed: None,
             step_count: 0,
         })
     }
@@ -55,9 +57,20 @@ impl<F: ForceField> MdEnv<F> {
         self
     }
 
-    /// Reset to the initial structure (velocities zeroed).
+    /// Seed Maxwell-Boltzmann velocities at `target_k` (deterministic from
+    /// `seed`), now and on every reset, so the run starts with thermal motion.
+    pub fn seeded(mut self, target_k: f64, seed: u64) -> Self {
+        self.seed = Some((target_k, seed));
+        self.sys.seed_velocities(target_k, seed);
+        self
+    }
+
+    /// Reset to the initial structure, re-seeding velocities if configured.
     pub fn reset(&mut self) -> Result<MdObservation, String> {
         self.sys = AtomSystem::from_ir(&self.initial)?;
+        if let Some((t, seed)) = self.seed {
+            self.sys.seed_velocities(t, seed);
+        }
         self.step_count = 0;
         Ok(self.observe())
     }
