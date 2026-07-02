@@ -36,6 +36,7 @@ mod adjoint;
 mod contract;
 mod fd;
 mod implicit;
+mod lbfgs;
 mod lift;
 mod mass;
 mod optimize;
@@ -49,10 +50,12 @@ pub use implicit::{
     constraint_row, row_pullbacks, solve_vertex_velocity, surface_residual, tangency_rows,
     ConstraintRow,
 };
+pub use lbfgs::minimize_lbfgs;
 pub use lift::{lift_surface, DualSurface};
 pub use mass::{mass_properties, mass_properties_with_derivative, MassProperties};
 pub use optimize::{
-    minimize, objective_gradient, IterateRecord, OptimizeOptions, OptimizeResult, StopReason,
+    minimize, objective_gradient, objective_gradient_reverse, IterateRecord, MeshObjective,
+    OptimizeOptions, OptimizeResult, StopReason, VolumeMatch,
 };
 pub use seam::{evaluate_with_sensitivity, volume_with_derivative, SeamMesh};
 pub use synthesize::{synthesize_all, synthesize_seeding};
