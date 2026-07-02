@@ -10,6 +10,9 @@ repository.workspace = true
 vcad-ir = { workspace = true }
 vcad-kernel = { workspace = true }
 vcad-kernel-tessellate = { workspace = true }
+vcad-kernel-diff = { workspace = true }
+vcad-kernel-primitives = { workspace = true }
+vcad-kernel-math = { workspace = true }
 phyz = { path = "../../../phyz/crates/phyz", version = "0.3" }
 serde = { workspace = true }
 thiserror = { workspace = true }
@@ -17,3 +20,4 @@ stl_io = "0.8"
 
 [dev-dependencies]
 vcad-kernel-urdf = { workspace = true }
+vcad-kernel-geom = { workspace = true }

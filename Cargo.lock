@@ -3027,7 +3027,7 @@ dependencies = [
 
 [[package]]
 name = "loon-lang"
-version = "0.5.0"
+version = "0.7.0"
 dependencies = [
  "codespan-reporting",
  "dirs-next",
@@ -3911,7 +3911,7 @@ dependencies = [
 
 [[package]]
 name = "phyz"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "tang",
 ]
@@ -7175,6 +7175,10 @@ dependencies = [
  "thiserror 2.0.18",
  "vcad-ir",
  "vcad-kernel",
+ "vcad-kernel-diff",
+ "vcad-kernel-geom",
+ "vcad-kernel-math",
+ "vcad-kernel-primitives",
  "vcad-kernel-tessellate",
  "vcad-kernel-urdf",
 ]
