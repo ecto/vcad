@@ -2264,6 +2264,22 @@ fn tessellate_cylindrical_face(
         .map(|he| topo.vertices[topo.half_edges[he].origin].point)
         .collect();
 
+    // Ruled two-chain strip: a blend face whose end rings are angle-paired
+    // sample curves but not necessarily planar (a miter-trimmed fillet
+    // cylinder ends on a slanted intersection curve). The rectangular
+    // (u, v) grid below assumes constant-v ends and would overshoot the
+    // slanted trim; the ruled path connects the two chains column by
+    // column using the loop's own points verbatim, so the boundary welds
+    // exactly with both the planar neighbors and the twin blend.
+    if let Some(cyl) = surface
+        .as_any()
+        .downcast_ref::<vcad_kernel_geom::CylinderSurface>()
+    {
+        if let Some(mesh) = tessellate_ruled_two_chain(cyl, &verts, reversed) {
+            return mesh;
+        }
+    }
+
     let mut radius = None;
     let mut u_min = 0.0;
     let mut u_max = 2.0 * PI;
@@ -2552,6 +2568,146 @@ fn tessellate_cylindrical_face(
     }
 
     mesh
+}
+
+/// Ruled tessellation of a cylinder face bounded by two angle-paired sample
+/// chains (a fillet blend whose ends may be slanted miter-trim curves).
+///
+/// Detection is deliberately strict so only machine-generated blend loops
+/// take this path: the loop must have even length ≥ 8, split into two
+/// halves whose vertices pair up at **identical** cylinder angles
+/// (`|Δu| < 1e-9`, loop vertex `i` pairing with `L−1−i`), and at least one
+/// half must be non-planar in `v` (a slanted end) — constant-`v` faces keep
+/// the existing grid path unchanged. Returns `None` when any condition
+/// fails.
+///
+/// The emitted triangles use the loop's own points verbatim (no surface
+/// re-evaluation), so the strip's boundary welds exactly against the
+/// neighboring planar faces and against the twin blend sharing the miter
+/// curve.
+fn tessellate_ruled_two_chain(
+    cyl: &vcad_kernel_geom::CylinderSurface,
+    verts: &[Point3],
+    reversed: bool,
+) -> Option<TriangleMesh> {
+    let l = verts.len();
+    if l < 8 || !l.is_multiple_of(2) {
+        return None;
+    }
+    let half = l / 2;
+
+    let axis = *cyl.axis.as_ref();
+    let ref_dir = *cyl.ref_dir.as_ref();
+    let y_dir = axis.cross(ref_dir);
+    let angle_v = |p: &Point3| -> (f64, f64) {
+        let d = *p - cyl.center;
+        let v = d.dot(axis);
+        let u = d.dot(y_dir).atan2(d.dot(ref_dir));
+        (u, v)
+    };
+
+    // Pair columns: loop = [chain1 (0..half), chain2 reversed (half..l)],
+    // so column i couples verts[i] with verts[l − 1 − i].
+    let mut v_spread_1 = 0.0f64;
+    let mut v_spread_2 = 0.0f64;
+    let (mut v1_min, mut v1_max) = (f64::MAX, f64::MIN);
+    let (mut v2_min, mut v2_max) = (f64::MAX, f64::MIN);
+    for i in 0..half {
+        let (u_a, v_a) = angle_v(&verts[i]);
+        let (u_b, v_b) = angle_v(&verts[l - 1 - i]);
+        // Compare angles on the circle (handle the ±π wrap).
+        let mut du = u_a - u_b;
+        while du > PI {
+            du -= 2.0 * PI;
+        }
+        while du < -PI {
+            du += 2.0 * PI;
+        }
+        if du.abs() > 1e-9 {
+            return None;
+        }
+        v1_min = v1_min.min(v_a);
+        v1_max = v1_max.max(v_a);
+        v2_min = v2_min.min(v_b);
+        v2_max = v2_max.max(v_b);
+        v_spread_1 = v_spread_1.max(v1_max - v1_min);
+        v_spread_2 = v_spread_2.max(v2_max - v2_min);
+    }
+    // Both ends planar (constant v) → the existing grid path already
+    // handles this face; keep behavior identical.
+    if v_spread_1 < 1e-9 && v_spread_2 < 1e-9 {
+        return None;
+    }
+
+    let mut mesh = TriangleMesh::new();
+    let radial_normal = |p: &Point3| -> Vec3 {
+        let d = *p - cyl.center;
+        let radial = d - axis * d.dot(axis);
+        let n = radial.norm();
+        if n < 1e-12 {
+            axis
+        } else {
+            radial / n
+        }
+    };
+    // Vertex layout: column i contributes bottom (index 2i) and top (2i+1).
+    for i in 0..half {
+        for p in [&verts[i], &verts[l - 1 - i]] {
+            mesh.vertices
+                .extend_from_slice(&[p.x as f32, p.y as f32, p.z as f32]);
+            let n = radial_normal(p);
+            let (nx, ny, nz) = if reversed {
+                (-n.x as f32, -n.y as f32, -n.z as f32)
+            } else {
+                (n.x as f32, n.y as f32, n.z as f32)
+            };
+            mesh.normals.extend_from_slice(&[nx, ny, nz]);
+        }
+    }
+    for i in 0..half - 1 {
+        let bl = (2 * i) as u32;
+        let tl = bl + 1;
+        let br = bl + 2;
+        let tr = bl + 3;
+        mesh.indices.extend_from_slice(&[bl, br, tl]);
+        mesh.indices.extend_from_slice(&[br, tr, tl]);
+    }
+
+    // Orient the strip so triangle normals agree with the (possibly
+    // reversed) outward radial direction: check one non-degenerate
+    // triangle and flip the whole strip if needed.
+    for t in mesh.indices.chunks(3) {
+        let p = |i: u32| {
+            let b = i as usize * 3;
+            Point3::new(
+                mesh.vertices[b] as f64,
+                mesh.vertices[b + 1] as f64,
+                mesh.vertices[b + 2] as f64,
+            )
+        };
+        let (a, b, c) = (p(t[0]), p(t[1]), p(t[2]));
+        let n = (b - a).cross(c - a);
+        if n.norm() < 1e-12 {
+            continue;
+        }
+        let centroid = Point3::new(
+            (a.x + b.x + c.x) / 3.0,
+            (a.y + b.y + c.y) / 3.0,
+            (a.z + b.z + c.z) / 3.0,
+        );
+        let mut outward = radial_normal(&centroid);
+        if reversed {
+            outward = -outward;
+        }
+        if n.dot(outward) < 0.0 {
+            for tri in mesh.indices.chunks_mut(3) {
+                tri.swap(1, 2);
+            }
+        }
+        break;
+    }
+
+    Some(mesh)
 }
 
 /// Tessellate a spherical face.
