@@ -134,6 +134,10 @@ pub fn constraint_row(
 ///
 /// Returns no rows when the surface is not tangent to the plane at `x`
 /// (transverse contacts are fully handled by the ordinary implicit rows).
+/// Surface kinds without tangency support — planes included — also return
+/// no rows, **never** an error: callers are expected to pass every
+/// incident surface and let this function decide which pairs participate,
+/// so an unknown kind is "no tangency information", not a failure.
 pub fn tangency_rows(
     plane_normal: Vec3,
     surface: &dyn Surface,

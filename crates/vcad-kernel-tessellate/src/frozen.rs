@@ -218,6 +218,13 @@ pub fn face_frame(surface: &dyn Surface) -> FaceFrame {
 /// unobservable, so the projection of the capture-time anchor is the
 /// frozen-sample convention); cylinders and spheres transport the sample's
 /// direction vector; unsupported kinds return the parameters verbatim.
+///
+/// The direction reconstruction relies on the geom kernel's frame
+/// convention `y_dir = axis × ref_dir` (see `CylinderSurface::y_dir` /
+/// `SphereSurface::y_dir`) on both the capture and rebuilt sides; the
+/// `transport_uv_survives_reframed_cylinder_and_sphere` test round-trips
+/// through those surfaces' own `evaluate`, so a convention change in
+/// either crate fails loudly.
 pub fn transport_uv(
     frame: &FaceFrame,
     rebuilt: &dyn Surface,
