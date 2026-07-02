@@ -46,8 +46,9 @@ pub mod stl;
 mod world;
 
 pub use diff::{
-    nominal_mass_props, rollout_gradient, rollout_gradient_with_anchors, AnchorFdSteps,
-    BodyMassProps, DiffBody, MassPropFdSteps,
+    nominal_mass_props, rollout_gradient, rollout_gradient_with_anchors,
+    rollout_gradient_with_surface, surface_gradient, AnchorFdSteps, BodyMassProps, DiffBody,
+    MassPropFdSteps, SurfaceTerm,
 };
 pub use error::PhysicsError;
 pub use gym::{Action, Observation, RobotEnv};

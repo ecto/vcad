@@ -53,10 +53,12 @@
 //!   load, a ground penalty), contact forces depend on the *surface* — a
 //!   channel this gradient does not see. The rollout closure you pass **must**
 //!   build a contact-free model; if it does not, the returned gradient is
-//!   silently incomplete. Extending to contacts means pulling `∂J/∂x` back
-//!   onto the collision-mesh nodes through the M5 pullback
-//!   ([`evaluate_with_pullback`](vcad_kernel_diff::evaluate_with_pullback)) —
-//!   future work, noted in `docs/differentiable-seam-m8.md`.
+//!   silently incomplete. The **surface skin** is built: objective terms that
+//!   read the surface directly go through [`rollout_gradient_with_surface`]
+//!   (exact, one M5 pullback per body), and a future contact adjoint's
+//!   `∂J/∂x` plugs into [`surface_gradient`] unchanged. What remains
+//!   phyz-side is the adjoint itself — producing `∂J_dyn/∂x` when contact
+//!   forces act *during* the rollout.
 //! - **Anchor channel.** If θ also moves a **joint anchor / mount frame** (a
 //!   pivot hole whose position scales with the part), use
 //!   [`rollout_gradient_with_anchors`]: the anchor coordinates enter the
@@ -72,9 +74,10 @@
 use phyz::math::{Mat3, Vec3 as PVec3};
 use phyz::SpatialInertia;
 use vcad_kernel_diff::{
-    evaluate_with_sensitivity, mass_properties, mass_properties_with_derivative, DiffError,
-    MassProperties, ParamSeeding,
+    evaluate_with_pullback, evaluate_with_sensitivity, mass_properties,
+    mass_properties_with_derivative, DiffError, MassProperties, ParamSeeding,
 };
+use vcad_kernel_math::{Point3 as CadPoint3, Vec3 as CadVec3};
 use vcad_kernel_primitives::BRepSolid;
 use vcad_kernel_tessellate::frozen::capture_plan;
 use vcad_kernel_tessellate::TessellationParams;
@@ -476,6 +479,158 @@ pub fn rollout_gradient_with_anchors(
             for (a, dj) in djda.iter().enumerate() {
                 *g += dj * (ap[a] - am[a]) / (2.0 * h);
             }
+        }
+    }
+
+    Ok((j0, gradient))
+}
+
+/// A surface-dependent objective term on one body's frozen-plan mesh.
+///
+/// Given the seam node positions (mm, CAD frame) and the frozen triangles,
+/// return the term's value and its analytic node gradient `∂J_surf/∂x`
+/// (J-units per mm, one vector per node). This is the **contact skin** of the
+/// M8 factorization: any objective contribution that reads the *surface*
+/// rather than the mass properties — a ground-clearance penalty, a
+/// penetration term, or (when one exists) a contact adjoint's `∂J/∂x`.
+pub type SurfaceTerm<'a> = Box<dyn Fn(&[CadPoint3], &[[u32; 3]]) -> (f64, Vec<CadVec3>) + 'a>;
+
+/// Price a mesh cotangent through the CAD seam: given `∂J/∂x` on `body`'s
+/// frozen-plan nodes (mm frame), return the per-parameter `dJ/dθ`
+/// contribution.
+///
+/// One M5 pullback ([`evaluate_with_pullback`]) prices the whole cotangent;
+/// each parameter then costs only a seeding synthesis and a contraction —
+/// the reverse-mode economics the skin was designed around. This is the raw
+/// entry point a **contact adjoint** plugs into: whatever produces `∂J/∂x`
+/// on the collision surface (an analytic penalty today, a phyz contact
+/// adjoint when one exists), this function turns it into CAD-parameter
+/// sensitivities.
+pub fn surface_gradient(
+    body: &DiffBody,
+    theta: &[f64],
+    djdx: &[CadVec3],
+) -> Result<Vec<f64>, DiffError> {
+    let brep = (body.build)(theta);
+    let plan = capture_plan(&brep, &body.tess)?;
+    let cots = evaluate_with_pullback(&brep, &plan, djdx)?;
+    let mut out = Vec::with_capacity(theta.len());
+    for k in 0..theta.len() {
+        let seeding = (body.seeding_for)(&brep, theta, k)?;
+        out.push(cots.contract(&seeding));
+    }
+    Ok(out)
+}
+
+/// [`rollout_gradient`] with the **surface skin**: `(J, dJ/dθ)` for a
+/// composite objective
+///
+/// ```text
+/// J = J_dyn(mass props)  +  Σ_bodies J_surf(surface nodes)
+/// ```
+///
+/// where `J_dyn` is the contact-free rollout (mass-property channel, exactly
+/// as [`rollout_gradient`]) and each `J_surf` reads the body's tessellated
+/// surface directly. The gradient sums both channels:
+///
+/// ```text
+/// dJ/dθ = Σ ∂J/∂p·dp/dθ  +  Σ pullback(∂J_surf/∂x)·seeding
+/// ```
+///
+/// The surface channel is **exact** (analytic node gradient through the M5
+/// pullback — no FD anywhere in it) and costs one pullback per body
+/// regardless of the θ dimension.
+///
+/// `surface_terms` is parallel to `bodies`; `None` for bodies without a
+/// surface term. What this does **not** do: surface-dependent *dynamics*.
+/// If contact forces act during the rollout, `∂J_dyn/∂(surface)` needs a
+/// contact adjoint phyz does not currently expose; when one exists, its
+/// `∂J/∂x` enters through [`surface_gradient`] and the factorization is
+/// unchanged (documented in `docs/differentiable-seam-m8.md`).
+pub fn rollout_gradient_with_surface(
+    bodies: &[DiffBody],
+    surface_terms: &[Option<SurfaceTerm>],
+    rollout: &impl Fn(&[BodyMassProps]) -> f64,
+    theta: &[f64],
+    fd: &MassPropFdSteps,
+) -> Result<(f64, Vec<f64>), DiffError> {
+    assert_eq!(
+        surface_terms.len(),
+        bodies.len(),
+        "one surface-term slot per body"
+    );
+    let n = theta.len();
+
+    // 1. Nominal seam per body; keep positions for the surface terms and the
+    //    B-rep/plan for both channels' seam passes.
+    let mut breps = Vec::with_capacity(bodies.len());
+    let mut plans = Vec::with_capacity(bodies.len());
+    let mut nominal = Vec::with_capacity(bodies.len());
+    let mut j_surf = 0.0;
+    let mut cotangents = Vec::with_capacity(bodies.len());
+    for (body, term) in bodies.iter().zip(surface_terms) {
+        let brep = (body.build)(theta);
+        let plan = capture_plan(&brep, &body.tess)?;
+        let seam0 = evaluate_with_sensitivity(&brep, &plan, &ParamSeeding::new())?;
+        let props = mass_properties(&seam0.positions, &seam0.triangles, body.seam_density());
+        nominal.push(BodyMassProps::from_seam(&props));
+        // Surface term: value into J, node gradient priced by one pullback.
+        cotangents.push(match term {
+            Some(t) => {
+                let (value, djdx) = t(&seam0.positions, &seam0.triangles);
+                j_surf += value;
+                Some(evaluate_with_pullback(&brep, &plan, &djdx)?)
+            }
+            None => None,
+        });
+        breps.push(brep);
+        plans.push(plan);
+    }
+
+    let j0 = rollout(&nominal) + j_surf;
+
+    // 2. ∂J_dyn/∂p per body by central FD (J_surf does not depend on p, so
+    //    perturbing the scalars probes exactly the dynamic term).
+    let mut djdp: Vec<[f64; 10]> = Vec::with_capacity(bodies.len());
+    for (i, nom) in nominal.iter().enumerate() {
+        let steps = fd.steps_for(nom);
+        let mut grad_p = [0.0f64; 10];
+        let mut work = nominal.clone();
+        for j in 0..10 {
+            let h = steps[j];
+            let mut sp = nom.scalars();
+            sp[j] += h;
+            work[i] = BodyMassProps::from_scalars(sp);
+            let jp = rollout(&work);
+
+            let mut sm = nom.scalars();
+            sm[j] -= h;
+            work[i] = BodyMassProps::from_scalars(sm);
+            let jm = rollout(&work);
+
+            grad_p[j] = (jp - jm) / (2.0 * h);
+        }
+        work[i] = *nom;
+        djdp.push(grad_p);
+    }
+
+    // 3. Per (body, parameter): the mass-property channel (forward seam) and
+    //    the surface channel (contraction of the body's one pullback).
+    let mut gradient = vec![0.0f64; n];
+    for (i, body) in bodies.iter().enumerate() {
+        for (k, g) in gradient.iter_mut().enumerate() {
+            let seeding = (body.seeding_for)(&breps[i], theta, k)?;
+            let seam_k = evaluate_with_sensitivity(&breps[i], &plans[i], &seeding)?;
+            let (_props, dprops) = mass_properties_with_derivative(&seam_k, body.seam_density());
+            let dp = BodyMassProps::deriv_scalars(&dprops);
+            let mut acc = 0.0;
+            for j in 0..10 {
+                acc += djdp[i][j] * dp[j];
+            }
+            if let Some(cots) = &cotangents[i] {
+                acc += cots.contract(&seeding);
+            }
+            *g += acc;
         }
     }
 
