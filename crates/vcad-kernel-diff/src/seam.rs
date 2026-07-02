@@ -155,7 +155,12 @@ pub fn evaluate_with_sensitivity(
                 // pinning the vertex tangentially; its tangent-curve rows
                 // carry the missing directions (a rounded-cube corner
                 // vertex slides along the support face as the fillet
-                // radius grows).
+                // radius grows). Looping over all (plane, surface) pairs
+                // over-generates safely: non-tangent pairs contribute no
+                // rows at all, and redundant rows from multiple tangent
+                // contacts are orthogonalized away by the solver after a
+                // consistency check — disagreement is a hard error, never
+                // a silent average.
                 for &pidx in &incident {
                     let plane = brep.geometry.surfaces[pidx].as_ref();
                     let Some(p) = plane.as_any().downcast_ref::<vcad_kernel_geom::Plane>() else {

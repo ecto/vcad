@@ -185,10 +185,11 @@ impl ParamSeeding {
             .unwrap_or(&[])
     }
 
-    /// Add `seed` to every surface in `geom` matching `pred`. Returns how
-    /// many surfaces were seeded (callers should assert the expected count
-    /// — boolean output stores may carry several copies of a moving
-    /// surface).
+    /// Add `seed` to every surface in `geom` matching `pred`. Like
+    /// [`ParamSeeding::seed`], this **composes** with seeds already present
+    /// on a matching surface — it never replaces them. Returns how many
+    /// surfaces were seeded (callers should assert the expected count —
+    /// boolean output stores may carry several copies of a moving surface).
     pub fn seed_where(
         &mut self,
         geom: &GeometryStore,
