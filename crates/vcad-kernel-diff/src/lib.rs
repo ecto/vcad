@@ -40,6 +40,7 @@ mod lift;
 mod mass;
 mod optimize;
 mod seam;
+mod synthesize;
 
 pub use adjoint::{evaluate_with_pullback, MeshCotangents, SurfaceCotangent};
 pub use contract::{contract_sensitivity, volume_gradient};
@@ -54,6 +55,7 @@ pub use optimize::{
     minimize, objective_gradient, IterateRecord, OptimizeOptions, OptimizeResult, StopReason,
 };
 pub use seam::{evaluate_with_sensitivity, volume_with_derivative, SeamMesh};
+pub use synthesize::{synthesize_all, synthesize_seeding};
 pub use vcad_kernel_tessellate::frozen::mesh_volume;
 
 /// Downcast a `dyn Surface` to its concrete struct, with the store's
@@ -104,6 +106,26 @@ pub enum DiffError {
         /// Entries supplied.
         got: usize,
     },
+    /// Seeding synthesis ([`synthesize_seeding`]) was asked for a parameter
+    /// index outside the θ vector.
+    ParameterOutOfRange {
+        /// Requested parameter index.
+        k: usize,
+        /// Length of the θ vector.
+        len: usize,
+    },
+    /// Seeding synthesis met a surface kind outside the seed vocabulary
+    /// (only plane / cylinder / sphere can be expressed as [`SurfaceSeed`]s).
+    UnsupportedSynthesis(SurfaceKind),
+    /// Seeding synthesis found two genuinely distinct surfaces both within
+    /// the matching tolerance of one base surface, so the perturbed
+    /// counterpart cannot be identified without guessing. This means the
+    /// feature-separation assumption the tolerance relies on was violated —
+    /// surfaced as a hard error rather than a wrong seed.
+    AmbiguousMatch {
+        /// Store index of the base surface whose match was ambiguous.
+        base_index: usize,
+    },
 }
 
 impl std::fmt::Display for DiffError {
@@ -127,6 +149,19 @@ impl std::fmt::Display for DiffError {
             DiffError::GradientLengthMismatch { expected, got } => write!(
                 f,
                 "mesh gradient has {got} entries but the plan has {expected} nodes"
+            ),
+            DiffError::ParameterOutOfRange { k, len } => write!(
+                f,
+                "parameter index {k} out of range for a θ vector of length {len}"
+            ),
+            DiffError::UnsupportedSynthesis(kind) => write!(
+                f,
+                "seeding synthesis has no seed vocabulary for surface kind {kind:?}"
+            ),
+            DiffError::AmbiguousMatch { base_index } => write!(
+                f,
+                "seeding synthesis: base surface {base_index} matches two distinct perturbed \
+                 surfaces within tolerance; feature-separation assumption violated"
             ),
         }
     }
