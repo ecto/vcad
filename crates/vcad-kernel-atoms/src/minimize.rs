@@ -71,9 +71,7 @@ pub fn minimize(
     const F_ALPHA: f64 = 0.99;
 
     let n = sys.len();
-    for v in &mut sys.velocities {
-        *v = [0.0; 3];
-    }
+    sys.velocities.fill([0.0; 3]);
     let (mut energy, mut forces) = ff.energy_forces(sys);
     let mut dt = opts.dt;
     let mut alpha = ALPHA_START;
@@ -136,9 +134,7 @@ pub fn minimize(
             steps_since_neg = 0;
             dt *= F_DEC;
             alpha = ALPHA_START;
-            for v in &mut sys.velocities {
-                *v = [0.0; 3];
-            }
+            sys.velocities.fill([0.0; 3]);
         }
 
         max_f = max_force_component(&forces);
