@@ -17,6 +17,7 @@
 //! ```
 
 pub mod convert;
+pub mod diff;
 pub mod evaluate;
 pub mod kinematics;
 pub mod pcb_preview;
