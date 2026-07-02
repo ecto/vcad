@@ -35,20 +35,23 @@ use vcad_kernel_tessellate::frozen::FrozenError;
 mod adjoint;
 mod contract;
 mod fd;
+mod gauss_newton;
 mod implicit;
 mod lbfgs;
 mod lift;
 mod mass;
 mod optimize;
 mod seam;
+mod second_order;
 mod synthesize;
 
 pub use adjoint::{evaluate_with_pullback, MeshCotangents, SurfaceCotangent};
 pub use contract::{contract_sensitivity, volume_gradient};
 pub use fd::{compare_velocities, fd_velocities, fd_volume_derivative, FdComparison};
+pub use gauss_newton::{gauss_newton_gradient, gauss_newton_hessian, gauss_newton_hvp};
 pub use implicit::{
-    constraint_row, row_pullbacks, solve_vertex_velocity, surface_residual, tangency_rows,
-    ConstraintRow,
+    constraint_row, constraint_row_2, row_pullbacks, solve_vertex_velocity, surface_residual,
+    tangency_rows, ConstraintRow,
 };
 pub use lbfgs::minimize_lbfgs;
 pub use lift::{lift_surface, DualSurface};
@@ -58,6 +61,10 @@ pub use optimize::{
     OptimizeOptions, OptimizeResult, StopReason, VolumeMatch,
 };
 pub use seam::{evaluate_with_sensitivity, volume_with_derivative, SeamMesh};
+pub use second_order::{
+    evaluate_with_second_derivative, volume_with_second_derivative, SeamMeshSecond,
+    SecondOrderSeeding,
+};
 pub use synthesize::{synthesize_all, synthesize_seeding};
 pub use vcad_kernel_tessellate::frozen::mesh_volume;
 
@@ -93,6 +100,15 @@ pub enum DiffError {
     /// No implicit constraint form is implemented for this surface kind, so
     /// a topology vertex adjacent to it cannot be differentiated.
     UnsupportedConstraint(SurfaceKind),
+    /// No second-order (acceleration) form is implemented for this surface
+    /// kind yet. The volume second derivative supports plane/cylinder/sphere,
+    /// whose surface points are **linear** in the seeded fields (translation,
+    /// radius), so the node acceleration is just the first-order lift fed the
+    /// field accelerations. Cone/torus points are nonlinear in their shape
+    /// fields (half-angle, radii), so their acceleration carries an extra
+    /// `∂²x/∂field²·fielḋ²` term — a mechanical extension, deliberately not
+    /// shipped.
+    SecondOrderUnsupported(SurfaceKind),
     /// The implicit system at a topology vertex is inconsistent: dependent
     /// constraint rows disagree beyond tolerance. The vertex does not
     /// actually lie on a common intersection of its adjacent surfaces (or a
@@ -144,6 +160,10 @@ impl std::fmt::Display for DiffError {
             DiffError::UnsupportedConstraint(kind) => write!(
                 f,
                 "no implicit constraint form for surface kind {kind:?}; cannot differentiate an adjacent topology vertex"
+            ),
+            DiffError::SecondOrderUnsupported(kind) => write!(
+                f,
+                "no second-order form for surface kind {kind:?}; volume second derivative supports plane/cylinder/sphere"
             ),
             DiffError::InconsistentConstraints { residual } => write!(
                 f,
