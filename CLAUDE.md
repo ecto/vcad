@@ -114,8 +114,10 @@ vcad/
 │   # - vcad-kernel-diff         # Differentiable seam: dx/dθ of frozen tessellations,
 │   #                            # mass-property QoIs, differentiable fillet radius,
 │   #                            # reverse-mode adjoint, seeding synthesis, cone/torus
-│   #                            # coverage, L-BFGS many-parameter optimizer (docs/
-│   #                            # differentiable-seam-m0-m2.md … -m9.md); no consumers yet
+│   #                            # coverage, L-BFGS many-parameter optimizer, second-order
+│   #                            # derivatives (docs/differentiable-seam-m0-m2.md … -m10.md);
+│   #                            # first consumer: vcad-kernel-physics::diff (rollout
+│   #                            # gradients — d(sim objective)/d(CAD parameter))
 ├── packages/                      # TypeScript workspace
 │   ├── app/                       # Web app (React + Three.js + Zustand)
 │   ├── engine/                    # WASM engine wrapper + physics

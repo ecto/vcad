@@ -134,7 +134,8 @@ pub enum DiffError {
         len: usize,
     },
     /// Seeding synthesis met a surface kind outside the seed vocabulary
-    /// (only plane / cylinder / sphere can be expressed as [`SurfaceSeed`]s).
+    /// (plane / cylinder / sphere / cone / torus are expressible as
+    /// [`SurfaceSeed`]s; NURBS and bilinear patches are not).
     UnsupportedSynthesis(SurfaceKind),
     /// Seeding synthesis found two genuinely distinct surfaces both within
     /// the matching tolerance of one base surface, so the perturbed
