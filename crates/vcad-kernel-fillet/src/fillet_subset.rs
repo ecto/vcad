@@ -1,4 +1,5 @@
-//! Correct per-edge fillet for an independent set of plane-plane edges.
+//! Correct per-edge fillet for a set of plane-plane edges: independent
+//! edges and **chains of adjacent edges joined by miter corners**.
 //!
 //! The shared-`trims` pipeline in [`crate::fillet_curved`] insets *every*
 //! face of the solid by `radius` — which is only correct when *every* edge
@@ -7,22 +8,33 @@
 //! non-watertight solid (a single-edge cube fillet came out at ~522 mm³
 //! instead of ~995 mm³).
 //!
-//! This module implements the geometrically correct construction for the
-//! case that matters to per-edge (differentiable) fillet radii: a set of
-//! **plane-plane** edges no two of which share a vertex (an *independent
-//! set*). For that case each selected edge is a self-contained rounding:
+//! This module implements the geometrically correct construction for
+//! **plane-plane** edges where each vertex is touched by at most **two**
+//! selected edges:
 //!
-//! * the two faces adjacent to the edge (its *side* faces) are inset only
-//!   along that edge,
-//! * a single quarter-cylinder blend replaces the edge,
-//! * the faces that merely *touch* an endpoint of the edge (its *cap*
-//!   faces) have that one corner rounded by the blend's terminating arc —
-//!   the cylinder ends flush against them, so no spherical corner patch is
-//!   required.
+//! * An edge endpoint touched by no other selected edge is a *cap* end:
+//!   the two faces adjacent to the edge (its *side* faces) are inset only
+//!   along that edge, a quarter-cylinder blend replaces the edge, and the
+//!   face that merely touches the endpoint (the *cap* face) has that one
+//!   corner rounded by the blend's terminating arc.
 //!
-//! Every face, cap arc and cylinder ring is generated from the same
-//! tangent-point / arc-sampling formulas, so coincident points quantize
-//! to a single welded vertex and the result is watertight.
+//! * An endpoint shared by **two** selected edges is a *miter corner*.
+//!   When the two blends have equal radius and the corner is mirror
+//!   symmetric — the edges share exactly one face `S`, and their other
+//!   faces `A`, `C` make equal dihedral angles with `S` (every prism-like
+//!   corner: boxes, L-brackets, top rims) — the two blend cylinders
+//!   intersect **exactly** in a planar curve on the bisector plane of the
+//!   two edge directions. The corner therefore needs no spherical patch:
+//!   each cylinder is trimmed at the miter plane, both trimmed ends share
+//!   the *same* sampled curve (welding is exact by construction), the
+//!   shared face's corner collapses to the curve's end on `S`, and faces
+//!   `A`/`C` corner at the curve's other end (which lies on `A ∩ C`, the
+//!   surviving third edge). Closed rings of edges (a box's top rim) are
+//!   chains whose every vertex is a miter.
+//!
+//! Every face, cap arc, miter curve and cylinder ring is generated from
+//! the same tangent-point / arc-sampling formulas, so coincident points
+//! quantize to a single welded vertex and the result is watertight.
 
 use std::collections::{HashMap, HashSet};
 use vcad_kernel_geom::{CylinderSurface, GeometryStore, Plane, SurfaceKind};
@@ -39,6 +51,12 @@ use crate::FilletResult;
 /// / side faces) and that the tessellated volume tracks the analytic
 /// closed form to well under 1e-6 relative.
 const ARC_SEGMENTS: usize = 128;
+
+/// Tolerance for the miter-symmetry test: the two non-shared faces must
+/// make equal dihedral angles with the shared face (compared via normal
+/// dot products) for the bisector-plane trim to be an exact intersection
+/// curve of both cylinders.
+const MITER_SYM_TOL: f64 = 1e-7;
 
 /// Precomputed geometry for one selected plane-plane edge.
 struct BlendGeom {
@@ -74,13 +92,22 @@ impl BlendGeom {
     fn tan_b_at(&self, v: VertexId) -> Point3 {
         self.center_at(v) + self.n_b * self.radius
     }
+    /// Unit edge direction pointing away from endpoint `v`.
+    fn dir_away_from(&self, v: VertexId) -> Vec3 {
+        if v == self.v_start {
+            self.axis
+        } else {
+            -self.axis
+        }
+    }
 }
 
-/// True when every `edge_id` names a plane-plane manifold edge and no two
-/// of the selected edges share a vertex. This is the domain the correct
-/// subset builder covers; callers fall back to the legacy pipeline
-/// otherwise.
-pub(crate) fn is_independent_plane_plane_set(brep: &BRepSolid, edge_ids: &[EdgeId]) -> bool {
+/// True when every `edge_id` names a plane-plane manifold edge, no vertex
+/// is touched by more than two of them, and every shared vertex is a
+/// symmetric trihedral miter corner (see the module docs). This is the
+/// domain the correct subset builder covers; callers fall back to the
+/// legacy pipeline otherwise.
+pub(crate) fn is_plane_plane_chain_set(brep: &BRepSolid, edge_ids: &[EdgeId], radius: f64) -> bool {
     if edge_ids.is_empty() {
         return false;
     }
@@ -89,8 +116,19 @@ pub(crate) fn is_independent_plane_plane_set(brep: &BRepSolid, edge_ids: &[EdgeI
         return false;
     }
     let edges = extract_edges(brep);
-    let mut seen_vertices: HashSet<VertexId> = HashSet::new();
+    let faces = extract_faces(brep);
+    let face_normal: HashMap<FaceId, Vec3> = faces.iter().map(|f| (f.face_id, f.normal)).collect();
+
+    // Faces incident to each vertex (for the trihedral test).
+    let mut faces_at_vertex: HashMap<VertexId, HashSet<FaceId>> = HashMap::new();
+    for f in &faces {
+        for &v in &f.vertex_ids {
+            faces_at_vertex.entry(v).or_default().insert(f.face_id);
+        }
+    }
+
     let mut matched = 0usize;
+    let mut at_vertex: HashMap<VertexId, Vec<&crate::topology::EdgeInfo>> = HashMap::new();
     for e in &edges {
         if !selected.contains(&e.edge_id) {
             continue;
@@ -101,16 +139,133 @@ pub(crate) fn is_independent_plane_plane_set(brep: &BRepSolid, edge_ids: &[EdgeI
         if sa != SurfaceKind::Plane || sb != SurfaceKind::Plane {
             return false;
         }
-        if !seen_vertices.insert(e.v_start) || !seen_vertices.insert(e.v_end) {
-            return false; // two selected edges share this vertex
+        at_vertex.entry(e.v_start).or_default().push(e);
+        at_vertex.entry(e.v_end).or_default().push(e);
+    }
+    if matched != edge_ids.len() {
+        return false;
+    }
+
+    for (&v, touching) in &at_vertex {
+        match touching.len() {
+            1 => {}
+            2 => {
+                let (e1, e2) = (touching[0], touching[1]);
+                // Exactly one shared face.
+                let f1: HashSet<FaceId> = [e1.face_a, e1.face_b].into_iter().collect();
+                let f2: HashSet<FaceId> = [e2.face_a, e2.face_b].into_iter().collect();
+                let shared: Vec<FaceId> = f1.intersection(&f2).copied().collect();
+                if shared.len() != 1 {
+                    return false;
+                }
+                let s = shared[0];
+                let a = if e1.face_a == s { e1.face_b } else { e1.face_a };
+                let c = if e2.face_a == s { e2.face_b } else { e2.face_a };
+                if a == c {
+                    return false;
+                }
+                // Trihedral corner: exactly the three faces S, A, C meet at v.
+                match faces_at_vertex.get(&v) {
+                    Some(fs)
+                        if fs.len() == 3
+                            && fs.contains(&s)
+                            && fs.contains(&a)
+                            && fs.contains(&c) => {}
+                    _ => return false,
+                }
+                // Mirror symmetry: equal dihedral angles against S.
+                let (ns, na, nc) = (face_normal[&s], face_normal[&a], face_normal[&c]);
+                if (na.dot(ns) - nc.dot(ns)).abs() > MITER_SYM_TOL {
+                    return false;
+                }
+                // Edge directions away from v must not be parallel (the
+                // miter plane's normal is their difference).
+                let d1 = edge_dir_away(brep, e1, v);
+                let d2 = edge_dir_away(brep, e2, v);
+                if (d1 - d2).norm() < 1e-9 {
+                    return false;
+                }
+                // Both edges must be long enough that the miter (which
+                // consumes up to ~radius of axial length) cannot cross the
+                // opposite end's trim.
+                for e in [e1, e2] {
+                    let len = (brep.topology.vertices[e.v_end].point
+                        - brep.topology.vertices[e.v_start].point)
+                        .norm();
+                    if len <= 2.0 * radius {
+                        return false;
+                    }
+                }
+            }
+            _ => return false,
         }
     }
-    matched == edge_ids.len()
+    true
 }
 
-/// Fillet an independent set of plane-plane edges. Precondition:
-/// [`is_independent_plane_plane_set`] returned `true` for `edge_ids`.
-pub(crate) fn fillet_independent_plane_edges(
+/// Unit direction of edge `e` pointing away from its endpoint `v`.
+fn edge_dir_away(brep: &BRepSolid, e: &crate::topology::EdgeInfo, v: VertexId) -> Vec3 {
+    let a = brep.topology.vertices[e.v_start].point;
+    let b = brep.topology.vertices[e.v_end].point;
+    let d = (b - a).normalize();
+    if v == e.v_start {
+        d
+    } else {
+        -d
+    }
+}
+
+/// A miter corner: the shared face and the trimmed-intersection curve both
+/// blend cylinders terminate on. `ring[0]` lies on `A ∩ C` (the surviving
+/// third edge of the corner); `ring[last]` lies on the shared face `S`.
+struct MiterCorner {
+    shared_face: FaceId,
+    ring: Vec<Point3>,
+}
+
+/// Sample the miter curve at vertex `v` from blend `b` (either blend works
+/// by symmetry): the blend's arc from its tangency on its non-shared face
+/// to its tangency on `shared`, with each sample slid along the axis onto
+/// the miter plane `{x : (x − v)·m = 0}`.
+fn sample_miter_ring(
+    b: &BlendGeom,
+    v: VertexId,
+    v_pos: Point3,
+    shared: FaceId,
+    m: Vec3,
+) -> Vec<Point3> {
+    let center = b.center_at(v);
+    let r = b.radius;
+    let (from, to) = if b.face_a == shared {
+        (b.tan_b_at(v), b.tan_a_at(v))
+    } else {
+        (b.tan_a_at(v), b.tan_b_at(v))
+    };
+    let u = (from - center) / r;
+    let mut w = b.axis.cross(u);
+    let wn = w.norm();
+    if wn < 1e-12 {
+        return vec![from, to];
+    }
+    w = w / wn;
+    let d = to - center;
+    let ang = d.dot(w).atan2(d.dot(u));
+    let am = b.axis.dot(m);
+    let mut pts = Vec::with_capacity(ARC_SEGMENTS + 1);
+    for i in 0..=ARC_SEGMENTS {
+        let t = ang * (i as f64 / ARC_SEGMENTS as f64);
+        let radial = u * t.cos() + w * t.sin();
+        let p0 = center + radial * r;
+        // Slide along the axis onto the miter plane.
+        let s = (v_pos - p0).dot(m) / am;
+        pts.push(p0 + b.axis * s);
+    }
+    pts
+}
+
+/// Fillet a chain set of plane-plane edges. Precondition:
+/// [`is_plane_plane_chain_set`] returned `true` for `edge_ids`.
+pub(crate) fn fillet_plane_chain_edges(
     brep: &BRepSolid,
     edge_ids: &[EdgeId],
     radius: f64,
@@ -164,12 +319,41 @@ pub(crate) fn fillet_independent_plane_edges(
         results.push(FilletResult::Success);
     }
 
-    // For each vertex, which selected edge touches it (independent set ⇒
-    // at most one).
-    let mut edge_at_vertex: HashMap<VertexId, EdgeId> = HashMap::new();
+    // Selected edges touching each vertex (1 = cap end, 2 = miter corner).
+    let mut edges_at_vertex: HashMap<VertexId, Vec<EdgeId>> = HashMap::new();
     for (&eid, b) in &blends {
-        edge_at_vertex.insert(b.v_start, eid);
-        edge_at_vertex.insert(b.v_end, eid);
+        edges_at_vertex.entry(b.v_start).or_default().push(eid);
+        edges_at_vertex.entry(b.v_end).or_default().push(eid);
+    }
+    for list in edges_at_vertex.values_mut() {
+        list.sort(); // determinism: the miter ring samples from the lower id
+    }
+
+    // Precompute every miter corner's shared face and trim curve. Both
+    // blends at the corner reference the SAME point list, so their welding
+    // along the miter is exact by construction.
+    let mut miters: HashMap<VertexId, MiterCorner> = HashMap::new();
+    for (&v, eids) in &edges_at_vertex {
+        if eids.len() != 2 {
+            continue;
+        }
+        let (b1, b2) = (&blends[&eids[0]], &blends[&eids[1]]);
+        let f1: HashSet<FaceId> = [b1.face_a, b1.face_b].into_iter().collect();
+        let shared = if f1.contains(&b2.face_a) {
+            b2.face_a
+        } else {
+            b2.face_b
+        };
+        let v_pos = topo.vertices[v].point;
+        let m = (b1.dir_away_from(v) - b2.dir_away_from(v)).normalize();
+        let ring = sample_miter_ring(b1, v, v_pos, shared, m);
+        miters.insert(
+            v,
+            MiterCorner {
+                shared_face: shared,
+                ring,
+            },
+        );
     }
 
     let mut new_topo = Topology::new();
@@ -185,12 +369,26 @@ pub(crate) fn fillet_independent_plane_edges(
         for i in 0..n {
             let v = face.vertex_ids[i];
             let pos = face.positions[i];
-            let Some(&eid) = edge_at_vertex.get(&v) else {
+            let Some(eids) = edges_at_vertex.get(&v) else {
                 loop_positions.push(pos);
                 continue;
             };
-            let b = &blends[&eid];
 
+            if let Some(corner) = miters.get(&v) {
+                // Miter corner: the shared face's corner collapses to the
+                // curve's end on S; the two non-shared side faces (and no
+                // others — the corner is trihedral) corner at the curve's
+                // end on A ∩ C.
+                if face.face_id == corner.shared_face {
+                    loop_positions.push(*corner.ring.last().unwrap());
+                } else {
+                    loop_positions.push(corner.ring[0]);
+                }
+                continue;
+            }
+
+            // Cap end: exactly one selected edge at this vertex.
+            let b = &blends[&eids[0]];
             if face.face_id == b.face_a {
                 loop_positions.push(b.tan_a_at(v)); // side face inset
             } else if face.face_id == b.face_b {
@@ -224,15 +422,37 @@ pub(crate) fn fillet_independent_plane_edges(
         );
     }
 
-    // 2. Emit the quarter-cylinder blend for every selected edge.
+    // 2. Emit the blend cylinder for every selected edge. Each end's ring
+    //    runs tangent-A → tangent-B: a cap end uses the quarter arc in the
+    //    endpoint plane, a mitered end uses the corner's trim curve
+    //    (oriented so it starts on this blend's face_a side).
     for b in blends.values() {
-        let ta_s = b.tan_a_at(b.v_start);
-        let tb_s = b.tan_b_at(b.v_start);
-        let ta_e = b.tan_a_at(b.v_end);
-        let tb_e = b.tan_b_at(b.v_end);
-
-        let ring_start = sample_arc(b.center_start, ta_s, tb_s, b.axis, ARC_SEGMENTS);
-        let ring_end = sample_arc(b.center_end, ta_e, tb_e, b.axis, ARC_SEGMENTS);
+        let ring_at = |v: VertexId, center: Point3, ta: Point3, tb: Point3| -> Vec<Point3> {
+            match miters.get(&v) {
+                Some(corner) => {
+                    // ring[0] is on A ∩ C (this blend's non-shared side),
+                    // ring[last] on the shared face.
+                    if b.face_a == corner.shared_face {
+                        corner.ring.iter().rev().copied().collect()
+                    } else {
+                        corner.ring.clone()
+                    }
+                }
+                None => sample_arc(center, ta, tb, b.axis, ARC_SEGMENTS),
+            }
+        };
+        let ring_start = ring_at(
+            b.v_start,
+            b.center_start,
+            b.tan_a_at(b.v_start),
+            b.tan_b_at(b.v_start),
+        );
+        let ring_end = ring_at(
+            b.v_end,
+            b.center_end,
+            b.tan_a_at(b.v_end),
+            b.tan_b_at(b.v_end),
+        );
 
         // Closed loop: start ring (ta_s → tb_s) then end ring reversed
         // (tb_e → ta_e). Winding chosen so the CCW face normal points
@@ -240,7 +460,7 @@ pub(crate) fn fillet_independent_plane_edges(
         let mut loop_positions = ring_start;
         loop_positions.extend(ring_end.into_iter().rev());
 
-        let ref_dir = (ta_s - b.center_start).normalize();
+        let ref_dir = (b.tan_a_at(b.v_start) - b.center_start).normalize();
         let cyl = CylinderSurface {
             center: b.center_start,
             axis: Dir3::new_normalize(b.axis),

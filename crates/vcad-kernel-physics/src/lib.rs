@@ -45,7 +45,11 @@ pub mod joints;
 pub mod stl;
 mod world;
 
-pub use diff::{nominal_mass_props, rollout_gradient, BodyMassProps, DiffBody, MassPropFdSteps};
+pub use diff::{
+    nominal_mass_props, rollout_gradient, rollout_gradient_with_anchors,
+    rollout_gradient_with_surface, surface_gradient, AnchorFdSteps, BodyMassProps, DiffBody,
+    MassPropFdSteps, SurfaceTerm,
+};
 pub use error::PhysicsError;
 pub use gym::{Action, Observation, RobotEnv};
 pub use world::{JointState, PhysicsWorld};

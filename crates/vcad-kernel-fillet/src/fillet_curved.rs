@@ -146,8 +146,8 @@ fn fillet_edges_detailed_inner(
     // pipeline below insets *every* face by `radius`, which is only valid
     // when every edge is filleted; for a proper subset it shrinks the whole
     // body. See `fillet_subset` for the geometrically correct construction.
-    if crate::fillet_subset::is_independent_plane_plane_set(brep, edge_ids) {
-        return crate::fillet_subset::fillet_independent_plane_edges(brep, edge_ids, radius);
+    if crate::fillet_subset::is_plane_plane_chain_set(brep, edge_ids, radius) {
+        return crate::fillet_subset::fillet_plane_chain_edges(brep, edge_ids, radius);
     }
 
     let faces = extract_faces(brep);

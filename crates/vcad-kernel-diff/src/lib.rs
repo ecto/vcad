@@ -54,7 +54,7 @@ pub use implicit::{
     tangency_rows, ConstraintRow,
 };
 pub use lbfgs::minimize_lbfgs;
-pub use lift::{lift_surface, DualSurface};
+pub use lift::{lift_surface, lift_surface_second, DualSurface, DualSurface2};
 pub use mass::{mass_properties, mass_properties_with_derivative, MassProperties};
 pub use optimize::{
     minimize, objective_gradient, objective_gradient_reverse, IterateRecord, MeshObjective,
@@ -100,15 +100,6 @@ pub enum DiffError {
     /// No implicit constraint form is implemented for this surface kind, so
     /// a topology vertex adjacent to it cannot be differentiated.
     UnsupportedConstraint(SurfaceKind),
-    /// No second-order (acceleration) form is implemented for this surface
-    /// kind yet. The volume second derivative supports plane/cylinder/sphere,
-    /// whose surface points are **linear** in the seeded fields (translation,
-    /// radius), so the node acceleration is just the first-order lift fed the
-    /// field accelerations. Cone/torus points are nonlinear in their shape
-    /// fields (half-angle, radii), so their acceleration carries an extra
-    /// `∂²x/∂field²·fielḋ²` term — a mechanical extension, deliberately not
-    /// shipped.
-    SecondOrderUnsupported(SurfaceKind),
     /// The implicit system at a topology vertex is inconsistent: dependent
     /// constraint rows disagree beyond tolerance. The vertex does not
     /// actually lie on a common intersection of its adjacent surfaces (or a
@@ -161,10 +152,6 @@ impl std::fmt::Display for DiffError {
             DiffError::UnsupportedConstraint(kind) => write!(
                 f,
                 "no implicit constraint form for surface kind {kind:?}; cannot differentiate an adjacent topology vertex"
-            ),
-            DiffError::SecondOrderUnsupported(kind) => write!(
-                f,
-                "no second-order form for surface kind {kind:?}; volume second derivative supports plane/cylinder/sphere"
             ),
             DiffError::InconsistentConstraints { residual } => write!(
                 f,

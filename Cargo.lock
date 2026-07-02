@@ -6959,6 +6959,7 @@ dependencies = [
  "vcad-ecad-pcb",
  "vcad-ir",
  "vcad-kernel",
+ "vcad-kernel-diff",
  "vcad-kernel-geom",
  "vcad-kernel-math",
  "vcad-kernel-sketch",
