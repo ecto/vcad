@@ -1235,4 +1235,73 @@ mod tests {
         );
         assert_eq!(mesh2.open_edge_count(), 0);
     }
+
+    #[test]
+    fn transport_uv_survives_reframed_cylinder_and_sphere() {
+        // The scenario frame transport exists for: the same geometric
+        // surface rebuilt with a different frame (flipped axis, rotated
+        // ref_dir, center slid along the axis — the fillet kernel does all
+        // three between builds). Transporting a capture-time (u, v) must
+        // land the *rebuilt* surface's evaluate on the same material point.
+        // This also pins the frame convention: both sides reconstruct with
+        // y = axis × ref_dir, matching CylinderSurface/SphereSurface::y_dir.
+        use vcad_kernel_math::Dir3;
+
+        let axis = Vec3::new(0.3, -0.4, 0.85).normalize();
+        let ref_dir = axis.cross(Vec3::new(0.0, 0.0, 1.0)).normalize();
+        let y = axis.cross(ref_dir);
+        let cyl = CylinderSurface {
+            center: Point3::new(1.0, 2.0, 3.0),
+            axis: Dir3::new_normalize(axis),
+            ref_dir: Dir3::new_normalize(ref_dir),
+            radius: 2.5,
+        };
+        // Same cylinder: axis flipped, ref_dir rotated 0.7 rad about the
+        // axis, center slid 1.7 along it.
+        let phi = 0.7_f64;
+        let cyl2 = CylinderSurface {
+            center: cyl.center + axis * 1.7,
+            axis: Dir3::new_normalize(-axis),
+            ref_dir: Dir3::new_normalize(ref_dir * phi.cos() + y * phi.sin()),
+            radius: 2.5,
+        };
+        let frame = face_frame(&cyl);
+        for &(u, v) in &[(0.0, 0.0), (1.1, 4.0), (5.9, -2.5)] {
+            let uv = Point2::new(u, v);
+            let p = CylinderSurface::evaluate(&cyl, uv);
+            let uv2 = transport_uv(&frame, &cyl2, uv, &p);
+            let p2 = CylinderSurface::evaluate(&cyl2, uv2);
+            assert!(
+                (p2 - p).norm() < 1e-12,
+                "cylinder ({u}, {v}): {p:?} vs {p2:?}"
+            );
+        }
+
+        let sph = SphereSurface {
+            center: Point3::new(-2.0, 0.5, 4.0),
+            radius: 1.5,
+            ref_dir: Dir3::new_normalize(ref_dir),
+            axis: Dir3::new_normalize(axis),
+        };
+        // Same sphere under a completely different orthonormal frame.
+        let axis2 = Vec3::new(0.9, 0.1, -0.3).normalize();
+        let ref2 = axis2.cross(Vec3::new(0.0, 1.0, 0.0)).normalize();
+        let sph2 = SphereSurface {
+            center: sph.center,
+            radius: 1.5,
+            ref_dir: Dir3::new_normalize(ref2),
+            axis: Dir3::new_normalize(axis2),
+        };
+        let frame = face_frame(&sph);
+        for &(u, v) in &[(0.2, 0.3), (2.8, -1.1), (4.4, 1.4)] {
+            let uv = Point2::new(u, v);
+            let p = SphereSurface::evaluate(&sph, uv);
+            let uv2 = transport_uv(&frame, &sph2, uv, &p);
+            let p2 = SphereSurface::evaluate(&sph2, uv2);
+            assert!(
+                (p2 - p).norm() < 1e-12,
+                "sphere ({u}, {v}): {p:?} vs {p2:?}"
+            );
+        }
+    }
 }
