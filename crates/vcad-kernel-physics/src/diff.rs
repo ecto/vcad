@@ -57,11 +57,13 @@
 //!   onto the collision-mesh nodes through the M5 pullback
 //!   ([`evaluate_with_pullback`](vcad_kernel_diff::evaluate_with_pullback)) —
 //!   future work, noted in `docs/differentiable-seam-m8.md`.
-//! - **Mass-property channel only.** θ is assumed to move geometry, hence mass
-//!   properties. If θ also moves a **joint anchor / mount frame**, that
-//!   sensitivity is *not* included here (the rollout applies mounts as fixed
-//!   transforms). The same FD-on-scalars pattern extends to anchor coordinates
-//!   when a model needs it.
+//! - **Anchor channel.** If θ also moves a **joint anchor / mount frame** (a
+//!   pivot hole whose position scales with the part), use
+//!   [`rollout_gradient_with_anchors`]: the anchor coordinates enter the
+//!   factorization as additional scalars — `∂J/∂anchor` by the same
+//!   central-FD-rollout pattern, `d(anchor)/dθ` by central FD on the caller's
+//!   anchor map (a pure function of θ, no geometry rebuild) — and the two
+//!   channels sum. [`rollout_gradient`] is the anchor-free special case.
 //! - **Determinism.** phyz's ABA + semi-implicit Euler are deterministic;
 //!   the FD estimate of `∂J/∂p` is only meaningful if the rollout closure is a
 //!   pure function of its mass-property input (fixed initial state, fixed
@@ -316,10 +318,74 @@ pub fn rollout_gradient(
     theta: &[f64],
     fd: &MassPropFdSteps,
 ) -> Result<(f64, Vec<f64>), DiffError> {
+    rollout_gradient_with_anchors(
+        bodies,
+        &|_theta: &[f64]| Vec::new(),
+        &|props: &[BodyMassProps], _anchors: &[f64]| rollout(props),
+        theta,
+        fd,
+        &AnchorFdSteps::default(),
+    )
+}
+
+/// Finite-difference step policy for the **anchor channel** of
+/// [`rollout_gradient_with_anchors`].
+///
+/// Two independent steps, because the two derivatives probe different maps:
+/// `value_abs` perturbs an anchor scalar inside the *rollout* (`∂J/∂a`,
+/// meters in the phyz frame), while `theta_rel`/`theta_min` step θ inside the
+/// caller's *anchor map* (`da/dθ`, a pure function — usually linear — so the
+/// step only needs to clear roundoff).
+#[derive(Debug, Clone, Copy)]
+pub struct AnchorFdSteps {
+    /// Absolute step (m) for each anchor scalar in the `∂J/∂a` rollouts.
+    pub value_abs: f64,
+    /// Relative step (of `|θ_k|`) for the `da/dθ_k` central difference.
+    pub theta_rel: f64,
+    /// Floor for the θ step.
+    pub theta_min: f64,
+}
+
+impl Default for AnchorFdSteps {
+    fn default() -> Self {
+        Self {
+            value_abs: 1e-7,
+            theta_rel: 1e-6,
+            theta_min: 1e-9,
+        }
+    }
+}
+
+/// [`rollout_gradient`] with the **anchor channel**: `(J, dJ/dθ)` where θ
+/// moves both the bodies' mass properties *and* joint anchor / mount-frame
+/// coordinates.
+///
+/// `anchor_map` maps θ to a flat vector of anchor scalars (layout is the
+/// caller's contract with its own `rollout` — e.g. `[pivot_x_m, pivot_y_m]`).
+/// The chain gains one term per anchor scalar:
+///
+/// ```text
+/// dJ/dθ = Σ_bodies ∂J/∂p·dp/dθ  +  Σ_anchors ∂J/∂a·da/dθ
+/// ```
+///
+/// with `∂J/∂a` from central-FD rollouts (like `∂J/∂p` — no CAD rebuild) and
+/// `da/dθ` from a central difference of `anchor_map` itself, which is a pure
+/// function of θ (no geometry, no remeshing; for the common linear anchor —
+/// a hole position proportional to a dimension — the FD is exact to
+/// roundoff). Everything in the [`rollout_gradient`] contract carries over;
+/// the rollout closure must be pure in *both* inputs.
+pub fn rollout_gradient_with_anchors(
+    bodies: &[DiffBody],
+    anchor_map: &impl Fn(&[f64]) -> Vec<f64>,
+    rollout: &impl Fn(&[BodyMassProps], &[f64]) -> f64,
+    theta: &[f64],
+    fd: &MassPropFdSteps,
+    anchor_fd: &AnchorFdSteps,
+) -> Result<(f64, Vec<f64>), DiffError> {
     let n = theta.len();
 
     // 1. Nominal mass properties per body (positions-only seam), and the
-    //    frozen plan / B-rep kept for the exact dp/dθ below.
+    //    frozen plan / B-rep kept for the exact dp/dθ below; nominal anchors.
     let mut breps = Vec::with_capacity(bodies.len());
     let mut plans = Vec::with_capacity(bodies.len());
     let mut nominal = Vec::with_capacity(bodies.len());
@@ -332,9 +398,10 @@ pub fn rollout_gradient(
         breps.push(brep);
         plans.push(plan);
     }
+    let anchors0 = anchor_map(theta);
 
-    // Primal objective at the nominal properties.
-    let j0 = rollout(&nominal);
+    // Primal objective at the nominal properties and anchors.
+    let j0 = rollout(&nominal, &anchors0);
 
     // 2. ∂J/∂p per body by central FD on the 10 mass-property scalars.
     //    Each body is perturbed independently; the others hold their nominal
@@ -349,12 +416,12 @@ pub fn rollout_gradient(
             let mut sp = nom.scalars();
             sp[j] += h;
             work[i] = BodyMassProps::from_scalars(sp);
-            let jp = rollout(&work);
+            let jp = rollout(&work, &anchors0);
 
             let mut sm = nom.scalars();
             sm[j] -= h;
             work[i] = BodyMassProps::from_scalars(sm);
-            let jm = rollout(&work);
+            let jm = rollout(&work, &anchors0);
 
             grad_p[j] = (jp - jm) / (2.0 * h);
         }
@@ -363,8 +430,21 @@ pub fn rollout_gradient(
         djdp.push(grad_p);
     }
 
+    // 2b. ∂J/∂a per anchor scalar, same central-FD-rollout pattern.
+    let mut djda = vec![0.0f64; anchors0.len()];
+    for (a, g) in djda.iter_mut().enumerate() {
+        let h = anchor_fd.value_abs;
+        let mut work = anchors0.clone();
+        work[a] = anchors0[a] + h;
+        let jp = rollout(&nominal, &work);
+        work[a] = anchors0[a] - h;
+        let jm = rollout(&nominal, &work);
+        *g = (jp - jm) / (2.0 * h);
+    }
+
     // 3 + 4. Exact dp/dθ from the seam, contracted with ∂J/∂p and summed
-    //         over bodies.
+    //         over bodies; then the anchor channel — da/dθ by central FD on
+    //         the (geometry-free) anchor map, contracted with ∂J/∂a.
     let mut gradient = vec![0.0f64; n];
     for (i, body) in bodies.iter().enumerate() {
         for (k, g) in gradient.iter_mut().enumerate() {
@@ -377,6 +457,25 @@ pub fn rollout_gradient(
                 acc += djdp[i][j] * dp[j];
             }
             *g += acc;
+        }
+    }
+    if !anchors0.is_empty() {
+        for (k, g) in gradient.iter_mut().enumerate() {
+            let h = (anchor_fd.theta_rel * theta[k].abs()).max(anchor_fd.theta_min);
+            let mut tp = theta.to_vec();
+            tp[k] += h;
+            let ap = anchor_map(&tp);
+            let mut tm = theta.to_vec();
+            tm[k] -= h;
+            let am = anchor_map(&tm);
+            debug_assert_eq!(
+                ap.len(),
+                anchors0.len(),
+                "anchor map length must be θ-invariant"
+            );
+            for (a, dj) in djda.iter().enumerate() {
+                *g += dj * (ap[a] - am[a]) / (2.0 * h);
+            }
         }
     }
 
