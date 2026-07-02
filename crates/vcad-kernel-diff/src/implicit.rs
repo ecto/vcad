@@ -30,7 +30,9 @@ pub struct ConstraintRow {
     pub rhs: f64,
 }
 
-/// The implicit form of a surface at `x`: `(g, ∇g, ∂g/∂θ)`.
+/// The implicit form of a surface at `x`: `(g, ∇g, ∂g/∂θ)`, with the
+/// θ-term summed over composed seeds (a fillet blend's radius and axis
+/// position both carry the fillet-radius parameter).
 ///
 /// Single source of truth for both [`constraint_row`] and
 /// [`surface_residual`], so incidence detection and the rows actually
@@ -39,7 +41,7 @@ pub struct ConstraintRow {
 /// `Ok(None)` for kinds without an implicit form.
 fn implicit_terms(
     surface: &dyn Surface,
-    seed: Option<SurfaceSeed>,
+    seeds: &[SurfaceSeed],
     x: &Point3,
 ) -> Result<Option<(f64, Vec3, f64)>, DiffError> {
     let kind = surface.surface_type();
@@ -48,11 +50,13 @@ fn implicit_terms(
             let plane = downcast::<Plane>(surface, kind)?;
             let n = *plane.normal_dir.as_ref();
             let g = plane.signed_distance(x);
-            let g_theta = match seed {
-                None => 0.0,
-                Some(SurfaceSeed::Translate { velocity }) => -n.dot(velocity),
-                Some(other) => return Err(DiffError::UnsupportedSeed { kind, seed: other }),
-            };
+            let mut g_theta = 0.0;
+            for seed in seeds {
+                g_theta += match *seed {
+                    SurfaceSeed::Translate { velocity } => -n.dot(velocity),
+                    other => return Err(DiffError::UnsupportedSeed { kind, seed: other }),
+                };
+            }
             Ok(Some((g, n, g_theta)))
         }
         SurfaceKind::Cylinder => {
@@ -61,48 +65,140 @@ fn implicit_terms(
             let d = *x - cyl.center;
             let radial = d - a * d.dot(a);
             let g = radial.norm_squared() - cyl.radius * cyl.radius;
-            let g_theta = match seed {
-                None => 0.0,
-                Some(SurfaceSeed::CylinderRadius { rate }) => -2.0 * cyl.radius * rate,
-                Some(SurfaceSeed::Translate { velocity }) => {
-                    // ∂g/∂θ = −2 radial · v_perp; radial ⊥ a so the axial
-                    // component of v drops out automatically.
-                    -2.0 * radial.dot(velocity)
-                }
-                Some(other) => return Err(DiffError::UnsupportedSeed { kind, seed: other }),
-            };
+            let mut g_theta = 0.0;
+            for seed in seeds {
+                g_theta += match *seed {
+                    SurfaceSeed::CylinderRadius { rate } => -2.0 * cyl.radius * rate,
+                    SurfaceSeed::Translate { velocity } => {
+                        // ∂g/∂θ = −2 radial · v_perp; radial ⊥ a so the axial
+                        // component of v drops out automatically.
+                        -2.0 * radial.dot(velocity)
+                    }
+                    other => return Err(DiffError::UnsupportedSeed { kind, seed: other }),
+                };
+            }
             Ok(Some((g, 2.0 * radial, g_theta)))
         }
         SurfaceKind::Sphere => {
             let sph = downcast::<SphereSurface>(surface, kind)?;
             let d = *x - sph.center;
             let g = d.norm_squared() - sph.radius * sph.radius;
-            let g_theta = match seed {
-                None => 0.0,
-                Some(SurfaceSeed::SphereRadius { rate }) => -2.0 * sph.radius * rate,
-                Some(SurfaceSeed::Translate { velocity }) => -2.0 * d.dot(velocity),
-                Some(other) => return Err(DiffError::UnsupportedSeed { kind, seed: other }),
-            };
+            let mut g_theta = 0.0;
+            for seed in seeds {
+                g_theta += match *seed {
+                    SurfaceSeed::SphereRadius { rate } => -2.0 * sph.radius * rate,
+                    SurfaceSeed::Translate { velocity } => -2.0 * d.dot(velocity),
+                    other => return Err(DiffError::UnsupportedSeed { kind, seed: other }),
+                };
+            }
             Ok(Some((g, 2.0 * d, g_theta)))
         }
         _ => Ok(None),
     }
 }
 
-/// Build the constraint row contributed by `surface` (with its θ-seed) at
-/// vertex position `x`. Kinds without an implicit form return
+/// Build the constraint row contributed by `surface` (with its composed
+/// θ-seeds) at vertex position `x`. Kinds without an implicit form return
 /// [`DiffError::UnsupportedConstraint`].
 pub fn constraint_row(
     surface: &dyn Surface,
-    seed: Option<SurfaceSeed>,
+    seeds: &[SurfaceSeed],
     x: &Point3,
 ) -> Result<ConstraintRow, DiffError> {
-    match implicit_terms(surface, seed, x)? {
+    match implicit_terms(surface, seeds, x)? {
         Some((_g, gradient, g_theta)) => Ok(ConstraintRow {
             gradient,
             rhs: -g_theta,
         }),
         None => Err(DiffError::UnsupportedConstraint(surface.surface_type())),
+    }
+}
+
+/// Extra first-order rows for a **tangency contact** at a vertex.
+///
+/// When a curved surface touches a plane with parallel gradients (a fillet
+/// blend resting on its support face), the surface's implicit row is
+/// dependent on the plane's and carries no tangential information — the
+/// rank-deficient system would silently freeze a vertex that actually
+/// slides along the support face (e.g. the corner of two tangent lines on
+/// a rounded cube moves at `(±1, ±1, 0)` per unit fillet radius). The
+/// missing information lives in the *tangent-curve* equations:
+///
+/// - cylinder tangent to plane `n`: the tangent line satisfies
+///   `q·(x − center(θ)) = 0` with `q = axis × n`, giving the row
+///   `q·ẋ = q·(d center/dθ)` (the radius rate drops out since the contact
+///   direction is parallel to `n`);
+/// - sphere tangent to plane `n`: the tangent point tracks the center in
+///   every direction perpendicular to `n` — two rows `q_i·ẋ = q_i·(d
+///   center/dθ)` for a basis `{q_1, q_2}` of `n⊥`.
+///
+/// Returns no rows when the surface is not tangent to the plane at `x`
+/// (transverse contacts are fully handled by the ordinary implicit rows).
+/// Surface kinds without tangency support — planes included — also return
+/// no rows, **never** an error: callers are expected to pass every
+/// incident surface and let this function decide which pairs participate,
+/// so an unknown kind is "no tangency information", not a failure.
+pub fn tangency_rows(
+    plane_normal: Vec3,
+    surface: &dyn Surface,
+    seeds: &[SurfaceSeed],
+    x: &Point3,
+) -> Result<Vec<ConstraintRow>, DiffError> {
+    let translate: Vec3 = seeds
+        .iter()
+        .fold(Vec3::new(0.0, 0.0, 0.0), |acc, s| match *s {
+            SurfaceSeed::Translate { velocity } => acc + velocity,
+            _ => acc,
+        });
+    let n = plane_normal.normalize();
+    let kind = surface.surface_type();
+    match kind {
+        SurfaceKind::Cylinder => {
+            let cyl = downcast::<CylinderSurface>(surface, kind)?;
+            let a = *cyl.axis.as_ref();
+            let d = *x - cyl.center;
+            let radial = d - a * d.dot(a);
+            let rn = radial.norm();
+            if rn < f64::MIN_POSITIVE || radial.cross(n).norm() > 1e-6 * rn {
+                return Ok(Vec::new()); // transverse (or on-axis): no tangency
+            }
+            let q = a.cross(n);
+            let qn = q.norm();
+            if qn < 1e-9 {
+                return Ok(Vec::new()); // axis ∥ n: degenerate contact
+            }
+            let q = q / qn;
+            Ok(vec![ConstraintRow {
+                gradient: q,
+                rhs: q.dot(translate),
+            }])
+        }
+        SurfaceKind::Sphere => {
+            let sph = downcast::<SphereSurface>(surface, kind)?;
+            let d = *x - sph.center;
+            let dn = d.norm();
+            if dn < f64::MIN_POSITIVE || d.cross(n).norm() > 1e-6 * dn {
+                return Ok(Vec::new());
+            }
+            let arbitrary = if n.x.abs() < 0.9 {
+                Vec3::new(1.0, 0.0, 0.0)
+            } else {
+                Vec3::new(0.0, 1.0, 0.0)
+            };
+            let q1 = n.cross(arbitrary).normalize();
+            let q2 = n.cross(q1);
+            Ok(vec![
+                ConstraintRow {
+                    gradient: q1,
+                    rhs: q1.dot(translate),
+                },
+                ConstraintRow {
+                    gradient: q2,
+                    rhs: q2.dot(translate),
+                },
+            ])
+        }
+        _ => Ok(Vec::new()),
     }
 }
 
@@ -117,7 +213,7 @@ pub fn constraint_row(
 /// seam loop), so constraint rows must be collected by incidence, not just
 /// by loop membership.
 pub fn surface_residual(surface: &dyn Surface, x: &Point3) -> Option<f64> {
-    let (g, grad, _) = implicit_terms(surface, None, x).ok()??;
+    let (g, grad, _) = implicit_terms(surface, &[], x).ok()??;
     let n = grad.norm();
     (n > f64::MIN_POSITIVE).then(|| (g / n).abs())
 }
@@ -189,13 +285,13 @@ mod tests {
         let side_x = Plane::new(Point3::new(4.0, 0.0, 0.0), Vec3::y(), Vec3::z());
         let side_y = Plane::new(Point3::new(0.0, 3.0, 0.0), Vec3::z(), Vec3::x());
         let x = Point3::new(4.0, 3.0, 2.0);
-        let seed = Some(SurfaceSeed::Translate {
+        let seed = [SurfaceSeed::Translate {
             velocity: Vec3::z(),
-        });
+        }];
         let rows = vec![
-            constraint_row(&top, seed, &x).unwrap(),
-            constraint_row(&side_x, None, &x).unwrap(),
-            constraint_row(&side_y, None, &x).unwrap(),
+            constraint_row(&top, &seed, &x).unwrap(),
+            constraint_row(&side_x, &[], &x).unwrap(),
+            constraint_row(&side_y, &[], &x).unwrap(),
         ];
         let v = solve_vertex_velocity(&rows).unwrap();
         assert!((v - Vec3::z()).norm() < 1e-12, "v = {v:?}");
@@ -210,8 +306,8 @@ mod tests {
         let u = 1.1_f64;
         let x = Point3::new(2.5 * u.cos(), 2.5 * u.sin(), 5.0);
         let rows = vec![
-            constraint_row(&plane, None, &x).unwrap(),
-            constraint_row(&cyl, Some(SurfaceSeed::CylinderRadius { rate: 1.0 }), &x).unwrap(),
+            constraint_row(&plane, &[], &x).unwrap(),
+            constraint_row(&cyl, &[SurfaceSeed::CylinderRadius { rate: 1.0 }], &x).unwrap(),
         ];
         let v = solve_vertex_velocity(&rows).unwrap();
         let expected = Vec3::new(u.cos(), u.sin(), 0.0);
@@ -228,13 +324,13 @@ mod tests {
         let rows = vec![
             constraint_row(
                 &p1,
-                Some(SurfaceSeed::Translate {
+                &[SurfaceSeed::Translate {
                     velocity: Vec3::z(),
-                }),
+                }],
                 &x,
             )
             .unwrap(),
-            constraint_row(&p2, None, &x).unwrap(),
+            constraint_row(&p2, &[], &x).unwrap(),
         ];
         assert!(matches!(
             solve_vertex_velocity(&rows),

@@ -7096,6 +7096,7 @@ version = "0.9.4"
 dependencies = [
  "tang",
  "vcad-kernel",
+ "vcad-kernel-fillet",
  "vcad-kernel-geom",
  "vcad-kernel-math",
  "vcad-kernel-nurbs",

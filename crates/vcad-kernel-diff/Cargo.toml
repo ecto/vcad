@@ -16,5 +16,6 @@ vcad-kernel-primitives = { workspace = true }
 vcad-kernel-tessellate = { workspace = true }
 
 [dev-dependencies]
+vcad-kernel-fillet = { workspace = true }
 vcad-kernel-sketch = { workspace = true }
 vcad-kernel = { workspace = true }

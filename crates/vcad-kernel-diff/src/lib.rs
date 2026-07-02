@@ -42,7 +42,9 @@ mod seam;
 
 pub use contract::{contract_sensitivity, volume_gradient};
 pub use fd::{compare_velocities, fd_velocities, fd_volume_derivative, FdComparison};
-pub use implicit::{constraint_row, solve_vertex_velocity, surface_residual, ConstraintRow};
+pub use implicit::{
+    constraint_row, solve_vertex_velocity, surface_residual, tangency_rows, ConstraintRow,
+};
 pub use lift::{lift_surface, DualSurface};
 pub use mass::{mass_properties, mass_properties_with_derivative, MassProperties};
 pub use optimize::{
@@ -152,9 +154,14 @@ pub enum SurfaceSeed {
 /// Surfaces without an entry are θ-independent (lifted with zero dual
 /// parts). This keeps the seeding honest about which surfaces a given θ
 /// actually touches.
+///
+/// A surface may carry **several seeds**, which compose additively — the
+/// canonical case is a fillet blend, whose radius *and* axis position both
+/// depend on the fillet-radius parameter (the axis retreats from the edge
+/// as the radius grows).
 #[derive(Debug, Clone, Default)]
 pub struct ParamSeeding {
-    seeds: BTreeMap<usize, SurfaceSeed>,
+    seeds: BTreeMap<usize, Vec<SurfaceSeed>>,
 }
 
 impl ParamSeeding {
@@ -163,18 +170,24 @@ impl ParamSeeding {
         Self::default()
     }
 
-    /// Seed the surface at `surface_index`.
+    /// Add a seed to the surface at `surface_index` (composes with seeds
+    /// already present on that surface).
     pub fn seed(&mut self, surface_index: usize, seed: SurfaceSeed) -> &mut Self {
-        self.seeds.insert(surface_index, seed);
+        self.seeds.entry(surface_index).or_default().push(seed);
         self
     }
 
-    /// The seed for a surface index, if any.
-    pub fn get(&self, surface_index: usize) -> Option<SurfaceSeed> {
-        self.seeds.get(&surface_index).copied()
+    /// The seeds for a surface index (empty = θ-independent).
+    pub fn get(&self, surface_index: usize) -> &[SurfaceSeed] {
+        self.seeds
+            .get(&surface_index)
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
     }
 
-    /// Seed every surface in `geom` matching `pred`. Returns how many
+    /// Add `seed` to every surface in `geom` matching `pred`. Like
+    /// [`ParamSeeding::seed`], this **composes** with seeds already present
+    /// on a matching surface — it never replaces them. Returns how many
     /// surfaces were seeded (callers should assert the expected count —
     /// boolean output stores may carry several copies of a moving surface).
     pub fn seed_where(
@@ -186,7 +199,7 @@ impl ParamSeeding {
         let mut count = 0;
         for (i, s) in geom.surfaces.iter().enumerate() {
             if pred(s.as_ref()) {
-                self.seeds.insert(i, seed);
+                self.seeds.entry(i).or_default().push(seed);
                 count += 1;
             }
         }

@@ -33,7 +33,7 @@
 use std::collections::HashMap;
 
 use vcad_kernel_geom::{CylinderSurface, Plane, SphereSurface, Surface, SurfaceKind};
-use vcad_kernel_math::{Point2, Point3};
+use vcad_kernel_math::{Point2, Point3, Vec3};
 use vcad_kernel_primitives::BRepSolid;
 use vcad_kernel_topo::{FaceId, Orientation, VertexId};
 
@@ -143,6 +143,145 @@ pub enum NodeRecipe {
     },
 }
 
+/// The parameterization frame of a face's surface, snapshotted at capture.
+///
+/// Construction-order-nondeterministic kernels (the fillet pipeline picks
+/// blend-cylinder axis signs by hash order) can rebuild the *same
+/// geometric surface* with a different frame, silently changing what a
+/// frozen `(u, v)` means. Evaluation therefore transports frozen samples
+/// through the rebuilt frame (see `transport_uv`) instead of trusting raw
+/// parameters across builds.
+#[derive(Debug, Clone, Copy)]
+pub enum FaceFrame {
+    /// Planar frame: `(u, v)` are in-plane coordinates.
+    Plane {
+        /// Frame origin.
+        origin: Point3,
+    },
+    /// Cylindrical frame: `u` is the angle from `ref_dir` about `axis`,
+    /// `v` the height along `axis` from `center`.
+    Cylinder {
+        /// Axis base point.
+        center: Point3,
+        /// Unit axis.
+        axis: Vec3,
+        /// Unit u = 0 direction.
+        ref_dir: Vec3,
+    },
+    /// Spherical frame: `u` longitude from `ref_dir`, `v` latitude toward
+    /// `axis`.
+    Sphere {
+        /// Sphere center.
+        center: Point3,
+        /// Unit pole direction.
+        axis: Vec3,
+        /// Unit u = 0 direction.
+        ref_dir: Vec3,
+    },
+    /// No transport support: frozen `(u, v)` are used verbatim (correct
+    /// only when the construction rebuilds frames deterministically).
+    Other,
+}
+
+/// Snapshot a surface's parameterization frame.
+pub fn face_frame(surface: &dyn Surface) -> FaceFrame {
+    match surface.surface_type() {
+        SurfaceKind::Plane => match surface.as_any().downcast_ref::<Plane>() {
+            Some(p) => FaceFrame::Plane { origin: p.origin },
+            None => FaceFrame::Other,
+        },
+        SurfaceKind::Cylinder => match surface.as_any().downcast_ref::<CylinderSurface>() {
+            Some(c) => FaceFrame::Cylinder {
+                center: c.center,
+                axis: *c.axis.as_ref(),
+                ref_dir: *c.ref_dir.as_ref(),
+            },
+            None => FaceFrame::Other,
+        },
+        SurfaceKind::Sphere => match surface.as_any().downcast_ref::<SphereSurface>() {
+            Some(s) => FaceFrame::Sphere {
+                center: s.center,
+                axis: *s.axis.as_ref(),
+                ref_dir: *s.ref_dir.as_ref(),
+            },
+            None => FaceFrame::Other,
+        },
+        _ => FaceFrame::Other,
+    }
+}
+
+/// Map a frozen `(u, v)` from its capture-time frame into `rebuilt`'s
+/// frame, so the sample denotes the same *material* point regardless of
+/// how the rebuild chose axis signs / reference directions.
+///
+/// Planes use anchor projection (in-plane motion of an infinite plane is
+/// unobservable, so the projection of the capture-time anchor is the
+/// frozen-sample convention); cylinders and spheres transport the sample's
+/// direction vector; unsupported kinds return the parameters verbatim.
+///
+/// The direction reconstruction relies on the geom kernel's frame
+/// convention `y_dir = axis × ref_dir` (see `CylinderSurface::y_dir` /
+/// `SphereSurface::y_dir`) on both the capture and rebuilt sides; the
+/// `transport_uv_survives_reframed_cylinder_and_sphere` test round-trips
+/// through those surfaces' own `evaluate`, so a convention change in
+/// either crate fails loudly.
+pub fn transport_uv(
+    frame: &FaceFrame,
+    rebuilt: &dyn Surface,
+    uv: Point2,
+    anchor: &Point3,
+) -> Point2 {
+    match frame {
+        FaceFrame::Plane { .. } => match rebuilt.as_any().downcast_ref::<Plane>() {
+            Some(p) => p.project(anchor),
+            None => uv,
+        },
+        FaceFrame::Cylinder {
+            center,
+            axis,
+            ref_dir,
+        } => match rebuilt.as_any().downcast_ref::<CylinderSurface>() {
+            Some(c) => {
+                let y = axis.cross(*ref_dir);
+                let d = *ref_dir * uv.x.cos() + y * uv.x.sin();
+                let axis2 = *c.axis.as_ref();
+                let ref2 = *c.ref_dir.as_ref();
+                let y2 = axis2.cross(ref2);
+                let u2 = d
+                    .dot(y2)
+                    .atan2(d.dot(ref2))
+                    .rem_euclid(2.0 * std::f64::consts::PI);
+                let v2 = (*center - c.center).dot(axis2) + uv.y * axis.dot(axis2);
+                Point2::new(u2, v2)
+            }
+            None => uv,
+        },
+        FaceFrame::Sphere {
+            center: _,
+            axis,
+            ref_dir,
+        } => match rebuilt.as_any().downcast_ref::<SphereSurface>() {
+            Some(s) => {
+                let y = axis.cross(*ref_dir);
+                let (cu, su) = (uv.x.cos(), uv.x.sin());
+                let (cv, sv) = (uv.y.cos(), uv.y.sin());
+                let d = (*ref_dir * cu + y * su) * cv + *axis * sv;
+                let axis2 = *s.axis.as_ref();
+                let ref2 = *s.ref_dir.as_ref();
+                let y2 = axis2.cross(ref2);
+                let v2 = d.dot(axis2).clamp(-1.0, 1.0).asin();
+                let u2 = d
+                    .dot(y2)
+                    .atan2(d.dot(ref2))
+                    .rem_euclid(2.0 * std::f64::consts::PI);
+                Point2::new(u2, v2)
+            }
+            None => uv,
+        },
+        FaceFrame::Other => uv,
+    }
+}
+
 /// A frozen tessellation: recipes for every node, frozen connectivity, and
 /// the topology signature of the B-rep the plan was captured from.
 #[derive(Debug, Clone)]
@@ -151,6 +290,9 @@ pub struct FrozenPlan {
     pub signature: TopologySignature,
     /// Per-node recompute recipes.
     pub nodes: Vec<NodeRecipe>,
+    /// Capture-time parameterization frame of each face in the canonical
+    /// traversal (indexed by the same slots recipes use).
+    pub face_frames: Vec<FaceFrame>,
     /// Node positions at the capture-time parameter value. Used to recover
     /// entity correspondence geometrically when a plan is evaluated against
     /// a rebuilt B-rep whose enumeration order differs (the boolean
@@ -418,15 +560,21 @@ fn invert_uv(surface: &dyn Surface, p: &Point3) -> Result<Point2, FrozenError> {
     }
 }
 
-/// Preference between two same-surface `SurfaceUv` recipes for a coincident
-/// node: a sample on a curved surface pins two position DOF, a sample on a
-/// plane pins one. (Coincident nodes on *distinct* surfaces are upgraded to
-/// [`NodeRecipe::Boundary`] instead, which tracks the moving trim no matter
-/// which surface carries θ; a matched topology vertex always wins.)
+/// Preference between two `SurfaceUv` recipes for a coincident node,
+/// by how many position DOF the surface's curvature pins: doubly-curved >
+/// singly-curved > flat. This also decides *tangent* pairs, where the
+/// Boundary upgrade correctly refuses (no transverse intersection): e.g.
+/// a corner-sphere/blend-cylinder contact arc must bind to the sphere —
+/// the sphere's frozen sample tracks the arc under a fillet-radius change
+/// while a cylinder-bound sample would freeze its axial coordinate.
+/// (Coincident nodes on *distinct, transverse* surfaces are upgraded to
+/// [`NodeRecipe::Boundary`] instead; a matched topology vertex always
+/// wins.)
 fn kind_rank(kind: SurfaceKind) -> u8 {
     match kind {
         SurfaceKind::Plane => 0,
-        _ => 1,
+        SurfaceKind::Cylinder | SurfaceKind::Cone | SurfaceKind::Bilinear => 1,
+        SurfaceKind::Sphere | SurfaceKind::Torus | SurfaceKind::BSpline => 2,
     }
 }
 
@@ -548,6 +696,11 @@ pub fn capture_plan(
     let ci = canonical_index(brep);
     let signature = signature_with_index(brep, &ci);
 
+    let face_frames: Vec<FaceFrame> = ci
+        .faces
+        .iter()
+        .map(|&fid| face_frame(brep.geometry.surfaces[topo.faces[fid].surface_index].as_ref()))
+        .collect();
     let mut nodes: Vec<NodeRecipe> = Vec::new();
     let mut base_positions: Vec<Point3> = Vec::new();
     let mut node_kinds: Vec<SurfaceKind> = Vec::new();
@@ -758,6 +911,7 @@ pub fn capture_plan(
     Ok(FrozenPlan {
         signature,
         nodes,
+        face_frames,
         base_positions,
         triangles,
     })
@@ -793,33 +947,72 @@ pub fn evaluate_plan(brep: &BRepSolid, plan: &FrozenPlan) -> Result<FrozenMesh, 
     }
 
     let topo = &brep.topology;
-    // Face slot (capture-time traversal index) → matched rebuilt face.
-    let mut face_match: HashMap<u32, FaceId> = HashMap::new();
-    // Resolve a capture-time face slot to a rebuilt face: the face whose
-    // surface, evaluated at the frozen (u, v), lands nearest the node's
-    // capture-time anchor.
-    fn resolve_face(
-        brep: &BRepSolid,
-        ci: &CanonicalIndex,
-        face_match: &mut HashMap<u32, FaceId>,
-        slot: u32,
-        uv: Point2,
-        anchor: &Point3,
-        node: usize,
-    ) -> Result<FaceId, FrozenError> {
-        if let Some(&f) = face_match.get(&slot) {
-            return Ok(f);
+
+    // Resolve every referenced face slot up front, against ALL of the
+    // slot's samples at once: the matched face must reproduce every frozen
+    // sample (frame-transported) near its anchor. Matching per-node would
+    // let an ambiguous first sample — e.g. a node on the shared edge of
+    // two faces, whose anchor lies on both planes — poison the slot's
+    // cache for every later node. Transporting through each candidate's
+    // frame makes the match robust to rebuilds that pick different axis
+    // signs / reference directions for the same geometric surface (the
+    // fillet pipeline does), while the worst-sample distance criterion
+    // still disambiguates coplanar/co-axial distinct faces.
+    let mut slot_samples: std::collections::BTreeMap<u32, Vec<(Point2, Point3, usize)>> =
+        std::collections::BTreeMap::new();
+    for (i, recipe) in plan.nodes.iter().enumerate() {
+        let anchor = plan.base_positions[i];
+        match *recipe {
+            NodeRecipe::SurfaceUv { face, u, v } => {
+                slot_samples
+                    .entry(face)
+                    .or_default()
+                    .push((Point2::new(u, v), anchor, i));
+            }
+            NodeRecipe::Boundary {
+                face_a,
+                ua,
+                va,
+                face_b,
+                ub,
+                vb,
+            } => {
+                slot_samples
+                    .entry(face_a)
+                    .or_default()
+                    .push((Point2::new(ua, va), anchor, i));
+                slot_samples
+                    .entry(face_b)
+                    .or_default()
+                    .push((Point2::new(ub, vb), anchor, i));
+            }
+            NodeRecipe::TopoVertex { .. } => {}
         }
-        let topo = &brep.topology;
-        let mut best: Option<(FaceId, f64)> = None;
+    }
+    let mut face_match: HashMap<u32, FaceId> = HashMap::new();
+    for (&slot, samples) in &slot_samples {
+        let frame = plan
+            .face_frames
+            .get(slot as usize)
+            .ok_or(FrozenError::RecipeOutOfRange)?;
+        let mut best: Option<(FaceId, f64, usize)> = None;
         for &fid in &ci.faces {
-            let surface = &brep.geometry.surfaces[topo.faces[fid].surface_index];
-            let d2 = (surface.evaluate(uv) - *anchor).norm_squared();
-            if best.map(|(_, bd)| d2 < bd).unwrap_or(true) {
-                best = Some((fid, d2));
+            let surface = brep.geometry.surfaces[topo.faces[fid].surface_index].as_ref();
+            let mut worst = 0.0_f64;
+            let mut worst_node = samples[0].2;
+            for &(uv, anchor, node) in samples {
+                let uv2 = transport_uv(frame, surface, uv, &anchor);
+                let d2 = (surface.evaluate(uv2) - anchor).norm_squared();
+                if d2 > worst {
+                    worst = d2;
+                    worst_node = node;
+                }
+            }
+            if best.map(|(_, bd, _)| worst < bd).unwrap_or(true) {
+                best = Some((fid, worst, worst_node));
             }
         }
-        let (fid, d2) = best.ok_or(FrozenError::RecipeOutOfRange)?;
+        let (fid, d2, node) = best.ok_or(FrozenError::RecipeOutOfRange)?;
         if d2 > MATCH_TOL * MATCH_TOL {
             return Err(FrozenError::CorrespondenceLost {
                 node,
@@ -827,8 +1020,13 @@ pub fn evaluate_plan(brep: &BRepSolid, plan: &FrozenPlan) -> Result<FrozenMesh, 
             });
         }
         face_match.insert(slot, fid);
-        Ok(fid)
     }
+    let resolve_face = |slot: u32| -> Result<FaceId, FrozenError> {
+        face_match
+            .get(&slot)
+            .copied()
+            .ok_or(FrozenError::RecipeOutOfRange)
+    };
 
     let mut positions = Vec::with_capacity(plan.nodes.len());
     for (i, recipe) in plan.nodes.iter().enumerate() {
@@ -869,9 +1067,13 @@ pub fn evaluate_plan(brep: &BRepSolid, plan: &FrozenPlan) -> Result<FrozenMesh, 
             }
             NodeRecipe::SurfaceUv { face, u, v } => {
                 let uv = Point2::new(u, v);
-                let face_id = resolve_face(brep, &ci, &mut face_match, face, uv, &anchor, i)?;
-                let surface = &brep.geometry.surfaces[topo.faces[face_id].surface_index];
-                let p = surface.evaluate(uv);
+                let face_id = resolve_face(face)?;
+                let surface = brep.geometry.surfaces[topo.faces[face_id].surface_index].as_ref();
+                let frame = plan
+                    .face_frames
+                    .get(face as usize)
+                    .ok_or(FrozenError::RecipeOutOfRange)?;
+                let p = surface.evaluate(transport_uv(frame, surface, uv, &anchor));
                 // Verify EVERY node against its anchor, not just the slot's
                 // first: a wrong face match that agrees near one sample but
                 // diverges elsewhere (tangent surfaces, duplicated boolean
@@ -886,32 +1088,9 @@ pub fn evaluate_plan(brep: &BRepSolid, plan: &FrozenPlan) -> Result<FrozenMesh, 
                 }
                 p
             }
-            NodeRecipe::Boundary {
-                face_a,
-                ua,
-                va,
-                face_b,
-                ub,
-                vb,
-            } => {
-                let fa = resolve_face(
-                    brep,
-                    &ci,
-                    &mut face_match,
-                    face_a,
-                    Point2::new(ua, va),
-                    &anchor,
-                    i,
-                )?;
-                let fb = resolve_face(
-                    brep,
-                    &ci,
-                    &mut face_match,
-                    face_b,
-                    Point2::new(ub, vb),
-                    &anchor,
-                    i,
-                )?;
+            NodeRecipe::Boundary { face_a, face_b, .. } => {
+                let fa = resolve_face(face_a)?;
+                let fb = resolve_face(face_b)?;
                 let sa = brep.geometry.surfaces[topo.faces[fa].surface_index].as_ref();
                 let sb = brep.geometry.surfaces[topo.faces[fb].surface_index].as_ref();
                 let p = refine_boundary_point(sa, sb, &anchor)
@@ -1062,5 +1241,74 @@ mod tests {
             expected2
         );
         assert_eq!(mesh2.open_edge_count(), 0);
+    }
+
+    #[test]
+    fn transport_uv_survives_reframed_cylinder_and_sphere() {
+        // The scenario frame transport exists for: the same geometric
+        // surface rebuilt with a different frame (flipped axis, rotated
+        // ref_dir, center slid along the axis — the fillet kernel does all
+        // three between builds). Transporting a capture-time (u, v) must
+        // land the *rebuilt* surface's evaluate on the same material point.
+        // This also pins the frame convention: both sides reconstruct with
+        // y = axis × ref_dir, matching CylinderSurface/SphereSurface::y_dir.
+        use vcad_kernel_math::Dir3;
+
+        let axis = Vec3::new(0.3, -0.4, 0.85).normalize();
+        let ref_dir = axis.cross(Vec3::new(0.0, 0.0, 1.0)).normalize();
+        let y = axis.cross(ref_dir);
+        let cyl = CylinderSurface {
+            center: Point3::new(1.0, 2.0, 3.0),
+            axis: Dir3::new_normalize(axis),
+            ref_dir: Dir3::new_normalize(ref_dir),
+            radius: 2.5,
+        };
+        // Same cylinder: axis flipped, ref_dir rotated 0.7 rad about the
+        // axis, center slid 1.7 along it.
+        let phi = 0.7_f64;
+        let cyl2 = CylinderSurface {
+            center: cyl.center + axis * 1.7,
+            axis: Dir3::new_normalize(-axis),
+            ref_dir: Dir3::new_normalize(ref_dir * phi.cos() + y * phi.sin()),
+            radius: 2.5,
+        };
+        let frame = face_frame(&cyl);
+        for &(u, v) in &[(0.0, 0.0), (1.1, 4.0), (5.9, -2.5)] {
+            let uv = Point2::new(u, v);
+            let p = CylinderSurface::evaluate(&cyl, uv);
+            let uv2 = transport_uv(&frame, &cyl2, uv, &p);
+            let p2 = CylinderSurface::evaluate(&cyl2, uv2);
+            assert!(
+                (p2 - p).norm() < 1e-12,
+                "cylinder ({u}, {v}): {p:?} vs {p2:?}"
+            );
+        }
+
+        let sph = SphereSurface {
+            center: Point3::new(-2.0, 0.5, 4.0),
+            radius: 1.5,
+            ref_dir: Dir3::new_normalize(ref_dir),
+            axis: Dir3::new_normalize(axis),
+        };
+        // Same sphere under a completely different orthonormal frame.
+        let axis2 = Vec3::new(0.9, 0.1, -0.3).normalize();
+        let ref2 = axis2.cross(Vec3::new(0.0, 1.0, 0.0)).normalize();
+        let sph2 = SphereSurface {
+            center: sph.center,
+            radius: 1.5,
+            ref_dir: Dir3::new_normalize(ref2),
+            axis: Dir3::new_normalize(axis2),
+        };
+        let frame = face_frame(&sph);
+        for &(u, v) in &[(0.2, 0.3), (2.8, -1.1), (4.4, 1.4)] {
+            let uv = Point2::new(u, v);
+            let p = SphereSurface::evaluate(&sph, uv);
+            let uv2 = transport_uv(&frame, &sph2, uv, &p);
+            let p2 = SphereSurface::evaluate(&sph2, uv2);
+            assert!(
+                (p2 - p).norm() < 1e-12,
+                "sphere ({u}, {v}): {p:?} vs {p2:?}"
+            );
+        }
     }
 }
