@@ -28,6 +28,7 @@ import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
 import { GridPlane } from "./GridPlane";
 import { SceneMesh, ImportedMesh } from "./SceneMesh";
 import { AtomInstances } from "./AtomInstances";
+import { useMoleculeStore } from "../stores/molecule-store";
 import { BoundaryEdgeOverlay } from "./BoundaryEdgeOverlay";
 import { useDebugOverlayStore } from "../stores/debug-overlay-store";
 import { InspectedTriangleMarker } from "./TriangleInspector";
@@ -326,6 +327,11 @@ export function ViewportContent({
   const docRoots = useDocumentStore((s) => s.document.roots);
   const docScene = useDocumentStore((s) => s.document.scene);
   const docMolecule = useDocumentStore((s) => s.document.molecule);
+  const storeMolecule = useMoleculeStore((s) => s.molecule);
+  const moleculeRep = useMoleculeStore((s) => s.representation);
+  // The live viewport prefers the dedicated molecule store; a molecule embedded
+  // in the document (e.g. loaded from a saved file) is the fallback.
+  const activeMolecule = storeMolecule ?? docMolecule ?? null;
 
   const selectedPartIds = useUiStore((s) => s.selectedPartIds);
   const selection = useUiStore((s) => s.selection);
@@ -1885,8 +1891,8 @@ export function ViewportContent({
             </>
 
               {/* Atomic / molecular structures (the `molecule` domain) */}
-              {docMolecule && docMolecule.positions.length > 0 && (
-                <AtomInstances molecule={docMolecule} />
+              {activeMolecule && activeMolecule.positions.length > 0 && (
+                <AtomInstances molecule={activeMolecule} representation={moleculeRep} />
               )}
 
               {/* Debug: mesh boundary edges (holes in tessellation).
