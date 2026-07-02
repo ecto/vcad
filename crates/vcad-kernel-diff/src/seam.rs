@@ -13,7 +13,8 @@ use vcad_kernel_tessellate::frozen::{
 use vcad_kernel_topo::VertexId;
 
 use crate::{
-    constraint_row, lift_surface, solve_vertex_velocity, surface_residual, DiffError, ParamSeeding,
+    constraint_row, lift_surface, solve_vertex_velocity, surface_residual, tangency_rows,
+    DiffError, ParamSeeding,
 };
 
 /// Incidence tolerance (mm) for treating a topology vertex as lying on a
@@ -148,6 +149,26 @@ pub fn evaluate_with_sensitivity(
                 for &sidx in &incident {
                     let surface = brep.geometry.surfaces[sidx].as_ref();
                     rows.push(constraint_row(surface, seeding.get(sidx), &x)?);
+                }
+                // Tangency completion: a curved surface resting on an
+                // incident plane duplicates the plane's row instead of
+                // pinning the vertex tangentially; its tangent-curve rows
+                // carry the missing directions (a rounded-cube corner
+                // vertex slides along the support face as the fillet
+                // radius grows).
+                for &pidx in &incident {
+                    let plane = brep.geometry.surfaces[pidx].as_ref();
+                    let Some(p) = plane.as_any().downcast_ref::<vcad_kernel_geom::Plane>() else {
+                        continue;
+                    };
+                    let n = *p.normal_dir.as_ref();
+                    for &sidx in &incident {
+                        if sidx == pidx {
+                            continue;
+                        }
+                        let surface = brep.geometry.surfaces[sidx].as_ref();
+                        rows.extend(tangency_rows(n, surface, seeding.get(sidx), &x)?);
+                    }
                 }
                 let v = solve_vertex_velocity(&rows)?;
                 positions.push(x);

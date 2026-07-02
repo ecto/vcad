@@ -113,9 +113,9 @@ fn m1_plane_offset_interior_samples_match_fd() {
     let base = build_plane(theta0);
     let lifted = lift_surface(
         &base,
-        Some(SurfaceSeed::Translate {
+        &[SurfaceSeed::Translate {
             velocity: normal_velocity,
-        }),
+        }],
     )
     .expect("lift");
 
