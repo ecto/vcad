@@ -113,8 +113,8 @@ vcad/
 │   # - vcad-kernel-stocksim     # CAM stock sim (octree SDF, marching cubes); no consumers yet
 │   # - vcad-kernel-diff         # Differentiable seam: dx/dθ of frozen tessellations,
 │   #                            # mass-property QoIs, optimizer harness, differentiable
-│   #                            # fillet radius (docs/differentiable-seam-m0-m2.md,
-│   #                            # -m3.md, -m4.md); no consumers yet
+│   #                            # fillet radius, reverse-mode adjoint (docs/
+│   #                            # differentiable-seam-m0-m2.md … -m5.md); no consumers yet
 ├── packages/                      # TypeScript workspace
 │   ├── app/                       # Web app (React + Three.js + Zustand)
 │   ├── engine/                    # WASM engine wrapper + physics

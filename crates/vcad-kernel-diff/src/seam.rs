@@ -14,7 +14,7 @@ use vcad_kernel_topo::VertexId;
 
 use crate::{
     constraint_row, lift_surface, solve_vertex_velocity, surface_residual, tangency_rows,
-    DiffError, ParamSeeding,
+    ConstraintRow, DiffError, ParamSeeding,
 };
 
 /// Incidence tolerance (mm) for treating a topology vertex as lying on a
@@ -27,7 +27,7 @@ const INCIDENCE_TOL: f64 = 1e-4;
 
 /// Tolerance (mm) for the structural capture-time-B-rep check: every
 /// resolved node must land on the plan's recorded base position.
-const ANCHOR_TOL: f64 = 1e-3;
+pub(crate) const ANCHOR_TOL: f64 = 1e-3;
 
 /// A frozen mesh with first-order sensitivities: node `i` of `positions`
 /// corresponds to node `i` of `velocities` (dx/dθ).
@@ -42,6 +42,166 @@ pub struct SeamMesh {
     /// Recipes (copied from the plan) so callers can select node classes
     /// (e.g. rim vertices vs interior surface samples) in their gates.
     pub recipes: Vec<NodeRecipe>,
+}
+
+/// Enforce the seam's capture-time-B-rep contract and return the canonical
+/// index: topology signature match plus plan-shape sanity. Shared by the
+/// forward pass and the reverse-mode pullback so both enforce identical
+/// preconditions.
+pub(crate) fn checked_index(
+    brep: &BRepSolid,
+    plan: &FrozenPlan,
+) -> Result<vcad_kernel_tessellate::frozen::CanonicalIndex, DiffError> {
+    let ci = canonical_index(brep);
+    let actual = signature_with_index(brep, &ci);
+    if actual != plan.signature {
+        return Err(FrozenError::TopologyChanged {
+            expected: plan.signature,
+            actual,
+        }
+        .into());
+    }
+    if plan.base_positions.len() != plan.nodes.len() {
+        return Err(FrozenError::RecipeOutOfRange.into());
+    }
+    Ok(ci)
+}
+
+/// Adjacency and referenced-surface context for implicit vertex
+/// differentiation, built once per evaluation.
+pub(crate) struct IncidenceContext {
+    /// Adjacent surface indices per topology vertex (distinct only).
+    pub adjacent: HashMap<VertexId, BTreeSet<usize>>,
+    /// Surface indices actually referenced by the solid's faces. The
+    /// geometric incidence scan is restricted to these, so surfaces a
+    /// boolean left in the store without a bounding face can never
+    /// contribute a spurious constraint row.
+    pub referenced: BTreeSet<usize>,
+}
+
+pub(crate) fn incidence_context(
+    brep: &BRepSolid,
+    faces: &[vcad_kernel_topo::FaceId],
+) -> IncidenceContext {
+    let topo = &brep.topology;
+    let mut adjacent: HashMap<VertexId, BTreeSet<usize>> = HashMap::new();
+    let mut referenced: BTreeSet<usize> = BTreeSet::new();
+    for &face_id in faces {
+        let face = &topo.faces[face_id];
+        referenced.insert(face.surface_index);
+        let loops = std::iter::once(face.outer_loop).chain(face.inner_loops.iter().copied());
+        for loop_id in loops {
+            for he in topo.loop_half_edges(loop_id) {
+                adjacent
+                    .entry(topo.half_edges[he].origin)
+                    .or_default()
+                    .insert(face.surface_index);
+            }
+        }
+    }
+    IncidenceContext {
+        adjacent,
+        referenced,
+    }
+}
+
+/// The constraint set of a topology vertex = topological adjacency ∪
+/// geometric incidence. The union matters: after a boolean, a rim vertex
+/// may carry half-edges of only one of its two defining faces (the other
+/// keeps an untrimmed seam loop), so loop membership alone
+/// under-constrains it.
+pub(crate) fn vertex_incident_surfaces(
+    brep: &BRepSolid,
+    ctx: &IncidenceContext,
+    vid: VertexId,
+    x: &Point3,
+) -> BTreeSet<usize> {
+    let mut incident: BTreeSet<usize> = ctx.adjacent.get(&vid).cloned().unwrap_or_default();
+    for &sidx in &ctx.referenced {
+        let surface = brep.geometry.surfaces[sidx].as_ref();
+        if let Some(res) = surface_residual(surface, x) {
+            if res < INCIDENCE_TOL {
+                incident.insert(sidx);
+            }
+        }
+    }
+    incident
+}
+
+/// Where a vertex-system row came from — which surface owns it and through
+/// which construction. The reverse-mode pullback re-materializes rows from
+/// their source with basis seeds to read off each row's seed-Jacobian, so
+/// forward and reverse can never disagree about a row's seed dependence.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum RowSource {
+    /// An implicit-form constraint row of the surface at this index.
+    Constraint {
+        /// Surface index in the geometry store.
+        surface: usize,
+    },
+    /// Row `index` of the tangency completion of `surface` against an
+    /// incident plane with this normal.
+    Tangency {
+        /// Normal of the incident plane.
+        plane_normal: Vec3,
+        /// Surface index of the tangent curved surface.
+        surface: usize,
+        /// Index into the rows `tangency_rows` returned for this pair.
+        index: usize,
+    },
+}
+
+/// Assemble the full implicit system of a topology vertex: one constraint
+/// row per incident surface, plus tangency completion. A curved surface
+/// resting on an incident plane duplicates the plane's row instead of
+/// pinning the vertex tangentially; its tangent-curve rows carry the
+/// missing directions (a rounded-cube corner vertex slides along the
+/// support face as the fillet radius grows). Looping over all
+/// (plane, surface) pairs over-generates safely: non-tangent pairs
+/// contribute no rows at all, and redundant rows from multiple tangent
+/// contacts are orthogonalized away by the solver after a consistency
+/// check — disagreement is a hard error, never a silent average.
+pub(crate) fn assemble_vertex_rows(
+    brep: &BRepSolid,
+    incident: &BTreeSet<usize>,
+    seeding: &ParamSeeding,
+    x: &Point3,
+) -> Result<Vec<(RowSource, ConstraintRow)>, DiffError> {
+    let mut rows = Vec::new();
+    for &sidx in incident {
+        let surface = brep.geometry.surfaces[sidx].as_ref();
+        rows.push((
+            RowSource::Constraint { surface: sidx },
+            constraint_row(surface, seeding.get(sidx), x)?,
+        ));
+    }
+    for &pidx in incident {
+        let plane = brep.geometry.surfaces[pidx].as_ref();
+        let Some(p) = plane.as_any().downcast_ref::<vcad_kernel_geom::Plane>() else {
+            continue;
+        };
+        let n = *p.normal_dir.as_ref();
+        for &sidx in incident {
+            if sidx == pidx {
+                continue;
+            }
+            let surface = brep.geometry.surfaces[sidx].as_ref();
+            for (index, row) in tangency_rows(n, surface, seeding.get(sidx), x)?
+                .into_iter()
+                .enumerate()
+            {
+                rows.push((
+                    RowSource::Tangency {
+                        plane_normal: n,
+                        surface: sidx,
+                        index,
+                    },
+                    row,
+                ));
+            }
+        }
+    }
+    Ok(rows)
 }
 
 /// Evaluate a frozen plan against a B-rep with analytic sensitivities.
@@ -69,41 +229,9 @@ pub fn evaluate_with_sensitivity(
     plan: &FrozenPlan,
     seeding: &ParamSeeding,
 ) -> Result<SeamMesh, DiffError> {
-    let ci = canonical_index(brep);
-    let actual = signature_with_index(brep, &ci);
-    if actual != plan.signature {
-        return Err(FrozenError::TopologyChanged {
-            expected: plan.signature,
-            actual,
-        }
-        .into());
-    }
-    if plan.base_positions.len() != plan.nodes.len() {
-        return Err(FrozenError::RecipeOutOfRange.into());
-    }
-
+    let ci = checked_index(brep, plan)?;
     let topo = &brep.topology;
-
-    // Adjacent surface indices per topology vertex (distinct indices only),
-    // plus the set of surface indices actually referenced by the solid's
-    // faces — the geometric incidence scan below is restricted to the
-    // latter, so surfaces a boolean left in the store without a bounding
-    // face can never contribute a spurious constraint row.
-    let mut adjacent: HashMap<VertexId, BTreeSet<usize>> = HashMap::new();
-    let mut referenced: BTreeSet<usize> = BTreeSet::new();
-    for &face_id in &ci.faces {
-        let face = &topo.faces[face_id];
-        referenced.insert(face.surface_index);
-        let loops = std::iter::once(face.outer_loop).chain(face.inner_loops.iter().copied());
-        for loop_id in loops {
-            for he in topo.loop_half_edges(loop_id) {
-                adjacent
-                    .entry(topo.half_edges[he].origin)
-                    .or_default()
-                    .insert(face.surface_index);
-            }
-        }
-    }
+    let ctx = incidence_context(brep, &ci.faces);
 
     // Lift each referenced face surface once (they are shared by many nodes).
     let mut lifted: HashMap<u32, crate::DualSurface> = HashMap::new();
@@ -131,50 +259,11 @@ pub fn evaluate_with_sensitivity(
                     .ok_or(FrozenError::RecipeOutOfRange)?;
                 let x = topo.vertices[vid].point;
                 anchor_check(i, &x, &plan.base_positions[i])?;
-                // Constraint set = topological adjacency ∪ geometric
-                // incidence. The union matters: after a boolean, a rim
-                // vertex may carry half-edges of only one of its two
-                // defining faces (the other keeps an untrimmed seam loop),
-                // so loop membership alone under-constrains it.
-                let mut incident: BTreeSet<usize> = adjacent.get(&vid).cloned().unwrap_or_default();
-                for &sidx in &referenced {
-                    let surface = brep.geometry.surfaces[sidx].as_ref();
-                    if let Some(res) = surface_residual(surface, &x) {
-                        if res < INCIDENCE_TOL {
-                            incident.insert(sidx);
-                        }
-                    }
-                }
-                let mut rows = Vec::new();
-                for &sidx in &incident {
-                    let surface = brep.geometry.surfaces[sidx].as_ref();
-                    rows.push(constraint_row(surface, seeding.get(sidx), &x)?);
-                }
-                // Tangency completion: a curved surface resting on an
-                // incident plane duplicates the plane's row instead of
-                // pinning the vertex tangentially; its tangent-curve rows
-                // carry the missing directions (a rounded-cube corner
-                // vertex slides along the support face as the fillet
-                // radius grows). Looping over all (plane, surface) pairs
-                // over-generates safely: non-tangent pairs contribute no
-                // rows at all, and redundant rows from multiple tangent
-                // contacts are orthogonalized away by the solver after a
-                // consistency check — disagreement is a hard error, never
-                // a silent average.
-                for &pidx in &incident {
-                    let plane = brep.geometry.surfaces[pidx].as_ref();
-                    let Some(p) = plane.as_any().downcast_ref::<vcad_kernel_geom::Plane>() else {
-                        continue;
-                    };
-                    let n = *p.normal_dir.as_ref();
-                    for &sidx in &incident {
-                        if sidx == pidx {
-                            continue;
-                        }
-                        let surface = brep.geometry.surfaces[sidx].as_ref();
-                        rows.extend(tangency_rows(n, surface, seeding.get(sidx), &x)?);
-                    }
-                }
+                let incident = vertex_incident_surfaces(brep, &ctx, vid, &x);
+                let rows: Vec<ConstraintRow> = assemble_vertex_rows(brep, &incident, seeding, &x)?
+                    .into_iter()
+                    .map(|(_, row)| row)
+                    .collect();
                 let v = solve_vertex_velocity(&rows)?;
                 positions.push(x);
                 velocities.push(v);

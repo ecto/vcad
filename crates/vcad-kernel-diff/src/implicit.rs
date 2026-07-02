@@ -273,6 +273,59 @@ pub fn solve_vertex_velocity(rows: &[ConstraintRow]) -> Result<Vec3, DiffError> 
     Ok(v)
 }
 
+/// The reverse-mode companion of [`solve_vertex_velocity`]: the solution's
+/// sensitivity `m_j = ∂ẋ/∂rhs_j` to each row's right-hand side, so that
+/// `ẋ = Σ_j m_j · rhs_j` for any rhs assignment over the same gradients.
+///
+/// The Gram–Schmidt solution is linear in the rhs vector with coefficients
+/// determined by the gradients alone; this runs the same elimination while
+/// carrying each basis coefficient as a linear functional over the rows
+/// (a vector of weights) instead of a scalar, then transposes. Rows dropped
+/// as dependent get a **zero column**: their rhs never enters the solution.
+/// In the forward path a dependent row's rhs is consistency-checked against
+/// the rows that were kept; the pullback has no concrete rhs to check, so it
+/// *presumes* the seedings it will be contracted against are consistent
+/// (every copy of a moving surface seeded together, as
+/// [`crate::ParamSeeding::seed_where`] does) — inconsistency detection
+/// remains the forward solve's job.
+pub fn row_pullbacks(rows: &[ConstraintRow]) -> Vec<Vec3> {
+    // Basis directions with their coefficients as linear functionals over
+    // the rows: ẋ = Σ_k e_k (α_k · rhs).
+    let mut basis: Vec<(Vec3, Vec<f64>)> = Vec::new();
+
+    for (j, row) in rows.iter().enumerate() {
+        let norm = row.gradient.norm();
+        if norm < f64::MIN_POSITIVE {
+            continue;
+        }
+        let mut g = row.gradient / norm;
+        let mut alpha = vec![0.0; rows.len()];
+        alpha[j] = 1.0 / norm;
+        for (e, a) in &basis {
+            let proj = g.dot(*e);
+            g -= *e * proj;
+            for (ai, bi) in alpha.iter_mut().zip(a) {
+                *ai -= proj * bi;
+            }
+        }
+        let res = g.norm();
+        if res > DEPENDENT_TOL {
+            for ai in alpha.iter_mut() {
+                *ai /= res;
+            }
+            basis.push((g / res, alpha));
+        }
+    }
+
+    let mut m = vec![Vec3::new(0.0, 0.0, 0.0); rows.len()];
+    for (e, a) in &basis {
+        for (mj, aj) in m.iter_mut().zip(a) {
+            *mj += *e * *aj;
+        }
+    }
+    m
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -336,6 +389,74 @@ mod tests {
             solve_vertex_velocity(&rows),
             Err(DiffError::InconsistentConstraints { .. })
         ));
+    }
+
+    #[test]
+    fn row_pullbacks_reproduce_the_forward_solve() {
+        // ẋ = Σ_j m_j rhs_j must hold for every system the forward solver
+        // accepts — full-rank corner, underdetermined rim, and a system
+        // with a dependent (dropped) row.
+        let top = Plane::new(Point3::new(0.0, 0.0, 2.0), Vec3::x(), Vec3::y());
+        let side_x = Plane::new(Point3::new(4.0, 0.0, 0.0), Vec3::y(), Vec3::z());
+        let side_y = Plane::new(Point3::new(0.0, 3.0, 0.0), Vec3::z(), Vec3::x());
+        let cyl = CylinderSurface::new(2.5);
+        let corner = Point3::new(4.0, 3.0, 2.0);
+        let u = 1.1_f64;
+        let rim = Point3::new(2.5 * u.cos(), 2.5 * u.sin(), 5.0);
+
+        let systems: Vec<Vec<ConstraintRow>> = vec![
+            vec![
+                constraint_row(
+                    &top,
+                    &[SurfaceSeed::Translate {
+                        velocity: Vec3::z(),
+                    }],
+                    &corner,
+                )
+                .unwrap(),
+                constraint_row(&side_x, &[], &corner).unwrap(),
+                constraint_row(&side_y, &[], &corner).unwrap(),
+            ],
+            vec![
+                constraint_row(&top, &[], &rim).unwrap(),
+                constraint_row(&cyl, &[SurfaceSeed::CylinderRadius { rate: 1.0 }], &rim).unwrap(),
+            ],
+            vec![
+                // Duplicate copies of the same moving plane: the second row
+                // is dropped as dependent, and its pullback column is zero.
+                constraint_row(
+                    &top,
+                    &[SurfaceSeed::Translate {
+                        velocity: Vec3::z(),
+                    }],
+                    &corner,
+                )
+                .unwrap(),
+                constraint_row(
+                    &top,
+                    &[SurfaceSeed::Translate {
+                        velocity: Vec3::z(),
+                    }],
+                    &corner,
+                )
+                .unwrap(),
+                constraint_row(&side_x, &[], &corner).unwrap(),
+            ],
+        ];
+        for rows in &systems {
+            let v = solve_vertex_velocity(rows).unwrap();
+            let m = row_pullbacks(rows);
+            let rebuilt = rows
+                .iter()
+                .zip(&m)
+                .fold(Vec3::new(0.0, 0.0, 0.0), |acc, (row, mj)| {
+                    acc + *mj * row.rhs
+                });
+            assert!(
+                (rebuilt - v).norm() < 1e-13,
+                "pullback rebuild {rebuilt:?} vs forward {v:?}"
+            );
+        }
     }
 
     #[test]
