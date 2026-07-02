@@ -47,6 +47,14 @@
 //!   perturbed build cannot corrupt them.
 //! - **Sphere** — center and radius are fully observable: full `Translate`
 //!   velocity plus a `SphereRadius` rate.
+//! - **Cone** — the apex is a genuine point of the surface's geometry (an
+//!   apex slid along the axis changes the radius at every height), so the
+//!   full apex velocity is observable: full `Translate` plus a `ConeAngle`
+//!   rate. Only the axis *sign* is gauge (the implicit form is symmetric
+//!   under it).
+//! - **Torus** — like the sphere, nothing translational is gauge: full
+//!   center `Translate` plus independent `TorusMajorRadius` /
+//!   `TorusMinorRadius` rates.
 //!
 //! Composite seeds (radius rate *and* center velocity on the same blend) fall
 //! out for free — [`ParamSeeding`] composes, so both are pushed. Duplicate
@@ -59,7 +67,9 @@
 //! a silently partial seeding: a step that crosses a topology change has no
 //! meaningful derivative.
 
-use vcad_kernel_geom::{CylinderSurface, Plane, SphereSurface, Surface, SurfaceKind};
+use vcad_kernel_geom::{
+    ConeSurface, CylinderSurface, Plane, SphereSurface, Surface, SurfaceKind, TorusSurface,
+};
 use vcad_kernel_math::{Point3, Vec3};
 use vcad_kernel_primitives::BRepSolid;
 use vcad_kernel_tessellate::frozen::{topology_signature, FrozenError};
@@ -125,6 +135,27 @@ enum SurfInfo {
         /// Radius.
         radius: f64,
     },
+    /// Cone by apex, axis (up to sign — the implicit form is symmetric under
+    /// a flip) and half-angle.
+    Cone {
+        /// Apex point.
+        apex: Point3,
+        /// Unit axis.
+        axis: Vec3,
+        /// Half-angle (radians).
+        half_angle: f64,
+    },
+    /// Torus by center, axis (up to sign) and both radii.
+    Torus {
+        /// Center of the ring.
+        center: Point3,
+        /// Unit axis.
+        axis: Vec3,
+        /// Major radius.
+        major: f64,
+        /// Minor radius.
+        minor: f64,
+    },
 }
 
 impl SurfInfo {
@@ -134,6 +165,8 @@ impl SurfInfo {
             SurfInfo::Plane { .. } => SurfaceKind::Plane,
             SurfInfo::Cylinder { .. } => SurfaceKind::Cylinder,
             SurfInfo::Sphere { .. } => SurfaceKind::Sphere,
+            SurfInfo::Cone { .. } => SurfaceKind::Cone,
+            SurfInfo::Torus { .. } => SurfaceKind::Torus,
         }
     }
 }
@@ -162,6 +195,23 @@ fn surf_info(s: &dyn Surface) -> Result<SurfInfo, DiffError> {
             Ok(SurfInfo::Sphere {
                 center: sp.center,
                 radius: sp.radius,
+            })
+        }
+        SurfaceKind::Cone => {
+            let c = crate::downcast::<ConeSurface>(s, SurfaceKind::Cone)?;
+            Ok(SurfInfo::Cone {
+                apex: c.apex,
+                axis: *c.axis.as_ref(),
+                half_angle: c.half_angle,
+            })
+        }
+        SurfaceKind::Torus => {
+            let t = crate::downcast::<TorusSurface>(s, SurfaceKind::Torus)?;
+            Ok(SurfInfo::Torus {
+                center: t.center,
+                axis: *t.axis.as_ref(),
+                major: t.major_radius,
+                minor: t.minor_radius,
             })
         }
         kind => Err(DiffError::UnsupportedSynthesis(kind)),
@@ -229,6 +279,43 @@ fn same_surface(a: &SurfInfo, b: &SurfInfo) -> bool {
                 radius: rb,
             },
         ) => (*ca - *cb).norm() < MATCH_TOL && (ra - rb).abs() < MATCH_TOL,
+        (
+            SurfInfo::Cone {
+                apex: pa,
+                axis: aa,
+                half_angle: ha,
+            },
+            SurfInfo::Cone {
+                apex: pb,
+                axis: ab,
+                half_angle: hb,
+            },
+        ) => {
+            // The apex is a real point of the geometry (no along-axis gauge);
+            // only the axis sign is free.
+            aa.dot(*ab).abs() > 1.0 - ANGLE_TOL
+                && (*pa - *pb).norm() < MATCH_TOL
+                && (ha - hb).abs() < MATCH_TOL
+        }
+        (
+            SurfInfo::Torus {
+                center: ca,
+                axis: aa,
+                major: ma,
+                minor: na,
+            },
+            SurfInfo::Torus {
+                center: cb,
+                axis: ab,
+                major: mb,
+                minor: nb,
+            },
+        ) => {
+            aa.dot(*ab).abs() > 1.0 - ANGLE_TOL
+                && (*ca - *cb).norm() < MATCH_TOL
+                && (ma - mb).abs() < MATCH_TOL
+                && (na - nb).abs() < MATCH_TOL
+        }
         _ => false,
     }
 }
@@ -303,6 +390,37 @@ fn close_enough(a: &SurfInfo, b: &SurfInfo, eps: f64) -> bool {
                 radius: rb,
             },
         ) => (*ca - *cb).norm() < eps && (ra - rb).abs() < eps,
+        (
+            SurfInfo::Cone {
+                apex: pa,
+                axis: aa,
+                half_angle: ha,
+            },
+            SurfInfo::Cone {
+                apex: pb,
+                axis: ab,
+                half_angle: hb,
+            },
+        ) => aa.dot(*ab).abs() > 1.0 - eps && (*pa - *pb).norm() < eps && (ha - hb).abs() < eps,
+        (
+            SurfInfo::Torus {
+                center: ca,
+                axis: aa,
+                major: ma,
+                minor: na,
+            },
+            SurfInfo::Torus {
+                center: cb,
+                axis: ab,
+                major: mb,
+                minor: nb,
+            },
+        ) => {
+            aa.dot(*ab).abs() > 1.0 - eps
+                && (*ca - *cb).norm() < eps
+                && (ma - mb).abs() < eps
+                && (na - nb).abs() < eps
+        }
         _ => false,
     }
 }
@@ -371,6 +489,53 @@ fn extract_seeds(
             let velocity = (*cp - *cm) / two_h;
             push_translate(seeding, index, velocity);
         }
+        (
+            SurfInfo::Cone { .. },
+            SurfInfo::Cone {
+                apex: pp,
+                half_angle: hp,
+                ..
+            },
+            SurfInfo::Cone {
+                apex: pm,
+                half_angle: hm,
+                ..
+            },
+        ) => {
+            // The apex has no translational gauge: seed its full velocity.
+            let angle_rate = (hp - hm) / two_h;
+            if angle_rate.abs() > ZERO_TOL {
+                seeding.seed(index, SurfaceSeed::ConeAngle { rate: angle_rate });
+            }
+            let velocity = (*pp - *pm) / two_h;
+            push_translate(seeding, index, velocity);
+        }
+        (
+            SurfInfo::Torus { .. },
+            SurfInfo::Torus {
+                center: cp,
+                major: mp,
+                minor: np,
+                ..
+            },
+            SurfInfo::Torus {
+                center: cm,
+                major: mm,
+                minor: nm,
+                ..
+            },
+        ) => {
+            let major_rate = (mp - mm) / two_h;
+            if major_rate.abs() > ZERO_TOL {
+                seeding.seed(index, SurfaceSeed::TorusMajorRadius { rate: major_rate });
+            }
+            let minor_rate = (np - nm) / two_h;
+            if minor_rate.abs() > ZERO_TOL {
+                seeding.seed(index, SurfaceSeed::TorusMinorRadius { rate: minor_rate });
+            }
+            let velocity = (*cp - *cm) / two_h;
+            push_translate(seeding, index, velocity);
+        }
         // find_match guarantees kinds agree, so the mixed arms are unreachable.
         _ => unreachable!("matched surfaces share a kind"),
     }
@@ -405,7 +570,7 @@ fn push_translate(seeding: &mut ParamSeeding, index: usize, velocity: Vec3) {
 ///   fall within `MATCH_TOL` of a base surface (a violated feature-separation
 ///   assumption, surfaced rather than guessed).
 /// - [`DiffError::UnsupportedSynthesis`] for a surface kind outside the seed
-///   vocabulary (plane / cylinder / sphere).
+///   vocabulary (plane / cylinder / sphere / cone / torus).
 pub fn synthesize_seeding(
     build: &dyn Fn(&[f64]) -> BRepSolid,
     theta: &[f64],

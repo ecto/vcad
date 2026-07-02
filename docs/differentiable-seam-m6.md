@@ -106,9 +106,11 @@ base (the same signature the frozen plan uses), and — as a backstop against a
 signature collision — a hard error if any base surface has *no* perturbed
 match. Both surface as `FrozenError::TopologyChanged`, mirroring the frozen
 seam's own contract. Surface kinds outside the seed vocabulary
-(cone/torus/NURBS/bilinear) are rejected with `UnsupportedSynthesis` rather
-than silently skipped — the seed vocabulary is translation + radius, exactly
-the M5 cotangent space, so those kinds have no synthesizable seed regardless.
+(NURBS/bilinear) are rejected with `UnsupportedSynthesis` rather than
+silently skipped — the synthesis vocabulary is exactly the seed vocabulary,
+so a kind with no seeds has no synthesizable motion regardless. (M7 landed
+alongside this note: cone and torus joined both vocabularies, and the
+`cone_and_torus_parameters_synthesized` gate covers the composition.)
 
 ## The base-instance contract
 
@@ -151,8 +153,9 @@ topology change (a through-hole appearing at θ > θ₀) errors as
 ## Notes and boundaries
 
 - **Seed vocabulary = synthesis vocabulary.** Plane translate, cylinder
-  translate + radius, sphere translate + radius — the M5 cotangent space
-  exactly. Cone half-angle / torus radii extend `SurfaceSeed`,
+  translate + radius, sphere translate + radius, cone translate (full apex —
+  no along-axis gauge) + half-angle, torus translate + both radii — the
+  cotangent space exactly. A future kind extends `SurfaceSeed`,
   `SurfaceCotangent`, *and* `SurfInfo`/`extract_seeds` together; nothing else
   changes.
 - **The base-index contract is real.** `synthesize_seeding` builds its own

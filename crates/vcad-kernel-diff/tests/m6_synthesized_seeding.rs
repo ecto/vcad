@@ -410,3 +410,73 @@ fn parameter_out_of_range_errors() {
         other => panic!("expected ParameterOutOfRange, got {other:?}"),
     }
 }
+
+// ---------------------------------------------------------------------------
+// Gate 6 — M6 × M7 composition: cone and torus parameters synthesize too.
+// ---------------------------------------------------------------------------
+
+/// The M7 cone model (θ = half-angle about a fixed apex at z = 20): both cap
+/// radii are functions of α, so the synthesizer must recover a pure
+/// `ConeAngle` seed on the wall plus the cap planes staying still.
+fn build_cone(theta: &[f64]) -> BRepSolid {
+    let t = theta[0].tan();
+    vcad_kernel_primitives::make_cone(20.0 * t, 12.0 * t, 8.0, 24)
+}
+
+/// The M7 torus model, θ = minor radius.
+fn build_torus(theta: &[f64]) -> BRepSolid {
+    vcad_kernel_primitives::make_torus(8.0, theta[0], 24)
+}
+
+#[test]
+fn cone_and_torus_parameters_synthesized() {
+    let params = TessellationParams {
+        circle_segments: 24,
+        height_segments: 2,
+        ..Default::default()
+    };
+
+    let alpha0 = 0.25_f64.atan();
+    let base = build_cone(&[alpha0]);
+    let seeding = {
+        let canonical = base.clone();
+        let probe = move |t: &[f64]| {
+            if (t[0] - alpha0).abs() < f64::EPSILON {
+                canonical.clone()
+            } else {
+                build_cone(t)
+            }
+        };
+        synthesize_seeding(&probe, &[alpha0], 0, H).expect("synthesize cone")
+    };
+    let plan = capture_plan(&base, &params).expect("capture cone");
+    let seam = evaluate_with_sensitivity(&base, &plan, &seeding).expect("seam cone");
+    let (_, dv) = volume_with_derivative(&seam);
+    let fd = fd_volume_derivative(|a| build_cone(&[a]), alpha0, H, &plan).expect("fd cone");
+    assert!(
+        rel(dv, fd) <= FD_GATE,
+        "cone half-angle: synthesized {dv} vs FD {fd}"
+    );
+
+    let r0 = 3.0;
+    let base = build_torus(&[r0]);
+    let seeding = {
+        let canonical = base.clone();
+        let probe = move |t: &[f64]| {
+            if (t[0] - r0).abs() < f64::EPSILON {
+                canonical.clone()
+            } else {
+                build_torus(t)
+            }
+        };
+        synthesize_seeding(&probe, &[r0], 0, H).expect("synthesize torus")
+    };
+    let plan = capture_plan(&base, &params).expect("capture torus");
+    let seam = evaluate_with_sensitivity(&base, &plan, &seeding).expect("seam torus");
+    let (_, dv) = volume_with_derivative(&seam);
+    let fd = fd_volume_derivative(|r| build_torus(&[r]), r0, H, &plan).expect("fd torus");
+    assert!(
+        rel(dv, fd) <= FD_GATE,
+        "torus minor radius: synthesized {dv} vs FD {fd}"
+    );
+}
