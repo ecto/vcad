@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, beforeEach } from "vitest";
+import { describe, it, expect, beforeAll, beforeEach, vi } from "vitest";
 import { Engine } from "@vcad/engine";
 import type { Document } from "@vcad/ir";
 import { openDocument, documents } from "../tools/session.js";
@@ -7,6 +7,8 @@ import {
   getOrderStatus,
   listOrders,
 } from "../tools/order.js";
+import { buildFabHandoff } from "../fabricate/handoff.js";
+import { telemetryConfig, flushTelemetry } from "../telemetry.js";
 import { InMemoryFabricateStore } from "../fabricate/store.js";
 import { storeArtifact, clearArtifacts } from "../tools/artifact-store.js";
 import { FulfillmentBroker } from "../fabricate/broker.js";
@@ -279,5 +281,83 @@ describe("fabricate quote loop (engine)", () => {
       null,
     );
     expect(res.isError).toBe(true);
+  });
+});
+
+describe("fab handoff (sheet metal interim rail)", () => {
+  it("builds a sheet-metal handoff with curated shops and no ordering claim", () => {
+    const h = buildFabHandoff("sheet_metal", { hasArtifact: false });
+    expect(h).not.toBeNull();
+    expect(h!.orderable_via_vcad).toBe(false);
+    const ids = h!.shops.map((s) => s.id);
+    expect(ids).toEqual(["sendcutsend", "oshcut", "fabworks"]);
+    // SendCutSend is the only shop whose tooling the kernel encodes today.
+    expect(h!.shops.find((s) => s.id === "sendcutsend")!.shop_profile).toBe("sendcutsend");
+    expect(h!.shops.find((s) => s.id === "oshcut")!.shop_profile).toBeNull();
+    // Without a bound artifact the recipe explains how to produce the files.
+    expect(h!.file_recipe.join(" ")).toContain("sheet_metal_unfold");
+  });
+
+  it("shortens the recipe when fab files are already bound", () => {
+    const h = buildFabHandoff("sheet_metal", { hasArtifact: true });
+    expect(h!.file_recipe).toHaveLength(1);
+    expect(h!.file_recipe[0]).toContain("already bound");
+  });
+
+  it("returns null for processes with a real or absent ordering path", () => {
+    expect(buildFabHandoff("cnc", { hasArtifact: false })).toBeNull();
+    expect(buildFabHandoff("pcb", { hasArtifact: false })).toBeNull();
+    expect(buildFabHandoff("cast_metal", { hasArtifact: false })).toBeNull();
+  });
+});
+
+describe("fab handoff in quote_manufacturing (engine)", () => {
+  let engine: Engine;
+  beforeAll(async () => {
+    engine = await Engine.init();
+  });
+
+  it("attaches fab_handoff to sheet_metal quotes and emits the BD event", async () => {
+    const fetchMock = vi.fn(async () => ({ ok: true, status: 200, statusText: "OK" }));
+    vi.stubGlobal("fetch", fetchMock);
+    telemetryConfig.apiKey = "phc_test_key";
+    try {
+      const res = await quoteManufacturing(
+        { ir: cubeDoc(), process: "sheet_metal", quantity: 3, material: "aluminum" },
+        engine,
+        new InMemoryFabricateStore(),
+        null,
+      );
+      expect(res.isError).toBeFalsy();
+      const quote = JSON.parse(res.content[0].text);
+      expect(quote.fab_handoff).toBeDefined();
+      expect(quote.fab_handoff.orderable_via_vcad).toBe(false);
+      expect(quote.fab_handoff.shops).toHaveLength(3);
+
+      await flushTelemetry();
+      const handoffCall = fetchMock.mock.calls
+        .map(([, init]) => JSON.parse((init as { body: string }).body))
+        .find((p) => p.event === "fab_handoff_generated");
+      expect(handoffCall).toBeDefined();
+      expect(handoffCall.properties.process).toBe("sheet_metal");
+      expect(handoffCall.properties.quantity).toBe(3);
+      expect(handoffCall.properties.total_usd).toBeGreaterThan(0);
+      // Aggregates only — no IR or shop payloads in the event.
+      expect(handoffCall.properties.ir).toBeUndefined();
+    } finally {
+      telemetryConfig.apiKey = "";
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("omits fab_handoff for non-sheet-metal quotes", async () => {
+    const res = await quoteManufacturing(
+      { ir: cubeDoc(), process: "cnc", quantity: 1, material: "aluminum" },
+      engine,
+      new InMemoryFabricateStore(),
+      null,
+    );
+    const quote = JSON.parse(res.content[0].text);
+    expect(quote.fab_handoff).toBeUndefined();
   });
 });
