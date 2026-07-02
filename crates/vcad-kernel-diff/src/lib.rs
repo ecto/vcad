@@ -32,6 +32,7 @@ use vcad_kernel_geom::{GeometryStore, Surface, SurfaceKind};
 use vcad_kernel_math::Vec3;
 use vcad_kernel_tessellate::frozen::FrozenError;
 
+mod adjoint;
 mod contract;
 mod fd;
 mod implicit;
@@ -40,10 +41,12 @@ mod mass;
 mod optimize;
 mod seam;
 
+pub use adjoint::{evaluate_with_pullback, MeshCotangents, SurfaceCotangent};
 pub use contract::{contract_sensitivity, volume_gradient};
 pub use fd::{compare_velocities, fd_velocities, fd_volume_derivative, FdComparison};
 pub use implicit::{
-    constraint_row, solve_vertex_velocity, surface_residual, tangency_rows, ConstraintRow,
+    constraint_row, row_pullbacks, solve_vertex_velocity, surface_residual, tangency_rows,
+    ConstraintRow,
 };
 pub use lift::{lift_surface, DualSurface};
 pub use mass::{mass_properties, mass_properties_with_derivative, MassProperties};
@@ -93,6 +96,14 @@ pub enum DiffError {
         /// Residual of the dependent row after projection.
         residual: f64,
     },
+    /// A reverse-mode mesh gradient has the wrong number of entries for
+    /// the plan it was pulled back through.
+    GradientLengthMismatch {
+        /// Node count of the plan.
+        expected: usize,
+        /// Entries supplied.
+        got: usize,
+    },
 }
 
 impl std::fmt::Display for DiffError {
@@ -112,6 +123,10 @@ impl std::fmt::Display for DiffError {
             DiffError::InconsistentConstraints { residual } => write!(
                 f,
                 "implicit vertex system inconsistent (residual {residual:.3e}); vertex is not on the common intersection of its adjacent surfaces"
+            ),
+            DiffError::GradientLengthMismatch { expected, got } => write!(
+                f,
+                "mesh gradient has {got} entries but the plan has {expected} nodes"
             ),
         }
     }
