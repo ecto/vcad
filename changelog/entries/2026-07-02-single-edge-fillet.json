@@ -1,0 +1,9 @@
+{
+  "id": "2026-07-02-single-edge-fillet",
+  "version": "0.9.4",
+  "date": "2026-07-02",
+  "category": "fix",
+  "title": "Per-edge fillets produce a correct solid",
+  "summary": "Filleting a subset of edges no longer insets every face of the body; single and non-adjacent edge fillets are now watertight with correct volume.",
+  "features": ["fillet", "kernel"]
+}
