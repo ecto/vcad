@@ -111,13 +111,18 @@ vcad/
 │
 │   # Work-in-progress crates (built but not yet wired to any consumer):
 │   # - vcad-kernel-stocksim     # CAM stock sim (octree SDF, marching cubes); no consumers yet
-│   # - vcad-kernel-diff         # Differentiable seam: dx/dθ of frozen tessellations,
-│   #                            # mass-property QoIs, differentiable fillet radius,
-│   #                            # reverse-mode adjoint, seeding synthesis, cone/torus
-│   #                            # coverage, L-BFGS many-parameter optimizer, second-order
-│   #                            # derivatives (docs/differentiable-seam-m0-m2.md … -m10.md);
-│   #                            # first consumer: vcad-kernel-physics::diff (rollout
-│   #                            # gradients — d(sim objective)/d(CAD parameter))
+│   #
+│   # - vcad-kernel-diff         # Differentiable seam, COMPLETE (M0–M10 + closeout):
+│   #                            # dx/dθ of frozen tessellations, mass-property QoIs,
+│   #                            # differentiable fillet radius, reverse-mode adjoint,
+│   #                            # seeding synthesis, cone/torus coverage incl. second
+│   #                            # order, L-BFGS optimizer
+│   #                            # (docs/differentiable-seam-m0-m2.md … -closeout.md).
+│   #                            # Consumers: vcad-kernel-physics::diff (rollout
+│   #                            # gradients — mass-property core, anchor channel,
+│   #                            # surface skin) and vcad-eval::diff
+│   #                            # (document_parameter_gradient — d(mass props)/d(named
+│   #                            # .vcad parameter))
 ├── packages/                      # TypeScript workspace
 │   ├── app/                       # Web app (React + Three.js + Zustand)
 │   ├── engine/                    # WASM engine wrapper + physics

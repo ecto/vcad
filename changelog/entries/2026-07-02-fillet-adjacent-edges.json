@@ -1,0 +1,9 @@
+{
+  "id": "2026-07-02-fillet-adjacent-edges",
+  "version": "0.9.4",
+  "date": "2026-07-02",
+  "category": "fix",
+  "title": "Filleting adjacent edges meets in clean miter corners",
+  "summary": "Selecting edges that share a corner now produces a watertight miter joint between the blends instead of falling back to a whole-body inset that malformed the part.",
+  "features": ["fillet", "kernel"]
+}
