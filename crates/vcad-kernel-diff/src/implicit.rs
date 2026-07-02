@@ -264,6 +264,129 @@ pub fn tangency_rows(
     }
 }
 
+/// Second-order (acceleration) constraint row of a surface at a topology
+/// vertex: `∇g · ẍ = rhs₂`.
+///
+/// Differentiating the frozen-branch identity `∇g·ẋ = −∂g/∂θ` a second time,
+///
+/// ```text
+/// ∇g · ẍ = −( ∂²g/∂θ²  +  2 ẋᵀ ∇ₓ(∂g/∂θ)  +  ẋᵀ ∇²g ẋ )
+/// ```
+///
+/// The gradient `∇g` is **identical** to the first-order row
+/// ([`constraint_row`]), so the same Gram–Schmidt solve
+/// ([`solve_vertex_velocity`]) recovers `ẍ` with the tangential DOF frozen at
+/// zero — exactly the frozen-parameter convention the velocity solve uses.
+/// The right-hand side splits into two pieces this function sums:
+///
+/// - the **field-acceleration** part, which is precisely the first-order rhs
+///   evaluated with the field *accelerations* seeded where velocities
+///   normally go (`constraint_row(surface, acc_seeds, x).rhs`) — the plane's
+///   whole contribution, and the field-second-derivative `∂²g/∂θ²` term of
+///   the quadrics;
+/// - the **velocity-curvature** part `−2‖ẋ⊥ − v_c⊥‖² + 2ṙ²` (plane: `0`), the
+///   collected `ẋ`- and field-velocity-quadratic terms. Only the implicit
+///   form's *constant* Hessian (`∇²g` = `0` plane / `2I` sphere / `2P`
+///   cylinder, `P = I − aaᵀ`) and the seeded field velocities enter it, so it
+///   is closed form.
+///
+/// `x` is the vertex position, `xdot` its already-solved velocity (from
+/// [`solve_vertex_velocity`] on the first-order rows). Implemented for
+/// plane/cylinder/sphere — enough for the boolean-hole and rounded-cube
+/// second-order volume gates; cone/torus return
+/// [`DiffError::UnsupportedConstraint`], since their curvature term carries a
+/// non-constant `∇²g` (a mechanical extension, deliberately not shipped).
+pub fn constraint_row_2(
+    surface: &dyn Surface,
+    vel_seeds: &[SurfaceSeed],
+    acc_seeds: &[SurfaceSeed],
+    x: &Point3,
+    xdot: &Vec3,
+) -> Result<ConstraintRow, DiffError> {
+    // Field-acceleration part: the first-order machinery, fed accelerations.
+    let base = constraint_row(surface, acc_seeds, x)?;
+    let curv = velocity_curvature(surface, vel_seeds, x, xdot)?;
+    Ok(ConstraintRow {
+        gradient: base.gradient,
+        rhs: base.rhs + curv,
+    })
+}
+
+/// The velocity-quadratic part of the second-order rhs (see
+/// [`constraint_row_2`]). Plane: identically zero (`∇²g = 0`, `g` linear in
+/// both `x` and the origin). Sphere/cylinder: `−2‖ẋ − v_c‖² + 2ṙ²`, projected
+/// perpendicular to the axis for the cylinder. Errors on kinds without a
+/// second-order form, and on inapplicable seeds.
+fn velocity_curvature(
+    surface: &dyn Surface,
+    vel_seeds: &[SurfaceSeed],
+    _x: &Point3,
+    xdot: &Vec3,
+) -> Result<f64, DiffError> {
+    let kind = surface.surface_type();
+    match kind {
+        SurfaceKind::Plane => {
+            for seed in vel_seeds {
+                if !matches!(seed, SurfaceSeed::Translate { .. }) {
+                    return Err(DiffError::UnsupportedSeed { kind, seed: *seed });
+                }
+            }
+            Ok(0.0)
+        }
+        SurfaceKind::Sphere => {
+            let (vc, rdot) = sphere_field_velocity(kind, vel_seeds)?;
+            let rel = *xdot - vc;
+            Ok(-2.0 * rel.norm_squared() + 2.0 * rdot * rdot)
+        }
+        SurfaceKind::Cylinder => {
+            let cyl = downcast::<CylinderSurface>(surface, kind)?;
+            let a = *cyl.axis.as_ref();
+            let (vc, rdot) = cylinder_field_velocity(kind, vel_seeds)?;
+            let xperp = *xdot - a * xdot.dot(a);
+            let vcperp = vc - a * vc.dot(a);
+            let rel = xperp - vcperp;
+            Ok(-2.0 * rel.norm_squared() + 2.0 * rdot * rdot)
+        }
+        _ => Err(DiffError::UnsupportedConstraint(kind)),
+    }
+}
+
+/// Sum the seeded (center velocity, radius rate) of a sphere's velocity
+/// seeds, rejecting inapplicable kinds.
+fn sphere_field_velocity(
+    kind: SurfaceKind,
+    seeds: &[SurfaceSeed],
+) -> Result<(Vec3, f64), DiffError> {
+    let mut vc = Vec3::new(0.0, 0.0, 0.0);
+    let mut rate = 0.0;
+    for seed in seeds {
+        match *seed {
+            SurfaceSeed::Translate { velocity } => vc += velocity,
+            SurfaceSeed::SphereRadius { rate: r } => rate += r,
+            other => return Err(DiffError::UnsupportedSeed { kind, seed: other }),
+        }
+    }
+    Ok((vc, rate))
+}
+
+/// Sum the seeded (center velocity, radius rate) of a cylinder's velocity
+/// seeds, rejecting inapplicable kinds.
+fn cylinder_field_velocity(
+    kind: SurfaceKind,
+    seeds: &[SurfaceSeed],
+) -> Result<(Vec3, f64), DiffError> {
+    let mut vc = Vec3::new(0.0, 0.0, 0.0);
+    let mut rate = 0.0;
+    for seed in seeds {
+        match *seed {
+            SurfaceSeed::Translate { velocity } => vc += velocity,
+            SurfaceSeed::CylinderRadius { rate: r } => rate += r,
+            other => return Err(DiffError::UnsupportedSeed { kind, seed: other }),
+        }
+    }
+    Ok((vc, rate))
+}
+
 /// Normalized incidence residual of a vertex against a surface: the
 /// distance-like quantity `|g(x)| / |∇g(x)|`. Returns `None` for surface
 /// kinds without an implicit form (their incidence cannot be tested) and
@@ -624,5 +747,81 @@ mod tests {
             (v - Vec3::z()).norm() < 1e-6,
             "noise direction amplified: v = {v:?}"
         );
+    }
+
+    #[test]
+    fn cylinder_radius_acceleration_matches_nonlinear_field() {
+        // A rim vertex on a fixed plane z = 5 and a cylinder whose radius is a
+        // *nonlinear* function of θ: r(θ) = r0 + ṙθ + ½r̈θ². The vertex rides
+        // radially: x(θ) = center + r(θ)·û + cap, so ẋ = ṙû and ẍ = r̈û with
+        // the angular slide frozen. This exercises the velocity-curvature term
+        // (ẋ nonzero) *and* the field-acceleration term (r̈ nonzero).
+        let plane = Plane::new(Point3::new(0.0, 0.0, 5.0), Vec3::x(), Vec3::y());
+        let r0 = 2.5;
+        let cyl = CylinderSurface::new(r0);
+        let (rdot, rddot) = (0.7, 1.3);
+        let u = 1.1_f64;
+        let uhat = Vec3::new(u.cos(), u.sin(), 0.0);
+        let x = Point3::new(r0 * u.cos(), r0 * u.sin(), 5.0);
+
+        let rows1 = vec![
+            constraint_row(&plane, &[], &x).unwrap(),
+            constraint_row(&cyl, &[SurfaceSeed::CylinderRadius { rate: rdot }], &x).unwrap(),
+        ];
+        let xdot = solve_vertex_velocity(&rows1).unwrap();
+        assert!((xdot - uhat * rdot).norm() < 1e-12, "xdot = {xdot:?}");
+
+        let rows2 = vec![
+            constraint_row_2(&plane, &[], &[], &x, &xdot).unwrap(),
+            constraint_row_2(
+                &cyl,
+                &[SurfaceSeed::CylinderRadius { rate: rdot }],
+                &[SurfaceSeed::CylinderRadius { rate: rddot }],
+                &x,
+                &xdot,
+            )
+            .unwrap(),
+        ];
+        let xddot = solve_vertex_velocity(&rows2).unwrap();
+        assert!(
+            (xddot - uhat * rddot).norm() < 1e-12,
+            "xddot = {xddot:?} vs expected {:?}",
+            uhat * rddot
+        );
+    }
+
+    #[test]
+    fn sphere_growing_corner_acceleration_matches_fd() {
+        // A corner where three orthogonal planes meet a growing sphere is
+        // over-determined by the planes alone; use a single sphere + two planes
+        // pinning a point that rides the sphere along a fixed direction as the
+        // radius grows nonlinearly. Validate ẍ against a central difference of
+        // the analytic ẋ under r ± δ (the sphere row's curvature is 2I).
+        let sph = SphereSurface::new(3.0);
+        let px = Plane::new(Point3::new(0.0, 0.0, 0.0), Vec3::y(), Vec3::z()); // x = 0
+        let py = Plane::new(Point3::new(0.0, 0.0, 0.0), Vec3::z(), Vec3::x()); // y = 0
+                                                                               // Point on the +z pole of the sphere (x = y = 0, z = r).
+        let x = Point3::new(0.0, 0.0, 3.0);
+        let rate = 1.0;
+
+        let vel = |s: &[SurfaceSeed]| {
+            let rows = vec![
+                constraint_row(&px, &[], &x).unwrap(),
+                constraint_row(&py, &[], &x).unwrap(),
+                constraint_row(&sph, s, &x).unwrap(),
+            ];
+            solve_vertex_velocity(&rows).unwrap()
+        };
+        let xdot = vel(&[SurfaceSeed::SphereRadius { rate }]);
+        assert!((xdot - Vec3::z()).norm() < 1e-12, "xdot = {xdot:?}");
+
+        let rows2 = vec![
+            constraint_row_2(&px, &[], &[], &x, &xdot).unwrap(),
+            constraint_row_2(&py, &[], &[], &x, &xdot).unwrap(),
+            constraint_row_2(&sph, &[SurfaceSeed::SphereRadius { rate }], &[], &x, &xdot).unwrap(),
+        ];
+        let xddot = solve_vertex_velocity(&rows2).unwrap();
+        // Pole rides at exactly z = r (linear in r), so ẍ = 0.
+        assert!(xddot.norm() < 1e-12, "xddot = {xddot:?}");
     }
 }

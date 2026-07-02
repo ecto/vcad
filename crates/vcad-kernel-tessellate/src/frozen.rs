@@ -823,6 +823,84 @@ fn tessellate_face_for_capture(
     crate::tessellate_face(topo, &brep.geometry, face_id, params)
 }
 
+/// A uniform spatial hash over `quantum`-sized cells for O(1)-amortized
+/// nearest-point-within-tolerance queries — the accelerator for the capture-
+/// and evaluation-time matches flagged as `O(n²)`-ish since M0–M2.
+///
+/// Points are bucketed by their rounded integer cell; a query probes the
+/// 3×3×3 neighborhood of its own cell. That neighborhood is **exhaustive**
+/// whenever the match tolerance does not exceed the cell size — which holds
+/// for every use here (`VERTEX_MATCH_TOL`, `DEDUP_QUANTUM`, and `MATCH_TOL`
+/// all equal their grid's quantum), so the nearest match is bit-identical to
+/// a full linear scan. The linear reference paths are kept and checked
+/// against the grid (see [`capture_plan_naive`] and the M10 equivalence test).
+struct PointGrid {
+    quantum: f64,
+    cells: HashMap<[i64; 3], Vec<u32>>,
+    pts: Vec<Point3>,
+}
+
+impl PointGrid {
+    fn new(quantum: f64) -> Self {
+        Self {
+            quantum,
+            cells: HashMap::new(),
+            pts: Vec::new(),
+        }
+    }
+
+    fn cell(&self, p: &Point3) -> [i64; 3] {
+        [
+            (p.x / self.quantum).round() as i64,
+            (p.y / self.quantum).round() as i64,
+            (p.z / self.quantum).round() as i64,
+        ]
+    }
+
+    /// Insert a point, returning its local index (parallel to insertion order).
+    fn insert(&mut self, p: Point3) -> u32 {
+        let idx = self.pts.len() as u32;
+        let c = self.cell(&p);
+        self.cells.entry(c).or_default().push(idx);
+        self.pts.push(p);
+        idx
+    }
+
+    /// The two nearest inserted points within `tol` of `p`: `(best, second)`
+    /// where `best = (local index, d²)` and `second` is the second-smallest
+    /// squared distance (`∞` if none), for the evaluation-time ambiguity
+    /// check. The 3×3×3 probe holds every point within `tol`, so both are
+    /// exact.
+    fn two_nearest(&self, p: &Point3, tol: f64) -> (Option<(u32, f64)>, f64) {
+        let c = self.cell(p);
+        let tol2 = tol * tol;
+        let mut best: Option<(u32, f64)> = None;
+        let mut second = f64::INFINITY;
+        for dx in -1..=1 {
+            for dy in -1..=1 {
+                for dz in -1..=1 {
+                    let key = [c[0] + dx, c[1] + dy, c[2] + dz];
+                    for &idx in self.cells.get(&key).into_iter().flatten() {
+                        let d2 = (self.pts[idx as usize] - *p).norm_squared();
+                        if d2 >= tol2 {
+                            continue;
+                        }
+                        match best {
+                            Some((_, bd)) if d2 < bd => {
+                                second = bd;
+                                best = Some((idx, d2));
+                            }
+                            Some(_) => second = second.min(d2),
+                            None => best = Some((idx, d2)),
+                        }
+                    }
+                }
+            }
+        }
+        (best, second)
+    }
+}
+
 /// Capture a frozen tessellation plan from a B-rep at the base parameter
 /// value.
 ///
@@ -832,6 +910,13 @@ fn tessellate_face_for_capture(
 /// samples on their face's surface ([`NodeRecipe::SurfaceUv`]). Coincident
 /// nodes from adjacent faces are merged (same quantum as the stock weld) so
 /// the frozen mesh shares vertices across face seams.
+///
+/// The cross-face dedup is already spatial-hashed ([`PointGrid`]-style, since
+/// the M0–M2 hardening). The remaining per-face topology-vertex
+/// classification scans a face's boundary loop, which is topology-bounded
+/// (not a function of tessellation density), so it is not a hot spot — see
+/// the M10 design note for the measurement that led this to be left as a
+/// linear scan.
 pub fn capture_plan(
     brep: &BRepSolid,
     params: &TessellationParams,
@@ -942,8 +1027,8 @@ pub fn capture_plan(
                     best = Some((idx, d2));
                 }
             }
-            let (recipe, position) = match best {
-                Some((idx, _)) => (
+            let (recipe, position) = match best.map(|(idx, _)| idx) {
+                Some(idx) => (
                     NodeRecipe::TopoVertex { vertex: idx },
                     topo.vertices[ci.vertices[idx as usize]].point,
                 ),
@@ -1077,7 +1162,30 @@ pub fn capture_plan(
 /// evaluated at the frozen `(u, v)`, lands nearest the capture-time
 /// position. A nearest match farther than the tolerance is
 /// [`FrozenError::CorrespondenceLost`].
+///
+/// The `TopoVertex` resolution is grid-accelerated ([`PointGrid`]) — turning
+/// the per-node scan over all rebuilt vertices (`O(nodes · vertices)`, the one
+/// genuinely quadratic scan in the seam once dedup was hashed) into O(1)
+/// amortized. Because a node's anchor sits ~1e-6 mm from its rebuilt vertex
+/// (far inside `MATCH_TOL`), the grid's 3×3×3 probe is exhaustive and the
+/// result is **bit-identical** to the linear reference [`evaluate_plan_naive`]
+/// (which the M10 equivalence test checks).
 pub fn evaluate_plan(brep: &BRepSolid, plan: &FrozenPlan) -> Result<FrozenMesh, FrozenError> {
+    evaluate_plan_impl(brep, plan, true)
+}
+
+/// The linear-scan reference of [`evaluate_plan`]: bit-identical output, the
+/// `O(nodes · vertices)` vertex resolution instead of the grid. Exposed for
+/// the M10 perf equivalence test and as the accelerator's defining oracle.
+pub fn evaluate_plan_naive(brep: &BRepSolid, plan: &FrozenPlan) -> Result<FrozenMesh, FrozenError> {
+    evaluate_plan_impl(brep, plan, false)
+}
+
+fn evaluate_plan_impl(
+    brep: &BRepSolid,
+    plan: &FrozenPlan,
+    use_grid: bool,
+) -> Result<FrozenMesh, FrozenError> {
     let ci = canonical_index(brep);
     let actual = signature_with_index(brep, &ci);
     if actual != plan.signature {
@@ -1172,32 +1280,74 @@ pub fn evaluate_plan(brep: &BRepSolid, plan: &FrozenPlan) -> Result<FrozenMesh, 
             .ok_or(FrozenError::RecipeOutOfRange)
     };
 
+    // Grid the rebuilt topology vertices once: resolving each `TopoVertex`
+    // node to its nearest rebuilt vertex was an O(vertices) scan per node
+    // (quadratic overall). The probe is exhaustive within `MATCH_TOL` (the
+    // grid quantum), so the resolved vertex and the ambiguity decision are
+    // bit-identical to the linear scan. `evaluate_plan_naive` takes the
+    // linear branch to serve as that reference.
+    let vgrid = use_grid.then(|| {
+        let mut g = PointGrid::new(MATCH_TOL);
+        for &vid in &ci.vertices {
+            g.insert(topo.vertices[vid].point);
+        }
+        g
+    });
+
+    // The two nearest rebuilt vertices to `anchor` within `MATCH_TOL`, as
+    // `(best point, best d², second d²)`; grid- or linear-resolved. Both take
+    // the strict-minimum squared distance in `ci.vertices` order, so ties
+    // resolve identically.
+    let resolve_vertex = |anchor: &Point3| -> (Option<(Point3, f64)>, f64) {
+        if let Some(g) = &vgrid {
+            let (best, second) = g.two_nearest(anchor, MATCH_TOL);
+            (best.map(|(local, d2)| (g.pts[local as usize], d2)), second)
+        } else {
+            let tol2 = MATCH_TOL * MATCH_TOL;
+            let mut best: Option<(Point3, f64)> = None;
+            let mut second = f64::INFINITY;
+            for &vid in &ci.vertices {
+                let q = topo.vertices[vid].point;
+                let d2 = (q - *anchor).norm_squared();
+                if d2 >= tol2 {
+                    continue;
+                }
+                match best {
+                    Some((_, bd)) if d2 < bd => {
+                        second = bd;
+                        best = Some((q, d2));
+                    }
+                    Some(_) => second = second.min(d2),
+                    None => best = Some((q, d2)),
+                }
+            }
+            (best, second)
+        }
+    };
+
     let mut positions = Vec::with_capacity(plan.nodes.len());
     for (i, recipe) in plan.nodes.iter().enumerate() {
         let anchor = plan.base_positions[i];
         let p = match *recipe {
             NodeRecipe::TopoVertex { .. } => {
-                let mut best: Option<(Point3, f64)> = None;
-                let mut second_d2 = f64::INFINITY;
-                for &vid in &ci.vertices {
-                    let q = topo.vertices[vid].point;
-                    let d2 = (q - anchor).norm_squared();
-                    match best {
-                        Some((_, bd)) if d2 < bd => {
-                            second_d2 = bd;
-                            best = Some((q, d2));
-                        }
-                        Some(_) => second_d2 = second_d2.min(d2),
-                        None => best = Some((q, d2)),
+                let (best, second_d2) = resolve_vertex(&anchor);
+                let (q, d2) = match best {
+                    Some(hit) => hit,
+                    // Nothing within tolerance: the perturbation moved the
+                    // vertex too far. Recover the true nearest distance for
+                    // the error (rare, off the hot path).
+                    None => {
+                        let nearest = ci
+                            .vertices
+                            .iter()
+                            .map(|&vid| (topo.vertices[vid].point - anchor).norm_squared())
+                            .fold(f64::INFINITY, f64::min);
+                        return Err(FrozenError::CorrespondenceLost {
+                            node: i,
+                            distance: nearest.sqrt(),
+                        });
                     }
-                }
-                let (q, d2) = best.ok_or(FrozenError::RecipeOutOfRange)?;
-                if d2 > MATCH_TOL * MATCH_TOL {
-                    return Err(FrozenError::CorrespondenceLost {
-                        node: i,
-                        distance: d2.sqrt(),
-                    });
-                }
+                };
                 // Ambiguous match: a second distinct vertex also inside the
                 // tolerance (a near-tangency pair) could bind differently at
                 // θ+h vs θ−h and silently corrupt the FD oracle. Refuse.

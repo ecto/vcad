@@ -34,6 +34,9 @@
 
 /// Mesh-to-collider conversion + mass / inertia estimation.
 pub mod colliders;
+/// Physics-rollout gradients: `dJ/dθ` of a simulation objective with respect
+/// to CAD parameters, via the mass-property factorization (M8).
+pub mod diff;
 mod error;
 mod gym;
 /// Joint conversion utilities.
@@ -42,6 +45,7 @@ pub mod joints;
 pub mod stl;
 mod world;
 
+pub use diff::{nominal_mass_props, rollout_gradient, BodyMassProps, DiffBody, MassPropFdSteps};
 pub use error::PhysicsError;
 pub use gym::{Action, Observation, RobotEnv};
 pub use world::{JointState, PhysicsWorld};
