@@ -26,6 +26,16 @@ pub fn migrate_v1(doc: &Document) -> CrdtDocument {
 
     migrate_assembly(&mut crdt, &mut ctx, doc);
 
+    // Atomic / molecular domain: one `molecule` feature carrying the whole
+    // system as a JSON blob (mirrors how schematic/scene data round-trips).
+    if let Some(mol) = &doc.molecule {
+        if let Ok(json) = serde_json::to_string(mol) {
+            let mut params = HashMap::new();
+            params.insert("system".to_string(), Value::String(json));
+            create(&mut crdt, &mut ctx, "molecule", params);
+        }
+    }
+
     crdt
 }
 

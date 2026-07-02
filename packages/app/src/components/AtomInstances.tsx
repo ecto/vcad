@@ -1,17 +1,22 @@
 /**
- * Instanced renderer for atomic structures (the `molecule` document domain).
+ * World-class instanced renderer for atomic structures.
  *
- * One `THREE.InstancedMesh` of an icosphere for atoms (CPK-colored, van-der-
- * Waals / covalent radii) and one of a cylinder for bonds — the same
- * `setMatrixAt` / `setColorAt` instancing pattern as the PCB via/pad meshes,
- * which scales to 10^5–10^6 atoms comfortably. Positions are in Å in the
- * kernel's Z-up frame; the viewport's global -90° X rotation handles Z-up→Y-up.
+ * Atoms are drawn as **GPU impostor spheres**: one billboarded quad per atom,
+ * with the sphere ray-traced analytically in the fragment shader. This is the
+ * technique QuteMol / Mol* use — pixel-perfect silhouettes at any zoom, correct
+ * per-fragment depth (so spheres interpenetrate and occlude precisely), and it
+ * scales to millions of atoms because there is no sphere tessellation. Shading
+ * is a self-contained molecular model (key/fill/rim + hemispheric ambient +
+ * Blinn specular + Fresnel), ACES-tonemapped and sRGB-encoded to match the rest
+ * of the viewport. Bonds are two-tone instanced cylinders, each half colored by
+ * its atom.
  *
- * This is Track A (interactive). Track B (the ray tracer's impostor-sphere
- * buffer) attaches via `RayTracer.uploadAtoms` for the high-quality path.
+ * Positions are in Å in the kernel's Z-up frame; the viewport's global -90° X
+ * rotation handles Z-up→Y-up.
  */
 
-import { useRef, useLayoutEffect, useMemo } from "react";
+import { useMemo, useRef, useLayoutEffect } from "react";
+import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import type { MoleculeSystem } from "@vcad/ir";
 
@@ -23,10 +28,10 @@ interface Props {
   representation?: AtomRepresentation;
 }
 
-// CPK fallback colors (sRGB) for common elements; species.color overrides.
+// CPK fallback colors (sRGB 0..1); species.color overrides.
 const CPK: Record<string, [number, number, number]> = {
   H: [1, 1, 1],
-  C: [0.56, 0.56, 0.56],
+  C: [0.34, 0.34, 0.34],
   N: [0.19, 0.31, 0.97],
   O: [1, 0.05, 0.05],
   F: [0.56, 0.88, 0.31],
@@ -44,124 +49,279 @@ const CPK: Record<string, [number, number, number]> = {
   Zn: [0.49, 0.5, 0.69],
   Au: [1, 0.82, 0.14],
 };
-// Covalent radii (Å) for a handful of common elements; else 0.75.
 const COVALENT: Record<string, number> = {
-  H: 0.31,
-  C: 0.76,
-  N: 0.71,
-  O: 0.66,
-  F: 0.57,
-  P: 1.07,
-  S: 1.05,
-  Cl: 1.02,
-  Fe: 1.32,
+  H: 0.31, C: 0.76, N: 0.71, O: 0.66, F: 0.57, Na: 1.66, Mg: 1.41,
+  Al: 1.21, Si: 1.11, P: 1.07, S: 1.05, Cl: 1.02, K: 2.03, Ca: 1.76,
+  Fe: 1.32, Cu: 1.32, Zn: 1.22, Au: 1.36,
 };
 
-const TMP_MAT = new THREE.Matrix4();
-const TMP_POS = new THREE.Vector3();
-const TMP_SCALE = new THREE.Vector3();
-const TMP_QUAT = new THREE.Quaternion();
-const TMP_COLOR = new THREE.Color();
-const Y_AXIS = new THREE.Vector3(0, 1, 0);
-const TMP_DIR = new THREE.Vector3();
-const TMP_A = new THREE.Vector3();
-const TMP_B = new THREE.Vector3();
-
-function elementColor(mol: MoleculeSystem, i: number): [number, number, number] {
+function speciesColor(mol: MoleculeSystem, i: number): [number, number, number] {
   const sp = mol.species[mol.speciesIdx[i]!];
-  if (sp?.color) return sp.color;
-  return CPK[sp?.element ?? "C"] ?? [0.85, 0.4, 0.85];
+  return sp?.color ?? CPK[sp?.element ?? "C"] ?? [0.85, 0.4, 0.85];
 }
-
-function atomRadius(mol: MoleculeSystem, i: number, rep: AtomRepresentation): number {
+function speciesRadius(mol: MoleculeSystem, i: number, rep: AtomRepresentation): number {
   const sp = mol.species[mol.speciesIdx[i]!];
   const base = sp?.radius ?? COVALENT[sp?.element ?? "C"] ?? 0.75;
   if (rep === "space_filling") return base * 1.8;
-  if (rep === "wireframe") return base * 0.18;
-  return base * 0.4; // ball-and-stick
+  if (rep === "wireframe") return base * 0.2;
+  return base * 0.42;
 }
 
+// Shared shading model (view-space N, V). Self-lit so it reads as a dedicated
+// molecular renderer, independent of scene lights.
+const SHADE_GLSL = /* glsl */ `
+vec3 acesFilm(vec3 x){
+  const float a=2.51, b=0.03, c=2.43, d=0.59, e=0.14;
+  return clamp((x*(a*x+b))/(x*(c*x+d)+e), 0.0, 1.0);
+}
+vec3 shadeMolecule(vec3 srgb, vec3 N, vec3 V){
+  vec3 base = pow(srgb, vec3(2.2));                 // to linear
+  vec3 keyDir  = normalize(vec3(0.35, 0.65, 0.68)); // camera-relative lights
+  vec3 fillDir = normalize(vec3(-0.6, -0.2, 0.35));
+  float key  = max(dot(N, keyDir), 0.0);
+  float fill = max(dot(N, fillDir), 0.0) * 0.30;
+  // hemispheric ambient (sky above / ground below in view space)
+  float hemi = N.y * 0.5 + 0.5;
+  vec3 ambient = mix(vec3(0.10,0.10,0.13), vec3(0.42,0.48,0.58), hemi);
+  // Blinn specular from the key light
+  vec3 H = normalize(keyDir + V);
+  float spec = pow(max(dot(N, H), 0.0), 56.0) * 0.55;
+  // Fresnel rim
+  float fres = pow(1.0 - max(dot(N, V), 0.0), 3.0);
+  vec3 rim = vec3(0.45, 0.62, 0.95) * fres * 0.6;
+  // subtle edge AO so spheres feel volumetric
+  float edgeAO = mix(0.72, 1.0, max(dot(N, V), 0.0));
+  vec3 col = base * (ambient + key + fill) * edgeAO + spec + rim;
+  col = acesFilm(col);
+  return pow(col, vec3(1.0/2.2));                   // to sRGB
+}`;
+
+// --- Impostor sphere material --------------------------------------------
+const SPHERE_VERT = /* glsl */ `
+in vec3 iCenter;
+in float iRadius;
+in vec3 iColor;
+out vec3 vColor;
+out float vRadius;
+out vec3 vCenterView;
+out vec3 vViewPos;
+void main(){
+  vColor = iColor;
+  vRadius = iRadius;
+  vec4 cv = modelViewMatrix * vec4(iCenter, 1.0);
+  vCenterView = cv.xyz;
+  // camera-facing quad, oversized for perspective safety
+  vec3 pos = cv.xyz + vec3(position.xy * iRadius * 1.5, 0.0);
+  vViewPos = pos;
+  gl_Position = projectionMatrix * vec4(pos, 1.0);
+}`;
+
+const SPHERE_FRAG = /* glsl */ `
+precision highp float;
+uniform float logDepthBufFC;
+uniform mat4 projectionMatrix; // three binds this built-in when declared in-stage
+in vec3 vColor;
+in float vRadius;
+in vec3 vCenterView;
+in vec3 vViewPos;
+out vec4 fragColor;
+${SHADE_GLSL}
+void main(){
+  vec3 rd = normalize(vViewPos);          // ray from camera (origin) to fragment
+  vec3 oc = -vCenterView;
+  float b = dot(oc, rd);
+  float c = dot(oc, oc) - vRadius * vRadius;
+  float h = b * b - c;
+  if (h < 0.0) discard;                   // ray misses sphere
+  float t = -b - sqrt(h);
+  if (t < 0.0) discard;
+  vec3 P = rd * t;                        // hit point (view space)
+  vec3 N = normalize(P - vCenterView);
+  vec3 V = normalize(-P);
+  // correct depth for logarithmicDepthBuffer
+  vec4 clip = projectionMatrix * vec4(P, 1.0);
+  gl_FragDepth = log2(1.0 + clip.w) * logDepthBufFC * 0.5;
+  fragColor = vec4(shadeMolecule(vColor, N, V), 1.0);
+}`;
+
+// --- Custom-lit bond material (real cylinder geometry) -------------------
+// `instanceMatrix` / `instanceColor` are injected by three for InstancedMesh.
+const BOND_VERT = /* glsl */ `
+out vec3 vColor;
+out vec3 vNormalV;
+out vec3 vViewPos;
+void main(){
+  #ifdef USE_INSTANCING_COLOR
+    vColor = instanceColor;
+  #else
+    vColor = vec3(0.6);
+  #endif
+  vec4 mv = modelViewMatrix * instanceMatrix * vec4(position, 1.0);
+  vViewPos = mv.xyz;
+  vNormalV = normalize((modelViewMatrix * instanceMatrix * vec4(normal, 0.0)).xyz);
+  gl_Position = projectionMatrix * mv;
+}`;
+
+const BOND_FRAG = /* glsl */ `
+precision highp float;
+uniform float logDepthBufFC;
+uniform mat4 projectionMatrix; // three binds this built-in when declared in-stage
+in vec3 vColor;
+in vec3 vNormalV;
+in vec3 vViewPos;
+out vec4 fragColor;
+${SHADE_GLSL}
+void main(){
+  vec3 N = normalize(vNormalV);
+  if (!gl_FrontFacing) N = -N;
+  vec3 V = normalize(-vViewPos);
+  vec4 clip = projectionMatrix * vec4(vViewPos, 1.0);
+  gl_FragDepth = log2(1.0 + clip.w) * logDepthBufFC * 0.5;
+  fragColor = vec4(shadeMolecule(vColor, N, V), 1.0);
+}`;
+
 export function AtomInstances({ molecule, representation = "ball_and_stick" }: Props) {
-  const atomsRef = useRef<THREE.InstancedMesh>(null);
   const bondsRef = useRef<THREE.InstancedMesh>(null);
 
   const atomCount = molecule.positions.length;
   const bonds = molecule.bonds ?? [];
   const showBonds = representation !== "space_filling";
 
-  // Shared geometries/material, memoized by count-independent params.
-  const atomGeometry = useMemo(() => new THREE.IcosahedronGeometry(1, 2), []);
-  const bondGeometry = useMemo(() => new THREE.CylinderGeometry(1, 1, 1, 10), []);
-  const material = useMemo(
-    () => new THREE.MeshStandardMaterial({ roughness: 0.35, metalness: 0.0, vertexColors: false }),
-    [],
-  );
-  const bondMaterial = useMemo(
-    () => new THREE.MeshStandardMaterial({ color: "#9aa0a6", roughness: 0.5, metalness: 0.0 }),
+  // Molecules are authored in Ångström (~1–20 units); the viewport is framed
+  // for millimeter CAD parts, so scale each structure to a comfortable display
+  // size. Impostor radii live in view space, so the scale is baked into the
+  // uploaded centers/radii rather than applied as a group transform.
+  const displayScale = useMemo(() => {
+    let maxR = 1e-3;
+    for (const p of molecule.positions) maxR = Math.max(maxR, Math.hypot(p[0], p[1], p[2]));
+    return 34 / maxR;
+  }, [molecule]);
+
+  // Impostor sphere geometry (instanced quads).
+  const sphereGeom = useMemo(() => {
+    const quad = new THREE.PlaneGeometry(2, 2);
+    const geo = new THREE.InstancedBufferGeometry();
+    geo.index = quad.index;
+    geo.attributes.position = quad.attributes.position!;
+    geo.attributes.uv = quad.attributes.uv!;
+    const centers = new Float32Array(atomCount * 3);
+    const radii = new Float32Array(atomCount);
+    const colors = new Float32Array(atomCount * 3);
+    for (let i = 0; i < atomCount; i++) {
+      const p = molecule.positions[i]!;
+      centers[i * 3] = p[0] * displayScale;
+      centers[i * 3 + 1] = p[1] * displayScale;
+      centers[i * 3 + 2] = p[2] * displayScale;
+      radii[i] = speciesRadius(molecule, i, representation) * displayScale;
+      const c = speciesColor(molecule, i);
+      colors[i * 3] = c[0];
+      colors[i * 3 + 1] = c[1];
+      colors[i * 3 + 2] = c[2];
+    }
+    geo.setAttribute("iCenter", new THREE.InstancedBufferAttribute(centers, 3));
+    geo.setAttribute("iRadius", new THREE.InstancedBufferAttribute(radii, 1));
+    geo.setAttribute("iColor", new THREE.InstancedBufferAttribute(colors, 3));
+    geo.instanceCount = atomCount;
+    quad.dispose();
+    return geo;
+  }, [molecule, atomCount, representation, displayScale]);
+
+  const sphereMaterial = useMemo(
+    () =>
+      new THREE.ShaderMaterial({
+        glslVersion: THREE.GLSL3,
+        uniforms: { logDepthBufFC: { value: 1.0 } },
+        vertexShader: SPHERE_VERT,
+        fragmentShader: SPHERE_FRAG,
+      }),
     [],
   );
 
-  useLayoutEffect(() => {
-    const inst = atomsRef.current;
-    if (!inst) return;
-    for (let i = 0; i < atomCount; i++) {
-      const p = molecule.positions[i]!;
-      const r = atomRadius(molecule, i, representation);
-      TMP_POS.set(p[0], p[1], p[2]);
-      TMP_SCALE.set(r, r, r);
-      TMP_QUAT.identity();
-      TMP_MAT.compose(TMP_POS, TMP_QUAT, TMP_SCALE);
-      inst.setMatrixAt(i, TMP_MAT);
-      const [cr, cg, cb] = elementColor(molecule, i);
-      TMP_COLOR.setRGB(cr, cg, cb);
-      inst.setColorAt(i, TMP_COLOR);
-    }
-    inst.count = atomCount;
-    inst.instanceMatrix.needsUpdate = true;
-    if (inst.instanceColor) inst.instanceColor.needsUpdate = true;
-  }, [molecule, atomCount, representation]);
+  // Bond geometry: two half-cylinders per bond, colored per atom.
+  const bondGeom = useMemo(() => new THREE.CylinderGeometry(1, 1, 1, 12, 1), []);
+  const bondMaterial = useMemo(
+    () =>
+      new THREE.ShaderMaterial({
+        glslVersion: THREE.GLSL3,
+        uniforms: { logDepthBufFC: { value: 1.0 } },
+        vertexShader: BOND_VERT,
+        fragmentShader: BOND_FRAG,
+      }),
+    [],
+  );
+
+  const bondCount = showBonds ? bonds.length * 2 : 0;
 
   useLayoutEffect(() => {
     const inst = bondsRef.current;
     if (!inst || !showBonds) return;
-    const radius = representation === "wireframe" ? 0.06 : 0.12;
-    for (let b = 0; b < bonds.length; b++) {
-      const bond = bonds[b]!;
+    const radius = (representation === "wireframe" ? 0.05 : 0.11) * displayScale;
+    const mat = new THREE.Matrix4();
+    const pos = new THREE.Vector3();
+    const scale = new THREE.Vector3();
+    const quat = new THREE.Quaternion();
+    const yAxis = new THREE.Vector3(0, 1, 0);
+    const A = new THREE.Vector3();
+    const B = new THREE.Vector3();
+    const dir = new THREE.Vector3();
+    const mid = new THREE.Vector3();
+    const color = new THREE.Color();
+    let k = 0;
+    for (const bond of bonds) {
       const pa = molecule.positions[bond.a]!;
       const pb = molecule.positions[bond.b]!;
-      TMP_A.set(pa[0], pa[1], pa[2]);
-      TMP_B.set(pb[0], pb[1], pb[2]);
-      TMP_DIR.subVectors(TMP_B, TMP_A);
-      const len = TMP_DIR.length();
+      A.set(pa[0] * displayScale, pa[1] * displayScale, pa[2] * displayScale);
+      B.set(pb[0] * displayScale, pb[1] * displayScale, pb[2] * displayScale);
+      mid.addVectors(A, B).multiplyScalar(0.5);
+      dir.subVectors(B, A);
+      const len = dir.length();
       if (len < 1e-6) {
-        TMP_MAT.makeScale(0, 0, 0);
-        inst.setMatrixAt(b, TMP_MAT);
+        mat.makeScale(0, 0, 0);
+        inst.setMatrixAt(k, mat);
+        inst.setMatrixAt(k + 1, mat);
+        k += 2;
         continue;
       }
-      TMP_DIR.normalize();
-      TMP_QUAT.setFromUnitVectors(Y_AXIS, TMP_DIR);
-      TMP_POS.addVectors(TMP_A, TMP_B).multiplyScalar(0.5);
-      TMP_SCALE.set(radius, len, radius);
-      TMP_MAT.compose(TMP_POS, TMP_QUAT, TMP_SCALE);
-      inst.setMatrixAt(b, TMP_MAT);
+      dir.normalize();
+      quat.setFromUnitVectors(yAxis, dir);
+      // half A: atom a → midpoint
+      scale.set(radius, len / 2, radius);
+      pos.addVectors(A, mid).multiplyScalar(0.5);
+      mat.compose(pos, quat, scale);
+      inst.setMatrixAt(k, mat);
+      const ca = speciesColor(molecule, bond.a);
+      color.setRGB(ca[0], ca[1], ca[2]);
+      inst.setColorAt(k, color);
+      // half B: midpoint → atom b
+      pos.addVectors(mid, B).multiplyScalar(0.5);
+      mat.compose(pos, quat, scale);
+      inst.setMatrixAt(k + 1, mat);
+      const cb = speciesColor(molecule, bond.b);
+      color.setRGB(cb[0], cb[1], cb[2]);
+      inst.setColorAt(k + 1, color);
+      k += 2;
     }
-    inst.count = bonds.length;
+    inst.count = bondCount;
     inst.instanceMatrix.needsUpdate = true;
-  }, [molecule, bonds, showBonds, representation]);
+    if (inst.instanceColor) inst.instanceColor.needsUpdate = true;
+  }, [molecule, bonds, showBonds, representation, bondCount, displayScale]);
+
+  // Keep the logarithmic-depth factor in sync with the camera each frame.
+  useFrame(({ camera }) => {
+    const fc = 2.0 / Math.log2((camera as THREE.PerspectiveCamera).far + 1.0);
+    sphereMaterial.uniforms.logDepthBufFC!.value = fc;
+    bondMaterial.uniforms.logDepthBufFC!.value = fc;
+  });
 
   if (atomCount === 0) return null;
 
   return (
     <group>
-      <instancedMesh
-        ref={atomsRef}
-        args={[atomGeometry, material, atomCount]}
-        frustumCulled={false}
-      />
+      <mesh geometry={sphereGeom} material={sphereMaterial} frustumCulled={false} />
       {showBonds && bonds.length > 0 && (
         <instancedMesh
           ref={bondsRef}
-          args={[bondGeometry, bondMaterial, bonds.length]}
+          args={[bondGeom, bondMaterial, bondCount]}
           frustumCulled={false}
         />
       )}

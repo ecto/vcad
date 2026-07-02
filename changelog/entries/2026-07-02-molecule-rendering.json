@@ -1,0 +1,9 @@
+{
+  "id": "2026-07-02-molecule-rendering",
+  "version": "0.9.4",
+  "date": "2026-07-02",
+  "category": "feat",
+  "title": "World-class atomic rendering + demos",
+  "summary": "GPU impostor-sphere molecular rendering, a demo picker with seven structures, a spinning buckyball on the boot splash, and .vcad molecule persistence.",
+  "features": ["atoms", "rendering", "impostor-spheres", "viewport", "splash"]
+}
