@@ -12,6 +12,7 @@ use std::collections::HashMap;
 pub mod ecad;
 pub mod expr_parser;
 pub mod file_io;
+pub mod molecule;
 pub mod parameters;
 pub mod stroke_font;
 pub mod to_loon;
@@ -1648,6 +1649,13 @@ pub struct Document {
     #[cfg_attr(feature = "ts-rs", ts(optional))]
     pub pcb: Option<ecad::Pcb>,
 
+    // Molecular / atomic domain (optional, for chemical design & simulation)
+    /// Atomic system for chemical/molecular design and simulation. Units are
+    /// Ångström (not the millimeter CAD convention).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-rs", ts(optional))]
+    pub molecule: Option<molecule::MoleculeSystem>,
+
     // Parameterization (optional, zero-cost when empty)
     /// Named parameters that drive bound fields via expressions. Evaluated
     /// in dependency order on resolve.
@@ -1675,6 +1683,7 @@ impl Default for Document {
             ground_instance_id: None,
             schematic: None,
             pcb: None,
+            molecule: None,
             parameters: HashMap::new(),
             bindings: Bindings::new(),
         }
