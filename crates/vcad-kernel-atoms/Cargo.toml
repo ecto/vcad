@@ -11,6 +11,9 @@ vcad-ir = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
+wasm-bindgen = { version = "0.2", optional = true }
 
 [features]
 default = []
+# JS-facing bindings; pulled into the vcad-kernel-wasm bundle.
+wasm = ["dep:wasm-bindgen"]

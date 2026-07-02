@@ -187,6 +187,7 @@ vcad-kernel-gpu = { path = "crates/vcad-kernel-gpu", version = "0.9.4" }
 vcad-kernel-raytrace = { path = "crates/vcad-kernel-raytrace", version = "0.9.4" }
 vcad-kernel-urdf = { path = "crates/vcad-kernel-urdf", version = "0.9.4" }
 vcad-kernel-physics = { path = "crates/vcad-kernel-physics", version = "0.9.4" }
+vcad-kernel-atoms = { path = "crates/vcad-kernel-atoms", version = "0.9.4" }
 wasmosis = { path = "crates/wasmosis", version = "0.9.4" }
 wasmosis-macro = { path = "crates/wasmosis/wasmosis-macro", version = "0.9.4" }
 vcad-slicer = { path = "crates/vcad-slicer", version = "0.9.4" }

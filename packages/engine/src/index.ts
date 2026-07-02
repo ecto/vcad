@@ -249,6 +249,23 @@ export type {
   ActionType as PhysicsActionType,
 } from "./physics.js";
 
+// Atomic / molecular domain: structure I/O, MD, minimization, receipts.
+export {
+  MdEnv,
+  isAtomsAvailable,
+  parseXyz,
+  writeXyz,
+  inspectMolecule,
+  minimizeEnergy,
+  buildReceipt as buildMoleculeReceipt,
+} from "./atoms.js";
+export type {
+  MoleculeReport,
+  MdObservation,
+  MinimizeResult as AtomsMinimizeResult,
+  MdConfig,
+} from "./atoms.js";
+
 // Cross-domain PCB ↔ enclosure verification (pure; no kernel dependency)
 export {
   checkEnclosureFit,

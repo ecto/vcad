@@ -24,6 +24,7 @@ vcad-loon = { workspace = true }
 vcad-render = { path = "../vcad-render", default-features = false }
 vcad-parts = { workspace = true }
 vcad-kernel-urdf = { workspace = true }
+vcad-kernel-atoms = { workspace = true, optional = true }
 wasmosis = { workspace = true }
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
@@ -41,7 +42,7 @@ ts-rs = { version = "10", optional = true }
 # the shipping bundle surface for the web app. Trim only if you are
 # intentionally shipping a slimmer build, and update the wasm-pack
 # invocation alongside.
-default = ["console_error_panic_hook", "physics", "slicer", "cam", "gpu", "raytrace", "cpu-raytrace", "ecad", "embroidery"]
+default = ["console_error_panic_hook", "physics", "atoms", "slicer", "cam", "gpu", "raytrace", "cpu-raytrace", "ecad", "embroidery"]
 # Skip the include_bytes!() compile-time font embed in vcad-kernel-text.
 # The font file lives under node_modules/next/..., so CI jobs that run
 # wasm-pack before `npm ci` can't see it. Shipping wasm keeps the font.
@@ -51,6 +52,9 @@ gpu = ["dep:vcad-kernel-gpu"]
 raytrace = ["dep:vcad-kernel-raytrace", "dep:vcad-kernel-topo", "dep:vcad-kernel-geom", "dep:vcad-kernel-math", "dep:wgpu", "gpu", "vcad-kernel-raytrace/gpu"]
 cpu-raytrace = ["dep:vcad-kernel-raytrace", "dep:vcad-kernel-topo", "dep:vcad-kernel-geom", "dep:vcad-kernel-math"]
 physics = ["dep:vcad-kernel-physics"]
+# Atomic/molecular domain: MD, minimization, MLIP, inverse design. The
+# #[wasm_bindgen] items in vcad-kernel-atoms are collected into this bundle.
+atoms = ["dep:vcad-kernel-atoms", "vcad-kernel-atoms/wasm"]
 slicer = ["dep:vcad-slicer", "dep:vcad-slicer-gcode", "dep:vcad-slicer-bambu"]
 cam = ["dep:vcad-kernel-cam"]
 ecad = ["dep:vcad-ecad-pcb", "dep:vcad-ecad-schematic", "dep:vcad-ecad-sim", "dep:vcad-ecad-export", "dep:vcad-ecad-symbols", "dep:vcad-ecad-parts", "dep:vcad-ecad-verify"]

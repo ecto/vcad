@@ -43,6 +43,9 @@ pub mod system;
 pub mod units;
 pub mod vec3;
 
+#[cfg(feature = "wasm")]
+pub mod wasm;
+
 pub use gym::{MdEnv, MdObservation};
 pub use inspect::{report, MoleculeReport};
 pub use integrate::{Integrator, Thermostat};

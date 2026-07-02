@@ -267,6 +267,15 @@ impl ForceField for Coulomb {
     }
 }
 
+/// A boxed force field is itself a force field, so `Box<dyn ForceField>` can be
+/// used wherever `F: ForceField` is expected (e.g. `MdEnv<Box<dyn ForceField>>`
+/// when the term set is chosen at runtime).
+impl ForceField for Box<dyn ForceField> {
+    fn energy_forces(&self, sys: &AtomSystem) -> (f64, Vec<[f64; 3]>) {
+        (**self).energy_forces(sys)
+    }
+}
+
 /// Sum of several force-field terms.
 pub struct Sum {
     /// The component terms.
