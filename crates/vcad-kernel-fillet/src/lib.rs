@@ -13,6 +13,7 @@ mod chamfer;
 mod closest_point;
 mod fillet_curved;
 mod fillet_planar;
+mod fillet_subset;
 mod rolling_ball;
 mod topology;
 mod trim;
@@ -112,7 +113,7 @@ mod tests {
     use super::*;
     use vcad_kernel_geom::{CylinderSurface, Plane};
     use vcad_kernel_math::Point3;
-    use vcad_kernel_primitives::make_cube;
+    use vcad_kernel_primitives::{make_cube, BRepSolid};
 
     use crate::topology::{extract_edges, extract_faces};
 
@@ -307,7 +308,7 @@ mod tests {
             {
                 let to_axis: vcad_kernel_math::Vec3 = cyl.center - centroid;
                 let axis = *cyl.axis.as_ref();
-                let along = to_axis.dot(&axis);
+                let along = to_axis.dot(axis);
                 let perp = (to_axis - along * axis).norm();
                 // The axis perpendicular distance from the centroid
                 // must equal (half_side - radius) · sqrt(2) ≈ 5.66 for
@@ -469,6 +470,168 @@ mod tests {
             FilletCase::GeneralCurved,
             "torus-torus should be GeneralCurved"
         );
+    }
+
+    /// Return the vertical (Z-parallel) edges of an axis-aligned cube,
+    /// keyed by their (x, y) foot so tests can pick specific corners.
+    fn vertical_cube_edges(cube: &BRepSolid) -> Vec<vcad_kernel_topo::EdgeId> {
+        extract_edges(cube)
+            .into_iter()
+            .filter(|e| {
+                let a = cube.topology.vertices[e.v_start].point;
+                let b = cube.topology.vertices[e.v_end].point;
+                (a.x - b.x).abs() < 1e-9 && (a.y - b.y).abs() < 1e-9
+            })
+            .map(|e| e.edge_id)
+            .collect()
+    }
+
+    /// Single-edge fillet of a cube: the corrected per-edge path must inset
+    /// only the two faces adjacent to the selected edge, round the two cap
+    /// corners with the blend arc, and leave the rest of the body alone.
+    /// Volume must match the closed form
+    ///   V = L³ − (1 − π/4)·r²·L
+    /// to 1e-6 relative, and the tessellation must be watertight.
+    ///
+    /// Regression for the "insets ALL six faces but emits ONE blend" bug,
+    /// which produced ~522 mm³ instead of ~995 mm³ and a non-manifold mesh.
+    #[test]
+    fn test_fillet_single_edge_volume_and_watertight() {
+        let l = 10.0;
+        let r = 1.5;
+        let cube = make_cube(l, l, l);
+        let edge = extract_edges(&cube)[0].edge_id;
+
+        let (filleted, results) = fillet_edges_detailed(&cube, &[edge], r);
+        assert_eq!(results.len(), 1);
+        assert!(matches!(results[0], FilletResult::Success));
+
+        let mesh = vcad_kernel_tessellate::tessellate_brep(&filleted, 32);
+        assert_eq!(
+            mesh.boundary_edges().len(),
+            0,
+            "single-edge fillet must be watertight"
+        );
+
+        let vol = compute_mesh_volume(&mesh);
+        let pi = std::f64::consts::PI;
+        let expected = l * l * l - (1.0 - pi / 4.0) * r * r * l;
+        let rel = (vol - expected).abs() / expected;
+        assert!(
+            rel < 1e-6,
+            "single-edge fillet volume: expected {:.6}, got {:.6} (rel {:.2e})",
+            expected,
+            vol,
+            rel
+        );
+    }
+
+    /// Two OPPOSITE (non-touching) edges of a cube. Each is an independent
+    /// rounding, so the volume is the cube minus two cylinder slivers with
+    /// no corner interaction:
+    ///   V = L³ − 2·(1 − π/4)·r²·L
+    /// Exact to 1e-6 relative; watertight. (The two verticals share the
+    /// top/bottom cap faces, so this also exercises a cap face with two
+    /// independently rounded corners.)
+    #[test]
+    fn test_fillet_two_opposite_edges_volume_and_watertight() {
+        let l = 10.0;
+        let r = 1.5;
+        let cube = make_cube(l, l, l);
+
+        // Two diagonally-opposite vertical edges share no vertex.
+        let verts = vertical_cube_edges(&cube);
+        let mut chosen = Vec::new();
+        'outer: for i in 0..verts.len() {
+            for j in (i + 1)..verts.len() {
+                if is_edge_pair_disjoint(&cube, verts[i], verts[j]) {
+                    chosen = vec![verts[i], verts[j]];
+                    break 'outer;
+                }
+            }
+        }
+        assert_eq!(chosen.len(), 2, "expected two disjoint vertical edges");
+
+        let (filleted, results) = fillet_edges_detailed(&cube, &chosen, r);
+        assert_eq!(results.len(), 2);
+        assert!(results.iter().all(|r| matches!(r, FilletResult::Success)));
+
+        let mesh = vcad_kernel_tessellate::tessellate_brep(&filleted, 32);
+        assert_eq!(
+            mesh.boundary_edges().len(),
+            0,
+            "two-opposite-edge fillet must be watertight"
+        );
+
+        let vol = compute_mesh_volume(&mesh);
+        let pi = std::f64::consts::PI;
+        let expected = l * l * l - 2.0 * (1.0 - pi / 4.0) * r * r * l;
+        let rel = (vol - expected).abs() / expected;
+        assert!(
+            rel < 1e-6,
+            "two-opposite-edge fillet volume: expected {:.6}, got {:.6} (rel {:.2e})",
+            expected,
+            vol,
+            rel
+        );
+    }
+
+    /// Aspirational: two ADJACENT edges sharing a vertex. This needs a
+    /// corner blend where two quarter-cylinders meet (a fillet-of-fillet /
+    /// partial-torus patch) that the current architecture cannot express —
+    /// such selections share a vertex, so they fall through to the legacy
+    /// inset-every-face pipeline and come out malformed (~520 mm³, dozens
+    /// of open edges). The correct per-edge builder (`fillet_subset`)
+    /// deliberately restricts itself to an *independent set* of edges and
+    /// leaves the shared-corner case to a follow-up. Un-ignore once
+    /// adjacent-edge corner blending exists.
+    #[test]
+    #[ignore = "adjacent-edge corner blend (fillet-of-fillet) not yet implemented; see fillet_subset"]
+    fn test_fillet_two_adjacent_edges_volume() {
+        let l = 10.0;
+        let r = 1.5;
+        let cube = make_cube(l, l, l);
+        let edges = extract_edges(&cube);
+
+        let mut adj = Vec::new();
+        'outer: for i in 0..edges.len() {
+            for j in (i + 1)..edges.len() {
+                if !is_edge_pair_disjoint(&cube, edges[i].edge_id, edges[j].edge_id) {
+                    adj = vec![edges[i].edge_id, edges[j].edge_id];
+                    break 'outer;
+                }
+            }
+        }
+
+        let (filleted, _) = fillet_edges_detailed(&cube, &adj, r);
+        let mesh = vcad_kernel_tessellate::tessellate_brep(&filleted, 32);
+        assert_eq!(mesh.boundary_edges().len(), 0, "must be watertight");
+
+        let vol = compute_mesh_volume(&mesh);
+        let pi = std::f64::consts::PI;
+        // Two edge slivers minus the shared-corner over-subtraction. Gated
+        // loosely to 1% pending an exact corner-blend closed form.
+        let two_slivers = l * l * l - 2.0 * (1.0 - pi / 4.0) * r * r * l;
+        assert!(
+            (vol - two_slivers).abs() / two_slivers < 0.01,
+            "adjacent-edge fillet volume: expected ~{:.3}, got {:.3}",
+            two_slivers,
+            vol
+        );
+    }
+
+    /// True when the two edges share no vertex.
+    fn is_edge_pair_disjoint(
+        brep: &BRepSolid,
+        a: vcad_kernel_topo::EdgeId,
+        b: vcad_kernel_topo::EdgeId,
+    ) -> bool {
+        let edges = extract_edges(brep);
+        let ea = edges.iter().find(|e| e.edge_id == a).unwrap();
+        let eb = edges.iter().find(|e| e.edge_id == b).unwrap();
+        let set = [ea.v_start, ea.v_end, eb.v_start, eb.v_end];
+        let uniq: std::collections::HashSet<_> = set.iter().collect();
+        uniq.len() == 4
     }
 
     fn compute_mesh_volume(mesh: &vcad_kernel_tessellate::TriangleMesh) -> f64 {

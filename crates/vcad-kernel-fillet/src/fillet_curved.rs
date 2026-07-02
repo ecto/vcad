@@ -141,6 +141,15 @@ fn fillet_edges_detailed_inner(
     edge_ids: &[EdgeId],
     radius: f64,
 ) -> (BRepSolid, Vec<FilletResult>) {
+    // Correct path for an independent set of plane-plane edges (single
+    // edge, opposite edges, per-edge differentiable radii). The legacy
+    // pipeline below insets *every* face by `radius`, which is only valid
+    // when every edge is filleted; for a proper subset it shrinks the whole
+    // body. See `fillet_subset` for the geometrically correct construction.
+    if crate::fillet_subset::is_independent_plane_plane_set(brep, edge_ids) {
+        return crate::fillet_subset::fillet_independent_plane_edges(brep, edge_ids, radius);
+    }
+
     let faces = extract_faces(brep);
     let edges = extract_edges(brep);
     let topo = &brep.topology;

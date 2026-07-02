@@ -50,6 +50,12 @@ use vcad_kernel_geom::SurfaceKind;
 
 /// Gradient of a mesh functional `J` with respect to one surface's seed
 /// slots.
+///
+/// Every scalar shape parameter a surface kind exposes gets its **own**
+/// slot — the torus in particular has two independent radii, so overloading
+/// a single `radius` slot would price a major- and a minor-radius parameter
+/// against each other. The [`ScalarSlot`] enum names them; the translation
+/// slot (ℝ³) is shared by every kind.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct SurfaceCotangent {
     /// ∂J/∂(translation velocity): contract with a
@@ -58,6 +64,38 @@ pub struct SurfaceCotangent {
     /// ∂J/∂(radius rate): contract with a [`SurfaceSeed::CylinderRadius`] /
     /// [`SurfaceSeed::SphereRadius`] rate. Zero for kinds without a radius.
     pub radius: f64,
+    /// ∂J/∂(half-angle rate): contract with a [`SurfaceSeed::ConeAngle`]
+    /// rate. Zero for non-cone kinds.
+    pub cone_angle: f64,
+    /// ∂J/∂(major-radius rate): contract with a
+    /// [`SurfaceSeed::TorusMajorRadius`] rate. Zero for non-torus kinds.
+    pub torus_major: f64,
+    /// ∂J/∂(minor-radius rate): contract with a
+    /// [`SurfaceSeed::TorusMinorRadius`] rate. Zero for non-torus kinds.
+    pub torus_minor: f64,
+}
+
+/// A named scalar (non-translation) seed slot of a surface cotangent. Each
+/// surface kind reports which slots it has via [`scalar_bases`]; both the
+/// lift-bridge and the row pullbacks accumulate into them uniformly, so
+/// adding a kind's scalar parameter is one arm here plus one field above.
+#[derive(Debug, Clone, Copy)]
+enum ScalarSlot {
+    Radius,
+    ConeAngle,
+    TorusMajor,
+    TorusMinor,
+}
+
+impl SurfaceCotangent {
+    fn add_scalar(&mut self, slot: ScalarSlot, value: f64) {
+        match slot {
+            ScalarSlot::Radius => self.radius += value,
+            ScalarSlot::ConeAngle => self.cone_angle += value,
+            ScalarSlot::TorusMajor => self.torus_major += value,
+            ScalarSlot::TorusMinor => self.torus_minor += value,
+        }
+    }
 }
 
 /// Per-surface cotangents of a mesh functional: the output of one
@@ -94,6 +132,9 @@ impl MeshCotangents {
                     SurfaceSeed::CylinderRadius { rate } | SurfaceSeed::SphereRadius { rate } => {
                         cot.radius * rate
                     }
+                    SurfaceSeed::ConeAngle { rate } => cot.cone_angle * rate,
+                    SurfaceSeed::TorusMajorRadius { rate } => cot.torus_major * rate,
+                    SurfaceSeed::TorusMinorRadius { rate } => cot.torus_minor * rate,
                 };
             }
         }
@@ -101,12 +142,30 @@ impl MeshCotangents {
     }
 }
 
-/// The unit basis seed for a surface's radius slot, if the kind has one.
-fn radius_basis(kind: SurfaceKind) -> Option<SurfaceSeed> {
+/// The unit basis seeds for a surface kind's scalar (non-translation) slots,
+/// each paired with the [`ScalarSlot`] its column accumulates into. Plane
+/// has none; cylinder/sphere have a radius; cone a half-angle; torus two
+/// independent radii. Probing happens per basis seed, so a kind with several
+/// scalars (the torus) prices each independently.
+fn scalar_bases(kind: SurfaceKind) -> &'static [(SurfaceSeed, ScalarSlot)] {
     match kind {
-        SurfaceKind::Cylinder => Some(SurfaceSeed::CylinderRadius { rate: 1.0 }),
-        SurfaceKind::Sphere => Some(SurfaceSeed::SphereRadius { rate: 1.0 }),
-        _ => None,
+        SurfaceKind::Cylinder => &[(
+            SurfaceSeed::CylinderRadius { rate: 1.0 },
+            ScalarSlot::Radius,
+        )],
+        SurfaceKind::Sphere => &[(SurfaceSeed::SphereRadius { rate: 1.0 }, ScalarSlot::Radius)],
+        SurfaceKind::Cone => &[(SurfaceSeed::ConeAngle { rate: 1.0 }, ScalarSlot::ConeAngle)],
+        SurfaceKind::Torus => &[
+            (
+                SurfaceSeed::TorusMajorRadius { rate: 1.0 },
+                ScalarSlot::TorusMajor,
+            ),
+            (
+                SurfaceSeed::TorusMinorRadius { rate: 1.0 },
+                ScalarSlot::TorusMinor,
+            ),
+        ],
+        _ => &[],
     }
 }
 
@@ -171,13 +230,12 @@ fn accumulate_row(
             _ => translate.z = col,
         }
     }
-    let radius = match radius_basis(kind) {
-        Some(seed) => row_rhs_column(brep, source, seed, x)?,
-        None => 0.0,
-    };
     let cot = cots.entry(sidx).or_default();
     cot.translate += translate * lambda;
-    cot.radius += radius * lambda;
+    for &(seed, slot) in scalar_bases(kind) {
+        let col = row_rhs_column(brep, source, seed, x)?;
+        cot.add_scalar(slot, col * lambda);
+    }
     Ok(())
 }
 
@@ -260,6 +318,9 @@ pub fn evaluate_with_pullback(
                 };
                 let kind = brep.geometry.surfaces[surface_index].surface_type();
                 let uv = vcad_kernel_math::Point2::new(u, v);
+                // Basis index layout per face slot: 0..=2 unit translations,
+                // then one per scalar seed the kind exposes (in
+                // `scalar_bases` order).
                 let mut basis_velocity = |basis: u8| -> Result<(Point3, Vec3), DiffError> {
                     if let std::collections::hash_map::Entry::Vacant(e) =
                         lifted.entry((face, basis))
@@ -268,7 +329,7 @@ pub fn evaluate_with_pullback(
                             0..=2 => SurfaceSeed::Translate {
                                 velocity: translate_bases()[basis as usize],
                             },
-                            _ => radius_basis(kind).expect("radius basis exists"),
+                            _ => scalar_bases(kind)[(basis - 3) as usize].0,
                         };
                         let surface = brep.geometry.surfaces[surface_index].as_ref();
                         e.insert(lift_surface(surface, &[seed])?);
@@ -279,13 +340,12 @@ pub fn evaluate_with_pullback(
                 anchor_check(i, &p, &plan.base_positions[i])?;
                 let (_, vy) = basis_velocity(1)?;
                 let (_, vz) = basis_velocity(2)?;
-                let vr = match radius_basis(kind) {
-                    Some(_) => basis_velocity(3)?.1,
-                    None => Vec3::new(0.0, 0.0, 0.0),
-                };
                 let cot = cots.entry(surface_index).or_default();
                 cot.translate += Vec3::new(w.dot(vx), w.dot(vy), w.dot(vz));
-                cot.radius += w.dot(vr);
+                for (k, &(_, slot)) in scalar_bases(kind).iter().enumerate() {
+                    let (_, vk) = basis_velocity(3 + k as u8)?;
+                    cot.add_scalar(slot, w.dot(vk));
+                }
             }
             NodeRecipe::Boundary { face_a, face_b, .. } => {
                 let sidx = |slot: u32| -> Result<usize, DiffError> {

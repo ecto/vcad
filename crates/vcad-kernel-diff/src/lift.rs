@@ -84,6 +84,7 @@ pub fn lift_surface(
             for seed in seeds {
                 match *seed {
                     SurfaceSeed::Translate { velocity } => seed_point(&mut s.apex, velocity),
+                    SurfaceSeed::ConeAngle { rate } => s.half_angle.dual += rate,
                     other => return Err(DiffError::UnsupportedSeed { kind, seed: other }),
                 }
             }
@@ -105,6 +106,8 @@ pub fn lift_surface(
             for seed in seeds {
                 match *seed {
                     SurfaceSeed::Translate { velocity } => seed_point(&mut s.center, velocity),
+                    SurfaceSeed::TorusMajorRadius { rate } => s.major_radius.dual += rate,
+                    SurfaceSeed::TorusMinorRadius { rate } => s.minor_radius.dual += rate,
                     other => return Err(DiffError::UnsupportedSeed { kind, seed: other }),
                 }
             }
@@ -203,6 +206,80 @@ mod tests {
                 "vel {vel:?} vs radial {radial:?}"
             );
             assert!((p.z - v).abs() < 1e-15);
+        }
+    }
+
+    #[test]
+    fn cone_angle_lift_matches_central_difference() {
+        use vcad_kernel_math::Dir3;
+        let cone = ConeSurface {
+            apex: Point3::new(0.0, 0.0, 20.0),
+            axis: Dir3::new_normalize(-Vec3::z()),
+            ref_dir: Dir3::new_normalize(Vec3::x()),
+            half_angle: 0.25_f64.atan(),
+        };
+        let lifted = lift_surface(&cone, &[SurfaceSeed::ConeAngle { rate: 1.0 }]).unwrap();
+        let h = 1e-7;
+        for &(u, v) in &[(0.0, 5.0), (1.3, 12.0), (4.7, 18.0)] {
+            let uv = Point2::new(u, v);
+            let (_, vel) = lifted.evaluate_with_velocity(uv);
+            let bump = |da: f64| {
+                ConeSurface {
+                    half_angle: cone.half_angle + da,
+                    ..cone.clone()
+                }
+                .evaluate(uv)
+            };
+            let fd = (bump(h) - bump(-h)) / (2.0 * h);
+            assert!(
+                (vel - fd).norm() < 1e-5,
+                "cone ({u},{v}): {vel:?} vs {fd:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn torus_radii_lifts_match_central_difference() {
+        let torus = TorusSurface::new(7.0, 2.0);
+        let h = 1e-7;
+        let samples = [(0.0, 0.0), (1.1, 2.2), (3.4, 5.1)];
+
+        // Major radius: dP/dR = tube_center_dir (the u-circle direction).
+        let major = lift_surface(&torus, &[SurfaceSeed::TorusMajorRadius { rate: 1.0 }]).unwrap();
+        for &(u, v) in &samples {
+            let uv = Point2::new(u, v);
+            let (_, vel) = major.evaluate_with_velocity(uv);
+            let bump = |d: f64| {
+                TorusSurface {
+                    major_radius: torus.major_radius + d,
+                    ..torus.clone()
+                }
+                .evaluate(uv)
+            };
+            let fd = (bump(h) - bump(-h)) / (2.0 * h);
+            assert!(
+                (vel - fd).norm() < 1e-5,
+                "major ({u},{v}): {vel:?} vs {fd:?}"
+            );
+        }
+
+        // Minor radius: dP/dr = surface normal (outward from the tube).
+        let minor = lift_surface(&torus, &[SurfaceSeed::TorusMinorRadius { rate: 1.0 }]).unwrap();
+        for &(u, v) in &samples {
+            let uv = Point2::new(u, v);
+            let (_, vel) = minor.evaluate_with_velocity(uv);
+            let bump = |d: f64| {
+                TorusSurface {
+                    minor_radius: torus.minor_radius + d,
+                    ..torus.clone()
+                }
+                .evaluate(uv)
+            };
+            let fd = (bump(h) - bump(-h)) / (2.0 * h);
+            assert!(
+                (vel - fd).norm() < 1e-5,
+                "minor ({u},{v}): {vel:?} vs {fd:?}"
+            );
         }
     }
 

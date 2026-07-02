@@ -16,7 +16,9 @@
 //! differentiates the *equations that define* the kernel's output without
 //! touching the code that computed it.
 
-use vcad_kernel_geom::{CylinderSurface, Plane, SphereSurface, Surface, SurfaceKind};
+use vcad_kernel_geom::{
+    ConeSurface, CylinderSurface, Plane, SphereSurface, Surface, SurfaceKind, TorusSurface,
+};
 use vcad_kernel_math::{Point3, Vec3};
 
 use crate::{downcast, DiffError, SurfaceSeed};
@@ -36,9 +38,14 @@ pub struct ConstraintRow {
 ///
 /// Single source of truth for both [`constraint_row`] and
 /// [`surface_residual`], so incidence detection and the rows actually
-/// solved can never disagree. Implicit forms: plane `g = n·(x − o)`;
-/// cylinder `g = |radial|² − r²`; sphere `g = |x − c|² − r²`. Returns
-/// `Ok(None)` for kinds without an implicit form.
+/// solved can never disagree. Implicit forms match
+/// [`vcad_kernel_geom::implicit_form`] term-for-term (plane `g = n·(x − o)`;
+/// cylinder `g = |radial|² − r²`; sphere `g = |x − c|² − r²`; cone
+/// `g = |radial|² − tan²α·axial²`; torus `g = (ρ − R)² + axial² − r²`) — the
+/// geom side owns `(g, ∇g)` for the Newton/boundary path and this side adds
+/// the seeded `∂g/∂θ` for the diff rows; keeping the algebra identical is
+/// what lets both paths share a vertex. Returns `Ok(None)` for kinds without
+/// an implicit form (and for the torus at the on-axis degeneracy `ρ → 0`).
 fn implicit_terms(
     surface: &dyn Surface,
     seeds: &[SurfaceSeed],
@@ -92,6 +99,61 @@ fn implicit_terms(
                 };
             }
             Ok(Some((g, 2.0 * d, g_theta)))
+        }
+        SurfaceKind::Cone => {
+            let cone = downcast::<ConeSurface>(surface, kind)?;
+            let axis = *cone.axis.as_ref();
+            let rel = *x - cone.apex;
+            let axial = rel.dot(axis);
+            let radial = rel - axis * axial;
+            let t = cone.half_angle.tan();
+            let tan2 = t * t;
+            let g = radial.norm_squared() - tan2 * axial * axial;
+            let grad = radial * 2.0 - axis * (2.0 * tan2 * axial);
+            let mut g_theta = 0.0;
+            for seed in seeds {
+                g_theta += match *seed {
+                    // Rigid apex translation: ∂g/∂θ = −∇g·v (the whole
+                    // implicit form rides the apex, so the query point's
+                    // motion relative to it is −v).
+                    SurfaceSeed::Translate { velocity } => -grad.dot(velocity),
+                    // Half-angle opening: only tan²α depends on α, so
+                    // ∂g/∂α = −axial²·d(tan²α)/dα = −axial²·2 tanα·sec²α.
+                    SurfaceSeed::ConeAngle { rate } => {
+                        let cos_a = cone.half_angle.cos();
+                        let sec2 = 1.0 / (cos_a * cos_a);
+                        -axial * axial * 2.0 * t * sec2 * rate
+                    }
+                    other => return Err(DiffError::UnsupportedSeed { kind, seed: other }),
+                };
+            }
+            Ok(Some((g, grad, g_theta)))
+        }
+        SurfaceKind::Torus => {
+            let torus = downcast::<TorusSurface>(surface, kind)?;
+            let axis = *torus.axis.as_ref();
+            let rel = *x - torus.center;
+            let axial = rel.dot(axis);
+            let p_radial = rel - axis * axial;
+            let rho = p_radial.norm();
+            if rho < 1e-12 {
+                return Ok(None); // on the axis: ∇g undefined
+            }
+            let major = torus.major_radius;
+            let minor = torus.minor_radius;
+            let g = (rho - major) * (rho - major) + axial * axial - minor * minor;
+            let grad = p_radial * (2.0 * (rho - major) / rho) + axis * (2.0 * axial);
+            let mut g_theta = 0.0;
+            for seed in seeds {
+                g_theta += match *seed {
+                    SurfaceSeed::Translate { velocity } => -grad.dot(velocity),
+                    // ∂g/∂R = −2(ρ − R); ∂g/∂r = −2r.
+                    SurfaceSeed::TorusMajorRadius { rate } => -2.0 * (rho - major) * rate,
+                    SurfaceSeed::TorusMinorRadius { rate } => -2.0 * minor * rate,
+                    other => return Err(DiffError::UnsupportedSeed { kind, seed: other }),
+                };
+            }
+            Ok(Some((g, grad, g_theta)))
         }
         _ => Ok(None),
     }
@@ -457,6 +519,86 @@ mod tests {
                 "pullback rebuild {rebuilt:?} vs forward {v:?}"
             );
         }
+    }
+
+    /// `g(x)` alone for a surface at `x` (no seeds), for FD of `∂g/∂θ`.
+    fn g_only(surface: &dyn Surface, x: &Point3) -> f64 {
+        implicit_terms(surface, &[], x).unwrap().unwrap().0
+    }
+
+    #[test]
+    fn cone_constraint_rhs_matches_fd() {
+        use vcad_kernel_geom::ConeSurface;
+        use vcad_kernel_math::Dir3;
+        let cone = ConeSurface {
+            apex: Point3::new(0.0, 0.0, 20.0),
+            axis: Dir3::new_normalize(-Vec3::z()),
+            ref_dir: Dir3::new_normalize(Vec3::x()),
+            half_angle: 0.25_f64.atan(),
+        };
+        let x = cone.evaluate(vcad_kernel_math::Point2::new(1.3, 12.0));
+        let h = 1e-7;
+
+        // ConeAngle: rhs = −∂g/∂α, FD of g under half_angle ± h.
+        let bumped = |da: f64| ConeSurface {
+            half_angle: cone.half_angle + da,
+            ..cone.clone()
+        };
+        let dgda = (g_only(&bumped(h), &x) - g_only(&bumped(-h), &x)) / (2.0 * h);
+        let row = constraint_row(&cone, &[SurfaceSeed::ConeAngle { rate: 1.0 }], &x).unwrap();
+        assert!(
+            (row.rhs + dgda).abs() < 1e-4,
+            "rhs {} vs -fd {}",
+            row.rhs,
+            -dgda
+        );
+
+        // Translate the apex along +x.
+        let bumped = |dx: f64| ConeSurface {
+            apex: cone.apex + Vec3::new(dx, 0.0, 0.0),
+            ..cone.clone()
+        };
+        let dgdx = (g_only(&bumped(h), &x) - g_only(&bumped(-h), &x)) / (2.0 * h);
+        let row = constraint_row(
+            &cone,
+            &[SurfaceSeed::Translate {
+                velocity: Vec3::x(),
+            }],
+            &x,
+        )
+        .unwrap();
+        assert!(
+            (row.rhs + dgdx).abs() < 1e-4,
+            "rhs {} vs -fd {}",
+            row.rhs,
+            -dgdx
+        );
+    }
+
+    #[test]
+    fn torus_constraint_rhs_matches_fd() {
+        use vcad_kernel_geom::TorusSurface;
+        let torus = TorusSurface::new(7.0, 2.0);
+        let x = torus.evaluate(vcad_kernel_math::Point2::new(1.1, 2.3));
+        let h = 1e-7;
+
+        let bump_major = |d: f64| TorusSurface {
+            major_radius: torus.major_radius + d,
+            ..torus.clone()
+        };
+        let dgdr = (g_only(&bump_major(h), &x) - g_only(&bump_major(-h), &x)) / (2.0 * h);
+        let row =
+            constraint_row(&torus, &[SurfaceSeed::TorusMajorRadius { rate: 1.0 }], &x).unwrap();
+        assert!((row.rhs + dgdr).abs() < 1e-4);
+
+        let bump_minor = |d: f64| TorusSurface {
+            minor_radius: torus.minor_radius + d,
+            ..torus.clone()
+        };
+        let dgdm = (g_only(&bump_minor(h), &x) - g_only(&bump_minor(-h), &x)) / (2.0 * h);
+        let row =
+            constraint_row(&torus, &[SurfaceSeed::TorusMinorRadius { rate: 1.0 }], &x).unwrap();
+        assert!((row.rhs + dgdm).abs() < 1e-4);
     }
 
     #[test]
