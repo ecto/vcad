@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-01-sheet-metal-fab-handoff",
+  "version": "0.9.4",
+  "date": "2026-07-01",
+  "category": "feat",
+  "title": "Fab-ready handoff for sheet-metal quotes",
+  "summary": "quote_manufacturing for sheet metal now returns a fab_handoff: curated instant-quote shops, the exact DXF/STEP file recipe, and what to enter at upload — finish the order on the fab's site today.",
+  "features": ["fabricate", "sheet-metal", "ordering"],
+  "mcpTools": ["quote_manufacturing"]
+}

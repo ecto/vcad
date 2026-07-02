@@ -61,13 +61,34 @@ export function captureToolCall(
   args: Record<string, unknown>,
   result: { isError?: boolean },
 ): void {
+  const docId =
+    typeof args?.document_id === "string" && args.document_id
+      ? args.document_id
+      : undefined;
+  captureEvent("mcp_tool_call", {
+    tool: name,
+    is_error: !!result.isError,
+    ...(docId ? { document_id: docId } : {}),
+  });
+}
+
+/**
+ * Capture a named business event (e.g. `fab_handoff_generated`) with explicit
+ * aggregate properties. Same rules as captureToolCall: fire-and-forget, never
+ * throws, no-op without an API key — and callers must pass only aggregate
+ * fields, never argument values or IR.
+ */
+export function captureEvent(
+  event: string,
+  eventProperties: Record<string, unknown>,
+): void {
   const key = telemetryConfig.apiKey;
   if (!key) return;
 
   const user = currentUser();
   const docId =
-    typeof args?.document_id === "string" && args.document_id
-      ? args.document_id
+    typeof eventProperties.document_id === "string" && eventProperties.document_id
+      ? eventProperties.document_id
       : undefined;
 
   // Signed-in → attribute to the user (matches the web app's posthog.identify).
@@ -77,18 +98,16 @@ export function captureToolCall(
   const distinctId = user?.sub ?? docId ?? "mcp-anonymous";
 
   const properties: Record<string, unknown> = {
-    tool: name,
-    is_error: !!result.isError,
+    ...eventProperties,
     authenticated: !!user,
     ...buildContext,
     $process_person_profile: !!user,
   };
-  if (docId) properties.document_id = docId;
   if (user?.email) properties.$set = { email: user.email };
 
   const body = JSON.stringify({
     api_key: key,
-    event: "mcp_tool_call",
+    event,
     distinct_id: distinctId,
     properties,
     timestamp: new Date().toISOString(),

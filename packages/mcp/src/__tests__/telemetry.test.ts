@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import {
+  captureEvent,
   captureToolCall,
   configureTelemetry,
   flushTelemetry,
@@ -73,6 +74,25 @@ describe("captureToolCall (PostHog)", () => {
     await flushTelemetry();
     const payload = JSON.parse(fetchMock.mock.calls[0][1].body);
     expect(payload.properties.is_error).toBe(true);
+  });
+
+  it("captures a named business event with explicit properties", async () => {
+    telemetryConfig.apiKey = KEY;
+    captureEvent("fab_handoff_generated", {
+      process: "sheet_metal",
+      quantity: 3,
+      total_usd: 42.5,
+    });
+    await flushTelemetry();
+
+    const payload = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(payload.event).toBe("fab_handoff_generated");
+    expect(payload.properties.process).toBe("sheet_metal");
+    expect(payload.properties.quantity).toBe(3);
+    expect(payload.properties.total_usd).toBe(42.5);
+    // Carries the same build identity + auth flags as tool events.
+    expect(payload.properties.build_sha).toBe("abc1234");
+    expect(payload.properties.authenticated).toBe(false);
   });
 
   it("never throws when the capture POST fails", async () => {

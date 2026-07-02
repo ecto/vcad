@@ -21,6 +21,8 @@ import { measureDocument } from "../fabricate/geometry.js";
 import { FulfillmentBroker } from "../fabricate/broker.js";
 import { toDfmProcess, catalogMaterial } from "../fabricate/process-map.js";
 import { ownerId, type FabricateStore } from "../fabricate/store.js";
+import { buildFabHandoff } from "../fabricate/handoff.js";
+import { captureEvent } from "../telemetry.js";
 import { resolveArtifactRef } from "./artifact-store.js";
 import {
   PROCESSES,
@@ -242,6 +244,22 @@ export async function quoteManufacturing(
     /* in-memory never throws; cloud logs internally */
   }
 
+  // Interim rail for processes with no signed fab partner: hand the agent a
+  // structured path to finish the order on a fab's own instant-quote site.
+  const fabHandoff = buildFabHandoff(process, { hasArtifact: fabArtifact != null });
+  if (fabHandoff) {
+    // Aggregate BD telemetry — how much order-ready demand the handoff rail
+    // generates (counts + totals only; no argument values or IR).
+    captureEvent("fab_handoff_generated", {
+      process,
+      quantity,
+      material: quote.material ?? "unspecified",
+      total_usd: toUsd(quote.total_amount_minor),
+      has_fab_artifact: fabArtifact != null,
+      dfm_passed: dfm.passed,
+    });
+  }
+
   // Agent-facing payload: margin-inclusive prices only; fab cost / margin never appear.
   return ok({
     quote_id: quoteId,
@@ -286,6 +304,7 @@ export async function quoteManufacturing(
     },
     margin_hidden: true,
     orderable: result.recommended.orderable,
+    ...(fabHandoff ? { fab_handoff: fabHandoff } : {}),
     expires_at: expiresAt,
     fab_artifact: fabArtifact
       ? {
