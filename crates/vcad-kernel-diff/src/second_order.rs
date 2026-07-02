@@ -26,20 +26,20 @@
 //!
 //! # Node accelerations
 //!
-//! - **Lift nodes** (`SurfaceUv`) on plane/cylinder/sphere: the surface point
-//!   `x(θ) = S(u, v; fields(θ))` is **linear** in the seeded fields
-//!   (translation, radius) at a frozen `(u, v)`, so `∂x/∂field` is a constant
-//!   map and `ẍ = (∂x/∂field)·field̈` — exactly the first-order lift
-//!   ([`crate::lift_surface`]) evaluated with the field *accelerations*
-//!   seeded where velocities normally go. No second-order lift is needed for
-//!   these kinds; cone/torus (nonlinear in half-angle / radii) are rejected
-//!   with [`DiffError::SecondOrderUnsupported`].
+//! - **Lift nodes** (`SurfaceUv`): the surface point `x(θ) = S(u, v;
+//!   fields(θ))` is evaluated through the nested-dual lift
+//!   ([`crate::lift_surface_second`]) with every seeded field packed as
+//!   `((f, ḟ), (ḟ, f̈))`, so `ẍ = ∂x/∂field·field̈ + ∂²x/∂field²·fielḋ ²`
+//!   comes out exactly for **every** surface kind — the linear kinds
+//!   (plane/cylinder/sphere, where the second term vanishes) and the
+//!   nonlinear ones (cone's `tan α`, torus radii) alike.
 //! - **Vertex / Boundary nodes** solve the second-order implicit system
 //!   ([`crate::constraint_row_2`]): the same row gradients as the velocity
 //!   solve, the frozen tangential completion reused verbatim, only the
-//!   right-hand side carries the curvature. Tangency-completion rows are
-//!   linear in `x` and the surface center, so their second-order form is the
-//!   first-order [`crate::tangency_rows`] fed the acceleration seeds.
+//!   right-hand side carries the curvature — including the cone/torus
+//!   non-constant `∇²g` terms. Tangency-completion rows are linear in `x`
+//!   and the surface center, so their second-order form is the first-order
+//!   [`crate::tangency_rows`] fed the acceleration seeds.
 //!
 //! What this computes, exactly: the volume second derivative with the node
 //! accelerations of plane/cylinder/sphere nodes carried in full. It is not a
@@ -50,7 +50,6 @@
 use std::collections::{BTreeSet, HashMap};
 
 use tang::Dual;
-use vcad_kernel_geom::SurfaceKind;
 use vcad_kernel_math::{Point2, Point3, Vec3};
 use vcad_kernel_primitives::BRepSolid;
 use vcad_kernel_tessellate::frozen::{refine_boundary_point, FrozenError, FrozenPlan, NodeRecipe};
@@ -59,8 +58,8 @@ use crate::seam::{
     assemble_vertex_rows, checked_index, incidence_context, vertex_incident_surfaces,
 };
 use crate::{
-    constraint_row, constraint_row_2, lift_surface, mesh_volume, solve_vertex_velocity,
-    tangency_rows, ConstraintRow, DiffError, DualSurface, ParamSeeding,
+    constraint_row, constraint_row_2, lift_surface_second, mesh_volume, solve_vertex_velocity,
+    tangency_rows, ConstraintRow, DiffError, DualSurface2, ParamSeeding,
 };
 
 /// A parameter's first- **and** second-order seeding: how θ moves each
@@ -164,9 +163,8 @@ fn assemble_vertex_rows_second(
 /// [`crate::evaluate_with_sensitivity`] (the same signature and anchor checks
 /// hold). The first-order path is identical to that function; the addition is
 /// the per-node acceleration `ẍ` (see the module docs for the kinematics).
-///
-/// `SurfaceUv` nodes are restricted to plane/cylinder/sphere; a lift node on
-/// a cone/torus errors with [`DiffError::SecondOrderUnsupported`].
+/// Every surface kind with an implicit form is supported — plane, cylinder,
+/// sphere, cone, and torus.
 pub fn evaluate_with_second_derivative(
     brep: &BRepSolid,
     plan: &FrozenPlan,
@@ -178,10 +176,9 @@ pub fn evaluate_with_second_derivative(
     let vel = &seeding.velocity;
     let acc = &seeding.acceleration;
 
-    // Lift each referenced face surface once per (velocity / acceleration)
-    // seeding — shared by every sample on the face.
-    let mut lifted_vel: HashMap<u32, DualSurface> = HashMap::new();
-    let mut lifted_acc: HashMap<u32, DualSurface> = HashMap::new();
+    // Lift each referenced face surface once to the nested-dual scalar with
+    // both seedings applied — shared by every sample on the face.
+    let mut lifted: HashMap<u32, DualSurface2> = HashMap::new();
 
     let anchor_check = |node: usize, p: &Point3, anchor: &Point3| -> Result<(), DiffError> {
         let d2 = (*p - *anchor).norm_squared();
@@ -228,28 +225,17 @@ pub fn evaluate_with_second_derivative(
                         .ok_or(FrozenError::RecipeOutOfRange)?;
                     topo.faces[face_id].surface_index
                 };
-                let kind = brep.geometry.surfaces[surface_index].surface_type();
-                // Only kinds whose points are linear in the seeded fields.
-                if !matches!(
-                    kind,
-                    SurfaceKind::Plane | SurfaceKind::Cylinder | SurfaceKind::Sphere
-                ) {
-                    return Err(DiffError::SecondOrderUnsupported(kind));
-                }
                 let uv = Point2::new(u, v);
-                if let std::collections::hash_map::Entry::Vacant(e) = lifted_vel.entry(face) {
+                if let std::collections::hash_map::Entry::Vacant(e) = lifted.entry(face) {
                     let surface = brep.geometry.surfaces[surface_index].as_ref();
-                    e.insert(lift_surface(surface, vel.get(surface_index))?);
+                    e.insert(lift_surface_second(
+                        surface,
+                        vel.get(surface_index),
+                        acc.get(surface_index),
+                    )?);
                 }
-                if let std::collections::hash_map::Entry::Vacant(e) = lifted_acc.entry(face) {
-                    let surface = brep.geometry.surfaces[surface_index].as_ref();
-                    e.insert(lift_surface(surface, acc.get(surface_index))?);
-                }
-                let (p, vx) = lifted_vel[&face].evaluate_with_velocity(uv);
+                let (p, vx, ax) = lifted[&face].evaluate_with_acceleration(uv);
                 anchor_check(i, &p, &plan.base_positions[i])?;
-                // x is linear in the fields ⇒ ẍ = (∂x/∂field)·field̈, which is
-                // the first-order lift evaluated with the acceleration seeds.
-                let (_, ax) = lifted_acc[&face].evaluate_with_velocity(uv);
                 positions.push(p);
                 velocities.push(vx);
                 accelerations.push(ax);

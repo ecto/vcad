@@ -288,6 +288,232 @@ fn m10_rounded_cube_second_derivative_matches_fd() {
     );
 }
 
+// ======================================== cone / torus second order (F1)
+
+const CONE_APEX_Z: f64 = 20.0;
+const CONE_H: f64 = 8.0;
+const CONE_SEGS: u32 = 24;
+
+/// θ = half-angle α about a fixed apex (the M7 cone-alpha model): both cap
+/// radii are `(APEX_Z − z)·tan α`, so every node position is **nonlinear**
+/// in α and the second-order machinery must produce nonzero accelerations.
+fn build_cone_alpha(alpha: f64) -> BRepSolid {
+    let t = alpha.tan();
+    vcad_kernel_primitives::make_cone(
+        CONE_APEX_Z * t,
+        (CONE_APEX_Z - CONE_H) * t,
+        CONE_H,
+        CONE_SEGS,
+    )
+}
+
+fn cone_alpha_seeding(brep: &BRepSolid) -> ParamSeeding {
+    let mut s = ParamSeeding::new();
+    let n = s.seed_where(
+        &brep.geometry,
+        |surf| surf.surface_type() == vcad_kernel_geom::SurfaceKind::Cone,
+        SurfaceSeed::ConeAngle { rate: 1.0 },
+    );
+    assert_eq!(n, 1, "expected exactly the cone lateral surface");
+    s
+}
+
+#[test]
+fn m10_cone_half_angle_second_derivative_matches_closed_form() {
+    let params = TessellationParams {
+        circle_segments: CONE_SEGS,
+        height_segments: 2,
+        ..Default::default()
+    };
+    let alpha0 = 0.25_f64.atan();
+    let (v, dv, ddv) = second_order_volume(&build_cone_alpha, &cone_alpha_seeding, alpha0, &params);
+
+    // Discrete closed form: V(α) = (h·k/3)·C·tan²α with k = ½N sin(2π/N) and
+    // C = z_a² + z_b² + z_a·z_b (z_a = 20, z_b = 12) — exactly quadratic in
+    // tan α, so d²V/dα² = (h·k/3)·C·(2 sec⁴α + 4 tan²α sec²α) is exact for
+    // the frozen mesh, a zero-discretization-error target like the boolean
+    // hole's.
+    let n = CONE_SEGS as f64;
+    let k = 0.5 * n * (2.0 * std::f64::consts::PI / n).sin();
+    let za = CONE_APEX_Z;
+    let zb = CONE_APEX_Z - CONE_H;
+    let c = za * za + zb * zb + za * zb;
+    let t = alpha0.tan();
+    let sec2 = 1.0 / (alpha0.cos() * alpha0.cos());
+    let v_exact = CONE_H * k / 3.0 * c * t * t;
+    let dv_exact = CONE_H * k / 3.0 * c * 2.0 * t * sec2;
+    let ddv_exact = CONE_H * k / 3.0 * c * (2.0 * sec2 * sec2 + 4.0 * t * t * sec2);
+
+    assert!((v - v_exact).abs() / v_exact < 1e-12, "V {v} vs {v_exact}");
+    assert!(
+        (dv - dv_exact).abs() / dv_exact.abs() < 1e-9,
+        "dV/dα {dv} vs {dv_exact}"
+    );
+    let rel = (ddv - ddv_exact).abs() / ddv_exact.abs();
+    eprintln!("cone d²V/dα²: analytic {ddv:.6} vs closed {ddv_exact:.6} (rel {rel:.3e})");
+    assert!(
+        rel <= 1e-9,
+        "cone d²V/dα² {ddv} vs closed form {ddv_exact} (rel {rel:.3e})"
+    );
+
+    // FD of the analytic dV/dα (fresh captures at α ± h).
+    let fd = fd_of_analytic_dv(
+        &build_cone_alpha,
+        &cone_alpha_seeding,
+        alpha0,
+        1e-6,
+        &params,
+    );
+    let rel_fd = (ddv - fd).abs() / ddv_exact.abs();
+    assert!(
+        rel_fd <= 1e-5,
+        "cone d²V/dα² {ddv} vs FD {fd} (rel {rel_fd:.3e})"
+    );
+
+    // The point of the extension: nodes are genuinely nonlinear in α, so the
+    // machinery must produce *nonzero* accelerations (unlike every previous
+    // linear-in-θ gate).
+    let brep = build_cone_alpha(alpha0);
+    let plan = capture_plan(&brep, &params).unwrap();
+    let seam = evaluate_with_second_derivative(
+        &brep,
+        &plan,
+        &SecondOrderSeeding::linear(cone_alpha_seeding(&brep)),
+    )
+    .unwrap();
+    let max_accel = seam
+        .accelerations
+        .iter()
+        .map(|a| a.norm())
+        .fold(0.0_f64, f64::max);
+    assert!(
+        max_accel > 1.0,
+        "cone nodes must accelerate (tan α nonlinearity), max ‖ẍ‖ = {max_accel:.3e}"
+    );
+}
+
+const TORUS_R: f64 = 8.0;
+const TORUS_MINOR: f64 = 3.0;
+const TORUS_SEGS: u32 = 24;
+
+fn torus_params() -> TessellationParams {
+    TessellationParams {
+        circle_segments: TORUS_SEGS,
+        height_segments: 2,
+        latitude_segments: TORUS_SEGS,
+        ..Default::default()
+    }
+}
+
+fn torus_seeding(brep: &BRepSolid, seed: SurfaceSeed) -> ParamSeeding {
+    let mut s = ParamSeeding::new();
+    let n = s.seed_where(
+        &brep.geometry,
+        |surf| surf.surface_type() == vcad_kernel_geom::SurfaceKind::Torus,
+        seed,
+    );
+    assert_eq!(n, 1, "expected exactly the torus surface");
+    s
+}
+
+#[test]
+fn m10_torus_minor_radius_second_derivative() {
+    let params = torus_params();
+    let build = |r: f64| vcad_kernel_primitives::make_torus(TORUS_R, r, TORUS_SEGS);
+    let seeding =
+        |brep: &BRepSolid| torus_seeding(brep, SurfaceSeed::TorusMinorRadius { rate: 1.0 });
+    let (_, dv, ddv) = second_order_volume(&build, &seeding, TORUS_MINOR, &params);
+
+    // Continuum sanity band: V = 2π²R r² ⇒ d²V/dr² = 4π²R; the two
+    // N-gon polygonizations put the mesh a few percent under it.
+    let ddv_cont = 4.0 * std::f64::consts::PI.powi(2) * TORUS_R;
+    assert!(
+        (ddv - ddv_cont).abs() / ddv_cont < 0.05,
+        "torus d²V/dr² {ddv} vs continuum {ddv_cont}"
+    );
+
+    // Gate: FD of the analytic dV/dr (fresh captures at r ± h). The torus
+    // seam-loop boundary nodes re-capture with O(1e-8) correspondence jitter
+    // (measured: rel 1.2e-4 at h = 1e-6, jitter/2h-limited), so use h = 1e-4
+    // where the jitter clears — same reasoning as the rounded-cube gate. The
+    // truncation term is negligible (V is cubic in r, d³V/dr³ ≈ 2πk·6).
+    let fd = fd_of_analytic_dv(&build, &seeding, TORUS_MINOR, 1e-4, &params);
+    let rel = (ddv - fd).abs() / ddv.abs();
+    eprintln!("torus d²V/dr²: analytic {ddv:.6} vs FD {fd:.6} (rel {rel:.3e}), dV/dr {dv:.6}");
+    assert!(
+        rel <= 1e-5,
+        "torus d²V/dr² {ddv} vs FD {fd} (rel {rel:.3e})"
+    );
+}
+
+#[test]
+fn m10_torus_major_radius_second_derivative() {
+    let params = torus_params();
+    let build = |big_r: f64| vcad_kernel_primitives::make_torus(big_r, TORUS_MINOR, TORUS_SEGS);
+    let seeding =
+        |brep: &BRepSolid| torus_seeding(brep, SurfaceSeed::TorusMajorRadius { rate: 1.0 });
+    let (_, dv, ddv) = second_order_volume(&build, &seeding, TORUS_R, &params);
+
+    // V is linear in R (Pappus: cross-section area × centroid path), for the
+    // discrete swept mesh exactly as for the continuum ⇒ d²V/dR² = 0. The
+    // torus rows' velocity-curvature terms are individually nonzero here and
+    // must cancel exactly against the lift's ∂²x/∂R² = 0.
+    let fd = fd_of_analytic_dv(&build, &seeding, TORUS_R, 1e-6, &params);
+    eprintln!("torus d²V/dR²: analytic {ddv:.3e} vs FD {fd:.3e} (dV/dR {dv:.6})");
+    assert!(
+        ddv.abs() < 1e-6 * dv.abs(),
+        "d²V/dR² should vanish (V linear in R), got {ddv:.3e}"
+    );
+    assert!((ddv - fd).abs() < 1e-4, "analytic {ddv:.3e} vs FD {fd:.3e}");
+}
+
+#[test]
+fn m10_torus_nonlinear_field_chain_rule() {
+    // r(θ) = θ² at θ0 = √3: velocity seeding ṙ = 2θ0, acceleration seeding
+    // r̈ = 2. Chain rule on the same frozen plan:
+    //   d²V/dθ² = d²V/dr²·(2θ0)² + dV/dr·2,
+    // with d²V/dr² and dV/dr from the linear-seeding run — an internal
+    // consistency gate that exercises nonzero acceleration seeds through
+    // every torus node class (lift, boundary, seam vertex).
+    let params = torus_params();
+    let theta0 = TORUS_MINOR.sqrt();
+    let brep = vcad_kernel_primitives::make_torus(TORUS_R, TORUS_MINOR, TORUS_SEGS);
+    let plan = capture_plan(&brep, &params).expect("capture torus");
+
+    // Linear-in-r run: dV/dr and d²V/dr².
+    let lin = SecondOrderSeeding::linear(torus_seeding(
+        &brep,
+        SurfaceSeed::TorusMinorRadius { rate: 1.0 },
+    ));
+    let seam_lin = evaluate_with_second_derivative(&brep, &plan, &lin).expect("linear seam");
+    let (_, dv_dr, ddv_drr) = volume_with_second_derivative(&seam_lin);
+
+    // Nonlinear r(θ) = θ² run.
+    let nonlin = SecondOrderSeeding {
+        velocity: torus_seeding(&brep, SurfaceSeed::TorusMinorRadius { rate: 2.0 * theta0 }),
+        acceleration: torus_seeding(&brep, SurfaceSeed::TorusMinorRadius { rate: 2.0 }),
+    };
+    let seam_nl = evaluate_with_second_derivative(&brep, &plan, &nonlin).expect("nonlinear seam");
+    let (_, dv_dtheta, ddv_dthth) = volume_with_second_derivative(&seam_nl);
+
+    let dv_expected = dv_dr * 2.0 * theta0;
+    let ddv_expected = ddv_drr * (2.0 * theta0) * (2.0 * theta0) + dv_dr * 2.0;
+    let rel1 = (dv_dtheta - dv_expected).abs() / dv_expected.abs();
+    let rel2 = (ddv_dthth - ddv_expected).abs() / ddv_expected.abs();
+    eprintln!(
+        "torus chain rule: dV/dθ {dv_dtheta:.6} vs {dv_expected:.6} (rel {rel1:.3e}), \
+         d²V/dθ² {ddv_dthth:.6} vs {ddv_expected:.6} (rel {rel2:.3e})"
+    );
+    assert!(
+        rel1 <= 1e-12,
+        "first-order chain rule violated (rel {rel1:.3e})"
+    );
+    assert!(
+        rel2 <= 1e-12,
+        "second-order chain rule violated (rel {rel2:.3e})"
+    );
+}
+
 // ================================================= Gauss–Newton curvature
 
 // The M9 five-parameter model: fillet_all_edges(cube(sx,sy,sz), r) drilled by

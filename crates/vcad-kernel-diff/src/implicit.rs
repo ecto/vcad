@@ -284,18 +284,15 @@ pub fn tangency_rows(
 ///   normally go (`constraint_row(surface, acc_seeds, x).rhs`) — the plane's
 ///   whole contribution, and the field-second-derivative `∂²g/∂θ²` term of
 ///   the quadrics;
-/// - the **velocity-curvature** part `−2‖ẋ⊥ − v_c⊥‖² + 2ṙ²` (plane: `0`), the
-///   collected `ẋ`- and field-velocity-quadratic terms. Only the implicit
-///   form's *constant* Hessian (`∇²g` = `0` plane / `2I` sphere / `2P`
-///   cylinder, `P = I − aaᵀ`) and the seeded field velocities enter it, so it
-///   is closed form.
+/// - the **velocity-curvature** part (plane: `0`), the collected `ẋ`- and
+///   field-velocity-quadratic terms. For sphere/cylinder it is the closed
+///   form `−2‖ẋ⊥ − v_c⊥‖² + 2ṙ²` of their *constant* Hessian (`∇²g` = `2I` /
+///   `2P`, `P = I − aaᵀ`); cone and torus carry their non-constant curvature
+///   in closed form too (see [`velocity_curvature`]'s per-kind derivations).
 ///
 /// `x` is the vertex position, `xdot` its already-solved velocity (from
 /// [`solve_vertex_velocity`] on the first-order rows). Implemented for
-/// plane/cylinder/sphere — enough for the boolean-hole and rounded-cube
-/// second-order volume gates; cone/torus return
-/// [`DiffError::UnsupportedConstraint`], since their curvature term carries a
-/// non-constant `∇²g` (a mechanical extension, deliberately not shipped).
+/// plane/cylinder/sphere/cone/torus — every kind with an implicit form.
 pub fn constraint_row_2(
     surface: &dyn Surface,
     vel_seeds: &[SurfaceSeed],
@@ -315,12 +312,16 @@ pub fn constraint_row_2(
 /// The velocity-quadratic part of the second-order rhs (see
 /// [`constraint_row_2`]). Plane: identically zero (`∇²g = 0`, `g` linear in
 /// both `x` and the origin). Sphere/cylinder: `−2‖ẋ − v_c‖² + 2ṙ²`, projected
-/// perpendicular to the axis for the cylinder. Errors on kinds without a
-/// second-order form, and on inapplicable seeds.
+/// perpendicular to the axis for the cylinder. Cone/torus carry the extra
+/// terms of their non-constant curvature — differentiating `ġ = 0` once more
+/// and keeping everything quadratic in the first-order rates (`ẋ` and the
+/// field velocities), with the field accelerations' share left to the base
+/// row. Errors on kinds without a second-order form, and on inapplicable
+/// seeds.
 fn velocity_curvature(
     surface: &dyn Surface,
     vel_seeds: &[SurfaceSeed],
-    _x: &Point3,
+    x: &Point3,
     xdot: &Vec3,
 ) -> Result<f64, DiffError> {
     let kind = surface.surface_type();
@@ -347,8 +348,93 @@ fn velocity_curvature(
             let rel = xperp - vcperp;
             Ok(-2.0 * rel.norm_squared() + 2.0 * rdot * rdot)
         }
+        SurfaceKind::Cone => {
+            // g = ‖p‖² − τ h², τ = tan²α, u = x − apex, h = u·a, p = u − h a.
+            // With ẇ = ẋ − v_apex (relative rate), ḣ = ẇ·a, ṗ = ẇ − ḣ a:
+            //   g̈|quad = 2‖ẇ⊥‖² − τ̈ h² − 4 τ̇ h ḣ − 2 τ ḣ²,
+            // where τ̇ = 2 tanα sec²α · α̇ and (with α̈'s share in the base
+            // row) τ̈ = 2 sec²α (sec²α + 2 tan²α) · α̇².
+            let cone = downcast::<ConeSurface>(surface, kind)?;
+            let a = *cone.axis.as_ref();
+            let (v_apex, adot) = cone_field_velocity(kind, vel_seeds)?;
+            let w = *xdot - v_apex;
+            let hdot = w.dot(a);
+            let wperp = w - a * hdot;
+            let h = (*x - cone.apex).dot(a);
+            let t = cone.half_angle.tan();
+            let cos_a = cone.half_angle.cos();
+            let sec2 = 1.0 / (cos_a * cos_a);
+            let tau = t * t;
+            let tau_dot = 2.0 * t * sec2 * adot;
+            let tau_ddot = 2.0 * sec2 * (sec2 + 2.0 * tau) * adot * adot;
+            Ok(-2.0 * wperp.norm_squared()
+                + tau_ddot * h * h
+                + 4.0 * tau_dot * h * hdot
+                + 2.0 * tau * hdot * hdot)
+        }
+        SurfaceKind::Torus => {
+            // g = (ρ − R)² + h² − r², u = x − c, h = u·a, p = u − h a,
+            // ρ = ‖p‖. With ẇ = ẋ − v_c, ḣ = ẇ·a, ρ̇ = p̂·ẇ:
+            //   g̈|quad = 2(ρ̇ − Ṙ)² + 2(ρ − R)(‖ẇ⊥‖² − ρ̇²)/ρ + 2ḣ² − 2ṙ²,
+            // the middle term being ρ's own curvature (the non-constant ∇²g).
+            let torus = downcast::<TorusSurface>(surface, kind)?;
+            let a = *torus.axis.as_ref();
+            let (vc, big_rdot, rdot) = torus_field_velocity(kind, vel_seeds)?;
+            let rel = *x - torus.center;
+            let h = rel.dot(a);
+            let p = rel - a * h;
+            let rho = p.norm();
+            if rho < 1e-12 {
+                return Err(DiffError::UnsupportedConstraint(kind));
+            }
+            let phat = p / rho;
+            let w = *xdot - vc;
+            let hdot = w.dot(a);
+            let wperp = w - a * hdot;
+            let rho_dot = phat.dot(wperp);
+            let curv_rho = (wperp.norm_squared() - rho_dot * rho_dot) / rho;
+            Ok(-(2.0 * (rho_dot - big_rdot) * (rho_dot - big_rdot)
+                + 2.0 * (rho - torus.major_radius) * curv_rho
+                + 2.0 * hdot * hdot
+                - 2.0 * rdot * rdot))
+        }
         _ => Err(DiffError::UnsupportedConstraint(kind)),
     }
+}
+
+/// Sum the seeded (apex velocity, half-angle rate) of a cone's velocity
+/// seeds, rejecting inapplicable kinds.
+fn cone_field_velocity(kind: SurfaceKind, seeds: &[SurfaceSeed]) -> Result<(Vec3, f64), DiffError> {
+    let mut v_apex = Vec3::new(0.0, 0.0, 0.0);
+    let mut adot = 0.0;
+    for seed in seeds {
+        match *seed {
+            SurfaceSeed::Translate { velocity } => v_apex += velocity,
+            SurfaceSeed::ConeAngle { rate } => adot += rate,
+            other => return Err(DiffError::UnsupportedSeed { kind, seed: other }),
+        }
+    }
+    Ok((v_apex, adot))
+}
+
+/// Sum the seeded (center velocity, major-radius rate, minor-radius rate) of
+/// a torus's velocity seeds, rejecting inapplicable kinds.
+fn torus_field_velocity(
+    kind: SurfaceKind,
+    seeds: &[SurfaceSeed],
+) -> Result<(Vec3, f64, f64), DiffError> {
+    let mut vc = Vec3::new(0.0, 0.0, 0.0);
+    let mut big_rdot = 0.0;
+    let mut rdot = 0.0;
+    for seed in seeds {
+        match *seed {
+            SurfaceSeed::Translate { velocity } => vc += velocity,
+            SurfaceSeed::TorusMajorRadius { rate } => big_rdot += rate,
+            SurfaceSeed::TorusMinorRadius { rate } => rdot += rate,
+            other => return Err(DiffError::UnsupportedSeed { kind, seed: other }),
+        }
+    }
+    Ok((vc, big_rdot, rdot))
 }
 
 /// Sum the seeded (center velocity, radius rate) of a sphere's velocity
@@ -823,5 +909,112 @@ mod tests {
         let xddot = solve_vertex_velocity(&rows2).unwrap();
         // Pole rides at exactly z = r (linear in r), so ẍ = 0.
         assert!(xddot.norm() < 1e-12, "xddot = {xddot:?}");
+    }
+
+    #[test]
+    fn cone_angle_acceleration_matches_closed_form() {
+        // A rim vertex on a fixed plane z = z0 and a cone (apex above, axis
+        // −ẑ) whose half-angle opens at constant rate α̇: the rim radius is
+        // ρ(α) = (apex_z − z0)·tan α, so with the angular slide frozen
+        //   ẋ = ρ'(α)·û = d·sec²α·α̇·û,  ẍ = ρ''(α)·û = d·2 sec²α tanα·α̇²·û,
+        // d = apex_z − z0. Nonlinear in α even with α̈ = 0 — exercising the
+        // cone's velocity-curvature term against an exact closed form.
+        use vcad_kernel_geom::ConeSurface;
+        use vcad_kernel_math::Dir3;
+        let apex_z = 20.0;
+        let z0 = 5.0;
+        let d = apex_z - z0;
+        let alpha = 0.25_f64.atan();
+        let adot = 1.0;
+        let cone = ConeSurface {
+            apex: Point3::new(0.0, 0.0, apex_z),
+            axis: Dir3::new_normalize(-Vec3::z()),
+            ref_dir: Dir3::new_normalize(Vec3::x()),
+            half_angle: alpha,
+        };
+        let plane = Plane::new(Point3::new(0.0, 0.0, z0), Vec3::x(), Vec3::y());
+        let u = 0.8_f64;
+        let uhat = Vec3::new(u.cos(), u.sin(), 0.0);
+        let rho = d * alpha.tan();
+        let x = Point3::new(rho * u.cos(), rho * u.sin(), z0);
+
+        let seed = [SurfaceSeed::ConeAngle { rate: adot }];
+        let rows1 = vec![
+            constraint_row(&plane, &[], &x).unwrap(),
+            constraint_row(&cone, &seed, &x).unwrap(),
+        ];
+        let xdot = solve_vertex_velocity(&rows1).unwrap();
+        let sec2 = 1.0 / (alpha.cos() * alpha.cos());
+        assert!(
+            (xdot - uhat * (d * sec2 * adot)).norm() < 1e-9,
+            "xdot = {xdot:?}"
+        );
+
+        let rows2 = vec![
+            constraint_row_2(&plane, &[], &[], &x, &xdot).unwrap(),
+            constraint_row_2(&cone, &seed, &[], &x, &xdot).unwrap(),
+        ];
+        let xddot = solve_vertex_velocity(&rows2).unwrap();
+        let expected = uhat * (d * 2.0 * sec2 * alpha.tan() * adot * adot);
+        assert!(
+            (xddot - expected).norm() < 1e-9,
+            "xddot = {xddot:?} vs expected {expected:?}"
+        );
+    }
+
+    #[test]
+    fn torus_minor_radius_acceleration_matches_nonlinear_field() {
+        // A point on the outer equator of a torus whose minor radius is a
+        // nonlinear function of θ: r(θ) = r0 + ṙθ + ½r̈θ². The point rides
+        // radially: x(θ) = (R + r(θ))·û, so ẋ = ṙ·û and ẍ = r̈·û — the
+        // torus analogue of the cylinder nonlinear-field test, pinned by two
+        // planes so only the radial DOF is live... the torus row alone pins
+        // the normal direction and the tangential DOFs are frozen, exactly
+        // like the cylinder case.
+        use vcad_kernel_geom::TorusSurface;
+        let torus = TorusSurface::new(7.0, 2.0);
+        let (rdot, rddot) = (0.6, 1.7);
+        let u = 0.9_f64;
+        let uhat = Vec3::new(u.cos(), u.sin(), 0.0);
+        let x = Point3::new(9.0 * u.cos(), 9.0 * u.sin(), 0.0); // ρ = R + r
+
+        let vel_seed = [SurfaceSeed::TorusMinorRadius { rate: rdot }];
+        let acc_seed = [SurfaceSeed::TorusMinorRadius { rate: rddot }];
+        let rows1 = vec![constraint_row(&torus, &vel_seed, &x).unwrap()];
+        let xdot = solve_vertex_velocity(&rows1).unwrap();
+        assert!((xdot - uhat * rdot).norm() < 1e-12, "xdot = {xdot:?}");
+
+        let rows2 = vec![constraint_row_2(&torus, &vel_seed, &acc_seed, &x, &xdot).unwrap()];
+        let xddot = solve_vertex_velocity(&rows2).unwrap();
+        assert!(
+            (xddot - uhat * rddot).norm() < 1e-10,
+            "xddot = {xddot:?} vs expected {:?}",
+            uhat * rddot
+        );
+    }
+
+    #[test]
+    fn torus_major_radius_acceleration_second_row_matches_fd() {
+        // Validate the torus second-order row's rhs directly against a central
+        // difference of the first-order rhs along the moving-point trajectory:
+        // for x(θ) riding the outer equator of a torus with R(θ) = R0 + Ṙθ,
+        // ∇g·ẍ must equal d/dθ[∇g·ẋ] − (∇̇g)·ẋ; equivalently the identity
+        // g(x(θ), θ) ≡ 0 gives ẍ = R̈ û = 0 here, so the solved acceleration
+        // must vanish even though the velocity-curvature and rhs terms are
+        // individually nonzero (they cancel exactly).
+        use vcad_kernel_geom::TorusSurface;
+        let torus = TorusSurface::new(7.0, 2.0);
+        let u = 1.7_f64;
+        let uhat = Vec3::new(u.cos(), u.sin(), 0.0);
+        let x = Point3::new(9.0 * u.cos(), 9.0 * u.sin(), 0.0);
+
+        let vel_seed = [SurfaceSeed::TorusMajorRadius { rate: 1.0 }];
+        let rows1 = vec![constraint_row(&torus, &vel_seed, &x).unwrap()];
+        let xdot = solve_vertex_velocity(&rows1).unwrap();
+        assert!((xdot - uhat).norm() < 1e-12, "xdot = {xdot:?}");
+
+        let rows2 = vec![constraint_row_2(&torus, &vel_seed, &[], &x, &xdot).unwrap()];
+        let xddot = solve_vertex_velocity(&rows2).unwrap();
+        assert!(xddot.norm() < 1e-10, "xddot = {xddot:?}, expected 0");
     }
 }
