@@ -1491,10 +1491,22 @@ impl Curve2d for Circle2d {
 /// The implicit form `g(x) = 0` of a surface, for the kinds that have one:
 /// returns `(g(p), ∇g(p))`.
 ///
-/// Forms: plane `g = n·(x − o)`; cylinder `g = |radial|² − r²`; sphere
-/// `g = |x − c|² − r²`. Returns `None` for kinds without a closed implicit
-/// form. Consumers that need a distance-like quantity should divide by
-/// `|∇g|` (the quadric forms are not signed distances).
+/// Forms:
+/// - plane `g = n·(x − o)`;
+/// - cylinder `g = |radial|² − r²`, `radial = (x − c) − ((x − c)·a) a`;
+/// - sphere `g = |x − c|² − r²`;
+/// - cone (apex `a`, unit axis `d`, half-angle `α`)
+///   `g = |radial|² − tan²α · axial²` with `axial = (x − a)·d`,
+///   `radial = (x − a) − axial·d` — zero exactly on the cone's ruled
+///   surface (both nappes; the primitive only meshes the forward one);
+/// - torus (center `c`, unit axis `d`, major `R`, minor `r`)
+///   `g = (ρ − R)² + axial² − r²` with `axial = (x − c)·d`,
+///   `ρ = |(x − c) − axial·d|`.
+///
+/// Returns `None` for kinds without a closed implicit form, and for the
+/// torus when `ρ → 0` (a query point on the axis, where `∇ρ` — hence the
+/// gradient — is undefined). Consumers that need a distance-like quantity
+/// should divide by `|∇g|` (the quadric forms are not signed distances).
 pub fn implicit_form(surface: &dyn Surface, p: &Point3) -> Option<(f64, Vec3)> {
     match surface.surface_type() {
         SurfaceKind::Plane => {
@@ -1515,6 +1527,38 @@ pub fn implicit_form(surface: &dyn Surface, p: &Point3) -> Option<(f64, Vec3)> {
             let sph = surface.as_any().downcast_ref::<SphereSurface>()?;
             let d = *p - sph.center;
             Some((d.norm_squared() - sph.radius * sph.radius, 2.0 * d))
+        }
+        SurfaceKind::Cone => {
+            let cone = surface.as_any().downcast_ref::<ConeSurface>()?;
+            let d = *cone.axis.as_ref();
+            let rel = *p - cone.apex;
+            let axial = rel.dot(d);
+            let radial = rel - d * axial;
+            let t = cone.half_angle.tan();
+            let tan2 = t * t;
+            // g = |radial|² − tan²α·axial²; ∇g = 2 radial − 2 tan²α·axial·d
+            // (radial is already ⊥ d, so ∇(|radial|²) = 2 radial).
+            let g = radial.norm_squared() - tan2 * axial * axial;
+            let grad = radial * 2.0 - d * (2.0 * tan2 * axial);
+            Some((g, grad))
+        }
+        SurfaceKind::Torus => {
+            let torus = surface.as_any().downcast_ref::<TorusSurface>()?;
+            let d = *torus.axis.as_ref();
+            let rel = *p - torus.center;
+            let axial = rel.dot(d);
+            let p_radial = rel - d * axial;
+            let rho = p_radial.norm();
+            if rho < 1e-12 {
+                return None; // on the axis: radial direction (hence ∇g) undefined
+            }
+            let major = torus.major_radius;
+            let minor = torus.minor_radius;
+            // g = (ρ − R)² + axial² − r²;
+            // ∇g = 2(ρ − R)/ρ · p_radial + 2 axial · d.
+            let g = (rho - major) * (rho - major) + axial * axial - minor * minor;
+            let grad = p_radial * (2.0 * (rho - major) / rho) + d * (2.0 * axial);
+            Some((g, grad))
         }
         _ => None,
     }
@@ -1754,5 +1798,70 @@ mod tests {
         assert!((d_dv.x - d_dv_fd.x).abs() < 1e-4);
         assert!((d_dv.y - d_dv_fd.y).abs() < 1e-4);
         assert!((d_dv.z - d_dv_fd.z).abs() < 1e-4);
+    }
+
+    /// Central-difference of the scalar `g` at `p`, for validating ∇g.
+    fn grad_fd(surface: &dyn Surface, p: &Point3) -> Vec3 {
+        let h = 1e-6;
+        let g = |q: Point3| implicit_form(surface, &q).unwrap().0;
+        Vec3::new(
+            (g(p + Vec3::new(h, 0.0, 0.0)) - g(p - Vec3::new(h, 0.0, 0.0))) / (2.0 * h),
+            (g(p + Vec3::new(0.0, h, 0.0)) - g(p - Vec3::new(0.0, h, 0.0))) / (2.0 * h),
+            (g(p + Vec3::new(0.0, 0.0, h)) - g(p - Vec3::new(0.0, 0.0, h))) / (2.0 * h),
+        )
+    }
+
+    #[test]
+    fn test_cone_implicit_form_zero_on_surface() {
+        // A tilted frustum-style cone: apex off-origin, oblique axis.
+        let cone = ConeSurface {
+            apex: Point3::new(1.0, -2.0, 3.0),
+            axis: Dir3::new_normalize(Vec3::new(0.2, 0.3, 0.9)),
+            ref_dir: Dir3::new_normalize(Vec3::new(0.9, -0.2, -0.13)),
+            half_angle: 0.4,
+        };
+        // Re-orthonormalize ref_dir against the axis so evaluate() is honest.
+        let a = *cone.axis.as_ref();
+        let r0 = *cone.ref_dir.as_ref();
+        let cone = ConeSurface {
+            ref_dir: Dir3::new_normalize(r0 - a * r0.dot(a)),
+            ..cone
+        };
+        for &(u, v) in &[(0.0, 2.0), (1.3, 5.0), (4.7, 0.5), (2.0, 9.0)] {
+            let p = cone.evaluate(Point2::new(u, v));
+            let (g, grad) = implicit_form(&cone, &p).unwrap();
+            assert!(g.abs() < 1e-9, "g={g} at ({u},{v})");
+            let fd = grad_fd(&cone, &p);
+            assert!((grad - fd).norm() < 1e-4, "grad {grad:?} vs fd {fd:?}");
+            // ∇g must be parallel to the analytic surface normal.
+            let n = *cone.normal(Point2::new(u, v)).as_ref();
+            assert!(grad.cross(n).norm() < 1e-6 * grad.norm(), "grad ∦ normal");
+        }
+    }
+
+    #[test]
+    fn test_torus_implicit_form_zero_on_surface() {
+        let torus = TorusSurface {
+            center: Point3::new(-1.0, 2.0, 0.5),
+            axis: Dir3::new_normalize(Vec3::new(0.1, -0.3, 0.95)),
+            ref_dir: Dir3::new_normalize(Vec3::new(0.95, 0.31, 0.0)),
+            major_radius: 7.0,
+            minor_radius: 2.0,
+        };
+        let a = *torus.axis.as_ref();
+        let r0 = *torus.ref_dir.as_ref();
+        let torus = TorusSurface {
+            ref_dir: Dir3::new_normalize(r0 - a * r0.dot(a)),
+            ..torus
+        };
+        for &(u, v) in &[(0.0, 0.0), (1.1, 2.2), (3.4, 5.1), (5.9, 0.7)] {
+            let p = torus.evaluate(Point2::new(u, v));
+            let (g, grad) = implicit_form(&torus, &p).unwrap();
+            assert!(g.abs() < 1e-9, "g={g} at ({u},{v})");
+            let fd = grad_fd(&torus, &p);
+            assert!((grad - fd).norm() < 1e-4, "grad {grad:?} vs fd {fd:?}");
+            let n = *torus.normal(Point2::new(u, v)).as_ref();
+            assert!(grad.cross(n).norm() < 1e-6 * grad.norm(), "grad ∦ normal");
+        }
     }
 }

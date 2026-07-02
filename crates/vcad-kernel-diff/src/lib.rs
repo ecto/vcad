@@ -162,6 +162,27 @@ pub enum SurfaceSeed {
         /// d(radius)/dθ.
         rate: f64,
     },
+    /// The cone half-angle varies: d(half_angle)/dθ = `rate` (radians per
+    /// unit θ). The cone struct stores its opening as a half-angle, not a
+    /// base radius, so this is the scalar shape parameter of a cone; a base
+    /// radius R at fixed apex-to-plane distance L maps to it via
+    /// `rate = d(atan(R/L))/dθ`.
+    ConeAngle {
+        /// d(half_angle)/dθ.
+        rate: f64,
+    },
+    /// The torus major radius (center-to-tube-center) varies:
+    /// d(major_radius)/dθ = `rate`.
+    TorusMajorRadius {
+        /// d(major_radius)/dθ.
+        rate: f64,
+    },
+    /// The torus minor radius (tube radius) varies:
+    /// d(minor_radius)/dθ = `rate`.
+    TorusMinorRadius {
+        /// d(minor_radius)/dθ.
+        rate: f64,
+    },
 }
 
 /// Maps surface indices of a [`GeometryStore`] to their θ-seeds.

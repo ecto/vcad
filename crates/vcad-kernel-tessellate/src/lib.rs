@@ -3522,7 +3522,19 @@ fn tessellate_toroidal_face(
         if us.len() >= 2 {
             us.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
             vs.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-            (us[0], us[us.len() - 1], vs[0], vs[vs.len() - 1])
+            let (u_lo, u_hi) = (us[0], us[us.len() - 1]);
+            let (v_lo, v_hi) = (vs[0], vs[vs.len() - 1]);
+            // A full (untrimmed) torus — e.g. `make_torus` — has one seam
+            // vertex shared by all four boundary half-edges, so the loop
+            // spans zero in (u, v). Fall back to the whole donut domain
+            // rather than collapsing to a degenerate point. (Trimmed
+            // fillet-blend patches span a real rectangle and keep their
+            // derived range.)
+            if (u_hi - u_lo) < 1e-9 || (v_hi - v_lo) < 1e-9 {
+                (default_u_min, default_u_max, default_v_min, default_v_max)
+            } else {
+                (u_lo, u_hi, v_lo, v_hi)
+            }
         } else {
             (default_u_min, default_u_max, default_v_min, default_v_max)
         }

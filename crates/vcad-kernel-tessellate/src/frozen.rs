@@ -32,7 +32,9 @@
 
 use std::collections::HashMap;
 
-use vcad_kernel_geom::{CylinderSurface, Plane, SphereSurface, Surface, SurfaceKind};
+use vcad_kernel_geom::{
+    ConeSurface, CylinderSurface, Plane, SphereSurface, Surface, SurfaceKind, TorusSurface,
+};
 use vcad_kernel_math::{Point2, Point3, Vec3};
 use vcad_kernel_primitives::BRepSolid;
 use vcad_kernel_topo::{FaceId, Orientation, VertexId};
@@ -178,6 +180,31 @@ pub enum FaceFrame {
         /// Unit u = 0 direction.
         ref_dir: Vec3,
     },
+    /// Conical frame: `u` is the angle from `ref_dir` about `axis`, `v` the
+    /// distance from the apex along the ruling. The apex and axis are
+    /// intrinsic to a cone (the axis points into the meshed nappe and cannot
+    /// flip without naming the other nappe), so transport corrects only a
+    /// rotated `ref_dir`.
+    Cone {
+        /// Apex point.
+        apex: Point3,
+        /// Unit axis (apex → base).
+        axis: Vec3,
+        /// Unit u = 0 direction.
+        ref_dir: Vec3,
+    },
+    /// Toroidal frame: `u` toroidal angle about `axis` from `ref_dir`, `v`
+    /// poloidal angle about the tube. The center is intrinsic; the axis may
+    /// flip between builds (the torus is symmetric under `axis → −axis` with
+    /// `(u, v) → (−u, −v)`), which transport absorbs.
+    Torus {
+        /// Torus center.
+        center: Point3,
+        /// Unit axis.
+        axis: Vec3,
+        /// Unit u = 0 direction.
+        ref_dir: Vec3,
+    },
     /// No transport support: frozen `(u, v)` are used verbatim (correct
     /// only when the construction rebuilds frames deterministically).
     Other,
@@ -203,6 +230,22 @@ pub fn face_frame(surface: &dyn Surface) -> FaceFrame {
                 center: s.center,
                 axis: *s.axis.as_ref(),
                 ref_dir: *s.ref_dir.as_ref(),
+            },
+            None => FaceFrame::Other,
+        },
+        SurfaceKind::Cone => match surface.as_any().downcast_ref::<ConeSurface>() {
+            Some(c) => FaceFrame::Cone {
+                apex: c.apex,
+                axis: *c.axis.as_ref(),
+                ref_dir: *c.ref_dir.as_ref(),
+            },
+            None => FaceFrame::Other,
+        },
+        SurfaceKind::Torus => match surface.as_any().downcast_ref::<TorusSurface>() {
+            Some(t) => FaceFrame::Torus {
+                center: t.center,
+                axis: *t.axis.as_ref(),
+                ref_dir: *t.ref_dir.as_ref(),
             },
             None => FaceFrame::Other,
         },
@@ -273,6 +316,60 @@ pub fn transport_uv(
                 let u2 = d
                     .dot(y2)
                     .atan2(d.dot(ref2))
+                    .rem_euclid(2.0 * std::f64::consts::PI);
+                Point2::new(u2, v2)
+            }
+            None => uv,
+        },
+        FaceFrame::Cone {
+            apex: _,
+            axis,
+            ref_dir,
+        } => match rebuilt.as_any().downcast_ref::<ConeSurface>() {
+            Some(c) => {
+                // `u` is a pure angle: reconstruct the (frame-independent)
+                // radial direction and re-read its angle in the rebuilt
+                // frame. `v` is the ruling distance from the apex, invariant
+                // because a cone's apex and axis are intrinsic (unlike a
+                // cylinder there is no axial slide to absorb).
+                let y = axis.cross(*ref_dir);
+                let dir = *ref_dir * uv.x.cos() + y * uv.x.sin();
+                let axis2 = *c.axis.as_ref();
+                let ref2 = *c.ref_dir.as_ref();
+                let y2 = axis2.cross(ref2);
+                let u2 = dir
+                    .dot(y2)
+                    .atan2(dir.dot(ref2))
+                    .rem_euclid(2.0 * std::f64::consts::PI);
+                Point2::new(u2, uv.y)
+            }
+            None => uv,
+        },
+        FaceFrame::Torus {
+            center: _,
+            axis,
+            ref_dir,
+        } => match rebuilt.as_any().downcast_ref::<TorusSurface>() {
+            Some(t) => {
+                // Reconstruct two frame-independent unit directions from the
+                // capture frame: the toroidal (in-plane) tube-center
+                // direction and the poloidal direction (the surface normal).
+                // Re-reading their angles in the rebuilt frame absorbs a
+                // rotated `ref_dir` and an axis flip together (a flip sends
+                // `v → −v`, which the poloidal atan2 produces automatically).
+                let y = axis.cross(*ref_dir);
+                let tube_dir = *ref_dir * uv.x.cos() + y * uv.x.sin();
+                let pol = tube_dir * uv.y.cos() + *axis * uv.y.sin();
+                let axis2 = *t.axis.as_ref();
+                let ref2 = *t.ref_dir.as_ref();
+                let y2 = axis2.cross(ref2);
+                let u2 = tube_dir
+                    .dot(y2)
+                    .atan2(tube_dir.dot(ref2))
+                    .rem_euclid(2.0 * std::f64::consts::PI);
+                let v2 = pol
+                    .dot(axis2)
+                    .atan2(pol.dot(tube_dir))
                     .rem_euclid(2.0 * std::f64::consts::PI);
                 Point2::new(u2, v2)
             }
@@ -555,6 +652,53 @@ fn invert_uv(surface: &dyn Surface, p: &Point3) -> Result<Point2, FrozenError> {
             let y = sph.y_dir();
             let u = d.dot(y).atan2(d.dot(sph.ref_dir.as_ref()));
             Ok(Point2::new(u.rem_euclid(2.0 * std::f64::consts::PI), v))
+        }
+        SurfaceKind::Cone => {
+            let cone = surface.as_any().downcast_ref::<ConeSurface>().ok_or(
+                FrozenError::UnsupportedSurface {
+                    kind: SurfaceKind::Cone,
+                },
+            )?;
+            // Invert P = apex + v·(cos α·axis + sin α·(cos u·ref + sin u·y)):
+            // axial = (P − apex)·axis = v·cos α ⇒ v = axial / cos α; the
+            // radial part gives the angle in the (ref, y) frame.
+            let axis = *cone.axis.as_ref();
+            let d = *p - cone.apex;
+            let axial = d.dot(axis);
+            let radial = d - axis * axial;
+            let y = cone.y_dir();
+            let u = radial.dot(y).atan2(radial.dot(cone.ref_dir.as_ref()));
+            let ca = cone.half_angle.cos();
+            let v = if ca.abs() > f64::MIN_POSITIVE {
+                axial / ca
+            } else {
+                axial
+            };
+            Ok(Point2::new(u.rem_euclid(2.0 * std::f64::consts::PI), v))
+        }
+        SurfaceKind::Torus => {
+            let torus = surface.as_any().downcast_ref::<TorusSurface>().ok_or(
+                FrozenError::UnsupportedSurface {
+                    kind: SurfaceKind::Torus,
+                },
+            )?;
+            // axial = (P − c)·axis = r·sin v; ρ = |radial| = R + r·cos v ⇒
+            // v = atan2(axial, ρ − R). u is the toroidal angle of the
+            // in-plane (tube-center) direction.
+            let axis = *torus.axis.as_ref();
+            let d = *p - torus.center;
+            let axial = d.dot(axis);
+            let p_radial = d - axis * axial;
+            let rho = p_radial.norm();
+            let y = torus.y_dir();
+            let u = p_radial
+                .dot(y)
+                .atan2(p_radial.dot(torus.ref_dir.as_ref()))
+                .rem_euclid(2.0 * std::f64::consts::PI);
+            let v = axial
+                .atan2(rho - torus.major_radius)
+                .rem_euclid(2.0 * std::f64::consts::PI);
+            Ok(Point2::new(u, v))
         }
         kind => Err(FrozenError::UnsupportedSurface { kind }),
     }
@@ -1309,6 +1453,70 @@ mod tests {
                 (p2 - p).norm() < 1e-12,
                 "sphere ({u}, {v}): {p:?} vs {p2:?}"
             );
+        }
+    }
+
+    #[test]
+    fn transport_uv_survives_reframed_cone_and_torus() {
+        // M7: the cone/torus analogues of the cylinder/sphere transport
+        // test. Same geometric surface, rebuilt with a rotated ref_dir
+        // (cone: apex/axis intrinsic, so only ref_dir can differ) and, for
+        // the torus, a flipped axis as well (the torus is symmetric under
+        // axis → −axis with v → −v). Transported (u, v) must land the
+        // rebuilt surface's own evaluate on the same material point.
+        use vcad_kernel_geom::{ConeSurface, TorusSurface};
+        use vcad_kernel_math::Dir3;
+
+        let axis = Vec3::new(0.3, -0.4, 0.85).normalize();
+        let ref_dir = axis.cross(Vec3::new(0.0, 0.0, 1.0)).normalize();
+        let y = axis.cross(ref_dir);
+
+        // --- Cone: rotate ref_dir 1.3 rad about the (intrinsic) axis. ---
+        let cone = ConeSurface {
+            apex: Point3::new(0.5, -1.0, 2.0),
+            axis: Dir3::new_normalize(axis),
+            ref_dir: Dir3::new_normalize(ref_dir),
+            half_angle: 0.35,
+        };
+        let psi = 1.3_f64;
+        let cone2 = ConeSurface {
+            apex: cone.apex,
+            axis: Dir3::new_normalize(axis),
+            ref_dir: Dir3::new_normalize(ref_dir * psi.cos() + y * psi.sin()),
+            half_angle: 0.35,
+        };
+        let frame = face_frame(&cone);
+        for &(u, v) in &[(0.0, 1.0), (1.1, 4.0), (5.9, 2.5)] {
+            let uv = Point2::new(u, v);
+            let p = ConeSurface::evaluate(&cone, uv);
+            let uv2 = transport_uv(&frame, &cone2, uv, &p);
+            let p2 = ConeSurface::evaluate(&cone2, uv2);
+            assert!((p2 - p).norm() < 1e-12, "cone ({u}, {v}): {p:?} vs {p2:?}");
+        }
+
+        // --- Torus: flip axis AND rotate ref_dir. ---
+        let torus = TorusSurface {
+            center: Point3::new(-1.0, 2.0, 0.5),
+            axis: Dir3::new_normalize(axis),
+            ref_dir: Dir3::new_normalize(ref_dir),
+            major_radius: 6.0,
+            minor_radius: 1.5,
+        };
+        let phi = 0.9_f64;
+        let torus2 = TorusSurface {
+            center: torus.center,
+            axis: Dir3::new_normalize(-axis),
+            ref_dir: Dir3::new_normalize(ref_dir * phi.cos() + y * phi.sin()),
+            major_radius: 6.0,
+            minor_radius: 1.5,
+        };
+        let frame = face_frame(&torus);
+        for &(u, v) in &[(0.0, 0.0), (1.1, 2.2), (3.4, 5.1), (5.9, 0.7)] {
+            let uv = Point2::new(u, v);
+            let p = TorusSurface::evaluate(&torus, uv);
+            let uv2 = transport_uv(&frame, &torus2, uv, &p);
+            let p2 = TorusSurface::evaluate(&torus2, uv2);
+            assert!((p2 - p).norm() < 1e-12, "torus ({u}, {v}): {p:?} vs {p2:?}");
         }
     }
 }
