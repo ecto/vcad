@@ -1,0 +1,9 @@
+{
+  "id": "2026-07-03-process-sim",
+  "version": "0.9.4",
+  "date": "2026-07-03",
+  "category": "feat",
+  "title": "Planar semiconductor process simulation",
+  "summary": "New vcad-process crate turns GDS masks plus a serializable process recipe (deposit, pattern etch, oxide growth, implant, CMP) into 3D film stacks and textbook process cross-sections.",
+  "features": ["process-sim", "gdsii", "chip-layout", "cross-section"]
+}

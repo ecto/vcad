@@ -7417,6 +7417,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "vcad-process"
+version = "0.9.4"
+dependencies = [
+ "geo",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "vcad-gdsii",
+ "vcad-ir",
+]
+
+[[package]]
 name = "vcad-render"
 version = "0.9.3"
 dependencies = [
