@@ -104,7 +104,7 @@ export function MoleculeTreeSection() {
       {/* Species */}
       {molecule.species.map((sp, idx) => (
         <Row
-          key={idx}
+          key={`${sp.element}-${idx}`}
           depth={1}
           icon={
             <span

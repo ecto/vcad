@@ -15,7 +15,7 @@
  * rotation handles Z-up→Y-up.
  */
 
-import { useMemo, useRef, useLayoutEffect } from "react";
+import { useMemo, useRef, useLayoutEffect, useEffect } from "react";
 import { useFrame, type ThreeEvent } from "@react-three/fiber";
 import * as THREE from "three";
 import type { MoleculeSystem } from "@vcad/ir";
@@ -283,6 +283,23 @@ export function AtomInstances({ molecule, representation = "ball_and_stick" }: P
 
   const bondCount = showBonds ? bonds.length * 2 : 0;
 
+  // The impostor geometry is rebuilt whenever the molecule (or its
+  // representation/scale) changes; dispose the superseded GPU buffers so they
+  // don't leak across edits.
+  useEffect(() => () => sphereGeom.dispose(), [sphereGeom]);
+
+  // Stable-for-the-lifetime resources: release them when the renderer unmounts.
+  useEffect(
+    () => () => {
+      sphereMaterial.dispose();
+      pickGeom.dispose();
+      pickMaterial.dispose();
+      bondGeom.dispose();
+      bondMaterial.dispose();
+    },
+    [sphereMaterial, pickGeom, pickMaterial, bondGeom, bondMaterial],
+  );
+
   useLayoutEffect(() => {
     const inst = bondsRef.current;
     if (!inst || !showBonds) return;
@@ -381,6 +398,7 @@ export function AtomInstances({ molecule, representation = "ball_and_stick" }: P
     <group>
       <mesh geometry={sphereGeom} material={sphereMaterial} frustumCulled={false} />
       <instancedMesh
+        key={atomCount}
         ref={pickRef}
         args={[pickGeom, pickMaterial, atomCount]}
         frustumCulled={false}
