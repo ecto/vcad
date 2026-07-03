@@ -151,13 +151,18 @@ mesh edge shared by exactly two triangles).
 
 ## What stays deferred, and why
 
-- **phyz inertia-parameter adjoint.** The FD factor `∂J/∂p` in the rollout
-  adapters would become analytic with a phyz-side parameter adjoint; phyz
-  lives in its own repository, outside this session's scope. The
-  factorization is already shaped for the swap.
-- **Contact-adjoint dynamics.** Same repository boundary: producing
-  `∂J_dyn/∂x` when contacts act during a rollout is phyz-side work. The
-  vcad-side seam for it (`surface_gradient`) ships in this wave.
+- ~~**phyz inertia-parameter adjoint.**~~ **Closed in M11**
+  (`differentiable-seam-m11.md`): `phyz::diff`'s trajectory adjoint computes
+  `∂J/∂p` exactly; `rollout_gradient_adjoint` swaps it in behind the
+  unchanged factorization, with the FD path kept as the fallback for
+  rollouts the structured spec cannot express.
+- ~~**Contact-adjoint dynamics.**~~ **Closed in M11**: the phyz contact
+  adjoint produces `∂J_dyn/∂x` on the body's frozen-plan seam mesh under a
+  differentiable per-vertex penalty contact model, and
+  `contact_rollout_gradient` prices it through the `surface_gradient`
+  pullback — the M8 "contact-free only" boundary no longer stands (for the
+  diff rollout's own forward model; the GJK/EPA production pipeline remains
+  non-differentiable).
 - **Cone-tangent-to-plane tangency rows** (M7 note): still waiting for a
   gate model that produces one — consistent with `tangency_rows`'
   documented "unknown kind = no tangency information" contract.

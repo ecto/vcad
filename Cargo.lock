@@ -6984,6 +6984,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "vcad-gdsii"
+version = "0.9.4"
+dependencies = [
+ "thiserror 2.0.18",
+ "vcad-ir",
+]
+
+[[package]]
 name = "vcad-i18n"
 version = "0.9.4"
 dependencies = [

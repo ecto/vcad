@@ -15,10 +15,12 @@
  * rotation handles Z-up→Y-up.
  */
 
-import { useMemo, useRef, useLayoutEffect } from "react";
-import { useFrame } from "@react-three/fiber";
+import { useMemo, useRef, useLayoutEffect, useEffect } from "react";
+import { useFrame, type ThreeEvent } from "@react-three/fiber";
 import * as THREE from "three";
 import type { MoleculeSystem } from "@vcad/ir";
+import { useMoleculeStore } from "../stores/molecule-store";
+import { viewportWasDrag } from "@/lib/viewport-drag";
 
 /** Rendering representation. */
 export type AtomRepresentation = "ball_and_stick" | "space_filling" | "wireframe";
@@ -101,13 +103,21 @@ const SPHERE_VERT = /* glsl */ `
 in vec3 iCenter;
 in float iRadius;
 in vec3 iColor;
+in float iIndex;
 out vec3 vColor;
 out float vRadius;
+// flat: the atom index is a per-atom integer and must reach the fragment shader
+// unmodified. Without flat the rasterizer would interpolate it across the quad;
+// even though all four quad vertices currently share one iIndex (making that a
+// no-op), flat makes the exact-integer guarantee hold no matter how the vertex
+// shader changes, so the abs(vIndex - uSelected) < 0.5 selection test stays safe.
+flat out float vIndex;
 out vec3 vCenterView;
 out vec3 vViewPos;
 void main(){
   vColor = iColor;
   vRadius = iRadius;
+  vIndex = iIndex;
   vec4 cv = modelViewMatrix * vec4(iCenter, 1.0);
   vCenterView = cv.xyz;
   // camera-facing quad, oversized for perspective safety
@@ -119,9 +129,11 @@ void main(){
 const SPHERE_FRAG = /* glsl */ `
 precision highp float;
 uniform float logDepthBufFC;
+uniform float uSelected;       // selected atom index, or -1
 uniform mat4 projectionMatrix; // three binds this built-in when declared in-stage
 in vec3 vColor;
 in float vRadius;
+flat in float vIndex;          // per-atom index, not interpolated (see vertex shader)
 in vec3 vCenterView;
 in vec3 vViewPos;
 out vec4 fragColor;
@@ -141,7 +153,13 @@ void main(){
   // correct depth for logarithmicDepthBuffer
   vec4 clip = projectionMatrix * vec4(P, 1.0);
   gl_FragDepth = log2(1.0 + clip.w) * logDepthBufFC * 0.5;
-  fragColor = vec4(shadeMolecule(vColor, N, V), 1.0);
+  vec3 col = shadeMolecule(vColor, N, V);
+  // Selection highlight: warm emissive lift + a bright silhouette ring.
+  if (abs(vIndex - uSelected) < 0.5) {
+    float ring = smoothstep(0.55, 0.98, 1.0 - max(dot(N, V), 0.0));
+    col = mix(col, vec3(1.0, 0.85, 0.35), 0.28) + vec3(1.0, 0.8, 0.3) * ring * 0.9;
+  }
+  fragColor = vec4(col, 1.0);
 }`;
 
 // --- Custom-lit bond material (real cylinder geometry) -------------------
@@ -182,6 +200,8 @@ void main(){
 
 export function AtomInstances({ molecule, representation = "ball_and_stick" }: Props) {
   const bondsRef = useRef<THREE.InstancedMesh>(null);
+  const pickRef = useRef<THREE.InstancedMesh>(null);
+  const selectAtom = useMoleculeStore((s) => s.selectAtom);
 
   const atomCount = molecule.positions.length;
   const bonds = molecule.bonds ?? [];
@@ -207,6 +227,7 @@ export function AtomInstances({ molecule, representation = "ball_and_stick" }: P
     const centers = new Float32Array(atomCount * 3);
     const radii = new Float32Array(atomCount);
     const colors = new Float32Array(atomCount * 3);
+    const indices = new Float32Array(atomCount);
     for (let i = 0; i < atomCount; i++) {
       const p = molecule.positions[i]!;
       centers[i * 3] = p[0] * displayScale;
@@ -217,10 +238,12 @@ export function AtomInstances({ molecule, representation = "ball_and_stick" }: P
       colors[i * 3] = c[0];
       colors[i * 3 + 1] = c[1];
       colors[i * 3 + 2] = c[2];
+      indices[i] = i;
     }
     geo.setAttribute("iCenter", new THREE.InstancedBufferAttribute(centers, 3));
     geo.setAttribute("iRadius", new THREE.InstancedBufferAttribute(radii, 1));
     geo.setAttribute("iColor", new THREE.InstancedBufferAttribute(colors, 3));
+    geo.setAttribute("iIndex", new THREE.InstancedBufferAttribute(indices, 1));
     geo.instanceCount = atomCount;
     quad.dispose();
     return geo;
@@ -230,9 +253,22 @@ export function AtomInstances({ molecule, representation = "ball_and_stick" }: P
     () =>
       new THREE.ShaderMaterial({
         glslVersion: THREE.GLSL3,
-        uniforms: { logDepthBufFC: { value: 1.0 } },
+        uniforms: { logDepthBufFC: { value: 1.0 }, uSelected: { value: -1 } },
         vertexShader: SPHERE_VERT,
         fragmentShader: SPHERE_FRAG,
+      }),
+    [],
+  );
+
+  // Invisible real-sphere geometry used only for CPU raycasting (the visible
+  // atoms are impostor quads, which the raycaster can't pick). Renders nothing
+  // (colorWrite/depthWrite off) but stays present so R3F's onClick works.
+  const pickGeom = useMemo(() => new THREE.SphereGeometry(1, 12, 8), []);
+  const pickMaterial = useMemo(
+    () =>
+      new THREE.MeshBasicMaterial({
+        colorWrite: false,
+        depthWrite: false,
       }),
     [],
   );
@@ -251,6 +287,23 @@ export function AtomInstances({ molecule, representation = "ball_and_stick" }: P
   );
 
   const bondCount = showBonds ? bonds.length * 2 : 0;
+
+  // The impostor geometry is rebuilt whenever the molecule (or its
+  // representation/scale) changes; dispose the superseded GPU buffers so they
+  // don't leak across edits.
+  useEffect(() => () => sphereGeom.dispose(), [sphereGeom]);
+
+  // Stable-for-the-lifetime resources: release them when the renderer unmounts.
+  useEffect(
+    () => () => {
+      sphereMaterial.dispose();
+      pickGeom.dispose();
+      pickMaterial.dispose();
+      bondGeom.dispose();
+      bondMaterial.dispose();
+    },
+    [sphereMaterial, pickGeom, pickMaterial, bondGeom, bondMaterial],
+  );
 
   useLayoutEffect(() => {
     const inst = bondsRef.current;
@@ -306,18 +359,56 @@ export function AtomInstances({ molecule, representation = "ball_and_stick" }: P
     if (inst.instanceColor) inst.instanceColor.needsUpdate = true;
   }, [molecule, bonds, showBonds, representation, bondCount, displayScale]);
 
-  // Keep the logarithmic-depth factor in sync with the camera each frame.
+  // Position the invisible pick spheres to match the visible atoms.
+  useLayoutEffect(() => {
+    const inst = pickRef.current;
+    if (!inst) return;
+    const mat = new THREE.Matrix4();
+    const pos = new THREE.Vector3();
+    const scl = new THREE.Vector3();
+    const q = new THREE.Quaternion();
+    for (let i = 0; i < atomCount; i++) {
+      const p = molecule.positions[i]!;
+      const r = speciesRadius(molecule, i, representation) * displayScale;
+      pos.set(p[0] * displayScale, p[1] * displayScale, p[2] * displayScale);
+      scl.set(r, r, r);
+      mat.compose(pos, q, scl);
+      inst.setMatrixAt(i, mat);
+    }
+    inst.count = atomCount;
+    inst.instanceMatrix.needsUpdate = true;
+  }, [molecule, atomCount, representation, displayScale]);
+
+  // Keep the logarithmic-depth factor and selection highlight in sync.
   useFrame(({ camera }) => {
     const fc = 2.0 / Math.log2((camera as THREE.PerspectiveCamera).far + 1.0);
     sphereMaterial.uniforms.logDepthBufFC!.value = fc;
     bondMaterial.uniforms.logDepthBufFC!.value = fc;
+    const sel = useMoleculeStore.getState().selectedAtomIndex;
+    sphereMaterial.uniforms.uSelected!.value = sel ?? -1;
   });
+
+  const handlePick = (e: ThreeEvent<MouseEvent>) => {
+    if (viewportWasDrag()) return; // ignore clicks that end an orbit/pan
+    e.stopPropagation();
+    const id = e.instanceId;
+    if (id === undefined) return;
+    const current = useMoleculeStore.getState().selectedAtomIndex;
+    selectAtom(current === id ? null : id); // toggle
+  };
 
   if (atomCount === 0) return null;
 
   return (
     <group>
       <mesh geometry={sphereGeom} material={sphereMaterial} frustumCulled={false} />
+      <instancedMesh
+        key={atomCount}
+        ref={pickRef}
+        args={[pickGeom, pickMaterial, atomCount]}
+        frustumCulled={false}
+        onClick={handlePick}
+      />
       {showBonds && bonds.length > 0 && (
         <instancedMesh
           ref={bondsRef}
