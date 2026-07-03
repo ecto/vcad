@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useBootStore, type BootPhase } from "@/stores/boot-store";
+import { SplashMolecule } from "@/components/SplashMolecule";
 
 const FADE_MS = 300;
 const APP_VERSION = __APP_VERSION__;
@@ -83,6 +84,7 @@ export function Splash() {
       aria-live="polite"
     >
       <div className="flex w-[260px] max-w-[92vw] flex-col items-center gap-5 text-center">
+        <SplashMolecule size={132} />
         <div className="flex flex-col items-center gap-2">
           <div className="text-6xl font-bold tracking-tighter text-text select-none leading-none">
             vcad<span className="text-brand">.</span>

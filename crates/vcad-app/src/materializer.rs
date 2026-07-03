@@ -137,6 +137,10 @@ pub fn materialize(crdt: &CrdtDocument) -> MaterializeResult {
                 materialize_schematic(&mut doc, feature);
                 continue;
             }
+            "molecule" => {
+                materialize_molecule(&mut doc, feature);
+                continue;
+            }
             _ => {}
         }
 
@@ -186,7 +190,8 @@ fn materialize_feature(
         | FeatureInput::Instance { .. }
         | FeatureInput::Joint { .. }
         | FeatureInput::SceneSettings { .. }
-        | FeatureInput::Schematic { .. } => return None,
+        | FeatureInput::Schematic { .. }
+        | FeatureInput::Molecule { .. } => return None,
         _ => {}
     }
 
@@ -1272,6 +1277,15 @@ fn materialize_schematic(doc: &mut Document, feature: &FeatureState) {
     }) = FeatureInput::from_crdt_params(&feature.kind, &feature.params)
     {
         doc.schematic = serde_json::from_str(&json).ok();
+    }
+}
+
+fn materialize_molecule(doc: &mut Document, feature: &FeatureState) {
+    if let Some(FeatureInput::Molecule {
+        system: Some(json), ..
+    }) = FeatureInput::from_crdt_params(&feature.kind, &feature.params)
+    {
+        doc.molecule = serde_json::from_str(&json).ok();
     }
 }
 

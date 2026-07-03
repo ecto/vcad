@@ -76,6 +76,13 @@ const FORCE_OPTIONAL = {
   // radius/depth/width are NOT listed because they also name required fields
   // on other variants like Cylinder).
   CsgOp: ["holes", "alignment", "kind", "gap"],
+  // Molecular domain: Vec+skip fields (velocities/bonds) and scalar
+  // `#[serde(default)]` fields (charge/order/periodic) are optional on the
+  // wire but ts-rs renders them required.
+  MoleculeSystem: ["velocities", "bonds"],
+  Species: ["charge"],
+  Bond: ["order"],
+  Cell: ["periodic"],
 };
 
 const blocks = [];

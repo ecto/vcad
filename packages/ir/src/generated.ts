@@ -100,6 +100,23 @@ height: number,
 standoff: number, };
 
 /**
+ * A bond between two atoms, by atom index.
+ */
+export type Bond = { 
+/**
+ * First atom index.
+ */
+a: number, 
+/**
+ * Second atom index.
+ */
+b: number, 
+/**
+ * Bond order (1.0 single, 1.5 aromatic, 2.0 double, …). Defaults to 1.
+ */
+order?: number, };
+
+/**
  * An axis-aligned 3D bounding box (millimeters), used for component bodies
  * and courtyards.
  */
@@ -137,6 +154,27 @@ target: Vec3,
  * Field of view in degrees.
  */
 fov?: number, };
+
+/**
+ * A periodic simulation cell defined by three lattice vectors (Å).
+ */
+export type Cell = { 
+/**
+ * Lattice vector **a** in Å.
+ */
+a: [number, number, number], 
+/**
+ * Lattice vector **b** in Å.
+ */
+b: [number, number, number], 
+/**
+ * Lattice vector **c** in Å.
+ */
+c: [number, number, number], 
+/**
+ * Per-axis periodicity flags.
+ */
+periodic?: [boolean, boolean, boolean], };
 
 /**
  * CSG operation — the core building block of the IR DAG.
@@ -769,6 +807,11 @@ schematic?: SchematicSheet,
  * Legacy PCB field — migrated to PcbBoard node on load.
  */
 pcb?: Pcb, 
+/**
+ * Atomic system for chemical/molecular design and simulation. Units are
+ * Ångström (not the millimeter CAD convention).
+ */
+molecule?: MoleculeSystem, 
 /**
  * Named parameters that drive bound fields via expressions. Evaluated
  * in dependency order on resolve.
@@ -1496,6 +1539,42 @@ clearcoat?: number,
  * Clearcoat layer roughness (0.0..1.0).
  */
 clearcoatRoughness?: number, };
+
+/**
+ * A molecular / atomic system: the optional `molecule` domain on a `Document`.
+ *
+ * Structure-of-arrays: `positions[i]`, `species_idx[i]`, and (optionally)
+ * `velocities[i]` all describe atom `i`. `species_idx[i]` indexes `species`.
+ */
+export type MoleculeSystem = { 
+/**
+ * Deduplicated species table; atoms index into this by `species_idx`.
+ */
+species: Array<Species>, 
+/**
+ * Atom positions in Å (structure-of-arrays).
+ */
+positions: Array<[number, number, number]>, 
+/**
+ * Per-atom index into [`MoleculeSystem::species`].
+ */
+speciesIdx: Array<number>, 
+/**
+ * Optional per-atom velocities in Å/fs (structure-of-arrays).
+ */
+velocities?: Array<[number, number, number]>, 
+/**
+ * Bond graph. May be empty (e.g. metals, ionic crystals).
+ */
+bonds?: Array<Bond>, 
+/**
+ * Optional periodic cell. `None` means a non-periodic (cluster) system.
+ */
+cell?: Cell, 
+/**
+ * Free-form label, e.g. source filename or structure name.
+ */
+name?: string, };
 
 /**
  * A named electrical connection.
@@ -2337,6 +2416,45 @@ export type SourcingSnapshot = {
  * The captured sourcing lines.
  */
 lines: Array<SourcingLine>, };
+
+/**
+ * A chemical species referenced by atoms in a [`MoleculeSystem`].
+ *
+ * The species table is the deduplicated set of element/charge kinds; each atom
+ * stores an index into it. Radii and color are optional overrides — when
+ * absent, consumers fall back to the built-in periodic-table defaults keyed by
+ * [`Species::element`].
+ */
+export type Species = { 
+/**
+ * Element symbol, e.g. "C", "Fe", "Au".
+ */
+element: string, 
+/**
+ * Atomic number (protons). 0 for a dummy/virtual site.
+ */
+atomicNumber: number, 
+/**
+ * Atomic mass in amu.
+ */
+mass: number, 
+/**
+ * Partial charge in elementary-charge units. Defaults to 0.
+ */
+charge?: number, 
+/**
+ * Optional label distinguishing chemically-distinct sites of the same
+ * element (e.g. force-field atom types "CA", "CB").
+ */
+label?: string, 
+/**
+ * Optional visual radius override in Å (else CPK/vdW default is used).
+ */
+radius?: number, 
+/**
+ * Optional sRGB color override `[r, g, b]` in 0..1 (else CPK default).
+ */
+color?: [number, number, number], };
 
 /**
  * A single layer in the physical board stackup.

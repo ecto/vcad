@@ -14,6 +14,13 @@ pub mod keybindings;
 pub mod sheet_metal;
 pub mod sketch_session;
 
+// Re-export the atomic-domain WASM bindings (MdSim, atoms_* free functions).
+// `#[wasm_bindgen]` items live in the `vcad-kernel-atoms` dependency; the
+// cdylib must reference them or wasm-bindgen dead-code-strips them from the
+// final bundle.
+#[cfg(feature = "atoms")]
+pub use vcad_kernel_atoms::wasm::*;
+
 use serde::{Deserialize, Serialize};
 use vcad_kernel::vcad_kernel_math::{Point2, Point3, Vec3};
 use vcad_kernel::vcad_kernel_sketch::{SketchProfile, SketchSegment};

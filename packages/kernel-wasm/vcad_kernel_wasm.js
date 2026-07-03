@@ -78,6 +78,130 @@ export class CircuitSim {
 if (Symbol.dispose) CircuitSim.prototype[Symbol.dispose] = CircuitSim.prototype.free;
 
 /**
+ * A stateful molecular-dynamics environment exposed to JS.
+ */
+export class MdSim {
+    __destroy_into_raw() {
+        const ptr = this.__wbg_ptr;
+        this.__wbg_ptr = 0;
+        MdSimFinalization.unregister(this);
+        return ptr;
+    }
+    free() {
+        const ptr = this.__destroy_into_raw();
+        wasm.__wbg_mdsim_free(ptr, 0);
+    }
+    /**
+     * Current structure as a `MoleculeSystem` JSON string.
+     * @returns {string}
+     */
+    moleculeJson() {
+        let deferred2_0;
+        let deferred2_1;
+        try {
+            const ret = wasm.mdsim_moleculeJson(this.__wbg_ptr);
+            var ptr1 = ret[0];
+            var len1 = ret[1];
+            if (ret[3]) {
+                ptr1 = 0; len1 = 0;
+                throw takeFromExternrefTable0(ret[2]);
+            }
+            deferred2_0 = ptr1;
+            deferred2_1 = len1;
+            return getStringFromWasm0(ptr1, len1);
+        } finally {
+            wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+        }
+    }
+    /**
+     * Create an environment from a `MoleculeSystem` JSON and config JSON.
+     * @param {string} molecule_json
+     * @param {string} config_json
+     */
+    constructor(molecule_json, config_json) {
+        const ptr0 = passStringToWasm0(molecule_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(config_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.mdsim_new(ptr0, len0, ptr1, len1);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        this.__wbg_ptr = ret[0] >>> 0;
+        MdSimFinalization.register(this, this.__wbg_ptr, this);
+        return this;
+    }
+    /**
+     * Current observation JSON without stepping.
+     * @returns {string}
+     */
+    observe() {
+        let deferred2_0;
+        let deferred2_1;
+        try {
+            const ret = wasm.mdsim_observe(this.__wbg_ptr);
+            var ptr1 = ret[0];
+            var len1 = ret[1];
+            if (ret[3]) {
+                ptr1 = 0; len1 = 0;
+                throw takeFromExternrefTable0(ret[2]);
+            }
+            deferred2_0 = ptr1;
+            deferred2_1 = len1;
+            return getStringFromWasm0(ptr1, len1);
+        } finally {
+            wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+        }
+    }
+    /**
+     * Reset to the initial structure; returns an observation JSON.
+     * @returns {string}
+     */
+    reset() {
+        let deferred2_0;
+        let deferred2_1;
+        try {
+            const ret = wasm.mdsim_reset(this.__wbg_ptr);
+            var ptr1 = ret[0];
+            var len1 = ret[1];
+            if (ret[3]) {
+                ptr1 = 0; len1 = 0;
+                throw takeFromExternrefTable0(ret[2]);
+            }
+            deferred2_0 = ptr1;
+            deferred2_1 = len1;
+            return getStringFromWasm0(ptr1, len1);
+        } finally {
+            wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+        }
+    }
+    /**
+     * Run `steps` MD steps; returns an observation JSON.
+     * @param {number} steps
+     * @returns {string}
+     */
+    run(steps) {
+        let deferred2_0;
+        let deferred2_1;
+        try {
+            const ret = wasm.mdsim_run(this.__wbg_ptr, steps);
+            var ptr1 = ret[0];
+            var len1 = ret[1];
+            if (ret[3]) {
+                ptr1 = 0; len1 = 0;
+                throw takeFromExternrefTable0(ret[2]);
+            }
+            deferred2_0 = ptr1;
+            deferred2_1 = len1;
+            return getStringFromWasm0(ptr1, len1);
+        } finally {
+            wasm.__wbindgen_free(deferred2_0, deferred2_1, 1);
+        }
+    }
+}
+if (Symbol.dispose) MdSim.prototype[Symbol.dispose] = MdSim.prototype.free;
+
+/**
  * Physics simulation environment for robotics and RL.
  *
  * This provides a gym-style interface for simulating robot assemblies
@@ -572,7 +696,7 @@ export class SliceResult {
      * @returns {number}
      */
     get filamentGrams() {
-        const ret = wasm.sliceresult_filamentGrams(this.__wbg_ptr);
+        const ret = wasm.circuitsim_dt(this.__wbg_ptr);
         return ret;
     }
     /**
@@ -2624,6 +2748,154 @@ export function analyzeForPrinting(solid) {
         throw takeFromExternrefTable0(ret[1]);
     }
     return takeFromExternrefTable0(ret[0]);
+}
+
+/**
+ * Build a reproducibility receipt JSON for a completed run.
+ * @param {string} molecule_json
+ * @param {string} force_field
+ * @param {string} run
+ * @param {string} params_json
+ * @param {string} outputs_json
+ * @returns {string}
+ */
+export function atoms_build_receipt(molecule_json, force_field, run, params_json, outputs_json) {
+    let deferred7_0;
+    let deferred7_1;
+    try {
+        const ptr0 = passStringToWasm0(molecule_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(force_field, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passStringToWasm0(run, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len2 = WASM_VECTOR_LEN;
+        const ptr3 = passStringToWasm0(params_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len3 = WASM_VECTOR_LEN;
+        const ptr4 = passStringToWasm0(outputs_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len4 = WASM_VECTOR_LEN;
+        const ret = wasm.atoms_build_receipt(ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3, ptr4, len4);
+        var ptr6 = ret[0];
+        var len6 = ret[1];
+        if (ret[3]) {
+            ptr6 = 0; len6 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred7_0 = ptr6;
+        deferred7_1 = len6;
+        return getStringFromWasm0(ptr6, len6);
+    } finally {
+        wasm.__wbindgen_free(deferred7_0, deferred7_1, 1);
+    }
+}
+
+/**
+ * Compute a structural report (formula, Rg, bbox, …) as JSON.
+ * @param {string} molecule_json
+ * @returns {string}
+ */
+export function atoms_inspect(molecule_json) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const ptr0 = passStringToWasm0(molecule_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.atoms_inspect(ptr0, len0);
+        var ptr2 = ret[0];
+        var len2 = ret[1];
+        if (ret[3]) {
+            ptr2 = 0; len2 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred3_0 = ptr2;
+        deferred3_1 = len2;
+        return getStringFromWasm0(ptr2, len2);
+    } finally {
+        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+    }
+}
+
+/**
+ * Minimize a structure and return `{ result, molecule }` JSON, where `molecule`
+ * is the relaxed structure.
+ * @param {string} molecule_json
+ * @param {string} config_json
+ * @param {number} max_iters
+ * @param {number} force_tol
+ * @returns {string}
+ */
+export function atoms_minimize(molecule_json, config_json, max_iters, force_tol) {
+    let deferred4_0;
+    let deferred4_1;
+    try {
+        const ptr0 = passStringToWasm0(molecule_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(config_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.atoms_minimize(ptr0, len0, ptr1, len1, max_iters, force_tol);
+        var ptr3 = ret[0];
+        var len3 = ret[1];
+        if (ret[3]) {
+            ptr3 = 0; len3 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred4_0 = ptr3;
+        deferred4_1 = len3;
+        return getStringFromWasm0(ptr3, len3);
+    } finally {
+        wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
+    }
+}
+
+/**
+ * Parse XYZ / extended-XYZ text into a `MoleculeSystem` JSON string.
+ * @param {string} text
+ * @returns {string}
+ */
+export function atoms_parse_xyz(text) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const ptr0 = passStringToWasm0(text, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.atoms_parse_xyz(ptr0, len0);
+        var ptr2 = ret[0];
+        var len2 = ret[1];
+        if (ret[3]) {
+            ptr2 = 0; len2 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred3_0 = ptr2;
+        deferred3_1 = len2;
+        return getStringFromWasm0(ptr2, len2);
+    } finally {
+        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+    }
+}
+
+/**
+ * Serialize a `MoleculeSystem` JSON string to XYZ text.
+ * @param {string} molecule_json
+ * @returns {string}
+ */
+export function atoms_write_xyz(molecule_json) {
+    let deferred3_0;
+    let deferred3_1;
+    try {
+        const ptr0 = passStringToWasm0(molecule_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.atoms_write_xyz(ptr0, len0);
+        var ptr2 = ret[0];
+        var len2 = ret[1];
+        if (ret[3]) {
+            ptr2 = 0; len2 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred3_0 = ptr2;
+        deferred3_1 = len2;
+        return getStringFromWasm0(ptr2, len2);
+    } finally {
+        wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+    }
 }
 
 /**
@@ -4827,7 +5099,7 @@ export function isCamAvailable() {
  * @returns {boolean}
  */
 export function isEcadAvailable() {
-    const ret = wasm.isEcadAvailable();
+    const ret = wasm.isCamAvailable();
     return ret !== 0;
 }
 
@@ -7251,7 +7523,7 @@ function __wbg_get_imports() {
                     const a = state0.a;
                     state0.a = 0;
                     try {
-                        return wasm_bindgen__convert__closures_____invoke__h3c7e771ac0cfa72e(a, state0.b, arg0, arg1);
+                        return wasm_bindgen__convert__closures_____invoke__h909ef70400a4aa92(a, state0.b, arg0, arg1);
                     } finally {
                         state0.a = a;
                     }
@@ -7836,13 +8108,13 @@ function __wbg_get_imports() {
             arg0.writeTexture(arg1, arg2, arg3, arg4);
         },
         __wbindgen_cast_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 2450, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 2451, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-            const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h30743bca3150d93c, wasm_bindgen__convert__closures_____invoke__hcf7d3eaee8800b37);
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 2522, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 2523, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h449c01a9b484b49e, wasm_bindgen__convert__closures_____invoke__h97f5d3065e41a070);
             return ret;
         },
         __wbindgen_cast_0000000000000002: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 3234, function: Function { arguments: [Externref], shim_idx: 3235, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-            const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__hfdadf281ff0f1c56, wasm_bindgen__convert__closures_____invoke__h9bdf540eb7e61590);
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 3235, function: Function { arguments: [Externref], shim_idx: 3236, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h5fc04d9207857a4f, wasm_bindgen__convert__closures_____invoke__h93fa00cb00fe3f24);
             return ret;
         },
         __wbindgen_cast_0000000000000003: function(arg0) {
@@ -7930,16 +8202,16 @@ function __wbg_get_imports() {
     };
 }
 
-function wasm_bindgen__convert__closures_____invoke__hcf7d3eaee8800b37(arg0, arg1, arg2) {
-    wasm.wasm_bindgen__convert__closures_____invoke__hcf7d3eaee8800b37(arg0, arg1, arg2);
+function wasm_bindgen__convert__closures_____invoke__h97f5d3065e41a070(arg0, arg1, arg2) {
+    wasm.wasm_bindgen__convert__closures_____invoke__h97f5d3065e41a070(arg0, arg1, arg2);
 }
 
-function wasm_bindgen__convert__closures_____invoke__h9bdf540eb7e61590(arg0, arg1, arg2) {
-    wasm.wasm_bindgen__convert__closures_____invoke__h9bdf540eb7e61590(arg0, arg1, arg2);
+function wasm_bindgen__convert__closures_____invoke__h93fa00cb00fe3f24(arg0, arg1, arg2) {
+    wasm.wasm_bindgen__convert__closures_____invoke__h93fa00cb00fe3f24(arg0, arg1, arg2);
 }
 
-function wasm_bindgen__convert__closures_____invoke__h3c7e771ac0cfa72e(arg0, arg1, arg2, arg3) {
-    wasm.wasm_bindgen__convert__closures_____invoke__h3c7e771ac0cfa72e(arg0, arg1, arg2, arg3);
+function wasm_bindgen__convert__closures_____invoke__h909ef70400a4aa92(arg0, arg1, arg2, arg3) {
+    wasm.wasm_bindgen__convert__closures_____invoke__h909ef70400a4aa92(arg0, arg1, arg2, arg3);
 }
 
 
@@ -7959,6 +8231,9 @@ const __wbindgen_enum_GpuTextureFormat = ["r8unorm", "r8snorm", "r8uint", "r8sin
 const CircuitSimFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_circuitsim_free(ptr >>> 0, 1));
+const MdSimFinalization = (typeof FinalizationRegistry === 'undefined')
+    ? { register: () => {}, unregister: () => {} }
+    : new FinalizationRegistry(ptr => wasm.__wbg_mdsim_free(ptr >>> 0, 1));
 const PhysicsSimFinalization = (typeof FinalizationRegistry === 'undefined')
     ? { register: () => {}, unregister: () => {} }
     : new FinalizationRegistry(ptr => wasm.__wbg_physicssim_free(ptr >>> 0, 1));

@@ -331,6 +331,12 @@ pub enum FeatureInput {
         #[serde(skip_serializing_if = "Option::is_none")]
         sheet: Option<String>,
     },
+    /// Atomic / molecular system (the `molecule` document domain).
+    Molecule {
+        /// System data (JSON-serialized `MoleculeSystem`).
+        #[serde(skip_serializing_if = "Option::is_none")]
+        system: Option<String>,
+    },
 }
 
 impl FeatureInput {
@@ -362,6 +368,7 @@ impl FeatureInput {
             Self::Joint { .. } => "joint",
             Self::SceneSettings { .. } => "scene-settings",
             Self::Schematic { .. } => "schematic",
+            Self::Molecule { .. } => "molecule",
         }
     }
 
@@ -670,6 +677,11 @@ impl FeatureInput {
                     p.insert("sheet".into(), Value::String(v.clone()));
                 }
             }
+            Self::Molecule { system } => {
+                if let Some(v) = system {
+                    p.insert("system".into(), Value::String(v.clone()));
+                }
+            }
         }
 
         (kind, p)
@@ -823,6 +835,9 @@ impl FeatureInput {
             "schematic" => Self::Schematic {
                 title: get_str(params, "title"),
                 sheet: get_str(params, "sheet"),
+            },
+            "molecule" => Self::Molecule {
+                system: get_str(params, "system"),
             },
             _ => return None,
         })

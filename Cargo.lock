@@ -7024,6 +7024,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "vcad-kernel-atoms"
+version = "0.9.4"
+dependencies = [
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "vcad-ir",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "vcad-kernel-booleans"
 version = "0.9.4"
 dependencies = [
@@ -7353,6 +7364,7 @@ dependencies = [
  "vcad-eval",
  "vcad-ir",
  "vcad-kernel",
+ "vcad-kernel-atoms",
  "vcad-kernel-cam",
  "vcad-kernel-drafting",
  "vcad-kernel-geom",

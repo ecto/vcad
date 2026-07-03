@@ -146,6 +146,20 @@ import {
   batchReset,
   batchResetSchema,
 } from "./tools/gym.js";
+import {
+  loadStructure,
+  loadStructureSchema,
+  inspectMoleculeTool,
+  inspectMoleculeSchema,
+  minimizeEnergyTool,
+  minimizeEnergySchema,
+  mdRun,
+  mdRunSchema,
+  designMaterial,
+  designMaterialSchema,
+  renderMolecule,
+  renderMoleculeSchema,
+} from "./tools/atoms.js";
 import { getChangelog, getChangelogSchema } from "./tools/changelog.js";
 import {
   searchPartsTool,
@@ -635,6 +649,14 @@ const TOOL_PACKS: Record<string, readonly string[]> = {
     "batch_create_envs",
     "batch_step",
     "batch_reset",
+  ],
+  atoms: [
+    "load_structure",
+    "inspect_molecule",
+    "minimize_energy",
+    "md_run",
+    "design_material",
+    "render_molecule",
   ],
   ecad: [
     "create_schematic",
@@ -1283,6 +1305,42 @@ export async function createServer(
         name: "gym_close",
         description: "Close and clean up a simulation environment.",
         inputSchema: gymCloseSchema,
+      },
+      {
+        name: "load_structure",
+        description:
+          "Import an atomic structure from XYZ / extended-XYZ text (or accept a MoleculeSystem) and return the molecule plus a summary (formula, atom count, radius of gyration, bonds, periodicity). Units are Ångström.",
+        inputSchema: loadStructureSchema,
+      },
+      {
+        name: "inspect_molecule",
+        description:
+          "Structural analysis of a molecule: Hill-order formula, per-element counts, mass, center of mass, radius of gyration, bounding box, bond count, periodicity. The atomic-domain analog of inspect_cad.",
+        inputSchema: inspectMoleculeSchema,
+      },
+      {
+        name: "minimize_energy",
+        description:
+          "Relax a structure to a local energy minimum with FIRE. Force field via config (Lennard-Jones default, harmonic bonds, Coulomb, or the ML-potential stub). Returns the relaxed molecule, a result summary (energy, max force, convergence), and a reproducibility receipt.",
+        inputSchema: minimizeEnergySchema,
+      },
+      {
+        name: "md_run",
+        description:
+          "Run molecular dynamics (velocity-Verlet, optional Berendsen thermostat) for N steps and return the final observation (energies, temperature, max force) and the evolved structure.",
+        inputSchema: mdRunSchema,
+      },
+      {
+        name: "design_material",
+        description:
+          "Inverse design: search an isotropic scale factor that drives a geometric property (nearest-neighbor distance or radius of gyration) to a target value, returning the reshaped molecule and a receipt. The energy-objective inverse design (gradients through the simulation) lives in the Rust kernel.",
+        inputSchema: designMaterialSchema,
+      },
+      {
+        name: "render_molecule",
+        description:
+          "Render a molecule as an isometric ball-and-stick (or space-filling) SVG with CPK colors and depth sorting — agent eyes on atomic structures.",
+        inputSchema: renderMoleculeSchema,
       },
       {
         name: "record_simulation",
@@ -2186,6 +2244,30 @@ export async function createServer(
 
         case "gym_close":
           result = gymClose(args);
+          break;
+
+        case "load_structure":
+          result = await loadStructure(args);
+          break;
+
+        case "inspect_molecule":
+          result = await inspectMoleculeTool(args);
+          break;
+
+        case "minimize_energy":
+          result = await minimizeEnergyTool(args);
+          break;
+
+        case "md_run":
+          result = await mdRun(args);
+          break;
+
+        case "design_material":
+          result = await designMaterial(args);
+          break;
+
+        case "render_molecule":
+          result = await renderMolecule(args);
           break;
 
         case "record_simulation":

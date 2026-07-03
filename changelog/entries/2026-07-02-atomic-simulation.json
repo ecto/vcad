@@ -1,0 +1,17 @@
+{
+  "id": "2026-07-02-atomic-simulation",
+  "version": "0.9.4",
+  "date": "2026-07-02",
+  "category": "feat",
+  "title": "Atomic & molecular design and simulation",
+  "summary": "Import, simulate (MD + energy minimization), inverse-design, and render atomic structures — via the app viewport and new MCP tools.",
+  "features": ["atoms", "simulation", "molecular-dynamics", "rendering", "mcp"],
+  "mcpTools": [
+    "load_structure",
+    "inspect_molecule",
+    "minimize_energy",
+    "md_run",
+    "design_material",
+    "render_molecule"
+  ]
+}
