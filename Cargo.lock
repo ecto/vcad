@@ -6987,6 +6987,7 @@ dependencies = [
 name = "vcad-gdsii"
 version = "0.9.4"
 dependencies = [
+ "geo",
  "thiserror 2.0.18",
  "vcad-ir",
 ]

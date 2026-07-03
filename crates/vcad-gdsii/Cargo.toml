@@ -10,8 +10,11 @@ publish = false
 [features]
 default = ["vcad-ir"]
 ## Enables the GDS-layer → vcad-ir document bridge (`bridge` module).
-vcad-ir = ["dep:vcad-ir"]
+vcad-ir = ["dep:vcad-ir", "dep:geo"]
 
 [dependencies]
 thiserror = { workspace = true }
 vcad-ir = { workspace = true, optional = true }
+# 2D polygon booleans for merging each layer's polygons before extrusion
+# (pure-Rust BooleanOps — same crate vcad-kernel-cam uses; WASM-safe).
+geo = { version = "0.28", optional = true }
