@@ -76,7 +76,14 @@ fn min_image_general(d: [f64; 3], c: &Cell) -> [f64; 3] {
     let det = h[0][0] * (h[1][1] * h[2][2] - h[1][2] * h[2][1])
         - h[0][1] * (h[1][0] * h[2][2] - h[1][2] * h[2][0])
         + h[0][2] * (h[1][0] * h[2][1] - h[1][1] * h[2][0]);
-    if det.abs() < 1e-12 {
+    // Degeneracy is judged relative to the cell's own scale (|det| ~ scale³
+    // for a well-conditioned cell): an absolute epsilon would let a large,
+    // nearly-flat cell through and blow up `1/det` into garbage wraps.
+    let scale = h
+        .iter()
+        .flat_map(|row| row.iter())
+        .fold(0.0f64, |m, &v| m.max(v.abs()));
+    if det.abs() <= 1e-12 * scale * scale * scale {
         return d;
     }
     let inv_det = 1.0 / det;

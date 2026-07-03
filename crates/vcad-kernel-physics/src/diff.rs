@@ -677,7 +677,18 @@ pub fn rollout_gradient_via_density(
         drho_dtheta.len(),
         "one density-derivative row per body"
     );
+    // Validate the full shape up front — before any rollout runs or the
+    // gradient is allocated — so a ragged input fails with a per-body
+    // diagnostic instead of mid-accumulation. With zero bodies the θ
+    // dimension is unknowable and the gradient is legitimately empty.
     let n_theta = drho_dtheta.first().map(|r| r.len()).unwrap_or(0);
+    for (i, row) in drho_dtheta.iter().enumerate() {
+        assert_eq!(
+            row.len(),
+            n_theta,
+            "density-derivative row {i} must share the θ dimension {n_theta}"
+        );
+    }
 
     let j0 = rollout(nominal);
 
@@ -686,11 +697,6 @@ pub fn rollout_gradient_via_density(
     let mut gradient = vec![0.0f64; n_theta];
     for (i, nom) in nominal.iter().enumerate() {
         assert!(rho0[i] > 0.0, "density must be positive");
-        assert_eq!(
-            drho_dtheta[i].len(),
-            n_theta,
-            "density-derivative rows must share the θ dimension"
-        );
         let steps = fd.steps_for(nom);
         let mut work = nominal.to_vec();
         // dJ/dρ_i = Σ_j ∂J/∂p_j · dp_j/dρ_i, with the exact linear factor

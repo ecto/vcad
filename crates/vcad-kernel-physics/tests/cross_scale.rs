@@ -128,8 +128,12 @@ fn lattice_constant_to_rollout_gradient_matches_fd_and_closed_form() {
         "dJ/da: chained {dj_da} vs end-to-end fd {fd} (rel {rel_fd:.3e}); J = {j}"
     );
 
-    // Referee 2: the closed form. ω(T) = τT/I_zz with I_zz ∝ ρ ∝ a⁻³ gives
-    // dJ/da = 3J/a — independent of every FD step in the chain.
+    // Referee 2: the closed form. With no state-dependent generalized
+    // forces on the single revolute DOF (gravity is moment-free, no
+    // Coriolis term for rotation about a fixed axis), qdd = τ/I_zz is a
+    // constant, so semi-implicit Euler accumulates ω(T) = τT/I_zz exactly —
+    // no O(dt) truncation enters J. With I_zz ∝ ρ ∝ a⁻³ that gives
+    // dJ/da = 3J/a, independent of every FD step in the chain.
     let closed = 3.0 * j / A0;
     let rel_closed = (dj_da - closed).abs() / closed.abs();
     assert!(

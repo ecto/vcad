@@ -315,8 +315,19 @@ pub fn homogenize(
 /// Find the isotropic scale factor `s ∈ [lo, hi]` that minimizes the
 /// potential energy of `sys` with positions and cell scaled by `s` (golden
 /// section; the 1-D "zero pressure" search that precedes an elastic-constant
-/// sweep). Returns the optimal `s`.
-pub fn equilibrium_scale(ff: &dyn ForceField, sys: &AtomSystem, lo: f64, hi: f64) -> f64 {
+/// sweep).
+///
+/// Errors when the bracket contains no interior minimum — i.e. the energy
+/// slope has the same sign at both ends (the crystal is entirely compressed
+/// or entirely stretched across `[lo, hi]`). Without this guard golden
+/// section would silently converge to a bracket endpoint and hand the
+/// caller a plausible-looking but wrong "equilibrium".
+pub fn equilibrium_scale(
+    ff: &dyn ForceField,
+    sys: &AtomSystem,
+    lo: f64,
+    hi: f64,
+) -> Result<f64, String> {
     let energy_at = |s: f64| -> f64 {
         let eps = [
             [s - 1.0, 0.0, 0.0],
@@ -325,6 +336,19 @@ pub fn equilibrium_scale(ff: &dyn ForceField, sys: &AtomSystem, lo: f64, hi: f64
         ];
         ff.energy(&apply_strain(sys, &eps))
     };
+    // Bracket check: dU/ds must be compressive (< 0) at `lo` and tensile
+    // (> 0) at `hi` for a zero-pressure point to lie inside.
+    let slope = |s: f64| -> f64 {
+        let h = 1e-6 * s.abs().max(1e-6);
+        (energy_at(s + h) - energy_at(s - h)) / (2.0 * h)
+    };
+    let (slope_lo, slope_hi) = (slope(lo), slope(hi));
+    if slope_lo >= 0.0 || slope_hi <= 0.0 {
+        return Err(format!(
+            "no zero-pressure point inside [{lo}, {hi}]: dU/ds = {slope_lo:.3e} at lo, \
+             {slope_hi:.3e} at hi — widen the bracket"
+        ));
+    }
     const INV_PHI: f64 = 0.618_033_988_749_894_8;
     let (mut a, mut b) = (lo, hi);
     let mut c = b - INV_PHI * (b - a);
@@ -348,7 +372,7 @@ pub fn equilibrium_scale(ff: &dyn ForceField, sys: &AtomSystem, lo: f64, hi: f64
             break;
         }
     }
-    0.5 * (a + b)
+    Ok(0.5 * (a + b))
 }
 
 /// Central-difference gradient of a scalar property of a parametrized
@@ -453,6 +477,32 @@ mod tests {
     }
 
     #[test]
+    fn min_image_declines_near_degenerate_cells() {
+        // A nearly-flat sheared cell (b almost parallel to a) is numerically
+        // non-invertible relative to its own scale; wrapping through 1/det
+        // would produce garbage, so the raw displacement must come back.
+        let cell = Some(Cell {
+            a: [10.0, 0.0, 0.0],
+            b: [10.0, 1e-12, 0.0],
+            c: [0.0, 0.0, 10.0],
+            periodic: [true, true, true],
+        });
+        let d = [9.6, 0.2, 0.0];
+        let w = min_image(d, &cell);
+        assert_eq!(w, d, "near-degenerate cell must not wrap");
+    }
+
+    #[test]
+    fn equilibrium_scale_rejects_brackets_without_a_zero_pressure_point() {
+        // [1.2, 1.4] is entirely on the tensile side of argon's equilibrium
+        // lattice constant — dU/ds > 0 at both ends, no interior minimum.
+        let ff = argon_lj();
+        let sys = AtomSystem::from_ir(&argon_fcc(5.3, 3)).unwrap();
+        let err = equilibrium_scale(&ff, &sys, 1.2, 1.4).unwrap_err();
+        assert!(err.contains("no zero-pressure point"), "got: {err}");
+    }
+
+    #[test]
     fn energy_is_invariant_under_lattice_translations_in_a_sheared_cell() {
         // Shear the argon crystal (as the C44 sweep does), translate one atom
         // by a full lattice vector, and check the energy is unchanged — the
@@ -477,7 +527,7 @@ mod tests {
     fn equilibrium_scale_finds_a_zero_pressure_lattice() {
         let ff = argon_lj();
         let sys = AtomSystem::from_ir(&argon_fcc(5.3, 3)).unwrap();
-        let s = equilibrium_scale(&ff, &sys, 0.9, 1.1);
+        let s = equilibrium_scale(&ff, &sys, 0.9, 1.1).unwrap();
         let a_eq = 5.3 * s;
         assert!(
             (5.0..5.6).contains(&a_eq),
@@ -505,7 +555,7 @@ mod tests {
     fn lj_fcc_elastic_constants_satisfy_stability_and_cauchy() {
         let ff = argon_lj();
         let base = AtomSystem::from_ir(&argon_fcc(5.3, 3)).unwrap();
-        let s = equilibrium_scale(&ff, &base, 0.9, 1.1);
+        let s = equilibrium_scale(&ff, &base, 0.9, 1.1).unwrap();
         let a_eq = 5.3 * s;
         let mol = argon_fcc(a_eq, 3);
         let card = homogenize(&ff, &mol, &HomogenizeOptions::default()).unwrap();
