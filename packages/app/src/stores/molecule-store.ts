@@ -269,9 +269,12 @@ interface MoleculeState {
   molecule: MoleculeSystem | null;
   representation: AtomRepresentation;
   activeDemoId: string | null;
+  /** Index of the selected atom (from viewport pick or feature tree), or null. */
+  selectedAtomIndex: number | null;
   setMolecule: (mol: MoleculeSystem | null, demoId?: string | null) => void;
   loadDemo: (id: string) => void;
   setRepresentation: (rep: AtomRepresentation) => void;
+  selectAtom: (index: number | null) => void;
   clear: () => void;
 }
 
@@ -279,11 +282,14 @@ export const useMoleculeStore = create<MoleculeState>((set) => ({
   molecule: null,
   representation: "ball_and_stick",
   activeDemoId: null,
-  setMolecule: (molecule, demoId = null) => set({ molecule, activeDemoId: demoId }),
+  selectedAtomIndex: null,
+  setMolecule: (molecule, demoId = null) =>
+    set({ molecule, activeDemoId: demoId, selectedAtomIndex: null }),
   loadDemo: (id) => {
     const demo = MOLECULE_DEMOS.find((d) => d.id === id);
-    if (demo) set({ molecule: demo.build(), activeDemoId: id });
+    if (demo) set({ molecule: demo.build(), activeDemoId: id, selectedAtomIndex: null });
   },
   setRepresentation: (representation) => set({ representation }),
-  clear: () => set({ molecule: null, activeDemoId: null }),
+  selectAtom: (index) => set({ selectedAtomIndex: index }),
+  clear: () => set({ molecule: null, activeDemoId: null, selectedAtomIndex: null }),
 }));

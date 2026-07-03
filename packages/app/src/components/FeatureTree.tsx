@@ -58,6 +58,7 @@ import { useEmbroideryStore } from "@/stores/embroidery-store";
 import type { PrimitiveKind, PartInfo, BooleanPartInfo, PrimitivePartInfo, SweepPartInfo, ExtrudePartInfo, RevolvePartInfo, FilletPartInfo, ChamferPartInfo, ShellPartInfo } from "@vcad/core";
 import type { PartInstance, Joint, JointKind } from "@vcad/ir";
 import { cn } from "@/lib/utils";
+import { MoleculeTreeSection } from "./MoleculeTree";
 import { getPartSummary } from "./tree/part-summary";
 import { InlineCubeDimensions, InlineCylinderDimensions, InlineSphereDimensions, InlineExtrudeDimensions, InlineRevolveDimensions, InlineFilletDimensions, InlineChamferDimensions, InlineShellDimensions, InlineSweepProperties } from "./tree/InlineDimensions";
 import { InlinePositionSection, InlineRotationSection } from "./tree/InlineTransform";
@@ -1230,6 +1231,9 @@ export function FeatureTree() {
 
             {/* Sketch entities / constraints — only while sketching */}
             <SketchTreeSection />
+
+            {/* Molecular structure (atomic domain) — species / bonds / selection */}
+            <MoleculeTreeSection />
 
             {/* Empty state when no parts/instances yet */}
             {!hasGeometry && <FeatureTreeEmptyState />}

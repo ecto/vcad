@@ -20,6 +20,7 @@ import { useAuth, isAuthEnabled, AuthModal } from "@vcad/auth";
 import { useOnboardingStore } from "@/stores/onboarding-store";
 import { examples, exampleToVcadFile } from "@/data/examples";
 import type { Example } from "@/data/examples";
+import { MOLECULE_DEMOS, useMoleculeStore } from "@/stores/molecule-store";
 
 interface InlineOnboardingProps {
   visible: boolean;
@@ -88,6 +89,12 @@ export function InlineOnboarding({ visible }: InlineOnboardingProps) {
     } else if (example.file) {
       loadDocument(exampleToVcadFile(example.file));
     }
+    hide();
+  }
+
+  function handleOpenMolecule(id: string) {
+    incrementProjectsCreated();
+    useMoleculeStore.getState().loadDemo(id);
     hide();
   }
 
@@ -258,6 +265,22 @@ export function InlineOnboarding({ visible }: InlineOnboardingProps) {
               ))}
             </div>
           )}
+          {/* Molecular structures — atomic domain demos */}
+          <div className="mt-3 flex flex-wrap items-center justify-center gap-x-3 gap-y-1">
+            <span className="text-[10px] uppercase tracking-wider text-text-muted/70">
+              Molecules
+            </span>
+            {MOLECULE_DEMOS.map((demo) => (
+              <button
+                key={demo.id}
+                onClick={() => handleOpenMolecule(demo.id)}
+                title={demo.blurb}
+                className="text-[11px] text-text-muted hover:text-text cursor-pointer"
+              >
+                {demo.name}
+              </button>
+            ))}
+          </div>
         </div>
 
         {/* Divider */}

@@ -1,0 +1,9 @@
+{
+  "id": "2026-07-03-molecule-ui",
+  "version": "0.9.4",
+  "date": "2026-07-03",
+  "category": "feat",
+  "title": "Selectable atoms + molecular feature tree",
+  "summary": "Molecule demos moved into the New dialog, atoms are now clickable in the viewport, and the molecular structure appears in the feature tree.",
+  "features": ["atoms", "selection", "feature-tree", "onboarding"]
+}
