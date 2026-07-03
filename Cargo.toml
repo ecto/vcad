@@ -57,6 +57,7 @@ members = [
     "crates/vcad-ecad-diff",
     "crates/vcad-ecad-diff-wasm",
     "crates/vcad-gdsii",
+    "crates/vcad-process",
     "crates/stepperoni",
     "crates/termview",
     "crates/vcad-embroidery",
@@ -130,6 +131,7 @@ default-members = [
     "crates/vcad-ecad-diff",
     "crates/vcad-ecad-diff-wasm",
     "crates/vcad-gdsii",
+    "crates/vcad-process",
     "crates/stepperoni",
     "crates/termview",
     "crates/vcad-embroidery",
@@ -223,6 +225,8 @@ vcad-embroidery = { path = "crates/vcad-embroidery", version = "0.9.4" }
 vcad-embroidery-pes = { path = "crates/vcad-embroidery-pes", version = "0.9.4" }
 vcad-embroidery-dst = { path = "crates/vcad-embroidery-dst", version = "0.9.4" }
 vcad-tool-derive = { path = "crates/vcad-tool-derive", version = "0.9.4" }
+vcad-gdsii = { path = "crates/vcad-gdsii", version = "0.9.4" }
+vcad-process = { path = "crates/vcad-process", version = "0.9.4" }
 
 # GPU stack — version-pin here, each consumer opts into the features it needs.
 wgpu = { version = "23" }

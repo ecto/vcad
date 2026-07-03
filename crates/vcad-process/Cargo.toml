@@ -1,0 +1,20 @@
+[package]
+name = "vcad-process"
+description = "Planar semiconductor process emulation: GDS masks + a process recipe → film-stack geometry"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+# Pure-Rust 2D polygon booleans (same version vcad-kernel-cam pins);
+# geo-clipper is deliberately avoided — it does not build for WASM.
+geo = "0.28"
+serde = { workspace = true }
+thiserror = { workspace = true }
+vcad-gdsii = { workspace = true }
+vcad-ir = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }
