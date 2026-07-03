@@ -85,7 +85,7 @@ pub fn to_vcad_document(
 
         let z_mm = z_bottom_um * um_to_mm;
         let thickness_mm = thickness_um * um_to_mm;
-        let mut layer_root: Option<NodeId> = None;
+        let mut extrudes: Vec<NodeId> = Vec::with_capacity(layer_polys.polygons.len());
 
         for polygon in &layer_polys.polygons {
             let segments: Vec<SketchSegment2D> = polygon
@@ -116,20 +116,27 @@ pub fn to_vcad_document(
                     scale_end: None,
                 },
             );
-            layer_root = Some(match layer_root {
-                None => extrude,
-                Some(left) => alloc(
-                    &mut doc,
-                    None,
-                    CsgOp::Union {
-                        left,
-                        right: extrude,
-                    },
-                ),
-            });
+            extrudes.push(extrude);
         }
 
-        let root = layer_root.expect("layer with polygons always yields a root");
+        // Union the extrudes as a balanced tree, not a left chain — real
+        // dies flatten to tens of thousands of polygons per layer, and a
+        // chain that deep overflows the stack of any recursive consumer.
+        let mut level = extrudes;
+        while level.len() > 1 {
+            let mut next = Vec::with_capacity(level.len().div_ceil(2));
+            let mut iter = level.into_iter();
+            while let Some(left) = iter.next() {
+                match iter.next() {
+                    Some(right) => next.push(alloc(&mut doc, None, CsgOp::Union { left, right })),
+                    None => next.push(left),
+                }
+            }
+            level = next;
+        }
+        let root = level
+            .pop()
+            .expect("layer with polygons always yields a root");
         // Name the root node after the layer so it reads well in the tree.
         if let Some(node) = doc.nodes.get_mut(&root) {
             node.name = Some(name.to_string());
@@ -320,5 +327,41 @@ mod tests {
         let json = doc.to_json().unwrap();
         let parsed = Document::from_json(&json).unwrap();
         assert_eq!(doc, parsed);
+    }
+
+    #[test]
+    fn union_tree_is_balanced_not_a_chain() {
+        // 1000 instances on one layer: a left-fold chain would nest unions
+        // 999 deep and overflow recursive consumers on real dies; a balanced
+        // tree stays at ~log2(n) depth.
+        let mut unit = Cell::new("unit");
+        unit.elements.push(Element::Boundary {
+            layer: 1,
+            datatype: 0,
+            xy: vec![(0, 0), (100, 0), (100, 100), (0, 100), (0, 0)],
+        });
+        let mut top = Cell::new("top");
+        top.elements.push(Element::Aref {
+            sname: "unit".into(),
+            strans: Strans::default(),
+            cols: 100,
+            rows: 10,
+            xy: [(0, 0), (20_000, 0), (0, 2_000)],
+        });
+        let mut lib = Library::new("depth_test");
+        lib.cells = vec![unit, top];
+
+        let doc =
+            to_vcad_document(&lib, "top", &[(1, 0.0, 0.2, "l1")], DEFAULT_VIEW_SCALE).unwrap();
+
+        fn depth(doc: &Document, id: NodeId) -> usize {
+            match &doc.nodes[&id].op {
+                CsgOp::Union { left, right } => 1 + depth(doc, *left).max(depth(doc, *right)),
+                _ => 0,
+            }
+        }
+        let d = depth(&doc, doc.roots[0].root);
+        // ceil(log2(1000)) == 10; allow a little slack, forbid chains.
+        assert!(d <= 12, "union depth {d} — expected a balanced tree");
     }
 }
