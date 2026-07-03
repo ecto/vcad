@@ -106,7 +106,12 @@ in vec3 iColor;
 in float iIndex;
 out vec3 vColor;
 out float vRadius;
-out float vIndex;
+// flat: the atom index is a per-atom integer and must reach the fragment shader
+// unmodified. Without flat the rasterizer would interpolate it across the quad;
+// even though all four quad vertices currently share one iIndex (making that a
+// no-op), flat makes the exact-integer guarantee hold no matter how the vertex
+// shader changes, so the abs(vIndex - uSelected) < 0.5 selection test stays safe.
+flat out float vIndex;
 out vec3 vCenterView;
 out vec3 vViewPos;
 void main(){
@@ -128,7 +133,7 @@ uniform float uSelected;       // selected atom index, or -1
 uniform mat4 projectionMatrix; // three binds this built-in when declared in-stage
 in vec3 vColor;
 in float vRadius;
-in float vIndex;
+flat in float vIndex;          // per-atom index, not interpolated (see vertex shader)
 in vec3 vCenterView;
 in vec3 vViewPos;
 out vec4 fragColor;
