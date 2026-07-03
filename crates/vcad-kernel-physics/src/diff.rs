@@ -25,40 +25,39 @@
 //!   the polynomial mass-property integrals: every field's θ-derivative in
 //!   one pass, to machine precision. No remeshing, no topology risk.
 //!
-//! - **`∂J/∂p_body`** — *central finite differences on the mass-property
-//!   scalars themselves*. Each scalar is perturbed ±h and the rollout is
-//!   re-run (≈20 rollouts per body: 10 scalars × 2). This is cheap and
-//!   robust: no CAD rebuild, no re-tessellation, no boolean/fillet
-//!   combinatorics under perturbation — only the physics integrator re-runs,
-//!   on a body whose inertia scalar moved by a hair.
+//! - **`∂J/∂p_body`** — two implementations of the same factor:
+//!   - **Adjoint (exact)** — [`rollout_gradient_adjoint`] hands a structured
+//!     rollout ([`AdjointRolloutSpec`]) to the **phyz trajectory adjoint**
+//!     (`phyz::diff`), which prices all `10·n_bodies` sensitivities in one
+//!     backward pass (dual-number lanes through a scalar-generic ABA — no
+//!     finite differences). Requires the rollout in structured form:
+//!     single-DOF joints, open-loop control, final-state objective with an
+//!     analytic gradient.
+//!   - **Central FD (fallback)** — [`rollout_gradient`] takes an *opaque*
+//!     rollout closure and perturbs each mass-property scalar ±h
+//!     (≈20 rollouts per body). Still no CAD rebuild, no re-tessellation —
+//!     only the integrator re-runs. This remains the path for rollouts the
+//!     spec cannot express (arbitrary code, state feedback, multi-DOF
+//!     joints) or for phyz versions without the adjoint.
 //!
-//! ## Why finite differences for `∂J/∂p`, not a phyz adjoint
-//!
-//! phyz ships `phyz-diff`, but it differentiates a single dynamics step with
-//! respect to **state and control** (`∂(q',v')/∂(q,v,ctrl)`), not with respect
-//! to **model inertia parameters**. The factor M8 needs — sensitivity of the
-//! rollout objective to a body's mass/COM/inertia — is not exposed by phyz at
-//! any version currently vendored. So the live, and only, path for
-//! `∂J/∂p_body` is central FD on the mass-property scalars, exactly the
-//! fallback the seam design anticipated. If a future phyz grows a
-//! parameter-adjoint, it drops in behind this same factorization: replace the
-//! FD loop in [`rollout_gradient`] with the analytic `∂J/∂p` and the chain is
-//! unchanged.
+//!   Either way the factorization is unchanged; the M11 gates
+//!   (`m11_adjoint_rollout.rs`) hold the two implementations to each other
+//!   at 1e-5 and to a rebuild-and-resimulate FD at 1e-4.
 //!
 //! # Contract and boundaries
 //!
-//! - **Contact-free only.** The factorization is exact *because* geometry
-//!   reaches the dynamics solely through mass properties. The moment collision
-//!   geometry participates (a contact, a joint limit that bottoms out under
-//!   load, a ground penalty), contact forces depend on the *surface* — a
-//!   channel this gradient does not see. The rollout closure you pass **must**
-//!   build a contact-free model; if it does not, the returned gradient is
-//!   silently incomplete. The **surface skin** is built: objective terms that
-//!   read the surface directly go through [`rollout_gradient_with_surface`]
-//!   (exact, one M5 pullback per body), and a future contact adjoint's
-//!   `∂J/∂x` plugs into [`surface_gradient`] unchanged. What remains
-//!   phyz-side is the adjoint itself — producing `∂J_dyn/∂x` when contact
-//!   forces act *during* the rollout.
+//! - **Contact-free for the mass-property-only entry points.** The
+//!   factorization is exact *because* geometry reaches the dynamics solely
+//!   through mass properties. The rollout closure passed to
+//!   [`rollout_gradient`] / [`rollout_gradient_adjoint`] **must** build a
+//!   contact-free model; if it does not, the returned gradient is silently
+//!   incomplete. When contact forces *do* act during the rollout, use
+//!   [`contact_rollout_gradient`]: the phyz contact adjoint produces
+//!   `∂J_dyn/∂x` on the body's collision skin (the frozen-plan seam mesh)
+//!   under the differentiable per-vertex penalty contact model, and that
+//!   cotangent goes through the same M5 pullback as [`surface_gradient`].
+//!   Objective terms that merely *read* the surface (no contact dynamics)
+//!   still go through [`rollout_gradient_with_surface`].
 //! - **Anchor channel.** If θ also moves a **joint anchor / mount frame** (a
 //!   pivot hole whose position scales with the part), use
 //!   [`rollout_gradient_with_anchors`]: the anchor coordinates enter the
@@ -491,8 +490,9 @@ pub fn rollout_gradient_with_anchors(
 /// return the term's value and its analytic node gradient `∂J_surf/∂x`
 /// (J-units per mm, one vector per node). This is the **contact skin** of the
 /// M8 factorization: any objective contribution that reads the *surface*
-/// rather than the mass properties — a ground-clearance penalty, a
-/// penetration term, or (when one exists) a contact adjoint's `∂J/∂x`.
+/// rather than the mass properties — a ground-clearance penalty or a
+/// penetration term. (Contact *dynamics* have their own entry point:
+/// [`contact_rollout_gradient`].)
 pub type SurfaceTerm<'a> = Box<dyn Fn(&[CadPoint3], &[[u32; 3]]) -> (f64, Vec<CadVec3>) + 'a>;
 
 /// Price a mesh cotangent through the CAD seam: given `∂J/∂x` on `body`'s
@@ -503,9 +503,9 @@ pub type SurfaceTerm<'a> = Box<dyn Fn(&[CadPoint3], &[[u32; 3]]) -> (f64, Vec<Ca
 /// each parameter then costs only a seeding synthesis and a contraction —
 /// the reverse-mode economics the skin was designed around. This is the raw
 /// entry point a **contact adjoint** plugs into: whatever produces `∂J/∂x`
-/// on the collision surface (an analytic penalty today, a phyz contact
-/// adjoint when one exists), this function turns it into CAD-parameter
-/// sensitivities.
+/// on the collision surface (an analytic penalty, or the phyz contact
+/// adjoint that [`contact_rollout_gradient`] drives), this function turns it
+/// into CAD-parameter sensitivities.
 pub fn surface_gradient(
     body: &DiffBody,
     theta: &[f64],
@@ -543,10 +543,10 @@ pub fn surface_gradient(
 ///
 /// `surface_terms` is parallel to `bodies`; `None` for bodies without a
 /// surface term. What this does **not** do: surface-dependent *dynamics*.
-/// If contact forces act during the rollout, `∂J_dyn/∂(surface)` needs a
-/// contact adjoint phyz does not currently expose; when one exists, its
-/// `∂J/∂x` enters through [`surface_gradient`] and the factorization is
-/// unchanged (documented in `docs/differentiable-seam-m8.md`).
+/// If contact forces act during the rollout, use
+/// [`contact_rollout_gradient`], which obtains `∂J_dyn/∂x` from the phyz
+/// contact adjoint and feeds it through the same pullback (documented in
+/// `docs/differentiable-seam-m8.md` and `-m11.md`).
 pub fn rollout_gradient_with_surface(
     bodies: &[DiffBody],
     surface_terms: &[Option<SurfaceTerm>],
@@ -635,6 +635,260 @@ pub fn rollout_gradient_with_surface(
     }
 
     Ok((j0, gradient))
+}
+
+// ---------------------------------------------------------------------------
+// Adjoint-backed rollout gradients (phyz trajectory adjoint for ∂J/∂p)
+// ---------------------------------------------------------------------------
+
+/// A structured, adjoint-differentiable rollout description.
+///
+/// [`rollout_gradient`] takes an opaque closure and therefore has to probe
+/// `∂J/∂p` by finite differences (~20 re-simulations per body). This spec
+/// exposes the rollout's structure — model builder, initial state, open-loop
+/// control schedule, final-state objective with its analytic gradient — so
+/// the phyz **trajectory adjoint** ([`phyz::diff`]) can compute `∂J/∂p`
+/// exactly in one backward pass.
+///
+/// # Contract
+///
+/// - `build_model` must install body `i`'s inertia **exactly as**
+///   `props[i].to_spatial_inertia()` — i.e. in the CAD body frame. Mounting
+///   (rotating/offsetting the body relative to its joint) belongs in the
+///   joint's `parent_to_joint` and `axis`, *not* in a transformed inertia;
+///   a transformed inertia would silently decouple `∂J/∂p` from the seam's
+///   `dp/dθ`. Violations are detected and panic.
+/// - Joints: single-DOF (revolute/prismatic) + fixed, like phyz's adjoint.
+/// - `ctrl` is open-loop: it must not read the state.
+/// - The rollout the adjoint differentiates is phyz's semi-implicit Euler
+///   (`v' = v + dt·qdd`, `q' = q + dt·v'`) — the same integrator the m8
+///   test rollouts hand-roll, so the FD path and the adjoint path price the
+///   same trajectory.
+#[allow(clippy::type_complexity)]
+pub struct AdjointRolloutSpec<'a> {
+    /// Build the (contact-free unless used via
+    /// [`contact_rollout_gradient`]) phyz model at the given mass
+    /// properties. See the type-level contract.
+    pub build_model: Box<dyn Fn(&[BodyMassProps]) -> phyz::Model + 'a>,
+    /// Initial joint positions (length `nq`).
+    pub q0: Vec<f64>,
+    /// Initial joint velocities (length `nv`).
+    pub v0: Vec<f64>,
+    /// Number of integration steps.
+    pub steps: usize,
+    /// Open-loop control at step `t` (length `nv`).
+    pub ctrl: Box<dyn Fn(usize) -> phyz::math::DVec + 'a>,
+    /// Final-state objective `J = g(q_T, v_T)`.
+    pub objective_value: Box<dyn Fn(&[f64], &[f64]) -> f64 + 'a>,
+    /// Analytic objective gradient `(∂g/∂q_T, ∂g/∂v_T)`.
+    pub objective_gradient: Box<dyn Fn(&[f64], &[f64]) -> (Vec<f64>, Vec<f64>) + 'a>,
+}
+
+/// Check the [`AdjointRolloutSpec::build_model`] contract: the model's body
+/// inertias must be the props verbatim (CAD body frame, no mount transform
+/// baked in).
+fn assert_model_matches_props(model: &phyz::Model, props: &[BodyMassProps]) {
+    assert_eq!(
+        model.nbodies(),
+        props.len(),
+        "build_model must create exactly one phyz body per DiffBody"
+    );
+    for (i, (body, p)) in model.bodies.iter().zip(props).enumerate() {
+        let si = p.to_spatial_inertia();
+        let close = |a: f64, b: f64| (a - b).abs() <= 1e-9 * a.abs().max(b.abs()).max(1e-12);
+        let com_ok = close(body.inertia.com.x, si.com.x)
+            && close(body.inertia.com.y, si.com.y)
+            && close(body.inertia.com.z, si.com.z);
+        let mut inertia_ok = close(body.inertia.mass, si.mass);
+        for r in 0..3 {
+            for c in 0..3 {
+                inertia_ok &= close(body.inertia.inertia.get(r, c), si.inertia.get(r, c));
+            }
+        }
+        assert!(
+            com_ok && inertia_ok,
+            "build_model contract violation on body {i}: the phyz body's \
+             spatial inertia differs from props[{i}].to_spatial_inertia(). \
+             Mount transforms belong in the joint (parent_to_joint / axis), \
+             not in a transformed inertia."
+        );
+    }
+}
+
+/// Shared core of the adjoint-backed gradients: nominal seam pass per body,
+/// model build + contract check, one phyz adjoint pass, then the exact
+/// `∂J/∂p · dp/dθ` contraction (plus the surface-channel contraction when
+/// collision skins are present).
+fn adjoint_gradient_core(
+    bodies: &[DiffBody],
+    spec: &AdjointRolloutSpec,
+    contact: Option<(&ContactConfig, &[usize])>,
+    theta: &[f64],
+) -> Result<(f64, Vec<f64>), DiffError> {
+    let n = theta.len();
+
+    // 1. Nominal seam pass per body; keep B-reps/plans/positions.
+    let mut breps = Vec::with_capacity(bodies.len());
+    let mut plans = Vec::with_capacity(bodies.len());
+    let mut positions = Vec::with_capacity(bodies.len());
+    let mut nominal = Vec::with_capacity(bodies.len());
+    for body in bodies {
+        let brep = (body.build)(theta);
+        let plan = capture_plan(&brep, &body.tess)?;
+        let seam0 = evaluate_with_sensitivity(&brep, &plan, &ParamSeeding::new())?;
+        let props = mass_properties(&seam0.positions, &seam0.triangles, body.seam_density());
+        nominal.push(BodyMassProps::from_seam(&props));
+        positions.push(seam0.positions);
+        breps.push(brep);
+        plans.push(plan);
+    }
+
+    // 2. Build the model and hold it to the body-frame contract.
+    let model = (spec.build_model)(&nominal);
+    assert_model_matches_props(&model, &nominal);
+
+    // 3. Collision skins: the body's frozen-plan nodes, mm → m. The skin is
+    //    *exactly* the seam mesh, so the vertex cotangent that comes back is
+    //    already indexed by plan node.
+    let meshes: Vec<phyz::diff::CollisionMesh> = match contact {
+        Some((_, skinned)) => skinned
+            .iter()
+            .map(|&i| phyz::diff::CollisionMesh {
+                body: i,
+                vertices: positions[i]
+                    .iter()
+                    .map(|p| phyz::math::Vec3::new(p.x * MM_TO_M, p.y * MM_TO_M, p.z * MM_TO_M))
+                    .collect(),
+            })
+            .collect(),
+        None => Vec::new(),
+    };
+    let ground = contact.map(|(cfg, _)| phyz::diff::GroundContact {
+        height: cfg.ground_height_m,
+        stiffness: cfg.stiffness,
+        damping: cfg.damping,
+    });
+
+    // 4. One adjoint pass: J, exact ∂J/∂p per body, and (with contact) the
+    //    exact vertex cotangent ∂J/∂x per skinned body.
+    let objective = phyz::diff::FinalStateObjective {
+        value: &*spec.objective_value,
+        gradient: &*spec.objective_gradient,
+    };
+    let ctrl = &*spec.ctrl;
+    let rollout = phyz::diff::AdjointRollout {
+        model: &model,
+        contact: ground.map(|g| phyz::diff::ContactSetup {
+            ground: g,
+            meshes: &meshes,
+        }),
+        q0: spec.q0.clone(),
+        v0: spec.v0.clone(),
+        steps: spec.steps,
+        ctrl,
+    };
+    let adj = phyz::diff::adjoint_rollout_gradient(&rollout, &objective);
+
+    // 5. Mass-property channel: exact ∂J/∂p (adjoint) · exact dp/dθ (seam).
+    let mut gradient = vec![0.0f64; n];
+    for (i, body) in bodies.iter().enumerate() {
+        for (k, g) in gradient.iter_mut().enumerate() {
+            let seeding = (body.seeding_for)(&breps[i], theta, k)?;
+            let seam_k = evaluate_with_sensitivity(&breps[i], &plans[i], &seeding)?;
+            let (_props, dprops) = mass_properties_with_derivative(&seam_k, body.seam_density());
+            let dp = BodyMassProps::deriv_scalars(&dprops);
+            let acc: f64 = adj.d_inertia[i]
+                .iter()
+                .zip(&dp)
+                .map(|(djdp, dpj)| djdp * dpj)
+                .sum();
+            *g += acc;
+        }
+    }
+
+    // 6. Surface channel: the adjoint's ∂J/∂x (per metre, body frame) turns
+    //    into a per-mm cotangent on the frozen-plan nodes and goes through
+    //    one M5 pullback per skinned body — the exact seam the M8 note
+    //    promised the contact adjoint would drop into.
+    if let Some((_, skinned)) = contact {
+        for (mi, &i) in skinned.iter().enumerate() {
+            let djdx_mm: Vec<CadVec3> = adj.d_vertices[mi]
+                .iter()
+                .map(|g| CadVec3::new(g.x * MM_TO_M, g.y * MM_TO_M, g.z * MM_TO_M))
+                .collect();
+            let cots = evaluate_with_pullback(&breps[i], &plans[i], &djdx_mm)?;
+            for (k, g) in gradient.iter_mut().enumerate() {
+                let seeding = (bodies[i].seeding_for)(&breps[i], theta, k)?;
+                *g += cots.contract(&seeding);
+            }
+        }
+    }
+
+    Ok((adj.objective, gradient))
+}
+
+/// [`rollout_gradient`] with the finite-difference `∂J/∂p` factor replaced
+/// by the **phyz trajectory adjoint**: `(J, dJ/dθ)` where both factors of
+/// the M8 chain are exact —
+///
+/// ```text
+/// dJ/dθ = Σ_bodies  ∂J/∂p_body (adjoint, exact) · dp_body/dθ (seam, exact)
+/// ```
+///
+/// The FD-based [`rollout_gradient`] remains available as the fallback for
+/// rollouts that cannot be expressed as an [`AdjointRolloutSpec`] (closed
+/// over arbitrary code, state-feedback control, multi-DOF joints, or a phyz
+/// version without the adjoint).
+pub fn rollout_gradient_adjoint(
+    bodies: &[DiffBody],
+    spec: &AdjointRolloutSpec,
+    theta: &[f64],
+) -> Result<(f64, Vec<f64>), DiffError> {
+    adjoint_gradient_core(bodies, spec, None, theta)
+}
+
+/// Ground-plane contact configuration for [`contact_rollout_gradient`], in
+/// phyz (SI) units.
+#[derive(Debug, Clone, Copy)]
+pub struct ContactConfig {
+    /// World z of the ground plane (m).
+    pub ground_height_m: f64,
+    /// Penalty stiffness per vertex (N/m).
+    pub stiffness: f64,
+    /// Penalty damping per vertex (N·s/m).
+    pub damping: f64,
+}
+
+/// `(J, dJ/dθ)` for a rollout in which **contact forces act during the
+/// dynamics** — the boundary the M8 contract left open.
+///
+/// Each body listed in `skinned` collides with the ground plane through its
+/// own frozen-plan seam mesh (mm → m), under phyz's differentiable
+/// per-vertex penalty model. The phyz trajectory adjoint returns both
+/// `∂J/∂p` and the vertex cotangent `∂J/∂x`; the gradient sums the two
+/// channels the seam already knows how to price:
+///
+/// ```text
+/// dJ/dθ = Σ ∂J/∂p·dp/dθ  +  Σ pullback(∂J/∂x)·seeding
+/// ```
+///
+/// The surface channel goes through [`evaluate_with_pullback`] exactly as
+/// [`surface_gradient`] — this function *is* the contact adjoint plugged
+/// into that seam. Both factors of both channels are analytic; there is no
+/// finite difference anywhere in the chain.
+///
+/// The forward model being differentiated is phyz's diff rollout (vertex
+/// penalty contact, no friction, single-DOF joints, open-loop control) —
+/// see `phyz::diff` for the contract. It is **not** the GJK/EPA production
+/// contact pipeline.
+pub fn contact_rollout_gradient(
+    bodies: &[DiffBody],
+    spec: &AdjointRolloutSpec,
+    contact: &ContactConfig,
+    skinned: &[usize],
+    theta: &[f64],
+) -> Result<(f64, Vec<f64>), DiffError> {
+    adjoint_gradient_core(bodies, spec, Some((contact, skinned)), theta)
 }
 
 /// The nominal SI mass properties of each body at θ (positions-only seam).
