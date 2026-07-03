@@ -287,12 +287,39 @@ pub fn evaluate_document(
         _ => 0.0,
     };
 
-    // Clash detection
+    // Clash detection. Broadphase first: blind pairwise `intersection`
+    // across all roots is O(n²) BRep booleans, which is fatal for
+    // many-root scenes (an imported chip die has ~90k roots). Compute
+    // each solid's AABB once, sort by min-x, and sweep — only pairs whose
+    // boxes overlap reach the kernel. AABB-disjoint pairs intersect to
+    // empty anyway, so skipping them is behavior-preserving.
     let mut clashes = Vec::new();
     let t_clash = clock.map(|c| c.now_ms());
     if !options.skip_clash_detection && solids.len() >= 2 {
-        for i in 0..solids.len() {
-            for j in (i + 1)..solids.len() {
+        let boxes: Vec<Option<([f64; 3], [f64; 3])>> = solids
+            .iter()
+            .map(|s| s.as_ref().map(|s| s.bounding_box()))
+            .collect();
+        let mut order: Vec<usize> = (0..solids.len()).filter(|&i| boxes[i].is_some()).collect();
+        order.sort_by(|&a, &b| {
+            let ax = boxes[a].as_ref().unwrap().0[0];
+            let bx = boxes[b].as_ref().unwrap().0[0];
+            ax.partial_cmp(&bx).unwrap_or(std::cmp::Ordering::Equal)
+        });
+        for (k, &i) in order.iter().enumerate() {
+            let (min_i, max_i) = boxes[i].as_ref().unwrap();
+            for &j in &order[k + 1..] {
+                let (min_j, max_j) = boxes[j].as_ref().unwrap();
+                if min_j[0] > max_i[0] {
+                    break; // sorted by min-x: no later j can overlap i
+                }
+                if min_j[1] > max_i[1]
+                    || max_j[1] < min_i[1]
+                    || min_j[2] > max_i[2]
+                    || max_j[2] < min_i[2]
+                {
+                    continue;
+                }
                 if let (Some(a), Some(b)) = (&solids[i], &solids[j]) {
                     let intersection = a.intersection(b);
                     if !intersection.is_empty() {

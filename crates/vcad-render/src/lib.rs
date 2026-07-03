@@ -231,8 +231,17 @@ fn evaluate_vcad(raw_vcad: &str) -> Result<Vec<TintedSolid>, String> {
     // left in an undefined state. The JS caller is responsible for
     // catching the trap (WebAssembly.RuntimeError) and poisoning the
     // shared instance; see packages/mcp/src/tools/render.ts.
+    // A static renderer never displays clash meshes, and clash detection
+    // is O(n²) pairwise booleans across scene roots — fatal for many-root
+    // documents (an imported chip die has ~90k roots).
     let scene = catch_unwind(AssertUnwindSafe(|| {
-        evaluate_document(&parsed.document, &EvalOptions::default())
+        evaluate_document(
+            &parsed.document,
+            &EvalOptions {
+                skip_clash_detection: true,
+                ..Default::default()
+            },
+        )
     }))
     .map_err(|_| "eval panicked".to_string())?
     .map_err(|e| format!("eval: {}", e))?;
