@@ -10,7 +10,6 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { NotificationContainer } from "@/components/ui/notifications";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
-import { MoleculePanel } from "@/components/MoleculePanel";
 import { AsyncBoundary } from "@/components/AsyncBoundary";
 import { AppShell } from "@/components/AppShell";
 import { Header } from "@/components/Header";
@@ -1047,13 +1046,6 @@ export function App() {
       <Suspense fallback={null}>
         <Viewport />
       </Suspense>
-
-      {/* Atomic-structure demo picker — bottom-left viewport overlay */}
-      <div className="pointer-events-none absolute bottom-3 left-3 z-20">
-        <Suspense fallback={null}>
-          <MoleculePanel />
-        </Suspense>
-      </div>
 
       {/* Read-only share banner — fixed to the top of the viewport region */}
       <div className="absolute inset-x-0 top-0 z-30 pointer-events-none">
