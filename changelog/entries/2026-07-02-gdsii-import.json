@@ -1,0 +1,9 @@
+{
+  "id": "2026-07-02-gdsii-import",
+  "version": "0.9.4",
+  "date": "2026-07-02",
+  "category": "feat",
+  "title": "GDSII chip-layout import foundation",
+  "summary": "New vcad-gdsii crate reads and writes GDSII streams, flattens cell hierarchies to per-layer polygons, and extrudes them into vcad parts via a layer stack.",
+  "features": ["gdsii", "import", "chip-layout"]
+}

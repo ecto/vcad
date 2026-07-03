@@ -1,0 +1,17 @@
+[package]
+name = "vcad-gdsii"
+description = "GDSII (Calma stream format) reader/writer and layout flattening for vcad"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[features]
+default = ["vcad-ir"]
+## Enables the GDS-layer → vcad-ir document bridge (`bridge` module).
+vcad-ir = ["dep:vcad-ir"]
+
+[dependencies]
+thiserror = { workspace = true }
+vcad-ir = { workspace = true, optional = true }
