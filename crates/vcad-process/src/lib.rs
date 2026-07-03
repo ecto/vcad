@@ -2,7 +2,9 @@
 //! v0.
 //!
 //! Takes a GDSII layout (masks) plus a [`Recipe`] (deposit, etch, grow,
-//! implant, planarize) and produces geometry as [`vcad_ir::Document`]s:
+//! implant, planarize, plus a photolithography loop of spin / expose /
+//! develop / etch-through-resist / strip) and produces geometry as
+//! [`vcad_ir::Document`]s:
 //!
 //! - [`simulate_3d`] — the 3D film stack over a (windowed) die region.
 //! - [`cross_section`] — the classic textbook process cross-section along
@@ -23,5 +25,5 @@ mod bridge;
 
 pub use bridge::{cross_section, simulate_3d};
 pub use error::{ProcessError, Result};
-pub use recipe::{Axis, CutLine, Polarity, ProcessStep, Recipe, SI_CONSUMED_PER_OXIDE};
-pub use sim::{simulate, Film, FilmKind, Masks};
+pub use recipe::{Axis, CutLine, Polarity, ProcessStep, Recipe, ResistTone, SI_CONSUMED_PER_OXIDE};
+pub use sim::{simulate, Exposure, Film, FilmKind, Masks, ResistState};

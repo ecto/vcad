@@ -50,6 +50,7 @@ fn material_def(material: &str) -> MaterialDef {
         "silicon" => ([0.42, 0.50, 0.80], 0.1, 0.7), // gray-blue wafer
         "sio2" => ([0.88, 0.85, 0.55], 0.0, 0.9),    // pale sandy oxide
         "poly" => ([0.88, 0.24, 0.18], 0.1, 0.7),    // classic poly red
+        "resist" => ([0.97, 0.62, 0.12], 0.0, 0.5),  // classic resist amber
         "aluminum" => ([0.35, 0.82, 0.78], 0.9, 0.35), // bright metal teal
         "li" | "tungsten" => ([0.65, 0.32, 0.88], 0.6, 0.5), // local interconnect purple
         "ndiff" | "n+" => ([0.22, 0.78, 0.30], 0.1, 0.7), // n-type green
@@ -442,6 +443,44 @@ mod tests {
         };
         let doc = cross_section(&sample_library(), "top", &patterned_recipe(), &cut).unwrap();
         assert_eq!(doc.roots.len(), 1); // substrate only
+    }
+
+    #[test]
+    fn resist_films_render_while_present() {
+        // A stack frozen mid-litho (before Strip) must include the resist
+        // as its own amber-tinted part in both emitters.
+        let recipe = Recipe {
+            substrate_material: "silicon".into(),
+            substrate_thickness_um: 1.0,
+            steps: vec![
+                ProcessStep::SpinResist {
+                    thickness_um: 1.0,
+                    tone: crate::recipe::ResistTone::Positive,
+                },
+                ProcessStep::Expose {
+                    mask_layer: 1,
+                    dose_mj_cm2: 150.0,
+                },
+                ProcessStep::Develop,
+            ],
+        };
+        let doc = simulate_3d(&sample_library(), "top", &recipe, None).unwrap();
+        let names: Vec<_> = doc
+            .roots
+            .iter()
+            .map(|r| doc.nodes[&r.root].name.clone().unwrap())
+            .collect();
+        assert!(names.iter().any(|n| n.contains("resist")));
+        let color = doc.materials["resist"].color;
+        assert!(color[0] > color[2], "resist should render amber, not blue");
+
+        let cut = CutLine {
+            axis: Axis::X,
+            position_um: 4.0,
+            span: [0.0, 10.0],
+        };
+        let section = cross_section(&sample_library(), "top", &recipe, &cut).unwrap();
+        assert!(section.materials.contains_key("resist"));
     }
 
     #[test]

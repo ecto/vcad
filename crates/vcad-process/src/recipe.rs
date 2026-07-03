@@ -74,6 +74,52 @@ pub enum ProcessStep {
         /// above which all material is removed.
         to_um: f64,
     },
+    /// Spin-coat a blanket photoresist film over the current top surface.
+    SpinResist {
+        /// Resist film thickness in µm.
+        thickness_um: f64,
+        /// Resist tone: which regions survive [`ProcessStep::Develop`].
+        tone: ResistTone,
+    },
+    /// Expose the topmost resist film through a GDS layer. (A maskless
+    /// stepper writing the same polygons directly is equivalent — the
+    /// layer is simply where the light lands.) The pattern and dose are
+    /// recorded on the resist film; exposure is binary for now and the
+    /// dose is pure bookkeeping — dose-to-clear thresholding is future
+    /// work. Multiple exposures accumulate (their patterns union).
+    Expose {
+        /// GDS layer number whose polygons are the exposed regions.
+        mask_layer: i16,
+        /// Exposure dose in mJ/cm² (recorded, not yet modeled).
+        dose_mj_cm2: f64,
+    },
+    /// Develop the topmost exposed, undeveloped resist film:
+    /// [`ResistTone::Positive`] removes the exposed regions,
+    /// [`ResistTone::Negative`] keeps only the exposed regions. After
+    /// develop the resist footprint reflects the pattern.
+    Develop,
+    /// Etch the topmost non-resist film wherever resist is absent, to
+    /// `depth_um` — the physically honest replacement for
+    /// [`ProcessStep::PatternEtch`]'s idealized mask → result shortcut.
+    /// Same through/partial-etch semantics as `PatternEtch`.
+    EtchThroughResist {
+        /// Etch depth in µm. Depth ≥ film thickness clears the film in
+        /// the open regions; a shallower depth leaves a recessed remnant.
+        depth_um: f64,
+    },
+    /// Strip all resist films from the stack.
+    Strip,
+}
+
+/// Photoresist tone: which regions survive [`ProcessStep::Develop`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ResistTone {
+    /// Exposed regions dissolve in the developer and are removed — the
+    /// common case.
+    Positive,
+    /// Exposed regions cross-link and survive; everything unexposed is
+    /// removed.
+    Negative,
 }
 
 /// A full process flow: substrate plus ordered steps.
@@ -142,6 +188,39 @@ mod tests {
         assert_eq!(recipe, parsed);
         // Steps are tagged so recipe files read like a run sheet.
         assert!(json.contains("\"step\": \"GrowOxide\""));
+    }
+
+    #[test]
+    fn litho_steps_serde_round_trip() {
+        let recipe = Recipe {
+            substrate_material: "silicon".into(),
+            substrate_thickness_um: 1.5,
+            steps: vec![
+                ProcessStep::SpinResist {
+                    thickness_um: 1.0,
+                    tone: ResistTone::Positive,
+                },
+                ProcessStep::Expose {
+                    mask_layer: 66,
+                    dose_mj_cm2: 150.0,
+                },
+                ProcessStep::Develop,
+                ProcessStep::EtchThroughResist { depth_um: 0.18 },
+                ProcessStep::Strip,
+                ProcessStep::SpinResist {
+                    thickness_um: 0.8,
+                    tone: ResistTone::Negative,
+                },
+            ],
+        };
+        let json = serde_json::to_string_pretty(&recipe).unwrap();
+        let parsed: Recipe = serde_json::from_str(&json).unwrap();
+        assert_eq!(recipe, parsed);
+        // Same run-sheet tagging as the rest of the steps.
+        assert!(json.contains("\"step\": \"SpinResist\""));
+        assert!(json.contains("\"step\": \"Develop\""));
+        assert!(json.contains("\"tone\": \"Positive\""));
+        assert!(json.contains("\"tone\": \"Negative\""));
     }
 
     #[test]

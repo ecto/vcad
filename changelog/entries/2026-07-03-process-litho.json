@@ -1,0 +1,9 @@
+{
+  "id": "2026-07-03-process-litho",
+  "version": "0.9.4",
+  "date": "2026-07-03",
+  "category": "feat",
+  "title": "Photolithography steps in the process simulator",
+  "summary": "vcad-process recipes gain SpinResist, Expose, Develop, EtchThroughResist, and Strip: a physically honest resist loop that lands on the same geometry as the idealized PatternEtch.",
+  "features": ["process-sim", "photolithography", "resist", "cross-section"]
+}
