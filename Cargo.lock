@@ -3911,7 +3911,7 @@ dependencies = [
 
 [[package]]
 name = "phyz"
-version = "0.3.1"
+version = "0.3.0"
 dependencies = [
  "tang",
 ]
@@ -7187,6 +7187,7 @@ dependencies = [
  "thiserror 2.0.18",
  "vcad-ir",
  "vcad-kernel",
+ "vcad-kernel-atoms",
  "vcad-kernel-diff",
  "vcad-kernel-geom",
  "vcad-kernel-math",

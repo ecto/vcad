@@ -157,6 +157,8 @@ import {
   mdRunSchema,
   designMaterial,
   designMaterialSchema,
+  homogenizeMaterialTool,
+  homogenizeMaterialSchema,
   renderMolecule,
   renderMoleculeSchema,
 } from "./tools/atoms.js";
@@ -656,6 +658,7 @@ const TOOL_PACKS: Record<string, readonly string[]> = {
     "minimize_energy",
     "md_run",
     "design_material",
+    "homogenize_material",
     "render_molecule",
   ],
   ecad: [
@@ -1335,6 +1338,12 @@ export async function createServer(
         description:
           "Inverse design: search an isotropic scale factor that drives a geometric property (nearest-neighbor distance or radius of gyration) to a target value, returning the reshaped molecule and a receipt. The energy-objective inverse design (gradients through the simulation) lives in the Rust kernel.",
         inputSchema: designMaterialSchema,
+      },
+      {
+        name: "homogenize_material",
+        description:
+          "Homogenize a periodic crystal into bulk material properties — density (kg/m³), cubic elastic constants C11/C12/C44 and VRH isotropic moduli (GPa) — the atoms-to-continuum bridge. Requires a fully periodic cell.",
+        inputSchema: homogenizeMaterialSchema,
       },
       {
         name: "render_molecule",
@@ -2264,6 +2273,10 @@ export async function createServer(
 
         case "design_material":
           result = await designMaterial(args);
+          break;
+
+        case "homogenize_material":
+          result = await homogenizeMaterialTool(args);
           break;
 
         case "render_molecule":

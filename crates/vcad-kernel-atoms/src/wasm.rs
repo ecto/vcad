@@ -9,6 +9,7 @@
 use wasm_bindgen::prelude::*;
 
 use crate::gym::MdEnv;
+use crate::homogenize::{self, HomogenizeOptions};
 use crate::integrate::Thermostat;
 use crate::minimize::{minimize, MinimizeOptions};
 use crate::potential::{Coulomb, ForceField, HarmonicBonds, LennardJones, Sum};
@@ -44,6 +45,10 @@ struct MdConfig {
     thermostat_k: f64,
     /// Thermostat coupling time (fs).
     thermostat_tau: f64,
+    /// Strain amplitude for homogenization second differences.
+    strain: f64,
+    /// Re-relax internal coordinates under each strained cell.
+    relax_internal: bool,
 }
 
 impl Default for MdConfig {
@@ -60,19 +65,29 @@ impl Default for MdConfig {
             dt: 1.0,
             thermostat_k: 0.0,
             thermostat_tau: 100.0,
+            strain: 2e-3,
+            relax_internal: true,
         }
     }
 }
 
 /// Harmonic bonds whose per-bond equilibrium length is the current geometry, so
 /// the input structure is a stress-free minimum (atoms vibrate about it rather
-/// than snapping to an arbitrary uniform length).
+/// than snapping to an arbitrary uniform length). Lengths are measured with the
+/// same minimum-image convention the force evaluation uses, so bonds that cross
+/// a periodic boundary get their true (wrapped) length, not the raw span.
 fn bonds_at_current_geometry(sys: &AtomSystem, k: f64) -> HarmonicBonds {
+    use crate::potential::min_image;
     use crate::vec3;
     let per_bond = sys
         .bonds
         .iter()
-        .map(|b| vec3::norm(vec3::sub(sys.positions[b.i], sys.positions[b.j])))
+        .map(|b| {
+            vec3::norm(min_image(
+                vec3::sub(sys.positions[b.i], sys.positions[b.j]),
+                &sys.cell,
+            ))
+        })
         .collect();
     HarmonicBonds {
         k,
@@ -175,6 +190,25 @@ pub fn atoms_minimize(
         "molecule": sys.to_ir(),
     });
     serde_json::to_string(&out).map_err(err)
+}
+
+/// Homogenize a periodic structure into bulk material properties — density,
+/// cubic elastic constants, and VRH isotropic moduli — as a `MaterialCard`
+/// JSON. The atoms → continuum bridge: the returned density (kg/m³) and
+/// moduli (GPa) are what a millimetre-scale part consumes.
+#[wasm_bindgen]
+pub fn atoms_homogenize(molecule_json: &str, config_json: &str) -> Result<String, JsValue> {
+    let mol: MoleculeSystem = serde_json::from_str(molecule_json).map_err(err)?;
+    let cfg = parse_config(config_json)?;
+    let sys = AtomSystem::from_ir(&mol).map_err(err)?;
+    let ff = build_force_field(&cfg, &sys);
+    let opts = HomogenizeOptions {
+        strain: cfg.strain,
+        relax_internal: cfg.relax_internal,
+        ..Default::default()
+    };
+    let card = homogenize::homogenize(ff.as_ref(), &mol, &opts).map_err(err)?;
+    serde_json::to_string(&card).map_err(err)
 }
 
 fn parse_config(config_json: &str) -> Result<MdConfig, JsValue> {

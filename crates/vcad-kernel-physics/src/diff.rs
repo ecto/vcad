@@ -637,6 +637,95 @@ pub fn rollout_gradient_with_surface(
     Ok((j0, gradient))
 }
 
+/// [`rollout_gradient`] with the **density channel**: `(J, dJ/dθ)` where θ
+/// reaches the rollout through each body's *material density* rather than
+/// its geometry.
+///
+/// This is the part-scale half of the atoms → continuum bridge: an upstream
+/// material model — in vcad, `vcad-kernel-atoms::homogenize` — maps θ (a
+/// lattice constant, a composition fraction) to each body's mass density
+/// `ρᵢ(θ)` and its derivative `dρᵢ/dθ`; the geometry is **fixed**. For a
+/// homogeneous body every mass-property scalar is linear in ρ (mass ∝ ρ,
+/// COM independent of ρ, inertia ∝ ρ), so the material-side factor is exact:
+///
+/// ```text
+/// dp/dρ = [m/ρ, 0, 0, 0, I_xx/ρ, …]        (exact, no FD)
+/// dJ/dθ_k = Σ_bodies (∂J/∂p_i · dp_i/dρ_i) · dρᵢ/dθ_k
+/// ```
+///
+/// `∂J/∂p` comes from the same central-FD pattern as [`rollout_gradient`],
+/// minus the three COM scalars whose `dp/dρ` is exactly zero — 7 scalars ×
+/// 2 = 14 rollouts per body; no CAD rebuild, seam pass, or re-tessellation
+/// happens here at all, which is why this channel is infallible where the
+/// geometry channels return [`DiffError`].
+///
+/// `nominal[i]` must be body `i`'s mass properties evaluated **at**
+/// `rho0[i]` (e.g. from [`nominal_mass_props`] with
+/// `density_kg_m3 = rho0[i]`), and `drho_dtheta[i]` is `dρᵢ/dθ` with one
+/// entry per θ component. The rollout closure contract (pure, deterministic,
+/// contact-free) is identical to [`rollout_gradient`].
+pub fn rollout_gradient_via_density(
+    nominal: &[BodyMassProps],
+    rho0: &[f64],
+    drho_dtheta: &[Vec<f64>],
+    rollout: &impl Fn(&[BodyMassProps]) -> f64,
+    fd: &MassPropFdSteps,
+) -> (f64, Vec<f64>) {
+    assert_eq!(nominal.len(), rho0.len(), "one density per body");
+    assert_eq!(
+        nominal.len(),
+        drho_dtheta.len(),
+        "one density-derivative row per body"
+    );
+    let n_theta = drho_dtheta.first().map(|r| r.len()).unwrap_or(0);
+
+    let j0 = rollout(nominal);
+
+    // ∂J/∂p per body by central FD on the density-coupled scalars, exactly
+    // as in the geometry channels.
+    let mut gradient = vec![0.0f64; n_theta];
+    for (i, nom) in nominal.iter().enumerate() {
+        assert!(rho0[i] > 0.0, "density must be positive");
+        assert_eq!(
+            drho_dtheta[i].len(),
+            n_theta,
+            "density-derivative rows must share the θ dimension"
+        );
+        let steps = fd.steps_for(nom);
+        let mut work = nominal.to_vec();
+        // dJ/dρ_i = Σ_j ∂J/∂p_j · dp_j/dρ_i, with the exact linear factor
+        // dp/dρ = p/ρ for mass and inertia and 0 for the COM.
+        let p = nom.scalars();
+        let mut dj_drho = 0.0;
+        for j in 0..10 {
+            if (1..=3).contains(&j) {
+                // COM components are density-independent: dp/dρ = 0, so
+                // their rollouts are skipped entirely.
+                continue;
+            }
+            let dp_drho = p[j] / rho0[i];
+            let h = steps[j];
+            let mut sp = p;
+            sp[j] += h;
+            work[i] = BodyMassProps::from_scalars(sp);
+            let jp = rollout(&work);
+
+            let mut sm = p;
+            sm[j] -= h;
+            work[i] = BodyMassProps::from_scalars(sm);
+            let jm = rollout(&work);
+
+            dj_drho += (jp - jm) / (2.0 * h) * dp_drho;
+        }
+        work[i] = *nom;
+        for (k, g) in gradient.iter_mut().enumerate() {
+            *g += dj_drho * drho_dtheta[i][k];
+        }
+    }
+
+    (j0, gradient)
+}
+
 /// The nominal SI mass properties of each body at θ (positions-only seam).
 ///
 /// A convenience for callers that want the primal properties — to build the
