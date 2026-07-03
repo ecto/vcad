@@ -10,6 +10,7 @@
 //! view scale: `1 µm in the layout` becomes `view_scale / 1000` mm in the
 //! document. With [`DEFAULT_VIEW_SCALE`] (1000), 1 µm renders as 1 mm.
 
+use geo::{BooleanOps, Coord, LineString, MultiPolygon, Polygon};
 use vcad_ir::{
     CsgOp, Document, MaterialDef, Node, NodeId, SceneEntry, SketchSegment2D, Vec2, Vec3,
 };
@@ -68,12 +69,6 @@ pub fn to_vcad_document(
 
     let mut doc = Document::new();
     let mut next_id: NodeId = 1;
-    let mut alloc = |doc: &mut Document, name: Option<String>, op: CsgOp| -> NodeId {
-        let id = next_id;
-        next_id += 1;
-        doc.nodes.insert(id, Node { id, name, op });
-        id
-    };
 
     for (stack_index, &(layer, z_bottom_um, thickness_um, name)) in layer_stack.iter().enumerate() {
         let Some(layer_polys) = flat.iter().find(|lp| lp.layer == layer) else {
@@ -85,58 +80,53 @@ pub fn to_vcad_document(
 
         let z_mm = z_bottom_um * um_to_mm;
         let thickness_mm = thickness_um * um_to_mm;
-        let mut extrudes: Vec<NodeId> = Vec::with_capacity(layer_polys.polygons.len());
 
-        for polygon in &layer_polys.polygons {
-            let segments: Vec<SketchSegment2D> = polygon
-                .iter()
-                .zip(polygon.iter().cycle().skip(1))
-                .map(|(a, b)| SketchSegment2D::Line {
-                    start: Vec2::new(a[0] * db_to_mm, a[1] * db_to_mm),
-                    end: Vec2::new(b[0] * db_to_mm, b[1] * db_to_mm),
-                })
-                .collect();
-            let sketch = alloc(
+        // Merge the layer's raw polygons in 2D before any extrusion. Raw GDS
+        // layers arrive as tens of thousands of abutting/overlapping rects;
+        // extruding them individually forces the 3D boolean pipeline to sew
+        // touching prisms one by one. After a 2D union each connected island
+        // is a single profile, islands are pairwise disjoint by construction
+        // (the cheap non-overlapping union path), and only interior holes
+        // ever reach a real 3D boolean (as a Difference per island).
+        let merged = union_polygons(&layer_polys.polygons);
+
+        let mut islands: Vec<NodeId> = Vec::with_capacity(merged.0.len());
+        for island in &merged.0 {
+            let outer = ring_solid(
                 &mut doc,
-                None,
-                CsgOp::Sketch2D {
-                    origin: Vec3::new(0.0, 0.0, z_mm),
-                    x_dir: Vec3::new(1.0, 0.0, 0.0),
-                    y_dir: Vec3::new(0.0, 1.0, 0.0),
-                    segments,
-                },
+                &mut next_id,
+                island.exterior(),
+                db_to_mm,
+                z_mm,
+                thickness_mm,
             );
-            let extrude = alloc(
-                &mut doc,
-                None,
-                CsgOp::Extrude {
-                    sketch,
-                    direction: Vec3::new(0.0, 0.0, thickness_mm),
-                    twist_angle: None,
-                    scale_end: None,
-                },
-            );
-            extrudes.push(extrude);
+            let node = if island.interiors().is_empty() {
+                outer
+            } else {
+                let holes: Vec<NodeId> = island
+                    .interiors()
+                    .iter()
+                    .map(|ring| {
+                        ring_solid(&mut doc, &mut next_id, ring, db_to_mm, z_mm, thickness_mm)
+                    })
+                    .collect();
+                let holes_root = balanced_union(&mut doc, &mut next_id, holes);
+                alloc(
+                    &mut doc,
+                    &mut next_id,
+                    CsgOp::Difference {
+                        left: outer,
+                        right: holes_root,
+                    },
+                )
+            };
+            islands.push(node);
+        }
+        if islands.is_empty() {
+            continue; // every polygon degenerated away in the 2D union
         }
 
-        // Union the extrudes as a balanced tree, not a left chain — real
-        // dies flatten to tens of thousands of polygons per layer, and a
-        // chain that deep overflows the stack of any recursive consumer.
-        let mut level = extrudes;
-        while level.len() > 1 {
-            let mut next = Vec::with_capacity(level.len().div_ceil(2));
-            let mut iter = level.into_iter();
-            while let Some(left) = iter.next() {
-                match iter.next() {
-                    Some(right) => next.push(alloc(&mut doc, None, CsgOp::Union { left, right })),
-                    None => next.push(left),
-                }
-            }
-            level = next;
-        }
-        let root = level
-            .pop()
-            .expect("layer with polygons always yields a root");
+        let root = balanced_union(&mut doc, &mut next_id, islands);
         // Name the root node after the layer so it reads well in the tree.
         if let Some(node) = doc.nodes.get_mut(&root) {
             node.name = Some(name.to_string());
@@ -162,6 +152,100 @@ pub fn to_vcad_document(
     }
 
     Ok(doc)
+}
+
+/// Insert a node and return its id.
+fn alloc(doc: &mut Document, next_id: &mut NodeId, op: CsgOp) -> NodeId {
+    let id = *next_id;
+    *next_id += 1;
+    doc.nodes.insert(id, Node { id, name: None, op });
+    id
+}
+
+/// Union all `polygons` (DB-unit vertex lists, implicit closing edge) into a
+/// multipolygon of disjoint islands via a balanced pairwise 2D boolean fold.
+fn union_polygons(polygons: &[Vec<[f64; 2]>]) -> MultiPolygon<f64> {
+    let mut level: Vec<MultiPolygon<f64>> = polygons
+        .iter()
+        .filter(|p| p.len() >= 3)
+        .map(|p| {
+            let coords: Vec<Coord<f64>> = p.iter().map(|v| Coord { x: v[0], y: v[1] }).collect();
+            MultiPolygon::new(vec![Polygon::new(LineString::new(coords), vec![])])
+        })
+        .collect();
+    while level.len() > 1 {
+        level = level
+            .chunks(2)
+            .map(|pair| {
+                if pair.len() == 2 {
+                    pair[0].union(&pair[1])
+                } else {
+                    pair[0].clone()
+                }
+            })
+            .collect();
+    }
+    level.pop().unwrap_or_else(|| MultiPolygon::new(Vec::new()))
+}
+
+/// Extrude one ring (already closed; geo duplicates the first point last)
+/// into a sketch + extrude pair, returning the extrude node.
+fn ring_solid(
+    doc: &mut Document,
+    next_id: &mut NodeId,
+    ring: &LineString<f64>,
+    db_to_mm: f64,
+    z_mm: f64,
+    thickness_mm: f64,
+) -> NodeId {
+    let pts = &ring.0[..ring.0.len().saturating_sub(1)];
+    let segments: Vec<SketchSegment2D> = pts
+        .iter()
+        .zip(pts.iter().cycle().skip(1))
+        .map(|(a, b)| SketchSegment2D::Line {
+            start: Vec2::new(a.x * db_to_mm, a.y * db_to_mm),
+            end: Vec2::new(b.x * db_to_mm, b.y * db_to_mm),
+        })
+        .collect();
+    let sketch = alloc(
+        doc,
+        next_id,
+        CsgOp::Sketch2D {
+            origin: Vec3::new(0.0, 0.0, z_mm),
+            x_dir: Vec3::new(1.0, 0.0, 0.0),
+            y_dir: Vec3::new(0.0, 1.0, 0.0),
+            segments,
+        },
+    );
+    alloc(
+        doc,
+        next_id,
+        CsgOp::Extrude {
+            sketch,
+            direction: Vec3::new(0.0, 0.0, thickness_mm),
+            twist_angle: None,
+            scale_end: None,
+        },
+    )
+}
+
+/// Union `nodes` into a balanced tree (depth ~log₂ n), not a left chain —
+/// deep chains overflow the stack of recursive document consumers.
+/// `nodes` must be non-empty.
+fn balanced_union(doc: &mut Document, next_id: &mut NodeId, nodes: Vec<NodeId>) -> NodeId {
+    let mut level = nodes;
+    while level.len() > 1 {
+        let mut next = Vec::with_capacity(level.len().div_ceil(2));
+        let mut iter = level.into_iter();
+        while let Some(left) = iter.next() {
+            match iter.next() {
+                Some(right) => next.push(alloc(doc, next_id, CsgOp::Union { left, right })),
+                None => next.push(left),
+            }
+        }
+        level = next;
+    }
+    level.pop().expect("balanced_union requires nodes")
 }
 
 #[cfg(test)]
@@ -363,5 +447,65 @@ mod tests {
         let d = depth(&doc, doc.roots[0].root);
         // ceil(log2(1000)) == 10; allow a little slack, forbid chains.
         assert!(d <= 12, "union depth {d} — expected a balanced tree");
+    }
+
+    #[test]
+    fn overlapping_polygons_merge_to_one_island() {
+        // Two overlapping squares on one layer merge in 2D: one sketch, one
+        // extrude, no unions at all.
+        let mut cell = Cell::new("top");
+        cell.elements.push(Element::Boundary {
+            layer: 1,
+            datatype: 0,
+            xy: vec![(0, 0), (1000, 0), (1000, 1000), (0, 1000), (0, 0)],
+        });
+        cell.elements.push(Element::Boundary {
+            layer: 1,
+            datatype: 0,
+            xy: vec![(500, 0), (1500, 0), (1500, 1000), (500, 1000), (500, 0)],
+        });
+        let mut lib = Library::new("merge_test");
+        lib.cells = vec![cell];
+
+        let doc =
+            to_vcad_document(&lib, "top", &[(1, 0.0, 0.2, "l1")], DEFAULT_VIEW_SCALE).unwrap();
+        let count = |pred: fn(&CsgOp) -> bool| doc.nodes.values().filter(|n| pred(&n.op)).count();
+        assert_eq!(count(|op| matches!(op, CsgOp::Extrude { .. })), 1);
+        assert_eq!(count(|op| matches!(op, CsgOp::Union { .. })), 0);
+    }
+
+    #[test]
+    fn abutting_ring_produces_hole_via_difference() {
+        // Four rects forming a closed picture frame: the 2D union yields one
+        // island with one interior ring -> outer extrude minus hole extrude.
+        let mut cell = Cell::new("top");
+        let rects: [[(i32, i32); 5]; 4] = [
+            [(0, 0), (3000, 0), (3000, 1000), (0, 1000), (0, 0)], // bottom
+            [(0, 2000), (3000, 2000), (3000, 3000), (0, 3000), (0, 2000)], // top
+            [(0, 0), (1000, 0), (1000, 3000), (0, 3000), (0, 0)], // left
+            [(2000, 0), (3000, 0), (3000, 3000), (2000, 3000), (2000, 0)], // right
+        ];
+        for r in rects {
+            cell.elements.push(Element::Boundary {
+                layer: 1,
+                datatype: 0,
+                xy: r.to_vec(),
+            });
+        }
+        let mut lib = Library::new("ring_test");
+        lib.cells = vec![cell];
+
+        let doc =
+            to_vcad_document(&lib, "top", &[(1, 0.0, 0.2, "l1")], DEFAULT_VIEW_SCALE).unwrap();
+        let count = |pred: fn(&CsgOp) -> bool| doc.nodes.values().filter(|n| pred(&n.op)).count();
+        // outer + hole
+        assert_eq!(count(|op| matches!(op, CsgOp::Extrude { .. })), 2);
+        assert_eq!(count(|op| matches!(op, CsgOp::Difference { .. })), 1);
+        assert_eq!(count(|op| matches!(op, CsgOp::Union { .. })), 0);
+        // The scene root is the Difference (single island).
+        assert!(matches!(
+            doc.nodes[&doc.roots[0].root].op,
+            CsgOp::Difference { .. }
+        ));
     }
 }
