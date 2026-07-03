@@ -262,8 +262,9 @@ impl<'a> RecordReader<'a> {
                         reason: format!("XY payload of {} bytes is not 8-aligned", payload.len()),
                     });
                 }
-                let pairs = payload
-                    .chunks_exact(8)
+                let (chunks, _) = payload.as_chunks::<8>();
+                let pairs = chunks
+                    .iter()
                     .map(|c| (be_i32(&c[0..4]), be_i32(&c[4..8])))
                     .collect();
                 Record::Xy(pairs)
