@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-02-homogenize-bridge",
+  "version": "0.9.4",
+  "date": "2026-07-02",
+  "category": "feat",
+  "title": "Homogenize bridge: atoms to bulk material properties",
+  "summary": "Homogenize a crystal into density and elastic moduli (MaterialCard), and differentiate part-scale physics objectives through it — dJ/d(lattice constant), end to end.",
+  "features": ["atoms", "simulation", "differentiable", "materials", "mcp"],
+  "mcpTools": ["homogenize_material"]
+}

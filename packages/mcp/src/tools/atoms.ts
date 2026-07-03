@@ -14,6 +14,7 @@ import {
   parseXyz,
   inspectMolecule,
   minimizeEnergy,
+  homogenizeMaterial,
   buildMoleculeReceipt,
   MdEnv,
   type MdConfig,
@@ -58,7 +59,7 @@ export const inspectMoleculeSchema = {
 const configSchema = {
   type: "object" as const,
   description:
-    "Force-field / integrator config: forceField ('lj'|'mlip-stub'), epsilon, sigma, cutoff, useBonds, bondK, bondR0, useCoulomb, dt, thermostatK, thermostatTau.",
+    "Force-field / integrator config: forceField ('auto'|'lj'|'bonds'|'mlip-stub', default auto), epsilon, sigma, cutoff, useBonds, bondK, bondR0, useCoulomb, dt, thermostatK, thermostatTau.",
 };
 
 export const minimizeEnergySchema = {
@@ -99,6 +100,38 @@ export const designMaterialSchema = {
     },
   },
   required: ["molecule", "property", "target"],
+};
+
+export const homogenizeMaterialSchema = {
+  type: "object" as const,
+  properties: {
+    molecule: {
+      type: "object" as const,
+      description: "MoleculeSystem to homogenize — must have a periodic cell.",
+    },
+    force_field: {
+      type: "string" as const,
+      enum: ["auto", "lj", "bonds", "mlip-stub"],
+      description: "Force field (default auto: bonds for bonded molecules, LJ otherwise).",
+    },
+    epsilon: { type: "number" as const, description: "LJ well depth (eV)." },
+    sigma: { type: "number" as const, description: "LJ sigma (Å)." },
+    cutoff: { type: "number" as const, description: "LJ cutoff (Å)." },
+    bond_k: {
+      type: "number" as const,
+      description:
+        "Harmonic bond force constant (eV/Å²) for the 'bonds'/'auto' force field (default 20). Moduli scale linearly with it.",
+    },
+    strain: {
+      type: "number" as const,
+      description: "Strain amplitude for the second differences (default 2e-3).",
+    },
+    relax_internal: {
+      type: "boolean" as const,
+      description: "Re-relax internal coordinates under each strained cell (default true).",
+    },
+  },
+  required: ["molecule"],
 };
 
 export const renderMoleculeSchema = {
@@ -290,6 +323,38 @@ export async function designMaterial(input: unknown): Promise<ToolResult> {
       ],
     );
     return ok({ scale: s, property: prop, target: args.target, molecule, receipt });
+  } catch (err) {
+    return fail(err);
+  }
+}
+
+/**
+ * Homogenize a periodic crystal into bulk material properties — density
+ * (kg/m³), cubic elastic constants C11/C12/C44 and VRH isotropic moduli (GPa)
+ * — the atoms-to-continuum bridge. Requires a fully periodic cell.
+ */
+export async function homogenizeMaterialTool(input: unknown): Promise<ToolResult> {
+  try {
+    const args = input as {
+      molecule: MoleculeSystem;
+      force_field?: "auto" | "lj" | "bonds" | "mlip-stub";
+      epsilon?: number;
+      sigma?: number;
+      cutoff?: number;
+      bond_k?: number;
+      strain?: number;
+      relax_internal?: boolean;
+    };
+    const config: MdConfig = {};
+    if (args.force_field !== undefined) config.forceField = args.force_field;
+    if (args.epsilon !== undefined) config.epsilon = args.epsilon;
+    if (args.sigma !== undefined) config.sigma = args.sigma;
+    if (args.cutoff !== undefined) config.cutoff = args.cutoff;
+    if (args.bond_k !== undefined) config.bondK = args.bond_k;
+    if (args.strain !== undefined) config.strain = args.strain;
+    if (args.relax_internal !== undefined) config.relaxInternal = args.relax_internal;
+    const card = await homogenizeMaterial(args.molecule, config);
+    return ok(card);
   } catch (err) {
     return fail(err);
   }

@@ -206,6 +206,30 @@ model's published error; a relaxation converges to a known equilibrium geometry.
 distance), the loop drives a design parameter to the analytic optimum;
 gradients match FD.
 
+#### M4.5 — The homogenize bridge (landed)
+
+The first cross-scale coupling is live, in the FD-oracle regime (the
+`tang-ad` swap-in point is marked at every seam):
+
+- `vcad-kernel-atoms::homogenize` — density plus cubic elastic constants
+  (C11/C12/C44 from strain-energy second differences, internal FIRE
+  relaxation under each strained cell) reduced to isotropic K/G/E/ν by
+  Voigt–Reuss–Hill, packaged as a `MaterialCard` (SI density, GPa moduli).
+  Shear sweeps are legal because `potential::min_image` now handles
+  general (non-orthorhombic) cells by fractional rounding.
+- `vcad-kernel-physics::diff::rollout_gradient_via_density` — the density
+  channel of the M8 factorization: `dp/dρ` is exact (mass properties are
+  linear in density; the COM does not move), so θ reaches a phyz rollout
+  through a material model with no CAD rebuild at all.
+- MCP: `homogenize_material(molecule, force field) → MaterialCard`.
+
+**Gate (passing):** `crates/vcad-kernel-physics/tests/cross_scale.rs`
+computes `dJ/d(lattice constant)` for an argon-FCC-densified flywheel —
+Å → kg/m³ → seam mass properties → phyz rollout — and matches both the
+brute-force whole-chain central difference and the closed form `3J/a` to
+1e-4. The atoms-side gates in `homogenize::tests` include the Cauchy
+relation `C12 = C44` for a pair potential at zero pressure.
+
 ### M5 — Legendary rendering
 
 **Goal:** publication-grade images out of MCP.

@@ -5,9 +5,9 @@
 //! validated in isolation against the finite-difference oracle in
 //! [`crate::fd`]. A [`Sum`] combines terms into a full force field.
 //!
-//! Periodic boundaries use the minimum-image convention for orthorhombic
-//! cells (diagonal lattice); non-orthorhombic cells are treated as
-//! non-periodic in the force evaluation.
+//! Periodic boundaries use the minimum-image convention: a fast per-axis
+//! path for orthorhombic (diagonal) cells and fractional-coordinate rounding
+//! for general cells (see [`min_image`] for the exactness contract).
 
 use std::collections::HashMap;
 
@@ -27,20 +27,30 @@ pub trait ForceField {
     }
 }
 
-/// Orthorhombic minimum-image displacement `ri - rj`, wrapped into the cell if
-/// the cell is present, periodic per-axis, and diagonal. Returns the raw
-/// displacement otherwise.
+/// Minimum-image displacement `ri - rj`, wrapped into the cell if one is
+/// present. Diagonal (orthorhombic) cells take a fast per-axis path (exact
+/// minimum image); general cells wrap in fractional coordinates (`s = H⁻¹d`,
+/// round the periodic components, map back). For a non-orthorhombic cell,
+/// fractional rounding recovers the exact minimum image whenever that image
+/// is shorter than half the cell's minimum slab width — so with an
+/// interaction cutoff below that bound (the usual MD condition, and true of
+/// every strained cell in an elastic-constant sweep) all images that matter
+/// are exact; displacements near the Wigner–Seitz boundary may wrap to a
+/// near-minimal image instead, the standard trade-off. Returns the raw
+/// displacement for degenerate (non-invertible) cells.
 #[inline]
 pub fn min_image(d: [f64; 3], cell: &Option<Cell>) -> [f64; 3] {
     let Some(c) = cell else { return d };
-    // Only orthorhombic (diagonal) cells are handled for MIC.
     let lx = c.a[0];
     let ly = c.b[1];
     let lz = c.c[2];
     let off_diag =
         c.a[1].abs() + c.a[2].abs() + c.b[0].abs() + c.b[2].abs() + c.c[0].abs() + c.c[1].abs();
     if off_diag > 1e-9 || lx <= 0.0 || ly <= 0.0 || lz <= 0.0 {
-        return d;
+        // Skewed, mirrored (negative-length), or degenerate: the general
+        // path handles any invertible cell and falls back to the raw
+        // displacement otherwise.
+        return min_image_general(d, c);
     }
     let mut out = d;
     let dims = [lx, ly, lz];
@@ -50,6 +60,65 @@ pub fn min_image(d: [f64; 3], cell: &Option<Cell>) -> [f64; 3] {
         }
     }
     out
+}
+
+/// General-cell minimum image via fractional-coordinate rounding. `H` has the
+/// lattice vectors as columns; `s = H⁻¹ d`, each periodic component of `s` is
+/// rounded to the nearest lattice translation, and the result maps back to
+/// Cartesian.
+fn min_image_general(d: [f64; 3], c: &Cell) -> [f64; 3] {
+    // H = [a b c] as columns.
+    let h = [
+        [c.a[0], c.b[0], c.c[0]],
+        [c.a[1], c.b[1], c.c[1]],
+        [c.a[2], c.b[2], c.c[2]],
+    ];
+    let det = h[0][0] * (h[1][1] * h[2][2] - h[1][2] * h[2][1])
+        - h[0][1] * (h[1][0] * h[2][2] - h[1][2] * h[2][0])
+        + h[0][2] * (h[1][0] * h[2][1] - h[1][1] * h[2][0]);
+    // Degeneracy is judged relative to the cell's own scale (|det| ~ scale³
+    // for a well-conditioned cell): an absolute epsilon would let a large,
+    // nearly-flat cell through and blow up `1/det` into garbage wraps.
+    let scale = h
+        .iter()
+        .flat_map(|row| row.iter())
+        .fold(0.0f64, |m, &v| m.max(v.abs()));
+    if det.abs() <= 1e-12 * scale * scale * scale {
+        return d;
+    }
+    let inv_det = 1.0 / det;
+    // Rows of H⁻¹ via the adjugate.
+    let hinv = [
+        [
+            (h[1][1] * h[2][2] - h[1][2] * h[2][1]) * inv_det,
+            (h[0][2] * h[2][1] - h[0][1] * h[2][2]) * inv_det,
+            (h[0][1] * h[1][2] - h[0][2] * h[1][1]) * inv_det,
+        ],
+        [
+            (h[1][2] * h[2][0] - h[1][0] * h[2][2]) * inv_det,
+            (h[0][0] * h[2][2] - h[0][2] * h[2][0]) * inv_det,
+            (h[0][2] * h[1][0] - h[0][0] * h[1][2]) * inv_det,
+        ],
+        [
+            (h[1][0] * h[2][1] - h[1][1] * h[2][0]) * inv_det,
+            (h[0][1] * h[2][0] - h[0][0] * h[2][1]) * inv_det,
+            (h[0][0] * h[1][1] - h[0][1] * h[1][0]) * inv_det,
+        ],
+    ];
+    let mut s = [0.0; 3];
+    for k in 0..3 {
+        s[k] = hinv[k][0] * d[0] + hinv[k][1] * d[1] + hinv[k][2] * d[2];
+    }
+    for (k, sk) in s.iter_mut().enumerate() {
+        if c.periodic[k] {
+            *sk -= sk.round();
+        }
+    }
+    [
+        h[0][0] * s[0] + h[0][1] * s[1] + h[0][2] * s[2],
+        h[1][0] * s[0] + h[1][1] * s[1] + h[1][2] * s[2],
+        h[2][0] * s[0] + h[2][1] * s[1] + h[2][2] * s[2],
+    ]
 }
 
 /// Lennard-Jones potential with per-element parameters and Lorentz-Berthelot

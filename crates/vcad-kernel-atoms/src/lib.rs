@@ -31,6 +31,7 @@ pub mod builder;
 pub mod element;
 pub mod fd;
 pub mod gym;
+pub mod homogenize;
 pub mod inspect;
 pub mod integrate;
 pub mod inverse;
@@ -47,6 +48,7 @@ pub mod vec3;
 pub mod wasm;
 
 pub use gym::{MdEnv, MdObservation};
+pub use homogenize::{homogenize, HomogenizeOptions, MaterialCard};
 pub use inspect::{report, MoleculeReport};
 pub use integrate::{Integrator, Thermostat};
 pub use minimize::{minimize, MinimizeOptions, MinimizeResult};

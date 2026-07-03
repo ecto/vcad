@@ -257,6 +257,7 @@ export {
   writeXyz,
   inspectMolecule,
   minimizeEnergy,
+  homogenizeMaterial,
   buildReceipt as buildMoleculeReceipt,
 } from "./atoms.js";
 export type {
@@ -264,6 +265,7 @@ export type {
   MdObservation,
   MinimizeResult as AtomsMinimizeResult,
   MdConfig,
+  MaterialCard,
 } from "./atoms.js";
 
 // Cross-domain PCB ↔ enclosure verification (pure; no kernel dependency)

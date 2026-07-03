@@ -43,8 +43,11 @@ export interface MinimizeResult {
 
 /** Force-field / integrator configuration. */
 export interface MdConfig {
-  /** "lj" (default) or "mlip-stub". */
-  forceField?: "lj" | "mlip-stub";
+  /**
+   * "auto" (default), "lj", "bonds", or "mlip-stub". "auto" uses harmonic
+   * bonds for a bonded molecule and Lennard-Jones for an unbonded system.
+   */
+  forceField?: "auto" | "lj" | "bonds" | "mlip-stub";
   /** LJ well depth (eV). */
   epsilon?: number;
   /** LJ sigma (Å). */
@@ -65,6 +68,36 @@ export interface MdConfig {
   thermostatK?: number;
   /** Thermostat coupling time (fs). */
   thermostatTau?: number;
+  /** Homogenization strain amplitude for the second differences (default 2e-3). */
+  strain?: number;
+  /** Re-relax internal coordinates under each strained cell (default true). */
+  relaxInternal?: boolean;
+}
+
+/** Bulk material properties from {@link homogenizeMaterial}. */
+export interface MaterialCard {
+  /** Mass density (kg/m³). */
+  density_kg_m3: number;
+  /** Cubic elastic constant C11 (GPa). */
+  c11_gpa: number;
+  /** Cubic elastic constant C12 (GPa). */
+  c12_gpa: number;
+  /** Cubic elastic constant C44 (GPa). */
+  c44_gpa: number;
+  /** Bulk modulus K = (C11 + 2 C12)/3 (GPa). */
+  bulk_gpa: number;
+  /** Isotropic (VRH) shear modulus (GPa). */
+  shear_gpa: number;
+  /** Isotropic Young's modulus E = 9KG/(3K + G) (GPa). */
+  youngs_gpa: number;
+  /** Isotropic Poisson ratio ν = (3K − 2G)/(2(3K + G)). */
+  poisson: number;
+  /** Potential energy per atom at the reference state (eV). */
+  energy_ev_atom: number;
+  /** Number of atoms in the supercell. */
+  atoms: number;
+  /** Reference cell volume (Å³). */
+  volume_a3: number;
 }
 
 /**
@@ -88,6 +121,7 @@ interface AtomsWasm {
   atoms_write_xyz(json: string): string;
   atoms_inspect(json: string): string;
   atoms_minimize(molJson: string, cfgJson: string, maxIters: number, forceTol: number): string;
+  atoms_homogenize(molJson: string, cfgJson: string): string;
   atoms_build_receipt(m: string, ff: string, run: string, p: string, o: string): string;
   MdSim: new (moleculeJson: string, configJson: string) => WasmMdSim;
 }
@@ -136,6 +170,21 @@ export async function minimizeEnergy(
   const wasm = await ensureWasm();
   const out = wasm.atoms_minimize(JSON.stringify(mol), JSON.stringify(config), maxIters, forceTol);
   return JSON.parse(out) as { result: MinimizeResult; molecule: MoleculeSystem };
+}
+
+/**
+ * Homogenize a periodic crystal into bulk material properties (Å / eV / amu
+ * in; SI density plus GPa moduli out). Rejects non-periodic structures.
+ */
+export async function homogenizeMaterial(
+  mol: MoleculeSystem,
+  config: MdConfig = {},
+): Promise<MaterialCard> {
+  const wasm = await ensureWasm();
+  if (typeof wasm.atoms_homogenize !== "function") {
+    throw new Error("atoms_homogenize is not in this kernel build — rebuild vcad-kernel-wasm");
+  }
+  return JSON.parse(wasm.atoms_homogenize(JSON.stringify(mol), JSON.stringify(config))) as MaterialCard;
 }
 
 /** Build a reproducible, tamper-evident simulation receipt. */
