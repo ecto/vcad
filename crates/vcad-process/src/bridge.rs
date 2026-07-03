@@ -247,6 +247,26 @@ pub fn cross_section(
     recipe: &Recipe,
     cut: &CutLine,
 ) -> Result<Document> {
+    cross_section_scaled(lib, top_cell, recipe, cut, 1.0)
+}
+
+/// [`cross_section`] with vertical exaggeration: every film's z-extent is
+/// multiplied by `z_scale` at emission. Real film stacks are ~7 µm tall on
+/// cuts hundreds of µm long — a ribbon at true aspect. `z_scale` in the
+/// 5–20 range gives the classic textbook proportions without touching the
+/// simulation itself (footprints and thickness math are unscaled).
+pub fn cross_section_scaled(
+    lib: &Library,
+    top_cell: &str,
+    recipe: &Recipe,
+    cut: &CutLine,
+    z_scale: f64,
+) -> Result<Document> {
+    if !(z_scale.is_finite() && z_scale > 0.0) {
+        return Err(ProcessError::BadRecipe(format!(
+            "z_scale must be positive and finite, got {z_scale}"
+        )));
+    }
     if !(cut.position_um.is_finite()
         && cut.span.iter().all(|v| v.is_finite())
         && cut.span[0] != cut.span[1])
@@ -311,7 +331,11 @@ pub fn cross_section(
                         },
                     ),
                 };
-                b.prism(&rect.to_polygon(), film.z_bottom_um, film.z_top_um)
+                b.prism(
+                    &rect.to_polygon(),
+                    film.z_bottom_um * z_scale,
+                    film.z_top_um * z_scale,
+                )
             })
             .collect();
         b.push_part(film, nodes);
@@ -494,5 +518,46 @@ mod tests {
             span: [0.0, 1.0],
         };
         assert!(cross_section(&lib, "top", &recipe, &cut).is_err());
+    }
+
+    #[test]
+    fn z_scale_exaggerates_only_vertical() {
+        let lib = sample_library();
+        let recipe = Recipe {
+            substrate_material: "silicon".into(),
+            substrate_thickness_um: 2.0,
+            steps: vec![ProcessStep::Deposit {
+                material: "oxide".into(),
+                thickness_um: 0.5,
+            }],
+        };
+        let cut = CutLine {
+            axis: Axis::Y,
+            position_um: 4.0,
+            span: [0.0, 10.0],
+        };
+        let base = cross_section(&lib, "top", &recipe, &cut).unwrap();
+        let scaled = cross_section_scaled(&lib, "top", &recipe, &cut, 10.0).unwrap();
+
+        let max_extrude_z = |doc: &Document| -> f64 {
+            doc.nodes
+                .values()
+                .filter_map(|n| match &n.op {
+                    CsgOp::Extrude { direction, .. } => Some(direction.z),
+                    _ => None,
+                })
+                .fold(0.0, f64::max)
+        };
+        let (bz, sz) = (max_extrude_z(&base), max_extrude_z(&scaled));
+        assert!(
+            (sz - bz * 10.0).abs() < 1e-9,
+            "vertical not scaled: base {bz}, scaled {sz}"
+        );
+        // Horizontal footprint identical: same node count, same sketch xs.
+        assert_eq!(base.nodes.len(), scaled.nodes.len());
+
+        // Bad scales rejected.
+        assert!(cross_section_scaled(&lib, "top", &recipe, &cut, 0.0).is_err());
+        assert!(cross_section_scaled(&lib, "top", &recipe, &cut, f64::NAN).is_err());
     }
 }

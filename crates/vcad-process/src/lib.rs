@@ -23,7 +23,7 @@ pub mod sim;
 
 mod bridge;
 
-pub use bridge::{cross_section, simulate_3d};
+pub use bridge::{cross_section, cross_section_scaled, simulate_3d};
 pub use error::{ProcessError, Result};
 pub use recipe::{Axis, CutLine, Polarity, ProcessStep, Recipe, ResistTone, SI_CONSUMED_PER_OXIDE};
 pub use sim::{simulate, Exposure, Film, FilmKind, Masks, ResistState};
