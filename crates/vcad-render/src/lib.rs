@@ -231,8 +231,17 @@ fn evaluate_vcad(raw_vcad: &str) -> Result<Vec<TintedSolid>, String> {
     // left in an undefined state. The JS caller is responsible for
     // catching the trap (WebAssembly.RuntimeError) and poisoning the
     // shared instance; see packages/mcp/src/tools/render.ts.
+    // A static renderer never displays clash meshes, and clash detection
+    // is O(n²) pairwise booleans across scene roots — fatal for many-root
+    // documents (an imported chip die has ~90k roots).
     let scene = catch_unwind(AssertUnwindSafe(|| {
-        evaluate_document(&parsed.document, &EvalOptions::default())
+        evaluate_document(
+            &parsed.document,
+            &EvalOptions {
+                skip_clash_detection: true,
+                ..Default::default()
+            },
+        )
     }))
     .map_err(|_| "eval panicked".to_string())?
     .map_err(|e| format!("eval: {}", e))?;
@@ -1418,15 +1427,28 @@ mod raster {
     /// with the same edge classification as the SVG path drawn on top
     /// (hidden lines removed). Errors are human-readable strings.
     pub fn render_jpeg_str(raw_vcad: &str, opts: &RasterOptions) -> Result<Vec<u8>, String> {
-        let solids: Vec<Solid> = evaluate_vcad(raw_vcad)?
-            .into_iter()
-            .map(|(s, _)| s)
-            .collect();
-        render_jpeg_solids(&solids, opts)
+        let tinted = evaluate_vcad(raw_vcad)?;
+        let solids: Vec<Solid> = tinted.iter().map(|(s, _)| s.clone()).collect();
+        let tints: Vec<Option<[f64; 3]>> = tinted.iter().map(|(_, t)| *t).collect();
+        render_jpeg_impl(&solids, &tints, opts)
     }
 
-    /// Render pre-evaluated solids to JPEG bytes. See [`render_jpeg_str`].
+    /// Render pre-evaluated solids to JPEG bytes, monochrome (no material
+    /// tints — mecheval reference images depend on this). See
+    /// [`render_jpeg_str`], which honours document material colours.
     pub fn render_jpeg_solids(solids: &[Solid], opts: &RasterOptions) -> Result<Vec<u8>, String> {
+        let no_tints: Vec<Option<[f64; 3]>> = vec![None; solids.len()];
+        render_jpeg_impl(solids, &no_tints, opts)
+    }
+
+    /// Shared raster implementation; `tints[i]`, when present, tints solid
+    /// `i`'s shading ramp exactly as the SVG path does. Untinted solids keep
+    /// the original two-stop monochrome shading, byte-for-byte.
+    fn render_jpeg_impl(
+        solids: &[Solid],
+        tints: &[Option<[f64; 3]>],
+        opts: &RasterOptions,
+    ) -> Result<Vec<u8>, String> {
         if solids.is_empty() {
             return Err("no solids produced".to_string());
         }
@@ -1442,11 +1464,9 @@ mod raster {
         let down = normalize(opts.view.down());
         let light = normalize(LIGHT);
 
-        // The raster path is monochrome (mecheval reference images) — no tints.
-        let no_tints: Vec<Option<[f64; 3]>> = vec![None; solids.len()];
         let arts = build_artifacts(
             solids,
-            &no_tints,
+            tints,
             cam,
             RASTER_SEGMENTS,
             &EdgeRules {
@@ -1520,19 +1540,24 @@ mod raster {
         // gives every face with the same normal the same colour, which
         // makes axis-aligned recesses invisible in axis-aligned views — a
         // mild depth cue (farther → darker) separates them.
-        for art in &arts {
+        for (ai, art) in arts.iter().enumerate() {
             let proj: Vec<(f64, f64, f64)> = art.verts.iter().map(|v| to_px(*v)).collect();
+            let tinted = tints.get(ai).copied().flatten().is_some();
             for (ti, t) in art.tris.iter().enumerate() {
                 if !art.visible[ti] {
                     continue;
                 }
                 let centroid_d = (proj[t[0]].2 + proj[t[1]].2 + proj[t[2]].2) / 3.0;
                 let cue = 0.78 + 0.22 * ((centroid_d - dmin) / dspan).clamp(0.0, 1.0);
-                let shade = mix_rgb(
-                    FILL_DARK,
-                    FILL_LIGHT,
-                    (lambertian(art.normals[ti], light) * cue).clamp(0.0, 1.0),
-                );
+                let lit = (lambertian(art.normals[ti], light) * cue).clamp(0.0, 1.0);
+                // Tinted parts sample their material ramp (same as the SVG
+                // path); untinted parts keep the original monochrome shade
+                // byte-for-byte (mecheval reference images).
+                let shade = if tinted {
+                    ramp_sample(&art.ramp, lit)
+                } else {
+                    mix_rgb(FILL_DARK, FILL_LIGHT, lit)
+                };
                 fill_triangle(
                     &mut rgb,
                     &mut zbuf,
