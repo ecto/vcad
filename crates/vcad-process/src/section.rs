@@ -39,7 +39,9 @@ fn polygon_intervals(polygon: &Polygon<f64>, cut: &CutLine) -> Vec<[f64; 2]> {
     }
     crossings.sort_by(f64::total_cmp);
     crossings
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .filter(|pair| pair[1] - pair[0] > EPS)
         .map(|pair| [pair[0], pair[1]])
         .collect()
