@@ -136,25 +136,74 @@ fn planar_regions_touch(
     let poly_a: Vec<(f64, f64)> = verts_a.iter().map(&proj).collect();
     let poly_b: Vec<(f64, f64)> = verts_b.iter().map(&proj).collect();
 
-    // Any vertex of one polygon inside (or on the boundary of) the other?
-    if poly_b.iter().any(|p| point_in_poly_inclusive(*p, &poly_a))
-        || poly_a.iter().any(|p| point_in_poly_inclusive(*p, &poly_b))
-    {
+    // Any edge contact (crossing or touching within tolerance)? Swept over
+    // x-intervals rather than all-pairs: chip-layer islands have thousands
+    // of edges per face, and this gate runs for every coplanar candidate
+    // pair in a union tree — the blind O(na·nb) loop dominated evaluation.
+    if edges_touch_swept(&poly_a, &poly_b) {
         return true;
     }
 
-    // Any edge crossing (including touching within tolerance)?
-    let na = poly_a.len();
-    let nb = poly_b.len();
-    for i in 0..na {
-        let a1 = poly_a[i];
-        let a2 = poly_a[(i + 1) % na];
-        for j in 0..nb {
-            let b1 = poly_b[j];
-            let b2 = poly_b[(j + 1) % nb];
-            if segments_touch(a1, a2, b1, b2) {
-                return true;
+    // No boundary contact: the regions are either fully disjoint or one is
+    // nested inside the other, so a single containment probe per side
+    // decides (any shared-boundary case was caught above within TOL).
+    point_in_poly_inclusive(poly_b[0], &poly_a) || point_in_poly_inclusive(poly_a[0], &poly_b)
+}
+
+/// Do any two edges of the polygons touch? Sweep over ascending edge
+/// `min.x` with tolerance padding, pruning by `max.x` — O((n+m)·log + k)
+/// for spread inputs instead of the all-pairs scan.
+fn edges_touch_swept(poly_a: &[(f64, f64)], poly_b: &[(f64, f64)]) -> bool {
+    // (min_x, max_x, i) per edge, tolerance-padded.
+    let edges = |poly: &[(f64, f64)]| -> Vec<(f64, f64, usize)> {
+        let n = poly.len();
+        let mut v: Vec<(f64, f64, usize)> = (0..n)
+            .map(|i| {
+                let p = poly[i];
+                let q = poly[(i + 1) % n];
+                (p.0.min(q.0) - TOL, p.0.max(q.0) + TOL, i)
+            })
+            .collect();
+        v.sort_by(|x, y| x.0.partial_cmp(&y.0).unwrap_or(std::cmp::Ordering::Equal));
+        v
+    };
+    let ea = edges(poly_a);
+    let eb = edges(poly_b);
+    let seg = |poly: &[(f64, f64)], i: usize| -> ((f64, f64), (f64, f64)) {
+        (poly[i], poly[(i + 1) % poly.len()])
+    };
+
+    // Merge the two sorted event lists; keep the opposite side's active
+    // edges pruned by max_x (same pattern as sweep_candidate_face_pairs).
+    let (mut ia, mut ib) = (0usize, 0usize);
+    let mut active_a: Vec<usize> = Vec::new(); // indices into ea
+    let mut active_b: Vec<usize> = Vec::new();
+    while ia < ea.len() || ib < eb.len() {
+        let take_a = ib >= eb.len() || (ia < ea.len() && ea[ia].0 <= eb[ib].0);
+        if take_a {
+            let (min_x, _, i) = ea[ia];
+            active_b.retain(|&k| eb[k].1 >= min_x);
+            let (a1, a2) = seg(poly_a, i);
+            for &k in &active_b {
+                let (b1, b2) = seg(poly_b, eb[k].2);
+                if segments_touch(a1, a2, b1, b2) {
+                    return true;
+                }
             }
+            active_a.push(ia);
+            ia += 1;
+        } else {
+            let (min_x, _, j) = eb[ib];
+            active_a.retain(|&k| ea[k].1 >= min_x);
+            let (b1, b2) = seg(poly_b, j);
+            for &k in &active_a {
+                let (a1, a2) = seg(poly_a, ea[k].2);
+                if segments_touch(a1, a2, b1, b2) {
+                    return true;
+                }
+            }
+            active_b.push(ib);
+            ib += 1;
         }
     }
     false
