@@ -4740,4 +4740,55 @@ mod tests {
             area
         );
     }
+
+    #[test]
+    fn earcut_frame_triangles_share_winding_and_sum_to_region_area() {
+        // A symmetric square frame (10x10 outer, 6x6 centered hole): the
+        // review conjecture was that "hole triangles" cancel the outer
+        // triangles' signed area. Earcut triangulates the FRAME REGION
+        // only; every output triangle is wound the same way, so the signed
+        // areas share one sign and sum to +/- the frame area (64), never 0.
+        let outer_2d = vec![(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0)];
+        let hole_2d = vec![(2.0, 2.0), (8.0, 2.0), (8.0, 8.0), (2.0, 8.0)];
+        let outer_3d: Vec<Point3> = outer_2d
+            .iter()
+            .map(|&(x, y)| Point3::new(x, y, 0.0))
+            .collect();
+        let hole_3d: Vec<Point3> = hole_2d
+            .iter()
+            .map(|&(x, y)| Point3::new(x, y, 0.0))
+            .collect();
+
+        let mesh =
+            earcut_polygon_with_holes(&outer_2d, &[hole_2d.clone()], &outer_3d, &[hole_3d], false);
+        assert!(!mesh.indices.is_empty());
+        let mut total = 0.0;
+        let mut signs = std::collections::HashSet::new();
+        for t in mesh.indices.chunks(3) {
+            let v = |i: u32| {
+                (
+                    mesh.vertices[3 * i as usize] as f64,
+                    mesh.vertices[3 * i as usize + 1] as f64,
+                )
+            };
+            let (ax, ay) = v(t[0]);
+            let (bx, by) = v(t[1]);
+            let (cx, cy) = v(t[2]);
+            let area2 = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
+            if area2.abs() > 1e-12 {
+                signs.insert(area2 > 0.0);
+            }
+            total += area2;
+        }
+        assert_eq!(
+            signs.len(),
+            1,
+            "earcut output triangles must share one winding"
+        );
+        assert!(
+            (total.abs() / 2.0 - 64.0).abs() < 1e-9,
+            "signed areas sum to the frame area, got {}",
+            total / 2.0
+        );
+    }
 }

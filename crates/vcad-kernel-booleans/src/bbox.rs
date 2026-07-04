@@ -522,4 +522,50 @@ mod tests {
         assert!((aabb.max.y - 10.0).abs() < 1e-10);
         assert!((aabb.max.z - 10.0).abs() < 1e-10);
     }
+
+    #[test]
+    fn sweep_emits_each_pair_exactly_once_even_with_equal_min_x() {
+        // Grid of A boxes and B boxes deliberately sharing min.x values so
+        // event ordering between sides at equal x is arbitrary. The sweep
+        // must match the quadratic reference as a MULTISET: any duplicate
+        // emission would show up as a count mismatch.
+        let mk = |x0: f64, y0: f64| Aabb3 {
+            min: Point3::new(x0, y0, 0.0),
+            max: Point3::new(x0 + 2.0, y0 + 2.0, 1.0),
+        };
+        let a_faces: Vec<(FaceId, Aabb3)> = (0..6)
+            .map(|i| {
+                (
+                    FaceId::from(slotmap::KeyData::from_ffi(i + 1)),
+                    mk((i % 3) as f64, (i / 3) as f64),
+                )
+            })
+            .collect();
+        // B boxes share the same min.x lattice and overlap the A boxes.
+        let b_faces: Vec<(FaceId, Aabb3)> = (0..6)
+            .map(|i| {
+                (
+                    FaceId::from(slotmap::KeyData::from_ffi(100 + i)),
+                    mk((i % 3) as f64, 0.5 + (i / 3) as f64),
+                )
+            })
+            .collect();
+
+        let mut swept = sweep_candidate_face_pairs(&a_faces, &b_faces);
+
+        let mut reference: Vec<(FaceId, FaceId)> = Vec::new();
+        for (fa, ba) in &a_faces {
+            for (fb, bb) in &b_faces {
+                if ba.overlaps(bb) {
+                    reference.push((*fa, *fb));
+                }
+            }
+        }
+        swept.sort();
+        reference.sort();
+        assert_eq!(
+            swept, reference,
+            "sweep must equal quadratic reference exactly (no dups, no misses)"
+        );
+    }
 }

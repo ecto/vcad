@@ -2090,6 +2090,13 @@ where
 
                 let seg = match seg_parts[0] {
                     "H" => {
+                        if segments.is_empty() && holes.is_empty() {
+                            return Err(VCodeParseError {
+                                line: *current_line,
+                                message: "sketch hole loop (H) before any outer-loop segment"
+                                    .to_string(),
+                            });
+                        }
                         holes.push(Vec::new());
                         continue;
                     }
@@ -2147,14 +2154,6 @@ where
                 }
             }
 
-            if segments.is_empty() && !holes.is_empty() {
-                return Err(VCodeParseError {
-                    line: *current_line,
-                    message:
-                        "sketch has hole loops (H) but no outer-loop segments before the first H"
-                            .to_string(),
-                });
-            }
             Ok(CsgOp::Sketch2D {
                 origin,
                 x_dir,

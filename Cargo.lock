@@ -7049,6 +7049,7 @@ version = "0.9.4"
 dependencies = [
  "criterion",
  "rayon",
+ "slotmap",
  "vcad-kernel-geom",
  "vcad-kernel-math",
  "vcad-kernel-primitives",
