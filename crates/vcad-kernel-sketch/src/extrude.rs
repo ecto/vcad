@@ -615,6 +615,249 @@ fn extrude_with_arcs(profile: &SketchProfile, direction: Vec3, arc_segs: usize) 
     }
 }
 
+/// Extrude a closed profile with interior holes along a direction.
+///
+/// The holes are given as closed loops of segments expressed in the *outer
+/// profile's* 2D sketch coordinate system. Each hole loop becomes a ring of
+/// interior lateral wall faces, and the two cap faces carry one inner loop
+/// per hole, so the result is a single multiply-connected solid — no boolean
+/// `Difference` pass is needed.
+///
+/// Winding is normalized internally: the outer loop is made counter-
+/// clockwise and hole loops clockwise (viewed from the +normal direction),
+/// so callers may pass loops in either orientation.
+///
+/// Arc segments (in the outer profile or holes) are polygonized with the
+/// default [`ExtrudeOptions::arc_segments`] subdivision; the analytic
+/// cylinder fast paths only apply to hole-free profiles.
+///
+/// # Preconditions
+///
+/// Hole loops must lie strictly inside the outer profile and must not touch
+/// or overlap each other. This is not validated (it would cost more than the
+/// extrusion itself); violating it yields self-intersecting geometry.
+///
+/// # Errors
+///
+/// Returns an error if the direction is zero, or if any hole loop is empty,
+/// degenerate, or not closed.
+pub fn extrude_with_holes(
+    profile: &SketchProfile,
+    holes: &[Vec<SketchSegment>],
+    direction: Vec3,
+) -> Result<BRepSolid, SketchError> {
+    if holes.is_empty() {
+        return extrude(profile, direction);
+    }
+    let dir_len = direction.norm();
+    if dir_len < 1e-12 {
+        return Err(SketchError::ZeroExtrusion);
+    }
+
+    let arc_segs = ExtrudeOptions::default().arc_segments as usize;
+
+    // Validate each hole loop (closure, degeneracy) by round-tripping it
+    // through the SketchProfile constructor on the outer profile's plane,
+    // then polygonize arcs so the build below is line-only.
+    let mut hole_profiles: Vec<SketchProfile> = Vec::with_capacity(holes.len());
+    for hole in holes {
+        let hp = SketchProfile::new(
+            profile.origin,
+            *profile.x_dir.as_ref(),
+            *profile.y_dir.as_ref(),
+            hole.clone(),
+        )?;
+        hole_profiles.push(if hp.is_line_only() {
+            hp
+        } else {
+            hp.tessellate(arc_segs)
+        });
+    }
+    let outer = if profile.is_line_only() {
+        profile.clone()
+    } else {
+        profile.tessellate(arc_segs)
+    };
+
+    // Normalize winding: outer CCW, holes CW (viewed from +normal). The
+    // lateral-face winding below then produces outward normals on the outer
+    // walls and hole-facing normals on the interior walls.
+    let outer_pts = oriented_loop_points(&outer, true);
+    let hole_pts: Vec<Vec<Point2>> = hole_profiles
+        .iter()
+        .map(|hp| oriented_loop_points(hp, false))
+        .collect();
+
+    let mut topo = Topology::new();
+    let mut geom = GeometryStore::new();
+
+    let quantize_pt = |p: Point3| -> [i64; 3] {
+        [
+            (p.x * 1e9).round() as i64,
+            (p.y * 1e9).round() as i64,
+            (p.z * 1e9).round() as i64,
+        ]
+    };
+    let mut vertex_cache: HashMap<[i64; 3], VertexId> = HashMap::new();
+    let mut get_or_create = |topo: &mut Topology, pos: Point3| -> VertexId {
+        let key = quantize_pt(pos);
+        *vertex_cache
+            .entry(key)
+            .or_insert_with(|| topo.add_vertex(pos))
+    };
+
+    // Bottom/top vertex rings for the outer loop and each hole loop.
+    let make_rings = |topo: &mut Topology,
+                      cache: &mut dyn FnMut(&mut Topology, Point3) -> VertexId,
+                      pts: &[Point2]|
+     -> (Vec<VertexId>, Vec<VertexId>) {
+        let mut bot = Vec::with_capacity(pts.len());
+        let mut top = Vec::with_capacity(pts.len());
+        for p2 in pts {
+            let p3 = profile.to_3d(*p2);
+            bot.push(cache(topo, p3));
+            top.push(cache(topo, p3 + direction));
+        }
+        (bot, top)
+    };
+
+    let (outer_bot, outer_top) = make_rings(&mut topo, &mut get_or_create, &outer_pts);
+    let hole_rings: Vec<(Vec<VertexId>, Vec<VertexId>)> = hole_pts
+        .iter()
+        .map(|pts| make_rings(&mut topo, &mut get_or_create, pts))
+        .collect();
+
+    let mut all_faces = Vec::new();
+    let mut he_map: HashMap<([i64; 3], [i64; 3]), HalfEdgeId> = HashMap::new();
+
+    // Lateral faces: one planar quad per loop edge, winding
+    // bot_i → bot_next → top_next → top_i. For the CCW outer loop this
+    // points normals out of the solid; for CW hole loops it points them
+    // into the hole cavity (also out of the material).
+    let build_lateral_ring =
+        |topo: &mut Topology,
+         geom: &mut GeometryStore,
+         bot: &[VertexId],
+         top: &[VertexId],
+         faces: &mut Vec<vcad_kernel_topo::FaceId>,
+         he_map: &mut HashMap<([i64; 3], [i64; 3]), HalfEdgeId>| {
+            let n = bot.len();
+            for i in 0..n {
+                let j = (i + 1) % n;
+                let p0 = topo.vertices[bot[i]].point;
+                let p1 = topo.vertices[bot[j]].point;
+                let p2 = topo.vertices[top[j]].point;
+                let p3 = topo.vertices[top[i]].point;
+                let (face_id, face_hes) = build_planar_lateral_face(
+                    topo, geom, bot[i], bot[j], top[j], top[i], p0, p1, p2, p3,
+                );
+                faces.push(face_id);
+                for he_id in face_hes {
+                    let he = &topo.half_edges[he_id];
+                    let origin = topo.vertices[he.origin].point;
+                    let next = he.next.unwrap();
+                    let dest = topo.vertices[topo.half_edges[next].origin].point;
+                    he_map.insert((quantize_pt(origin), quantize_pt(dest)), he_id);
+                }
+            }
+        };
+
+    build_lateral_ring(
+        &mut topo,
+        &mut geom,
+        &outer_bot,
+        &outer_top,
+        &mut all_faces,
+        &mut he_map,
+    );
+    for (bot, top) in &hole_rings {
+        build_lateral_ring(&mut topo, &mut geom, bot, top, &mut all_faces, &mut he_map);
+    }
+
+    // Caps. Bottom cap: outward normal is -profile.normal, so both the outer
+    // loop and the hole loops are reversed relative to their stored order;
+    // top cap keeps the stored order. Reversal keeps every cap half-edge
+    // anti-parallel to its lateral twin so `pair_twin_half_edges` closes the
+    // manifold.
+    for (is_bottom, cap_normal) in [
+        (true, -*profile.normal.as_ref()),
+        (false, *profile.normal.as_ref()),
+    ] {
+        let ring = |bot: &Vec<VertexId>, top: &Vec<VertexId>| -> Vec<VertexId> {
+            if is_bottom {
+                bot.clone()
+            } else {
+                top.clone()
+            }
+        };
+        let outer_ring = ring(&outer_bot, &outer_top);
+        let origin_pos = topo.vertices[outer_ring[0]].point;
+        let surf_idx = geom.add_surface(Box::new(Plane::from_normal(origin_pos, cap_normal)));
+
+        let outer_loop_id =
+            add_cap_loop(&mut topo, &outer_ring, is_bottom, &mut he_map, quantize_pt);
+        let face_id = topo.add_face(outer_loop_id, surf_idx, Orientation::Forward);
+        for (bot, top) in &hole_rings {
+            let hole_ring = ring(bot, top);
+            let loop_id = add_cap_loop(&mut topo, &hole_ring, is_bottom, &mut he_map, quantize_pt);
+            topo.add_inner_loop(face_id, loop_id);
+        }
+        all_faces.push(face_id);
+    }
+
+    pair_twin_half_edges(&mut topo, &he_map);
+
+    let shell = topo.add_shell(all_faces, ShellType::Outer);
+    let solid_id = topo.add_solid(shell);
+
+    Ok(BRepSolid {
+        topology: topo,
+        geometry: geom,
+        solid_id,
+    })
+}
+
+/// Segment start points of a (line-only) profile, oriented CCW when `ccw`
+/// is true and CW otherwise, as measured in the profile's 2D plane.
+fn oriented_loop_points(profile: &SketchProfile, ccw: bool) -> Vec<Point2> {
+    let mut pts = profile.vertices_2d();
+    let is_ccw = profile.signed_area() > 0.0;
+    if is_ccw != ccw {
+        pts.reverse();
+    }
+    pts
+}
+
+/// Create a cap loop over `ring` (reversed when `reversed`), registering its
+/// half-edges in `he_map` for twin pairing. Returns the loop id; the caller
+/// attaches it to a face as the outer or an inner loop.
+fn add_cap_loop<F>(
+    topo: &mut Topology,
+    ring: &[VertexId],
+    reversed: bool,
+    he_map: &mut HashMap<([i64; 3], [i64; 3]), HalfEdgeId>,
+    quantize_pt: F,
+) -> vcad_kernel_topo::LoopId
+where
+    F: Fn(Point3) -> [i64; 3],
+{
+    let ordered: Vec<VertexId> = if reversed {
+        ring.iter().rev().copied().collect()
+    } else {
+        ring.to_vec()
+    };
+    let hes: Vec<HalfEdgeId> = ordered.iter().map(|&v| topo.add_half_edge(v)).collect();
+    let loop_id = topo.add_loop(&hes);
+    for &he_id in &hes {
+        let he = &topo.half_edges[he_id];
+        let origin = topo.vertices[he.origin].point;
+        let next = he.next.unwrap();
+        let dest = topo.vertices[topo.half_edges[next].origin].point;
+        he_map.insert((quantize_pt(origin), quantize_pt(dest)), he_id);
+    }
+    loop_id
+}
+
 /// Sample an arc from `start` to `end` with center `center`. Returns
 /// `arc_segs + 1` points in 2D sketch space including both endpoints.
 fn sample_arc_2d(
@@ -1315,6 +1558,213 @@ mod tests {
     }
 
     // =========================================================================
+    // Tests for extrude_with_holes
+    // =========================================================================
+
+    /// Closed rectangle loop (CCW) as line segments.
+    fn rect_loop(x0: f64, y0: f64, x1: f64, y1: f64) -> Vec<SketchSegment> {
+        let p = [
+            Point2::new(x0, y0),
+            Point2::new(x1, y0),
+            Point2::new(x1, y1),
+            Point2::new(x0, y1),
+        ];
+        (0..4)
+            .map(|i| SketchSegment::Line {
+                start: p[i],
+                end: p[(i + 1) % 4],
+            })
+            .collect()
+    }
+
+    /// Closed polygonal circle loop (CCW) as `n` line segments.
+    fn circle_loop(cx: f64, cy: f64, r: f64, n: usize) -> Vec<SketchSegment> {
+        let pt = |i: usize| {
+            let a = 2.0 * PI * (i % n) as f64 / n as f64;
+            Point2::new(cx + r * a.cos(), cy + r * a.sin())
+        };
+        (0..n)
+            .map(|i| SketchSegment::Line {
+                start: pt(i),
+                end: pt(i + 1),
+            })
+            .collect()
+    }
+
+    fn mesh_volume_of(solid: &BRepSolid) -> f64 {
+        let mesh = vcad_kernel_tessellate::tessellate_brep(solid, 32);
+        compute_mesh_volume(&mesh)
+    }
+
+    #[test]
+    fn test_extrude_with_holes_donut_volume_matches_boolean() {
+        // Polygonal donut: 64-gon outer, 64-gon hole. The same loops drive
+        // both the native holed extrude and the boolean Difference path, so
+        // the volumes must agree to float noise.
+        let h = 4.0;
+        let outer = SketchProfile::new(
+            Point3::origin(),
+            Vec3::x(),
+            Vec3::y(),
+            circle_loop(0.0, 0.0, 10.0, 64),
+        )
+        .unwrap();
+        let hole = circle_loop(0.0, 0.0, 4.0, 64);
+
+        let holed = extrude_with_holes(&outer, std::slice::from_ref(&hole), Vec3::new(0.0, 0.0, h))
+            .unwrap();
+
+        let outer_solid = extrude(&outer, Vec3::new(0.0, 0.0, h)).unwrap();
+        let hole_profile =
+            SketchProfile::new(Point3::origin(), Vec3::x(), Vec3::y(), hole).unwrap();
+        let hole_solid = extrude(&hole_profile, Vec3::new(0.0, 0.0, h)).unwrap();
+
+        let diff = vcad_kernel_booleans::boolean_op(
+            &outer_solid,
+            &hole_solid,
+            vcad_kernel_booleans::BooleanOp::Difference,
+            32,
+        )
+        .into_brep()
+        .unwrap();
+        let boolean = mesh_volume_of(&diff);
+        let v_holed = mesh_volume_of(&holed);
+
+        // Independent analytic check: prismatic volume = (A_outer − A_hole)·h.
+        let a_outer = SketchProfile::new(
+            Point3::origin(),
+            Vec3::x(),
+            Vec3::y(),
+            circle_loop(0.0, 0.0, 10.0, 64),
+        )
+        .unwrap()
+        .signed_area();
+        let a_hole = SketchProfile::new(
+            Point3::origin(),
+            Vec3::x(),
+            Vec3::y(),
+            circle_loop(0.0, 0.0, 4.0, 64),
+        )
+        .unwrap()
+        .signed_area();
+        let expected = (a_outer - a_hole) * h;
+
+        // TriangleMesh stores f32 vertices, so mesh-derived volumes carry
+        // ~1e-7 relative noise; 1e-6 relative is the tightest meaningful
+        // tolerance here (observed error ≈ 7e-9 relative).
+        assert!(
+            (v_holed - expected).abs() < 1e-6 * expected.max(1.0),
+            "holed extrude volume {v_holed} != analytic {expected}"
+        );
+        assert!(
+            (v_holed - boolean).abs() < 1e-6 * expected.max(1.0),
+            "holed extrude volume {v_holed} != boolean path {boolean}"
+        );
+    }
+
+    #[test]
+    fn test_extrude_with_holes_two_hole_plate() {
+        let outer = SketchProfile::new(
+            Point3::origin(),
+            Vec3::x(),
+            Vec3::y(),
+            rect_loop(0.0, 0.0, 30.0, 10.0),
+        )
+        .unwrap();
+        let h1 = rect_loop(5.0, 3.0, 10.0, 7.0);
+        let h2 = rect_loop(20.0, 2.0, 26.0, 8.0);
+        let h = 2.5;
+
+        let solid = extrude_with_holes(&outer, &[h1, h2], Vec3::new(0.0, 0.0, h)).unwrap();
+
+        // Volume = (30·10 − 5·4 − 6·6) · 2.5
+        let expected = (300.0 - 20.0 - 36.0) * h;
+        let vol = mesh_volume_of(&solid);
+        assert!(
+            (vol - expected).abs() < 1e-6 * expected,
+            "expected {expected}, got {vol}"
+        );
+
+        // Watertight: every half-edge twinned.
+        let unpaired = solid
+            .topology
+            .half_edges
+            .values()
+            .filter(|he| he.twin.is_none())
+            .count();
+        assert_eq!(unpaired, 0, "found {unpaired} unpaired half-edges");
+
+        // 4 outer + 2×4 hole lateral faces + 2 caps.
+        assert_eq!(solid.topology.faces.len(), 14);
+        // Caps carry 2 inner loops each.
+        let caps_with_holes = solid
+            .topology
+            .faces
+            .values()
+            .filter(|f| f.inner_loops.len() == 2)
+            .count();
+        assert_eq!(caps_with_holes, 2);
+    }
+
+    #[test]
+    fn test_extrude_with_holes_winding_invariance() {
+        // Hole loops may be passed CW or CCW; result must be identical.
+        let outer = SketchProfile::new(
+            Point3::origin(),
+            Vec3::x(),
+            Vec3::y(),
+            rect_loop(0.0, 0.0, 10.0, 10.0),
+        )
+        .unwrap();
+        let hole_ccw = rect_loop(4.0, 4.0, 6.0, 6.0);
+        let hole_cw: Vec<SketchSegment> = hole_ccw
+            .iter()
+            .rev()
+            .map(|s| match s {
+                SketchSegment::Line { start, end } => SketchSegment::Line {
+                    start: *end,
+                    end: *start,
+                },
+                _ => unreachable!(),
+            })
+            .collect();
+
+        let v1 = mesh_volume_of(
+            &extrude_with_holes(&outer, &[hole_ccw], Vec3::new(0.0, 0.0, 3.0)).unwrap(),
+        );
+        let v2 = mesh_volume_of(
+            &extrude_with_holes(&outer, &[hole_cw], Vec3::new(0.0, 0.0, 3.0)).unwrap(),
+        );
+        let expected = (100.0 - 4.0) * 3.0;
+        assert!((v1 - expected).abs() < 1e-6 * expected, "ccw hole: {v1}");
+        assert!((v2 - expected).abs() < 1e-6 * expected, "cw hole: {v2}");
+    }
+
+    #[test]
+    fn test_extrude_with_holes_empty_holes_is_plain_extrude() {
+        let profile = SketchProfile::rectangle(Point3::origin(), Vec3::x(), Vec3::y(), 10.0, 5.0);
+        let solid = extrude_with_holes(&profile, &[], Vec3::new(0.0, 0.0, 20.0)).unwrap();
+        assert_eq!(solid.topology.faces.len(), 6);
+    }
+
+    #[test]
+    fn test_extrude_with_holes_open_hole_error() {
+        let outer = SketchProfile::new(
+            Point3::origin(),
+            Vec3::x(),
+            Vec3::y(),
+            rect_loop(0.0, 0.0, 10.0, 10.0),
+        )
+        .unwrap();
+        let open_hole = vec![SketchSegment::Line {
+            start: Point2::new(2.0, 2.0),
+            end: Point2::new(4.0, 2.0),
+        }];
+        let result = extrude_with_holes(&outer, &[open_hole], Vec3::new(0.0, 0.0, 3.0));
+        assert!(matches!(result, Err(SketchError::NotClosed(_))));
+    }
+
+    // =========================================================================
     // Tests for extrude_with_options
     // =========================================================================
 
@@ -1439,7 +1889,6 @@ mod tests {
             twist_angle: PI, // 180 degrees
             scale_end: 0.8,
             arc_segments: 4,
-            ..Default::default()
         };
 
         let solid = extrude_with_options(&profile, Vec3::new(0.0, 0.0, 20.0), options).unwrap();

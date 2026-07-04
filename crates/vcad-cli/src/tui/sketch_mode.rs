@@ -82,6 +82,7 @@ impl SketchModeState {
             x_dir: Vec3::new(x[0], x[1], x[2]),
             y_dir: Vec3::new(y[0], y[1], y[2]),
             segments,
+            holes: None,
         })
     }
 }

@@ -85,42 +85,22 @@ pub fn to_vcad_document(
         // layers arrive as tens of thousands of abutting/overlapping rects;
         // extruding them individually forces the 3D boolean pipeline to sew
         // touching prisms one by one. After a 2D union each connected island
-        // is a single profile, islands are pairwise disjoint by construction
-        // (the cheap non-overlapping union path), and only interior holes
-        // ever reach a real 3D boolean (as a Difference per island).
+        // is a single multi-loop profile (outer ring + interior hole rings),
+        // islands are pairwise disjoint by construction (the cheap
+        // non-overlapping union path), and holes are carved at the profile
+        // level by the hole-aware extrude — no 3D boolean is ever needed.
         let merged = union_polygons(&layer_polys.polygons);
 
         let mut islands: Vec<NodeId> = Vec::with_capacity(merged.0.len());
         for island in &merged.0 {
-            let outer = ring_solid(
+            islands.push(island_solid(
                 &mut doc,
                 &mut next_id,
-                island.exterior(),
+                island,
                 db_to_mm,
                 z_mm,
                 thickness_mm,
-            );
-            let node = if island.interiors().is_empty() {
-                outer
-            } else {
-                let holes: Vec<NodeId> = island
-                    .interiors()
-                    .iter()
-                    .map(|ring| {
-                        ring_solid(&mut doc, &mut next_id, ring, db_to_mm, z_mm, thickness_mm)
-                    })
-                    .collect();
-                let holes_root = balanced_union(&mut doc, &mut next_id, holes);
-                alloc(
-                    &mut doc,
-                    &mut next_id,
-                    CsgOp::Difference {
-                        left: outer,
-                        right: holes_root,
-                    },
-                )
-            };
-            islands.push(node);
+            ));
         }
         if islands.is_empty() {
             continue; // every polygon degenerated away in the 2D union
@@ -188,24 +168,23 @@ fn union_polygons(polygons: &[Vec<[f64; 2]>]) -> MultiPolygon<f64> {
     level.pop().unwrap_or_else(|| MultiPolygon::new(Vec::new()))
 }
 
-/// Extrude one ring (already closed; geo duplicates the first point last)
-/// into a sketch + extrude pair, returning the extrude node.
-fn ring_solid(
+/// Emit one island (outer ring plus interior hole rings) as a single
+/// hole-aware `Sketch2D` + `Extrude` pair, returning the extrude node.
+/// Holes ride on the sketch as native inner loops carved at the profile
+/// level, so no 3D `Difference` (or any boolean) is emitted for them.
+fn island_solid(
     doc: &mut Document,
     next_id: &mut NodeId,
-    ring: &LineString<f64>,
+    island: &Polygon<f64>,
     db_to_mm: f64,
     z_mm: f64,
     thickness_mm: f64,
 ) -> NodeId {
-    let pts = &ring.0[..ring.0.len().saturating_sub(1)];
-    let segments: Vec<SketchSegment2D> = pts
+    let holes: Vec<Vec<SketchSegment2D>> = island
+        .interiors()
         .iter()
-        .zip(pts.iter().cycle().skip(1))
-        .map(|(a, b)| SketchSegment2D::Line {
-            start: Vec2::new(a.x * db_to_mm, a.y * db_to_mm),
-            end: Vec2::new(b.x * db_to_mm, b.y * db_to_mm),
-        })
+        .map(|ring| ring_segments(ring, db_to_mm))
+        .filter(|segs| segs.len() >= 3) // drop degenerate slivers
         .collect();
     let sketch = alloc(
         doc,
@@ -214,7 +193,8 @@ fn ring_solid(
             origin: Vec3::new(0.0, 0.0, z_mm),
             x_dir: Vec3::new(1.0, 0.0, 0.0),
             y_dir: Vec3::new(0.0, 1.0, 0.0),
-            segments,
+            segments: ring_segments(island.exterior(), db_to_mm),
+            holes: if holes.is_empty() { None } else { Some(holes) },
         },
     );
     alloc(
@@ -227,6 +207,19 @@ fn ring_solid(
             scale_end: None,
         },
     )
+}
+
+/// Segment list of one ring (already closed; geo duplicates the first point
+/// last), scaled from DB units to document millimeters.
+fn ring_segments(ring: &LineString<f64>, db_to_mm: f64) -> Vec<SketchSegment2D> {
+    let pts = &ring.0[..ring.0.len().saturating_sub(1)];
+    pts.iter()
+        .zip(pts.iter().cycle().skip(1))
+        .map(|(a, b)| SketchSegment2D::Line {
+            start: Vec2::new(a.x * db_to_mm, a.y * db_to_mm),
+            end: Vec2::new(b.x * db_to_mm, b.y * db_to_mm),
+        })
+        .collect()
 }
 
 /// Union `nodes` into a balanced tree (depth ~log₂ n), not a left chain —
@@ -475,9 +468,10 @@ mod tests {
     }
 
     #[test]
-    fn abutting_ring_produces_hole_via_difference() {
+    fn abutting_ring_produces_holed_sketch() {
         // Four rects forming a closed picture frame: the 2D union yields one
-        // island with one interior ring -> outer extrude minus hole extrude.
+        // island with one interior ring -> a single hole-aware sketch +
+        // extrude, no boolean ops at all.
         let mut cell = Cell::new("top");
         let rects: [[(i32, i32); 5]; 4] = [
             [(0, 0), (3000, 0), (3000, 1000), (0, 1000), (0, 0)], // bottom
@@ -498,14 +492,27 @@ mod tests {
         let doc =
             to_vcad_document(&lib, "top", &[(1, 0.0, 0.2, "l1")], DEFAULT_VIEW_SCALE).unwrap();
         let count = |pred: fn(&CsgOp) -> bool| doc.nodes.values().filter(|n| pred(&n.op)).count();
-        // outer + hole
-        assert_eq!(count(|op| matches!(op, CsgOp::Extrude { .. })), 2);
-        assert_eq!(count(|op| matches!(op, CsgOp::Difference { .. })), 1);
+        // One multi-loop sketch, one extrude, zero booleans.
+        assert_eq!(count(|op| matches!(op, CsgOp::Sketch2D { .. })), 1);
+        assert_eq!(count(|op| matches!(op, CsgOp::Extrude { .. })), 1);
+        assert_eq!(count(|op| matches!(op, CsgOp::Difference { .. })), 0);
         assert_eq!(count(|op| matches!(op, CsgOp::Union { .. })), 0);
-        // The scene root is the Difference (single island).
+        // The scene root is the Extrude (single island)...
         assert!(matches!(
             doc.nodes[&doc.roots[0].root].op,
-            CsgOp::Difference { .. }
+            CsgOp::Extrude { .. }
         ));
+        // ...whose sketch carries the frame opening as one interior loop.
+        let holes = doc
+            .nodes
+            .values()
+            .find_map(|n| match &n.op {
+                CsgOp::Sketch2D { holes, .. } => Some(holes),
+                _ => None,
+            })
+            .unwrap();
+        let holes = holes.as_ref().expect("island sketch should carry holes");
+        assert_eq!(holes.len(), 1);
+        assert_eq!(holes[0].len(), 4);
     }
 }

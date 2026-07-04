@@ -87,60 +87,33 @@ impl Builder {
         id
     }
 
-    /// Sketch a closed ring at `z` (mm) and extrude it up by `height` mm.
-    fn ring_extrude(&mut self, ring: &geo::LineString<f64>, z_mm: f64, height_mm: f64) -> NodeId {
-        let segments: Vec<SketchSegment2D> = ring
-            .lines()
-            .filter(|l| l.start != l.end)
-            .map(|l| SketchSegment2D::Line {
-                start: Vec2::new(l.start.x * UM_TO_MM, l.start.y * UM_TO_MM),
-                end: Vec2::new(l.end.x * UM_TO_MM, l.end.y * UM_TO_MM),
-            })
+    /// One polygon (with holes) as a prism from `z0` to `z1` (µm): a single
+    /// hole-aware sketch + extrude. Interior rings ride on the sketch as
+    /// native inner loops, so no boolean is emitted for them.
+    fn prism(&mut self, polygon: &Polygon<f64>, z0_um: f64, z1_um: f64) -> NodeId {
+        let holes: Vec<Vec<SketchSegment2D>> = polygon
+            .interiors()
+            .iter()
+            .map(ring_segments)
+            .filter(|segs| segs.len() >= 3) // drop degenerate slivers
             .collect();
         let sketch = self.alloc(
             None,
             CsgOp::Sketch2D {
-                origin: Vec3::new(0.0, 0.0, z_mm),
+                origin: Vec3::new(0.0, 0.0, z0_um * UM_TO_MM),
                 x_dir: Vec3::new(1.0, 0.0, 0.0),
                 y_dir: Vec3::new(0.0, 1.0, 0.0),
-                segments,
+                segments: ring_segments(polygon.exterior()),
+                holes: if holes.is_empty() { None } else { Some(holes) },
             },
         );
         self.alloc(
             None,
             CsgOp::Extrude {
                 sketch,
-                direction: Vec3::new(0.0, 0.0, height_mm),
+                direction: Vec3::new(0.0, 0.0, (z1_um - z0_um) * UM_TO_MM),
                 twist_angle: None,
                 scale_end: None,
-            },
-        )
-    }
-
-    /// One polygon (with holes) as a prism from `z0` to `z1` (µm).
-    fn prism(&mut self, polygon: &Polygon<f64>, z0_um: f64, z1_um: f64) -> NodeId {
-        let z_mm = z0_um * UM_TO_MM;
-        let h_mm = (z1_um - z0_um) * UM_TO_MM;
-        let body = self.ring_extrude(polygon.exterior(), z_mm, h_mm);
-        if polygon.interiors().is_empty() {
-            return body;
-        }
-        // Subtract holes; overshoot them vertically so the boolean never
-        // has to resolve coplanar top/bottom faces.
-        let overshoot = h_mm * 0.05;
-        let holes: Vec<NodeId> = polygon
-            .interiors()
-            .iter()
-            .map(|ring| self.ring_extrude(ring, z_mm - overshoot, h_mm + 2.0 * overshoot))
-            .collect();
-        let holes = self
-            .union_tree(holes)
-            .expect("non-empty interiors yield a node");
-        self.alloc(
-            None,
-            CsgOp::Difference {
-                left: body,
-                right: holes,
             },
         )
     }
@@ -179,6 +152,17 @@ impl Builder {
             visible: None,
         });
     }
+}
+
+/// Segment list of one closed ring, scaled to view millimeters.
+fn ring_segments(ring: &geo::LineString<f64>) -> Vec<SketchSegment2D> {
+    ring.lines()
+        .filter(|l| l.start != l.end)
+        .map(|l| SketchSegment2D::Line {
+            start: Vec2::new(l.start.x * UM_TO_MM, l.start.y * UM_TO_MM),
+            end: Vec2::new(l.end.x * UM_TO_MM, l.end.y * UM_TO_MM),
+        })
+        .collect()
 }
 
 fn window_rect(window: [f64; 4]) -> Result<Rect<f64>> {
@@ -505,6 +489,33 @@ mod tests {
         };
         let section = cross_section(&sample_library(), "top", &recipe, &cut).unwrap();
         assert!(section.materials.contains_key("resist"));
+    }
+
+    #[test]
+    fn prism_with_holes_is_one_sketch_extrude_pair() {
+        use geo::LineString;
+        let outer = LineString::from(vec![(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0)]);
+        let hole = LineString::from(vec![(4.0, 4.0), (6.0, 4.0), (6.0, 6.0), (4.0, 6.0)]);
+        let polygon = Polygon::new(outer, vec![hole]);
+
+        let mut b = Builder::new();
+        let root = b.prism(&polygon, 0.0, 1.0);
+
+        // Native hole loops: no boolean anywhere in the emitted graph.
+        assert!(!b
+            .doc
+            .nodes
+            .values()
+            .any(|n| matches!(n.op, CsgOp::Difference { .. } | CsgOp::Union { .. })));
+        let CsgOp::Extrude { sketch, .. } = b.doc.nodes[&root].op else {
+            panic!("prism root must be an extrude");
+        };
+        let CsgOp::Sketch2D { holes, .. } = &b.doc.nodes[&sketch].op else {
+            panic!("extrude profile must be a sketch");
+        };
+        let holes = holes.as_ref().expect("interior ring becomes a hole loop");
+        assert_eq!(holes.len(), 1);
+        assert_eq!(holes[0].len(), 4);
     }
 
     #[test]

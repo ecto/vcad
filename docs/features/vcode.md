@@ -114,6 +114,7 @@ OPCODE [args...] [# comment]
 | `SK` | Sketch start | `ox oy oz xx xy xz yx yy yz` (origin, x_dir, y_dir) |
 | `L` | Line (in sketch) | `x1 y1 x2 y2` |
 | `A` | Arc (in sketch) | `x1 y1 x2 y2 cx cy ccw` |
+| `H` | Hole loop start (in sketch) | segments that follow form an interior hole loop |
 | `END` | Sketch end | (closes sketch block) |
 | `E` | Extrude | `sketch_node dx dy dz` |
 | `V` | Revolve | `sketch_node ox oy oz ax ay az angle_deg` |

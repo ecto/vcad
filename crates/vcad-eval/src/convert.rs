@@ -45,3 +45,11 @@ pub fn ir_sketch_to_profile(
     let segments: Vec<SketchSegment> = segments.iter().map(convert_segment).collect();
     SketchProfile::new(to_point3(origin), to_vec3(x_dir), to_vec3(y_dir), segments)
 }
+
+/// Convert IR hole loops into kernel segment loops.
+pub fn ir_holes_to_segments(holes: &[Vec<SketchSegment2D>]) -> Vec<Vec<SketchSegment>> {
+    holes
+        .iter()
+        .map(|hole| hole.iter().map(convert_segment).collect())
+        .collect()
+}

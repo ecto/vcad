@@ -1086,6 +1086,12 @@ fn tessellate_concave_polygon(verts: &[Point3], reversed: bool) -> TriangleMesh 
         })
         .collect();
 
+    // Large concave polygons (e.g. 1000+-vertex chip-layer island caps)
+    // make the O(n³) ear-clip loop below impractical; earcut is near-linear.
+    if n > EARCUT_VERTEX_THRESHOLD {
+        return earcut_polygon_with_holes(&verts_2d, &[], verts, &[], reversed);
+    }
+
     // Build mesh with all 3D vertices
     let mut mesh = TriangleMesh::new();
     for v in verts {
@@ -1345,10 +1351,99 @@ fn tessellate_planar_face_with_holes(
     // that together form a full circle at the same position).
     merge_overlapping_holes(&mut inner_2d, &mut inner_loops);
 
+    // Large multiply-connected faces (chip-layer islands with hundreds of
+    // holes and thousands of boundary vertices) blow up the O(n²)-ish
+    // bridge + ear-clip path below; route them through earcut, which is
+    // near-linear and handles holes natively without Steiner points.
+    let total_verts = outer_2d.len() + inner_2d.iter().map(Vec::len).sum::<usize>();
+    if total_verts > EARCUT_VERTEX_THRESHOLD {
+        return earcut_polygon_with_holes(
+            &outer_2d,
+            &inner_2d,
+            &outer_verts,
+            &inner_loops,
+            reversed,
+        );
+    }
+
     // After merging overlapping arcs, use bridge+ear-clip directly.
     // The merged holes are well-shaped (no more overlapping semicircles),
     // so bridge construction works reliably.
     triangulate_polygon_with_holes(&outer_2d, &inner_2d, &outer_verts, &inner_loops, reversed)
+}
+
+/// Boundary-vertex count above which planar-face triangulation switches
+/// from the bridge/ear-clip path to earcut. Small faces keep the existing
+/// path (its Steiner-ring refinement yields nicer triangles); large faces
+/// need earcut's near-linear running time.
+const EARCUT_VERTEX_THRESHOLD: usize = 64;
+
+/// Triangulate a projected planar polygon (with optional holes) via earcut.
+///
+/// `outer_2d`/`inner_2d` are the projected loops; `outer_3d`/`inner_3d` the
+/// corresponding 3D vertices in identical order. No vertices are added or
+/// removed, so the cap stays watertight against adjacent lateral faces.
+fn earcut_polygon_with_holes(
+    outer_2d: &[(f64, f64)],
+    inner_2d: &[Vec<(f64, f64)>],
+    outer_3d: &[Point3],
+    inner_3d: &[Vec<Point3>],
+    reversed: bool,
+) -> TriangleMesh {
+    let mut mesh = TriangleMesh::new();
+
+    let mut data: Vec<f64> = Vec::with_capacity(2 * (outer_2d.len() + inner_2d.len() * 4));
+    let mut hole_starts: Vec<usize> = Vec::with_capacity(inner_2d.len());
+    for &(x, y) in outer_2d {
+        data.push(x);
+        data.push(y);
+    }
+    for hole in inner_2d {
+        hole_starts.push(data.len() / 2);
+        for &(x, y) in hole {
+            data.push(x);
+            data.push(y);
+        }
+    }
+
+    for v in outer_3d.iter().chain(inner_3d.iter().flatten()) {
+        mesh.vertices.push(v.x as f32);
+        mesh.vertices.push(v.y as f32);
+        mesh.vertices.push(v.z as f32);
+    }
+
+    let Ok(tris) = earcutr::earcut(&data, &hole_starts, 2) else {
+        return mesh;
+    };
+
+    // earcut's output winding follows the input outer ring; normalize to the
+    // same convention as `ear_clip_triangulate` (CCW in the projected frame
+    // unless `reversed`). Probe the first non-degenerate triangle.
+    let mut flip = false;
+    for t in tris.chunks(3) {
+        let (ax, ay) = (data[2 * t[0]], data[2 * t[0] + 1]);
+        let (bx, by) = (data[2 * t[1]], data[2 * t[1] + 1]);
+        let (cx, cy) = (data[2 * t[2]], data[2 * t[2] + 1]);
+        let area = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
+        if area.abs() > 1e-12 {
+            flip = (area > 0.0) == reversed;
+            break;
+        }
+    }
+
+    for t in tris.chunks(3) {
+        if flip {
+            mesh.indices.push(t[0] as u32);
+            mesh.indices.push(t[2] as u32);
+            mesh.indices.push(t[1] as u32);
+        } else {
+            mesh.indices.push(t[0] as u32);
+            mesh.indices.push(t[1] as u32);
+            mesh.indices.push(t[2] as u32);
+        }
+    }
+
+    mesh
 }
 
 /// Merge inner loops that overlap (e.g., two semicircular arcs forming a full circle).

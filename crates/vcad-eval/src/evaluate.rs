@@ -612,14 +612,24 @@ fn evaluate_op_timed(
             }
 
             // Handle Sketch2D
-            let (s_origin, s_x_dir, s_y_dir, segments) = extract_sketch(&sketch_node.op)?;
+            let (s_origin, s_x_dir, s_y_dir, segments, holes) = extract_sketch(&sketch_node.op)?;
             let profile = ir_sketch_to_profile(s_origin, s_x_dir, s_y_dir, segments)
                 .map_err(EvalError::Sketch)?;
 
             let has_twist = twist_angle.is_some_and(|t| t.abs() > 1e-12);
             let has_scale = scale_end.is_some_and(|s| (s - 1.0).abs() > 1e-12);
 
-            let solid = if has_twist || has_scale {
+            let solid = if !holes.is_empty() {
+                if has_twist || has_scale {
+                    return Err(EvalError::Sketch(
+                        vcad_kernel_sketch::SketchError::HolesUnsupported(
+                            "extrude with twist or taper",
+                        ),
+                    ));
+                }
+                let hole_loops = crate::convert::ir_holes_to_segments(holes);
+                Solid::extrude_with_holes(profile, &hole_loops, dir).map_err(EvalError::Sketch)?
+            } else if has_twist || has_scale {
                 Solid::extrude_with_options(
                     profile,
                     dir,
@@ -642,7 +652,8 @@ fn evaluate_op_timed(
         } => {
             let sketch_node = nodes.get(sketch).ok_or(EvalError::MissingNode(*sketch))?;
 
-            let (s_origin, s_x_dir, s_y_dir, segments) = extract_sketch(&sketch_node.op)?;
+            let (s_origin, s_x_dir, s_y_dir, segments, holes) = extract_sketch(&sketch_node.op)?;
+            reject_holes(holes, "revolve")?;
             let profile = ir_sketch_to_profile(s_origin, s_x_dir, s_y_dir, segments)
                 .map_err(EvalError::Sketch)?;
 
@@ -669,7 +680,8 @@ fn evaluate_op_timed(
         } => {
             let sketch_node = nodes.get(sketch).ok_or(EvalError::MissingNode(*sketch))?;
 
-            let (s_origin, s_x_dir, s_y_dir, segments) = extract_sketch(&sketch_node.op)?;
+            let (s_origin, s_x_dir, s_y_dir, segments, holes) = extract_sketch(&sketch_node.op)?;
+            reject_holes(holes, "sweep")?;
             let profile = ir_sketch_to_profile(s_origin, s_x_dir, s_y_dir, segments)
                 .map_err(EvalError::Sketch)?;
 
@@ -707,7 +719,9 @@ fn evaluate_op_timed(
                 let sketch_node = nodes
                     .get(sketch_id)
                     .ok_or(EvalError::MissingNode(*sketch_id))?;
-                let (s_origin, s_x_dir, s_y_dir, segments) = extract_sketch(&sketch_node.op)?;
+                let (s_origin, s_x_dir, s_y_dir, segments, holes) =
+                    extract_sketch(&sketch_node.op)?;
+                reject_holes(holes, "loft")?;
                 let profile = ir_sketch_to_profile(s_origin, s_x_dir, s_y_dir, segments)
                     .map_err(EvalError::Sketch)?;
                 profiles.push(profile);
@@ -1067,25 +1081,47 @@ fn is_transform_op(op: &CsgOp) -> bool {
     )
 }
 
+/// Error out when a sketch with interior holes reaches an operation that
+/// doesn't support them (only extrude does today).
+fn reject_holes(
+    holes: &[Vec<vcad_ir::SketchSegment2D>],
+    op_name: &'static str,
+) -> Result<(), EvalError> {
+    if holes.is_empty() {
+        Ok(())
+    } else {
+        Err(EvalError::Sketch(
+            vcad_kernel_sketch::SketchError::HolesUnsupported(op_name),
+        ))
+    }
+}
+
+/// Borrowed fields of a `Sketch2D`: origin, x-dir, y-dir, outer segments,
+/// and interior hole loops (empty when absent).
+type SketchFields<'a> = (
+    &'a vcad_ir::Vec3,
+    &'a vcad_ir::Vec3,
+    &'a vcad_ir::Vec3,
+    &'a [vcad_ir::SketchSegment2D],
+    &'a [Vec<vcad_ir::SketchSegment2D>],
+);
+
 /// Extract sketch fields from a CsgOp, returning error if not a Sketch2D.
-fn extract_sketch(
-    op: &CsgOp,
-) -> Result<
-    (
-        &vcad_ir::Vec3,
-        &vcad_ir::Vec3,
-        &vcad_ir::Vec3,
-        &[vcad_ir::SketchSegment2D],
-    ),
-    EvalError,
-> {
+fn extract_sketch(op: &CsgOp) -> Result<SketchFields<'_>, EvalError> {
     match op {
         CsgOp::Sketch2D {
             origin,
             x_dir,
             y_dir,
             segments,
-        } => Ok((origin, x_dir, y_dir, segments)),
+            holes,
+        } => Ok((
+            origin,
+            x_dir,
+            y_dir,
+            segments,
+            holes.as_deref().unwrap_or(&[]),
+        )),
         _ => Err(EvalError::InvalidSketchRef),
     }
 }

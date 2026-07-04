@@ -7260,6 +7260,7 @@ name = "vcad-kernel-sketch"
 version = "0.9.4"
 dependencies = [
  "thiserror 2.0.18",
+ "vcad-kernel-booleans",
  "vcad-kernel-geom",
  "vcad-kernel-math",
  "vcad-kernel-primitives",
@@ -7310,6 +7311,7 @@ dependencies = [
 name = "vcad-kernel-tessellate"
 version = "0.9.4"
 dependencies = [
+ "earcutr",
  "tang",
  "vcad-kernel-geom",
  "vcad-kernel-math",

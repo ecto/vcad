@@ -852,6 +852,7 @@ mod tests {
                 id: sketch_id,
                 name: None,
                 op: CsgOp::Sketch2D {
+                    holes: None,
                     origin: Vec3::new(0.0, 0.0, 0.0),
                     x_dir: Vec3::new(1.0, 0.0, 0.0),
                     y_dir: Vec3::new(0.0, 1.0, 0.0),

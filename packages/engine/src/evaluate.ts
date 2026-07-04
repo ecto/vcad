@@ -230,6 +230,11 @@ function convertSketchToProfile(op: Sketch2DOp) {
     x_dir: [op.x_dir.x, op.x_dir.y, op.x_dir.z],
     y_dir: [op.y_dir.x, op.y_dir.y, op.y_dir.z],
     segments: op.segments.map(convertSegment),
+    // Interior hole loops ride along on the profile JSON; the kernel honors
+    // them for extrude and rejects them for revolve/sweep/loft.
+    ...(op.holes && op.holes.length > 0
+      ? { holes: op.holes.map((hole) => hole.map(convertSegment)) }
+      : {}),
   };
 }
 

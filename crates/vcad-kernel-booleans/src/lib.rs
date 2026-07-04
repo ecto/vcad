@@ -19,6 +19,7 @@ pub mod bbox;
 pub mod classify;
 pub mod cyl_cyl;
 pub mod mesh;
+mod no_crossing;
 mod pipeline;
 mod repair;
 pub mod sew;
@@ -722,7 +723,7 @@ mod tests {
                     // Compute winding normal from first 3 verts
                     let e1 = loop_verts[1] - loop_verts[0];
                     let e2 = loop_verts[2] - loop_verts[0];
-                    let winding_normal = e1.cross(&e2);
+                    let winding_normal = e1.cross(e2);
                     let wn = if winding_normal.norm() > 1e-12 {
                         winding_normal.normalize()
                     } else {
@@ -900,7 +901,7 @@ mod tests {
                     .fold(f64::NEG_INFINITY, f64::max);
                 let e1 = loop_verts[1] - loop_verts[0];
                 let e2 = loop_verts[2] - loop_verts[0];
-                let winding_n = e1.cross(&e2);
+                let winding_n = e1.cross(e2);
                 let wn = if winding_n.norm() > 1e-12 {
                     winding_n.normalize()
                 } else {
@@ -932,7 +933,7 @@ mod tests {
                     // Compute cross products for first few triangles
                     let e1 = loop_verts[1] - loop_verts[0];
                     let e2 = loop_verts[2] - loop_verts[0];
-                    let n1 = e1.cross(&e2);
+                    let n1 = e1.cross(e2);
                     eprintln!(
                         "    First triangle (v0,v1,v2) cross: ({:.4}, {:.4}, {:.4})",
                         n1.x, n1.y, n1.z

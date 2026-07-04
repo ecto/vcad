@@ -326,7 +326,15 @@ y_dir: Vec3,
 /**
  * The segments forming the closed profile.
  */
-segments: Array<SketchSegment2D>, } | { "type": "Extrude", 
+segments: Array<SketchSegment2D>, 
+/**
+ * Optional interior hole loops. Each entry is a closed loop of
+ * segments in the same sketch coordinate system, lying strictly
+ * inside the outer profile and disjoint from the other holes.
+ * Extrude turns each loop into an interior wall directly — no
+ * boolean Difference pass. Loop winding may be CW or CCW.
+ */
+holes?: Array<Array<SketchSegment2D>>, } | { "type": "Extrude", 
 /**
  * The sketch node to extrude.
  */

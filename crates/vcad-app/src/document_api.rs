@@ -591,6 +591,7 @@ mod tests {
         // both near-identical shells render and z-fight ("the pork-chop
         // sawtooth").
         let sketch_json = serde_json::to_string(&vcad_ir::CsgOp::Sketch2D {
+            holes: None,
             origin: vcad_ir::Vec3::new(0.0, 0.0, 0.0),
             x_dir: vcad_ir::Vec3::new(1.0, 0.0, 0.0),
             y_dir: vcad_ir::Vec3::new(0.0, 1.0, 0.0),

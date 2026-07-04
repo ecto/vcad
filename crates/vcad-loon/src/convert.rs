@@ -873,6 +873,7 @@ impl ConvertCtx {
                     x_dir,
                     y_dir,
                     segments,
+                    holes: None,
                 }))
             }
             _ => Err(format!("expected Sketch, got {tag}")),
