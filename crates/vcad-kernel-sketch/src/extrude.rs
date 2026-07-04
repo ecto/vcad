@@ -96,7 +96,12 @@ pub fn extrude(profile: &SketchProfile, direction: Vec3) -> Result<BRepSolid, Sk
 
     let n_segments = profile.segments.len();
 
-    // Vertex cache: quantized position -> VertexId
+    // Vertex cache: quantized position -> VertexId. The 1e-9 grid (1 pm in
+    // mm units) is deliberately three orders finer than the sew tolerance
+    // (1e-6): this cache only unifies float-identical endpoints shared by
+    // consecutive segments and by the cap/lateral construction — proximity
+    // welding of genuinely distinct vertices is sew's job, and a coarser
+    // grid here would alias real geometry instead of preventing it.
     let mut vertex_cache: HashMap<[i64; 3], VertexId> = HashMap::new();
 
     let quantize_pt = |p: Point3| -> [i64; 3] {
