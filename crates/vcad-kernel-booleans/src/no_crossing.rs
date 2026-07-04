@@ -12,6 +12,13 @@
 //! general pipeline so coincident faces are deduplicated; [`boundaries_touch`]
 //! detects coincident-surface candidate pairs whose 2D regions actually
 //! touch and vetoes the fast path.
+//!
+//! The gate lives in `pipeline.rs` (`brep_boolean`): this path is entered
+//! only when SSI over all broadphase candidate pairs produced **zero** real
+//! crossings AND [`boundaries_touch`] reports no coincident-region contact;
+//! [`resolve_containment`] returning `None` (degenerate ray casts) also
+//! falls back to the general pipeline. Every ambiguity resolves toward the
+//! slow, general path.
 
 use vcad_kernel_geom::Plane;
 use vcad_kernel_math::{Point3, Vec3};
