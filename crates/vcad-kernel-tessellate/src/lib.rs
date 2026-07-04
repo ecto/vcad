@@ -1376,7 +1376,12 @@ fn tessellate_planar_face_with_holes(
 /// from the bridge/ear-clip path to earcut. Small faces keep the existing
 /// path (its Steiner-ring refinement yields nicer triangles); large faces
 /// need earcut's near-linear running time.
-const EARCUT_VERTEX_THRESHOLD: usize = 64;
+// Trade-off: below this, the Steiner-ring path yields nicer, more uniform
+// triangles (better shading on ordinary curved caps); above it, its O(n^2)
+// refinement is too slow and earcut wins. 256 keeps a 32-segment arc cap
+// with a few holes on the quality path while chip-scale polygons (GDS
+// layers, thousands of vertices) take the fast path.
+const EARCUT_VERTEX_THRESHOLD: usize = 256;
 
 /// Triangulate a projected planar polygon (with optional holes) via earcut.
 ///
@@ -1416,20 +1421,19 @@ fn earcut_polygon_with_holes(
         return mesh;
     };
 
-    // earcut's output winding follows the input outer ring; normalize to the
-    // same convention as `ear_clip_triangulate` (CCW in the projected frame
-    // unless `reversed`). Probe the first non-degenerate triangle.
-    let mut flip = false;
+    // earcut's output triangles are uniformly wound; measure that winding
+    // from the TOTAL signed area of the output (immune to any individual
+    // degenerate triangle and to assumptions about which ring the first
+    // triangle came from) and normalize to the same convention as
+    // `ear_clip_triangulate` (CCW in the projected frame unless `reversed`).
+    let mut area2 = 0.0;
     for t in tris.chunks(3) {
         let (ax, ay) = (data[2 * t[0]], data[2 * t[0] + 1]);
         let (bx, by) = (data[2 * t[1]], data[2 * t[1] + 1]);
         let (cx, cy) = (data[2 * t[2]], data[2 * t[2] + 1]);
-        let area = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
-        if area.abs() > 1e-12 {
-            flip = (area > 0.0) == reversed;
-            break;
-        }
+        area2 += (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
     }
+    let flip = (area2 > 0.0) == reversed;
 
     for t in tris.chunks(3) {
         if flip {

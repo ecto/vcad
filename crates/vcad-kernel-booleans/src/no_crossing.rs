@@ -103,8 +103,14 @@ fn face_outer_verts(brep: &BRepSolid, face: FaceId) -> Vec<Point3> {
 
 /// Do two coplanar face regions touch or overlap? Projects both outer loops
 /// into the shared plane and tests vertex containment (boundary-inclusive)
-/// plus edge-edge intersection. Inner loops are ignored, which errs on the
-/// side of reporting contact (safe: the general pipeline takes over).
+/// plus edge-edge intersection.
+///
+/// Inner (hole) loops are deliberately not examined: a hole lies strictly
+/// inside its face's outer region, so if two outer regions are disjoint,
+/// every point of either face's hole boundaries is disjoint from the other
+/// face too — outer-region separation is sufficient, not just conservative.
+/// (When outer regions do overlap, this returns `true` and the general
+/// pipeline handles the geometry, holes included.)
 fn planar_regions_touch(
     a: &BRepSolid,
     fa: FaceId,
@@ -676,17 +682,11 @@ mod vcad_kernel_sketch_probe {
             .map(|&(x, y)| topo.add_vertex(vcad_kernel_math::Point3::new(x, y, h)))
             .collect();
         let mut faces = Vec::new();
-        let mut he_pairs: std::collections::HashMap<(u64, u64), vcad_kernel_topo::HalfEdgeId> =
-            Default::default();
-        let key = |v: vcad_kernel_topo::VertexId| -> u64 {
-            // slotmap keys are unique; hash via Debug format
-            let s = format!("{v:?}");
-            let mut acc = 0u64;
-            for b in s.bytes() {
-                acc = acc.wrapping_mul(131).wrapping_add(b as u64);
-            }
-            acc
-        };
+        // slotmap keys are Hash + Eq — key the pairing map on them directly.
+        let mut he_pairs: std::collections::HashMap<
+            (vcad_kernel_topo::VertexId, vcad_kernel_topo::VertexId),
+            vcad_kernel_topo::HalfEdgeId,
+        > = Default::default();
         let mut mk_face = |topo: &mut Topology,
                            geom: &mut GeometryStore,
                            ring: &[vcad_kernel_topo::VertexId],
@@ -704,10 +704,10 @@ mod vcad_kernel_sketch_probe {
             for (i, &he) in hes.iter().enumerate() {
                 let a = ring[i];
                 let b = ring[(i + 1) % ring.len()];
-                if let Some(&other) = he_pairs.get(&(key(b), key(a))) {
+                if let Some(&other) = he_pairs.get(&(b, a)) {
                     topo.add_edge(he, other);
                 } else {
-                    he_pairs.insert((key(a), key(b)), he);
+                    he_pairs.insert((a, b), he);
                 }
             }
             let l = topo.add_loop(&hes);
