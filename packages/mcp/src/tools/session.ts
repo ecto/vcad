@@ -14,6 +14,8 @@ import { writeFileSync, readFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { resolveWithinRoot } from "./safe-path.js";
+import { storeArtifact } from "./artifact-store.js";
+import { maxInlineArtifactBytes } from "./remote.js";
 import type { SessionStore } from "../session-store.js";
 import type { AuthUser } from "../oauth.js";
 
@@ -281,8 +283,40 @@ export function getDocumentTool(args: Record<string, unknown>): {
 } {
   const id = String(args.document_id ?? "");
   const doc = getSession(id);
+  const inline = JSON.stringify(doc);
+  // A routed PCB or imported assembly serializes far past the tool-output
+  // token budget. Same byte-cap idiom as export_gerber / import_step: under
+  // the cap the full IR returns inline (the documented contract); over it the
+  // IR moves to the artifact store and the result is a compact handle whose
+  // manifest sha256 lets any consumer verify the downloaded snapshot.
+  const cap = maxInlineArtifactBytes();
+  if (Buffer.byteLength(inline, "utf8") > cap) {
+    const handle = storeArtifact([{ name: `${id}.vcad`, content: inline }]);
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify({
+            document_id: id,
+            parts: doc.roots?.length ?? 0,
+            nodes: Object.keys(doc.nodes ?? {}).length,
+            bytes: handle.bytes,
+            artifact_id: handle.artifact_id,
+            artifact_url: handle.artifact_url,
+            manifest: handle.manifest,
+            expires_at: handle.expires_at,
+            note:
+              `Document IR is ${handle.bytes} bytes — over the ${cap}-byte inline ` +
+              "limit, so the full IR was written to the artifact store. Download " +
+              "it at artifact_url (sha256 in the manifest verifies the snapshot); " +
+              "the session stays live via document_id.",
+          }),
+        },
+      ],
+    };
+  }
   return {
-    content: [{ type: "text", text: JSON.stringify(doc) }],
+    content: [{ type: "text", text: inline }],
   };
 }
 
