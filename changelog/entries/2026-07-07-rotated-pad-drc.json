@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-07-rotated-pad-drc",
+  "version": "0.9.4",
+  "date": "2026-07-07",
+  "category": "fix",
+  "title": "DRC judges rotated footprint pads at their true positions",
+  "summary": "Pad copper on rotated footprints was checked at unrotated phantom positions, so traces routed to reported pad coordinates failed DRC as false shorts/clearance; DRC, DFM, and connectivity now use the rotated transform.",
+  "features": ["pcb", "drc", "dfm", "routing"],
+  "mcpTools": ["run_drc", "dfm_check", "get_pad_positions", "add_trace"]
+}

@@ -59,14 +59,9 @@ pub fn generate_teardrops(pcb: &Pcb) -> Vec<Teardrop> {
         });
     }
     for fp in &pcb.footprints {
-        let fr = fp.rotation.to_radians();
-        let (fc, fs) = (fr.cos(), fr.sin());
         for pad in &fp.pads {
             let Some(net) = pad.net.clone() else { continue };
-            let world = Vec2::new(
-                fp.position.x + pad.position.x * fc - pad.position.y * fs,
-                fp.position.y + pad.position.x * fs + pad.position.y * fc,
-            );
+            let world = crate::geometry::pad_world_position(fp, pad);
             let (hw, hh) = pad_half_extents(pad);
             lands.push(Land {
                 center: world,

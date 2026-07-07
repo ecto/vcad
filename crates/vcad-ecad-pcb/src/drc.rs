@@ -447,10 +447,7 @@ fn check_pad_clearance(
             let Some(net) = pad.net.as_deref() else {
                 continue;
             };
-            let center = Vec2::new(
-                fp.position.x + pad.position.x,
-                fp.position.y + pad.position.y,
-            );
+            let center = crate::geometry::pad_world_position(fp, pad);
             let rot = (fp.rotation + pad.rotation).to_radians();
             boxes.push(PadBox {
                 center,
@@ -586,10 +583,7 @@ fn check_min_drill(pcb: &Pcb, violations: &mut Vec<DrcViolation>) {
         for pad in &footprint.pads {
             if let Some(drill) = &pad.drill {
                 if drill.diameter < min_drill - 1e-6 {
-                    let abs_pos = Vec2::new(
-                        footprint.position.x + pad.position.x,
-                        footprint.position.y + pad.position.y,
-                    );
+                    let abs_pos = crate::geometry::pad_world_position(footprint, pad);
                     violations.push(DrcViolation {
                         rule: DrcRuleType::MinDrill,
                         severity: DrcSeverity::Error,
@@ -696,10 +690,7 @@ fn check_hole_to_hole(pcb: &Pcb, violations: &mut Vec<DrcViolation>) {
         let generated = fp_is_generated(footprint);
         for pad in &footprint.pads {
             if let Some(drill) = &pad.drill {
-                let abs_pos = Vec2::new(
-                    footprint.position.x + pad.position.x,
-                    footprint.position.y + pad.position.y,
-                );
+                let abs_pos = crate::geometry::pad_world_position(footprint, pad);
                 holes.push(Hole {
                     pos: abs_pos,
                     radius: drill.diameter / 2.0,
@@ -785,10 +776,7 @@ fn check_annular_ring(pcb: &Pcb, violations: &mut Vec<DrcViolation>) {
                 let pad_min_dim = pad_min_dimension(pad);
                 let ring = (pad_min_dim - drill.diameter) / 2.0;
                 if ring < min_ring - 1e-6 {
-                    let abs_pos = Vec2::new(
-                        footprint.position.x + pad.position.x,
-                        footprint.position.y + pad.position.y,
-                    );
+                    let abs_pos = crate::geometry::pad_world_position(footprint, pad);
                     violations.push(DrcViolation {
                         rule: DrcRuleType::AnnularRing,
                         severity: DrcSeverity::Error,
@@ -877,10 +865,7 @@ fn check_keepout(pcb: &Pcb, violations: &mut Vec<DrcViolation>) {
                 let mut hit = false;
                 let mut hit_pos = fp.position;
                 for pad in &fp.pads {
-                    let pad_pos = Vec2::new(
-                        fp.position.x + pad.position.x,
-                        fp.position.y + pad.position.y,
-                    );
+                    let pad_pos = crate::geometry::pad_world_position(fp, pad);
                     if point_in_polygon(pad_pos, &keepout.outline) {
                         hit = true;
                         hit_pos = pad_pos;
@@ -1230,10 +1215,7 @@ fn build_conn_nodes(pcb: &Pcb) -> Vec<ConnNode> {
 
     for fp in &pcb.footprints {
         for pad in &fp.pads {
-            let center = Vec2::new(
-                fp.position.x + pad.position.x,
-                fp.position.y + pad.position.y,
-            );
+            let center = crate::geometry::pad_world_position(fp, pad);
             let rot = (fp.rotation + pad.rotation).to_radians();
             let mut layers = 0u16;
             for &l in &pad.layers {
@@ -2561,6 +2543,105 @@ mod tests {
             violations.is_empty(),
             "expected no violations, got: {:?}",
             violations
+        );
+    }
+
+    /// One-pad SMD footprint for the rotated-placement regression tests.
+    fn one_pad_footprint(
+        reference: &str,
+        position: Vec2,
+        rotation: f64,
+        pad_local: Vec2,
+        net: &str,
+    ) -> Footprint {
+        Footprint {
+            reference: reference.to_string(),
+            value: "X".to_string(),
+            footprint_name: "TEST_1PAD".to_string(),
+            position,
+            rotation,
+            front: true,
+            pads: vec![Pad {
+                number: "1".to_string(),
+                pad_type: PadType::SMD,
+                shape: PadShape::Rect {
+                    width: 1.2,
+                    height: 1.2,
+                },
+                position: pad_local,
+                rotation: 0.0,
+                drill: None,
+                net: Some(net.to_string()),
+                layers: vec![PcbLayer::FCu],
+            }],
+            graphics: vec![],
+            model_3d: None,
+            properties: std::collections::HashMap::new(),
+        }
+    }
+
+    /// DRC must judge pad copper at the ROTATED world position — the position
+    /// `get_pad_positions` reports and the Gerber writer exports. Regression
+    /// for the pad transform dropping the footprint rotation: J1's pad sits at
+    /// local (+5, 0) on a 180°-rotated footprint, so its real copper is at
+    /// (65, 60); the unrotated phantom position (75, 60) would sit dead on
+    /// R1's foreign-net pad and produced a bogus clearance/short.
+    #[test]
+    fn rotated_footprint_pads_are_judged_at_rotated_positions() {
+        let mut pcb = clean_pcb();
+        pcb.footprints.push(one_pad_footprint(
+            "J1",
+            Vec2::new(70.0, 60.0),
+            180.0,
+            Vec2::new(5.0, 0.0),
+            "1",
+        ));
+        pcb.footprints.push(one_pad_footprint(
+            "R1",
+            Vec2::new(75.0, 60.0),
+            0.0,
+            Vec2::new(0.0, 0.0),
+            "2",
+        ));
+        let conflicts: Vec<_> = check_drc(&pcb)
+            .into_iter()
+            .filter(|v| matches!(v.rule, DrcRuleType::Clearance | DrcRuleType::Short))
+            .collect();
+        assert!(
+            conflicts.is_empty(),
+            "rotated pad copper is 10mm from R1 — a violation means DRC placed \
+             it at the unrotated phantom position: {:?}",
+            conflicts
+        );
+    }
+
+    /// Positive control for the test above: when the ROTATED position really
+    /// does land on a foreign-net pad, DRC must still flag it.
+    #[test]
+    fn rotated_footprint_real_pad_overlap_is_still_flagged() {
+        let mut pcb = clean_pcb();
+        // 180° rotation puts J1's pad at (80 − 5, 60) = (75, 60) — on R1.
+        pcb.footprints.push(one_pad_footprint(
+            "J1",
+            Vec2::new(80.0, 60.0),
+            180.0,
+            Vec2::new(5.0, 0.0),
+            "1",
+        ));
+        pcb.footprints.push(one_pad_footprint(
+            "R1",
+            Vec2::new(75.0, 60.0),
+            0.0,
+            Vec2::new(0.0, 0.0),
+            "2",
+        ));
+        let conflicts: Vec<_> = check_drc(&pcb)
+            .into_iter()
+            .filter(|v| matches!(v.rule, DrcRuleType::Clearance | DrcRuleType::Short))
+            .collect();
+        assert!(
+            !conflicts.is_empty(),
+            "overlapping foreign-net pads at the rotated position must be flagged"
         );
     }
 

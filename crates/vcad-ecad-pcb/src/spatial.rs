@@ -465,9 +465,8 @@ pub(crate) fn copper_elements(pcb: &Pcb) -> Vec<CopperElement> {
     // Footprint pads.
     for footprint in &pcb.footprints {
         for pad in &footprint.pads {
-            let abs_x = footprint.position.x + pad.position.x;
-            let abs_y = footprint.position.y + pad.position.y;
-            let center = Vec2::new(abs_x, abs_y);
+            let center = crate::geometry::pad_world_position(footprint, pad);
+            let (abs_x, abs_y) = (center.x, center.y);
             let net = pad.net.clone().unwrap_or_default();
             // Total pad rotation = footprint rotation + pad-local rotation.
             let rot = (footprint.rotation + pad.rotation).to_radians();
@@ -783,6 +782,116 @@ mod tests {
     fn default_index() {
         let index = SpatialIndex::default();
         assert!(index.is_empty());
+    }
+
+    /// Pads of a rotated footprint must be indexed at their rotated world
+    /// position (footprint origin + rotation-transformed pad offset) — the
+    /// same transform the Gerber writer and the `get_pad_positions` MCP tool
+    /// apply. Regression for copper_elements composing the offset without
+    /// rotating it, which put every pad of a rotated footprint at a phantom
+    /// location and made agent-routed traces to the reported positions fail
+    /// DRC.
+    #[test]
+    fn rotated_footprint_pads_index_at_rotated_positions() {
+        let footprint = Footprint {
+            reference: "R1".to_string(),
+            value: "10k".to_string(),
+            footprint_name: "R_0805".to_string(),
+            position: Vec2::new(25.0, 40.0),
+            rotation: 90.0,
+            front: true,
+            pads: vec![
+                Pad {
+                    number: "1".to_string(),
+                    pad_type: PadType::SMD,
+                    shape: PadShape::Rect {
+                        width: 1.0,
+                        height: 1.2,
+                    },
+                    position: Vec2::new(-1.0, 0.0),
+                    rotation: 0.0,
+                    drill: None,
+                    net: Some("1".to_string()),
+                    layers: vec![PcbLayer::FCu],
+                },
+                Pad {
+                    number: "2".to_string(),
+                    pad_type: PadType::SMD,
+                    shape: PadShape::Rect {
+                        width: 1.0,
+                        height: 1.2,
+                    },
+                    position: Vec2::new(1.0, 0.0),
+                    rotation: 0.0,
+                    drill: None,
+                    net: Some("2".to_string()),
+                    layers: vec![PcbLayer::FCu],
+                },
+            ],
+            graphics: vec![],
+            model_3d: None,
+            properties: std::collections::HashMap::new(),
+        };
+        let pcb = Pcb {
+            outline: BoardOutline {
+                vertices: vec![
+                    Vec2::new(0.0, 0.0),
+                    Vec2::new(100.0, 0.0),
+                    Vec2::new(100.0, 80.0),
+                    Vec2::new(0.0, 80.0),
+                ],
+                cutouts: vec![],
+                thickness: 1.6,
+            },
+            stackup: LayerStackup { layers: vec![] },
+            nets: vec![],
+            rules: DesignRules {
+                default_rules: NetClassRules {
+                    name: "Default".to_string(),
+                    trace_width: 0.25,
+                    clearance: 0.2,
+                    via_diameter: 0.8,
+                    via_drill: 0.4,
+                    diff_pair_gap: None,
+                    diff_pair_width: None,
+                },
+                class_rules: vec![],
+                net_class_assignments: std::collections::HashMap::new(),
+                edge_clearance: 0.5,
+                hole_to_hole: 0.5,
+                min_annular_ring: 0.15,
+                min_drill: 0.2,
+            },
+            footprints: vec![footprint],
+            traces: vec![],
+            trace_arcs: vec![],
+            vias: vec![],
+            zones: vec![],
+            keepouts: vec![],
+            net_ties: vec![],
+        };
+
+        let elements = copper_elements(&pcb);
+        assert_eq!(elements.len(), 2);
+        // 90° CCW: local (x, y) → world (fp.x − y, fp.y + x).
+        // Pad 1 local (−1, 0) → (25, 39); pad 2 local (1, 0) → (25, 41).
+        for (net, expect) in [("1", Vec2::new(25.0, 39.0)), ("2", Vec2::new(25.0, 41.0))] {
+            let el = elements.iter().find(|e| e.net == net).unwrap();
+            let CopperGeom::Rect { center, .. } = el.geom else {
+                panic!("expected rect pad geom");
+            };
+            assert!(
+                approx(center.x, expect.x) && approx(center.y, expect.y),
+                "pad on net {net} indexed at ({}, {}), expected ({}, {})",
+                center.x,
+                center.y,
+                expect.x,
+                expect.y
+            );
+            // The broadphase bbox must cover the rotated center too.
+            assert!(el.min[0] <= expect.x && expect.x <= el.max[0]);
+            assert!(el.min[1] <= expect.y && expect.y <= el.max[1]);
+        }
     }
 
     // ------------------------------------------------------------------
