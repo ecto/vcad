@@ -498,8 +498,23 @@ pub(crate) fn brep_boolean(
             // Also verify the circle center is in the face's material region to
             // avoid creating nested inner loops (e.g. bore circle inside hub hole).
             if let ssi::IntersectionCurve::Circle(circle) = &curve {
-                // Sample a point on the circle (not center — center might not be in face for cylindrical)
-                let sample_pt = circle.center + circle.radius * circle.x_dir.into_inner();
+                // The circle counts as touching a face when ANY of several
+                // rim probes lands in it (not center — center might not be in
+                // face for cylindrical; not a single rim point — a circle that
+                // partially overhangs the face's boundary, e.g. a boss hanging
+                // over a disc edge, can have any one fixed angle land outside
+                // even though the crossing is real and must be split).
+                let circle_touches_face = |solid: &BRepSolid, fid: FaceId| -> bool {
+                    for k in 0..8 {
+                        let theta = 2.0 * std::f64::consts::PI * k as f64 / 8.0;
+                        let dir = theta.cos() * circle.x_dir.into_inner()
+                            + theta.sin() * circle.y_dir.into_inner();
+                        if trim::point_in_face(solid, fid, &(circle.center + circle.radius * dir)) {
+                            return true;
+                        }
+                    }
+                    false
+                };
 
                 // A circle from a curved×planar SSI is built from the planar face's
                 // *infinite* carrier plane. When that planar face is a small bounded
@@ -591,13 +606,13 @@ pub(crate) fn brep_boolean(
                     let outer_len = a.topology.loop_len(a.topology.faces[face_a].outer_loop);
                     let has_inner_loops = !a.topology.faces[face_a].inner_loops.is_empty();
                     if outer_len <= 1 {
-                        if trim::point_in_face(&a, face_a, &sample_pt) {
+                        if circle_touches_face(&a, face_a) {
                             results_a.push((curve.clone(), circle.center, circle.center));
                         }
                     } else if has_inner_loops {
                         // Regular polygon face with existing holes: check that the circle
                         // is inside the face material (not inside an existing hole)
-                        if trim::point_in_face(&a, face_a, &sample_pt) {
+                        if circle_touches_face(&a, face_a) {
                             results_a.push((curve.clone(), circle.center, circle.center));
                         }
                     } else {
@@ -617,13 +632,13 @@ pub(crate) fn brep_boolean(
                     let outer_len = b.topology.loop_len(b.topology.faces[face_b].outer_loop);
                     let has_inner_loops = !b.topology.faces[face_b].inner_loops.is_empty();
                     if outer_len <= 1 {
-                        if trim::point_in_face(&b, face_b, &sample_pt) {
+                        if circle_touches_face(&b, face_b) {
                             results_b.push((curve.clone(), circle.center, circle.center));
                         }
                     } else if has_inner_loops {
                         // Regular polygon face with existing holes: check that the circle
                         // is inside the face material (not inside an existing hole)
-                        if trim::point_in_face(&b, face_b, &sample_pt) {
+                        if circle_touches_face(&b, face_b) {
                             results_b.push((curve.clone(), circle.center, circle.center));
                         }
                     } else {

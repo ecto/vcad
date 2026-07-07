@@ -9,7 +9,10 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { Engine, getKernelWasm } from "@vcad/engine";
 import { commandRegistry } from "@vcad/core";
-import { computeIntegrity } from "../tools/integrity.js";
+import {
+  computeIntegrity,
+  isoperimetricViolation,
+} from "../tools/integrity.js";
 import { dispatchRegistryTool } from "../tools/registry-dispatch.js";
 import { registerSession } from "../tools/session.js";
 
@@ -94,6 +97,40 @@ describe("computeIntegrity", () => {
     expect(report!.com_axis_distance_mm![0]).toBeLessThan(0.05);
     expect(
       report!.warnings.filter((w) => w.includes("off the circular-pattern axis")),
+    ).toEqual([]);
+  });
+});
+
+describe("isoperimetricViolation", () => {
+  it("flags the turbopump field repro (661 mm³ from 100 mm²)", () => {
+    // A³ ≥ 36πV² for any real solid: 100 mm² of surface can enclose at
+    // most √(100³/36π) ≈ 94 mm³ — the deployed kernel returned ~661 mm³
+    // of phantom intersection volume with only ~100 mm² of skin.
+    const v = isoperimetricViolation(661, 100);
+    expect(v).not.toBeNull();
+    expect(v!.max_volume_mm3).toBeCloseTo(94.03, 1);
+  });
+
+  it("accepts real solids, including the extremal sphere", () => {
+    // Cube 10³: V = 1000, A = 600 → 600³ = 2.16e8 ≥ 36π·10⁶ ≈ 1.13e8.
+    expect(isoperimetricViolation(1000, 600)).toBeNull();
+    // Sphere r=10 (the equality case) with a hair of numeric slack.
+    const r = 10;
+    const vol = (4 / 3) * Math.PI * r ** 3;
+    const area = 4 * Math.PI * r * r;
+    expect(isoperimetricViolation(vol, area)).toBeNull();
+    // Degenerate / empty geometry never warns.
+    expect(isoperimetricViolation(0, 100)).toBeNull();
+    expect(isoperimetricViolation(1e-12, 0)).toBeNull();
+  });
+
+  it("computeIntegrity reports surface area and stays clean on real parts", () => {
+    const report = computeIntegrity(docFromLoon("[cube 10 20 30]"), engine);
+    expect(report).not.toBeNull();
+    // 2·(10·20 + 10·30 + 20·30) = 2200
+    expect(report!.surface_area_mm2).toBeCloseTo(2200, 3);
+    expect(
+      report!.warnings.filter((w) => w.includes("isoperimetrically")),
     ).toEqual([]);
   });
 });
