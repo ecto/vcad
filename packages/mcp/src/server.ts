@@ -103,6 +103,18 @@ import {
   placeOrderSchema,
 } from "./tools/ordering.js";
 import {
+  bomCreate,
+  bomCreateSchema,
+  bomAddLine,
+  bomAddLineSchema,
+  bomExport,
+  bomExportSchema,
+} from "./tools/bom.js";
+import {
+  searchMechanicalParts,
+  searchMechanicalPartsSchema,
+} from "./tools/mech-parts.js";
+import {
   shareSession,
   shareSessionSchema,
   unshareSession,
@@ -650,6 +662,8 @@ const TOOL_PACKS: Record<string, readonly string[]> = {
     "authorize_spend",
     "place_order",
   ],
+  // Project-level bill of materials + the curated mechanical COTS catalog.
+  bom: ["bom_create", "bom_add_line", "bom_export", "search_mechanical_parts"],
   dfm: ["dfm_check", "dfm_explain", "dfm_suggest_fix", "dfm_apply_fix"],
   sheet_metal: [
     "sheet_metal_create",
@@ -773,6 +787,7 @@ function buildInstructions(kernelPrompt: string | null): string {
     "- See your work with `render_view` (isometric PNG); measure with `inspect_cad` (volume, area, bbox, center of mass).",
     "- Ship with `export_cad` (STL/GLB/STEP) or `open_in_browser` (vcad.io deep link).",
     "- Fix in place: when geometry is wrong, prefer `update` on the offending node over deleting parts and starting over.",
+    "- Deliver the project bill of materials with `bom_create` → `bom_export` (markdown/CSV/JSON with landed-cost totals): link quote_manufacturing quotes on manufactured lines, and source COTS hardware (bearings, shafts, standoffs, screws, ferrite magnets) with `search_mechanical_parts`. All BOM prices are estimates and flagged as such.",
     "",
     "PCB workflow: `create_schematic` (declare connectivity as data via `nets`) → `place_components` → `route_nets` / `add_coil` / `add_coil_array` → `run_drc` → `validate_for_fab` → `export_gerber`. All take the `document_id` from create_schematic and mutate that session — never re-send the document. `validate_for_fab` is the single 'is this board ready?' gate (DRC + renderability + Gerber serialization + blockers, all fail-closed); `export_gerber` enforces a clean DRC by default and blocks a dirty board. `board_from_solid` turns a solid part (e.g. an enclosure or stator disc in a CAD session) into an outline polygon for `place_components`. For motors, plan the winding first with `winding_layout` (slots + poles → per-coil phase/polarity/winding-factor, as data — it touches no board), then realize it with `add_coil_array`. `run_drc` returns a summary by default (counts by rule + net-pair, worst clearance, a capped sample); pass `detail:'full'` for every violation. Surgical copper edits: `get_copper` lists existing traces/vias/zones (filtered by layer/net/bbox/kind) with the same indices `delete_trace`/`delete_via`/`delete_zone` accept — discover, then delete, without exporting the document. Where two nets must touch on purpose (wye neutral, split ground, shunt tap), declare it with `add_net_tie` — prefer a region-scoped tie (position+radius) so DRC stays honest away from the junction; `delete_net_tie` takes it back.",
   ].join("\n");
@@ -1089,6 +1104,31 @@ export async function createServer(
         description:
           "Place a QUOTED order once its authorization has been human-approved: performs one atomic wallet debit and moves the order to PAID (fab submission follows in a later step). Refuses if the authorization is still pending approval. Flag-gated (test-mode).",
         inputSchema: placeOrderSchema,
+      },
+      // ── Project BOM: the deliverable bill of materials ─────────
+      {
+        name: "bom_create",
+        description:
+          "Create a project bill of materials — the deliverable that collects every manufactured part (PCBs, sheet metal, 3D prints; link quote_manufacturing quotes by quote_id) and COTS part (bearings, shafts, screws, magnets; link search_mechanical_parts entries by catalog_id) in one place. Optionally attach a document_id and assembly notes. Pass the full `lines` array to build the whole BOM in ONE call — recommended, since BOMs are in-memory per server instance. All prices are estimates and flagged as such.",
+        inputSchema: bomCreateSchema,
+      },
+      {
+        name: "bom_add_line",
+        description:
+          "Append one line to a BOM from bom_create. kind 'manufactured': name + process (or a quote_id from quote_manufacturing, which auto-fills process, vendor, qty, and the landed unit price) plus optional artifact path and document_id. kind 'cots': name/spec/example_pn/vendor/qty/unit_price_usd, or a catalog_id from search_mechanical_parts to auto-fill spec and a price-band-midpoint estimate. Returns the running totals.",
+        inputSchema: bomAddLineSchema,
+      },
+      {
+        name: "bom_export",
+        description:
+          "Render a BOM as markdown (the shareable deliverable: manufactured-parts table with vendors/prices/artifact sources, COTS table with specs and example PNs, totals, assembly notes), csv (flat, spreadsheet-ready), or json (the full object). Totals include a landed-cost shipping estimate reusing the Fabricate shipping model (per distinct vendor; quote-linked lines are already landed). Also returns a vcad.receipt/1 `receipt_claim` (domain 'bom') carrying the cost estimate for a DesignReceipt — informational, never gates a design verdict. Prices are estimates and every export says so.",
+        inputSchema: bomExportSchema,
+      },
+      {
+        name: "search_mechanical_parts",
+        description:
+          "Spec-search the curated mechanical COTS catalog (offline) — the mechanical sibling of search_electronic_parts: 608/625/688/600x-series bearings, precision ground shafts (3-12 mm), shaft collars, flange couplings, M2/M3 standoffs, machine screws, and ferrite/ceramic disc+ring magnets (Y30/Y35/C8). Filter by type + dimensions (bore_mm, od_mm, width_mm, thread, length_mm, …) and/or free text. Returns spec + example part number + a typical price band — street-price ESTIMATES, not live quotes. Use the result's `id` as `catalog_id` in bom_add_line.",
+        inputSchema: searchMechanicalPartsSchema,
       },
       // ── Live review window: share a watchable session link ────
       {
@@ -2284,6 +2324,22 @@ export async function createServer(
 
         case "place_order":
           result = await placeOrder(args, fabricateStore, eventStore, context.user);
+          break;
+
+        case "bom_create":
+          result = await bomCreate(args, fabricateStore, context.user);
+          break;
+
+        case "bom_add_line":
+          result = await bomAddLine(args, fabricateStore, context.user);
+          break;
+
+        case "bom_export":
+          result = bomExport(args, context.user);
+          break;
+
+        case "search_mechanical_parts":
+          result = searchMechanicalParts(args);
           break;
 
         case "share_session":

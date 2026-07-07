@@ -1,0 +1,573 @@
+{
+  "schema": "vcad-mech-catalog/1",
+  "version": "1",
+  "notes": [
+    "Curated COTS mechanical parts catalog for BOM building — the mechanical",
+    "sibling of the generative electronic parts engine. Entries are common,",
+    "widely-second-sourced sizes (the ones a motor/robotics build actually",
+    "uses), searchable by type + dimension via `search_mechanical_parts`.",
+    "price_band_usd is a rough per-unit street-price range (single-digit",
+    "quantities from typical online vendors) — an ESTIMATE, never a live",
+    "quote, flagged as such in tool results just like Phase-0 fab quotes.",
+    "Bundled into @vcad/mcp at build time by scripts/gen-mech-catalog.mjs",
+    "(same source-of-truth-in-lib/ pattern as the DFM rule packs)."
+  ],
+  "parts": [
+    {
+      "id": "bearing.623zz",
+      "type": "bearing",
+      "name": "623ZZ deep-groove ball bearing",
+      "spec": { "bore_mm": 3, "od_mm": 10, "width_mm": 4, "seal": "ZZ (metal shields)", "friction": "low — shielded, light grease" },
+      "example_pn": "623ZZ",
+      "synonyms": ["623", "3x10x4 bearing"],
+      "price_band_usd": [0.4, 1.5],
+      "notes": "Smallest common hobby size; fine for idlers and light shafts."
+    },
+    {
+      "id": "bearing.625zz",
+      "type": "bearing",
+      "name": "625ZZ deep-groove ball bearing",
+      "spec": { "bore_mm": 5, "od_mm": 16, "width_mm": 5, "seal": "ZZ (metal shields)", "friction": "low — shielded, light grease" },
+      "example_pn": "625ZZ",
+      "synonyms": ["625", "5x16x5 bearing"],
+      "price_band_usd": [0.4, 1.5],
+      "notes": "Ubiquitous 5 mm-bore size (3D printer idlers, small rotors)."
+    },
+    {
+      "id": "bearing.625-2rs",
+      "type": "bearing",
+      "name": "625-2RS deep-groove ball bearing",
+      "spec": { "bore_mm": 5, "od_mm": 16, "width_mm": 5, "seal": "2RS (rubber seals)", "friction": "medium — contact seals add drag but keep dust out" },
+      "example_pn": "625-2RS",
+      "synonyms": ["625rs", "5x16x5 sealed bearing"],
+      "price_band_usd": [0.5, 1.8],
+      "notes": "Sealed variant of 625; prefer for dusty environments, ZZ for lowest drag."
+    },
+    {
+      "id": "bearing.626zz",
+      "type": "bearing",
+      "name": "626ZZ deep-groove ball bearing",
+      "spec": { "bore_mm": 6, "od_mm": 19, "width_mm": 6, "seal": "ZZ (metal shields)", "friction": "low — shielded, light grease" },
+      "example_pn": "626ZZ",
+      "synonyms": ["626", "6x19x6 bearing"],
+      "price_band_usd": [0.5, 1.8],
+      "notes": "6 mm-bore workhorse."
+    },
+    {
+      "id": "bearing.688zz",
+      "type": "bearing",
+      "name": "688ZZ thin-section ball bearing",
+      "spec": { "bore_mm": 8, "od_mm": 16, "width_mm": 5, "seal": "ZZ (metal shields)", "friction": "low — shielded, light grease" },
+      "example_pn": "688ZZ",
+      "synonyms": ["688", "8x16x5 bearing", "thin bearing"],
+      "price_band_usd": [0.6, 2.0],
+      "notes": "Thin 8 mm-bore section — compact rotor/hub support where a 608 is too fat."
+    },
+    {
+      "id": "bearing.608zz",
+      "type": "bearing",
+      "name": "608ZZ deep-groove ball bearing",
+      "spec": { "bore_mm": 8, "od_mm": 22, "width_mm": 7, "seal": "ZZ (metal shields)", "friction": "low — shielded, light grease" },
+      "example_pn": "608ZZ",
+      "synonyms": ["608", "skate bearing", "8x22x7 bearing"],
+      "price_band_usd": [0.3, 1.2],
+      "notes": "The skate-bearing standard; cheapest bearing per newton of anything on this list."
+    },
+    {
+      "id": "bearing.608-2rs",
+      "type": "bearing",
+      "name": "608-2RS deep-groove ball bearing",
+      "spec": { "bore_mm": 8, "od_mm": 22, "width_mm": 7, "seal": "2RS (rubber seals)", "friction": "medium — contact seals add drag but keep dust out" },
+      "example_pn": "608-2RS",
+      "synonyms": ["608rs", "sealed skate bearing"],
+      "price_band_usd": [0.4, 1.5],
+      "notes": "Sealed 608; prefer for outdoor/dusty builds."
+    },
+    {
+      "id": "bearing.6000zz",
+      "type": "bearing",
+      "name": "6000ZZ deep-groove ball bearing",
+      "spec": { "bore_mm": 10, "od_mm": 26, "width_mm": 8, "seal": "ZZ (metal shields)", "friction": "low — shielded, light grease" },
+      "example_pn": "6000ZZ",
+      "synonyms": ["6000", "10x26x8 bearing"],
+      "price_band_usd": [0.8, 2.5],
+      "notes": "First of the 6000 metric series; 10 mm bore."
+    },
+    {
+      "id": "bearing.6001zz",
+      "type": "bearing",
+      "name": "6001ZZ deep-groove ball bearing",
+      "spec": { "bore_mm": 12, "od_mm": 28, "width_mm": 8, "seal": "ZZ (metal shields)", "friction": "low — shielded, light grease" },
+      "example_pn": "6001ZZ",
+      "synonyms": ["6001", "12x28x8 bearing"],
+      "price_band_usd": [0.9, 2.8],
+      "notes": "12 mm bore."
+    },
+    {
+      "id": "bearing.6002zz",
+      "type": "bearing",
+      "name": "6002ZZ deep-groove ball bearing",
+      "spec": { "bore_mm": 15, "od_mm": 32, "width_mm": 9, "seal": "ZZ (metal shields)", "friction": "low — shielded, light grease" },
+      "example_pn": "6002ZZ",
+      "synonyms": ["6002", "15x32x9 bearing"],
+      "price_band_usd": [1.0, 3.0],
+      "notes": "15 mm bore."
+    },
+    {
+      "id": "bearing.6003zz",
+      "type": "bearing",
+      "name": "6003ZZ deep-groove ball bearing",
+      "spec": { "bore_mm": 17, "od_mm": 35, "width_mm": 10, "seal": "ZZ (metal shields)", "friction": "low — shielded, light grease" },
+      "example_pn": "6003ZZ",
+      "synonyms": ["6003", "17x35x10 bearing"],
+      "price_band_usd": [1.2, 3.5],
+      "notes": "17 mm bore — top of the small 6000 series."
+    },
+
+    {
+      "id": "shaft.ground-3mm",
+      "type": "shaft",
+      "name": "Precision ground shaft, 3 mm",
+      "spec": { "diameter_mm": 3, "tolerance": "h6", "material": "hardened bearing steel, chrome plated", "lengths_mm": [100, 150, 200, 300] },
+      "example_pn": "3mm x 300mm linear shaft",
+      "synonyms": ["linear rod", "3mm shaft", "drill rod"],
+      "price_band_usd": [2.0, 6.0],
+      "notes": "Price band is per piece up to 300 mm. Mates with 623 bearings."
+    },
+    {
+      "id": "shaft.ground-4mm",
+      "type": "shaft",
+      "name": "Precision ground shaft, 4 mm",
+      "spec": { "diameter_mm": 4, "tolerance": "h6", "material": "hardened bearing steel, chrome plated", "lengths_mm": [100, 150, 200, 300] },
+      "example_pn": "4mm x 300mm linear shaft",
+      "synonyms": ["linear rod", "4mm shaft"],
+      "price_band_usd": [2.5, 7.0],
+      "notes": "Price band is per piece up to 300 mm."
+    },
+    {
+      "id": "shaft.ground-5mm",
+      "type": "shaft",
+      "name": "Precision ground shaft, 5 mm",
+      "spec": { "diameter_mm": 5, "tolerance": "h6", "material": "hardened bearing steel, chrome plated", "lengths_mm": [100, 150, 200, 300] },
+      "example_pn": "5mm x 300mm linear shaft",
+      "synonyms": ["linear rod", "5mm shaft", "motor shaft stock"],
+      "price_band_usd": [3.0, 8.0],
+      "notes": "Price band is per piece up to 300 mm. Mates with 625 bearings — the default small-motor shaft."
+    },
+    {
+      "id": "shaft.ground-6mm",
+      "type": "shaft",
+      "name": "Precision ground shaft, 6 mm",
+      "spec": { "diameter_mm": 6, "tolerance": "h6", "material": "hardened bearing steel, chrome plated", "lengths_mm": [100, 150, 200, 300, 500] },
+      "example_pn": "6mm x 300mm linear shaft",
+      "synonyms": ["linear rod", "6mm shaft"],
+      "price_band_usd": [3.0, 9.0],
+      "notes": "Price band is per piece up to 300 mm. Mates with 626 bearings."
+    },
+    {
+      "id": "shaft.ground-8mm",
+      "type": "shaft",
+      "name": "Precision ground shaft, 8 mm",
+      "spec": { "diameter_mm": 8, "tolerance": "h6", "material": "hardened bearing steel, chrome plated", "lengths_mm": [100, 150, 200, 300, 500] },
+      "example_pn": "8mm x 300mm linear shaft",
+      "synonyms": ["linear rod", "8mm shaft"],
+      "price_band_usd": [4.0, 12.0],
+      "notes": "Price band is per piece up to 300 mm. Mates with 608/688 bearings; also the 3D-printer smooth-rod standard."
+    },
+    {
+      "id": "shaft.ground-10mm",
+      "type": "shaft",
+      "name": "Precision ground shaft, 10 mm",
+      "spec": { "diameter_mm": 10, "tolerance": "h6", "material": "hardened bearing steel, chrome plated", "lengths_mm": [100, 200, 300, 500] },
+      "example_pn": "10mm x 300mm linear shaft",
+      "synonyms": ["linear rod", "10mm shaft"],
+      "price_band_usd": [5.0, 15.0],
+      "notes": "Price band is per piece up to 300 mm. Mates with 6000 bearings."
+    },
+    {
+      "id": "shaft.ground-12mm",
+      "type": "shaft",
+      "name": "Precision ground shaft, 12 mm",
+      "spec": { "diameter_mm": 12, "tolerance": "h6", "material": "hardened bearing steel, chrome plated", "lengths_mm": [100, 200, 300, 500] },
+      "example_pn": "12mm x 300mm linear shaft",
+      "synonyms": ["linear rod", "12mm shaft"],
+      "price_band_usd": [6.0, 18.0],
+      "notes": "Price band is per piece up to 300 mm. Mates with 6001 bearings."
+    },
+
+    {
+      "id": "collar.set-screw-3mm",
+      "type": "shaft_collar",
+      "name": "Set-screw shaft collar, 3 mm bore",
+      "spec": { "bore_mm": 3, "od_mm": 8, "width_mm": 4, "style": "set screw", "material": "steel, black oxide" },
+      "example_pn": "SC-3",
+      "synonyms": ["3mm collar", "locking collar"],
+      "price_band_usd": [0.5, 2.0],
+      "notes": "Set screw mars the shaft; use clamp style on ground shafts you care about."
+    },
+    {
+      "id": "collar.set-screw-5mm",
+      "type": "shaft_collar",
+      "name": "Set-screw shaft collar, 5 mm bore",
+      "spec": { "bore_mm": 5, "od_mm": 10, "width_mm": 6, "style": "set screw", "material": "steel, black oxide" },
+      "example_pn": "SC-5",
+      "synonyms": ["5mm collar", "locking collar"],
+      "price_band_usd": [0.5, 2.0],
+      "notes": "Set screw mars the shaft; use clamp style on ground shafts you care about."
+    },
+    {
+      "id": "collar.set-screw-6mm",
+      "type": "shaft_collar",
+      "name": "Set-screw shaft collar, 6 mm bore",
+      "spec": { "bore_mm": 6, "od_mm": 12, "width_mm": 6, "style": "set screw", "material": "steel, black oxide" },
+      "example_pn": "SC-6",
+      "synonyms": ["6mm collar", "locking collar"],
+      "price_band_usd": [0.5, 2.0],
+      "notes": "Set screw mars the shaft; use clamp style on ground shafts you care about."
+    },
+    {
+      "id": "collar.set-screw-8mm",
+      "type": "shaft_collar",
+      "name": "Set-screw shaft collar, 8 mm bore",
+      "spec": { "bore_mm": 8, "od_mm": 15, "width_mm": 8, "style": "set screw", "material": "steel, black oxide" },
+      "example_pn": "SC-8",
+      "synonyms": ["8mm collar", "locking collar"],
+      "price_band_usd": [0.6, 2.2],
+      "notes": "Set screw mars the shaft; use clamp style on ground shafts you care about."
+    },
+    {
+      "id": "collar.clamp-5mm",
+      "type": "shaft_collar",
+      "name": "Clamping shaft collar, 5 mm bore",
+      "spec": { "bore_mm": 5, "od_mm": 16, "width_mm": 9, "style": "single-split clamp", "material": "aluminum" },
+      "example_pn": "SCS-5",
+      "synonyms": ["5mm clamp collar", "split collar"],
+      "price_band_usd": [2.0, 6.0],
+      "notes": "Clamps without marring the shaft; holds concentricity better than set-screw style."
+    },
+    {
+      "id": "collar.clamp-6mm",
+      "type": "shaft_collar",
+      "name": "Clamping shaft collar, 6 mm bore",
+      "spec": { "bore_mm": 6, "od_mm": 16, "width_mm": 9, "style": "single-split clamp", "material": "aluminum" },
+      "example_pn": "SCS-6",
+      "synonyms": ["6mm clamp collar", "split collar"],
+      "price_band_usd": [2.0, 6.0],
+      "notes": "Clamps without marring the shaft."
+    },
+    {
+      "id": "collar.clamp-8mm",
+      "type": "shaft_collar",
+      "name": "Clamping shaft collar, 8 mm bore",
+      "spec": { "bore_mm": 8, "od_mm": 18, "width_mm": 9, "style": "single-split clamp", "material": "aluminum" },
+      "example_pn": "SCS-8",
+      "synonyms": ["8mm clamp collar", "split collar"],
+      "price_band_usd": [2.2, 6.5],
+      "notes": "Clamps without marring the shaft."
+    },
+
+    {
+      "id": "coupling.flange-5mm",
+      "type": "flange_coupling",
+      "name": "Rigid flange coupling, 5 mm bore",
+      "spec": { "bore_mm": 5, "flange_dia_mm": 22, "bcd_mm": 16, "bolt_holes": 4, "bolt_thread": "M3", "hub_length_mm": 11, "style": "set screw", "material": "steel or aluminum" },
+      "example_pn": "5mm flange coupling",
+      "synonyms": ["flange hub", "shaft flange", "wheel hub"],
+      "price_band_usd": [1.5, 5.0],
+      "notes": "Bolts a disc/rotor/wheel to a 5 mm shaft — the standard hobby rotor-hub part."
+    },
+    {
+      "id": "coupling.flange-6mm",
+      "type": "flange_coupling",
+      "name": "Rigid flange coupling, 6 mm bore",
+      "spec": { "bore_mm": 6, "flange_dia_mm": 22, "bcd_mm": 16, "bolt_holes": 4, "bolt_thread": "M3", "hub_length_mm": 11, "style": "set screw", "material": "steel or aluminum" },
+      "example_pn": "6mm flange coupling",
+      "synonyms": ["flange hub", "shaft flange", "wheel hub"],
+      "price_band_usd": [1.5, 5.0],
+      "notes": "Bolts a disc/rotor/wheel to a 6 mm shaft."
+    },
+    {
+      "id": "coupling.flange-8mm",
+      "type": "flange_coupling",
+      "name": "Rigid flange coupling, 8 mm bore",
+      "spec": { "bore_mm": 8, "flange_dia_mm": 30, "bcd_mm": 22, "bolt_holes": 4, "bolt_thread": "M4", "hub_length_mm": 12, "style": "set screw", "material": "steel or aluminum" },
+      "example_pn": "8mm flange coupling",
+      "synonyms": ["flange hub", "shaft flange", "wheel hub"],
+      "price_band_usd": [2.0, 6.0],
+      "notes": "Bolts a disc/rotor/wheel to an 8 mm shaft."
+    },
+    {
+      "id": "coupling.flange-10mm",
+      "type": "flange_coupling",
+      "name": "Rigid flange coupling, 10 mm bore",
+      "spec": { "bore_mm": 10, "flange_dia_mm": 30, "bcd_mm": 22, "bolt_holes": 4, "bolt_thread": "M4", "hub_length_mm": 13, "style": "set screw", "material": "steel or aluminum" },
+      "example_pn": "10mm flange coupling",
+      "synonyms": ["flange hub", "shaft flange", "wheel hub"],
+      "price_band_usd": [2.5, 7.0],
+      "notes": "Bolts a disc/rotor/wheel to a 10 mm shaft."
+    },
+
+    {
+      "id": "standoff.m2-mf-brass",
+      "type": "standoff",
+      "name": "M2 male-female hex standoff, brass",
+      "spec": { "thread": "M2", "style": "male-female hex", "material": "brass, nickel plated", "af_mm": 4, "lengths_mm": [6, 8, 10, 12, 15, 20] },
+      "example_pn": "M2x10+3 M-F standoff",
+      "synonyms": ["spacer", "pillar", "hex standoff"],
+      "price_band_usd": [0.1, 0.4],
+      "notes": "Per piece; usually sold in assortment kits (~$8-15 for 100+)."
+    },
+    {
+      "id": "standoff.m2-ff-brass",
+      "type": "standoff",
+      "name": "M2 female-female hex standoff, brass",
+      "spec": { "thread": "M2", "style": "female-female hex", "material": "brass, nickel plated", "af_mm": 4, "lengths_mm": [6, 8, 10, 12, 15, 20] },
+      "example_pn": "M2x10 F-F standoff",
+      "synonyms": ["spacer", "pillar", "hex standoff"],
+      "price_band_usd": [0.1, 0.4],
+      "notes": "Per piece; usually sold in assortment kits."
+    },
+    {
+      "id": "standoff.m3-mf-brass",
+      "type": "standoff",
+      "name": "M3 male-female hex standoff, brass",
+      "spec": { "thread": "M3", "style": "male-female hex", "material": "brass, nickel plated", "af_mm": 5.5, "lengths_mm": [6, 8, 10, 12, 15, 20, 25, 30] },
+      "example_pn": "M3x12+6 M-F standoff",
+      "synonyms": ["spacer", "pillar", "hex standoff"],
+      "price_band_usd": [0.1, 0.5],
+      "notes": "Per piece; the default PCB-stack standoff."
+    },
+    {
+      "id": "standoff.m3-ff-brass",
+      "type": "standoff",
+      "name": "M3 female-female hex standoff, brass",
+      "spec": { "thread": "M3", "style": "female-female hex", "material": "brass, nickel plated", "af_mm": 5.5, "lengths_mm": [6, 8, 10, 12, 15, 20, 25, 30] },
+      "example_pn": "M3x15 F-F standoff",
+      "synonyms": ["spacer", "pillar", "hex standoff"],
+      "price_band_usd": [0.1, 0.5],
+      "notes": "Per piece; usually sold in assortment kits."
+    },
+    {
+      "id": "standoff.m3-ff-nylon",
+      "type": "standoff",
+      "name": "M3 female-female hex standoff, nylon",
+      "spec": { "thread": "M3", "style": "female-female hex", "material": "nylon (insulating)", "af_mm": 5.5, "lengths_mm": [6, 8, 10, 12, 15, 20, 25] },
+      "example_pn": "M3x10 nylon standoff",
+      "synonyms": ["insulating spacer", "nylon pillar"],
+      "price_band_usd": [0.05, 0.3],
+      "notes": "Electrically insulating — use under live boards; weaker than brass."
+    },
+    {
+      "id": "standoff.m3-ff-aluminum",
+      "type": "standoff",
+      "name": "M3 female-female round standoff, aluminum",
+      "spec": { "thread": "M3", "style": "female-female round", "material": "aluminum, anodized", "od_mm": 6, "lengths_mm": [10, 15, 20, 25, 30, 40] },
+      "example_pn": "M3x20 aluminum standoff",
+      "synonyms": ["spacer", "pillar", "round standoff"],
+      "price_band_usd": [0.3, 1.2],
+      "notes": "Structural — good for motor mounts and frames, not just PCB stacks."
+    },
+
+    {
+      "id": "screw.m2-shcs",
+      "type": "screw",
+      "name": "M2 socket head cap screw (ISO 4762)",
+      "spec": { "thread": "M2", "head": "socket cap", "drive": "1.5mm hex", "material": "12.9 alloy steel, black oxide", "lengths_mm": [4, 5, 6, 8, 10, 12, 16, 20] },
+      "example_pn": "ISO 4762 M2x8",
+      "synonyms": ["SHCS", "cap screw", "allen bolt", "DIN 912"],
+      "price_band_usd": [0.03, 0.15],
+      "notes": "Per piece; sold in 25-100 packs (~$3-8)."
+    },
+    {
+      "id": "screw.m2.5-shcs",
+      "type": "screw",
+      "name": "M2.5 socket head cap screw (ISO 4762)",
+      "spec": { "thread": "M2.5", "head": "socket cap", "drive": "2mm hex", "material": "12.9 alloy steel, black oxide", "lengths_mm": [4, 5, 6, 8, 10, 12, 16, 20] },
+      "example_pn": "ISO 4762 M2.5x8",
+      "synonyms": ["SHCS", "cap screw", "allen bolt", "DIN 912"],
+      "price_band_usd": [0.03, 0.15],
+      "notes": "Per piece; sold in 25-100 packs."
+    },
+    {
+      "id": "screw.m3-shcs",
+      "type": "screw",
+      "name": "M3 socket head cap screw (ISO 4762)",
+      "spec": { "thread": "M3", "head": "socket cap", "drive": "2.5mm hex", "material": "12.9 alloy steel, black oxide", "lengths_mm": [4, 5, 6, 8, 10, 12, 16, 20, 25, 30] },
+      "example_pn": "ISO 4762 M3x10",
+      "synonyms": ["SHCS", "cap screw", "allen bolt", "DIN 912"],
+      "price_band_usd": [0.03, 0.15],
+      "notes": "Per piece; the hobby-robotics default fastener. Sold in 25-100 packs (~$3-8)."
+    },
+    {
+      "id": "screw.m3-bhcs",
+      "type": "screw",
+      "name": "M3 button head cap screw (ISO 7380)",
+      "spec": { "thread": "M3", "head": "button", "drive": "2mm hex", "material": "10.9 alloy steel, black oxide", "lengths_mm": [4, 5, 6, 8, 10, 12, 16, 20] },
+      "example_pn": "ISO 7380 M3x8",
+      "synonyms": ["BHCS", "button screw", "low profile screw"],
+      "price_band_usd": [0.04, 0.18],
+      "notes": "Per piece; lower head profile than SHCS, less drive engagement."
+    },
+    {
+      "id": "screw.m3-shcs-ss",
+      "type": "screw",
+      "name": "M3 socket head cap screw, stainless (A2-70)",
+      "spec": { "thread": "M3", "head": "socket cap", "drive": "2.5mm hex", "material": "A2 stainless steel", "lengths_mm": [4, 5, 6, 8, 10, 12, 16, 20, 25, 30] },
+      "example_pn": "ISO 4762 M3x10 A2",
+      "synonyms": ["SHCS", "stainless cap screw", "non-magnetic screw"],
+      "price_band_usd": [0.05, 0.2],
+      "notes": "Per piece. Non-magnetic — use near magnet rotors where black-oxide steel would be grabbed."
+    },
+    {
+      "id": "screw.m4-shcs",
+      "type": "screw",
+      "name": "M4 socket head cap screw (ISO 4762)",
+      "spec": { "thread": "M4", "head": "socket cap", "drive": "3mm hex", "material": "12.9 alloy steel, black oxide", "lengths_mm": [6, 8, 10, 12, 16, 20, 25, 30, 40] },
+      "example_pn": "ISO 4762 M4x12",
+      "synonyms": ["SHCS", "cap screw", "allen bolt", "DIN 912"],
+      "price_band_usd": [0.04, 0.2],
+      "notes": "Per piece; sold in 25-100 packs."
+    },
+    {
+      "id": "screw.m5-shcs",
+      "type": "screw",
+      "name": "M5 socket head cap screw (ISO 4762)",
+      "spec": { "thread": "M5", "head": "socket cap", "drive": "4mm hex", "material": "12.9 alloy steel, black oxide", "lengths_mm": [8, 10, 12, 16, 20, 25, 30, 40, 50] },
+      "example_pn": "ISO 4762 M5x16",
+      "synonyms": ["SHCS", "cap screw", "allen bolt", "DIN 912"],
+      "price_band_usd": [0.06, 0.25],
+      "notes": "Per piece; sold in 25-100 packs."
+    },
+    {
+      "id": "screw.m3-set",
+      "type": "screw",
+      "name": "M3 cup-point set screw (ISO 4029)",
+      "spec": { "thread": "M3", "head": "headless (grub)", "drive": "1.5mm hex", "material": "12.9 alloy steel, black oxide", "lengths_mm": [3, 4, 5, 6, 8, 10] },
+      "example_pn": "ISO 4029 M3x4",
+      "synonyms": ["grub screw", "set screw"],
+      "price_band_usd": [0.03, 0.12],
+      "notes": "Per piece; the collar/coupling/hub locking screw."
+    },
+    {
+      "id": "screw.m4-set",
+      "type": "screw",
+      "name": "M4 cup-point set screw (ISO 4029)",
+      "spec": { "thread": "M4", "head": "headless (grub)", "drive": "2mm hex", "material": "12.9 alloy steel, black oxide", "lengths_mm": [4, 5, 6, 8, 10, 12] },
+      "example_pn": "ISO 4029 M4x5",
+      "synonyms": ["grub screw", "set screw"],
+      "price_band_usd": [0.03, 0.14],
+      "notes": "Per piece."
+    },
+
+    {
+      "id": "magnet.ferrite-disc-10x3-y30",
+      "type": "magnet",
+      "name": "Ferrite disc magnet 10x3 mm, Y30",
+      "spec": { "shape": "disc", "od_mm": 10, "thickness_mm": 3, "grade": "Y30", "br_mT": [370, 400], "material": "sintered ferrite (ceramic)", "max_temp_c": 250 },
+      "example_pn": "Y30 D10x3",
+      "synonyms": ["ceramic magnet", "ferrite magnet", "10mm disc magnet"],
+      "price_band_usd": [0.1, 0.5],
+      "notes": "Cheap, corrosion-proof, weak vs NdFeB (~1/3 the Br). Fine for sensors and light rotors."
+    },
+    {
+      "id": "magnet.ferrite-disc-12x3-y30",
+      "type": "magnet",
+      "name": "Ferrite disc magnet 12x3 mm, Y30",
+      "spec": { "shape": "disc", "od_mm": 12, "thickness_mm": 3, "grade": "Y30", "br_mT": [370, 400], "material": "sintered ferrite (ceramic)", "max_temp_c": 250 },
+      "example_pn": "Y30 D12x3",
+      "synonyms": ["ceramic magnet", "ferrite magnet", "12mm disc magnet"],
+      "price_band_usd": [0.15, 0.6],
+      "notes": "Common rotor-pole size for demo/hobby axial-flux motors."
+    },
+    {
+      "id": "magnet.ferrite-disc-15x3-y30",
+      "type": "magnet",
+      "name": "Ferrite disc magnet 15x3 mm, Y30",
+      "spec": { "shape": "disc", "od_mm": 15, "thickness_mm": 3, "grade": "Y30", "br_mT": [370, 400], "material": "sintered ferrite (ceramic)", "max_temp_c": 250 },
+      "example_pn": "Y30 D15x3",
+      "synonyms": ["ceramic magnet", "ferrite magnet", "15mm disc magnet"],
+      "price_band_usd": [0.15, 0.7],
+      "notes": ""
+    },
+    {
+      "id": "magnet.ferrite-disc-18x5-y30",
+      "type": "magnet",
+      "name": "Ferrite disc magnet 18x5 mm, Y30",
+      "spec": { "shape": "disc", "od_mm": 18, "thickness_mm": 5, "grade": "Y30", "br_mT": [370, 400], "material": "sintered ferrite (ceramic)", "max_temp_c": 250 },
+      "example_pn": "Y30 D18x5",
+      "synonyms": ["ceramic magnet", "ferrite magnet", "18mm disc magnet"],
+      "price_band_usd": [0.2, 0.9],
+      "notes": ""
+    },
+    {
+      "id": "magnet.ferrite-disc-20x5-y35",
+      "type": "magnet",
+      "name": "Ferrite disc magnet 20x5 mm, Y35",
+      "spec": { "shape": "disc", "od_mm": 20, "thickness_mm": 5, "grade": "Y35", "br_mT": [400, 430], "material": "sintered ferrite (ceramic)", "max_temp_c": 250 },
+      "example_pn": "Y35 D20x5",
+      "synonyms": ["ceramic magnet", "ferrite magnet", "20mm disc magnet"],
+      "price_band_usd": [0.3, 1.2],
+      "notes": "Y35 is the strongest common ferrite grade (~8% more Br than Y30)."
+    },
+    {
+      "id": "magnet.ferrite-disc-25x5-y35",
+      "type": "magnet",
+      "name": "Ferrite disc magnet 25x5 mm, Y35",
+      "spec": { "shape": "disc", "od_mm": 25, "thickness_mm": 5, "grade": "Y35", "br_mT": [400, 430], "material": "sintered ferrite (ceramic)", "max_temp_c": 250 },
+      "example_pn": "Y35 D25x5",
+      "synonyms": ["ceramic magnet", "ferrite magnet", "25mm disc magnet"],
+      "price_band_usd": [0.4, 1.5],
+      "notes": ""
+    },
+    {
+      "id": "magnet.ceramic-disc-12.7x3.2-c8",
+      "type": "magnet",
+      "name": "Ceramic disc magnet 1/2\" x 1/8\" (12.7x3.2 mm), C8",
+      "spec": { "shape": "disc", "od_mm": 12.7, "thickness_mm": 3.2, "grade": "C8", "br_mT": [385, 410], "material": "sintered ferrite (ceramic 8)", "max_temp_c": 250 },
+      "example_pn": "C8 0.5x0.125 disc",
+      "synonyms": ["ceramic 8", "half inch ceramic magnet"],
+      "price_band_usd": [0.15, 0.6],
+      "notes": "C8 is the US grade roughly equivalent to Y30BH/Y33 — imperial-size stock."
+    },
+    {
+      "id": "magnet.ceramic-disc-19x3.2-c8",
+      "type": "magnet",
+      "name": "Ceramic disc magnet 3/4\" x 1/8\" (19x3.2 mm), C8",
+      "spec": { "shape": "disc", "od_mm": 19.05, "thickness_mm": 3.2, "grade": "C8", "br_mT": [385, 410], "material": "sintered ferrite (ceramic 8)", "max_temp_c": 250 },
+      "example_pn": "C8 0.75x0.125 disc",
+      "synonyms": ["ceramic 8", "three quarter inch ceramic magnet"],
+      "price_band_usd": [0.2, 0.8],
+      "notes": ""
+    },
+    {
+      "id": "magnet.ferrite-ring-32x18x6-y30",
+      "type": "magnet",
+      "name": "Ferrite ring magnet 32x18x6 mm, Y30",
+      "spec": { "shape": "ring", "od_mm": 32, "id_mm": 18, "thickness_mm": 6, "grade": "Y30", "br_mT": [370, 400], "material": "sintered ferrite (ceramic)", "max_temp_c": 250 },
+      "example_pn": "Y30 R32x18x6",
+      "synonyms": ["ring magnet", "speaker magnet"],
+      "price_band_usd": [0.5, 2.0],
+      "notes": "Classic speaker-motor ring; axially magnetized."
+    },
+    {
+      "id": "magnet.ferrite-ring-45x22x9-y35",
+      "type": "magnet",
+      "name": "Ferrite ring magnet 45x22x9 mm, Y35",
+      "spec": { "shape": "ring", "od_mm": 45, "id_mm": 22, "thickness_mm": 9, "grade": "Y35", "br_mT": [400, 430], "material": "sintered ferrite (ceramic)", "max_temp_c": 250 },
+      "example_pn": "Y35 R45x22x9",
+      "synonyms": ["ring magnet", "speaker magnet"],
+      "price_band_usd": [1.0, 3.5],
+      "notes": "Axially magnetized."
+    },
+    {
+      "id": "magnet.ceramic-ring-25.4x12.7x6.4-c8",
+      "type": "magnet",
+      "name": "Ceramic ring magnet 1\" x 1/2\" x 1/4\" (25.4x12.7x6.4 mm), C8",
+      "spec": { "shape": "ring", "od_mm": 25.4, "id_mm": 12.7, "thickness_mm": 6.4, "grade": "C8", "br_mT": [385, 410], "material": "sintered ferrite (ceramic 8)", "max_temp_c": 250 },
+      "example_pn": "C8 R1.0x0.5x0.25",
+      "synonyms": ["ceramic 8 ring", "one inch ring magnet"],
+      "price_band_usd": [0.4, 1.5],
+      "notes": "Imperial-size stock; axially magnetized."
+    }
+  ]
+}
