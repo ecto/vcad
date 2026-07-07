@@ -75,11 +75,19 @@ import {
   netContinuity as kernelNetContinuity,
 } from "@vcad/engine";
 import type { Engine, NetlistResult, TriangleMesh, NetContinuity } from "@vcad/engine";
-import { registerSession, getSession, undoLastSnapshot, historyDepth } from "./session.js";
+import {
+  registerSession,
+  getSession,
+  undoLastSnapshot,
+  historyDepth,
+  resolveDocInput,
+  type DocInputCtx,
+} from "./session.js";
 import { emClaim } from "./em-claims.js";
 import type { NextAction } from "./next-actions.js";
 import { computeEnclosureFitForBoard } from "./enclosure.js";
 import { validatePcb, pcbValidationError } from "./pcb-validate.js";
+import { PCB_LAYERS } from "./pcb-layers.js";
 import { sizePdnExact, ecadDiffEngineAvailable } from "../wasm/ecad-diff.js";
 import { bundleBytes, storeArtifact } from "./artifact-store.js";
 import { maxInlineArtifactBytes, maxInlineExportBytes } from "./remote.js";
@@ -274,19 +282,11 @@ function ecadUnverifiable(
 // PCB layer name validation — the single gate guarding every write boundary
 // ============================================================================
 
-/**
- * Every legal PCB layer name, in board order — the canonical serde variants of
- * the Rust `PcbLayer` enum (crates/vcad-ir/src/ecad.rs). This is the single
- * source of truth the write boundaries validate against. The old scattered
- * `/Cu$/` regex checks let malformed dotted KiCad names (`In1.Cu`) slip through,
- * which then corrupted documents and broke render_pcb / export_gerber.
- */
-const PCB_LAYERS: readonly PcbLayer[] = [
-  "FCu", "BCu", "In1Cu", "In2Cu", "In3Cu", "In4Cu", "In5Cu", "In6Cu",
-  "FSilkS", "BSilkS", "FMask", "BMask", "FPaste", "BPaste",
-  "FFab", "BFab", "FCrtYd", "BCrtYd",
-  "EdgeCuts", "UserDrawings", "UserComments",
-];
+// The legal PCB layer names live in ./pcb-layers.ts (imported as PCB_LAYERS) —
+// the single runtime copy, shared with pcb-validate.ts, mirroring the Rust
+// `PcbLayer` enum (crates/vcad-ir/src/ecad.rs). The old scattered `/Cu$/` regex
+// checks let malformed dotted KiCad names (`In1.Cu`) slip through, which then
+// corrupted documents and broke render_pcb / export_gerber.
 
 /** Fast membership test for any legal layer name. */
 const PCB_LAYER_SET: ReadonlySet<string> = new Set(PCB_LAYERS);
@@ -367,36 +367,18 @@ function validateCopperLayer(raw: unknown): LayerOk | LayerErr {
 // ============================================================================
 // Document resolution — session-based (document_id) with inline fallback
 // ============================================================================
-
-/** A resolved document input: session-backed (preferred) or inline (legacy). */
-interface EcadDocCtx {
-  doc: Document;
-  /** Set when the doc came from (or was registered as) a server session. */
-  documentId?: string;
-}
-
-/**
- * Resolve the document argument for ECAD tools. `document_id` (a session
- * from create_schematic / open_document) is preferred; an inline `document`
- * object is still accepted for backward compatibility and is mutated and
- * echoed back like the pre-session API did.
- */
-function resolveDocInput(args: Record<string, unknown>): EcadDocCtx {
-  const id = args.document_id ? String(args.document_id) : "";
-  if (id) return { doc: getSession(id), documentId: id };
-  const doc = args.document as Document | undefined;
-  if (doc && typeof doc === "object") return { doc };
-  throw new Error(
-    "Pass `document_id` (from create_schematic or open_document) — or an inline `document` for the legacy stateless flow.",
-  );
-}
+//
+// `resolveDocInput` now lives in session.ts and is shared with the core
+// read-only tools (inspect_cad / render_view / export_cad / dfm_check). ECAD
+// tools echo the full mutated document back for the inline path, so they keep
+// their own result-payload helper below.
 
 /**
  * The document part of a mutating tool's response. Session docs are mutated
  * server-side, so only the id is echoed; inline docs get the full mutated
  * document back (the caller has no other way to retrieve it).
  */
-function docResultPayload(ctx: EcadDocCtx): Record<string, unknown> {
+function docResultPayload(ctx: DocInputCtx): Record<string, unknown> {
   return ctx.documentId
     ? { document_id: ctx.documentId }
     : { document: ctx.doc };

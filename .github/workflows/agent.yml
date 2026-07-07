@@ -105,7 +105,12 @@ jobs:
             Execute the spec:
             1. Create a branch: `agent/issue-${{ github.event.issue.number }}`.
             2. Implement the changes. Keep the diff minimal — don't refactor
-               surrounding code that wasn't asked for.
+               surrounding code that wasn't asked for. Never commit the
+               generated `packages/kernel-wasm/vcad_kernel_wasm*` artifacts
+               (CI blocks PRs that touch them) — a workflow refreshes them
+               on main after merge. Use `VCAD_WASM_SKIP=1` for workspace
+               builds; if your change needs fresh WASM to test, build it
+               locally but leave the artifacts out of the commit.
             3. Run every command in the spec's "Verification" section. All
                must pass. If a command fails, fix the root cause and re-run
                — never use --no-verify or bypass checks.

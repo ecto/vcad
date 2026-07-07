@@ -271,3 +271,26 @@ jobs:
         # tooling churn too often to block on. See cargo-audit above for
         # how to flip this into a blocking check.
         run: npm audit --audit-level=moderate || true
+
+  # Generated kernel-wasm artifacts have a single writer: wasm-refresh.yml
+  # rebuilds and commits them on main after kernel merges. A feature branch
+  # that commits its own rebuild conflicts with every other branch that did
+  # the same (wasm-pack output is not byte-reproducible), so block them at
+  # the door. PRs lose nothing — the TypeScript job consumes wasm built
+  # from source by the `wasm` job above, never the checked-in copies.
+  wasm-artifact-guard:
+    name: No committed WASM artifacts
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Fail on artifact changes
+        run: |
+          if git diff --name-only "origin/${{ github.base_ref }}...HEAD" -- \
+               'packages/kernel-wasm/vcad_kernel_wasm*' | grep -q .; then
+            echo "::error::This PR commits generated kernel-wasm artifacts. wasm-refresh.yml maintains them on main after merge — drop the change with: git checkout origin/main -- 'packages/kernel-wasm/vcad_kernel_wasm*' && git commit"
+            exit 1
+          fi
+          echo "no generated artifacts committed — ok"

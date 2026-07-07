@@ -23,6 +23,11 @@ export type Observation = PhysicsObservation;
 /** Step result from the environment (re-export for API compatibility) */
 export type StepResult = PhysicsStepResult;
 
+/** MCP tool result for the gym tools. Error paths set `isError: true` so hosts
+ *  (and the central next_actions enrichment) treat them as failures rather than
+ *  reading a `{"error": ...}` body as a successful result. */
+type GymResult = { content: Array<{ type: "text"; text: string }>; isError?: boolean };
+
 /** In-memory storage for active simulations */
 const simulations = new Map<string, PhysicsEnv>();
 
@@ -136,9 +141,7 @@ export const gymCloseSchema = {
 };
 
 /** Create a new robot simulation environment */
-export async function createRobotEnv(input: unknown): Promise<{
-  content: Array<{ type: "text"; text: string }>;
-}> {
+export async function createRobotEnv(input: unknown): Promise<GymResult> {
   const args = input as {
     document: Document;
     end_effector_ids: string[];
@@ -159,6 +162,7 @@ export async function createRobotEnv(input: unknown): Promise<{
           }),
         },
       ],
+      isError: true,
     };
   }
 
@@ -192,14 +196,13 @@ export async function createRobotEnv(input: unknown): Promise<{
     const message = err instanceof Error ? err.message : String(err);
     return {
       content: [{ type: "text", text: JSON.stringify({ error: message }) }],
+      isError: true,
     };
   }
 }
 
 /** Step the simulation with an action */
-export function gymStep(input: unknown): {
-  content: Array<{ type: "text"; text: string }>;
-} {
+export function gymStep(input: unknown): GymResult {
   const args = input as {
     env_id: string;
     action_type: PhysicsActionType;
@@ -212,6 +215,7 @@ export function gymStep(input: unknown): {
       content: [
         { type: "text", text: JSON.stringify({ error: `Unknown env_id: ${args.env_id}` }) },
       ],
+      isError: true,
     };
   }
 
@@ -224,14 +228,13 @@ export function gymStep(input: unknown): {
     const message = err instanceof Error ? err.message : String(err);
     return {
       content: [{ type: "text", text: JSON.stringify({ error: message }) }],
+      isError: true,
     };
   }
 }
 
 /** Reset the environment to initial state */
-export function gymReset(input: unknown): {
-  content: Array<{ type: "text"; text: string }>;
-} {
+export function gymReset(input: unknown): GymResult {
   const args = input as { env_id: string };
 
   const env = simulations.get(args.env_id);
@@ -240,6 +243,7 @@ export function gymReset(input: unknown): {
       content: [
         { type: "text", text: JSON.stringify({ error: `Unknown env_id: ${args.env_id}` }) },
       ],
+      isError: true,
     };
   }
 
@@ -252,14 +256,13 @@ export function gymReset(input: unknown): {
     const message = err instanceof Error ? err.message : String(err);
     return {
       content: [{ type: "text", text: JSON.stringify({ error: message }) }],
+      isError: true,
     };
   }
 }
 
 /** Get current observation without stepping */
-export function gymObserve(input: unknown): {
-  content: Array<{ type: "text"; text: string }>;
-} {
+export function gymObserve(input: unknown): GymResult {
   const args = input as { env_id: string };
 
   const env = simulations.get(args.env_id);
@@ -268,6 +271,7 @@ export function gymObserve(input: unknown): {
       content: [
         { type: "text", text: JSON.stringify({ error: `Unknown env_id: ${args.env_id}` }) },
       ],
+      isError: true,
     };
   }
 
@@ -280,14 +284,13 @@ export function gymObserve(input: unknown): {
     const message = err instanceof Error ? err.message : String(err);
     return {
       content: [{ type: "text", text: JSON.stringify({ error: message }) }],
+      isError: true,
     };
   }
 }
 
 /** Close and clean up a simulation environment */
-export function gymClose(input: unknown): {
-  content: Array<{ type: "text"; text: string }>;
-} {
+export function gymClose(input: unknown): GymResult {
   const args = input as { env_id: string };
 
   const env = simulations.get(args.env_id);
@@ -303,6 +306,7 @@ export function gymClose(input: unknown): {
     content: [
       { type: "text", text: JSON.stringify({ error: `Unknown env_id: ${args.env_id}` }) },
     ],
+    isError: true,
   };
 }
 
@@ -379,9 +383,7 @@ export const batchResetSchema = {
 };
 
 /** Create N parallel simulation environments from a single assembly */
-export async function batchCreateEnvs(input: unknown): Promise<{
-  content: Array<{ type: "text"; text: string }>;
-}> {
+export async function batchCreateEnvs(input: unknown): Promise<GymResult> {
   const args = input as {
     document: Document;
     n_envs: number;
@@ -402,6 +404,7 @@ export async function batchCreateEnvs(input: unknown): Promise<{
           }),
         },
       ],
+      isError: true,
     };
   }
 
@@ -444,14 +447,13 @@ export async function batchCreateEnvs(input: unknown): Promise<{
     const message = err instanceof Error ? err.message : String(err);
     return {
       content: [{ type: "text", text: JSON.stringify({ error: message }) }],
+      isError: true,
     };
   }
 }
 
 /** Step all environments in a batch simultaneously */
-export function batchStep(input: unknown): {
-  content: Array<{ type: "text"; text: string }>;
-} {
+export function batchStep(input: unknown): GymResult {
   const args = input as {
     batch_id: string;
     action_type: PhysicsActionType;
@@ -464,6 +466,7 @@ export function batchStep(input: unknown): {
       content: [
         { type: "text", text: JSON.stringify({ error: `Unknown batch_id: ${args.batch_id}` }) },
       ],
+      isError: true,
     };
   }
 
@@ -477,6 +480,7 @@ export function batchStep(input: unknown): {
           }),
         },
       ],
+      isError: true,
     };
   }
 
@@ -499,14 +503,13 @@ export function batchStep(input: unknown): {
     const message = err instanceof Error ? err.message : String(err);
     return {
       content: [{ type: "text", text: JSON.stringify({ error: message }) }],
+      isError: true,
     };
   }
 }
 
 /** Reset all environments in a batch */
-export function batchReset(input: unknown): {
-  content: Array<{ type: "text"; text: string }>;
-} {
+export function batchReset(input: unknown): GymResult {
   const args = input as { batch_id: string };
 
   const group = batchGroups.get(args.batch_id);
@@ -515,6 +518,7 @@ export function batchReset(input: unknown): {
       content: [
         { type: "text", text: JSON.stringify({ error: `Unknown batch_id: ${args.batch_id}` }) },
       ],
+      isError: true,
     };
   }
 
@@ -527,6 +531,7 @@ export function batchReset(input: unknown): {
     const message = err instanceof Error ? err.message : String(err);
     return {
       content: [{ type: "text", text: JSON.stringify({ error: message }) }],
+      isError: true,
     };
   }
 }

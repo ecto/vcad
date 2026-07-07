@@ -16,7 +16,7 @@ import { getKernelWasm, resetKernelWasm, computeRatsnest } from "@vcad/engine";
 import type { NetlistResult } from "@vcad/engine";
 import { getNodePcb, getPcbNodeIds } from "@vcad/core";
 import type { Document, Pcb } from "@vcad/ir";
-import { getSession } from "./session.js";
+import { getSession, resolveDocInput } from "./session.js";
 import { validatePcb, pcbValidationError } from "./pcb-validate.js";
 
 export const renderViewSchema = {
@@ -25,6 +25,12 @@ export const renderViewSchema = {
     document_id: {
       type: "string" as const,
       description: "Session id from open_document.",
+    },
+    document: {
+      type: "object" as const,
+      description:
+        "Inline Document IR to render instead of a session. Use this stateless " +
+        "path when no `document_id` is resident (e.g. a cold serverless instance).",
     },
     view: {
       type: "string" as const,
@@ -38,7 +44,6 @@ export const renderViewSchema = {
         "Target raster width in pixels (default 800, clamped to 64–2048). Ignored when falling back to SVG output.",
     },
   },
-  required: ["document_id"],
 };
 
 type ContentBlock =
@@ -96,7 +101,7 @@ type RasterOutcome =
  *  module and a genuine rasterization failure are distinct outcomes so
  *  the fallback note never tells the agent to install a dependency that
  *  is present but failing. */
-async function rasterize(
+export async function rasterize(
   svg: string,
   widthPx: number,
   background = "white",
@@ -131,8 +136,9 @@ async function rasterize(
 export async function renderView(
   args: Record<string, unknown>,
 ): Promise<RenderViewResult> {
-  const documentId = String(args.document_id ?? "");
-  const doc = getSession(documentId);
+  const { doc, documentId: resolvedId } = resolveDocInput(args);
+  // Echoed back in result/error payloads; the empty string marks the inline path.
+  const documentId = resolvedId ?? "";
 
   const widthRaw = Number(args.width_px ?? DEFAULT_WIDTH_PX);
   const widthPx = Math.min(
