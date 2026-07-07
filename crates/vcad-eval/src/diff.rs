@@ -30,7 +30,7 @@ use vcad_kernel_diff::{
 use vcad_kernel_tessellate::frozen::capture_plan;
 use vcad_kernel_tessellate::TessellationParams;
 
-use crate::{evaluate_document, EvalError, EvaluatedMesh, EvalOptions};
+use crate::{evaluate_document, EvalError, EvalOptions, EvaluatedMesh};
 
 /// Gradient of one solid part's mass properties with respect to a document
 /// parameter.

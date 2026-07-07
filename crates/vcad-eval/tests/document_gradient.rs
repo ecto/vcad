@@ -12,9 +12,7 @@
 //!    evaluated through `vcad_loon::eval_vcad`, parameterized after the
 //!    fact — proving documents from the loon path reach the same seam.
 
-use vcad_eval::diff::{
-    document_parameter_gradient, document_parameter_qoi_gradient, DocDiffError,
-};
+use vcad_eval::diff::{document_parameter_gradient, document_parameter_qoi_gradient, DocDiffError};
 use vcad_eval::{evaluate_document, EvalOptions};
 use vcad_ir::{Bindings, CsgOp, Document, Expr, MaterialDef, Node, Parameter, SceneEntry};
 use vcad_kernel_diff::mass_properties;
@@ -190,7 +188,10 @@ fn qoi_gradient_matches_central_finite_differences() {
     // bbox x/y extents are 2r (grow at 2·dr) and z is the fixed height.
     let _ = (&plus, &minus);
     assert!((g.bbox_extents[0] - 2.0 * R0).abs() < 1e-2, "x extent ≈ 2r");
-    assert!((g.bbox_extents[2] - HEIGHT).abs() < 1e-2, "z extent ≈ height");
+    assert!(
+        (g.bbox_extents[2] - HEIGHT).abs() < 1e-2,
+        "z extent ≈ height"
+    );
     assert!(
         (g.d_bbox_extents[0] - 2.0).abs() < 1e-2,
         "d(x extent)/dr ≈ 2: {}",
