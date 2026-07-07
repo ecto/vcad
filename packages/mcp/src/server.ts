@@ -295,6 +295,7 @@ import {
   sheetMetalNest,
   sheetMetalNestSchema,
 } from "./tools/sheet-metal.js";
+import { simulateStrike, simulateStrikeSchema } from "./tools/acoustics.js";
 import {
   getPreviewGlb,
   getPreviewGlbSchema,
@@ -640,6 +641,7 @@ const TOOL_PACKS: Record<string, readonly string[]> = {
     "sheet_metal_suggest_fix",
     "sheet_metal_sequence",
     "sheet_metal_nest",
+    "simulate_strike",
   ],
   physics: [
     "create_robot_env",
@@ -1240,6 +1242,12 @@ export async function createServer(
         description:
           "Pack multiple sheet-metal parts on stock sheets using bottom-left fill decreasing. Each part is either a session `document_id` (footprint inferred from the flat pattern) or an explicit `{width_mm, height_mm}`. Returns per-instance placements, sheets used, and utilization — enough to drive a multi-part DXF and a real quote.",
         inputSchema: sheetMetalNestSchema,
+      },
+      {
+        name: "simulate_strike",
+        description:
+          "Hear a part before it's cut: simulate a mallet strike on a flat free-free bar (glockenspiel/vibraphone bar) and verify its pitch. Modal frequencies from BOTH the closed-form Euler–Bernoulli model and a hole-aware 1-D FEM (cord holes change A(x), I(x)); strike-excited modal synthesis (mode shape at strike point × half-sine mallet spectrum, Q-based decay) → optional 44.1 kHz WAV → FFT peak extraction → cents-error verdict vs `note`/`expect_hz`. Takes a flat sheet_metal_create `document_id` (dims, material, holes read from the session) or an explicit `bar` spec. E/ρ come from the kernel material registry. The `modes` table {hz, gain, q} is compact enough to drive client-side Web Audio synthesis.",
+        inputSchema: simulateStrikeSchema,
       },
       {
         name: "import_step",
@@ -2217,6 +2225,10 @@ export async function createServer(
 
         case "sheet_metal_nest":
           result = sheetMetalNest(args, engine);
+          break;
+
+        case "simulate_strike":
+          result = simulateStrike(args, engine);
           break;
 
         case "import_step":

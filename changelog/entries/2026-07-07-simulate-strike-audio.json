@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-07-simulate-strike-audio",
+  "version": "0.9.4",
+  "date": "2026-07-07",
+  "category": "feat",
+  "title": "Hear a part before it's cut: simulate_strike",
+  "summary": "New MCP tool strikes a flat bar in simulation — hole-aware FEM modal analysis, mallet-excited synthesis to WAV, and an FFT pitch verdict in cents — so tuned parts are verified by ear before ordering.",
+  "features": ["sheet-metal", "acoustics", "verification"],
+  "mcpTools": ["simulate_strike"]
+}

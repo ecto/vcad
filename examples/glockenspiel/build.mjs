@@ -31,15 +31,18 @@ import {
 } from "../../packages/mcp/dist/tools/sheet-metal.js";
 import { exportCad } from "../../packages/mcp/dist/tools/export.js";
 import { getSession } from "../../packages/mcp/dist/tools/session.js";
+import { femHz, simulateStrike } from "../../packages/mcp/dist/tools/acoustics.js";
 
 import {
   BAR,
   BAR_MATERIAL,
   STAND,
   STAND_MATERIAL,
+  acousticBar,
   barConstantSI,
   barCreateArgs,
   barSpecs,
+  compensateBarSpecs,
   standCreateArgs,
 } from "./geometry.mjs";
 
@@ -72,27 +75,39 @@ async function main() {
       `ρ = ${alHard.density_kg_m3} kg/m³ (matches geometry.mjs)`,
   );
 
-  // [1] The tuning table — solved from f₁ = 3.5608·(t/L²)·sqrt(E/12ρ).
-  const bars = barSpecs();
+  // [1] The tuning table — solved from f₁ = 3.5608·(t/L²)·sqrt(E/12ρ),
+  // then hole-compensated: the FEM says the Ø4.2 nodal holes flatten every
+  // bar ~5 cents, so the cut lengths come from the hole-aware model.
+  const closedForm = barSpecs();
+  // The plan's published closed-form table — a regression guard.
+  assert.deepEqual(
+    closedForm.map((b) => b.lengthMm),
+    [125.6, 118.5, 111.9, 108.7, 102.6, 96.8, 91.4, 88.8],
+  );
+  const holeShift =
+    1200 *
+    Math.log2(
+      femHz(acousticBar(closedForm[0].lengthMm), 1)[0] /
+        closedForm[0].predictedHz,
+    );
+  const bars = compensateBarSpecs(femHz, closedForm);
   log(
     `\n[1] Bars: f₁·L² = ${barConstantSI().toFixed(3)} Hz·m² for ` +
       `${BAR.thicknessMm} mm ${BAR_MATERIAL.displayName}`,
   );
-  log("    note  target Hz   L (mm)  predicted Hz  err (¢)");
+  log(
+    `    nodal holes cost ${holeShift.toFixed(1)} ¢ (hole-aware FEM) — cut lengths compensated:`,
+  );
+  log("    note  target Hz   closed-form L  cut L (mm)  FEM Hz    err (¢)");
   for (const b of bars) {
     log(
       `    ${b.note.padEnd(4)}  ${b.targetHz.toFixed(2).padStart(9)}  ` +
-        `${b.lengthMm.toFixed(1).padStart(7)}  ${b.predictedHz.toFixed(2).padStart(12)}  ` +
-        `${b.errorCents.toFixed(2).padStart(7)}`,
+        `${b.closedFormLengthMm.toFixed(1).padStart(13)}  ${b.lengthMm.toFixed(1).padStart(10)}  ` +
+        `${b.predictedHz.toFixed(2).padStart(8)}  ${b.errorCents.toFixed(2).padStart(7)}`,
     );
-    // Worst-case rounding to the 0.1 mm cut grid is ~1.2 cents — inaudible.
-    assert(Math.abs(b.errorCents) < 2, `${b.note} rounding error over 2 cents`);
+    // Residual = 0.1 mm cut-grid rounding on the compensated length.
+    assert(Math.abs(b.errorCents) < 2, `${b.note} error over 2 cents after compensation`);
   }
-  // The plan's published table — a regression guard on the physics.
-  assert.deepEqual(
-    bars.map((b) => b.lengthMm),
-    [125.6, 118.5, 111.9, 108.7, 102.6, 96.8, 91.4, 88.8],
-  );
 
   // Explicit cut-feature guard: the DFM checker's bend rules are vacuous for
   // a flat part, so state the cutting constraint we rely on out loud.
@@ -134,6 +149,7 @@ async function main() {
       note: spec.note,
       target_hz: spec.targetHz,
       length_mm: spec.lengthMm,
+      closed_form_length_mm: spec.closedFormLengthMm,
       width_mm: BAR.widthMm,
       thickness_mm: BAR.thicknessMm,
       hole_dia_mm: BAR.holeDiaMm,
@@ -145,6 +161,7 @@ async function main() {
       mass_kg: cost.breakdown.mass_kg_each,
       shop_ready: check.shop_ready,
       dxf: dxfName,
+      document_id: created.document_id,
     });
     log(
       `    ${spec.note.padEnd(4)} ${spec.lengthMm.toFixed(1).padStart(6)} × ${BAR.widthMm} mm` +
@@ -154,14 +171,48 @@ async function main() {
     );
   }
 
-  // [3] The stand — where the DFM loop earns its keep. First as naively
+  // [3] The receipt you can hear — literally. Strike each bar in
+  // simulation: hole-aware modal analysis → mallet-excited synthesis →
+  // WAV → FFT peak extraction → cents verdict. The gate before the order.
+  log(`\n[3] Strike simulation (center strike, hard mallet, 44.1 kHz):`);
+  for (const report of barReports) {
+    const sim = JSON.parse(
+      simulateStrike(
+        {
+          document_id: report.document_id,
+          note: report.note,
+          tolerance_cents: 5,
+          wav_filename: `bar-${report.note}.wav`,
+        },
+        engine,
+      ).content[0].text,
+    );
+    assert(sim.verdict.pass, `${report.note}: audio verdict failed (${sim.verdict.cents_error.toFixed(2)} ¢)`);
+    report.audio = {
+      f1_fem_hz: sim.physics.f1_fem_with_holes_hz,
+      measured_hz: sim.verdict.measured_hz,
+      cents_error: sim.verdict.cents_error,
+      overtone_ratios: sim.physics.overtone_ratios.slice(0, 3),
+      modes: sim.modes,
+      wav: `bar-${report.note}.wav`,
+    };
+    const ring = sim.modes[0]?.t60_s ?? 0;
+    log(
+      `    ${report.note.padEnd(4)} strike → ${sim.verdict.measured_hz.toFixed(2).padStart(8)} Hz ` +
+        `(${sim.verdict.cents_error >= 0 ? "+" : ""}${sim.verdict.cents_error.toFixed(2)} ¢)  ` +
+        `rings ${ring.toFixed(1)} s  → bar-${report.note}.wav  ✓`,
+    );
+  }
+  log(`    all 8 bars within ±5 ¢ of target — order-gate passed`);
+
+  // [4] The stand — where the DFM loop earns its keep. First as naively
   // designed (no reliefs): the chamfered deck corners put material at the
   // wall-bend ends, and the checker catches the tear-out.
-  log(`\n[3] Stand: ${STAND.lengthMm}×${STAND.widthMm} mm ${STAND_MATERIAL.displayName} deck,`);
+  log(`\n[4] Stand: ${STAND.lengthMm}×${STAND.widthMm} mm ${STAND_MATERIAL.displayName} deck,`);
   log(
     `    two ${STAND.wallMm} mm walls + ${STAND.footMm} mm feet, 16 cord holes on the nodal rows`,
   );
-  const naive = parse(sheetMetalCreate(standCreateArgs(false), engine));
+  const naive = parse(sheetMetalCreate(standCreateArgs(false, bars), engine));
   const naiveCheck = parse(
     sheetMetalCheck(
       { document_id: naive.document_id, shop_profile: "sendcutsend" },
@@ -183,7 +234,7 @@ async function main() {
 
   // Apply the fix the checker asked for — reliefs in the design, not a
   // skipped check — and re-verify.
-  const stand = parse(sheetMetalCreate(standCreateArgs(true), engine));
+  const stand = parse(sheetMetalCreate(standCreateArgs(true, bars), engine));
   const standCheck = parse(
     sheetMetalCheck(
       { document_id: stand.document_id, shop_profile: "sendcutsend" },
@@ -227,25 +278,28 @@ async function main() {
       `${(standCost.breakdown.mass_kg_each * 1000).toFixed(0)} g → stand.dxf, stand.step, stand.glb`,
   );
 
-  // [4] The receipt — every claim in one JSON, with its oracle named.
+  // [5] The receipt — every claim in one JSON, with its oracle named.
+  const receiptBars = barReports.map(({ document_id: _id, ...rest }) => rest);
   const receipt = {
     demo: "scs-glockenspiel",
     plan: "docs/plans/2026-07-06-scs-closed-loop-demo.md",
     physics: {
-      model: "free-free Euler–Bernoulli bar, first mode",
+      model:
+        "free-free Euler–Bernoulli bar; cut lengths from the hole-aware 1-D FEM (simulate_strike), closed form as the published baseline",
       formula: "f1 = 3.5608 * (t / L^2) * sqrt(E / (12 * rho))",
       f1_times_L2_hz_m2: barConstantSI(),
       nodal_fraction_from_end: 0.2242,
+      hole_shift_cents_closed_form_c6: holeShift,
       material_source: "vcad-kernel-sheet materials registry (al-hard)",
       E_gpa: BAR_MATERIAL.modulusGpa,
       rho_kg_m3: BAR_MATERIAL.densityKgM3,
       caveats: [
         "±0.1 mm on 3.175 mm stock is ±3% on pitch — calibrate with the as-built thickness",
-        "the Ø4.2 mm nodal holes are not in the beam model; at the nodes their effect on f₁ is second-order",
         "alloy tolerance on E moves all bars together",
+        "1-D bending modes only; decay Q in the audio is a heuristic, the frequencies are not",
       ],
     },
-    bars: barReports,
+    bars: receiptBars,
     stand: {
       material: STAND_MATERIAL.displayName,
       scs_material: STAND_MATERIAL.scsKey,
@@ -302,13 +356,14 @@ async function main() {
   writeFileSync(join(OUT, "receipt.json"), JSON.stringify(receipt, null, 2));
 
   const table = [
-    "| note | target Hz | L (mm) | holes @ (mm) | predicted Hz | err (¢) |",
-    "|------|-----------|--------|--------------|--------------|---------|",
-    ...bars.map(
+    "| note | target Hz | closed-form L | cut L (mm) | holes @ (mm) | FEM Hz | strike FFT Hz | err (¢) |",
+    "|------|-----------|---------------|------------|--------------|--------|---------------|---------|",
+    ...barReports.map(
       (b) =>
-        `| ${b.note} | ${b.targetHz.toFixed(2)} | ${b.lengthMm.toFixed(1)} | ` +
-        `${b.holeXsMm.map((x) => x.toFixed(2)).join(" / ")} | ` +
-        `${b.predictedHz.toFixed(2)} | ${b.errorCents.toFixed(2)} |`,
+        `| ${b.note} | ${b.target_hz.toFixed(2)} | ${b.closed_form_length_mm.toFixed(1)} | ` +
+        `${b.length_mm.toFixed(1)} | ${b.hole_xs_mm.map((x) => x.toFixed(2)).join(" / ")} | ` +
+        `${b.predicted_hz.toFixed(2)} | ${b.audio.measured_hz.toFixed(2)} | ` +
+        `${b.audio.cents_error.toFixed(2)} |`,
     ),
   ].join("\n");
   writeFileSync(join(OUT, "frequency-table.md"), table + "\n");
@@ -318,7 +373,7 @@ async function main() {
     `  ${bars.length} bars + 1 stand — all shop-ready · ${(totalMassKg * 1000).toFixed(0)} g · ` +
       `~USD ${totalEachUsd.toFixed(0)} (generic rates)`,
   );
-  log(`  receipt.json, frequency-table.md, 9 DXF, STEP, GLB → ${OUT}`);
+  log(`  receipt.json, frequency-table.md, 9 DXF, 8 WAV, STEP, GLB → ${OUT}`);
   rule();
 }
 

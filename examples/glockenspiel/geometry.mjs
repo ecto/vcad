@@ -78,9 +78,10 @@ export function predictedHz(lengthMm) {
 export const cents = (actualHz, refHz) => 1200 * Math.log2(actualHz / refHz);
 
 /**
- * Solve each note's bar: length from the target pitch (rounded to 0.1 mm —
- * the shop's cut tolerance dwarfs anything finer), nodal hole positions,
- * and the frequency the as-modeled (rounded) length actually predicts.
+ * Solve each note's bar from the CLOSED-FORM model: length from the target
+ * pitch (rounded to 0.1 mm — the shop's cut tolerance dwarfs anything
+ * finer), nodal hole positions, and the frequency the as-modeled length
+ * predicts. This is the plan doc's published table.
  */
 export function barSpecs() {
   const C = barConstantSI();
@@ -98,6 +99,52 @@ export function barSpecs() {
       holeXsMm: [holeFromEndMm, lengthMm - holeFromEndMm],
       predictedHz: predicted,
       errorCents: cents(predicted, fT),
+    };
+  });
+}
+
+/** BarSpec (acoustics-module shape) for a bar of length L with nodal holes. */
+export function acousticBar(lengthMm) {
+  const h = NODAL_FRAC * lengthMm;
+  return {
+    length_mm: lengthMm,
+    width_mm: BAR.widthMm,
+    thickness_mm: BAR.thicknessMm,
+    holes_mm: [h, lengthMm - h],
+    hole_dia_mm: BAR.holeDiaMm,
+    modulus_gpa: BAR_MATERIAL.modulusGpa,
+    density_kg_m3: BAR_MATERIAL.densityKgM3,
+  };
+}
+
+/**
+ * Hole-compensated bar specs: the Ø4.2 mm nodal holes remove bending
+ * stiffness where mode-1 curvature is nonzero, flattening every bar by
+ * ~5 cents — the audio simulation caught this before the order. Shorten
+ * each bar (f ∝ 1/L², fixed point in 3 iterations) so the hole-aware FEM
+ * fundamental lands on the target, then round to the 0.1 mm cut grid.
+ *
+ * `femHz(bar, count)` is injected (from @vcad/mcp's acoustics module) so
+ * this file stays dependency-free for closed-form use.
+ */
+export function compensateBarSpecs(femHz, specs = barSpecs()) {
+  return specs.map((s) => {
+    let L = s.lengthMm;
+    for (let i = 0; i < 3; i++) {
+      const f = femHz(acousticBar(L), 1)[0];
+      L *= Math.sqrt(f / s.targetHz);
+    }
+    const lengthMm = Math.round(L * 10) / 10;
+    const holeFromEndMm = NODAL_FRAC * lengthMm;
+    const predicted = femHz(acousticBar(lengthMm), 1)[0];
+    return {
+      ...s,
+      lengthMm,
+      holeFromEndMm,
+      holeXsMm: [holeFromEndMm, lengthMm - holeFromEndMm],
+      closedFormLengthMm: s.lengthMm,
+      predictedHz: predicted,
+      errorCents: cents(predicted, s.targetHz),
     };
   });
 }
@@ -163,11 +210,11 @@ export function circleCW(cx, cy, r, n = 64) {
  * the shop's cut tolerance) and it keeps the folded STEP export ~12 MB —
  * face count in the B-rep writer scales with hole segments.
  */
-export function standHoles() {
+export function standHoles(specs = barSpecs()) {
   const stations = standStationsMm();
   const midY = STAND.widthMm / 2;
   const holes = [];
-  barSpecs().forEach((bar, i) => {
+  specs.forEach((bar, i) => {
     const off = (0.5 - NODAL_FRAC) * bar.lengthMm;
     for (const y of [midY - off, midY + off]) {
       holes.push(circleCW(stations[i], y, STAND.holeDiaMm / 2, 24));
@@ -208,10 +255,10 @@ export function barCreateArgs(spec) {
 }
 
 /** The sheet_metal_create argument for the stand. `relief` toggles the fix. */
-export function standCreateArgs(relief) {
+export function standCreateArgs(relief, specs = barSpecs()) {
   return {
     outline: standOutline(),
-    holes: standHoles(),
+    holes: standHoles(specs),
     thickness: STAND.thicknessMm,
     material: STAND_MATERIAL.key,
     shop_profile: "sendcutsend",

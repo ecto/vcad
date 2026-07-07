@@ -24,27 +24,55 @@ Bar lengths are solved from the target pitches; the cord holes sit exactly on
 the fundamental's nodal lines at **0.2242·L** from each end, so the
 suspension neither damps nor detunes the note.
 
-| note | target Hz | L (mm) | holes @ (mm) | predicted Hz | err (¢) |
-|------|-----------|--------|----------------|--------------|---------|
-| C6 | 1046.50 | 125.6 | 28.16 / 97.44 | 1045.84 | −1.10 |
-| D6 | 1174.66 | 118.5 | 26.57 / 91.93 | 1174.92 | 0.38 |
-| E6 | 1318.51 | 111.9 | 25.09 / 86.81 | 1317.60 | −1.20 |
-| F6 | 1396.91 | 108.7 | 24.37 / 84.33 | 1396.32 | −0.74 |
-| G6 | 1567.98 | 102.6 | 23.00 / 79.60 | 1567.29 | −0.77 |
-| A6 | 1760.00 | 96.8 | 21.70 / 75.10 | 1760.73 | 0.72 |
-| B6 | 1975.53 | 91.4 | 20.49 / 70.91 | 1974.93 | −0.53 |
-| C7 | 2093.00 | 88.8 | 19.91 / 68.89 | 2092.27 | −0.61 |
+The closed form assumes a uniform bar — but the cord holes remove bending
+stiffness where mode-1 curvature is nonzero, and the **hole-aware 1-D FEM**
+behind the `simulate_strike` MCP tool showed that flattens every bar by
+**≈ −5 cents**. So the cut lengths are hole-compensated (≈ 0.2 mm shorter),
+and every bar is then struck *in simulation* and verified through the audio
+path: modal synthesis → WAV → FFT peak → cents error.
 
-(err is the cost of rounding lengths to the 0.1 mm cut grid — inaudible.
-The real-world delta will be dominated by stock-thickness tolerance: ±0.1 mm
-on 3.175 mm stock is ±3 % on pitch. That error is the demo — see the
-calibration act in the plan.)
+| note | target Hz | closed-form L | cut L (mm) | holes @ (mm) | strike FFT Hz | err (¢) |
+|------|-----------|---------------|------------|----------------|---------------|---------|
+| C6 | 1046.50 | 125.6 | 125.4 | 28.11 / 97.29 | 1046.23 | −0.44 |
+| D6 | 1174.66 | 118.5 | 118.3 | 26.52 / 91.78 | 1175.42 | 1.12 |
+| E6 | 1318.51 | 111.9 | 111.7 | 25.04 / 86.66 | 1318.29 | −0.29 |
+| F6 | 1396.91 | 108.7 | 108.5 | 24.33 / 84.17 | 1396.97 | 0.08 |
+| G6 | 1567.98 | 102.6 | 102.4 | 22.96 / 79.44 | 1568.03 | 0.06 |
+| A6 | 1760.00 | 96.8 | 96.6 | 21.66 / 74.94 | 1761.71 | 1.68 |
+| B6 | 1975.53 | 91.4 | 91.2 | 20.45 / 70.75 | 1976.03 | 0.43 |
+| C7 | 2093.00 | 88.8 | 88.6 | 19.86 / 68.74 | 2093.45 | 0.37 |
 
-Reproduce the table without building anything:
+(err is dominated by rounding the compensated lengths to the 0.1 mm cut
+grid. The real-world delta will be dominated by stock-thickness tolerance:
+±0.1 mm on 3.175 mm stock is ±3 % on pitch. That error is the demo — see
+the calibration act in the plan.)
+
+Reproduce the table without building anything (closed form; a built
+workspace upgrades it to the hole-compensated lengths):
 
 ```bash
 node examples/glockenspiel/frequencies.mjs
 ```
+
+## The audio, before the metal
+
+`node build.mjs` strikes every bar in simulation via the same code path as
+the **`simulate_strike` MCP tool**: hole-aware FEM modal frequencies,
+strike-position gains (center strike = antinode of mode 1, node of mode 2 —
+like a real player), a half-sine hard-mallet contact filter, and Q-based
+decay where the cord at the nodal holes selectively preserves the
+fundamental (that's *why* the holes are there — now audible). The result is
+a 16-bit/44.1 kHz WAV per bar in `out/`, and the **order gate**: the
+dominant FFT peak of each synthesized strike must land within ±5 cents of
+its target note, or the build fails.
+
+The strike's upper partials sit at the non-harmonic free-free ratios
+(≈ 2.76, 5.40, 8.93 × f₁) and die in tenths of a second while the
+fundamental rings for seconds — that inharmonic ping into a pure tone *is*
+the glockenspiel timbre. Play `out/bar-C6.wav` and judge.
+
+Model limits, stated: 1-D transverse bending only (no torsional modes);
+decay is a documented heuristic — the frequencies are not.
 
 ## The stand
 
@@ -75,28 +103,29 @@ Outputs land in `out/`:
 | File | What it is |
 |------|-----------|
 | `bar-C6.dxf` … `bar-C7.dxf` | one flat DXF per bar — upload each to SCS as **6061-T6, 0.125″, raw** (coatings damp the ring) |
+| `bar-C6.wav` … `bar-C7.wav` | the simulated strike of each bar — what the aluminum should sound like |
 | `stand.dxf` | stand flat pattern: CUT layer + DASHED bend centerlines, relief notches included — **5052-H32, 0.125″** |
 | `stand.step` | the folded stand as B-rep STEP — SCS auto-detects bends from it (zero data entry) |
 | `stand.glb` | folded stand mesh for a 3D viewer |
 | `*.vcad` | editable parametric sources |
 | `frequency-table.md` | the tuning claims above, regenerated |
-| `receipt.json` | every claim with its oracle: pitches, hole positions, masses, bend angles, DFM verdicts, cost |
+| `receipt.json` | every claim with its oracle: pitches, hole positions, masses, bend angles, DFM verdicts, audio verdicts, cost |
 
 ## The receipt
 
 | claim | oracle | instrument |
 |-------|--------|-----------|
-| f₁ per bar | closed-form beam model + kernel materials registry | phone FFT, error in cents |
+| f₁ per bar | hole-aware FEM + strike sim FFT (`simulate_strike`) | phone FFT, error in cents |
 | hole positions on nodal lines | `receipt.json` / drawing dims | caliper |
 | total mass ≈ 715 g | sheet cost model (ρ · A · t) | kitchen scale |
 | bend angles 90° | bend model + springback compensation | protractor |
 | DFM legal for SCS | `sheet_metal_check` vs shop catalog | the order is accepted |
 | cost estimate | `sheet_metal_cost` (generic rates) | the actual invoice |
+| the sound itself | `out/bar-*.wav` (synthesized strike) | your ears vs the real strike |
 
-Model caveats, stated up front: the Ø4.2 mm nodal holes aren't in the beam
-model (second-order at the nodes); alloy tolerance on E moves all bars
+Model caveats, stated up front: alloy tolerance on E moves all bars
 together; thickness tolerance is the big lever and is exactly what the
-calibration act measures.
+calibration act measures; audio decay is a heuristic, frequencies are not.
 
 ## Assembly
 
