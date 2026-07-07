@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-07-3dp-print-then-measure",
+  "version": "0.9.4",
+  "date": "2026-07-07",
+  "category": "feat",
+  "title": "3D-print calibration loop: predict, print, measure",
+  "summary": "predict_print snapshots a design's measurables (bbox, mass, feature dims); record_measurement joins caliper/scale readings into a delta report with axis scales, hole undersize, and printer-profile suggestions.",
+  "features": ["3d-printing", "calibration", "verification", "mcp"],
+  "mcpTools": ["predict_print", "record_measurement"]
+}
