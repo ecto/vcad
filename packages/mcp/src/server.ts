@@ -1761,7 +1761,8 @@ export async function createServer(
           "crossing of the same nets elsewhere still fires. Without them the " +
           "exemption is board-wide (prefer scoped: it keeps DRC honest away " +
           "from the junction). Nets must exist on the board. Returns the " +
-          "updated tie list with indices. Mutates the session document.",
+          "updated tie list with indices. Mutates the session document." +
+          " Verify-on-write: the result carries `drc_delta` — the DRC violations this call introduced or resolved (a tie edit changes short/clearance exemptions) with `clean` to branch on in one step.",
         inputSchema: addNetTieSchema,
       },
       {
@@ -1771,7 +1772,8 @@ export async function createServer(
           "order-insensitive) and/or `position` — the take-back for a bad " +
           "add_net_tie. Any junction copper stays on the board; DRC will report " +
           "it as a short again. Returns the deleted tie and the updated tie " +
-          "list. Mutates the session document.",
+          "list. Mutates the session document." +
+          " Verify-on-write: the result carries `drc_delta` — the DRC violations this call introduced or resolved (a tie edit changes short/clearance exemptions) with `clean` to branch on in one step.",
         inputSchema: deleteNetTieSchema,
       },
       {
@@ -2641,11 +2643,11 @@ export async function createServer(
           break;
 
         case "add_net_tie":
-          result = addNetTie(args);
+          result = await addNetTie(args);
           break;
 
         case "delete_net_tie":
-          result = deleteNetTie(args);
+          result = await deleteNetTie(args);
           break;
 
         case "undo":

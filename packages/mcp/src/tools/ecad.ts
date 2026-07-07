@@ -8659,7 +8659,7 @@ export const addNetTieSchema = {
  * of the same nets elsewhere still fires). Region-less ties exempt the pair
  * board-wide. Mutates the session document.
  */
-export function addNetTie(args: Record<string, unknown>) {
+export async function addNetTie(args: Record<string, unknown>) {
   const ctx = resolveDocInput(args);
   const pcb = getDocPcb(ctx.doc);
   const fail = ecadError;
@@ -8717,6 +8717,17 @@ export function addNetTie(args: Record<string, unknown>) {
     radius = round3(radius);
   }
 
+  // A tie mutates DRC *semantics*, not copper: it exempts (and, deleted,
+  // re-convicts) short/clearance findings. A region-scoped tie only changes
+  // verdicts inside its circle; a board-wide tie can change them anywhere the
+  // tied nets' copper meets.
+  const drcCap = await beginDrcDelta(
+    pcb,
+    position && radius !== undefined
+      ? boundsOfPoints([position], radius)
+      : "full",
+  );
+
   pcb.netTies = pcb.netTies ?? [];
   const tie: NetTie = {
     nets,
@@ -8743,6 +8754,7 @@ export function addNetTie(args: Record<string, unknown>) {
           net_ties: netTieList(pcb),
           net_ties_total: pcb.netTies.length,
           changed: [change],
+          drc_delta: await drcCap.finish(),
           ...docResultPayload(ctx),
         }),
       },
@@ -8781,7 +8793,7 @@ export const deleteNetTieSchema = {
 /** Remove a net tie by `index`, or by matching `nets` (set equality) and/or
  *  `position` — the take-back for a bad add_net_tie. The junction's copper (if
  *  any) stays; DRC will report it as a short again. Mutates the session. */
-export function deleteNetTie(args: Record<string, unknown>) {
+export async function deleteNetTie(args: Record<string, unknown>) {
   const ctx = resolveDocInput(args);
   const pcb = getDocPcb(ctx.doc);
   const fail = ecadError;
@@ -8860,6 +8872,17 @@ export function deleteNetTie(args: Record<string, unknown>) {
     );
   }
 
+  // Removing a tie un-exempts whatever it was excusing — copper contact at
+  // the junction reads as a Short again. Scope to the tie's region when it
+  // has one; a board-wide tie could have been excusing contact anywhere.
+  const target = ties[index]!;
+  const drcCap = await beginDrcDelta(
+    pcb,
+    target.position && target.radius != null
+      ? boundsOfPoints([target.position], target.radius)
+      : "full",
+  );
+
   const [removed] = ties.splice(index, 1);
   const change: PcbElementChange = {
     action: "removed",
@@ -8878,6 +8901,7 @@ export function deleteNetTie(args: Record<string, unknown>) {
           net_ties: netTieList(pcb),
           net_ties_total: ties.length,
           changed: [change],
+          drc_delta: await drcCap.finish(),
           ...docResultPayload(ctx),
         }),
       },

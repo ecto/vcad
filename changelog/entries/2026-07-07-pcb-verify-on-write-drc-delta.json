@@ -5,7 +5,12 @@
   "category": "feat",
   "title": "PCB copper mutators verify-on-write with drc_delta",
   "summary": "Every copper-mutating PCB tool now returns a drc_delta (violations it introduced, categorized, with clean to branch on), incrementally scoped on big boards.",
-  "features": ["pcb", "drc", "verification", "mcp"],
+  "features": [
+    "pcb",
+    "drc",
+    "verification",
+    "mcp"
+  ],
   "mcpTools": [
     "add_trace",
     "add_via",
@@ -17,6 +22,8 @@
     "delete_via",
     "delete_zone",
     "set_board_outline",
-    "set_stackup"
+    "set_stackup",
+    "add_net_tie",
+    "delete_net_tie"
   ]
 }

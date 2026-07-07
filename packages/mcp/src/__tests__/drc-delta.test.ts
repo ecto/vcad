@@ -18,6 +18,8 @@ import {
   addTrace,
   addVia,
   addCoil,
+  addNetTie,
+  deleteNetTie,
   deleteTrace,
   setStackup,
   setBoardOutline,
@@ -214,6 +216,36 @@ describe("drc_delta — mutations that break the board say so", () => {
       delta.sample.some((v: { rule: string }) =>
         ["UnconnectedNet", "NetIslands"].includes(v.rule),
       ),
+    ).toBe(true);
+  });
+
+  it("net ties: add_net_tie resolves a short, delete_net_tie re-convicts it", async () => {
+    const id = await placedBoard();
+    out(await routeNets({ document_id: id }));
+    const pcb = boardPcb(id);
+
+    // Deliberate VCC↔GND junction — a short until a tie declares it intended.
+    out(
+      await addTrace({
+        document_id: id,
+        net: "VCC",
+        points: [padOf(pcb, "VCC"), padOf(pcb, "GND")],
+      }),
+    );
+
+    // Declaring the junction intended EXEMPTS the short: resolved, clean.
+    const tied = out(await addNetTie({ document_id: id, nets: ["VCC", "GND"] }));
+    expect(tied.success).toBe(true);
+    expect(tied.drc_delta.clean).toBe(true);
+    expect(tied.drc_delta.resolved).toBeGreaterThanOrEqual(1);
+
+    // Deleting the tie re-convicts the junction copper as a live short.
+    const untied = out(await deleteNetTie({ document_id: id, nets: ["VCC", "GND"] }));
+    expect(untied.success).toBe(true);
+    expect(untied.drc_delta.clean).toBe(false);
+    expect(untied.drc_delta.by_category.shorts).toBeGreaterThanOrEqual(1);
+    expect(
+      untied.drc_delta.sample.some((v: { rule: string }) => v.rule === "Short"),
     ).toBe(true);
   });
 
