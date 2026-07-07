@@ -1630,6 +1630,7 @@ mod tests {
             vcad_kernel_booleans::BooleanOp::Difference,
             32,
         )
+        .expect("boolean difference should succeed")
         .into_brep()
         .unwrap();
         let boolean = mesh_volume_of(&diff);

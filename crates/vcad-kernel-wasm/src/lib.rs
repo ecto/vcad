@@ -802,16 +802,25 @@ impl Solid {
     // =========================================================================
 
     /// Boolean union (self ∪ other).
+    ///
+    /// Returns a JS error (instead of trapping the WASM instance) when the
+    /// kernel reports a boolean failure.
     #[wasm_bindgen(js_name = union)]
-    pub fn union(&self, other: &Solid) -> Solid {
-        Solid {
-            inner: self.inner.union(&other.inner),
-        }
+    pub fn union(&self, other: &Solid) -> Result<Solid, JsError> {
+        Ok(Solid {
+            inner: self
+                .inner
+                .try_union(&other.inner)
+                .map_err(|e| JsError::new(&e.to_string()))?,
+        })
     }
 
     /// Boolean difference (self − other).
+    ///
+    /// Returns a JS error (instead of trapping the WASM instance) when the
+    /// kernel reports a boolean failure.
     #[wasm_bindgen(js_name = difference)]
-    pub fn difference(&self, other: &Solid) -> Solid {
+    pub fn difference(&self, other: &Solid) -> Result<Solid, JsError> {
         // Log input solid info with more detail
         let self_tris = self.inner.num_triangles();
         let other_tris = other.inner.num_triangles();
@@ -827,7 +836,10 @@ impl Solid {
         ).into());
 
         let result = Solid {
-            inner: self.inner.difference(&other.inner),
+            inner: self
+                .inner
+                .try_difference(&other.inner)
+                .map_err(|e| JsError::new(&e.to_string()))?,
         };
 
         let result_tris_before_mesh = result.inner.num_triangles();
@@ -964,15 +976,21 @@ impl Solid {
             .into(),
         );
 
-        result
+        Ok(result)
     }
 
     /// Boolean intersection (self ∩ other).
+    ///
+    /// Returns a JS error (instead of trapping the WASM instance) when the
+    /// kernel reports a boolean failure.
     #[wasm_bindgen(js_name = intersection)]
-    pub fn intersection(&self, other: &Solid) -> Solid {
-        Solid {
-            inner: self.inner.intersection(&other.inner),
-        }
+    pub fn intersection(&self, other: &Solid) -> Result<Solid, JsError> {
+        Ok(Solid {
+            inner: self
+                .inner
+                .try_intersection(&other.inner)
+                .map_err(|e| JsError::new(&e.to_string()))?,
+        })
     }
 
     // =========================================================================
@@ -3599,19 +3617,19 @@ fn evaluate_node(doc: &vcad_ir::Document, node_id: vcad_ir::NodeId) -> Result<So
         vcad_ir::CsgOp::Union { left, right } => {
             let l = evaluate_node(doc, *left)?;
             let r = evaluate_node(doc, *right)?;
-            Ok(l.union(&r))
+            l.union(&r)
         }
 
         vcad_ir::CsgOp::Difference { left, right } => {
             let l = evaluate_node(doc, *left)?;
             let r = evaluate_node(doc, *right)?;
-            Ok(l.difference(&r))
+            l.difference(&r)
         }
 
         vcad_ir::CsgOp::Intersection { left, right } => {
             let l = evaluate_node(doc, *left)?;
             let r = evaluate_node(doc, *right)?;
-            Ok(l.intersection(&r))
+            l.intersection(&r)
         }
 
         vcad_ir::CsgOp::Translate { child, offset } => {
