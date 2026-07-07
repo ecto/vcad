@@ -35,6 +35,26 @@ Unset, every pack is enabled. A smaller surface costs fewer schema
 tokens per request and measurably improves tool-selection accuracy for
 focused workflows.
 
+### Switching packs at runtime
+
+`VCAD_MCP_PACKS` is only the boot-time default — an agent can also flip
+packs mid-session with two always-on meta-tools:
+
+- **`list_tool_packs`** — the packs, whether each is currently enabled,
+  and its tool count.
+- **`set_tool_packs`** — enable/disable packs by name. Pass `enable`
+  and/or `disable` arrays, or `set` to replace the enabled set outright
+  (an array of names, or `"all"` / `"none"`).
+
+On a **persistent transport (stdio)** the change is live: the next
+`tools/list` reflects it and the server emits
+`notifications/tools/list_changed` so the client refetches. On the
+**stateless HTTP transport** (fresh server per request) there's no push
+channel — instead, a signed-in user's choice is persisted (keyed by user
+in the `mcp_tool_packs` table) and applied on the next request; anonymous
+HTTP callers fall back to `VCAD_MCP_PACKS`. Calling a tool whose pack is
+disabled returns an actionable error pointing at `set_tool_packs`.
+
 ## Discord activity rollups
 
 The server can post a periodic activity summary to a Discord channel —

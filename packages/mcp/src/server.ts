@@ -36,6 +36,7 @@ import {
   createSessionStore,
   createSessionEventStore,
   createShareStore,
+  createPackStore,
   sessionStoreInfo,
   warnIfSessionStoreNotDurable,
 } from "./session-store.js";
@@ -308,6 +309,8 @@ const LIST_TOOL_ORDER: readonly string[] = [
   "branch_from",
   "continue_document",
   "server_info",
+  "list_tool_packs",
+  "set_tool_packs",
   // ── vcad Fabricate ─────────────────────────────────────────
   "quote_manufacturing",
   "get_order_status",
@@ -492,22 +495,46 @@ function buildInstructions(kernelPrompt: string | null): string {
   return [header, ...picked].join("\n\n");
 }
 
-/** Tool names hidden by the `VCAD_MCP_PACKS` env var (empty = none). A tool is
- *  hidden when its `pack` is set and that pack isn't in the enabled list;
- *  `pack: null` tools (core) and the registry-tier kernel tools are never
- *  gated. Derived from each ToolDef's `pack` — no separate pack table.
- *  Exported for tests. */
-export function disabledToolNames(): Set<string> {
+/** Every distinct domain pack contributed by a ToolDef, sorted. Core
+ *  (`pack: null`) tools and the registry-tier kernel tools are never packs.
+ *  The runtime pack-switching meta-tools (`list_tool_packs`/`set_tool_packs`)
+ *  validate names against this and report per-pack state from it. */
+export const ALL_PACKS: readonly string[] = Array.from(
+  new Set(STATIC_TOOL_DEFS.map((d) => d.pack).filter((p): p is string => !!p)),
+).sort();
+
+/** Parse `VCAD_MCP_PACKS` into the set of ENABLED packs, or null when the var
+ *  is unset — the default, meaning "all packs". `none` yields the empty set
+ *  (core only). This is the boot-time default; a connection may then flip it
+ *  live via `set_tool_packs`. */
+export function parseEnvPacks(): Set<string> | null {
   const env = process.env.VCAD_MCP_PACKS?.trim();
-  if (!env) return new Set();
+  if (!env) return null;
   const enabled = new Set(
     env.split(",").map((s) => s.trim().toLowerCase()).filter(Boolean),
   );
+  enabled.delete("none");
+  return enabled;
+}
+
+/** Tool names hidden given a set of ENABLED packs: a tool is hidden when its
+ *  `pack` is set and not in `enabled`. `pack: null` core tools and the
+ *  registry-tier kernel tools are never gated. Derived from each ToolDef's
+ *  `pack` — no separate pack table. */
+export function packDisabledNames(enabled: Set<string>): Set<string> {
   const disabled = new Set<string>();
   for (const d of STATIC_TOOL_DEFS) {
     if (d.pack && !enabled.has(d.pack)) disabled.add(d.name);
   }
   return disabled;
+}
+
+/** Tool names hidden by the `VCAD_MCP_PACKS` env var (empty = none). `pack:
+ *  null` tools (core) and the registry-tier kernel tools are never gated.
+ *  Exported for tests. */
+export function disabledToolNames(): Set<string> {
+  const enabled = parseEnvPacks();
+  return enabled ? packDisabledNames(enabled) : new Set();
 }
 
 /**
@@ -636,8 +663,43 @@ export async function createServer(
     behavior: behavior({ geometry: true, writesDoc: d.name !== "read" }),
   }));
 
-  // Tools hidden by VCAD_MCP_PACKS (resolved once at server creation).
-  const disabledTools = disabledToolNames();
+  // ── Runtime tool packs ────────────────────────────────────────────────────
+  // The enabled-pack set is mutable per connection: `set_tool_packs` flips it
+  // live. On stdio/persistent transports the flip takes effect immediately and
+  // emits notifications/tools/list_changed; on the stateless HTTP transport
+  // it's persisted for a signed-in user (packStore) and re-derived here on the
+  // next request. Initial value: the user's saved preference if any, else
+  // VCAD_MCP_PACKS, else all packs (unchanged default). `enabledPacks` and the
+  // derived `disabledTools` are `let` so the meta-tool can reassign them; every
+  // reader (assembleToolList, the CallTool gate, server_info) reads them at
+  // call time and so reflects the current state.
+  const packStore = createPackStore(context.user);
+  let enabledPacks: Set<string> = await (async () => {
+    try {
+      const saved = await packStore.load();
+      if (saved) return new Set(saved);
+    } catch {
+      // durable read is best-effort — fall back to env / all packs
+    }
+    return parseEnvPacks() ?? new Set(ALL_PACKS);
+  })();
+  let disabledTools = packDisabledNames(enabledPacks);
+
+  /** Compact summary of the enabled packs for `server_info`: "all", "none", or
+   *  a sorted comma list. */
+  const packsSummary = (): string => {
+    if (enabledPacks.size === ALL_PACKS.length) return "all";
+    if (enabledPacks.size === 0) return "none";
+    return Array.from(enabledPacks).sort().join(",");
+  };
+
+  /** Per-pack enabled state + tool count, for the pack meta-tools. */
+  const packState = (): Array<{ name: string; enabled: boolean; tool_count: number }> =>
+    ALL_PACKS.map((name) => ({
+      name,
+      enabled: enabledPacks.has(name),
+      tool_count: STATIC_TOOL_DEFS.filter((d) => d.pack === name).length,
+    }));
 
   // Startup self-check: confirm the kernel WASM exposes the load-bearing
   // exports this build depends on. A stale/incomplete dist otherwise surfaces
@@ -699,7 +761,147 @@ export async function createServer(
                 : {}),
               kernel_tool_count: dispatchableTools.size,
               disabled_tool_count: disabledTools.size,
-              packs: process.env.VCAD_MCP_PACKS ?? "all",
+              packs: packsSummary(),
+            }),
+          },
+        ],
+      };
+    },
+    behavior: behavior({}),
+  };
+
+  // ── Runtime tool-pack meta-tools ──────────────────────────────────────────
+  // Defined inline (like server_info) because they close over this
+  // connection's mutable `enabledPacks` / `disabledTools`, its `packStore`, and
+  // the `server` handle used to emit list_changed.
+  const listToolPacksDef: ToolDef = {
+    name: "list_tool_packs",
+    pack: null,
+    description:
+      "List the optional tool packs and whether each is currently enabled, " +
+      "with its tool count. Packs gate large domain surfaces (ecad, physics, " +
+      "sheet_metal, dfm, …) off the always-on core; a smaller surface costs " +
+      "fewer schema tokens and improves tool selection. Use set_tool_packs to " +
+      "enable/disable them at runtime.",
+    inputSchema: { type: "object", properties: {} },
+    handler: async (): Promise<ToolResult> => ({
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify({ packs: packState(), core_always_on: true }),
+        },
+      ],
+    }),
+    behavior: behavior({}),
+  };
+
+  const setToolPacksDef: ToolDef = {
+    name: "set_tool_packs",
+    pack: null,
+    description:
+      "Enable or disable optional tool packs at runtime (see list_tool_packs " +
+      "for names). Pass `enable` and/or `disable` as arrays of pack names, or " +
+      '`set` to replace the enabled set outright (an array, or the string ' +
+      '"all" / "none"). On stdio/persistent connections the tool list updates ' +
+      "immediately and emits notifications/tools/list_changed; on the stateless " +
+      "HTTP transport the choice is saved for a signed-in user and applies on " +
+      "the next request (no push notification there). Disabled-pack calls keep " +
+      "returning an actionable error.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        enable: {
+          type: "array",
+          items: { type: "string" },
+          description: "Pack names to enable.",
+        },
+        disable: {
+          type: "array",
+          items: { type: "string" },
+          description: "Pack names to disable.",
+        },
+        set: {
+          description:
+            'Replace the enabled set: an array of pack names, or "all" / "none".',
+        },
+      },
+    },
+    handler: async (args): Promise<ToolResult> => {
+      const err = (text: string): ToolResult => ({
+        content: [{ type: "text", text }],
+        isError: true,
+      });
+      const known = new Set(ALL_PACKS);
+      const bad = new Set<string>();
+      const asNames = (v: unknown): string[] =>
+        Array.isArray(v) ? v.map((x) => String(x).trim().toLowerCase()) : [];
+      const noteUnknown = (names: string[]) => {
+        for (const n of names) if (!known.has(n)) bad.add(n);
+      };
+
+      let next: Set<string>;
+      if (args.set !== undefined) {
+        if (args.set === "all") next = new Set(ALL_PACKS);
+        else if (args.set === "none") next = new Set();
+        else if (Array.isArray(args.set)) {
+          const names = asNames(args.set);
+          noteUnknown(names);
+          next = new Set(names);
+        } else {
+          return err('`set` must be an array of pack names, or "all" / "none".');
+        }
+      } else {
+        next = new Set(enabledPacks);
+      }
+      if (args.enable !== undefined) {
+        const names = asNames(args.enable);
+        noteUnknown(names);
+        for (const n of names) next.add(n);
+      }
+      if (args.disable !== undefined) {
+        const names = asNames(args.disable);
+        noteUnknown(names);
+        for (const n of names) next.delete(n);
+      }
+      if (bad.size > 0) {
+        return err(
+          `Unknown pack(s): ${Array.from(bad).join(", ")}. ` +
+            `Known packs: ${ALL_PACKS.join(", ")}.`,
+        );
+      }
+
+      enabledPacks = next;
+      disabledTools = packDisabledNames(enabledPacks);
+
+      // Persist for a signed-in user so a stateless HTTP request re-derives it.
+      let persisted = false;
+      try {
+        await packStore.save(Array.from(enabledPacks).sort());
+        persisted = packStore.durable && context.user !== null;
+      } catch {
+        // best-effort durable write
+      }
+
+      // Live update on persistent transports. On the stateless HTTP transport
+      // there's no push channel, so this is a no-op / rejects — the next
+      // request advertises the new surface instead.
+      let listChangedSent = false;
+      try {
+        await server.sendToolListChanged();
+        listChangedSent = true;
+      } catch {
+        // no notification channel (stateless transport / not connected)
+      }
+
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({
+              packs: packState(),
+              enabled: Array.from(enabledPacks).sort(),
+              list_changed_sent: listChangedSent,
+              persisted,
             }),
           },
         ],
@@ -709,20 +911,25 @@ export async function createServer(
   };
 
   // Every tool this connection can dispatch: static module defs + server_info +
-  // the generated registry defs. Name → def, for O(1) CallTool lookup.
+  // the pack meta-tools + the generated registry defs. Name → def, for O(1)
+  // CallTool lookup.
   const dispatchMap = new Map<string, ToolDef>();
   for (const d of STATIC_TOOL_DEFS) dispatchMap.set(d.name, d);
   dispatchMap.set(serverInfoDef.name, serverInfoDef);
+  dispatchMap.set(listToolPacksDef.name, listToolPacksDef);
+  dispatchMap.set(setToolPacksDef.name, setToolPacksDef);
   for (const d of registryDefs) dispatchMap.set(d.name, d);
 
   // Boot-time drift guard: LIST_TOOL_ORDER must name every static def +
-  // server_info exactly once (registry defs are spliced separately). A missing
-  // or duplicated name is a wiring bug that would silently drop/duplicate a
-  // tool from ListTools.
+  // server_info + the pack meta-tools exactly once (registry defs are spliced
+  // separately). A missing or duplicated name is a wiring bug that would
+  // silently drop/duplicate a tool from ListTools.
   const orderSet = new Set(LIST_TOOL_ORDER);
   const staticNames = new Set([
     ...STATIC_TOOL_DEFS.map((d) => d.name),
     serverInfoDef.name,
+    listToolPacksDef.name,
+    setToolPacksDef.name,
   ]);
   if (orderSet.size !== LIST_TOOL_ORDER.length) {
     throw new Error("[mcp] LIST_TOOL_ORDER contains a duplicate tool name");
@@ -784,7 +991,9 @@ export async function createServer(
     },
     {
       capabilities: {
-        tools: {},
+        // listChanged: `set_tool_packs` re-advertises the surface at runtime
+        // and emits notifications/tools/list_changed on persistent transports.
+        tools: { listChanged: true },
         resources: {},
         // Acknowledge MCP Apps UI extension so Claude Desktop renders the viewer iframe.
         // The extension key is not in the typed ServerCapabilities schema so we spread as object.
@@ -924,11 +1133,15 @@ export async function createServer(
     const { name, arguments: args = {} } = request.params;
 
     if (disabledTools.has(name)) {
+      const pack = dispatchMap.get(name)?.pack;
+      const enableHint = pack
+        ? `Enable it with set_tool_packs({ enable: ["${pack}"] }) or set VCAD_MCP_PACKS.`
+        : "Enable its pack to use it.";
       const disabledResult: ToolResult = {
         content: [
           {
             type: "text",
-            text: `Tool '${name}' belongs to a pack disabled by VCAD_MCP_PACKS. Enable its pack to use it.`,
+            text: `Tool '${name}' belongs to a disabled tool pack${pack ? ` ('${pack}')` : ""}. ${enableHint}`,
           },
         ],
         isError: true,

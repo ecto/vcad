@@ -193,6 +193,40 @@
     }
   },
   {
+    "name": "list_tool_packs",
+    "description": "List the optional tool packs and whether each is currently enabled, with its tool count. Packs gate large domain surfaces (ecad, physics, sheet_metal, dfm, \u2026) off the always-on core; a smaller surface costs fewer schema tokens and improves tool selection. Use set_tool_packs to enable/disable them at runtime.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    }
+  },
+  {
+    "name": "set_tool_packs",
+    "description": "Enable or disable optional tool packs at runtime (see list_tool_packs for names). Pass `enable` and/or `disable` as arrays of pack names, or `set` to replace the enabled set outright (an array, or the string \"all\" / \"none\"). On stdio/persistent connections the tool list updates immediately and emits notifications/tools/list_changed; on the stateless HTTP transport the choice is saved for a signed-in user and applies on the next request (no push notification there). Disabled-pack calls keep returning an actionable error.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "enable": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Pack names to enable."
+        },
+        "disable": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Pack names to disable."
+        },
+        "set": {
+          "description": "Replace the enabled set: an array of pack names, or \"all\" / \"none\"."
+        }
+      }
+    }
+  },
+  {
     "name": "quote_manufacturing",
     "description": "Quote manufacturing a part: measures the design, runs light DFM, and returns margin-inclusive price options per fab (pcb/cnc/3dprint/sheet_metal/cast_metal). Pass `ir` (inline Document \u2014 stateless, no open_document needed, serverless-safe, parallel-safe) OR a `document_id` from an open session. Persists a quote + a QUOTED order. Phase 0 is quote-only \u2014 prices are estimates and ordering/payment ship next; no money moves. For sheet_metal the result includes `fab_handoff`: curated US instant-quote shops (SendCutSend/OSH Cut/Fabworks), the exact file recipe (DXF via sheet_metal_unfold or folded STEP via export_cad), and what to enter at upload \u2014 everything needed to finish the order on the fab's site today.",
     "inputSchema": {
