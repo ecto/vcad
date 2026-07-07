@@ -25,6 +25,7 @@ import type {
   PadType,
   PcbLayer,
   Trace,
+  TraceArc,
   Via,
   Zone,
   Vec2,
@@ -7837,10 +7838,12 @@ export function addZone(args: Record<string, unknown>) {
 // `changed` diff of what left the board, mirroring the other mutators. For a
 // "take back the very last thing I did" the `undo` tool is the broader hammer.
 
-/** A removed (or, for undo, re-added) board element, for the `changed` diff. */
+/** A removed (or, for undo, re-added) board element, for the `changed` diff.
+ *  For `netTie` entries `net` is the joined nets as "A+B+C" (a tie has no
+ *  single net of its own). */
 interface PcbElementChange {
   action: "removed" | "added";
-  kind: "zone" | "trace" | "traceArc" | "via";
+  kind: "zone" | "trace" | "traceArc" | "via" | "netTie";
   index: number;
   net: string;
   layer?: string;
@@ -7990,6 +7993,582 @@ export function deleteVia(args: Record<string, unknown>) {
 }
 
 // ============================================================================
+// get_copper — read/query routed copper (the discovery side of the algebra)
+// ============================================================================
+//
+// add_trace/add_via/add_zone write copper and delete_trace/delete_via/
+// delete_zone remove it by index — but nothing let an agent SEE what copper
+// exists: describe_pcb only aggregates counts, so finding "the trace shorting
+// GND to PHA near the star point" meant exporting the whole document. This is
+// the read companion: filter by layer/net/bbox/kind and get each element back
+// with the same `index` (per-collection, add order) the delete_* tools accept.
+
+/** The queryable copper collections, in report order. */
+type CopperKind = "trace" | "traceArc" | "via" | "zone";
+const COPPER_KINDS: readonly CopperKind[] = ["trace", "traceArc", "via", "zone"];
+
+/** Axis-aligned bbox as {min, max}. */
+interface Bbox {
+  min: Vec2;
+  max: Vec2;
+}
+
+/** Conservative bounding box of a copper element (copper extent included). */
+function copperElementBbox(kind: CopperKind, el: Trace | TraceArc | Via | Zone): Bbox {
+  switch (kind) {
+    case "trace": {
+      const t = el as Trace;
+      const r = t.width / 2;
+      return {
+        min: { x: Math.min(t.start.x, t.end.x) - r, y: Math.min(t.start.y, t.end.y) - r },
+        max: { x: Math.max(t.start.x, t.end.x) + r, y: Math.max(t.start.y, t.end.y) + r },
+      };
+    }
+    case "traceArc": {
+      // Full-circle bound — conservative (a quarter arc reports the whole
+      // circle's box), but never misses copper on a bbox query.
+      const a = el as TraceArc;
+      const r = a.radius + a.width / 2;
+      return {
+        min: { x: a.center.x - r, y: a.center.y - r },
+        max: { x: a.center.x + r, y: a.center.y + r },
+      };
+    }
+    case "via": {
+      const v = el as Via;
+      const r = v.diameter / 2;
+      return {
+        min: { x: v.position.x - r, y: v.position.y - r },
+        max: { x: v.position.x + r, y: v.position.y + r },
+      };
+    }
+    case "zone": {
+      const z = el as Zone;
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      for (const p of z.outline) {
+        if (p.x < minX) minX = p.x;
+        if (p.y < minY) minY = p.y;
+        if (p.x > maxX) maxX = p.x;
+        if (p.y > maxY) maxY = p.y;
+      }
+      return { min: { x: minX, y: minY }, max: { x: maxX, y: maxY } };
+    }
+  }
+}
+
+/** True when a via's barrel spans `layer` (start/end plus every copper layer
+ *  between, by stackup order) — a through via FCu→BCu carries In1Cu too. */
+function viaSpansLayer(via: Via, layer: PcbLayer): boolean {
+  const lo = COPPER_LAYERS.indexOf(via.startLayer);
+  const hi = COPPER_LAYERS.indexOf(via.endLayer);
+  const at = COPPER_LAYERS.indexOf(layer);
+  if (lo < 0 || hi < 0 || at < 0) return via.startLayer === layer || via.endLayer === layer;
+  return at >= Math.min(lo, hi) && at <= Math.max(lo, hi);
+}
+
+/** Hard cap on elements per get_copper page — keeps a dense board's response
+ *  bounded; the caller pages with `offset` (the result carries `total`). */
+const GET_COPPER_CAP = 200;
+
+/** JSON Schema for get_copper tool. */
+export const getCopperSchema = {
+  type: "object" as const,
+  properties: {
+    ...docInputProperties,
+    kind: {
+      type: "string" as const,
+      description:
+        "Restrict to one collection: 'trace', 'traceArc', 'via', or 'zone'. " +
+        "Omit for all four.",
+    },
+    layer: {
+      type: "string" as const,
+      description:
+        "Copper-layer filter (e.g. 'FCu', 'BCu', 'In1Cu'). Traces/arcs/zones " +
+        "match their own layer; a via matches every layer its barrel spans.",
+    },
+    net: { type: "string" as const, description: "Net filter (exact id, e.g. 'GND')." },
+    bbox: {
+      type: "object" as const,
+      description:
+        "Spatial filter, board-local mm: keep elements whose bounding box " +
+        "overlaps the rectangle x..x+w, y..y+h (conservative for arcs).",
+      properties: {
+        x: { type: "number" as const },
+        y: { type: "number" as const },
+        w: { type: "number" as const },
+        h: { type: "number" as const },
+      },
+      required: ["x", "y", "w", "h"],
+    },
+    offset: {
+      type: "number" as const,
+      description: "Skip this many matches (pagination; default 0).",
+    },
+    limit: {
+      type: "number" as const,
+      description: `Max elements returned (default and cap ${GET_COPPER_CAP}).`,
+    },
+  },
+  required: ["document_id"],
+};
+
+/**
+ * Query the board's routed copper — traces, trace arcs, vias, zones — with
+ * optional layer/net/bbox/kind filters. Each element is returned with its
+ * `kind` and `index`: the exact addressing delete_trace / delete_via /
+ * delete_zone accept, so a query result can drive a surgical delete without
+ * ever exporting the document. Read-only.
+ */
+export function getCopper(args: Record<string, unknown>) {
+  const ctx = resolveDocInput(args);
+  const pcb = getDocPcb(ctx.doc);
+  const fail = ecadError;
+  if (!pcb) {
+    return fail(
+      "Document has no PCB — run place_components first (or open a document that has a board)",
+    );
+  }
+
+  let kinds: readonly CopperKind[] = COPPER_KINDS;
+  if (args.kind != null) {
+    const k = String(args.kind);
+    if (!COPPER_KINDS.includes(k as CopperKind)) {
+      return fail(`kind '${k}' is not valid; legal: ${COPPER_KINDS.join(", ")}`);
+    }
+    kinds = [k as CopperKind];
+  }
+
+  let wantLayer: PcbLayer | undefined;
+  if (args.layer != null) {
+    const layerRes = validateCopperLayer(args.layer);
+    if ("error" in layerRes) return fail(layerRes.error);
+    wantLayer = layerRes.layer;
+  }
+  const wantNet = args.net != null ? String(args.net) : undefined;
+
+  let queryBox: Bbox | undefined;
+  if (args.bbox != null) {
+    const b = args.bbox as Record<string, unknown>;
+    if (
+      typeof b.x !== "number" || typeof b.y !== "number" ||
+      typeof b.w !== "number" || typeof b.h !== "number"
+    ) {
+      return fail("bbox must be {x, y, w, h} in board-local mm");
+    }
+    if ((b.w as number) < 0 || (b.h as number) < 0) return fail("bbox w and h must be >= 0");
+    queryBox = {
+      min: { x: b.x as number, y: b.y as number },
+      max: { x: (b.x as number) + (b.w as number), y: (b.y as number) + (b.h as number) },
+    };
+  }
+
+  const offset = typeof args.offset === "number" ? Math.max(0, Math.floor(args.offset)) : 0;
+  const limit =
+    typeof args.limit === "number"
+      ? Math.min(GET_COPPER_CAP, Math.max(1, Math.floor(args.limit)))
+      : GET_COPPER_CAP;
+
+  const overlaps = (a: Bbox, b: Bbox): boolean =>
+    a.min.x <= b.max.x && a.max.x >= b.min.x && a.min.y <= b.max.y && a.max.y >= b.min.y;
+
+  const layerMatches = (kind: CopperKind, el: Trace | TraceArc | Via | Zone): boolean => {
+    if (wantLayer === undefined) return true;
+    if (kind === "via") return viaSpansLayer(el as Via, wantLayer);
+    return (el as Trace | TraceArc | Zone).layer === wantLayer;
+  };
+
+  const rv = (v: Vec2): Vec2 => ({ x: round3(v.x), y: round3(v.y) });
+  const rbox = (b: Bbox): Bbox => ({ min: rv(b.min), max: rv(b.max) });
+
+  /** The reported view of one element — identity first, geometry after. */
+  const describe = (
+    kind: CopperKind,
+    index: number,
+    el: Trace | TraceArc | Via | Zone,
+  ): Record<string, unknown> => {
+    switch (kind) {
+      case "trace": {
+        const t = el as Trace;
+        return {
+          kind, index, net: t.net, layer: t.layer,
+          start: rv(t.start), end: rv(t.end), width: t.width,
+          ...(t.source ? { source: t.source } : {}),
+        };
+      }
+      case "traceArc": {
+        const a = el as TraceArc;
+        return {
+          kind, index, net: a.net, layer: a.layer,
+          center: rv(a.center), radius: round3(a.radius),
+          start_angle: a.startAngle, end_angle: a.endAngle, width: a.width,
+        };
+      }
+      case "via": {
+        const v = el as Via;
+        return {
+          kind, index, net: v.net, layers: [v.startLayer, v.endLayer],
+          position: rv(v.position), diameter: v.diameter, drill: v.drill,
+          ...(v.source ? { source: v.source } : {}),
+        };
+      }
+      case "zone": {
+        // A pour's outline can run to hundreds of vertices (board fills) —
+        // report its bbox + vertex count; the index is enough to delete it.
+        const z = el as Zone;
+        return {
+          kind, index, net: z.net, layer: z.layer,
+          bbox: rbox(copperElementBbox("zone", z)), vertices: z.outline.length,
+          ...(z.holes && z.holes.length > 0 ? { holes: z.holes.length } : {}),
+          clearance: z.clearance, priority: z.priority ?? 0,
+        };
+      }
+    }
+  };
+
+  const collections: Record<CopperKind, Array<Trace | TraceArc | Via | Zone>> = {
+    trace: pcb.traces,
+    traceArc: pcb.traceArcs ?? [],
+    via: pcb.vias,
+    zone: pcb.zones,
+  };
+
+  // Match in deterministic order (traces, arcs, vias, zones; index order
+  // within each) so offset-paging never skips or repeats an element.
+  const matched: Array<{ kind: CopperKind; index: number; el: Trace | TraceArc | Via | Zone }> = [];
+  const totalByKind: Partial<Record<CopperKind, number>> = {};
+  for (const kind of kinds) {
+    collections[kind].forEach((el, index) => {
+      if (wantNet !== undefined && el.net !== wantNet) return;
+      if (!layerMatches(kind, el)) return;
+      if (queryBox && !overlaps(copperElementBbox(kind, el), queryBox)) return;
+      matched.push({ kind, index, el });
+      totalByKind[kind] = (totalByKind[kind] ?? 0) + 1;
+    });
+  }
+
+  const page = matched.slice(offset, offset + limit);
+  const elements = page.map((m) => describe(m.kind, m.index, m.el));
+
+  return {
+    content: [
+      {
+        type: "text" as const,
+        text: JSON.stringify({
+          success: true,
+          total: matched.length,
+          total_by_kind: totalByKind,
+          count: elements.length,
+          offset,
+          ...(offset + elements.length < matched.length
+            ? { next_offset: offset + elements.length }
+            : {}),
+          elements,
+          ...docResultPayload(ctx),
+        }),
+      },
+    ],
+  };
+}
+
+// ============================================================================
+// add_net_tie / delete_net_tie — intentional net junctions
+// ============================================================================
+//
+// Wye motor windings, split grounds joined at one stitch, and current-sense
+// shunts all REQUIRE two named nets to touch on purpose — without a declared
+// tie, DRC correctly reports the junction as a short. Until now only the
+// add_motor_winding realizer could author a NetTie; an agent hand-building a
+// wye had to do offline JSON surgery on the saved .vcad. These tools complete
+// the algebra: author and remove ties on the live session.
+
+/** Tolerance for matching a tie by position in delete_net_tie, mm. */
+const TIE_POSITION_TOL = 1e-3;
+
+/** The reported view of one net tie: the stored fields plus its index (the
+ *  addressing delete_net_tie accepts) and the DRC scope it resolves to. */
+function describeNetTie(tie: NetTie, index: number): Record<string, unknown> {
+  return {
+    index,
+    nets: tie.nets,
+    ...(tie.position ? { position: tie.position } : {}),
+    ...(tie.radius !== undefined ? { radius: tie.radius } : {}),
+    scope: tie.position && tie.radius !== undefined ? "region" : "board_wide",
+  };
+}
+
+/** The full tie list, as returned by both tie tools after a mutation. */
+function netTieList(pcb: Pcb): Array<Record<string, unknown>> {
+  return (pcb.netTies ?? []).map((t, i) => describeNetTie(t, i));
+}
+
+/** JSON Schema for add_net_tie tool. */
+export const addNetTieSchema = {
+  type: "object" as const,
+  properties: {
+    ...docInputProperties,
+    nets: {
+      type: "array" as const,
+      items: { type: "string" as const },
+      description:
+        "Names of the nets joined at this tie (>= 2, all must exist on the " +
+        "board) — e.g. the three phases + neutral of a wye, or GND + AGND.",
+    },
+    position: {
+      ...vec2Schema,
+      description:
+        "Center of the allowed join region, board-local mm. Give WITH `radius` " +
+        "to scope the exemption; omit both for a board-wide tie.",
+    },
+    radius: {
+      type: "number" as const,
+      description:
+        "Radius of the allowed join region, mm (> 0). Requires `position`. " +
+        "Size it to cover the junction copper with margin (~1 trace width): " +
+        "DRC judges each contact at an estimated contact point (e.g. a trace " +
+        "midpoint), not the exact geometric touch.",
+    },
+  },
+  required: ["document_id", "nets"],
+};
+
+/**
+ * Declare an intentional junction between two or more nets (a net-tie) so DRC
+ * treats them as one electrical node where they meet — the primitive behind
+ * wye/star neutral points, split-ground stitches, and current-sense shunt
+ * taps. Region-scoped (position+radius) ties exempt clearance/short checks
+ * only for contacts inside the region — and connectivity: nets joined through
+ * copper are legal when each has a tie-covered contact there (a stray crossing
+ * of the same nets elsewhere still fires). Region-less ties exempt the pair
+ * board-wide. Mutates the session document.
+ */
+export function addNetTie(args: Record<string, unknown>) {
+  const ctx = resolveDocInput(args);
+  const pcb = getDocPcb(ctx.doc);
+  const fail = ecadError;
+  if (!pcb) {
+    return fail(
+      "Document has no PCB — run place_components first (or open a document that has a board)",
+    );
+  }
+
+  const rawNets = Array.isArray(args.nets) ? (args.nets as unknown[]) : undefined;
+  if (!rawNets) return fail("nets is required — the >= 2 net names this tie joins");
+  const nets: string[] = [];
+  for (const n of rawNets) {
+    const name = String(n ?? "").trim();
+    if (!name) return fail("every entry in nets must be a non-empty net name");
+    if (!nets.includes(name)) nets.push(name);
+  }
+  if (nets.length < 2) return fail("a net tie joins at least 2 distinct nets");
+
+  // A tie on a net that doesn't exist is a typo, not an intention — and it
+  // would silently exempt nothing. Validate against the board's netlist.
+  const known = new Set(pcb.nets.map((n) => n.id));
+  const unknown = nets.filter((n) => !known.has(n));
+  if (unknown.length > 0) {
+    const names = pcb.nets.map((n) => n.id);
+    const shown = names.slice(0, 30).join(", ");
+    return fail(
+      `unknown net${unknown.length > 1 ? "s" : ""} ${unknown.map((n) => `'${n}'`).join(", ")} — ` +
+        `board nets: ${shown}${names.length > 30 ? `, … (${names.length} total)` : ""}`,
+    );
+  }
+
+  // The kernel only forms a scoped region when BOTH position and radius are
+  // present (NetTieGroups in drc.rs); one without the other would silently
+  // degrade to a board-wide exemption. Fail closed instead.
+  const hasPosition = args.position != null;
+  const hasRadius = args.radius != null;
+  if (hasPosition !== hasRadius) {
+    return fail(
+      "position and radius must be given together — one without the other " +
+        "would silently become a board-wide exemption. Pass both to scope the " +
+        "tie to a region, or neither for an explicit board-wide tie.",
+    );
+  }
+  let position: Vec2 | undefined;
+  let radius: number | undefined;
+  if (hasPosition) {
+    const p = args.position as Record<string, unknown>;
+    if (typeof p.x !== "number" || typeof p.y !== "number") {
+      return fail("position must be {x, y} in board-local mm");
+    }
+    radius = args.radius as number;
+    if (typeof radius !== "number" || !(radius > 0)) return fail("radius must be > 0 mm");
+    position = { x: round3(p.x as number), y: round3(p.y as number) };
+    radius = round3(radius);
+  }
+
+  pcb.netTies = pcb.netTies ?? [];
+  const tie: NetTie = {
+    nets,
+    ...(position ? { position } : {}),
+    ...(radius !== undefined ? { radius } : {}),
+  };
+  pcb.netTies.push(tie);
+  const index = pcb.netTies.length - 1;
+
+  const change: PcbElementChange = {
+    action: "added",
+    kind: "netTie",
+    index,
+    net: nets.join("+"),
+  };
+
+  return {
+    content: [
+      {
+        type: "text" as const,
+        text: JSON.stringify({
+          success: true,
+          tie: describeNetTie(tie, index),
+          net_ties: netTieList(pcb),
+          net_ties_total: pcb.netTies.length,
+          changed: [change],
+          ...docResultPayload(ctx),
+        }),
+      },
+    ],
+  };
+}
+
+/** JSON Schema for delete_net_tie tool. */
+export const deleteNetTieSchema = {
+  type: "object" as const,
+  properties: {
+    ...docInputProperties,
+    index: {
+      type: "number" as const,
+      description:
+        "Zero-based position in pcb.netTies (as reported by add_net_tie / get_document).",
+    },
+    nets: {
+      type: "array" as const,
+      items: { type: "string" as const },
+      description:
+        "Match ties joining exactly this net set (order-insensitive). With " +
+        "`index`, a guard; without it, identifies the tie when exactly one matches.",
+    },
+    position: {
+      ...vec2Schema,
+      description:
+        `Match region-scoped ties centered here (±${TIE_POSITION_TOL} mm) — ` +
+        "disambiguates when the same net set is tied at several junctions " +
+        "(e.g. the three X–Y ties of a delta winding).",
+    },
+  },
+  required: ["document_id"],
+};
+
+/** Remove a net tie by `index`, or by matching `nets` (set equality) and/or
+ *  `position` — the take-back for a bad add_net_tie. The junction's copper (if
+ *  any) stays; DRC will report it as a short again. Mutates the session. */
+export function deleteNetTie(args: Record<string, unknown>) {
+  const ctx = resolveDocInput(args);
+  const pcb = getDocPcb(ctx.doc);
+  const fail = ecadError;
+  if (!pcb) {
+    return fail(
+      "Document has no PCB — run place_components first (or open a document that has a board)",
+    );
+  }
+  const ties = pcb.netTies ?? [];
+  if (ties.length === 0) return fail("board has no net ties to delete");
+
+  let wantNets: string[] | undefined;
+  if (args.nets != null) {
+    if (!Array.isArray(args.nets)) return fail("nets must be an array of net names");
+    wantNets = (args.nets as unknown[]).map((n) => String(n ?? "").trim()).sort();
+  }
+  let wantPos: Vec2 | undefined;
+  if (args.position != null) {
+    const p = args.position as Record<string, unknown>;
+    if (typeof p.x !== "number" || typeof p.y !== "number") {
+      return fail("position must be {x, y} in board-local mm");
+    }
+    wantPos = { x: p.x as number, y: p.y as number };
+  }
+
+  const matchesFilter = (tie: NetTie): boolean => {
+    if (wantNets) {
+      const have = [...tie.nets].sort();
+      if (have.length !== wantNets.length || have.some((n, i) => n !== wantNets![i])) return false;
+    }
+    if (wantPos) {
+      if (!tie.position) return false;
+      if (
+        Math.abs(tie.position.x - wantPos.x) > TIE_POSITION_TOL ||
+        Math.abs(tie.position.y - wantPos.y) > TIE_POSITION_TOL
+      ) {
+        return false;
+      }
+    }
+    return true;
+  };
+
+  let index: number;
+  if (typeof args.index === "number") {
+    index = args.index as number;
+    if (!Number.isInteger(index) || index < 0 || index >= ties.length) {
+      return fail(`index ${index} out of range — board has ${ties.length} net ties (0..${ties.length - 1})`);
+    }
+    // A nets/position given alongside the index is a guard against deleting
+    // the wrong tie — confirm the indexed tie actually matches.
+    if (!matchesFilter(ties[index]!)) {
+      return fail(
+        `net tie at index ${index} joins [${ties[index]!.nets.join(", ")}]` +
+          `${ties[index]!.position ? ` at (${ties[index]!.position!.x}, ${ties[index]!.position!.y})` : ""}, ` +
+          "not the nets/position you specified",
+      );
+    }
+  } else if (wantNets || wantPos) {
+    const matches = ties.flatMap((t, i) => (matchesFilter(t) ? [i] : []));
+    const sel = [
+      wantNets ? `[${wantNets.join(", ")}]` : undefined,
+      wantPos ? `(${wantPos.x}, ${wantPos.y})` : undefined,
+    ]
+      .filter(Boolean)
+      .join(" at ");
+    if (matches.length === 0) return fail(`no net tie matches ${sel}`);
+    if (matches.length > 1) {
+      return fail(
+        `${matches.length} net ties match ${sel} (indices ${matches.join(", ")}) — pass \`index\` or \`position\` to pick one`,
+      );
+    }
+    index = matches[0]!;
+  } else {
+    return fail(
+      `pass \`index\` (0..${ties.length - 1}), \`nets\`, or \`position\` to identify the tie to delete`,
+    );
+  }
+
+  const [removed] = ties.splice(index, 1);
+  const change: PcbElementChange = {
+    action: "removed",
+    kind: "netTie",
+    index,
+    net: removed!.nets.join("+"),
+  };
+
+  return {
+    content: [
+      {
+        type: "text" as const,
+        text: JSON.stringify({
+          success: true,
+          deleted: describeNetTie(removed!, index),
+          net_ties: netTieList(pcb),
+          net_ties_total: ties.length,
+          changed: [change],
+          ...docResultPayload(ctx),
+        }),
+      },
+    ],
+  };
+}
+
+// ============================================================================
 // undo — rewind the last mutation on a session (snapshot stack)
 // ============================================================================
 
@@ -8032,11 +8611,16 @@ function diffElementArray(
 /** Board-element diff between two PCBs (or null when neither has a board). */
 function diffPcbElements(before: Pcb | null, after: Pcb | null): PcbElementChange[] {
   if (!before || !after) return [];
+  // Ties carry no single `net` — view them with the joined names so the
+  // generic differ (which keys on full JSON and reads `.net`) can report them.
+  const tieView = (ties?: NetTie[]) =>
+    (ties ?? []).map((t) => ({ ...t, net: t.nets.join("+") }));
   return [
     ...diffElementArray("zone", before.zones ?? [], after.zones ?? []),
     ...diffElementArray("trace", before.traces ?? [], after.traces ?? []),
     ...diffElementArray("traceArc", (before.traceArcs ?? []) as never, (after.traceArcs ?? []) as never),
     ...diffElementArray("via", before.vias ?? [], after.vias ?? []),
+    ...diffElementArray("netTie", tieView(before.netTies) as never, tieView(after.netTies) as never),
   ];
 }
 
