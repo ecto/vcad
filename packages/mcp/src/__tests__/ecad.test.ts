@@ -1325,7 +1325,11 @@ describe("ecad session flow", () => {
     // Deliberately NOT routed → MID's two pads sit in disjoint copper groups,
     // so DRC reports an UnconnectedNet error and the board is not fab-clean.
 
-    const blocked = out(await exportGerber({ document_id: id })); // require_clean_drc defaults true
+    const blockedResult = await exportGerber({ document_id: id }); // require_clean_drc defaults true
+    // The gate tripping is a verdict, not a tool failure — isError would make
+    // clients and telemetry read a working guard as a crash.
+    expect((blockedResult as { isError?: boolean }).isError).toBeUndefined();
+    const blocked = out(blockedResult);
     expect(blocked.success).toBe(false);
     expect(blocked.blocked).toBe(true);
     expect(blocked.drc.errors).toBeGreaterThan(0);

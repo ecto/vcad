@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-07-save-document-durable",
+  "version": "0.9.4",
+  "date": "2026-07-07",
+  "category": "fix",
+  "title": "save_document works on the hosted MCP server",
+  "summary": "save_document/load_document now persist durably on mcp.vcad.io: signed-in saves land in your vcad.io account under the given name; anonymous saves return a private reopen key. Previously every hosted save failed.",
+  "features": ["mcp", "sessions", "durability"],
+  "mcpTools": ["save_document", "load_document"]
+}
