@@ -15,6 +15,7 @@ import {
 } from "@vcad/engine";
 import type { Node } from "@vcad/ir";
 import { getSession } from "./session.js";
+import { behavior, type ToolDef } from "./tool-def.js";
 
 export const searchPartsSchema = {
   type: "object",
@@ -210,3 +211,24 @@ export function placePartTool(
     ],
   };
 }
+
+export const toolDefs: ToolDef[] = [
+  {
+    name: "search_parts",
+    pack: null,
+    description:
+      "Search the stdlib parts library (fasteners, bearings, …). Matches across name, category, synonyms, and catalog part numbers (McMaster / ISO / DIN). Returns an array of {id, name, category, params, xrefs, synonyms} — use `id` with `place_part`. Part numbers like '91290A320' or 'ISO 4762' match directly.",
+    inputSchema: searchPartsSchema,
+    handler: (a, c) => searchPartsTool(a, c.engine),
+    behavior: behavior({}),
+  },
+  {
+    name: "place_part",
+    pack: null,
+    description:
+      "Insert a stdlib part into the session's document. Takes a `document_id`, a `path` (from `search_parts.id`), and an optional `params` map; missing params use declared defaults. The part remains parametric — end users can edit its params from the feature tree.",
+    inputSchema: placePartSchema,
+    handler: (a, c) => placePartTool(a, c.engine),
+    behavior: behavior({ writesDoc: true, geometry: true }),
+  },
+];

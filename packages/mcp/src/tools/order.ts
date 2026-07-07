@@ -24,6 +24,7 @@ import { ownerId, type FabricateStore } from "../fabricate/store.js";
 import { buildFabHandoff } from "../fabricate/handoff.js";
 import { captureEvent } from "../telemetry.js";
 import { resolveArtifactRef } from "./artifact-store.js";
+import { behavior, type ToolDef } from "./tool-def.js";
 import {
   PROCESSES,
   type DfmSummary,
@@ -34,17 +35,9 @@ import {
   type Process,
   type Quote,
 } from "../fabricate/types.js";
-
-type ToolResult = { content: Array<{ type: "text"; text: string }>; isError?: boolean };
+import { okPretty as ok, err, type ToolResult } from "./tool-result.js";
 
 const QUOTE_TTL_MS = 24 * 60 * 60 * 1000; // 24h. Phase 1 shortens this for duty volatility.
-
-function ok(payload: unknown): ToolResult {
-  return { content: [{ type: "text", text: JSON.stringify(payload, null, 2) }] };
-}
-function err(message: string): ToolResult {
-  return { content: [{ type: "text", text: JSON.stringify({ error: message }) }], isError: true };
-}
 
 // ── quote_manufacturing ────────────────────────────────────────────────────
 
@@ -394,3 +387,33 @@ export async function listOrders(
     })),
   });
 }
+
+export const toolDefs: ToolDef[] = [
+  {
+    name: "quote_manufacturing",
+    pack: "fabricate",
+    description:
+      "Quote manufacturing a part: measures the design, runs light DFM, and returns margin-inclusive price options per fab (pcb/cnc/3dprint/sheet_metal/cast_metal). Pass `ir` (inline Document — stateless, no open_document needed, serverless-safe, parallel-safe) OR a `document_id` from an open session. Persists a quote + a QUOTED order. Phase 0 is quote-only — prices are estimates and ordering/payment ship next; no money moves. For sheet_metal the result includes `fab_handoff`: curated US instant-quote shops (SendCutSend/OSH Cut/Fabworks), the exact file recipe (DXF via sheet_metal_unfold or folded STEP via export_cad), and what to enter at upload — everything needed to finish the order on the fab's site today.",
+    inputSchema: quoteManufacturingSchema,
+    handler: (a, c) => quoteManufacturing(a, c.engine, c.fabricateStore, c.user),
+    behavior: behavior({}),
+  },
+  {
+    name: "get_order_status",
+    pack: "fabricate",
+    description:
+      "Return the lifecycle row for a Fabricate order (state, fab, totals, event timeline). Read-only.",
+    inputSchema: getOrderStatusSchema,
+    handler: (a, c) => getOrderStatus(a, c.fabricateStore, c.user),
+    behavior: behavior({}),
+  },
+  {
+    name: "list_orders",
+    pack: "fabricate",
+    description:
+      "List the caller's Fabricate orders, newest first. Optional status filter and limit. Read-only.",
+    inputSchema: listOrdersSchema,
+    handler: (a, c) => listOrders(a, c.fabricateStore, c.user),
+    behavior: behavior({}),
+  },
+];

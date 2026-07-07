@@ -23,15 +23,8 @@ import { ownerId, type FabricateStore } from "../fabricate/store.js";
 import { resolveArtifactRef } from "./artifact-store.js";
 import type { SessionEventStore } from "../session-store.js";
 import type { FabArtifactRef, SpendAuthorization } from "../fabricate/types.js";
-
-type ToolResult = { content: Array<{ type: "text"; text: string }>; isError?: boolean };
-
-function ok(payload: unknown): ToolResult {
-  return { content: [{ type: "text", text: JSON.stringify(payload, null, 2) }] };
-}
-function err(message: string): ToolResult {
-  return { content: [{ type: "text", text: JSON.stringify({ error: message }) }], isError: true };
-}
+import { behavior, type ToolDef } from "./tool-def.js";
+import { okPretty as ok, err, type ToolResult } from "./tool-result.js";
 
 /** Ordering is disabled unless explicitly enabled — test-mode, flag-gated. */
 export function orderingEnabled(): boolean {
@@ -284,3 +277,24 @@ export async function placeOrder(
         : ""),
   });
 }
+
+export const toolDefs: ToolDef[] = [
+  {
+    name: "authorize_spend",
+    pack: "fabricate",
+    description:
+      "Propose a spend authorization for a QUOTED order. Creates a DB-backed, revocable authorization (status pending_human) and records the proposal on the session's event log. A HUMAN must approve it in the vcad app before place_order can charge — the agent cannot approve its own spend. Flag-gated (test-mode); no money moves here.",
+    inputSchema: authorizeSpendSchema,
+    handler: (a, c) => authorizeSpend(a, c.fabricateStore, c.eventStore, c.user),
+    behavior: behavior({}),
+  },
+  {
+    name: "place_order",
+    pack: "fabricate",
+    description:
+      "Place a QUOTED order once its authorization has been human-approved: performs one atomic wallet debit and moves the order to PAID (fab submission follows in a later step). Refuses if the authorization is still pending approval. Flag-gated (test-mode).",
+    inputSchema: placeOrderSchema,
+    handler: (a, c) => placeOrder(a, c.fabricateStore, c.eventStore, c.user),
+    behavior: behavior({}),
+  },
+];

@@ -1,3 +1,4 @@
+import { behavior, type ToolDef } from "./tool-def.js";
 /**
  * `check_clearance` — named clearance/clash assertions between part groups.
  *
@@ -461,3 +462,15 @@ function err(text: string) {
     isError: true as const,
   };
 }
+
+export const toolDefs: ToolDef[] = [
+  {
+    name: "check_clearance",
+    pack: null,
+    description:
+      "Measure the minimum distance between two groups of parts in a CAD session and assert it stays above `min_mm` \u2014 air gaps, press fits, screw-head clearances. Reports the measured minimum (negative = penetration depth), the worst part pair, and pass/fail. Give it a `label` to persist the assertion on the document: build_receipt then emits it as a mech.clearance claim and verify_receipt re-verifies it as Holds / Stale / Violated when geometry changes.",
+    inputSchema: checkClearanceSchema,
+    handler: (a, c) => checkClearance(a, c.engine),
+    behavior: behavior({ writesDoc: true }),
+  },
+];

@@ -1,0 +1,12 @@
+import { createServer } from "./packages/mcp/dist/server.js";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { writeFileSync } from "node:fs";
+const server = await createServer();
+const client = new Client({ name: "dump", version: "0.0.0" }, { capabilities: {} });
+const [ct, st] = InMemoryTransport.createLinkedPair();
+await Promise.all([client.connect(ct), server.connect(st)]);
+const { tools } = await client.listTools();
+writeFileSync(process.argv[2], JSON.stringify(tools, null, 2) + "\n");
+console.log("dumped", tools.length, "tools");
+process.exit(0);

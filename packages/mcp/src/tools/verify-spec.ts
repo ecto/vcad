@@ -13,6 +13,7 @@
 
 import { createHash } from "node:crypto";
 import type { Engine } from "@vcad/engine";
+import { behavior, type ToolDef } from "./tool-def.js";
 import { computeIntegrity } from "./integrity.js";
 import { getSession } from "./session.js";
 import {
@@ -128,3 +129,15 @@ export function verifySpec(
     ],
   };
 }
+
+export const toolDefs: ToolDef[] = [
+  {
+    name: "verify_spec",
+    pack: null,
+    description:
+      "TDD for CAD: grade an open session document against a caller-supplied spec and return a fail-closed verification receipt (schema vcad.receipt/1). Declare the spec FIRST \u2014 bounding-box min/max \u00b1 tolerance, volume range, watertightness, exact part count, center of mass \u00b1 tolerance \u2014 then iterate the geometry until every claim rolls up to pass. Each claim reports measured vs expected. Fail-closed: an empty spec, a missing measurement, or a claim the kernel can't evaluate is `unverifiable`, never a silent pass. Unlike verify_part this needs no mecheval task \u2014 you supply the acceptance criteria.",
+    inputSchema: verifySpecSchema,
+    handler: (a, c) => verifySpec(a, c.engine),
+    behavior: behavior({}),
+  },
+];

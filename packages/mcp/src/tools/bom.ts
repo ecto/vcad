@@ -30,6 +30,7 @@ import { ownerId, type FabricateStore } from "../fabricate/store.js";
 import { estimateLandedCost } from "../fabricate/pricing.js";
 import { PROCESSES } from "../fabricate/types.js";
 import { mechCatalog, type MechPart } from "./mech-parts.js";
+import { behavior, type ToolDef } from "./tool-def.js";
 
 type ToolResult = { content: Array<{ type: "text"; text: string }>; isError?: boolean };
 
@@ -730,3 +731,33 @@ export function renderCsv(bom: Bom): string {
   }
   return rows.join("\r\n") + "\r\n";
 }
+
+export const toolDefs: ToolDef[] = [
+  {
+    name: "bom_create",
+    pack: "bom",
+    description:
+      "Create a project bill of materials — the deliverable that collects every manufactured part (PCBs, sheet metal, 3D prints; link quote_manufacturing quotes by quote_id) and COTS part (bearings, shafts, screws, magnets; link search_mechanical_parts entries by catalog_id) in one place. Optionally attach a document_id and assembly notes. Pass the full `lines` array to build the whole BOM in ONE call — recommended, since BOMs are in-memory per server instance. All prices are estimates and flagged as such.",
+    inputSchema: bomCreateSchema,
+    handler: (a, c) => bomCreate(a, c.fabricateStore, c.user),
+    behavior: behavior({}),
+  },
+  {
+    name: "bom_add_line",
+    pack: "bom",
+    description:
+      "Append one line to a BOM from bom_create. kind 'manufactured': name + process (or a quote_id from quote_manufacturing, which auto-fills process, vendor, qty, and the landed unit price) plus optional artifact path and document_id. kind 'cots': name/spec/example_pn/vendor/qty/unit_price_usd, or a catalog_id from search_mechanical_parts to auto-fill spec and a price-band-midpoint estimate. Returns the running totals.",
+    inputSchema: bomAddLineSchema,
+    handler: (a, c) => bomAddLine(a, c.fabricateStore, c.user),
+    behavior: behavior({}),
+  },
+  {
+    name: "bom_export",
+    pack: "bom",
+    description:
+      "Render a BOM as markdown (the shareable deliverable: manufactured-parts table with vendors/prices/artifact sources, COTS table with specs and example PNs, totals, assembly notes), csv (flat, spreadsheet-ready), or json (the full object). Totals include a landed-cost shipping estimate reusing the Fabricate shipping model (per distinct vendor; quote-linked lines are already landed). Also returns a vcad.receipt/1 `receipt_claim` (domain 'bom') carrying the cost estimate for a DesignReceipt — informational, never gates a design verdict. Prices are estimates and every export says so.",
+    inputSchema: bomExportSchema,
+    handler: (a, c) => bomExport(a, c.user),
+    behavior: behavior({}),
+  },
+];

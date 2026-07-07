@@ -13,6 +13,7 @@ import type { Engine, TriangleMesh } from "@vcad/engine";
 import type { Document } from "@vcad/ir";
 import { isoperimetricViolation } from "./integrity.js";
 import { resolveDocInput } from "./session.js";
+import { behavior, type ToolDef } from "./tool-def.js";
 
 export const inspectCadSchema = {
   type: "object" as const,
@@ -380,3 +381,15 @@ export function inspectCad(
     ],
   };
 }
+
+export const toolDefs: ToolDef[] = [
+  {
+    name: "inspect_cad",
+    pack: null,
+    description:
+      "Inspect an open session document to get aggregate geometry properties: volume, surface area, bounding box, center of mass, triangle count, and mass (if material density is known). For per-part inspection use the chat-surface `inspect_part` / `describe_scene` tools (deferred from this MCP surface in v1).",
+    inputSchema: inspectCadSchema,
+    handler: (a, c) => inspectCad(a, c.engine),
+    behavior: behavior({}),
+  },
+];

@@ -19,6 +19,8 @@ import type { Document } from "@vcad/ir";
 import { getSession } from "./session.js";
 import { getSimulation } from "./gym.js";
 import type { PhysicsActionType } from "@vcad/engine";
+import { behavior, type ToolDef } from "./tool-def.js";
+import type { ToolResult } from "./tool-result.js";
 
 export const recordSimulationSchema = {
   type: "object" as const,
@@ -480,3 +482,20 @@ function errorResult(text: string): RecordResult {
     isError: true,
   };
 }
+
+export const toolDefs: ToolDef[] = [
+  {
+    name: "record_simulation",
+    pack: "physics",
+    description:
+      "Step an open physics env N times and return an animated GIF of the run — your eyes on the simulation. " +
+      "Drives the env created via create_robot_env, mutates the paired session document's joint states each step, " +
+      "and re-renders through the same kernel SVG pipeline as render_view. " +
+      "Defaults to passive playback (zero torque) under gravity; pass `action` (constant) or `actions[steps][action_dim]` (per-step) for active control. " +
+      "Hard caps: steps ≤ 600, width_px ≤ 1024. " +
+      "Requires the optional `@resvg/resvg-js` rasterizer and `gifenc` encoder; degrades to a JSON joint-trajectory dump when either is missing.",
+    inputSchema: recordSimulationSchema,
+    handler: async (a) => (await recordSimulation(a)) as unknown as ToolResult,
+    behavior: behavior({}),
+  },
+];
