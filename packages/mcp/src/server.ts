@@ -240,6 +240,12 @@ import {
   deleteTraceSchema,
   deleteVia,
   deleteViaSchema,
+  getCopper,
+  getCopperSchema,
+  addNetTie,
+  addNetTieSchema,
+  deleteNetTie,
+  deleteNetTieSchema,
   undo,
   undoSchema,
   setDesignRules,
@@ -511,6 +517,10 @@ const SWITCH_DOC_WRITERS = new Set<string>([
   "delete_zone",
   "delete_trace",
   "delete_via",
+  // Net ties are DRC data, not copper — invisible in the render, but they
+  // change what run_drc accepts, so they must persist (and be undoable).
+  "add_net_tie",
+  "delete_net_tie",
   "undo",
   "set_stackup",
   "set_placement",
@@ -674,6 +684,7 @@ const TOOL_PACKS: Record<string, readonly string[]> = {
     "route_nets",
     "get_pad_positions",
     "describe_pcb",
+    "get_copper",
     "add_trace",
     "add_via",
     "add_via_array",
@@ -684,6 +695,8 @@ const TOOL_PACKS: Record<string, readonly string[]> = {
     "delete_zone",
     "delete_trace",
     "delete_via",
+    "add_net_tie",
+    "delete_net_tie",
     "set_design_rules",
     "size_trace_for_current",
     "add_coil",
@@ -755,7 +768,7 @@ function buildInstructions(kernelPrompt: string | null): string {
     "- Ship with `export_cad` (STL/GLB/STEP) or `open_in_browser` (vcad.io deep link).",
     "- Fix in place: when geometry is wrong, prefer `update` on the offending node over deleting parts and starting over.",
     "",
-    "PCB workflow: `create_schematic` (declare connectivity as data via `nets`) → `place_components` → `route_nets` / `add_coil` / `add_coil_array` → `run_drc` → `validate_for_fab` → `export_gerber`. All take the `document_id` from create_schematic and mutate that session — never re-send the document. `validate_for_fab` is the single 'is this board ready?' gate (DRC + renderability + Gerber serialization + blockers, all fail-closed); `export_gerber` enforces a clean DRC by default and blocks a dirty board. `board_from_solid` turns a solid part (e.g. an enclosure or stator disc in a CAD session) into an outline polygon for `place_components`. For motors, plan the winding first with `winding_layout` (slots + poles → per-coil phase/polarity/winding-factor, as data — it touches no board), then realize it with `add_coil_array`. `run_drc` returns a summary by default (counts by rule + net-pair, worst clearance, a capped sample); pass `detail:'full'` for every violation.",
+    "PCB workflow: `create_schematic` (declare connectivity as data via `nets`) → `place_components` → `route_nets` / `add_coil` / `add_coil_array` → `run_drc` → `validate_for_fab` → `export_gerber`. All take the `document_id` from create_schematic and mutate that session — never re-send the document. `validate_for_fab` is the single 'is this board ready?' gate (DRC + renderability + Gerber serialization + blockers, all fail-closed); `export_gerber` enforces a clean DRC by default and blocks a dirty board. `board_from_solid` turns a solid part (e.g. an enclosure or stator disc in a CAD session) into an outline polygon for `place_components`. For motors, plan the winding first with `winding_layout` (slots + poles → per-coil phase/polarity/winding-factor, as data — it touches no board), then realize it with `add_coil_array`. `run_drc` returns a summary by default (counts by rule + net-pair, worst clearance, a capped sample); pass `detail:'full'` for every violation. Surgical copper edits: `get_copper` lists existing traces/vias/zones (filtered by layer/net/bbox/kind) with the same indices `delete_trace`/`delete_via`/`delete_zone` accept — discover, then delete, without exporting the document. Where two nets must touch on purpose (wye neutral, split ground, shunt tap), declare it with `add_net_tie` — prefer a region-scoped tie (position+radius) so DRC stays honest away from the junction; `delete_net_tie` takes it back.",
   ].join("\n");
   if (!kernelPrompt) return header;
   const sections = new Map<string, string>();
@@ -1654,6 +1667,45 @@ export async function createServer(
         inputSchema: deleteViaSchema,
       },
       {
+        name: "get_copper",
+        description:
+          "Query the board's routed copper — traces, trace arcs, vias, zones — " +
+          "with optional `layer`/`net`/`bbox`/`kind` filters. Each element comes " +
+          "back with its `kind` + `index`: exactly the addressing delete_trace / " +
+          "delete_via / delete_zone accept, so a query can drive a surgical " +
+          "delete without exporting the document. describe_pcb aggregates " +
+          "counts; this returns the elements themselves (geometry, width, net, " +
+          "layer), capped at 200 per page with `offset` pagination and a `total`. " +
+          "Read-only.",
+        inputSchema: getCopperSchema,
+      },
+      {
+        name: "add_net_tie",
+        description:
+          "Declare an intentional junction between >= 2 nets (a net-tie) so DRC " +
+          "treats them as one node where they meet — required for wye/star motor " +
+          "neutrals, split grounds (GND+AGND), and current-sense shunt taps, " +
+          "which are otherwise reported as shorts. With `position`+`radius` the " +
+          "tie is region-scoped: clearance/short checks are exempt only for " +
+          "contacts inside the region, and connectivity accepts nets joined " +
+          "through copper when each has a tie-covered contact there — a stray " +
+          "crossing of the same nets elsewhere still fires. Without them the " +
+          "exemption is board-wide (prefer scoped: it keeps DRC honest away " +
+          "from the junction). Nets must exist on the board. Returns the " +
+          "updated tie list with indices. Mutates the session document.",
+        inputSchema: addNetTieSchema,
+      },
+      {
+        name: "delete_net_tie",
+        description:
+          "Remove a net tie by `index`, or by matching `nets` (set equality, " +
+          "order-insensitive) and/or `position` — the take-back for a bad " +
+          "add_net_tie. Any junction copper stays on the board; DRC will report " +
+          "it as a short again. Returns the deleted tie and the updated tie " +
+          "list. Mutates the session document.",
+        inputSchema: deleteNetTieSchema,
+      },
+      {
         name: "undo",
         description:
           "Rewind the most recent mutation on a session — the snapshot taken " +
@@ -2443,6 +2495,18 @@ export async function createServer(
 
         case "delete_via":
           result = deleteVia(args);
+          break;
+
+        case "get_copper":
+          result = getCopper(args);
+          break;
+
+        case "add_net_tie":
+          result = addNetTie(args);
+          break;
+
+        case "delete_net_tie":
+          result = deleteNetTie(args);
           break;
 
         case "undo":

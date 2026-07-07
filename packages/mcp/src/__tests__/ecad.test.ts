@@ -36,6 +36,9 @@ import {
   deleteZone,
   deleteTrace,
   deleteVia,
+  getCopper,
+  addNetTie,
+  deleteNetTie,
   undo,
   setDesignRules,
   sizeTraceForCurrent,
@@ -4595,6 +4598,326 @@ describe("delete_zone / delete_trace / delete_via", () => {
     const dv = out(await deleteVia({ document_id: id, index: 0 }));
     expect(dv.deleted).toMatchObject({ kind: "via", net: "MID" });
     expect(getPcbBoard(getSession(id)).vias).toHaveLength(0);
+  });
+});
+
+describe("get_copper", () => {
+  /** Board with two traces (MID/AUX), one via, and a back-side GND pour. */
+  async function boardWithCopper(): Promise<string> {
+    const id = await boardWithTwoResistors();
+    out(
+      await addTrace({
+        document_id: id,
+        net: "MID",
+        points: [
+          { x: 10, y: 10 },
+          { x: 20, y: 10 },
+        ],
+      }),
+    );
+    out(
+      await addTrace({
+        document_id: id,
+        net: "AUX",
+        layer: "BCu",
+        points: [
+          { x: 30, y: 30 },
+          { x: 40, y: 30 },
+        ],
+      }),
+    );
+    out(await addVia({ document_id: id, net: "MID", position: { x: 20, y: 10 } }));
+    out(await addZone({ document_id: id, net: "GND", layer: "BCu", fill_board: true }));
+    return id;
+  }
+
+  it("returns every element with delete-compatible kind + index", async () => {
+    const id = await boardWithCopper();
+    const res = out(await getCopper({ document_id: id }));
+    expect(res.success).toBe(true);
+    expect(res.total).toBe(4);
+    expect(res.count).toBe(4);
+    expect(res.next_offset).toBeUndefined();
+    expect(res.total_by_kind).toEqual({ trace: 2, via: 1, zone: 1 });
+
+    // Deterministic order: traces, arcs, vias, zones — index order within each.
+    expect(res.elements.map((e: { kind: string }) => e.kind)).toEqual([
+      "trace",
+      "trace",
+      "via",
+      "zone",
+    ]);
+    expect(res.elements[0]).toMatchObject({
+      kind: "trace",
+      index: 0,
+      net: "MID",
+      layer: "FCu",
+      start: { x: 10, y: 10 },
+      end: { x: 20, y: 10 },
+      source: "manual",
+    });
+    expect(res.elements[2]).toMatchObject({
+      kind: "via",
+      index: 0,
+      net: "MID",
+      layers: ["FCu", "BCu"],
+      position: { x: 20, y: 10 },
+    });
+    // Zones report bbox + vertex count, not the (possibly huge) outline.
+    expect(res.elements[3]).toMatchObject({ kind: "zone", index: 0, net: "GND", layer: "BCu" });
+    expect(res.elements[3].bbox).toEqual({ min: { x: 0, y: 0 }, max: { x: 50, y: 50 } });
+    expect(res.elements[3].vertices).toBeGreaterThanOrEqual(3);
+    expect(res.elements[3].outline).toBeUndefined();
+  });
+
+  it("filters by kind, net, layer, and bbox", async () => {
+    const id = await boardWithCopper();
+
+    const vias = out(await getCopper({ document_id: id, kind: "via" }));
+    expect(vias.total).toBe(1);
+    expect(vias.elements[0].kind).toBe("via");
+
+    const mid = out(await getCopper({ document_id: id, net: "MID" }));
+    expect(mid.total).toBe(2); // FCu trace + via
+    expect(mid.elements.every((e: { net: string }) => e.net === "MID")).toBe(true);
+
+    // BCu: the AUX trace, the pour — and the via, whose barrel spans FCu→BCu.
+    const bcu = out(await getCopper({ document_id: id, layer: "BCu" }));
+    expect(bcu.total).toBe(3);
+    expect(bcu.elements.map((e: { kind: string }) => e.kind).sort()).toEqual([
+      "trace",
+      "via",
+      "zone",
+    ]);
+
+    // Spatial: only the MID trace's neighborhood, kind-scoped so the
+    // board-spanning pour doesn't match.
+    const near = out(
+      await getCopper({ document_id: id, kind: "trace", bbox: { x: 5, y: 5, w: 10, h: 10 } }),
+    );
+    expect(near.total).toBe(1);
+    expect(near.elements[0]).toMatchObject({ kind: "trace", net: "MID" });
+
+    // Empty match is a success with total 0, not an error.
+    const none = out(await getCopper({ document_id: id, net: "GHOST" }));
+    expect(none.total).toBe(0);
+    expect(none.elements).toEqual([]);
+  });
+
+  it("query indices drive surgical deletes", async () => {
+    const id = await boardWithCopper();
+    const aux = out(await getCopper({ document_id: id, kind: "trace", net: "AUX" }));
+    expect(aux.total).toBe(1);
+    const del = out(await deleteTrace({ document_id: id, index: aux.elements[0].index }));
+    expect(del.deleted).toMatchObject({ kind: "trace", net: "AUX" });
+    expect(out(await getCopper({ document_id: id, kind: "trace" })).total).toBe(1);
+  });
+
+  it("paginates with offset and reports the uncapped total", async () => {
+    const id = await boardWithTwoResistors();
+    for (let i = 0; i < 5; i++) {
+      out(await addVia({ document_id: id, net: "MID", position: { x: 10 + i * 5, y: 40 } }));
+    }
+    const p1 = out(await getCopper({ document_id: id, kind: "via", limit: 2 }));
+    expect(p1.total).toBe(5);
+    expect(p1.count).toBe(2);
+    expect(p1.next_offset).toBe(2);
+    expect(p1.elements.map((e: { index: number }) => e.index)).toEqual([0, 1]);
+
+    const p2 = out(await getCopper({ document_id: id, kind: "via", limit: 2, offset: 4 }));
+    expect(p2.count).toBe(1);
+    expect(p2.elements[0].index).toBe(4);
+    expect(p2.next_offset).toBeUndefined();
+  });
+
+  it("rejects a bad kind, a malformed layer, and a bad bbox", async () => {
+    const id = await boardWithTwoResistors();
+    expect(isErr(await getCopper({ document_id: id, kind: "wire" }))).toBe(true);
+    expect(isErr(await getCopper({ document_id: id, layer: "F.Cu" }))).toBe(true);
+    expect(isErr(await getCopper({ document_id: id, bbox: { x: 0, y: 0 } }))).toBe(true);
+  });
+});
+
+describe("add_net_tie / delete_net_tie", () => {
+  /** Board whose netlist has four nets (one pad each) and no routing. */
+  async function boardWithFourNets(): Promise<string> {
+    const created = out(
+      await createSchematic({
+        components: [resistor("R1", 0), resistor("R2", 20)],
+        nets: { PHA: ["R1.1"], PHB: ["R1.2"], GND: ["R2.1"], AGND: ["R2.2"] },
+      }),
+    );
+    const id = created.document_id as string;
+    out(await placeComponents({ document_id: id, board_width: 50, board_height: 50 }));
+    return id;
+  }
+
+  it("authors a board-wide tie and returns the updated tie list", async () => {
+    const id = await boardWithFourNets();
+    const res = out(await addNetTie({ document_id: id, nets: ["GND", "AGND"] }));
+    expect(res.success).toBe(true);
+    expect(res.tie).toMatchObject({ index: 0, nets: ["GND", "AGND"], scope: "board_wide" });
+    expect(res.net_ties).toEqual([res.tie]);
+    expect(res.net_ties_total).toBe(1);
+    expect(res.changed).toEqual([
+      { action: "added", kind: "netTie", index: 0, net: "GND+AGND" },
+    ]);
+
+    const board = getPcbBoard(getSession(id));
+    expect(board.netTies).toHaveLength(1);
+    expect(board.netTies![0]).toEqual({ nets: ["GND", "AGND"] });
+  });
+
+  it("authors a region-scoped tie with position + radius", async () => {
+    const id = await boardWithFourNets();
+    const res = out(
+      await addNetTie({
+        document_id: id,
+        nets: ["PHA", "PHB", "GND"],
+        position: { x: 25, y: 25 },
+        radius: 3,
+      }),
+    );
+    expect(res.tie).toMatchObject({
+      scope: "region",
+      position: { x: 25, y: 25 },
+      radius: 3,
+    });
+    const board = getPcbBoard(getSession(id));
+    expect(board.netTies![0].position).toEqual({ x: 25, y: 25 });
+    expect(board.netTies![0].radius).toBe(3);
+  });
+
+  it("rejects unknown nets, < 2 distinct nets, and a half-scoped region", async () => {
+    const id = await boardWithFourNets();
+    // Unknown net — the error names it so the typo is findable.
+    const bad = await addNetTie({ document_id: id, nets: ["GND", "GROUND"] });
+    expect(isErr(bad)).toBe(true);
+    expect((bad as { content: Array<{ text: string }> }).content[0].text).toContain("GROUND");
+
+    expect(isErr(await addNetTie({ document_id: id, nets: ["GND"] }))).toBe(true);
+    // Duplicates collapse — still one distinct net.
+    expect(isErr(await addNetTie({ document_id: id, nets: ["GND", "GND"] }))).toBe(true);
+    // position without radius (or vice versa) would silently become a
+    // board-wide exemption in the kernel — rejected outright.
+    expect(
+      isErr(await addNetTie({ document_id: id, nets: ["GND", "AGND"], position: { x: 1, y: 1 } })),
+    ).toBe(true);
+    expect(isErr(await addNetTie({ document_id: id, nets: ["GND", "AGND"], radius: 2 }))).toBe(true);
+    expect(
+      isErr(
+        await addNetTie({
+          document_id: id,
+          nets: ["GND", "AGND"],
+          position: { x: 1, y: 1 },
+          radius: 0,
+        }),
+      ),
+    ).toBe(true);
+    expect(getPcbBoard(getSession(id)).netTies ?? []).toHaveLength(0);
+  });
+
+  it("deletes by index, by net set, and by position; guards a mismatched index", async () => {
+    const id = await boardWithFourNets();
+    out(await addNetTie({ document_id: id, nets: ["GND", "AGND"] }));
+    out(
+      await addNetTie({
+        document_id: id,
+        nets: ["PHA", "PHB"],
+        position: { x: 10, y: 10 },
+        radius: 2,
+      }),
+    );
+    out(
+      await addNetTie({
+        document_id: id,
+        nets: ["PHB", "PHA"],
+        position: { x: 40, y: 40 },
+        radius: 2,
+      }),
+    );
+
+    // Net-set match alone is ambiguous across the two PHA/PHB junctions…
+    expect(isErr(await deleteNetTie({ document_id: id, nets: ["PHA", "PHB"] }))).toBe(true);
+    // …position disambiguates (order-insensitive net match).
+    const byPos = out(
+      await deleteNetTie({ document_id: id, nets: ["PHB", "PHA"], position: { x: 40, y: 40 } }),
+    );
+    expect(byPos.deleted).toMatchObject({ index: 2, nets: ["PHB", "PHA"] });
+    expect(byPos.net_ties_total).toBe(2);
+    expect(byPos.changed).toEqual([
+      { action: "removed", kind: "netTie", index: 2, net: "PHB+PHA" },
+    ]);
+
+    // Index + mismatched nets is a guard, not a delete.
+    expect(isErr(await deleteNetTie({ document_id: id, index: 0, nets: ["PHA", "PHB"] }))).toBe(
+      true,
+    );
+    // No selector at all → error; out-of-range index → error.
+    expect(isErr(await deleteNetTie({ document_id: id }))).toBe(true);
+    expect(isErr(await deleteNetTie({ document_id: id, index: 9 }))).toBe(true);
+
+    const bySet = out(await deleteNetTie({ document_id: id, nets: ["AGND", "GND"] }));
+    expect(bySet.deleted.nets).toEqual(["GND", "AGND"]);
+    const byIndex = out(await deleteNetTie({ document_id: id, index: 0 }));
+    expect(byIndex.net_ties_total).toBe(0);
+    expect(getPcbBoard(getSession(id)).netTies).toHaveLength(0);
+  });
+
+  it("a region-scoped tie exempts the junction short in DRC; deleting it re-arms", async () => {
+    const id = await boardWithFourNets();
+    // Pin the floorplan to the top edge so no pad sits near the junction the
+    // test builds — only the deliberate crossing may short.
+    out(
+      await setPlacement({
+        document_id: id,
+        placements: [
+          { ref: "R1", x: 10, y: 45 },
+          { ref: "R2", x: 35, y: 45 },
+        ],
+      }),
+    );
+    // A PHB stub ending ON the PHA trace — a T-junction at (20, 25), the
+    // shape of a real tie point (shunt tap, star chord meeting the neutral).
+    out(
+      await addTrace({
+        document_id: id,
+        net: "PHA",
+        points: [
+          { x: 10, y: 25 },
+          { x: 30, y: 25 },
+        ],
+      }),
+    );
+    out(
+      await addTrace({
+        document_id: id,
+        net: "PHB",
+        points: [
+          { x: 20, y: 15 },
+          { x: 20, y: 25 },
+        ],
+      }),
+    );
+
+    const before = out(await runDrc({ document_id: id }));
+    expect(before.byRule?.Short ?? 0).toBeGreaterThan(0);
+
+    out(
+      await addNetTie({
+        document_id: id,
+        nets: ["PHA", "PHB"],
+        position: { x: 20, y: 25 },
+        radius: 3,
+      }),
+    );
+    const tied = out(await runDrc({ document_id: id }));
+    expect(tied.byRule?.Short ?? 0).toBe(0);
+
+    // Take the tie back — the same copper is a short again (fail-closed).
+    out(await deleteNetTie({ document_id: id, nets: ["PHA", "PHB"] }));
+    const rearmed = out(await runDrc({ document_id: id }));
+    expect(rearmed.byRule?.Short ?? 0).toBeGreaterThan(0);
   });
 });
 
