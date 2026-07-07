@@ -216,6 +216,7 @@ fn trace(net: &str, layer: PcbLayer, x1: f64, y1: f64, x2: f64, y2: f64, w: f64)
         width: w,
         layer,
         net: net.to_string(),
+        source: None,
     }
 }
 
@@ -265,6 +266,7 @@ fn sample_board() -> Pcb {
             start_layer: PcbLayer::FCu,
             end_layer: PcbLayer::BCu,
             net: "GND".to_string(),
+            source: None,
         },
         Via {
             position: Vec2::new(27.7, 14.31),
@@ -273,6 +275,7 @@ fn sample_board() -> Pcb {
             start_layer: PcbLayer::FCu,
             end_layer: PcbLayer::BCu,
             net: "GND".to_string(),
+            source: None,
         },
     ];
 
@@ -537,6 +540,7 @@ fn complex_board() -> Pcb {
             width: 0.16,
             layer: PcbLayer::FCu,
             net: net.clone(),
+            source: None,
         });
         if n.is_multiple_of(3) {
             vias.push(Via {
@@ -546,6 +550,7 @@ fn complex_board() -> Pcb {
                 start_layer: PcbLayer::FCu,
                 end_layer: PcbLayer::BCu,
                 net: net.clone(),
+                source: None,
             });
             let end2 = Vec2::new(end.x + d.x * 4.5, end.y + d.y * 4.5);
             traces.push(Trace {
@@ -554,6 +559,7 @@ fn complex_board() -> Pcb {
                 width: 0.25,
                 layer: PcbLayer::BCu,
                 net,
+                source: None,
             });
         }
     }
@@ -652,6 +658,7 @@ fn inner_layers_board() -> Pcb {
             width: 0.6,
             layer: *layer,
             net: format!("L{i}"),
+            source: None,
         });
     }
     Pcb {

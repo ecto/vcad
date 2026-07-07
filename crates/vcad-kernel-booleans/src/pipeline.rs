@@ -8,7 +8,7 @@ use vcad_kernel_primitives::BRepSolid;
 use vcad_kernel_tessellate::tessellate_brep;
 use vcad_kernel_topo::FaceId;
 
-use crate::api::{BooleanOp, BooleanResult};
+use crate::api::{BooleanError, BooleanOp, BooleanResult};
 use crate::mesh::empty_brep;
 use crate::{bbox, classify, sew, split, ssi, trim};
 
@@ -447,7 +447,7 @@ pub(crate) fn brep_boolean(
     solid_b: &BRepSolid,
     op: BooleanOp,
     segments: u32,
-) -> BooleanResult {
+) -> Result<BooleanResult, BooleanError> {
     debug_bool!("\n========== BREP BOOLEAN START ==========");
     debug_bool!("Operation: {:?}", op);
     debug_bool!("Solid A: {} faces", solid_a.topology.faces.len());
@@ -462,258 +462,262 @@ pub(crate) fn brep_boolean(
     debug_bool!("\n--- Stage 1: AABB filtering ---");
     debug_bool!("Candidate face pairs: {}", pairs.len());
 
-    // 2. For each face pair, compute SSI and collect splits for both A and B
-    let compute_ssi = |&(face_a, face_b): &(FaceId, FaceId)| -> Option<SsiPairResult> {
-        // Get face data with bounds checking to avoid panics
-        let face_data_a = a.topology.faces.get(face_a)?;
-        let face_data_b = b.topology.faces.get(face_b)?;
-        let surf_a = a.geometry.surfaces.get(face_data_a.surface_index)?;
-        let surf_b = b.geometry.surfaces.get(face_data_b.surface_index)?;
-
-        let curve = ssi::intersect_surfaces(surf_a.as_ref(), surf_b.as_ref());
-
-        if matches!(curve, ssi::IntersectionCurve::Empty) {
-            return None;
-        }
-
-        let mut results_a = Vec::new();
-        let mut results_b = Vec::new();
-
-        // For circle curves (from plane-cylinder intersection), skip trimming —
-        // the circle is already the intersection. Add split instructions to
-        // BOTH the planar face (gets an inner loop) and the cylindrical face
-        // (gets a new edge splitting the cylinder).
-        // Note: face_a and face_b can be from either solid, so check both.
-        // Also verify the circle center is in the face's material region to
-        // avoid creating nested inner loops (e.g. bore circle inside hub hole).
-        if let ssi::IntersectionCurve::Circle(circle) = &curve {
-            // Sample a point on the circle (not center — center might not be in face for cylindrical)
-            let sample_pt = circle.center + circle.radius * circle.x_dir.into_inner();
-
-            // A circle from a curved×planar SSI is built from the planar face's
-            // *infinite* carrier plane. When that planar face is a small bounded
-            // disk (e.g. a cylinder cap), the circle can be far larger than the
-            // face and centered well outside it — a "phantom" circle. The
-            // analytic splitters for curved faces (cylinder/sphere/cone) split
-            // the *whole* surface by the circle, so applying a phantom circle to
-            // a curved partner resurfaces geometry that a prior boolean already
-            // trimmed away (e.g. a subtracted sphere reappearing above the part).
-            //
-            // Gate each curved-face split on the planar partner actually
-            // anchoring the circle: its center — or, failing that, a point
-            // on its rim — must lie within the partner face. The center
-            // test alone rejects annular partners whose inner boundary IS
-            // the circle (a drum face butted against a hub wall: the
-            // center sits in the annulus hole), which left the wall
-            // unsplit at the contact circle. The rim test keeps the
-            // original phantom protection: a circle from a small disjoint
-            // cap's carrier plane touches the partner face nowhere.
-            // Curved×curved pairs have no planar partner and keep their
-            // existing behavior.
-            // The center test alone rejects annular partners whose inner
-            // boundary IS the circle (a drum face butted against a hub
-            // wall: the center sits in the annulus hole), leaving the wall
-            // unsplit at the contact circle and the touching interface
-            // untrimmed. Second chance: the circle counts as SEATED in the
-            // face when rim probes at several angles land inside it. The
-            // probes are nudged to both sides because a face whose hole
-            // boundary is this circle stores it as an inscribed polygon
-            // (a probe exactly on the rim falls in the hole by the chord
-            // sag), and ≥2 distinct angles must hit so a circle that
-            // merely grazes a face edge over a tiny arc — the phantom
-            // regime the anchor gate exists for — still fails.
-            let nudge = (circle.radius * 0.01).max(0.05);
-            let seated = |solid: &vcad_kernel_primitives::BRepSolid, fid: FaceId| {
-                let mut hits = 0u32;
-                for k in 0..8 {
-                    let theta = 2.0 * std::f64::consts::PI * k as f64 / 8.0;
-                    let dir = theta.cos() * circle.x_dir.into_inner()
-                        + theta.sin() * circle.y_dir.into_inner();
-                    let out = circle.center + (circle.radius + nudge) * dir;
-                    let inn = circle.center + (circle.radius - nudge) * dir;
-                    if trim::point_in_face(solid, fid, &out)
-                        || trim::point_in_face(solid, fid, &inn)
-                    {
-                        hits += 1;
-                        if hits >= 2 {
-                            return true;
-                        }
-                    }
-                }
-                false
+    // 2. For each face pair, compute SSI and collect splits for both A and B.
+    // `Ok(None)` means "no splits for this pair"; `Err` aborts the whole
+    // boolean with a typed error instead of panicking mid-pipeline.
+    let compute_ssi =
+        |&(face_a, face_b): &(FaceId, FaceId)| -> Result<Option<SsiPairResult>, BooleanError> {
+            // Get face data with bounds checking to avoid panics
+            let Some(face_data_a) = a.topology.faces.get(face_a) else {
+                return Ok(None);
             };
-            let b_anchors_circle = !split::is_planar_face(&b, face_b)
-                || trim::point_in_face(&b, face_b, &circle.center)
-                || seated(&b, face_b);
-            let a_anchors_circle = !split::is_planar_face(&a, face_a)
-                || trim::point_in_face(&a, face_a, &circle.center)
-                || seated(&a, face_a);
+            let Some(face_data_b) = b.topology.faces.get(face_b) else {
+                return Ok(None);
+            };
+            let Some(surf_a) = a.geometry.surfaces.get(face_data_a.surface_index) else {
+                return Ok(None);
+            };
+            let Some(surf_b) = b.geometry.surfaces.get(face_data_b.surface_index) else {
+                return Ok(None);
+            };
 
-            // A circle that is already part of the planar face's sampled
-            // boundary (the cap of an arc-extruded body paired with the
-            // wall it borders) has nothing to split — feeding it to
-            // split_planar_face shaves crescent slivers off the boundary
-            // polygon, which then classify unreliably. Arc samples lie
-            // exactly on their circle, and a circle that genuinely crosses
-            // a polygon touches it at no more than two points, so ≥3
-            // on-circle vertices means "this circle is one of my arcs".
-            let circle_is_own_boundary = |solid: &BRepSolid, fid: FaceId| -> bool {
-                let face = &solid.topology.faces[fid];
-                let radius_tol = (circle.radius * 1e-4).max(1e-4);
-                let mut on_circle = 0u32;
-                let loops =
-                    std::iter::once(face.outer_loop).chain(face.inner_loops.iter().copied());
-                for loop_id in loops {
-                    for he in solid.topology.loop_half_edges(loop_id) {
-                        let v = solid.topology.vertices[solid.topology.half_edges[he].origin].point;
-                        if ((v - circle.center).norm() - circle.radius).abs() <= radius_tol {
-                            on_circle += 1;
-                            if on_circle >= 3 {
+            let curve = ssi::intersect_surfaces(surf_a.as_ref(), surf_b.as_ref())?;
+
+            if matches!(curve, ssi::IntersectionCurve::Empty) {
+                return Ok(None);
+            }
+
+            let mut results_a = Vec::new();
+            let mut results_b = Vec::new();
+
+            // For circle curves (from plane-cylinder intersection), skip trimming —
+            // the circle is already the intersection. Add split instructions to
+            // BOTH the planar face (gets an inner loop) and the cylindrical face
+            // (gets a new edge splitting the cylinder).
+            // Note: face_a and face_b can be from either solid, so check both.
+            // Also verify the circle center is in the face's material region to
+            // avoid creating nested inner loops (e.g. bore circle inside hub hole).
+            if let ssi::IntersectionCurve::Circle(circle) = &curve {
+                // Sample a point on the circle (not center — center might not be in face for cylindrical)
+                let sample_pt = circle.center + circle.radius * circle.x_dir.into_inner();
+
+                // A circle from a curved×planar SSI is built from the planar face's
+                // *infinite* carrier plane. When that planar face is a small bounded
+                // disk (e.g. a cylinder cap), the circle can be far larger than the
+                // face and centered well outside it — a "phantom" circle. The
+                // analytic splitters for curved faces (cylinder/sphere/cone) split
+                // the *whole* surface by the circle, so applying a phantom circle to
+                // a curved partner resurfaces geometry that a prior boolean already
+                // trimmed away (e.g. a subtracted sphere reappearing above the part).
+                //
+                // Gate each curved-face split on the planar partner actually
+                // anchoring the circle: its center must lie within the partner
+                // face. The center test alone rejects annular partners whose
+                // inner boundary IS the circle (a drum face butted against a
+                // hub wall: the center sits in the annulus hole), leaving the
+                // wall unsplit at the contact circle and the touching interface
+                // untrimmed. Second chance: the circle counts as SEATED in the
+                // face when rim probes at several angles land inside it. The
+                // probes are nudged to both sides because a face whose hole
+                // boundary is this circle stores it as an inscribed polygon (a
+                // probe exactly on the rim falls in the hole by the chord sag),
+                // and ≥2 distinct angles must hit so a circle that merely
+                // grazes a face edge over a tiny arc — the phantom regime the
+                // anchor gate exists for — still fails. Curved×curved pairs
+                // have no planar partner and keep their existing behavior.
+                let nudge = (circle.radius * 0.01).max(0.05);
+                let seated = |solid: &vcad_kernel_primitives::BRepSolid, fid: FaceId| {
+                    let mut hits = 0u32;
+                    for k in 0..8 {
+                        let theta = 2.0 * std::f64::consts::PI * k as f64 / 8.0;
+                        let dir = theta.cos() * circle.x_dir.into_inner()
+                            + theta.sin() * circle.y_dir.into_inner();
+                        let out = circle.center + (circle.radius + nudge) * dir;
+                        let inn = circle.center + (circle.radius - nudge) * dir;
+                        if trim::point_in_face(solid, fid, &out)
+                            || trim::point_in_face(solid, fid, &inn)
+                        {
+                            hits += 1;
+                            if hits >= 2 {
                                 return true;
                             }
                         }
                     }
-                }
-                false
-            };
+                    false
+                };
+                let b_anchors_circle = !split::is_planar_face(&b, face_b)
+                    || trim::point_in_face(&b, face_b, &circle.center)
+                    || seated(&b, face_b);
+                let a_anchors_circle = !split::is_planar_face(&a, face_a)
+                    || trim::point_in_face(&a, face_a, &circle.center)
+                    || seated(&a, face_a);
 
-            if split::is_planar_face(&a, face_a) && !circle_is_own_boundary(&a, face_a) {
-                // Check point_in_face to avoid creating inner loops inside existing holes.
-                // For degenerate cap faces (single-vertex outer loop), always check.
-                // For regular polygon faces, only check if they already have inner loops
-                // (existing holes from prior boolean ops). Without existing holes, the
-                // circle intersection is always valid and split_planar_face handles
-                // partial containment correctly.
-                let outer_len = a.topology.loop_len(a.topology.faces[face_a].outer_loop);
-                let has_inner_loops = !a.topology.faces[face_a].inner_loops.is_empty();
-                if outer_len <= 1 {
-                    if trim::point_in_face(&a, face_a, &sample_pt) {
+                // A circle that is already part of the planar face's sampled
+                // boundary (the cap of an arc-extruded body paired with the
+                // wall it borders) has nothing to split — feeding it to
+                // split_planar_face shaves crescent slivers off the boundary
+                // polygon, which then classify unreliably. Arc samples lie
+                // exactly on their circle, and a circle that genuinely crosses
+                // a polygon touches it at no more than two points, so ≥3
+                // on-circle vertices means "this circle is one of my arcs".
+                let circle_is_own_boundary = |solid: &BRepSolid, fid: FaceId| -> bool {
+                    let face = &solid.topology.faces[fid];
+                    let radius_tol = (circle.radius * 1e-4).max(1e-4);
+                    let mut on_circle = 0u32;
+                    let loops =
+                        std::iter::once(face.outer_loop).chain(face.inner_loops.iter().copied());
+                    for loop_id in loops {
+                        for he in solid.topology.loop_half_edges(loop_id) {
+                            let v =
+                                solid.topology.vertices[solid.topology.half_edges[he].origin].point;
+                            if ((v - circle.center).norm() - circle.radius).abs() <= radius_tol {
+                                on_circle += 1;
+                                if on_circle >= 3 {
+                                    return true;
+                                }
+                            }
+                        }
+                    }
+                    false
+                };
+
+                if split::is_planar_face(&a, face_a) && !circle_is_own_boundary(&a, face_a) {
+                    // Check point_in_face to avoid creating inner loops inside existing holes.
+                    // For degenerate cap faces (single-vertex outer loop), always check.
+                    // For regular polygon faces, only check if they already have inner loops
+                    // (existing holes from prior boolean ops). Without existing holes, the
+                    // circle intersection is always valid and split_planar_face handles
+                    // partial containment correctly.
+                    let outer_len = a.topology.loop_len(a.topology.faces[face_a].outer_loop);
+                    let has_inner_loops = !a.topology.faces[face_a].inner_loops.is_empty();
+                    if outer_len <= 1 {
+                        if trim::point_in_face(&a, face_a, &sample_pt) {
+                            results_a.push((curve.clone(), circle.center, circle.center));
+                        }
+                    } else if has_inner_loops {
+                        // Regular polygon face with existing holes: check that the circle
+                        // is inside the face material (not inside an existing hole)
+                        if trim::point_in_face(&a, face_a, &sample_pt) {
+                            results_a.push((curve.clone(), circle.center, circle.center));
+                        }
+                    } else {
                         results_a.push((curve.clone(), circle.center, circle.center));
                     }
-                } else if has_inner_loops {
-                    // Regular polygon face with existing holes: check that the circle
-                    // is inside the face material (not inside an existing hole)
-                    if trim::point_in_face(&a, face_a, &sample_pt) {
-                        results_a.push((curve.clone(), circle.center, circle.center));
-                    }
-                } else {
+                }
+                if b_anchors_circle && split::is_cylindrical_face(&a, face_a) {
                     results_a.push((curve.clone(), circle.center, circle.center));
                 }
-            }
-            if b_anchors_circle && split::is_cylindrical_face(&a, face_a) {
-                results_a.push((curve.clone(), circle.center, circle.center));
-            }
-            if b_anchors_circle && split::is_spherical_face(&a, face_a) {
-                results_a.push((curve.clone(), circle.center, circle.center));
-            }
-            if b_anchors_circle && split::is_conical_face(&a, face_a) {
-                results_a.push((curve.clone(), circle.center, circle.center));
-            }
-            if split::is_planar_face(&b, face_b) && !circle_is_own_boundary(&b, face_b) {
-                let outer_len = b.topology.loop_len(b.topology.faces[face_b].outer_loop);
-                let has_inner_loops = !b.topology.faces[face_b].inner_loops.is_empty();
-                if outer_len <= 1 {
-                    if trim::point_in_face(&b, face_b, &sample_pt) {
+                if b_anchors_circle && split::is_spherical_face(&a, face_a) {
+                    results_a.push((curve.clone(), circle.center, circle.center));
+                }
+                if b_anchors_circle && split::is_conical_face(&a, face_a) {
+                    results_a.push((curve.clone(), circle.center, circle.center));
+                }
+                if split::is_planar_face(&b, face_b) && !circle_is_own_boundary(&b, face_b) {
+                    let outer_len = b.topology.loop_len(b.topology.faces[face_b].outer_loop);
+                    let has_inner_loops = !b.topology.faces[face_b].inner_loops.is_empty();
+                    if outer_len <= 1 {
+                        if trim::point_in_face(&b, face_b, &sample_pt) {
+                            results_b.push((curve.clone(), circle.center, circle.center));
+                        }
+                    } else if has_inner_loops {
+                        // Regular polygon face with existing holes: check that the circle
+                        // is inside the face material (not inside an existing hole)
+                        if trim::point_in_face(&b, face_b, &sample_pt) {
+                            results_b.push((curve.clone(), circle.center, circle.center));
+                        }
+                    } else {
                         results_b.push((curve.clone(), circle.center, circle.center));
                     }
-                } else if has_inner_loops {
-                    // Regular polygon face with existing holes: check that the circle
-                    // is inside the face material (not inside an existing hole)
-                    if trim::point_in_face(&b, face_b, &sample_pt) {
-                        results_b.push((curve.clone(), circle.center, circle.center));
-                    }
-                } else {
+                }
+                if a_anchors_circle && split::is_cylindrical_face(&b, face_b) {
                     results_b.push((curve.clone(), circle.center, circle.center));
                 }
+                if a_anchors_circle && split::is_spherical_face(&b, face_b) {
+                    results_b.push((curve.clone(), circle.center, circle.center));
+                }
+                if a_anchors_circle && split::is_conical_face(&b, face_b) {
+                    results_b.push((curve.clone(), circle.center, circle.center));
+                }
+                // Circle splits are not interval-trimmed; treat any hit as a
+                // real crossing (conservative).
+                let real = !results_a.is_empty() || !results_b.is_empty();
+                return Ok(Some((face_a, results_a, face_b, results_b, real)));
             }
-            if a_anchors_circle && split::is_cylindrical_face(&b, face_b) {
-                results_b.push((curve.clone(), circle.center, circle.center));
-            }
-            if a_anchors_circle && split::is_spherical_face(&b, face_b) {
-                results_b.push((curve.clone(), circle.center, circle.center));
-            }
-            if a_anchors_circle && split::is_conical_face(&b, face_b) {
-                results_b.push((curve.clone(), circle.center, circle.center));
-            }
-            // Circle splits are not interval-trimmed; treat any hit as a
-            // real crossing (conservative).
-            let real = !results_a.is_empty() || !results_b.is_empty();
-            return Some((face_a, results_a, face_b, results_b, real));
-        }
 
-        // TwoSampled is the analytic cylinder × cylinder result (the
-        // Steinmetz pair of ellipses). The curves are already on both
-        // cylindrical surfaces; route them directly to the cylindrical
-        // splitter without going through `trim_curve_to_face`, so the
-        // figure-8 stays atomic and the 4-way split happens in one call.
-        if let ssi::IntersectionCurve::TwoSampled(_, _) = &curve {
-            debug_bool!(
-                "  TwoSampled: {:?}({:?}) x {:?}({:?})",
-                face_a,
-                surf_a.surface_type(),
-                face_b,
-                surf_b.surface_type()
-            );
-            if split::is_cylindrical_face(&a, face_a) {
-                results_a.push((curve.clone(), Point3::origin(), Point3::origin()));
-            }
-            if split::is_cylindrical_face(&b, face_b) {
-                results_b.push((curve.clone(), Point3::origin(), Point3::origin()));
-            }
-            let real = !results_a.is_empty() || !results_b.is_empty();
-            return Some((face_a, results_a, face_b, results_b, real));
-        }
-
-        // Expand TwoLines into individual Line curves for processing
-        let curves_to_process: Vec<ssi::IntersectionCurve> = match &curve {
-            ssi::IntersectionCurve::TwoLines(line1, line2) => {
+            // TwoSampled is the analytic cylinder × cylinder result (the
+            // Steinmetz pair of ellipses). The curves are already on both
+            // cylindrical surfaces; route them directly to the cylindrical
+            // splitter without going through `trim_curve_to_face`, so the
+            // figure-8 stays atomic and the 4-way split happens in one call.
+            if let ssi::IntersectionCurve::TwoSampled(_, _) = &curve {
                 debug_bool!(
-                    "  TwoLines: {:?}({:?}) x {:?}({:?})",
+                    "  TwoSampled: {:?}({:?}) x {:?}({:?})",
                     face_a,
                     surf_a.surface_type(),
                     face_b,
                     surf_b.surface_type()
                 );
-                debug_bool!(
-                    "    Line1: origin=({:.2},{:.2},{:.2}) dir=({:.2},{:.2},{:.2})",
-                    line1.origin.x,
-                    line1.origin.y,
-                    line1.origin.z,
-                    line1.direction.x,
-                    line1.direction.y,
-                    line1.direction.z
-                );
-                debug_bool!(
-                    "    Line2: origin=({:.2},{:.2},{:.2}) dir=({:.2},{:.2},{:.2})",
-                    line2.origin.x,
-                    line2.origin.y,
-                    line2.origin.z,
-                    line2.direction.x,
-                    line2.direction.y,
-                    line2.direction.z
-                );
-                vec![
-                    ssi::IntersectionCurve::Line(line1.clone()),
-                    ssi::IntersectionCurve::Line(line2.clone()),
-                ]
+                if split::is_cylindrical_face(&a, face_a) {
+                    results_a.push((curve.clone(), Point3::origin(), Point3::origin()));
+                }
+                if split::is_cylindrical_face(&b, face_b) {
+                    results_b.push((curve.clone(), Point3::origin(), Point3::origin()));
+                }
+                let real = !results_a.is_empty() || !results_b.is_empty();
+                return Ok(Some((face_a, results_a, face_b, results_b, real)));
             }
-            _ => vec![curve.clone()],
-        };
 
-        let mut real_crossing = false;
-        for single_curve in &curves_to_process {
-            // Trim curve to A's face boundary (for non-circle curves)
-            let segs_a = trim::trim_curve_to_face(single_curve, face_a, &a, 64);
-            debug_bool!(
-                "    Trim to face A ({:?}): {} segments",
-                face_a,
-                segs_a.len()
-            );
-            for seg in &segs_a {
-                let entry = evaluate_curve(single_curve, seg.t_start);
-                let exit = evaluate_curve(single_curve, seg.t_end);
-                let len = (exit - entry).norm();
+            // Expand TwoLines into individual Line curves for processing
+            let curves_to_process: Vec<ssi::IntersectionCurve> = match &curve {
+                ssi::IntersectionCurve::TwoLines(line1, line2) => {
+                    debug_bool!(
+                        "  TwoLines: {:?}({:?}) x {:?}({:?})",
+                        face_a,
+                        surf_a.surface_type(),
+                        face_b,
+                        surf_b.surface_type()
+                    );
+                    debug_bool!(
+                        "    Line1: origin=({:.2},{:.2},{:.2}) dir=({:.2},{:.2},{:.2})",
+                        line1.origin.x,
+                        line1.origin.y,
+                        line1.origin.z,
+                        line1.direction.x,
+                        line1.direction.y,
+                        line1.direction.z
+                    );
+                    debug_bool!(
+                        "    Line2: origin=({:.2},{:.2},{:.2}) dir=({:.2},{:.2},{:.2})",
+                        line2.origin.x,
+                        line2.origin.y,
+                        line2.origin.z,
+                        line2.direction.x,
+                        line2.direction.y,
+                        line2.direction.z
+                    );
+                    vec![
+                        ssi::IntersectionCurve::Line(line1.clone()),
+                        ssi::IntersectionCurve::Line(line2.clone()),
+                    ]
+                }
+                _ => vec![curve.clone()],
+            };
+
+            let mut real_crossing = false;
+            for single_curve in &curves_to_process {
+                // Trim curve to A's face boundary (for non-circle curves)
+                let segs_a = trim::trim_curve_to_face(single_curve, face_a, &a, 64);
                 debug_bool!(
+                    "    Trim to face A ({:?}): {} segments",
+                    face_a,
+                    segs_a.len()
+                );
+                for seg in &segs_a {
+                    let entry = evaluate_curve(single_curve, seg.t_start);
+                    let exit = evaluate_curve(single_curve, seg.t_end);
+                    let len = (exit - entry).norm();
+                    debug_bool!(
                     "      Segment: entry=({:.2},{:.2},{:.2}) exit=({:.2},{:.2},{:.2}) len={:.4}",
                     entry.x,
                     entry.y,
@@ -723,23 +727,23 @@ pub(crate) fn brep_boolean(
                     exit.z,
                     len
                 );
-                if len > 1e-6 {
-                    results_a.push((single_curve.clone(), entry, exit));
+                    if len > 1e-6 {
+                        results_a.push((single_curve.clone(), entry, exit));
+                    }
                 }
-            }
 
-            // Trim curve to B's face boundary (for non-circle curves)
-            let segs_b = trim::trim_curve_to_face(single_curve, face_b, &b, 64);
-            debug_bool!(
-                "    Trim to face B ({:?}): {} segments",
-                face_b,
-                segs_b.len()
-            );
-            for seg in &segs_b {
-                let entry = evaluate_curve(single_curve, seg.t_start);
-                let exit = evaluate_curve(single_curve, seg.t_end);
-                let len = (exit - entry).norm();
+                // Trim curve to B's face boundary (for non-circle curves)
+                let segs_b = trim::trim_curve_to_face(single_curve, face_b, &b, 64);
                 debug_bool!(
+                    "    Trim to face B ({:?}): {} segments",
+                    face_b,
+                    segs_b.len()
+                );
+                for seg in &segs_b {
+                    let entry = evaluate_curve(single_curve, seg.t_start);
+                    let exit = evaluate_curve(single_curve, seg.t_end);
+                    let len = (exit - entry).norm();
+                    debug_bool!(
                     "      Segment: entry=({:.2},{:.2},{:.2}) exit=({:.2},{:.2},{:.2}) len={:.4}",
                     entry.x,
                     entry.y,
@@ -749,42 +753,44 @@ pub(crate) fn brep_boolean(
                     exit.z,
                     len
                 );
-                if len > 1e-6 {
-                    results_b.push((single_curve.clone(), entry, exit));
+                    if len > 1e-6 {
+                        results_b.push((single_curve.clone(), entry, exit));
+                    }
                 }
-            }
 
-            // The pair genuinely crosses only when a positive-length stretch
-            // of the curve lies on BOTH faces: their trimmed t-intervals
-            // must overlap. One-sided segments are phantom splits from the
-            // infinite carrier curve crossing a nearby (but disjoint) face.
-            if !real_crossing {
-                'overlap: for sa in &segs_a {
-                    for sb in &segs_b {
-                        let lo = sa.t_start.max(sb.t_start);
-                        let hi = sa.t_end.min(sb.t_end);
-                        if hi > lo {
-                            let p0 = evaluate_curve(single_curve, lo);
-                            let p1 = evaluate_curve(single_curve, hi);
-                            if (p1 - p0).norm() > 1e-6 {
-                                real_crossing = true;
-                                break 'overlap;
+                // The pair genuinely crosses only when a positive-length stretch
+                // of the curve lies on BOTH faces: their trimmed t-intervals
+                // must overlap. One-sided segments are phantom splits from the
+                // infinite carrier curve crossing a nearby (but disjoint) face.
+                if !real_crossing {
+                    'overlap: for sa in &segs_a {
+                        for sb in &segs_b {
+                            let lo = sa.t_start.max(sb.t_start);
+                            let hi = sa.t_end.min(sb.t_end);
+                            if hi > lo {
+                                let p0 = evaluate_curve(single_curve, lo);
+                                let p1 = evaluate_curve(single_curve, hi);
+                                if (p1 - p0).norm() > 1e-6 {
+                                    real_crossing = true;
+                                    break 'overlap;
+                                }
                             }
                         }
                     }
                 }
             }
-        }
 
-        Some((face_a, results_a, face_b, results_b, real_crossing))
-    };
+            Ok(Some((face_a, results_a, face_b, results_b, real_crossing)))
+        };
 
-    // Use Rayon parallelism only when there are enough pairs to amortize thread overhead
-    let split_results: Vec<_> = if pairs.len() >= 100 {
-        pairs.par_iter().filter_map(compute_ssi).collect()
+    // Use Rayon parallelism only when there are enough pairs to amortize
+    // thread overhead. The first SSI error aborts the whole boolean.
+    let pair_results: Result<Vec<Option<SsiPairResult>>, BooleanError> = if pairs.len() >= 100 {
+        pairs.par_iter().map(compute_ssi).collect()
     } else {
-        pairs.iter().filter_map(compute_ssi).collect()
+        pairs.iter().map(compute_ssi).collect()
     };
+    let split_results: Vec<SsiPairResult> = pair_results?.into_iter().flatten().collect();
 
     // Merge results into HashMaps
     let mut splits_a: HashMap<FaceId, FaceSplits> = HashMap::new();
@@ -817,7 +823,7 @@ pub(crate) fn brep_boolean(
     if !any_real_crossing && !crate::no_crossing::boundaries_touch(&a, &b, &pairs) {
         if let Some(rel) = crate::no_crossing::resolve_containment(&a, &b, segments) {
             debug_bool!("No-crossing fast path: {:?}", rel);
-            return crate::no_crossing::no_crossing_result(a, b, op, rel);
+            return Ok(crate::no_crossing::no_crossing_result(a, b, op, rel));
         }
     }
 
@@ -906,5 +912,5 @@ pub(crate) fn brep_boolean(
     debug_bool!("Result solid has {} faces", result.topology.faces.len());
     debug_bool!("========== BREP BOOLEAN END ==========\n");
 
-    BooleanResult::BRep(Box::new(result))
+    Ok(BooleanResult::BRep(Box::new(result)))
 }

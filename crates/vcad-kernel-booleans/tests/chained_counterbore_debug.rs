@@ -39,7 +39,7 @@ fn vol(b: &BRepSolid) -> f64 {
 }
 
 fn diff(a: &BRepSolid, b: &BRepSolid) -> BRepSolid {
-    let BooleanResult::BRep(r) = boolean_op(a, b, BooleanOp::Difference, 64);
+    let BooleanResult::BRep(r) = boolean_op(a, b, BooleanOp::Difference, 64).expect("boolean");
     *r
 }
 
@@ -197,7 +197,8 @@ fn d2_locality_union_shared_wall() {
         PI * (400.0 - 16.0) * 30.0
     );
 
-    let BooleanResult::BRep(u) = boolean_op(&hub_minus_bore, &drum, BooleanOp::Union, 64);
+    let BooleanResult::BRep(u) =
+        boolean_op(&hub_minus_bore, &drum, BooleanOp::Union, 64).expect("boolean");
     let expected = PI * (400.0 * 30.0 - 16.0 * 30.0 + (784.0 - 400.0) * 10.0);
     eprintln!("union vol {:.1} (expect {expected:.1})", vol(&u));
     for (fid, face) in u.topology.faces.iter() {

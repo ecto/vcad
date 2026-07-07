@@ -14,7 +14,8 @@ use vcad_kernel_step::{read_step_from_buffer, write_step_to_buffer};
 fn write_step_after_difference() {
     let cube = make_cube(20.0, 20.0, 20.0);
     let cyl = make_cylinder(5.0, 30.0, 32);
-    let result = boolean_op(&cube, &cyl, BooleanOp::Difference, 32);
+    let result =
+        boolean_op(&cube, &cyl, BooleanOp::Difference, 32).expect("boolean should succeed");
     let brep = result.as_brep().expect("Difference should yield BRep");
 
     let buffer = write_step_to_buffer(brep).expect("STEP write should succeed");
@@ -28,7 +29,8 @@ fn write_step_after_difference_round_trips() {
     // result parses back into at least one solid.
     let cube = make_cube(20.0, 20.0, 20.0);
     let cyl = make_cylinder(5.0, 30.0, 32);
-    let result = boolean_op(&cube, &cyl, BooleanOp::Difference, 32);
+    let result =
+        boolean_op(&cube, &cyl, BooleanOp::Difference, 32).expect("boolean should succeed");
     let brep = result.as_brep().expect("Difference should yield BRep");
 
     let buffer = write_step_to_buffer(brep).expect("STEP write should succeed");
@@ -46,7 +48,7 @@ fn write_step_after_union_overlap() {
     for (_, v) in &mut b.topology.vertices {
         v.point.x += 10.0;
     }
-    let result = boolean_op(&a, &b, BooleanOp::Union, 32);
+    let result = boolean_op(&a, &b, BooleanOp::Union, 32).expect("boolean should succeed");
     let brep = result.as_brep().expect("Union should yield BRep");
 
     let buffer = write_step_to_buffer(brep).expect("STEP write should succeed");

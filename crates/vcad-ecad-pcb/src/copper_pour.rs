@@ -362,6 +362,7 @@ mod tests {
                 width: 0.25,
                 layer: PcbLayer::FCu,
                 net: "1".to_string(),
+                source: None,
             }],
             trace_arcs: vec![],
             vias: vec![],

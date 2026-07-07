@@ -162,6 +162,7 @@ mod tests {
             width: 0.25,
             layer,
             net: net.into(),
+            source: None,
         }
     }
 
@@ -181,6 +182,7 @@ mod tests {
                 start_layer: PcbLayer::FCu,
                 end_layer: PcbLayer::BCu,
                 net: "SIG".into(),
+                source: None,
             }],
         );
         let c = critique_net(&pcb, "SIG");

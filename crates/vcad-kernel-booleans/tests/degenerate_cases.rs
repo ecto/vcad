@@ -8,9 +8,15 @@
 //!   5. Floating-point near-miss (within epsilon of coincident)
 //!   6. Arc-split geometry (cylinder cap arcs on planar box faces)
 
-use vcad_kernel_booleans::{boolean_op, BooleanOp};
+use vcad_kernel_booleans::{BooleanOp, BooleanResult};
 use vcad_kernel_math::Transform;
 use vcad_kernel_primitives::{make_cube, make_cylinder, make_sphere, BRepSolid};
+
+/// Test wrapper: unwrap the now-fallible `boolean_op` — none of the
+/// geometry here should hit an SSI error.
+fn boolean_op(a: &BRepSolid, b: &BRepSolid, op: BooleanOp, segments: u32) -> BooleanResult {
+    vcad_kernel_booleans::boolean_op(a, b, op, segments).expect("boolean_op should succeed")
+}
 
 // ---------------------------------------------------------------------------
 // Helpers

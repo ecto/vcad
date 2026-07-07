@@ -51,7 +51,8 @@ fn b1_intersection_diagnostics() {
     let cyl = make_cylinder(45.0, 13.0, 32);
     let bl = blade();
 
-    let BooleanResult::BRep(result) = boolean_op(&cyl, &bl, BooleanOp::Intersection, 64);
+    let BooleanResult::BRep(result) =
+        boolean_op(&cyl, &bl, BooleanOp::Intersection, 64).expect("boolean");
     let mesh = tessellate_brep(&result, 64);
     let vol = mesh_volume(&mesh);
 
@@ -92,7 +93,8 @@ fn b1_intersection_diagnostics() {
 fn b1_difference_diagnostics() {
     let cyl = make_cylinder(45.0, 13.0, 32);
     let bl = blade();
-    let BooleanResult::BRep(result) = boolean_op(&cyl, &bl, BooleanOp::Difference, 64);
+    let BooleanResult::BRep(result) =
+        boolean_op(&cyl, &bl, BooleanOp::Difference, 64).expect("boolean");
     let mesh = tessellate_brep(&result, 64);
     let vol = mesh_volume(&mesh);
     let expected = std::f64::consts::PI * 45.0 * 45.0 * 13.0 - 146.32;
@@ -113,7 +115,8 @@ fn b1_difference_diagnostics() {
 fn b1_intersection_result_face_dump() {
     let cyl = make_cylinder(45.0, 13.0, 32);
     let bl = blade();
-    let BooleanResult::BRep(result) = boolean_op(&cyl, &bl, BooleanOp::Intersection, 64);
+    let BooleanResult::BRep(result) =
+        boolean_op(&cyl, &bl, BooleanOp::Intersection, 64).expect("boolean");
     for (fid, face) in result.topology.faces.iter() {
         let verts: Vec<_> = result
             .topology
@@ -168,7 +171,8 @@ fn top_face_trim_finds_crossing() {
         }
     }
     let (top_face, top_surf_idx) = best.unwrap();
-    let curve = ssi::intersect_surfaces(wall.as_ref(), bl.geometry.surfaces[top_surf_idx].as_ref());
+    let curve = ssi::intersect_surfaces(wall.as_ref(), bl.geometry.surfaces[top_surf_idx].as_ref())
+        .expect("ssi");
     eprintln!(
         "curve kind: {}",
         match &curve {
@@ -214,7 +218,8 @@ fn top_face_point_in_face_scan() {
         }
     }
     let (top_face, top_surf_idx) = best.unwrap();
-    let curve = ssi::intersect_surfaces(wall.as_ref(), bl.geometry.surfaces[top_surf_idx].as_ref());
+    let curve = ssi::intersect_surfaces(wall.as_ref(), bl.geometry.surfaces[top_surf_idx].as_ref())
+        .expect("ssi");
     let ssi::IntersectionCurve::Sampled(pts) = curve else {
         panic!()
     };
@@ -240,7 +245,8 @@ fn top_face_point_in_face_scan() {
 fn b1_intersection_mesh_area_by_kind() {
     let cyl = make_cylinder(45.0, 13.0, 32);
     let bl = blade();
-    let BooleanResult::BRep(result) = boolean_op(&cyl, &bl, BooleanOp::Intersection, 64);
+    let BooleanResult::BRep(result) =
+        boolean_op(&cyl, &bl, BooleanOp::Intersection, 64).expect("boolean");
     let mesh = tessellate_brep(&result, 64);
     let mut area_by_kind = std::collections::HashMap::new();
     for (t, kind) in mesh.indices.chunks(3).zip(mesh.face_kinds.iter()) {

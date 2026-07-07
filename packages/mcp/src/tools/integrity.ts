@@ -325,11 +325,13 @@ export function computeIntegrity(
  * Merge an integrity report into a tool result: into
  * `structuredContent.integrity`, and into the first JSON text block (or as
  * a trailing text block when the first block isn't JSON, e.g.
- * create_cad_loon's raw document output).
+ * create_cad_loon's raw document output). Structurally typed to accept any
+ * ToolResult-shaped value — image and resource blocks pass through
+ * untouched.
  */
 export function appendIntegrity(
   result: {
-    content: Array<{ type: "text"; text: string }>;
+    content: Array<{ type: string; text?: string }>;
     structuredContent?: Record<string, unknown>;
   },
   integrity: IntegrityReport,
@@ -337,7 +339,7 @@ export function appendIntegrity(
   result.structuredContent = { ...result.structuredContent, integrity };
 
   const block = result.content[0];
-  if (block && block.type === "text") {
+  if (block && block.type === "text" && typeof block.text === "string") {
     try {
       const parsed = JSON.parse(block.text) as Record<string, unknown>;
       parsed.integrity = integrity;

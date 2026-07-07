@@ -10,6 +10,49 @@ use vcad_kernel_geom::{
 };
 use vcad_kernel_math::{Dir3, Point2, Point3};
 
+/// Typed error for surface-surface intersection failures.
+///
+/// These conditions used to be hard failures on the SSI path; in the browser
+/// any panic poisons the WASM instance, so they are now plain values that
+/// propagate through the boolean pipeline and surface as a clean error at
+/// the FFI boundary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SsiError {
+    /// A surface's reported [`SurfaceKind`] does not match its concrete
+    /// type, so the analytic intersection routine for the pair cannot run.
+    /// This is a kernel invariant violation: downstream splitters dispatch
+    /// on the reported kind, so falling back to sampling a surface that
+    /// misreports its kind would risk silently wrong geometry.
+    SurfaceKindMismatch {
+        /// Reported kind of the first surface of the pair.
+        a: SurfaceKind,
+        /// Reported kind of the second surface of the pair.
+        b: SurfaceKind,
+    },
+}
+
+impl std::fmt::Display for SsiError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SsiError::SurfaceKindMismatch { a, b } => write!(
+                f,
+                "surface-surface intersection failed for pair {a:?} × {b:?}: \
+                 a surface's reported kind does not match its concrete type"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for SsiError {}
+
+/// Build the mismatch error for a surface pair.
+fn kind_mismatch(a: &dyn Surface, b: &dyn Surface) -> SsiError {
+    SsiError::SurfaceKindMismatch {
+        a: a.surface_type(),
+        b: b.surface_type(),
+    }
+}
+
 /// Result of a surface-surface intersection.
 #[derive(Debug, Clone)]
 pub enum IntersectionCurve {
@@ -35,126 +78,100 @@ pub enum IntersectionCurve {
 
 /// Compute the intersection of two surfaces.
 ///
-/// Dispatches to specialized routines based on surface type.
-pub fn intersect_surfaces(a: &dyn Surface, b: &dyn Surface) -> IntersectionCurve {
+/// Dispatches to specialized routines based on surface type. Analytic pairs
+/// with no closed-form routine degrade gracefully to the sampled/marching
+/// fallback. The only error is [`SsiError::SurfaceKindMismatch`], returned
+/// when a surface's reported kind disagrees with its concrete type — a
+/// condition that previously panicked and, in the browser, poisoned the
+/// WASM instance.
+pub fn intersect_surfaces(a: &dyn Surface, b: &dyn Surface) -> Result<IntersectionCurve, SsiError> {
     match (a.surface_type(), b.surface_type()) {
-        (SurfaceKind::Plane, SurfaceKind::Plane) => {
-            let pa = downcast_plane(a);
-            let pb = downcast_plane(b);
-            match (pa, pb) {
-                (Some(pa), Some(pb)) => plane_plane(pa, pb),
-                _ => IntersectionCurve::Empty,
-            }
-        }
+        (SurfaceKind::Plane, SurfaceKind::Plane) => match (downcast_plane(a), downcast_plane(b)) {
+            (Some(pa), Some(pb)) => Ok(plane_plane(pa, pb)),
+            _ => Err(kind_mismatch(a, b)),
+        },
         (SurfaceKind::Plane, SurfaceKind::Sphere) => {
-            let p = downcast_plane(a);
-            let s = downcast_sphere(b);
-            match (p, s) {
-                (Some(p), Some(s)) => plane_sphere(p, s),
-                _ => IntersectionCurve::Empty,
+            match (downcast_plane(a), downcast_sphere(b)) {
+                (Some(p), Some(s)) => Ok(plane_sphere(p, s)),
+                _ => Err(kind_mismatch(a, b)),
             }
         }
         (SurfaceKind::Sphere, SurfaceKind::Plane) => {
-            let s = downcast_sphere(a);
-            let p = downcast_plane(b);
-            match (s, p) {
-                (Some(s), Some(p)) => plane_sphere(p, s),
-                _ => IntersectionCurve::Empty,
+            match (downcast_sphere(a), downcast_plane(b)) {
+                (Some(s), Some(p)) => Ok(plane_sphere(p, s)),
+                _ => Err(kind_mismatch(a, b)),
             }
         }
         (SurfaceKind::Plane, SurfaceKind::Cylinder) => {
-            let p = downcast_plane(a);
-            let c = downcast_cylinder(b);
-            match (p, c) {
-                (Some(p), Some(c)) => plane_cylinder(p, c),
-                _ => IntersectionCurve::Empty,
+            match (downcast_plane(a), downcast_cylinder(b)) {
+                (Some(p), Some(c)) => Ok(plane_cylinder(p, c)),
+                _ => Err(kind_mismatch(a, b)),
             }
         }
         (SurfaceKind::Cylinder, SurfaceKind::Plane) => {
-            let c = downcast_cylinder(a);
-            let p = downcast_plane(b);
-            match (c, p) {
-                (Some(c), Some(p)) => plane_cylinder(p, c),
-                _ => IntersectionCurve::Empty,
+            match (downcast_cylinder(a), downcast_plane(b)) {
+                (Some(c), Some(p)) => Ok(plane_cylinder(p, c)),
+                _ => Err(kind_mismatch(a, b)),
             }
         }
-        (SurfaceKind::Plane, SurfaceKind::Cone) => {
-            let p = downcast_plane(a);
-            let c = downcast_cone(b);
-            match (p, c) {
-                (Some(p), Some(c)) => plane_cone(p, c),
-                _ => IntersectionCurve::Empty,
-            }
-        }
-        (SurfaceKind::Cone, SurfaceKind::Plane) => {
-            let c = downcast_cone(a);
-            let p = downcast_plane(b);
-            match (c, p) {
-                (Some(c), Some(p)) => plane_cone(p, c),
-                _ => IntersectionCurve::Empty,
-            }
-        }
+        (SurfaceKind::Plane, SurfaceKind::Cone) => match (downcast_plane(a), downcast_cone(b)) {
+            (Some(p), Some(c)) => Ok(plane_cone(p, c)),
+            _ => Err(kind_mismatch(a, b)),
+        },
+        (SurfaceKind::Cone, SurfaceKind::Plane) => match (downcast_cone(a), downcast_plane(b)) {
+            (Some(c), Some(p)) => Ok(plane_cone(p, c)),
+            _ => Err(kind_mismatch(a, b)),
+        },
         (SurfaceKind::Sphere, SurfaceKind::Sphere) => {
-            let sa = downcast_sphere(a);
-            let sb = downcast_sphere(b);
-            match (sa, sb) {
-                (Some(sa), Some(sb)) => sphere_sphere(sa, sb),
-                _ => IntersectionCurve::Empty,
+            match (downcast_sphere(a), downcast_sphere(b)) {
+                (Some(sa), Some(sb)) => Ok(sphere_sphere(sa, sb)),
+                _ => Err(kind_mismatch(a, b)),
             }
         }
         (SurfaceKind::Cylinder, SurfaceKind::Cylinder) => {
-            let ca = downcast_cylinder(a);
-            let cb = downcast_cylinder(b);
-            match (ca, cb) {
-                (Some(ca), Some(cb)) => cylinder_cylinder(ca, cb),
-                _ => IntersectionCurve::Empty,
+            match (downcast_cylinder(a), downcast_cylinder(b)) {
+                (Some(ca), Some(cb)) => Ok(cylinder_cylinder(ca, cb)),
+                _ => Err(kind_mismatch(a, b)),
             }
         }
         // Torus intersections
-        (SurfaceKind::Plane, SurfaceKind::Torus) => {
-            let p = downcast_plane(a);
-            let t = downcast_torus(b);
-            match (p, t) {
-                (Some(p), Some(t)) => plane_torus(p, t),
-                _ => IntersectionCurve::Empty,
-            }
-        }
-        (SurfaceKind::Torus, SurfaceKind::Plane) => {
-            let t = downcast_torus(a);
-            let p = downcast_plane(b);
-            match (t, p) {
-                (Some(t), Some(p)) => plane_torus(p, t),
-                _ => IntersectionCurve::Empty,
-            }
-        }
+        (SurfaceKind::Plane, SurfaceKind::Torus) => match (downcast_plane(a), downcast_torus(b)) {
+            (Some(p), Some(t)) => Ok(plane_torus(p, t)),
+            _ => Err(kind_mismatch(a, b)),
+        },
+        (SurfaceKind::Torus, SurfaceKind::Plane) => match (downcast_torus(a), downcast_plane(b)) {
+            (Some(t), Some(p)) => Ok(plane_torus(p, t)),
+            _ => Err(kind_mismatch(a, b)),
+        },
         (SurfaceKind::Cylinder, SurfaceKind::Torus)
         | (SurfaceKind::Torus, SurfaceKind::Cylinder)
         | (SurfaceKind::Sphere, SurfaceKind::Torus)
         | (SurfaceKind::Torus, SurfaceKind::Sphere)
         | (SurfaceKind::Torus, SurfaceKind::Torus) => {
             // Complex torus intersections: use marching/sampling method
-            marching_ssi(a, b, 64)
+            Ok(marching_ssi(a, b, 64))
         }
         // B-spline intersections: use marching/sampling method
-        (SurfaceKind::BSpline, _) | (_, SurfaceKind::BSpline) => marching_ssi(a, b, 64),
+        (SurfaceKind::BSpline, _) | (_, SurfaceKind::BSpline) => Ok(marching_ssi(a, b, 64)),
         // BilinearSurface (from sweep) — approximate as plane for fast analytic SSI
-        (SurfaceKind::Bilinear, _) => {
-            if let Some(plane) = downcast_bilinear(a).and_then(|b| b.to_approximate_plane()) {
-                intersect_surfaces(&plane, b)
-            } else {
-                marching_ssi(a, b, 16)
-            }
-        }
-        (_, SurfaceKind::Bilinear) => {
-            if let Some(plane) = downcast_bilinear(b).and_then(|b| b.to_approximate_plane()) {
-                intersect_surfaces(a, &plane)
-            } else {
-                marching_ssi(a, b, 16)
-            }
-        }
+        (SurfaceKind::Bilinear, _) => match downcast_bilinear(a) {
+            Some(bl) => match bl.to_approximate_plane() {
+                Some(plane) => intersect_surfaces(&plane, b),
+                // Degenerate patch with no plane approximation — sample.
+                None => Ok(marching_ssi(a, b, 16)),
+            },
+            None => Err(kind_mismatch(a, b)),
+        },
+        (_, SurfaceKind::Bilinear) => match downcast_bilinear(b) {
+            Some(bl) => match bl.to_approximate_plane() {
+                Some(plane) => intersect_surfaces(a, &plane),
+                None => Ok(marching_ssi(a, b, 16)),
+            },
+            None => Err(kind_mismatch(a, b)),
+        },
         _ => {
             // Unsupported pair — use marching with fewer samples.
-            marching_ssi(a, b, 16)
+            Ok(marching_ssi(a, b, 16))
         }
     }
 }
@@ -1069,8 +1086,69 @@ mod tests {
         let a: Box<dyn Surface> = Box::new(Plane::xy());
         let b: Box<dyn Surface> = Box::new(SphereSurface::new(10.0));
 
-        let result = intersect_surfaces(a.as_ref(), b.as_ref());
+        let result = intersect_surfaces(a.as_ref(), b.as_ref()).expect("supported pair");
         assert!(matches!(result, IntersectionCurve::Circle(_)));
+    }
+
+    /// A surface that reports [`SurfaceKind::Plane`] but whose concrete type
+    /// is not `Plane` — the downcast-mismatch condition that used to be a
+    /// hard failure on the SSI path.
+    #[derive(Debug, Clone)]
+    struct LyingSurface(SphereSurface);
+
+    impl Surface for LyingSurface {
+        fn evaluate(&self, uv: Point2) -> Point3 {
+            self.0.evaluate(uv)
+        }
+        fn normal(&self, uv: Point2) -> Dir3 {
+            self.0.normal(uv)
+        }
+        fn d_du(&self, uv: Point2) -> vcad_kernel_math::Vec3 {
+            self.0.d_du(uv)
+        }
+        fn d_dv(&self, uv: Point2) -> vcad_kernel_math::Vec3 {
+            self.0.d_dv(uv)
+        }
+        fn domain(&self) -> ((f64, f64), (f64, f64)) {
+            self.0.domain()
+        }
+        fn surface_type(&self) -> SurfaceKind {
+            SurfaceKind::Plane // the lie
+        }
+        fn clone_box(&self) -> Box<dyn Surface> {
+            Box::new(self.clone())
+        }
+        fn as_any(&self) -> &dyn std::any::Any {
+            self
+        }
+        fn transform(&self, t: &vcad_kernel_math::Transform) -> Box<dyn Surface> {
+            Box::new(LyingSurface(
+                self.0
+                    .transform(t)
+                    .as_any()
+                    .downcast_ref::<SphereSurface>()
+                    .expect("sphere transform yields sphere")
+                    .clone(),
+            ))
+        }
+    }
+
+    #[test]
+    fn test_mismatched_surface_kind_returns_err_not_panic() {
+        let liar: Box<dyn Surface> = Box::new(LyingSurface(SphereSurface::new(5.0)));
+        let plane: Box<dyn Surface> = Box::new(Plane::xy());
+
+        // Both orders must fail cleanly with the typed error.
+        let r1 = intersect_surfaces(liar.as_ref(), plane.as_ref());
+        assert!(matches!(
+            r1,
+            Err(SsiError::SurfaceKindMismatch {
+                a: SurfaceKind::Plane,
+                b: SurfaceKind::Plane,
+            })
+        ));
+        let r2 = intersect_surfaces(plane.as_ref(), liar.as_ref());
+        assert!(matches!(r2, Err(SsiError::SurfaceKindMismatch { .. })));
     }
 
     #[test]

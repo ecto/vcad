@@ -628,6 +628,44 @@ pub fn split_planar_face_by_circle(
                         .topology
                         .add_face(inner_loop, surface_index, orientation);
 
+                    // Route the cap's pre-existing inner loops (holes from prior
+                    // booleans) to the sub-face that now contains them, mirroring
+                    // the polygonal-outer-loop path below. A hole inside the
+                    // splitting circle belongs to the new disk face; leaving it on
+                    // the cap both strands a nested hole on the ring and lets the
+                    // disk seal the hole with a phantom membrane (e.g. a bearing
+                    // bore closed at its mouth), which corrupts point-in-solid
+                    // parity for every later boolean against this solid.
+                    let existing_inner: Vec<_> = brep.topology.faces[face_id].inner_loops.clone();
+                    for lp in existing_inner {
+                        let lp_verts: Vec<Point3> = brep
+                            .topology
+                            .loop_half_edges(lp)
+                            .map(|he| {
+                                brep.topology.vertices[brep.topology.half_edges[he].origin].point
+                            })
+                            .collect();
+                        if lp_verts.is_empty() {
+                            continue;
+                        }
+                        let test_pt = if lp_verts.len() == 1 {
+                            lp_verts[0]
+                        } else {
+                            let n = lp_verts.len() as f64;
+                            Point3::new(
+                                lp_verts.iter().map(|v| v.x).sum::<f64>() / n,
+                                lp_verts.iter().map(|v| v.y).sum::<f64>() / n,
+                                lp_verts.iter().map(|v| v.z).sum::<f64>() / n,
+                            )
+                        };
+                        if (test_pt - circle.center).norm() < circle.radius - tolerance {
+                            brep.topology.faces[face_id]
+                                .inner_loops
+                                .retain(|&l| l != lp);
+                            brep.topology.faces[inner_face].inner_loops.push(lp);
+                        }
+                    }
+
                     // Add the circle as an inner loop (hole) on the original cap face.
                     // Determine correct winding: inner loop should be opposite to outer.
                     // For a degenerate outer loop we use the plane normal to decide:

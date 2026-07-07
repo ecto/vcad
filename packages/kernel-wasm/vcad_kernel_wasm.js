@@ -1082,13 +1082,19 @@ export class Solid {
     }
     /**
      * Boolean difference (self − other).
+     *
+     * Returns a JS error (instead of trapping the WASM instance) when the
+     * kernel reports a boolean failure.
      * @param {Solid} other
      * @returns {Solid}
      */
     difference(other) {
         _assertClass(other, Solid);
         const ret = wasm.solid_difference(this.__wbg_ptr, other.__wbg_ptr);
-        return Solid.__wrap(ret);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return Solid.__wrap(ret[0]);
     }
     /**
      * Create an empty solid.
@@ -1181,13 +1187,19 @@ export class Solid {
     }
     /**
      * Boolean intersection (self ∩ other).
+     *
+     * Returns a JS error (instead of trapping the WASM instance) when the
+     * kernel reports a boolean failure.
      * @param {Solid} other
      * @returns {Solid}
      */
     intersection(other) {
         _assertClass(other, Solid);
         const ret = wasm.solid_intersection(this.__wbg_ptr, other.__wbg_ptr);
-        return Solid.__wrap(ret);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return Solid.__wrap(ret[0]);
     }
     /**
      * Check if the solid is empty (has no geometry).
@@ -1567,13 +1579,19 @@ export class Solid {
     }
     /**
      * Boolean union (self ∪ other).
+     *
+     * Returns a JS error (instead of trapping the WASM instance) when the
+     * kernel reports a boolean failure.
      * @param {Solid} other
      * @returns {Solid}
      */
     union(other) {
         _assertClass(other, Solid);
         const ret = wasm.solid_union(this.__wbg_ptr, other.__wbg_ptr);
-        return Solid.__wrap(ret);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return Solid.__wrap(ret[0]);
     }
     /**
      * Compute the volume of the solid.
@@ -8140,12 +8158,12 @@ function __wbg_get_imports() {
             arg0.writeTexture(arg1, arg2, arg3, arg4);
         },
         __wbindgen_cast_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 2478, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 2479, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 2466, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 2467, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h30743bca3150d93c, wasm_bindgen__convert__closures_____invoke__hcf7d3eaee8800b37);
             return ret;
         },
         __wbindgen_cast_0000000000000002: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 3262, function: Function { arguments: [Externref], shim_idx: 3263, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 3250, function: Function { arguments: [Externref], shim_idx: 3251, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__hfdadf281ff0f1c56, wasm_bindgen__convert__closures_____invoke__h9bdf540eb7e61590);
             return ret;
         },

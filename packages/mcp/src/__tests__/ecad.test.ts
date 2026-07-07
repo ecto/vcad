@@ -18,6 +18,7 @@ import {
   calcCoil,
   sizeCoil,
   calcRf,
+  calcMotor,
   addCoil,
   addCoilArray,
   windingLayout,
@@ -803,15 +804,15 @@ describe("route_nets locked_nets", () => {
     expect(hasDetour(getPcbBoard(getSession(id)))).toBe(true);
   });
 
-  it("rips up the same net when it is not locked (control)", async () => {
+  it("preserves manual add_trace copper even when the net is NOT locked", async () => {
     const created = out(
       await createSchematic({
-        components: [resistor("R1", 0), resistor("R2", 20)],
-        nets: { MID: ["R1.2", "R2.1"] },
+        components: [resistor("R1", 0), resistor("R2", 20), resistor("R3", 40)],
+        nets: { MID: ["R1.2", "R2.1"], NETB: ["R2.2", "R3.1"] },
       }),
     );
     const id = created.document_id;
-    await placeComponents({ document_id: id, board_width: 40, board_height: 20 });
+    await placeComponents({ document_id: id, board_width: 60, board_height: 20 });
     await addTrace({
       document_id: id,
       net: "MID",
@@ -823,11 +824,80 @@ describe("route_nets locked_nets", () => {
     });
     expect(hasDetour(getPcbBoard(getSession(id)))).toBe(true);
 
+    // No locked_nets: provenance alone protects the hand-placed copper. The
+    // net is preserved wholesale (the kernel can't route "around" existing
+    // copper) and reported so the caller knows it was skipped.
+    const res = out(await routeNets({ document_id: id }));
+    expect(res.success).toBe(true);
+    expect(res.manual_nets_preserved).toEqual(["MID"]);
+    expect(res.traces_removed ?? 0).toBe(0);
+    expect((res.warnings ?? []).join(" ")).toContain("MID");
+    const board = getPcbBoard(getSession(id));
+    expect(hasDetour(board)).toBe(true);
+    // Other nets still route normally around the preserved copper.
+    expect(board.traces.some((t) => t.net === "NETB")).toBe(true);
+  });
+
+  it("rips up untagged (pre-provenance) copper on an unlocked net (control)", async () => {
+    const created = out(
+      await createSchematic({
+        components: [resistor("R1", 0), resistor("R2", 20)],
+        nets: { MID: ["R1.2", "R2.1"] },
+      }),
+    );
+    const id = created.document_id;
+    await placeComponents({ document_id: id, board_width: 40, board_height: 20 });
+    // Inject a raw trace with no `source` — the shape of a document saved
+    // before copper provenance existed. Legacy copper stays disposable, so a
+    // re-route replaces it instead of stacking on top of it.
+    getPcbBoard(getSession(id)).traces.push({
+      start: { x: 1, y: 9 },
+      end: { x: 1, y: 1 },
+      width: 0.25,
+      layer: "FCu",
+      net: "MID",
+    });
+    expect(hasDetour(getPcbBoard(getSession(id)))).toBe(true);
+
     const res = out(await routeNets({ document_id: id }));
     expect(res.traces_removed).toBeGreaterThan(0);
     expect(hasDetour(getPcbBoard(getSession(id)))).toBe(false);
   });
+
+  it("keeps a manual via while re-routing the net's traces", async () => {
+    const created = out(
+      await createSchematic({
+        components: [resistor("R1", 0), resistor("R2", 20)],
+        nets: { MID: ["R1.2", "R2.1"] },
+      }),
+    );
+    const id = created.document_id;
+    await placeComponents({ document_id: id, board_width: 40, board_height: 20 });
+    out(await routeNets({ document_id: id }));
+    out(
+      await addVia({
+        document_id: id,
+        net: "MID",
+        position: { x: 2, y: 2 },
+      }),
+    );
+
+    // A via alone doesn't block re-routing (the ratsnest only counts traces),
+    // so the net is re-owned: autorouted copper replaced, manual via kept.
+    const res = out(await routeNets({ document_id: id }));
+    expect(res.success).toBe(true);
+    expect(res.traces_removed).toBeGreaterThan(0);
+    expect(res.manual_nets_preserved).toBeUndefined();
+    const board = getPcbBoard(getSession(id));
+    expect(
+      board.vias.some(
+        (v) => v.net === "MID" && v.source === "manual" && v.position.x === 2,
+      ),
+    ).toBe(true);
+    expect(board.traces.some((t) => t.net === "MID")).toBe(true);
+  });
 });
+
 
 describe("route_nets strategy", () => {
   const mkBoard = async () => {
@@ -1325,7 +1395,11 @@ describe("ecad session flow", () => {
     // Deliberately NOT routed → MID's two pads sit in disjoint copper groups,
     // so DRC reports an UnconnectedNet error and the board is not fab-clean.
 
-    const blocked = out(await exportGerber({ document_id: id })); // require_clean_drc defaults true
+    const blockedResult = await exportGerber({ document_id: id }); // require_clean_drc defaults true
+    // The gate tripping is a verdict, not a tool failure — isError would make
+    // clients and telemetry read a working guard as a crash.
+    expect((blockedResult as { isError?: boolean }).isError).toBeUndefined();
+    const blocked = out(blockedResult);
     expect(blocked.success).toBe(false);
     expect(blocked.blocked).toBe(true);
     expect(blocked.drc.errors).toBeGreaterThan(0);
@@ -2143,13 +2217,15 @@ describe("explicit netlist (nets as data)", () => {
 });
 
 describe("route_nets idempotency", () => {
-  // The exact board from the field bug report. Before the fix, routing an
-  // already-routed board a second time stacked copper: the kernel ratsnest
-  // skips nets that already have a trace, so the second route_all came back
-  // empty, the no-kernel fallback in routeNets misfired, and it chained naive
-  // straight segments over the clean route — turning a handful of inherent
-  // violations into dozens of shorts. The fix rips up the target nets' copper
-  // before routing, so re-running replaces the route instead of adding to it.
+  // The exact board from the field bug report (issue #277). Before the fix,
+  // routing an already-routed board a second time stacked copper: the kernel
+  // ratsnest skips nets that already have a trace, so the second route_all
+  // came back empty, the no-kernel fallback in routeNets misfired, and it
+  // chained naive straight segments over the clean route — turning a handful
+  // of inherent violations into dozens of shorts. The fix rips up the target
+  // nets' *autorouted* copper before routing (hand-placed copper is
+  // provenance-tagged and preserved), so re-running replaces the route
+  // instead of adding to it.
   const soic8 = (ref: string, x: number) => ({
     ref,
     value: "U",
@@ -2208,6 +2284,10 @@ describe("route_nets idempotency", () => {
     return id;
   };
 
+  /** Segment identity — stacked copper shows up as exact duplicates. */
+  const segKey = (t: { net: string; layer: string; start: Vec2; end: Vec2 }) =>
+    `${t.net}|${t.layer}|${t.start.x},${t.start.y}->${t.end.x},${t.end.y}`;
+
   it("a second route_nets does not stack copper or add violations", async () => {
     const id = await buildBoard();
 
@@ -2218,20 +2298,62 @@ describe("route_nets idempotency", () => {
     const vias1 = board1.vias.length;
     const drc1 = out(await runDrc({ document_id: id }));
     expect(traces1).toBeGreaterThan(0);
+    // A single pass never stacks copper on itself — the duplicate-free
+    // baseline the re-route must hold.
+    const keys1 = board1.traces.map(segKey);
+    expect(new Set(keys1).size).toBe(keys1.length);
 
     // Second route — must rip up and re-lay the same copper, not append a second
     // set. After the rip-up the board is pads-only again, exactly as it was
     // before the first route, so the deterministic router reproduces it byte
     // for byte.
-    out(await routeNets({ document_id: id }));
+    const r2 = out(await routeNets({ document_id: id }));
     const board2 = getPcbBoard(getSession(id));
     const drc2 = out(await runDrc({ document_id: id }));
 
+    // The rip-up is visible in the result, not silent.
+    expect(r2.traces_removed).toBeGreaterThan(0);
     expect(board2.traces.length).toBe(traces1);
     expect(board2.vias.length).toBe(vias1);
+    // No two identical segments — the stacked-copper signature.
+    const keys2 = board2.traces.map(segKey);
+    expect(new Set(keys2).size).toBe(keys2.length);
+    // Every piece of autorouted copper carries its provenance, so the next
+    // re-route knows it is disposable.
+    expect(board2.traces.every((t) => t.source === "autoroute")).toBe(true);
+    expect(board2.vias.every((v) => v.source === "autoroute")).toBe(true);
     expect(drc2.violations).toBe(drc1.violations);
     // The headline symptom: the re-route must never introduce shorts.
     expect(drc2.byRule.Short ?? 0).toBe(0);
+  });
+
+  it("a scoped re-route of one net leaves the other nets' copper untouched", async () => {
+    const id = await buildBoard();
+    out(await routeNets({ document_id: id }));
+
+    const before = getPcbBoard(getSession(id));
+    const othersBefore = before.traces.filter((t) => t.net !== "SIG2").map(segKey).sort();
+    const sig2Before = before.traces.filter((t) => t.net === "SIG2").length;
+    expect(sig2Before).toBeGreaterThan(0);
+
+    const r = out(await routeNets({ document_id: id, nets: ["SIG2"] }));
+    expect(r.success).toBe(true);
+    expect(r.traces_removed).toBeGreaterThan(0);
+
+    const after = getPcbBoard(getSession(id));
+    // SIG2 was replaced (still routed, no duplicate segments), not doubled.
+    // The scoped pass routes against different obstacles than the original
+    // negotiated pass, so the exact path may differ — but stacking would at
+    // least double the segment count.
+    const sig2After = after.traces.filter((t) => t.net === "SIG2");
+    expect(sig2After.length).toBeGreaterThan(0);
+    expect(sig2After.length).toBeLessThan(sig2Before * 2);
+    const sig2Keys = sig2After.map(segKey);
+    expect(new Set(sig2Keys).size).toBe(sig2Keys.length);
+    // Copper on every other net is byte-identical.
+    expect(after.traces.filter((t) => t.net !== "SIG2").map(segKey).sort()).toEqual(
+      othersBefore,
+    );
   });
 
   it("routing three times in a row stays flat — no monotonic copper growth", async () => {
@@ -4788,5 +4910,130 @@ describe("layer-name validation at write boundaries", () => {
     expect(isErr(res)).toBe(true);
     expect(errText(res)).toContain("copper_layer");
     expect(errText(res)).toContain("did you mean 'FCu'");
+  });
+});
+
+describe("EM receipt claims", () => {
+  const stack = { dielectric_height: 0.2, copper_thickness: 0.035, dielectric_er: 4.3 };
+
+  it("calc_impedance claims Z0, er_eff, and delay with the model that computed them", async () => {
+    const r = out(await calcImpedance({ trace_width: 0.3, ...stack }));
+    expect(r.claims.map((c: any) => c.quantity)).toEqual([
+      "characteristic_impedance",
+      "effective_permittivity",
+      "propagation_delay",
+    ]);
+    for (const c of r.claims) {
+      expect(c.domain).toBe("em");
+      expect(c.method).toBe("ipc2141-microstrip");
+      expect(c.inputs.trace_width).toBe(0.3);
+    }
+    const z0 = r.claims.find((c: any) => c.quantity === "characteristic_impedance");
+    expect(z0.predicted).toBe(r.z0);
+    expect(z0.unit).toBe("ohm");
+  });
+
+  it("a differential pair adds a differential_impedance claim", async () => {
+    const r = out(
+      await calcImpedance({
+        trace_width: 0.15,
+        spacing: 0.15,
+        trace_type: "diff_microstrip",
+        ...stack,
+      }),
+    );
+    const diff = r.claims.find((c: any) => c.quantity === "differential_impedance");
+    expect(diff.predicted).toBe(r.z_diff);
+    expect(diff.method).toBe("edge-coupled-diff-pair");
+    expect(diff.inputs.spacing).toBe(0.15);
+  });
+
+  it("size_impedance claims describe the snapped geometry it recommends", () => {
+    const r = out(sizeImpedance({ trace_type: "microstrip", target_z0: 50, ...stack }));
+    const z0 = r.claims.find((c: any) => c.quantity === "characteristic_impedance");
+    expect(z0.predicted).toBe(r.measured.z0);
+    expect(z0.inputs.trace_width).toBe(r.width_mm);
+  });
+
+  it("calc_coil and size_coil claim inductance and DC resistance", () => {
+    const r = out(calcCoil({ inner_radius: 2, outer_radius: 6, turns: 10, trace_width: 0.2 }));
+    const ind = r.claims.find((c: any) => c.quantity === "inductance");
+    expect(ind.predicted).toBe(r.inductance_nh);
+    expect(ind.unit).toBe("nH");
+    expect(ind.method).toBe("wheeler-mohan-1999");
+    expect(r.claims.find((c: any) => c.quantity === "dc_resistance").predicted).toBe(
+      r.dc_resistance_ohm,
+    );
+
+    const s = out(
+      sizeCoil({ target_inductance_nh: 500, inner_radius: 2, outer_radius: 8, trace_width: 0.15 }),
+    );
+    const sInd = s.claims.find((c: any) => c.quantity === "inductance");
+    expect(sInd.predicted).toBe(s.achieved_inductance_nh);
+    expect(sInd.inputs.turns).toBe(s.turns);
+  });
+
+  it("calc_rf claims resonance and Q", () => {
+    const r = out(calcRf({ topology: "series_rlc", r_ohm: 50, l_henry: 10e-9, c_farad: 10e-12 }));
+    const f0 = r.claims.find((c: any) => c.quantity === "resonant_frequency");
+    expect(f0.predicted).toBe(r.resonance_hz);
+    expect(f0.unit).toBe("Hz");
+    expect(r.claims.find((c: any) => c.quantity === "q_factor").predicted).toBe(r.q_factor);
+  });
+
+  it("size_pdn claims one IR drop per budgeted node", async () => {
+    const r = out(
+      await sizePdn({
+        nodes: 2,
+        edges: [{ a: 0, b: 1, length: 10 }],
+        loads: [{ node: 1, current: 1.0 }],
+        targets: [{ node: 1, max_drop: 0.05 }],
+      }),
+    );
+    expect(r.claims).toHaveLength(1);
+    expect(r.claims[0].quantity).toBe("ir_drop");
+    expect(r.claims[0].predicted).toBe(r.measured_drops_v[0]);
+    expect(r.claims[0].inputs.node).toBe(1);
+  });
+
+  it("winding_layout claims the winding factor only for a feasible plan", () => {
+    const plan = out(windingLayout({ slots: 9, poles: 12 }));
+    const kw = plan.claims.find((c: any) => c.quantity === "winding_factor");
+    expect(kw.predicted).toBe(plan.windingFactor);
+    expect(kw.method).toBe("star-of-slots");
+    const bad = out(windingLayout({ slots: 9, poles: 12, layer: "single" }));
+    expect(bad.claims).toBeUndefined();
+  });
+
+  it("calc_motor claims Kt/Ke/speed/stall, plus B_gap when it computed it", async () => {
+    const r = out(
+      await calcMotor({
+        pole_pairs: 6,
+        turns_per_phase: 60,
+        winding_factor: 0.866,
+        inner_radius_mm: 5,
+        outer_radius_mm: 30,
+        phase_resistance_ohm: 0.5,
+        supply_voltage_v: 24,
+        magnet: {},
+      }),
+    );
+    const q = (name: string) => r.claims.find((c: any) => c.quantity === name);
+    expect(q("torque_constant").predicted).toBe(r.kt_nm_per_a);
+    expect(q("torque_constant").unit).toBe("N·m/A");
+    expect(q("back_emf_constant").predicted).toBe(r.ke_v_s_per_rad);
+    expect(q("no_load_speed").predicted).toBe(r.no_load_speed_rad_s);
+    expect(q("stall_torque").predicted).toBe(r.stall_torque_nm);
+    const b = q("airgap_flux_density");
+    expect(b.method).toBe("mec-reluctance");
+    expect(b.predicted).toBe(r.airgap_flux_tesla);
+    // Every claim in the family carries the uniform shape.
+    for (const c of r.claims) {
+      expect(c.domain).toBe("em");
+      expect(typeof c.predicted).toBe("number");
+      expect(typeof c.unit).toBe("string");
+      expect(typeof c.method).toBe("string");
+      expect(c.inputs).toBeTruthy();
+    }
   });
 });

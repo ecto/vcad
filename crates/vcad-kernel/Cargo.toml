@@ -23,6 +23,11 @@ vcad-kernel-constraints = { workspace = true }
 vcad-kernel-text = { workspace = true }
 vcad-kernel-cost = { workspace = true }
 vcad-kernel-dfm = { workspace = true }
+vcad-kernel-cam = { workspace = true }
+vcad-kernel-stocksim = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }
 
 [features]
 # Forwards the `no-builtin-font` flag from vcad-kernel-text so downstream

@@ -971,7 +971,7 @@ mod ssi_profile_tests {
         let mut parsed_ok = 0;
         let mut split_ok = 0;
         for surf in &blade.geometry.surfaces {
-            let curve = ssi::intersect_surfaces(wall.as_ref(), surf.as_ref());
+            let curve = ssi::intersect_surfaces(wall.as_ref(), surf.as_ref()).expect("ssi");
             let kind = match &curve {
                 ssi::IntersectionCurve::Sampled(pts) => {
                     sampled_seen += 1;
@@ -1066,7 +1066,8 @@ mod realize_tests {
         let curve = ssi::intersect_surfaces(
             cyl_solid.geometry.surfaces[wall_idx].as_ref(),
             blade.geometry.surfaces[0].as_ref(),
-        );
+        )
+        .expect("ssi");
         let ssi::IntersectionCurve::Sampled(pts) = curve else {
             panic!("expected sampled ellipse, got {curve:?}");
         };
@@ -1143,7 +1144,8 @@ mod full_split_tests {
             let curve = ssi::intersect_surfaces(
                 cyl_solid.geometry.surfaces[wall_idx].as_ref(),
                 surf.as_ref(),
-            );
+            )
+            .expect("ssi");
             let ssi::IntersectionCurve::Sampled(pts) = curve else {
                 continue;
             };
@@ -1209,7 +1211,7 @@ mod result_band_tests {
             *s = s.transform(&combined);
         }
         let BooleanResult::BRep(result) =
-            boolean_op(&cyl_solid, &blade, BooleanOp::Intersection, 64);
+            boolean_op(&cyl_solid, &blade, BooleanOp::Intersection, 64).expect("boolean");
         let mut checked = 0;
         for (fid, face) in result.topology.faces.iter() {
             let Some(cyl) = result.geometry.surfaces[face.surface_index]

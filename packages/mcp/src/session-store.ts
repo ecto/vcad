@@ -21,6 +21,12 @@ import type { Document } from "@vcad/ir";
 import type { AuthUser } from "./oauth.js";
 
 export interface SessionStore {
+  /** Keying scope of the durable rows. "user": rows are scoped to the caller
+   *  (user_id, local_id), so human-chosen names are safe keys. "capability":
+   *  rows are keyed by the unguessable id ALONE, so name-derived keys would be
+   *  guessable across tenants — only random ids are safe. "memory": no durable
+   *  backend at all (stdio/local). save_document keys its named saves off this. */
+  readonly scope: "memory" | "user" | "capability";
   /** Fetch a session's Document, or null on miss. Never throws for
    *  not-found; transport/Supabase errors are logged and surfaced as null so
    *  an outage degrades to "cache only", not a tool failure. */
@@ -38,6 +44,7 @@ export interface SessionStore {
  * before), save/drop do nothing. Used for stdio and anonymous HTTP calls.
  */
 export class InMemorySessionStore implements SessionStore {
+  readonly scope = "memory" as const;
   async load(): Promise<Document | null> {
     return null;
   }
@@ -82,6 +89,7 @@ export interface SupabaseStoreConfig {
  * vcad.io — it isn't just a dead row.
  */
 export class SupabaseSessionStore implements SessionStore {
+  readonly scope = "user" as const;
   /**
    * Per-session monotonic version. The `version` column is int4, so a
    * timestamp can't be used (Date.now() overflows). A cold instance restarts
@@ -112,7 +120,7 @@ export class SupabaseSessionStore implements SessionStore {
   }
 
   /** `?user_id=eq.<caller>&local_id=eq.mcp:<id>` — the ownership-scoped key. */
-  private scope(documentId: string): string {
+  private scopeQuery(documentId: string): string {
     const uid = encodeURIComponent(this.cfg.userId);
     const lid = encodeURIComponent(this.localId(documentId));
     return `?user_id=eq.${uid}&local_id=eq.${lid}`;
@@ -121,7 +129,7 @@ export class SupabaseSessionStore implements SessionStore {
   async load(documentId: string): Promise<Document | null> {
     try {
       const res = await sessionFetch(
-        this.rowsUrl(`${this.scope(documentId)}&select=content&limit=1`),
+        this.rowsUrl(`${this.scopeQuery(documentId)}&select=content&limit=1`),
         {
           method: "GET",
           headers: this.headers({ Accept: "application/vnd.pgrst.object+json" }),
@@ -177,7 +185,7 @@ export class SupabaseSessionStore implements SessionStore {
 
   async drop(documentId: string): Promise<void> {
     try {
-      await sessionFetch(this.rowsUrl(this.scope(documentId)), {
+      await sessionFetch(this.rowsUrl(this.scopeQuery(documentId)), {
         method: "DELETE",
         headers: this.headers(),
       });
@@ -195,6 +203,7 @@ export class SupabaseSessionStore implements SessionStore {
  * cross-instance routing exactly like signed-in users do.
  */
 export class AnonSupabaseSessionStore implements SessionStore {
+  readonly scope = "capability" as const;
   constructor(private cfg: { supabaseUrl: string; serviceRoleKey: string }) {}
 
   private headers(extra: Record<string, string> = {}): Record<string, string> {

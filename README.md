@@ -128,6 +128,16 @@ npm run tauri:dev          # launches desktop window against the dev server
 npm run tauri:build        # produces a signed/unsigned installer
 ```
 
+## Export controls
+
+The hosted services (vcad.io and mcp.vcad.io) are not available in
+jurisdictions subject to U.S. sanctions and export controls — currently
+Russia, Belarus, Iran, Cuba, North Korea, Syria, and the Crimea, Sevastopol,
+Donetsk, and Luhansk regions of Ukraine. Users must comply with all
+applicable export laws. The open-source code in this repository is not
+affected and remains available to everyone. Details in
+[docs/export-controls.md](docs/export-controls.md).
+
 ## License
 
 Copyright © 2026 Municipal Robotics Corporation
