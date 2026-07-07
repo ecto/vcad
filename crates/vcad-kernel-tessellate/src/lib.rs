@@ -1013,7 +1013,7 @@ fn tessellate_planar_face_core(outer_verts: &[Point3], reversed: bool) -> Triang
     // Returns None if the polygon is too concave for fan triangulation.
     match find_best_fan_center(outer_verts) {
         Some(fan_center) => {
-            // Fan triangulation is valid for this polygon
+            // Fan triangulation from the chosen vertex
             let mut mesh = TriangleMesh::new();
             let n = outer_verts.len();
 
@@ -1036,6 +1036,35 @@ fn tessellate_planar_face_core(outer_verts: &[Point3], reversed: bool) -> Triang
                     mesh.indices.push(i as u32);
                     mesh.indices.push((i + 1) as u32);
                 }
+            }
+
+            // Validate the fan: on a concave polygon the heuristic can pick
+            // a center whose fan folds outside the boundary and cancels
+            // area (an annular-sector cap loses its inner-arc bulge, ~25%
+            // of the face). Compare unsigned fan area to the polygon's
+            // signed (shoelace) area and reroute through ear clipping on
+            // mismatch.
+            let mut signed = Vec3::zeros();
+            for i in 1..n - 1 {
+                let e1 = outer_verts[i] - outer_verts[0];
+                let e2 = outer_verts[i + 1] - outer_verts[0];
+                signed += e1.cross(e2);
+            }
+            let polygon_area = 0.5 * signed.norm();
+            let mut fan_area = 0.0;
+            for t in mesh.indices.chunks(3) {
+                let p = |i: u32| {
+                    let b = i as usize * 3;
+                    Point3::new(
+                        mesh.vertices[b] as f64,
+                        mesh.vertices[b + 1] as f64,
+                        mesh.vertices[b + 2] as f64,
+                    )
+                };
+                fan_area += 0.5 * (p(t[1]) - p(t[0])).cross(p(t[2]) - p(t[0])).norm();
+            }
+            if (fan_area - polygon_area).abs() > polygon_area.max(1e-12) * 1e-6 {
+                return tessellate_concave_polygon(outer_verts, reversed);
             }
 
             mesh
@@ -1912,6 +1941,22 @@ fn ear_clip_triangulate(
 
     let mut remaining: Vec<usize> = indices.to_vec();
 
+    // The polygon's winding in this 2D projection is a property of the
+    // input, not of the face-orientation flag: the projection basis is
+    // derived from the first corner's cross product, which points opposite
+    // the loop normal whenever that corner is reflex. Detect the actual
+    // winding by shoelace sign; `reversed` only controls the emitted
+    // triangle order. (Mixing the two made ear detection reject every
+    // genuinely convex corner of a clockwise-projected polygon, silently
+    // dropping area.)
+    let mut shoelace = 0.0;
+    for k in 0..remaining.len() {
+        let p = verts_2d[remaining[k]];
+        let q = verts_2d[remaining[(k + 1) % remaining.len()]];
+        shoelace += p.0 * q.1 - q.0 * p.1;
+    }
+    let winding_ccw = shoelace >= 0.0;
+
     while remaining.len() > 3 {
         let n = remaining.len();
         let mut found_ear = false;
@@ -1926,7 +1971,11 @@ fn ear_clip_triangulate(
 
             // Check if this is a convex vertex (ear candidate)
             let cross = (b.0 - a.0) * (c.1 - a.1) - (b.1 - a.1) * (c.0 - a.0);
-            let is_convex = if reversed { cross < 0.0 } else { cross > 0.0 };
+            let is_convex = if winding_ccw {
+                cross > 0.0
+            } else {
+                cross < 0.0
+            };
 
             if !is_convex {
                 continue;

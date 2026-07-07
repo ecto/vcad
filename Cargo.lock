@@ -7053,6 +7053,7 @@ dependencies = [
  "vcad-kernel-geom",
  "vcad-kernel-math",
  "vcad-kernel-primitives",
+ "vcad-kernel-sketch",
  "vcad-kernel-tessellate",
  "vcad-kernel-topo",
 ]

@@ -705,9 +705,10 @@ pub(crate) fn split_wavy_band_by_circle(
     brep: &mut BRepSolid,
     face_id: FaceId,
     circle: &vcad_kernel_geom::Circle3d,
+    require_wavy: bool,
 ) -> Option<SplitResult> {
     let (cyl, band) = parse_band(brep, face_id)?;
-    if band_is_rectangular(&band) {
+    if require_wavy && band_is_rectangular(&band) {
         return None;
     }
     let v_c = (circle.center - cyl.center).dot(cyl.axis.as_ref());
@@ -731,9 +732,10 @@ pub(crate) fn split_wavy_band_by_line(
     brep: &mut BRepSolid,
     face_id: FaceId,
     line: &vcad_kernel_geom::Line3d,
+    require_wavy: bool,
 ) -> Option<SplitResult> {
     let (cyl, band) = parse_band(brep, face_id)?;
-    if band_is_rectangular(&band) {
+    if require_wavy && band_is_rectangular(&band) {
         return None;
     }
     // The line must be axis-parallel and on the surface.

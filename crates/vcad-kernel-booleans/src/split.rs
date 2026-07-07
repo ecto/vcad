@@ -2451,22 +2451,34 @@ pub fn split_cylindrical_face(
     match curve {
         IntersectionCurve::Circle(circle) => {
             if wavy {
-                return crate::cyl_band::split_wavy_band_by_circle(brep, face_id, circle)
+                return crate::cyl_band::split_wavy_band_by_circle(brep, face_id, circle, true)
                     .unwrap_or(SplitResult {
                         sub_faces: vec![face_id],
                     });
             }
-            split_cylindrical_face_by_circle(brep, face_id, circle)
+            let result = split_cylindrical_face_by_circle(brep, face_id, circle);
+            if result.sub_faces.len() >= 2 {
+                return result;
+            }
+            // The legacy splitter only parses degenerate seam loops and
+            // 4-corner rectangles; arc-extruded walls carry dense sampled
+            // loops it refuses. Retry through the band machinery, which
+            // parses any two-chain loop (rectangular included).
+            crate::cyl_band::split_wavy_band_by_circle(brep, face_id, circle, false)
+                .unwrap_or(result)
         }
         IntersectionCurve::Line(line) => {
             if wavy {
-                return crate::cyl_band::split_wavy_band_by_line(brep, face_id, line).unwrap_or(
-                    SplitResult {
+                return crate::cyl_band::split_wavy_band_by_line(brep, face_id, line, true)
+                    .unwrap_or(SplitResult {
                         sub_faces: vec![face_id],
-                    },
-                );
+                    });
             }
-            split_cylindrical_face_by_line(brep, face_id, line)
+            let result = split_cylindrical_face_by_line(brep, face_id, line);
+            if result.sub_faces.len() >= 2 {
+                return result;
+            }
+            crate::cyl_band::split_wavy_band_by_line(brep, face_id, line, false).unwrap_or(result)
         }
         IntersectionCurve::Sampled(points) => {
             // Oblique intersection (e.g. a tilted plane crossing the

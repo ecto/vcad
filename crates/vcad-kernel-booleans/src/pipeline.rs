@@ -549,7 +549,35 @@ pub(crate) fn brep_boolean(
                 || trim::point_in_face(&a, face_a, &circle.center)
                 || seated(&a, face_a);
 
-            if split::is_planar_face(&a, face_a) {
+            // A circle that is already part of the planar face's sampled
+            // boundary (the cap of an arc-extruded body paired with the
+            // wall it borders) has nothing to split — feeding it to
+            // split_planar_face shaves crescent slivers off the boundary
+            // polygon, which then classify unreliably. Arc samples lie
+            // exactly on their circle, and a circle that genuinely crosses
+            // a polygon touches it at no more than two points, so ≥3
+            // on-circle vertices means "this circle is one of my arcs".
+            let circle_is_own_boundary = |solid: &BRepSolid, fid: FaceId| -> bool {
+                let face = &solid.topology.faces[fid];
+                let radius_tol = (circle.radius * 1e-4).max(1e-4);
+                let mut on_circle = 0u32;
+                let loops =
+                    std::iter::once(face.outer_loop).chain(face.inner_loops.iter().copied());
+                for loop_id in loops {
+                    for he in solid.topology.loop_half_edges(loop_id) {
+                        let v = solid.topology.vertices[solid.topology.half_edges[he].origin].point;
+                        if ((v - circle.center).norm() - circle.radius).abs() <= radius_tol {
+                            on_circle += 1;
+                            if on_circle >= 3 {
+                                return true;
+                            }
+                        }
+                    }
+                }
+                false
+            };
+
+            if split::is_planar_face(&a, face_a) && !circle_is_own_boundary(&a, face_a) {
                 // Check point_in_face to avoid creating inner loops inside existing holes.
                 // For degenerate cap faces (single-vertex outer loop), always check.
                 // For regular polygon faces, only check if they already have inner loops
@@ -581,7 +609,7 @@ pub(crate) fn brep_boolean(
             if b_anchors_circle && split::is_conical_face(&a, face_a) {
                 results_a.push((curve.clone(), circle.center, circle.center));
             }
-            if split::is_planar_face(&b, face_b) {
+            if split::is_planar_face(&b, face_b) && !circle_is_own_boundary(&b, face_b) {
                 let outer_len = b.topology.loop_len(b.topology.faces[face_b].outer_loop);
                 let has_inner_loops = !b.topology.faces[face_b].inner_loops.is_empty();
                 if outer_len <= 1 {
