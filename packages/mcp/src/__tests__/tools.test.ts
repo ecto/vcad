@@ -1197,6 +1197,18 @@ describe("tool packs (VCAD_MCP_PACKS)", () => {
     expect(disabled.has("sheet_metal_unfold")).toBe(false);
     expect(disabled.has("run_drc")).toBe(true);
   });
+
+  it("keeps `undo` always-on core — never gated by a pack", async () => {
+    const { disabledToolNames } = await import("../server.js");
+    // `undo` is the universal rewind, not an ECAD-only tool; a client that
+    // trims down to a non-ecad pack must still be able to take back a mutation.
+    process.env.VCAD_MCP_PACKS = "dfm";
+    const disabled = disabledToolNames();
+    delete process.env.VCAD_MCP_PACKS;
+    expect(disabled.has("undo")).toBe(false);
+    // The dfm-only case still disables the ecad pack — proves the gate is live.
+    expect(disabled.has("run_drc")).toBe(true);
+  });
 });
 
 describe("GLB part-identity node names", () => {

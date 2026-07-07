@@ -73,6 +73,7 @@ import { emClaim } from "./em-claims.js";
 import type { NextAction } from "./next-actions.js";
 import { computeEnclosureFitForBoard } from "./enclosure.js";
 import { validatePcb, pcbValidationError } from "./pcb-validate.js";
+import { PCB_LAYERS } from "./pcb-layers.js";
 import { sizePdnExact, ecadDiffEngineAvailable } from "../wasm/ecad-diff.js";
 import { bundleBytes, storeArtifact } from "./artifact-store.js";
 import { maxInlineArtifactBytes, maxInlineExportBytes } from "./remote.js";
@@ -267,19 +268,11 @@ function ecadUnverifiable(
 // PCB layer name validation — the single gate guarding every write boundary
 // ============================================================================
 
-/**
- * Every legal PCB layer name, in board order — the canonical serde variants of
- * the Rust `PcbLayer` enum (crates/vcad-ir/src/ecad.rs). This is the single
- * source of truth the write boundaries validate against. The old scattered
- * `/Cu$/` regex checks let malformed dotted KiCad names (`In1.Cu`) slip through,
- * which then corrupted documents and broke render_pcb / export_gerber.
- */
-const PCB_LAYERS: readonly PcbLayer[] = [
-  "FCu", "BCu", "In1Cu", "In2Cu", "In3Cu", "In4Cu", "In5Cu", "In6Cu",
-  "FSilkS", "BSilkS", "FMask", "BMask", "FPaste", "BPaste",
-  "FFab", "BFab", "FCrtYd", "BCrtYd",
-  "EdgeCuts", "UserDrawings", "UserComments",
-];
+// The legal PCB layer names live in ./pcb-layers.ts (imported as PCB_LAYERS) —
+// the single runtime copy, shared with pcb-validate.ts, mirroring the Rust
+// `PcbLayer` enum (crates/vcad-ir/src/ecad.rs). The old scattered `/Cu$/` regex
+// checks let malformed dotted KiCad names (`In1.Cu`) slip through, which then
+// corrupted documents and broke render_pcb / export_gerber.
 
 /** Fast membership test for any legal layer name. */
 const PCB_LAYER_SET: ReadonlySet<string> = new Set(PCB_LAYERS);

@@ -2477,7 +2477,10 @@ export async function createServer(
           break;
 
         case "render_molecule":
-          result = await renderMolecule(args);
+          // renderMolecule can return an image content block (like render_view),
+          // which the text-only ToolResult shape doesn't model — cast as the
+          // sibling renderers do.
+          result = (await renderMolecule(args)) as unknown as typeof result;
           break;
 
         case "record_simulation":
