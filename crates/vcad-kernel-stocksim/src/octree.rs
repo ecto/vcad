@@ -219,24 +219,32 @@ impl Stock {
         ]
     }
 
-    /// Subtract a sphere from the stock.
-    pub fn subtract_sphere(&mut self, center: [f64; 3], radius: f64) {
+    /// Subtract an arbitrary signed-distance region from the stock.
+    ///
+    /// The remaining material is `stock ∖ region`. `sdf` must be negative
+    /// inside the removal region, positive outside, and 1-Lipschitz (a true
+    /// signed distance or a conservative lower bound of one) — the octree
+    /// descent relies on the Lipschitz property to prune cells that provably
+    /// don't touch the region boundary.
+    pub fn subtract_sdf<F: Fn([f64; 3]) -> f64>(&mut self, sdf: F) {
         let bounds = self.bounds;
         let max_depth = self.max_depth;
         let old_root = std::mem::replace(&mut self.root, OctreeNode::Solid { inside: false });
-        self.root =
-            Self::subtract_sphere_node_impl(old_root, center, radius, &bounds, 0, max_depth);
+        self.root = Self::subtract_sdf_node_impl(old_root, &sdf, &bounds, 0, max_depth);
     }
 
-    fn subtract_sphere_node_impl(
+    fn subtract_sdf_node_impl<F: Fn([f64; 3]) -> f64>(
         node: OctreeNode,
-        center: [f64; 3],
-        radius: f64,
+        sdf: &F,
         bounds: &[f64; 6],
         depth: u8,
         max_depth: u8,
     ) -> OctreeNode {
-        // Check if sphere intersects this cell
+        // Already air: subtracting more changes nothing.
+        if matches!(node, OctreeNode::Solid { inside: false }) {
+            return node;
+        }
+
         let cell_center = [
             (bounds[0] + bounds[3]) / 2.0,
             (bounds[1] + bounds[4]) / 2.0,
@@ -247,34 +255,20 @@ impl Stock {
             (bounds[4] - bounds[1]) / 2.0,
             (bounds[5] - bounds[2]) / 2.0,
         ];
-
-        // Distance from sphere center to closest point on cell
-        let closest = [
-            center[0].clamp(bounds[0], bounds[3]),
-            center[1].clamp(bounds[1], bounds[4]),
-            center[2].clamp(bounds[2], bounds[5]),
-        ];
-        let dist_sq = (closest[0] - center[0]).powi(2)
-            + (closest[1] - center[1]).powi(2)
-            + (closest[2] - center[2]).powi(2);
-
-        // Cell diagonal
         let cell_diag = (half_size[0].powi(2) + half_size[1].powi(2) + half_size[2].powi(2)).sqrt();
 
-        // If sphere doesn't intersect cell, return unchanged
-        if dist_sq > (radius + cell_diag).powi(2) {
+        let d = sdf(cell_center);
+
+        // Region provably misses the cell: nothing to remove.
+        if d > cell_diag {
             return node;
         }
-
-        // If cell is entirely inside sphere, make it empty
-        let corner_dist_sq = (cell_center[0] - center[0]).powi(2)
-            + (cell_center[1] - center[1]).powi(2)
-            + (cell_center[2] - center[2]).powi(2);
-        if corner_dist_sq + cell_diag.powi(2) < radius.powi(2) {
+        // Cell provably swallowed by the region: all material removed.
+        if d < -cell_diag {
             return OctreeNode::Solid { inside: false };
         }
 
-        // If at max depth, create leaf with SDF
+        // At max depth, store the boolean result as a leaf SDF.
         if depth >= max_depth {
             let sdf_before = match &node {
                 OctreeNode::Leaf { sdf } => *sdf,
@@ -288,16 +282,11 @@ impl Stock {
                 OctreeNode::Branch { .. } => -cell_diag, // Assume some material
             };
 
-            // Sphere SDF at cell center
-            let sphere_sdf = ((cell_center[0] - center[0]).powi(2)
-                + (cell_center[1] - center[1]).powi(2)
-                + (cell_center[2] - center[2]).powi(2))
-            .sqrt()
-                - radius;
-
-            // Union of SDFs (max for subtraction)
-            let new_sdf = sdf_before.max(sphere_sdf);
-            return OctreeNode::Leaf { sdf: new_sdf };
+            // Subtraction is intersection with the region's complement, so
+            // the region SDF enters NEGATED: material = max(before, -d).
+            return OctreeNode::Leaf {
+                sdf: sdf_before.max(-d),
+            };
         }
 
         // Subdivide and recurse
@@ -318,17 +307,17 @@ impl Stock {
             }
         };
 
-        let new_children: [OctreeNode; 8] = std::array::from_fn(|i| {
-            let child_bounds = Self::child_bounds(bounds, i);
-            Self::subtract_sphere_node_impl(
-                children[i].clone(),
-                center,
-                radius,
-                &child_bounds,
-                depth + 1,
-                max_depth,
-            )
-        });
+        let new_children: Vec<OctreeNode> = children
+            .into_iter()
+            .enumerate()
+            .map(|(i, child)| {
+                let child_bounds = Self::child_bounds(bounds, i);
+                Self::subtract_sdf_node_impl(child, sdf, &child_bounds, depth + 1, max_depth)
+            })
+            .collect();
+        let new_children: [OctreeNode; 8] = new_children
+            .try_into()
+            .expect("octree branch always has 8 children");
 
         // Try to collapse if all children are same solid
         if let Some(inside) = Self::can_collapse(&new_children) {
@@ -338,6 +327,15 @@ impl Stock {
                 children: Box::new(new_children),
             }
         }
+    }
+
+    /// Subtract a sphere from the stock.
+    pub fn subtract_sphere(&mut self, center: [f64; 3], radius: f64) {
+        self.subtract_sdf(|p| {
+            ((p[0] - center[0]).powi(2) + (p[1] - center[1]).powi(2) + (p[2] - center[2]).powi(2))
+                .sqrt()
+                - radius
+        });
     }
 
     fn can_collapse(children: &[OctreeNode; 8]) -> Option<bool> {
@@ -358,103 +356,7 @@ impl Stock {
 
     /// Subtract a capsule (swept sphere) from the stock.
     pub fn subtract_capsule(&mut self, from: [f64; 3], to: [f64; 3], radius: f64) {
-        let bounds = self.bounds;
-        let max_depth = self.max_depth;
-        let old_root = std::mem::replace(&mut self.root, OctreeNode::Solid { inside: false });
-        self.root =
-            Self::subtract_capsule_node_impl(old_root, from, to, radius, &bounds, 0, max_depth);
-    }
-
-    fn subtract_capsule_node_impl(
-        node: OctreeNode,
-        from: [f64; 3],
-        to: [f64; 3],
-        radius: f64,
-        bounds: &[f64; 6],
-        depth: u8,
-        max_depth: u8,
-    ) -> OctreeNode {
-        let cell_center = [
-            (bounds[0] + bounds[3]) / 2.0,
-            (bounds[1] + bounds[4]) / 2.0,
-            (bounds[2] + bounds[5]) / 2.0,
-        ];
-        let half_size = [
-            (bounds[3] - bounds[0]) / 2.0,
-            (bounds[4] - bounds[1]) / 2.0,
-            (bounds[5] - bounds[2]) / 2.0,
-        ];
-        let cell_diag = (half_size[0].powi(2) + half_size[1].powi(2) + half_size[2].powi(2)).sqrt();
-
-        // Capsule SDF at cell center
-        let capsule_sdf = capsule_sdf(cell_center, from, to, radius);
-
-        // Quick reject: if capsule is far from cell
-        if capsule_sdf > cell_diag * 2.0 {
-            return node;
-        }
-
-        // Quick accept: if cell is entirely inside capsule
-        if capsule_sdf < -cell_diag {
-            return OctreeNode::Solid { inside: false };
-        }
-
-        // At max depth, compute SDF
-        if depth >= max_depth {
-            let sdf_before = match &node {
-                OctreeNode::Leaf { sdf } => *sdf,
-                OctreeNode::Solid { inside } => {
-                    if *inside {
-                        -cell_diag
-                    } else {
-                        cell_diag
-                    }
-                }
-                OctreeNode::Branch { .. } => -cell_diag,
-            };
-
-            let new_sdf = sdf_before.max(capsule_sdf);
-            return OctreeNode::Leaf { sdf: new_sdf };
-        }
-
-        // Subdivide
-        let children = match node {
-            OctreeNode::Branch { children } => *children,
-            _ => {
-                let child = node.clone();
-                [
-                    child.clone(),
-                    child.clone(),
-                    child.clone(),
-                    child.clone(),
-                    child.clone(),
-                    child.clone(),
-                    child.clone(),
-                    child,
-                ]
-            }
-        };
-
-        let new_children: [OctreeNode; 8] = std::array::from_fn(|i| {
-            let child_bounds = Self::child_bounds(bounds, i);
-            Self::subtract_capsule_node_impl(
-                children[i].clone(),
-                from,
-                to,
-                radius,
-                &child_bounds,
-                depth + 1,
-                max_depth,
-            )
-        });
-
-        if let Some(inside) = Self::can_collapse(&new_children) {
-            OctreeNode::Solid { inside }
-        } else {
-            OctreeNode::Branch {
-                children: Box::new(new_children),
-            }
-        }
+        self.subtract_sdf(|p| capsule_sdf(p, from, to, radius));
     }
 
     /// Convert stock to a triangle mesh using marching cubes.
@@ -537,6 +439,27 @@ mod tests {
         assert!(
             sdf > 0.0,
             "After subtracting sphere, center should be outside"
+        );
+    }
+
+    #[test]
+    fn test_subtract_sphere_boundary_cells() {
+        // Points inside the sphere but in partially-covered boundary cells
+        // must read as removed too — this exercises the leaf-level SDF
+        // (subtraction must negate the region SDF), not just the
+        // whole-cell quick-accept path.
+        let mut stock = Stock::from_box([0.0, 0.0, 0.0, 100.0, 100.0, 50.0], 5.0);
+        stock.subtract_sphere([50.0, 50.0, 25.0], 20.0);
+
+        let just_inside = stock.sdf_at(50.0, 50.0, 25.0 + 18.0);
+        assert!(
+            just_inside > 0.0,
+            "point 2mm inside the sphere surface should be removed, got {just_inside}"
+        );
+        let just_outside = stock.sdf_at(50.0, 50.0, 25.0 + 22.0);
+        assert!(
+            just_outside < 0.0,
+            "point 2mm outside the sphere surface should remain, got {just_outside}"
         );
     }
 

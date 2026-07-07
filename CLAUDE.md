@@ -102,6 +102,8 @@ vcad/
 │   ├── vcad-kernel-raytrace/      # Direct BRep ray tracing
 │   ├── vcad-kernel-physics/       # phyz physics simulation
 │   ├── vcad-kernel-urdf/          # URDF robot description import
+│   ├── vcad-kernel-cam/           # 2.5D CAM toolpath generation + G-code post
+│   ├── vcad-kernel-stocksim/      # CAM stock sim (octree SDF) + toolpath verification oracle
 │   ├── vcad-kernel/               # Unified kernel API
 │   ├── vcad-kernel-wasm/          # WASM bindings for browser
 │   ├── vcad-ir/                   # Intermediate representation
@@ -110,8 +112,6 @@ vcad/
 │   └── vcad/                      # Legacy CSG library (manifold-based)
 │
 │   # Work-in-progress crates (built but not yet wired to any consumer):
-│   # - vcad-kernel-stocksim     # CAM stock sim (octree SDF, marching cubes); no consumers yet
-│   #
 │   # - vcad-kernel-diff         # Differentiable seam, COMPLETE (M0–M11 + closeout):
 │   #                            # dx/dθ of frozen tessellations, mass-property QoIs,
 │   #                            # differentiable fillet radius, reverse-mode adjoint,

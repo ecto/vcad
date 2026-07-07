@@ -901,11 +901,14 @@ export const routeNetsSchema = {
       items: { type: "string" as const },
       description:
         "Net IDs to route (empty = route all). Re-running is safe and " +
-        "self-cleaning: routing rips up the prior copper on each net first and " +
-        "lays a complete fresh route, so trace counts don't grow across " +
-        "iterations. After a set_placement move, nets whose pads no longer sit " +
-        "under their copper are detected as stale and re-routed too (even if not " +
-        "listed here); the result reports `traces_removed`/`vias_removed` and " +
+        "self-cleaning: routing rips up the prior *autorouted* copper on each " +
+        "net first and lays a complete fresh route, so trace counts don't grow " +
+        "across iterations. Hand-placed copper (add_trace / add_via / coil " +
+        "tools) is never ripped: a net carrying a manual trace is preserved " +
+        "wholesale and reported in `manual_nets_preserved`. After a " +
+        "set_placement move, nets whose pads no longer sit under their copper " +
+        "are detected as stale and re-routed too (even if not listed here); " +
+        "the result reports `traces_removed`/`vias_removed` and " +
         "`stale_nets_cleared` so the cleanup is visible.",
     },
     locked_nets: {
@@ -913,10 +916,12 @@ export const routeNetsSchema = {
       items: { type: "string" as const },
       description:
         "Nets whose existing copper is preserved — never ripped up or " +
-        "re-routed by this call. Use for hand-routed traces/vias (e.g. a " +
-        "manual via bridge, or a stitched plane net) that the autorouter's " +
-        "self-cleaning would otherwise delete. Copper on these nets survives " +
-        "across route_nets passes; the kernel still routes every other net.",
+        "re-routed by this call. Copper on these nets survives across " +
+        "route_nets passes; the kernel still routes every other net. Nets " +
+        "carrying hand-placed traces (add_trace / coil tools) get this " +
+        "protection automatically via copper provenance, so locking is only " +
+        "needed for copper the tools didn't tag (e.g. imported or injected " +
+        "boards).",
     },
     strategy: {
       type: "string" as const,
@@ -940,7 +945,7 @@ export const routeNetsSchema = {
     receipt: {
       type: "boolean" as const,
       description:
-        "When true, wrap the route in a before/after DRC and return a `receipt` verdict (what it fixed, what it introduced incl. shorts, with each violation attributed to footprint vs routing) — instead of just a document_id. Routing is not idempotent; this surfaces a re-route that silently shorts the board.",
+        "When true, wrap the route in a before/after DRC and return a `receipt` verdict (what it fixed, what it introduced incl. shorts, with each violation attributed to footprint vs routing) — instead of just a document_id. Re-routing rips up the prior autorouted copper first (idempotent by construction); the receipt proves it, surfacing any re-route that would short the board.",
     },
   },
   required: [],
@@ -2963,8 +2968,8 @@ export async function routeNets(args: Record<string, unknown>) {
 
   const width = traceWidth || pcb.rules.defaultRules.traceWidth;
 
-  // Receipt: snapshot DRC before the (non-idempotent) route so the after-diff
-  // can attribute exactly what this call fixed and what it introduced.
+  // Receipt: snapshot DRC before the route so the after-diff can attribute
+  // exactly what this call fixed and what it introduced.
   const wantReceipt = Boolean(args.receipt);
   const beforeSnap = wantReceipt ? await drcPcb(pcb, "full", 500) : null;
 
@@ -3013,13 +3018,32 @@ export async function routeNets(args: Record<string, unknown>) {
     targetNets.add(net);
   }
 
+  // Copper provenance (issue #277): only *autorouted* copper is disposable.
+  // Traces carrying `source: "manual"` (add_trace / add_via / coil tools) are
+  // hand-placed work the router must not destroy. A net with a manual trace
+  // can't be partially re-routed either — the kernel's ratsnest treats any
+  // existing trace as "already routed" and skips the net, so ripping just its
+  // autorouted segments would strand it with no way to close it again.
+  // Such nets are therefore preserved wholesale (implicitly locked) and
+  // reported in `manual_nets_preserved`; delete the manual copper
+  // (delete_trace / delete_via) to hand the net back to the autorouter.
+  // Copper with no `source` (pre-provenance documents, or injected directly)
+  // is treated as autorouted — exactly the rip-up those documents already got.
+  // Manual *vias* alone don't block re-routing (the ratsnest ignores vias);
+  // they simply survive the rip-up while the net's traces are re-laid.
+  const manualNets = new Set<string>();
+  for (const t of pcb.traces) {
+    if (t.source === "manual" && targetNets.has(t.net)) manualNets.add(t.net);
+  }
+  for (const n of manualNets) targetNets.delete(n);
+
   let tracesRemoved = 0;
   let viasRemoved = 0;
   if (targetNets.size > 0) {
     const beforeT = pcb.traces.length;
     const beforeV = pcb.vias.length;
-    pcb.traces = pcb.traces.filter((t) => !targetNets.has(t.net));
-    pcb.vias = pcb.vias.filter((v) => !targetNets.has(v.net));
+    pcb.traces = pcb.traces.filter((t) => !targetNets.has(t.net) || t.source === "manual");
+    pcb.vias = pcb.vias.filter((v) => !targetNets.has(v.net) || v.source === "manual");
     tracesRemoved = beforeT - pcb.traces.length;
     viasRemoved = beforeV - pcb.vias.length;
   }
@@ -3051,18 +3075,20 @@ export async function routeNets(args: Record<string, unknown>) {
   // re-reading the board.
   const realizedWidths: Record<string, number> = {};
   // Nets the kernel should route: the effective set minus any the caller
-  // locked. A locked net is neither ripped up (above) nor re-routed here, so
-  // its hand-placed copper stays exactly as authored. An empty effectiveFilter
-  // means "route everything", so to subtract locked nets we make the all-set
-  // explicit; with no locked nets it stays empty (behavior unchanged).
+  // locked and minus nets preserved for their manual copper. A preserved net
+  // is neither ripped up (above) nor re-routed here, so its hand-placed
+  // copper stays exactly as authored. An empty effectiveFilter means "route
+  // everything", so to subtract preserved nets we make the all-set explicit;
+  // with nothing preserved it stays empty (behavior unchanged).
+  const preservedNets = new Set<string>([...lockedNets, ...manualNets]);
   let routeFilter = effectiveFilter;
-  if (lockedNets.size > 0) {
+  if (preservedNets.size > 0) {
     if (effectiveFilter.length > 0) {
-      routeFilter = effectiveFilter.filter((n) => !lockedNets.has(n));
+      routeFilter = effectiveFilter.filter((n) => !preservedNets.has(n));
     } else {
       const allRoutable = new Set<string>();
       for (const [net, conns] of netConnections) {
-        if (conns.length >= 2 && !lockedNets.has(net)) allRoutable.add(net);
+        if (conns.length >= 2 && !preservedNets.has(net)) allRoutable.add(net);
       }
       routeFilter = [...allRoutable];
     }
@@ -3098,6 +3124,7 @@ export async function routeNets(args: Record<string, unknown>) {
         // valid PcbLayer value.
         layer: t.layer as PcbLayer,
         net: t.net,
+        source: "autoroute",
       });
       realizedWidths[t.net] = Math.max(realizedWidths[t.net] ?? 0, t.width);
       tracesAdded++;
@@ -3110,6 +3137,7 @@ export async function routeNets(args: Record<string, unknown>) {
         startLayer: "FCu",
         endLayer: "BCu",
         net: v.net,
+        source: "autoroute",
       });
       viasAdded++;
     }
@@ -3130,7 +3158,7 @@ export async function routeNets(args: Record<string, unknown>) {
     const universe =
       routeFilter.length > 0
         ? routeFilter
-        : [...netConnections.keys()].filter((n) => !lockedNets.has(n));
+        : [...netConnections.keys()].filter((n) => !preservedNets.has(n));
     const tiers = [...new Set(universe.map(tierOf))].sort((a, b) => a - b);
     for (const tier of tiers) {
       const nets = universe.filter((n) => tierOf(n) === tier);
@@ -3153,7 +3181,8 @@ export async function routeNets(args: Record<string, unknown>) {
     // behavior; flagged because it may cross copper).
     for (const [netId, conns] of netConnections) {
       if (conns.length < 2) continue;
-      if (lockedNets.has(netId)) continue; // never reroute a locked net
+      // Never reroute a locked net or one preserved for its manual copper.
+      if (preservedNets.has(netId)) continue;
       if (effectiveFilter.length > 0 && !effectiveFilter.includes(netId)) continue;
       const positions = conns.map((c) => {
         const fp = pcb.footprints.find((f) => f.ref === c.component_ref)!;
@@ -3167,6 +3196,7 @@ export async function routeNets(args: Record<string, unknown>) {
           width,
           layer: "FCu",
           net: netId,
+          source: "autoroute",
         });
         tracesAdded++;
       }
@@ -3214,11 +3244,19 @@ export async function routeNets(args: Record<string, unknown>) {
   }
   // Stale nets the caller didn't ask for but we ripped up and re-routed because a
   // pad had moved out from under their copper. Surface them so a scoped re-route
-  // is honest about the extra cleanup it did.
-  const staleCleared = [...staleNets].filter((n) => !netsFilter.includes(n));
+  // is honest about the extra cleanup it did. Nets preserved for manual copper
+  // were NOT actually cleared, so they don't belong in this message.
+  const staleCleared = [...staleNets].filter(
+    (n) => !netsFilter.includes(n) && !manualNets.has(n),
+  );
   if (netsFilter.length > 0 && staleCleared.length > 0) {
     warnings.push(
       `ripped up orphaned copper on ${staleCleared.length} net(s) whose pads moved after the last route and re-routed them: ${staleCleared.join(", ")}`,
+    );
+  }
+  if (manualNets.size > 0) {
+    warnings.push(
+      `${manualNets.size} net(s) carry hand-placed copper (add_trace / add_via / coil tools) and were preserved as-is — neither ripped up nor re-routed: ${[...manualNets].sort().join(", ")}. Delete that copper (delete_trace / delete_via) first if route_nets should re-own the net`,
     );
   }
 
@@ -3269,6 +3307,9 @@ export async function routeNets(args: Record<string, unknown>) {
           ...(viasRemoved > 0 ? { vias_removed: viasRemoved } : {}),
           ...(staleCleared.length > 0 ? { stale_nets_cleared: staleCleared } : {}),
           ...(lockedNets.size > 0 ? { locked_nets: [...lockedNets] } : {}),
+          ...(manualNets.size > 0
+            ? { manual_nets_preserved: [...manualNets].sort() }
+            : {}),
           ...(planeStitched.length > 0 ? { plane_stitched: planeStitched } : {}),
           ...(Object.keys(realizedWidths).length > 0
             ? { track_widths_mm: realizedWidths }
@@ -3582,6 +3623,8 @@ export async function routeDiffPair(args: Record<string, unknown>) {
         width,
         layer: "FCu",
         net: leg.net,
+        // Router output: rippable by a route_nets re-route of these nets.
+        source: "autoroute",
       });
       added++;
     }
@@ -3758,7 +3801,7 @@ function parsePadClearance(
 
 /** Sorted, NUL-joined net-pair key so (A,B) and (B,A) collapse. */
 function netPairKey(a: string, b: string): string {
-  return a <= b ? `${a} ${b}` : `${b} ${a}`;
+  return a <= b ? `${a}\x00${b}` : `${b}\x00${a}`;
 }
 
 /** Run the lightweight pre-routing DRC subset against a freshly-placed board.
@@ -3811,7 +3854,7 @@ export async function summarizePlacementDrc(pcb: Pcb): Promise<PlacementDrc> {
   }
 
   const shorts: PlacementShort[] = [...shortPairs].map((key) => {
-    const [a, b] = key.split(" ") as [string, string];
+    const [a, b] = key.split("\x00") as [string, string];
     const refs = new Set<string>();
     for (const p of padPairs) {
       if (netPairKey(p.parsed.nets[0], p.parsed.nets[1]) === key) {
@@ -4148,6 +4191,11 @@ export async function exportGerber(args: Record<string, unknown>) {
         verdict.status === "unverifiable"
           ? verdict.reason
           : `${verdict.summary.errors} DRC error(s) must be resolved before fabrication`;
+      // A blocked export is a VERDICT, not a tool failure — same posture as
+      // validate_for_fab's `verdict: "blocked"`. The tool ran, evaluated the
+      // gate, and reported a structured refusal with escape hatches; isError
+      // here would (and did) make every working gate trip read as a tool
+      // crash in clients and telemetry.
       return {
         content: [
           {
@@ -4165,7 +4213,6 @@ export async function exportGerber(args: Record<string, unknown>) {
             }),
           },
         ],
-        isError: true,
       };
     }
   }
@@ -5583,7 +5630,14 @@ export function addCoil(args: Record<string, unknown>) {
     for (let li = 0; li < layersIn.length; li++) {
       const lyr = layersIn[li] as PcbLayer;
       for (let i = 0; i + 1 < pts.length; i++) {
-        pcb.traces.push({ start: pts[i], end: pts[i + 1], width: traceWidth, layer: lyr, net });
+        pcb.traces.push({
+          start: pts[i],
+          end: pts[i + 1],
+          width: traceWidth,
+          layer: lyr,
+          net,
+          source: "manual",
+        });
         totalTraces++;
       }
       totalLengthMm += perLayerLen;
@@ -5601,6 +5655,7 @@ export function addCoil(args: Record<string, unknown>) {
           startLayer: lyr,
           endLayer: layersIn[li + 1] as PcbLayer,
           net,
+          source: "manual",
         });
         stitchVias.push({ position: stitchPt, startLayer: lyr, endLayer: layersIn[li + 1] as PcbLayer });
       }
@@ -5651,6 +5706,7 @@ export function addCoil(args: Record<string, unknown>) {
       width: traceWidth,
       layer,
       net,
+      source: "manual",
     });
     tracesAdded++;
     lengthMm += Math.hypot(pts[i + 1].x - pts[i].x, pts[i + 1].y - pts[i].y);
@@ -5668,6 +5724,7 @@ export function addCoil(args: Record<string, unknown>) {
       startLayer: layer,
       endLayer: viaTo,
       net,
+      source: "manual" as const,
     };
     pcb.vias.push(v);
     via = { position: v.position, startLayer: layer, endLayer: viaTo };
@@ -7054,7 +7111,9 @@ export function addTrace(args: Record<string, unknown>) {
   for (let i = 0; i + 1 < points.length; i++) {
     const start = { x: round3(points[i].x), y: round3(points[i].y) };
     const end = { x: round3(points[i + 1].x), y: round3(points[i + 1].y) };
-    const trace: Trace = { start, end, width, layer, net };
+    // Tagged manual: route_nets preserves this copper instead of ripping it
+    // up on a re-route (issue #277).
+    const trace: Trace = { start, end, width, layer, net, source: "manual" };
     pcb.traces.push(trace);
     tracesAdded++;
     lengthMm += Math.hypot(end.x - start.x, end.y - start.y);
@@ -7137,7 +7196,8 @@ export function addVia(args: Record<string, unknown>) {
   }
 
   const pos = { x: round3(position.x), y: round3(position.y) };
-  const via: Via = { position: pos, diameter, drill, startLayer, endLayer, net };
+  // Tagged manual: survives route_nets rip-up (issue #277).
+  const via: Via = { position: pos, diameter, drill, startLayer, endLayer, net, source: "manual" };
   pcb.vias.push(via);
 
   return {
@@ -8279,6 +8339,7 @@ export function addViaArray(args: Record<string, unknown>) {
       startLayer,
       endLayer,
       net,
+      source: "manual",
     });
   }
 
@@ -8618,7 +8679,7 @@ export function addMotorWinding(args: Record<string, unknown>) {
     const ra = { x: round3(a.x), y: round3(a.y) };
     const rb = { x: round3(b.x), y: round3(b.y) };
     if (ra.x === rb.x && ra.y === rb.y) return false;
-    pcb.traces.push({ start: ra, end: rb, width: traceWidth, layer, net });
+    pcb.traces.push({ start: ra, end: rb, width: traceWidth, layer, net, source: "manual" });
     return true;
   };
   const pushVia = (p: Vec2, net: string): Vec2 => {
@@ -8630,6 +8691,7 @@ export function addMotorWinding(args: Record<string, unknown>) {
       startLayer: copperLayer,
       endLayer: returnLayer,
       net,
+      source: "manual",
     });
     vias++;
     return rp;

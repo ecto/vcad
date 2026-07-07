@@ -2382,6 +2382,7 @@ mod tests {
                     width: 0.25,
                     layer: PcbLayer::FCu,
                     net: "1".to_string(),
+                    source: None,
                 },
                 Trace {
                     start: Vec2::new(20.0, 50.0),
@@ -2389,6 +2390,7 @@ mod tests {
                     width: 0.25,
                     layer: PcbLayer::FCu,
                     net: "2".to_string(),
+                    source: None,
                 },
             ],
             trace_arcs: vec![],
@@ -2399,6 +2401,7 @@ mod tests {
                 start_layer: PcbLayer::FCu,
                 end_layer: PcbLayer::BCu,
                 net: "1".to_string(),
+                source: None,
             }],
             zones: vec![],
             keepouts: vec![],
@@ -2443,6 +2446,7 @@ mod tests {
                 start_layer: PcbLayer::FCu,
                 end_layer: PcbLayer::BCu,
                 net: "2".to_string(),
+                source: None,
             });
 
             let shorts: Vec<_> = check_drc(&pcb)
@@ -2486,6 +2490,7 @@ mod tests {
             width: 0.25,
             layer: PcbLayer::FCu,
             net: "3".to_string(),
+            source: None,
         });
         let shorts: Vec<_> = check_drc(&pcb)
             .into_iter()
@@ -2534,6 +2539,7 @@ mod tests {
             width: 0.25,
             layer: PcbLayer::FCu,
             net: "3".to_string(),
+            source: None,
         });
         let shorts: Vec<_> = check_drc(&pcb)
             .into_iter()
@@ -2567,6 +2573,7 @@ mod tests {
             width: 0.1, // below 0.25 minimum
             layer: PcbLayer::FCu,
             net: "1".to_string(),
+            source: None,
         });
 
         let violations = check_drc(&pcb);
@@ -2634,6 +2641,7 @@ mod tests {
             start_layer: PcbLayer::FCu,
             end_layer: PcbLayer::BCu,
             net: "2".to_string(),
+            source: None,
         });
 
         let violations = check_drc(&pcb);
@@ -2658,6 +2666,7 @@ mod tests {
             width: 0.25,
             layer: PcbLayer::FCu,
             net: "1".to_string(),
+            source: None,
         });
 
         let violations = check_drc(&pcb);
@@ -2682,6 +2691,7 @@ mod tests {
             start_layer: PcbLayer::FCu,
             end_layer: PcbLayer::BCu,
             net: "2".to_string(),
+            source: None,
         });
 
         let violations = check_drc(&pcb);
@@ -2706,6 +2716,7 @@ mod tests {
             start_layer: PcbLayer::FCu,
             end_layer: PcbLayer::BCu,
             net: "1".to_string(),
+            source: None,
         });
 
         let violations = check_drc(&pcb);
@@ -2732,6 +2743,7 @@ mod tests {
             width: 0.25,
             layer: PcbLayer::FCu,
             net: "1".to_string(),
+            source: None,
         });
         pcb.traces.push(Trace {
             start: Vec2::new(20.0, 40.3),
@@ -2739,6 +2751,7 @@ mod tests {
             width: 0.25,
             layer: PcbLayer::FCu,
             net: "2".to_string(),
+            source: None,
         });
 
         let violations = check_drc(&pcb);
@@ -2810,6 +2823,7 @@ mod tests {
             width: 0.2,
             layer: PcbLayer::FCu,
             net: net.into(),
+            source: None,
         };
         pcb.traces.push(leg(40.0, "USB_P"));
         pcb.traces.push(leg(40.3, "USB_N"));
@@ -2862,6 +2876,7 @@ mod tests {
             width: 0.25,
             layer: PcbLayer::FCu,
             net: net.to_string(),
+            source: None,
         }
     }
 
@@ -3198,6 +3213,7 @@ mod tests {
             start_layer: PcbLayer::FCu,
             end_layer: PcbLayer::BCu,
             net: "1".to_string(),
+            source: None,
         });
 
         let violations = check_drc(&pcb);
@@ -3518,6 +3534,7 @@ mod tests {
             start_layer: PcbLayer::FCu,
             end_layer: PcbLayer::BCu,
             net: "1".to_string(),
+            source: None,
         });
 
         let violations = check_drc(&pcb);
@@ -3586,6 +3603,7 @@ mod tests {
             start_layer: PcbLayer::FCu,
             end_layer: PcbLayer::BCu,
             net: "2".to_string(),
+            source: None,
         });
         let v = check_drc(&pcb);
         let d = v.iter().find(|v| v.rule == DrcRuleType::MinDrill).unwrap();
@@ -3709,6 +3727,7 @@ mod tests {
                 width: 0.25,
                 layer: PcbLayer::FCu,
                 net: "3V3".to_string(),
+                source: None,
             },
             Trace {
                 start: Vec2::new(35.0, 40.0),
@@ -3716,6 +3735,7 @@ mod tests {
                 width: 0.25,
                 layer: PcbLayer::FCu,
                 net: "3V3".to_string(),
+                source: None,
             },
         ];
 
@@ -3764,6 +3784,7 @@ mod tests {
             width: 0.25,
             layer: PcbLayer::FCu,
             net: "3V3".to_string(),
+            source: None,
         }];
 
         let c = analyze_net_continuity(&pcb, "3V3");
@@ -3929,6 +3950,7 @@ mod tests {
             start_layer: PcbLayer::FCu,
             end_layer: PcbLayer::In1Cu,
             net: "3".to_string(),
+            source: None,
         });
         let after: Vec<_> = check_drc(&pcb)
             .into_iter()
@@ -4105,6 +4127,7 @@ mod tests {
             start_layer: PcbLayer::FCu,
             end_layer: PcbLayer::BCu,
             net: "3".to_string(),
+            source: None,
         });
 
         let unstitched = check_drc(&pcb)

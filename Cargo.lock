@@ -3911,7 +3911,7 @@ dependencies = [
 
 [[package]]
 name = "phyz"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "tang",
 ]
@@ -7014,7 +7014,9 @@ dependencies = [
 name = "vcad-kernel"
 version = "0.9.4"
 dependencies = [
+ "serde_json",
  "vcad-kernel-booleans",
+ "vcad-kernel-cam",
  "vcad-kernel-constraints",
  "vcad-kernel-cost",
  "vcad-kernel-dfm",
@@ -7026,6 +7028,7 @@ dependencies = [
  "vcad-kernel-shell",
  "vcad-kernel-sketch",
  "vcad-kernel-step",
+ "vcad-kernel-stocksim",
  "vcad-kernel-sweep",
  "vcad-kernel-tessellate",
  "vcad-kernel-text",

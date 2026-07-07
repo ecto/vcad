@@ -177,6 +177,17 @@ c: [number, number, number],
 periodic?: [boolean, boolean, boolean], };
 
 /**
+ * Provenance of a piece of copper: who placed it.
+ *
+ * The autorouter treats its own output as disposable — re-running `route_nets`
+ * rips up `Autoroute` copper on the nets it routes and lays it fresh — while
+ * `Manual` copper (hand-placed traces/vias, coils) is preserved. Copper with
+ * no recorded source (documents from before provenance existed) is treated as
+ * autorouted, matching the rip-up behavior those documents already had.
+ */
+export type CopperSource = "autoroute" | "manual";
+
+/**
  * CSG operation — the core building block of the IR DAG.
  *
  * Each variant is either a leaf primitive or a combining/transform operation
@@ -2603,7 +2614,12 @@ layer: PcbLayer,
 /**
  * Net this trace belongs to.
  */
-net: string, };
+net: string, 
+/**
+ * Who placed this copper. Absent on pre-provenance documents (treated as
+ * autorouted, i.e. rippable by `route_nets`).
+ */
+source?: CopperSource, };
 
 /**
  * An arc routed copper trace segment.
@@ -2750,7 +2766,12 @@ endLayer: PcbLayer,
 /**
  * Net this via belongs to.
  */
-net: string, };
+net: string, 
+/**
+ * Who placed this via. Absent on pre-provenance documents (treated as
+ * autorouted, i.e. rippable by `route_nets`).
+ */
+source?: CopperSource, };
 
 /**
  * Vignette effect settings.

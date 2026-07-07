@@ -225,6 +225,7 @@ mod tests {
                 start_layer: PcbLayer::FCu,
                 end_layer: PcbLayer::BCu,
                 net: "1".into(),
+                source: None,
             }],
             zones: vec![],
             keepouts: vec![],

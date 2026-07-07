@@ -460,6 +460,9 @@ export class Solid {
     static cylinder(radius: number, height: number, segments?: number | null): Solid;
     /**
      * Boolean difference (self − other).
+     *
+     * Returns a JS error (instead of trapping the WASM instance) when the
+     * kernel reports a boolean failure.
      */
     difference(other: Solid): Solid;
     /**
@@ -503,6 +506,9 @@ export class Solid {
     horizontalSection(z: number, hatch_spacing?: number | null, hatch_angle?: number | null, segments?: number | null): any;
     /**
      * Boolean intersection (self ∩ other).
+     *
+     * Returns a JS error (instead of trapping the WASM instance) when the
+     * kernel reports a boolean failure.
      */
     intersection(other: Solid): Solid;
     /**
@@ -654,6 +660,9 @@ export class Solid {
     translate(x: number, y: number, z: number): Solid;
     /**
      * Boolean union (self ∪ other).
+     *
+     * Returns a JS error (instead of trapping the WASM instance) when the
+     * kernel reports a boolean failure.
      */
     union(other: Solid): Solid;
     /**
@@ -2574,13 +2583,13 @@ export interface InitOutput {
     readonly solid_cone: (a: number, b: number, c: number, d: number) => number;
     readonly solid_cube: (a: number, b: number, c: number) => number;
     readonly solid_cylinder: (a: number, b: number, c: number) => number;
-    readonly solid_difference: (a: number, b: number) => number;
+    readonly solid_difference: (a: number, b: number) => [number, number, number];
     readonly solid_empty: () => number;
     readonly solid_extrude: (a: number, b: number, c: number, d: number) => [number, number, number];
     readonly solid_extrudeWithOptions: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
     readonly solid_getMesh: (a: number, b: number) => any;
     readonly solid_horizontalSection: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => any;
-    readonly solid_intersection: (a: number, b: number) => number;
+    readonly solid_intersection: (a: number, b: number) => [number, number, number];
     readonly solid_isEmpty: (a: number) => number;
     readonly solid_loft: (a: number, b: number, c: number) => [number, number, number];
     readonly solid_mirror: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => number;
@@ -2599,7 +2608,7 @@ export interface InitOutput {
     readonly solid_toStepBuffer: (a: number) => [number, number, number, number];
     readonly solid_torus: (a: number, b: number, c: number) => number;
     readonly solid_translate: (a: number, b: number, c: number, d: number) => number;
-    readonly solid_union: (a: number, b: number) => number;
+    readonly solid_union: (a: number, b: number) => [number, number, number];
     readonly solid_volume: (a: number) => number;
     readonly solid_wedge: (a: number, b: number, c: number) => number;
     readonly solveForwardKinematics: (a: number, b: number) => [number, number, number];

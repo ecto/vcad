@@ -417,6 +417,7 @@ mod tests {
                     width: 0.2,
                     layer: PcbLayer::FCu,
                     net: leg.net.clone(),
+                    source: None,
                 });
             }
         }

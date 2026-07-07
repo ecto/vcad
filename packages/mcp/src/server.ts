@@ -960,17 +960,21 @@ export async function createServer(
       {
         name: "save_document",
         description:
-          "Persist a live session to disk as `<name>.vcad` under VCAD_MCP_STATE_DIR " +
-          "(or the working directory) so it survives a restart and can be reopened " +
-          "by name with load_document. Sessions are otherwise in-memory only.",
+          "Persist a live session under a name so it can be reopened with " +
+          "load_document. On the hosted server the save is durable: a signed-in " +
+          "user's save goes to their vcad.io account under the (normalized) name; " +
+          "an anonymous save returns an unguessable `saved_…` key to reopen with. " +
+          "On a local/stdio server it writes `<name>.vcad` under VCAD_MCP_STATE_DIR " +
+          "(or the working directory).",
         inputSchema: saveDocumentSchema,
       },
       {
         name: "load_document",
         description:
-          "Reopen a previously saved `<name>.vcad` into a fresh session and return " +
-          "its new document_id. The cheap way to resume a board/part across runs " +
-          "instead of rebuilding it.",
+          "Reopen a save_document save into a fresh session and return its new " +
+          "document_id. Pass the same name you saved under (or the `saved_…` key " +
+          "an anonymous save returned). The cheap way to resume a board/part " +
+          "across runs instead of rebuilding it.",
         inputSchema: loadDocumentSchema,
       },
       {
@@ -1424,11 +1428,15 @@ export async function createServer(
         name: "route_nets",
         description:
           "Route electrical nets on the PCB with copper traces. Connects pads " +
-          "belonging to the same net. A net with a copper-pour zone (a plane) " +
-          "is connected by stitching each pad to the plane with a via instead " +
-          "of tracing it — those nets come back in `plane_stitched`. " +
-          "`locked_nets` preserves hand-placed copper from rip-up. Mutates the " +
-          "session document (pass document_id).",
+          "belonging to the same net. Idempotent: re-running rips up the " +
+          "previously autorouted copper on the target nets before routing, so " +
+          "a second call replaces the route instead of stacking shorts. " +
+          "Hand-placed copper (add_trace / add_via / coils) is preserved " +
+          "automatically; `locked_nets` additionally protects whole nets. A " +
+          "net with a copper-pour zone (a plane) is connected by stitching " +
+          "each pad to the plane with a via instead of tracing it — those " +
+          "nets come back in `plane_stitched`. Mutates the session document " +
+          "(pass document_id).",
         inputSchema: routeNetsSchema,
       },
       {
@@ -1542,7 +1550,8 @@ export async function createServer(
           "Lay an explicit copper trace: a polyline of segments on a layer, " +
           "assigned to a net. The general-purpose routing primitive — use it " +
           "for coil interconnect, buses, and hand-routes that route_nets " +
-          "(pad-driven) won't make. Mutates the session document.",
+          "(pad-driven) won't make. Tagged as manual copper, so route_nets " +
+          "preserves it instead of ripping it up. Mutates the session document.",
         inputSchema: addTraceSchema,
       },
       {
@@ -2431,11 +2440,11 @@ export async function createServer(
           break;
 
         case "save_document":
-          result = saveDocument(args);
+          result = await saveDocument(args, sessionStore);
           break;
 
         case "load_document":
-          result = loadDocument(args);
+          result = await loadDocument(args, sessionStore);
           break;
 
         case "continue_document":
