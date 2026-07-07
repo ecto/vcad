@@ -500,17 +500,54 @@ pub(crate) fn brep_boolean(
             // trimmed away (e.g. a subtracted sphere reappearing above the part).
             //
             // Gate each curved-face split on the planar partner actually
-            // anchoring the circle: its center must lie within the partner face.
-            // The circle is coplanar with the planar partner, so a small disk
-            // (cap) centered away from the circle correctly fails this test,
-            // while a large face that the circle is seated in (a part's top, a
-            // box wall) passes — even when the circle pokes slightly past the
-            // face's filleted edge. Curved×curved pairs have no planar partner
-            // and keep their existing behavior.
+            // anchoring the circle: its center — or, failing that, a point
+            // on its rim — must lie within the partner face. The center
+            // test alone rejects annular partners whose inner boundary IS
+            // the circle (a drum face butted against a hub wall: the
+            // center sits in the annulus hole), which left the wall
+            // unsplit at the contact circle. The rim test keeps the
+            // original phantom protection: a circle from a small disjoint
+            // cap's carrier plane touches the partner face nowhere.
+            // Curved×curved pairs have no planar partner and keep their
+            // existing behavior.
+            // The center test alone rejects annular partners whose inner
+            // boundary IS the circle (a drum face butted against a hub
+            // wall: the center sits in the annulus hole), leaving the wall
+            // unsplit at the contact circle and the touching interface
+            // untrimmed. Second chance: the circle counts as SEATED in the
+            // face when rim probes at several angles land inside it. The
+            // probes are nudged to both sides because a face whose hole
+            // boundary is this circle stores it as an inscribed polygon
+            // (a probe exactly on the rim falls in the hole by the chord
+            // sag), and ≥2 distinct angles must hit so a circle that
+            // merely grazes a face edge over a tiny arc — the phantom
+            // regime the anchor gate exists for — still fails.
+            let nudge = (circle.radius * 0.01).max(0.05);
+            let seated = |solid: &vcad_kernel_primitives::BRepSolid, fid: FaceId| {
+                let mut hits = 0u32;
+                for k in 0..8 {
+                    let theta = 2.0 * std::f64::consts::PI * k as f64 / 8.0;
+                    let dir = theta.cos() * circle.x_dir.into_inner()
+                        + theta.sin() * circle.y_dir.into_inner();
+                    let out = circle.center + (circle.radius + nudge) * dir;
+                    let inn = circle.center + (circle.radius - nudge) * dir;
+                    if trim::point_in_face(solid, fid, &out)
+                        || trim::point_in_face(solid, fid, &inn)
+                    {
+                        hits += 1;
+                        if hits >= 2 {
+                            return true;
+                        }
+                    }
+                }
+                false
+            };
             let b_anchors_circle = !split::is_planar_face(&b, face_b)
-                || trim::point_in_face(&b, face_b, &circle.center);
+                || trim::point_in_face(&b, face_b, &circle.center)
+                || seated(&b, face_b);
             let a_anchors_circle = !split::is_planar_face(&a, face_a)
-                || trim::point_in_face(&a, face_a, &circle.center);
+                || trim::point_in_face(&a, face_a, &circle.center)
+                || seated(&a, face_a);
 
             if split::is_planar_face(&a, face_a) {
                 // Check point_in_face to avoid creating inner loops inside existing holes.

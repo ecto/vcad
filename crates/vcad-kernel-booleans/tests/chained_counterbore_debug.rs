@@ -52,9 +52,17 @@ fn d4_chained_counterbore() {
     let cbore = translate_z(make_cylinder(24.0, 10.0, 32), 30.0);
 
     let s1 = diff(&hub, &cavity);
-    eprintln!("after cavity: vol {:.2} (expect {:.2})", vol(&s1), PI * (900.0 * 40.0 - 342.25 * 30.0));
+    eprintln!(
+        "after cavity: vol {:.2} (expect {:.2})",
+        vol(&s1),
+        PI * (900.0 * 40.0 - 342.25 * 30.0)
+    );
     let s2 = diff(&s1, &bore);
-    eprintln!("after bore:   vol {:.2} (expect {:.2})", vol(&s2), PI * (900.0 * 40.0 - 342.25 * 30.0 - 100.0 * 10.0));
+    eprintln!(
+        "after bore:   vol {:.2} (expect {:.2})",
+        vol(&s2),
+        PI * (900.0 * 40.0 - 342.25 * 30.0 - 100.0 * 10.0)
+    );
     let s3 = diff(&s2, &cbore);
     let expected = PI * (900.0 * 40.0 - 342.25 * 30.0 - 100.0 * 10.0 - (576.0 - 342.25) * 10.0);
     eprintln!("after cbore:  vol {:.2} (expect {:.2})", vol(&s3), expected);
@@ -77,7 +85,10 @@ fn d4_chained_counterbore() {
             "  {fid:?} {kind:?} nv={} inner={} r~[{:.1},{:.1}] z[{:.1},{:.1}] {:?}",
             verts.len(),
             face.inner_loops.len(),
-            lo[0].abs().max(lo[1].abs()).min(hi[0].abs().max(hi[1].abs())),
+            lo[0]
+                .abs()
+                .max(lo[1].abs())
+                .min(hi[0].abs().max(hi[1].abs())),
             hi[0].abs().max(hi[1].abs()),
             lo[2],
             hi[2],
@@ -114,7 +125,7 @@ fn d4_per_face_areas() {
                 )
             };
             let (a, b, c) = (p(t[0]), p(t[1]), p(t[2]));
-            area += 0.5 * (b - a).cross(&(c - a)).norm();
+            area += 0.5 * (b - a).cross(c - a).norm();
             for v in [a, b, c] {
                 zmin = zmin.min(v.z);
                 zmax = zmax.max(v.z);
@@ -146,7 +157,7 @@ fn d4_cap_areas_by_plane() {
         };
         let (a, b, c) = (p(t[0]), p(t[1]), p(t[2]));
         if (a.z - b.z).abs() < 1e-6 && (b.z - c.z).abs() < 1e-6 {
-            let area = 0.5 * (b - a).cross(&(c - a)).norm();
+            let area = 0.5 * (b - a).cross(c - a).norm();
             *by_z.entry((a.z * 10.0).round() as i64).or_insert(0.0) += area;
         }
     }
@@ -161,4 +172,55 @@ fn d4_cap_areas_by_plane() {
         PI * (576.0 - 342.25),
         PI * (900.0 - 576.0)
     );
+}
+
+#[test]
+fn d2_locality_union_shared_wall() {
+    use std::f64::consts::PI;
+    // hub r20 h30; drum = annulus r20..28 z in [20,30]; bore r4 h30.
+    let hub = make_cylinder(20.0, 30.0, 32);
+    let drum_outer = translate_z(make_cylinder(28.0, 10.0, 32), 20.0);
+    let drum_inner = translate_z(make_cylinder(20.0, 10.0, 32), 20.0);
+    let drum = diff(&drum_outer, &drum_inner);
+    let bore = make_cylinder(4.0, 30.0, 32);
+
+    eprintln!(
+        "drum vol {:.1} (expect {:.1})",
+        vol(&drum),
+        PI * (784.0 - 400.0) * 10.0
+    );
+
+    let hub_minus_bore = diff(&hub, &bore);
+    eprintln!(
+        "hub-bore vol {:.1} (expect {:.1})",
+        vol(&hub_minus_bore),
+        PI * (400.0 - 16.0) * 30.0
+    );
+
+    let BooleanResult::BRep(u) = boolean_op(&hub_minus_bore, &drum, BooleanOp::Union, 64);
+    let expected = PI * (400.0 * 30.0 - 16.0 * 30.0 + (784.0 - 400.0) * 10.0);
+    eprintln!("union vol {:.1} (expect {expected:.1})", vol(&u));
+    for (fid, face) in u.topology.faces.iter() {
+        let verts: Vec<_> = u
+            .topology
+            .loop_half_edges(face.outer_loop)
+            .map(|he| u.topology.vertices[u.topology.half_edges[he].origin].point)
+            .collect();
+        let (mut lo, mut hi) = ([f64::MAX; 3], [f64::MIN; 3]);
+        for p in &verts {
+            for (k, val) in [p.x, p.y, p.z].into_iter().enumerate() {
+                lo[k] = lo[k].min(val);
+                hi[k] = hi[k].max(val);
+            }
+        }
+        let kind = u.geometry.surfaces[face.surface_index].surface_type();
+        eprintln!(
+            "  {fid:?} {kind:?} nv={} r<= {:.1} z[{:.1},{:.1}] {:?}",
+            verts.len(),
+            hi[0].abs().max(hi[1].abs()),
+            lo[2],
+            hi[2],
+            face.orientation
+        );
+    }
 }
