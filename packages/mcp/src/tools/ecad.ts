@@ -3758,7 +3758,7 @@ function parsePadClearance(
 
 /** Sorted, NUL-joined net-pair key so (A,B) and (B,A) collapse. */
 function netPairKey(a: string, b: string): string {
-  return a <= b ? `${a} ${b}` : `${b} ${a}`;
+  return a <= b ? `${a}\x00${b}` : `${b}\x00${a}`;
 }
 
 /** Run the lightweight pre-routing DRC subset against a freshly-placed board.
@@ -3811,7 +3811,7 @@ export async function summarizePlacementDrc(pcb: Pcb): Promise<PlacementDrc> {
   }
 
   const shorts: PlacementShort[] = [...shortPairs].map((key) => {
-    const [a, b] = key.split(" ") as [string, string];
+    const [a, b] = key.split("\x00") as [string, string];
     const refs = new Set<string>();
     for (const p of padPairs) {
       if (netPairKey(p.parsed.nets[0], p.parsed.nets[1]) === key) {
