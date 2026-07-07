@@ -1,0 +1,80 @@
+{
+  "format": 1,
+  "vendor": "sendcutsend",
+  "capability": "quote",
+  "version": "0.0.1",
+  "entry_url": "https://sendcutsend.com",
+  "steps": [
+    {
+      "id": "open",
+      "do": { "action": "navigate", "url": "https://sendcutsend.com" }
+    },
+    {
+      "id": "upload-part",
+      "do": {
+        "action": "upload",
+        "selector": { "role": "button", "label": "TODO(recording): upload affordance" },
+        "file": { "from_intent": "/files/0" }
+      }
+    },
+    {
+      "id": "select-material",
+      "do": {
+        "action": "select",
+        "selector": { "label": "TODO(recording): material picker" },
+        "option_label": { "from_intent": "/config/material" }
+      }
+    },
+    {
+      "id": "select-thickness",
+      "do": {
+        "action": "select",
+        "selector": { "label": "TODO(recording): thickness picker" },
+        "option_label": { "from_intent": "/config/thickness" }
+      }
+    },
+    {
+      "id": "set-quantity",
+      "do": {
+        "action": "fill",
+        "selector": { "label": "TODO(recording): quantity input" },
+        "value": { "from_intent": "/quantity" }
+      },
+      "money_adjacent": true,
+      "assert": [
+        {
+          "subject": "quantity_shown",
+          "op": "eq",
+          "value": { "from_intent": "/quantity" }
+        }
+      ],
+      "on_fail": "abort"
+    },
+    {
+      "id": "extract-price",
+      "do": {
+        "action": "extract",
+        "selector": { "text": "TODO(recording): unit/total price node" },
+        "into": "total_price",
+        "parse": "money"
+      },
+      "money_adjacent": true,
+      "assert": [{ "subject": "total_price", "op": "present" }],
+      "on_fail": "abort"
+    },
+    {
+      "id": "extract-lead-time",
+      "do": {
+        "action": "extract",
+        "selector": { "text": "TODO(recording): lead time / ship estimate" },
+        "into": "lead_time",
+        "parse": "text"
+      }
+    },
+    {
+      "id": "snapshot-quote",
+      "do": { "action": "screenshot", "into": "priced_configurator" }
+    }
+  ],
+  "fixtures": []
+}

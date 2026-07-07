@@ -1,0 +1,10 @@
+{
+  "name": "@kerf/core",
+  "version": "0.0.1",
+  "description": "kerf schemas: intents, quotes, the job state machine, playbook format + assertion grammar, evidence bundles, vendor registry types. Framework-free by design — this package must never depend on eve, a browser, or a payment SDK.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "sideEffects": false
+}

@@ -1,0 +1,50 @@
+{
+  "format": 1,
+  "id": "sendcutsend",
+  "label": "SendCutSend",
+  "domains": ["sendcutsend.com", "www.sendcutsend.com", "app.sendcutsend.com"],
+  "region": "US",
+  "intents": ["configurator"],
+  "processes": ["sheet_metal"],
+  "capabilities": {
+    "quote": {
+      "transport": "browser",
+      "playbook": "playbooks/quote.json",
+      "status": "unproven"
+    },
+    "order": {
+      "transport": "browser",
+      "status": "unproven"
+    },
+    "track": {
+      "transport": "browser",
+      "playbook": "playbooks/quote.json",
+      "status": "unproven"
+    }
+  },
+  "autonomy_ceiling": "L2",
+  "policy_notes": "Public instant-quote; sheet metal has no buyer API industry-wide. vcad-kernel-sheet encodes the SCS shop profile (published bend catalog), so uploads arrive pre-validated and should quote clean on the first try. STEP uploads auto-detect bends; DXF for flat parts. 6061 is not bendable at SCS — flat 6061 only.",
+  "config_schema": {
+    "sheet_metal": {
+      "material": {
+        "kind": "enum_from_site",
+        "note": "vendor-native label, e.g. \"5052 H32 Aluminum\""
+      },
+      "thickness": {
+        "kind": "enum_from_site",
+        "note": "vendor-native label, e.g. \"0.125\" (3.175mm)\""
+      },
+      "finish": {
+        "kind": "enum_from_site",
+        "optional": true,
+        "note": "e.g. powder coat color; omit for raw. Coatings damp the ring — leave resonant parts raw."
+      },
+      "quantity": { "kind": "int", "min": 1 }
+    }
+  },
+  "canary": {
+    "cron": "0 9 * * *",
+    "playbook": "playbooks/quote.json",
+    "budget_minor": 0
+  }
+}

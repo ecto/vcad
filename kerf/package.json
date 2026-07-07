@@ -1,0 +1,22 @@
+{
+  "name": "kerf",
+  "private": true,
+  "version": "0.0.1",
+  "description": "Agents that buy atoms — durable browser-agent ordering rail with fail-closed payment containment.",
+  "license": "Apache-2.0",
+  "repository": "github:ecto/kerf",
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "typecheck": "tsc -p packages/core",
+    "validate": "node scripts/validate-registry.mjs",
+    "check": "npm run typecheck && npm run validate"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  }
+}

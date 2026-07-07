@@ -1,14 +1,22 @@
-# waldo — the universal ordering rail (browser-agent adapter)
+# kerf — the universal ordering rail (browser-agent adapter)
 
 *Architecture proposal. 2026-07-07. Companion to
 [ACP-CM](../agentic-commerce-custom-manufacturing.md) and the
 [convergence strategy](2026-07-06-convergence-strategy.md) (asset 6: agents
-that buy atoms). Working name: **waldo** — see Naming.*
+that buy atoms). Named **kerf** — see Naming.*
 
 *Rev 2 (same day): runtime is cloud-first — Vercel Workflows (WDK) + eve +
 a cloud browser host; the desktop-sidecar lane is dropped. Card issuer
 decided: Stripe Issuing. The goal is that ordering works entirely via MCP
 from any agent session, with no user machine in the loop.*
+
+*Rev 3 (same day): named **kerf**; eve adopted fully (no framework
+hedging). The scaffold is real and lives at `kerf/` in this repo,
+**incubating until `ecto/kerf` exists** — this session's GitHub credential
+cannot create repositories. Extraction is history-preserving:
+`git subtree split -P kerf -b kerf-extract && git push
+git@github.com:ecto/kerf.git kerf-extract:main`. The canonical
+architecture doc moves with the code: `kerf/docs/architecture.md`.*
 
 ## The problem
 
@@ -60,15 +68,15 @@ Four load-bearing decisions:
    retry. The idempotency key goes into the vendor's PO/notes field so
    reconciliation can find the order server-side.
 4. **Autonomy is a per-vendor ladder, not a switch.** L0 handoff (today) →
-   L1 assisted (waldo fills everything, human clicks buy) → L2 supervised
-   (waldo clicks buy under mandate + virtual card) → L3 standing (repeat
+   L1 assisted (kerf fills everything, human clicks buy) → L2 supervised
+   (kerf clicks buy under mandate + virtual card) → L3 standing (repeat
    orders under standing mandates). Rungs are earned by canary history and
    set per-vendor by policy — some vendors stay pinned at L1 forever, and
    that is a feature.
 
 ## Separate repo: yes
 
-Sibling repo, same pattern as `tang`: `ecto/waldo`, consumed by vcad.
+Sibling repo, same pattern as `tang`: `ecto/kerf`, consumed by vcad.
 
 - **Security blast radius.** This system holds vendor sessions, an email
   inbox, and payment-instrument handles, and it executes real-money actions.
@@ -76,7 +84,7 @@ Sibling repo, same pattern as `tang`: `ecto/waldo`, consumed by vcad.
   its review bar should not be vcad's.
 - **Nothing about it is CAD.** Driving sendcutsend.com and driving
   digikey.com are the same machinery. Any design surface — or any agent —
-  can be the client. ACP-CM is the protocol; waldo is the reference buyer-
+  can be the client. ACP-CM is the protocol; kerf is the reference buyer-
   agent executor. That story is bigger standalone.
 - **Churn isolation.** Vendor sites break weekly. Playbook patch releases
   must not ride vcad's release train, and vcad must be able to pin.
@@ -87,36 +95,34 @@ Sibling repo, same pattern as `tang`: `ecto/waldo`, consumed by vcad.
 
 The seam is exactly ACP-CM's role boundary, which is why the split is clean:
 
-| stays in vcad (money plane) | moves to waldo (execution plane) |
+| stays in vcad (money plane) | moves to kerf (execution plane) |
 |---|---|
 | wallet, `debit_wallet`, margin | browser runtime, sessions, vault |
 | spend authorizations + human approval UI | driver registry (playbooks, fixtures, canaries) |
 | quotes, `doc_hash` binding, DFM gates | job state machine, evidence pipeline |
 | orders table, receipt assembly | email inbox oracle, tracking scrapes |
-| `ManufacturerAdapter` broker | virtual-card *use* (vcad issues; waldo types) |
+| `ManufacturerAdapter` broker | virtual-card *use* (vcad issues; kerf types) |
 
-vcad never learns selectors; waldo never holds funds.
+vcad never learns selectors; kerf never holds funds.
 
 ### Naming
 
-The working name is **waldo**: Heinlein's remotely-operated manipulator
-hands, which became real engineering slang for teleoperated arms in nuclear
-labs. The metaphor teaches the architecture — a waldo is *teleoperation with
-interlocks*, not autonomy: the human grants authority, the machine executes
-precisely, hard physical limits bound the failure. Register-compatible with
-tang/loon/phyz. Runners-up, should waldo collide: **factor** (the historical
-mercantile agent who buys on a principal's behalf — semantically perfect,
-lexically overloaded), **supercargo** (the ship's officer who transacts for
-the cargo owner), **prokura** (civil-law signing authority granted to a
-merchant's agent). Check npm/crates squatting before publishing; `@vcad/…`
-scoping sidesteps it if needed.
+**Decided: kerf.** A kerf is the width of material the cutting process
+removes — the part of the stock the process itself takes. The metaphor is
+exact twice over: this system is the cut between a design and delivered
+atoms, and the kerf is the process's take — apt for the rail that carries
+the merchant-of-record margin. Register-compatible with tang/loon/phyz.
+(Considered along the way: waldo — Heinlein's teleoperated manipulator
+hands, real nuclear-lab slang; factor — the historical mercantile agent
+who buys on a principal's behalf; supercargo; prokura. Kept for the
+etymology file.)
 
 ## Architecture
 
 ```
-vcad MCP (money plane)                 waldo (execution plane — Vercel)
+vcad MCP (money plane)                 kerf (execution plane — Vercel)
 ┌─────────────────────────┐            ┌──────────────────────────────┐
-│ quote_manufacturing     │  quote job │ waldo-mcp (remote MCP)       │
+│ quote_manufacturing     │  quote job │ kerf-mcp (remote MCP)       │
 │  └ BrowserAdapter ──────┼───────────►│  ├ engine: WDK workflows     │
 │ authorize_spend         │            │  │   ├ playbook steps        │
 │  └ human approves (OOB) │            │  │   └ eve agent (Tier 2)    │
@@ -149,7 +155,7 @@ vcad MCP (money plane)                 waldo (execution plane — Vercel)
 
 ### The registry
 
-`waldo-registry/<vendor>/` — one package per vendor: manifest (domains,
+`kerf-registry/<vendor>/` — one package per vendor: manifest (domains,
 processes, capability matrix `quote|order|track|cancel`, autonomy ceiling,
 **config schema** for the vendor's option space with vendor-native labels —
 `shop_profile` generalized), playbooks, fixtures, canary spec. Semver per
@@ -164,7 +170,7 @@ flywheel.
 `place_order` today: verify mandate ∧ hash ∧ caps ∧ expiry → atomic debit.
 Added step: the debit funds a **single-use virtual card** (Stripe Issuing —
 decided) capped at the authorized total, merchant-locked on
-first settlement, short-expiry. waldo receives a card *reference*; the
+first settlement, short-expiry. kerf receives a card *reference*; the
 runtime types the PAN into the payment iframe via CDP **outside model
 context** — the model sees a placeholder, never the number. The issuer's
 settlement webhook is then an independent oracle: *the vendor charged what
@@ -186,7 +192,7 @@ are not "mitigated" — they are financially impossible.
 ### Exactly-once ordering
 
 `SUBMITTED / SUBMIT_FAILED / RECONCILING` already exist in `OrderState` —
-the state machine anticipated this. waldo's contribution is the discipline:
+the state machine anticipated this. kerf's contribution is the discipline:
 pre-click intent snapshot; one click; two-oracle confirmation (page scrape,
 inbox parse via plus-addressed email `orders+<job>@…`, card settlement);
 timeout → `RECONCILING` → scrape vendor order history / inbox for the
@@ -200,8 +206,8 @@ confirmation, confirmation email, settlement record, tracking events. Plus
 one elegant trick: the runtime feeds the file inputs, so it hashes the
 **exact uploaded bytes in flight** — closing the chain
 `doc_hash → DXF sha256 → uploaded-bytes sha256 → vendor order → invoice →
-box`. New `OracleRef` ids: `waldo/upload-hash`, `waldo/confirmation-email`,
-`waldo/card-settlement`, `waldo/tracking`. An order whose confirmation could
+box`. New `OracleRef` ids: `kerf/upload-hash`, `kerf/confirmation-email`,
+`kerf/card-settlement`, `kerf/tracking`. An order whose confirmation could
 not be scraped is `Unverifiable`, not assumed — the receipt house rule,
 applied to commerce.
 
@@ -226,7 +232,7 @@ interface (Browser Use cloud first — the eve template exists;
 Browserbase/Steel/Sandbox-Chromium as alternates). Sessions persist by id
 independently of function invocations, so a suspended workflow reattaches
 via CDP on resume; live-view URLs give watch-and-takeover from any device;
-proxies and profile persistence are host features, not waldo code. This is
+proxies and profile persistence are host features, not kerf code. This is
 why a browser cloud beats running Chromium inside a sandbox with a bounded
 lifetime: checkout spans takeover waits, and the order spans weeks.
 
@@ -262,7 +268,7 @@ sidecar — same trust properties, zero install — and L1 assisted mode
 ("cart is staged; click buy in this live view") works from anywhere.
 Human takeover is a first-class job state, not an error.
 
-waldo-mcp is a remote MCP server on Vercel for agent-facing consumption;
+kerf-mcp is a remote MCP server on Vercel for agent-facing consumption;
 vcad's fabricate broker talks to the same job API service-to-service
 (HTTP + signed webhooks).
 
@@ -270,7 +276,7 @@ vcad's fabricate broker talks to the same job API service-to-service
 
 The adapter contract stays transport-agnostic. Three transports satisfy it:
 **api** (DigiKey, Mouser, Xometry — and JLCPCB the day they relent),
-**browser** (waldo), **email-RFQ** (the true long tail: send files + spec,
+**browser** (kerf), **email-RFQ** (the true long tail: send files + spec,
 parse the quoted PDF, human approves, reply with PO — slow-motion checkout,
 same state machine, same evidence discipline). Intent is a tagged union:
 `ConfiguratorIntent` (files + process config — SCS, JLC),
@@ -289,9 +295,9 @@ egress is a per-vendor browser-host option where warranted, not a default
 identity-hiding posture;
 (2) per-vendor autonomy ceilings are policy: a vendor that has said no to
 automation (JLCPCB denied the API app — going around that is a relationship
-decision, not a technical one) stays at **L1 assisted**, where waldo does
+decision, not a technical one) stays at **L1 assisted**, where kerf does
 upload/configure/cart and the human performs the purchase click; (3) the
-endgame is conversion — every waldo playbook is a demand signal, and "here
+endgame is conversion — every kerf playbook is a demand signal, and "here
 are N orders we sent you this quarter through this rail; here is the API we
 wish you had" is the ACP-CM partner pitch. Adapters are designed to be
 *retired* into api-transport gracefully. L1 alone already removes ~95% of
@@ -302,25 +308,25 @@ it is the MVP, not a compromise.
 
 - `fabricate/broker.ts`: `CONTRACTED_FABS` hardcode → registry-driven
   capability data; add a `BrowserAdapter implements ManufacturerAdapter`
-  that runs a waldo quote job and returns `pricing_basis: "binding"` —
+  that runs a kerf quote job and returns `pricing_basis: "binding"` —
   real SCS prices in the agent loop is the first shipped value, before any
   ordering.
 - `fabricate/handoff.ts`: L1 evolves the handoff — same struct, plus a
-  staged waldo job ("cart is loaded; here's the review screenshot; click
+  staged kerf job ("cart is loaded; here's the review screenshot; click
   buy in this live view").
-- `place_order`: after debit, issue VCC + submit waldo order job; order rows
-  gain `waldo_job_id` + evidence artifact refs; events stream back into
+- `place_order`: after debit, issue VCC + submit kerf order job; order rows
+  gain `kerf_job_id` + evidence artifact refs; events stream back into
   `orders.events`.
 - `vcad-receipt`: new oracle ids listed above; `build_receipt` gains the
   commerce claims.
-- Supabase: `waldo_jobs` mirror table (or event log) for the app's Orders
+- Supabase: `kerf_jobs` mirror table (or event log) for the app's Orders
   panel; migration alongside 024/027.
 
 ## Sequencing
 
 - **Wave 0 (now):** glockenspiel goes by hand — lead time is the long pole
   and the demo must not wait on infrastructure. In parallel: bootstrap
-  `ecto/waldo` (core schemas, job state machine, evidence bundle) + the SCS
+  `ecto/kerf` (core schemas, job state machine, evidence bundle) + the SCS
   **quote-only** playbook. Zero money, zero account, public instant-quote —
   and it immediately upgrades sheet-metal quotes from `estimate` to
   `binding`.
@@ -345,9 +351,15 @@ it is the MVP, not a compromise.
 - **Card issuer: Stripe Issuing.** Fits the merchant-of-record posture;
   issuing, spend controls (amount cap + merchant lock), and settlement
   webhooks in one API.
-- **Runtime: cloud, on Vercel.** WDK workflows as the job spine, eve for
-  the Tier-2 agent, remote MCP as the agent-facing surface. No local
-  computer use; the desktop sidecar lane is dropped.
+- **Runtime: cloud, on Vercel.** Durable workflows as the job spine, remote
+  MCP as the agent-facing surface. No local computer use; the desktop
+  sidecar lane is dropped.
+- **Framework: eve, fully adopted.** The Tier-2 operator, the job
+  workflows, and the canary schedules are all eve constructs; `@kerf/core`
+  (schemas, state machine, playbook format) stays framework-free as the
+  contract layer, but there is no parallel non-eve engine.
+- **The name: kerf.** Repo: `ecto/kerf` (scaffold incubating at `kerf/` in
+  this repo until the standalone repo exists — see Rev 3 note).
 
 ## Open questions
 
@@ -356,14 +368,11 @@ it is the MVP, not a compromise.
    across suspended workflows, live-view takeover UX, profile/proxy
    support, price per session-hour. `BrowserHost` interface either way, so
    this is swappable.
-2. **eve vs bare WDK for the spine.** eve is a weeks-old beta; the
-   money-adjacent spine wants the most boring substrate available.
-   Proposed layering: waldo-core stays framework-free (schemas, playbook
-   format, assertions); quote/order/reconcile/canary workflows on WDK
-   directly; eve owns the Tier-2 agent loop. Revisit as eve matures — if
-   it stabilizes, more of the engine can migrate into it.
-3. **Registry publicity timing.** The scoreboard is a flywheel but also an
+2. **Registry publicity timing.** The scoreboard is a flywheel but also an
    anti-bot bat-signal. Private until Wave 3, public with the partner-pitch
    framing?
-4. **The name.** waldo / factor / supercargo / prokura — cheap to decide
-   before the repo exists, expensive after.
+3. **Repo creation.** `ecto/kerf` needs to be created by a human (this
+   session's GitHub App credential cannot create repositories); the
+   scaffold extracts from `kerf/` with the subtree-split in the Rev 3
+   note. Suggested settings: private to start, Apache-2.0, no auto-init
+   (the extracted history is the init).
