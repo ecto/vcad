@@ -142,8 +142,10 @@ impl CopperGeom {
         }
     }
 
-    /// Distance from a point to this rectangle (0 inside).
-    fn point_distance(&self, p: Vec2) -> f64 {
+    /// Distance from a point to this rectangle (0 inside; `f64::MAX` for
+    /// non-rect geometries). Also used by DRC's same-net bypass adjacency
+    /// test (a trace endpoint landing on a pad is an intended termination).
+    pub(crate) fn point_distance(&self, p: Vec2) -> f64 {
         match self {
             CopperGeom::Rect {
                 center,
@@ -170,6 +172,30 @@ impl CopperGeom {
     /// True if a point lies inside this rectangle.
     fn contains_point(&self, p: Vec2) -> bool {
         self.point_distance(p) <= 1e-12
+    }
+
+    /// Axis-aligned bounding box `(min, max)` of the copper body (mm).
+    pub fn bounds(&self) -> ([f64; 2], [f64; 2]) {
+        match self {
+            CopperGeom::Segment { a, b, half_w } => (
+                [a.x.min(b.x) - half_w, a.y.min(b.y) - half_w],
+                [a.x.max(b.x) + half_w, a.y.max(b.y) + half_w],
+            ),
+            CopperGeom::Disc { center, r } => {
+                ([center.x - r, center.y - r], [center.x + r, center.y + r])
+            }
+            rect @ CopperGeom::Rect { .. } => {
+                let mut min = [f64::MAX, f64::MAX];
+                let mut max = [f64::MIN, f64::MIN];
+                for c in rect.rect_corners() {
+                    min[0] = min[0].min(c.x);
+                    min[1] = min[1].min(c.y);
+                    max[0] = max[0].max(c.x);
+                    max[1] = max[1].max(c.y);
+                }
+                (min, max)
+            }
+        }
     }
 }
 

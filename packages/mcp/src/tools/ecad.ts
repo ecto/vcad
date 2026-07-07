@@ -43,7 +43,7 @@ import {
   hasClearanceClaims,
   verifyClearanceClaims,
 } from "./clearance.js";
-import { getNodePcb, getPcbNodeIds, buildEntry, agentView } from "@vcad/core";
+import { getNodePcb, getPcbNodeIds, buildEntry, agentView, diffViolations } from "@vcad/core";
 import {
   computeRatsnest,
   componentMeshes,
@@ -61,6 +61,7 @@ import {
   routeDiffPair as kernelRouteDiffPair,
   critiqueRoute as kernelCritiqueRoute,
   runDrc as kernelRunDrc,
+  runDrcInRegion as kernelRunDrcInRegion,
   runErc as kernelRunErc,
   checkErc as kernelCheckErc,
   evaluateMotor,
@@ -3360,11 +3361,15 @@ interface DrcNetPairCount {
  *  conflicts / fab-rule breaks). UnconnectedNet and UnstitchedPad are
  *  "incomplete" rules (route it / stitch it). NetIslands is a hard defect (a
  *  net's copper built as ≥2 galvanically-isolated islands); it carries Error
- *  severity regardless of bucket. */
+ *  severity regardless of bucket. SameNetBypass is a Warning-severity
+ *  connectivity defect: same-net copper touching far from any intended
+ *  junction, short-circuiting the conductor between the points (fatal to
+ *  two-terminal structures like spiral coils). */
 const DRC_CATEGORY: Record<string, "connectivity" | "clearance" | "manufacturing"> = {
   UnconnectedNet: "connectivity",
   UnstitchedPad: "connectivity",
   NetIslands: "connectivity",
+  SameNetBypass: "connectivity",
   Clearance: "clearance",
   Short: "clearance",
   MinTraceWidth: "manufacturing",
@@ -3753,6 +3758,258 @@ export async function drcPcb(
   }
 
   return aggregateDrc(violations, sampleSize, detail);
+}
+
+// ============================================================================
+// drc_delta — verify-on-write for every copper-mutating tool
+// ============================================================================
+//
+// Field report: add_motor_winding returned a bare document_version for a board
+// it had just shorted in 3 places and islanded in 3 more — the agent only
+// learned from a separate run_drc. Every copper mutator now wraps its mutation
+// in a before/after DRC snapshot and reports what it *introduced* (the
+// route_nets `receipt` diff, extracted into `drcDelta`); `drc_delta.clean` is
+// the one-step branch an agent needs.
+//
+// Cost control: boards with >= DRC_DELTA_FULL_BOARD_MAX elements scope the
+// geometric checks to the mutation's inflated bbox via the kernel's region DRC
+// (`check_drc_in_region`); connectivity always runs board-global — it is the
+// only rule class a local copper edit can violate remotely. Smaller boards
+// just take full-board snapshots.
+
+/** Counts of introduced violations split by what they mean for the board.
+ *  Unlike run_drc's categories, shorts get their own bucket — the worst class,
+ *  so an agent can triage without parsing rule names. */
+export interface DrcDeltaCategories {
+  shorts: number;
+  clearance: number;
+  connectivity: number;
+  manufacturing: number;
+}
+
+/** Verify-on-write verdict attached to every copper-mutating tool result:
+ *  what this one call broke (and fixed), from before/after DRC snapshots. */
+export interface DrcDelta {
+  /** True iff the mutation introduced no new violations. */
+  clean: boolean;
+  /** Violations this mutation introduced (multiset diff, exact). */
+  introduced: number;
+  /** Violations this mutation fixed. */
+  resolved: number;
+  /** Introduced counts by category — `shorts` is the drop-everything bucket. */
+  by_category: DrcDeltaCategories;
+  /** Worst-first capped sample of the introduced violations, with positions. */
+  sample: DrcViol[];
+  sample_capped: boolean;
+  /** "full" board snapshots, or geometric checks scoped to the mutation's
+   *  inflated bbox ("region" — connectivity still board-global). */
+  scope: "full" | "region";
+  /** Present when a snapshot could not be verified (kernel refused the board).
+   *  `clean` is forced false — an unverifiable board is NOT a clean one. */
+  unverifiable?: { reason: string; offending_field?: string };
+}
+
+/** Category of one rule for the delta triage. */
+function deltaCategory(rule: string): keyof DrcDeltaCategories {
+  if (rule === "Short") return "shorts";
+  return DRC_CATEGORY[rule] ?? "manufacturing";
+}
+
+/** Sample cap for `drc_delta.sample` — enough to act on, small enough to read. */
+const DRC_DELTA_SAMPLE_CAP = 10;
+
+/**
+ * Diff two DRC snapshots into the violations a mutation INTRODUCED (and
+ * resolved). The extracted core of the route_nets receipt: the same multiset
+ * identity (`@vcad/core` `diffViolations`), reduced to the one verdict a
+ * mutator should self-report. Both snapshots must come from the same scope
+ * (full board, or the same region) — the callers guarantee that.
+ */
+export function drcDelta(
+  before: DrcSummary | DrcUnverifiable,
+  after: DrcSummary | DrcUnverifiable,
+  scope: "full" | "region" = "full",
+): DrcDelta {
+  const empty: DrcDeltaCategories = {
+    shorts: 0,
+    clearance: 0,
+    connectivity: 0,
+    manufacturing: 0,
+  };
+  if (!before.success || !after.success) {
+    const bad = !before.success ? before : (after as DrcUnverifiable);
+    return {
+      clean: false,
+      introduced: 0,
+      resolved: 0,
+      by_category: empty,
+      sample: [],
+      sample_capped: false,
+      scope,
+      unverifiable: {
+        reason: bad.reason,
+        ...(bad.offending_field ? { offending_field: bad.offending_field } : {}),
+      },
+    };
+  }
+
+  // Snapshots are taken with detail:"full", so `details` is the complete list
+  // and the diff is exact; `sample` only backstops a foreign snapshot.
+  const { introduced, fixed } = diffViolations(
+    before.details ?? before.sample,
+    after.details ?? after.sample,
+  );
+
+  const by_category: DrcDeltaCategories = { ...empty };
+  for (const v of introduced) by_category[deltaCategory(v.rule)] += 1;
+
+  // Worst-first: shorts → connectivity → clearance → manufacturing, errors
+  // before warnings — so a truncated sample never hides the short.
+  const rank: Record<keyof DrcDeltaCategories, number> = {
+    shorts: 0,
+    connectivity: 1,
+    clearance: 2,
+    manufacturing: 3,
+  };
+  const sorted = [...(introduced as DrcViol[])].sort(
+    (a, b) =>
+      rank[deltaCategory(a.rule)] - rank[deltaCategory(b.rule)] ||
+      (a.severity === "Error" ? 0 : 1) - (b.severity === "Error" ? 0 : 1),
+  );
+
+  return {
+    clean: introduced.length === 0,
+    introduced: introduced.length,
+    resolved: fixed.length,
+    by_category,
+    sample: sorted.slice(0, DRC_DELTA_SAMPLE_CAP),
+    sample_capped: introduced.length > DRC_DELTA_SAMPLE_CAP,
+    scope,
+  };
+}
+
+/** Boards with fewer elements than this always take full-board snapshots —
+ *  the region machinery only pays off past it. */
+const DRC_DELTA_FULL_BOARD_MAX = 2000;
+
+/** Board size in copper-ish elements, for the full-vs-region scope decision. */
+function pcbElementCount(pcb: Pcb): number {
+  let pads = 0;
+  for (const fp of pcb.footprints) pads += fp.pads.length;
+  return (
+    pcb.traces.length +
+    (pcb.traceArcs?.length ?? 0) +
+    pcb.vias.length +
+    pcb.zones.length +
+    pads
+  );
+}
+
+/** The largest clearance any net class demands — the region inflation that
+ *  keeps every element the mutation could conflict with in scope. */
+function maxBoardClearance(pcb: Pcb): number {
+  let c = pcb.rules.defaultRules.clearance;
+  for (const cls of pcb.rules.classRules ?? []) c = Math.max(c, cls.clearance);
+  return c;
+}
+
+/** World-space bbox of a mutation's copper, inflated by the element radius.
+ *  Returns "full" when any coordinate is non-finite (bad args are the tool's
+ *  problem — the delta must not silently scope them out). */
+function boundsOfPoints(
+  points: Vec2[],
+  inflate = 0,
+): { min: Vec2; max: Vec2 } | "full" {
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const p of points) {
+    minX = Math.min(minX, p.x);
+    minY = Math.min(minY, p.y);
+    maxX = Math.max(maxX, p.x);
+    maxY = Math.max(maxY, p.y);
+  }
+  const b = {
+    min: { x: minX - inflate, y: minY - inflate },
+    max: { x: maxX + inflate, y: maxY + inflate },
+  };
+  const vals = [b.min.x, b.min.y, b.max.x, b.max.y];
+  return vals.every(Number.isFinite) ? b : "full";
+}
+
+/** Mutation footprint for the drc_delta scope: a copper bbox, "full" for
+ *  board-scale mutations (outline changes, motor windings), or null when the
+ *  mutation moves no copper at all (set_stackup) — a no-op delta is expected
+ *  but still verified. */
+type DrcDeltaBounds = { min: Vec2; max: Vec2 } | "full" | null;
+
+/** Region-scoped DRC snapshot — same summary shape as {@link drcPcb}. */
+async function drcPcbInRegion(
+  pcb: Pcb,
+  region: { min: Vec2; max: Vec2 },
+): Promise<DrcSummary | DrcUnverifiable> {
+  if (await isEcadAvailable()) {
+    const outcome = await kernelRunDrcInRegion(pcb, region.min, region.max);
+    if (outcome.status === "errored") {
+      return {
+        success: false,
+        status: "errored",
+        reason: outcome.reason,
+        ...(outcome.offending_field ? { offending_field: outcome.offending_field } : {}),
+      };
+    }
+    return aggregateDrc(outcome.value as unknown as DrcViol[], 20, "full");
+  }
+  // No kernel: the scalar fallback is linear and cheap — run it unscoped.
+  return drcPcb(pcb, "full", 20);
+}
+
+/** An in-flight verify-on-write capture: the before snapshot is taken, the
+ *  after snapshot and diff happen in {@link DrcDeltaCapture.finish}. */
+export interface DrcDeltaCapture {
+  /** Take the after snapshot (same scope as before) and diff. Call once,
+   *  after the mutation has been applied to the same live `pcb`. */
+  finish(): Promise<DrcDelta>;
+}
+
+/**
+ * Start a verify-on-write capture for a mutation about to land in `bounds`.
+ * Call after arg validation (so error paths don't pay for a snapshot) and
+ * immediately before the first board mutation; `finish()` after the last one.
+ */
+export async function beginDrcDelta(
+  pcb: Pcb,
+  bounds: DrcDeltaBounds,
+): Promise<DrcDeltaCapture> {
+  const full = bounds === "full" || pcbElementCount(pcb) < DRC_DELTA_FULL_BOARD_MAX;
+  let region: { min: Vec2; max: Vec2 } | null = null;
+  if (!full) {
+    // `!full` already excludes bounds === "full" (aliased-condition narrowing).
+    if (bounds) {
+      // Inflate by the worst clearance in play (plus the kernel's own 1mm
+      // search margin) so borderline subjects at the bbox edge stay in scope.
+      const pad = maxBoardClearance(pcb) + 1.0;
+      region = {
+        min: { x: bounds.min.x - pad, y: bounds.min.y - pad },
+        max: { x: bounds.max.x + pad, y: bounds.max.y + pad },
+      };
+    } else {
+      // No copper moved: a degenerate region keeps the geometric checks empty
+      // while connectivity still verifies globally.
+      region = { min: { x: 0, y: 0 }, max: { x: 0, y: 0 } };
+    }
+  }
+  const scope: "full" | "region" = region ? "region" : "full";
+  const snapshot = (): Promise<DrcSummary | DrcUnverifiable> =>
+    region ? drcPcbInRegion(pcb, region) : drcPcb(pcb, "full", 20);
+  const before = await snapshot();
+  return {
+    async finish(): Promise<DrcDelta> {
+      const after = await snapshot();
+      return drcDelta(before, after, scope);
+    },
+  };
 }
 
 // ============================================================================
@@ -5625,7 +5882,15 @@ const round3 = (v: number) => Math.round(v * 1000) / 1000;
  * turn-to-turn gap against clearance, assigns every segment to a net, and
  * can drop a via at the inner endpoint (which is otherwise trapped).
  */
-export function addCoil(args: Record<string, unknown>) {
+export async function addCoil(
+  args: Record<string, unknown>,
+  opts?: {
+    /** Composite tools (add_coil_array / add_motor_winding) wrap the WHOLE
+     *  batch in one drc_delta capture — per-coil snapshots would multiply the
+     *  DRC cost by the coil count for no extra signal. */
+    skipDrcDelta?: boolean;
+  },
+) {
   const ctx = resolveDocInput(args);
   const pcb = getDocPcb(ctx.doc);
   if (!pcb) {
@@ -5717,6 +5982,15 @@ export function addCoil(args: Record<string, unknown>) {
     if (T.x !== pts[0].x || T.y !== pts[0].y) pts.unshift(T);
   }
 
+  // The coil's copper (spiral + lead-out + any inner/stitch vias, which all
+  // land on spiral points) stays inside the sampled polyline's bbox.
+  const drcCap = opts?.skipDrcDelta
+    ? null
+    : await beginDrcDelta(
+        pcb,
+        boundsOfPoints(pts, Math.max(traceWidth, pcb.rules.defaultRules.viaDiameter) / 2),
+      );
+
   if (!pcb.nets.some((n) => n.id === net)) {
     pcb.nets.push({ id: net, name: net });
   }
@@ -5795,6 +6069,7 @@ export function addCoil(args: Record<string, unknown>) {
             terminals: { a: terminalA, b: terminalB },
             inner_endpoint: pts[0],
             outer_endpoint: pts[pts.length - 1],
+            ...(drcCap ? { drc_delta: await drcCap.finish() } : {}),
             ...docResultPayload(ctx),
           }),
         },
@@ -5857,6 +6132,7 @@ export function addCoil(args: Record<string, unknown>) {
           inner_endpoint: pts[0],
           outer_endpoint: pts[pts.length - 1],
           ...(via ? { via } : {}),
+          ...(drcCap ? { drc_delta: await drcCap.finish() } : {}),
           ...docResultPayload(ctx),
         }),
       },
@@ -5884,7 +6160,7 @@ function segLength(pts: Vec2[]): number {
  * convenience with NO phase/polarity meaning. For an electrically-correct phase
  * and polarity per coil, plan with `winding_layout` first and map its result.
  */
-export function addCoilArray(args: Record<string, unknown>) {
+export async function addCoilArray(args: Record<string, unknown>) {
   const ctx = resolveDocInput(args);
   const pcb = getDocPcb(ctx.doc);
   if (!pcb) {
@@ -5929,6 +6205,18 @@ export function addCoilArray(args: Record<string, unknown>) {
   // Re-use the same session/doc so each delegated addCoil mutates this board.
   const childDoc = ctx.documentId ? { document_id: ctx.documentId } : { document: ctx.doc };
 
+  // One capture around the WHOLE ring (each coil reaches outer_radius from a
+  // center on the pitch circle); the delegated addCoil calls skip their own.
+  const outerR = typeof args.outer_radius === "number" ? (args.outer_radius as number) : NaN;
+  const reach = pitchRadius + outerR + pcb.rules.defaultRules.viaDiameter;
+  const drcCap = await beginDrcDelta(
+    pcb,
+    boundsOfPoints([
+      { x: center.x - reach, y: center.y - reach },
+      { x: center.x + reach, y: center.y + reach },
+    ]),
+  );
+
   const results: Array<Record<string, unknown>> = [];
   const errors: string[] = [];
   let totalTraces = 0;
@@ -5942,7 +6230,7 @@ export function addCoilArray(args: Record<string, unknown>) {
     };
     const coilNet = netSequence?.length ? netSequence[i % netSequence.length] : net;
     const direction = dirFor(i);
-    const res = addCoil({
+    const res = await addCoil({
       ...childDoc,
       center: coilCenter,
       turns: args.turns,
@@ -5957,7 +6245,7 @@ export function addCoilArray(args: Record<string, unknown>) {
       segments_per_turn: args.segments_per_turn,
       inner_via: args.inner_via,
       via_to_layer: args.via_to_layer,
-    });
+    }, { skipDrcDelta: true });
     if (res.isError) {
       errors.push(`coil ${i} (net ${coilNet}): ${res.content[0]!.text}`);
       continue;
@@ -5978,6 +6266,7 @@ export function addCoilArray(args: Record<string, unknown>) {
           total_traces: totalTraces,
           results,
           ...(errors.length ? { errors } : {}),
+          drc_delta: await drcCap.finish(),
           ...docResultPayload(ctx),
         }),
       },
@@ -6232,7 +6521,7 @@ export const setBoardOutlineSchema = {
  * board. This is the non-destructive counterpart to re-running place_components
  * with new dimensions (which would reset the floorplan).
  */
-export function setBoardOutline(args: Record<string, unknown>) {
+export async function setBoardOutline(args: Record<string, unknown>) {
   const ctx = resolveDocInput(args);
   const pcb = getDocPcb(ctx.doc);
   if (!pcb) {
@@ -6299,6 +6588,10 @@ export function setBoardOutline(args: Record<string, unknown>) {
 
   const thickness = (args.thickness as number) ?? pcb.outline.thickness ?? 1.6;
 
+  // A new outline re-judges EVERY copper element's edge clearance (and can
+  // strand copper off-board) — inherently board-wide, so never region-scoped.
+  const drcCap = await beginDrcDelta(pcb, "full");
+
   pcb.outline = {
     vertices,
     ...(cutouts && cutouts.length > 0 ? { cutouts } : {}),
@@ -6335,6 +6628,7 @@ export function setBoardOutline(args: Record<string, unknown>) {
           },
           components_kept: pcb.footprints.length,
           ...(offBoard.length > 0 ? { off_board: offBoard } : {}),
+          drc_delta: await drcCap.finish(),
           ...docResultPayload(ctx),
         }),
       },
@@ -7087,6 +7381,11 @@ export async function describePcb(args: Record<string, unknown>) {
         categories: drcSummary.categories,
         byRule: drcSummary.byRule,
         worstClearance: drcSummary.worstClearance,
+        // Same-net copper touching far from any intended junction — invisible
+        // to clearance/short rules but fatal to two-terminal structures
+        // (coils, shunts). Surfaced by name so a "clean-looking" board that
+        // silently short-circuits its own winding is impossible to miss.
+        sameNetBypass: drcSummary.byRule["SameNetBypass"] ?? 0,
         // `clean` ignores connectivity (unrouted nets are a to-do, not a defect) —
         // same semantics as placement_drc.clean.
         clean: drcSummary.categories.clearance + drcSummary.categories.manufacturing === 0,
@@ -7199,7 +7498,7 @@ export const addTraceSchema = {
  * copper layer of the board. Ensures the net exists. The atomic routing
  * primitive add_coil / add_motor_winding lean on.
  */
-export function addTrace(args: Record<string, unknown>) {
+export async function addTrace(args: Record<string, unknown>) {
   const ctx = resolveDocInput(args);
   const pcb = getDocPcb(ctx.doc);
   const fail = ecadError;
@@ -7224,6 +7523,8 @@ export function addTrace(args: Record<string, unknown>) {
   if ("error" in layerRes) return fail(layerRes.error);
   const layer = layerRes.layer;
   if (!(width > 0)) return fail("width must be > 0");
+
+  const drcCap = await beginDrcDelta(pcb, boundsOfPoints(points, width / 2));
 
   if (!pcb.nets.some((n) => n.id === net)) {
     pcb.nets.push({ id: net, name: net });
@@ -7252,6 +7553,7 @@ export function addTrace(args: Record<string, unknown>) {
           length_mm: Math.round(lengthMm * 1000) / 1000,
           net,
           layer,
+          drc_delta: await drcCap.finish(),
           ...docResultPayload(ctx),
         }),
       },
@@ -7288,7 +7590,7 @@ export const addViaSchema = {
  * Push a single via (layer-spanning connection) onto the board. Ensures the net
  * exists. The escape primitive for trapped spiral ends and inter-layer hops.
  */
-export function addVia(args: Record<string, unknown>) {
+export async function addVia(args: Record<string, unknown>) {
   const ctx = resolveDocInput(args);
   const pcb = getDocPcb(ctx.doc);
   const fail = ecadError;
@@ -7314,6 +7616,8 @@ export function addVia(args: Record<string, unknown>) {
   if ("error" in endRes) return fail(`end_layer: ${endRes.error}`);
   const endLayer = endRes.layer;
 
+  const drcCap = await beginDrcDelta(pcb, boundsOfPoints([position], diameter / 2));
+
   if (!pcb.nets.some((n) => n.id === net)) {
     pcb.nets.push({ id: net, name: net });
   }
@@ -7333,6 +7637,7 @@ export function addVia(args: Record<string, unknown>) {
           position: pos,
           start_layer: startLayer,
           end_layer: endLayer,
+          drc_delta: await drcCap.finish(),
           ...docResultPayload(ctx),
         }),
       },
@@ -7383,7 +7688,7 @@ export const setStackupSchema = {
  * Closes the gap where coil DC-resistance was permanently computed at 1 oz
  * because nothing could set copper weight.
  */
-export function setStackup(args: Record<string, unknown>) {
+export async function setStackup(args: Record<string, unknown>) {
   const ctx = resolveDocInput(args);
   const pcb = getDocPcb(ctx.doc);
   const fail = ecadError;
@@ -7402,6 +7707,10 @@ export function setStackup(args: Record<string, unknown>) {
     return fail("provide `copper_oz` and/or a non-empty `layers` array");
   }
   if (copperOz != null && !(copperOz > 0)) return fail("copper_oz must be > 0");
+
+  // Stackup edits move no copper, so a no-op delta is the expected outcome —
+  // but it is verified, not assumed (null bounds: connectivity still runs).
+  const drcCap = await beginDrcDelta(pcb, null);
 
   const stackup = pcb.stackup.layers;
 
@@ -7447,6 +7756,7 @@ export function setStackup(args: Record<string, unknown>) {
         text: JSON.stringify({
           success: true,
           stackup: pcb.stackup.layers,
+          drc_delta: await drcCap.finish(),
           ...docResultPayload(ctx),
         }),
       },
@@ -7847,7 +8157,7 @@ function elementLayer(kind: PcbElementChange["kind"], el: Zone | Trace | Via): s
 /** Shared body for delete_zone / delete_trace / delete_via. Resolves the target
  *  element (by `index`, or by an unambiguous net[/layer] match), splices it out,
  *  and returns the standard result with a `changed: [{action:'removed', …}]`. */
-function deletePcbElement(args: Record<string, unknown>, kind: "zone" | "trace" | "via") {
+async function deletePcbElement(args: Record<string, unknown>, kind: "zone" | "trace" | "via") {
   const ctx = resolveDocInput(args);
   const pcb = getDocPcb(ctx.doc);
   const fail = ecadError;
@@ -7899,6 +8209,21 @@ function deletePcbElement(args: Record<string, unknown>, kind: "zone" | "trace" 
     return fail(`pass \`index\` (0..${coll.length - 1}) or a \`net\` to identify the ${kind} to delete`);
   }
 
+  // Removing copper can't create clearance faults, but it CAN sever a net
+  // into islands or orphan a plane stitch — the delta's connectivity pass
+  // (always board-global) is what catches that.
+  const target = coll[index]!;
+  const bounds =
+    kind === "zone"
+      ? boundsOfPoints((target as Zone).outline)
+      : kind === "trace"
+        ? boundsOfPoints(
+            [(target as Trace).start, (target as Trace).end],
+            (target as Trace).width / 2,
+          )
+        : boundsOfPoints([(target as Via).position], (target as Via).diameter / 2);
+  const drcCap = await beginDrcDelta(pcb, bounds);
+
   const [removed] = coll.splice(index, 1);
   const change: PcbElementChange = {
     action: "removed",
@@ -7917,6 +8242,7 @@ function deletePcbElement(args: Record<string, unknown>, kind: "zone" | "trace" 
           deleted: change,
           [`${plural}_total`]: coll.length,
           changed: [change],
+          drc_delta: await drcCap.finish(),
           ...docResultPayload(ctx),
         }),
       },
@@ -8331,7 +8657,7 @@ export const addNetTieSchema = {
  * of the same nets elsewhere still fires). Region-less ties exempt the pair
  * board-wide. Mutates the session document.
  */
-export function addNetTie(args: Record<string, unknown>) {
+export async function addNetTie(args: Record<string, unknown>) {
   const ctx = resolveDocInput(args);
   const pcb = getDocPcb(ctx.doc);
   const fail = ecadError;
@@ -8389,6 +8715,17 @@ export function addNetTie(args: Record<string, unknown>) {
     radius = round3(radius);
   }
 
+  // A tie mutates DRC *semantics*, not copper: it exempts (and, deleted,
+  // re-convicts) short/clearance findings. A region-scoped tie only changes
+  // verdicts inside its circle; a board-wide tie can change them anywhere the
+  // tied nets' copper meets.
+  const drcCap = await beginDrcDelta(
+    pcb,
+    position && radius !== undefined
+      ? boundsOfPoints([position], radius)
+      : "full",
+  );
+
   pcb.netTies = pcb.netTies ?? [];
   const tie: NetTie = {
     nets,
@@ -8415,6 +8752,7 @@ export function addNetTie(args: Record<string, unknown>) {
           net_ties: netTieList(pcb),
           net_ties_total: pcb.netTies.length,
           changed: [change],
+          drc_delta: await drcCap.finish(),
           ...docResultPayload(ctx),
         }),
       },
@@ -8453,7 +8791,7 @@ export const deleteNetTieSchema = {
 /** Remove a net tie by `index`, or by matching `nets` (set equality) and/or
  *  `position` — the take-back for a bad add_net_tie. The junction's copper (if
  *  any) stays; DRC will report it as a short again. Mutates the session. */
-export function deleteNetTie(args: Record<string, unknown>) {
+export async function deleteNetTie(args: Record<string, unknown>) {
   const ctx = resolveDocInput(args);
   const pcb = getDocPcb(ctx.doc);
   const fail = ecadError;
@@ -8532,6 +8870,17 @@ export function deleteNetTie(args: Record<string, unknown>) {
     );
   }
 
+  // Removing a tie un-exempts whatever it was excusing — copper contact at
+  // the junction reads as a Short again. Scope to the tie's region when it
+  // has one; a board-wide tie could have been excusing contact anywhere.
+  const target = ties[index]!;
+  const drcCap = await beginDrcDelta(
+    pcb,
+    target.position && target.radius != null
+      ? boundsOfPoints([target.position], target.radius)
+      : "full",
+  );
+
   const [removed] = ties.splice(index, 1);
   const change: PcbElementChange = {
     action: "removed",
@@ -8550,6 +8899,7 @@ export function deleteNetTie(args: Record<string, unknown>) {
           net_ties: netTieList(pcb),
           net_ties_total: ties.length,
           changed: [change],
+          drc_delta: await drcCap.finish(),
           ...docResultPayload(ctx),
         }),
       },
@@ -8943,7 +9293,7 @@ const MAX_VIA_ARRAY = 2000;
  * vias, plane stitching) or an explicit list of `points`. Grid vias are clipped
  * to the board outline by default. Mutates the session document.
  */
-export function addViaArray(args: Record<string, unknown>) {
+export async function addViaArray(args: Record<string, unknown>) {
   const ctx = resolveDocInput(args);
   const pcb = getDocPcb(ctx.doc);
   const fail = (text: string) => ({
@@ -9035,6 +9385,8 @@ export function addViaArray(args: Record<string, unknown>) {
     );
   }
 
+  const drcCap = await beginDrcDelta(pcb, boundsOfPoints(kept, diameter / 2));
+
   if (!pcb.nets.some((n) => n.id === net)) pcb.nets.push({ id: net, name: net });
 
   for (const p of kept) {
@@ -9061,6 +9413,7 @@ export function addViaArray(args: Record<string, unknown>) {
           ...(skipped > 0 ? { skipped_outside_board: skipped } : {}),
           start_layer: startLayer,
           end_layer: endLayer,
+          drc_delta: await drcCap.finish(),
           ...docResultPayload(ctx),
         }),
       },
@@ -9215,7 +9568,7 @@ export const addMotorWindingSchema = {
  * A post-build audit re-checks both invariants (no same-net via bypass, no
  * cross-net contact outside a tie region) and reports violations as errors.
  */
-export function addMotorWinding(args: Record<string, unknown>) {
+export async function addMotorWinding(args: Record<string, unknown>) {
   const ctx = resolveDocInput(args);
   const pcb = getDocPcb(ctx.doc);
   const fail = ecadError;
@@ -9379,6 +9732,12 @@ export function addMotorWinding(args: Record<string, unknown>) {
     }
   }
 
+  // The field-report tool: it used to return a bare document_version for a
+  // board it had just shorted. Full-board capture — a winding spans the stator
+  // annulus, the bore interconnect rings, AND rim feed escapes out to the
+  // board edge, so a bbox scope would cover most of the board anyway.
+  const drcCap = await beginDrcDelta(pcb, "full");
+
   const tracesBase = pcb.traces.length;
   const viasBase = pcb.vias.length;
   const pushTrace = (a: Vec2, b: Vec2, layer: PcbLayer, net: string): boolean => {
@@ -9432,7 +9791,7 @@ export function addMotorWinding(args: Record<string, unknown>) {
     };
     const dir = coil.polarity === 1 ? "ccw" : "cw";
     const beforeTraces = pcb.traces.length;
-    const res = addCoil({
+    const res = await addCoil({
       ...childDoc,
       center: coilCenter,
       turns: turnsPerCoil,
@@ -9446,7 +9805,7 @@ export function addMotorWinding(args: Record<string, unknown>) {
       clearance: args.clearance,
       segments_per_turn: args.segments_per_turn,
       inner_via: false,
-    });
+    }, { skipDrcDelta: true });
     if (res.isError) {
       errors.push(`coil slot ${coil.slot} (net ${coil.net}): ${res.content[0]!.text}`);
       continue;
@@ -9926,6 +10285,7 @@ export function addMotorWinding(args: Record<string, unknown>) {
             "these invariants" +
             (auditIssues.length ? " and FOUND VIOLATIONS (see errors)." : "."),
           ...(errors.length ? { errors } : {}),
+          drc_delta: await drcCap.finish(),
           ...docResultPayload(ctx),
         }),
       },

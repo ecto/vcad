@@ -1001,7 +1001,7 @@ export class Solid {
      * @returns {boolean}
      */
     canExportStep() {
-        const ret = wasm.raytracer_canRaytrace(this.__wbg_ptr);
+        const ret = wasm.solid_canExportStep(this.__wbg_ptr);
         return ret !== 0;
     }
     /**
@@ -3808,6 +3808,36 @@ export function ecadCheckDrc(pcb_json) {
     const ptr0 = passStringToWasm0(pcb_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len0 = WASM_VECTOR_LEN;
     const ret = wasm.ecadCheckDrc(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+
+/**
+ * Run DRC with the geometric checks scoped to an axis-aligned region
+ * (mm) — the incremental verify-on-write entry point. Only elements
+ * intersecting the region are subjects of the clearance/width/drill/edge
+ * checks (each still judged against the whole board); connectivity
+ * (shorts, islands, unrouted nets) always runs board-global.
+ *
+ * # Arguments
+ * * `pcb_json` - JSON-serialized `Pcb` struct
+ * * `min_x`, `min_y`, `max_x`, `max_y` - region corners (mm)
+ *
+ * # Returns
+ * Array of DRC violations as JsValue.
+ * @param {string} pcb_json
+ * @param {number} min_x
+ * @param {number} min_y
+ * @param {number} max_x
+ * @param {number} max_y
+ * @returns {any}
+ */
+export function ecadCheckDrcInRegion(pcb_json, min_x, min_y, max_x, max_y) {
+    const ptr0 = passStringToWasm0(pcb_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.ecadCheckDrcInRegion(ptr0, len0, min_x, min_y, max_x, max_y);
     if (ret[2]) {
         throw takeFromExternrefTable0(ret[1]);
     }
