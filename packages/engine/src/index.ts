@@ -394,6 +394,28 @@ export interface KernelModule {
   getSheetMetalShopCatalog?: (shopId: string) => string;
   /** Folded sheet-metal solid as STEP AP214 → JSON `{step, error}`. */
   sheetMetalFoldedStep?: (chainJson: string) => string;
+  /** Mesh-to-mesh clearance over raw evaluated-mesh buffers. */
+  mesh_clearance?: (
+    positionsA: Float32Array,
+    indicesA: Uint32Array,
+    positionsB: Float32Array,
+    indicesB: Uint32Array,
+  ) => ClearanceResult;
+}
+
+/**
+ * Mesh-to-mesh clearance: minimum separation distance in mm, or the negated
+ * deepest penetration when the meshes intersect (mirrors `WasmClearance`).
+ */
+export interface ClearanceResult {
+  /** Signed distance in mm: `>= 0` separation, `< 0` penetration depth. */
+  distance: number;
+  /** True when the meshes intersect (crossing surfaces or containment). */
+  intersecting: boolean;
+  /** Point on the first mesh realizing the reported distance. */
+  pointA: [number, number, number];
+  /** Point on the second mesh realizing the reported distance. */
+  pointB: [number, number, number];
 }
 
 /** Rendered dimension types from the annotation layer */
@@ -597,6 +619,7 @@ export class Engine {
       getSheetMetalBendTable: (wasmModule as Record<string, unknown>).getSheetMetalBendTable as KernelModule["getSheetMetalBendTable"],
       getSheetMetalShopCatalog: (wasmModule as Record<string, unknown>).getSheetMetalShopCatalog as KernelModule["getSheetMetalShopCatalog"],
       sheetMetalFoldedStep: (wasmModule as Record<string, unknown>).sheetMetalFoldedStep as KernelModule["sheetMetalFoldedStep"],
+      mesh_clearance: (wasmModule as Record<string, unknown>).mesh_clearance as KernelModule["mesh_clearance"],
     }, compiledWasmModule);
   }
 
@@ -788,6 +811,21 @@ export class Engine {
       { positions: mesh.positions, indices: mesh.indices },
       viewDirection,
     );
+  }
+
+  /**
+   * Minimum signed distance between two evaluated meshes in mm: `>= 0` is
+   * the separation, `< 0` the deepest penetration when they intersect.
+   * Meshes are measured as placed (positions are used verbatim), so callers
+   * can compare any two parts of an evaluated scene.
+   */
+  meshClearance(a: TriangleMesh, b: TriangleMesh): ClearanceResult {
+    if (typeof this.kernel.mesh_clearance !== "function") {
+      throw new Error(
+        "mesh_clearance is not exported by this kernel WASM build — rebuild packages/kernel-wasm",
+      );
+    }
+    return this.kernel.mesh_clearance(a.positions, a.indices, b.positions, b.indices);
   }
 
   /** Import solids from a STEP file buffer.
