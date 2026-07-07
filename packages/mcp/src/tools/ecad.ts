@@ -68,7 +68,14 @@ import {
   netContinuity as kernelNetContinuity,
 } from "@vcad/engine";
 import type { Engine, NetlistResult, TriangleMesh, NetContinuity } from "@vcad/engine";
-import { registerSession, getSession, undoLastSnapshot, historyDepth } from "./session.js";
+import {
+  registerSession,
+  getSession,
+  undoLastSnapshot,
+  historyDepth,
+  resolveDocInput,
+  type DocInputCtx,
+} from "./session.js";
 import { emClaim } from "./em-claims.js";
 import type { NextAction } from "./next-actions.js";
 import { computeEnclosureFitForBoard } from "./enclosure.js";
@@ -360,36 +367,18 @@ function validateCopperLayer(raw: unknown): LayerOk | LayerErr {
 // ============================================================================
 // Document resolution — session-based (document_id) with inline fallback
 // ============================================================================
-
-/** A resolved document input: session-backed (preferred) or inline (legacy). */
-interface EcadDocCtx {
-  doc: Document;
-  /** Set when the doc came from (or was registered as) a server session. */
-  documentId?: string;
-}
-
-/**
- * Resolve the document argument for ECAD tools. `document_id` (a session
- * from create_schematic / open_document) is preferred; an inline `document`
- * object is still accepted for backward compatibility and is mutated and
- * echoed back like the pre-session API did.
- */
-function resolveDocInput(args: Record<string, unknown>): EcadDocCtx {
-  const id = args.document_id ? String(args.document_id) : "";
-  if (id) return { doc: getSession(id), documentId: id };
-  const doc = args.document as Document | undefined;
-  if (doc && typeof doc === "object") return { doc };
-  throw new Error(
-    "Pass `document_id` (from create_schematic or open_document) — or an inline `document` for the legacy stateless flow.",
-  );
-}
+//
+// `resolveDocInput` now lives in session.ts and is shared with the core
+// read-only tools (inspect_cad / render_view / export_cad / dfm_check). ECAD
+// tools echo the full mutated document back for the inline path, so they keep
+// their own result-payload helper below.
 
 /**
  * The document part of a mutating tool's response. Session docs are mutated
  * server-side, so only the id is echoed; inline docs get the full mutated
  * document back (the caller has no other way to retrieve it).
  */
-function docResultPayload(ctx: EcadDocCtx): Record<string, unknown> {
+function docResultPayload(ctx: DocInputCtx): Record<string, unknown> {
   return ctx.documentId
     ? { document_id: ctx.documentId }
     : { document: ctx.doc };
