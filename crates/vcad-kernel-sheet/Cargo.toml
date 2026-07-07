@@ -10,3 +10,4 @@ repository.workspace = true
 vcad-kernel-math = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+vcad-receipt = { workspace = true }

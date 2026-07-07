@@ -1,0 +1,15 @@
+[package]
+name = "vcad-receipt"
+description = "Unified, versioned, fail-closed verification receipt schema for vcad documents"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+ts-rs = { version = "10", optional = true }
+
+[features]
+ts-rs = ["dep:ts-rs"]

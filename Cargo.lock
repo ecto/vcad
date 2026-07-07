@@ -3911,7 +3911,7 @@ dependencies = [
 
 [[package]]
 name = "phyz"
-version = "0.3.1"
+version = "0.3.0"
 dependencies = [
  "tang",
 ]
@@ -7246,6 +7246,7 @@ dependencies = [
  "serde",
  "serde_json",
  "vcad-kernel-math",
+ "vcad-receipt",
 ]
 
 [[package]]
@@ -7433,6 +7434,15 @@ dependencies = [
  "thiserror 2.0.18",
  "vcad-gdsii",
  "vcad-ir",
+]
+
+[[package]]
+name = "vcad-receipt"
+version = "0.9.4"
+dependencies = [
+ "serde",
+ "serde_json",
+ "ts-rs",
 ]
 
 [[package]]
