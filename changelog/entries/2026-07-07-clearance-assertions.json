@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-07-clearance-assertions",
+  "version": "0.9.4",
+  "date": "2026-07-07",
+  "category": "feat",
+  "title": "Named clearance/clash assertions with receipt re-verification",
+  "summary": "check_clearance measures the minimum distance (or penetration depth) between part groups; labeled assertions persist on the document and re-verify as Holds/Stale/Violated via build_receipt/verify_receipt.",
+  "features": ["clearance", "verification", "receipt", "assembly", "mechanical"],
+  "mcpTools": ["check_clearance", "build_receipt", "verify_receipt"]
+}

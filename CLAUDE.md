@@ -253,6 +253,9 @@ target/debug/vcad-render path/to/part.vcad > out.svg
 - `create_cad_document` — create parts from primitives + operations
 - `export_cad` — export to STL or GLB
 - `inspect_cad` — get volume, area, bbox, center of mass
+- `check_clearance` — min distance / penetration depth between part groups;
+  labeled assertions persist on the document and re-verify via
+  `build_receipt` / `verify_receipt` as Holds/Stale/Violated
 - `render_view` — render the session document to an isometric PNG (agent eyes)
 - `verify_part` / `list_eval_tasks` — grade the document against mecheval
   benchmark tasks via the official `mecheval-grade` binary (self-grading

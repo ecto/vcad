@@ -1674,6 +1674,32 @@ pub struct Document {
     /// resolve, so the kernel never sees expressions.
     #[serde(default, skip_serializing_if = "Bindings::is_empty")]
     pub bindings: Bindings,
+
+    // Verification (optional, zero-cost when empty)
+    /// Named clearance/clash assertions between part groups, re-measured by
+    /// `check_clearance` and receipt verification whenever geometry changes.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub clearance_specs: Vec<ClearanceSpec>,
+}
+
+/// A named minimum-clearance assertion between two groups of parts.
+///
+/// Persisted on the document so safety-critical distances (rotor air gaps,
+/// bearing fits, screw-head clearances) are re-verified as geometry changes
+/// instead of being hand-computed once and silently invalidated later.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "bindings/"))]
+pub struct ClearanceSpec {
+    /// Unique human-readable name, e.g. "air-gap".
+    pub label: String,
+    /// Part ids (stringified root node ids) forming the first group.
+    pub group_a: Vec<String>,
+    /// Part ids forming the second group.
+    pub group_b: Vec<String>,
+    /// Required minimum separation in mm: the assertion holds when the
+    /// measured minimum distance between the groups is at least this value.
+    pub min_mm: f64,
 }
 
 impl Default for Document {
@@ -1694,6 +1720,7 @@ impl Default for Document {
             molecule: None,
             parameters: HashMap::new(),
             bindings: Bindings::new(),
+            clearance_specs: Vec::new(),
         }
     }
 }
