@@ -513,6 +513,7 @@ export function SketchPropertyPanel() {
           const partId = addRevolve(plane, origin, segments, origin, axisDir, pendingOperation.angleDeg);
           if (partId) {
             select(partId);
+            analytics.sketchCompleted(constraints.length);
             addToast("Created Revolve", "success");
           } else {
             addToast("Revolve failed", "error");
@@ -541,6 +542,7 @@ export function SketchPropertyPanel() {
           const partId = addSweep(plane, origin, segments, path);
           if (partId) {
             select(partId);
+            analytics.sketchCompleted(constraints.length);
             addToast("Created Sweep", "success");
           } else {
             addToast("Sweep failed", "error");
@@ -559,6 +561,7 @@ export function SketchPropertyPanel() {
             );
             if (partId) {
               select(partId);
+              analytics.sketchCompleted(constraints.length);
               addToast("Created Loft", "success");
             }
           } else {
