@@ -665,9 +665,11 @@ export function useToolDefinitions(): {
         iconColor: color("build"),
         onClick: () => {
           if (!scene) return;
+          analytics.exportStarted("stl");
           const blob = exportStlBlob(scene);
           downloadBlob(blob, "model.stl");
           analytics.documentExported("stl");
+          analytics.exportCompleted("stl");
           useNotificationStore.getState().addToast("Exported model.stl", "success");
         },
       },
@@ -681,9 +683,11 @@ export function useToolDefinitions(): {
         iconColor: color("build"),
         onClick: () => {
           if (!scene) return;
+          analytics.exportStarted("glb");
           const blob = exportGltfBlob(scene);
           downloadBlob(blob, "model.glb");
           analytics.documentExported("glb");
+          analytics.exportCompleted("glb");
           useNotificationStore.getState().addToast("Exported model.glb", "success");
         },
       },
@@ -697,10 +701,12 @@ export function useToolDefinitions(): {
         iconColor: color("build"),
         onClick: () => {
           if (!scene) return;
+          analytics.exportStarted("step");
           try {
             const blob = exportStepBlob(scene);
             downloadBlob(blob, "model.step");
             analytics.documentExported("step");
+            analytics.exportCompleted("step");
             useNotificationStore
               .getState()
               .addToast("Exported model.step", "success");
@@ -730,6 +736,7 @@ export function useToolDefinitions(): {
             const boardIds = getPcbNodeIds(doc);
             const pcb = boardIds.length > 0 ? getNodePcb(doc, boardIds[0]!) : null;
             if (!pcb) return;
+            analytics.exportStarted("gerber");
             const files = await exportFabFiles(pcb);
             if (!files || files.length === 0) {
               useNotificationStore
@@ -742,6 +749,7 @@ export function useToolDefinitions(): {
             const blob = new Blob([zipSync(entries)], { type: "application/zip" });
             downloadBlob(blob, "gerbers.zip");
             analytics.documentExported("gerber");
+            analytics.exportCompleted("gerber");
             useNotificationStore
               .getState()
               .addToast(`Exported gerbers.zip (${files.length} files)`, "success");

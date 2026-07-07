@@ -18,6 +18,7 @@ import { useElectronicsStore } from "@/stores/electronics-store";
 import { Tooltip } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { invoke, isTauri } from "@/lib/tauri";
+import { analytics } from "@/lib/analytics";
 import { useCapabilities } from "@/lib/capabilities";
 
 /**
@@ -288,7 +289,13 @@ export function DocTitle({ macOverlay }: { macOverlay?: boolean }) {
 
       {/* Scope breadcrumb — only shows when out of doc root */}
       {sketchActive && (
-        <ScopeCrumb onExit={() => requestSketchExit()}>
+        <ScopeCrumb
+          onExit={() => {
+            // Immediate exit only happens for an empty sketch; with segments
+            // the confirmation in FeatureTree fires the abandon event instead.
+            if (requestSketchExit()) analytics.sketchAbandoned("empty");
+          }}
+        >
           Sketch <span className="text-text-muted">on</span>{" "}
           {getSketchPlaneName(sketchPlane)}
         </ScopeCrumb>

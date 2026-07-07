@@ -12,6 +12,17 @@ export const analytics = {
     ph?.capture("document_saved", { method }),
   documentExported: (format: "stl" | "glb" | "step" | "dxf" | "gerber") =>
     ph?.capture("document_exported", { format }),
+  // Export funnel — started fires at the moment the user triggers an export,
+  // completed only on success. A started without a completed is a failed or
+  // aborted export, which document_exported alone (success-only) can't show.
+  exportStarted: (format: "stl" | "glb" | "step" | "dxf" | "gerber") =>
+    ph?.capture("export_started", { format }),
+  exportCompleted: (format: "stl" | "glb" | "step" | "dxf" | "gerber") =>
+    ph?.capture("export_completed", { format }),
+
+  // Activation funnel — which starting template (example part or molecule
+  // demo) a user opened, from the first-run gallery, ⌘K palette, or menu.
+  templateOpened: (id: string) => ph?.capture("template_opened", { template_id: id }),
 
   // Feature usage
   primitiveAdded: (kind: "cube" | "cylinder" | "sphere" | "cone") =>
@@ -21,6 +32,13 @@ export const analytics = {
   sketchStarted: () => ph?.capture("sketch_started"),
   sketchCompleted: (constraintCount: number) =>
     ph?.capture("sketch_completed", { constraint_count: constraintCount }),
+  // Sketch mode exited without committing an operation. Reasons: "empty"
+  // (nothing drawn), "discarded" (drawn segments thrown away), "no_operation"
+  // (finished with segments but no extrude/revolve/… pending), or
+  // "face_selection" (bailed at the pick-a-face step before sketching).
+  sketchAbandoned: (
+    reason: "empty" | "discarded" | "no_operation" | "face_selection",
+  ) => ph?.capture("sketch_abandoned", { reason }),
   extrudeApplied: () => ph?.capture("extrude_applied"),
 
   // Auth events
@@ -43,6 +61,20 @@ export const analytics = {
   // (token) or accountless (inline) handoff.
   continueHandoff: (host: string, mode: "token" | "inline") =>
     ph?.capture("continue_handoff", { host, mode }),
+
+  // The very first command this browser profile ever executes — the key
+  // activation step. localStorage-guarded so it fires once per user, not
+  // once per session; the flag is only set when the event actually sends.
+  firstCommand: (id: string) => {
+    if (!ph) return;
+    try {
+      if (localStorage.getItem("vcad_first_command") != null) return;
+      localStorage.setItem("vcad_first_command", "1");
+    } catch {
+      return; // storage unavailable — skip rather than fire every command
+    }
+    ph.capture("first_command", { command_id: id });
+  },
 
   // Command registry — fired for every action triggered through
   // useAppCommands, regardless of which surface invoked it. Lets us see
