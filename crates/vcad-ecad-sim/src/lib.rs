@@ -9,16 +9,23 @@
 //!
 //! # Modules
 //!
+//! The electromagnetic solvers are grouped under the [`em`] domain facade
+//! (see its module docs for the claim family and domain framing):
+//!
 //! - [`airgap`] — First-order air-gap flux density via a reluctance network (MEC)
-//! - [`circuit`] — Lumped-element transient circuit simulation (MNA network solver)
 //! - [`impedance`] — Characteristic impedance for microstrip and stripline geometries
 //! - [`magnetics`] — Scalar-generic spiral inductance + motor torque constant
 //! - [`motor`] — Analytical motor performance (Kt/Ke, no-load speed, stall torque, curve)
 //! - [`signal_integrity`] — Propagation delay, crosstalk estimation, length matching
+//!
+//! Neighbors outside the EM domain:
+//!
+//! - [`circuit`] — Lumped-element transient circuit simulation (MNA network solver)
 //! - [`thermal`] — Component junction temperature and via thermal resistance
 
 pub mod airgap;
 pub mod circuit;
+pub mod em;
 pub mod impedance;
 pub mod magnetics;
 pub mod motor;

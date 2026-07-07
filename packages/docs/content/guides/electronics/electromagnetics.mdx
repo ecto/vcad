@@ -1,0 +1,53 @@
+---
+title: "Electromagnetics"
+description: "The EM domain: coils, motor windings, impedance, RF — and the claims they make"
+order: 6
+---
+
+vcad's electromagnetics capability grew up scattered across the PCB stack: spiral-inductance math arrived with PCB motors, transmission-line impedance with the routing tools, the air-gap solver with motor co-design. This page names the collection **electromagnetics** — a design domain in its own right, alongside PCB layout and mechanical modeling. Nothing moved and no tool was renamed; the domain is a lens, not a migration.
+
+Electromagnetics rides the PCB rail: everything the domain designs is copper, so it is fabricated the same way any board is. A planar inductor, a motor stator, a matched RF feed — each is traces, vias, and zones that `export_gerber` already knows how to ship.
+
+## The tools
+
+Eight calculators analyze or size EM structures. They are pure: they take parameters and return numbers, touching no board.
+
+| Tool | What it does |
+|---|---|
+| `calc_coil` | Planar spiral inductance (modified Wheeler), DC resistance, L/R time constant |
+| `size_coil` | Inverse: solve turn count for a target inductance, check it fits the annulus |
+| `calc_impedance` | Characteristic impedance Z0 for microstrip/stripline, single-ended or differential |
+| `size_impedance` | Inverse: solve trace width (and pair spacing) for a target Z0, snapped to the fab grid |
+| `size_pdn` | Size power-distribution copper so every load node meets its IR-drop budget |
+| `calc_rf` | RLC frequency response: resonance, Q, S11/return loss against a reference Z0 |
+| `winding_layout` | Polyphase motor winding plan: per-slot phase/polarity and the winding factor |
+| `calc_motor` | First-order motor performance: Kt, Ke, no-load speed, stall torque, speed–torque curve |
+
+Three realizers turn plans into copper on the session board: `add_coil` (one Archimedean spiral of traces), `add_coil_array` (a ring of coils with per-coil nets and chirality), and `add_motor_winding` (plan + place + interconnect + terminate a whole stator winding in one call).
+
+## The claim family
+
+Every calculator's output now includes a `claims` array. A claim is one quantitative prediction in a uniform shape:
+
+```json
+{
+  "domain": "em",
+  "quantity": "inductance",
+  "predicted": 862.674,
+  "unit": "nH",
+  "method": "wheeler-mohan-1999",
+  "inputs": { "turns": 10, "inner_radius": 2, "outer_radius": 6, "geometry": "circular" }
+}
+```
+
+The quantities the domain can claim today: inductance, DC resistance, characteristic and differential impedance, effective permittivity, propagation delay, IR drop, resonant frequency, Q factor, winding factor, torque constant, back-EMF constant, no-load speed, stall torque, and air-gap flux density.
+
+The `method` string names the closed-form model that produced the number — `wheeler-mohan-1999`, `ipc2141-microstrip`, `mec-reluctance`, `star-of-slots`, `first-order-dc-motor`, and friends. Every one is a first-order model: no slotting, fringing, saturation, or field solving. That honesty is the point — a claim states what was predicted, by what model, from what inputs, so a Receipt can ledger it and a later measurement or FEA pass can grade the prediction instead of contradicting a vague number.
+
+## Differentiable by construction
+
+The kernel-side leaves behind these calculators (`crates/vcad-ecad-sim`, module `em`) are generic over the `tang` scalar type, so the same code that evaluates a number also builds a symbolic expression graph and differentiates exactly. `size_impedance` solves trace geometry by gradient rather than search, and motor plant/controller co-design backpropagates through the torque-constant leaf.
+
+## What's next
+
+Antenna synthesis, filter synthesis, and eventually a field solver join the domain here. The claim family is designed to absorb them: a new solver adds new quantities and methods, and the Receipt machinery inherits them for free.

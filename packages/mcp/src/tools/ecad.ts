@@ -63,6 +63,7 @@ import {
 } from "@vcad/engine";
 import type { Engine, NetlistResult, TriangleMesh, NetContinuity } from "@vcad/engine";
 import { registerSession, getSession, undoLastSnapshot, historyDepth } from "./session.js";
+import { emClaim } from "./em-claims.js";
 import type { NextAction } from "./next-actions.js";
 import { computeEnclosureFitForBoard } from "./enclosure.js";
 import { validatePcb, pcbValidationError } from "./pcb-validate.js";
@@ -4965,6 +4966,31 @@ export async function calcImpedance(args: Record<string, unknown>) {
   if (gate.kind === "incomplete") return ecadError(gate.message);
   applyRealizedGate(result, gate, { conductor: "trace", noun: "Impedance" });
 
+  // Receipt claims for the quantities predicted (method reflects the branch
+  // actually taken above — see em-claims.ts for the family).
+  const model = traceType === "stripline" ? "ipc2141-stripline" : "ipc2141-microstrip";
+  const claimInputs = {
+    trace_width: traceWidth,
+    copper_thickness: copperThickness,
+    dielectric_height: dielectricHeight,
+    dielectric_er: er,
+    trace_type: traceType,
+  };
+  const claims = [
+    emClaim("characteristic_impedance", result.z0 as number, "ohm", model, claimInputs),
+    emClaim("effective_permittivity", result.er_eff as number, "dimensionless", model, claimInputs),
+    emClaim("propagation_delay", result.delay_ps_per_mm as number, "ps/mm", model, claimInputs),
+  ];
+  if (result.z_diff !== undefined) {
+    claims.push(
+      emClaim("differential_impedance", result.z_diff as number, "ohm", "edge-coupled-diff-pair", {
+        ...claimInputs,
+        spacing,
+      }),
+    );
+  }
+  result.claims = claims;
+
   return {
     content: [
       {
@@ -5099,6 +5125,31 @@ export function sizeImpedance(args: Record<string, unknown>) {
     ...(reason ? { reason } : {}),
   };
 
+  // Receipt claims about the recommended (snapped) geometry.
+  const seModel = traceType.includes("stripline") ? "ipc2141-stripline" : "ipc2141-microstrip";
+  const claimInputs = {
+    trace_type: traceType,
+    trace_width: r4(wSnap),
+    ...(isDiff ? { spacing: r4(sSnap as number) } : {}),
+    copper_thickness: t,
+    dielectric_height: h,
+    dielectric_er: er,
+  };
+  payload.claims = [
+    emClaim("characteristic_impedance", r2(z0Meas), "ohm", seModel, claimInputs),
+    ...(isDiff
+      ? [
+          emClaim(
+            "differential_impedance",
+            r2(diffMeas as number),
+            "ohm",
+            "edge-coupled-diff-pair",
+            claimInputs,
+          ),
+        ]
+      : []),
+  ];
+
   return { content: [{ type: "text" as const, text: JSON.stringify(payload) }] };
 }
 
@@ -5148,6 +5199,16 @@ export async function sizePdn(args: Record<string, unknown>) {
     });
     return { content: [{ type: "text" as const, text: JSON.stringify(payload) }] };
   };
+  // One IR-drop receipt claim per budgeted node — same model regardless of
+  // which engine (TS solver or Rust adjoint) produced the widths.
+  const pdnClaims = (drops: number[], segments: number) =>
+    targets.map((tg, i) =>
+      emClaim("ir_drop", Math.round(drops[i]! * 1e6) / 1e6, "V", "dc-resistor-mesh", {
+        node: tg.node,
+        max_drop_v: tg.max_drop,
+        segments,
+      }),
+    );
 
   // Optionally route into the Rust kernel engine (implicit-function adjoint)
   // via WASM. Falls through to the TS solver if the artifact isn't available.
@@ -5184,6 +5245,7 @@ export async function sizePdn(args: Record<string, unknown>) {
         targets,
         converged: exact.converged,
         ...(overBudget.length ? { over_budget: overBudget } : {}),
+        claims: pdnClaims(drops, widths.length),
       });
     }
   }
@@ -5291,6 +5353,8 @@ export async function sizePdn(args: Record<string, unknown>) {
     fab_grid_mm: grid,
     ...(active.length ? { active_constraints: active } : {}),
     ...(overBudget.length ? { over_budget: overBudget } : {}),
+    // One IR-drop claim per budgeted node, at the sized copper widths.
+    claims: pdnClaims(measured, ne),
   });
 }
 
@@ -5338,6 +5402,20 @@ export function calcCoil(args: Record<string, unknown>) {
           // L/R time constant in microseconds.
           time_constant_us: r3((inductanceNh * 1e-9) / resistance / 1e-6),
           inputs: { inner_radius: innerR, outer_radius: outerR, trace_width: w, copper_thickness: t },
+          claims: [
+            emClaim("inductance", r3(inductanceNh), "nH", "wheeler-mohan-1999", {
+              turns,
+              inner_radius: innerR,
+              outer_radius: outerR,
+              geometry,
+            }),
+            emClaim("dc_resistance", r3(resistance), "ohm", "dc-trace-resistance", {
+              wire_length_mm: r3(wireLen),
+              trace_width: w,
+              copper_thickness: t,
+              resistivity: rho,
+            }),
+          ],
         }),
       },
     ],
@@ -5407,6 +5485,21 @@ export function sizeCoil(args: Record<string, unknown>) {
           max_turns_fit: maxTurnsFit,
           dc_resistance_ohm: r3(resistance),
           wire_length_mm: r3(wireLen),
+          // Claims describe the integer-turn coil actually recommended.
+          claims: [
+            emClaim("inductance", r3(achievedNh), "nH", "wheeler-mohan-1999", {
+              turns,
+              inner_radius: innerR,
+              outer_radius: outerR,
+              geometry,
+            }),
+            emClaim("dc_resistance", r3(resistance), "ohm", "dc-trace-resistance", {
+              wire_length_mm: r3(wireLen),
+              trace_width: w,
+              copper_thickness: t,
+              resistivity: rho,
+            }),
+          ],
         }),
       },
     ],
@@ -5501,6 +5594,24 @@ export function calcRf(args: Record<string, unknown>) {
           },
           z0_ohm: z0,
           samples,
+          claims: [
+            emClaim("resonant_frequency", Math.round(f0), "Hz", "rlc-analytic", {
+              topology,
+              r_ohm: r,
+              l_henry: l,
+              c_farad: c,
+            }),
+            ...(Number.isFinite(q)
+              ? [
+                  emClaim("q_factor", r3(q), "dimensionless", "rlc-analytic", {
+                    topology,
+                    r_ohm: r,
+                    l_henry: l,
+                    c_farad: c,
+                  }),
+                ]
+              : []),
+          ],
         }),
       },
     ],
@@ -6038,7 +6149,24 @@ export function windingLayout(args: Record<string, unknown>) {
     ...(neutralNet ? { neutralNet } : {}),
   };
 
-  return { content: [{ type: "text" as const, text: JSON.stringify(plan) }] };
+  // A winding factor is only a claim about a buildable winding.
+  const payload = {
+    ...plan,
+    ...(feasible
+      ? {
+          claims: [
+            emClaim("winding_factor", plan.windingFactor, "dimensionless", "star-of-slots", {
+              slots,
+              poles,
+              phases,
+              layer,
+            }),
+          ],
+        }
+      : {}),
+  };
+
+  return { content: [{ type: "text" as const, text: JSON.stringify(payload) }] };
 }
 
 // ============================================================================
@@ -8689,11 +8817,12 @@ export async function calcMotor(args: Record<string, unknown>) {
   // Resolve air-gap flux: explicit value, else compute from magnet geometry.
   let bGap = num(args.airgap_flux_tesla);
   let bGapSource: "supplied" | "computed" = "supplied";
+  let magnetSpec: Parameters<typeof airgapFluxDensity>[0] | undefined;
   if (!Number.isFinite(bGap)) {
     const m = (args.magnet ?? {}) as Record<string, unknown>;
     const mnum = (v: unknown, d: number) =>
       typeof v === "number" && Number.isFinite(v) ? (v as number) : d;
-    const computed = await airgapFluxDensity({
+    magnetSpec = {
       remanenceTesla: mnum(m.remanence_tesla, 1.2),
       magnetThicknessMm: mnum(m.magnet_thickness_mm, 3),
       recoilMuRel: mnum(m.recoil_mu_rel, 1.05),
@@ -8703,7 +8832,8 @@ export async function calcMotor(args: Record<string, unknown>) {
       ironMuRel: typeof m.iron_mu_rel === "number" ? (m.iron_mu_rel as number) : null,
       ironPathMm: mnum(m.iron_path_mm, 0),
       ironAreaMm2: mnum(m.iron_area_mm2, 1),
-    });
+    };
+    const computed = await airgapFluxDensity(magnetSpec);
     if (computed == null) {
       return fail(
         "air-gap flux is required: pass airgap_flux_tesla, or `magnet` params (ECAD WASM must be available to compute B_gap).",
@@ -8728,6 +8858,41 @@ export async function calcMotor(args: Record<string, unknown>) {
   }
 
   const r4 = (n: number) => Math.round(n * 1e4) / 1e4;
+  const motorInputs = {
+    pole_pairs: polePairs,
+    turns_per_phase: turnsPerPhase,
+    winding_factor: windingFactor,
+    inner_radius_mm: innerR,
+    outer_radius_mm: outerR,
+    phase_resistance_ohm: phaseR,
+    supply_voltage_v: supplyV,
+    airgap_flux_tesla: r4(bGap),
+  };
+  const claims = [
+    emClaim("torque_constant", r4(perf.ktNmPerA), "N·m/A", "first-order-dc-motor", motorInputs),
+    emClaim("back_emf_constant", r4(perf.keVSPerRad), "V·s/rad", "first-order-dc-motor", motorInputs),
+    emClaim("no_load_speed", r4(perf.noLoadSpeedRadS), "rad/s", "first-order-dc-motor", motorInputs),
+    emClaim("stall_torque", r4(perf.stallTorqueNm), "N·m", "first-order-dc-motor", motorInputs),
+  ];
+  if (bGapSource === "computed" && magnetSpec) {
+    claims.push(
+      emClaim("airgap_flux_density", r4(bGap), "T", "mec-reluctance", {
+        remanence_tesla: magnetSpec.remanenceTesla,
+        magnet_thickness_mm: magnetSpec.magnetThicknessMm,
+        recoil_mu_rel: magnetSpec.recoilMuRel,
+        airgap_mm: magnetSpec.airgapMm,
+        magnet_area_mm2: magnetSpec.magnetAreaMm2,
+        gap_area_mm2: magnetSpec.gapAreaMm2,
+        ...(magnetSpec.ironMuRel != null
+          ? {
+              iron_mu_rel: magnetSpec.ironMuRel,
+              iron_path_mm: magnetSpec.ironPathMm,
+              iron_area_mm2: magnetSpec.ironAreaMm2,
+            }
+          : {}),
+      }),
+    );
+  }
   return {
     content: [
       {
@@ -8747,6 +8912,7 @@ export async function calcMotor(args: Record<string, unknown>) {
             torque_nm: r4(p.torqueNm),
           })),
           note: "First-order steady-state estimate (no slotting/fringing/saturation/losses).",
+          claims,
         }),
       },
     ],
