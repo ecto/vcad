@@ -36,6 +36,15 @@ VCAD_WASM_SKIP=1 npm run build --workspaces --if-present
 `VCAD_WASM_SKIP=1` skips the wasm-pack rebuild when `packages/kernel-wasm/vcad_kernel_wasm*`
 artifacts are already checked in; drop it if you need a fresh kernel WASM.
 
+**Never commit the generated `packages/kernel-wasm/vcad_kernel_wasm*` artifacts from a
+feature branch** — wasm-pack output is not byte-reproducible, so two branches that each
+rebuilt them merge-conflict on every merge even when their Rust changes don't overlap.
+They have a single writer: `.github/workflows/wasm-refresh.yml` rebuilds and commits them
+on `main` after any kernel-source merge, and CI (`wasm-artifact-guard`) fails a PR that
+touches them. If you accidentally committed a rebuild, drop it with
+`git checkout origin/main -- 'packages/kernel-wasm/vcad_kernel_wasm*'`. PR CI does not
+depend on the checked-in copies — the TypeScript job consumes WASM built from source.
+
 ## Commands
 
 ```bash
