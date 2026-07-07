@@ -4,6 +4,10 @@ use vcad_kernel_cam::{Tool, Toolpath, ToolpathSegment};
 
 use crate::Stock;
 
+/// Cutting length assumed above the tip (or cone shoulder) for tools that
+/// don't report a flute length: drills, V-bits, and face mills.
+const DEFAULT_CUT_LENGTH: f64 = 50.0;
+
 /// A swept volume representing tool motion.
 pub struct SweptVolume {
     /// Tool radius.
@@ -36,44 +40,228 @@ impl SweptVolume {
     }
 }
 
+/// SDF of a tool's cutter envelope with the tip at the origin, axis +Z.
+///
+/// Each variant is a 1-Lipschitz signed distance (or a conservative lower
+/// bound of one), as required by [`Stock::subtract_sdf`].
+enum ToolStamp {
+    /// Flat-bottomed cylinder (flat endmill, face mill).
+    Flat {
+        /// Cutter radius.
+        radius: f64,
+        /// Cutting length above the tip.
+        height: f64,
+    },
+    /// Hemispherical tip blended into a cylinder (ball endmill).
+    Ball {
+        /// Cutter radius.
+        radius: f64,
+        /// Cutting length above the tip.
+        height: f64,
+    },
+    /// Flat bottom with a rounded outer corner (bull endmill).
+    Bull {
+        /// Cutter radius.
+        radius: f64,
+        /// Corner radius, strictly between 0 and `radius`.
+        corner: f64,
+        /// Cutting length above the tip.
+        height: f64,
+    },
+    /// Cone tip opening into a cylinder (V-bit, drill).
+    Cone {
+        /// Cutter radius at the shoulder.
+        radius: f64,
+        /// Angle between the cone side and the tool axis, radians.
+        half_angle: f64,
+        /// Cutting length above the tip.
+        height: f64,
+    },
+}
+
+impl ToolStamp {
+    fn from_tool(tool: &Tool) -> Self {
+        let radius = tool.radius();
+        match tool {
+            Tool::FlatEndMill { flute_length, .. } => ToolStamp::Flat {
+                radius,
+                height: *flute_length,
+            },
+            Tool::BallEndMill { flute_length, .. } => ToolStamp::Ball {
+                radius,
+                height: *flute_length,
+            },
+            Tool::BullEndMill {
+                corner_radius,
+                flute_length,
+                ..
+            } => {
+                let corner = corner_radius.clamp(0.0, radius);
+                if corner <= 0.0 {
+                    ToolStamp::Flat {
+                        radius,
+                        height: *flute_length,
+                    }
+                } else if (radius - corner) < 1e-9 {
+                    ToolStamp::Ball {
+                        radius,
+                        height: *flute_length,
+                    }
+                } else {
+                    ToolStamp::Bull {
+                        radius,
+                        corner,
+                        height: *flute_length,
+                    }
+                }
+            }
+            Tool::VBit { angle, .. } => {
+                let half_angle = (angle.to_radians() / 2.0).clamp(0.02, 1.55);
+                ToolStamp::Cone {
+                    radius,
+                    half_angle,
+                    height: radius / half_angle.tan() + DEFAULT_CUT_LENGTH,
+                }
+            }
+            Tool::Drill { point_angle, .. } => {
+                let half_angle = (point_angle.to_radians() / 2.0).clamp(0.02, 1.55);
+                ToolStamp::Cone {
+                    radius,
+                    half_angle,
+                    height: radius / half_angle.tan() + DEFAULT_CUT_LENGTH,
+                }
+            }
+            Tool::FaceMill { .. } => ToolStamp::Flat {
+                radius,
+                height: DEFAULT_CUT_LENGTH,
+            },
+        }
+    }
+
+    /// Evaluate the stamp SDF at world point `p` for a tool tip at `tip`.
+    fn sdf(&self, p: [f64; 3], tip: [f64; 3]) -> f64 {
+        let dx = p[0] - tip[0];
+        let dy = p[1] - tip[1];
+        let z = p[2] - tip[2];
+        let q = (dx * dx + dy * dy).sqrt();
+        match *self {
+            ToolStamp::Flat { radius, height } => flat_cylinder_sdf(q, z, radius, height),
+            ToolStamp::Ball { radius, height } => {
+                let sphere = (q * q + (z - radius).powi(2)).sqrt() - radius;
+                let barrel = flat_cylinder_sdf(q, z - radius, radius, (height - radius).max(0.0));
+                sphere.min(barrel)
+            }
+            ToolStamp::Bull {
+                radius,
+                corner,
+                height,
+            } => {
+                let uq = q - (radius - corner);
+                let uz = z - corner;
+                if uq > 0.0 && uz < 0.0 {
+                    // Rounded outer corner: distance to the torus arc.
+                    (uq * uq + uz * uz).sqrt() - corner
+                } else {
+                    flat_cylinder_sdf(q, z, radius, height)
+                }
+            }
+            ToolStamp::Cone {
+                radius,
+                half_angle,
+                height,
+            } => {
+                // Signed distance to the cone side through the apex, capped
+                // by the cylinder wall and the top.
+                let side = q * half_angle.cos() - z * half_angle.sin();
+                side.max(q - radius).max(z - height)
+            }
+        }
+    }
+}
+
+/// Exact SDF of a finite cylinder with radius `r` spanning z ∈ [0, h], in
+/// radial/axial coordinates.
+fn flat_cylinder_sdf(q: f64, z: f64, r: f64, h: f64) -> f64 {
+    let dq = q - r;
+    let dz = (z - h / 2.0).abs() - h / 2.0;
+    let outside = (dq.max(0.0).powi(2) + dz.max(0.0).powi(2)).sqrt();
+    let inside = dq.max(dz).min(0.0);
+    outside + inside
+}
+
 impl Stock {
     /// Subtract a toolpath from the stock.
+    ///
+    /// Motion segments (rapids included — a rapid through material is a
+    /// crash, and simulating it as removal is what lets verification catch
+    /// it) are sampled at sub-cell spacing, and the tool's cutter envelope —
+    /// flat, ball, bull, or cone bottom depending on the tool type — is
+    /// subtracted at each sample. Toolpath coordinates are tool-tip
+    /// positions; the cutter extends upward (+Z) from the tip.
     ///
     /// # Arguments
     ///
     /// * `tool` - The cutting tool
     /// * `toolpath` - The toolpath to subtract
     pub fn subtract_toolpath(&mut self, tool: &Tool, toolpath: &Toolpath) {
-        let radius = tool.radius();
-        let mut current_pos = [0.0, 0.0, self.bounds()[5] + 10.0]; // Start above stock
+        let stamp = ToolStamp::from_tool(tool);
+        let spacing = self.stamp_spacing();
+        // Start above the stock so the approach move cuts nothing.
+        let mut current = [0.0, 0.0, self.bounds()[5] + 10.0];
 
         for segment in &toolpath.segments {
             match segment {
                 ToolpathSegment::Rapid { to } | ToolpathSegment::Linear { to, .. } => {
-                    // Only subtract for cutting moves that enter the stock
-                    let min_z = current_pos[2].min(to[2]);
-                    if min_z <= self.bounds()[5] {
-                        self.subtract_capsule(current_pos, *to, radius);
-                    }
-                    current_pos = *to;
+                    self.stamp_segment(&stamp, current, *to, spacing);
+                    current = *to;
                 }
                 ToolpathSegment::Arc {
                     to, center, dir, ..
                 } => {
-                    // Linearize arc into segments
-                    let arc_points = linearize_arc(current_pos, *to, *center, *dir);
-                    let mut prev = current_pos;
-                    for pt in arc_points {
-                        let min_z = prev[2].min(pt[2]);
-                        if min_z <= self.bounds()[5] {
-                            self.subtract_capsule(prev, pt, radius);
-                        }
+                    let mut prev = current;
+                    for pt in linearize_arc(current, *to, *center, *dir) {
+                        self.stamp_segment(&stamp, prev, pt, spacing);
                         prev = pt;
                     }
-                    current_pos = *to;
+                    current = *to;
                 }
                 _ => {} // Ignore non-motion segments
             }
+        }
+    }
+
+    /// Stamp spacing: half the finest leaf cell, so the scallop left
+    /// between consecutive stamps stays well below the sim resolution.
+    fn stamp_spacing(&self) -> f64 {
+        let b = self.bounds();
+        let cells = (1u32 << self.max_depth()) as f64;
+        let cell = ((b[3] - b[0]) / cells)
+            .max((b[4] - b[1]) / cells)
+            .max((b[5] - b[2]) / cells);
+        (cell * 0.5).max(1e-3)
+    }
+
+    /// Subtract the cutter envelope at samples along a linear move.
+    fn stamp_segment(&mut self, stamp: &ToolStamp, from: [f64; 3], to: [f64; 3], spacing: f64) {
+        // The cutter extends upward from the tip: a move whose tip stays
+        // above the stock top can't touch material.
+        let top = self.bounds()[5];
+        if from[2] > top && to[2] > top {
+            return;
+        }
+
+        let len =
+            ((to[0] - from[0]).powi(2) + (to[1] - from[1]).powi(2) + (to[2] - from[2]).powi(2))
+                .sqrt();
+        let n = ((len / spacing).ceil() as usize).max(1);
+        for i in 0..=n {
+            let t = i as f64 / n as f64;
+            let tip = [
+                from[0] + t * (to[0] - from[0]),
+                from[1] + t * (to[1] - from[1]),
+                from[2] + t * (to[2] - from[2]),
+            ];
+            self.subtract_sdf(|p| stamp.sdf(p, tip));
         }
     }
 }
@@ -172,17 +360,54 @@ mod tests {
     }
 
     #[test]
+    fn test_flat_stamp_cuts_flat_floor() {
+        let stamp = ToolStamp::from_tool(&Tool::FlatEndMill {
+            diameter: 6.0,
+            flute_length: 20.0,
+            flutes: 2,
+        });
+        let tip = [0.0, 0.0, 0.0];
+
+        // Inside the cutter, just above the tip.
+        assert!(stamp.sdf([0.0, 0.0, 0.5], tip) < 0.0);
+        assert!(stamp.sdf([2.9, 0.0, 0.5], tip) < 0.0);
+        // Below the tip: a flat endmill does NOT cut under its floor.
+        assert!(stamp.sdf([0.0, 0.0, -0.5], tip) > 0.0);
+        // Outside the radius.
+        assert!(stamp.sdf([3.5, 0.0, 5.0], tip) > 0.0);
+    }
+
+    #[test]
+    fn test_ball_stamp_tip_geometry() {
+        let stamp = ToolStamp::from_tool(&Tool::BallEndMill {
+            diameter: 6.0,
+            flute_length: 20.0,
+            flutes: 2,
+        });
+        let tip = [0.0, 0.0, 0.0];
+
+        // Sphere center sits at z = +r, so the tip itself is on the surface.
+        assert!(stamp.sdf([0.0, 0.0, 0.0], tip).abs() < 1e-9);
+        assert!(stamp.sdf([0.0, 0.0, 3.0], tip) < 0.0);
+        // At tip height the ball has zero radius: a point at q=2 is outside.
+        assert!(stamp.sdf([2.0, 0.0, 0.01], tip) > 0.0);
+        // Nothing below the tip.
+        assert!(stamp.sdf([0.0, 0.0, -0.5], tip) > 0.0);
+    }
+
+    #[test]
     fn test_stock_subtract_toolpath() {
         use vcad_kernel_cam::{CamSettings, Face};
 
-        let mut stock = Stock::from_box([0.0, 0.0, 0.0, 50.0, 50.0, 10.0], 2.0);
+        // CAM convention: stock top at Z=0, material below.
+        let mut stock = Stock::from_box([0.0, 0.0, -10.0, 50.0, 50.0, 0.0], 1.0);
         let tool = Tool::FlatEndMill {
             diameter: 6.0,
             flute_length: 20.0,
             flutes: 2,
         };
 
-        // Create a simple facing toolpath
+        // Face off the top 2mm.
         let face = Face::new(0.0, 0.0, 50.0, 50.0, 2.0);
         let settings = CamSettings {
             stepover: 4.0,
@@ -190,23 +415,31 @@ mod tests {
             feed_rate: 1000.0,
             plunge_rate: 300.0,
             spindle_rpm: 12000.0,
-            safe_z: 15.0,
-            retract_z: 20.0,
+            safe_z: 5.0,
+            retract_z: 10.0,
         };
         let toolpath = face.generate(&tool, &settings).unwrap();
 
-        // Subtract the toolpath
         stock.subtract_toolpath(&tool, &toolpath);
 
-        // After facing, the top surface should have material removed
-        let sdf_top = stock.sdf_at(25.0, 25.0, 9.0);
-        let sdf_below = stock.sdf_at(25.0, 25.0, 5.0);
-
-        // sdf_top should be higher (more outside) than sdf_below after facing
-        // (material removed from top)
+        // The faced layer is gone...
         assert!(
-            sdf_top > sdf_below || sdf_top > -1.0,
-            "Top should have less material after facing"
+            stock.sdf_at(25.0, 25.0, -1.0) > 0.0,
+            "faced layer should be removed at the center"
+        );
+        assert!(
+            stock.sdf_at(5.0, 5.0, -0.5) > 0.0,
+            "faced layer should be removed near the edges"
+        );
+        // ...and the floor below survives: a flat endmill leaves a flat
+        // floor instead of gouging a ball radius below the tip.
+        assert!(
+            stock.sdf_at(25.0, 25.0, -2.5) < 0.0,
+            "flat endmill must not gouge below the floor"
+        );
+        assert!(
+            stock.sdf_at(25.0, 25.0, -5.0) < 0.0,
+            "material well below the floor must remain"
         );
     }
 }

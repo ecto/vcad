@@ -8,7 +8,10 @@
 //! # Features
 //!
 //! - SDF octree representation of stock
-//! - Swept volume subtraction for toolpath simulation
+//! - Swept volume subtraction for toolpath simulation, with per-tool cutter
+//!   envelopes (flat, ball, bull, and cone bottoms)
+//! - Verification oracle: gouge and excess checks against a target mesh
+//!   ([`verify_stock_against_mesh`])
 //! - Marching cubes mesh extraction for visualization
 //! - Collision detection for tool holders
 //!
@@ -29,11 +32,15 @@ mod collision;
 mod marching_cubes;
 mod octree;
 mod subtract;
+mod verify;
 
 pub use collision::{CollisionResult, CollisionType};
 pub use marching_cubes::MarchingCubes;
 pub use octree::{OctreeNode, Stock};
 pub use subtract::SweptVolume;
+pub use verify::{
+    verify_stock_against_mesh, CheckReport, StockVerification, VerifyOptions, ViolationSample,
+};
 
 use thiserror::Error;
 
