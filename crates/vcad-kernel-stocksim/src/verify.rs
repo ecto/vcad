@@ -228,7 +228,9 @@ type Triangle = [[f64; 3]; 3];
 
 fn collect_triangles(vertices: &[f32], indices: &[u32]) -> Vec<Triangle> {
     indices
-        .chunks_exact(3)
+        .as_chunks::<3>()
+        .0
+        .iter()
         .map(|tri| {
             let v = |idx: u32| {
                 let i = idx as usize * 3;
