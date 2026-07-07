@@ -2,9 +2,10 @@
  * The electromagnetics (EM) receipt-claim family.
  *
  * Every EM calculator (calc_coil, calc_motor, calc_rf, calc_impedance,
- * size_coil, size_impedance, size_pdn, winding_layout) predicts values for
- * named physical quantities — inductance, torque constant, Z0, winding
- * factor, resonance. A claim records one such prediction in a uniform,
+ * size_coil, size_impedance, size_pdn, winding_layout, check_self_start)
+ * predicts values for named physical quantities — inductance, torque
+ * constant, Z0, winding factor, resonance, locked-rotor torque, starting
+ * margin. A claim records one such prediction in a uniform,
  * plainly serializable shape: what quantity, what value, by what method,
  * from what inputs. That is exactly what a receipt needs to ledger the
  * prediction and what a later measurement or FEA pass needs to grade it.
@@ -34,7 +35,13 @@ export type EmQuantity =
   | "back_emf_constant"
   | "no_load_speed"
   | "stall_torque"
-  | "airgap_flux_density";
+  | "airgap_flux_density"
+  | "torque_per_unit_slip"
+  | "locked_rotor_torque"
+  | "synchronous_speed"
+  | "rotor_copper_loss"
+  | "friction_torque"
+  | "start_margin";
 
 /** Stable identifiers for the closed-form models behind each claim. */
 export type EmMethod =
@@ -47,7 +54,11 @@ export type EmMethod =
   | "rlc-analytic" // series/parallel RLC frequency response
   | "star-of-slots" // polyphase winding factor kw = kp·kd
   | "mec-reluctance" // air-gap B via magnetic equivalent circuit
-  | "first-order-dc-motor"; // Kt/Ke, V = iR + Ke·ω envelope
+  | "first-order-dc-motor" // Kt/Ke, V = iR + Ke·ω envelope
+  | "mec-fringing-derate" // Carter-like w/(w+2g) pole-edge fringing on the MEC B
+  | "thin-sheet-induction" // rotating-MMF B1 + linear eddy slip torque (Russell–Norsworthy end effect)
+  | "bearing-friction-catalog" // documented typical bearing running-drag ranges
+  | "torque-friction-margin"; // starting torque vs worst-case friction, fail-closed
 
 /**
  * One quantitative prediction made by an EM calculator — the unit of the

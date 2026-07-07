@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-07-solid-from-board",
+  "version": "0.9.4",
+  "date": "2026-07-07",
+  "category": "feat",
+  "title": "solid_from_board: PCB to solid CAD part",
+  "summary": "The inverse of board_from_solid: extrudes the board outline with its cutouts intact, adds component keep-out volumes, and carries a homogenized FR4+copper mass so inspect/physics see the real board.",
+  "features": ["ecad", "pcb", "solid", "mass-properties", "round-trip", "mcp"],
+  "mcpTools": ["solid_from_board", "board_from_solid", "check_enclosure_fit", "inspect_cad"]
+}

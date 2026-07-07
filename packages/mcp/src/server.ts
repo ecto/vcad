@@ -103,6 +103,18 @@ import {
   placeOrderSchema,
 } from "./tools/ordering.js";
 import {
+  bomCreate,
+  bomCreateSchema,
+  bomAddLine,
+  bomAddLineSchema,
+  bomExport,
+  bomExportSchema,
+} from "./tools/bom.js";
+import {
+  searchMechanicalParts,
+  searchMechanicalPartsSchema,
+} from "./tools/mech-parts.js";
+import {
   shareSession,
   shareSessionSchema,
   unshareSession,
@@ -216,6 +228,8 @@ import {
   windingLayoutSchema,
   boardFromSolid,
   boardFromSolidSchema,
+  solidFromBoard,
+  solidFromBoardSchema,
   addTrace,
   addTraceSchema,
   getPadPositions,
@@ -240,6 +254,12 @@ import {
   deleteTraceSchema,
   deleteVia,
   deleteViaSchema,
+  getCopper,
+  getCopperSchema,
+  addNetTie,
+  addNetTieSchema,
+  deleteNetTie,
+  deleteNetTieSchema,
   undo,
   undoSchema,
   setDesignRules,
@@ -252,6 +272,8 @@ import {
   addMotorWindingSchema,
   calcMotor,
   calcMotorSchema,
+  checkSelfStart,
+  checkSelfStartSchema,
   searchElectronicParts,
   searchElectronicPartsSchema,
   resolvePart,
@@ -514,6 +536,10 @@ const SWITCH_DOC_WRITERS = new Set<string>([
   "delete_zone",
   "delete_trace",
   "delete_via",
+  // Net ties are DRC data, not copper — invisible in the render, but they
+  // change what run_drc accepts, so they must persist (and be undoable).
+  "add_net_tie",
+  "delete_net_tie",
   "undo",
   "set_stackup",
   "set_placement",
@@ -639,6 +665,8 @@ const TOOL_PACKS: Record<string, readonly string[]> = {
     "authorize_spend",
     "place_order",
   ],
+  // Project-level bill of materials + the curated mechanical COTS catalog.
+  bom: ["bom_create", "bom_add_line", "bom_export", "search_mechanical_parts"],
   dfm: ["dfm_check", "dfm_explain", "dfm_suggest_fix", "dfm_apply_fix"],
   sheet_metal: [
     "sheet_metal_create",
@@ -677,6 +705,7 @@ const TOOL_PACKS: Record<string, readonly string[]> = {
     "route_nets",
     "get_pad_positions",
     "describe_pcb",
+    "get_copper",
     "add_trace",
     "add_via",
     "add_via_array",
@@ -687,6 +716,8 @@ const TOOL_PACKS: Record<string, readonly string[]> = {
     "delete_zone",
     "delete_trace",
     "delete_via",
+    "add_net_tie",
+    "delete_net_tie",
     "set_design_rules",
     "size_trace_for_current",
     "add_coil",
@@ -694,6 +725,7 @@ const TOOL_PACKS: Record<string, readonly string[]> = {
     "add_motor_winding",
     "winding_layout",
     "board_from_solid",
+    "solid_from_board",
     "check_enclosure_fit",
     "import_kicad",
     "import_eagle",
@@ -711,6 +743,7 @@ const TOOL_PACKS: Record<string, readonly string[]> = {
     "size_coil",
     "calc_rf",
     "calc_motor",
+    "check_self_start",
     "search_electronic_parts",
     "list_footprints",
     "search_footprints",
@@ -757,8 +790,9 @@ function buildInstructions(kernelPrompt: string | null): string {
     "- See your work with `render_view` (isometric PNG); measure with `inspect_cad` (volume, area, bbox, center of mass).",
     "- Ship with `export_cad` (STL/GLB/STEP) or `open_in_browser` (vcad.io deep link).",
     "- Fix in place: when geometry is wrong, prefer `update` on the offending node over deleting parts and starting over.",
+    "- Deliver the project bill of materials with `bom_create` → `bom_export` (markdown/CSV/JSON with landed-cost totals): link quote_manufacturing quotes on manufactured lines, and source COTS hardware (bearings, shafts, standoffs, screws, ferrite magnets) with `search_mechanical_parts`. All BOM prices are estimates and flagged as such.",
     "",
-    "PCB workflow: `create_schematic` (declare connectivity as data via `nets`) → `place_components` → `route_nets` / `add_coil` / `add_coil_array` → `run_drc` → `validate_for_fab` → `export_gerber`. All take the `document_id` from create_schematic and mutate that session — never re-send the document. `validate_for_fab` is the single 'is this board ready?' gate (DRC + renderability + Gerber serialization + blockers, all fail-closed); `export_gerber` enforces a clean DRC by default and blocks a dirty board. `board_from_solid` turns a solid part (e.g. an enclosure or stator disc in a CAD session) into an outline polygon for `place_components`. For motors, plan the winding first with `winding_layout` (slots + poles → per-coil phase/polarity/winding-factor, as data — it touches no board), then realize it with `add_coil_array`. `run_drc` returns a summary by default (counts by rule + net-pair, worst clearance, a capped sample); pass `detail:'full'` for every violation.",
+    "PCB workflow: `create_schematic` (declare connectivity as data via `nets`) → `place_components` → `route_nets` / `add_coil` / `add_coil_array` → `run_drc` → `validate_for_fab` → `export_gerber`. All take the `document_id` from create_schematic and mutate that session — never re-send the document. `validate_for_fab` is the single 'is this board ready?' gate (DRC + renderability + Gerber serialization + blockers, all fail-closed); `export_gerber` enforces a clean DRC by default and blocks a dirty board. `board_from_solid` turns a solid part (e.g. an enclosure or stator disc in a CAD session) into an outline polygon for `place_components`. For motors, plan the winding first with `winding_layout` (slots + poles → per-coil phase/polarity/winding-factor, as data — it touches no board), then realize it with `add_coil_array`. `run_drc` returns a summary by default (counts by rule + net-pair, worst clearance, a capped sample); pass `detail:'full'` for every violation. Surgical copper edits: `get_copper` lists existing traces/vias/zones (filtered by layer/net/bbox/kind) with the same indices `delete_trace`/`delete_via`/`delete_zone` accept — discover, then delete, without exporting the document. Where two nets must touch on purpose (wye neutral, split ground, shunt tap), declare it with `add_net_tie` — prefer a region-scoped tie (position+radius) so DRC stays honest away from the junction; `delete_net_tie` takes it back.",
   ].join("\n");
   if (!kernelPrompt) return header;
   const sections = new Map<string, string>();
@@ -1073,6 +1107,31 @@ export async function createServer(
         description:
           "Place a QUOTED order once its authorization has been human-approved: performs one atomic wallet debit and moves the order to PAID (fab submission follows in a later step). Refuses if the authorization is still pending approval. Flag-gated (test-mode).",
         inputSchema: placeOrderSchema,
+      },
+      // ── Project BOM: the deliverable bill of materials ─────────
+      {
+        name: "bom_create",
+        description:
+          "Create a project bill of materials — the deliverable that collects every manufactured part (PCBs, sheet metal, 3D prints; link quote_manufacturing quotes by quote_id) and COTS part (bearings, shafts, screws, magnets; link search_mechanical_parts entries by catalog_id) in one place. Optionally attach a document_id and assembly notes. Pass the full `lines` array to build the whole BOM in ONE call — recommended, since BOMs are in-memory per server instance. All prices are estimates and flagged as such.",
+        inputSchema: bomCreateSchema,
+      },
+      {
+        name: "bom_add_line",
+        description:
+          "Append one line to a BOM from bom_create. kind 'manufactured': name + process (or a quote_id from quote_manufacturing, which auto-fills process, vendor, qty, and the landed unit price) plus optional artifact path and document_id. kind 'cots': name/spec/example_pn/vendor/qty/unit_price_usd, or a catalog_id from search_mechanical_parts to auto-fill spec and a price-band-midpoint estimate. Returns the running totals.",
+        inputSchema: bomAddLineSchema,
+      },
+      {
+        name: "bom_export",
+        description:
+          "Render a BOM as markdown (the shareable deliverable: manufactured-parts table with vendors/prices/artifact sources, COTS table with specs and example PNs, totals, assembly notes), csv (flat, spreadsheet-ready), or json (the full object). Totals include a landed-cost shipping estimate reusing the Fabricate shipping model (per distinct vendor; quote-linked lines are already landed). Also returns a vcad.receipt/1 `receipt_claim` (domain 'bom') carrying the cost estimate for a DesignReceipt — informational, never gates a design verdict. Prices are estimates and every export says so.",
+        inputSchema: bomExportSchema,
+      },
+      {
+        name: "search_mechanical_parts",
+        description:
+          "Spec-search the curated mechanical COTS catalog (offline) — the mechanical sibling of search_electronic_parts: 608/625/688/600x-series bearings, precision ground shafts (3-12 mm), shaft collars, flange couplings, M2/M3 standoffs, machine screws, and ferrite/ceramic disc+ring magnets (Y30/Y35/C8). Filter by type + dimensions (bore_mm, od_mm, width_mm, thread, length_mm, …) and/or free text. Returns spec + example part number + a typical price band — street-price ESTIMATES, not live quotes. Use the result's `id` as `catalog_id` in bom_add_line.",
+        inputSchema: searchMechanicalPartsSchema,
       },
       // ── Live review window: share a watchable session link ────
       {
@@ -1507,6 +1566,20 @@ export async function createServer(
         inputSchema: boardFromSolidSchema,
       },
       {
+        name: "solid_from_board",
+        description:
+          "Materialize the session PCB as a solid CAD part — the inverse of " +
+          "board_from_solid. Extrudes the board outline to its thickness " +
+          "through the hole-aware sketch path (bore/cutout polygons survive " +
+          "as real holes), adds simplified per-component keep-out volumes " +
+          "(kernel 3D body extents, else courtyard × package-class height), " +
+          "and gives the substrate a homogenized FR4+copper density so " +
+          "inspect_cad / physics see the real board mass. Inject into an " +
+          "existing CAD session with `document_id_target` (enclosure fit, " +
+          "motor stacks, clash checks) or omit it to mint a fresh session.",
+        inputSchema: solidFromBoardSchema,
+      },
+      {
         name: "check_enclosure_fit",
         description:
           "Cross-check a board (board session) against the enclosure it ships " +
@@ -1669,6 +1742,45 @@ export async function createServer(
         inputSchema: deleteViaSchema,
       },
       {
+        name: "get_copper",
+        description:
+          "Query the board's routed copper — traces, trace arcs, vias, zones — " +
+          "with optional `layer`/`net`/`bbox`/`kind` filters. Each element comes " +
+          "back with its `kind` + `index`: exactly the addressing delete_trace / " +
+          "delete_via / delete_zone accept, so a query can drive a surgical " +
+          "delete without exporting the document. describe_pcb aggregates " +
+          "counts; this returns the elements themselves (geometry, width, net, " +
+          "layer), capped at 200 per page with `offset` pagination and a `total`. " +
+          "Read-only.",
+        inputSchema: getCopperSchema,
+      },
+      {
+        name: "add_net_tie",
+        description:
+          "Declare an intentional junction between >= 2 nets (a net-tie) so DRC " +
+          "treats them as one node where they meet — required for wye/star motor " +
+          "neutrals, split grounds (GND+AGND), and current-sense shunt taps, " +
+          "which are otherwise reported as shorts. With `position`+`radius` the " +
+          "tie is region-scoped: clearance/short checks are exempt only for " +
+          "contacts inside the region, and connectivity accepts nets joined " +
+          "through copper when each has a tie-covered contact there — a stray " +
+          "crossing of the same nets elsewhere still fires. Without them the " +
+          "exemption is board-wide (prefer scoped: it keeps DRC honest away " +
+          "from the junction). Nets must exist on the board. Returns the " +
+          "updated tie list with indices. Mutates the session document.",
+        inputSchema: addNetTieSchema,
+      },
+      {
+        name: "delete_net_tie",
+        description:
+          "Remove a net tie by `index`, or by matching `nets` (set equality, " +
+          "order-insensitive) and/or `position` — the take-back for a bad " +
+          "add_net_tie. Any junction copper stays on the board; DRC will report " +
+          "it as a short again. Returns the deleted tie and the updated tie " +
+          "list. Mutates the session document.",
+        inputSchema: deleteNetTieSchema,
+      },
+      {
         name: "undo",
         description:
           "Rewind the most recent mutation on a session — the snapshot taken " +
@@ -1721,12 +1833,27 @@ export async function createServer(
       {
         name: "calc_motor",
         description:
-          "Evaluate motor performance AS DATA: torque constant Kt, back-EMF " +
-          "constant Ke, no-load speed, stall torque, and a speed–torque " +
-          "curve. Supply air-gap flux directly or compute it from magnet " +
-          "geometry via the first-order MEC field model. Pure: no board, no " +
-          "mutation. First-order steady state (no slotting/fringing/losses).",
+          "Evaluate motor performance AS DATA. mode:'pm' (default): torque " +
+          "constant Kt, back-EMF constant Ke, no-load speed, stall torque, " +
+          "and a speed–torque curve; supply air-gap flux directly or compute " +
+          "it from magnet geometry via the first-order MEC field model, with " +
+          "an optional Carter-like fringing derate (magnet.pole_width_mm). " +
+          "mode:'induction': thin-sheet axial induction rotor (drag-cup / " +
+          "PCB cage) — gap field B1, torque-per-unit-slip, locked-rotor " +
+          "torque, sync speed, rotor sheet loss. Pure: no board, no " +
+          "mutation. First-order steady state.",
         inputSchema: calcMotorSchema,
+      },
+      {
+        name: "check_self_start",
+        description:
+          "Will it spin? Starting torque (direct, or Kt·I; induction: the " +
+          "locked-rotor torque from calc_motor) vs a friction estimate " +
+          "(direct, or the built-in bearing catalog: 608-2RS/608-ZZ/625/688 " +
+          "× light/medium preload × count). Returns starts (fail-closed vs " +
+          "worst-case friction), best-case verdict, and the margin. Pure " +
+          "calc, no document.",
+        inputSchema: checkSelfStartSchema,
       },
       {
         name: "render_pcb",
@@ -2219,6 +2346,22 @@ export async function createServer(
           result = await placeOrder(args, fabricateStore, eventStore, context.user);
           break;
 
+        case "bom_create":
+          result = await bomCreate(args, fabricateStore, context.user);
+          break;
+
+        case "bom_add_line":
+          result = await bomAddLine(args, fabricateStore, context.user);
+          break;
+
+        case "bom_export":
+          result = bomExport(args, context.user);
+          break;
+
+        case "search_mechanical_parts":
+          result = searchMechanicalParts(args);
+          break;
+
         case "share_session":
           result = await shareSession(args, shareStore, context.user);
           break;
@@ -2405,6 +2548,43 @@ export async function createServer(
           result = boardFromSolid(args, engine);
           break;
 
+        case "solid_from_board": {
+          // Cross-session writer: reads the PCB in `document_id`, writes the
+          // CAD session in `document_id_target` (or mints one). The central
+          // hydrate/snapshot/persist plumbing keys off args.document_id —
+          // here the read-only PCB source — so the target is handled here.
+          const targetId =
+            typeof args.document_id_target === "string" ? args.document_id_target : null;
+          if (targetId) {
+            try {
+              await hydrateSession(sessionStore, targetId);
+            } catch {
+              // Durable load failed — fall back to cache.
+            }
+            if (documents.has(targetId)) recordHistorySnapshot(targetId);
+          }
+          result = await solidFromBoard(args);
+          const writtenId = result.structuredContent?.document_id;
+          if (!result.isError && typeof writtenId === "string" && documents.has(writtenId)) {
+            try {
+              await persistSession(sessionStore, writtenId);
+            } catch {
+              // best-effort durable write
+            }
+            try {
+              await eventStore.append(writtenId, {
+                author: context.user?.sub ?? "agent",
+                kind: "kernel",
+                type: name,
+                payload: buildKernelEventPayload(name, args, result),
+              });
+            } catch {
+              // best-effort event append
+            }
+          }
+          break;
+        }
+
         case "check_enclosure_fit":
           result = await checkEnclosureFit(args, engine);
           break;
@@ -2469,6 +2649,18 @@ export async function createServer(
           result = deleteVia(args);
           break;
 
+        case "get_copper":
+          result = getCopper(args);
+          break;
+
+        case "add_net_tie":
+          result = addNetTie(args);
+          break;
+
+        case "delete_net_tie":
+          result = deleteNetTie(args);
+          break;
+
         case "undo":
           result = undo(args);
           break;
@@ -2491,6 +2683,10 @@ export async function createServer(
 
         case "calc_motor":
           result = await calcMotor(args);
+          break;
+
+        case "check_self_start":
+          result = checkSelfStart(args);
           break;
 
         case "render_pcb":

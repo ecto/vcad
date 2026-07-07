@@ -133,6 +133,14 @@ jobs:
             --out-dir ../../packages/kernel-wasm/pkg \
             --features no-builtin-font
           cp packages/kernel-wasm/pkg/vcad_kernel_wasm* packages/kernel-wasm/
+      # Same glue post-processing scripts/build.mjs applies after its own
+      # wasm-pack run: append the __vcad_reset_wasm trap-recovery hook and
+      # rewire aliased export calls (toolchain-dependent shim merging can
+      # leave e.g. `isEcadAvailable()` calling `wasm.isCamAvailable()` —
+      # the engine's kernel-wasm-glue drift guard fails on that shape).
+      - name: Post-process wasm glue
+        if: steps.wasm-cache.outputs.cache-hit != 'true'
+        run: node packages/kernel-wasm/scripts/build.mjs --postprocess-only
       # Freshness of the committed kernel-wasm bindings is NOT verified
       # here. The previous `git diff`-against-fresh-build check turned out
       # to be platform-dependent: wasm-bindgen 0.2.x emits a handful of
@@ -155,6 +163,7 @@ jobs:
       #   wasm-pack build crates/vcad-kernel-wasm --profiling --target web \
       #     --out-dir ../../packages/kernel-wasm/pkg --features no-builtin-font
       #   cp packages/kernel-wasm/pkg/vcad_kernel_wasm* packages/kernel-wasm/
+      #   node packages/kernel-wasm/scripts/build.mjs --postprocess-only
       #   git add packages/kernel-wasm/vcad_kernel_wasm* && git commit
       - uses: actions/upload-artifact@v7
         with:
