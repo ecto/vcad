@@ -254,6 +254,8 @@ import {
   addMotorWindingSchema,
   calcMotor,
   calcMotorSchema,
+  checkSelfStart,
+  checkSelfStartSchema,
   searchElectronicParts,
   searchElectronicPartsSchema,
   resolvePart,
@@ -711,6 +713,7 @@ const TOOL_PACKS: Record<string, readonly string[]> = {
     "size_coil",
     "calc_rf",
     "calc_motor",
+    "check_self_start",
     "search_electronic_parts",
     "list_footprints",
     "search_footprints",
@@ -1723,12 +1726,27 @@ export async function createServer(
       {
         name: "calc_motor",
         description:
-          "Evaluate motor performance AS DATA: torque constant Kt, back-EMF " +
-          "constant Ke, no-load speed, stall torque, and a speed–torque " +
-          "curve. Supply air-gap flux directly or compute it from magnet " +
-          "geometry via the first-order MEC field model. Pure: no board, no " +
-          "mutation. First-order steady state (no slotting/fringing/losses).",
+          "Evaluate motor performance AS DATA. mode:'pm' (default): torque " +
+          "constant Kt, back-EMF constant Ke, no-load speed, stall torque, " +
+          "and a speed–torque curve; supply air-gap flux directly or compute " +
+          "it from magnet geometry via the first-order MEC field model, with " +
+          "an optional Carter-like fringing derate (magnet.pole_width_mm). " +
+          "mode:'induction': thin-sheet axial induction rotor (drag-cup / " +
+          "PCB cage) — gap field B1, torque-per-unit-slip, locked-rotor " +
+          "torque, sync speed, rotor sheet loss. Pure: no board, no " +
+          "mutation. First-order steady state.",
         inputSchema: calcMotorSchema,
+      },
+      {
+        name: "check_self_start",
+        description:
+          "Will it spin? Starting torque (direct, or Kt·I; induction: the " +
+          "locked-rotor torque from calc_motor) vs a friction estimate " +
+          "(direct, or the built-in bearing catalog: 608-2RS/608-ZZ/625/688 " +
+          "× light/medium preload × count). Returns starts (fail-closed vs " +
+          "worst-case friction), best-case verdict, and the margin. Pure " +
+          "calc, no document.",
+        inputSchema: checkSelfStartSchema,
       },
       {
         name: "render_pcb",
@@ -2521,6 +2539,10 @@ export async function createServer(
 
         case "calc_motor":
           result = await calcMotor(args);
+          break;
+
+        case "check_self_start":
+          result = checkSelfStart(args);
           break;
 
         case "render_pcb":

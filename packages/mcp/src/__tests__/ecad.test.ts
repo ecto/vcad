@@ -19,6 +19,7 @@ import {
   sizeCoil,
   calcRf,
   calcMotor,
+  checkSelfStart,
   addCoil,
   addCoilArray,
   windingLayout,
@@ -5275,6 +5276,304 @@ describe("EM receipt claims", () => {
       expect(typeof c.method).toBe("string");
       expect(c.inputs).toBeTruthy();
     }
+  });
+
+  it("calc_motor induction mode claims B1, slip torque, sync speed, and rotor loss", async () => {
+    const r = out(
+      await calcMotor({
+        mode: "induction",
+        pole_pairs: 3,
+        turns_per_phase: 30,
+        winding_factor: 0.866,
+        phase_current_a: 1.5,
+        electrical_freq_hz: 100,
+        effective_gap_mm: 4.7,
+        sheet_conductance_s: 8120,
+        inner_radius_mm: 15.3,
+        outer_radius_mm: 28.5,
+      }),
+    );
+    const quantities = r.claims.map((c: any) => c.quantity);
+    expect(quantities).toEqual([
+      "airgap_flux_density",
+      "torque_per_unit_slip",
+      "locked_rotor_torque",
+      "synchronous_speed",
+      "rotor_copper_loss",
+    ]);
+    for (const c of r.claims) {
+      expect(c.domain).toBe("em");
+      expect(c.method).toBe("thin-sheet-induction");
+      expect(c.inputs.sheet_conductance_s).toBe(8120);
+      expect(c.inputs.end_effect_factor).toBe(0.65);
+    }
+    const lr = r.claims.find((c: any) => c.quantity === "locked_rotor_torque");
+    expect(lr.predicted).toBe(r.locked_rotor_torque_nm);
+    expect(lr.unit).toBe("N·m");
+  });
+
+  it("calc_motor PM fringing derate claims both the raw MEC B and the derated B", async () => {
+    const r = out(
+      await calcMotor({
+        pole_pairs: 6,
+        turns_per_phase: 60,
+        winding_factor: 0.866,
+        inner_radius_mm: 5,
+        outer_radius_mm: 30,
+        phase_resistance_ohm: 0.5,
+        supply_voltage_v: 24,
+        magnet: { airgap_mm: 1, pole_width_mm: 10 },
+      }),
+    );
+    const bClaims = r.claims.filter((c: any) => c.quantity === "airgap_flux_density");
+    expect(bClaims.map((c: any) => c.method)).toEqual(["mec-reluctance", "mec-fringing-derate"]);
+    expect(bClaims[0].predicted).toBe(r.airgap_flux_raw_tesla);
+    expect(bClaims[1].predicted).toBe(r.airgap_flux_tesla);
+    expect(bClaims[1].inputs.pole_width_mm).toBe(10);
+  });
+
+  it("check_self_start claims the catalog friction estimate and the margin", () => {
+    const r = out(
+      checkSelfStart({
+        available_torque_nm: 5e-3,
+        bearings: { type: "608-2RS", preload: "light", count: 2 },
+      }),
+    );
+    const friction = r.claims.find((c: any) => c.quantity === "friction_torque");
+    expect(friction.method).toBe("bearing-friction-catalog");
+    expect(friction.predicted).toBeCloseTo(4e-3, 9);
+    const margin = r.claims.find((c: any) => c.quantity === "start_margin");
+    expect(margin.method).toBe("torque-friction-margin");
+    expect(margin.predicted).toBe(r.margin);
+    // A direct friction estimate is the caller's number, not a prediction.
+    const direct = out(checkSelfStart({ available_torque_nm: 1e-3, friction_torque_nm: 2e-3 }));
+    expect(direct.claims.map((c: any) => c.quantity)).toEqual(["start_margin"]);
+  });
+});
+
+describe("calc_motor induction mode (thin-sheet axial rotor)", () => {
+  // The validation reference from the tool spec: N=30, kw=0.866, p=3,
+  // I=1.5 A rms, f=100 Hz, g=4.7 mm, σs=8120 S (2×2oz copper), r1=15.3,
+  // r2=28.5 → B1 ≈ 4.7 mT, locked-rotor ≈ 18 µN·m before end effect.
+  const reference = {
+    mode: "induction",
+    pole_pairs: 3,
+    turns_per_phase: 30,
+    winding_factor: 0.866,
+    phase_current_a: 1.5,
+    electrical_freq_hz: 100,
+    effective_gap_mm: 4.7,
+    sheet_conductance_s: 8120,
+    inner_radius_mm: 15.3,
+    outer_radius_mm: 28.5,
+  };
+
+  it("pins the reference machine: B1 ≈ 4.7 mT, raw locked-rotor ≈ 18 µN·m, 2000 rpm sync", async () => {
+    const r = out(await calcMotor(reference));
+    expect(r.success).toBe(true);
+    expect(r.mode).toBe("induction");
+    expect(r.b1_tesla).toBeCloseTo(4.69e-3, 4);
+    expect(r.locked_rotor_torque_raw_nm).toBeCloseTo(17.8e-6, 7);
+    // Default Russell–Norsworthy end effect 0.65 scales the delivered torque.
+    expect(r.end_effect_factor).toBe(0.65);
+    expect(r.locked_rotor_torque_nm).toBeCloseTo(0.65 * r.locked_rotor_torque_raw_nm, 9);
+    expect(r.torque_per_unit_slip_nm).toBe(r.locked_rotor_torque_nm);
+    expect(r.sync_rpm).toBe(2000);
+    // Locked-rotor sheet loss is the air-gap power T·ωsync.
+    const omegaSync = (2 * Math.PI * 100) / 3;
+    expect(r.copper_loss_w).toBeCloseTo(r.locked_rotor_torque_nm * omegaSync, 7);
+  });
+
+  it("honors an explicit end_effect_factor", async () => {
+    const r = out(await calcMotor({ ...reference, end_effect_factor: 1 }));
+    expect(r.locked_rotor_torque_nm).toBe(r.locked_rotor_torque_raw_nm);
+  });
+
+  it("torque scales with conductance and current squared, field inversely with gap", async () => {
+    const base = out(await calcMotor(reference));
+    const thick = out(await calcMotor({ ...reference, sheet_conductance_s: 16240 }));
+    expect(thick.locked_rotor_torque_nm / base.locked_rotor_torque_nm).toBeCloseTo(2, 4);
+    const hot = out(await calcMotor({ ...reference, phase_current_a: 3 }));
+    expect(hot.locked_rotor_torque_nm / base.locked_rotor_torque_nm).toBeCloseTo(4, 4);
+    const far = out(await calcMotor({ ...reference, effective_gap_mm: 9.4 }));
+    expect(far.b1_tesla / base.b1_tesla).toBeCloseTo(0.5, 4);
+  });
+
+  it("rejects missing or non-physical induction inputs", async () => {
+    for (const bad of [
+      { ...reference, phase_current_a: undefined },
+      { ...reference, electrical_freq_hz: 0 },
+      { ...reference, effective_gap_mm: -1 },
+      { ...reference, sheet_conductance_s: undefined },
+      { ...reference, end_effect_factor: 1.5 },
+      { ...reference, mode: "linear" },
+    ]) {
+      expect(isErr(await calcMotor(bad as Record<string, unknown>))).toBe(true);
+    }
+  });
+
+  it("PM mode still requires its electrical inputs", async () => {
+    const res = await calcMotor({
+      pole_pairs: 6,
+      turns_per_phase: 60,
+      inner_radius_mm: 5,
+      outer_radius_mm: 30,
+    });
+    expect(isErr(res)).toBe(true);
+  });
+});
+
+describe("calc_motor PM fringing derate", () => {
+  const base = {
+    pole_pairs: 6,
+    turns_per_phase: 60,
+    winding_factor: 0.866,
+    inner_radius_mm: 5,
+    outer_radius_mm: 30,
+    phase_resistance_ohm: 0.5,
+    supply_voltage_v: 24,
+  };
+
+  it("reports raw and derated B and uses the derated value for Kt", async () => {
+    const plain = out(await calcMotor({ ...base, magnet: { airgap_mm: 1 } }));
+    const derated = out(
+      await calcMotor({ ...base, magnet: { airgap_mm: 1, pole_width_mm: 10 } }),
+    );
+    // w/(w+2g) = 10/12.
+    expect(derated.fringing_derate).toBeCloseTo(10 / 12, 3);
+    expect(derated.airgap_flux_raw_tesla).toBe(plain.airgap_flux_tesla);
+    expect(derated.airgap_flux_tesla).toBeCloseTo(
+      plain.airgap_flux_tesla * (10 / 12),
+      3,
+    );
+    // Kt scales linearly with the gap flux.
+    expect(derated.kt_nm_per_a / plain.kt_nm_per_a).toBeCloseTo(10 / 12, 2);
+    // Without pole_width_mm nothing changes and no derate fields appear.
+    expect(plain.fringing_derate).toBeUndefined();
+    expect(plain.airgap_flux_raw_tesla).toBeUndefined();
+  });
+
+  it("a wide pole barely derates; derate shrinks as the gap grows", async () => {
+    const wide = out(await calcMotor({ ...base, magnet: { airgap_mm: 0.5, pole_width_mm: 40 } }));
+    expect(wide.fringing_derate).toBeGreaterThan(0.95);
+    const bigGap = out(await calcMotor({ ...base, magnet: { airgap_mm: 3, pole_width_mm: 10 } }));
+    expect(bigGap.fringing_derate).toBeLessThan(wide.fringing_derate);
+  });
+
+  it("rejects a non-positive pole width", async () => {
+    expect(isErr(await calcMotor({ ...base, magnet: { pole_width_mm: 0 } }))).toBe(true);
+  });
+});
+
+describe("check_self_start", () => {
+  it("608-2RS light pair lands at the documented 1–4 mN·m and gates fail-closed", () => {
+    const r = out(
+      checkSelfStart({
+        available_torque_nm: 2e-3, // 2 mN·m available
+        bearings: { type: "608-2RS", preload: "light", count: 2 },
+      }),
+    );
+    expect(r.friction_torque_mnm).toEqual({ min: 1, max: 4 });
+    // Beats the optimistic end, not the worst case → fail-closed no-start.
+    expect(r.starts).toBe(false);
+    expect(r.starts_best_case).toBe(true);
+    expect(r.margin).toBeCloseTo(0.5, 6);
+
+    const strong = out(
+      checkSelfStart({
+        available_torque_nm: 12e-3,
+        bearings: { type: "608-2RS", preload: "light", count: 2 },
+      }),
+    );
+    expect(strong.starts).toBe(true);
+    expect(strong.margin).toBeCloseTo(3, 6);
+  });
+
+  it("computes available torque from Kt·I when not given directly", () => {
+    const r = out(
+      checkSelfStart({
+        kt_nm_per_a: 0.004,
+        current_a: 1.5,
+        bearings: { type: "608-ZZ", count: 2 },
+      }),
+    );
+    expect(r.available_torque_nm).toBeCloseTo(0.006, 9);
+    expect(r.available_torque_source).toBe("kt_times_current");
+    expect(r.starts).toBe(true);
+  });
+
+  it("shielded and miniature presets are far freer than sealed 608s", () => {
+    const sealed = out(
+      checkSelfStart({ available_torque_nm: 1e-3, bearings: { type: "608-2RS", count: 2 } }),
+    );
+    const shielded = out(
+      checkSelfStart({ available_torque_nm: 1e-3, bearings: { type: "608-ZZ", count: 2 } }),
+    );
+    expect(shielded.friction_torque_mnm.max).toBeLessThan(sealed.friction_torque_mnm.max);
+    expect(shielded.starts).toBe(true);
+    for (const type of ["625", "688"]) {
+      const r = out(checkSelfStart({ available_torque_nm: 1e-3, bearings: { type, count: 2 } }));
+      expect(r.starts).toBe(true);
+      expect(r.bearings.per_bearing_mnm.max).toBeLessThanOrEqual(0.6);
+    }
+  });
+
+  it("medium preload and more bearings scale the range", () => {
+    const light = out(
+      checkSelfStart({ available_torque_nm: 1, bearings: { type: "608-2RS", preload: "light", count: 2 } }),
+    );
+    const medium = out(
+      checkSelfStart({ available_torque_nm: 1, bearings: { type: "608-2RS", preload: "medium", count: 2 } }),
+    );
+    expect(medium.friction_torque_mnm.max).toBeGreaterThan(light.friction_torque_mnm.max);
+    const quad = out(
+      checkSelfStart({ available_torque_nm: 1, bearings: { type: "608-2RS", preload: "light", count: 4 } }),
+    );
+    expect(quad.friction_torque_mnm.max).toBeCloseTo(2 * light.friction_torque_mnm.max, 9);
+  });
+
+  it("a direct friction estimate overrides the catalog", () => {
+    const r = out(
+      checkSelfStart({
+        available_torque_nm: 3e-3,
+        friction_torque_nm: 2e-3,
+        bearings: { type: "608-2RS", count: 2 },
+      }),
+    );
+    expect(r.friction_source).toBe("direct");
+    expect(r.friction_torque_mnm).toEqual({ min: 2, max: 2 });
+    expect(r.starts).toBe(true);
+    expect(r.margin).toBeCloseTo(1.5, 6);
+  });
+
+  it("an induction locked-rotor µN·m machine does NOT start on sealed bearings", () => {
+    // The reference thin-sheet machine: ~11.6 µN·m delivered locked-rotor
+    // torque vs a pair of 608-2RS at 1–4 mN·m — two orders of magnitude short.
+    const r = out(
+      checkSelfStart({
+        available_torque_nm: 11.6e-6,
+        bearings: { type: "608-2RS", preload: "light", count: 2 },
+      }),
+    );
+    expect(r.starts).toBe(false);
+    expect(r.starts_best_case).toBe(false);
+    expect(r.margin).toBeLessThan(0.01);
+  });
+
+  it("rejects bad inputs", () => {
+    expect(isErr(checkSelfStart({}))).toBe(true);
+    expect(isErr(checkSelfStart({ available_torque_nm: -1 }))).toBe(true);
+    expect(isErr(checkSelfStart({ kt_nm_per_a: 0.01 }))).toBe(true);
+    expect(
+      isErr(checkSelfStart({ available_torque_nm: 1, bearings: { type: "6900" } })),
+    ).toBe(true);
+    expect(
+      isErr(checkSelfStart({ available_torque_nm: 1, bearings: { type: "625", preload: "heavy" } })),
+    ).toBe(true);
+    expect(
+      isErr(checkSelfStart({ available_torque_nm: 1, bearings: { count: 1.5 } })),
+    ).toBe(true);
+    expect(isErr(checkSelfStart({ available_torque_nm: 1, friction_torque_nm: 0 }))).toBe(true);
   });
 });
 

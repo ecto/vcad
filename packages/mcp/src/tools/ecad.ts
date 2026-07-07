@@ -9375,45 +9375,183 @@ function padApproxRadius(pad: Pad): number {
 export const calcMotorSchema = {
   type: "object" as const,
   properties: {
+    mode: {
+      type: "string" as const,
+      description:
+        "'pm' (default): permanent-magnet machine — Kt/Ke from air-gap flux; " +
+        "requires inner/outer radius, phase_resistance_ohm, supply_voltage_v. " +
+        "'induction': thin-sheet axial induction rotor (drag-cup / PCB cage) — " +
+        "torque from eddy currents; requires phase_current_a, electrical_freq_hz, " +
+        "effective_gap_mm, sheet_conductance_s, inner/outer radius.",
+    },
     pole_pairs: { type: "number" as const, description: "Pole pairs p (electrical periods per mechanical rev)." },
     turns_per_phase: { type: "number" as const, description: "Series turns per phase N." },
     winding_factor: { type: "number" as const, description: "Winding factor kw (default 0.95). Use the value from winding_layout for accuracy." },
-    inner_radius_mm: { type: "number" as const, description: "Inner (bore) stator radius, mm." },
-    outer_radius_mm: { type: "number" as const, description: "Outer stator radius, mm." },
-    phase_resistance_ohm: { type: "number" as const, description: "Per-phase resistance, ohms (e.g. the add_coil DC estimate)." },
-    supply_voltage_v: { type: "number" as const, description: "DC bus / supply voltage, volts." },
+    inner_radius_mm: { type: "number" as const, description: "Inner (bore) stator radius, mm. In induction mode: inner radius of the active annulus the field sweeps." },
+    outer_radius_mm: { type: "number" as const, description: "Outer stator radius, mm. In induction mode: outer radius of the active annulus." },
+    phase_resistance_ohm: { type: "number" as const, description: "Per-phase resistance, ohms (e.g. the add_coil DC estimate). PM mode only (required)." },
+    supply_voltage_v: { type: "number" as const, description: "DC bus / supply voltage, volts. PM mode only (required)." },
     airgap_flux_tesla: {
       type: "number" as const,
-      description: "Air-gap flux density B_gap (T). Omit to COMPUTE it from `magnet` via the MEC model.",
+      description: "PM mode: air-gap flux density B_gap (T). Omit to COMPUTE it from `magnet` via the MEC model.",
     },
     magnet: {
       type: "object" as const,
       description:
-        "Optional magnet/geometry to compute B_gap when airgap_flux_tesla is omitted (NdFeB defaults). Fields: remanence_tesla, magnet_thickness_mm, airgap_mm, recoil_mu_rel, magnet_area_mm2, gap_area_mm2, iron_mu_rel.",
+        "PM mode: optional magnet/geometry to compute B_gap when airgap_flux_tesla is omitted (NdFeB defaults). " +
+        "Fields: remanence_tesla, magnet_thickness_mm, airgap_mm, recoil_mu_rel, magnet_area_mm2, gap_area_mm2, iron_mu_rel. " +
+        "Add pole_width_mm (magnet pole face width across the fringing direction) to also apply the first-order " +
+        "Carter-like fringing derate w/(w+2g) — the tool then reports raw AND derated B and uses the derated value for Kt.",
+    },
+    phase_current_a: { type: "number" as const, description: "Induction mode (required): phase current, A RMS (balanced 3-phase drive)." },
+    electrical_freq_hz: { type: "number" as const, description: "Induction mode (required): electrical drive frequency, Hz." },
+    effective_gap_mm: {
+      type: "number" as const,
+      description:
+        "Induction mode (required): TOTAL non-ferromagnetic flux path, mm — all air gaps plus the rotor sheet " +
+        "and any PCB substrate between back-irons (e.g. 4.7 for a PCB-stator sandwich).",
+    },
+    sheet_conductance_s: {
+      type: "number" as const,
+      description:
+        "Induction mode (required): rotor sheet surface conductance σs = σ·thickness, siemens. " +
+        "E.g. 2×2oz copper: 5.8e7 S/m × 0.14e-3 m ≈ 8120 S.",
+    },
+    end_effect_factor: {
+      type: "number" as const,
+      description:
+        "Induction mode: Russell–Norsworthy end-effect factor (0..1] — fraction of ideal torque surviving the " +
+        "eddy return paths outside the active annulus. Default 0.65.",
     },
   },
-  required: [
-    "pole_pairs",
-    "turns_per_phase",
-    "inner_radius_mm",
-    "outer_radius_mm",
-    "phase_resistance_ohm",
-    "supply_voltage_v",
-  ],
+  required: ["pole_pairs", "turns_per_phase"],
 };
 
+/** Round to 6 significant digits — micro-newton-metre torques survive, noise doesn't. */
+const sig6 = (v: number) => (v === 0 || !Number.isFinite(v) ? v : Number(v.toPrecision(6)));
+
 /**
- * Evaluate a motor's headline performance — torque constant, back-EMF constant,
- * no-load speed, stall torque, and a speed–torque curve — from its magnetics +
- * electrical parameters. Pure analysis (no board, no mutation). The air-gap flux
- * is either supplied directly or computed from magnet geometry via the
- * first-order MEC reluctance model. First-order steady state: no slotting,
- * fringing, saturation, or losses.
+ * Thin-sheet axial induction branch of calc_motor. A TypeScript mirror of the
+ * `vcad_ecad_sim::induction` closed form (same pattern as calc_coil /
+ * calc_impedance mirroring their Rust twins):
+ *
+ *   F1 = (3/2)·(4/π)·(kw·N/(2p))·I_pk      rotating MMF fundamental
+ *   B1 = μ0·F1/g                           g = total non-ferromagnetic path
+ *   T(s) = k_ee·π·σs·s·(ωe/p)·B1²·(r2⁴−r1⁴)/4   linear-in-slip eddy torque
+ *
+ * k_ee is the Russell–Norsworthy end-effect factor (eddy return paths close
+ * outside the active annulus). First-order: no breakdown peak, no magnetizing/
+ * leakage reactance, no stator copper loss (no resistance input).
+ */
+function calcMotorInduction(
+  args: Record<string, unknown>,
+  polePairs: number,
+  turnsPerPhase: number,
+  windingFactor: number,
+  innerR: number,
+  outerR: number,
+) {
+  const fail = ecadError;
+  const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : NaN);
+  const iRms = num(args.phase_current_a);
+  const freqHz = num(args.electrical_freq_hz);
+  const gapMm = num(args.effective_gap_mm);
+  const sigmaS = num(args.sheet_conductance_s);
+  const endEffect = Number.isFinite(num(args.end_effect_factor))
+    ? num(args.end_effect_factor)
+    : 0.65;
+
+  if (!(iRms > 0)) return fail("induction mode: phase_current_a (A rms) must be > 0");
+  if (!(freqHz > 0)) return fail("induction mode: electrical_freq_hz must be > 0");
+  if (!(gapMm > 0)) return fail("induction mode: effective_gap_mm must be > 0");
+  if (!(sigmaS > 0)) return fail("induction mode: sheet_conductance_s must be > 0");
+  if (!(endEffect > 0 && endEffect <= 1)) {
+    return fail("induction mode: end_effect_factor must be in (0, 1]");
+  }
+
+  // Rotating MMF fundamental of a balanced 3-phase winding.
+  const iPk = iRms * Math.SQRT2;
+  const f1 = 1.5 * (4 / Math.PI) * ((windingFactor * turnsPerPhase) / (2 * polePairs)) * iPk;
+  const b1 = (MU0 * f1) / (gapMm * 1e-3);
+
+  const omegaSync = (2 * Math.PI * freqHz) / polePairs; // mechanical rad/s
+  const annulusM4 = (Math.pow(outerR * 1e-3, 4) - Math.pow(innerR * 1e-3, 4)) / 4;
+  const torquePerSlipRaw = Math.PI * sigmaS * omegaSync * b1 * b1 * annulusM4;
+  const torquePerSlip = endEffect * torquePerSlipRaw;
+  const syncRpm = (60 * freqHz) / polePairs;
+  // Locked rotor (s = 1): all air-gap power T·ωsync dissipates in the sheet.
+  const copperLossW = torquePerSlip * omegaSync;
+
+  const inductionInputs = {
+    pole_pairs: polePairs,
+    turns_per_phase: turnsPerPhase,
+    winding_factor: windingFactor,
+    phase_current_a: iRms,
+    electrical_freq_hz: freqHz,
+    effective_gap_mm: gapMm,
+    sheet_conductance_s: sigmaS,
+    inner_radius_mm: innerR,
+    outer_radius_mm: outerR,
+    end_effect_factor: endEffect,
+  };
+  const claim = (q: Parameters<typeof emClaim>[0], v: number, unit: string) =>
+    emClaim(q, sig6(v), unit, "thin-sheet-induction", inductionInputs);
+  return {
+    content: [
+      {
+        type: "text" as const,
+        text: JSON.stringify({
+          success: true,
+          mode: "induction",
+          b1_tesla: sig6(b1),
+          torque_per_unit_slip_nm: sig6(torquePerSlip),
+          locked_rotor_torque_nm: sig6(torquePerSlip),
+          locked_rotor_torque_raw_nm: sig6(torquePerSlipRaw),
+          sync_rpm: sig6(syncRpm),
+          copper_loss_w: sig6(copperLossW),
+          end_effect_factor: endEffect,
+          note:
+            "First-order thin-sheet induction model: torque linear in slip (T(s) = K·s, " +
+            "no breakdown peak), B1 impressed by the winding MMF (no magnetizing/leakage " +
+            "reactance, no slotting/saturation), Russell–Norsworthy end-effect factor " +
+            "applied to torque. copper_loss_w is the ROTOR sheet dissipation at locked " +
+            "rotor (T·ωsync); stator copper loss is not modeled (no resistance input). " +
+            "Feed locked_rotor_torque_nm to check_self_start to answer 'will it spin?'.",
+          claims: [
+            claim("airgap_flux_density", b1, "T"),
+            claim("torque_per_unit_slip", torquePerSlip, "N·m"),
+            claim("locked_rotor_torque", torquePerSlip, "N·m"),
+            claim("synchronous_speed", syncRpm, "rpm"),
+            claim("rotor_copper_loss", copperLossW, "W"),
+          ],
+        }),
+      },
+    ],
+  };
+}
+
+/**
+ * Evaluate a motor's headline performance AS DATA — pure analysis, no board,
+ * no mutation. Two machine models behind one tool:
+ *
+ * - `mode: "pm"` (default) — torque constant, back-EMF constant, no-load
+ *   speed, stall torque, and a speed–torque curve from magnetics + electrical
+ *   parameters. Air-gap flux is supplied directly or computed from magnet
+ *   geometry via the first-order MEC reluctance model; pass
+ *   `magnet.pole_width_mm` to additionally apply a Carter-like fringing
+ *   derate (raw and derated B both reported).
+ * - `mode: "induction"` — thin-sheet axial induction rotor (drag-cup / PCB
+ *   cage): fundamental gap field B1, torque-per-unit-slip, locked-rotor
+ *   torque, synchronous speed, rotor sheet loss.
  */
 export async function calcMotor(args: Record<string, unknown>) {
   const fail = ecadError;
 
   const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : NaN);
+  const mode = typeof args.mode === "string" ? args.mode : "pm";
+  if (mode !== "pm" && mode !== "induction") {
+    return fail("mode must be 'pm' (default) or 'induction'");
+  }
   const polePairs = num(args.pole_pairs);
   const turnsPerPhase = num(args.turns_per_phase);
   const windingFactor = Number.isFinite(num(args.winding_factor)) ? num(args.winding_factor) : 0.95;
@@ -9425,6 +9563,11 @@ export async function calcMotor(args: Record<string, unknown>) {
   if (!(polePairs > 0)) return fail("pole_pairs must be > 0");
   if (!(turnsPerPhase > 0)) return fail("turns_per_phase must be > 0");
   if (!(outerR > innerR && innerR >= 0)) return fail("outer_radius_mm must be > inner_radius_mm >= 0");
+
+  if (mode === "induction") {
+    return calcMotorInduction(args, polePairs, turnsPerPhase, windingFactor, innerR, outerR);
+  }
+
   if (!(phaseR > 0)) return fail("phase_resistance_ohm must be > 0");
   if (!(supplyV > 0)) return fail("supply_voltage_v must be > 0");
 
@@ -9432,6 +9575,8 @@ export async function calcMotor(args: Record<string, unknown>) {
   let bGap = num(args.airgap_flux_tesla);
   let bGapSource: "supplied" | "computed" = "supplied";
   let magnetSpec: Parameters<typeof airgapFluxDensity>[0] | undefined;
+  // Optional first-order fringing derate on the MEC flux (see below).
+  let fringing: { poleWidthMm: number; derate: number; bRawTesla: number } | undefined;
   if (!Number.isFinite(bGap)) {
     const m = (args.magnet ?? {}) as Record<string, unknown>;
     const mnum = (v: unknown, d: number) =>
@@ -9455,6 +9600,18 @@ export async function calcMotor(args: Record<string, unknown>) {
     }
     bGap = computed;
     bGapSource = "computed";
+
+    // Carter-like pole-edge fringing derate (mirrors
+    // vcad_ecad_sim::airgap::fringing_derate): flux fringes outward ~one gap
+    // length per pole edge, so B under the pole drops by w/(w+2g). First-order,
+    // honest only for pole width ≳ 2× gap. Opt-in via magnet.pole_width_mm.
+    if (m.pole_width_mm !== undefined) {
+      const poleW = num(m.pole_width_mm);
+      if (!(poleW > 0)) return fail("magnet.pole_width_mm must be > 0");
+      const derate = poleW / (poleW + 2 * magnetSpec.airgapMm);
+      fringing = { poleWidthMm: poleW, derate, bRawTesla: bGap };
+      bGap *= derate;
+    }
   }
 
   const perf = await evaluateMotor({
@@ -9489,23 +9646,41 @@ export async function calcMotor(args: Record<string, unknown>) {
     emClaim("stall_torque", r4(perf.stallTorqueNm), "N·m", "first-order-dc-motor", motorInputs),
   ];
   if (bGapSource === "computed" && magnetSpec) {
+    const mecInputs = {
+      remanence_tesla: magnetSpec.remanenceTesla,
+      magnet_thickness_mm: magnetSpec.magnetThicknessMm,
+      recoil_mu_rel: magnetSpec.recoilMuRel,
+      airgap_mm: magnetSpec.airgapMm,
+      magnet_area_mm2: magnetSpec.magnetAreaMm2,
+      gap_area_mm2: magnetSpec.gapAreaMm2,
+      ...(magnetSpec.ironMuRel != null
+        ? {
+            iron_mu_rel: magnetSpec.ironMuRel,
+            iron_path_mm: magnetSpec.ironPathMm,
+            iron_area_mm2: magnetSpec.ironAreaMm2,
+          }
+        : {}),
+    };
+    // The raw MEC prediction stays a claim of its own even when derated —
+    // a fringing-aware FEA pass grades the derate, not the network.
     claims.push(
-      emClaim("airgap_flux_density", r4(bGap), "T", "mec-reluctance", {
-        remanence_tesla: magnetSpec.remanenceTesla,
-        magnet_thickness_mm: magnetSpec.magnetThicknessMm,
-        recoil_mu_rel: magnetSpec.recoilMuRel,
-        airgap_mm: magnetSpec.airgapMm,
-        magnet_area_mm2: magnetSpec.magnetAreaMm2,
-        gap_area_mm2: magnetSpec.gapAreaMm2,
-        ...(magnetSpec.ironMuRel != null
-          ? {
-              iron_mu_rel: magnetSpec.ironMuRel,
-              iron_path_mm: magnetSpec.ironPathMm,
-              iron_area_mm2: magnetSpec.ironAreaMm2,
-            }
-          : {}),
-      }),
+      emClaim(
+        "airgap_flux_density",
+        r4(fringing ? fringing.bRawTesla : bGap),
+        "T",
+        "mec-reluctance",
+        mecInputs,
+      ),
     );
+    if (fringing) {
+      claims.push(
+        emClaim("airgap_flux_density", r4(bGap), "T", "mec-fringing-derate", {
+          ...mecInputs,
+          pole_width_mm: fringing.poleWidthMm,
+          fringing_derate: r4(fringing.derate),
+        }),
+      );
+    }
   }
   return {
     content: [
@@ -9513,8 +9688,20 @@ export async function calcMotor(args: Record<string, unknown>) {
         type: "text" as const,
         text: JSON.stringify({
           success: true,
+          mode: "pm",
           airgap_flux_tesla: r4(bGap),
           airgap_flux_source: bGapSource,
+          ...(fringing
+            ? {
+                airgap_flux_raw_tesla: r4(fringing.bRawTesla),
+                fringing_derate: r4(fringing.derate),
+                fringing_note:
+                  "Carter-like first-order derate: B under the pole drops by " +
+                  "w/(w+2g) as flux fringes ~one gap length past each pole edge. " +
+                  "Kt/Ke and the curve use the DERATED flux. Honest for pole " +
+                  "width ≳ 2× gap; below that treat it as a lower bound.",
+              }
+            : {}),
           winding_factor: windingFactor,
           kt_nm_per_a: r4(perf.ktNmPerA),
           ke_v_s_per_rad: r4(perf.keVSPerRad),
@@ -9525,8 +9712,204 @@ export async function calcMotor(args: Record<string, unknown>) {
             speed_rad_s: r4(p.speedRadS),
             torque_nm: r4(p.torqueNm),
           })),
-          note: "First-order steady-state estimate (no slotting/fringing/saturation/losses).",
+          note: fringing
+            ? "First-order steady-state estimate (no slotting/saturation/losses; " +
+              "pole-edge fringing derated via magnet.pole_width_mm)."
+            : "First-order steady-state estimate (no slotting/fringing/saturation/losses; " +
+              "pass magnet.pole_width_mm to derate for fringing).",
           claims,
+        }),
+      },
+    ],
+  };
+}
+
+// ============================================================================
+// check_self_start — will it spin? starting torque vs bearing friction
+// ============================================================================
+
+/**
+ * Documented typical running-friction torque per bearing, mN·m, by preset and
+ * preload class. Low-speed drag in small deep-groove bearings is dominated by
+ * seal contact and grease churning, so seal type matters more than load:
+ *
+ * - `608-2RS` (8×22×7, contact rubber seals): the lip drag dominates —
+ *   0.5–2 mN·m each at light preload (a pair lands at the oft-quoted
+ *   1–4 mN·m), roughly double under medium preload.
+ * - `608-ZZ` (8×22×7, non-contact metal shields): no lip contact, an order
+ *   of magnitude freer.
+ * - `625` (5×16×5) and `688` (8×16×5 thin-section): miniature bearings,
+ *   figures for the common shielded (ZZ-type, non-contact) variants.
+ *
+ * Ranges are catalog-typical for greased bearings at room temperature; a
+ * cold, over-greased, or axially pinched bearing can exceed the top end.
+ */
+const BEARING_FRICTION_MNM: Record<
+  string,
+  Record<"light" | "medium", { min: number; max: number }>
+> = {
+  "608-2RS": {
+    light: { min: 0.5, max: 2.0 },
+    medium: { min: 1.0, max: 4.0 },
+  },
+  "608-ZZ": {
+    light: { min: 0.05, max: 0.3 },
+    medium: { min: 0.15, max: 0.8 },
+  },
+  "625": {
+    light: { min: 0.03, max: 0.2 },
+    medium: { min: 0.1, max: 0.5 },
+  },
+  "688": {
+    light: { min: 0.03, max: 0.25 },
+    medium: { min: 0.1, max: 0.6 },
+  },
+};
+
+export const checkSelfStartSchema = {
+  type: "object" as const,
+  properties: {
+    available_torque_nm: {
+      type: "number" as const,
+      description:
+        "Torque available at standstill, N·m — PM: Kt·I (or pass kt_nm_per_a + current_a " +
+        "instead); induction: locked_rotor_torque_nm from calc_motor mode:'induction'.",
+    },
+    kt_nm_per_a: {
+      type: "number" as const,
+      description: "Alternative to available_torque_nm: torque constant Kt (N·m/A), multiplied by current_a.",
+    },
+    current_a: {
+      type: "number" as const,
+      description: "Alternative to available_torque_nm: standstill phase current (A), multiplied by kt_nm_per_a.",
+    },
+    friction_torque_nm: {
+      type: "number" as const,
+      description:
+        "Direct friction estimate, N·m (single value or a measurement). Overrides `bearings` when given.",
+    },
+    bearings: {
+      type: "object" as const,
+      description:
+        "Bearing-friction estimator (used when friction_torque_nm is omitted). Fields: " +
+        "type ('608-2RS' | '608-ZZ' | '625' | '688'; 625/688 assume shielded non-contact variants), " +
+        "preload ('light' default | 'medium'), count (number of bearings, default 2).",
+    },
+  },
+};
+
+/**
+ * The single most important motor design question — will it spin? — as a pure
+ * fail-closed check: starting torque (given directly, or Kt·I) against a
+ * friction estimate (given directly, or from documented typical bearing-drag
+ * ranges). `starts` is judged against the WORST-CASE (max) friction; a design
+ * that only beats the optimistic end is reported `starts: false` with
+ * `starts_best_case: true` so the margin story is visible.
+ */
+export function checkSelfStart(args: Record<string, unknown>) {
+  const fail = ecadError;
+  const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : NaN);
+
+  // Available starting torque: direct, or Kt·I.
+  let available = num(args.available_torque_nm);
+  let availableSource: "direct" | "kt_times_current" = "direct";
+  if (!Number.isFinite(available)) {
+    const kt = num(args.kt_nm_per_a);
+    const i = num(args.current_a);
+    if (!(kt > 0) || !(i > 0)) {
+      return fail(
+        "pass available_torque_nm (> 0), or both kt_nm_per_a and current_a (> 0) to compute Kt·I",
+      );
+    }
+    available = kt * i;
+    availableSource = "kt_times_current";
+  }
+  if (!(available > 0)) return fail("available_torque_nm must be > 0");
+
+  // Friction estimate: direct value, or the bearing catalog.
+  let frictionMinNm: number;
+  let frictionMaxNm: number;
+  let frictionSource: "direct" | "bearing-catalog" = "direct";
+  let bearing:
+    | { type: string; preload: "light" | "medium"; count: number; per_bearing_mnm: { min: number; max: number } }
+    | undefined;
+  const directFriction = num(args.friction_torque_nm);
+  if (Number.isFinite(directFriction)) {
+    if (!(directFriction > 0)) return fail("friction_torque_nm must be > 0");
+    frictionMinNm = directFriction;
+    frictionMaxNm = directFriction;
+  } else {
+    const b = (args.bearings ?? {}) as Record<string, unknown>;
+    const type = typeof b.type === "string" ? b.type : "608-2RS";
+    const table = BEARING_FRICTION_MNM[type];
+    if (!table) {
+      return fail(
+        `unknown bearing type '${type}' — presets: ${Object.keys(BEARING_FRICTION_MNM).join(", ")} ` +
+          "(or pass friction_torque_nm directly)",
+      );
+    }
+    const preload = b.preload === "medium" ? "medium" : b.preload === "light" || b.preload === undefined ? "light" : null;
+    if (preload === null) return fail("bearings.preload must be 'light' or 'medium'");
+    const count = Number.isFinite(num(b.count)) ? num(b.count) : 2;
+    if (!(count >= 1 && Number.isInteger(count))) return fail("bearings.count must be an integer >= 1");
+    const range = table[preload];
+    frictionMinNm = range.min * count * 1e-3;
+    frictionMaxNm = range.max * count * 1e-3;
+    frictionSource = "bearing-catalog";
+    bearing = { type, preload, count, per_bearing_mnm: range };
+  }
+
+  const starts = available > frictionMaxNm;
+  const startsBestCase = available > frictionMinNm;
+  const margin = available / frictionMaxNm;
+
+  const claimInputs: Record<string, number | string> = {
+    available_torque_nm: sig6(available),
+    available_torque_source: availableSource,
+    friction_source: frictionSource,
+    ...(bearing
+      ? {
+          bearing_type: bearing.type,
+          bearing_preload: bearing.preload,
+          bearing_count: bearing.count,
+        }
+      : { friction_torque_nm: sig6(frictionMaxNm) }),
+  };
+  return {
+    content: [
+      {
+        type: "text" as const,
+        text: JSON.stringify({
+          success: true,
+          starts,
+          starts_best_case: startsBestCase,
+          margin: sig6(margin),
+          available_torque_nm: sig6(available),
+          available_torque_source: availableSource,
+          friction_torque_mnm: { min: sig6(frictionMinNm * 1e3), max: sig6(frictionMaxNm * 1e3) },
+          friction_source: frictionSource,
+          ...(bearing ? { bearings: bearing } : {}),
+          note:
+            "`starts` is fail-closed: available torque vs the WORST-CASE (max) friction " +
+            "estimate; `margin` = available / worst-case (aim for ≥ 2 to absorb cogging, " +
+            "cold grease, and preload spread). Bearing ranges are documented catalog-" +
+            "typical running drag for greased bearings, not measurements of yours.",
+          claims: [
+            // The friction estimate is only a claim when this tool predicted it
+            // (catalog lookup); a passthrough of the caller's number is not.
+            ...(frictionSource === "bearing-catalog"
+              ? [
+                  emClaim(
+                    "friction_torque",
+                    sig6(frictionMaxNm),
+                    "N·m",
+                    "bearing-friction-catalog",
+                    claimInputs,
+                  ),
+                ]
+              : []),
+            emClaim("start_margin", sig6(margin), "dimensionless", "torque-friction-margin", claimInputs),
+          ],
         }),
       },
     ],
