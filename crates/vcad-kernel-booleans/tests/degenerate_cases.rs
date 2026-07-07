@@ -185,6 +185,74 @@ fn flush_corner_step_block_difference_volume_vertical() {
     );
 }
 
+/// A2 cube-with-pocket regression (mecheval task `a2-cube-with-pocket-01`,
+/// issue #161 repro A): a 20×20×10 pocket cut from the middle of a 40³
+/// cube's top face. Exactly ONE cutter face (the pocket top at z=40) is
+/// coplanar with a face of the base solid, and the pocket outline lies
+/// strictly inside the top face — so the top face gains an inner loop
+/// instead of being split at its border. Pre-79ab4d0 this reported
+/// 57333.33 mm³ (the pocket's four side walls integrated with inverted
+/// orientation); correct volume is 40³ − 20·20·10 = 60000 mm³.
+#[test]
+fn flush_pocket_difference_volume_one_shared_face() {
+    let mut base = make_cube(40.0, 40.0, 40.0);
+    translate(&mut base, -20.0, -20.0, 0.0);
+    let mut pocket = make_cube(20.0, 20.0, 10.0);
+    translate(&mut pocket, -10.0, -10.0, 30.0);
+
+    let result = boolean_op(&base, &pocket, BooleanOp::Difference, 32);
+    let mesh = result.to_mesh(32);
+    assert_valid_mesh(&mesh);
+
+    let vol = mesh_volume(&mesh);
+    assert!(
+        (vol - 60000.0).abs() / 60000.0 < 0.001,
+        "pocket diff (1 shared face): expected 60000, got {vol:.2}"
+    );
+}
+
+/// Pocket flush with TWO base faces (top z=40 and side x=20): the cutter
+/// reaches the +X border of the top face, so the top face is split at its
+/// boundary rather than gaining an inner loop, and the +X wall gains a
+/// notch. Sits between the 1-shared-face pocket and the 4-shared-face
+/// stepped-block cases (issue #161 acceptance asks for 1–4 coverage).
+#[test]
+fn flush_pocket_difference_volume_two_shared_faces() {
+    let mut base = make_cube(40.0, 40.0, 40.0);
+    translate(&mut base, -20.0, -20.0, 0.0);
+    let mut pocket = make_cube(20.0, 20.0, 10.0);
+    translate(&mut pocket, 0.0, -10.0, 30.0);
+
+    let result = boolean_op(&base, &pocket, BooleanOp::Difference, 32);
+    let mesh = result.to_mesh(32);
+    assert_valid_mesh(&mesh);
+
+    let vol = mesh_volume(&mesh);
+    assert!(
+        (vol - 60000.0).abs() / 60000.0 < 0.001,
+        "pocket diff (2 shared faces): expected 60000, got {vol:.2}"
+    );
+}
+
+/// Pocket flush with THREE base faces (top z=40, +X, +Y): a corner notch.
+#[test]
+fn flush_pocket_difference_volume_three_shared_faces() {
+    let mut base = make_cube(40.0, 40.0, 40.0);
+    translate(&mut base, -20.0, -20.0, 0.0);
+    let mut pocket = make_cube(20.0, 20.0, 10.0);
+    translate(&mut pocket, 0.0, 0.0, 30.0);
+
+    let result = boolean_op(&base, &pocket, BooleanOp::Difference, 32);
+    let mesh = result.to_mesh(32);
+    assert_valid_mesh(&mesh);
+
+    let vol = mesh_volume(&mesh);
+    assert!(
+        (vol - 60000.0).abs() / 60000.0 < 0.001,
+        "pocket diff (3 shared faces): expected 60000, got {vol:.2}"
+    );
+}
+
 /// Co-planar face union where both operands share an entire face in the Z direction.
 /// A occupies z=[0,10], B occupies z=[10,20]; they touch at the z=10 plane.
 #[test]
@@ -594,5 +662,158 @@ fn cylinder_cylinder_perpendicular_union_steinmetz() {
         err < 0.02,
         "perpendicular cylinder union: volume error {:.2}% (expected {expected:.2}, got {vol:.2})",
         err * 100.0
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 9. Boolean-chain tessellation (octagonal flange, issue #162)
+// ---------------------------------------------------------------------------
+//
+// The a3-octagonal-flange-01 mecheval task panicked in the tessellator with
+// "Normals/vertices mismatch: N normals vs 2N vertices" on two families of
+// input: a well-formed flange (intersection of a box with its 45°-rotated
+// copy, minus a bolt-hole union) and a malformed model output whose chained
+// slab intersection collapses to an empty solid. Both must tessellate (or
+// evaluate empty) without panicking, with normals in 1:1 lockstep with
+// vertices.
+
+/// Well-formed octagonal flange: `Difference(Intersection(box, rotated-box),
+/// Union(8 cylinders))` — the issue #162 acceptance geometry. The octagon is
+/// the intersection of a 60×40×8 box centered in XY with its 45°-rotated
+/// copy (area 1871.07 mm², computed by polygon clipping); the 8 bolt holes
+/// (r=2.5 on a bolt circle of r=15) all land strictly inside it.
+#[test]
+fn octagonal_flange_boolean_chain_tessellates() {
+    let mut box_a = make_cube(60.0, 40.0, 8.0);
+    translate(&mut box_a, -30.0, -20.0, 0.0);
+    let mut box_b = make_cube(60.0, 40.0, 8.0);
+    translate(&mut box_b, -30.0, -20.0, 0.0);
+    apply_transform(
+        &mut box_b,
+        &Transform::rotation_z(std::f64::consts::FRAC_PI_4),
+    );
+
+    let octagon = boolean_op(&box_a, &box_b, BooleanOp::Intersection, 32)
+        .into_brep()
+        .expect("octagon intersection should produce a BRep");
+
+    let mut holes: Option<BRepSolid> = None;
+    for k in 0..8 {
+        let ang = (k as f64) * std::f64::consts::FRAC_PI_4;
+        let mut cyl = make_cylinder(2.5, 8.0, 32);
+        translate(&mut cyl, 15.0 * ang.cos(), 15.0 * ang.sin(), 0.0);
+        holes = Some(match holes {
+            None => cyl,
+            Some(prev) => boolean_op(&prev, &cyl, BooleanOp::Union, 32)
+                .into_brep()
+                .expect("bolt-hole union should produce a BRep"),
+        });
+    }
+
+    let result = boolean_op(&octagon, &holes.unwrap(), BooleanOp::Difference, 32);
+    let mesh = result.to_mesh(32);
+    assert_valid_mesh(&mesh);
+    assert!(
+        mesh.normals.is_empty() || mesh.normals.len() == mesh.vertices.len(),
+        "normals/vertices mismatch: {} normals vs {} vertices",
+        mesh.normals.len(),
+        mesh.vertices.len()
+    );
+
+    // Octagon area × height, minus 8 bolt holes. The mesh discretizes each
+    // hole as a 32-gon (slightly smaller than the true circle), so allow
+    // 0.5% against the analytic value.
+    let octagon_area = 1871.067_811_865_475_5;
+    let hole_vol = std::f64::consts::PI * 2.5 * 2.5 * 8.0;
+    let expected = octagon_area * 8.0 - 8.0 * hole_vol;
+    let vol = mesh_volume(&mesh);
+    let err = (vol - expected).abs() / expected;
+    assert!(
+        err < 0.005,
+        "octagonal flange: volume error {:.2}% (expected {expected:.2}, got {vol:.2})",
+        err * 100.0
+    );
+}
+
+/// Malformed flange from the actual panicking mecheval run
+/// (`a3-octagonal-flange-01` / gpt-5-mini): eight 80×160×8 slabs rotated
+/// about Z and chain-intersected. The slab placement is wrong — the true
+/// intersection collapses to empty at the 4th step (29576.45 → 9600 → 1600
+/// → 0 mm³, verified analytically by polygon clipping) — and the empty
+/// solid then flows into a Difference against a bolt-hole union. Every step
+/// must return the correct (eventually empty) result without panicking.
+#[test]
+fn chained_slab_intersection_collapses_to_empty_no_panic() {
+    // Slab k: cube corner at origin, rotated (180 + 45k)° about Z, then
+    // translated 20mm radially outward at angle 45k° (the diagonal offsets
+    // use the run's literal 14.142136 values).
+    let offsets = [
+        (20.0, 0.0),
+        (14.142_136, 14.142_136),
+        (0.0, 20.0),
+        (-14.142_136, 14.142_136),
+        (-20.0, 0.0),
+        (-14.142_136, -14.142_136),
+        (0.0, -20.0),
+        (14.142_136, -14.142_136),
+    ];
+    let expected_step_volumes = [29576.45, 9600.0, 1600.0, 0.0, 0.0, 0.0, 0.0];
+
+    let slab = |k: usize| {
+        let mut s = make_cube(80.0, 160.0, 8.0);
+        let ang = (180.0 + 45.0 * k as f64).to_radians();
+        apply_transform(&mut s, &Transform::rotation_z(ang));
+        translate(&mut s, offsets[k].0, offsets[k].1, 0.0);
+        s
+    };
+
+    let mut acc = slab(0);
+    for (k, &expected_vol) in expected_step_volumes.iter().enumerate() {
+        let result = boolean_op(&acc, &slab(k + 1), BooleanOp::Intersection, 32);
+        let mesh = result.to_mesh(32);
+        assert!(
+            mesh.normals.is_empty() || mesh.normals.len() == mesh.vertices.len(),
+            "step {}: normals/vertices mismatch: {} normals vs {} vertices",
+            k + 1,
+            mesh.normals.len(),
+            mesh.vertices.len()
+        );
+        let vol = mesh_volume(&mesh);
+        assert!(
+            (vol - expected_vol).abs() < expected_vol.max(1.0) * 0.01,
+            "step {}: expected volume ~{expected_vol}, got {vol:.2}",
+            k + 1
+        );
+        acc = result
+            .into_brep()
+            .expect("intersection should produce a (possibly empty) BRep");
+    }
+
+    // Difference of the (empty) octagon against a bolt-hole union must not
+    // panic and must stay empty.
+    let mut holes: Option<BRepSolid> = None;
+    for k in 0..8 {
+        let ang = (k as f64) * std::f64::consts::FRAC_PI_4;
+        let mut cyl = make_cylinder(2.5, 8.0, 32);
+        translate(&mut cyl, 15.0 * ang.cos(), 15.0 * ang.sin(), 0.0);
+        holes = Some(match holes {
+            None => cyl,
+            Some(prev) => boolean_op(&prev, &cyl, BooleanOp::Union, 32)
+                .into_brep()
+                .expect("bolt-hole union should produce a BRep"),
+        });
+    }
+    let result = boolean_op(&acc, &holes.unwrap(), BooleanOp::Difference, 32);
+    let mesh = result.to_mesh(32);
+    assert!(
+        mesh.normals.is_empty() || mesh.normals.len() == mesh.vertices.len(),
+        "final difference: normals/vertices mismatch: {} normals vs {} vertices",
+        mesh.normals.len(),
+        mesh.vertices.len()
+    );
+    let vol = mesh_volume(&mesh);
+    assert!(
+        vol < 1.0,
+        "difference of an empty solid must stay empty, got volume {vol:.2}"
     );
 }
