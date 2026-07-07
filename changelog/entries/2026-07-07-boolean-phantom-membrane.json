@@ -1,0 +1,9 @@
+{
+  "id": "2026-07-07-boolean-phantom-membrane",
+  "version": "0.9.4",
+  "date": "2026-07-07",
+  "category": "fix",
+  "title": "Booleans no longer seal bores with phantom membranes",
+  "summary": "Circle-splitting an annular cap face now moves its hole to the new disk sub-face, so union trees of coaxial parts stop growing phantom volume in later intersections.",
+  "features": ["booleans", "kernel"]
+}
