@@ -10,7 +10,7 @@
  * The request handler in entry.ts runs the same check as defense-in-depth.
  */
 
-import { isRequestGeoBlocked, geoBlockResponse } from "../../shared/geo-block";
+import { isRequestGeoBlocked, geoBlockResponse } from "../../shared/geo-block.js";
 
 export default function middleware(request: Request): Response {
   if (isRequestGeoBlocked(request)) return geoBlockResponse();

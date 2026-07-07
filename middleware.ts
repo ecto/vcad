@@ -8,7 +8,7 @@
  * import the same shared module.
  */
 
-import { isRequestGeoBlocked, geoBlockResponse } from "./shared/geo-block";
+import { isRequestGeoBlocked, geoBlockResponse } from "./shared/geo-block.js";
 
 export default function middleware(request: Request): Response | undefined {
   if (isRequestGeoBlocked(request)) return geoBlockResponse();

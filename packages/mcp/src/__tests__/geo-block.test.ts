@@ -14,7 +14,7 @@ import {
   geoBlockResponse,
   isGeoBlocked,
   isRequestGeoBlocked,
-} from "../../../../shared/geo-block";
+} from "../../../../shared/geo-block.js";
 
 describe("isGeoBlocked", () => {
   it("blocks every listed country", () => {
