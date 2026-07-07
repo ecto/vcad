@@ -591,19 +591,71 @@ pub fn split_planar_face_by_circle(
                 let cap_radius = on_plane.norm();
 
                 // Check: is the intersection circle coplanar and fully inside?
+                // Tangency counts as inside — a boss ring exactly inscribed to
+                // the cap rim (offset + r == cap_radius) must still punch its
+                // hole through the cap; leaving the membrane whole corrupts
+                // the volume integral by the full contact-disk flux.
                 let circle_to_plane = (circle.center - center).dot(normal).abs();
                 let circle_center_offset = {
                     let d = circle.center - center;
                     (d - d.dot(normal) * normal).norm()
                 };
+                // A circle that IS the cap's own rim (concentric, same
+                // radius — e.g. a press-fit ring whose wall lies exactly on
+                // the wall that bounds this cap) has nothing to split:
+                // admitting it would punch a hole covering the entire cap
+                // and leave a duplicate full-size disk. This is the
+                // degenerate-loop analog of `circle_is_own_boundary`.
+                if circle_to_plane < 1e-6
+                    && circle_center_offset < 1e-6
+                    && (circle.radius - cap_radius).abs() < 1e-6
+                {
+                    return SplitResult {
+                        sub_faces: vec![face_id],
+                    };
+                }
                 let circle_inside = circle_to_plane < 1e-6
-                    && circle_center_offset + circle.radius + 1e-6 < cap_radius;
+                    && circle_center_offset + circle.radius <= cap_radius + 1e-6;
+                // Partial overlap: part of the circle is within the rim, part
+                // sticks out (a boss overhanging the edge of a disc).
+                let circle_overlaps = circle_to_plane < 1e-6
+                    && !circle_inside
+                    && circle_center_offset - circle.radius < cap_radius - 1e-6
+                    && circle_center_offset < cap_radius + circle.radius - 1e-6;
+
+                if circle_overlaps && cap_radius > 1e-12 {
+                    // The degenerate single-vertex outer loop can't express a
+                    // partial split. Sample the rim into an explicit polygon
+                    // outer loop and re-enter this function: the polygonal
+                    // path detects the partial overlap and routes to the arc
+                    // splitter. Sample densely — the polygon becomes the
+                    // cap's real boundary from here on, and a coarse rim
+                    // under-integrates the cap area.
+                    let n_rim = segments.max(128) as usize;
+                    let cap_x = on_plane.normalize();
+                    let cap_y = normal.cross(cap_x);
+                    let rim_ids: Vec<_> = (0..n_rim)
+                        .map(|i| {
+                            let theta = 2.0 * std::f64::consts::PI * (i as f64) / (n_rim as f64);
+                            let p =
+                                center + cap_radius * (theta.cos() * cap_x + theta.sin() * cap_y);
+                            find_or_create_vertex(brep, &p, 1e-6)
+                        })
+                        .collect();
+                    let rim_hes: Vec<_> = rim_ids
+                        .iter()
+                        .map(|&v| brep.topology.add_half_edge(v))
+                        .collect();
+                    let new_outer = brep.topology.add_loop(&rim_hes);
+                    brep.topology.faces[face_id].outer_loop = new_outer;
+                    return split_planar_face_by_circle(brep, face_id, circle, segments);
+                }
 
                 if circle_inside && cap_radius > 1e-12 {
                     let tolerance = 1e-6;
 
                     // Generate circle vertices for the inner disk face
-                    let circle_verts: Vec<Point3> = (0..segments)
+                    let raw_circle_verts: Vec<Point3> = (0..segments)
                         .map(|i| {
                             let theta = 2.0 * std::f64::consts::PI * (i as f64) / (segments as f64);
                             let (sin_t, cos_t) = theta.sin_cos();
@@ -613,6 +665,36 @@ pub fn split_planar_face_by_circle(
                                         + sin_t * circle.y_dir.into_inner())
                         })
                         .collect();
+
+                    // The SSI circle's (x_dir, y_dir) frame is arbitrary, so
+                    // the generated ring can wind either way. The tessellator
+                    // expects loops CCW around the STORED surface normal
+                    // (`Orientation::Reversed` flips triangles afterwards) —
+                    // normalize the disk loop to that convention. The disk is
+                    // usually classified Inside and dropped, but when it
+                    // survives (a bore mouth kept as the visible floor under
+                    // a press-fit ring) a backwards loop tessellates facing
+                    // into the solid and the volume integral goes negative.
+                    let cap_x_dir = on_plane.normalize();
+                    let cap_y_dir = normal.cross(cap_x_dir);
+                    let circle_signed_area = {
+                        let project = |p: &Point3| -> (f64, f64) {
+                            let d = *p - center;
+                            (d.dot(cap_x_dir), d.dot(cap_y_dir))
+                        };
+                        let pts_2d: Vec<_> = raw_circle_verts.iter().map(project).collect();
+                        let mut a = 0.0;
+                        for i in 0..pts_2d.len() {
+                            let j = (i + 1) % pts_2d.len();
+                            a += pts_2d[i].0 * pts_2d[j].1 - pts_2d[j].0 * pts_2d[i].1;
+                        }
+                        a / 2.0
+                    };
+                    let circle_verts: Vec<Point3> = if circle_signed_area < 0.0 {
+                        raw_circle_verts.iter().rev().cloned().collect()
+                    } else {
+                        raw_circle_verts
+                    };
 
                     // Create inner disk face (will be classified as "inside" and removed)
                     let inner_verts: Vec<_> = circle_verts
@@ -667,31 +749,10 @@ pub fn split_planar_face_by_circle(
                     }
 
                     // Add the circle as an inner loop (hole) on the original cap face.
-                    // Determine correct winding: inner loop should be opposite to outer.
-                    // For a degenerate outer loop we use the plane normal to decide:
-                    // outer is CCW from above → inner should be CW from above.
-                    let cap_x_dir = on_plane.normalize();
-                    let cap_y_dir = normal.cross(cap_x_dir);
-                    let circle_signed_area = {
-                        let project = |p: &Point3| -> (f64, f64) {
-                            let d = *p - center;
-                            (d.dot(cap_x_dir), d.dot(cap_y_dir))
-                        };
-                        let pts_2d: Vec<_> = circle_verts.iter().map(project).collect();
-                        let mut a = 0.0;
-                        for i in 0..pts_2d.len() {
-                            let j = (i + 1) % pts_2d.len();
-                            a += pts_2d[i].0 * pts_2d[j].1 - pts_2d[j].0 * pts_2d[i].1;
-                        }
-                        a / 2.0
-                    };
-
-                    // Inner loop winding should be CW (negative area in face-normal space)
-                    let hole_verts: Vec<Point3> = if circle_signed_area > 0.0 {
-                        circle_verts.iter().rev().cloned().collect()
-                    } else {
-                        circle_verts.clone()
-                    };
+                    // Inner loops wind opposite to the outer convention: the
+                    // disk loop is CCW around the surface normal, so the hole
+                    // is its reverse (CW).
+                    let hole_verts: Vec<Point3> = circle_verts.iter().rev().cloned().collect();
 
                     let hole_vert_ids: Vec<_> = hole_verts
                         .iter()
@@ -745,9 +806,9 @@ pub fn split_planar_face_by_circle(
         };
     }
 
-    // Generate circle vertices (CCW when viewed from face normal direction)
-    // The circle's normal should align with the plane normal
-    let circle_verts: Vec<Point3> = (0..segments)
+    // Generate circle vertices in the SSI circle's own (x_dir, y_dir) frame;
+    // the winding relative to the face is normalized below.
+    let raw_circle_verts: Vec<Point3> = (0..segments)
         .map(|i| {
             let theta = 2.0 * std::f64::consts::PI * (i as f64) / (segments as f64);
             let (sin_t, cos_t) = theta.sin_cos();
@@ -756,28 +817,6 @@ pub fn split_planar_face_by_circle(
                     * (cos_t * circle.x_dir.into_inner() + sin_t * circle.y_dir.into_inner())
         })
         .collect();
-
-    // Create inner face (disk) - uses circle vertices as its outer loop
-    // The inner face's loop should be oriented the same as the parent face
-    let tolerance = 1e-6;
-    let inner_verts: Vec<_> = circle_verts
-        .iter()
-        .map(|p| find_or_create_vertex(brep, p, tolerance))
-        .collect();
-
-    let inner_hes: Vec<_> = inner_verts
-        .iter()
-        .map(|&v| brep.topology.add_half_edge(v))
-        .collect();
-
-    let inner_loop = brep.topology.add_loop(&inner_hes);
-    let inner_face = brep
-        .topology
-        .add_face(inner_loop, surface_index, orientation);
-
-    // Create outer face (polygon with hole)
-    // The outer loop stays the same; we add the circle as an inner loop
-    // The inner loop must have OPPOSITE winding to the outer loop in the face's 2D projection
 
     // Compute the face's 2D coordinate system using the plane surface normal
     // instead of deriving from vertices, which can produce inconsistent normals
@@ -823,17 +862,40 @@ pub fn split_planar_face_by_circle(
     };
 
     let outer_area = signed_area(&loop_verts);
-    let circle_area = signed_area(&circle_verts);
+    let circle_area = signed_area(&raw_circle_verts);
 
-    // Inner loop should have opposite sign to outer loop
-    // If they have the same sign, we need to reverse the circle vertices
-    let need_reverse = (outer_area > 0.0) == (circle_area > 0.0);
-
-    let inner_loop_verts: Vec<Point3> = if need_reverse {
-        circle_verts.iter().rev().cloned().collect()
+    // The disk sub-face's outer loop must wind the SAME way as the parent's
+    // outer loop (both are outer loops of faces with identical surface and
+    // orientation — the tessellator triangulates by loop order and flips for
+    // `Orientation::Reversed`, so a backwards disk loop would tessellate
+    // facing into the solid and corrupt the volume integral whenever the
+    // disk survives classification). The hole loop is its reverse.
+    let circle_verts: Vec<Point3> = if (outer_area > 0.0) == (circle_area > 0.0) {
+        raw_circle_verts
     } else {
-        circle_verts.clone()
+        raw_circle_verts.iter().rev().cloned().collect()
     };
+
+    // Create inner face (disk) - uses circle vertices as its outer loop
+    let tolerance = 1e-6;
+    let inner_verts: Vec<_> = circle_verts
+        .iter()
+        .map(|p| find_or_create_vertex(brep, p, tolerance))
+        .collect();
+
+    let inner_hes: Vec<_> = inner_verts
+        .iter()
+        .map(|&v| brep.topology.add_half_edge(v))
+        .collect();
+
+    let inner_loop = brep.topology.add_loop(&inner_hes);
+    let inner_face = brep
+        .topology
+        .add_face(inner_loop, surface_index, orientation);
+
+    // Create outer face (polygon with hole): the outer loop stays the same;
+    // the circle joins as an inner loop with opposite winding to the outer.
+    let inner_loop_verts: Vec<Point3> = circle_verts.iter().rev().cloned().collect();
 
     let outer_inner_verts: Vec<_> = inner_loop_verts
         .iter()
@@ -1498,6 +1560,50 @@ pub fn split_planar_face_by_arc(
         brep.topology.shells[shell_id]
             .faces
             .retain(|&f| f != face_id);
+    }
+
+    // Re-home the original face's inner loops (holes from prior booleans)
+    // onto whichever sub-face contains them — dropping them here would seal
+    // each hole with a phantom membrane that corrupts point-in-solid parity
+    // and the volume integral. A degenerate single-vertex loop is a full
+    // circle; its seam vertex stands in for the whole hole, which is safe
+    // because the arc split never runs between a hole and its own boundary.
+    let existing_inner: Vec<_> = brep.topology.faces[face_id].inner_loops.clone();
+    if !existing_inner.is_empty() {
+        let face1_2d: Vec<(f64, f64)> = face1_points
+            .iter()
+            .map(|p| {
+                let d = *p - origin;
+                (d.dot(u_axis), d.dot(v_axis))
+            })
+            .collect();
+        for lp in existing_inner {
+            let lp_verts: Vec<Point3> = brep
+                .topology
+                .loop_half_edges(lp)
+                .map(|he| brep.topology.vertices[brep.topology.half_edges[he].origin].point)
+                .collect();
+            if lp_verts.is_empty() {
+                continue;
+            }
+            let test_pt = if lp_verts.len() == 1 {
+                lp_verts[0]
+            } else {
+                let n = lp_verts.len() as f64;
+                Point3::new(
+                    lp_verts.iter().map(|v| v.x).sum::<f64>() / n,
+                    lp_verts.iter().map(|v| v.y).sum::<f64>() / n,
+                    lp_verts.iter().map(|v| v.z).sum::<f64>() / n,
+                )
+            };
+            let d = test_pt - origin;
+            let target = if point_in_polygon_2d(d.dot(u_axis), d.dot(v_axis), &face1_2d) {
+                face1
+            } else {
+                face2
+            };
+            brep.topology.faces[target].inner_loops.push(lp);
+        }
     }
 
     // Remove the original face
