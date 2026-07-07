@@ -1,0 +1,21 @@
+{
+  "id": "2026-07-07-mcp-error-and-render-defects",
+  "version": "0.9.4",
+  "date": "2026-07-07",
+  "category": "fix",
+  "title": "MCP gym errors flag isError; render_molecule returns a PNG",
+  "summary": "Gym tool errors now set isError so hosts stop reading failures as successes and get recovery hints, and render_molecule rasterizes to a PNG image block (SVG-text fallback) like render_view.",
+  "features": [
+    "mcp",
+    "physics",
+    "atoms"
+  ],
+  "mcpTools": [
+    "create_robot_env",
+    "gym_step",
+    "gym_reset",
+    "gym_observe",
+    "gym_close",
+    "render_molecule"
+  ]
+}

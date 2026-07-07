@@ -101,7 +101,7 @@ type RasterOutcome =
  *  module and a genuine rasterization failure are distinct outcomes so
  *  the fallback note never tells the agent to install a dependency that
  *  is present but failing. */
-async function rasterize(
+export async function rasterize(
   svg: string,
   widthPx: number,
   background = "white",
