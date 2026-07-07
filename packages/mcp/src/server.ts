@@ -1673,9 +1673,12 @@ export async function createServer(
         description:
           "One-shot motor winding realizer: plans a balanced slots/poles/" +
           "phases winding, drops a spiral coil per tooth with correct phase + " +
-          "polarity, series-connects each phase, and ties the wye/delta " +
-          "termination as a net-tie — closing the winding_layout plan into " +
-          "actual copper. Mutates the session document.",
+          "polarity, series-connects each phase with planar staggered-radius " +
+          "arcs in the coil-free bore (never crossing), ties the wye/delta " +
+          "termination with a region-scoped net-tie on real board material, " +
+          "and routes phase feeds to same-net pads when present — closing the " +
+          "winding_layout plan into DRC-clean copper. Mutates the session " +
+          "document.",
         inputSchema: addMotorWindingSchema,
       },
       {

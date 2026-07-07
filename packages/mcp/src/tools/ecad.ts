@@ -31,6 +31,7 @@ import type {
   Receipt,
 } from "@vcad/ir";
 import { createDocument } from "@vcad/ir";
+import { summarize, unifiedFromPcbReceipt } from "../receipt-unified.js";
 import { getNodePcb, getPcbNodeIds, buildEntry, agentView } from "@vcad/core";
 import {
   computeRatsnest,
@@ -8494,6 +8495,69 @@ export function addViaArray(args: Record<string, unknown>) {
 // add_motor_winding — plan → copper realizer (closes the winding loop)
 // ============================================================================
 
+/** Point at polar (r, ang·rad) around c. Not rounded — round at push time. */
+function windPolar(c: Vec2, r: number, ang: number): Vec2 {
+  return { x: c.x + r * Math.cos(ang), y: c.y + r * Math.sin(ang) };
+}
+
+/** Angle of p around c, radians normalized to [0, 2π). */
+function windAngle(c: Vec2, p: Vec2): number {
+  const a = Math.atan2(p.y - c.y, p.x - c.x);
+  return a < 0 ? a + 2 * Math.PI : a;
+}
+
+/** Minimum centerline distance between segments ab and cd. */
+function windSegSegDist(a: Vec2, b: Vec2, c: Vec2, d: Vec2): number {
+  if (segmentCrossing(a, b, c, d)) return 0;
+  return Math.min(
+    pointSegDist(a, c, d),
+    pointSegDist(b, c, d),
+    pointSegDist(c, a, b),
+    pointSegDist(d, a, b),
+  );
+}
+
+/** Approximate closest-approach point between segments ab and cd. */
+function windSegClosestPt(a: Vec2, b: Vec2, c: Vec2, d: Vec2): Vec2 {
+  const clamp = (p: Vec2, s: Vec2, e: Vec2): Vec2 => {
+    const dx = e.x - s.x;
+    const dy = e.y - s.y;
+    const len2 = dx * dx + dy * dy;
+    if (len2 === 0) return s;
+    const t = Math.max(0, Math.min(1, ((p.x - s.x) * dx + (p.y - s.y) * dy) / len2));
+    return { x: s.x + t * dx, y: s.y + t * dy };
+  };
+  let best: [Vec2, Vec2] = [a, clamp(a, c, d)];
+  let bestD = Infinity;
+  for (const [p, q] of [
+    [a, clamp(a, c, d)],
+    [b, clamp(b, c, d)],
+    [c, clamp(c, a, b)],
+    [d, clamp(d, a, b)],
+  ] as Array<[Vec2, Vec2]>) {
+    const dd = Math.hypot(p.x - q.x, p.y - q.y);
+    if (dd < bestD) {
+      bestD = dd;
+      best = [p, q];
+    }
+  }
+  return { x: (best[0].x + best[1].x) / 2, y: (best[0].y + best[1].y) / 2 };
+}
+
+/**
+ * Arc polyline at radius r around c from angle a0 to a1 (radians). Sweeps
+ * CCW when a1 > a0, CW when a1 < a0. Chord sagitta capped at 0.02mm so the
+ * polyline never strays meaningfully off its ring radius.
+ */
+function windArcPoints(c: Vec2, r: number, a0: number, a1: number): Vec2[] {
+  const sweep = a1 - a0;
+  const maxStep = Math.max(0.01, 2 * Math.acos(Math.max(0, 1 - 0.02 / Math.max(r, 0.02))));
+  const n = Math.max(1, Math.ceil(Math.abs(sweep) / maxStep));
+  const pts: Vec2[] = [];
+  for (let i = 0; i <= n; i++) pts.push(windPolar(c, r, a0 + (sweep * i) / n));
+  return pts;
+}
+
 /** JSON Schema for add_motor_winding tool. */
 export const addMotorWindingSchema = {
   type: "object" as const,
@@ -8518,7 +8582,9 @@ export const addMotorWindingSchema = {
     copper_layer: { type: "string" as const, description: "Layer the spirals are drawn on (default 'FCu')" },
     return_layer: {
       type: "string" as const,
-      description: "Layer for interconnect + neutral/loop (default 'BCu')",
+      description:
+        "Layer for the interconnect's radial drops and terminal vias; the " +
+        "interconnect arcs ride the spiral layer (default 'BCu')",
     },
     phase_nets: {
       type: "array" as const,
@@ -8543,12 +8609,34 @@ export const addMotorWindingSchema = {
 
 /**
  * One-shot motor-winding realizer: plans a balanced polyphase winding with
- * winding_layout, drops a spiral coil per tooth (each escaping to the return
- * layer via inner+outer vias), series-connects coils within each phase on the
- * return layer, and terminates the phases (wye star or delta loop) — recording
- * the join as a NetTie so DRC treats it as intentional, not a short. The
- * interconnect is a baseline straight-line realizer; the new DRC honestly flags
- * any crossings it introduces for follow-up routing.
+ * winding_layout, drops a spiral coil per tooth, series-connects coils within
+ * each phase, and terminates the phases (wye star or delta loop) with a
+ * region-scoped NetTie at each junction so DRC treats the join as intentional.
+ *
+ * The interconnect is planar by construction:
+ *
+ * - Each coil's terminals land on vias placed clear of the spiral body — the
+ *   inner terminal leads to a via at the coil center (the bore is copper-free),
+ *   the outer leads radially outward past the last turn. A via dropped directly
+ *   on the spiral endpoint would overlap the adjacent turn (turn pitch is
+ *   usually smaller than via radius + trace half-width) and silently short it.
+ * - Every phase gets one arc ring in the coil-free bore around the winding
+ *   center: series hops ride that ring on the spiral layer, reached by radial
+ *   drops on the return layer, joined only through vias. Rings are staggered
+ *   by via-to-via pitch, so arcs never cross anything.
+ * - Approach angles are jogged so no return-layer radial runs along a terminal
+ *   ray past a same-net via it doesn't terminate at (which would electrically
+ *   bypass a coil).
+ * - The wye star is a short radial junction across the phase-ring ends at an
+ *   angle chosen on real board material (never over a bore cutout, never at
+ *   the board center), carrying the neutral net under a scoped NetTie.
+ * - Phase (and neutral) feeds are routed to same-net pads when any exist, via
+ *   staggered escape arcs outside the coil ring, each candidate checked for
+ *   collisions before it is committed; unroutable feeds are reported, never
+ *   guessed.
+ *
+ * A post-build audit re-checks both invariants (no same-net via bypass, no
+ * cross-net contact outside a tie region) and reports violations as errors.
  */
 export function addMotorWinding(args: Record<string, unknown>) {
   const ctx = resolveDocInput(args);
@@ -8604,9 +8692,161 @@ export function addMotorWinding(args: Record<string, unknown>) {
   let vias = 0;
   let interconnectTraces = 0;
 
-  // b. One spiral per tooth; both terminals reachable on the return layer.
-  //    Keyed by slot so the series walk can find each coil's endpoints.
-  const coilTerminals = new Map<number, { inner: Vec2; outer: Vec2 }>();
+  const TAU = Math.PI * 2;
+  const rules = pcb.rules;
+  const viaDia = rules.defaultRules.viaDiameter;
+  const viaDrill = rules.defaultRules.viaDrill;
+  const clearance = (args.clearance as number) ?? rules.defaultRules.clearance;
+  const halfW = traceWidth / 2;
+  const viaR = viaDia / 2;
+  const MARGIN = 0.05;
+
+  // Pads by net — feed targets (pre-existing pads only; this tool adds none).
+  const padsByNet = new Map<string, Array<{ pos: Vec2; onReturnLayer: boolean; size: number }>>();
+  for (const fp of pcb.footprints) {
+    for (const pad of fp.pads) {
+      if (!pad.net) continue;
+      const arr = padsByNet.get(pad.net) ?? [];
+      arr.push({
+        pos: padWorld(fp, pad),
+        onReturnLayer: pad.layers.includes(returnLayer),
+        size: padApproxRadius(pad),
+      });
+      padsByNet.set(pad.net, arr);
+    }
+  }
+  const neutral =
+    connection === "wye"
+      ? (plan.neutralNet ?? (args.neutral_net ? String(args.neutral_net) : "WIND_N"))
+      : undefined;
+  const neutralFeedWanted = !!(neutral && (padsByNet.get(neutral)?.length ?? 0) > 0);
+
+  // Interconnect geometry, validated up front so an unroutable request fails
+  // BEFORE any copper lands: one arc ring per phase (plus one for delta return
+  // links / the neutral feed) in the coil-free bore. Ring pitch is the worst
+  // pairwise requirement — via-to-via clearance or drilled hole-to-hole — so
+  // staggered rings can never interact.
+  const planPhases = Object.keys(plan.phaseSeries).length;
+  const ringSpacing = Math.max(viaDia + clearance, viaDrill + rules.holeToHole) + MARGIN;
+  const ringOuterBound = pitchRadius - outerR - (viaR + halfW + clearance + MARGIN);
+  const nRings =
+    connection === "wye" ? planPhases + (neutralFeedWanted ? 1 : 0) : planPhases * 2;
+  const ringInnermost = ringOuterBound - (nRings - 1) * ringSpacing;
+  const interconnectNeeded = plan.coils.length > 1 || connection === "wye";
+  const onMaterial = (p: Vec2): boolean =>
+    pointInPolygon(p, pcb.outline.vertices) &&
+    !(pcb.outline.cutouts ?? []).some((c) => c.length >= 3 && pointInPolygon(p, c));
+
+  if (interconnectNeeded) {
+    // The rings must land on real board material: clear of any outline cutout
+    // that intrudes into the bore (e.g. a shaft bore), by edge clearance.
+    let cutoutReach = 0;
+    for (const cut of pcb.outline.cutouts ?? []) {
+      if (cut.length < 3) continue;
+      const dists = cut.map((v) => Math.hypot(v.x - center.x, v.y - center.y));
+      if (Math.min(...dists) < ringOuterBound + viaR + rules.edgeClearance) {
+        cutoutReach = Math.max(cutoutReach, Math.max(...dists));
+      }
+    }
+    const minInner = Math.max(viaR + rules.edgeClearance, cutoutReach + viaR + rules.edgeClearance);
+    if (!(ringInnermost >= minInner)) {
+      return fail(
+        `interconnect doesn't fit: ${nRings} arc ring(s) at ${round3(ringSpacing)}mm pitch ` +
+          `need radii ${round3(ringInnermost)}–${round3(ringOuterBound)}mm around the winding ` +
+          `center, but the innermost usable radius is ${round3(minInner)}mm` +
+          (cutoutReach > 0 ? ` (a bore/cutout reaches ${round3(cutoutReach)}mm)` : "") +
+          `. Increase pitch_radius, reduce outer_radius, or shrink the bore.`,
+      );
+    }
+  }
+
+  // Jog angle: sized so a radial run at (terminal ray ± jog) clears every via
+  // sitting ON the terminal ray, at every radius down to the innermost ring —
+  // the no-bypass invariant. Also spaces same-ring via pairs at one coil.
+  const viaSep = Math.max(viaDia + clearance, viaDrill + rules.holeToHole) + MARGIN;
+  const jog = interconnectNeeded
+    ? Math.asin(Math.min(1, viaSep / Math.max(ringInnermost, viaSep)))
+    : 0;
+
+  // Wye star angle: past the last coil ray (plus jogs), short of the first
+  // coil's feed jog window near 2π — and on real board material, so the
+  // junction never lands over a bore cutout (and never at the board center).
+  let starAngle: number | undefined;
+  if (connection === "wye" && interconnectNeeded) {
+    const maxCoilAngle = ((plan.coils.length - 1) / Math.max(1, plan.coils.length)) * TAU;
+    const wFrom = maxCoilAngle + 2 * jog;
+    const wTo = TAU - 2.5 * jog;
+    const rTop = ringOuterBound;
+    const rBot = ringOuterBound - (planPhases - 1) * ringSpacing;
+    const rMid = (rTop + rBot) / 2;
+    const steps = 24;
+    for (let i = 0; i <= steps && wTo > wFrom; i++) {
+      const a = wFrom + ((wTo - wFrom) * i) / steps;
+      const jc = windPolar(center, rMid, a);
+      const probe = (rTop - rBot) / 2 + viaR + rules.edgeClearance;
+      let ok = onMaterial(jc);
+      for (let k = 0; k < 8 && ok; k++) {
+        ok = onMaterial(windPolar(jc, probe, (k * TAU) / 8));
+      }
+      if (ok) {
+        starAngle = a;
+        break;
+      }
+    }
+    if (starAngle == null) {
+      return fail(
+        "no board material for the star junction in the reachable angular window — " +
+          "the outline/cutouts leave nowhere to land the neutral. Adjust the outline " +
+          "or the winding placement.",
+      );
+    }
+  }
+
+  const tracesBase = pcb.traces.length;
+  const viasBase = pcb.vias.length;
+  const pushTrace = (a: Vec2, b: Vec2, layer: PcbLayer, net: string): boolean => {
+    const ra = { x: round3(a.x), y: round3(a.y) };
+    const rb = { x: round3(b.x), y: round3(b.y) };
+    if (ra.x === rb.x && ra.y === rb.y) return false;
+    pcb.traces.push({ start: ra, end: rb, width: traceWidth, layer, net, source: "manual" });
+    return true;
+  };
+  const pushVia = (p: Vec2, net: string): Vec2 => {
+    const rp = { x: round3(p.x), y: round3(p.y) };
+    pcb.vias.push({
+      position: rp,
+      diameter: viaDia,
+      drill: viaDrill,
+      startLayer: copperLayer,
+      endLayer: returnLayer,
+      net,
+      source: "manual",
+    });
+    vias++;
+    return rp;
+  };
+  const pushPolyline = (pts: Vec2[], layer: PcbLayer, net: string): void => {
+    for (let i = 0; i + 1 < pts.length; i++) {
+      if (pushTrace(pts[i]!, pts[i + 1]!, layer, net)) interconnectTraces++;
+    }
+  };
+
+  // b. One spiral per tooth. Terminal strategy: the spiral's own endpoints are
+  //    NOT via sites — a via on the spiral start/end overlaps the adjacent turn
+  //    (turn pitch < via radius + trace half-width), silently bypassing it.
+  //    Instead the inner endpoint leads to a via at the coil CENTER (guaranteed
+  //    copper-free bore) and the outer endpoint leads radially outward far
+  //    enough for the via pad to clear the outermost turn.
+  const leadOut = viaR + halfW + clearance + MARGIN;
+  interface CoilTerm {
+    net: string;
+    centerVia: Vec2;
+    centerAngle: number;
+    outerVia: Vec2;
+    outerAngle: number;
+  }
+  const coilTerminals = new Map<number, CoilTerm>();
+  const coilTraceRanges: Array<[number, number]> = [];
   for (const coil of plan.coils) {
     const angle = (coil.angleDeg * Math.PI) / 180;
     const coilCenter = {
@@ -8614,6 +8854,7 @@ export function addMotorWinding(args: Record<string, unknown>) {
       y: round3(center.y + pitchRadius * Math.sin(angle)),
     };
     const dir = coil.polarity === 1 ? "ccw" : "cw";
+    const beforeTraces = pcb.traces.length;
     const res = addCoil({
       ...childDoc,
       center: coilCenter,
@@ -8627,107 +8868,461 @@ export function addMotorWinding(args: Record<string, unknown>) {
       start_angle_deg: coil.angleDeg,
       clearance: args.clearance,
       segments_per_turn: args.segments_per_turn,
-      inner_via: true,
-      via_to_layer: returnLayer,
+      inner_via: false,
     });
     if (res.isError) {
       errors.push(`coil slot ${coil.slot} (net ${coil.net}): ${res.content[0]!.text}`);
       continue;
     }
+    coilTraceRanges.push([beforeTraces, pcb.traces.length]);
     const payload = JSON.parse(res.content[0]!.text) as {
       inner_endpoint: Vec2;
       outer_endpoint: Vec2;
     };
     coilsPlaced++;
-    vias++; // the inner via add_coil placed
-    // Add an outer via so the outer terminal is also reachable on returnLayer.
-    pcb.vias.push({
-      position: payload.outer_endpoint,
-      diameter: pcb.rules.defaultRules.viaDiameter,
-      drill: pcb.rules.defaultRules.viaDrill,
-      startLayer: copperLayer,
-      endLayer: returnLayer,
-      net: coil.net,
-      source: "manual",
-    });
-    vias++;
-    coilTerminals.set(coil.slot, {
-      inner: payload.inner_endpoint,
-      outer: payload.outer_endpoint,
-    });
-  }
-
-  // c. Series interconnect on the return layer, per phase, in plan order.
-  //    Connect coil k's outer terminal to coil k+1's inner terminal.
-  const phaseEnds: Record<string, { start: Vec2; end: Vec2 }> = {};
-  for (const [netName, slotSeq] of Object.entries(plan.phaseSeries)) {
-    const present = slotSeq.filter((s) => coilTerminals.has(s));
-    if (present.length === 0) continue;
-    const first = coilTerminals.get(present[0]!)!;
-    let prevEnd = first.outer;
-    phaseEnds[netName] = { start: first.inner, end: first.outer };
-    for (let i = 1; i < present.length; i++) {
-      const term = coilTerminals.get(present[i]!)!;
-      pcb.traces.push({
-        start: prevEnd,
-        end: term.inner,
-        width: traceWidth,
-        layer: returnLayer,
-        net: netName,
-        source: "manual",
-      });
+    // Inner lead-in: spiral start → coil center, via there (spiral layer run).
+    if (pushTrace(payload.inner_endpoint, coilCenter, copperLayer, coil.net)) {
       interconnectTraces++;
-      prevEnd = term.outer;
     }
-    phaseEnds[netName]!.end = prevEnd;
+    const centerVia = pushVia(coilCenter, coil.net);
+    // Outer lead-out: spiral end → radially outward, via clear of the last turn.
+    const outDirAng = windAngle(coilCenter, payload.outer_endpoint);
+    const rOut = Math.hypot(
+      payload.outer_endpoint.x - coilCenter.x,
+      payload.outer_endpoint.y - coilCenter.y,
+    );
+    const outerViaPos = windPolar(coilCenter, rOut + leadOut, outDirAng);
+    if (pushTrace(payload.outer_endpoint, outerViaPos, copperLayer, coil.net)) {
+      interconnectTraces++;
+    }
+    const outerVia = pushVia(outerViaPos, coil.net);
+    coilTerminals.set(coil.slot, {
+      net: coil.net,
+      centerVia,
+      centerAngle: windAngle(center, centerVia),
+      outerVia,
+      outerAngle: windAngle(center, outerVia),
+    });
   }
 
-  // d. Termination + net-tie so DRC sees an intentional join, not a short.
-  const phaseNetNames = Object.keys(phaseEnds);
+  // Phases that actually placed coils, in plan order.
+  const phaseList = Object.keys(plan.phaseSeries).filter((n) =>
+    plan.phaseSeries[n]!.some((s) => coilTerminals.has(s)),
+  );
+  const seriesRing = (p: number) => ringOuterBound - p * ringSpacing;
+  const buildInterconnect =
+    coilsPlaced > 0 && (coilsPlaced > 1 || connection === "wye");
+
+  // Return-layer drop from an outer terminal via to a ring: short jog chord at
+  // the terminal radius (off the terminal ray), then a radial to the ring, then
+  // a layer-hop via. Returns the ring angle the arc starts at.
+  const buildDescent = (term: CoilTerm, ringR: number, net: string): number => {
+    const aFrom = term.outerAngle + jog;
+    const rO = Math.hypot(term.outerVia.x - center.x, term.outerVia.y - center.y);
+    const jogEnd = windPolar(center, rO, aFrom);
+    if (pushTrace(term.outerVia, jogEnd, returnLayer, net)) interconnectTraces++;
+    const hop = windPolar(center, ringR, aFrom);
+    if (pushTrace(jogEnd, hop, returnLayer, net)) interconnectTraces++;
+    pushVia(hop, net);
+    return aFrom;
+  };
+
+  // d. Series links per phase: ride the phase's ring on the spiral layer from
+  //    (previous coil's outer drop) to the next coil's center-via ray, then hop
+  //    back to the return layer and run the radial up to the center via.
+  const phaseChain = new Map<string, { first: CoilTerm; last: CoilTerm }>();
+  phaseList.forEach((netName, p) => {
+    const present = plan.phaseSeries[netName]!.filter((s) => coilTerminals.has(s));
+    const ringR = seriesRing(p);
+    const first = coilTerminals.get(present[0]!)!;
+    let last = first;
+    for (let i = 1; i < present.length; i++) {
+      const prev = coilTerminals.get(present[i - 1]!)!;
+      const cur = coilTerminals.get(present[i]!)!;
+      const aFrom = buildDescent(prev, ringR, netName);
+      let aTo = cur.centerAngle;
+      while (aTo <= aFrom + 1e-9) aTo += TAU;
+      pushPolyline(windArcPoints(center, ringR, aFrom, aTo), copperLayer, netName);
+      const hopEnd = pushVia(windPolar(center, ringR, aTo), netName);
+      if (pushTrace(hopEnd, cur.centerVia, returnLayer, netName)) interconnectTraces++;
+      last = cur;
+    }
+    phaseChain.set(netName, { first, last });
+  });
+
+  // e. Termination + scoped net-tie at each junction.
   pcb.netTies = pcb.netTies ?? [];
   let netTiesAdded = 0;
-  if (connection === "wye") {
-    const neutral = plan.neutralNet ?? (args.neutral_net ? String(args.neutral_net) : "WIND_N");
-    for (const netName of phaseNetNames) {
-      pcb.traces.push({
-        start: phaseEnds[netName]!.end,
-        end: center,
-        width: traceWidth,
-        layer: returnLayer,
-        net: netName,
-        source: "manual",
-      });
-      interconnectTraces++;
+  let starJunction: Vec2 | undefined;
+  let neutralFeedVia: Vec2 | undefined;
+
+  if (connection === "wye" && buildInterconnect && phaseList.length > 0 && starAngle != null) {
+    const rTop = seriesRing(0);
+    const rBot = seriesRing(phaseList.length - 1);
+
+    // Each phase ring continues past its last coil to the star angle…
+    phaseList.forEach((netName, p) => {
+      const ringR = seriesRing(p);
+      const { last } = phaseChain.get(netName)!;
+      const aFrom = buildDescent(last, ringR, netName);
+      let aTo = starAngle!;
+      while (aTo <= aFrom + 1e-9) aTo += TAU;
+      pushPolyline(windArcPoints(center, ringR, aFrom, aTo), copperLayer, netName);
+    });
+    // …and the neutral is a short radial across the ring ends, on the spiral
+    // layer, touching each phase exactly at its arc end.
+    const neutralNet = neutral!;
+    if (!pcb.nets.some((n) => n.id === neutralNet)) {
+      pcb.nets.push({ id: neutralNet, name: neutralNet });
     }
+    const jTop = windPolar(center, rTop, starAngle);
+    const jBot = windPolar(center, rBot, starAngle);
+    if (pushTrace(jTop, jBot, copperLayer, neutralNet)) interconnectTraces++;
+    if (neutralFeedWanted) {
+      const rN = ringOuterBound - phaseList.length * ringSpacing;
+      const jN = windPolar(center, rN, starAngle);
+      if (pushTrace(jBot, jN, copperLayer, neutralNet)) interconnectTraces++;
+      neutralFeedVia = pushVia(jN, neutralNet);
+    }
+    starJunction = { x: round3((jTop.x + jBot.x) / 2), y: round3((jTop.y + jBot.y) / 2) };
     pcb.netTies.push({
-      nets: [...phaseNetNames, neutral],
-      position: center,
-      radius: Math.max(2, innerR),
+      nets: [...phaseList, neutralNet],
+      position: starJunction,
+      radius: round3((rTop - rBot) / 2 + (neutralFeedWanted ? ringSpacing : 0) + traceWidth + 1),
     });
     netTiesAdded++;
-  } else {
-    // delta: phase[i].end → phase[(i+1)%n].start, one tie per junction.
-    const n = phaseNetNames.length;
-    for (let i = 0; i < n; i++) {
-      const a = phaseNetNames[i]!;
-      const b = phaseNetNames[(i + 1) % n]!;
-      pcb.traces.push({
-        start: phaseEnds[a]!.end,
-        end: phaseEnds[b]!.start,
-        width: traceWidth,
-        layer: returnLayer,
-        net: a,
-        source: "manual",
-      });
-      interconnectTraces++;
+  } else if (connection === "delta" && buildInterconnect && phaseList.length > 1) {
+    // Delta: phase[i]'s end rides its own link ring to phase[i+1]'s first-coil
+    // ray, then ascends to that coil's center via — the junction, tied there.
+    const n = phaseList.length;
+    for (let p = 0; p < n; p++) {
+      const a = phaseList[p]!;
+      const b = phaseList[(p + 1) % n]!;
+      const endTerm = phaseChain.get(a)!.last;
+      const startTerm = phaseChain.get(b)!.first;
+      const ringR = ringOuterBound - (n + p) * ringSpacing;
+      const aFrom = buildDescent(endTerm, ringR, a);
+      let aTo = startTerm.centerAngle;
+      while (aTo <= aFrom + 1e-9) aTo += TAU;
+      pushPolyline(windArcPoints(center, ringR, aFrom, aTo), copperLayer, a);
+      const hopEnd = pushVia(windPolar(center, ringR, aTo), a);
+      // Ascend to phase b's center via — the X–Y junction. The last stretch is
+      // its own short segment so DRC's contact-point estimate (a trace's
+      // midpoint) lands inside the tie region.
+      const junctionR = Math.hypot(
+        startTerm.centerVia.x - center.x,
+        startTerm.centerVia.y - center.y,
+      );
+      const approach = windPolar(center, junctionR - viaSep, aTo);
+      if (pushTrace(hopEnd, approach, returnLayer, a)) interconnectTraces++;
+      if (pushTrace(approach, startTerm.centerVia, returnLayer, a)) interconnectTraces++;
       pcb.netTies.push({
         nets: [a, b],
-        position: phaseEnds[b]!.start,
-        radius: Math.max(2, innerR),
+        position: startTerm.centerVia,
+        radius: round3(viaR + traceWidth + clearance + 1),
       });
       netTiesAdded++;
     }
   }
+
+  // f. Phase/neutral feeds to same-net pads, when any exist. Escape scheme:
+  //    jog off the first coil's center-via ray (opposite side from the series
+  //    escapes), radial out on the return layer past the outer terminals, a
+  //    staggered escape arc to the pad's angle, then a drop onto the pad (via
+  //    if the pad doesn't reach the return layer). Every candidate is checked
+  //    against all existing copper before it is committed; ring assignments
+  //    and arc directions are searched, and anything unroutable is reported.
+  const phaseFeeds: Record<string, Vec2> = {};
+  const feedsRouted: string[] = [];
+  const feedsUnrouted: string[] = [];
+  {
+    interface FeedSpec {
+      net: string;
+      start: Vec2;
+      startRadius: number;
+      angle: number;
+      useJog: boolean;
+    }
+    const specs: FeedSpec[] = [];
+    for (const netName of phaseList) {
+      const first = phaseChain.get(netName)?.first;
+      if (!first) continue;
+      phaseFeeds[netName] = first.centerVia;
+      if ((padsByNet.get(netName)?.length ?? 0) > 0) {
+        specs.push({
+          net: netName,
+          start: first.centerVia,
+          startRadius: Math.hypot(first.centerVia.x - center.x, first.centerVia.y - center.y),
+          angle: first.centerAngle,
+          useJog: true,
+        });
+      }
+    }
+    if (neutralFeedWanted && neutralFeedVia && starJunction) {
+      phaseFeeds[neutral!] = neutralFeedVia;
+      specs.push({
+        net: neutral!,
+        start: neutralFeedVia,
+        startRadius: Math.hypot(neutralFeedVia.x - center.x, neutralFeedVia.y - center.y),
+        angle: windAngle(center, neutralFeedVia),
+        useJog: false,
+      });
+    }
+
+    if (specs.length > 0) {
+      const outerViaRadii = [...coilTerminals.values()].map((t) =>
+        Math.hypot(t.outerVia.x - center.x, t.outerVia.y - center.y),
+      );
+      const rEscBase =
+        (outerViaRadii.length ? Math.max(...outerViaRadii) : pitchRadius + outerR) +
+        viaR +
+        halfW +
+        clearance +
+        MARGIN;
+      // Outer material limit: nearest outline edge from the winding center.
+      let rimDist = Infinity;
+      const ov = pcb.outline.vertices;
+      for (let i = 0; i < ov.length; i++) {
+        rimDist = Math.min(rimDist, pointSegDist(center, ov[i]!, ov[(i + 1) % ov.length]!));
+      }
+      const rEscMax = rimDist - rules.edgeClearance - viaR;
+
+      type Candidate = {
+        traces: Array<{ a: Vec2; b: Vec2; layer: PcbLayer }>;
+        vias: Vec2[];
+      };
+      const buildFeed = (spec: FeedSpec, ringIdx: number, dirSign: 1 | -1): Candidate | null => {
+        const rEsc = rEscBase + ringIdx * ringSpacing;
+        if (rEsc + halfW > rEscMax) return null;
+        const pads = padsByNet.get(spec.net)!;
+        const target = pads.reduce((best, p) =>
+          Math.hypot(p.pos.x - spec.start.x, p.pos.y - spec.start.y) <
+          Math.hypot(best.pos.x - spec.start.x, best.pos.y - spec.start.y)
+            ? p
+            : best,
+        );
+        const aEsc = spec.useJog ? spec.angle - jog : spec.angle;
+        const traces: Candidate["traces"] = [];
+        const cvias: Vec2[] = [];
+        let prev = spec.start;
+        if (spec.useJog) {
+          const jogEnd = windPolar(center, spec.startRadius, aEsc);
+          traces.push({ a: prev, b: jogEnd, layer: returnLayer });
+          prev = jogEnd;
+        }
+        const escTop = windPolar(center, rEsc, aEsc);
+        traces.push({ a: prev, b: escTop, layer: returnLayer });
+        let aPad = windAngle(center, target.pos);
+        if (dirSign > 0) {
+          while (aPad <= aEsc + 1e-9) aPad += TAU;
+        } else {
+          while (aPad >= aEsc - 1e-9) aPad -= TAU;
+        }
+        // Stop the arc short of the pad's ray so the last chord stays clear of
+        // the pad drop-via — the final diagonal then terminates AT the via
+        // instead of riding past it (which the bypass audit would flag).
+        const padR = Math.hypot(target.pos.x - center.x, target.pos.y - center.y);
+        const lim = viaR + halfW + clearance + MARGIN;
+        let standoff = 0;
+        if (Math.abs(rEsc - padR) < lim && rEsc > 0 && padR > 0) {
+          const cosD = (rEsc * rEsc + padR * padR - lim * lim) / (2 * rEsc * padR);
+          standoff = Math.acos(Math.max(-1, Math.min(1, cosD)));
+        }
+        const arcEnd = aPad - dirSign * standoff;
+        if (Math.abs(arcEnd - aEsc) > 1e-6 && dirSign * (arcEnd - aEsc) > 0) {
+          const arc = windArcPoints(center, rEsc, aEsc, arcEnd);
+          for (let i = 0; i + 1 < arc.length; i++) {
+            traces.push({ a: arc[i]!, b: arc[i + 1]!, layer: returnLayer });
+          }
+          traces.push({ a: arc[arc.length - 1]!, b: target.pos, layer: returnLayer });
+        } else {
+          traces.push({ a: escTop, b: target.pos, layer: returnLayer });
+        }
+        if (!target.onReturnLayer) cvias.push(target.pos);
+        return { traces, vias: cvias };
+      };
+
+      // Collision check against all existing copper (and board material).
+      const feedClear = (cand: Candidate, net: string): boolean => {
+        for (const t of cand.traces) {
+          if (!onMaterial(t.a) || !onMaterial(t.b)) return false;
+          for (const other of pcb.traces) {
+            if (other.net === net || other.layer !== t.layer) continue;
+            if (windSegSegDist(t.a, t.b, other.start, other.end) < halfW + other.width / 2 + clearance) {
+              return false;
+            }
+          }
+          for (const v of pcb.vias) {
+            if (v.net === net) continue;
+            if (pointSegDist(v.position, t.a, t.b) < v.diameter / 2 + halfW + clearance) return false;
+          }
+          for (const fp of pcb.footprints) {
+            for (const pad of fp.pads) {
+              if (pad.net === net) continue;
+              const pw = padWorld(fp, pad);
+              if (pointSegDist(pw, t.a, t.b) < padApproxRadius(pad) + halfW + clearance) return false;
+            }
+          }
+        }
+        for (const v of cand.vias) {
+          for (const other of pcb.vias) {
+            const d = Math.hypot(other.position.x - v.x, other.position.y - v.y);
+            if (other.net !== net && d < viaDia + clearance) return false;
+            if (d < viaDrill + rules.holeToHole && d > 1e-6) return false;
+          }
+          for (const other of pcb.traces) {
+            if (other.net === net) continue;
+            if (pointSegDist(v, other.start, other.end) < viaR + other.width / 2 + clearance) {
+              return false;
+            }
+          }
+        }
+        return true;
+      };
+
+      const commit = (cand: Candidate, net: string) => {
+        for (const t of cand.traces) {
+          if (pushTrace(t.a, t.b, t.layer, net)) interconnectTraces++;
+        }
+        for (const v of cand.vias) pushVia(v, net);
+      };
+
+      // Search ring assignments (≤4 feeds → ≤24 permutations), directions
+      // greedily per feed; first fully-clear assignment wins.
+      const perms = (idx: number[]): number[][] =>
+        idx.length <= 1
+          ? [idx]
+          : idx.flatMap((v, i) => perms([...idx.slice(0, i), ...idx.slice(i + 1)]).map((r) => [v, ...r]));
+      let done = false;
+      for (const perm of perms(specs.map((_, i) => i))) {
+        const staged: Array<{ cand: Candidate; net: string }> = [];
+        let ok = true;
+        for (let s = 0; s < specs.length && ok; s++) {
+          const spec = specs[s]!;
+          let placed = false;
+          for (const dirSign of [1, -1] as const) {
+            const cand = buildFeed(spec, perm[s]!, dirSign);
+            if (!cand) continue;
+            // check against pcb + already-staged candidates
+            const stagedHit = staged.some((st) =>
+              st.net !== spec.net &&
+              st.cand.traces.some((a) =>
+                cand.traces.some(
+                  (b) => a.layer === b.layer && windSegSegDist(a.a, a.b, b.a, b.b) < traceWidth + clearance,
+                ),
+              ),
+            );
+            if (!stagedHit && feedClear(cand, spec.net)) {
+              staged.push({ cand, net: spec.net });
+              placed = true;
+              break;
+            }
+          }
+          if (!placed) ok = false;
+        }
+        if (ok) {
+          for (const st of staged) commit(st.cand, st.net);
+          feedsRouted.push(...staged.map((st) => st.net));
+          done = true;
+          break;
+        }
+      }
+      if (!done) {
+        // Fall back to routing whatever fits, first-fit; report the rest.
+        for (const spec of specs) {
+          let placed = false;
+          for (let ringIdx = 0; ringIdx < specs.length && !placed; ringIdx++) {
+            for (const dirSign of [1, -1] as const) {
+              const cand = buildFeed(spec, ringIdx, dirSign);
+              if (cand && feedClear(cand, spec.net)) {
+                commit(cand, spec.net);
+                placed = true;
+                break;
+              }
+            }
+          }
+          (placed ? feedsRouted : feedsUnrouted).push(spec.net);
+        }
+      }
+    }
+  }
+
+  // g. Post-build audit: re-verify the two invariants on the copper this call
+  //    added. (1) No trace within clearance of a same-net via it doesn't
+  //    terminate at — the silent-bypass case. (2) No cross-net copper contact
+  //    or sub-clearance approach outside a declared tie region.
+  const auditIssues: string[] = [];
+  {
+    const near = (a: Vec2, b: Vec2) => Math.hypot(a.x - b.x, a.y - b.y) <= 1e-3;
+    const tieExempt = (a: string, b: string, at: Vec2): boolean =>
+      (pcb.netTies ?? []).some(
+        (t) =>
+          t.nets.includes(a) &&
+          t.nets.includes(b) &&
+          (!t.position ||
+            t.radius == null ||
+            Math.hypot(at.x - t.position.x, at.y - t.position.y) <= t.radius),
+      );
+    const isCoilTrace = (idx: number) =>
+      coilTraceRanges.some(([s, e]) => idx >= s && idx < e);
+    const bboxFar = (a1: Vec2, b1: Vec2, a2: Vec2, b2: Vec2, lim: number) =>
+      Math.min(a1.x, b1.x) > Math.max(a2.x, b2.x) + lim ||
+      Math.min(a2.x, b2.x) > Math.max(a1.x, b1.x) + lim ||
+      Math.min(a1.y, b1.y) > Math.max(a2.y, b2.y) + lim ||
+      Math.min(a2.y, b2.y) > Math.max(a1.y, b1.y) + lim;
+
+    for (let vi = viasBase; vi < pcb.vias.length; vi++) {
+      const v = pcb.vias[vi]!;
+      for (let ti = tracesBase; ti < pcb.traces.length; ti++) {
+        const t = pcb.traces[ti]!;
+        if (t.net !== v.net) continue;
+        const lim = v.diameter / 2 + t.width / 2 + clearance - 1e-6;
+        if (bboxFar(t.start, t.end, v.position, v.position, lim)) continue;
+        const d = pointSegDist(v.position, t.start, t.end);
+        if (d >= lim) continue;
+        if (near(v.position, t.start) || near(v.position, t.end)) continue;
+        auditIssues.push(
+          `audit: net '${t.net}' trace (${t.start.x},${t.start.y})→(${t.end.x},${t.end.y}) passes ` +
+            `${round3(d)}mm from a same-net via at (${v.position.x},${v.position.y}) it doesn't ` +
+            `terminate at — electrical bypass`,
+        );
+      }
+    }
+
+    for (let ti = tracesBase; ti < pcb.traces.length; ti++) {
+      const t = pcb.traces[ti]!;
+      const tIsCoil = isCoilTrace(ti);
+      for (let tj = tracesBase; tj < pcb.traces.length; tj++) {
+        if (tj <= ti || (tIsCoil && isCoilTrace(tj))) continue;
+        const u = pcb.traces[tj]!;
+        if (u.net === t.net || u.layer !== t.layer) continue;
+        const lim = t.width / 2 + u.width / 2 + clearance - 1e-6;
+        if (bboxFar(t.start, t.end, u.start, u.end, lim)) continue;
+        const d = windSegSegDist(t.start, t.end, u.start, u.end);
+        if (d >= lim) continue;
+        const at = windSegClosestPt(t.start, t.end, u.start, u.end);
+        if (tieExempt(t.net, u.net, at)) continue;
+        auditIssues.push(
+          `audit: nets '${t.net}'/'${u.net}' copper ${round3(d)}mm apart at ` +
+            `(${round3(at.x)},${round3(at.y)}) on ${t.layer}, outside any tie region`,
+        );
+      }
+      for (let vi = viasBase; vi < pcb.vias.length; vi++) {
+        const v = pcb.vias[vi]!;
+        if (v.net === t.net) continue;
+        const lim = v.diameter / 2 + t.width / 2 + clearance - 1e-6;
+        if (bboxFar(t.start, t.end, v.position, v.position, lim)) continue;
+        const d = pointSegDist(v.position, t.start, t.end);
+        if (d >= lim) continue;
+        if (tieExempt(t.net, v.net, v.position)) continue;
+        auditIssues.push(
+          `audit: net '${t.net}' trace ${round3(d)}mm from net '${v.net}' via at ` +
+            `(${v.position.x},${v.position.y}), outside any tie region`,
+        );
+      }
+    }
+  }
+  errors.push(...auditIssues);
 
   return {
     content: [
@@ -8736,15 +9331,23 @@ export function addMotorWinding(args: Record<string, unknown>) {
         text: JSON.stringify({
           success: errors.length === 0,
           coils_placed: coilsPlaced,
-          coils_failed: errors.length,
+          coils_failed: plan.coils.length - coilsPlaced,
           interconnect_traces: interconnectTraces,
           vias_added: vias,
           net_ties_added: netTiesAdded,
           connection,
           winding_factor: plan.windingFactor,
+          ...(starJunction ? { star_junction: starJunction } : {}),
+          phase_feeds: phaseFeeds,
+          ...(feedsRouted.length ? { feeds_routed: feedsRouted } : {}),
+          ...(feedsUnrouted.length ? { feeds_unrouted: feedsUnrouted } : {}),
           interconnect_note:
-            "Series interconnect and termination are straight-line on the return " +
-            "layer and may cross; run_drc will flag any crossings for routing cleanup.",
+            "Interconnect is planar by construction: per-phase staggered-radius arcs " +
+            "on the spiral layer in the coil-free bore, radial drops on the return " +
+            "layer, joined only through vias, with approach angles jogged so no trace " +
+            "rides a terminal ray past a same-net via. A post-build audit re-checked " +
+            "these invariants" +
+            (auditIssues.length ? " and FOUND VIOLATIONS (see errors)." : "."),
           ...(errors.length ? { errors } : {}),
           ...docResultPayload(ctx),
         }),
@@ -8752,6 +9355,13 @@ export function addMotorWinding(args: Record<string, unknown>) {
     ],
     ...(errors.length && coilsPlaced === 0 ? { isError: true as const } : {}),
   };
+}
+
+/** Coarse pad radius from its shape, for feed-escape collision checks. */
+function padApproxRadius(pad: Pad): number {
+  const s = pad.shape as { type: string; diameter?: number; width?: number; height?: number };
+  if (s.type === "Circle") return (s.diameter ?? 1) / 2;
+  return Math.max(s.width ?? 1, s.height ?? 1) / 2;
 }
 
 // ============================================================================
@@ -9616,6 +10226,17 @@ export async function buildReceipt(args: Record<string, unknown>, engine?: Engin
     }
   }
 
+  // The unified DesignReceipt (schema vcad.receipt/1) is the cross-domain
+  // claim ledger — DRC, power continuity, provenance, and enclosure fit as
+  // fail-closed claims. The legacy Receipt stays the re-runnable input to
+  // verify_receipt. Emit both.
+  const unified = unifiedFromPcbReceipt(receipt, ctx.documentId, {
+    ...(enclosureFit ? { enclosureFit } : {}),
+    ...(enclosureId && !enclosureFit && enclosureFitError
+      ? { enclosureFitError }
+      : {}),
+  });
+
   // The receipt rides in structuredContent so the inline viewer renders it
   // as an audit ledger (the only carrier ChatGPT's widget bridge exposes);
   // document_id lets the viewer also fetch the board GLB behind the ledger.
@@ -9625,9 +10246,19 @@ export async function buildReceipt(args: Record<string, unknown>, engine?: Engin
       ? { ...receipt, enclosure_fit_error: enclosureFitError }
       : receipt;
   return {
-    content: [{ type: "text" as const, text: JSON.stringify(textPayload) }],
+    content: [
+      {
+        type: "text" as const,
+        text: JSON.stringify({
+          ...textPayload,
+          unified,
+          unified_summary: summarize(unified),
+        }),
+      },
+    ],
     structuredContent: {
       receipt,
+      unified,
       power_integrity_ok: powerIntegrityOk,
       ...(planeWarnings.length ? { disconnected_planes: planeWarnings } : {}),
       ...(enclosureFit ? { enclosure_fit: enclosureFit } : {}),
@@ -9668,7 +10299,13 @@ export async function verifyReceipt(args: Record<string, unknown>) {
   if (!validity.valid) {
     return pcbValidationError("verify_receipt", validity, args.document_id ? String(args.document_id) : undefined);
   }
-  const receipt = args.receipt as Receipt | undefined;
+  let receipt = args.receipt as Receipt | undefined;
+  // Tolerate the whole build_receipt payload ({ receipt, unified, … } or a
+  // structuredContent echo) being passed back verbatim.
+  if (receipt && typeof receipt === "object" && !receipt.board_hash) {
+    const inner = (receipt as Record<string, unknown>).receipt;
+    if (inner && typeof inner === "object") receipt = inner as Receipt;
+  }
   if (!receipt || typeof receipt !== "object" || !receipt.board_hash) {
     return {
       content: [
