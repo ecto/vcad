@@ -4916,3 +4916,54 @@ describe("EM receipt claims", () => {
     }
   });
 });
+
+describe("diff_stripline model consistency (calc_impedance vs size_impedance)", () => {
+  const stack = { dielectric_height: 0.4, copper_thickness: 0.035, dielectric_er: 4.3 };
+
+  it("diff_stripline computes its base Z0 with the stripline formula", async () => {
+    const diff = out(
+      await calcImpedance({ trace_type: "diff_stripline", trace_width: 0.15, spacing: 0.2, ...stack }),
+    );
+    const se = out(
+      await calcImpedance({ trace_type: "stripline", trace_width: 0.15, ...stack }),
+    );
+    // Same base Z0 as plain stripline — NOT the microstrip formula.
+    expect(diff.z0).toBeCloseTo(se.z0, 6);
+    // Fully embedded in the dielectric → er_eff == er (and the delay follows).
+    expect(diff.er_eff).toBeCloseTo(4.3, 6);
+    // Claims name the model actually used.
+    const z0claim = diff.claims.find((c: any) => c.quantity === "characteristic_impedance");
+    expect(z0claim.method).toBe("ipc2141-stripline");
+  });
+
+  it("size_impedance(diff_stripline) geometry is reproduced by calc_impedance — same model", async () => {
+    const sized = out(
+      sizeImpedance({ trace_type: "diff_stripline", target_z0: 50, target_diff_z0: 90, ...stack }),
+    );
+    expect(sized.within_tolerance).toBe(true);
+    const calc = out(
+      await calcImpedance({
+        trace_type: "diff_stripline",
+        trace_width: sized.width_mm,
+        spacing: sized.spacing_mm,
+        ...stack,
+      }),
+    );
+    expect(calc.z0).toBeCloseTo(sized.measured.z0, 1);
+    expect(calc.z_diff).toBeCloseTo(sized.measured.diff_z0, 1);
+  });
+
+  it("stripline and microstrip diff pairs use their own coupling constants", async () => {
+    // Same s/h for both families; compare the implied coupling k = z_diff / (2·z0).
+    const geo = { trace_width: 0.15, spacing: 0.4, ...stack }; // s/h = 1
+    const micro = out(await calcImpedance({ trace_type: "diff_microstrip", ...geo }));
+    const strip = out(await calcImpedance({ trace_type: "diff_stripline", ...geo }));
+    const kMicro = micro.z_diff / (2 * micro.z0);
+    const kStrip = strip.z_diff / (2 * strip.z0);
+    // Analytic constants at s/h = 1: microstrip 1 − 0.48·e^−0.96, stripline 1 − 0.347·e^−2.9.
+    expect(kMicro).toBeCloseTo(1 - 0.48 * Math.exp(-0.96), 2);
+    expect(kStrip).toBeCloseTo(1 - 0.347 * Math.exp(-2.9), 2);
+    // Stripline couples less at the same spacing — the pair sits closer to 2·Z0.
+    expect(kStrip).toBeGreaterThan(kMicro);
+  });
+});
