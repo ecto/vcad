@@ -6,7 +6,13 @@
 //! - Scaling benchmarks: performance vs. tessellation resolution
 
 use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion};
-use vcad_kernel_booleans::{bbox, boolean_op, classify, point_in_mesh, ssi, trim, BooleanOp};
+use vcad_kernel_booleans::{bbox, classify, point_in_mesh, ssi, trim, BooleanOp, BooleanResult};
+
+/// Bench wrapper: unwrap the now-fallible `boolean_op` — bench geometry
+/// never hits an SSI error.
+fn boolean_op(a: &BRepSolid, b: &BRepSolid, op: BooleanOp, segments: u32) -> BooleanResult {
+    vcad_kernel_booleans::boolean_op(a, b, op, segments).expect("boolean_op should succeed")
+}
 use vcad_kernel_geom::{CylinderSurface, Line3d, Plane};
 use vcad_kernel_math::predicates::{incircle, insphere, orient2d, orient3d};
 use vcad_kernel_math::{Point2, Point3, Transform, Vec3};
