@@ -733,6 +733,24 @@ fn default_true() -> bool {
 // Traces and Vias
 // ============================================================================
 
+/// Provenance of a piece of copper: who placed it.
+///
+/// The autorouter treats its own output as disposable — re-running `route_nets`
+/// rips up `Autoroute` copper on the nets it routes and lays it fresh — while
+/// `Manual` copper (hand-placed traces/vias, coils) is preserved. Copper with
+/// no recorded source (documents from before provenance existed) is treated as
+/// autorouted, matching the rip-up behavior those documents already had.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "bindings/"))]
+#[serde(rename_all = "lowercase")]
+pub enum CopperSource {
+    /// Placed by the autorouter (`route_nets` / diff-pair routing).
+    Autoroute,
+    /// Hand-placed by a user or agent (`add_trace`, `add_via`, coil tools).
+    Manual,
+}
+
 /// A straight routed copper trace segment.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
@@ -748,6 +766,11 @@ pub struct Trace {
     pub layer: PcbLayer,
     /// Net this trace belongs to.
     pub net: NetId,
+    /// Who placed this copper. Absent on pre-provenance documents (treated as
+    /// autorouted, i.e. rippable by `route_nets`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-rs", ts(optional))]
+    pub source: Option<CopperSource>,
 }
 
 /// An arc routed copper trace segment.
@@ -792,6 +815,11 @@ pub struct Via {
     pub end_layer: PcbLayer,
     /// Net this via belongs to.
     pub net: NetId,
+    /// Who placed this via. Absent on pre-provenance documents (treated as
+    /// autorouted, i.e. rippable by `route_nets`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-rs", ts(optional))]
+    pub source: Option<CopperSource>,
 }
 
 // ============================================================================
@@ -1068,6 +1096,7 @@ mod tests {
                 width: 0.25,
                 layer: PcbLayer::FCu,
                 net: "1".to_string(),
+                source: None,
             }],
             trace_arcs: vec![],
             vias: vec![Via {
@@ -1077,6 +1106,7 @@ mod tests {
                 start_layer: PcbLayer::FCu,
                 end_layer: PcbLayer::BCu,
                 net: "1".to_string(),
+                source: None,
             }],
             zones: vec![Zone {
                 outline: vec![

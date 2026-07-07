@@ -803,15 +803,15 @@ describe("route_nets locked_nets", () => {
     expect(hasDetour(getPcbBoard(getSession(id)))).toBe(true);
   });
 
-  it("rips up the same net when it is not locked (control)", async () => {
+  it("preserves manual add_trace copper even when the net is NOT locked", async () => {
     const created = out(
       await createSchematic({
-        components: [resistor("R1", 0), resistor("R2", 20)],
-        nets: { MID: ["R1.2", "R2.1"] },
+        components: [resistor("R1", 0), resistor("R2", 20), resistor("R3", 40)],
+        nets: { MID: ["R1.2", "R2.1"], NETB: ["R2.2", "R3.1"] },
       }),
     );
     const id = created.document_id;
-    await placeComponents({ document_id: id, board_width: 40, board_height: 20 });
+    await placeComponents({ document_id: id, board_width: 60, board_height: 20 });
     await addTrace({
       document_id: id,
       net: "MID",
@@ -823,11 +823,80 @@ describe("route_nets locked_nets", () => {
     });
     expect(hasDetour(getPcbBoard(getSession(id)))).toBe(true);
 
+    // No locked_nets: provenance alone protects the hand-placed copper. The
+    // net is preserved wholesale (the kernel can't route "around" existing
+    // copper) and reported so the caller knows it was skipped.
+    const res = out(await routeNets({ document_id: id }));
+    expect(res.success).toBe(true);
+    expect(res.manual_nets_preserved).toEqual(["MID"]);
+    expect(res.traces_removed ?? 0).toBe(0);
+    expect((res.warnings ?? []).join(" ")).toContain("MID");
+    const board = getPcbBoard(getSession(id));
+    expect(hasDetour(board)).toBe(true);
+    // Other nets still route normally around the preserved copper.
+    expect(board.traces.some((t) => t.net === "NETB")).toBe(true);
+  });
+
+  it("rips up untagged (pre-provenance) copper on an unlocked net (control)", async () => {
+    const created = out(
+      await createSchematic({
+        components: [resistor("R1", 0), resistor("R2", 20)],
+        nets: { MID: ["R1.2", "R2.1"] },
+      }),
+    );
+    const id = created.document_id;
+    await placeComponents({ document_id: id, board_width: 40, board_height: 20 });
+    // Inject a raw trace with no `source` — the shape of a document saved
+    // before copper provenance existed. Legacy copper stays disposable, so a
+    // re-route replaces it instead of stacking on top of it.
+    getPcbBoard(getSession(id)).traces.push({
+      start: { x: 1, y: 9 },
+      end: { x: 1, y: 1 },
+      width: 0.25,
+      layer: "FCu",
+      net: "MID",
+    });
+    expect(hasDetour(getPcbBoard(getSession(id)))).toBe(true);
+
     const res = out(await routeNets({ document_id: id }));
     expect(res.traces_removed).toBeGreaterThan(0);
     expect(hasDetour(getPcbBoard(getSession(id)))).toBe(false);
   });
+
+  it("keeps a manual via while re-routing the net's traces", async () => {
+    const created = out(
+      await createSchematic({
+        components: [resistor("R1", 0), resistor("R2", 20)],
+        nets: { MID: ["R1.2", "R2.1"] },
+      }),
+    );
+    const id = created.document_id;
+    await placeComponents({ document_id: id, board_width: 40, board_height: 20 });
+    out(await routeNets({ document_id: id }));
+    out(
+      await addVia({
+        document_id: id,
+        net: "MID",
+        position: { x: 2, y: 2 },
+      }),
+    );
+
+    // A via alone doesn't block re-routing (the ratsnest only counts traces),
+    // so the net is re-owned: autorouted copper replaced, manual via kept.
+    const res = out(await routeNets({ document_id: id }));
+    expect(res.success).toBe(true);
+    expect(res.traces_removed).toBeGreaterThan(0);
+    expect(res.manual_nets_preserved).toBeUndefined();
+    const board = getPcbBoard(getSession(id));
+    expect(
+      board.vias.some(
+        (v) => v.net === "MID" && v.source === "manual" && v.position.x === 2,
+      ),
+    ).toBe(true);
+    expect(board.traces.some((t) => t.net === "MID")).toBe(true);
+  });
 });
+
 
 describe("route_nets strategy", () => {
   const mkBoard = async () => {
@@ -2147,13 +2216,15 @@ describe("explicit netlist (nets as data)", () => {
 });
 
 describe("route_nets idempotency", () => {
-  // The exact board from the field bug report. Before the fix, routing an
-  // already-routed board a second time stacked copper: the kernel ratsnest
-  // skips nets that already have a trace, so the second route_all came back
-  // empty, the no-kernel fallback in routeNets misfired, and it chained naive
-  // straight segments over the clean route — turning a handful of inherent
-  // violations into dozens of shorts. The fix rips up the target nets' copper
-  // before routing, so re-running replaces the route instead of adding to it.
+  // The exact board from the field bug report (issue #277). Before the fix,
+  // routing an already-routed board a second time stacked copper: the kernel
+  // ratsnest skips nets that already have a trace, so the second route_all
+  // came back empty, the no-kernel fallback in routeNets misfired, and it
+  // chained naive straight segments over the clean route — turning a handful
+  // of inherent violations into dozens of shorts. The fix rips up the target
+  // nets' *autorouted* copper before routing (hand-placed copper is
+  // provenance-tagged and preserved), so re-running replaces the route
+  // instead of adding to it.
   const soic8 = (ref: string, x: number) => ({
     ref,
     value: "U",
@@ -2212,6 +2283,10 @@ describe("route_nets idempotency", () => {
     return id;
   };
 
+  /** Segment identity — stacked copper shows up as exact duplicates. */
+  const segKey = (t: { net: string; layer: string; start: Vec2; end: Vec2 }) =>
+    `${t.net}|${t.layer}|${t.start.x},${t.start.y}->${t.end.x},${t.end.y}`;
+
   it("a second route_nets does not stack copper or add violations", async () => {
     const id = await buildBoard();
 
@@ -2222,20 +2297,62 @@ describe("route_nets idempotency", () => {
     const vias1 = board1.vias.length;
     const drc1 = out(await runDrc({ document_id: id }));
     expect(traces1).toBeGreaterThan(0);
+    // A single pass never stacks copper on itself — the duplicate-free
+    // baseline the re-route must hold.
+    const keys1 = board1.traces.map(segKey);
+    expect(new Set(keys1).size).toBe(keys1.length);
 
     // Second route — must rip up and re-lay the same copper, not append a second
     // set. After the rip-up the board is pads-only again, exactly as it was
     // before the first route, so the deterministic router reproduces it byte
     // for byte.
-    out(await routeNets({ document_id: id }));
+    const r2 = out(await routeNets({ document_id: id }));
     const board2 = getPcbBoard(getSession(id));
     const drc2 = out(await runDrc({ document_id: id }));
 
+    // The rip-up is visible in the result, not silent.
+    expect(r2.traces_removed).toBeGreaterThan(0);
     expect(board2.traces.length).toBe(traces1);
     expect(board2.vias.length).toBe(vias1);
+    // No two identical segments — the stacked-copper signature.
+    const keys2 = board2.traces.map(segKey);
+    expect(new Set(keys2).size).toBe(keys2.length);
+    // Every piece of autorouted copper carries its provenance, so the next
+    // re-route knows it is disposable.
+    expect(board2.traces.every((t) => t.source === "autoroute")).toBe(true);
+    expect(board2.vias.every((v) => v.source === "autoroute")).toBe(true);
     expect(drc2.violations).toBe(drc1.violations);
     // The headline symptom: the re-route must never introduce shorts.
     expect(drc2.byRule.Short ?? 0).toBe(0);
+  });
+
+  it("a scoped re-route of one net leaves the other nets' copper untouched", async () => {
+    const id = await buildBoard();
+    out(await routeNets({ document_id: id }));
+
+    const before = getPcbBoard(getSession(id));
+    const othersBefore = before.traces.filter((t) => t.net !== "SIG2").map(segKey).sort();
+    const sig2Before = before.traces.filter((t) => t.net === "SIG2").length;
+    expect(sig2Before).toBeGreaterThan(0);
+
+    const r = out(await routeNets({ document_id: id, nets: ["SIG2"] }));
+    expect(r.success).toBe(true);
+    expect(r.traces_removed).toBeGreaterThan(0);
+
+    const after = getPcbBoard(getSession(id));
+    // SIG2 was replaced (still routed, no duplicate segments), not doubled.
+    // The scoped pass routes against different obstacles than the original
+    // negotiated pass, so the exact path may differ — but stacking would at
+    // least double the segment count.
+    const sig2After = after.traces.filter((t) => t.net === "SIG2");
+    expect(sig2After.length).toBeGreaterThan(0);
+    expect(sig2After.length).toBeLessThan(sig2Before * 2);
+    const sig2Keys = sig2After.map(segKey);
+    expect(new Set(sig2Keys).size).toBe(sig2Keys.length);
+    // Copper on every other net is byte-identical.
+    expect(after.traces.filter((t) => t.net !== "SIG2").map(segKey).sort()).toEqual(
+      othersBefore,
+    );
   });
 
   it("routing three times in a row stays flat — no monotonic copper growth", async () => {

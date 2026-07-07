@@ -1492,6 +1492,7 @@ mod tests {
                 width: t.width,
                 layer: t.layer,
                 net: t.net.clone(),
+                source: None,
             });
         }
         for v in &r.vias {
@@ -1502,6 +1503,7 @@ mod tests {
                 start_layer: PcbLayer::FCu,
                 end_layer: PcbLayer::BCu,
                 net: v.net.clone(),
+                source: None,
             });
         }
     }

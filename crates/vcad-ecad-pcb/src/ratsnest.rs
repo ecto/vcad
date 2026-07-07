@@ -423,6 +423,7 @@ mod tests {
             width: 0.25,
             layer: PcbLayer::FCu,
             net: "VCC".into(),
+            source: None,
         });
 
         let netlist = Netlist {

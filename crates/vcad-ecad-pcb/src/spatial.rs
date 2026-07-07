@@ -753,6 +753,7 @@ mod tests {
                 width: 0.25,
                 layer: PcbLayer::FCu,
                 net: "1".to_string(),
+                source: None,
             }],
             trace_arcs: vec![],
             vias: vec![Via {
@@ -762,6 +763,7 @@ mod tests {
                 start_layer: PcbLayer::FCu,
                 end_layer: PcbLayer::BCu,
                 net: "1".to_string(),
+                source: None,
             }],
             zones: vec![],
             keepouts: vec![],
