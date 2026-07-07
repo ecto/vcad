@@ -538,10 +538,7 @@ fn pad_min_dimension(pad: &Pad) -> f64 {
 
 /// Absolute board-frame center of a pad on its footprint.
 fn pad_center(fp: &vcad_ir::ecad::Footprint, pad: &Pad) -> Vec2 {
-    Vec2::new(
-        fp.position.x + pad.position.x,
-        fp.position.y + pad.position.y,
-    )
+    crate::geometry::pad_world_position(fp, pad)
 }
 
 /// Assemble a "minimum metric" rule result (smaller is worse).

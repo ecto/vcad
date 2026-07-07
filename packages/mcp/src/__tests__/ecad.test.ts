@@ -454,6 +454,37 @@ describe("get_pad_positions", () => {
     }
   });
 
+  it("agrees with the Rust pad_world_position transform on a rotated footprint", async () => {
+    const created = out(
+      await createSchematic({
+        components: [resistor("R1", 0)],
+      }),
+    );
+    const id = created.document_id;
+    await placeComponents({ document_id: id, board_width: 40, board_height: 20 });
+
+    // Pin the placed footprint to the exact fixture the Rust kernel test
+    // `pad_world_position_rotated_matches_ts_tool` asserts in
+    // crates/vcad-ecad-pcb/src/geometry.rs. Both sides hardcode the same
+    // world coordinates (origin (10, 20), rotation 190°), so the Rust copper
+    // pipeline (DRC / routing / pours) and this reporting tool cannot drift
+    // apart on the pad transform. If you change one side, change both.
+    const board = getPcbBoard(getSession(id));
+    const fp = board.footprints.find((f) => f.ref === "R1")!;
+    fp.position = { x: 10, y: 20 };
+    fp.rotation = 190;
+    fp.pads[0]!.position = { x: 7.62, y: 0 };
+    fp.pads[1]!.position = { x: 2.54, y: -1.27 };
+
+    const res = out(await getPadPositions({ document_id: id, ref: "R1" }));
+    const pads = res.pads as PadPos[];
+    expect(pads.length).toBe(2);
+    expect(pads[0]!.x).toBeCloseTo(2.496, 3);
+    expect(pads[0]!.y).toBeCloseTo(18.677, 3);
+    expect(pads[1]!.x).toBeCloseTo(7.278, 3);
+    expect(pads[1]!.y).toBeCloseTo(20.81, 3);
+  });
+
   it("filters by net and by ref", async () => {
     const created = out(
       await createSchematic({

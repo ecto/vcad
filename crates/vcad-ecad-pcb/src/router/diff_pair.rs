@@ -71,14 +71,9 @@ fn fan_to_pads(segments: &mut Vec<(Vec2, Vec2)>, start_pad: Vec2, end_pad: Vec2)
 fn pad_positions_for_net(pcb: &Pcb, net: &str) -> Vec<Vec2> {
     let mut out = Vec::new();
     for fp in &pcb.footprints {
-        let fr = fp.rotation.to_radians();
-        let (fc, fs) = (fr.cos(), fr.sin());
         for pad in &fp.pads {
             if pad.net.as_deref() == Some(net) {
-                out.push(Vec2::new(
-                    fp.position.x + pad.position.x * fc - pad.position.y * fs,
-                    fp.position.y + pad.position.x * fs + pad.position.y * fc,
-                ));
+                out.push(crate::geometry::pad_world_position(fp, pad));
             }
         }
     }

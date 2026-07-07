@@ -1184,7 +1184,6 @@ fn stitch_planes(
     let copper = copper_layers(pcb);
 
     for fp in &pcb.footprints {
-        let (s, c) = fp.rotation.to_radians().sin_cos();
         for pad in &fp.pads {
             let Some(net) = pad.net.as_ref().filter(|n| !n.is_empty()) else {
                 continue;
@@ -1203,10 +1202,7 @@ fn stitch_planes(
             let Some(pad_layer) = pad.layers.iter().copied().find(|l| l.is_copper()) else {
                 continue;
             };
-            let pad_pt = Vec2::new(
-                fp.position.x + pad.position.x * c - pad.position.y * s,
-                fp.position.y + pad.position.x * s + pad.position.y * c,
-            );
+            let pad_pt = crate::geometry::pad_world_position(fp, pad);
             // A fine-pitch pad can't take an at-pad drill — force the dog-bone.
             // Pitch is the nearest neighbour's spacing in the footprint's own
             // frame (rotation/translation preserve relative distances).

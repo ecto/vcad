@@ -60,14 +60,9 @@ pub fn compute_ratsnest(pcb: &Pcb, netlist: &Netlist) -> Vec<RatsnestLine> {
     // Build pad position lookup: "REF:NUM" -> world position
     let mut pad_positions = std::collections::HashMap::new();
     for fp in &pcb.footprints {
-        let fp_rot = fp.rotation.to_radians();
-        let cos_r = fp_rot.cos();
-        let sin_r = fp_rot.sin();
         for pad in &fp.pads {
             let key = format!("{}:{}", fp.reference, pad.number);
-            let wx = fp.position.x + pad.position.x * cos_r - pad.position.y * sin_r;
-            let wy = fp.position.y + pad.position.x * sin_r + pad.position.y * cos_r;
-            pad_positions.insert(key, Vec2::new(wx, wy));
+            pad_positions.insert(key, crate::geometry::pad_world_position(fp, pad));
         }
     }
 
