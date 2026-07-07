@@ -31,6 +31,7 @@ import { UpgradeModal } from "@/components/UpgradeModal";
 import { cn } from "@/lib/utils";
 import { downloadBlob } from "@/lib/download";
 import { examples } from "@/data/examples";
+import { analytics } from "@/lib/analytics";
 import { SignInButton, UserMenu, triggerSync, useAuthStore } from "@vcad/auth";
 import { useChangelogStore } from "@/stores/changelog-store";
 import { useNotificationStore } from "@/stores/notification-store";
@@ -436,6 +437,7 @@ export function Header({ onAboutOpen, onProductOpen, onSave, onOpen, onShareOpen
       useNotificationStore.getState().addToast("Nothing to export", "info");
       return;
     }
+    analytics.exportStarted(format);
     try {
       const blob = await runJob(
         { verb: `Exporting ${format.toUpperCase()}` },
@@ -445,6 +447,7 @@ export function Header({ onAboutOpen, onProductOpen, onSave, onOpen, onShareOpen
           : exportStepBlob(scene),
       );
       downloadBlob(blob, `model.${format}`);
+      analytics.exportCompleted(format);
     } catch (err) {
       useNotificationStore
         .getState()
@@ -459,6 +462,7 @@ export function Header({ onAboutOpen, onProductOpen, onSave, onOpen, onShareOpen
   // bundle (e.g. Unitree G1 / Go2) that the loader pipes through the
   // engine's URDF importer.
   const handleLoadExampleEntry = (ex: (typeof examples)[number]) => {
+    analytics.templateOpened(ex.id);
     if (ex.urdf) {
       window.dispatchEvent(
         new CustomEvent("vcad:load-example", { detail: { urdf: ex.urdf } }),

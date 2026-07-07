@@ -10,6 +10,7 @@
  */
 
 import type { Engine, TriangleMesh } from "@vcad/engine";
+import type { Document } from "@vcad/ir";
 import { getSession } from "./session.js";
 
 export const inspectCadSchema = {
@@ -29,7 +30,7 @@ interface BoundingBox {
 }
 
 /** Per-part mass information. */
-interface PartMassInfo {
+export interface PartMassInfo {
   name: string;
   volume_mm3: number;
   material: string;
@@ -37,7 +38,7 @@ interface PartMassInfo {
   mass_g?: number;
 }
 
-interface InspectResult {
+export interface InspectResult {
   volume_mm3: number;
   surface_area_mm2: number;
   bounding_box: BoundingBox;
@@ -200,14 +201,10 @@ function computeMeshProperties(mesh: TriangleMesh): {
   };
 }
 
-export function inspectCad(
-  input: unknown,
-  engine: Engine,
-): { content: Array<{ type: "text"; text: string }> } {
-  const args = (input ?? {}) as Record<string, unknown>;
-  const documentId = String(args.document_id ?? "");
-  const ir = getSession(documentId);
-
+/** Evaluate a document and aggregate its geometry properties. Shared by
+ *  `inspect_cad` and `predict_print` (which snapshots the same numbers as
+ *  pre-print measurables). */
+export function computeInspection(ir: Document, engine: Engine): InspectResult {
   // Evaluate the document
   const scene = engine.evaluate(ir);
 
@@ -330,6 +327,19 @@ export function inspectCad(
     result.mass_g = Math.round(totalMass * 1000) / 1000;
     result.part_masses = partMasses;
   }
+
+  return result;
+}
+
+export function inspectCad(
+  input: unknown,
+  engine: Engine,
+): { content: Array<{ type: "text"; text: string }> } {
+  const args = (input ?? {}) as Record<string, unknown>;
+  const documentId = String(args.document_id ?? "");
+  const ir = getSession(documentId);
+
+  const result = computeInspection(ir, engine);
 
   return {
     content: [

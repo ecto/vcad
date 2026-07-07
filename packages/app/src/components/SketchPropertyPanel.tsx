@@ -468,8 +468,12 @@ export function SketchPropertyPanel() {
     if (!active) return;
     function handleCommit() {
       if (!pendingOperation) {
-        // No pending op — just exit.
-        exitSketchMode();
+        // No pending op — just exit. Any drawn segments are dropped, so this
+        // is an abandon from the funnel's perspective, not a completion.
+        const status = exitSketchMode();
+        analytics.sketchAbandoned(
+          status === "has_segments" ? "no_operation" : "empty",
+        );
         return;
       }
       if (!hasSegments && pendingOperation.kind !== "loft") {
@@ -509,6 +513,7 @@ export function SketchPropertyPanel() {
           const partId = addRevolve(plane, origin, segments, origin, axisDir, pendingOperation.angleDeg);
           if (partId) {
             select(partId);
+            analytics.sketchCompleted(constraints.length);
             addToast("Created Revolve", "success");
           } else {
             addToast("Revolve failed", "error");
@@ -537,6 +542,7 @@ export function SketchPropertyPanel() {
           const partId = addSweep(plane, origin, segments, path);
           if (partId) {
             select(partId);
+            analytics.sketchCompleted(constraints.length);
             addToast("Created Sweep", "success");
           } else {
             addToast("Sweep failed", "error");
@@ -555,6 +561,7 @@ export function SketchPropertyPanel() {
             );
             if (partId) {
               select(partId);
+              analytics.sketchCompleted(constraints.length);
               addToast("Created Loft", "success");
             }
           } else {

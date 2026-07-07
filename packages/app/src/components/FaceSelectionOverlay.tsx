@@ -2,6 +2,7 @@ import { useSketchStore, useDocumentStore } from "@vcad/core";
 import { Crosshair } from "@phosphor-icons/react/dist/ssr/Crosshair";
 import { X } from "@phosphor-icons/react/dist/ssr/X";
 import { Button } from "@/components/ui/button";
+import { analytics } from "@/lib/analytics";
 
 export function FaceSelectionOverlay() {
   const faceSelectionMode = useSketchStore((s) => s.faceSelectionMode);
@@ -40,7 +41,10 @@ export function FaceSelectionOverlay() {
           <Button
             variant="ghost"
             size="icon-sm"
-            onClick={cancelFaceSelection}
+            onClick={() => {
+              cancelFaceSelection();
+              analytics.sketchAbandoned("face_selection");
+            }}
           >
             <X size={16} />
           </Button>

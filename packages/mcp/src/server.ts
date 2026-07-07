@@ -17,6 +17,12 @@ import type { Document } from "@vcad/ir";
 import { exportCad, exportCadSchema } from "./tools/export.js";
 import { inspectCad, inspectCadSchema } from "./tools/inspect.js";
 import {
+  predictPrint,
+  predictPrintSchema,
+  recordMeasurement,
+  recordMeasurementSchema,
+} from "./tools/print-check.js";
+import {
   renderView,
   renderViewSchema,
   renderPcb,
@@ -265,6 +271,7 @@ import {
 } from "./tools/ecad.js";
 import { checkEnclosureFit, checkEnclosureFitSchema } from "./tools/enclosure.js";
 import { createCadLoon, createCadLoonSchema } from "./tools/loon.js";
+import { appendIntegrity, computeIntegrity } from "./tools/integrity.js";
 import {
   dfmCheck,
   dfmCheckSchema,
@@ -710,6 +717,9 @@ const TOOL_PACKS: Record<string, readonly string[]> = {
     "build_receipt",
     "verify_receipt",
   ],
+  // The 3DP print-then-measure calibration loop (predict before printing,
+  // record calipers/scale after — see docs/plans/2026-07-07-3dp-print-then-measure.md).
+  print: ["predict_print", "record_measurement"],
   // Mecheval self-grading oracle. The benchmark harness already excludes
   // these during scored runs; hosts that don't want the benchmark
   // vocabulary at all can drop the pack.
@@ -946,7 +956,7 @@ export async function createServer(
       {
         name: "get_document",
         description:
-          "Return the full IR Document JSON for an open session. Use after a series of mutations to capture the result, or to feed into `export_cad` / `open_in_browser`.",
+          "Return the full IR Document JSON for an open session. Use after a series of mutations to capture the result, or to feed into `export_cad` / `open_in_browser`. Very large documents come back as a compact artifact handle instead ({document_id, artifact_url, manifest with sha256, …}) — download the full IR at `artifact_url`.",
         inputSchema: getDocumentSchema,
         // Widget-callable: the viewer's "Open in vcad.io" button fetches
         // the IR through this tool to build the deep link.
@@ -1145,6 +1155,19 @@ export async function createServer(
         description:
           "Inspect an open session document to get aggregate geometry properties: volume, surface area, bounding box, center of mass, triangle count, and mass (if material density is known). For per-part inspection use the chat-surface `inspect_part` / `describe_scene` tools (deferred from this MCP surface in v1).",
         inputSchema: inspectCadSchema,
+      },
+      // ── Print-then-measure calibration loop (3DP) ───────────────
+      {
+        name: "predict_print",
+        description:
+          "Snapshot the design's predicted measurables BEFORE 3D-printing it: kernel-evaluated bbox and mass (at a filament density), plus caller-declared feature dimensions (step heights, hole diameters, wall thicknesses) with design-intent values. Returns a PrintPrediction — save it; after printing, record_measurement joins caliper/scale readings against it. The prediction doubles as the guided measurement worksheet (each measurable carries a human instruction label).",
+        inputSchema: predictPrintSchema,
+      },
+      {
+        name: "record_measurement",
+        description:
+          "Record as-built measurements (caliper dimensions, scale mass) of a printed part against its predict_print snapshot and emit the receipt-vs-reality delta report: per-feature deltas with tolerances, per-axis scale factors (X/Y/Z shrinkage), hole undersize and thin-wall flow offsets, and concrete printer-profile suggestions. Accepts the prediction inline (from a saved prediction.json) when the session's warm instance is gone. Partial measurements are fine.",
+        inputSchema: recordMeasurementSchema,
       },
       // ── Verify-and-iterate loop: eyes + oracle ──────────────────
       {
@@ -2083,7 +2106,7 @@ export async function createServer(
       // shared planner + applyToolOutcome path. Falls through to the
       // preview block below so these mutations render in the inline viewer.
       if (dispatchableTools.has(name)) {
-        result = dispatchRegistryTool(name, args);
+        result = dispatchRegistryTool(name, args, engine);
         const docId = resolvePreviewDocumentId(name, result, args, engine);
         if (docId) {
           attachPreviewHandle(result, docId, name);
@@ -2125,9 +2148,22 @@ export async function createServer(
           );
           break;
 
-        case "create_cad_loon":
+        case "create_cad_loon": {
           result = createCadLoon(args, engine);
+          // Attach the integrity certificate to the largest mutation of
+          // all: authoring a whole document. The loon evaluation is cheap
+          // relative to the mesh evaluation computeIntegrity runs anyway.
+          try {
+            const doc = engine.evalVcadSource(String(args.source ?? ""));
+            if (doc) {
+              const integrity = computeIntegrity(doc, engine);
+              if (integrity) appendIntegrity(result, integrity);
+            }
+          } catch {
+            // Best-effort: never fail the authoring call over accounting.
+          }
           break;
+        }
 
         case "export_cad":
           result = exportCad(args, engine);
@@ -2135,6 +2171,12 @@ export async function createServer(
 
         case "inspect_cad":
           result = inspectCad(args, engine);
+          break;
+        case "predict_print":
+          result = predictPrint(args, engine);
+          break;
+        case "record_measurement":
+          result = recordMeasurement(args);
           break;
 
         case "quote_manufacturing":

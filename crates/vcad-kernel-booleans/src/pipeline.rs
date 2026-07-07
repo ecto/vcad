@@ -366,50 +366,64 @@ fn apply_splits_to_solid(
                         }
                     }
 
-                    // Re-trim the curve to THIS sub-face's boundary
-                    let segs = trim::trim_curve_to_face(&curve, fid, solid, 64);
-                    debug_bool!(
-                        "  Split {} face {:?}: re-trim got {} segs",
-                        solid_name,
-                        fid,
-                        segs.len()
-                    );
-                    if segs.is_empty() {
-                        // Curve doesn't cross this face, keep it unchanged
-                        debug_bool!("    -> empty segs, keeping face unchanged");
-                        new_faces.push(fid);
-                        continue;
-                    }
-                    // Use the first segment's trimmed entry/exit
-                    let seg = &segs[0];
-                    let entry = evaluate_curve(&curve, seg.t_start);
-                    let exit = evaluate_curve(&curve, seg.t_end);
-                    let len = (exit - entry).norm();
-                    debug_bool!(
-                        "    -> entry=({:.2},{:.2},{:.2}) exit=({:.2},{:.2},{:.2}) len={:.4}",
-                        entry.x,
-                        entry.y,
-                        entry.z,
-                        exit.x,
-                        exit.y,
-                        exit.z,
-                        len
-                    );
-                    if len < 1e-6 {
-                        debug_bool!("    -> too short, keeping face unchanged");
-                        new_faces.push(fid);
-                        continue;
-                    }
-                    let result = split::split_face_by_curve(solid, fid, &curve, &entry, &exit);
-                    debug_bool!(
-                        "    -> split result: {} sub-faces {:?}",
-                        result.sub_faces.len(),
-                        result.sub_faces
-                    );
-                    if result.sub_faces.len() >= 2 {
-                        new_faces.extend(result.sub_faces);
-                    } else {
-                        new_faces.push(fid);
+                    // Generic path: re-trim the curve to each (sub-)face and
+                    // split along every trimmed segment. A curve can cross a
+                    // face more than once (e.g. an ellipse clipping two
+                    // corners), and the first listed segment can be a
+                    // phantom that fails to split — so each face tries every
+                    // segment, and successful splits re-queue their
+                    // sub-faces for the remaining crossings.
+                    let mut pending = vec![fid];
+                    let mut passes = 0usize;
+                    while let Some(cur) = pending.pop() {
+                        passes += 1;
+                        if passes > 32 {
+                            // Defensive bound; no realistic curve crosses a
+                            // face this many times.
+                            new_faces.push(cur);
+                            continue;
+                        }
+                        let segs = trim::trim_curve_to_face(&curve, cur, solid, 64);
+                        debug_bool!(
+                            "  Split {} face {:?}: re-trim got {} segs",
+                            solid_name,
+                            cur,
+                            segs.len()
+                        );
+                        let mut split_applied = false;
+                        for seg in &segs {
+                            let entry = evaluate_curve(&curve, seg.t_start);
+                            let exit = evaluate_curve(&curve, seg.t_end);
+                            let len = (exit - entry).norm();
+                            debug_bool!(
+                                "    -> entry=({:.2},{:.2},{:.2}) exit=({:.2},{:.2},{:.2}) len={:.4}",
+                                entry.x,
+                                entry.y,
+                                entry.z,
+                                exit.x,
+                                exit.y,
+                                exit.z,
+                                len
+                            );
+                            if len < 1e-6 {
+                                continue;
+                            }
+                            let result =
+                                split::split_face_by_curve(solid, cur, &curve, &entry, &exit);
+                            debug_bool!(
+                                "    -> split result: {} sub-faces {:?}",
+                                result.sub_faces.len(),
+                                result.sub_faces
+                            );
+                            if result.sub_faces.len() >= 2 {
+                                pending.extend(result.sub_faces);
+                                split_applied = true;
+                                break;
+                            }
+                        }
+                        if !split_applied {
+                            new_faces.push(cur);
+                        }
                     }
                 }
             }
@@ -497,19 +511,77 @@ pub(crate) fn brep_boolean(
                 // trimmed away (e.g. a subtracted sphere reappearing above the part).
                 //
                 // Gate each curved-face split on the planar partner actually
-                // anchoring the circle: its center must lie within the partner face.
-                // The circle is coplanar with the planar partner, so a small disk
-                // (cap) centered away from the circle correctly fails this test,
-                // while a large face that the circle is seated in (a part's top, a
-                // box wall) passes — even when the circle pokes slightly past the
-                // face's filleted edge. Curved×curved pairs have no planar partner
-                // and keep their existing behavior.
+                // anchoring the circle: its center must lie within the partner
+                // face. The center test alone rejects annular partners whose
+                // inner boundary IS the circle (a drum face butted against a
+                // hub wall: the center sits in the annulus hole), leaving the
+                // wall unsplit at the contact circle and the touching interface
+                // untrimmed. Second chance: the circle counts as SEATED in the
+                // face when rim probes at several angles land inside it. The
+                // probes are nudged to both sides because a face whose hole
+                // boundary is this circle stores it as an inscribed polygon (a
+                // probe exactly on the rim falls in the hole by the chord sag),
+                // and ≥2 distinct angles must hit so a circle that merely
+                // grazes a face edge over a tiny arc — the phantom regime the
+                // anchor gate exists for — still fails. Curved×curved pairs
+                // have no planar partner and keep their existing behavior.
+                let nudge = (circle.radius * 0.01).max(0.05);
+                let seated = |solid: &vcad_kernel_primitives::BRepSolid, fid: FaceId| {
+                    let mut hits = 0u32;
+                    for k in 0..8 {
+                        let theta = 2.0 * std::f64::consts::PI * k as f64 / 8.0;
+                        let dir = theta.cos() * circle.x_dir.into_inner()
+                            + theta.sin() * circle.y_dir.into_inner();
+                        let out = circle.center + (circle.radius + nudge) * dir;
+                        let inn = circle.center + (circle.radius - nudge) * dir;
+                        if trim::point_in_face(solid, fid, &out)
+                            || trim::point_in_face(solid, fid, &inn)
+                        {
+                            hits += 1;
+                            if hits >= 2 {
+                                return true;
+                            }
+                        }
+                    }
+                    false
+                };
                 let b_anchors_circle = !split::is_planar_face(&b, face_b)
-                    || trim::point_in_face(&b, face_b, &circle.center);
+                    || trim::point_in_face(&b, face_b, &circle.center)
+                    || seated(&b, face_b);
                 let a_anchors_circle = !split::is_planar_face(&a, face_a)
-                    || trim::point_in_face(&a, face_a, &circle.center);
+                    || trim::point_in_face(&a, face_a, &circle.center)
+                    || seated(&a, face_a);
 
-                if split::is_planar_face(&a, face_a) {
+                // A circle that is already part of the planar face's sampled
+                // boundary (the cap of an arc-extruded body paired with the
+                // wall it borders) has nothing to split — feeding it to
+                // split_planar_face shaves crescent slivers off the boundary
+                // polygon, which then classify unreliably. Arc samples lie
+                // exactly on their circle, and a circle that genuinely crosses
+                // a polygon touches it at no more than two points, so ≥3
+                // on-circle vertices means "this circle is one of my arcs".
+                let circle_is_own_boundary = |solid: &BRepSolid, fid: FaceId| -> bool {
+                    let face = &solid.topology.faces[fid];
+                    let radius_tol = (circle.radius * 1e-4).max(1e-4);
+                    let mut on_circle = 0u32;
+                    let loops =
+                        std::iter::once(face.outer_loop).chain(face.inner_loops.iter().copied());
+                    for loop_id in loops {
+                        for he in solid.topology.loop_half_edges(loop_id) {
+                            let v =
+                                solid.topology.vertices[solid.topology.half_edges[he].origin].point;
+                            if ((v - circle.center).norm() - circle.radius).abs() <= radius_tol {
+                                on_circle += 1;
+                                if on_circle >= 3 {
+                                    return true;
+                                }
+                            }
+                        }
+                    }
+                    false
+                };
+
+                if split::is_planar_face(&a, face_a) && !circle_is_own_boundary(&a, face_a) {
                     // Check point_in_face to avoid creating inner loops inside existing holes.
                     // For degenerate cap faces (single-vertex outer loop), always check.
                     // For regular polygon faces, only check if they already have inner loops
@@ -541,7 +613,7 @@ pub(crate) fn brep_boolean(
                 if b_anchors_circle && split::is_conical_face(&a, face_a) {
                     results_a.push((curve.clone(), circle.center, circle.center));
                 }
-                if split::is_planar_face(&b, face_b) {
+                if split::is_planar_face(&b, face_b) && !circle_is_own_boundary(&b, face_b) {
                     let outer_len = b.topology.loop_len(b.topology.faces[face_b].outer_loop);
                     let has_inner_loops = !b.topology.faces[face_b].inner_loops.is_empty();
                     if outer_len <= 1 {

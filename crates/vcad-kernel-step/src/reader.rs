@@ -6,7 +6,7 @@ use std::path::Path;
 use crate::entities::{
     curves::{parse_curve, StepCurve},
     parse_advanced_face, parse_edge_curve, parse_edge_loop, parse_manifold_solid_brep,
-    parse_oriented_edge, parse_shell, parse_surface, parse_vertex_point,
+    parse_oriented_edge, parse_shell, parse_surface_oriented, parse_vertex_point,
 };
 use crate::error::StepError;
 use stepperoni::{Parser, StepFile};
@@ -104,8 +104,10 @@ pub(crate) struct StepReader<'a> {
     edge_map: HashMap<u64, EdgeId>,
     /// Maps (STEP edge ID, orientation) to vcad HalfEdgeId.
     half_edge_map: HashMap<(u64, bool), HalfEdgeId>,
-    /// Maps STEP surface ID to vcad geometry store index.
-    surface_map: HashMap<u64, usize>,
+    /// Maps STEP surface ID to vcad geometry store index, plus a flag that
+    /// is true when the stored surface's natural normal is flipped relative
+    /// to the STEP surface normal (see `parse_surface_oriented`).
+    surface_map: HashMap<u64, (usize, bool)>,
     /// For subdivided curved edges: maps (STEP edge ID, orientation) to
     /// an ordered chain of half-edge IDs that replace the single original.
     subdivided_edges: HashMap<(u64, bool), Vec<HalfEdgeId>>,
@@ -172,10 +174,11 @@ impl<'a> StepReader<'a> {
 
             // Parse and store surface - skip face if surface type unsupported
             if !self.surface_map.contains_key(&step_face.surface_id) {
-                match parse_surface(self.file, step_face.surface_id) {
-                    Ok(surface) => {
+                match parse_surface_oriented(self.file, step_face.surface_id) {
+                    Ok((surface, sense_flipped)) => {
                         let idx = geom.add_surface(surface.into_box());
-                        self.surface_map.insert(step_face.surface_id, idx);
+                        self.surface_map
+                            .insert(step_face.surface_id, (idx, sense_flipped));
                     }
                     Err(StepError::UnsupportedEntity(_)) => {
                         // Skip this face - surface type not supported
@@ -294,7 +297,7 @@ impl<'a> StepReader<'a> {
                 continue;
             }
             let step_face = parse_advanced_face(self.file, face_id)?;
-            let surface_idx = self.surface_map[&step_face.surface_id];
+            let (surface_idx, sense_flipped) = self.surface_map[&step_face.surface_id];
 
             let mut outer_loop: Option<LoopId> = None;
             let mut inner_loops = Vec::new();
@@ -353,7 +356,10 @@ impl<'a> StepReader<'a> {
                 None => continue,
             };
 
-            let orientation = if step_face.same_sense {
+            // `same_sense` is expressed against the STEP surface normal;
+            // XOR with the parse-time flag when our surface's natural
+            // normal points the other way.
+            let orientation = if step_face.same_sense != sense_flipped {
                 Orientation::Forward
             } else {
                 Orientation::Reversed

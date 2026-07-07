@@ -342,6 +342,10 @@ function applyDocumentData(data: DocumentBootData): void {
   }
 
   if (data.kind === "new") {
+    // No document found anywhere — a first visit (an untouched blank doc is
+    // never autosaved, so this stays true until the user actually keeps
+    // something). The app uses it to surface the template gallery.
+    useBootStore.getState().setFirstVisit(true);
     docStore.newDocument(data.id, data.name);
     return;
   }

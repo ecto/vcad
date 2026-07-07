@@ -1,0 +1,9 @@
+{
+  "id": "2026-07-07-revolve-partial-sweep",
+  "version": "0.9.4",
+  "date": "2026-07-07",
+  "category": "fix",
+  "title": "Revolve produces real swept geometry",
+  "summary": "Partial revolves (e.g. 180°) no longer collapse to zero volume, and full revolves of washer-style profiles get exact annular faces and correctly oriented bore walls.",
+  "features": ["kernel", "revolve", "sketch"]
+}

@@ -1,6 +1,25 @@
 // Receipt — re-runnable PCB audit ledger (browser-safe engine)
 export * from "./utils/receipt/index.js";
 
+// Print-then-measure calibration — 3DP receipt-vs-reality delta engine
+export {
+  buildCalibrationReport,
+  fingerprintDocument,
+  defaultTolerance,
+} from "./utils/print-calibration.js";
+export type {
+  Measurable,
+  MeasurableKind,
+  MeasurableAxis,
+  MeasurableFeature,
+  PrintPrediction,
+  MeasurementContext,
+  DeltaRow,
+  AxisScale,
+  CalibrationReport,
+  CalibrationVerdict,
+} from "./utils/print-calibration.js";
+
 // Types
 export type {
   PrimitiveKind,

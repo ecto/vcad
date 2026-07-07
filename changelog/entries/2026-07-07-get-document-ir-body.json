@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-07-get-document-ir-body",
+  "version": "0.9.4",
+  "date": "2026-07-07",
+  "category": "fix",
+  "title": "get_document returns the full IR body",
+  "summary": "The MCP get_document tool now reliably returns the full IR Document JSON; oversized documents offload to the artifact store with a sha256 manifest instead of being stubbed.",
+  "features": ["mcp"],
+  "mcpTools": ["get_document"]
+}

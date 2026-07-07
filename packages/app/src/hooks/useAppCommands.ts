@@ -77,6 +77,7 @@ export function useAppCommands({
         useNotificationStore.getState().addToast("Nothing to export", "info");
         return;
       }
+      analytics.exportStarted(format);
       try {
         const blob =
           format === "stl"
@@ -85,6 +86,7 @@ export function useAppCommands({
               ? exportGltfBlob(scene)
               : exportStepBlob(scene);
         downloadBlob(blob, `model.${format}`);
+        analytics.exportCompleted(format);
       } catch (err) {
         useNotificationStore
           .getState()
@@ -470,6 +472,7 @@ export function useAppCommands({
         action: () => {
           const ok = useSketchStore.getState().requestExit();
           if (ok) {
+            analytics.sketchAbandoned("empty");
             useNotificationStore.getState().addToast("Sketch cancelled", "info");
           }
           onDismiss();
@@ -488,6 +491,7 @@ export function useAppCommands({
     return registry.map((cmd) => ({
       ...cmd,
       action: () => {
+        analytics.firstCommand(cmd.id);
         analytics.commandExecuted({
           id: cmd.id,
           category: cmd.category,
