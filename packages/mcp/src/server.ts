@@ -1744,7 +1744,10 @@ export async function createServer(
         name: "run_drc",
         description:
           "Run Design Rule Check (DRC) on a PCB. Checks clearance, trace width, " +
-          "drill size, annular ring, hole-to-hole, and edge clearance. Every " +
+          "drill size, annular ring, hole-to-hole, edge clearance, and " +
+          "connectivity — including SameNetBypass, a warning when same-net " +
+          "copper touches far from any intended junction (e.g. a trace over a " +
+          "coil's inner via, short-circuiting the spiral). Every " +
           "violation is tagged with `provenance` (intra_footprint / " +
           "inter_component / routing) and `generated` (involves a synthesized " +
           "footprint land pattern); the summary adds `byProvenance`, " +

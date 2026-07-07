@@ -2888,6 +2888,43 @@ describe("add_coil", () => {
     }
   });
 
+  it("run_drc flags a same-net trace over the coil's inner via as SameNetBypass", async () => {
+    const id = await circleBoardSession();
+    const coil = out(
+      addCoil({
+        document_id: id,
+        center: { x: 40, y: 40 },
+        turns: 10,
+        inner_radius: 2.6,
+        outer_radius: 7.2,
+        trace_width: 0.25,
+        clearance: 0.2,
+        net: "PHA",
+        inner_via: true,
+      }),
+    );
+    expect(coil.success).toBe(true);
+
+    // The old add_motor_winding failure: a same-net star trace from the outer
+    // endpoint straight along the terminal ray, over the inner via — no
+    // net-based rule can see it, but it short-circuits the spiral.
+    out(
+      await addTrace({
+        document_id: id,
+        net: "PHA",
+        layer: "FCu",
+        width: 0.25,
+        points: [coil.outer_endpoint, { x: 41, y: 40 }],
+      }),
+    );
+
+    const drc = out(await runDrc({ document_id: id }));
+    expect(drc.byRule?.SameNetBypass ?? 0).toBeGreaterThan(0);
+    // Warning severity, bucketed under connectivity.
+    expect(drc.warnings).toBeGreaterThan(0);
+    expect(drc.categories.connectivity).toBeGreaterThan(0);
+  });
+
   it("rejects coils whose turns don't fit the clearance, with the max that would", async () => {
     const id = await circleBoardSession();
     const res = addCoil({
@@ -3621,6 +3658,31 @@ describe("run_drc summary aggregation", () => {
     expect(summary.sample.length).toBe(2);
     expect(summary.sampleCapped).toBe(true);
     expect(summary.details).toBeUndefined();
+  });
+
+  it("buckets SameNetBypass into the connectivity category", () => {
+    const violations = [
+      {
+        rule: "SameNetBypass",
+        severity: "Warning",
+        message:
+          "Same-net bypass on net 'PHA': copper at (57.20, 40.00) touches copper at " +
+          "(52.60, 40.00) that is 481 conductor hops away — the contact short-circuits " +
+          "everything between them (fatal to a two-terminal structure like a spiral " +
+          "coil, shunt, or sense trace)",
+        position: { x: 52.6, y: 40 },
+        actual: 481,
+        required: 3,
+      },
+    ];
+    const summary = aggregateDrc(violations, 20, "summary");
+    expect(summary.categories.connectivity).toBe(1);
+    expect(summary.categories.clearance).toBe(0);
+    expect(summary.categories.manufacturing).toBe(0);
+    expect(summary.warnings).toBe(1);
+    expect(summary.errors).toBe(0);
+    // The single-net message yields a [net, ""] pair for the roll-up.
+    expect(summary.byNetPair.some((p) => p.nets[0] === "PHA" && p.nets[1] === "")).toBe(true);
   });
 
   it("detail='full' attaches the complete violation array", () => {

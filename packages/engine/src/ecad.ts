@@ -33,7 +33,8 @@ export type DrcRuleType =
   | "AcidTrap"
   | "Keepout"
   | "Short"
-  | "NetIslands";
+  | "NetIslands"
+  | "SameNetBypass";
 
 export type DrcSeverity = "Error" | "Warning";
 

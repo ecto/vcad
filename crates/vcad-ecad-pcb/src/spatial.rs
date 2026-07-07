@@ -142,8 +142,10 @@ impl CopperGeom {
         }
     }
 
-    /// Distance from a point to this rectangle (0 inside).
-    fn point_distance(&self, p: Vec2) -> f64 {
+    /// Distance from a point to this rectangle (0 inside; `f64::MAX` for
+    /// non-rect geometries). Also used by DRC's same-net bypass adjacency
+    /// test (a trace endpoint landing on a pad is an intended termination).
+    pub(crate) fn point_distance(&self, p: Vec2) -> f64 {
         match self {
             CopperGeom::Rect {
                 center,
