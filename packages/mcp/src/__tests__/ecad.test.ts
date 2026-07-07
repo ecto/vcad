@@ -18,6 +18,7 @@ import {
   calcCoil,
   sizeCoil,
   calcRf,
+  calcMotor,
   addCoil,
   addCoilArray,
   windingLayout,
@@ -4788,5 +4789,130 @@ describe("layer-name validation at write boundaries", () => {
     expect(isErr(res)).toBe(true);
     expect(errText(res)).toContain("copper_layer");
     expect(errText(res)).toContain("did you mean 'FCu'");
+  });
+});
+
+describe("EM receipt claims", () => {
+  const stack = { dielectric_height: 0.2, copper_thickness: 0.035, dielectric_er: 4.3 };
+
+  it("calc_impedance claims Z0, er_eff, and delay with the model that computed them", async () => {
+    const r = out(await calcImpedance({ trace_width: 0.3, ...stack }));
+    expect(r.claims.map((c: any) => c.quantity)).toEqual([
+      "characteristic_impedance",
+      "effective_permittivity",
+      "propagation_delay",
+    ]);
+    for (const c of r.claims) {
+      expect(c.domain).toBe("em");
+      expect(c.method).toBe("ipc2141-microstrip");
+      expect(c.inputs.trace_width).toBe(0.3);
+    }
+    const z0 = r.claims.find((c: any) => c.quantity === "characteristic_impedance");
+    expect(z0.predicted).toBe(r.z0);
+    expect(z0.unit).toBe("ohm");
+  });
+
+  it("a differential pair adds a differential_impedance claim", async () => {
+    const r = out(
+      await calcImpedance({
+        trace_width: 0.15,
+        spacing: 0.15,
+        trace_type: "diff_microstrip",
+        ...stack,
+      }),
+    );
+    const diff = r.claims.find((c: any) => c.quantity === "differential_impedance");
+    expect(diff.predicted).toBe(r.z_diff);
+    expect(diff.method).toBe("edge-coupled-diff-pair");
+    expect(diff.inputs.spacing).toBe(0.15);
+  });
+
+  it("size_impedance claims describe the snapped geometry it recommends", () => {
+    const r = out(sizeImpedance({ trace_type: "microstrip", target_z0: 50, ...stack }));
+    const z0 = r.claims.find((c: any) => c.quantity === "characteristic_impedance");
+    expect(z0.predicted).toBe(r.measured.z0);
+    expect(z0.inputs.trace_width).toBe(r.width_mm);
+  });
+
+  it("calc_coil and size_coil claim inductance and DC resistance", () => {
+    const r = out(calcCoil({ inner_radius: 2, outer_radius: 6, turns: 10, trace_width: 0.2 }));
+    const ind = r.claims.find((c: any) => c.quantity === "inductance");
+    expect(ind.predicted).toBe(r.inductance_nh);
+    expect(ind.unit).toBe("nH");
+    expect(ind.method).toBe("wheeler-mohan-1999");
+    expect(r.claims.find((c: any) => c.quantity === "dc_resistance").predicted).toBe(
+      r.dc_resistance_ohm,
+    );
+
+    const s = out(
+      sizeCoil({ target_inductance_nh: 500, inner_radius: 2, outer_radius: 8, trace_width: 0.15 }),
+    );
+    const sInd = s.claims.find((c: any) => c.quantity === "inductance");
+    expect(sInd.predicted).toBe(s.achieved_inductance_nh);
+    expect(sInd.inputs.turns).toBe(s.turns);
+  });
+
+  it("calc_rf claims resonance and Q", () => {
+    const r = out(calcRf({ topology: "series_rlc", r_ohm: 50, l_henry: 10e-9, c_farad: 10e-12 }));
+    const f0 = r.claims.find((c: any) => c.quantity === "resonant_frequency");
+    expect(f0.predicted).toBe(r.resonance_hz);
+    expect(f0.unit).toBe("Hz");
+    expect(r.claims.find((c: any) => c.quantity === "q_factor").predicted).toBe(r.q_factor);
+  });
+
+  it("size_pdn claims one IR drop per budgeted node", async () => {
+    const r = out(
+      await sizePdn({
+        nodes: 2,
+        edges: [{ a: 0, b: 1, length: 10 }],
+        loads: [{ node: 1, current: 1.0 }],
+        targets: [{ node: 1, max_drop: 0.05 }],
+      }),
+    );
+    expect(r.claims).toHaveLength(1);
+    expect(r.claims[0].quantity).toBe("ir_drop");
+    expect(r.claims[0].predicted).toBe(r.measured_drops_v[0]);
+    expect(r.claims[0].inputs.node).toBe(1);
+  });
+
+  it("winding_layout claims the winding factor only for a feasible plan", () => {
+    const plan = out(windingLayout({ slots: 9, poles: 12 }));
+    const kw = plan.claims.find((c: any) => c.quantity === "winding_factor");
+    expect(kw.predicted).toBe(plan.windingFactor);
+    expect(kw.method).toBe("star-of-slots");
+    const bad = out(windingLayout({ slots: 9, poles: 12, layer: "single" }));
+    expect(bad.claims).toBeUndefined();
+  });
+
+  it("calc_motor claims Kt/Ke/speed/stall, plus B_gap when it computed it", async () => {
+    const r = out(
+      await calcMotor({
+        pole_pairs: 6,
+        turns_per_phase: 60,
+        winding_factor: 0.866,
+        inner_radius_mm: 5,
+        outer_radius_mm: 30,
+        phase_resistance_ohm: 0.5,
+        supply_voltage_v: 24,
+        magnet: {},
+      }),
+    );
+    const q = (name: string) => r.claims.find((c: any) => c.quantity === name);
+    expect(q("torque_constant").predicted).toBe(r.kt_nm_per_a);
+    expect(q("torque_constant").unit).toBe("N·m/A");
+    expect(q("back_emf_constant").predicted).toBe(r.ke_v_s_per_rad);
+    expect(q("no_load_speed").predicted).toBe(r.no_load_speed_rad_s);
+    expect(q("stall_torque").predicted).toBe(r.stall_torque_nm);
+    const b = q("airgap_flux_density");
+    expect(b.method).toBe("mec-reluctance");
+    expect(b.predicted).toBe(r.airgap_flux_tesla);
+    // Every claim in the family carries the uniform shape.
+    for (const c of r.claims) {
+      expect(c.domain).toBe("em");
+      expect(typeof c.predicted).toBe("number");
+      expect(typeof c.unit).toBe("string");
+      expect(typeof c.method).toBe("string");
+      expect(c.inputs).toBeTruthy();
+    }
   });
 });

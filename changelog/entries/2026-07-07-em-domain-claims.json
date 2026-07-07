@@ -1,0 +1,19 @@
+{
+  "id": "2026-07-07-em-domain-claims",
+  "version": "0.9.4",
+  "date": "2026-07-07",
+  "category": "feat",
+  "title": "Electromagnetics named as a domain, calculators emit claims",
+  "summary": "Every EM calculator (coil, impedance, PDN, RF, winding, motor) now returns structured receipt claims — quantity, predicted value, unit, method, inputs — and the domain is documented end to end.",
+  "features": ["electromagnetics", "pcb", "receipt", "verification"],
+  "mcpTools": [
+    "calc_coil",
+    "size_coil",
+    "calc_impedance",
+    "size_impedance",
+    "size_pdn",
+    "calc_rf",
+    "winding_layout",
+    "calc_motor"
+  ]
+}
