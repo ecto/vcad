@@ -55,10 +55,131 @@ function ensureResetHook(gluePath) {
   console.log('[kernel-wasm] appended __vcad_reset_wasm trap-recovery hook');
 }
 
+/**
+ * Rewire aliased export calls in the wasm-bindgen glue.
+ *
+ * When two `#[wasm_bindgen]` shims compile to byte-identical bodies (two
+ * `-> bool { true }` availability probes; two f64 getters reading the same
+ * struct offset), some host toolchains let the linker merge them and
+ * wasm-bindgen then points BOTH JS wrappers at ONE of the surviving export
+ * names — e.g. `isEcadAvailable()` calling `wasm.isCamAvailable()`, or
+ * `SliceResult.filamentGrams` calling `wasm.circuitsim_dt`. The module still
+ * exports every name (as aliases of the merged function), so calling the
+ * wrapper's own same-named export is behaviorally identical — and keeps the
+ * glue deterministic across toolchains. packages/engine's kernel-wasm-glue
+ * drift test fails the build otherwise.
+ *
+ * A wrapper is only rewritten when its expected export actually exists in
+ * the built wasm, so legitimate cross-class delegations (e.g. `Solid` ->
+ * `raytracer_canRaytrace`, which has no `solid_*` export) are untouched.
+ */
+function normalizeGlue(gluePath, wasmPath) {
+  const exports = new Set(
+    WebAssembly.Module.exports(
+      new WebAssembly.Module(readFileSync(wasmPath)),
+    ).map((e) => e.name),
+  );
+  const lines = readFileSync(gluePath, 'utf8').split('\n');
+  const classNames = new Set(
+    lines
+      .map((l) => l.match(/^export class (\w+)/)?.[1]?.toLowerCase())
+      .filter(Boolean),
+  );
+
+  const fixes = [];
+  let cls = null;
+  let method = null;
+  let freeFn = null;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    const classMatch = line.match(/^export class (\w+)/);
+    if (classMatch) {
+      cls = classMatch[1];
+      continue;
+    }
+    if (cls && /^}/.test(line)) {
+      cls = null;
+      continue;
+    }
+    if (cls) {
+      // Track the enclosing method so the expected export name can be
+      // derived: wasm-bindgen exports `classname_method` (getters keep the
+      // property name, setters get a `set_` infix).
+      const sig = line.match(/^ {4}(static\s+)?(get\s+|set\s+)?(\w+)\s*\(.*\)\s*{/);
+      if (sig) method = (sig[2]?.trim() === 'set' ? 'set_' : '') + sig[3];
+      if (!method) continue;
+      for (const call of line.matchAll(/wasm\.([A-Za-z0-9_]+)\(/g)) {
+        const name = call[1];
+        if (name.startsWith('__')) continue;
+        const prefix = name.match(/^([a-z0-9]+)_/)?.[1];
+        if (!prefix || !classNames.has(prefix)) continue;
+        if (prefix === cls.toLowerCase()) continue;
+        const expected = `${cls.toLowerCase()}_${method}`;
+        if (expected !== name && exports.has(expected)) {
+          lines[i] = line.replace(`wasm.${name}(`, `wasm.${expected}(`);
+          fixes.push(`${cls}.${method}: ${name} -> ${expected}`);
+        }
+      }
+      continue;
+    }
+    const fnMatch = line.match(/^export function (\w+)\s*\(/);
+    if (fnMatch) {
+      freeFn = { name: fnMatch[1], calls: [] };
+      continue;
+    }
+    if (!freeFn) continue;
+    for (const call of line.matchAll(/wasm\.([A-Za-z0-9_]+)\(/g)) {
+      if (!call[1].startsWith('__')) freeFn.calls.push({ line: i, name: call[1] });
+    }
+    if (/^}/.test(line)) {
+      // Only unambiguous single-call pass-through wrappers are rewritten —
+      // the same scope the engine drift guard checks.
+      const distinct = [...new Set(freeFn.calls.map((c) => c.name))];
+      if (
+        distinct.length === 1 &&
+        distinct[0] !== freeFn.name &&
+        exports.has(freeFn.name)
+      ) {
+        for (const c of freeFn.calls) {
+          lines[c.line] = lines[c.line].replace(
+            `wasm.${c.name}(`,
+            `wasm.${freeFn.name}(`,
+          );
+        }
+        fixes.push(`${freeFn.name}: ${distinct[0]} -> ${freeFn.name}`);
+      }
+      freeFn = null;
+    }
+  }
+
+  if (fixes.length > 0) {
+    writeFileSync(gluePath, lines.join('\n'));
+    console.log(
+      `[kernel-wasm] rewired ${fixes.length} aliased export call(s):\n  ` +
+        fixes.join('\n  '),
+    );
+  }
+}
+
 const here = dirname(fileURLToPath(import.meta.url));
 const pkgRoot = join(here, '..');
 const cratePath = join(pkgRoot, '..', '..', 'crates', 'vcad-kernel-wasm');
 const outDir = join(pkgRoot, 'pkg');
+
+// `--postprocess-only`: skip the wasm-pack build and re-apply the glue
+// post-processing (reset hook + aliased-export rewiring) to the artifacts
+// already sitting in the package root. For flows that run wasm-pack
+// directly (the CI recipe in .github/workflows/ci.yml) instead of this
+// script.
+if (process.argv.includes('--postprocess-only')) {
+  ensureResetHook(join(pkgRoot, 'vcad_kernel_wasm.js'));
+  normalizeGlue(
+    join(pkgRoot, 'vcad_kernel_wasm.js'),
+    join(pkgRoot, 'vcad_kernel_wasm_bg.wasm'),
+  );
+  console.log('[kernel-wasm] postprocess complete');
+  process.exit(0);
+}
 
 if (process.env.VCAD_WASM_SKIP) {
   console.log(
@@ -80,85 +201,14 @@ if (result.error || result.status !== 0) {
   process.exit(result.status ?? 1);
 }
 
-/**
- * Rewrite glue call sites that wasm-bindgen canonicalized onto a *different*
- * member's export name.
- *
- * LLVM's identical-code-folding merges Rust functions that compile to the same
- * body (e.g. two f64 field getters at the same struct offset). All export
- * names survive in the .wasm as aliases of the merged function, but the glue
- * generator picks ONE alias for every call site — which rustc version decides,
- * so a toolchain bump can leave `SliceResult.filamentGrams` calling
- * `wasm.circuitsim_dt`. Runtime-identical, but it is exactly the shape the
- * glue-drift gate (packages/engine kernel-wasm-glue.test.ts) forbids, because
- * a REAL mis-wiring looks the same. Restore the invariant: every member calls
- * its own same-named export whenever that export exists in the wasm.
- */
-function canonicalizeAliasedExportCalls(gluePath, dtsPath) {
-  const exports = new Set(
-    [...readFileSync(dtsPath, 'utf8').matchAll(/^export const (\w+):/gm)].map(
-      (m) => m[1],
-    ),
-  );
-  const lines = readFileSync(gluePath, 'utf8').split('\n');
-  let cls = null;
-  let member = null;
-  let freeFn = null;
-  let rewrites = 0;
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    const clsM = line.match(/^export class (\w+)/);
-    if (clsM) {
-      cls = clsM[1];
-      member = null;
-      continue;
-    }
-    if (cls && /^}/.test(line)) {
-      cls = null;
-      continue;
-    }
-    // The export name a call inside the current member SHOULD use.
-    let expected = null;
-    if (cls) {
-      // Method definitions sit at 4-space indent; bodies at 8+. Setters
-      // export as `classname_set_member`, getters as plain `classname_member`.
-      const mm = line.match(/^ {4}(?:static\s+)?(get\s+|set\s+)?(\w+)\s*\(/);
-      if (mm) member = mm[1]?.trim() === 'set' ? `set_${mm[2]}` : mm[2];
-      if (member) {
-        expected =
-          member === 'constructor'
-            ? `${cls.toLowerCase()}_new`
-            : `${cls.toLowerCase()}_${member}`;
-      }
-    } else {
-      const fm = line.match(/^export function (\w+)\s*\(/);
-      if (fm) freeFn = fm[1];
-      if (/^}/.test(line)) freeFn = null;
-      expected = freeFn;
-    }
-    if (!expected || !exports.has(expected)) continue;
-    lines[i] = line.replace(/wasm\.(\w+)\(/g, (whole, name) => {
-      if (name.startsWith('__') || name === expected) return whole;
-      rewrites++;
-      return `wasm.${expected}(`;
-    });
-  }
-  if (rewrites > 0) {
-    writeFileSync(gluePath, lines.join('\n'));
-    console.log(
-      `[kernel-wasm] re-canonicalized ${rewrites} aliased export call(s)`,
-    );
-  }
-}
-
 for (const file of readdirSync(outDir)) {
   if (file.startsWith('vcad_kernel_wasm')) {
     copyFileSync(join(outDir, file), join(pkgRoot, file));
   }
 }
-canonicalizeAliasedExportCalls(
-  join(pkgRoot, 'vcad_kernel_wasm.js'),
-  join(pkgRoot, 'vcad_kernel_wasm_bg.wasm.d.ts'),
-);
 ensureResetHook(join(pkgRoot, 'vcad_kernel_wasm.js'));
+normalizeGlue(
+  join(pkgRoot, 'vcad_kernel_wasm.js'),
+  join(pkgRoot, 'vcad_kernel_wasm_bg.wasm'),
+);
 console.log('[kernel-wasm] build complete');

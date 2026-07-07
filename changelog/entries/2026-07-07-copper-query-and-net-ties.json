@@ -1,0 +1,17 @@
+{
+  "id": "2026-07-07-copper-query-and-net-ties",
+  "version": "0.9.4",
+  "date": "2026-07-07",
+  "category": "feat",
+  "title": "Query board copper and author net ties from MCP",
+  "summary": "New get_copper lists traces/vias/zones with delete-compatible indices, and add_net_tie/delete_net_tie declare intentional net junctions (wye neutrals, split grounds, shunt taps) without offline JSON surgery.",
+  "features": [
+    "ecad",
+    "pcb"
+  ],
+  "mcpTools": [
+    "get_copper",
+    "add_net_tie",
+    "delete_net_tie"
+  ]
+}

@@ -257,7 +257,7 @@ export class PhysicsSim {
      * @returns {number}
      */
     numJoints() {
-        const ret = wasm.physicssim_numJoints(this.__wbg_ptr);
+        const ret = wasm.physicssim_actionDim(this.__wbg_ptr);
         return ret >>> 0;
     }
     /**
@@ -1020,7 +1020,7 @@ export class Solid {
      * @returns {Solid}
      */
     chamfer(distance) {
-        const ret = wasm.solid_chamfer(this.__wbg_ptr, distance);
+        const ret = wasm.op_chamfer(this.__wbg_ptr, distance);
         return Solid.__wrap(ret);
     }
     /**
@@ -1043,7 +1043,7 @@ export class Solid {
      * @returns {Solid}
      */
     circularPattern(axis_origin_x, axis_origin_y, axis_origin_z, axis_dir_x, axis_dir_y, axis_dir_z, count, angle_deg) {
-        const ret = wasm.solid_circularPattern(this.__wbg_ptr, axis_origin_x, axis_origin_y, axis_origin_z, axis_dir_x, axis_dir_y, axis_dir_z, count, angle_deg);
+        const ret = wasm.op_circular_pattern(this.__wbg_ptr, axis_origin_x, axis_origin_y, axis_origin_z, axis_dir_x, axis_dir_y, axis_dir_z, count, angle_deg);
         return Solid.__wrap(ret);
     }
     /**
@@ -1151,7 +1151,7 @@ export class Solid {
      * @returns {Solid}
      */
     fillet(radius) {
-        const ret = wasm.solid_fillet(this.__wbg_ptr, radius);
+        const ret = wasm.op_fillet(this.__wbg_ptr, radius);
         return Solid.__wrap(ret);
     }
     /**
@@ -1225,7 +1225,7 @@ export class Solid {
      * @returns {Solid}
      */
     linearPattern(dir_x, dir_y, dir_z, count, spacing) {
-        const ret = wasm.solid_linearPattern(this.__wbg_ptr, dir_x, dir_y, dir_z, count, spacing);
+        const ret = wasm.op_linear_pattern(this.__wbg_ptr, dir_x, dir_y, dir_z, count, spacing);
         return Solid.__wrap(ret);
     }
     /**
@@ -1412,7 +1412,7 @@ export class Solid {
      * @returns {Solid}
      */
     shell(thickness) {
-        const ret = wasm.solid_shell(this.__wbg_ptr, thickness);
+        const ret = wasm.op_shell(this.__wbg_ptr, thickness);
         return Solid.__wrap(ret);
     }
     /**

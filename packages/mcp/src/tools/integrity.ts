@@ -17,6 +17,7 @@ import type { Engine, TriangleMesh } from "@vcad/engine";
 /** Compact aggregate geometry report attached to mutation results. */
 export interface IntegrityReport {
   volume_mm3: number;
+  surface_area_mm2: number;
   bounding_box: {
     min: { x: number; y: number; z: number };
     max: { x: number; y: number; z: number };
@@ -41,6 +42,32 @@ export interface IntegrityReport {
 
 const round3 = (v: number): number => Math.round(v * 1000) / 1000;
 
+/**
+ * Isoperimetric impossibility test. Every real solid satisfies
+ * A³ ≥ 36·π·V² (equality only for the sphere), and the bound holds exactly
+ * for closed, consistently wound meshes too — so a (volume, area) pair that
+ * violates it cannot bound any solid. In the field this is the signature of
+ * a wrong-but-watertight boolean result: the mesh looks fine, but the
+ * volume integral reports material the surface could not possibly enclose
+ * (e.g. ~661 mm³ from ~100 mm², where 100 mm² can enclose at most ~94 mm³).
+ *
+ * Returns the maximum volume the given area could enclose when the pair is
+ * impossible, or null when the pair is geometrically consistent. The 0.1%
+ * slack absorbs f32 mesh coordinates and reporting round-off; genuine
+ * violations overshoot the bound by orders of magnitude.
+ */
+export function isoperimetricViolation(
+  volume_mm3: number,
+  area_mm2: number,
+): { max_volume_mm3: number } | null {
+  const volume = Math.abs(volume_mm3);
+  if (!(volume > 1e-9) || !(area_mm2 > 0)) return null;
+  const bound = 36 * Math.PI * volume * volume;
+  const cube = area_mm2 * area_mm2 * area_mm2;
+  if (cube >= bound * 0.999) return null;
+  return { max_volume_mm3: Math.sqrt(cube / (36 * Math.PI)) };
+}
+
 /** Signed tetra volume of a triangle against the origin. */
 function signedVolume(
   p1: readonly number[],
@@ -53,6 +80,24 @@ function signedVolume(
       p3[0] * (p1[1] * p2[2] - p2[1] * p1[2])) /
     6.0
   );
+}
+
+/** Unsigned area of a triangle. */
+function triangleArea(
+  p1: readonly number[],
+  p2: readonly number[],
+  p3: readonly number[],
+): number {
+  const ax = p2[0] - p1[0];
+  const ay = p2[1] - p1[1];
+  const az = p2[2] - p1[2];
+  const bx = p3[0] - p1[0];
+  const by = p3[1] - p1[1];
+  const bz = p3[2] - p1[2];
+  const cx = ay * bz - az * by;
+  const cy = az * bx - ax * bz;
+  const cz = ax * by - ay * bx;
+  return Math.sqrt(cx * cx + cy * cy + cz * cz) / 2;
 }
 
 /**
@@ -171,6 +216,7 @@ export function computeIntegrity(
   }
 
   let volume = 0;
+  let area = 0;
   let cx = 0;
   let cy = 0;
   let cz = 0;
@@ -182,11 +228,12 @@ export function computeIntegrity(
   };
   const warnings: string[] = [];
 
-  for (const part of scene.parts) {
-    const mesh = part.mesh;
+  for (let partIndex = 0; partIndex < scene.parts.length; partIndex++) {
+    const mesh = scene.parts[partIndex].mesh;
     const tris = mesh.indices.length / 3;
     triangles += tris;
     let partVolume = 0;
+    let partArea = 0;
     for (let t = 0; t < tris; t++) {
       const p = (k: number): number[] => {
         const b = mesh.indices[t * 3 + k] * 3;
@@ -199,6 +246,7 @@ export function computeIntegrity(
       const [p1, p2, p3] = [p(0), p(1), p(2)];
       const v = signedVolume(p1, p2, p3);
       partVolume += v;
+      partArea += triangleArea(p1, p2, p3);
       cx += (v * (p1[0] + p2[0] + p3[0])) / 4;
       cy += (v * (p1[1] + p2[1] + p3[1])) / 4;
       cz += (v * (p1[2] + p2[2] + p3[2])) / 4;
@@ -216,7 +264,16 @@ export function computeIntegrity(
         `part mesh has net negative volume (${round3(partVolume)} mm³) — inverted winding`,
       );
     }
+    const impossible = isoperimetricViolation(partVolume, partArea);
+    if (impossible) {
+      warnings.push(
+        `part ${partIndex + 1} volume ${round3(Math.abs(partVolume))} mm³ is isoperimetrically impossible for its ` +
+          `${round3(partArea)} mm² of surface (A³ ≥ 36πV² for any real solid; this area can enclose at most ` +
+          `≈${round3(impossible.max_volume_mm3)} mm³) — the volume integral is corrupt, do not trust this geometry`,
+      );
+    }
     volume += partVolume;
+    area += partArea;
     openEdges += countOpenEdges(mesh);
   }
 
@@ -259,6 +316,7 @@ export function computeIntegrity(
 
   const report: IntegrityReport = {
     volume_mm3: round3(Math.abs(volume)),
+    surface_area_mm2: round3(area),
     bounding_box: hasBbox
       ? {
           min: {

@@ -25,9 +25,13 @@ import type {
   PadType,
   PcbLayer,
   Trace,
+  TraceArc,
   Via,
   Zone,
   Vec2,
+  Vec3,
+  CsgOp,
+  SketchSegment2D,
   Receipt,
 } from "@vcad/ir";
 import { createDocument } from "@vcad/ir";
@@ -35,6 +39,7 @@ import { summarize, unifiedFromPcbReceipt } from "../receipt-unified.js";
 import { getNodePcb, getPcbNodeIds, buildEntry, agentView, diffViolations } from "@vcad/core";
 import {
   computeRatsnest,
+  componentMeshes,
   exportFabFiles,
   pcbPreviewMeshes,
   exportKicadPcb,
@@ -8134,10 +8139,12 @@ export function addZone(args: Record<string, unknown>) {
 // `changed` diff of what left the board, mirroring the other mutators. For a
 // "take back the very last thing I did" the `undo` tool is the broader hammer.
 
-/** A removed (or, for undo, re-added) board element, for the `changed` diff. */
+/** A removed (or, for undo, re-added) board element, for the `changed` diff.
+ *  For `netTie` entries `net` is the joined nets as "A+B+C" (a tie has no
+ *  single net of its own). */
 interface PcbElementChange {
   action: "removed" | "added";
-  kind: "zone" | "trace" | "traceArc" | "via";
+  kind: "zone" | "trace" | "traceArc" | "via" | "netTie";
   index: number;
   net: string;
   layer?: string;
@@ -8303,6 +8310,582 @@ export function deleteVia(args: Record<string, unknown>) {
 }
 
 // ============================================================================
+// get_copper — read/query routed copper (the discovery side of the algebra)
+// ============================================================================
+//
+// add_trace/add_via/add_zone write copper and delete_trace/delete_via/
+// delete_zone remove it by index — but nothing let an agent SEE what copper
+// exists: describe_pcb only aggregates counts, so finding "the trace shorting
+// GND to PHA near the star point" meant exporting the whole document. This is
+// the read companion: filter by layer/net/bbox/kind and get each element back
+// with the same `index` (per-collection, add order) the delete_* tools accept.
+
+/** The queryable copper collections, in report order. */
+type CopperKind = "trace" | "traceArc" | "via" | "zone";
+const COPPER_KINDS: readonly CopperKind[] = ["trace", "traceArc", "via", "zone"];
+
+/** Axis-aligned bbox as {min, max}. */
+interface Bbox {
+  min: Vec2;
+  max: Vec2;
+}
+
+/** Conservative bounding box of a copper element (copper extent included). */
+function copperElementBbox(kind: CopperKind, el: Trace | TraceArc | Via | Zone): Bbox {
+  switch (kind) {
+    case "trace": {
+      const t = el as Trace;
+      const r = t.width / 2;
+      return {
+        min: { x: Math.min(t.start.x, t.end.x) - r, y: Math.min(t.start.y, t.end.y) - r },
+        max: { x: Math.max(t.start.x, t.end.x) + r, y: Math.max(t.start.y, t.end.y) + r },
+      };
+    }
+    case "traceArc": {
+      // Full-circle bound — conservative (a quarter arc reports the whole
+      // circle's box), but never misses copper on a bbox query.
+      const a = el as TraceArc;
+      const r = a.radius + a.width / 2;
+      return {
+        min: { x: a.center.x - r, y: a.center.y - r },
+        max: { x: a.center.x + r, y: a.center.y + r },
+      };
+    }
+    case "via": {
+      const v = el as Via;
+      const r = v.diameter / 2;
+      return {
+        min: { x: v.position.x - r, y: v.position.y - r },
+        max: { x: v.position.x + r, y: v.position.y + r },
+      };
+    }
+    case "zone": {
+      const z = el as Zone;
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      for (const p of z.outline) {
+        if (p.x < minX) minX = p.x;
+        if (p.y < minY) minY = p.y;
+        if (p.x > maxX) maxX = p.x;
+        if (p.y > maxY) maxY = p.y;
+      }
+      return { min: { x: minX, y: minY }, max: { x: maxX, y: maxY } };
+    }
+  }
+}
+
+/** True when a via's barrel spans `layer` (start/end plus every copper layer
+ *  between, by stackup order) — a through via FCu→BCu carries In1Cu too. */
+function viaSpansLayer(via: Via, layer: PcbLayer): boolean {
+  const lo = COPPER_LAYERS.indexOf(via.startLayer);
+  const hi = COPPER_LAYERS.indexOf(via.endLayer);
+  const at = COPPER_LAYERS.indexOf(layer);
+  if (lo < 0 || hi < 0 || at < 0) return via.startLayer === layer || via.endLayer === layer;
+  return at >= Math.min(lo, hi) && at <= Math.max(lo, hi);
+}
+
+/** Hard cap on elements per get_copper page — keeps a dense board's response
+ *  bounded; the caller pages with `offset` (the result carries `total`). */
+const GET_COPPER_CAP = 200;
+
+/** JSON Schema for get_copper tool. */
+export const getCopperSchema = {
+  type: "object" as const,
+  properties: {
+    ...docInputProperties,
+    kind: {
+      type: "string" as const,
+      description:
+        "Restrict to one collection: 'trace', 'traceArc', 'via', or 'zone'. " +
+        "Omit for all four.",
+    },
+    layer: {
+      type: "string" as const,
+      description:
+        "Copper-layer filter (e.g. 'FCu', 'BCu', 'In1Cu'). Traces/arcs/zones " +
+        "match their own layer; a via matches every layer its barrel spans.",
+    },
+    net: { type: "string" as const, description: "Net filter (exact id, e.g. 'GND')." },
+    bbox: {
+      type: "object" as const,
+      description:
+        "Spatial filter, board-local mm: keep elements whose bounding box " +
+        "overlaps the rectangle x..x+w, y..y+h (conservative for arcs).",
+      properties: {
+        x: { type: "number" as const },
+        y: { type: "number" as const },
+        w: { type: "number" as const },
+        h: { type: "number" as const },
+      },
+      required: ["x", "y", "w", "h"],
+    },
+    offset: {
+      type: "number" as const,
+      description: "Skip this many matches (pagination; default 0).",
+    },
+    limit: {
+      type: "number" as const,
+      description: `Max elements returned (default and cap ${GET_COPPER_CAP}).`,
+    },
+  },
+  required: ["document_id"],
+};
+
+/**
+ * Query the board's routed copper — traces, trace arcs, vias, zones — with
+ * optional layer/net/bbox/kind filters. Each element is returned with its
+ * `kind` and `index`: the exact addressing delete_trace / delete_via /
+ * delete_zone accept, so a query result can drive a surgical delete without
+ * ever exporting the document. Read-only.
+ */
+export function getCopper(args: Record<string, unknown>) {
+  const ctx = resolveDocInput(args);
+  const pcb = getDocPcb(ctx.doc);
+  const fail = ecadError;
+  if (!pcb) {
+    return fail(
+      "Document has no PCB — run place_components first (or open a document that has a board)",
+    );
+  }
+
+  let kinds: readonly CopperKind[] = COPPER_KINDS;
+  if (args.kind != null) {
+    const k = String(args.kind);
+    if (!COPPER_KINDS.includes(k as CopperKind)) {
+      return fail(`kind '${k}' is not valid; legal: ${COPPER_KINDS.join(", ")}`);
+    }
+    kinds = [k as CopperKind];
+  }
+
+  let wantLayer: PcbLayer | undefined;
+  if (args.layer != null) {
+    const layerRes = validateCopperLayer(args.layer);
+    if ("error" in layerRes) return fail(layerRes.error);
+    wantLayer = layerRes.layer;
+  }
+  const wantNet = args.net != null ? String(args.net) : undefined;
+
+  let queryBox: Bbox | undefined;
+  if (args.bbox != null) {
+    const b = args.bbox as Record<string, unknown>;
+    if (
+      typeof b.x !== "number" || typeof b.y !== "number" ||
+      typeof b.w !== "number" || typeof b.h !== "number"
+    ) {
+      return fail("bbox must be {x, y, w, h} in board-local mm");
+    }
+    if ((b.w as number) < 0 || (b.h as number) < 0) return fail("bbox w and h must be >= 0");
+    queryBox = {
+      min: { x: b.x as number, y: b.y as number },
+      max: { x: (b.x as number) + (b.w as number), y: (b.y as number) + (b.h as number) },
+    };
+  }
+
+  const offset = typeof args.offset === "number" ? Math.max(0, Math.floor(args.offset)) : 0;
+  const limit =
+    typeof args.limit === "number"
+      ? Math.min(GET_COPPER_CAP, Math.max(1, Math.floor(args.limit)))
+      : GET_COPPER_CAP;
+
+  const overlaps = (a: Bbox, b: Bbox): boolean =>
+    a.min.x <= b.max.x && a.max.x >= b.min.x && a.min.y <= b.max.y && a.max.y >= b.min.y;
+
+  const layerMatches = (kind: CopperKind, el: Trace | TraceArc | Via | Zone): boolean => {
+    if (wantLayer === undefined) return true;
+    if (kind === "via") return viaSpansLayer(el as Via, wantLayer);
+    return (el as Trace | TraceArc | Zone).layer === wantLayer;
+  };
+
+  const rv = (v: Vec2): Vec2 => ({ x: round3(v.x), y: round3(v.y) });
+  const rbox = (b: Bbox): Bbox => ({ min: rv(b.min), max: rv(b.max) });
+
+  /** The reported view of one element — identity first, geometry after. */
+  const describe = (
+    kind: CopperKind,
+    index: number,
+    el: Trace | TraceArc | Via | Zone,
+  ): Record<string, unknown> => {
+    switch (kind) {
+      case "trace": {
+        const t = el as Trace;
+        return {
+          kind, index, net: t.net, layer: t.layer,
+          start: rv(t.start), end: rv(t.end), width: t.width,
+          ...(t.source ? { source: t.source } : {}),
+        };
+      }
+      case "traceArc": {
+        const a = el as TraceArc;
+        return {
+          kind, index, net: a.net, layer: a.layer,
+          center: rv(a.center), radius: round3(a.radius),
+          start_angle: a.startAngle, end_angle: a.endAngle, width: a.width,
+        };
+      }
+      case "via": {
+        const v = el as Via;
+        return {
+          kind, index, net: v.net, layers: [v.startLayer, v.endLayer],
+          position: rv(v.position), diameter: v.diameter, drill: v.drill,
+          ...(v.source ? { source: v.source } : {}),
+        };
+      }
+      case "zone": {
+        // A pour's outline can run to hundreds of vertices (board fills) —
+        // report its bbox + vertex count; the index is enough to delete it.
+        const z = el as Zone;
+        return {
+          kind, index, net: z.net, layer: z.layer,
+          bbox: rbox(copperElementBbox("zone", z)), vertices: z.outline.length,
+          ...(z.holes && z.holes.length > 0 ? { holes: z.holes.length } : {}),
+          clearance: z.clearance, priority: z.priority ?? 0,
+        };
+      }
+    }
+  };
+
+  const collections: Record<CopperKind, Array<Trace | TraceArc | Via | Zone>> = {
+    trace: pcb.traces,
+    traceArc: pcb.traceArcs ?? [],
+    via: pcb.vias,
+    zone: pcb.zones,
+  };
+
+  // Match in deterministic order (traces, arcs, vias, zones; index order
+  // within each) so offset-paging never skips or repeats an element.
+  const matched: Array<{ kind: CopperKind; index: number; el: Trace | TraceArc | Via | Zone }> = [];
+  const totalByKind: Partial<Record<CopperKind, number>> = {};
+  for (const kind of kinds) {
+    collections[kind].forEach((el, index) => {
+      if (wantNet !== undefined && el.net !== wantNet) return;
+      if (!layerMatches(kind, el)) return;
+      if (queryBox && !overlaps(copperElementBbox(kind, el), queryBox)) return;
+      matched.push({ kind, index, el });
+      totalByKind[kind] = (totalByKind[kind] ?? 0) + 1;
+    });
+  }
+
+  const page = matched.slice(offset, offset + limit);
+  const elements = page.map((m) => describe(m.kind, m.index, m.el));
+
+  return {
+    content: [
+      {
+        type: "text" as const,
+        text: JSON.stringify({
+          success: true,
+          total: matched.length,
+          total_by_kind: totalByKind,
+          count: elements.length,
+          offset,
+          ...(offset + elements.length < matched.length
+            ? { next_offset: offset + elements.length }
+            : {}),
+          elements,
+          ...docResultPayload(ctx),
+        }),
+      },
+    ],
+  };
+}
+
+// ============================================================================
+// add_net_tie / delete_net_tie — intentional net junctions
+// ============================================================================
+//
+// Wye motor windings, split grounds joined at one stitch, and current-sense
+// shunts all REQUIRE two named nets to touch on purpose — without a declared
+// tie, DRC correctly reports the junction as a short. Until now only the
+// add_motor_winding realizer could author a NetTie; an agent hand-building a
+// wye had to do offline JSON surgery on the saved .vcad. These tools complete
+// the algebra: author and remove ties on the live session.
+
+/** Tolerance for matching a tie by position in delete_net_tie, mm. */
+const TIE_POSITION_TOL = 1e-3;
+
+/** The reported view of one net tie: the stored fields plus its index (the
+ *  addressing delete_net_tie accepts) and the DRC scope it resolves to. */
+function describeNetTie(tie: NetTie, index: number): Record<string, unknown> {
+  return {
+    index,
+    nets: tie.nets,
+    ...(tie.position ? { position: tie.position } : {}),
+    ...(tie.radius !== undefined ? { radius: tie.radius } : {}),
+    scope: tie.position && tie.radius !== undefined ? "region" : "board_wide",
+  };
+}
+
+/** The full tie list, as returned by both tie tools after a mutation. */
+function netTieList(pcb: Pcb): Array<Record<string, unknown>> {
+  return (pcb.netTies ?? []).map((t, i) => describeNetTie(t, i));
+}
+
+/** JSON Schema for add_net_tie tool. */
+export const addNetTieSchema = {
+  type: "object" as const,
+  properties: {
+    ...docInputProperties,
+    nets: {
+      type: "array" as const,
+      items: { type: "string" as const },
+      description:
+        "Names of the nets joined at this tie (>= 2, all must exist on the " +
+        "board) — e.g. the three phases + neutral of a wye, or GND + AGND.",
+    },
+    position: {
+      ...vec2Schema,
+      description:
+        "Center of the allowed join region, board-local mm. Give WITH `radius` " +
+        "to scope the exemption; omit both for a board-wide tie.",
+    },
+    radius: {
+      type: "number" as const,
+      description:
+        "Radius of the allowed join region, mm (> 0). Requires `position`. " +
+        "Size it to cover the junction copper with margin (~1 trace width): " +
+        "DRC judges each contact at an estimated contact point (e.g. a trace " +
+        "midpoint), not the exact geometric touch.",
+    },
+  },
+  required: ["document_id", "nets"],
+};
+
+/**
+ * Declare an intentional junction between two or more nets (a net-tie) so DRC
+ * treats them as one electrical node where they meet — the primitive behind
+ * wye/star neutral points, split-ground stitches, and current-sense shunt
+ * taps. Region-scoped (position+radius) ties exempt clearance/short checks
+ * only for contacts inside the region — and connectivity: nets joined through
+ * copper are legal when each has a tie-covered contact there (a stray crossing
+ * of the same nets elsewhere still fires). Region-less ties exempt the pair
+ * board-wide. Mutates the session document.
+ */
+export function addNetTie(args: Record<string, unknown>) {
+  const ctx = resolveDocInput(args);
+  const pcb = getDocPcb(ctx.doc);
+  const fail = ecadError;
+  if (!pcb) {
+    return fail(
+      "Document has no PCB — run place_components first (or open a document that has a board)",
+    );
+  }
+
+  const rawNets = Array.isArray(args.nets) ? (args.nets as unknown[]) : undefined;
+  if (!rawNets) return fail("nets is required — the >= 2 net names this tie joins");
+  const nets: string[] = [];
+  for (const n of rawNets) {
+    const name = String(n ?? "").trim();
+    if (!name) return fail("every entry in nets must be a non-empty net name");
+    if (!nets.includes(name)) nets.push(name);
+  }
+  if (nets.length < 2) return fail("a net tie joins at least 2 distinct nets");
+
+  // A tie on a net that doesn't exist is a typo, not an intention — and it
+  // would silently exempt nothing. Validate against the board's netlist.
+  const known = new Set(pcb.nets.map((n) => n.id));
+  const unknown = nets.filter((n) => !known.has(n));
+  if (unknown.length > 0) {
+    const names = pcb.nets.map((n) => n.id);
+    const shown = names.slice(0, 30).join(", ");
+    return fail(
+      `unknown net${unknown.length > 1 ? "s" : ""} ${unknown.map((n) => `'${n}'`).join(", ")} — ` +
+        `board nets: ${shown}${names.length > 30 ? `, … (${names.length} total)` : ""}`,
+    );
+  }
+
+  // The kernel only forms a scoped region when BOTH position and radius are
+  // present (NetTieGroups in drc.rs); one without the other would silently
+  // degrade to a board-wide exemption. Fail closed instead.
+  const hasPosition = args.position != null;
+  const hasRadius = args.radius != null;
+  if (hasPosition !== hasRadius) {
+    return fail(
+      "position and radius must be given together — one without the other " +
+        "would silently become a board-wide exemption. Pass both to scope the " +
+        "tie to a region, or neither for an explicit board-wide tie.",
+    );
+  }
+  let position: Vec2 | undefined;
+  let radius: number | undefined;
+  if (hasPosition) {
+    const p = args.position as Record<string, unknown>;
+    if (typeof p.x !== "number" || typeof p.y !== "number") {
+      return fail("position must be {x, y} in board-local mm");
+    }
+    radius = args.radius as number;
+    if (typeof radius !== "number" || !(radius > 0)) return fail("radius must be > 0 mm");
+    position = { x: round3(p.x as number), y: round3(p.y as number) };
+    radius = round3(radius);
+  }
+
+  pcb.netTies = pcb.netTies ?? [];
+  const tie: NetTie = {
+    nets,
+    ...(position ? { position } : {}),
+    ...(radius !== undefined ? { radius } : {}),
+  };
+  pcb.netTies.push(tie);
+  const index = pcb.netTies.length - 1;
+
+  const change: PcbElementChange = {
+    action: "added",
+    kind: "netTie",
+    index,
+    net: nets.join("+"),
+  };
+
+  return {
+    content: [
+      {
+        type: "text" as const,
+        text: JSON.stringify({
+          success: true,
+          tie: describeNetTie(tie, index),
+          net_ties: netTieList(pcb),
+          net_ties_total: pcb.netTies.length,
+          changed: [change],
+          ...docResultPayload(ctx),
+        }),
+      },
+    ],
+  };
+}
+
+/** JSON Schema for delete_net_tie tool. */
+export const deleteNetTieSchema = {
+  type: "object" as const,
+  properties: {
+    ...docInputProperties,
+    index: {
+      type: "number" as const,
+      description:
+        "Zero-based position in pcb.netTies (as reported by add_net_tie / get_document).",
+    },
+    nets: {
+      type: "array" as const,
+      items: { type: "string" as const },
+      description:
+        "Match ties joining exactly this net set (order-insensitive). With " +
+        "`index`, a guard; without it, identifies the tie when exactly one matches.",
+    },
+    position: {
+      ...vec2Schema,
+      description:
+        `Match region-scoped ties centered here (±${TIE_POSITION_TOL} mm) — ` +
+        "disambiguates when the same net set is tied at several junctions " +
+        "(e.g. the three X–Y ties of a delta winding).",
+    },
+  },
+  required: ["document_id"],
+};
+
+/** Remove a net tie by `index`, or by matching `nets` (set equality) and/or
+ *  `position` — the take-back for a bad add_net_tie. The junction's copper (if
+ *  any) stays; DRC will report it as a short again. Mutates the session. */
+export function deleteNetTie(args: Record<string, unknown>) {
+  const ctx = resolveDocInput(args);
+  const pcb = getDocPcb(ctx.doc);
+  const fail = ecadError;
+  if (!pcb) {
+    return fail(
+      "Document has no PCB — run place_components first (or open a document that has a board)",
+    );
+  }
+  const ties = pcb.netTies ?? [];
+  if (ties.length === 0) return fail("board has no net ties to delete");
+
+  let wantNets: string[] | undefined;
+  if (args.nets != null) {
+    if (!Array.isArray(args.nets)) return fail("nets must be an array of net names");
+    wantNets = (args.nets as unknown[]).map((n) => String(n ?? "").trim()).sort();
+  }
+  let wantPos: Vec2 | undefined;
+  if (args.position != null) {
+    const p = args.position as Record<string, unknown>;
+    if (typeof p.x !== "number" || typeof p.y !== "number") {
+      return fail("position must be {x, y} in board-local mm");
+    }
+    wantPos = { x: p.x as number, y: p.y as number };
+  }
+
+  const matchesFilter = (tie: NetTie): boolean => {
+    if (wantNets) {
+      const have = [...tie.nets].sort();
+      if (have.length !== wantNets.length || have.some((n, i) => n !== wantNets![i])) return false;
+    }
+    if (wantPos) {
+      if (!tie.position) return false;
+      if (
+        Math.abs(tie.position.x - wantPos.x) > TIE_POSITION_TOL ||
+        Math.abs(tie.position.y - wantPos.y) > TIE_POSITION_TOL
+      ) {
+        return false;
+      }
+    }
+    return true;
+  };
+
+  let index: number;
+  if (typeof args.index === "number") {
+    index = args.index as number;
+    if (!Number.isInteger(index) || index < 0 || index >= ties.length) {
+      return fail(`index ${index} out of range — board has ${ties.length} net ties (0..${ties.length - 1})`);
+    }
+    // A nets/position given alongside the index is a guard against deleting
+    // the wrong tie — confirm the indexed tie actually matches.
+    if (!matchesFilter(ties[index]!)) {
+      return fail(
+        `net tie at index ${index} joins [${ties[index]!.nets.join(", ")}]` +
+          `${ties[index]!.position ? ` at (${ties[index]!.position!.x}, ${ties[index]!.position!.y})` : ""}, ` +
+          "not the nets/position you specified",
+      );
+    }
+  } else if (wantNets || wantPos) {
+    const matches = ties.flatMap((t, i) => (matchesFilter(t) ? [i] : []));
+    const sel = [
+      wantNets ? `[${wantNets.join(", ")}]` : undefined,
+      wantPos ? `(${wantPos.x}, ${wantPos.y})` : undefined,
+    ]
+      .filter(Boolean)
+      .join(" at ");
+    if (matches.length === 0) return fail(`no net tie matches ${sel}`);
+    if (matches.length > 1) {
+      return fail(
+        `${matches.length} net ties match ${sel} (indices ${matches.join(", ")}) — pass \`index\` or \`position\` to pick one`,
+      );
+    }
+    index = matches[0]!;
+  } else {
+    return fail(
+      `pass \`index\` (0..${ties.length - 1}), \`nets\`, or \`position\` to identify the tie to delete`,
+    );
+  }
+
+  const [removed] = ties.splice(index, 1);
+  const change: PcbElementChange = {
+    action: "removed",
+    kind: "netTie",
+    index,
+    net: removed!.nets.join("+"),
+  };
+
+  return {
+    content: [
+      {
+        type: "text" as const,
+        text: JSON.stringify({
+          success: true,
+          deleted: describeNetTie(removed!, index),
+          net_ties: netTieList(pcb),
+          net_ties_total: ties.length,
+          changed: [change],
+          ...docResultPayload(ctx),
+        }),
+      },
+    ],
+  };
+}
+
+// ============================================================================
 // undo — rewind the last mutation on a session (snapshot stack)
 // ============================================================================
 
@@ -8345,11 +8928,16 @@ function diffElementArray(
 /** Board-element diff between two PCBs (or null when neither has a board). */
 function diffPcbElements(before: Pcb | null, after: Pcb | null): PcbElementChange[] {
   if (!before || !after) return [];
+  // Ties carry no single `net` — view them with the joined names so the
+  // generic differ (which keys on full JSON and reads `.net`) can report them.
+  const tieView = (ties?: NetTie[]) =>
+    (ties ?? []).map((t) => ({ ...t, net: t.nets.join("+") }));
   return [
     ...diffElementArray("zone", before.zones ?? [], after.zones ?? []),
     ...diffElementArray("trace", before.traces ?? [], after.traces ?? []),
     ...diffElementArray("traceArc", (before.traceArcs ?? []) as never, (after.traceArcs ?? []) as never),
     ...diffElementArray("via", before.vias ?? [], after.vias ?? []),
+    ...diffElementArray("netTie", tieView(before.netTies) as never, tieView(after.netTies) as never),
   ];
 }
 
@@ -9698,45 +10286,183 @@ function padApproxRadius(pad: Pad): number {
 export const calcMotorSchema = {
   type: "object" as const,
   properties: {
+    mode: {
+      type: "string" as const,
+      description:
+        "'pm' (default): permanent-magnet machine — Kt/Ke from air-gap flux; " +
+        "requires inner/outer radius, phase_resistance_ohm, supply_voltage_v. " +
+        "'induction': thin-sheet axial induction rotor (drag-cup / PCB cage) — " +
+        "torque from eddy currents; requires phase_current_a, electrical_freq_hz, " +
+        "effective_gap_mm, sheet_conductance_s, inner/outer radius.",
+    },
     pole_pairs: { type: "number" as const, description: "Pole pairs p (electrical periods per mechanical rev)." },
     turns_per_phase: { type: "number" as const, description: "Series turns per phase N." },
     winding_factor: { type: "number" as const, description: "Winding factor kw (default 0.95). Use the value from winding_layout for accuracy." },
-    inner_radius_mm: { type: "number" as const, description: "Inner (bore) stator radius, mm." },
-    outer_radius_mm: { type: "number" as const, description: "Outer stator radius, mm." },
-    phase_resistance_ohm: { type: "number" as const, description: "Per-phase resistance, ohms (e.g. the add_coil DC estimate)." },
-    supply_voltage_v: { type: "number" as const, description: "DC bus / supply voltage, volts." },
+    inner_radius_mm: { type: "number" as const, description: "Inner (bore) stator radius, mm. In induction mode: inner radius of the active annulus the field sweeps." },
+    outer_radius_mm: { type: "number" as const, description: "Outer stator radius, mm. In induction mode: outer radius of the active annulus." },
+    phase_resistance_ohm: { type: "number" as const, description: "Per-phase resistance, ohms (e.g. the add_coil DC estimate). PM mode only (required)." },
+    supply_voltage_v: { type: "number" as const, description: "DC bus / supply voltage, volts. PM mode only (required)." },
     airgap_flux_tesla: {
       type: "number" as const,
-      description: "Air-gap flux density B_gap (T). Omit to COMPUTE it from `magnet` via the MEC model.",
+      description: "PM mode: air-gap flux density B_gap (T). Omit to COMPUTE it from `magnet` via the MEC model.",
     },
     magnet: {
       type: "object" as const,
       description:
-        "Optional magnet/geometry to compute B_gap when airgap_flux_tesla is omitted (NdFeB defaults). Fields: remanence_tesla, magnet_thickness_mm, airgap_mm, recoil_mu_rel, magnet_area_mm2, gap_area_mm2, iron_mu_rel.",
+        "PM mode: optional magnet/geometry to compute B_gap when airgap_flux_tesla is omitted (NdFeB defaults). " +
+        "Fields: remanence_tesla, magnet_thickness_mm, airgap_mm, recoil_mu_rel, magnet_area_mm2, gap_area_mm2, iron_mu_rel. " +
+        "Add pole_width_mm (magnet pole face width across the fringing direction) to also apply the first-order " +
+        "Carter-like fringing derate w/(w+2g) — the tool then reports raw AND derated B and uses the derated value for Kt.",
+    },
+    phase_current_a: { type: "number" as const, description: "Induction mode (required): phase current, A RMS (balanced 3-phase drive)." },
+    electrical_freq_hz: { type: "number" as const, description: "Induction mode (required): electrical drive frequency, Hz." },
+    effective_gap_mm: {
+      type: "number" as const,
+      description:
+        "Induction mode (required): TOTAL non-ferromagnetic flux path, mm — all air gaps plus the rotor sheet " +
+        "and any PCB substrate between back-irons (e.g. 4.7 for a PCB-stator sandwich).",
+    },
+    sheet_conductance_s: {
+      type: "number" as const,
+      description:
+        "Induction mode (required): rotor sheet surface conductance σs = σ·thickness, siemens. " +
+        "E.g. 2×2oz copper: 5.8e7 S/m × 0.14e-3 m ≈ 8120 S.",
+    },
+    end_effect_factor: {
+      type: "number" as const,
+      description:
+        "Induction mode: Russell–Norsworthy end-effect factor (0..1] — fraction of ideal torque surviving the " +
+        "eddy return paths outside the active annulus. Default 0.65.",
     },
   },
-  required: [
-    "pole_pairs",
-    "turns_per_phase",
-    "inner_radius_mm",
-    "outer_radius_mm",
-    "phase_resistance_ohm",
-    "supply_voltage_v",
-  ],
+  required: ["pole_pairs", "turns_per_phase"],
 };
 
+/** Round to 6 significant digits — micro-newton-metre torques survive, noise doesn't. */
+const sig6 = (v: number) => (v === 0 || !Number.isFinite(v) ? v : Number(v.toPrecision(6)));
+
 /**
- * Evaluate a motor's headline performance — torque constant, back-EMF constant,
- * no-load speed, stall torque, and a speed–torque curve — from its magnetics +
- * electrical parameters. Pure analysis (no board, no mutation). The air-gap flux
- * is either supplied directly or computed from magnet geometry via the
- * first-order MEC reluctance model. First-order steady state: no slotting,
- * fringing, saturation, or losses.
+ * Thin-sheet axial induction branch of calc_motor. A TypeScript mirror of the
+ * `vcad_ecad_sim::induction` closed form (same pattern as calc_coil /
+ * calc_impedance mirroring their Rust twins):
+ *
+ *   F1 = (3/2)·(4/π)·(kw·N/(2p))·I_pk      rotating MMF fundamental
+ *   B1 = μ0·F1/g                           g = total non-ferromagnetic path
+ *   T(s) = k_ee·π·σs·s·(ωe/p)·B1²·(r2⁴−r1⁴)/4   linear-in-slip eddy torque
+ *
+ * k_ee is the Russell–Norsworthy end-effect factor (eddy return paths close
+ * outside the active annulus). First-order: no breakdown peak, no magnetizing/
+ * leakage reactance, no stator copper loss (no resistance input).
+ */
+function calcMotorInduction(
+  args: Record<string, unknown>,
+  polePairs: number,
+  turnsPerPhase: number,
+  windingFactor: number,
+  innerR: number,
+  outerR: number,
+) {
+  const fail = ecadError;
+  const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : NaN);
+  const iRms = num(args.phase_current_a);
+  const freqHz = num(args.electrical_freq_hz);
+  const gapMm = num(args.effective_gap_mm);
+  const sigmaS = num(args.sheet_conductance_s);
+  const endEffect = Number.isFinite(num(args.end_effect_factor))
+    ? num(args.end_effect_factor)
+    : 0.65;
+
+  if (!(iRms > 0)) return fail("induction mode: phase_current_a (A rms) must be > 0");
+  if (!(freqHz > 0)) return fail("induction mode: electrical_freq_hz must be > 0");
+  if (!(gapMm > 0)) return fail("induction mode: effective_gap_mm must be > 0");
+  if (!(sigmaS > 0)) return fail("induction mode: sheet_conductance_s must be > 0");
+  if (!(endEffect > 0 && endEffect <= 1)) {
+    return fail("induction mode: end_effect_factor must be in (0, 1]");
+  }
+
+  // Rotating MMF fundamental of a balanced 3-phase winding.
+  const iPk = iRms * Math.SQRT2;
+  const f1 = 1.5 * (4 / Math.PI) * ((windingFactor * turnsPerPhase) / (2 * polePairs)) * iPk;
+  const b1 = (MU0 * f1) / (gapMm * 1e-3);
+
+  const omegaSync = (2 * Math.PI * freqHz) / polePairs; // mechanical rad/s
+  const annulusM4 = (Math.pow(outerR * 1e-3, 4) - Math.pow(innerR * 1e-3, 4)) / 4;
+  const torquePerSlipRaw = Math.PI * sigmaS * omegaSync * b1 * b1 * annulusM4;
+  const torquePerSlip = endEffect * torquePerSlipRaw;
+  const syncRpm = (60 * freqHz) / polePairs;
+  // Locked rotor (s = 1): all air-gap power T·ωsync dissipates in the sheet.
+  const copperLossW = torquePerSlip * omegaSync;
+
+  const inductionInputs = {
+    pole_pairs: polePairs,
+    turns_per_phase: turnsPerPhase,
+    winding_factor: windingFactor,
+    phase_current_a: iRms,
+    electrical_freq_hz: freqHz,
+    effective_gap_mm: gapMm,
+    sheet_conductance_s: sigmaS,
+    inner_radius_mm: innerR,
+    outer_radius_mm: outerR,
+    end_effect_factor: endEffect,
+  };
+  const claim = (q: Parameters<typeof emClaim>[0], v: number, unit: string) =>
+    emClaim(q, sig6(v), unit, "thin-sheet-induction", inductionInputs);
+  return {
+    content: [
+      {
+        type: "text" as const,
+        text: JSON.stringify({
+          success: true,
+          mode: "induction",
+          b1_tesla: sig6(b1),
+          torque_per_unit_slip_nm: sig6(torquePerSlip),
+          locked_rotor_torque_nm: sig6(torquePerSlip),
+          locked_rotor_torque_raw_nm: sig6(torquePerSlipRaw),
+          sync_rpm: sig6(syncRpm),
+          copper_loss_w: sig6(copperLossW),
+          end_effect_factor: endEffect,
+          note:
+            "First-order thin-sheet induction model: torque linear in slip (T(s) = K·s, " +
+            "no breakdown peak), B1 impressed by the winding MMF (no magnetizing/leakage " +
+            "reactance, no slotting/saturation), Russell–Norsworthy end-effect factor " +
+            "applied to torque. copper_loss_w is the ROTOR sheet dissipation at locked " +
+            "rotor (T·ωsync); stator copper loss is not modeled (no resistance input). " +
+            "Feed locked_rotor_torque_nm to check_self_start to answer 'will it spin?'.",
+          claims: [
+            claim("airgap_flux_density", b1, "T"),
+            claim("torque_per_unit_slip", torquePerSlip, "N·m"),
+            claim("locked_rotor_torque", torquePerSlip, "N·m"),
+            claim("synchronous_speed", syncRpm, "rpm"),
+            claim("rotor_copper_loss", copperLossW, "W"),
+          ],
+        }),
+      },
+    ],
+  };
+}
+
+/**
+ * Evaluate a motor's headline performance AS DATA — pure analysis, no board,
+ * no mutation. Two machine models behind one tool:
+ *
+ * - `mode: "pm"` (default) — torque constant, back-EMF constant, no-load
+ *   speed, stall torque, and a speed–torque curve from magnetics + electrical
+ *   parameters. Air-gap flux is supplied directly or computed from magnet
+ *   geometry via the first-order MEC reluctance model; pass
+ *   `magnet.pole_width_mm` to additionally apply a Carter-like fringing
+ *   derate (raw and derated B both reported).
+ * - `mode: "induction"` — thin-sheet axial induction rotor (drag-cup / PCB
+ *   cage): fundamental gap field B1, torque-per-unit-slip, locked-rotor
+ *   torque, synchronous speed, rotor sheet loss.
  */
 export async function calcMotor(args: Record<string, unknown>) {
   const fail = ecadError;
 
   const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : NaN);
+  const mode = typeof args.mode === "string" ? args.mode : "pm";
+  if (mode !== "pm" && mode !== "induction") {
+    return fail("mode must be 'pm' (default) or 'induction'");
+  }
   const polePairs = num(args.pole_pairs);
   const turnsPerPhase = num(args.turns_per_phase);
   const windingFactor = Number.isFinite(num(args.winding_factor)) ? num(args.winding_factor) : 0.95;
@@ -9748,6 +10474,11 @@ export async function calcMotor(args: Record<string, unknown>) {
   if (!(polePairs > 0)) return fail("pole_pairs must be > 0");
   if (!(turnsPerPhase > 0)) return fail("turns_per_phase must be > 0");
   if (!(outerR > innerR && innerR >= 0)) return fail("outer_radius_mm must be > inner_radius_mm >= 0");
+
+  if (mode === "induction") {
+    return calcMotorInduction(args, polePairs, turnsPerPhase, windingFactor, innerR, outerR);
+  }
+
   if (!(phaseR > 0)) return fail("phase_resistance_ohm must be > 0");
   if (!(supplyV > 0)) return fail("supply_voltage_v must be > 0");
 
@@ -9755,6 +10486,8 @@ export async function calcMotor(args: Record<string, unknown>) {
   let bGap = num(args.airgap_flux_tesla);
   let bGapSource: "supplied" | "computed" = "supplied";
   let magnetSpec: Parameters<typeof airgapFluxDensity>[0] | undefined;
+  // Optional first-order fringing derate on the MEC flux (see below).
+  let fringing: { poleWidthMm: number; derate: number; bRawTesla: number } | undefined;
   if (!Number.isFinite(bGap)) {
     const m = (args.magnet ?? {}) as Record<string, unknown>;
     const mnum = (v: unknown, d: number) =>
@@ -9778,6 +10511,18 @@ export async function calcMotor(args: Record<string, unknown>) {
     }
     bGap = computed;
     bGapSource = "computed";
+
+    // Carter-like pole-edge fringing derate (mirrors
+    // vcad_ecad_sim::airgap::fringing_derate): flux fringes outward ~one gap
+    // length per pole edge, so B under the pole drops by w/(w+2g). First-order,
+    // honest only for pole width ≳ 2× gap. Opt-in via magnet.pole_width_mm.
+    if (m.pole_width_mm !== undefined) {
+      const poleW = num(m.pole_width_mm);
+      if (!(poleW > 0)) return fail("magnet.pole_width_mm must be > 0");
+      const derate = poleW / (poleW + 2 * magnetSpec.airgapMm);
+      fringing = { poleWidthMm: poleW, derate, bRawTesla: bGap };
+      bGap *= derate;
+    }
   }
 
   const perf = await evaluateMotor({
@@ -9812,23 +10557,41 @@ export async function calcMotor(args: Record<string, unknown>) {
     emClaim("stall_torque", r4(perf.stallTorqueNm), "N·m", "first-order-dc-motor", motorInputs),
   ];
   if (bGapSource === "computed" && magnetSpec) {
+    const mecInputs = {
+      remanence_tesla: magnetSpec.remanenceTesla,
+      magnet_thickness_mm: magnetSpec.magnetThicknessMm,
+      recoil_mu_rel: magnetSpec.recoilMuRel,
+      airgap_mm: magnetSpec.airgapMm,
+      magnet_area_mm2: magnetSpec.magnetAreaMm2,
+      gap_area_mm2: magnetSpec.gapAreaMm2,
+      ...(magnetSpec.ironMuRel != null
+        ? {
+            iron_mu_rel: magnetSpec.ironMuRel,
+            iron_path_mm: magnetSpec.ironPathMm,
+            iron_area_mm2: magnetSpec.ironAreaMm2,
+          }
+        : {}),
+    };
+    // The raw MEC prediction stays a claim of its own even when derated —
+    // a fringing-aware FEA pass grades the derate, not the network.
     claims.push(
-      emClaim("airgap_flux_density", r4(bGap), "T", "mec-reluctance", {
-        remanence_tesla: magnetSpec.remanenceTesla,
-        magnet_thickness_mm: magnetSpec.magnetThicknessMm,
-        recoil_mu_rel: magnetSpec.recoilMuRel,
-        airgap_mm: magnetSpec.airgapMm,
-        magnet_area_mm2: magnetSpec.magnetAreaMm2,
-        gap_area_mm2: magnetSpec.gapAreaMm2,
-        ...(magnetSpec.ironMuRel != null
-          ? {
-              iron_mu_rel: magnetSpec.ironMuRel,
-              iron_path_mm: magnetSpec.ironPathMm,
-              iron_area_mm2: magnetSpec.ironAreaMm2,
-            }
-          : {}),
-      }),
+      emClaim(
+        "airgap_flux_density",
+        r4(fringing ? fringing.bRawTesla : bGap),
+        "T",
+        "mec-reluctance",
+        mecInputs,
+      ),
     );
+    if (fringing) {
+      claims.push(
+        emClaim("airgap_flux_density", r4(bGap), "T", "mec-fringing-derate", {
+          ...mecInputs,
+          pole_width_mm: fringing.poleWidthMm,
+          fringing_derate: r4(fringing.derate),
+        }),
+      );
+    }
   }
   return {
     content: [
@@ -9836,8 +10599,20 @@ export async function calcMotor(args: Record<string, unknown>) {
         type: "text" as const,
         text: JSON.stringify({
           success: true,
+          mode: "pm",
           airgap_flux_tesla: r4(bGap),
           airgap_flux_source: bGapSource,
+          ...(fringing
+            ? {
+                airgap_flux_raw_tesla: r4(fringing.bRawTesla),
+                fringing_derate: r4(fringing.derate),
+                fringing_note:
+                  "Carter-like first-order derate: B under the pole drops by " +
+                  "w/(w+2g) as flux fringes ~one gap length past each pole edge. " +
+                  "Kt/Ke and the curve use the DERATED flux. Honest for pole " +
+                  "width ≳ 2× gap; below that treat it as a lower bound.",
+              }
+            : {}),
           winding_factor: windingFactor,
           kt_nm_per_a: r4(perf.ktNmPerA),
           ke_v_s_per_rad: r4(perf.keVSPerRad),
@@ -9848,8 +10623,204 @@ export async function calcMotor(args: Record<string, unknown>) {
             speed_rad_s: r4(p.speedRadS),
             torque_nm: r4(p.torqueNm),
           })),
-          note: "First-order steady-state estimate (no slotting/fringing/saturation/losses).",
+          note: fringing
+            ? "First-order steady-state estimate (no slotting/saturation/losses; " +
+              "pole-edge fringing derated via magnet.pole_width_mm)."
+            : "First-order steady-state estimate (no slotting/fringing/saturation/losses; " +
+              "pass magnet.pole_width_mm to derate for fringing).",
           claims,
+        }),
+      },
+    ],
+  };
+}
+
+// ============================================================================
+// check_self_start — will it spin? starting torque vs bearing friction
+// ============================================================================
+
+/**
+ * Documented typical running-friction torque per bearing, mN·m, by preset and
+ * preload class. Low-speed drag in small deep-groove bearings is dominated by
+ * seal contact and grease churning, so seal type matters more than load:
+ *
+ * - `608-2RS` (8×22×7, contact rubber seals): the lip drag dominates —
+ *   0.5–2 mN·m each at light preload (a pair lands at the oft-quoted
+ *   1–4 mN·m), roughly double under medium preload.
+ * - `608-ZZ` (8×22×7, non-contact metal shields): no lip contact, an order
+ *   of magnitude freer.
+ * - `625` (5×16×5) and `688` (8×16×5 thin-section): miniature bearings,
+ *   figures for the common shielded (ZZ-type, non-contact) variants.
+ *
+ * Ranges are catalog-typical for greased bearings at room temperature; a
+ * cold, over-greased, or axially pinched bearing can exceed the top end.
+ */
+const BEARING_FRICTION_MNM: Record<
+  string,
+  Record<"light" | "medium", { min: number; max: number }>
+> = {
+  "608-2RS": {
+    light: { min: 0.5, max: 2.0 },
+    medium: { min: 1.0, max: 4.0 },
+  },
+  "608-ZZ": {
+    light: { min: 0.05, max: 0.3 },
+    medium: { min: 0.15, max: 0.8 },
+  },
+  "625": {
+    light: { min: 0.03, max: 0.2 },
+    medium: { min: 0.1, max: 0.5 },
+  },
+  "688": {
+    light: { min: 0.03, max: 0.25 },
+    medium: { min: 0.1, max: 0.6 },
+  },
+};
+
+export const checkSelfStartSchema = {
+  type: "object" as const,
+  properties: {
+    available_torque_nm: {
+      type: "number" as const,
+      description:
+        "Torque available at standstill, N·m — PM: Kt·I (or pass kt_nm_per_a + current_a " +
+        "instead); induction: locked_rotor_torque_nm from calc_motor mode:'induction'.",
+    },
+    kt_nm_per_a: {
+      type: "number" as const,
+      description: "Alternative to available_torque_nm: torque constant Kt (N·m/A), multiplied by current_a.",
+    },
+    current_a: {
+      type: "number" as const,
+      description: "Alternative to available_torque_nm: standstill phase current (A), multiplied by kt_nm_per_a.",
+    },
+    friction_torque_nm: {
+      type: "number" as const,
+      description:
+        "Direct friction estimate, N·m (single value or a measurement). Overrides `bearings` when given.",
+    },
+    bearings: {
+      type: "object" as const,
+      description:
+        "Bearing-friction estimator (used when friction_torque_nm is omitted). Fields: " +
+        "type ('608-2RS' | '608-ZZ' | '625' | '688'; 625/688 assume shielded non-contact variants), " +
+        "preload ('light' default | 'medium'), count (number of bearings, default 2).",
+    },
+  },
+};
+
+/**
+ * The single most important motor design question — will it spin? — as a pure
+ * fail-closed check: starting torque (given directly, or Kt·I) against a
+ * friction estimate (given directly, or from documented typical bearing-drag
+ * ranges). `starts` is judged against the WORST-CASE (max) friction; a design
+ * that only beats the optimistic end is reported `starts: false` with
+ * `starts_best_case: true` so the margin story is visible.
+ */
+export function checkSelfStart(args: Record<string, unknown>) {
+  const fail = ecadError;
+  const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : NaN);
+
+  // Available starting torque: direct, or Kt·I.
+  let available = num(args.available_torque_nm);
+  let availableSource: "direct" | "kt_times_current" = "direct";
+  if (!Number.isFinite(available)) {
+    const kt = num(args.kt_nm_per_a);
+    const i = num(args.current_a);
+    if (!(kt > 0) || !(i > 0)) {
+      return fail(
+        "pass available_torque_nm (> 0), or both kt_nm_per_a and current_a (> 0) to compute Kt·I",
+      );
+    }
+    available = kt * i;
+    availableSource = "kt_times_current";
+  }
+  if (!(available > 0)) return fail("available_torque_nm must be > 0");
+
+  // Friction estimate: direct value, or the bearing catalog.
+  let frictionMinNm: number;
+  let frictionMaxNm: number;
+  let frictionSource: "direct" | "bearing-catalog" = "direct";
+  let bearing:
+    | { type: string; preload: "light" | "medium"; count: number; per_bearing_mnm: { min: number; max: number } }
+    | undefined;
+  const directFriction = num(args.friction_torque_nm);
+  if (Number.isFinite(directFriction)) {
+    if (!(directFriction > 0)) return fail("friction_torque_nm must be > 0");
+    frictionMinNm = directFriction;
+    frictionMaxNm = directFriction;
+  } else {
+    const b = (args.bearings ?? {}) as Record<string, unknown>;
+    const type = typeof b.type === "string" ? b.type : "608-2RS";
+    const table = BEARING_FRICTION_MNM[type];
+    if (!table) {
+      return fail(
+        `unknown bearing type '${type}' — presets: ${Object.keys(BEARING_FRICTION_MNM).join(", ")} ` +
+          "(or pass friction_torque_nm directly)",
+      );
+    }
+    const preload = b.preload === "medium" ? "medium" : b.preload === "light" || b.preload === undefined ? "light" : null;
+    if (preload === null) return fail("bearings.preload must be 'light' or 'medium'");
+    const count = Number.isFinite(num(b.count)) ? num(b.count) : 2;
+    if (!(count >= 1 && Number.isInteger(count))) return fail("bearings.count must be an integer >= 1");
+    const range = table[preload];
+    frictionMinNm = range.min * count * 1e-3;
+    frictionMaxNm = range.max * count * 1e-3;
+    frictionSource = "bearing-catalog";
+    bearing = { type, preload, count, per_bearing_mnm: range };
+  }
+
+  const starts = available > frictionMaxNm;
+  const startsBestCase = available > frictionMinNm;
+  const margin = available / frictionMaxNm;
+
+  const claimInputs: Record<string, number | string> = {
+    available_torque_nm: sig6(available),
+    available_torque_source: availableSource,
+    friction_source: frictionSource,
+    ...(bearing
+      ? {
+          bearing_type: bearing.type,
+          bearing_preload: bearing.preload,
+          bearing_count: bearing.count,
+        }
+      : { friction_torque_nm: sig6(frictionMaxNm) }),
+  };
+  return {
+    content: [
+      {
+        type: "text" as const,
+        text: JSON.stringify({
+          success: true,
+          starts,
+          starts_best_case: startsBestCase,
+          margin: sig6(margin),
+          available_torque_nm: sig6(available),
+          available_torque_source: availableSource,
+          friction_torque_mnm: { min: sig6(frictionMinNm * 1e3), max: sig6(frictionMaxNm * 1e3) },
+          friction_source: frictionSource,
+          ...(bearing ? { bearings: bearing } : {}),
+          note:
+            "`starts` is fail-closed: available torque vs the WORST-CASE (max) friction " +
+            "estimate; `margin` = available / worst-case (aim for ≥ 2 to absorb cogging, " +
+            "cold grease, and preload spread). Bearing ranges are documented catalog-" +
+            "typical running drag for greased bearings, not measurements of yours.",
+          claims: [
+            // The friction estimate is only a claim when this tool predicted it
+            // (catalog lookup); a passthrough of the caller's number is not.
+            ...(frictionSource === "bearing-catalog"
+              ? [
+                  emClaim(
+                    "friction_torque",
+                    sig6(frictionMaxNm),
+                    "N·m",
+                    "bearing-friction-catalog",
+                    claimInputs,
+                  ),
+                ]
+              : []),
+            emClaim("start_margin", sig6(margin), "dimensionless", "torque-friction-margin", claimInputs),
+          ],
         }),
       },
     ],
@@ -10329,6 +11300,485 @@ export function boardFromSolid(args: Record<string, unknown>, engine: Engine) {
         }),
       },
     ],
+  };
+}
+
+// ============================================================================
+// solid_from_board — materialize the session PCB as a solid CAD part
+// (the inverse of board_from_solid)
+// ============================================================================
+
+/** JSON Schema for solid_from_board tool. */
+export const solidFromBoardSchema = {
+  type: "object" as const,
+  properties: {
+    document_id: {
+      type: "string" as const,
+      description:
+        "PCB session id (from create_schematic / open_document) holding the " +
+        "board to materialize as a solid.",
+    },
+    document_id_target: {
+      type: "string" as const,
+      description:
+        "Existing CAD session to inject the part into (e.g. the enclosure " +
+        "or motor-stack assembly it must fit). Omit to mint a fresh CAD " +
+        "session; the response then carries the new document_id plus the " +
+        "document IR (usable with open_document elsewhere).",
+    },
+    include_components: {
+      type: "boolean" as const,
+      description:
+        "Also emit simplified component keep-out volumes — one box per " +
+        "placed footprint, body extents from the kernel's 3D component " +
+        "bodies where available, else courtyard × a per-package-class " +
+        "default height. Default true.",
+    },
+    part_name: {
+      type: "string" as const,
+      description:
+        "Name for the substrate part (default 'board'). Component keep-out " +
+        "parts are named '<part_name>:<ref>'.",
+    },
+  },
+  required: ["document_id"],
+} as const;
+
+/** FR4 substrate density, kg/m³ — matches the app's `__pcb_fr4__` preset. */
+const FR4_DENSITY_KG_M3 = 1850;
+/** Copper density, kg/m³ — matches the app's `copper` preset. */
+const COPPER_DENSITY_KG_M3 = 8960;
+/** 1 oz/ft² copper in mm, the fallback when a stackup layer omits thickness. */
+const DEFAULT_COPPER_THICKNESS_MM = 0.035;
+
+/** Absolute (sign-agnostic) shoelace area of a closed loop, mm². */
+const loopArea = (loop: Vec2[]): number => Math.abs(loopSignedArea(loop));
+
+/** Closed polygon → Line segments for a Sketch2D loop (zero-length runs from
+ *  duplicated vertices are dropped). */
+function loopToSegments(loop: Vec2[]): SketchSegment2D[] {
+  const segs: SketchSegment2D[] = [];
+  for (let i = 0; i < loop.length; i++) {
+    const a = loop[i]!;
+    const b = loop[(i + 1) % loop.length]!;
+    if (Math.hypot(b.x - a.x, b.y - a.y) < 1e-9) continue;
+    segs.push({ type: "Line", start: { x: a.x, y: a.y }, end: { x: b.x, y: b.y } });
+  }
+  return segs;
+}
+
+/** Copper area of one pad, mm² (Oval/RoundRect ≈ their bounding rect). */
+function padAreaMm2(pad: Pad): number {
+  const s = pad.shape;
+  switch (s.type) {
+    case "Circle":
+      return (Math.PI / 4) * s.diameter * s.diameter;
+    case "Rect":
+    case "Oval":
+    case "RoundRect":
+      return s.width * s.height;
+    case "Custom":
+      return loopArea(s.vertices);
+    default:
+      return 0;
+  }
+}
+
+/**
+ * Estimated copper coverage per copper layer, mm²: zones (outline minus
+ * holes; hatched pours count half), traces and arcs (length × width), pad
+ * copper, and via annular rings on their span-end layers. Overlaps between
+ * features are not deduplicated — a slight overestimate on dense boards —
+ * and each layer is capped at the board area.
+ */
+function copperAreaByLayer(pcb: Pcb, boardArea: number): Record<string, number> {
+  const area: Record<string, number> = {};
+  const add = (layer: string, a: number) => {
+    if (!/Cu$/.test(layer) || !(a > 0)) return;
+    area[layer] = (area[layer] ?? 0) + a;
+  };
+  for (const z of pcb.zones) {
+    const holes = (z.holes ?? []).reduce((s, h) => s + loopArea(h), 0);
+    const fill = z.fillType === "Hatched" ? 0.5 : 1;
+    add(z.layer, Math.max(0, loopArea(z.outline) - holes) * fill);
+  }
+  for (const t of pcb.traces) {
+    add(t.layer, Math.hypot(t.end.x - t.start.x, t.end.y - t.start.y) * t.width);
+  }
+  for (const a of pcb.traceArcs ?? []) {
+    const sweep = (Math.abs(a.endAngle - a.startAngle) * Math.PI) / 180;
+    add(a.layer, sweep * a.radius * a.width);
+  }
+  for (const fp of pcb.footprints) {
+    for (const pad of fp.pads) {
+      const padArea = padAreaMm2(pad);
+      for (const layer of pad.layers) add(layer, padArea);
+    }
+  }
+  for (const v of pcb.vias) {
+    const ring = (Math.PI / 4) * Math.max(0, v.diameter * v.diameter - v.drill * v.drill);
+    add(v.startLayer, ring);
+    if (v.endLayer !== v.startLayer) add(v.endLayer, ring);
+  }
+  for (const k of Object.keys(area)) area[k] = Math.min(area[k]!, boardArea);
+  return area;
+}
+
+/** Mass estimate for a bare board: FR4 slab + per-layer copper coverage. */
+interface BoardMassEstimate {
+  fr4VolumeMm3: number;
+  copperVolumeMm3: number;
+  copperAreaByLayer: Record<string, number>;
+  fr4G: number;
+  copperG: number;
+  totalG: number;
+  /** total mass / substrate solid volume — the density that makes the
+   *  extruded slab weigh what the real FR4+copper board weighs. */
+  homogenizedDensityKgM3: number;
+}
+
+/** Compute the board's FR4 + copper mass from outline area and stackup. */
+function estimateBoardMass(pcb: Pcb, boardArea: number): BoardMassEstimate {
+  const thickness = pcb.outline.thickness;
+  const fr4VolumeMm3 = boardArea * thickness;
+  const copperArea = copperAreaByLayer(pcb, boardArea);
+  const thicknessByLayer = new Map<string, number | undefined>(
+    pcb.stackup.layers.map((l) => [l.layer as string, l.copperThickness]),
+  );
+  let copperVolumeMm3 = 0;
+  for (const [layer, a] of Object.entries(copperArea)) {
+    copperVolumeMm3 += a * (thicknessByLayer.get(layer) ?? DEFAULT_COPPER_THICKNESS_MM);
+  }
+  // mass (g) = volume (mm³) × density (kg/m³) / 1e6
+  const fr4G = (fr4VolumeMm3 * FR4_DENSITY_KG_M3) / 1e6;
+  const copperG = (copperVolumeMm3 * COPPER_DENSITY_KG_M3) / 1e6;
+  const totalG = fr4G + copperG;
+  return {
+    fr4VolumeMm3,
+    copperVolumeMm3,
+    copperAreaByLayer: copperArea,
+    fr4G,
+    copperG,
+    totalG,
+    homogenizedDensityKgM3:
+      fr4VolumeMm3 > 0 ? (totalG / fr4VolumeMm3) * 1e6 : FR4_DENSITY_KG_M3,
+  };
+}
+
+/** One simplified component keep-out volume, board-local mm (bottom of the
+ *  substrate at z = 0, top at z = thickness). */
+interface ComponentBoxOut {
+  ref: string;
+  footprint: string;
+  /** "mesh" = kernel 3D body extents; "courtyard" = pad/courtyard bbox ×
+   *  per-package-class default height. */
+  source: "mesh" | "courtyard";
+  min: Vec3;
+  max: Vec3;
+}
+
+/** Footprints that are holes in the board, not bodies on it. */
+const MOUNTING_FP_RE = /mount(ing)?[_-]?hole/i;
+
+/** Default body height (mm) by package-class name — mirrors the kernel's
+ *  component-mesh table (vcad-ecad-pcb::component_mesh::package_height). */
+function packageHeightMm(footprintName: string): number {
+  const n = footprintName.toUpperCase();
+  if (n.includes("0402")) return 0.35;
+  if (n.includes("0603")) return 0.45;
+  if (n.includes("0805")) return 0.5;
+  if (n.includes("1206")) return 0.55;
+  if (n.includes("SOIC")) return 1.75;
+  if (n.includes("QFP")) return 1.6;
+  if (n.includes("DIP")) return 4.0;
+  if (/SOT-?223/.test(n)) return 1.6;
+  if (/SOT-?23/.test(n)) return 1.1;
+  if (n.includes("HEADER")) return 8.5;
+  return 1.0;
+}
+
+/**
+ * Simplified keep-out volume per placed footprint. Preferred source is the
+ * kernel's parametric 3D component bodies (exact XY + Z extents in board
+ * coordinates); when the ECAD WASM is unavailable or a footprint has no
+ * body, fall back to its courtyard/pad bbox extruded to a per-package-class
+ * default height on the correct side of the board.
+ */
+async function componentKeepouts(
+  pcb: Pcb,
+): Promise<{ boxes: ComponentBoxOut[]; warnings: string[] }> {
+  const thickness = pcb.outline.thickness;
+  const warnings: string[] = [];
+  const meshBoxes = new Map<string, { min: Vec3; max: Vec3 }>();
+  try {
+    for (const m of await componentMeshes(pcb)) {
+      let minX = Infinity;
+      let minY = Infinity;
+      let minZ = Infinity;
+      let maxX = -Infinity;
+      let maxY = -Infinity;
+      let maxZ = -Infinity;
+      for (let i = 0; i + 2 < m.positions.length; i += 3) {
+        if (m.positions[i] < minX) minX = m.positions[i];
+        if (m.positions[i] > maxX) maxX = m.positions[i];
+        if (m.positions[i + 1] < minY) minY = m.positions[i + 1];
+        if (m.positions[i + 1] > maxY) maxY = m.positions[i + 1];
+        if (m.positions[i + 2] < minZ) minZ = m.positions[i + 2];
+        if (m.positions[i + 2] > maxZ) maxZ = m.positions[i + 2];
+      }
+      if (
+        Number.isFinite(minX) &&
+        maxX - minX > 1e-6 &&
+        maxY - minY > 1e-6 &&
+        maxZ - minZ > 1e-6
+      ) {
+        meshBoxes.set(m.footprint_ref, {
+          min: { x: minX, y: minY, z: minZ },
+          max: { x: maxX, y: maxY, z: maxZ },
+        });
+      }
+    }
+  } catch {
+    // ECAD WASM unavailable — every footprint takes the courtyard fallback.
+  }
+
+  const boxes: ComponentBoxOut[] = [];
+  for (const fp of pcb.footprints) {
+    // Mounting holes / NPTH-only footprints are voids, not bodies.
+    if (MOUNTING_FP_RE.test(fp.footprintName) || MOUNTING_FP_RE.test(fp.ref)) continue;
+    if (fp.pads.length > 0 && fp.pads.every((p) => p.padType === "NPTH")) continue;
+
+    const mesh = meshBoxes.get(fp.ref);
+    if (mesh) {
+      boxes.push({
+        ref: fp.ref,
+        footprint: fp.footprintName,
+        source: "mesh",
+        min: mesh.min,
+        max: mesh.max,
+      });
+      continue;
+    }
+    const local = localCourtyardAabb(fp.pads, fp.graphics ?? []);
+    const board = boardCourtyardAabb(local, fp.position, fp.rotation ?? 0, fp.front ?? true);
+    if (!board) {
+      warnings.push(`${fp.ref}: no 3D body, pads, or courtyard — keep-out skipped`);
+      continue;
+    }
+    const h = packageHeightMm(fp.footprintName);
+    const front = fp.front ?? true;
+    boxes.push({
+      ref: fp.ref,
+      footprint: fp.footprintName,
+      source: "courtyard",
+      min: { x: board.min.x, y: board.min.y, z: front ? thickness : -h },
+      max: { x: board.max.x, y: board.max.y, z: front ? thickness + h : 0 },
+    });
+  }
+  return { boxes, warnings };
+}
+
+/** Cap on the per-component box list echoed in the response. */
+const KEEPOUT_ECHO_CAP = 32;
+/** Cap on the inline `document` IR echoed when a fresh session is minted. */
+const INLINE_DOC_ECHO_CAP = 100_000;
+
+/**
+ * Materialize the session PCB as a solid CAD part — the inverse of
+ * board_from_solid. The substrate is the board outline extruded to the board
+ * thickness through the hole-aware sketch path, so bore/cutout polygons
+ * survive as real holes (no boolean pass). Optional simplified component
+ * keep-out volumes ride along as child parts. The substrate's material
+ * carries a homogenized FR4+copper density so inspect_cad and physics see
+ * the real board mass, not bare-FR4 mass.
+ *
+ * Injects into `document_id_target` when given (board bottom lands at
+ * z = 0 in that session's frame), else mints a fresh CAD session.
+ */
+export async function solidFromBoard(args: Record<string, unknown>) {
+  const documentId = String(args.document_id ?? "");
+  const doc = getSession(documentId);
+  const pcb = getDocPcb(doc);
+  if (!pcb) {
+    return ecadError(
+      "Document has no PCB — run place_components first (or open a document that has a board)",
+    );
+  }
+  const outline = pcb.outline;
+  if (!outline.vertices || outline.vertices.length < 3) {
+    return ecadError("Board outline needs >= 3 vertices — set_board_outline first");
+  }
+  const thickness = outline.thickness;
+  if (!(thickness > 0)) return ecadError("Board thickness must be > 0");
+
+  const partName =
+    typeof args.part_name === "string" && args.part_name.trim()
+      ? args.part_name.trim()
+      : "board";
+  const includeComponents = args.include_components !== false;
+
+  const cutouts = outline.cutouts ?? [];
+  const boardArea = Math.max(
+    0,
+    loopArea(outline.vertices) - cutouts.reduce((s, c) => s + loopArea(c), 0),
+  );
+  if (!(boardArea > 0)) return ecadError("Board outline has no area to extrude");
+  const mass = estimateBoardMass(pcb, boardArea);
+
+  const warnings: string[] = [];
+  let boxes: ComponentBoxOut[] = [];
+  if (includeComponents && pcb.footprints.length > 0) {
+    const keepouts = await componentKeepouts(pcb);
+    boxes = keepouts.boxes;
+    warnings.push(...keepouts.warnings);
+  }
+
+  // Target: inject into an existing CAD session, or mint a fresh document.
+  const targetId =
+    typeof args.document_id_target === "string" && args.document_id_target
+      ? args.document_id_target
+      : undefined;
+  let target: Document;
+  if (targetId) {
+    try {
+      target = getSession(targetId);
+    } catch (e) {
+      return ecadError(e instanceof Error ? e.message : String(e));
+    }
+  } else {
+    target = createDocument();
+  }
+
+  const existingIds = Object.keys(target.nodes)
+    .map(Number)
+    .filter(Number.isFinite);
+  let nextId = (existingIds.length > 0 ? Math.max(...existingIds) : 0) + 1;
+  const alloc = (name: string | null, op: CsgOp): number => {
+    const id = nextId++;
+    target.nodes[String(id)] = { id, name, op };
+    return id;
+  };
+
+  // Substrate: hole-aware sketch + extrude (#396) — cutouts become interior
+  // walls of one multi-loop solid, no Difference pass. Board bottom at z = 0.
+  const sketchId = alloc(`${partName} profile`, {
+    type: "Sketch2D",
+    origin: { x: 0, y: 0, z: 0 },
+    x_dir: { x: 1, y: 0, z: 0 },
+    y_dir: { x: 0, y: 1, z: 0 },
+    segments: loopToSegments(ensureCcw(outline.vertices)),
+    ...(cutouts.length > 0 ? { holes: cutouts.map((c) => loopToSegments(c)) } : {}),
+  });
+  const substrateId = alloc(partName, {
+    type: "Extrude",
+    sketch: sketchId,
+    direction: { x: 0, y: 0, z: thickness },
+  });
+
+  // Homogenized material: the extruded slab weighs what the real FR4+copper
+  // board weighs, so inspect_cad / physics read a realistic mass off it.
+  let materialKey = `pcb:${partName}`;
+  for (let i = 2; target.materials[materialKey]; i++) materialKey = `pcb:${partName}-${i}`;
+  target.materials[materialKey] = {
+    name: materialKey,
+    color: [0.05, 0.35, 0.18], // FR4 soldermask green
+    metallic: 0.1,
+    roughness: 0.7,
+    density: Math.round(mass.homogenizedDensityKgM3 * 100) / 100,
+  };
+  target.roots.push({ root: substrateId, material: materialKey });
+  target.part_materials[partName] = materialKey;
+
+  const componentPartIds: string[] = [];
+  for (const b of boxes) {
+    const size = {
+      x: b.max.x - b.min.x,
+      y: b.max.y - b.min.y,
+      z: b.max.z - b.min.z,
+    };
+    const cubeId = alloc(null, { type: "Cube", size });
+    const moveId = alloc(`${partName}:${b.ref}`, {
+      type: "Translate",
+      child: cubeId,
+      offset: { x: b.min.x, y: b.min.y, z: b.min.z },
+    });
+    target.roots.push({ root: moveId, material: "default" });
+    componentPartIds.push(String(moveId));
+  }
+
+  const created = !targetId;
+  const outId = targetId ?? registerSession(target);
+
+  const roundVec = (v: Vec3) => ({ x: round3(v.x), y: round3(v.y), z: round3(v.z) });
+  const copperAreaRounded = Object.fromEntries(
+    Object.entries(mass.copperAreaByLayer).map(([k, v]) => [k, round3(v)]),
+  );
+  // Echo the minted IR so the part can travel to another server via
+  // open_document — unless the outline is huge, in which case get_document
+  // on the returned document_id serves it instead.
+  const inlineDoc =
+    created && JSON.stringify(target).length <= INLINE_DOC_ECHO_CAP ? target : undefined;
+
+  const payload = {
+    success: true,
+    document_id: outId,
+    created_session: created,
+    source_document_id: documentId,
+    part_id: String(substrateId),
+    part_name: partName,
+    substrate: {
+      outline_vertices: outline.vertices.length,
+      cutouts: cutouts.length,
+      thickness,
+      area_mm2: round3(boardArea),
+      volume_mm3: round3(mass.fr4VolumeMm3),
+    },
+    components: {
+      included: includeComponents,
+      count: boxes.length,
+      part_ids: componentPartIds,
+      ...(boxes.length > 0
+        ? {
+            boxes: boxes.slice(0, KEEPOUT_ECHO_CAP).map((b) => ({
+              ref: b.ref,
+              footprint: b.footprint,
+              source: b.source,
+              min: roundVec(b.min),
+              max: roundVec(b.max),
+            })),
+            ...(boxes.length > KEEPOUT_ECHO_CAP ? { boxes_truncated: true } : {}),
+          }
+        : {}),
+    },
+    mass: {
+      fr4_g: round3(mass.fr4G),
+      copper_g: round3(mass.copperG),
+      total_g: round3(mass.totalG),
+      fr4_volume_mm3: round3(mass.fr4VolumeMm3),
+      copper_volume_mm3: round3(mass.copperVolumeMm3),
+      copper_area_mm2_by_layer: copperAreaRounded,
+      homogenized_density_kg_m3: Math.round(mass.homogenizedDensityKgM3 * 100) / 100,
+      material: materialKey,
+    },
+    ...(inlineDoc ? { document: inlineDoc } : {}),
+    ...(warnings.length > 0 ? { warnings } : {}),
+    hint: created
+      ? "Fresh CAD session minted — render_view / inspect_cad it, or feed `document` to open_document elsewhere"
+      : "Part injected — render_view / inspect_cad the target session (e.g. run check_enclosure_fit against it)",
+  };
+
+  return {
+    content: [{ type: "text" as const, text: JSON.stringify(payload) }],
+    structuredContent: {
+      solid_from_board: {
+        part_id: String(substrateId),
+        part_name: partName,
+        components: componentPartIds.length,
+        mass_g: round3(mass.totalG),
+      },
+      document_id: outId,
+      source_document_id: documentId,
+    },
   };
 }
 

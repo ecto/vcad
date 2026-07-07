@@ -3793,6 +3793,89 @@ mod tests {
         );
     }
 
+    /// Issue #378 regression: connectivity must place a rotated footprint's
+    /// pads at their TRUE (rotation-applied) world positions — the same
+    /// positions get_pad_positions, the ratsnest, and the routers report.
+    /// Before the fix the pad nodes sat at the unrotated (phantom) offsets, so
+    /// copper laid between the true positions (a hand route) never touched
+    /// them and UnconnectedNet could not clear.
+    #[test]
+    fn connectivity_credits_copper_at_rotated_pad_positions() {
+        let mut pcb = clean_pcb();
+        pcb.traces.clear();
+        pcb.vias.clear();
+        // Both footprints rotated 90°, pads 2mm off the footprint origin along
+        // local +X. True pad centers land 2mm along +Y instead:
+        //   J1 pad: (20, 42)   [phantom would be (22, 40)]
+        //   J2 pad: (50, 42)   [phantom would be (52, 40)]
+        pcb.footprints.push(footprint(
+            "J1",
+            (20.0, 40.0),
+            90.0,
+            vec![smd_pad("1", (2.0, 0.0), "1")],
+        ));
+        pcb.footprints.push(footprint(
+            "J2",
+            (50.0, 40.0),
+            90.0,
+            vec![smd_pad("1", (2.0, 0.0), "1")],
+        ));
+
+        // Sanity: with no copper the net is open.
+        let open: Vec<_> = check_drc(&pcb)
+            .into_iter()
+            .filter(|v| v.rule == DrcRuleType::UnconnectedNet)
+            .collect();
+        assert!(!open.is_empty(), "unrouted rotated pads should report open");
+
+        // Hand-route between the TRUE rotated pad centers.
+        pcb.traces.push(trace((20.0, 42.0), (50.0, 42.0), "1"));
+
+        let violations = check_drc(&pcb);
+        let bad: Vec<_> = violations
+            .iter()
+            .filter(|v| v.rule == DrcRuleType::UnconnectedNet || v.rule == DrcRuleType::Short)
+            .collect();
+        assert!(
+            bad.is_empty(),
+            "copper at the true rotated pad positions must clear UnconnectedNet, got: {:?}",
+            bad
+        );
+    }
+
+    /// Issue #378 counterpart: copper laid at the phantom (unrotated) offsets
+    /// must NOT be credited — those locations hold no pad copper on a rotated
+    /// footprint.
+    #[test]
+    fn connectivity_ignores_copper_at_phantom_unrotated_positions() {
+        let mut pcb = clean_pcb();
+        pcb.traces.clear();
+        pcb.vias.clear();
+        pcb.footprints.push(footprint(
+            "J1",
+            (20.0, 40.0),
+            90.0,
+            vec![smd_pad("1", (2.0, 0.0), "1")],
+        ));
+        pcb.footprints.push(footprint(
+            "J2",
+            (50.0, 40.0),
+            90.0,
+            vec![smd_pad("1", (2.0, 0.0), "1")],
+        ));
+        // Trace between the unrotated offsets — thin air on this board.
+        pcb.traces.push(trace((22.0, 40.0), (52.0, 40.0), "1"));
+
+        let unrouted: Vec<_> = check_drc(&pcb)
+            .into_iter()
+            .filter(|v| v.rule == DrcRuleType::UnconnectedNet)
+            .collect();
+        assert!(
+            !unrouted.is_empty(),
+            "copper at phantom unrotated positions must not credit connectivity"
+        );
+    }
+
     // ------------------------------------------------------------------------
     // Provenance + generated tagging
     // ------------------------------------------------------------------------
