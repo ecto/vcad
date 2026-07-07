@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-07-motor-winding-planar-interconnect",
+  "version": "0.9.4",
+  "date": "2026-07-07",
+  "category": "fix",
+  "title": "add_motor_winding: planar interconnect, no silent bypasses",
+  "summary": "Motor winding interconnect is now planar staggered-radius arcs (no crossing shorts), the wye star lands on real board material with a scoped net-tie DRC honors, and phase feeds route to pads.",
+  "features": ["pcb", "motor", "drc"],
+  "mcpTools": ["add_motor_winding", "run_drc"]
+}

@@ -3170,7 +3170,9 @@ describe("add_motor_winding", () => {
     expect(res.connection).toBe("wye");
     expect(res.interconnect_traces).toBeGreaterThan(0);
     expect(res.net_ties_added).toBe(1);
-    expect(res.vias_added).toBe(24); // inner + outer via per coil
+    // 2 terminal vias per coil (center + outer lead-out), 2 layer-hop vias per
+    // series link (3 phases × 3 links), 1 hop via per star drop (3 phases).
+    expect(res.vias_added).toBe(45);
     expect(res.winding_factor).toBeGreaterThan(0.9);
 
     const b = getPcbBoard(getSession(id));
@@ -3222,6 +3224,213 @@ describe("add_motor_winding", () => {
       trace_width: 0.2,
     });
     expect(res.isError).toBe(true);
+  });
+
+  // --- 9s/6p regression: planar interconnect, scoped star, routed feeds ----
+  //
+  // Reproduces the reported geometry bugs: (1) straight-chord series links
+  // crossing on the return layer (cross-net Shorts), (2) star chords riding a
+  // coil's terminal ray over its same-net inner via (a silent electrical
+  // bypass of the last coil of each phase), (3) the star junction landing at
+  // the board center over the shaft-bore cutout, with phase feeds never
+  // routed to their pads (NetIslands).
+
+  /** n-gon approximation of a circle, CCW. */
+  function circlePts(cx: number, cy: number, r: number, n = 64): Vec2[] {
+    return Array.from({ length: n }, (_, i) => {
+      const a = (i / n) * 2 * Math.PI;
+      return {
+        x: Math.round((cx + r * Math.cos(a)) * 1000) / 1000,
+        y: Math.round((cy + r * Math.sin(a)) * 1000) / 1000,
+      };
+    });
+  }
+
+  /** Perpendicular distance from p to segment ab (test-local copy). */
+  function distToSeg(p: Vec2, a: Vec2, b: Vec2): number {
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const len2 = dx * dx + dy * dy;
+    if (len2 === 0) return Math.hypot(p.x - a.x, p.y - a.y);
+    const t = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2));
+    return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
+  }
+
+  /**
+   * The bypass invariant: no trace may pass within clearance of a same-net
+   * via it isn't terminating at — copper riding a terminal ray over a via
+   * electrically shorts out everything between the two contact points.
+   */
+  function findViaBypasses(pcb: Pcb, clearance: number): string[] {
+    const issues: string[] = [];
+    for (const v of pcb.vias) {
+      for (const t of pcb.traces) {
+        if (t.net !== v.net) continue;
+        const lim = v.diameter / 2 + t.width / 2 + clearance - 1e-6;
+        const d = distToSeg(v.position, t.start, t.end);
+        if (d >= lim) continue;
+        const atStart = Math.hypot(v.position.x - t.start.x, v.position.y - t.start.y) <= 1e-3;
+        const atEnd = Math.hypot(v.position.x - t.end.x, v.position.y - t.end.y) <= 1e-3;
+        if (atStart || atEnd) continue;
+        issues.push(
+          `net '${v.net}' via at (${v.position.x},${v.position.y}) is ${d.toFixed(3)}mm from ` +
+            `a passing same-net trace (${t.start.x},${t.start.y})→(${t.end.x},${t.end.y})`,
+        );
+      }
+    }
+    return issues;
+  }
+
+  /** Read the hand-built board back from a registered session. */
+  function boardOf(id: string): Pcb {
+    return (getSession(id) as Document & { pcb?: Pcb }).pcb!;
+  }
+
+  /**
+   * 70mm circular stator board with a shaft bore at (35,35) — the reported
+   * repro — plus one SMD testpoint per phase net so feed routing (and the
+   * NetIslands rule) is exercised.
+   */
+  function statorBoard9s6p(withPads: boolean, boreRadius = 10): string {
+    const tp = (ref: string, net: string, angleDeg: number) => {
+      const a = (angleDeg * Math.PI) / 180;
+      return {
+        ref,
+        value: "TP",
+        footprintName: "test:tp",
+        position: {
+          x: Math.round((35 + 33.5 * Math.cos(a)) * 1000) / 1000,
+          y: Math.round((35 + 33.5 * Math.sin(a)) * 1000) / 1000,
+        },
+        rotation: 0,
+        front: true,
+        pads: [
+          {
+            number: "1",
+            padType: "SMD",
+            shape: { type: "Rect", width: 1.5, height: 1.5 },
+            position: { x: 0, y: 0 },
+            layers: ["FCu"],
+            net,
+          },
+        ],
+      };
+    };
+    const pcb = {
+      outline: {
+        vertices: circlePts(35, 35, 35),
+        cutouts: [circlePts(35, 35, boreRadius)],
+        thickness: 1.6,
+      },
+      stackup: {
+        layers: [
+          { layer: "FCu", copperThickness: 0.035, dielectricThickness: 1.5, dielectricEr: 4.5, material: "FR4" },
+          { layer: "BCu", copperThickness: 0.035 },
+        ],
+      },
+      nets: withPads
+        ? [
+            { id: "PHA", name: "PHA" },
+            { id: "PHB", name: "PHB" },
+            { id: "PHC", name: "PHC" },
+          ]
+        : [],
+      rules: {
+        defaultRules: { name: "Default", traceWidth: 0.25, clearance: 0.15, viaDiameter: 0.8, viaDrill: 0.4 },
+        classRules: [],
+        netClassAssignments: {},
+        edgeClearance: 0.5,
+        holeToHole: 0.5,
+        minAnnularRing: 0.15,
+        minDrill: 0.2,
+      },
+      // Testpoints near each phase's feed escape ray (phase starts at slots
+      // 0/1/2 → 0°/40°/80°).
+      footprints: withPads ? [tp("TP1", "PHA", 350), tp("TP2", "PHB", 30), tp("TP3", "PHC", 70)] : [],
+      traces: [],
+      vias: [],
+      zones: [],
+    } as unknown as Pcb;
+    const doc = createDocument();
+    (doc as Document & { pcb?: Pcb }).pcb = pcb;
+    return registerSession(doc);
+  }
+
+  const wind9s6p = (id: string, connection: "wye" | "delta") =>
+    addMotorWinding({
+      document_id: id,
+      slots: 9,
+      poles: 6,
+      center: { x: 35, y: 35 },
+      pitch_radius: 22.5,
+      inner_radius: 2.6,
+      outer_radius: 7.2,
+      turns_per_coil: 10,
+      trace_width: 0.25,
+      clearance: 0.15,
+      connection,
+    });
+
+  it("9s/6p wye: 0 shorts, no same-net via bypass, star off the bore, feeds routed", async () => {
+    const id = statorBoard9s6p(true);
+    const res = out(wind9s6p(id, "wye"));
+    expect(res.errors).toBeUndefined();
+    expect(res.success).toBe(true);
+    expect(res.coils_placed).toBe(9);
+
+    // (3) The star junction sits on real board material — never at the board
+    // center, never over the 10mm-radius bore cutout.
+    expect(res.star_junction).toBeDefined();
+    const starDist = Math.hypot(res.star_junction.x - 35, res.star_junction.y - 35);
+    expect(starDist).toBeGreaterThan(10.5);
+    // …and the tie recording it is region-scoped, not board-wide.
+    const b = boardOf(id);
+    expect(b.netTies!.length).toBe(1);
+    expect(b.netTies![0].position).toBeDefined();
+    expect(b.netTies![0].radius).toBeDefined();
+    expect(b.netTies![0].radius!).toBeLessThan(6);
+
+    // (3b) Feeds reached the phase testpoints.
+    expect(res.feeds_routed).toEqual(expect.arrayContaining(["PHA", "PHB", "PHC"]));
+    expect(res.feeds_unrouted).toBeUndefined();
+
+    // (2) The bypass invariant, re-checked independently of the tool's audit:
+    // no trace within clearance of a same-net via it isn't terminating at.
+    expect(findViaBypasses(b, 0.15)).toEqual([]);
+
+    // (1) Kernel DRC: no shorts (series links / star are planar; the wye
+    // junction is exempted by its scoped tie), no stranded copper (feeds
+    // landed), no clearance faults. The board is DRC-clean outright.
+    const drc = out(await runDrc({ document_id: id, detail: "full" }));
+    expect(drc.byRule?.Short ?? 0).toBe(0);
+    expect(drc.byRule?.NetIslands ?? 0).toBe(0);
+    expect(drc.byRule?.Clearance ?? 0).toBe(0);
+    expect(drc.violations).toBe(0);
+  });
+
+  it("9s/6p delta: 0 shorts and no bypass with per-junction scoped ties", async () => {
+    // Delta needs 2 rings per phase (series + return links); the Ø20 bore
+    // doesn't fit 6 — use a Ø12 bore for the delta variant.
+    const id = statorBoard9s6p(false, 6);
+    const res = out(wind9s6p(id, "delta"));
+    expect(res.errors).toBeUndefined();
+    expect(res.success).toBe(true);
+    expect(res.coils_placed).toBe(9);
+    expect(res.net_ties_added).toBe(3);
+
+    const b = boardOf(id);
+    expect(findViaBypasses(b, 0.15)).toEqual([]);
+
+    const drc = out(await runDrc({ document_id: id, detail: "full" }));
+    expect(drc.byRule?.Short ?? 0).toBe(0);
+    expect(drc.byRule?.Clearance ?? 0).toBe(0);
+  });
+
+  it("9s/6p delta on the Ø20 bore fails loudly — the rings don't fit", async () => {
+    const id = statorBoard9s6p(false, 10);
+    const res = wind9s6p(id, "delta");
+    expect(res.isError).toBe(true);
+    expect(res.content[0]!.text).toContain("interconnect doesn't fit");
   });
 });
 
