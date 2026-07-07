@@ -77,7 +77,7 @@ function freshWindow(): Window {
 export function fireToolAlert(
   name: string,
   args: Record<string, unknown>,
-  result: { isError?: boolean },
+  result: { isError?: boolean; content?: Array<{ type?: string; text?: string }> },
 ): void {
   // The viewer polls get_preview_version on a timer to self-refresh; counting
   // it would swamp PostHog/Discord with non-user traffic. get_preview_glb is

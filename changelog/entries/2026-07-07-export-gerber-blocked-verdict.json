@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-07-export-gerber-blocked-verdict",
+  "version": "0.9.4",
+  "date": "2026-07-07",
+  "category": "fix",
+  "title": "export_gerber DRC block reports as a verdict, not an error",
+  "summary": "When the clean-DRC gate blocks a dirty board, export_gerber now returns the structured blocked verdict (reason, DRC summary, escape hatches) as a normal result instead of a tool error, matching validate_for_fab.",
+  "features": ["mcp", "pcb", "gerber", "drc"],
+  "mcpTools": ["export_gerber"]
+}

@@ -960,17 +960,21 @@ export async function createServer(
       {
         name: "save_document",
         description:
-          "Persist a live session to disk as `<name>.vcad` under VCAD_MCP_STATE_DIR " +
-          "(or the working directory) so it survives a restart and can be reopened " +
-          "by name with load_document. Sessions are otherwise in-memory only.",
+          "Persist a live session under a name so it can be reopened with " +
+          "load_document. On the hosted server the save is durable: a signed-in " +
+          "user's save goes to their vcad.io account under the (normalized) name; " +
+          "an anonymous save returns an unguessable `saved_…` key to reopen with. " +
+          "On a local/stdio server it writes `<name>.vcad` under VCAD_MCP_STATE_DIR " +
+          "(or the working directory).",
         inputSchema: saveDocumentSchema,
       },
       {
         name: "load_document",
         description:
-          "Reopen a previously saved `<name>.vcad` into a fresh session and return " +
-          "its new document_id. The cheap way to resume a board/part across runs " +
-          "instead of rebuilding it.",
+          "Reopen a save_document save into a fresh session and return its new " +
+          "document_id. Pass the same name you saved under (or the `saved_…` key " +
+          "an anonymous save returned). The cheap way to resume a board/part " +
+          "across runs instead of rebuilding it.",
         inputSchema: loadDocumentSchema,
       },
       {
@@ -2428,11 +2432,11 @@ export async function createServer(
           break;
 
         case "save_document":
-          result = saveDocument(args);
+          result = await saveDocument(args, sessionStore);
           break;
 
         case "load_document":
-          result = loadDocument(args);
+          result = await loadDocument(args, sessionStore);
           break;
 
         case "continue_document":

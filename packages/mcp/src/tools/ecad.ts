@@ -4148,6 +4148,11 @@ export async function exportGerber(args: Record<string, unknown>) {
         verdict.status === "unverifiable"
           ? verdict.reason
           : `${verdict.summary.errors} DRC error(s) must be resolved before fabrication`;
+      // A blocked export is a VERDICT, not a tool failure — same posture as
+      // validate_for_fab's `verdict: "blocked"`. The tool ran, evaluated the
+      // gate, and reported a structured refusal with escape hatches; isError
+      // here would (and did) make every working gate trip read as a tool
+      // crash in clients and telemetry.
       return {
         content: [
           {
@@ -4165,7 +4170,6 @@ export async function exportGerber(args: Record<string, unknown>) {
             }),
           },
         ],
-        isError: true,
       };
     }
   }
