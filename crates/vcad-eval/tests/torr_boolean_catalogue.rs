@@ -550,3 +550,4 @@ fn e_pattern_scale_canary() {
 fn v_of(i: &Inspection) -> f64 {
     i.volume
 }
+

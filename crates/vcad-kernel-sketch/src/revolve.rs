@@ -109,28 +109,53 @@ pub fn revolve(
 
     let n_segments = profile.segments.len();
 
-    // For full revolution: each profile vertex maps to one vertex (seam)
-    // For partial revolution: each profile vertex spawns 2 vertices
-    let mut start_verts: Vec<VertexId> = Vec::with_capacity(n_segments);
-    let mut end_verts: Vec<VertexId> = Vec::with_capacity(n_segments);
-
-    for seg in &profile.segments {
-        let p = profile.to_3d(seg.start());
-
-        if is_full {
-            // Single vertex for full revolution
-            let v = get_or_create_vertex(&mut vertex_cache, &mut topo, p);
-            start_verts.push(v);
-            end_verts.push(v); // Same vertex for seam
-        } else {
-            // Two vertices for partial revolution
-            let p_rotated = rotate_point(&p, &axis_origin, axis.as_ref(), angle);
-            let v_start = get_or_create_vertex(&mut vertex_cache, &mut topo, p);
-            let v_end = get_or_create_vertex(&mut vertex_cache, &mut topo, p_rotated);
-            start_verts.push(v_start);
-            end_verts.push(v_end);
-        }
+    // Per-vertex (radius, axial) coordinates and the profile's winding in
+    // the (r, t) half-plane. The winding sign orients every generated
+    // face: for a counterclockwise profile (positive shoelace area), the
+    // outward normal of the surface swept by a segment with direction
+    // (dr, dt) is (dt·radial − dr·axis).
+    let rt: Vec<(f64, f64)> = profile
+        .segments
+        .iter()
+        .map(|seg| {
+            let p = profile.to_3d(seg.start());
+            let t = (p - axis_origin).dot(axis.as_ref());
+            let proj = axis_origin + t * axis.as_ref();
+            ((p - proj).norm(), t)
+        })
+        .collect();
+    let mut shoelace = 0.0;
+    for i in 0..n_segments {
+        let (r0, t0) = rt[i];
+        let (r1, t1) = rt[(i + 1) % n_segments];
+        shoelace += r0 * t1 - r1 * t0;
     }
+    let ccw = shoelace > 0.0;
+
+    // Angular facet count for swept faces that have no analytic surface
+    // (partial revolutions, cones): one facet per ~11.25° matches the
+    // default 32-segment circle tessellation.
+    let n_steps = ((angle / (2.0 * PI) * 32.0).ceil() as usize).max(1);
+
+    // Vertex rings: rings[j][i] = profile vertex i rotated by j·angle/n.
+    // Full revolutions only need ring 0 (the seam).
+    let n_rings = if is_full { 1 } else { n_steps + 1 };
+    let mut rings: Vec<Vec<VertexId>> = Vec::with_capacity(n_rings);
+    for j in 0..n_rings {
+        let theta = angle * j as f64 / n_steps as f64;
+        let ring = profile
+            .segments
+            .iter()
+            .map(|seg| {
+                let p = profile.to_3d(seg.start());
+                let pr = rotate_point(&p, &axis_origin, axis.as_ref(), theta);
+                get_or_create_vertex(&mut vertex_cache, &mut topo, pr)
+            })
+            .collect();
+        rings.push(ring);
+    }
+    let start_verts: Vec<VertexId> = rings[0].clone();
+    let end_verts: Vec<VertexId> = rings[n_rings - 1].clone();
 
     let mut all_faces = Vec::new();
     let mut he_map: HashMap<([i64; 3], [i64; 3]), HalfEdgeId> = HashMap::new();
@@ -148,77 +173,120 @@ pub fn revolve(
 
         // Classify the line segment relative to the axis
         let surf_type = classify_line_segment(&p_start, &p_end, &axis_origin, axis.as_ref());
+        let (dr, dt) = (
+            rt[next_i].0 - rt[i].0,
+            rt[next_i].1 - rt[i].1,
+        );
 
-        let face_id = if is_full {
-            // For full revolution, use true surface types
+        if is_full {
             match surf_type {
-                RevolveSurfaceType::Cylinder { radius } => build_full_cylinder_face(
-                    &mut topo,
-                    &mut geom,
-                    &axis_origin,
-                    axis.as_ref(),
-                    radius,
-                    &start_verts[i],
-                    &start_verts[next_i],
-                    &mut he_map,
-                    quantize_pt,
-                ),
-                RevolveSurfaceType::Cone { .. } | RevolveSurfaceType::Plane { .. } => {
-                    // For full cones and planes, use planar approximation
-                    // (true cone tessellation has same issues as partial cylinder)
-                    build_full_planar_approximation_face(
+                RevolveSurfaceType::Cylinder { radius } => {
+                    // Outward radial ⇔ the profile walks up (+t) on a CCW
+                    // profile; otherwise the wall faces the axis.
+                    let outward = if ccw { dt > 0.0 } else { dt < 0.0 };
+                    all_faces.push(build_full_cylinder_face(
                         &mut topo,
                         &mut geom,
+                        &axis_origin,
+                        axis.as_ref(),
+                        radius,
                         &start_verts[i],
                         &start_verts[next_i],
+                        outward,
                         &mut he_map,
                         quantize_pt,
-                    )
+                    ));
+                }
+                RevolveSurfaceType::Plane { .. } => {
+                    // Annular planar face: degenerate outer circle loop plus
+                    // a densely sampled inner hole.
+                    let axis_sign = if ccw { -dr.signum() } else { dr.signum() };
+                    all_faces.push(build_full_annular_face(
+                        &mut topo,
+                        &mut geom,
+                        &mut vertex_cache,
+                        &axis_origin,
+                        axis.as_ref(),
+                        rt[i],
+                        rt[next_i],
+                        &start_verts[i],
+                        &start_verts[next_i],
+                        axis_sign,
+                        quantize_pt,
+                    ));
+                }
+                RevolveSurfaceType::Cone { .. } => {
+                    // Faceted ring (true cone surfaces TODO).
+                    for j in 0..n_steps {
+                        let theta0 = angle * j as f64 / n_steps as f64;
+                        let theta1 = angle * (j + 1) as f64 / n_steps as f64;
+                        all_faces.push(build_facet_quad(
+                            &mut topo,
+                            &mut geom,
+                            &mut vertex_cache,
+                            &axis_origin,
+                            axis.as_ref(),
+                            &p_start,
+                            &p_end,
+                            theta0,
+                            theta1,
+                            ccw,
+                            &mut he_map,
+                            quantize_pt,
+                        ));
+                    }
                 }
             }
         } else {
-            // For partial revolution, always use planar approximation
-            // because tessellator can't handle partial curved surfaces
-            build_partial_planar_face(
-                &mut topo,
-                &mut geom,
-                &start_verts[i],
-                &start_verts[next_i],
-                &end_verts[next_i],
-                &end_verts[i],
-                &mut he_map,
-                quantize_pt,
-            )
-        };
-
-        all_faces.push(face_id);
+            // Partial revolution: faceted angular sweep. A single flat
+            // quad spanning the whole angle (the previous implementation)
+            // collapses to zero volume at 180° and misrepresents every
+            // other angle.
+            for j in 0..n_steps {
+                let theta0 = angle * j as f64 / n_steps as f64;
+                let theta1 = angle * (j + 1) as f64 / n_steps as f64;
+                all_faces.push(build_facet_quad(
+                    &mut topo,
+                    &mut geom,
+                    &mut vertex_cache,
+                    &axis_origin,
+                    axis.as_ref(),
+                    &p_start,
+                    &p_end,
+                    theta0,
+                    theta1,
+                    ccw,
+                    &mut he_map,
+                    quantize_pt,
+                ));
+            }
+        }
     }
 
-    // For partial revolution, add closing side faces
+    // For partial revolution, add closing side faces. Their loop winding
+    // must run opposite to the adjacent facet-quad edges so twins pair,
+    // which depends on the profile winding (see build_facet_quad).
     if !is_full {
-        // Start side face (at angle=0)
-        // Revolution faces have edges start[i] -> start[i+1]
-        // For these to be properly paired, start side needs reversed winding
+        // For a CCW profile the facet quads' θ=0 edge runs next_i → i, so
+        // the start cap walks the profile forward (not reversed); at
+        // θ=angle the quad edge runs i → next_i, so the end cap reverses.
         let start_face = build_side_face(
             &mut topo,
             &mut geom,
             &start_verts,
             &mut he_map,
             quantize_pt,
-            true, // reversed winding so edges pair with revolution faces
+            !ccw,
         );
         all_faces.push(start_face);
 
-        // End side face (at angle=angle)
-        // Revolution faces have edges end[i+1] -> end[i] (going backward)
-        // For these to be properly paired, end side needs forward winding
         let end_face = build_side_face(
             &mut topo,
             &mut geom,
             &end_verts,
             &mut he_map,
             quantize_pt,
-            false, // forward winding
+            ccw,
         );
         all_faces.push(end_face);
     }
@@ -298,6 +366,7 @@ fn build_full_cylinder_face<F>(
     radius: f64,
     v_bot: &VertexId,
     v_top: &VertexId,
+    outward: bool,
     he_map: &mut HashMap<([i64; 3], [i64; 3]), HalfEdgeId>,
     quantize_pt: F,
 ) -> vcad_kernel_topo::FaceId
@@ -315,7 +384,14 @@ where
     let he_seam_down = topo.add_half_edge(*v_top); // seam going down
 
     let loop_id = topo.add_loop(&[he_bot, he_seam_up, he_top, he_seam_down]);
-    let face_id = topo.add_face(loop_id, surf_idx, Orientation::Forward);
+    // The cylinder surface normal points radially outward; an inner wall
+    // (e.g. the bore of a revolved washer) faces the axis instead.
+    let orientation = if outward {
+        Orientation::Forward
+    } else {
+        Orientation::Reversed
+    };
+    let face_id = topo.add_face(loop_id, surf_idx, orientation);
 
     // Record in he_map
     for &he_id in &[he_bot, he_seam_up, he_top, he_seam_down] {
@@ -330,79 +406,119 @@ where
     face_id
 }
 
+/// Annular (or disk) planar face for a full revolution of a segment
+/// perpendicular to the axis. The outer boundary is a degenerate
+/// single-vertex circle loop, matching the primitive cylinder-cap
+/// representation the tessellator and boolean pipeline special-case; the
+/// inner hole is a densely sampled polygon, matching how boolean splits
+/// encode circular holes (`split_planar_face_by_circle`) — degenerate
+/// inner loops are filtered out by the hole-aware tessellation.
 #[allow(clippy::too_many_arguments)]
-fn build_full_planar_approximation_face<F>(
+fn build_full_annular_face(
     topo: &mut Topology,
     geom: &mut GeometryStore,
-    v_bot: &VertexId,
-    v_top: &VertexId,
-    he_map: &mut HashMap<([i64; 3], [i64; 3]), HalfEdgeId>,
-    quantize_pt: F,
-) -> vcad_kernel_topo::FaceId
-where
-    F: Fn(Point3) -> [i64; 3],
-{
-    // For full revolution of cone/plane, approximate with a degenerate planar face
-    let p_bot = topo.vertices[*v_bot].point;
-    let p_top = topo.vertices[*v_top].point;
-
-    let plane = Plane::from_normal(p_bot, (p_top - p_bot).normalize());
+    vertex_cache: &mut HashMap<[i64; 3], VertexId>,
+    axis_origin: &Point3,
+    axis: &Vec3,
+    rt_a: (f64, f64),
+    rt_b: (f64, f64),
+    v_a: &VertexId,
+    v_b: &VertexId,
+    axis_sign: f64,
+    quantize_pt: impl Fn(Point3) -> [i64; 3],
+) -> vcad_kernel_topo::FaceId {
+    let t_plane = rt_a.1;
+    let center = *axis_origin + t_plane * axis;
+    let plane = Plane::from_normal(center, *axis * axis_sign);
     let surf_idx = geom.add_surface(Box::new(plane));
 
-    let he_bot = topo.add_half_edge(*v_bot);
-    let he_seam_up = topo.add_half_edge(*v_bot);
-    let he_top = topo.add_half_edge(*v_top);
-    let he_seam_down = topo.add_half_edge(*v_top);
+    // Outer boundary at the larger radius, inner hole at the smaller.
+    let (v_outer, v_inner) = if rt_a.0 >= rt_b.0 {
+        (v_a, v_b)
+    } else {
+        (v_b, v_a)
+    };
 
-    let loop_id = topo.add_loop(&[he_bot, he_seam_up, he_top, he_seam_down]);
-    let face_id = topo.add_face(loop_id, surf_idx, Orientation::Forward);
+    let he_outer = topo.add_half_edge(*v_outer);
+    let outer_loop = topo.add_loop(&[he_outer]);
+    let face_id = topo.add_face(outer_loop, surf_idx, Orientation::Forward);
 
-    for &he_id in &[he_bot, he_seam_up, he_top, he_seam_down] {
-        let he = &topo.half_edges[he_id];
-        let origin = topo.vertices[he.origin].point;
-        if let Some(next) = he.next {
-            let dest = topo.vertices[topo.half_edges[next].origin].point;
-            he_map.insert((quantize_pt(origin), quantize_pt(dest)), he_id);
-        }
+    // Dense inner circle through the inner seam vertex.
+    const INNER_SEGMENTS: usize = 32;
+    let p_inner = topo.vertices[*v_inner].point;
+    let mut inner_hes = Vec::with_capacity(INNER_SEGMENTS);
+    for k in 0..INNER_SEGMENTS {
+        let theta = 2.0 * PI * k as f64 / INNER_SEGMENTS as f64;
+        let p = rotate_point(&p_inner, axis_origin, axis, theta);
+        let key = quantize_pt(p);
+        let vid = *vertex_cache
+            .entry(key)
+            .or_insert_with(|| topo.add_vertex(p));
+        inner_hes.push(topo.add_half_edge(vid));
     }
+    let inner_loop = topo.add_loop(&inner_hes);
+    topo.add_inner_loop(face_id, inner_loop);
 
     face_id
 }
 
+/// One angular facet of a swept profile segment: a planar quad between
+/// θ0 and θ1. Winding is chosen from the profile's (r, t) orientation so
+/// the quad normal points out of the solid: for a CCW profile the outward
+/// direction is (dt·radial − dr·axis), which corresponds to walking the
+/// quad start-edge before the θ1 arc.
 #[allow(clippy::too_many_arguments)]
-fn build_partial_planar_face<F>(
+fn build_facet_quad<F>(
     topo: &mut Topology,
     geom: &mut GeometryStore,
-    v_start_0: &VertexId,
-    v_start_1: &VertexId,
-    v_end_1: &VertexId,
-    v_end_0: &VertexId,
+    vertex_cache: &mut HashMap<[i64; 3], VertexId>,
+    axis_origin: &Point3,
+    axis: &Vec3,
+    p_start: &Point3,
+    p_end: &Point3,
+    theta0: f64,
+    theta1: f64,
+    ccw: bool,
     he_map: &mut HashMap<([i64; 3], [i64; 3]), HalfEdgeId>,
     quantize_pt: F,
 ) -> vcad_kernel_topo::FaceId
 where
     F: Fn(Point3) -> [i64; 3],
 {
-    // Use planar approximation for partial revolution faces
-    let p0 = topo.vertices[*v_start_0].point;
-    let p1 = topo.vertices[*v_start_1].point;
-    let p2 = topo.vertices[*v_end_1].point;
+    let s0 = rotate_point(p_start, axis_origin, axis, theta0);
+    let s1 = rotate_point(p_start, axis_origin, axis, theta1);
+    let e0 = rotate_point(p_end, axis_origin, axis, theta0);
+    let e1 = rotate_point(p_end, axis_origin, axis, theta1);
 
-    let x_dir = p1 - p0;
-    let y_dir = p2 - p1;
-    let plane = Plane::new(p0, x_dir, y_dir);
+    let corners: [Point3; 4] = if ccw {
+        [s0, s1, e1, e0]
+    } else {
+        [s0, e0, e1, s1]
+    };
+
+    let plane = Plane::new(
+        corners[0],
+        corners[1] - corners[0],
+        corners[3] - corners[0],
+    );
     let surf_idx = geom.add_surface(Box::new(plane));
 
-    // Winding: v_start_0 -> v_start_1 -> v_end_1 -> v_end_0
-    let he0 = topo.add_half_edge(*v_start_0);
-    let he1 = topo.add_half_edge(*v_start_1);
-    let he2 = topo.add_half_edge(*v_end_1);
-    let he3 = topo.add_half_edge(*v_end_0);
+    let quantize = &quantize_pt;
+    let vids: Vec<VertexId> = corners
+        .iter()
+        .map(|p| {
+            let key = quantize(*p);
+            *vertex_cache
+                .entry(key)
+                .or_insert_with(|| topo.add_vertex(*p))
+        })
+        .collect();
 
-    let loop_id = topo.add_loop(&[he0, he1, he2, he3]);
+    let hes: Vec<HalfEdgeId> = vids.iter().map(|&v| topo.add_half_edge(v)).collect();
+    let loop_id = topo.add_loop(&hes);
     let face_id = topo.add_face(loop_id, surf_idx, Orientation::Forward);
 
-    for &he_id in &[he0, he1, he2, he3] {
+    for &he_id in &hes {
         let he = &topo.half_edges[he_id];
         let origin = topo.vertices[he.origin].point;
         if let Some(next) = he.next {
@@ -542,11 +658,13 @@ mod tests {
 
         let solid = revolve(&profile, Point3::origin(), Vec3::z(), PI / 2.0).unwrap();
 
-        // 4 revolution faces + 2 side faces = 6 faces
-        assert_eq!(solid.topology.faces.len(), 6);
+        // Partial revolutions sweep each profile segment into angular
+        // facets (90° → 8 steps at the default 32-per-turn density):
+        // 4 segments × 8 facets + 2 side caps.
+        assert_eq!(solid.topology.faces.len(), 4 * 8 + 2);
 
-        // 8 vertices (4 at start, 4 at end)
-        assert_eq!(solid.topology.vertices.len(), 8);
+        // 4 profile vertices × 9 rings.
+        assert_eq!(solid.topology.vertices.len(), 4 * 9);
     }
 
     #[test]
