@@ -34,7 +34,7 @@ import {
   isGeoBlocked,
   GEO_BLOCK_BODY,
   GEO_BLOCK_STATUS,
-} from "../../shared/geo-block";
+} from "../../shared/geo-block.js";
 
 // The serverless function filesystem is read-only (/var/task), so the
 // filesystem-touching tools (export_cad, import_step, export_gerber)
