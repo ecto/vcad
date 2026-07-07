@@ -55,6 +55,7 @@ import {
   registryToolDescriptors,
   registryDispatchableNames,
   dispatchRegistryTool,
+  READ_ONLY_REGISTRY_TOOLS,
 } from "./tools/registry-dispatch.js";
 import {
   buildErrorResult,
@@ -104,6 +105,7 @@ import { toolDefs as previewToolDefs } from "./tools/preview.js";
 import { toolDefs as loonToolDefs } from "./tools/loon.js";
 import { toolDefs as exportToolDefs } from "./tools/export.js";
 import { toolDefs as inspectToolDefs } from "./tools/inspect.js";
+import { toolDefs as measureToolDefs } from "./tools/measure.js";
 import { toolDefs as printCheckToolDefs } from "./tools/print-check.js";
 import { toolDefs as renderToolDefs } from "./tools/render.js";
 import { toolDefs as verifyToolDefs } from "./tools/verify.js";
@@ -272,6 +274,7 @@ const STATIC_TOOL_DEFS: readonly ToolDef[] = [
   ...loonToolDefs,
   ...exportToolDefs,
   ...inspectToolDefs,
+  ...measureToolDefs,
   ...printCheckToolDefs,
   ...renderToolDefs,
   ...verifyToolDefs,
@@ -333,6 +336,7 @@ const LIST_TOOL_ORDER: readonly string[] = [
   "create_cad_loon",
   "export_cad",
   "inspect_cad",
+  "measure",
   // ── Print-then-measure calibration loop (3DP) ──────────────
   "predict_print",
   "record_measurement",
@@ -472,7 +476,7 @@ function buildInstructions(kernelPrompt: string | null): string {
     "",
     "Workflow: `open_document` → author → see → measure → ship.",
     "- Author whole parts with `create_cad_loon` (the full modeling vocabulary in one call); make surgical edits with `create`/`update`/`delete` (one node per call — mutation results report a compact `changed` diff of affected parts).",
-    "- See your work with `render_view` (isometric PNG); measure with `inspect_cad` (volume, area, bbox, center of mass).",
+    "- See your work with `render_view` (isometric PNG); measure with `inspect_cad` (whole-document volume, area, bbox, center of mass), `inspect_part` / `describe_scene` (per-part bbox, size, center, material), and `measure` (min distance/overlap between two parts, or one part's bbox+volume+center of mass).",
     "- Ship with `export_cad` (STL/GLB/STEP) or `open_in_browser` (vcad.io deep link).",
     "- Fix in place: when geometry is wrong, prefer `update` on the offending node over deleting parts and starting over.",
     "- Deliver the project bill of materials with `bom_create` → `bom_export` (markdown/CSV/JSON with landed-cost totals): link quote_manufacturing quotes on manufactured lines, and source COTS hardware (bearings, shafts, standoffs, screws, ferrite magnets) with `search_mechanical_parts`. All BOM prices are estimates and flagged as such.",
@@ -624,8 +628,9 @@ export async function createServer(
   // Registry-driven kernel tools, generated per connection from the WASM
   // registry as ToolDefs — one dispatch pipeline, no special-cased early
   // return. Each mutates a session document and is geometry (a preview is
-  // always meaningful); `read` alone is a pure reader. viewer `_meta` is
-  // derived like every other tool: they carry no template.
+  // always meaningful); the read-only tools (`read`, `inspect_part`,
+  // `describe_scene`) are pure readers — no undo snapshot, no persist. viewer
+  // `_meta` is derived like every other tool: they carry no template.
   const registryDefs: ToolDef[] = registryToolDescriptors().map((d) => ({
     name: d.name,
     pack: null,
@@ -633,7 +638,10 @@ export async function createServer(
     inputSchema: d.inputSchema as Record<string, unknown>,
     handler: (args: Record<string, unknown>, c: ToolContext) =>
       dispatchRegistryTool(d.name, args, c.engine) as ToolResult,
-    behavior: behavior({ geometry: true, writesDoc: d.name !== "read" }),
+    behavior: behavior({
+      geometry: true,
+      writesDoc: !READ_ONLY_REGISTRY_TOOLS.has(d.name),
+    }),
   }));
 
   // Tools hidden by VCAD_MCP_PACKS (resolved once at server creation).
