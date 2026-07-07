@@ -1480,6 +1480,29 @@ fn merge_overlapping_holes(inner_2d: &mut Vec<Vec<(f64, f64)>>, inner_3d: &mut V
 
         let Some((i, j)) = merge_pair else { break };
 
+        // Nested holes (one entirely inside the other — e.g. a chained
+        // boolean whose new counterbore hole swallowed the previous cavity
+        // hole) union to the OUTER hole; interleaving their vertices by
+        // angle would fabricate a mongrel mid-radius boundary.
+        {
+            let ci = centroid_2d(&inner_2d[i]);
+            let ri = avg_radius_2d(&inner_2d[i], ci);
+            let cj = centroid_2d(&inner_2d[j]);
+            let rj = avg_radius_2d(&inner_2d[j], cj);
+            let dist = ((ci.0 - cj.0).powi(2) + (ci.1 - cj.1).powi(2)).sqrt();
+            let (small, big, r_small, r_big) = if ri <= rj {
+                (i, j, ri, rj)
+            } else {
+                (j, i, rj, ri)
+            };
+            if dist + r_small <= r_big * 1.001 {
+                inner_2d.remove(small);
+                inner_3d.remove(small);
+                let _ = big;
+                continue;
+            }
+        }
+
         // Merge loop j into loop i by combining vertices and sorting by angle
         let mut combined_2d = std::mem::take(&mut inner_2d[i]);
         combined_2d.extend_from_slice(&inner_2d[j]);
