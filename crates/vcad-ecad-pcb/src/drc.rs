@@ -288,26 +288,30 @@ impl NetTieGroups {
     /// Returns true if nets `a` and `b` are tied together (and, for
     /// region-scoped ties, the contact point lies within the region).
     pub(crate) fn exempt(&self, a: &str, b: &str, at: Vec2) -> bool {
-        if a == b {
-            return true;
-        }
-        for g in &self.groups {
+        a == b || !self.covering_group_ids(a, b, at).is_empty()
+    }
+
+    /// Indices of tie groups that join `a` and `b` and whose region (if any)
+    /// contains `at`. A board-wide group (no region) always covers.
+    pub(crate) fn covering_group_ids(&self, a: &str, b: &str, at: Vec2) -> Vec<usize> {
+        let mut ids = Vec::new();
+        for (idx, g) in self.groups.iter().enumerate() {
             let joins = g.nets.iter().any(|n| n == a) && g.nets.iter().any(|n| n == b);
             if !joins {
                 continue;
             }
             match g.region {
-                None => return true,
+                None => ids.push(idx),
                 Some((c, r2)) => {
                     let dx = at.x - c.x;
                     let dy = at.y - c.y;
                     if dx * dx + dy * dy <= r2 {
-                        return true;
+                        ids.push(idx);
                     }
                 }
             }
         }
-        false
+        ids
     }
 
     /// Returns true if nets `a` and `b` are tied board-wide (no region scope).
@@ -1179,12 +1183,12 @@ fn check_connectivity(pcb: &Pcb, net_ties: &NetTieGroups, violations: &mut Vec<D
     // Union-find over geometric touch (same-layer, overlapping/touching) — the
     // same graph `analyze_net_continuity` reads, so DRC and the realized-plane
     // gates agree on what is connected.
-    let (nodes, mut dsu) = build_connectivity(pcb);
+    let (nodes, mut dsu, contacts) = build_connectivity_with_contacts(pcb);
     if nodes.is_empty() {
         return;
     }
 
-    detect_shorts(&nodes, &mut dsu, net_ties, violations);
+    detect_shorts(&nodes, &mut dsu, net_ties, &contacts, violations);
     detect_unrouted(pcb, &nodes, &mut dsu, net_ties, violations);
     detect_net_islands(pcb, &nodes, &mut dsu, violations);
     detect_unstitched_pads(pcb, &nodes, &mut dsu, violations);
@@ -1334,14 +1338,73 @@ fn split_pour_islands(rings: &[Vec<Vec2>]) -> Vec<Vec<Vec<Vec2>>> {
     islands
 }
 
-/// Emit a `Short` violation for any component carrying ≥2 distinct declared
-/// nets that are not net-tied.
+/// Emit a `Short` violation for unintentional cross-net copper contact.
+///
+/// Two passes:
+///
+/// 1. **Direct contacts.** Every geometric touch between differently-netted
+///    copper is judged at its contact point: covered by a tie group (board-wide
+///    or a scoped region containing the point) it is an intentional junction;
+///    otherwise it is a short, reported where the copper actually meets. This
+///    is what lets a region-scoped [`vcad_ir::ecad::NetTie`] do its job — a
+///    star/neutral junction is exempt exactly there, while a stray crossing of
+///    the same two nets elsewhere on the board still fires.
+///
+/// 2. **Indirect joins.** A connected component carrying two nets whose copper
+///    never directly touches (they're joined through other copper) is still a
+///    short — unless both nets are *anchored* into a common tie group within
+///    that component, i.e. each has a tie-covered direct contact with a member
+///    of the group. That is precisely a wye junction: PHA and PHB never touch,
+///    but both touch the neutral inside the tie region.
 fn detect_shorts(
     nodes: &[ConnNode],
     dsu: &mut Dsu,
     net_ties: &NetTieGroups,
+    contacts: &[CrossNetContact],
     violations: &mut Vec<DrcViolation>,
 ) {
+    let pair_key = |a: &str, b: &str| -> (String, String) {
+        if a <= b {
+            (a.to_string(), b.to_string())
+        } else {
+            (b.to_string(), a.to_string())
+        }
+    };
+
+    let mut seen_pairs: std::collections::HashSet<(String, String)> = Default::default();
+    // Pairs with ≥1 direct contact in a component — judged in pass 1, so the
+    // component-level pass must not re-judge (and mis-report) them.
+    let mut direct: std::collections::HashSet<(usize, (String, String))> = Default::default();
+    // (component, net) → tie groups the net has a covered contact with.
+    let mut anchored: HashMap<(usize, String), std::collections::HashSet<usize>> = HashMap::new();
+
+    for c in contacts {
+        let na = &nodes[c.i].net;
+        let nb = &nodes[c.j].net;
+        let root = dsu.find(c.i);
+        direct.insert((root, pair_key(na, nb)));
+        let covering = net_ties.covering_group_ids(na, nb, c.at);
+        if covering.is_empty() {
+            if seen_pairs.insert(pair_key(na, nb)) {
+                violations.push(DrcViolation {
+                    rule: DrcRuleType::Short,
+                    severity: DrcSeverity::Error,
+                    position: c.at,
+                    message: format!("Short: nets '{}' and '{}' are connected by copper", na, nb),
+                    actual: 0.0,
+                    required: 0.0,
+                    provenance: DrcProvenance::Routing,
+                    generated: false,
+                });
+            }
+        } else {
+            for g in covering {
+                anchored.entry((root, na.clone())).or_default().insert(g);
+                anchored.entry((root, nb.clone())).or_default().insert(g);
+            }
+        }
+    }
+
     // Gather declared nets per component, with a representative position.
     let mut comp_nets: HashMap<usize, Vec<(String, Vec2)>> = HashMap::new();
     for (i, node) in nodes.iter().enumerate() {
@@ -1355,8 +1418,7 @@ fn detect_shorts(
         }
     }
 
-    let mut seen_pairs: std::collections::HashSet<(String, String)> = Default::default();
-    for nets in comp_nets.values() {
+    for (root, nets) in &comp_nets {
         if nets.len() < 2 {
             continue;
         }
@@ -1367,11 +1429,22 @@ fn detect_shorts(
                 if net_ties.tied_board_wide(na, nb) {
                     continue;
                 }
-                let key = if na <= nb {
-                    (na.clone(), nb.clone())
-                } else {
-                    (nb.clone(), na.clone())
+                let key = pair_key(na, nb);
+                if direct.contains(&(*root, key.clone())) {
+                    continue; // judged at its contact points in pass 1
+                }
+                // Indirectly joined. Intentional iff some tie group joining
+                // both nets anchors each of them in this component.
+                let shared_anchor = match (
+                    anchored.get(&(*root, na.clone())),
+                    anchored.get(&(*root, nb.clone())),
+                ) {
+                    (Some(ga), Some(gb)) => ga.iter().any(|g| gb.contains(g)),
+                    _ => false,
                 };
+                if shared_anchor {
+                    continue;
+                }
                 if !seen_pairs.insert(key) {
                     continue;
                 }
@@ -1790,16 +1863,135 @@ pub struct NetContinuity {
 /// [`check_connectivity`] builds) and return the nodes alongside it, so callers
 /// can analyze one or many nets without rebuilding the connectivity.
 fn build_connectivity(pcb: &Pcb) -> (Vec<ConnNode>, Dsu) {
+    let (nodes, dsu, _) = build_connectivity_with_contacts(pcb);
+    (nodes, dsu)
+}
+
+/// A direct geometric touch between two nodes carrying *different* declared
+/// nets, with the approximate location where the copper meets. These are the
+/// candidate shorts: each is judged individually against the net-tie regions.
+struct CrossNetContact {
+    /// Index of the first node.
+    i: usize,
+    /// Index of the second node.
+    j: usize,
+    /// Approximate contact location.
+    at: Vec2,
+}
+
+/// [`build_connectivity`], additionally recording every cross-net contact so
+/// short detection can judge each junction at the point where it happens.
+fn build_connectivity_with_contacts(pcb: &Pcb) -> (Vec<ConnNode>, Dsu, Vec<CrossNetContact>) {
     let nodes = build_conn_nodes(pcb);
     let mut dsu = Dsu::new(nodes.len());
+    let mut contacts = Vec::new();
     for i in 0..nodes.len() {
         for j in (i + 1)..nodes.len() {
             if nodes[i].touches(&nodes[j]) {
                 dsu.union(i, j);
+                if !nodes[i].net.is_empty()
+                    && !nodes[j].net.is_empty()
+                    && nodes[i].net != nodes[j].net
+                {
+                    contacts.push(CrossNetContact {
+                        i,
+                        j,
+                        at: contact_point(&nodes[i].geom, &nodes[j].geom),
+                    });
+                }
             }
         }
     }
-    (nodes, dsu)
+    (nodes, dsu, contacts)
+}
+
+/// Closest point on segment `ab` to point `p`.
+fn closest_point_on_segment(p: Vec2, a: Vec2, b: Vec2) -> Vec2 {
+    let abx = b.x - a.x;
+    let aby = b.y - a.y;
+    let len2 = abx * abx + aby * aby;
+    if len2 <= f64::EPSILON {
+        return a;
+    }
+    let t = (((p.x - a.x) * abx + (p.y - a.y) * aby) / len2).clamp(0.0, 1.0);
+    Vec2::new(a.x + t * abx, a.y + t * aby)
+}
+
+/// Closest pair of points between segments `p1p2` and `p3p4` (centerlines).
+fn segment_closest_points(p1: Vec2, p2: Vec2, p3: Vec2, p4: Vec2) -> (Vec2, Vec2) {
+    // Candidate pairs from each endpoint projected onto the other segment;
+    // for touching/overlapping copper this lands inside the overlap, which is
+    // all the tie-region check needs.
+    let candidates = [
+        (closest_point_on_segment(p3, p1, p2), p3),
+        (closest_point_on_segment(p4, p1, p2), p4),
+        (p1, closest_point_on_segment(p1, p3, p4)),
+        (p2, closest_point_on_segment(p2, p3, p4)),
+    ];
+    let mut best = candidates[0];
+    let mut best_d2 = f64::MAX;
+    for (a, b) in candidates {
+        let dx = a.x - b.x;
+        let dy = a.y - b.y;
+        let d2 = dx * dx + dy * dy;
+        if d2 < best_d2 {
+            best_d2 = d2;
+            best = (a, b);
+        }
+    }
+    best
+}
+
+/// Representative point of a copper geometry.
+fn copper_rep_point(g: &CopperGeom) -> Vec2 {
+    match g {
+        CopperGeom::Segment { a, b, .. } => Vec2::new((a.x + b.x) / 2.0, (a.y + b.y) / 2.0),
+        CopperGeom::Disc { center, .. } | CopperGeom::Rect { center, .. } => *center,
+    }
+}
+
+/// Approximate location where two touching node geometries meet.
+///
+/// Used to judge region-scoped net ties. Tie radii are sized generously by the
+/// tools that write them (millimetres of slack around the junction), so a
+/// nearby representative point is sufficient — exact overlap geometry is not.
+fn contact_point(a: &NodeGeom, b: &NodeGeom) -> Vec2 {
+    match (a, b) {
+        (NodeGeom::Copper(ga), NodeGeom::Copper(gb)) => match (ga, gb) {
+            (
+                CopperGeom::Segment { a: a1, b: b1, .. },
+                CopperGeom::Segment { a: a2, b: b2, .. },
+            ) => {
+                let (p, q) = segment_closest_points(*a1, *b1, *a2, *b2);
+                Vec2::new((p.x + q.x) / 2.0, (p.y + q.y) / 2.0)
+            }
+            (CopperGeom::Segment { a, b, .. }, CopperGeom::Disc { center, .. })
+            | (CopperGeom::Disc { center, .. }, CopperGeom::Segment { a, b, .. })
+            | (CopperGeom::Segment { a, b, .. }, CopperGeom::Rect { center, .. })
+            | (CopperGeom::Rect { center, .. }, CopperGeom::Segment { a, b, .. }) => {
+                closest_point_on_segment(*center, *a, *b)
+            }
+            _ => {
+                let p = copper_rep_point(ga);
+                let q = copper_rep_point(gb);
+                Vec2::new((p.x + q.x) / 2.0, (p.y + q.y) / 2.0)
+            }
+        },
+        (NodeGeom::Pour(_), NodeGeom::Copper(g)) | (NodeGeom::Copper(g), NodeGeom::Pour(_)) => {
+            copper_rep_point(g)
+        }
+        (NodeGeom::Pour(ra), NodeGeom::Pour(rb)) => {
+            let p = ra
+                .first()
+                .map(|r| polygon_centroid(r))
+                .unwrap_or(Vec2::new(0.0, 0.0));
+            let q = rb
+                .first()
+                .map(|r| polygon_centroid(r))
+                .unwrap_or(Vec2::new(0.0, 0.0));
+            Vec2::new((p.x + q.x) / 2.0, (p.y + q.y) / 2.0)
+        }
+    }
 }
 
 /// Compute one net's continuity from a pre-built connectivity graph.
@@ -3103,6 +3295,116 @@ mod tests {
         assert!(
             !clearance.is_empty(),
             "junction outside tie region should still violate clearance"
+        );
+    }
+
+    /// A region-scoped tie covering the junction exempts the galvanic Short
+    /// there — the whole point of a scoped tie (e.g. a winding's star point).
+    #[test]
+    fn scoped_net_tie_exempts_short_at_junction() {
+        let mut pcb = clean_pcb();
+        pcb.traces.clear();
+        pcb.traces.push(trace((40.0, 50.0), (50.0, 50.0), "1"));
+        pcb.traces.push(trace((50.0, 50.0), (60.0, 50.0), "2"));
+        pcb.net_ties.push(NetTie {
+            nets: vec!["1".to_string(), "2".to_string()],
+            position: Some(Vec2::new(50.0, 50.0)),
+            radius: Some(2.0),
+        });
+
+        let violations = check_drc(&pcb);
+        let bad: Vec<_> = violations
+            .iter()
+            .filter(|v| v.rule == DrcRuleType::Short || v.rule == DrcRuleType::Clearance)
+            .collect();
+        assert!(
+            bad.is_empty(),
+            "junction inside scoped tie region must be exempt, got: {:?}",
+            bad
+        );
+    }
+
+    /// The scoped exemption is local: the same two nets touching AGAIN outside
+    /// the tie region is still a short, reported at the stray contact.
+    #[test]
+    fn scoped_net_tie_does_not_exempt_stray_contact() {
+        let mut pcb = clean_pcb();
+        pcb.traces.clear();
+        // Intentional junction at (50,50), tied there.
+        pcb.traces.push(trace((40.0, 50.0), (50.0, 50.0), "1"));
+        pcb.traces.push(trace((50.0, 50.0), (60.0, 50.0), "2"));
+        // Stray second contact between the same nets at (50,20).
+        pcb.traces.push(trace((40.0, 20.0), (50.0, 20.0), "1"));
+        pcb.traces.push(trace((50.0, 20.0), (60.0, 20.0), "2"));
+        pcb.net_ties.push(NetTie {
+            nets: vec!["1".to_string(), "2".to_string()],
+            position: Some(Vec2::new(50.0, 50.0)),
+            radius: Some(2.0),
+        });
+
+        let shorts: Vec<_> = check_drc(&pcb)
+            .into_iter()
+            .filter(|v| v.rule == DrcRuleType::Short)
+            .collect();
+        assert!(
+            !shorts.is_empty(),
+            "same nets touching outside the tie region must still short"
+        );
+        let p = shorts[0].position;
+        assert!(
+            (p.y - 20.0).abs() < 1.0,
+            "short must be reported at the stray contact, got {:?}",
+            p
+        );
+    }
+
+    /// Wye/star junction: three phase nets each touch the neutral inside one
+    /// scoped tie region and are thereby joined pairwise *indirectly*. No pair
+    /// touches directly, and every join is intentional — no shorts.
+    #[test]
+    fn scoped_net_tie_exempts_wye_star_junction() {
+        let mut pcb = clean_pcb();
+        pcb.traces.clear();
+        // Neutral bar at y=50, x in [48,52].
+        pcb.traces.push(trace((48.0, 50.0), (52.0, 50.0), "WIND_N"));
+        // Three phases arriving at the bar.
+        pcb.traces.push(trace((48.0, 50.0), (40.0, 58.0), "PHA"));
+        pcb.traces.push(trace((50.0, 50.0), (50.0, 60.0), "PHB"));
+        pcb.traces.push(trace((52.0, 50.0), (60.0, 58.0), "PHC"));
+        pcb.net_ties.push(NetTie {
+            nets: vec![
+                "PHA".to_string(),
+                "PHB".to_string(),
+                "PHC".to_string(),
+                "WIND_N".to_string(),
+            ],
+            position: Some(Vec2::new(50.0, 50.0)),
+            radius: Some(3.0),
+        });
+
+        let shorts: Vec<_> = check_drc(&pcb)
+            .into_iter()
+            .filter(|v| v.rule == DrcRuleType::Short)
+            .collect();
+        assert!(
+            shorts.is_empty(),
+            "star junction under a scoped tie must not short, got: {:?}",
+            shorts
+        );
+
+        // A genuine PHA/PHB crossing far from the junction still fires.
+        pcb.traces.push(trace((10.0, 10.0), (30.0, 10.0), "PHA"));
+        pcb.traces.push(trace((20.0, 5.0), (20.0, 15.0), "PHB"));
+        let shorts: Vec<_> = check_drc(&pcb)
+            .into_iter()
+            .filter(|v| v.rule == DrcRuleType::Short)
+            .collect();
+        assert!(
+            shorts
+                .iter()
+                .any(|v| v.message.contains("PHA") && v.message.contains("PHB")),
+            "crossing outside the tie region must still short, got: {:?}",
+            shorts
         );
     }
 
