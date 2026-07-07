@@ -30,6 +30,11 @@ import { Engine } from "@vcad/engine";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { readFileSync } from "node:fs";
+import {
+  isGeoBlocked,
+  GEO_BLOCK_BODY,
+  GEO_BLOCK_STATUS,
+} from "../../shared/geo-block";
 
 // The serverless function filesystem is read-only (/var/task), so the
 // filesystem-touching tools (export_cad, import_step, export_gerber)
@@ -77,6 +82,23 @@ export default async function handler(
     "Access-Control-Expose-Headers",
     "mcp-session-id, mcp-protocol-version",
   );
+
+  // U.S. export-control / sanctions geo-block (see shared/geo-block.ts).
+  // Defense-in-depth behind the edge middleware in .vercel/output — every
+  // route dests to this one function, so this check alone covers the whole
+  // surface even if a request reaches it without traversing the middleware.
+  const ipCountry = req.headers["x-vercel-ip-country"];
+  const ipRegion = req.headers["x-vercel-ip-country-region"];
+  if (
+    isGeoBlocked(
+      Array.isArray(ipCountry) ? ipCountry[0] : ipCountry,
+      Array.isArray(ipRegion) ? ipRegion[0] : ipRegion,
+    )
+  ) {
+    res.writeHead(GEO_BLOCK_STATUS, { "Content-Type": "application/json" });
+    res.end(GEO_BLOCK_BODY);
+    return;
+  }
 
   const url = new URL(req.url ?? "/", `https://${req.headers.host ?? "mcp.vcad.io"}`);
 

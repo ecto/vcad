@@ -9,7 +9,7 @@ interface LegalContent {
 
 const CONTACT_EMAIL = "info@muni.works";
 const COMPANY = "Municipal Robotics Corporation";
-const LAST_UPDATED = "April 23, 2026";
+const LAST_UPDATED = "July 7, 2026";
 
 const PRIVACY: LegalContent = {
   title: "Privacy Policy",
@@ -99,6 +99,13 @@ const TERMS: LegalContent = {
       body: [
         "Don't use vcad to break the law, infringe others' rights, transmit malware, or attempt to access accounts or data that aren't yours. Don't abuse our AI features to generate content that would violate our providers' policies.",
         "We may suspend accounts that violate these terms.",
+      ],
+    },
+    {
+      heading: "Export controls and sanctions",
+      body: [
+        "The hosted service is not available in jurisdictions subject to comprehensive U.S. sanctions or to the OFAC determination under Executive Order 14071 covering IT support and cloud-based services for design and manufacturing software — currently Russia, Belarus, Iran, Cuba, North Korea, Syria, and the Crimea, Sevastopol, Donetsk, and Luhansk regions of Ukraine.",
+        "You may not use the hosted service if you are located in any of those jurisdictions or listed on a U.S. restricted-party list, and you are responsible for complying with all applicable export control and sanctions laws. The open-source code remains available on GitHub under the Apache License 2.0.",
       ],
     },
     {
