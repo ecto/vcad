@@ -12,7 +12,9 @@
 //!    evaluated through `vcad_loon::eval_vcad`, parameterized after the
 //!    fact — proving documents from the loon path reach the same seam.
 
-use vcad_eval::diff::{document_parameter_gradient, DocDiffError};
+use vcad_eval::diff::{
+    document_parameter_gradient, document_parameter_qoi_gradient, DocDiffError,
+};
 use vcad_eval::{evaluate_document, EvalOptions};
 use vcad_ir::{Bindings, CsgOp, Document, Expr, MaterialDef, Node, Parameter, SceneEntry};
 use vcad_kernel_diff::mass_properties;
@@ -142,6 +144,67 @@ fn parametric_document_cylinder_gradient() {
         rel_izz <= 1e-6,
         "dIzz/dr {} vs rebuild FD {fd_izz} (rel {rel_izz:.3e})",
         g.derivative.inertia_origin[2][2]
+    );
+}
+
+#[test]
+fn qoi_gradient_matches_central_finite_differences() {
+    // The MCP/WASM QoI bundle: analytic volume/mass/centroid derivatives must
+    // match a central finite difference of the bundle's own reported values,
+    // and the (finite-difference) bbox extents must be internally consistent.
+    const DENSITY: f64 = 3.0;
+    let h = 1e-3;
+    let qoi = |r: f64| {
+        document_parameter_qoi_gradient(&parametric_cylinder_doc(r), "r", DENSITY, &tess(), 1e-4)
+            .expect("qoi gradient")
+    };
+
+    let base = qoi(R0);
+    assert_eq!(base.len(), 1, "one solid part");
+    let g = &base[0];
+
+    let plus = qoi(R0 + h);
+    let minus = qoi(R0 - h);
+
+    // Analytic dVolume/dr vs central FD of the bundle's own volume.
+    let fd_dv = (plus[0].volume - minus[0].volume) / (2.0 * h);
+    let rel = (g.d_volume - fd_dv).abs() / fd_dv.abs();
+    assert!(
+        rel <= 1e-4,
+        "dVolume/dr {} vs central FD {fd_dv} (rel {rel:.3e})",
+        g.d_volume
+    );
+    // Mass tracks density · volume.
+    assert!((g.mass - DENSITY * g.volume).abs() / (DENSITY * g.volume) <= 1e-12);
+    let fd_dm = (plus[0].mass - minus[0].mass) / (2.0 * h);
+    assert!((g.d_mass - fd_dm).abs() / fd_dm.abs() <= 1e-4);
+
+    // A centered disc's centroid is r-invariant.
+    assert!(
+        g.d_centroid.iter().all(|c| c.abs() < 1e-6),
+        "centroid must not move with r: {:?}",
+        g.d_centroid
+    );
+
+    // A 64-gon disc starting at angle 0 spans [-r, r] on both x and y, so the
+    // bbox x/y extents are 2r (grow at 2·dr) and z is the fixed height.
+    let _ = (&plus, &minus);
+    assert!((g.bbox_extents[0] - 2.0 * R0).abs() < 1e-2, "x extent ≈ 2r");
+    assert!((g.bbox_extents[2] - HEIGHT).abs() < 1e-2, "z extent ≈ height");
+    assert!(
+        (g.d_bbox_extents[0] - 2.0).abs() < 1e-2,
+        "d(x extent)/dr ≈ 2: {}",
+        g.d_bbox_extents[0]
+    );
+    assert!(
+        (g.d_bbox_extents[1] - 2.0).abs() < 1e-2,
+        "d(y extent)/dr ≈ 2: {}",
+        g.d_bbox_extents[1]
+    );
+    assert!(
+        g.d_bbox_extents[2].abs() < 1e-2,
+        "z extent (height) is r-invariant: {}",
+        g.d_bbox_extents[2]
     );
 }
 

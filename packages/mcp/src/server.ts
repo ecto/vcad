@@ -295,6 +295,14 @@ import {
 import { checkEnclosureFit, checkEnclosureFitSchema } from "./tools/enclosure.js";
 import { checkClearance, checkClearanceSchema } from "./tools/clearance.js";
 import { createCadLoon, createCadLoonSchema } from "./tools/loon.js";
+import {
+  listParameters,
+  listParametersSchema,
+  parameterGradient,
+  parameterGradientSchema,
+  setParameters,
+  setParametersSchema,
+} from "./tools/parameters.js";
 import { appendIntegrity, computeIntegrity } from "./tools/integrity.js";
 import {
   dfmCheck,
@@ -546,6 +554,9 @@ const SWITCH_DOC_WRITERS = new Set<string>([
   "set_placement",
   "set_board_outline",
   "set_design_rules",
+  // Batch-updates named parameters → geometry changes, so it must snapshot
+  // (undo) and persist like any other document mutator.
+  "set_parameters",
 ]);
 
 /** UI metadata for geometry tools — both dialects, hosts read what they
@@ -1218,6 +1229,25 @@ export async function createServer(
         description:
           "Inspect an open session document to get aggregate geometry properties: volume, surface area, bounding box, center of mass, triangle count, and mass (if material density is known). For per-part inspection use the chat-surface `inspect_part` / `describe_scene` tools (deferred from this MCP surface in v1).",
         inputSchema: inspectCadSchema,
+      },
+      // ── Parametric parameters + differentiable seam ─────────────
+      {
+        name: "list_parameters",
+        description:
+          "List a document's named parameters: raw expression, resolved numeric value, unit, and scrub bounds (min/max). Pair with set_parameters to drive the design and parameter_gradient to differentiate it.",
+        inputSchema: listParametersSchema,
+      },
+      {
+        name: "set_parameters",
+        description:
+          "Batch-update named parameter values on an open session document (e.g. { \"r\": 12, \"h\": 8 }). Every name must already be declared; values must be finite numbers. Returns a `changed` diff of the deltas and re-evaluates geometry integrity. Undoable and persisted.",
+        inputSchema: setParametersSchema,
+      },
+      {
+        name: "parameter_gradient",
+        description:
+          "Differentiate a document's QoIs with respect to a single named parameter via the differentiable seam: per solid part, returns d(volume)/dθ, d(mass)/dθ, d(centroid)/dθ (exact analytic seam derivatives) and d(bbox extents)/dθ (finite difference), alongside each QoI's value. The parameter must be bound onto some geometry field. \"Solve for the geometry\" starts here.",
+        inputSchema: parameterGradientSchema,
       },
       // ── Print-then-measure calibration loop (3DP) ───────────────
       {
@@ -2325,6 +2355,15 @@ export async function createServer(
 
         case "inspect_cad":
           result = inspectCad(args, engine);
+          break;
+        case "list_parameters":
+          result = listParameters(args);
+          break;
+        case "set_parameters":
+          result = setParameters(args, engine);
+          break;
+        case "parameter_gradient":
+          result = parameterGradient(args, engine);
           break;
         case "predict_print":
           result = predictPrint(args, engine);
