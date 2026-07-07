@@ -1539,7 +1539,8 @@ export async function createServer(
           "geometry on a layer, assigns it to a net, validates turn-to-turn " +
           "clearance, and optionally drops a via at the (otherwise trapped) " +
           "inner endpoint. Returns endpoints, copper length, and a DC " +
-          "resistance estimate.",
+          "resistance estimate." +
+          " Verify-on-write: the result carries `drc_delta` — the DRC violations this call introduced (shorts/clearance/connectivity/manufacturing, capped sample with positions) with `clean` to branch on in one step.",
         inputSchema: addCoilSchema,
       },
       {
@@ -1550,7 +1551,8 @@ export async function createServer(
           "Net per coil comes from `net_sequence` (cycled); `chirality` sets " +
           "winding sense. GEOMETRY ONLY: it has no notion of phases — derive " +
           "correct per-coil phase/polarity with `winding_layout` first, then " +
-          "map it onto net_sequence/chirality.",
+          "map it onto net_sequence/chirality." +
+          " Verify-on-write: the result carries `drc_delta` — the DRC violations this call introduced (shorts/clearance/connectivity/manufacturing, capped sample with positions) with `clean` to branch on in one step.",
         inputSchema: addCoilArraySchema,
       },
       {
@@ -1669,7 +1671,8 @@ export async function createServer(
           "assigned to a net. The general-purpose routing primitive — use it " +
           "for coil interconnect, buses, and hand-routes that route_nets " +
           "(pad-driven) won't make. Tagged as manual copper, so route_nets " +
-          "preserves it instead of ripping it up. Mutates the session document.",
+          "preserves it instead of ripping it up. Mutates the session document." +
+          " Verify-on-write: the result carries `drc_delta` — the DRC violations this call introduced (shorts/clearance/connectivity/manufacturing, capped sample with positions) with `clean` to branch on in one step.",
         inputSchema: addTraceSchema,
       },
       {
@@ -1677,7 +1680,8 @@ export async function createServer(
         description:
           "Drop a via at a point connecting two layers on a net (defaults " +
           "FCu→BCu, diameter/drill from design rules). Pairs with add_trace " +
-          "for multi-layer routing. Mutates the session document.",
+          "for multi-layer routing. Mutates the session document." +
+          " Verify-on-write: the result carries `drc_delta` — the DRC violations this call introduced (shorts/clearance/connectivity/manufacturing, capped sample with positions) with `clean` to branch on in one step.",
         inputSchema: addViaSchema,
       },
       {
@@ -1686,7 +1690,8 @@ export async function createServer(
           "Set the board stackup copper weight (e.g. copper_oz: 2) and/or " +
           "per-layer thickness/material, so DC-resistance and impedance " +
           "estimates reflect the real fab stackup instead of a default 1 oz. " +
-          "Mutates the session document.",
+          "Mutates the session document." +
+          " Verify-on-write: the result carries `drc_delta` — the DRC violations this call introduced (shorts/clearance/connectivity/manufacturing, capped sample with positions) with `clean` to branch on in one step.",
         inputSchema: setStackupSchema,
       },
       {
@@ -1709,7 +1714,8 @@ export async function createServer(
           "(outline) — WITHOUT re-placing components, traces, vias, or zones. " +
           "Unlike re-running place_components, the floorplan is preserved; any " +
           "footprint whose origin ends up off the new board is reported in " +
-          "`off_board` rather than silently relocated. Mutates the session document.",
+          "`off_board` rather than silently relocated. Mutates the session document." +
+          " Verify-on-write: the result carries `drc_delta` — the DRC violations this call introduced (shorts/clearance/connectivity/manufacturing, capped sample with positions) with `clean` to branch on in one step.",
         inputSchema: setBoardOutlineSchema,
         _meta: UI_META,
       },
@@ -1729,7 +1735,8 @@ export async function createServer(
           "without rebuilding the session. Target by `index` (0-based, the add " +
           "order) or by `net`/`layer` when exactly one zone matches. Returns a " +
           "`changed` diff of what was removed. To undo the very last mutation of " +
-          "any kind, use `undo` instead. Mutates the session document.",
+          "any kind, use `undo` instead. Mutates the session document." +
+          " Verify-on-write: the result carries `drc_delta` — the DRC violations this call introduced (shorts/clearance/connectivity/manufacturing, capped sample with positions) with `clean` to branch on in one step.",
         inputSchema: deleteZoneSchema,
       },
       {
@@ -1737,7 +1744,8 @@ export async function createServer(
         description:
           "Remove a single routed trace segment by `index` (0-based, the add " +
           "order) or by an unambiguous `net`/`layer` match. The take-back for a " +
-          "stray add_trace. Returns a `changed` diff. Mutates the session document.",
+          "stray add_trace. Returns a `changed` diff. Mutates the session document." +
+          " Verify-on-write: the result carries `drc_delta` — the DRC violations this call introduced (shorts/clearance/connectivity/manufacturing, capped sample with positions) with `clean` to branch on in one step.",
         inputSchema: deleteTraceSchema,
       },
       {
@@ -1745,7 +1753,8 @@ export async function createServer(
         description:
           "Remove a single via by `index` (0-based, the add order) or by an " +
           "unambiguous `net` match. The take-back for a stray add_via. Returns a " +
-          "`changed` diff. Mutates the session document.",
+          "`changed` diff. Mutates the session document." +
+          " Verify-on-write: the result carries `drc_delta` — the DRC violations this call introduced (shorts/clearance/connectivity/manufacturing, capped sample with positions) with `clean` to branch on in one step.",
         inputSchema: deleteViaSchema,
       },
       {
@@ -1774,7 +1783,8 @@ export async function createServer(
           "crossing of the same nets elsewhere still fires. Without them the " +
           "exemption is board-wide (prefer scoped: it keeps DRC honest away " +
           "from the junction). Nets must exist on the board. Returns the " +
-          "updated tie list with indices. Mutates the session document.",
+          "updated tie list with indices. Mutates the session document." +
+          " Verify-on-write: the result carries `drc_delta` — the DRC violations this call introduced or resolved (a tie edit changes short/clearance exemptions) with `clean` to branch on in one step.",
         inputSchema: addNetTieSchema,
       },
       {
@@ -1784,7 +1794,8 @@ export async function createServer(
           "order-insensitive) and/or `position` — the take-back for a bad " +
           "add_net_tie. Any junction copper stays on the board; DRC will report " +
           "it as a short again. Returns the deleted tie and the updated tie " +
-          "list. Mutates the session document.",
+          "list. Mutates the session document." +
+          " Verify-on-write: the result carries `drc_delta` — the DRC violations this call introduced or resolved (a tie edit changes short/clearance exemptions) with `clean` to branch on in one step.",
         inputSchema: deleteNetTieSchema,
       },
       {
@@ -1821,7 +1832,8 @@ export async function createServer(
           "Place many vias at once — a grid over a rectangular `region` (thermal " +
           "vias under FETs, GND-plane stitching) or an explicit `points` list. " +
           "Grid vias are clipped to the board outline by default. Mutates the " +
-          "session document.",
+          "session document." +
+          " Verify-on-write: the result carries `drc_delta` — the DRC violations this call introduced (shorts/clearance/connectivity/manufacturing, capped sample with positions) with `clean` to branch on in one step.",
         inputSchema: addViaArraySchema,
       },
       {
@@ -1834,7 +1846,8 @@ export async function createServer(
           "termination with a region-scoped net-tie on real board material, " +
           "and routes phase feeds to same-net pads when present — closing the " +
           "winding_layout plan into DRC-clean copper. Mutates the session " +
-          "document.",
+          "document." +
+          " Verify-on-write: the result carries `drc_delta` — the DRC violations this call introduced (shorts/clearance/connectivity/manufacturing, capped sample with positions) with `clean` to branch on in one step.",
         inputSchema: addMotorWindingSchema,
       },
       {
@@ -2550,11 +2563,11 @@ export async function createServer(
           break;
 
         case "add_coil":
-          result = addCoil(args);
+          result = await addCoil(args);
           break;
 
         case "add_coil_array":
-          result = addCoilArray(args);
+          result = await addCoilArray(args);
           break;
 
         case "winding_layout":
@@ -2631,15 +2644,15 @@ export async function createServer(
           break;
 
         case "add_trace":
-          result = addTrace(args);
+          result = await addTrace(args);
           break;
 
         case "add_via":
-          result = addVia(args);
+          result = await addVia(args);
           break;
 
         case "set_stackup":
-          result = setStackup(args);
+          result = await setStackup(args);
           break;
 
         case "set_placement":
@@ -2647,7 +2660,7 @@ export async function createServer(
           break;
 
         case "set_board_outline":
-          result = setBoardOutline(args);
+          result = await setBoardOutline(args);
           break;
 
         case "add_zone":
@@ -2655,15 +2668,15 @@ export async function createServer(
           break;
 
         case "delete_zone":
-          result = deleteZone(args);
+          result = await deleteZone(args);
           break;
 
         case "delete_trace":
-          result = deleteTrace(args);
+          result = await deleteTrace(args);
           break;
 
         case "delete_via":
-          result = deleteVia(args);
+          result = await deleteVia(args);
           break;
 
         case "get_copper":
@@ -2671,11 +2684,11 @@ export async function createServer(
           break;
 
         case "add_net_tie":
-          result = addNetTie(args);
+          result = await addNetTie(args);
           break;
 
         case "delete_net_tie":
-          result = deleteNetTie(args);
+          result = await deleteNetTie(args);
           break;
 
         case "undo":
@@ -2691,11 +2704,11 @@ export async function createServer(
           break;
 
         case "add_via_array":
-          result = addViaArray(args);
+          result = await addViaArray(args);
           break;
 
         case "add_motor_winding":
-          result = addMotorWinding(args);
+          result = await addMotorWinding(args);
           break;
 
         case "calc_motor":

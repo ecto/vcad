@@ -148,6 +148,7 @@ export type { Ast as ExpressionAst } from "./expressions.js";
 export {
   isEcadAvailable,
   runDrc,
+  runDrcInRegion,
   runPcbDfm,
   getPcbDfmPack,
   tryRunDrc,

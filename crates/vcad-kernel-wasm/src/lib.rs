@@ -5139,6 +5139,35 @@ mod ecad_wasm {
         serde_wasm_bindgen::to_value(&violations).map_err(|e| JsError::new(&e.to_string()))
     }
 
+    /// Run DRC with the geometric checks scoped to an axis-aligned region
+    /// (mm) — the incremental verify-on-write entry point. Only elements
+    /// intersecting the region are subjects of the clearance/width/drill/edge
+    /// checks (each still judged against the whole board); connectivity
+    /// (shorts, islands, unrouted nets) always runs board-global.
+    ///
+    /// # Arguments
+    /// * `pcb_json` - JSON-serialized `Pcb` struct
+    /// * `min_x`, `min_y`, `max_x`, `max_y` - region corners (mm)
+    ///
+    /// # Returns
+    /// Array of DRC violations as JsValue.
+    #[wasm_bindgen(js_name = ecadCheckDrcInRegion)]
+    pub fn ecad_check_drc_in_region(
+        pcb_json: &str,
+        min_x: f64,
+        min_y: f64,
+        max_x: f64,
+        max_y: f64,
+    ) -> Result<JsValue, JsError> {
+        let pcb: Pcb = serde_json::from_str(pcb_json).map_err(|e| JsError::new(&e.to_string()))?;
+        let violations = vcad_ecad_pcb::drc::check_drc_in_region(
+            &pcb,
+            vcad_ir::Vec2::new(min_x, min_y),
+            vcad_ir::Vec2::new(max_x, max_y),
+        );
+        serde_wasm_bindgen::to_value(&violations).map_err(|e| JsError::new(&e.to_string()))
+    }
+
     /// Run Design-for-Manufacturing checks on a PCB against a fab profile.
     ///
     /// Where DRC validates a board against its *own* declared design rules, DFM

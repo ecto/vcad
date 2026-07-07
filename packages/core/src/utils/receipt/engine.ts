@@ -71,6 +71,43 @@ function violationKey(v: DrcViolation): string {
   return `${v.rule}|${px}|${py}|${messageSignature(v.message)}`;
 }
 
+/**
+ * Multiset diff of two complete violation lists, keyed by (rule, rounded
+ * position, message signature) — the same identity {@link buildEntry} diffs
+ * receipt snapshots with. `introduced` are the actual after-side violations
+ * that have no before-side counterpart (so they carry real severity /
+ * actual / required / position); `fixed` are the before-side violations that
+ * vanished. The extracted core of the route_nets receipt diff, shared by the
+ * per-mutation `drc_delta` verdict every copper mutator returns.
+ */
+export function diffViolations(
+  before: DrcViolation[],
+  after: DrcViolation[],
+): { introduced: DrcViolation[]; fixed: DrcViolation[] } {
+  const beforeCounts = new Map<string, number>();
+  for (const v of before) {
+    const k = violationKey(v);
+    beforeCounts.set(k, (beforeCounts.get(k) ?? 0) + 1);
+  }
+  const introduced: DrcViolation[] = [];
+  const afterCounts = new Map<string, number>();
+  for (const v of after) {
+    const k = violationKey(v);
+    const seen = (afterCounts.get(k) ?? 0) + 1;
+    afterCounts.set(k, seen);
+    if (seen > (beforeCounts.get(k) ?? 0)) introduced.push(v);
+  }
+  const fixed: DrcViolation[] = [];
+  const beforeSeen = new Map<string, number>();
+  for (const v of before) {
+    const k = violationKey(v);
+    const seen = (beforeSeen.get(k) ?? 0) + 1;
+    beforeSeen.set(k, seen);
+    if (seen > (afterCounts.get(k) ?? 0)) fixed.push(v);
+  }
+  return { introduced, fixed };
+}
+
 /** Resolve final blame from cause + status. A fault present both before AND
  *  after a mutation was, by definition, not introduced by it — so anything the
  *  engine cannot pin on this step's routing defaults to "not the agent's". */
