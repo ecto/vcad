@@ -1,0 +1,84 @@
+name: WASM refresh
+
+# Single writer for the generated kernel-wasm artifacts.
+#
+# wasm-pack output is not byte-reproducible, so two branches that each
+# rebuilt packages/kernel-wasm/vcad_kernel_wasm* conflict on every merge
+# even when their Rust changes don't overlap. Feature branches therefore
+# never commit those files (ci.yml's wasm-artifact-guard enforces it);
+# instead this workflow rebuilds them on main after any kernel-source
+# merge and commits the refresh itself.
+#
+# The refresh commit only touches packages/kernel-wasm/**, which does not
+# match the paths filter below — so it can never re-trigger itself.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "crates/**"
+      # loon stdlib is include_str! into crates/vcad-loon
+      - "lib/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+  # Manual re-fire for the rare push race (a merge landing between this
+  # workflow's checkout and its push makes the push fail cleanly).
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+concurrency:
+  group: wasm-refresh-main
+  # Only the newest kernel state matters — a superseded rebuild is waste.
+  cancel-in-progress: true
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Clone sibling repos
+        run: |
+          git clone --depth 1 https://github.com/ecto/tang.git ../tang
+          git clone --depth 1 https://github.com/ecto/phyz.git ../phyz
+          git clone --depth 1 https://github.com/ecto/loon.git ../loon
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-workspace-crates: true
+      - name: Install wasm-pack
+        # Via cargo so the binary comes through the same trust chain as the
+        # rest of the toolchain (matches ci.yml).
+        run: cargo install wasm-pack --locked --version 0.13.1
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+      # node_modules is needed for the builtin font include_bytes! in
+      # vcad-kernel-text; --ignore-scripts skips native builds we don't use.
+      - run: npm ci --prefer-offline --no-audit --no-fund --ignore-scripts
+      # build.mjs (not raw wasm-pack): it also re-applies the trap-recovery
+      # hook to the wasm-bindgen glue, which the checked-in artifacts carry.
+      - name: Rebuild kernel WASM artifacts
+        run: node packages/kernel-wasm/scripts/build.mjs
+      - name: Commit refreshed artifacts
+        run: |
+          git add packages/kernel-wasm/vcad_kernel_wasm.js \
+                  packages/kernel-wasm/vcad_kernel_wasm.d.ts \
+                  packages/kernel-wasm/vcad_kernel_wasm_bg.wasm \
+                  packages/kernel-wasm/vcad_kernel_wasm_bg.wasm.d.ts
+          if git diff --cached --quiet; then
+            echo "artifacts unchanged — nothing to refresh"
+            exit 0
+          fi
+          git config user.name  "vcad-agent[bot]"
+          git config user.email "vcad-agent@users.noreply.github.com"
+          git commit -m "chore(wasm): refresh kernel artifacts for ${GITHUB_SHA:0:7}"
+          # Cheap insurance against a non-artifact merge racing us; a binary
+          # conflict here means a policy violation upstream and should fail
+          # loudly (re-run via workflow_dispatch after fixing).
+          git pull --rebase origin main
+          git push origin HEAD:main

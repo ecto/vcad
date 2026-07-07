@@ -2,7 +2,6 @@
  * export_cad tool — export IR document to file.
  */
 
-import type { Document } from "@vcad/ir";
 import type { Engine } from "@vcad/engine";
 import { writeFileSync } from "node:fs";
 import { toStlBytes } from "../export/stl.js";
@@ -10,12 +9,8 @@ import { toGlbBytes } from "../export/glb.js";
 import { resolveWithinRoot } from "./safe-path.js";
 import { isRemoteDeployment, maxInlineExportBytes } from "./remote.js";
 import { storeArtifact } from "./artifact-store.js";
+import { resolveDocInput } from "./session.js";
 import { behavior, type ToolDef } from "./tool-def.js";
-
-interface ExportInput {
-  ir: Document;
-  filename: string;
-}
 
 /**
  * Deliver export bytes: write to disk on local servers, return base64
@@ -78,9 +73,19 @@ function deliver(
 export const exportCadSchema = {
   type: "object" as const,
   properties: {
+    document_id: {
+      type: "string" as const,
+      description: "Session id from open_document (preferred).",
+    },
+    document: {
+      type: "object" as const,
+      description:
+        "Inline Document IR to export instead of a session. Use this stateless " +
+        "path when no `document_id` is resident (e.g. a cold serverless instance).",
+    },
     ir: {
       type: "object" as const,
-      description: "IR document from create_cad_document",
+      description: "Inline IR document (legacy alias for `document`).",
     },
     filename: {
       type: "string" as const,
@@ -92,14 +97,16 @@ export const exportCadSchema = {
         "auto-detect bends, angles, and directions with zero data entry.",
     },
   },
-  required: ["ir", "filename"],
+  required: ["filename"],
 };
 
 export function exportCad(
   input: unknown,
   engine: Engine,
 ): { content: Array<{ type: "text"; text: string }> } {
-  const { ir, filename } = input as ExportInput;
+  const args = (input ?? {}) as Record<string, unknown>;
+  const { doc: ir } = resolveDocInput(args, ["document", "ir"]);
+  const filename = String(args.filename ?? "");
 
   // STEP: only the folded sheet-metal body is exportable (mesh-evaluated
   // documents have no B-rep to write). The folded solid carries real

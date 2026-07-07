@@ -47,7 +47,9 @@ use vcad_kernel_booleans::{boolean_op, BooleanOp, BooleanResult};
 use vcad_kernel_math::{Point3, Transform, Vec3};
 use vcad_kernel_primitives::BRepSolid;
 use vcad_kernel_step::StepError;
-use vcad_kernel_tessellate::{tessellate_brep, TriangleMesh};
+use vcad_kernel_tessellate::{mesh_clearance, tessellate_brep, TriangleMesh};
+
+pub use vcad_kernel_tessellate::ClearanceResult;
 
 /// Error returned when STEP export fails.
 #[derive(Debug)]
@@ -850,6 +852,20 @@ impl Solid {
             && max_a[2] >= min_b[2]
     }
 
+    /// Minimum signed distance between this solid and `other` in mm.
+    ///
+    /// Positive is the minimum separation, negative the deepest penetration
+    /// when the solids intersect (see
+    /// [`vcad_kernel_tessellate::clearance`]). Tessellation-based: both
+    /// solids are meshed at their own `segments` setting, so curved-surface
+    /// results carry the usual chord error (raise `segments` for tight
+    /// fits). Returns `None` when either solid is empty.
+    pub fn clearance(&self, other: &Solid) -> Option<ClearanceResult> {
+        let mesh_a = self.to_mesh(self.segments);
+        let mesh_b = other.to_mesh(other.segments);
+        mesh_clearance(&mesh_a, &mesh_b)
+    }
+
     /// Fast vertex-only AABB (no tessellation). Slightly underestimates for curved surfaces.
     fn vertex_aabb(&self) -> ([f64; 3], [f64; 3]) {
         match &self.repr {
@@ -1461,6 +1477,51 @@ mod tests {
     fn test_empty() {
         let empty = Solid::empty();
         assert!(empty.is_empty());
+    }
+
+    /// Rotor/stator air gap: a 5 mm rotor inside a ring stator with a 1 mm
+    /// radial design gap measures ≈1 mm (within chord error at 128 segments).
+    #[test]
+    fn test_clearance_rotor_stator_gap() {
+        let rotor = Solid::cylinder(5.0, 10.0, 128);
+        let stator = Solid::cylinder(10.0, 10.0, 128).difference(&Solid::cylinder(6.0, 12.0, 128));
+        let r = rotor.clearance(&stator).unwrap();
+        assert!(!r.intersecting);
+        assert!(
+            (r.distance - 1.0).abs() < 0.02,
+            "air gap = {} mm, expected ≈1.0",
+            r.distance
+        );
+    }
+
+    /// Shrinking the gap moves the measured value with it.
+    #[test]
+    fn test_clearance_tracks_geometry() {
+        let rotor = Solid::cylinder(5.6, 10.0, 128);
+        let stator = Solid::cylinder(10.0, 10.0, 128).difference(&Solid::cylinder(6.0, 12.0, 128));
+        let r = rotor.clearance(&stator).unwrap();
+        assert!(!r.intersecting);
+        assert!(
+            (r.distance - 0.4).abs() < 0.02,
+            "air gap = {} mm, expected ≈0.4",
+            r.distance
+        );
+    }
+
+    /// An oversized rotor intersects the stator: negative distance.
+    #[test]
+    fn test_clearance_interference_is_negative() {
+        let rotor = Solid::cylinder(7.0, 10.0, 64);
+        let stator = Solid::cylinder(10.0, 10.0, 64).difference(&Solid::cylinder(6.0, 12.0, 64));
+        let r = rotor.clearance(&stator).unwrap();
+        assert!(r.intersecting);
+        assert!(r.distance < 0.0, "distance = {}, expected < 0", r.distance);
+    }
+
+    #[test]
+    fn test_clearance_empty_is_none() {
+        let cube = Solid::cube(10.0, 10.0, 10.0);
+        assert!(cube.clearance(&Solid::empty()).is_none());
     }
 
     #[test]

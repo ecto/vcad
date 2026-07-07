@@ -9,19 +9,10 @@
  * ensures all tools fail-closed on the same conditions.
  */
 
-import type { Pcb, PcbLayer } from "@vcad/ir";
+import type { Pcb } from "@vcad/ir";
+import { PCB_LAYERS } from "./pcb-layers.js";
 
-const VALID_LAYERS: ReadonlySet<string> = new Set<PcbLayer>([
-  "FCu", "BCu",
-  "In1Cu", "In2Cu", "In3Cu", "In4Cu", "In5Cu", "In6Cu",
-  "FSilkS", "BSilkS",
-  "FMask", "BMask",
-  "FPaste", "BPaste",
-  "FFab", "BFab",
-  "FCrtYd", "BCrtYd",
-  "EdgeCuts",
-  "UserDrawings", "UserComments",
-]);
+const VALID_LAYERS: ReadonlySet<string> = new Set<string>(PCB_LAYERS);
 
 export { VALID_LAYERS };
 

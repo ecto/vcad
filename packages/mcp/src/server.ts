@@ -107,6 +107,8 @@ import { toolDefs as inspectToolDefs } from "./tools/inspect.js";
 import { toolDefs as printCheckToolDefs } from "./tools/print-check.js";
 import { toolDefs as renderToolDefs } from "./tools/render.js";
 import { toolDefs as verifyToolDefs } from "./tools/verify.js";
+import { toolDefs as verifySpecToolDefs } from "./tools/verify-spec.js";
+import { toolDefs as clearanceToolDefs } from "./tools/clearance.js";
 import { toolDefs as dfmToolDefs } from "./tools/dfm.js";
 import { toolDefs as sheetMetalToolDefs } from "./tools/sheet-metal.js";
 import { toolDefs as importToolDefs } from "./tools/import.js";
@@ -273,6 +275,8 @@ const STATIC_TOOL_DEFS: readonly ToolDef[] = [
   ...printCheckToolDefs,
   ...renderToolDefs,
   ...verifyToolDefs,
+  ...verifySpecToolDefs,
+  ...clearanceToolDefs,
   ...dfmToolDefs,
   ...sheetMetalToolDefs,
   ...importToolDefs,
@@ -336,6 +340,7 @@ const LIST_TOOL_ORDER: readonly string[] = [
   "render_view",
   "verify_part",
   "list_eval_tasks",
+  "verify_spec",
   // ── DFM ────────────────────────────────────────────────────
   "dfm_check",
   "dfm_explain",
@@ -385,6 +390,7 @@ const LIST_TOOL_ORDER: readonly string[] = [
   "board_from_solid",
   "solid_from_board",
   "check_enclosure_fit",
+  "check_clearance",
   "list_footprints",
   "search_footprints",
   "get_pad_positions",

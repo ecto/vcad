@@ -37,6 +37,9 @@ export function classifyCause(v: DrcViolation): { cause: Cause; refs?: [string, 
   // An unstitched plane pad is a connectivity to-do (drop a stitching via), the
   // same class as an unrouted net — not a footprint/placement defect.
   if (/Unstitched pad/i.test(m)) return { cause: "connectivity" };
+  // A same-net bypass is copper the router (or a hand edit) laid over its own
+  // net far from any junction — a routing fault, not a footprint/placement one.
+  if (/Same-net bypass/i.test(m)) return { cause: "routing" };
   // Pad-to-pad clearance: footprint (same refdes) vs placement (two parts).
   // Checked before the generic `trace` test so a net literally named "trace"
   // can't masquerade a footprint fault as routing.
@@ -66,6 +69,43 @@ function violationKey(v: DrcViolation): string {
   const px = v.position ? round(v.position.x, 2) : "?";
   const py = v.position ? round(v.position.y, 2) : "?";
   return `${v.rule}|${px}|${py}|${messageSignature(v.message)}`;
+}
+
+/**
+ * Multiset diff of two complete violation lists, keyed by (rule, rounded
+ * position, message signature) — the same identity {@link buildEntry} diffs
+ * receipt snapshots with. `introduced` are the actual after-side violations
+ * that have no before-side counterpart (so they carry real severity /
+ * actual / required / position); `fixed` are the before-side violations that
+ * vanished. The extracted core of the route_nets receipt diff, shared by the
+ * per-mutation `drc_delta` verdict every copper mutator returns.
+ */
+export function diffViolations(
+  before: DrcViolation[],
+  after: DrcViolation[],
+): { introduced: DrcViolation[]; fixed: DrcViolation[] } {
+  const beforeCounts = new Map<string, number>();
+  for (const v of before) {
+    const k = violationKey(v);
+    beforeCounts.set(k, (beforeCounts.get(k) ?? 0) + 1);
+  }
+  const introduced: DrcViolation[] = [];
+  const afterCounts = new Map<string, number>();
+  for (const v of after) {
+    const k = violationKey(v);
+    const seen = (afterCounts.get(k) ?? 0) + 1;
+    afterCounts.set(k, seen);
+    if (seen > (beforeCounts.get(k) ?? 0)) introduced.push(v);
+  }
+  const fixed: DrcViolation[] = [];
+  const beforeSeen = new Map<string, number>();
+  for (const v of before) {
+    const k = violationKey(v);
+    const seen = (beforeSeen.get(k) ?? 0) + 1;
+    beforeSeen.set(k, seen);
+    if (seen > (afterCounts.get(k) ?? 0)) fixed.push(v);
+  }
+  return { introduced, fixed };
 }
 
 /** Resolve final blame from cause + status. A fault present both before AND

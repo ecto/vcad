@@ -119,6 +119,46 @@ export function getSession(documentId: string): Document {
   return doc;
 }
 
+// ─── Dual-mode document input (session id OR inline document) ─────────────────
+//
+// The primary path is always a live `document_id` session. But a warm session
+// is process-local: after a cold start or a serverless instance flip the id no
+// longer resolves. An inline `document` object is the stateless escape hatch —
+// the caller pastes the IR it already holds and the tool runs without a
+// resident session. Generalized here (it began as ecad's private helper) so the
+// core read-only tools share one contract and one error string.
+
+/** A resolved document input: session-backed (preferred) or inline (the
+ *  stateless escape hatch for cold serverless instances). */
+export interface DocInputCtx {
+  doc: Document;
+  /** Set when the doc came from a live server session. */
+  documentId?: string;
+}
+
+/**
+ * Resolve a tool's document argument. `document_id` (a live session) is the
+ * primary path; an inline document object is the stateless fallback that still
+ * works when no session is resident (cold instance / instance flip). By default
+ * the inline field is `document`; pass `inlineKeys` to accept aliases (e.g.
+ * export_cad's legacy `ir`), tried in order.
+ */
+export function resolveDocInput(
+  args: Record<string, unknown>,
+  inlineKeys: readonly string[] = ["document"],
+): DocInputCtx {
+  const id = args.document_id ? String(args.document_id) : "";
+  if (id) return { doc: getSession(id), documentId: id };
+  for (const key of inlineKeys) {
+    const inline = args[key];
+    if (inline && typeof inline === "object") return { doc: inline as Document };
+  }
+  const names = inlineKeys.map((k) => `\`${k}\``).join(" or ");
+  throw new Error(
+    `Pass \`document_id\` (from open_document) — or an inline ${names} object for the stateless flow.`,
+  );
+}
+
 // ─── Per-session undo history (in-memory snapshot stack) ──────────────────────
 //
 // The event spine (session_events) is an append-only telemetry/realtime log,

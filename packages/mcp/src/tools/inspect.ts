@@ -12,7 +12,7 @@
 import type { Engine, TriangleMesh } from "@vcad/engine";
 import type { Document } from "@vcad/ir";
 import { isoperimetricViolation } from "./integrity.js";
-import { getSession } from "./session.js";
+import { resolveDocInput } from "./session.js";
 import { behavior, type ToolDef } from "./tool-def.js";
 
 export const inspectCadSchema = {
@@ -22,8 +22,13 @@ export const inspectCadSchema = {
       type: "string" as const,
       description: "Session id from open_document.",
     },
+    document: {
+      type: "object" as const,
+      description:
+        "Inline Document IR to inspect instead of a session. Use this stateless " +
+        "path when no `document_id` is resident (e.g. a cold serverless instance).",
+    },
   },
-  required: ["document_id"],
 };
 
 interface BoundingBox {
@@ -363,8 +368,7 @@ export function inspectCad(
   engine: Engine,
 ): { content: Array<{ type: "text"; text: string }> } {
   const args = (input ?? {}) as Record<string, unknown>;
-  const documentId = String(args.document_id ?? "");
-  const ir = getSession(documentId);
+  const { doc: ir } = resolveDocInput(args);
 
   const result = computeInspection(ir, engine);
 

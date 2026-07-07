@@ -33,10 +33,17 @@ import type {
   CsgOp,
   SketchSegment2D,
   Receipt,
+  DesignReceipt,
+  ReceiptStatus,
 } from "@vcad/ir";
 import { createDocument } from "@vcad/ir";
-import { summarize, unifiedFromPcbReceipt } from "../receipt-unified.js";
-import { getNodePcb, getPcbNodeIds, buildEntry, agentView } from "@vcad/core";
+import { RECEIPT_SCHEMA, summarize, unifiedFromPcbReceipt } from "../receipt-unified.js";
+import {
+  clearanceReceiptClaims,
+  hasClearanceClaims,
+  verifyClearanceClaims,
+} from "./clearance.js";
+import { getNodePcb, getPcbNodeIds, buildEntry, agentView, diffViolations } from "@vcad/core";
 import {
   computeRatsnest,
   componentMeshes,
@@ -54,6 +61,7 @@ import {
   routeDiffPair as kernelRouteDiffPair,
   critiqueRoute as kernelCritiqueRoute,
   runDrc as kernelRunDrc,
+  runDrcInRegion as kernelRunDrcInRegion,
   runErc as kernelRunErc,
   checkErc as kernelCheckErc,
   evaluateMotor,
@@ -77,12 +85,15 @@ import {
   hydrateSession,
   persistSession,
   recordHistorySnapshot,
+  resolveDocInput,
+  type DocInputCtx,
 } from "./session.js";
 import { buildKernelEventPayload } from "./kernel-event.js";
 import { emClaim } from "./em-claims.js";
 import type { NextAction } from "./next-actions.js";
 import { computeEnclosureFitForBoard } from "./enclosure.js";
 import { validatePcb, pcbValidationError } from "./pcb-validate.js";
+import { PCB_LAYERS } from "./pcb-layers.js";
 import { sizePdnExact, ecadDiffEngineAvailable } from "../wasm/ecad-diff.js";
 import { bundleBytes, storeArtifact } from "./artifact-store.js";
 import { maxInlineArtifactBytes, maxInlineExportBytes } from "./remote.js";
@@ -279,19 +290,11 @@ function ecadUnverifiable(
 // PCB layer name validation — the single gate guarding every write boundary
 // ============================================================================
 
-/**
- * Every legal PCB layer name, in board order — the canonical serde variants of
- * the Rust `PcbLayer` enum (crates/vcad-ir/src/ecad.rs). This is the single
- * source of truth the write boundaries validate against. The old scattered
- * `/Cu$/` regex checks let malformed dotted KiCad names (`In1.Cu`) slip through,
- * which then corrupted documents and broke render_pcb / export_gerber.
- */
-const PCB_LAYERS: readonly PcbLayer[] = [
-  "FCu", "BCu", "In1Cu", "In2Cu", "In3Cu", "In4Cu", "In5Cu", "In6Cu",
-  "FSilkS", "BSilkS", "FMask", "BMask", "FPaste", "BPaste",
-  "FFab", "BFab", "FCrtYd", "BCrtYd",
-  "EdgeCuts", "UserDrawings", "UserComments",
-];
+// The legal PCB layer names live in ./pcb-layers.ts (imported as PCB_LAYERS) —
+// the single runtime copy, shared with pcb-validate.ts, mirroring the Rust
+// `PcbLayer` enum (crates/vcad-ir/src/ecad.rs). The old scattered `/Cu$/` regex
+// checks let malformed dotted KiCad names (`In1.Cu`) slip through, which then
+// corrupted documents and broke render_pcb / export_gerber.
 
 /** Fast membership test for any legal layer name. */
 const PCB_LAYER_SET: ReadonlySet<string> = new Set(PCB_LAYERS);
@@ -372,36 +375,18 @@ function validateCopperLayer(raw: unknown): LayerOk | LayerErr {
 // ============================================================================
 // Document resolution — session-based (document_id) with inline fallback
 // ============================================================================
-
-/** A resolved document input: session-backed (preferred) or inline (legacy). */
-interface EcadDocCtx {
-  doc: Document;
-  /** Set when the doc came from (or was registered as) a server session. */
-  documentId?: string;
-}
-
-/**
- * Resolve the document argument for ECAD tools. `document_id` (a session
- * from create_schematic / open_document) is preferred; an inline `document`
- * object is still accepted for backward compatibility and is mutated and
- * echoed back like the pre-session API did.
- */
-function resolveDocInput(args: Record<string, unknown>): EcadDocCtx {
-  const id = args.document_id ? String(args.document_id) : "";
-  if (id) return { doc: getSession(id), documentId: id };
-  const doc = args.document as Document | undefined;
-  if (doc && typeof doc === "object") return { doc };
-  throw new Error(
-    "Pass `document_id` (from create_schematic or open_document) — or an inline `document` for the legacy stateless flow.",
-  );
-}
+//
+// `resolveDocInput` now lives in session.ts and is shared with the core
+// read-only tools (inspect_cad / render_view / export_cad / dfm_check). ECAD
+// tools echo the full mutated document back for the inline path, so they keep
+// their own result-payload helper below.
 
 /**
  * The document part of a mutating tool's response. Session docs are mutated
  * server-side, so only the id is echoed; inline docs get the full mutated
  * document back (the caller has no other way to retrieve it).
  */
-function docResultPayload(ctx: EcadDocCtx): Record<string, unknown> {
+function docResultPayload(ctx: DocInputCtx): Record<string, unknown> {
   return ctx.documentId
     ? { document_id: ctx.documentId }
     : { document: ctx.doc };
@@ -3383,11 +3368,15 @@ interface DrcNetPairCount {
  *  conflicts / fab-rule breaks). UnconnectedNet and UnstitchedPad are
  *  "incomplete" rules (route it / stitch it). NetIslands is a hard defect (a
  *  net's copper built as ≥2 galvanically-isolated islands); it carries Error
- *  severity regardless of bucket. */
+ *  severity regardless of bucket. SameNetBypass is a Warning-severity
+ *  connectivity defect: same-net copper touching far from any intended
+ *  junction, short-circuiting the conductor between the points (fatal to
+ *  two-terminal structures like spiral coils). */
 const DRC_CATEGORY: Record<string, "connectivity" | "clearance" | "manufacturing"> = {
   UnconnectedNet: "connectivity",
   UnstitchedPad: "connectivity",
   NetIslands: "connectivity",
+  SameNetBypass: "connectivity",
   Clearance: "clearance",
   Short: "clearance",
   MinTraceWidth: "manufacturing",
@@ -3776,6 +3765,258 @@ export async function drcPcb(
   }
 
   return aggregateDrc(violations, sampleSize, detail);
+}
+
+// ============================================================================
+// drc_delta — verify-on-write for every copper-mutating tool
+// ============================================================================
+//
+// Field report: add_motor_winding returned a bare document_version for a board
+// it had just shorted in 3 places and islanded in 3 more — the agent only
+// learned from a separate run_drc. Every copper mutator now wraps its mutation
+// in a before/after DRC snapshot and reports what it *introduced* (the
+// route_nets `receipt` diff, extracted into `drcDelta`); `drc_delta.clean` is
+// the one-step branch an agent needs.
+//
+// Cost control: boards with >= DRC_DELTA_FULL_BOARD_MAX elements scope the
+// geometric checks to the mutation's inflated bbox via the kernel's region DRC
+// (`check_drc_in_region`); connectivity always runs board-global — it is the
+// only rule class a local copper edit can violate remotely. Smaller boards
+// just take full-board snapshots.
+
+/** Counts of introduced violations split by what they mean for the board.
+ *  Unlike run_drc's categories, shorts get their own bucket — the worst class,
+ *  so an agent can triage without parsing rule names. */
+export interface DrcDeltaCategories {
+  shorts: number;
+  clearance: number;
+  connectivity: number;
+  manufacturing: number;
+}
+
+/** Verify-on-write verdict attached to every copper-mutating tool result:
+ *  what this one call broke (and fixed), from before/after DRC snapshots. */
+export interface DrcDelta {
+  /** True iff the mutation introduced no new violations. */
+  clean: boolean;
+  /** Violations this mutation introduced (multiset diff, exact). */
+  introduced: number;
+  /** Violations this mutation fixed. */
+  resolved: number;
+  /** Introduced counts by category — `shorts` is the drop-everything bucket. */
+  by_category: DrcDeltaCategories;
+  /** Worst-first capped sample of the introduced violations, with positions. */
+  sample: DrcViol[];
+  sample_capped: boolean;
+  /** "full" board snapshots, or geometric checks scoped to the mutation's
+   *  inflated bbox ("region" — connectivity still board-global). */
+  scope: "full" | "region";
+  /** Present when a snapshot could not be verified (kernel refused the board).
+   *  `clean` is forced false — an unverifiable board is NOT a clean one. */
+  unverifiable?: { reason: string; offending_field?: string };
+}
+
+/** Category of one rule for the delta triage. */
+function deltaCategory(rule: string): keyof DrcDeltaCategories {
+  if (rule === "Short") return "shorts";
+  return DRC_CATEGORY[rule] ?? "manufacturing";
+}
+
+/** Sample cap for `drc_delta.sample` — enough to act on, small enough to read. */
+const DRC_DELTA_SAMPLE_CAP = 10;
+
+/**
+ * Diff two DRC snapshots into the violations a mutation INTRODUCED (and
+ * resolved). The extracted core of the route_nets receipt: the same multiset
+ * identity (`@vcad/core` `diffViolations`), reduced to the one verdict a
+ * mutator should self-report. Both snapshots must come from the same scope
+ * (full board, or the same region) — the callers guarantee that.
+ */
+export function drcDelta(
+  before: DrcSummary | DrcUnverifiable,
+  after: DrcSummary | DrcUnverifiable,
+  scope: "full" | "region" = "full",
+): DrcDelta {
+  const empty: DrcDeltaCategories = {
+    shorts: 0,
+    clearance: 0,
+    connectivity: 0,
+    manufacturing: 0,
+  };
+  if (!before.success || !after.success) {
+    const bad = !before.success ? before : (after as DrcUnverifiable);
+    return {
+      clean: false,
+      introduced: 0,
+      resolved: 0,
+      by_category: empty,
+      sample: [],
+      sample_capped: false,
+      scope,
+      unverifiable: {
+        reason: bad.reason,
+        ...(bad.offending_field ? { offending_field: bad.offending_field } : {}),
+      },
+    };
+  }
+
+  // Snapshots are taken with detail:"full", so `details` is the complete list
+  // and the diff is exact; `sample` only backstops a foreign snapshot.
+  const { introduced, fixed } = diffViolations(
+    before.details ?? before.sample,
+    after.details ?? after.sample,
+  );
+
+  const by_category: DrcDeltaCategories = { ...empty };
+  for (const v of introduced) by_category[deltaCategory(v.rule)] += 1;
+
+  // Worst-first: shorts → connectivity → clearance → manufacturing, errors
+  // before warnings — so a truncated sample never hides the short.
+  const rank: Record<keyof DrcDeltaCategories, number> = {
+    shorts: 0,
+    connectivity: 1,
+    clearance: 2,
+    manufacturing: 3,
+  };
+  const sorted = [...(introduced as DrcViol[])].sort(
+    (a, b) =>
+      rank[deltaCategory(a.rule)] - rank[deltaCategory(b.rule)] ||
+      (a.severity === "Error" ? 0 : 1) - (b.severity === "Error" ? 0 : 1),
+  );
+
+  return {
+    clean: introduced.length === 0,
+    introduced: introduced.length,
+    resolved: fixed.length,
+    by_category,
+    sample: sorted.slice(0, DRC_DELTA_SAMPLE_CAP),
+    sample_capped: introduced.length > DRC_DELTA_SAMPLE_CAP,
+    scope,
+  };
+}
+
+/** Boards with fewer elements than this always take full-board snapshots —
+ *  the region machinery only pays off past it. */
+const DRC_DELTA_FULL_BOARD_MAX = 2000;
+
+/** Board size in copper-ish elements, for the full-vs-region scope decision. */
+function pcbElementCount(pcb: Pcb): number {
+  let pads = 0;
+  for (const fp of pcb.footprints) pads += fp.pads.length;
+  return (
+    pcb.traces.length +
+    (pcb.traceArcs?.length ?? 0) +
+    pcb.vias.length +
+    pcb.zones.length +
+    pads
+  );
+}
+
+/** The largest clearance any net class demands — the region inflation that
+ *  keeps every element the mutation could conflict with in scope. */
+function maxBoardClearance(pcb: Pcb): number {
+  let c = pcb.rules.defaultRules.clearance;
+  for (const cls of pcb.rules.classRules ?? []) c = Math.max(c, cls.clearance);
+  return c;
+}
+
+/** World-space bbox of a mutation's copper, inflated by the element radius.
+ *  Returns "full" when any coordinate is non-finite (bad args are the tool's
+ *  problem — the delta must not silently scope them out). */
+function boundsOfPoints(
+  points: Vec2[],
+  inflate = 0,
+): { min: Vec2; max: Vec2 } | "full" {
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const p of points) {
+    minX = Math.min(minX, p.x);
+    minY = Math.min(minY, p.y);
+    maxX = Math.max(maxX, p.x);
+    maxY = Math.max(maxY, p.y);
+  }
+  const b = {
+    min: { x: minX - inflate, y: minY - inflate },
+    max: { x: maxX + inflate, y: maxY + inflate },
+  };
+  const vals = [b.min.x, b.min.y, b.max.x, b.max.y];
+  return vals.every(Number.isFinite) ? b : "full";
+}
+
+/** Mutation footprint for the drc_delta scope: a copper bbox, "full" for
+ *  board-scale mutations (outline changes, motor windings), or null when the
+ *  mutation moves no copper at all (set_stackup) — a no-op delta is expected
+ *  but still verified. */
+type DrcDeltaBounds = { min: Vec2; max: Vec2 } | "full" | null;
+
+/** Region-scoped DRC snapshot — same summary shape as {@link drcPcb}. */
+async function drcPcbInRegion(
+  pcb: Pcb,
+  region: { min: Vec2; max: Vec2 },
+): Promise<DrcSummary | DrcUnverifiable> {
+  if (await isEcadAvailable()) {
+    const outcome = await kernelRunDrcInRegion(pcb, region.min, region.max);
+    if (outcome.status === "errored") {
+      return {
+        success: false,
+        status: "errored",
+        reason: outcome.reason,
+        ...(outcome.offending_field ? { offending_field: outcome.offending_field } : {}),
+      };
+    }
+    return aggregateDrc(outcome.value as unknown as DrcViol[], 20, "full");
+  }
+  // No kernel: the scalar fallback is linear and cheap — run it unscoped.
+  return drcPcb(pcb, "full", 20);
+}
+
+/** An in-flight verify-on-write capture: the before snapshot is taken, the
+ *  after snapshot and diff happen in {@link DrcDeltaCapture.finish}. */
+export interface DrcDeltaCapture {
+  /** Take the after snapshot (same scope as before) and diff. Call once,
+   *  after the mutation has been applied to the same live `pcb`. */
+  finish(): Promise<DrcDelta>;
+}
+
+/**
+ * Start a verify-on-write capture for a mutation about to land in `bounds`.
+ * Call after arg validation (so error paths don't pay for a snapshot) and
+ * immediately before the first board mutation; `finish()` after the last one.
+ */
+export async function beginDrcDelta(
+  pcb: Pcb,
+  bounds: DrcDeltaBounds,
+): Promise<DrcDeltaCapture> {
+  const full = bounds === "full" || pcbElementCount(pcb) < DRC_DELTA_FULL_BOARD_MAX;
+  let region: { min: Vec2; max: Vec2 } | null = null;
+  if (!full) {
+    // `!full` already excludes bounds === "full" (aliased-condition narrowing).
+    if (bounds) {
+      // Inflate by the worst clearance in play (plus the kernel's own 1mm
+      // search margin) so borderline subjects at the bbox edge stay in scope.
+      const pad = maxBoardClearance(pcb) + 1.0;
+      region = {
+        min: { x: bounds.min.x - pad, y: bounds.min.y - pad },
+        max: { x: bounds.max.x + pad, y: bounds.max.y + pad },
+      };
+    } else {
+      // No copper moved: a degenerate region keeps the geometric checks empty
+      // while connectivity still verifies globally.
+      region = { min: { x: 0, y: 0 }, max: { x: 0, y: 0 } };
+    }
+  }
+  const scope: "full" | "region" = region ? "region" : "full";
+  const snapshot = (): Promise<DrcSummary | DrcUnverifiable> =>
+    region ? drcPcbInRegion(pcb, region) : drcPcb(pcb, "full", 20);
+  const before = await snapshot();
+  return {
+    async finish(): Promise<DrcDelta> {
+      const after = await snapshot();
+      return drcDelta(before, after, scope);
+    },
+  };
 }
 
 // ============================================================================
@@ -5648,7 +5889,15 @@ const round3 = (v: number) => Math.round(v * 1000) / 1000;
  * turn-to-turn gap against clearance, assigns every segment to a net, and
  * can drop a via at the inner endpoint (which is otherwise trapped).
  */
-export function addCoil(args: Record<string, unknown>) {
+export async function addCoil(
+  args: Record<string, unknown>,
+  opts?: {
+    /** Composite tools (add_coil_array / add_motor_winding) wrap the WHOLE
+     *  batch in one drc_delta capture — per-coil snapshots would multiply the
+     *  DRC cost by the coil count for no extra signal. */
+    skipDrcDelta?: boolean;
+  },
+) {
   const ctx = resolveDocInput(args);
   const pcb = getDocPcb(ctx.doc);
   if (!pcb) {
@@ -5740,6 +5989,15 @@ export function addCoil(args: Record<string, unknown>) {
     if (T.x !== pts[0].x || T.y !== pts[0].y) pts.unshift(T);
   }
 
+  // The coil's copper (spiral + lead-out + any inner/stitch vias, which all
+  // land on spiral points) stays inside the sampled polyline's bbox.
+  const drcCap = opts?.skipDrcDelta
+    ? null
+    : await beginDrcDelta(
+        pcb,
+        boundsOfPoints(pts, Math.max(traceWidth, pcb.rules.defaultRules.viaDiameter) / 2),
+      );
+
   if (!pcb.nets.some((n) => n.id === net)) {
     pcb.nets.push({ id: net, name: net });
   }
@@ -5818,6 +6076,7 @@ export function addCoil(args: Record<string, unknown>) {
             terminals: { a: terminalA, b: terminalB },
             inner_endpoint: pts[0],
             outer_endpoint: pts[pts.length - 1],
+            ...(drcCap ? { drc_delta: await drcCap.finish() } : {}),
             ...docResultPayload(ctx),
           }),
         },
@@ -5880,6 +6139,7 @@ export function addCoil(args: Record<string, unknown>) {
           inner_endpoint: pts[0],
           outer_endpoint: pts[pts.length - 1],
           ...(via ? { via } : {}),
+          ...(drcCap ? { drc_delta: await drcCap.finish() } : {}),
           ...docResultPayload(ctx),
         }),
       },
@@ -5907,7 +6167,7 @@ function segLength(pts: Vec2[]): number {
  * convenience with NO phase/polarity meaning. For an electrically-correct phase
  * and polarity per coil, plan with `winding_layout` first and map its result.
  */
-export function addCoilArray(args: Record<string, unknown>) {
+export async function addCoilArray(args: Record<string, unknown>) {
   const ctx = resolveDocInput(args);
   const pcb = getDocPcb(ctx.doc);
   if (!pcb) {
@@ -5952,6 +6212,18 @@ export function addCoilArray(args: Record<string, unknown>) {
   // Re-use the same session/doc so each delegated addCoil mutates this board.
   const childDoc = ctx.documentId ? { document_id: ctx.documentId } : { document: ctx.doc };
 
+  // One capture around the WHOLE ring (each coil reaches outer_radius from a
+  // center on the pitch circle); the delegated addCoil calls skip their own.
+  const outerR = typeof args.outer_radius === "number" ? (args.outer_radius as number) : NaN;
+  const reach = pitchRadius + outerR + pcb.rules.defaultRules.viaDiameter;
+  const drcCap = await beginDrcDelta(
+    pcb,
+    boundsOfPoints([
+      { x: center.x - reach, y: center.y - reach },
+      { x: center.x + reach, y: center.y + reach },
+    ]),
+  );
+
   const results: Array<Record<string, unknown>> = [];
   const errors: string[] = [];
   let totalTraces = 0;
@@ -5965,7 +6237,7 @@ export function addCoilArray(args: Record<string, unknown>) {
     };
     const coilNet = netSequence?.length ? netSequence[i % netSequence.length] : net;
     const direction = dirFor(i);
-    const res = addCoil({
+    const res = await addCoil({
       ...childDoc,
       center: coilCenter,
       turns: args.turns,
@@ -5980,7 +6252,7 @@ export function addCoilArray(args: Record<string, unknown>) {
       segments_per_turn: args.segments_per_turn,
       inner_via: args.inner_via,
       via_to_layer: args.via_to_layer,
-    });
+    }, { skipDrcDelta: true });
     if (res.isError) {
       errors.push(`coil ${i} (net ${coilNet}): ${res.content[0]!.text}`);
       continue;
@@ -6001,6 +6273,7 @@ export function addCoilArray(args: Record<string, unknown>) {
           total_traces: totalTraces,
           results,
           ...(errors.length ? { errors } : {}),
+          drc_delta: await drcCap.finish(),
           ...docResultPayload(ctx),
         }),
       },
@@ -6255,7 +6528,7 @@ export const setBoardOutlineSchema = {
  * board. This is the non-destructive counterpart to re-running place_components
  * with new dimensions (which would reset the floorplan).
  */
-export function setBoardOutline(args: Record<string, unknown>) {
+export async function setBoardOutline(args: Record<string, unknown>) {
   const ctx = resolveDocInput(args);
   const pcb = getDocPcb(ctx.doc);
   if (!pcb) {
@@ -6322,6 +6595,10 @@ export function setBoardOutline(args: Record<string, unknown>) {
 
   const thickness = (args.thickness as number) ?? pcb.outline.thickness ?? 1.6;
 
+  // A new outline re-judges EVERY copper element's edge clearance (and can
+  // strand copper off-board) — inherently board-wide, so never region-scoped.
+  const drcCap = await beginDrcDelta(pcb, "full");
+
   pcb.outline = {
     vertices,
     ...(cutouts && cutouts.length > 0 ? { cutouts } : {}),
@@ -6358,6 +6635,7 @@ export function setBoardOutline(args: Record<string, unknown>) {
           },
           components_kept: pcb.footprints.length,
           ...(offBoard.length > 0 ? { off_board: offBoard } : {}),
+          drc_delta: await drcCap.finish(),
           ...docResultPayload(ctx),
         }),
       },
@@ -7110,6 +7388,11 @@ export async function describePcb(args: Record<string, unknown>) {
         categories: drcSummary.categories,
         byRule: drcSummary.byRule,
         worstClearance: drcSummary.worstClearance,
+        // Same-net copper touching far from any intended junction — invisible
+        // to clearance/short rules but fatal to two-terminal structures
+        // (coils, shunts). Surfaced by name so a "clean-looking" board that
+        // silently short-circuits its own winding is impossible to miss.
+        sameNetBypass: drcSummary.byRule["SameNetBypass"] ?? 0,
         // `clean` ignores connectivity (unrouted nets are a to-do, not a defect) —
         // same semantics as placement_drc.clean.
         clean: drcSummary.categories.clearance + drcSummary.categories.manufacturing === 0,
@@ -7222,7 +7505,7 @@ export const addTraceSchema = {
  * copper layer of the board. Ensures the net exists. The atomic routing
  * primitive add_coil / add_motor_winding lean on.
  */
-export function addTrace(args: Record<string, unknown>) {
+export async function addTrace(args: Record<string, unknown>) {
   const ctx = resolveDocInput(args);
   const pcb = getDocPcb(ctx.doc);
   const fail = ecadError;
@@ -7247,6 +7530,8 @@ export function addTrace(args: Record<string, unknown>) {
   if ("error" in layerRes) return fail(layerRes.error);
   const layer = layerRes.layer;
   if (!(width > 0)) return fail("width must be > 0");
+
+  const drcCap = await beginDrcDelta(pcb, boundsOfPoints(points, width / 2));
 
   if (!pcb.nets.some((n) => n.id === net)) {
     pcb.nets.push({ id: net, name: net });
@@ -7275,6 +7560,7 @@ export function addTrace(args: Record<string, unknown>) {
           length_mm: Math.round(lengthMm * 1000) / 1000,
           net,
           layer,
+          drc_delta: await drcCap.finish(),
           ...docResultPayload(ctx),
         }),
       },
@@ -7311,7 +7597,7 @@ export const addViaSchema = {
  * Push a single via (layer-spanning connection) onto the board. Ensures the net
  * exists. The escape primitive for trapped spiral ends and inter-layer hops.
  */
-export function addVia(args: Record<string, unknown>) {
+export async function addVia(args: Record<string, unknown>) {
   const ctx = resolveDocInput(args);
   const pcb = getDocPcb(ctx.doc);
   const fail = ecadError;
@@ -7337,6 +7623,8 @@ export function addVia(args: Record<string, unknown>) {
   if ("error" in endRes) return fail(`end_layer: ${endRes.error}`);
   const endLayer = endRes.layer;
 
+  const drcCap = await beginDrcDelta(pcb, boundsOfPoints([position], diameter / 2));
+
   if (!pcb.nets.some((n) => n.id === net)) {
     pcb.nets.push({ id: net, name: net });
   }
@@ -7356,6 +7644,7 @@ export function addVia(args: Record<string, unknown>) {
           position: pos,
           start_layer: startLayer,
           end_layer: endLayer,
+          drc_delta: await drcCap.finish(),
           ...docResultPayload(ctx),
         }),
       },
@@ -7406,7 +7695,7 @@ export const setStackupSchema = {
  * Closes the gap where coil DC-resistance was permanently computed at 1 oz
  * because nothing could set copper weight.
  */
-export function setStackup(args: Record<string, unknown>) {
+export async function setStackup(args: Record<string, unknown>) {
   const ctx = resolveDocInput(args);
   const pcb = getDocPcb(ctx.doc);
   const fail = ecadError;
@@ -7425,6 +7714,10 @@ export function setStackup(args: Record<string, unknown>) {
     return fail("provide `copper_oz` and/or a non-empty `layers` array");
   }
   if (copperOz != null && !(copperOz > 0)) return fail("copper_oz must be > 0");
+
+  // Stackup edits move no copper, so a no-op delta is the expected outcome —
+  // but it is verified, not assumed (null bounds: connectivity still runs).
+  const drcCap = await beginDrcDelta(pcb, null);
 
   const stackup = pcb.stackup.layers;
 
@@ -7470,6 +7763,7 @@ export function setStackup(args: Record<string, unknown>) {
         text: JSON.stringify({
           success: true,
           stackup: pcb.stackup.layers,
+          drc_delta: await drcCap.finish(),
           ...docResultPayload(ctx),
         }),
       },
@@ -7870,7 +8164,7 @@ function elementLayer(kind: PcbElementChange["kind"], el: Zone | Trace | Via): s
 /** Shared body for delete_zone / delete_trace / delete_via. Resolves the target
  *  element (by `index`, or by an unambiguous net[/layer] match), splices it out,
  *  and returns the standard result with a `changed: [{action:'removed', …}]`. */
-function deletePcbElement(args: Record<string, unknown>, kind: "zone" | "trace" | "via") {
+async function deletePcbElement(args: Record<string, unknown>, kind: "zone" | "trace" | "via") {
   const ctx = resolveDocInput(args);
   const pcb = getDocPcb(ctx.doc);
   const fail = ecadError;
@@ -7922,6 +8216,21 @@ function deletePcbElement(args: Record<string, unknown>, kind: "zone" | "trace" 
     return fail(`pass \`index\` (0..${coll.length - 1}) or a \`net\` to identify the ${kind} to delete`);
   }
 
+  // Removing copper can't create clearance faults, but it CAN sever a net
+  // into islands or orphan a plane stitch — the delta's connectivity pass
+  // (always board-global) is what catches that.
+  const target = coll[index]!;
+  const bounds =
+    kind === "zone"
+      ? boundsOfPoints((target as Zone).outline)
+      : kind === "trace"
+        ? boundsOfPoints(
+            [(target as Trace).start, (target as Trace).end],
+            (target as Trace).width / 2,
+          )
+        : boundsOfPoints([(target as Via).position], (target as Via).diameter / 2);
+  const drcCap = await beginDrcDelta(pcb, bounds);
+
   const [removed] = coll.splice(index, 1);
   const change: PcbElementChange = {
     action: "removed",
@@ -7940,6 +8249,7 @@ function deletePcbElement(args: Record<string, unknown>, kind: "zone" | "trace" 
           deleted: change,
           [`${plural}_total`]: coll.length,
           changed: [change],
+          drc_delta: await drcCap.finish(),
           ...docResultPayload(ctx),
         }),
       },
@@ -8354,7 +8664,7 @@ export const addNetTieSchema = {
  * of the same nets elsewhere still fires). Region-less ties exempt the pair
  * board-wide. Mutates the session document.
  */
-export function addNetTie(args: Record<string, unknown>) {
+export async function addNetTie(args: Record<string, unknown>) {
   const ctx = resolveDocInput(args);
   const pcb = getDocPcb(ctx.doc);
   const fail = ecadError;
@@ -8412,6 +8722,17 @@ export function addNetTie(args: Record<string, unknown>) {
     radius = round3(radius);
   }
 
+  // A tie mutates DRC *semantics*, not copper: it exempts (and, deleted,
+  // re-convicts) short/clearance findings. A region-scoped tie only changes
+  // verdicts inside its circle; a board-wide tie can change them anywhere the
+  // tied nets' copper meets.
+  const drcCap = await beginDrcDelta(
+    pcb,
+    position && radius !== undefined
+      ? boundsOfPoints([position], radius)
+      : "full",
+  );
+
   pcb.netTies = pcb.netTies ?? [];
   const tie: NetTie = {
     nets,
@@ -8438,6 +8759,7 @@ export function addNetTie(args: Record<string, unknown>) {
           net_ties: netTieList(pcb),
           net_ties_total: pcb.netTies.length,
           changed: [change],
+          drc_delta: await drcCap.finish(),
           ...docResultPayload(ctx),
         }),
       },
@@ -8476,7 +8798,7 @@ export const deleteNetTieSchema = {
 /** Remove a net tie by `index`, or by matching `nets` (set equality) and/or
  *  `position` — the take-back for a bad add_net_tie. The junction's copper (if
  *  any) stays; DRC will report it as a short again. Mutates the session. */
-export function deleteNetTie(args: Record<string, unknown>) {
+export async function deleteNetTie(args: Record<string, unknown>) {
   const ctx = resolveDocInput(args);
   const pcb = getDocPcb(ctx.doc);
   const fail = ecadError;
@@ -8555,6 +8877,17 @@ export function deleteNetTie(args: Record<string, unknown>) {
     );
   }
 
+  // Removing a tie un-exempts whatever it was excusing — copper contact at
+  // the junction reads as a Short again. Scope to the tie's region when it
+  // has one; a board-wide tie could have been excusing contact anywhere.
+  const target = ties[index]!;
+  const drcCap = await beginDrcDelta(
+    pcb,
+    target.position && target.radius != null
+      ? boundsOfPoints([target.position], target.radius)
+      : "full",
+  );
+
   const [removed] = ties.splice(index, 1);
   const change: PcbElementChange = {
     action: "removed",
@@ -8573,6 +8906,7 @@ export function deleteNetTie(args: Record<string, unknown>) {
           net_ties: netTieList(pcb),
           net_ties_total: ties.length,
           changed: [change],
+          drc_delta: await drcCap.finish(),
           ...docResultPayload(ctx),
         }),
       },
@@ -8966,7 +9300,7 @@ const MAX_VIA_ARRAY = 2000;
  * vias, plane stitching) or an explicit list of `points`. Grid vias are clipped
  * to the board outline by default. Mutates the session document.
  */
-export function addViaArray(args: Record<string, unknown>) {
+export async function addViaArray(args: Record<string, unknown>) {
   const ctx = resolveDocInput(args);
   const pcb = getDocPcb(ctx.doc);
   const fail = (text: string) => ({
@@ -9058,6 +9392,8 @@ export function addViaArray(args: Record<string, unknown>) {
     );
   }
 
+  const drcCap = await beginDrcDelta(pcb, boundsOfPoints(kept, diameter / 2));
+
   if (!pcb.nets.some((n) => n.id === net)) pcb.nets.push({ id: net, name: net });
 
   for (const p of kept) {
@@ -9084,6 +9420,7 @@ export function addViaArray(args: Record<string, unknown>) {
           ...(skipped > 0 ? { skipped_outside_board: skipped } : {}),
           start_layer: startLayer,
           end_layer: endLayer,
+          drc_delta: await drcCap.finish(),
           ...docResultPayload(ctx),
         }),
       },
@@ -9238,7 +9575,7 @@ export const addMotorWindingSchema = {
  * A post-build audit re-checks both invariants (no same-net via bypass, no
  * cross-net contact outside a tie region) and reports violations as errors.
  */
-export function addMotorWinding(args: Record<string, unknown>) {
+export async function addMotorWinding(args: Record<string, unknown>) {
   const ctx = resolveDocInput(args);
   const pcb = getDocPcb(ctx.doc);
   const fail = ecadError;
@@ -9402,6 +9739,12 @@ export function addMotorWinding(args: Record<string, unknown>) {
     }
   }
 
+  // The field-report tool: it used to return a bare document_version for a
+  // board it had just shorted. Full-board capture — a winding spans the stator
+  // annulus, the bore interconnect rings, AND rim feed escapes out to the
+  // board edge, so a bbox scope would cover most of the board anyway.
+  const drcCap = await beginDrcDelta(pcb, "full");
+
   const tracesBase = pcb.traces.length;
   const viasBase = pcb.vias.length;
   const pushTrace = (a: Vec2, b: Vec2, layer: PcbLayer, net: string): boolean => {
@@ -9455,7 +9798,7 @@ export function addMotorWinding(args: Record<string, unknown>) {
     };
     const dir = coil.polarity === 1 ? "ccw" : "cw";
     const beforeTraces = pcb.traces.length;
-    const res = addCoil({
+    const res = await addCoil({
       ...childDoc,
       center: coilCenter,
       turns: turnsPerCoil,
@@ -9469,7 +9812,7 @@ export function addMotorWinding(args: Record<string, unknown>) {
       clearance: args.clearance,
       segments_per_turn: args.segments_per_turn,
       inner_via: false,
-    });
+    }, { skipDrcDelta: true });
     if (res.isError) {
       errors.push(`coil slot ${coil.slot} (net ${coil.net}): ${res.content[0]!.text}`);
       continue;
@@ -9949,6 +10292,7 @@ export function addMotorWinding(args: Record<string, unknown>) {
             "these invariants" +
             (auditIssues.length ? " and FOUND VIOLATIONS (see errors)." : "."),
           ...(errors.length ? { errors } : {}),
+          drc_delta: await drcCap.finish(),
           ...docResultPayload(ctx),
         }),
       },
@@ -11539,7 +11883,8 @@ export const buildReceiptSchema = {
   properties: {
     document_id: {
       type: "string",
-      description: "Session id holding the PCB to certify.",
+      description:
+        "Session id holding the PCB and/or clearance-spec'd CAD parts to certify.",
     },
     enclosure_document_id: {
       type: "string",
@@ -11640,10 +11985,36 @@ export async function verifySubstitution(args: Record<string, unknown>) {
 export async function buildReceipt(args: Record<string, unknown>, engine?: Engine) {
   const ctx = resolveDocInput(args);
   const pcb = getDocPcb(ctx.doc);
+  const clearanceSpecs = ctx.doc.clearance_specs ?? [];
   if (!pcb) {
+    if (clearanceSpecs.length === 0) {
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: "Error: Document has no PCB and no clearance specs — nothing to certify. (Persist mechanical assertions with check_clearance + label first.)",
+          },
+        ],
+        isError: true,
+      };
+    }
+    // Mechanical-only receipt: re-measure every persisted clearance spec.
+    const unified: DesignReceipt = {
+      schema: RECEIPT_SCHEMA,
+      ...(ctx.documentId ? { document_id: ctx.documentId } : {}),
+      claims: clearanceReceiptClaims(ctx.doc, engine),
+    };
     return {
-      content: [{ type: "text" as const, text: "Error: Document has no PCB" }],
-      isError: true,
+      content: [
+        {
+          type: "text" as const,
+          text: JSON.stringify({ unified, unified_summary: summarize(unified) }),
+        },
+      ],
+      structuredContent: {
+        unified,
+        ...(ctx.documentId ? { document_id: ctx.documentId } : {}),
+      },
     };
   }
   const validity = validatePcb(pcb);
@@ -11698,6 +12069,11 @@ export async function buildReceipt(args: Record<string, unknown>, engine?: Engin
       ? { enclosureFitError }
       : {}),
   });
+  // Persisted mechanical clearance assertions ride in the same ledger, so a
+  // board+mechanics document certifies both domains in one receipt.
+  if (clearanceSpecs.length > 0) {
+    unified.claims.push(...clearanceReceiptClaims(ctx.doc, engine));
+  }
 
   // The receipt rides in structuredContent so the inline viewer renders it
   // as an audit ledger (the only carrier ChatGPT's widget bridge exposes);
@@ -11746,47 +12122,117 @@ export const verifyReceiptSchema = {
   required: ["receipt"],
 } as const;
 
-/** Re-run a prior Receipt against the session's current board. Returns the
- *  verdict: Holds (same board, clean), Stale (board changed), or Violated. */
-export async function verifyReceipt(args: Record<string, unknown>) {
+/** Worst-wins rollup across verification domains. */
+function worstStatus(statuses: ReceiptStatus[]): ReceiptStatus {
+  if (statuses.includes("Violated")) return "Violated";
+  if (statuses.includes("Stale")) return "Stale";
+  return "Holds";
+}
+
+/** Re-run a prior Receipt against the session's current document. Returns the
+ *  verdict: Holds (unchanged, clean), Stale (document changed but claims still
+ *  hold), or Violated. Handles the re-runnable PCB Receipt (board hash + DRC
+ *  diff), the unified DesignReceipt's mech.clearance claims (re-measured
+ *  against current geometry), or both at once — worst verdict wins. */
+export async function verifyReceipt(args: Record<string, unknown>, engine?: Engine) {
   const ctx = resolveDocInput(args);
-  const pcb = getDocPcb(ctx.doc);
-  if (!pcb) {
-    return {
-      content: [{ type: "text" as const, text: "Error: Document has no PCB" }],
-      isError: true,
-    };
-  }
-  const validity = validatePcb(pcb);
-  if (!validity.valid) {
-    return pcbValidationError("verify_receipt", validity, args.document_id ? String(args.document_id) : undefined);
-  }
-  let receipt = args.receipt as Receipt | undefined;
-  // Tolerate the whole build_receipt payload ({ receipt, unified, … } or a
-  // structuredContent echo) being passed back verbatim.
-  if (receipt && typeof receipt === "object" && !receipt.board_hash) {
-    const inner = (receipt as Record<string, unknown>).receipt;
-    if (inner && typeof inner === "object") receipt = inner as Receipt;
-  }
-  if (!receipt || typeof receipt !== "object" || !receipt.board_hash) {
+  const raw = args.receipt as Record<string, unknown> | undefined;
+  if (!raw || typeof raw !== "object") {
     return {
       content: [
         {
           type: "text" as const,
-          text: "Error: missing `receipt` — pass a Receipt produced by build_receipt.",
+          text: "Error: missing `receipt` — pass a receipt produced by build_receipt.",
         },
       ],
       isError: true,
     };
   }
-  const status = await kernelVerifyReceipt(pcb, receipt);
-  if (!status) {
+
+  // Legacy re-runnable PCB Receipt: the arg itself, or nested under
+  // `.receipt` when the whole build_receipt payload is passed back verbatim.
+  let legacy: Receipt | undefined;
+  if (typeof raw.board_hash === "string" && raw.board_hash) {
+    legacy = raw as unknown as Receipt;
+  } else if (raw.receipt && typeof raw.receipt === "object") {
+    const inner = raw.receipt as Record<string, unknown>;
+    if (typeof inner.board_hash === "string" && inner.board_hash) {
+      legacy = inner as unknown as Receipt;
+    }
+  }
+
+  // Unified DesignReceipt: the arg itself, or nested under `.unified`.
+  let unified: DesignReceipt | undefined;
+  if (typeof raw.schema === "string" && Array.isArray(raw.claims)) {
+    unified = raw as unknown as DesignReceipt;
+  } else if (raw.unified && typeof raw.unified === "object") {
+    const inner = raw.unified as Record<string, unknown>;
+    if (typeof inner.schema === "string" && Array.isArray(inner.claims)) {
+      unified = inner as unknown as DesignReceipt;
+    }
+  }
+  const clearanceReceipt = unified && hasClearanceClaims(unified) ? unified : undefined;
+
+  if (!legacy && !clearanceReceipt) {
     return {
-      content: [{ type: "text" as const, text: "Error: ECAD engine unavailable" }],
+      content: [
+        {
+          type: "text" as const,
+          text: "Error: `receipt` carries nothing re-verifiable — pass a PCB Receipt (board_hash) or a unified DesignReceipt with mech.clearance claims, as produced by build_receipt.",
+        },
+      ],
       isError: true,
     };
   }
-  const payload = { status, board_hash: receipt.board_hash };
+
+  const statuses: ReceiptStatus[] = [];
+
+  let boardHash: string | undefined;
+  if (legacy) {
+    const pcb = getDocPcb(ctx.doc);
+    if (!pcb) {
+      return {
+        content: [{ type: "text" as const, text: "Error: Document has no PCB" }],
+        isError: true,
+      };
+    }
+    const validity = validatePcb(pcb);
+    if (!validity.valid) {
+      return pcbValidationError("verify_receipt", validity, args.document_id ? String(args.document_id) : undefined);
+    }
+    const status = await kernelVerifyReceipt(pcb, legacy);
+    if (!status) {
+      return {
+        content: [{ type: "text" as const, text: "Error: ECAD engine unavailable" }],
+        isError: true,
+      };
+    }
+    statuses.push(status);
+    boardHash = legacy.board_hash;
+  }
+
+  let clearance: ReturnType<typeof verifyClearanceClaims> | undefined;
+  if (clearanceReceipt) {
+    if (!engine) {
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: "Error: clearance re-verification needs the kernel engine; unavailable in this context",
+          },
+        ],
+        isError: true,
+      };
+    }
+    clearance = verifyClearanceClaims(ctx.doc, engine, clearanceReceipt);
+    statuses.push(clearance.status);
+  }
+
+  const payload = {
+    status: worstStatus(statuses),
+    ...(boardHash ? { board_hash: boardHash } : {}),
+    ...(clearance ? { clearance } : {}),
+  };
   return {
     content: [{ type: "text" as const, text: JSON.stringify(payload) }],
     structuredContent: {
@@ -11859,12 +12305,7 @@ export const toolDefs: ToolDef[] = [
     name: "add_coil",
     pack: "ecad",
     description:
-      "Add a spiral copper coil (Archimedean) to the PCB — the primitive " +
-      "for PCB-motor stators and planar inductors. Generates the trace " +
-      "geometry on a layer, assigns it to a net, validates turn-to-turn " +
-      "clearance, and optionally drops a via at the (otherwise trapped) " +
-      "inner endpoint. Returns endpoints, copper length, and a DC " +
-      "resistance estimate.",
+      "Add a spiral copper coil (Archimedean) to the PCB \u2014 the primitive for PCB-motor stators and planar inductors. Generates the trace geometry on a layer, assigns it to a net, validates turn-to-turn clearance, and optionally drops a via at the (otherwise trapped) inner endpoint. Returns endpoints, copper length, and a DC resistance estimate. Verify-on-write: the result carries `drc_delta` \u2014 the DRC violations this call introduced (shorts/clearance/connectivity/manufacturing, capped sample with positions) with `clean` to branch on in one step.",
     inputSchema: addCoilSchema,
     handler: (a) => addCoil(a) as ToolResult | Promise<ToolResult>,
     behavior: behavior({ writesDoc: true, geometry: true }),
@@ -11873,12 +12314,7 @@ export const toolDefs: ToolDef[] = [
     name: "add_coil_array",
     pack: "ecad",
     description:
-      "Lay a ring of `count` spiral coils evenly around `center` at " +
-      "`pitch_radius` — the placement primitive for a PCB-motor stator. " +
-      "Net per coil comes from `net_sequence` (cycled); `chirality` sets " +
-      "winding sense. GEOMETRY ONLY: it has no notion of phases — derive " +
-      "correct per-coil phase/polarity with `winding_layout` first, then " +
-      "map it onto net_sequence/chirality.",
+      "Lay a ring of `count` spiral coils evenly around `center` at `pitch_radius` \u2014 the placement primitive for a PCB-motor stator. Net per coil comes from `net_sequence` (cycled); `chirality` sets winding sense. GEOMETRY ONLY: it has no notion of phases \u2014 derive correct per-coil phase/polarity with `winding_layout` first, then map it onto net_sequence/chirality. Verify-on-write: the result carries `drc_delta` \u2014 the DRC violations this call introduced (shorts/clearance/connectivity/manufacturing, capped sample with positions) with `clean` to branch on in one step.",
     inputSchema: addCoilArraySchema,
     handler: (a) => addCoilArray(a) as ToolResult | Promise<ToolResult>,
     behavior: behavior({ writesDoc: true, geometry: true }),
@@ -12032,11 +12468,7 @@ export const toolDefs: ToolDef[] = [
     name: "add_trace",
     pack: "ecad",
     description:
-      "Lay an explicit copper trace: a polyline of segments on a layer, " +
-      "assigned to a net. The general-purpose routing primitive — use it " +
-      "for coil interconnect, buses, and hand-routes that route_nets " +
-      "(pad-driven) won't make. Tagged as manual copper, so route_nets " +
-      "preserves it instead of ripping it up. Mutates the session document.",
+      "Lay an explicit copper trace: a polyline of segments on a layer, assigned to a net. The general-purpose routing primitive \u2014 use it for coil interconnect, buses, and hand-routes that route_nets (pad-driven) won't make. Tagged as manual copper, so route_nets preserves it instead of ripping it up. Mutates the session document. Verify-on-write: the result carries `drc_delta` \u2014 the DRC violations this call introduced (shorts/clearance/connectivity/manufacturing, capped sample with positions) with `clean` to branch on in one step.",
     inputSchema: addTraceSchema,
     handler: (a) => addTrace(a) as ToolResult | Promise<ToolResult>,
     behavior: behavior({ writesDoc: true, geometry: true }),
@@ -12045,9 +12477,7 @@ export const toolDefs: ToolDef[] = [
     name: "add_via",
     pack: "ecad",
     description:
-      "Drop a via at a point connecting two layers on a net (defaults " +
-      "FCu→BCu, diameter/drill from design rules). Pairs with add_trace " +
-      "for multi-layer routing. Mutates the session document.",
+      "Drop a via at a point connecting two layers on a net (defaults FCu\u2192BCu, diameter/drill from design rules). Pairs with add_trace for multi-layer routing. Mutates the session document. Verify-on-write: the result carries `drc_delta` \u2014 the DRC violations this call introduced (shorts/clearance/connectivity/manufacturing, capped sample with positions) with `clean` to branch on in one step.",
     inputSchema: addViaSchema,
     handler: (a) => addVia(a) as ToolResult | Promise<ToolResult>,
     behavior: behavior({ writesDoc: true, geometry: true }),
@@ -12056,10 +12486,7 @@ export const toolDefs: ToolDef[] = [
     name: "set_stackup",
     pack: "ecad",
     description:
-      "Set the board stackup copper weight (e.g. copper_oz: 2) and/or " +
-      "per-layer thickness/material, so DC-resistance and impedance " +
-      "estimates reflect the real fab stackup instead of a default 1 oz. " +
-      "Mutates the session document.",
+      "Set the board stackup copper weight (e.g. copper_oz: 2) and/or per-layer thickness/material, so DC-resistance and impedance estimates reflect the real fab stackup instead of a default 1 oz. Mutates the session document. Verify-on-write: the result carries `drc_delta` \u2014 the DRC violations this call introduced (shorts/clearance/connectivity/manufacturing, capped sample with positions) with `clean` to branch on in one step.",
     inputSchema: setStackupSchema,
     handler: (a) => setStackup(a) as ToolResult | Promise<ToolResult>,
     behavior: behavior({ writesDoc: true, geometry: true }),
@@ -12083,12 +12510,7 @@ export const toolDefs: ToolDef[] = [
     name: "set_board_outline",
     pack: "ecad",
     description:
-      "Resize or reshape the board outline in place — rectangle " +
-      "(board_width/height), circle/annulus (board_shape), or any polygon " +
-      "(outline) — WITHOUT re-placing components, traces, vias, or zones. " +
-      "Unlike re-running place_components, the floorplan is preserved; any " +
-      "footprint whose origin ends up off the new board is reported in " +
-      "`off_board` rather than silently relocated. Mutates the session document.",
+      "Resize or reshape the board outline in place \u2014 rectangle (board_width/height), circle/annulus (board_shape), or any polygon (outline) \u2014 WITHOUT re-placing components, traces, vias, or zones. Unlike re-running place_components, the floorplan is preserved; any footprint whose origin ends up off the new board is reported in `off_board` rather than silently relocated. Mutates the session document. Verify-on-write: the result carries `drc_delta` \u2014 the DRC violations this call introduced (shorts/clearance/connectivity/manufacturing, capped sample with positions) with `clean` to branch on in one step.",
     inputSchema: setBoardOutlineSchema,
     handler: (a) => setBoardOutline(a) as ToolResult | Promise<ToolResult>,
     behavior: behavior({ writesDoc: true }),
@@ -12109,11 +12531,7 @@ export const toolDefs: ToolDef[] = [
     name: "delete_zone",
     pack: "ecad",
     description:
-      "Remove a copper pour from the board — the take-back for a bad add_zone, " +
-      "without rebuilding the session. Target by `index` (0-based, the add " +
-      "order) or by `net`/`layer` when exactly one zone matches. Returns a " +
-      "`changed` diff of what was removed. To undo the very last mutation of " +
-      "any kind, use `undo` instead. Mutates the session document.",
+      "Remove a copper pour from the board \u2014 the take-back for a bad add_zone, without rebuilding the session. Target by `index` (0-based, the add order) or by `net`/`layer` when exactly one zone matches. Returns a `changed` diff of what was removed. To undo the very last mutation of any kind, use `undo` instead. Mutates the session document. Verify-on-write: the result carries `drc_delta` \u2014 the DRC violations this call introduced (shorts/clearance/connectivity/manufacturing, capped sample with positions) with `clean` to branch on in one step.",
     inputSchema: deleteZoneSchema,
     handler: (a) => deleteZone(a) as ToolResult | Promise<ToolResult>,
     behavior: behavior({ writesDoc: true, geometry: true }),
@@ -12122,9 +12540,7 @@ export const toolDefs: ToolDef[] = [
     name: "delete_trace",
     pack: "ecad",
     description:
-      "Remove a single routed trace segment by `index` (0-based, the add " +
-      "order) or by an unambiguous `net`/`layer` match. The take-back for a " +
-      "stray add_trace. Returns a `changed` diff. Mutates the session document.",
+      "Remove a single routed trace segment by `index` (0-based, the add order) or by an unambiguous `net`/`layer` match. The take-back for a stray add_trace. Returns a `changed` diff. Mutates the session document. Verify-on-write: the result carries `drc_delta` \u2014 the DRC violations this call introduced (shorts/clearance/connectivity/manufacturing, capped sample with positions) with `clean` to branch on in one step.",
     inputSchema: deleteTraceSchema,
     handler: (a) => deleteTrace(a) as ToolResult | Promise<ToolResult>,
     behavior: behavior({ writesDoc: true, geometry: true }),
@@ -12133,9 +12549,7 @@ export const toolDefs: ToolDef[] = [
     name: "delete_via",
     pack: "ecad",
     description:
-      "Remove a single via by `index` (0-based, the add order) or by an " +
-      "unambiguous `net` match. The take-back for a stray add_via. Returns a " +
-      "`changed` diff. Mutates the session document.",
+      "Remove a single via by `index` (0-based, the add order) or by an unambiguous `net` match. The take-back for a stray add_via. Returns a `changed` diff. Mutates the session document. Verify-on-write: the result carries `drc_delta` \u2014 the DRC violations this call introduced (shorts/clearance/connectivity/manufacturing, capped sample with positions) with `clean` to branch on in one step.",
     inputSchema: deleteViaSchema,
     handler: (a) => deleteVia(a) as ToolResult | Promise<ToolResult>,
     behavior: behavior({ writesDoc: true, geometry: true }),
@@ -12160,17 +12574,7 @@ export const toolDefs: ToolDef[] = [
     name: "add_net_tie",
     pack: "ecad",
     description:
-      "Declare an intentional junction between >= 2 nets (a net-tie) so DRC " +
-      "treats them as one node where they meet — required for wye/star motor " +
-      "neutrals, split grounds (GND+AGND), and current-sense shunt taps, " +
-      "which are otherwise reported as shorts. With `position`+`radius` the " +
-      "tie is region-scoped: clearance/short checks are exempt only for " +
-      "contacts inside the region, and connectivity accepts nets joined " +
-      "through copper when each has a tie-covered contact there — a stray " +
-      "crossing of the same nets elsewhere still fires. Without them the " +
-      "exemption is board-wide (prefer scoped: it keeps DRC honest away " +
-      "from the junction). Nets must exist on the board. Returns the " +
-      "updated tie list with indices. Mutates the session document.",
+      "Declare an intentional junction between >= 2 nets (a net-tie) so DRC treats them as one node where they meet \u2014 required for wye/star motor neutrals, split grounds (GND+AGND), and current-sense shunt taps, which are otherwise reported as shorts. With `position`+`radius` the tie is region-scoped: clearance/short checks are exempt only for contacts inside the region, and connectivity accepts nets joined through copper when each has a tie-covered contact there \u2014 a stray crossing of the same nets elsewhere still fires. Without them the exemption is board-wide (prefer scoped: it keeps DRC honest away from the junction). Nets must exist on the board. Returns the updated tie list with indices. Mutates the session document. Verify-on-write: the result carries `drc_delta` \u2014 the DRC violations this call introduced or resolved (a tie edit changes short/clearance exemptions) with `clean` to branch on in one step.",
     inputSchema: addNetTieSchema,
     handler: (a) => addNetTie(a) as ToolResult | Promise<ToolResult>,
     behavior: behavior({ writesDoc: true }),
@@ -12179,18 +12583,16 @@ export const toolDefs: ToolDef[] = [
     name: "delete_net_tie",
     pack: "ecad",
     description:
-      "Remove a net tie by `index`, or by matching `nets` (set equality, " +
-      "order-insensitive) and/or `position` — the take-back for a bad " +
-      "add_net_tie. Any junction copper stays on the board; DRC will report " +
-      "it as a short again. Returns the deleted tie and the updated tie " +
-      "list. Mutates the session document.",
+      "Remove a net tie by `index`, or by matching `nets` (set equality, order-insensitive) and/or `position` \u2014 the take-back for a bad add_net_tie. Any junction copper stays on the board; DRC will report it as a short again. Returns the deleted tie and the updated tie list. Mutates the session document. Verify-on-write: the result carries `drc_delta` \u2014 the DRC violations this call introduced or resolved (a tie edit changes short/clearance exemptions) with `clean` to branch on in one step.",
     inputSchema: deleteNetTieSchema,
     handler: (a) => deleteNetTie(a) as ToolResult | Promise<ToolResult>,
     behavior: behavior({ writesDoc: true }),
   },
   {
     name: "undo",
-    pack: "ecad",
+    // Always-on core (#442): undo serves every session type, so it must not
+    // disappear when the ecad pack is disabled.
+    pack: null,
     description:
       "Rewind the most recent mutation on a session — the snapshot taken " +
       "before the last add_zone / add_trace / add_via / delete_* / route_nets " +
@@ -12230,10 +12632,7 @@ export const toolDefs: ToolDef[] = [
     name: "add_via_array",
     pack: "ecad",
     description:
-      "Place many vias at once — a grid over a rectangular `region` (thermal " +
-      "vias under FETs, GND-plane stitching) or an explicit `points` list. " +
-      "Grid vias are clipped to the board outline by default. Mutates the " +
-      "session document.",
+      "Place many vias at once \u2014 a grid over a rectangular `region` (thermal vias under FETs, GND-plane stitching) or an explicit `points` list. Grid vias are clipped to the board outline by default. Mutates the session document. Verify-on-write: the result carries `drc_delta` \u2014 the DRC violations this call introduced (shorts/clearance/connectivity/manufacturing, capped sample with positions) with `clean` to branch on in one step.",
     inputSchema: addViaArraySchema,
     handler: (a) => addViaArray(a) as ToolResult | Promise<ToolResult>,
     behavior: behavior({ writesDoc: true }),
@@ -12242,14 +12641,7 @@ export const toolDefs: ToolDef[] = [
     name: "add_motor_winding",
     pack: "ecad",
     description:
-      "One-shot motor winding realizer: plans a balanced slots/poles/" +
-      "phases winding, drops a spiral coil per tooth with correct phase + " +
-      "polarity, series-connects each phase with planar staggered-radius " +
-      "arcs in the coil-free bore (never crossing), ties the wye/delta " +
-      "termination with a region-scoped net-tie on real board material, " +
-      "and routes phase feeds to same-net pads when present — closing the " +
-      "winding_layout plan into DRC-clean copper. Mutates the session " +
-      "document.",
+      "One-shot motor winding realizer: plans a balanced slots/poles/phases winding, drops a spiral coil per tooth with correct phase + polarity, series-connects each phase with planar staggered-radius arcs in the coil-free bore (never crossing), ties the wye/delta termination with a region-scoped net-tie on real board material, and routes phase feeds to same-net pads when present \u2014 closing the winding_layout plan into DRC-clean copper. Mutates the session document. Verify-on-write: the result carries `drc_delta` \u2014 the DRC violations this call introduced (shorts/clearance/connectivity/manufacturing, capped sample with positions) with `clean` to branch on in one step.",
     inputSchema: addMotorWindingSchema,
     handler: (a) => addMotorWinding(a) as ToolResult | Promise<ToolResult>,
     behavior: behavior({ writesDoc: true, geometry: true }),
@@ -12289,13 +12681,7 @@ export const toolDefs: ToolDef[] = [
     name: "run_drc",
     pack: "ecad",
     description:
-      "Run Design Rule Check (DRC) on a PCB. Checks clearance, trace width, " +
-      "drill size, annular ring, hole-to-hole, and edge clearance. Every " +
-      "violation is tagged with `provenance` (intra_footprint / " +
-      "inter_component / routing) and `generated` (involves a synthesized " +
-      "footprint land pattern); the summary adds `byProvenance`, " +
-      "`generatedArtifacts`, and `realViolations` so the headline count " +
-      "excludes footprint artifacts without hand-triage.",
+      "Run Design Rule Check (DRC) on a PCB. Checks clearance, trace width, drill size, annular ring, hole-to-hole, edge clearance, and connectivity \u2014 including SameNetBypass, a warning when same-net copper touches far from any intended junction (e.g. a trace over a coil's inner via, short-circuiting the spiral). Every violation is tagged with `provenance` (intra_footprint / inter_component / routing) and `generated` (involves a synthesized footprint land pattern); the summary adds `byProvenance`, `generatedArtifacts`, and `realViolations` so the headline count excludes footprint artifacts without hand-triage.",
     inputSchema: runDrcSchema,
     handler: (a) => runDrc(a) as ToolResult | Promise<ToolResult>,
     behavior: behavior({}),
@@ -12353,10 +12739,7 @@ export const toolDefs: ToolDef[] = [
     name: "build_receipt",
     pack: "ecad",
     description:
-      "Build a re-runnable verification Receipt for the session PCB: a content " +
-      "hash, the DRC backend, a canonicalized DRC summary, and per-part " +
-      "provenance — a durable proof that round-trips and re-verifies later as " +
-      "Holds / Stale / Violated. Renders as an audit ledger in the inline viewer.",
+      "Build a re-runnable verification Receipt for the session PCB: a content hash, the DRC backend, a canonicalized DRC summary, and per-part provenance \u2014 a durable proof that round-trips and re-verifies later as Holds / Stale / Violated. Persisted clearance specs (check_clearance with a label) join the unified ledger as mech.clearance claims \u2014 a CAD-only session with specs gets a mechanical receipt, no PCB needed. Renders as an audit ledger in the inline viewer.",
     inputSchema: buildReceiptSchema,
     handler: (a, c) =>
       buildReceipt(a, c.engine) as ToolResult | Promise<ToolResult>,
@@ -12366,9 +12749,7 @@ export const toolDefs: ToolDef[] = [
     name: "verify_receipt",
     pack: "ecad",
     description:
-      "Re-run a prior Receipt (from build_receipt) against the session's current " +
-      "board and return the verdict — Holds (same board, clean), Stale (board " +
-      "changed), or Violated. Powers the ledger's Re-run button.",
+      "Re-run a prior receipt (from build_receipt) against the session's current document and return the verdict \u2014 Holds (unchanged, clean), Stale (changed but claims still hold), or Violated. Covers the PCB Receipt (board hash + DRC diff) and mech.clearance claims (re-measured against current geometry); worst verdict wins. Powers the ledger's Re-run button.",
     inputSchema: verifyReceiptSchema,
     handler: (a) => verifyReceipt(a) as ToolResult | Promise<ToolResult>,
     behavior: behavior({ widgetCallable: true }),

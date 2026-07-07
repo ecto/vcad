@@ -19,12 +19,23 @@ import {
   MdEnv,
   type MdConfig,
 } from "@vcad/engine";
+import { rasterize } from "./render.js";
 import { behavior, type ToolDef } from "./tool-def.js";
 import { okPretty as ok, toolResult, type ToolResult } from "./tool-result.js";
 
-function fail(err: unknown): ToolResult {
-  const message = err instanceof Error ? err.message : String(err);
-  return toolResult({ error: message });
+/** render_molecule may return an image block (PNG) alongside text, so it needs a
+ *  wider content type than the text-only tools. */
+type ImageToolResult = {
+  content: Array<
+    | { type: "text"; text: string }
+    | { type: "image"; data: string; mimeType: string }
+  >;
+  isError?: boolean;
+};
+
+function fail(e: unknown): ToolResult {
+  const message = e instanceof Error ? e.message : String(e);
+  return toolResult({ error: message }, { isError: true });
 }
 
 // ---------------------------------------------------------------------------
@@ -397,7 +408,7 @@ function elementColor(mol: MoleculeSystem, i: number): string {
  * the world-class path is the WebGPU ray tracer's impostor-sphere buffer plus a
  * headless-wgpu harness returning PNG (Track B).
  */
-export async function renderMolecule(input: unknown): Promise<ToolResult> {
+export async function renderMolecule(input: unknown): Promise<ImageToolResult> {
   try {
     const args = input as {
       molecule: MoleculeSystem;
@@ -481,11 +492,47 @@ export async function renderMolecule(input: unknown): Promise<ToolResult> {
     }
     parts.push(`</svg>`);
     const svg = parts.join("");
+
+    // Rasterize to PNG so the model receives a visible image block (like
+    // render_view); degrade to raw SVG text when @resvg/resvg-js is absent.
+    const raster = await rasterize(svg, W, "#0d1117");
+    if (raster.png) {
+      return {
+        content: [
+          { type: "image", data: raster.png.toString("base64"), mimeType: "image/png" },
+          {
+            type: "text",
+            text: JSON.stringify({
+              width_px: W,
+              representation: spaceFilling ? "space_filling" : "ball_and_stick",
+              atoms: mol.positions.length,
+              format: "png",
+            }),
+          },
+        ],
+      };
+    }
+    const note =
+      raster.reason === "module-missing"
+        ? "Install @resvg/resvg-js for PNG output; returning raw SVG."
+        : `PNG ${raster.reason}; returning raw SVG.`;
     return {
-      content: [{ type: "text", text: svg }],
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify({
+            width_px: W,
+            representation: spaceFilling ? "space_filling" : "ball_and_stick",
+            atoms: mol.positions.length,
+            format: "svg",
+            note,
+            svg,
+          }),
+        },
+      ],
     };
   } catch (err) {
-    return fail(err);
+    return fail(err) as unknown as ImageToolResult;
   }
 }
 
@@ -550,7 +597,7 @@ export const toolDefs: ToolDef[] = [
     description:
       "Render a molecule as an isometric ball-and-stick (or space-filling) SVG with CPK colors and depth sorting — agent eyes on atomic structures.",
     inputSchema: renderMoleculeSchema,
-    handler: (a) => renderMolecule(a),
+    handler: async (a) => (await renderMolecule(a)) as unknown as ToolResult,
     behavior: behavior({}),
   },
 ];

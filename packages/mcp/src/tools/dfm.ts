@@ -23,11 +23,19 @@ import type {
 import { runDfm, runPcbDfm } from "@vcad/engine";
 import type { Document, Node, Pcb } from "@vcad/ir";
 import { getNodePcb, getPcbNodeIds } from "@vcad/core";
-import { documents, getSession } from "./session.js";
+import { documents, resolveDocInput } from "./session.js";
 import { behavior, type ToolDef } from "./tool-def.js";
 
-/** Most-recent report per session, used by explain / suggest / apply. */
+/** Most-recent report per session, used by explain / suggest / apply.
+ *  Warm-only, like the print-check registries — NOT durable across a cold
+ *  serverless instance or an instance flip. The inline `report` arg on
+ *  explain / suggest / apply is the stateless path when this map is empty. */
 const lastReports = new Map<string, DfmReport>();
+
+/** Test/reset hook — mirrors clearPrintCheckState in print-check.ts. */
+export function clearDfmState(): void {
+  lastReports.clear();
+}
 
 const mechanicalProcessEnum = [
   "cnc_3axis",
@@ -85,6 +93,14 @@ export const dfmCheckSchema = {
       type: "string" as const,
       description: "Session id from open_document.",
     },
+    document: {
+      type: "object" as const,
+      description:
+        "Inline Document IR to check instead of a session. Use this stateless " +
+        "path when no `document_id` is resident (e.g. a cold serverless instance). " +
+        "The returned report can then be passed inline to dfm_explain / " +
+        "dfm_suggest_fix / dfm_apply_fix via their `report` arg.",
+    },
     process: {
       type: "string" as const,
       enum: [...processEnum],
@@ -102,7 +118,7 @@ export const dfmCheckSchema = {
         "Optional TOML rule pack to override the bundled default. Same schema as lib/dfm/<process>.toml.",
     },
   },
-  required: ["document_id", "process"],
+  required: ["process"],
 };
 
 export async function dfmCheck(
@@ -110,10 +126,11 @@ export async function dfmCheck(
   _engine: Engine,
 ): Promise<{ content: Array<{ type: "text"; text: string }>; isError?: boolean }> {
   const args = (input ?? {}) as Record<string, unknown>;
-  const documentId = String(args.document_id ?? "");
+  const { doc, documentId: resolvedId } = resolveDocInput(args);
+  // Echoed in error payloads; the empty string marks the inline path.
+  const documentId = resolvedId ?? "";
   const process = String(args.process ?? "fdm");
   const rulePack = typeof args.rule_pack_toml === "string" ? args.rule_pack_toml : undefined;
-  const doc = getSession(documentId);
 
   // PCB branch: a board document checked against a fab-house capability profile.
   const profile = pcbProfileFor(process);
@@ -163,7 +180,9 @@ export async function dfmCheck(
 
   // Mechanical branch: a solid part checked against a process rule pack.
   const report = await runDfm(doc, { process: process as DfmProcess, rulePack });
-  lastReports.set(documentId, report);
+  // Warm-cache the report only for a real session; the inline path has no id
+  // to key on and hands the report straight back for inline follow-ups.
+  if (documentId) lastReports.set(documentId, report);
   return {
     content: [
       {
@@ -190,10 +209,21 @@ export async function dfmCheck(
 export const dfmExplainSchema = {
   type: "object" as const,
   properties: {
-    document_id: { type: "string" as const, description: "Session id." },
+    document_id: {
+      type: "string" as const,
+      description:
+        "Session id — looks the issue up in the report dfm_check cached for it.",
+    },
     issue_id: { type: "string" as const, description: "Issue id from a prior dfm_check." },
+    report: {
+      type: "object" as const,
+      description:
+        "The DFM report dfm_check returned, passed back inline. Use this when " +
+        "the warm report cache is empty (cold serverless instance / instance " +
+        "flip) — it resolves the issue without a resident session.",
+    },
   },
-  required: ["document_id", "issue_id"],
+  required: ["issue_id"],
 };
 
 export function dfmExplain(input: unknown): {
@@ -202,7 +232,7 @@ export function dfmExplain(input: unknown): {
   const args = (input ?? {}) as Record<string, unknown>;
   const documentId = String(args.document_id ?? "");
   const issueId = String(args.issue_id ?? "");
-  const issue = findIssue(documentId, issueId);
+  const issue = findIssue(resolveReport(args, documentId), issueId);
   return {
     content: [
       {
@@ -232,10 +262,20 @@ export function dfmExplain(input: unknown): {
 export const dfmSuggestFixSchema = {
   type: "object" as const,
   properties: {
-    document_id: { type: "string" as const },
+    document_id: {
+      type: "string" as const,
+      description:
+        "Session id — looks the issue up in the report dfm_check cached for it.",
+    },
     issue_id: { type: "string" as const },
+    report: {
+      type: "object" as const,
+      description:
+        "The DFM report dfm_check returned, passed back inline — the stateless " +
+        "path when the warm report cache is empty (cold serverless instance).",
+    },
   },
-  required: ["document_id", "issue_id"],
+  required: ["issue_id"],
 };
 
 export function dfmSuggestFix(input: unknown): {
@@ -244,7 +284,7 @@ export function dfmSuggestFix(input: unknown): {
   const args = (input ?? {}) as Record<string, unknown>;
   const documentId = String(args.document_id ?? "");
   const issueId = String(args.issue_id ?? "");
-  const issue = findIssue(documentId, issueId);
+  const issue = findIssue(resolveReport(args, documentId), issueId);
   return {
     content: [
       {
@@ -269,19 +309,34 @@ export function dfmSuggestFix(input: unknown): {
 export const dfmApplyFixSchema = {
   type: "object" as const,
   properties: {
-    document_id: { type: "string" as const },
+    document_id: {
+      type: "string" as const,
+      description: "Session id of the document to mutate (preferred).",
+    },
+    document: {
+      type: "object" as const,
+      description:
+        "Inline Document IR to mutate instead of a session — the stateless path " +
+        "when no `document_id` is resident. The mutated document is echoed back.",
+    },
     issue_id: { type: "string" as const },
+    report: {
+      type: "object" as const,
+      description:
+        "The DFM report dfm_check returned, passed back inline — resolves the " +
+        "issue's fix when the warm report cache is empty (cold serverless instance).",
+    },
   },
-  required: ["document_id", "issue_id"],
+  required: ["issue_id"],
 };
 
 export function dfmApplyFix(input: unknown): {
   content: Array<{ type: "text"; text: string }>;
 } {
   const args = (input ?? {}) as Record<string, unknown>;
-  const documentId = String(args.document_id ?? "");
   const issueId = String(args.issue_id ?? "");
-  const issue = findIssue(documentId, issueId);
+  const { doc, documentId } = resolveDocInput(args);
+  const issue = findIssue(resolveReport(args, documentId ?? ""), issueId);
   if (!issue.suggested_fix) {
     throw new Error(`Issue ${issueId} has no suggested fix.`);
   }
@@ -290,11 +345,12 @@ export function dfmApplyFix(input: unknown): {
       `Fix kind "${issue.suggested_fix.type}" not yet auto-applyable (v1 supports set_param only).`,
     );
   }
-  const doc = getSession(documentId);
   const fix = issue.suggested_fix;
   if (fix.type === "set_param") {
     applySetParam(doc, fix.node, fix.path, fix.value);
-    documents.set(documentId, doc);
+    // Persist to the session for the id path; the inline path mutated the
+    // caller's own object, which we echo back so they can retrieve it.
+    if (documentId) documents.set(documentId, doc);
     return {
       content: [
         {
@@ -305,6 +361,7 @@ export function dfmApplyFix(input: unknown): {
               node: fix.node,
               path: fix.path,
               value: fix.value,
+              ...(documentId ? {} : { document: doc }),
               note: "Re-run dfm_check to confirm the issue cleared.",
             },
             null,
@@ -317,16 +374,33 @@ export function dfmApplyFix(input: unknown): {
   throw new Error("unreachable");
 }
 
-function findIssue(documentId: string, issueId: string): DfmIssue {
-  const report = lastReports.get(documentId);
-  if (!report) {
+/** Resolve the report to look an issue up in: an inline `report` payload (the
+ *  stateless path) wins; otherwise the warm cache keyed by document_id. */
+function resolveReport(args: Record<string, unknown>, documentId: string): DfmReport {
+  const inline = args.report;
+  if (inline != null && typeof inline === "object") {
+    const r = inline as DfmReport;
+    if (!Array.isArray(r.issues)) {
+      throw new Error(
+        "`report` must be a DFM report as returned by dfm_check (with an `issues` array).",
+      );
+    }
+    return r;
+  }
+  const cached = documentId ? lastReports.get(documentId) : undefined;
+  if (!cached) {
     throw new Error(
-      `No DFM report cached for ${documentId}. Run dfm_check first.`,
+      `No DFM report cached${documentId ? ` for ${documentId}` : ""}. Run dfm_check first, ` +
+        "or pass the report inline via the `report` arg (survives a cold instance).",
     );
   }
+  return cached;
+}
+
+function findIssue(report: DfmReport, issueId: string): DfmIssue {
   const issue = report.issues.find((i) => i.id === issueId);
   if (!issue) {
-    throw new Error(`Issue ${issueId} not found in last report for ${documentId}.`);
+    throw new Error(`Issue ${issueId} not found in the DFM report.`);
   }
   return issue;
 }

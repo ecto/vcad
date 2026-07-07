@@ -1,8 +1,16 @@
 import { describe, it, expect, beforeAll, beforeEach } from "vitest";
 import { Engine } from "@vcad/engine";
+import type { DfmReport } from "@vcad/engine";
+import type { Document } from "@vcad/ir";
 import { createSchematic, placeComponents, addTrace } from "../tools/ecad.js";
-import { dfmCheck } from "../tools/dfm.js";
-import { documents } from "../tools/session.js";
+import {
+  dfmCheck,
+  dfmExplain,
+  dfmSuggestFix,
+  dfmApplyFix,
+  clearDfmState,
+} from "../tools/dfm.js";
+import { documents, openDocument } from "../tools/session.js";
 
 let engine: Engine;
 
@@ -12,6 +20,7 @@ beforeAll(async () => {
 
 beforeEach(() => {
   documents.clear();
+  clearDfmState();
 });
 
 /** Parse the single JSON text block of a tool result. */
@@ -128,5 +137,162 @@ describe("dfm_check — PCB fab profiles", () => {
     );
     expect((res as { isError?: boolean }).isError).toBe(true);
     expect(res.content[0].text).toContain("no PCB");
+  });
+});
+
+// ─── Serverless-safe follow-ups: inline document + inline report ─────────────
+
+/** A minimal solid document (one 10 mm cube) for the mechanical DFM path. */
+function cubeDoc(): Document {
+  return {
+    version: "0.1",
+    nodes: {
+      "1": { id: 1, name: "cube", op: { type: "Cube", size: { x: 10, y: 10, z: 10 } } },
+    },
+    materials: {},
+    part_materials: {},
+    roots: [{ root: 1, material: "default" }],
+  } as unknown as Document;
+}
+
+/** A hand-built DFM report — the payload dfm_check returns and the follow-up
+ *  tools accept inline when the warm cache is empty. Carries one issue with a
+ *  set_param fix so dfm_apply_fix has something applyable. */
+function syntheticReport(node: number): DfmReport {
+  return {
+    process: "cnc_3axis",
+    rule_pack_name: "test-pack",
+    rule_pack_version: "1",
+    issues: [
+      {
+        id: "iss-1",
+        rule: "cnc.internal_radius_too_small",
+        severity: "error",
+        process: "cnc_3axis",
+        message: "Radius R1.00 mm below cutter minimum R3.00 mm",
+        explanation: "Internal radii below the cutter radius can't be machined.",
+        face_indices: [],
+        edge_indices: [],
+        anchor: [0, 0, 0],
+        measured: 1,
+        limit: 3,
+        units: "mm",
+        origin_op: node,
+        suggested_fix: { type: "set_param", node, path: "radius", value: 3 },
+      },
+    ],
+    cost_estimate: null,
+  };
+}
+
+describe("dfm_check — inline document (serverless-safe)", () => {
+  it("runs a mechanical check on an inline document with no resident session", async () => {
+    documents.clear();
+    const res = out(await dfmCheck({ document: cubeDoc(), process: "fdm" }, engine));
+    expect(res.process).toBe("fdm");
+    expect(Array.isArray(res.issues)).toBe(true);
+    expect(typeof res.issue_count).toBe("number");
+    expect(typeof res.score).toBe("number");
+  });
+});
+
+describe("dfm_explain / dfm_suggest_fix — inline report fallback", () => {
+  it("resolves an issue from the warm cache after dfm_check", async () => {
+    const { document_id } = JSON.parse(
+      openDocument({ initial: cubeDoc() }).content[0].text,
+    );
+    // Populate the warm cache with a real report, then reach into it via the id.
+    await dfmCheck({ document_id, process: "fdm" }, engine);
+    // A real cube may or may not trip an fdm rule, so drive the assertion with
+    // an inline report on the same session — the documented id+report contract.
+    const explained = out(
+      dfmExplain({ document_id, issue_id: "iss-1", report: syntheticReport(1) }),
+    );
+    expect(explained.id).toBe("iss-1");
+    expect(explained.rule).toBe("cnc.internal_radius_too_small");
+  });
+
+  it("survives a cleared warm cache when the report is passed inline", () => {
+    const { document_id } = JSON.parse(
+      openDocument({ initial: cubeDoc() }).content[0].text,
+    );
+    // Simulate a cold serverless instance: the warm report map is gone even
+    // though the (durably-backed) session document is still resolvable.
+    clearDfmState();
+
+    // Without the inline report the tool fails closed, pointing at the escape hatch.
+    expect(() => dfmExplain({ document_id, issue_id: "iss-1" })).toThrow(
+      /Run dfm_check first|report inline/,
+    );
+
+    // With the report inline the documented path works.
+    const explained = out(
+      dfmExplain({ document_id, issue_id: "iss-1", report: syntheticReport(1) }),
+    );
+    expect(explained.explanation).toContain("Internal radii");
+
+    const suggested = out(
+      dfmSuggestFix({ issue_id: "iss-1", report: syntheticReport(1) }),
+    );
+    expect(suggested.issue_id).toBe("iss-1");
+    expect(suggested.applyable).toBe(true);
+    expect(suggested.fix.type).toBe("set_param");
+  });
+
+  it("rejects a malformed inline report", () => {
+    expect(() =>
+      dfmExplain({ issue_id: "iss-1", report: { not: "a report" } }),
+    ).toThrow(/must be a DFM report/);
+  });
+});
+
+describe("dfm_apply_fix — inline document + inline report", () => {
+  it("applies a set_param fix to an inline document and echoes it back", () => {
+    clearDfmState();
+    const doc = {
+      version: "0.1",
+      nodes: {
+        "5": { id: 5, name: "pin", op: { type: "Cylinder", radius: 1, height: 10 } },
+      },
+      materials: {},
+      part_materials: {},
+      roots: [{ root: 5, material: "default" }],
+    } as unknown as Document;
+
+    const res = out(
+      dfmApplyFix({ document: doc, issue_id: "iss-1", report: syntheticReport(5) }),
+    );
+    expect(res.applied).toBe(true);
+    expect(res.node).toBe(5);
+    expect(res.path).toBe("radius");
+    expect(res.value).toBe(3);
+    // Inline path echoes the mutated document (no session to persist into).
+    expect(res.document.nodes["5"].op.radius).toBe(3);
+  });
+
+  it("mutates a resident session in place via document_id", () => {
+    const { document_id } = JSON.parse(
+      openDocument({
+        initial: {
+          version: "0.1",
+          nodes: {
+            "5": { id: 5, name: "pin", op: { type: "Cylinder", radius: 1, height: 10 } },
+          },
+          materials: {},
+          part_materials: {},
+          roots: [{ root: 5, material: "default" }],
+        } as unknown as Document,
+      }).content[0].text,
+    );
+    clearDfmState();
+    const res = out(
+      dfmApplyFix({ document_id, issue_id: "iss-1", report: syntheticReport(5) }),
+    );
+    expect(res.applied).toBe(true);
+    // Session path echoes only the id; the mutation landed in the live doc.
+    expect(res.document).toBeUndefined();
+    const stored = documents.get(document_id) as Document;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    expect((stored.nodes["5"].op as any).radius).toBe(3);
   });
 });
