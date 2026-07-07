@@ -11,6 +11,7 @@
 
 import type { Engine, TriangleMesh } from "@vcad/engine";
 import type { Document } from "@vcad/ir";
+import { isoperimetricViolation } from "./integrity.js";
 import { getSession } from "./session.js";
 
 export const inspectCadSchema = {
@@ -47,6 +48,12 @@ export interface InspectResult {
   parts: number;
   mass_g?: number;
   part_masses?: PartMassInfo[];
+  /**
+   * Geometry-integrity violations (e.g. a part whose volume/area pair
+   * breaks the isoperimetric bound A³ ≥ 36πV², which no real solid can).
+   * Absent when the inspection is clean.
+   */
+  warnings?: string[];
 }
 
 /** Calculate signed volume of a triangle with origin. */
@@ -228,6 +235,7 @@ export function computeInspection(ir: Document, engine: Engine): InspectResult {
   };
 
   const partMasses: PartMassInfo[] = [];
+  const warnings: string[] = [];
 
   // Find the root nodes to get part names
   const rootNameMap = new Map<number, string>();
@@ -267,6 +275,20 @@ export function computeInspection(ir: Document, engine: Engine): InspectResult {
     // Get part name from root or use index
     const rootEntry = ir.roots[i];
     const partName = rootEntry ? rootNameMap.get(rootEntry.root) ?? `part_${i + 1}` : `part_${i + 1}`;
+
+    // Isoperimetric impossibility: A³ ≥ 36πV² for any real solid, so a
+    // violating (volume, area) pair means the volume integral is corrupt
+    // (wrong-but-watertight boolean result) — flag it instead of returning
+    // the impossible numbers silently.
+    const impossible = isoperimetricViolation(props.volume, props.area);
+    if (impossible) {
+      warnings.push(
+        `part "${partName}" volume ${Math.round(props.volume * 1000) / 1000} mm³ is isoperimetrically impossible ` +
+          `for its ${Math.round(props.area * 1000) / 1000} mm² of surface (A³ ≥ 36πV² for any real solid; this ` +
+          `area can enclose at most ≈${Math.round(impossible.max_volume_mm3 * 1000) / 1000} mm³) — the volume ` +
+          `integral is corrupt, do not trust this geometry`,
+      );
+    }
 
     const partMassInfo: PartMassInfo = {
       name: partName,
@@ -326,6 +348,10 @@ export function computeInspection(ir: Document, engine: Engine): InspectResult {
   if (hasMassData) {
     result.mass_g = Math.round(totalMass * 1000) / 1000;
     result.part_masses = partMasses;
+  }
+
+  if (warnings.length > 0) {
+    result.warnings = warnings;
   }
 
   return result;
