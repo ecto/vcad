@@ -465,9 +465,8 @@ pub(crate) fn copper_elements(pcb: &Pcb) -> Vec<CopperElement> {
     // Footprint pads.
     for footprint in &pcb.footprints {
         for pad in &footprint.pads {
-            let abs_x = footprint.position.x + pad.position.x;
-            let abs_y = footprint.position.y + pad.position.y;
-            let center = Vec2::new(abs_x, abs_y);
+            let center = crate::geometry::pad_world_center(footprint, pad);
+            let (abs_x, abs_y) = (center.x, center.y);
             let net = pad.net.clone().unwrap_or_default();
             // Total pad rotation = footprint rotation + pad-local rotation.
             let rot = (footprint.rotation + pad.rotation).to_radians();

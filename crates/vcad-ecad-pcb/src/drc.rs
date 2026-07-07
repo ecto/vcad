@@ -443,10 +443,7 @@ fn check_pad_clearance(
             let Some(net) = pad.net.as_deref() else {
                 continue;
             };
-            let center = Vec2::new(
-                fp.position.x + pad.position.x,
-                fp.position.y + pad.position.y,
-            );
+            let center = crate::geometry::pad_world_center(fp, pad);
             let rot = (fp.rotation + pad.rotation).to_radians();
             boxes.push(PadBox {
                 center,
@@ -582,10 +579,7 @@ fn check_min_drill(pcb: &Pcb, violations: &mut Vec<DrcViolation>) {
         for pad in &footprint.pads {
             if let Some(drill) = &pad.drill {
                 if drill.diameter < min_drill - 1e-6 {
-                    let abs_pos = Vec2::new(
-                        footprint.position.x + pad.position.x,
-                        footprint.position.y + pad.position.y,
-                    );
+                    let abs_pos = crate::geometry::pad_world_center(footprint, pad);
                     violations.push(DrcViolation {
                         rule: DrcRuleType::MinDrill,
                         severity: DrcSeverity::Error,
@@ -692,10 +686,7 @@ fn check_hole_to_hole(pcb: &Pcb, violations: &mut Vec<DrcViolation>) {
         let generated = fp_is_generated(footprint);
         for pad in &footprint.pads {
             if let Some(drill) = &pad.drill {
-                let abs_pos = Vec2::new(
-                    footprint.position.x + pad.position.x,
-                    footprint.position.y + pad.position.y,
-                );
+                let abs_pos = crate::geometry::pad_world_center(footprint, pad);
                 holes.push(Hole {
                     pos: abs_pos,
                     radius: drill.diameter / 2.0,
@@ -781,10 +772,7 @@ fn check_annular_ring(pcb: &Pcb, violations: &mut Vec<DrcViolation>) {
                 let pad_min_dim = pad_min_dimension(pad);
                 let ring = (pad_min_dim - drill.diameter) / 2.0;
                 if ring < min_ring - 1e-6 {
-                    let abs_pos = Vec2::new(
-                        footprint.position.x + pad.position.x,
-                        footprint.position.y + pad.position.y,
-                    );
+                    let abs_pos = crate::geometry::pad_world_center(footprint, pad);
                     violations.push(DrcViolation {
                         rule: DrcRuleType::AnnularRing,
                         severity: DrcSeverity::Error,
@@ -873,10 +861,7 @@ fn check_keepout(pcb: &Pcb, violations: &mut Vec<DrcViolation>) {
                 let mut hit = false;
                 let mut hit_pos = fp.position;
                 for pad in &fp.pads {
-                    let pad_pos = Vec2::new(
-                        fp.position.x + pad.position.x,
-                        fp.position.y + pad.position.y,
-                    );
+                    let pad_pos = crate::geometry::pad_world_center(fp, pad);
                     if point_in_polygon(pad_pos, &keepout.outline) {
                         hit = true;
                         hit_pos = pad_pos;
@@ -1226,10 +1211,7 @@ fn build_conn_nodes(pcb: &Pcb) -> Vec<ConnNode> {
 
     for fp in &pcb.footprints {
         for pad in &fp.pads {
-            let center = Vec2::new(
-                fp.position.x + pad.position.x,
-                fp.position.y + pad.position.y,
-            );
+            let center = crate::geometry::pad_world_center(fp, pad);
             let rot = (fp.rotation + pad.rotation).to_radians();
             let mut layers = 0u16;
             for &l in &pad.layers {
@@ -3227,6 +3209,89 @@ mod tests {
             unrouted.is_empty(),
             "via should bridge FCu/BCu pads on same net, got: {:?}",
             unrouted
+        );
+    }
+
+    /// Issue #378 regression: connectivity must place a rotated footprint's
+    /// pads at their TRUE (rotation-applied) world positions — the same
+    /// positions get_pad_positions, the ratsnest, and the routers report.
+    /// Before the fix the pad nodes sat at the unrotated (phantom) offsets, so
+    /// copper laid between the true positions (a hand route) never touched
+    /// them and UnconnectedNet could not clear.
+    #[test]
+    fn connectivity_credits_copper_at_rotated_pad_positions() {
+        let mut pcb = clean_pcb();
+        pcb.traces.clear();
+        pcb.vias.clear();
+        // Both footprints rotated 90°, pads 2mm off the footprint origin along
+        // local +X. True pad centers land 2mm along +Y instead:
+        //   J1 pad: (20, 42)   [phantom would be (22, 40)]
+        //   J2 pad: (50, 42)   [phantom would be (52, 40)]
+        pcb.footprints.push(footprint(
+            "J1",
+            (20.0, 40.0),
+            90.0,
+            vec![smd_pad("1", (2.0, 0.0), "1")],
+        ));
+        pcb.footprints.push(footprint(
+            "J2",
+            (50.0, 40.0),
+            90.0,
+            vec![smd_pad("1", (2.0, 0.0), "1")],
+        ));
+
+        // Sanity: with no copper the net is open.
+        let open: Vec<_> = check_drc(&pcb)
+            .into_iter()
+            .filter(|v| v.rule == DrcRuleType::UnconnectedNet)
+            .collect();
+        assert!(!open.is_empty(), "unrouted rotated pads should report open");
+
+        // Hand-route between the TRUE rotated pad centers.
+        pcb.traces.push(trace((20.0, 42.0), (50.0, 42.0), "1"));
+
+        let violations = check_drc(&pcb);
+        let bad: Vec<_> = violations
+            .iter()
+            .filter(|v| v.rule == DrcRuleType::UnconnectedNet || v.rule == DrcRuleType::Short)
+            .collect();
+        assert!(
+            bad.is_empty(),
+            "copper at the true rotated pad positions must clear UnconnectedNet, got: {:?}",
+            bad
+        );
+    }
+
+    /// Issue #378 counterpart: copper laid at the phantom (unrotated) offsets
+    /// must NOT be credited — those locations hold no pad copper on a rotated
+    /// footprint.
+    #[test]
+    fn connectivity_ignores_copper_at_phantom_unrotated_positions() {
+        let mut pcb = clean_pcb();
+        pcb.traces.clear();
+        pcb.vias.clear();
+        pcb.footprints.push(footprint(
+            "J1",
+            (20.0, 40.0),
+            90.0,
+            vec![smd_pad("1", (2.0, 0.0), "1")],
+        ));
+        pcb.footprints.push(footprint(
+            "J2",
+            (50.0, 40.0),
+            90.0,
+            vec![smd_pad("1", (2.0, 0.0), "1")],
+        ));
+        // Trace between the unrotated offsets — thin air on this board.
+        pcb.traces.push(trace((22.0, 40.0), (52.0, 40.0), "1"));
+
+        let unrouted: Vec<_> = check_drc(&pcb)
+            .into_iter()
+            .filter(|v| v.rule == DrcRuleType::UnconnectedNet)
+            .collect();
+        assert!(
+            !unrouted.is_empty(),
+            "copper at phantom unrotated positions must not credit connectivity"
         );
     }
 

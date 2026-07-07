@@ -110,20 +110,31 @@ pub fn copper_layer_index(layer: PcbLayer) -> usize {
         .unwrap_or(99)
 }
 
+/// Absolute board-frame center of a pad: the footprint position plus the pad's
+/// local offset rotated by the footprint rotation.
+///
+/// This is the single world-position convention shared by the ratsnest, the
+/// routers, and every DRC/DFM geometric check. Skipping the rotation places a
+/// rotated footprint's pads at phantom locations that nothing else on the
+/// board (routed or hand-laid copper, `get_pad_positions` callers) can ever
+/// touch — the root cause of connectivity never crediting manual copper.
+pub fn pad_world_center(fp: &vcad_ir::ecad::Footprint, pad: &vcad_ir::ecad::Pad) -> Vec2 {
+    let (sin_r, cos_r) = fp.rotation.to_radians().sin_cos();
+    Vec2::new(
+        fp.position.x + pad.position.x * cos_r - pad.position.y * sin_r,
+        fp.position.y + pad.position.x * sin_r + pad.position.y * cos_r,
+    )
+}
+
 /// Compute bounding box of a footprint's pads: `(min, max)`.
 pub fn footprint_bounds(fp: &vcad_ir::ecad::Footprint) -> (Vec2, Vec2) {
-    let fp_rot = fp.rotation.to_radians();
-    let cos_r = fp_rot.cos();
-    let sin_r = fp_rot.sin();
-
     let mut min_x = f64::MAX;
     let mut min_y = f64::MAX;
     let mut max_x = f64::MIN;
     let mut max_y = f64::MIN;
 
     for pad in &fp.pads {
-        let wx = fp.position.x + pad.position.x * cos_r - pad.position.y * sin_r;
-        let wy = fp.position.y + pad.position.x * sin_r + pad.position.y * cos_r;
+        let Vec2 { x: wx, y: wy } = pad_world_center(fp, pad);
         let (pw, ph) = pad_dimensions(&pad.shape);
         let r = pw.max(ph) / 2.0;
 
