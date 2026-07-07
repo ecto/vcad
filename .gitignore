@@ -7,6 +7,7 @@ packages/mcp/dist-viewer/
 packages/mcp/src/viewer-html.generated.ts
 packages/mcp/dist-live/
 packages/mcp/src/live-html.generated.ts
+packages/mcp/src/tools/mech-catalog.generated.ts
 .next/
 out/
 .env

@@ -34,6 +34,8 @@ export interface DebitParams {
 
 export interface FabricateStore {
   saveQuote(quote: Quote, econ: QuoteEconomics, userId: string): Promise<void>;
+  /** Read a persisted quote, ownership-scoped (BOM lines link quotes by id). */
+  getQuote(quoteId: string, userId: string): Promise<Quote | null>;
   saveOrder(order: Order, fabCostMinor: number, userId: string): Promise<void>;
   getOrder(orderId: string, userId: string): Promise<Order | null>;
   listOrders(userId: string, filter: OrderFilter): Promise<Order[]>;
@@ -65,6 +67,9 @@ const memKey = (userId: string, id: string): string => `${userId}::${id}`;
 export class InMemoryFabricateStore implements FabricateStore {
   async saveQuote(quote: Quote, econ: QuoteEconomics, userId: string): Promise<void> {
     memQuotes.set(memKey(userId, quote.quote_id), { quote, econ });
+  }
+  async getQuote(quoteId: string, userId: string): Promise<Quote | null> {
+    return memQuotes.get(memKey(userId, quoteId))?.quote ?? null;
   }
   async saveOrder(order: Order, fabCostMinor: number, userId: string): Promise<void> {
     memOrders.set(memKey(userId, order.order_id), { order, fabCostMinor });
@@ -214,6 +219,23 @@ export class SupabaseFabricateStore implements FabricateStore {
       expires_at: quote.expires_at,
     };
     await this.insert("quotes", row);
+  }
+
+  async getQuote(quoteId: string, userId: string): Promise<Quote | null> {
+    try {
+      const res = await fabricateFetch(
+        this.url(
+          "quotes",
+          `?id=eq.${encodeURIComponent(quoteId)}&user_id=eq.${encodeURIComponent(userId)}&limit=1`,
+        ),
+        { method: "GET", headers: this.headers({ Accept: "application/vnd.pgrst.object+json" }) },
+      );
+      if (!res.ok) return null;
+      return rowToQuote(await res.json());
+    } catch (err) {
+      console.error("[fabricate-store] getQuote failed:", err);
+      return null;
+    }
   }
 
   async saveOrder(order: Order, fabCostMinor: number, userId: string): Promise<void> {
@@ -387,6 +409,33 @@ export class SupabaseFabricateStore implements FabricateStore {
       console.error(`[fabricate-store] insert ${table} failed:`, err);
     }
   }
+}
+
+/** Map a PostgREST quotes row to a Quote (inverse of saveQuote's row shape).
+ *  Server-only economics columns (fab_cost_minor, margin_minor) are never
+ *  copied onto the returned Quote. */
+function rowToQuote(row: unknown): Quote {
+  const r = (row ?? {}) as Record<string, unknown>;
+  return {
+    quote_id: String(r.id ?? ""),
+    document_id: String(r.document_id ?? ""),
+    doc_hash: (r.doc_hash as string) ?? null,
+    process: r.process as Quote["process"],
+    material: (r.material as string) ?? null,
+    quantity: Number(r.quantity ?? 1),
+    dfm: (r.dfm as Quote["dfm"]) ?? { checked: false, passed: false, violations: [] },
+    fab_options: Array.isArray(r.fab_options) ? (r.fab_options as Quote["fab_options"]) : [],
+    landed_cost: (r.landed_cost as Quote["landed_cost"]) ?? {
+      shipping_minor: 0,
+      duty_minor: 0,
+      basis: "unknown",
+    },
+    total_amount_minor: Number(r.total_amount_minor ?? 0),
+    currency: String(r.currency ?? "USD"),
+    margin_hidden: true,
+    expires_at: String(r.expires_at ?? ""),
+    created_at: String(r.created_at ?? ""),
+  };
 }
 
 /** Map a PostgREST orders row to an Order. */

@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-07-project-bom-tools",
+  "version": "0.9.4",
+  "date": "2026-07-07",
+  "category": "feat",
+  "title": "Project BOM tools + mechanical COTS catalog",
+  "summary": "bom_create/bom_add_line/bom_export build a project bill of materials (quote-linked manufactured parts + COTS lines) with landed-cost totals and markdown/CSV/JSON export; search_mechanical_parts spec-searches a curated bearings/shafts/standoffs/screws/magnets catalog.",
+  "features": ["bom", "fabricate", "parts", "cots", "receipt"],
+  "mcpTools": ["bom_create", "bom_add_line", "bom_export", "search_mechanical_parts"]
+}
