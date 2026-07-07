@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-07-verify-spec",
+  "version": "0.9.4",
+  "date": "2026-07-07",
+  "category": "feat",
+  "title": "verify_spec: spec-first verification receipts (TDD for CAD)",
+  "summary": "New MCP tool grades an open document against a declared spec — bbox, volume range, watertightness, part count, center of mass — returning a fail-closed vcad.receipt/1 receipt with measured vs expected per claim.",
+  "features": ["receipt", "verification", "mechanical"],
+  "mcpTools": ["verify_spec"]
+}

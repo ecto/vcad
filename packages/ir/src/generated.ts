@@ -206,6 +206,64 @@ export type ClaimValue = number | boolean | string;
 export type ClaimVerdict = "pass" | "fail" | "unverifiable";
 
 /**
+ * A named clearance assertion between two part groups, with its measured
+ * outcome. The wire type behind `mech.clearance.*` receipt claims: the
+ * full struct rides in the claim's `details` so a stored receipt can be
+ * re-verified against a changed document without external context.
+ */
+export type ClearanceClaim = { 
+/**
+ * Assertion name, e.g. "air-gap".
+ */
+label: string, 
+/**
+ * Part ids (stringified root node ids) of the first group.
+ */
+group_a: Array<string>, 
+/**
+ * Part ids of the second group.
+ */
+group_b: Array<string>, 
+/**
+ * Required minimum separation in mm.
+ */
+required_mm: number, 
+/**
+ * Measured minimum distance in mm (negative = penetration depth).
+ */
+measured_mm: number, 
+/**
+ * Whether the measured distance satisfies the requirement.
+ */
+holds: boolean, };
+
+/**
+ * A named minimum-clearance assertion between two groups of parts.
+ *
+ * Persisted on the document so safety-critical distances (rotor air gaps,
+ * bearing fits, screw-head clearances) are re-verified as geometry changes
+ * instead of being hand-computed once and silently invalidated later.
+ */
+export type ClearanceSpec = { 
+/**
+ * Unique human-readable name, e.g. "air-gap".
+ */
+label: string, 
+/**
+ * Part ids (stringified root node ids) forming the first group.
+ */
+group_a: Array<string>, 
+/**
+ * Part ids forming the second group.
+ */
+group_b: Array<string>, 
+/**
+ * Required minimum separation in mm: the assertion holds when the
+ * measured minimum distance between the groups is at least this value.
+ */
+min_mm: number, };
+
+/**
  * Provenance of a piece of copper: who placed it.
  *
  * The autorouter treats its own output as disposable — re-running `route_nets`
@@ -901,7 +959,12 @@ parameters?: Record<string, Parameter>,
  * to concrete `f64`/`Vec3` fields on the kernel-facing side during
  * resolve, so the kernel never sees expressions.
  */
-bindings?: Bindings, };
+bindings?: Bindings, 
+/**
+ * Named clearance/clash assertions between part groups, re-measured by
+ * `check_clearance` and receipt verification whenever geometry changes.
+ */
+clearance_specs?: Array<ClearanceSpec>, };
 
 /**
  * A canonicalized DRC summary: total, per-rule counts (sorted), and the

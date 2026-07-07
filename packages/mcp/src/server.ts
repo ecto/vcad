@@ -39,6 +39,7 @@ import {
   listEvalTasks,
   listEvalTasksSchema,
 } from "./tools/verify.js";
+import { verifySpec, verifySpecSchema } from "./tools/verify-spec.js";
 import { importStep, importStepSchema } from "./tools/import.js";
 import {
   importKicad,
@@ -292,6 +293,7 @@ import {
   searchFootprintsSchema,
 } from "./tools/ecad.js";
 import { checkEnclosureFit, checkEnclosureFitSchema } from "./tools/enclosure.js";
+import { checkClearance, checkClearanceSchema } from "./tools/clearance.js";
 import { createCadLoon, createCadLoonSchema } from "./tools/loon.js";
 import { appendIntegrity, computeIntegrity } from "./tools/integrity.js";
 import {
@@ -519,6 +521,8 @@ const SWITCH_DOC_WRITERS = new Set<string>([
   // CAD / sheet-metal / DFM mutators
   "place_part",
   "dfm_apply_fix",
+  // Persists a named clearance spec on the doc when `label` is given.
+  "check_clearance",
   // PCB / ECAD mutators
   "place_components",
   "route_nets",
@@ -1247,6 +1251,12 @@ export async function createServer(
           "List mecheval benchmark tasks (id, suite, tier, title, prompt, check count). Suites: A authoring, B kernel, C mech/physics, D visual, F fit. Pair with verify_part for self-graded practice and verification.",
         inputSchema: listEvalTasksSchema,
       },
+      {
+        name: "verify_spec",
+        description:
+          "TDD for CAD: grade an open session document against a caller-supplied spec and return a fail-closed verification receipt (schema vcad.receipt/1). Declare the spec FIRST — bounding-box min/max ± tolerance, volume range, watertightness, exact part count, center of mass ± tolerance — then iterate the geometry until every claim rolls up to pass. Each claim reports measured vs expected. Fail-closed: an empty spec, a missing measurement, or a claim the kernel can't evaluate is `unverifiable`, never a silent pass. Unlike verify_part this needs no mecheval task — you supply the acceptance criteria.",
+        inputSchema: verifySpecSchema,
+      },
       // ── DFM (Design for Manufacturing) ──────────────────────────
       {
         name: "dfm_check",
@@ -1592,6 +1602,18 @@ export async function createServer(
         inputSchema: checkEnclosureFitSchema,
       },
       {
+        name: "check_clearance",
+        description:
+          "Measure the minimum distance between two groups of parts in a CAD " +
+          "session and assert it stays above `min_mm` — air gaps, press fits, " +
+          "screw-head clearances. Reports the measured minimum (negative = " +
+          "penetration depth), the worst part pair, and pass/fail. Give it a " +
+          "`label` to persist the assertion on the document: build_receipt " +
+          "then emits it as a mech.clearance claim and verify_receipt " +
+          "re-verifies it as Holds / Stale / Violated when geometry changes.",
+        inputSchema: checkClearanceSchema,
+      },
+      {
         name: "list_footprints",
         description:
           "List the footprint families the parametric engine resolves, each " +
@@ -1933,15 +1955,20 @@ export async function createServer(
           "Build a re-runnable verification Receipt for the session PCB: a content " +
           "hash, the DRC backend, a canonicalized DRC summary, and per-part " +
           "provenance — a durable proof that round-trips and re-verifies later as " +
-          "Holds / Stale / Violated. Renders as an audit ledger in the inline viewer.",
+          "Holds / Stale / Violated. Persisted clearance specs (check_clearance " +
+          "with a label) join the unified ledger as mech.clearance claims — a " +
+          "CAD-only session with specs gets a mechanical receipt, no PCB needed. " +
+          "Renders as an audit ledger in the inline viewer.",
         inputSchema: buildReceiptSchema,
       },
       {
         name: "verify_receipt",
         description:
-          "Re-run a prior Receipt (from build_receipt) against the session's current " +
-          "board and return the verdict — Holds (same board, clean), Stale (board " +
-          "changed), or Violated. Powers the ledger's Re-run button.",
+          "Re-run a prior receipt (from build_receipt) against the session's current " +
+          "document and return the verdict — Holds (unchanged, clean), Stale " +
+          "(changed but claims still hold), or Violated. Covers the PCB Receipt " +
+          "(board hash + DRC diff) and mech.clearance claims (re-measured against " +
+          "current geometry); worst verdict wins. Powers the ledger's Re-run button.",
         inputSchema: verifyReceiptSchema,
       },
       {
@@ -2377,6 +2404,10 @@ export async function createServer(
           result = listEvalTasks(args);
           break;
 
+        case "verify_spec":
+          result = verifySpec(args, engine);
+          break;
+
         case "dfm_check":
           result = await dfmCheck(args, engine);
           break;
@@ -2490,7 +2521,10 @@ export async function createServer(
           break;
 
         case "render_molecule":
-          result = await renderMolecule(args);
+          // renderMolecule can return an image content block (like render_view),
+          // which the text-only ToolResult shape doesn't model — cast as the
+          // sibling renderers do.
+          result = (await renderMolecule(args)) as unknown as typeof result;
           break;
 
         case "record_simulation":
@@ -2580,6 +2614,10 @@ export async function createServer(
 
         case "check_enclosure_fit":
           result = await checkEnclosureFit(args, engine);
+          break;
+
+        case "check_clearance":
+          result = await checkClearance(args, engine);
           break;
 
         case "list_footprints":
@@ -2763,7 +2801,7 @@ export async function createServer(
           break;
 
         case "verify_receipt":
-          result = await verifyReceipt(args);
+          result = await verifyReceipt(args, engine);
           break;
 
         case "route_diff_pair":

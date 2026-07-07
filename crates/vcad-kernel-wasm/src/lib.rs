@@ -299,6 +299,60 @@ pub struct WasmMesh {
     pub face_kinds: Option<Vec<u8>>,
 }
 
+/// Mesh-to-mesh clearance result: minimum separation (or penetration
+/// depth if negative) between two solids/meshes.
+#[derive(Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-rs", derive(TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "generated/"))]
+pub struct WasmClearance {
+    /// Signed distance in mm: minimum separation when non-negative, the
+    /// negated deepest penetration when the meshes intersect.
+    pub distance: f64,
+    /// True when the meshes intersect (crossing surfaces or containment).
+    pub intersecting: bool,
+    /// Point on the first mesh realizing the reported distance.
+    #[serde(rename = "pointA")]
+    pub point_a: [f64; 3],
+    /// Point on the second mesh realizing the reported distance.
+    #[serde(rename = "pointB")]
+    pub point_b: [f64; 3],
+}
+
+impl From<vcad_kernel::ClearanceResult> for WasmClearance {
+    fn from(r: vcad_kernel::ClearanceResult) -> Self {
+        Self {
+            distance: r.distance,
+            intersecting: r.intersecting,
+            point_a: r.point_a,
+            point_b: r.point_b,
+        }
+    }
+}
+
+/// Mesh-to-mesh clearance over raw evaluated-mesh buffers (see
+/// `WasmClearance`). Operates on already-placed geometry, so callers can
+/// measure between any two evaluated parts (or merged part groups) without
+/// re-building solids.
+#[wasm_bindgen]
+pub fn mesh_clearance(
+    positions_a: &[f32],
+    indices_a: &[u32],
+    positions_b: &[f32],
+    indices_b: &[u32],
+) -> Result<JsValue, JsError> {
+    let mesh_of = |positions: &[f32], indices: &[u32]| {
+        let mut m = vcad_kernel_tessellate::TriangleMesh::new();
+        m.vertices = positions.to_vec();
+        m.indices = indices.to_vec();
+        m
+    };
+    let a = mesh_of(positions_a, indices_a);
+    let b = mesh_of(positions_b, indices_b);
+    let r = vcad_kernel_tessellate::mesh_clearance(&a, &b)
+        .ok_or_else(|| JsError::new("clearance requires two non-empty meshes"))?;
+    serde_wasm_bindgen::to_value(&WasmClearance::from(r)).map_err(|e| JsError::new(&e.to_string()))
+}
+
 /// A 2D sketch segment (line or arc) for WASM input.
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "type")]
@@ -1192,6 +1246,18 @@ impl Solid {
     pub fn bounding_box(&self) -> Vec<f64> {
         let (min, max) = self.inner.bounding_box();
         vec![min[0], min[1], min[2], max[0], max[1], max[2]]
+    }
+
+    /// Minimum signed distance to another solid in mm (see `WasmClearance`):
+    /// positive separation, negative penetration depth on intersection.
+    #[wasm_bindgen(js_name = clearance)]
+    pub fn clearance(&self, other: &Solid) -> Result<JsValue, JsError> {
+        let r = self
+            .inner
+            .clearance(&other.inner)
+            .ok_or_else(|| JsError::new("clearance requires two non-empty solids"))?;
+        serde_wasm_bindgen::to_value(&WasmClearance::from(r))
+            .map_err(|e| JsError::new(&e.to_string()))
     }
 
     /// Run DFM directly on this solid's BRep.
@@ -6673,6 +6739,7 @@ mod ts_tests {
         // Types are auto-exported via #[ts(export)] attribute
         // This test ensures all types compile correctly with ts-rs
         WasmMesh::export_all().expect("WasmMesh export failed");
+        WasmClearance::export_all().expect("WasmClearance export failed");
         WasmSketchSegment::export_all().expect("WasmSketchSegment export failed");
         WasmSketchProfile::export_all().expect("WasmSketchProfile export failed");
         GpuGeometryResult::export_all().expect("GpuGeometryResult export failed");

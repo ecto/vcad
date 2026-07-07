@@ -33,9 +33,16 @@ import type {
   CsgOp,
   SketchSegment2D,
   Receipt,
+  DesignReceipt,
+  ReceiptStatus,
 } from "@vcad/ir";
 import { createDocument } from "@vcad/ir";
-import { summarize, unifiedFromPcbReceipt } from "../receipt-unified.js";
+import { RECEIPT_SCHEMA, summarize, unifiedFromPcbReceipt } from "../receipt-unified.js";
+import {
+  clearanceReceiptClaims,
+  hasClearanceClaims,
+  verifyClearanceClaims,
+} from "./clearance.js";
 import { getNodePcb, getPcbNodeIds, buildEntry, agentView, diffViolations } from "@vcad/core";
 import {
   computeRatsnest,
@@ -69,11 +76,19 @@ import {
   netContinuity as kernelNetContinuity,
 } from "@vcad/engine";
 import type { Engine, NetlistResult, TriangleMesh, NetContinuity } from "@vcad/engine";
-import { registerSession, getSession, undoLastSnapshot, historyDepth } from "./session.js";
+import {
+  registerSession,
+  getSession,
+  undoLastSnapshot,
+  historyDepth,
+  resolveDocInput,
+  type DocInputCtx,
+} from "./session.js";
 import { emClaim } from "./em-claims.js";
 import type { NextAction } from "./next-actions.js";
 import { computeEnclosureFitForBoard } from "./enclosure.js";
 import { validatePcb, pcbValidationError } from "./pcb-validate.js";
+import { PCB_LAYERS } from "./pcb-layers.js";
 import { sizePdnExact, ecadDiffEngineAvailable } from "../wasm/ecad-diff.js";
 import { bundleBytes, storeArtifact } from "./artifact-store.js";
 import { maxInlineArtifactBytes, maxInlineExportBytes } from "./remote.js";
@@ -268,19 +283,11 @@ function ecadUnverifiable(
 // PCB layer name validation — the single gate guarding every write boundary
 // ============================================================================
 
-/**
- * Every legal PCB layer name, in board order — the canonical serde variants of
- * the Rust `PcbLayer` enum (crates/vcad-ir/src/ecad.rs). This is the single
- * source of truth the write boundaries validate against. The old scattered
- * `/Cu$/` regex checks let malformed dotted KiCad names (`In1.Cu`) slip through,
- * which then corrupted documents and broke render_pcb / export_gerber.
- */
-const PCB_LAYERS: readonly PcbLayer[] = [
-  "FCu", "BCu", "In1Cu", "In2Cu", "In3Cu", "In4Cu", "In5Cu", "In6Cu",
-  "FSilkS", "BSilkS", "FMask", "BMask", "FPaste", "BPaste",
-  "FFab", "BFab", "FCrtYd", "BCrtYd",
-  "EdgeCuts", "UserDrawings", "UserComments",
-];
+// The legal PCB layer names live in ./pcb-layers.ts (imported as PCB_LAYERS) —
+// the single runtime copy, shared with pcb-validate.ts, mirroring the Rust
+// `PcbLayer` enum (crates/vcad-ir/src/ecad.rs). The old scattered `/Cu$/` regex
+// checks let malformed dotted KiCad names (`In1.Cu`) slip through, which then
+// corrupted documents and broke render_pcb / export_gerber.
 
 /** Fast membership test for any legal layer name. */
 const PCB_LAYER_SET: ReadonlySet<string> = new Set(PCB_LAYERS);
@@ -361,36 +368,18 @@ function validateCopperLayer(raw: unknown): LayerOk | LayerErr {
 // ============================================================================
 // Document resolution — session-based (document_id) with inline fallback
 // ============================================================================
-
-/** A resolved document input: session-backed (preferred) or inline (legacy). */
-interface EcadDocCtx {
-  doc: Document;
-  /** Set when the doc came from (or was registered as) a server session. */
-  documentId?: string;
-}
-
-/**
- * Resolve the document argument for ECAD tools. `document_id` (a session
- * from create_schematic / open_document) is preferred; an inline `document`
- * object is still accepted for backward compatibility and is mutated and
- * echoed back like the pre-session API did.
- */
-function resolveDocInput(args: Record<string, unknown>): EcadDocCtx {
-  const id = args.document_id ? String(args.document_id) : "";
-  if (id) return { doc: getSession(id), documentId: id };
-  const doc = args.document as Document | undefined;
-  if (doc && typeof doc === "object") return { doc };
-  throw new Error(
-    "Pass `document_id` (from create_schematic or open_document) — or an inline `document` for the legacy stateless flow.",
-  );
-}
+//
+// `resolveDocInput` now lives in session.ts and is shared with the core
+// read-only tools (inspect_cad / render_view / export_cad / dfm_check). ECAD
+// tools echo the full mutated document back for the inline path, so they keep
+// their own result-payload helper below.
 
 /**
  * The document part of a mutating tool's response. Session docs are mutated
  * server-side, so only the id is echoed; inline docs get the full mutated
  * document back (the caller has no other way to retrieve it).
  */
-function docResultPayload(ctx: EcadDocCtx): Record<string, unknown> {
+function docResultPayload(ctx: DocInputCtx): Record<string, unknown> {
   return ctx.documentId
     ? { document_id: ctx.documentId }
     : { document: ctx.doc };
@@ -11878,7 +11867,8 @@ export const buildReceiptSchema = {
   properties: {
     document_id: {
       type: "string",
-      description: "Session id holding the PCB to certify.",
+      description:
+        "Session id holding the PCB and/or clearance-spec'd CAD parts to certify.",
     },
     enclosure_document_id: {
       type: "string",
@@ -11979,10 +11969,36 @@ export async function verifySubstitution(args: Record<string, unknown>) {
 export async function buildReceipt(args: Record<string, unknown>, engine?: Engine) {
   const ctx = resolveDocInput(args);
   const pcb = getDocPcb(ctx.doc);
+  const clearanceSpecs = ctx.doc.clearance_specs ?? [];
   if (!pcb) {
+    if (clearanceSpecs.length === 0) {
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: "Error: Document has no PCB and no clearance specs — nothing to certify. (Persist mechanical assertions with check_clearance + label first.)",
+          },
+        ],
+        isError: true,
+      };
+    }
+    // Mechanical-only receipt: re-measure every persisted clearance spec.
+    const unified: DesignReceipt = {
+      schema: RECEIPT_SCHEMA,
+      ...(ctx.documentId ? { document_id: ctx.documentId } : {}),
+      claims: clearanceReceiptClaims(ctx.doc, engine),
+    };
     return {
-      content: [{ type: "text" as const, text: "Error: Document has no PCB" }],
-      isError: true,
+      content: [
+        {
+          type: "text" as const,
+          text: JSON.stringify({ unified, unified_summary: summarize(unified) }),
+        },
+      ],
+      structuredContent: {
+        unified,
+        ...(ctx.documentId ? { document_id: ctx.documentId } : {}),
+      },
     };
   }
   const validity = validatePcb(pcb);
@@ -12037,6 +12053,11 @@ export async function buildReceipt(args: Record<string, unknown>, engine?: Engin
       ? { enclosureFitError }
       : {}),
   });
+  // Persisted mechanical clearance assertions ride in the same ledger, so a
+  // board+mechanics document certifies both domains in one receipt.
+  if (clearanceSpecs.length > 0) {
+    unified.claims.push(...clearanceReceiptClaims(ctx.doc, engine));
+  }
 
   // The receipt rides in structuredContent so the inline viewer renders it
   // as an audit ledger (the only carrier ChatGPT's widget bridge exposes);
@@ -12085,47 +12106,117 @@ export const verifyReceiptSchema = {
   required: ["receipt"],
 } as const;
 
-/** Re-run a prior Receipt against the session's current board. Returns the
- *  verdict: Holds (same board, clean), Stale (board changed), or Violated. */
-export async function verifyReceipt(args: Record<string, unknown>) {
+/** Worst-wins rollup across verification domains. */
+function worstStatus(statuses: ReceiptStatus[]): ReceiptStatus {
+  if (statuses.includes("Violated")) return "Violated";
+  if (statuses.includes("Stale")) return "Stale";
+  return "Holds";
+}
+
+/** Re-run a prior Receipt against the session's current document. Returns the
+ *  verdict: Holds (unchanged, clean), Stale (document changed but claims still
+ *  hold), or Violated. Handles the re-runnable PCB Receipt (board hash + DRC
+ *  diff), the unified DesignReceipt's mech.clearance claims (re-measured
+ *  against current geometry), or both at once — worst verdict wins. */
+export async function verifyReceipt(args: Record<string, unknown>, engine?: Engine) {
   const ctx = resolveDocInput(args);
-  const pcb = getDocPcb(ctx.doc);
-  if (!pcb) {
-    return {
-      content: [{ type: "text" as const, text: "Error: Document has no PCB" }],
-      isError: true,
-    };
-  }
-  const validity = validatePcb(pcb);
-  if (!validity.valid) {
-    return pcbValidationError("verify_receipt", validity, args.document_id ? String(args.document_id) : undefined);
-  }
-  let receipt = args.receipt as Receipt | undefined;
-  // Tolerate the whole build_receipt payload ({ receipt, unified, … } or a
-  // structuredContent echo) being passed back verbatim.
-  if (receipt && typeof receipt === "object" && !receipt.board_hash) {
-    const inner = (receipt as Record<string, unknown>).receipt;
-    if (inner && typeof inner === "object") receipt = inner as Receipt;
-  }
-  if (!receipt || typeof receipt !== "object" || !receipt.board_hash) {
+  const raw = args.receipt as Record<string, unknown> | undefined;
+  if (!raw || typeof raw !== "object") {
     return {
       content: [
         {
           type: "text" as const,
-          text: "Error: missing `receipt` — pass a Receipt produced by build_receipt.",
+          text: "Error: missing `receipt` — pass a receipt produced by build_receipt.",
         },
       ],
       isError: true,
     };
   }
-  const status = await kernelVerifyReceipt(pcb, receipt);
-  if (!status) {
+
+  // Legacy re-runnable PCB Receipt: the arg itself, or nested under
+  // `.receipt` when the whole build_receipt payload is passed back verbatim.
+  let legacy: Receipt | undefined;
+  if (typeof raw.board_hash === "string" && raw.board_hash) {
+    legacy = raw as unknown as Receipt;
+  } else if (raw.receipt && typeof raw.receipt === "object") {
+    const inner = raw.receipt as Record<string, unknown>;
+    if (typeof inner.board_hash === "string" && inner.board_hash) {
+      legacy = inner as unknown as Receipt;
+    }
+  }
+
+  // Unified DesignReceipt: the arg itself, or nested under `.unified`.
+  let unified: DesignReceipt | undefined;
+  if (typeof raw.schema === "string" && Array.isArray(raw.claims)) {
+    unified = raw as unknown as DesignReceipt;
+  } else if (raw.unified && typeof raw.unified === "object") {
+    const inner = raw.unified as Record<string, unknown>;
+    if (typeof inner.schema === "string" && Array.isArray(inner.claims)) {
+      unified = inner as unknown as DesignReceipt;
+    }
+  }
+  const clearanceReceipt = unified && hasClearanceClaims(unified) ? unified : undefined;
+
+  if (!legacy && !clearanceReceipt) {
     return {
-      content: [{ type: "text" as const, text: "Error: ECAD engine unavailable" }],
+      content: [
+        {
+          type: "text" as const,
+          text: "Error: `receipt` carries nothing re-verifiable — pass a PCB Receipt (board_hash) or a unified DesignReceipt with mech.clearance claims, as produced by build_receipt.",
+        },
+      ],
       isError: true,
     };
   }
-  const payload = { status, board_hash: receipt.board_hash };
+
+  const statuses: ReceiptStatus[] = [];
+
+  let boardHash: string | undefined;
+  if (legacy) {
+    const pcb = getDocPcb(ctx.doc);
+    if (!pcb) {
+      return {
+        content: [{ type: "text" as const, text: "Error: Document has no PCB" }],
+        isError: true,
+      };
+    }
+    const validity = validatePcb(pcb);
+    if (!validity.valid) {
+      return pcbValidationError("verify_receipt", validity, args.document_id ? String(args.document_id) : undefined);
+    }
+    const status = await kernelVerifyReceipt(pcb, legacy);
+    if (!status) {
+      return {
+        content: [{ type: "text" as const, text: "Error: ECAD engine unavailable" }],
+        isError: true,
+      };
+    }
+    statuses.push(status);
+    boardHash = legacy.board_hash;
+  }
+
+  let clearance: ReturnType<typeof verifyClearanceClaims> | undefined;
+  if (clearanceReceipt) {
+    if (!engine) {
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: "Error: clearance re-verification needs the kernel engine; unavailable in this context",
+          },
+        ],
+        isError: true,
+      };
+    }
+    clearance = verifyClearanceClaims(ctx.doc, engine, clearanceReceipt);
+    statuses.push(clearance.status);
+  }
+
+  const payload = {
+    status: worstStatus(statuses),
+    ...(boardHash ? { board_hash: boardHash } : {}),
+    ...(clearance ? { clearance } : {}),
+  };
   return {
     content: [{ type: "text" as const, text: JSON.stringify(payload) }],
     structuredContent: {
