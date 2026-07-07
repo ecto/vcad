@@ -18,6 +18,7 @@
 use std::path::Path;
 
 pub use vcad_kernel_booleans;
+pub use vcad_kernel_cam;
 pub use vcad_kernel_constraints;
 pub use vcad_kernel_cost;
 pub use vcad_kernel_dfm;
@@ -29,10 +30,14 @@ pub use vcad_kernel_sheet;
 pub use vcad_kernel_shell;
 pub use vcad_kernel_sketch;
 pub use vcad_kernel_step;
+pub use vcad_kernel_stocksim;
 pub use vcad_kernel_sweep;
 pub use vcad_kernel_tessellate;
 pub use vcad_kernel_text;
 pub use vcad_kernel_topo;
+
+pub mod cam_verify;
+pub use cam_verify::verify_toolpaths;
 
 pub mod sheet_fold;
 pub use sheet_fold::folded_sheet_solid;
