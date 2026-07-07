@@ -216,6 +216,8 @@ import {
   windingLayoutSchema,
   boardFromSolid,
   boardFromSolidSchema,
+  solidFromBoard,
+  solidFromBoardSchema,
   addTrace,
   addTraceSchema,
   getPadPositions,
@@ -691,6 +693,7 @@ const TOOL_PACKS: Record<string, readonly string[]> = {
     "add_motor_winding",
     "winding_layout",
     "board_from_solid",
+    "solid_from_board",
     "check_enclosure_fit",
     "import_kicad",
     "import_eagle",
@@ -1502,6 +1505,20 @@ export async function createServer(
           "the XY plane. Bridges solid modeling and PCB layout: feed the " +
           "returned `outline` to place_components.",
         inputSchema: boardFromSolidSchema,
+      },
+      {
+        name: "solid_from_board",
+        description:
+          "Materialize the session PCB as a solid CAD part — the inverse of " +
+          "board_from_solid. Extrudes the board outline to its thickness " +
+          "through the hole-aware sketch path (bore/cutout polygons survive " +
+          "as real holes), adds simplified per-component keep-out volumes " +
+          "(kernel 3D body extents, else courtyard × package-class height), " +
+          "and gives the substrate a homogenized FR4+copper density so " +
+          "inspect_cad / physics see the real board mass. Inject into an " +
+          "existing CAD session with `document_id_target` (enclosure fit, " +
+          "motor stacks, clash checks) or omit it to mint a fresh session.",
+        inputSchema: solidFromBoardSchema,
       },
       {
         name: "check_enclosure_fit",
@@ -2384,6 +2401,43 @@ export async function createServer(
         case "board_from_solid":
           result = boardFromSolid(args, engine);
           break;
+
+        case "solid_from_board": {
+          // Cross-session writer: reads the PCB in `document_id`, writes the
+          // CAD session in `document_id_target` (or mints one). The central
+          // hydrate/snapshot/persist plumbing keys off args.document_id —
+          // here the read-only PCB source — so the target is handled here.
+          const targetId =
+            typeof args.document_id_target === "string" ? args.document_id_target : null;
+          if (targetId) {
+            try {
+              await hydrateSession(sessionStore, targetId);
+            } catch {
+              // Durable load failed — fall back to cache.
+            }
+            if (documents.has(targetId)) recordHistorySnapshot(targetId);
+          }
+          result = await solidFromBoard(args);
+          const writtenId = result.structuredContent?.document_id;
+          if (!result.isError && typeof writtenId === "string" && documents.has(writtenId)) {
+            try {
+              await persistSession(sessionStore, writtenId);
+            } catch {
+              // best-effort durable write
+            }
+            try {
+              await eventStore.append(writtenId, {
+                author: context.user?.sub ?? "agent",
+                kind: "kernel",
+                type: name,
+                payload: buildKernelEventPayload(name, args, result),
+              });
+            } catch {
+              // best-effort event append
+            }
+          }
+          break;
+        }
 
         case "check_enclosure_fit":
           result = await checkEnclosureFit(args, engine);

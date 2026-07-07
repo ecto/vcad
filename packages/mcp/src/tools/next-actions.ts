@@ -292,6 +292,21 @@ export function happyPathNext(toolName: string, docId?: string): NextAction[] {
           tool: "render_pcb",
         }),
       ];
+    // docId here is the CAD session that received the solid (the result body's
+    // document_id wins over args), not the PCB source — exactly the session
+    // these consumers want.
+    case "solid_from_board":
+      return [
+        withDoc({
+          action: "Render the board solid to visually cross-check it.",
+          tool: "render_view",
+        }),
+        withDoc({
+          action:
+            "Measure the solid — volume, bbox, and the homogenized FR4+copper mass.",
+          tool: "inspect_cad",
+        }),
+      ];
     default:
       return [];
   }
