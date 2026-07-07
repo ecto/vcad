@@ -20,6 +20,18 @@ incubation copy is removed from this repo — kerf development happens in
 ecto/kerf, and the canonical architecture doc lives there at
 `docs/architecture.md`.*
 
+*Rev 5 (same day): Wave 0 is largely built in ecto/kerf. The eve app
+deploys on Vercel; the SendCutSend quote flow was recorded end-to-end via
+live agentic probes (anonymous priced configurator reached — $5.58/ea @ qty
+1 — and the fixture DXF vendor-validated at 100 × 50 mm); and the
+deterministic Tier-1 engine (`@kerf/engine`: playbook runner with
+fail-closed money-adjacent assertions, `quoted`-basis quote assembly, and
+the ACP-CM intent hash) is implemented and tested (17 passing). The one
+piece left before the quote loop closes is the concrete Browser Use CDP
+`BrowserHost` plus a first live deterministic run — it needs live
+browser-use egress. This file is the point-in-time proposal; the living
+design tracks in [kerf's `docs/architecture.md`](https://github.com/ecto/kerf/blob/main/docs/architecture.md).*
+
 ## The problem
 
 The ordering rail is built and fail-closed — quote → hash-bound mandate →
