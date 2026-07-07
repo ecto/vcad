@@ -23,6 +23,7 @@ import {
   loadDocument,
   documents,
 } from "../tools/session.js";
+import { InMemorySessionStore } from "../session-store.js";
 import {
   registryDispatchableNames,
   registryToolDescriptors,
@@ -217,11 +218,14 @@ describe("session persistence (save_document / load_document)", () => {
     rmSync(stateDir, { recursive: true, force: true });
   });
 
-  it("round-trips a session to disk and back", () => {
+  it("round-trips a session to disk and back", async () => {
     const open = openDocument({ initial: makeCubeDoc() });
     const { document_id } = JSON.parse(open.content[0].text);
 
-    const save = saveDocument({ document_id, name: "my-part" });
+    const save = await saveDocument(
+      { document_id, name: "my-part" },
+      new InMemorySessionStore(),
+    );
     const saved = JSON.parse(save.content[0].text);
     expect(saved.saved).toBe(true);
     expect(saved.name).toBe("my-part");
@@ -231,7 +235,10 @@ describe("session persistence (save_document / load_document)", () => {
     // Simulate a cold start: drop the in-process session.
     documents.clear();
 
-    const load = loadDocument({ name: "my-part" });
+    const load = await loadDocument(
+      { name: "my-part" },
+      new InMemorySessionStore(),
+    );
     expect(load.isError).toBeFalsy();
     const loaded = JSON.parse(load.content[0].text);
     expect(loaded.document_id).toMatch(/^doc_/);
@@ -245,8 +252,11 @@ describe("session persistence (save_document / load_document)", () => {
     expect(Object.keys(fetched.nodes)).toContain("1");
   });
 
-  it("load_document on a missing file returns an isError result", () => {
-    const load = loadDocument({ name: "does-not-exist" });
+  it("load_document on a missing file returns an isError result", async () => {
+    const load = await loadDocument(
+      { name: "does-not-exist" },
+      new InMemorySessionStore(),
+    );
     expect(load.isError).toBe(true);
     expect(load.content[0].text).toContain('No saved document named "does-not-exist"');
     expect(load.content[0].text).toContain(stateDir);

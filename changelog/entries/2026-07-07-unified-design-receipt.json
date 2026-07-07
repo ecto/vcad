@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-07-unified-design-receipt",
+  "version": "0.9.4",
+  "date": "2026-07-07",
+  "category": "feat",
+  "title": "Unified fail-closed DesignReceipt across domains",
+  "summary": "One versioned receipt schema (vcad.receipt/1): claims with oracle id+version, predicted vs measured values with units, and pass/fail/unverifiable verdicts — build_receipt now emits it.",
+  "features": ["receipt", "verification", "pcb", "sheet-metal", "mechanical"],
+  "mcpTools": ["build_receipt", "verify_receipt"]
+}

@@ -28,8 +28,9 @@ pub mod ssi;
 pub mod trim;
 
 // Re-export public API
-pub use api::{boolean_op, BooleanOp, BooleanResult};
+pub use api::{boolean_op, BooleanError, BooleanOp, BooleanResult};
 pub use mesh::point_in_mesh;
+pub use ssi::SsiError;
 
 #[cfg(test)]
 mod tests {
@@ -37,6 +38,13 @@ mod tests {
     use vcad_kernel_math::{Point3, Transform};
     use vcad_kernel_primitives::{make_cube, BRepSolid};
     use vcad_kernel_tessellate::{tessellate_brep, TriangleMesh};
+
+    /// Test wrapper: unwrap the now-fallible `boolean_op`. None of the
+    /// geometry in this module should hit an SSI error; a panic here means
+    /// the pipeline reported one and the test should fail loudly.
+    fn boolean_op(a: &BRepSolid, b: &BRepSolid, op: BooleanOp, segments: u32) -> BooleanResult {
+        crate::api::boolean_op(a, b, op, segments).expect("boolean_op should succeed")
+    }
 
     /// Compute the volume of a triangle mesh using signed tetrahedron method.
     fn compute_mesh_volume(mesh: &TriangleMesh) -> f64 {

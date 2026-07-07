@@ -61,6 +61,24 @@ npx esbuild@latest entry.ts \
   --outfile="$OUT/functions/mcp.func/index.mjs" \
   --banner:js="import { createRequire as __vcadCreateRequire } from 'module'; const require = __vcadCreateRequire(import.meta.url);"
 
+# ── 3b. Bundle edge middleware (export-control geo-block) ───
+# Build Output API deploys don't get Vercel's automatic middleware.ts
+# detection, so the geo-block middleware is bundled explicitly as an edge
+# function and wired in via a `middlewarePath` route below.
+mkdir -p "$OUT/functions/_middleware.func"
+npx esbuild@latest middleware.ts \
+  --bundle \
+  --platform=browser \
+  --format=esm \
+  --outfile="$OUT/functions/_middleware.func/index.js"
+
+cat > "$OUT/functions/_middleware.func/.vc-config.json" << 'EOF'
+{
+  "runtime": "edge",
+  "entrypoint": "index.js"
+}
+EOF
+
 # ── 4. Copy WASM binary next to the bundle ───────────────────
 cp "$REPO_ROOT/packages/kernel-wasm/vcad_kernel_wasm_bg.wasm" \
    "$OUT/functions/mcp.func/"
@@ -91,6 +109,11 @@ cat > "$OUT/config.json" << 'EOF'
 {
   "version": 3,
   "routes": [
+    {
+      "src": "/.*",
+      "middlewarePath": "_middleware",
+      "continue": true
+    },
     {
       "src": "^/$",
       "status": 308,

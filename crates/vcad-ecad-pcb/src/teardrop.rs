@@ -59,14 +59,9 @@ pub fn generate_teardrops(pcb: &Pcb) -> Vec<Teardrop> {
         });
     }
     for fp in &pcb.footprints {
-        let fr = fp.rotation.to_radians();
-        let (fc, fs) = (fr.cos(), fr.sin());
         for pad in &fp.pads {
             let Some(net) = pad.net.clone() else { continue };
-            let world = Vec2::new(
-                fp.position.x + pad.position.x * fc - pad.position.y * fs,
-                fp.position.y + pad.position.x * fs + pad.position.y * fc,
-            );
+            let world = crate::geometry::pad_world_position(fp, pad);
             let (hw, hh) = pad_half_extents(pad);
             lands.push(Land {
                 center: world,
@@ -267,6 +262,7 @@ mod tests {
             start_layer: PcbLayer::FCu,
             end_layer: PcbLayer::BCu,
             net: "N".into(),
+            source: None,
         };
         let trace = Trace {
             start: Vec2::new(20.0, 20.0),
@@ -274,6 +270,7 @@ mod tests {
             width: 0.25,
             layer: PcbLayer::FCu,
             net: "N".into(),
+            source: None,
         };
         let tds = generate_teardrops(&board(vec![], vec![trace], vec![via]));
         assert_eq!(tds.len(), 1, "one endpoint lands on the via");
@@ -293,6 +290,7 @@ mod tests {
             start_layer: PcbLayer::FCu,
             end_layer: PcbLayer::BCu,
             net: "OTHER".into(),
+            source: None,
         };
         let trace = Trace {
             start: Vec2::new(20.0, 20.0),
@@ -300,6 +298,7 @@ mod tests {
             width: 0.25,
             layer: PcbLayer::FCu,
             net: "N".into(),
+            source: None,
         };
         let tds = generate_teardrops(&board(vec![], vec![trace], vec![via]));
         assert!(tds.is_empty(), "a different-net via gets no teardrop");
@@ -315,6 +314,7 @@ mod tests {
             start_layer: PcbLayer::FCu,
             end_layer: PcbLayer::BCu,
             net: "N".into(),
+            source: None,
         };
         let trace = Trace {
             start: Vec2::new(20.0, 20.0),
@@ -322,6 +322,7 @@ mod tests {
             width: 0.25,
             layer: PcbLayer::FCu,
             net: "N".into(),
+            source: None,
         };
         assert!(generate_teardrops(&board(vec![], vec![trace], vec![via])).is_empty());
     }

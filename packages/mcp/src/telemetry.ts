@@ -53,13 +53,35 @@ export function configureTelemetry(info: {
 const pending = new Set<Promise<void>>();
 
 /**
+ * Coarse error classification for triage, derived ONLY from known marker
+ * strings — never the raw error text, which can embed argument values or IR
+ * (the no-payload constraint above). "other" is the honest bucket for
+ * anything unrecognized; extend the markers when a new class shows up in a
+ * real incident.
+ */
+function classifyErrorKind(result: {
+  isError?: boolean;
+  content?: Array<{ type?: string; text?: string }>;
+}): string {
+  const text = result.content?.find((c) => typeof c.text === "string")?.text ?? "";
+  if (/Unknown document_id/.test(text)) return "unknown_document";
+  if (/Unknown checkpoint_id/.test(text)) return "unknown_checkpoint";
+  if (/kernel WASM not loaded|kernel_wasm/i.test(text)) return "kernel_unavailable";
+  if (/Document has no PCB/.test(text)) return "no_pcb";
+  if (/"document_safe"/.test(text)) return "validation";
+  if (/Invalid save name|No saved document named/.test(text)) return "save_load";
+  if (/^Error: /.test(text)) return "exception";
+  return "other";
+}
+
+/**
  * Capture one tool call to PostHog. Fire-and-forget — returns immediately and
  * never throws. A no-op when no API key is set.
  */
 export function captureToolCall(
   name: string,
   args: Record<string, unknown>,
-  result: { isError?: boolean },
+  result: { isError?: boolean; content?: Array<{ type?: string; text?: string }> },
 ): void {
   const docId =
     typeof args?.document_id === "string" && args.document_id
@@ -68,6 +90,7 @@ export function captureToolCall(
   captureEvent("mcp_tool_call", {
     tool: name,
     is_error: !!result.isError,
+    ...(result.isError ? { error_kind: classifyErrorKind(result) } : {}),
     ...(docId ? { document_id: docId } : {}),
   });
 }

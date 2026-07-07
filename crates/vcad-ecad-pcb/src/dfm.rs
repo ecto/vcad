@@ -536,9 +536,9 @@ fn pad_min_dimension(pad: &Pad) -> f64 {
     }
 }
 
-/// Absolute board-frame center of a pad on its footprint (rotation applied).
+/// Absolute board-frame center of a pad on its footprint.
 fn pad_center(fp: &vcad_ir::ecad::Footprint, pad: &Pad) -> Vec2 {
-    crate::geometry::pad_world_center(fp, pad)
+    crate::geometry::pad_world_position(fp, pad)
 }
 
 /// Assemble a "minimum metric" rule result (smaller is worse).
@@ -1576,6 +1576,7 @@ mod tests {
             width: 0.3,
             layer: PcbLayer::FCu,
             net: "SIG".into(),
+            source: None,
         });
         let report = check_dfm(&pcb, PcbFabProfile::Jlcpcb, None).unwrap();
         assert_eq!(report.profile, "jlcpcb");
@@ -1598,6 +1599,7 @@ mod tests {
             width: 0.08,
             layer: PcbLayer::FCu,
             net: "SIG".into(),
+            source: None,
         });
         // 2) A via with a 0.1mm drill — below JLC 0.2mm min drill, and a
         //    0.05mm annular ring (0.2 dia / 0.1 drill) below 0.13mm.
@@ -1608,6 +1610,7 @@ mod tests {
             start_layer: PcbLayer::FCu,
             end_layer: PcbLayer::BCu,
             net: "SIG".into(),
+            source: None,
         });
 
         let report = check_dfm(&pcb, PcbFabProfile::Jlcpcb, None).unwrap();
@@ -1645,6 +1648,7 @@ mod tests {
             width: 0.15,
             layer: PcbLayer::FCu,
             net: "SIG".into(),
+            source: None,
         });
         let report = check_dfm(&pcb, PcbFabProfile::Jlcpcb, None).unwrap();
         assert_eq!(report.copper_weight_oz, 2.0);
@@ -1688,6 +1692,7 @@ mod tests {
             start_layer: PcbLayer::FCu,
             end_layer: PcbLayer::BCu,
             net: "SIG".into(),
+            source: None,
         });
 
         let jlc = check_dfm(&pcb, PcbFabProfile::Jlcpcb, None).unwrap();
@@ -1762,6 +1767,7 @@ mod tests {
             width: 0.3,
             layer: PcbLayer::FCu,
             net: "SIG".into(),
+            source: None,
         });
         pcb.traces.push(Trace {
             start: Vec2::new(20.0, 20.0),
@@ -1769,6 +1775,7 @@ mod tests {
             width: 0.3,
             layer: PcbLayer::FCu,
             net: "SIG".into(),
+            source: None,
         });
         let report = check_dfm(&pcb, PcbFabProfile::Jlcpcb, None).unwrap();
         let at = find(&report, "acid_trap");
@@ -1786,6 +1793,7 @@ mod tests {
             width: 0.08,
             layer: PcbLayer::FCu,
             net: "SIG".into(),
+            source: None,
         });
         // A bespoke pack that allows 0.05mm traces.
         let custom = r#"

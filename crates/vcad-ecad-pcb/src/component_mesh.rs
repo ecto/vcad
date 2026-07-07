@@ -575,10 +575,6 @@ fn pad_extent(shape: &PadShape) -> (f64, f64, f64, f64) {
 /// slightly inset from the pad, proud of the copper — under a studio IBL the
 /// metallic tin reads as a reflowed joint against the matte board.
 fn add_pad_solder(fp: &Footprint, zb: f32, z_dir: f32, out: &mut Vec<ComponentMesh>) {
-    let fp_rot = (fp.rotation as f32).to_radians();
-    let cos_f = fp_rot.cos();
-    let sin_f = fp_rot.sin();
-
     for pad in &fp.pads {
         if pad.pad_type != PadType::SMD {
             continue;
@@ -587,9 +583,8 @@ fn add_pad_solder(fp: &Footprint, zb: f32, z_dir: f32, out: &mut Vec<ComponentMe
         if pw < 1e-3 || ph < 1e-3 {
             continue;
         }
-        // Pad world position = footprint position + footprint-rotated pad offset.
-        let px = fp.position.x + pad.position.x * cos_f as f64 - pad.position.y * sin_f as f64;
-        let py = fp.position.y + pad.position.x * sin_f as f64 + pad.position.y * cos_f as f64;
+        let world = crate::geometry::pad_world_position(fp, pad);
+        let (px, py) = (world.x, world.y);
         let pad_rot = ((fp.rotation + pad.rotation) as f32).to_radians();
         // Shift the joint to the pad-local bbox center (nonzero only for an
         // off-origin Custom polygon), rotated into world by the pad rotation.

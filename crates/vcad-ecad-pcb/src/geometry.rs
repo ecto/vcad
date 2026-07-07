@@ -70,6 +70,22 @@ pub fn pad_radius(shape: &PadShape) -> f64 {
     }
 }
 
+/// Absolute board-frame center of a pad: the footprint origin plus the pad's
+/// local offset rotated by the footprint rotation (degrees, CCW).
+///
+/// This is the canonical pad placement transform — the same one the Gerber /
+/// Excellon writers and the TypeScript `get_pad_positions` MCP tool apply:
+/// `world = fp + R(θ)·pad`. Every consumer that positions pad copper must go
+/// through it; adding `fp.position + pad.position` without the rotation
+/// misplaces every pad on a rotated footprint.
+pub fn pad_world_position(fp: &vcad_ir::ecad::Footprint, pad: &vcad_ir::ecad::Pad) -> Vec2 {
+    let (sin_r, cos_r) = fp.rotation.to_radians().sin_cos();
+    Vec2::new(
+        fp.position.x + pad.position.x * cos_r - pad.position.y * sin_r,
+        fp.position.y + pad.position.x * sin_r + pad.position.y * cos_r,
+    )
+}
+
 // ============================================================================
 // Coordinate conversion
 // ============================================================================
@@ -110,22 +126,6 @@ pub fn copper_layer_index(layer: PcbLayer) -> usize {
         .unwrap_or(99)
 }
 
-/// Absolute board-frame center of a pad: the footprint position plus the pad's
-/// local offset rotated by the footprint rotation.
-///
-/// This is the single world-position convention shared by the ratsnest, the
-/// routers, and every DRC/DFM geometric check. Skipping the rotation places a
-/// rotated footprint's pads at phantom locations that nothing else on the
-/// board (routed or hand-laid copper, `get_pad_positions` callers) can ever
-/// touch — the root cause of connectivity never crediting manual copper.
-pub fn pad_world_center(fp: &vcad_ir::ecad::Footprint, pad: &vcad_ir::ecad::Pad) -> Vec2 {
-    let (sin_r, cos_r) = fp.rotation.to_radians().sin_cos();
-    Vec2::new(
-        fp.position.x + pad.position.x * cos_r - pad.position.y * sin_r,
-        fp.position.y + pad.position.x * sin_r + pad.position.y * cos_r,
-    )
-}
-
 /// Compute bounding box of a footprint's pads: `(min, max)`.
 pub fn footprint_bounds(fp: &vcad_ir::ecad::Footprint) -> (Vec2, Vec2) {
     let mut min_x = f64::MAX;
@@ -134,7 +134,7 @@ pub fn footprint_bounds(fp: &vcad_ir::ecad::Footprint) -> (Vec2, Vec2) {
     let mut max_y = f64::MIN;
 
     for pad in &fp.pads {
-        let Vec2 { x: wx, y: wy } = pad_world_center(fp, pad);
+        let Vec2 { x: wx, y: wy } = pad_world_position(fp, pad);
         let (pw, ph) = pad_dimensions(&pad.shape);
         let r = pw.max(ph) / 2.0;
 
@@ -155,6 +155,70 @@ pub fn footprint_bounds(fp: &vcad_ir::ecad::Footprint) -> (Vec2, Vec2) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use vcad_ir::ecad::{Footprint, Pad, PadType};
+
+    fn rotated_fixture() -> Footprint {
+        Footprint {
+            reference: "J1".to_string(),
+            value: "CONN".to_string(),
+            footprint_name: "JST_XH_4".to_string(),
+            position: Vec2::new(10.0, 20.0),
+            rotation: 190.0,
+            front: true,
+            pads: vec![
+                Pad {
+                    number: "1".to_string(),
+                    pad_type: PadType::THT,
+                    shape: PadShape::Circle { diameter: 1.7 },
+                    position: Vec2::new(7.62, 0.0),
+                    rotation: 0.0,
+                    drill: None,
+                    net: Some("1".to_string()),
+                    layers: vec![PcbLayer::FCu],
+                },
+                Pad {
+                    number: "2".to_string(),
+                    pad_type: PadType::THT,
+                    shape: PadShape::Circle { diameter: 1.7 },
+                    position: Vec2::new(2.54, -1.27),
+                    rotation: 0.0,
+                    drill: None,
+                    net: Some("2".to_string()),
+                    layers: vec![PcbLayer::FCu],
+                },
+            ],
+            graphics: vec![],
+            model_3d: None,
+            properties: std::collections::HashMap::new(),
+        }
+    }
+
+    /// Cross-language regression: these constants are also asserted by the
+    /// TypeScript `get_pad_positions` test ("agrees with the Rust
+    /// pad_world_position transform") in
+    /// `packages/mcp/src/__tests__/ecad.test.ts`. Both sides pin the same
+    /// footprint fixture (origin (10, 20), rotation 190°) to the same world
+    /// coordinates, so the Rust copper pipeline and the TS reporting tool
+    /// cannot silently drift apart. If you change one, change both.
+    #[test]
+    fn pad_world_position_rotated_matches_ts_tool() {
+        let fp = rotated_fixture();
+        let a = pad_world_position(&fp, &fp.pads[0]);
+        assert!((a.x - 2.495764922046975).abs() < 1e-9, "a.x = {}", a.x);
+        assert!((a.y - 18.67680088617799).abs() < 1e-9, "a.y = {}", a.y);
+        let b = pad_world_position(&fp, &fp.pads[1]);
+        assert!((b.x - 7.27805512171199).abs() < 1e-9, "b.x = {}", b.x);
+        assert!((b.y - 20.8096394750515).abs() < 1e-9, "b.y = {}", b.y);
+    }
+
+    #[test]
+    fn pad_world_position_zero_rotation_is_plain_offset() {
+        let mut fp = rotated_fixture();
+        fp.rotation = 0.0;
+        let a = pad_world_position(&fp, &fp.pads[0]);
+        assert!((a.x - 17.62).abs() < 1e-12);
+        assert!((a.y - 20.0).abs() < 1e-12);
+    }
 
     #[test]
     fn layer_z_fcu() {

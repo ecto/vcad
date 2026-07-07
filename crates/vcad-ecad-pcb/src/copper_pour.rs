@@ -128,15 +128,11 @@ fn collect_clearance_regions(pcb: &Pcb, zone: &Zone) -> Vec<Poly> {
     let spoke = zone.thermal_spoke_width.unwrap_or(DEFAULT_SPOKE_WIDTH);
     for footprint in &pcb.footprints {
         let fr = footprint.rotation.to_radians();
-        let (fc, fs) = (fr.cos(), fr.sin());
         for pad in &footprint.pads {
             if !pad.layers.contains(&zone.layer) {
                 continue;
             }
-            let world = Vec2::new(
-                footprint.position.x + pad.position.x * fc - pad.position.y * fs,
-                footprint.position.y + pad.position.x * fs + pad.position.y * fc,
-            );
+            let world = crate::geometry::pad_world_position(footprint, pad);
             let ang = fr + pad.rotation.to_radians();
             let (hw, hh) = pad_half_extents(pad);
             let same_net = pad.net.as_deref() == Some(zone.net.as_str());
@@ -362,6 +358,7 @@ mod tests {
                 width: 0.25,
                 layer: PcbLayer::FCu,
                 net: "1".to_string(),
+                source: None,
             }],
             trace_arcs: vec![],
             vias: vec![],
