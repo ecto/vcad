@@ -834,7 +834,7 @@ mod tests {
     #[test]
     fn fmt_precision() {
         assert_eq!(fmt_f64(10.0), "10.0");
-        assert_eq!(fmt_f64(3.14159), "3.14159");
+        assert_eq!(fmt_f64(3.14259), "3.14259");
         assert_eq!(fmt_f64(0.0), "0.0");
         assert_eq!(fmt_f64(1.5), "1.5");
     }
