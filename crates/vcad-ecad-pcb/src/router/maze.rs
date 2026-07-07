@@ -471,6 +471,7 @@ mod tests {
             width: 0.25,
             layer: PcbLayer::FCu,
             net: net.into(),
+            source: None,
         }
     }
 

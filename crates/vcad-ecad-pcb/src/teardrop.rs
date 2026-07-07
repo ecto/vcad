@@ -267,6 +267,7 @@ mod tests {
             start_layer: PcbLayer::FCu,
             end_layer: PcbLayer::BCu,
             net: "N".into(),
+            source: None,
         };
         let trace = Trace {
             start: Vec2::new(20.0, 20.0),
@@ -274,6 +275,7 @@ mod tests {
             width: 0.25,
             layer: PcbLayer::FCu,
             net: "N".into(),
+            source: None,
         };
         let tds = generate_teardrops(&board(vec![], vec![trace], vec![via]));
         assert_eq!(tds.len(), 1, "one endpoint lands on the via");
@@ -293,6 +295,7 @@ mod tests {
             start_layer: PcbLayer::FCu,
             end_layer: PcbLayer::BCu,
             net: "OTHER".into(),
+            source: None,
         };
         let trace = Trace {
             start: Vec2::new(20.0, 20.0),
@@ -300,6 +303,7 @@ mod tests {
             width: 0.25,
             layer: PcbLayer::FCu,
             net: "N".into(),
+            source: None,
         };
         let tds = generate_teardrops(&board(vec![], vec![trace], vec![via]));
         assert!(tds.is_empty(), "a different-net via gets no teardrop");
@@ -315,6 +319,7 @@ mod tests {
             start_layer: PcbLayer::FCu,
             end_layer: PcbLayer::BCu,
             net: "N".into(),
+            source: None,
         };
         let trace = Trace {
             start: Vec2::new(20.0, 20.0),
@@ -322,6 +327,7 @@ mod tests {
             width: 0.25,
             layer: PcbLayer::FCu,
             net: "N".into(),
+            source: None,
         };
         assert!(generate_teardrops(&board(vec![], vec![trace], vec![via])).is_empty());
     }

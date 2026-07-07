@@ -757,6 +757,7 @@ mod tests {
             end: Vec2::new(20.0, 5.0),
             width: 0.25,
             layer: PcbLayer::FCu,
+            source: None,
         };
         let pcb = board_with(
             vec![chip("R1", 10.0, 10.0), chip("R2", 25.0, 20.0)],

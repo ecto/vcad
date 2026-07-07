@@ -1424,11 +1424,15 @@ export async function createServer(
         name: "route_nets",
         description:
           "Route electrical nets on the PCB with copper traces. Connects pads " +
-          "belonging to the same net. A net with a copper-pour zone (a plane) " +
-          "is connected by stitching each pad to the plane with a via instead " +
-          "of tracing it — those nets come back in `plane_stitched`. " +
-          "`locked_nets` preserves hand-placed copper from rip-up. Mutates the " +
-          "session document (pass document_id).",
+          "belonging to the same net. Idempotent: re-running rips up the " +
+          "previously autorouted copper on the target nets before routing, so " +
+          "a second call replaces the route instead of stacking shorts. " +
+          "Hand-placed copper (add_trace / add_via / coils) is preserved " +
+          "automatically; `locked_nets` additionally protects whole nets. A " +
+          "net with a copper-pour zone (a plane) is connected by stitching " +
+          "each pad to the plane with a via instead of tracing it — those " +
+          "nets come back in `plane_stitched`. Mutates the session document " +
+          "(pass document_id).",
         inputSchema: routeNetsSchema,
       },
       {
@@ -1542,7 +1546,8 @@ export async function createServer(
           "Lay an explicit copper trace: a polyline of segments on a layer, " +
           "assigned to a net. The general-purpose routing primitive — use it " +
           "for coil interconnect, buses, and hand-routes that route_nets " +
-          "(pad-driven) won't make. Mutates the session document.",
+          "(pad-driven) won't make. Tagged as manual copper, so route_nets " +
+          "preserves it instead of ripping it up. Mutates the session document.",
         inputSchema: addTraceSchema,
       },
       {

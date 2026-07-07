@@ -686,6 +686,7 @@ fn parse_trace(node: &SExpr<'_>, net_map: &HashMap<u32, String>) -> Option<Trace
         width,
         layer,
         net,
+        source: None,
     })
 }
 
@@ -710,6 +711,7 @@ fn parse_via(node: &SExpr<'_>, net_map: &HashMap<u32, String>) -> Option<Via> {
         start_layer,
         end_layer,
         net,
+        source: None,
     })
 }
 
