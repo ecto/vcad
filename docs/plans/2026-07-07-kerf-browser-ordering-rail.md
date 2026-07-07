@@ -11,12 +11,14 @@ decided: Stripe Issuing. The goal is that ordering works entirely via MCP
 from any agent session, with no user machine in the loop.*
 
 *Rev 3 (same day): named **kerf**; eve adopted fully (no framework
-hedging). The scaffold is real and lives at `kerf/` in this repo,
-**incubating until `ecto/kerf` exists** — this session's GitHub credential
-cannot create repositories. Extraction is history-preserving:
-`git subtree split -P kerf -b kerf-extract && git push
-git@github.com:ecto/kerf.git kerf-extract:main`. The canonical
-architecture doc moves with the code: `kerf/docs/architecture.md`.*
+hedging). The scaffold briefly incubated at `kerf/` in this repo because
+this session's GitHub credential cannot create repositories.*
+
+*Rev 4 (same day): [`ecto/kerf`](https://github.com/ecto/kerf) exists;
+extraction complete via `git subtree split` (root commit `72f32f3`). The
+incubation copy is removed from this repo — kerf development happens in
+ecto/kerf, and the canonical architecture doc lives there at
+`docs/architecture.md`.*
 
 ## The problem
 
@@ -371,8 +373,3 @@ it is the MVP, not a compromise.
 2. **Registry publicity timing.** The scoreboard is a flywheel but also an
    anti-bot bat-signal. Private until Wave 3, public with the partner-pitch
    framing?
-3. **Repo creation.** `ecto/kerf` needs to be created by a human (this
-   session's GitHub App credential cannot create repositories); the
-   scaffold extracts from `kerf/` with the subtree-split in the Rev 3
-   note. Suggested settings: private to start, Apache-2.0, no auto-init
-   (the extracted history is the init).
