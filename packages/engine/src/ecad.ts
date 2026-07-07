@@ -197,6 +197,40 @@ export async function runDrc(pcb: Pcb): Promise<VerifyOutcome<DrcViolationResult
 }
 
 /**
+ * Run DRC with the geometric checks scoped to an axis-aligned region (mm) —
+ * the incremental verify-on-write entry point. Only elements intersecting the
+ * region are subjects of the clearance/width/drill/edge checks (each still
+ * judged against the whole board); connectivity (shorts, net islands,
+ * unrouted nets) always runs board-global. Same three-state contract as
+ * {@link runDrc}.
+ *
+ * A kernel WASM built before the scoped binding falls back to a full-board
+ * run — a correct (slower) superset, and still element-wise comparable across
+ * a before/after pair as long as both snapshots take the same path.
+ */
+export async function runDrcInRegion(
+  pcb: Pcb,
+  min: Vec2,
+  max: Vec2,
+): Promise<VerifyOutcome<DrcViolationResult[]>> {
+  const wasm = await loadEcadWasm();
+  if (wasm && typeof wasm.ecadCheckDrcInRegion !== "function") {
+    return runDrc(pcb);
+  }
+  return verifyWithKernel(
+    "DRC(region)",
+    (w) =>
+      w.ecadCheckDrcInRegion(
+        JSON.stringify(pcb),
+        min.x,
+        min.y,
+        max.x,
+        max.y,
+      ) as DrcViolationResult[],
+  );
+}
+
+/**
  * Discriminated outcome for fab-readiness probes that must distinguish a real
  * pass from an *unverifiable* one. Surface the kernel error verbatim so callers
  * can fail closed and quote the exact failing field.

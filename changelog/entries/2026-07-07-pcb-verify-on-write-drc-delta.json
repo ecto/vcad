@@ -1,0 +1,22 @@
+{
+  "id": "2026-07-07-pcb-verify-on-write-drc-delta",
+  "version": "0.9.4",
+  "date": "2026-07-07",
+  "category": "feat",
+  "title": "PCB copper mutators verify-on-write with drc_delta",
+  "summary": "Every copper-mutating PCB tool now returns a drc_delta (violations it introduced, categorized, with clean to branch on), incrementally scoped on big boards.",
+  "features": ["pcb", "drc", "verification", "mcp"],
+  "mcpTools": [
+    "add_trace",
+    "add_via",
+    "add_via_array",
+    "add_coil",
+    "add_coil_array",
+    "add_motor_winding",
+    "delete_trace",
+    "delete_via",
+    "delete_zone",
+    "set_board_outline",
+    "set_stackup"
+  ]
+}

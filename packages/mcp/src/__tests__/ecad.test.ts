@@ -2464,7 +2464,7 @@ describe("route_nets idempotency", () => {
     // A standalone coil on its own net — a free spiral whose terminals dangle by
     // design and whose net has no pads. It must survive every route_nets call.
     const coil = out(
-      addCoil({
+      await addCoil({
         document_id: id,
         center: { x: 25, y: 17 },
         turns: 4,
@@ -2847,7 +2847,7 @@ describe("add_coil", () => {
   it("generates a spiral on a net with sane endpoints, length, and resistance", async () => {
     const id = await circleBoardSession();
     const coil = out(
-      addCoil({
+      await addCoil({
         document_id: id,
         center: { x: 40, y: 40 },
         turns: 5,
@@ -2890,7 +2890,7 @@ describe("add_coil", () => {
 
   it("rejects coils whose turns don't fit the clearance, with the max that would", async () => {
     const id = await circleBoardSession();
-    const res = addCoil({
+    const res = await addCoil({
       document_id: id,
       center: { x: 40, y: 40 },
       turns: 30,
@@ -2906,7 +2906,7 @@ describe("add_coil", () => {
 
   it("requires a PCB on the document", async () => {
     const created = out(await createSchematic({ components: [resistor("R1", 0)] }));
-    const res = addCoil({
+    const res = await addCoil({
       document_id: created.document_id,
       center: { x: 0, y: 0 },
       turns: 2,
@@ -3011,7 +3011,7 @@ describe("add_coil_array", () => {
 
   it("lays a 3-phase ring: 3 coils 120° apart, nets cycled", async () => {
     const id = await ringBoard();
-    const res = out(addCoilArray({ document_id: id, ...base, net_sequence: ["PHA", "PHB", "PHC"] }));
+    const res = out(await addCoilArray({ document_id: id, ...base, net_sequence: ["PHA", "PHB", "PHC"] }));
     expect(res.success).toBe(true);
     expect(res.coils_added).toBe(3);
     expect(res.total_traces).toBeGreaterThan(0);
@@ -3031,14 +3031,14 @@ describe("add_coil_array", () => {
 
   it("chirality 'alternating' flips winding sense per coil", async () => {
     const id = await ringBoard();
-    const res = out(addCoilArray({ document_id: id, ...base, net: "X", chirality: "alternating" }));
+    const res = out(await addCoilArray({ document_id: id, ...base, net: "X", chirality: "alternating" }));
     expect(res.results.map((r: { direction: string }) => r.direction)).toEqual(["ccw", "cw", "ccw"]);
   });
 
   it("cycles net_sequence when shorter than count", async () => {
     const id = await ringBoard();
     const res = out(
-      addCoilArray({ document_id: id, ...base, count: 4, net_sequence: ["A", "B"] }),
+      await addCoilArray({ document_id: id, ...base, count: 4, net_sequence: ["A", "B"] }),
     );
     expect(res.results.map((r: { net: string }) => r.net)).toEqual(["A", "B", "A", "B"]);
   });
@@ -3046,20 +3046,20 @@ describe("add_coil_array", () => {
   it("mutates the same session that addCoil writes to", async () => {
     const id = await ringBoard();
     const before = getPcbBoard(getSession(id)).traces.length;
-    out(addCoilArray({ document_id: id, ...base, net_sequence: ["PHA", "PHB", "PHC"] }));
+    out(await addCoilArray({ document_id: id, ...base, net_sequence: ["PHA", "PHB", "PHC"] }));
     expect(getPcbBoard(getSession(id)).traces.length).toBeGreaterThan(before);
   });
 
   it("rejects count < 1", async () => {
     const id = await ringBoard();
-    const res = addCoilArray({ document_id: id, ...base, count: 0, net: "X" });
+    const res = await addCoilArray({ document_id: id, ...base, count: 0, net: "X" });
     expect(res.isError).toBe(true);
   });
 
   it("collects per-coil geometry failures instead of throwing", async () => {
     const id = await ringBoard();
     // outer_radius <= inner_radius fails inside addCoil for every coil.
-    const res = addCoilArray({
+    const res = await addCoilArray({
       document_id: id,
       ...base,
       inner_radius: 8,
@@ -3083,7 +3083,7 @@ describe("add_trace / add_via / set_stackup", () => {
   it("add_trace adds N-1 segments and ensures the net", async () => {
     const id = await board();
     const res = out(
-      addTrace({
+      await addTrace({
         document_id: id,
         net: "SIG",
         points: [
@@ -3105,23 +3105,27 @@ describe("add_trace / add_via / set_stackup", () => {
 
   it("add_trace rejects < 2 points and non-copper layers", async () => {
     const id = await board();
-    expect(addTrace({ document_id: id, net: "X", points: [{ x: 0, y: 0 }] }).isError).toBe(true);
     expect(
-      addTrace({
-        document_id: id,
-        net: "X",
-        layer: "FSilkS",
-        points: [
-          { x: 0, y: 0 },
-          { x: 1, y: 1 },
-        ],
-      }).isError,
+      (await addTrace({ document_id: id, net: "X", points: [{ x: 0, y: 0 }] })).isError,
+    ).toBe(true);
+    expect(
+      (
+        await addTrace({
+          document_id: id,
+          net: "X",
+          layer: "FSilkS",
+          points: [
+            { x: 0, y: 0 },
+            { x: 1, y: 1 },
+          ],
+        })
+      ).isError,
     ).toBe(true);
   });
 
   it("add_via adds a via with default span and ensures the net", async () => {
     const id = await board();
-    const res = out(addVia({ document_id: id, net: "GND", position: { x: 5, y: 5 } }));
+    const res = out(await addVia({ document_id: id, net: "GND", position: { x: 5, y: 5 } }));
     expect(res.success).toBe(true);
     expect(res.position).toEqual({ x: 5, y: 5 });
     const b = getPcbBoard(getSession(id));
@@ -3135,7 +3139,7 @@ describe("add_trace / add_via / set_stackup", () => {
 
   it("set_stackup copper_oz changes copperThickness on all copper layers", async () => {
     const id = await board();
-    const res = out(setStackup({ document_id: id, copper_oz: 2 }));
+    const res = out(await setStackup({ document_id: id, copper_oz: 2 }));
     expect(res.success).toBe(true);
     const b = getPcbBoard(getSession(id));
     for (const l of b.stackup.layers.filter((s) => /Cu$/.test(s.layer))) {
@@ -3147,7 +3151,7 @@ describe("add_trace / add_via / set_stackup", () => {
     // 1 oz baseline coil.
     const id1 = await board();
     const c1oz = out(
-      addCoil({
+      await addCoil({
         document_id: id1,
         center: { x: 25, y: 25 },
         turns: 3,
@@ -3160,9 +3164,9 @@ describe("add_trace / add_via / set_stackup", () => {
     );
     // 2 oz coil on a fresh board (thicker copper → lower resistance).
     const id2 = await board();
-    out(setStackup({ document_id: id2, copper_oz: 2 }));
+    out(await setStackup({ document_id: id2, copper_oz: 2 }));
     const c2oz = out(
-      addCoil({
+      await addCoil({
         document_id: id2,
         center: { x: 25, y: 25 },
         turns: 3,
@@ -3180,7 +3184,7 @@ describe("add_trace / add_via / set_stackup", () => {
   it("set_stackup per-layer creates a missing copper layer entry", async () => {
     const id = await board();
     const res = out(
-      setStackup({
+      await setStackup({
         document_id: id,
         layers: [{ layer: "In1Cu", copper_oz: 0.5, material: "FR4" }],
       }),
@@ -3211,7 +3215,7 @@ describe("add_coil lead-out and multilayer", () => {
     const id = await circleBoardSession();
     const center = { x: 40, y: 40 };
     const plain = out(
-      addCoil({
+      await addCoil({
         document_id: id,
         center,
         turns: 4,
@@ -3229,7 +3233,7 @@ describe("add_coil lead-out and multilayer", () => {
 
     const id2 = await circleBoardSession();
     const led = out(
-      addCoil({
+      await addCoil({
         document_id: id2,
         center,
         turns: 4,
@@ -3256,7 +3260,7 @@ describe("add_coil lead-out and multilayer", () => {
   it("layers:[FCu,BCu] stacks the coil on both layers with a stitch via", async () => {
     const id = await circleBoardSession();
     const res = out(
-      addCoil({
+      await addCoil({
         document_id: id,
         center: { x: 40, y: 40 },
         turns: 3,
@@ -3304,7 +3308,7 @@ describe("add_motor_winding", () => {
   it("realizes a feasible 12s/10p wye winding: 12 coils, interconnect, a net-tie", async () => {
     const id = await statorBoard();
     const res = out(
-      addMotorWinding({
+      await addMotorWinding({
         document_id: id,
         slots: 12,
         poles: 10,
@@ -3344,7 +3348,7 @@ describe("add_motor_winding", () => {
   it("delta winding adds a net-tie per junction", async () => {
     const id = await statorBoard();
     const res = out(
-      addMotorWinding({
+      await addMotorWinding({
         document_id: id,
         slots: 12,
         poles: 10,
@@ -3365,7 +3369,7 @@ describe("add_motor_winding", () => {
 
   it("rejects an infeasible slot/pole/phase combination", async () => {
     const id = await statorBoard();
-    const res = addMotorWinding({
+    const res = await addMotorWinding({
       document_id: id,
       slots: 9,
       poles: 12,
@@ -3526,7 +3530,7 @@ describe("add_motor_winding", () => {
 
   it("9s/6p wye: 0 shorts, no same-net via bypass, star off the bore, feeds routed", async () => {
     const id = statorBoard9s6p(true);
-    const res = out(wind9s6p(id, "wye"));
+    const res = out(await wind9s6p(id, "wye"));
     expect(res.errors).toBeUndefined();
     expect(res.success).toBe(true);
     expect(res.coils_placed).toBe(9);
@@ -3565,7 +3569,7 @@ describe("add_motor_winding", () => {
     // Delta needs 2 rings per phase (series + return links); the Ø20 bore
     // doesn't fit 6 — use a Ø12 bore for the delta variant.
     const id = statorBoard9s6p(false, 6);
-    const res = out(wind9s6p(id, "delta"));
+    const res = out(await wind9s6p(id, "delta"));
     expect(res.errors).toBeUndefined();
     expect(res.success).toBe(true);
     expect(res.coils_placed).toBe(9);
@@ -3581,7 +3585,7 @@ describe("add_motor_winding", () => {
 
   it("9s/6p delta on the Ø20 bore fails loudly — the rings don't fit", async () => {
     const id = statorBoard9s6p(false, 10);
-    const res = wind9s6p(id, "delta");
+    const res = await wind9s6p(id, "delta");
     expect(res.isError).toBe(true);
     expect(res.content[0]!.text).toContain("interconnect doesn't fit");
   });

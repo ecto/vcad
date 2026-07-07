@@ -257,7 +257,7 @@ export class PhysicsSim {
      * @returns {number}
      */
     numJoints() {
-        const ret = wasm.physicssim_actionDim(this.__wbg_ptr);
+        const ret = wasm.physicssim_numJoints(this.__wbg_ptr);
         return ret >>> 0;
     }
     /**
@@ -1001,7 +1001,7 @@ export class Solid {
      * @returns {boolean}
      */
     canExportStep() {
-        const ret = wasm.raytracer_canRaytrace(this.__wbg_ptr);
+        const ret = wasm.solid_canExportStep(this.__wbg_ptr);
         return ret !== 0;
     }
     /**
@@ -1020,7 +1020,7 @@ export class Solid {
      * @returns {Solid}
      */
     chamfer(distance) {
-        const ret = wasm.op_chamfer(this.__wbg_ptr, distance);
+        const ret = wasm.solid_chamfer(this.__wbg_ptr, distance);
         return Solid.__wrap(ret);
     }
     /**
@@ -1043,7 +1043,7 @@ export class Solid {
      * @returns {Solid}
      */
     circularPattern(axis_origin_x, axis_origin_y, axis_origin_z, axis_dir_x, axis_dir_y, axis_dir_z, count, angle_deg) {
-        const ret = wasm.op_circular_pattern(this.__wbg_ptr, axis_origin_x, axis_origin_y, axis_origin_z, axis_dir_x, axis_dir_y, axis_dir_z, count, angle_deg);
+        const ret = wasm.solid_circularPattern(this.__wbg_ptr, axis_origin_x, axis_origin_y, axis_origin_z, axis_dir_x, axis_dir_y, axis_dir_z, count, angle_deg);
         return Solid.__wrap(ret);
     }
     /**
@@ -1151,7 +1151,7 @@ export class Solid {
      * @returns {Solid}
      */
     fillet(radius) {
-        const ret = wasm.op_fillet(this.__wbg_ptr, radius);
+        const ret = wasm.solid_fillet(this.__wbg_ptr, radius);
         return Solid.__wrap(ret);
     }
     /**
@@ -1225,7 +1225,7 @@ export class Solid {
      * @returns {Solid}
      */
     linearPattern(dir_x, dir_y, dir_z, count, spacing) {
-        const ret = wasm.op_linear_pattern(this.__wbg_ptr, dir_x, dir_y, dir_z, count, spacing);
+        const ret = wasm.solid_linearPattern(this.__wbg_ptr, dir_x, dir_y, dir_z, count, spacing);
         return Solid.__wrap(ret);
     }
     /**
@@ -1412,7 +1412,7 @@ export class Solid {
      * @returns {Solid}
      */
     shell(thickness) {
-        const ret = wasm.op_shell(this.__wbg_ptr, thickness);
+        const ret = wasm.solid_shell(this.__wbg_ptr, thickness);
         return Solid.__wrap(ret);
     }
     /**
@@ -3794,6 +3794,36 @@ export function ecadCheckDrc(pcb_json) {
     const ptr0 = passStringToWasm0(pcb_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len0 = WASM_VECTOR_LEN;
     const ret = wasm.ecadCheckDrc(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+
+/**
+ * Run DRC with the geometric checks scoped to an axis-aligned region
+ * (mm) — the incremental verify-on-write entry point. Only elements
+ * intersecting the region are subjects of the clearance/width/drill/edge
+ * checks (each still judged against the whole board); connectivity
+ * (shorts, islands, unrouted nets) always runs board-global.
+ *
+ * # Arguments
+ * * `pcb_json` - JSON-serialized `Pcb` struct
+ * * `min_x`, `min_y`, `max_x`, `max_y` - region corners (mm)
+ *
+ * # Returns
+ * Array of DRC violations as JsValue.
+ * @param {string} pcb_json
+ * @param {number} min_x
+ * @param {number} min_y
+ * @param {number} max_x
+ * @param {number} max_y
+ * @returns {any}
+ */
+export function ecadCheckDrcInRegion(pcb_json, min_x, min_y, max_x, max_y) {
+    const ptr0 = passStringToWasm0(pcb_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.ecadCheckDrcInRegion(ptr0, len0, min_x, min_y, max_x, max_y);
     if (ret[2]) {
         throw takeFromExternrefTable0(ret[1]);
     }
@@ -7573,7 +7603,7 @@ function __wbg_get_imports() {
                     const a = state0.a;
                     state0.a = 0;
                     try {
-                        return wasm_bindgen__convert__closures_____invoke__h3c7e771ac0cfa72e(a, state0.b, arg0, arg1);
+                        return wasm_bindgen__convert__closures_____invoke__h909ef70400a4aa92(a, state0.b, arg0, arg1);
                     } finally {
                         state0.a = a;
                     }
@@ -8158,13 +8188,13 @@ function __wbg_get_imports() {
             arg0.writeTexture(arg1, arg2, arg3, arg4);
         },
         __wbindgen_cast_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 2462, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 2463, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-            const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h30743bca3150d93c, wasm_bindgen__convert__closures_____invoke__hcf7d3eaee8800b37);
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 2594, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 2595, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h449c01a9b484b49e, wasm_bindgen__convert__closures_____invoke__h97f5d3065e41a070);
             return ret;
         },
         __wbindgen_cast_0000000000000002: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 3246, function: Function { arguments: [Externref], shim_idx: 3247, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-            const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__hfdadf281ff0f1c56, wasm_bindgen__convert__closures_____invoke__h9bdf540eb7e61590);
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 3307, function: Function { arguments: [Externref], shim_idx: 3308, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h5fc04d9207857a4f, wasm_bindgen__convert__closures_____invoke__h93fa00cb00fe3f24);
             return ret;
         },
         __wbindgen_cast_0000000000000003: function(arg0) {
@@ -8252,16 +8282,16 @@ function __wbg_get_imports() {
     };
 }
 
-function wasm_bindgen__convert__closures_____invoke__hcf7d3eaee8800b37(arg0, arg1, arg2) {
-    wasm.wasm_bindgen__convert__closures_____invoke__hcf7d3eaee8800b37(arg0, arg1, arg2);
+function wasm_bindgen__convert__closures_____invoke__h97f5d3065e41a070(arg0, arg1, arg2) {
+    wasm.wasm_bindgen__convert__closures_____invoke__h97f5d3065e41a070(arg0, arg1, arg2);
 }
 
-function wasm_bindgen__convert__closures_____invoke__h9bdf540eb7e61590(arg0, arg1, arg2) {
-    wasm.wasm_bindgen__convert__closures_____invoke__h9bdf540eb7e61590(arg0, arg1, arg2);
+function wasm_bindgen__convert__closures_____invoke__h93fa00cb00fe3f24(arg0, arg1, arg2) {
+    wasm.wasm_bindgen__convert__closures_____invoke__h93fa00cb00fe3f24(arg0, arg1, arg2);
 }
 
-function wasm_bindgen__convert__closures_____invoke__h3c7e771ac0cfa72e(arg0, arg1, arg2, arg3) {
-    wasm.wasm_bindgen__convert__closures_____invoke__h3c7e771ac0cfa72e(arg0, arg1, arg2, arg3);
+function wasm_bindgen__convert__closures_____invoke__h909ef70400a4aa92(arg0, arg1, arg2, arg3) {
+    wasm.wasm_bindgen__convert__closures_____invoke__h909ef70400a4aa92(arg0, arg1, arg2, arg3);
 }
 
 

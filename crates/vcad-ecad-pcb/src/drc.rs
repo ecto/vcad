@@ -118,6 +118,58 @@ fn fp_pair_provenance(a_ref: &str, b_ref: &str) -> DrcProvenance {
     }
 }
 
+/// Axis-aligned region scoping an incremental DRC run.
+///
+/// A scoped run keeps only the elements whose copper bounds intersect this
+/// region as *subjects* of the per-element and pairwise checks (clearance,
+/// widths, drills, edge, hole-to-hole, keepouts, courtyards). Pairwise checks
+/// fire when **either** party is in scope, so a subject in the region is still
+/// judged against everything around it. Connectivity (shorts through copper,
+/// unrouted nets, net islands, unstitched pads) is always board-global — a
+/// local copper edit changes the electrical graph everywhere.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DrcRegion {
+    /// Minimum corner `[x, y]` (mm).
+    pub min: [f64; 2],
+    /// Maximum corner `[x, y]` (mm).
+    pub max: [f64; 2],
+}
+
+impl DrcRegion {
+    /// True when the AABB `(min, max)` intersects this region.
+    fn hits(&self, min: [f64; 2], max: [f64; 2]) -> bool {
+        min[0] <= self.max[0]
+            && max[0] >= self.min[0]
+            && min[1] <= self.max[1]
+            && max[1] >= self.min[1]
+    }
+
+    /// True when a disc of radius `r` at `p` intersects this region.
+    fn hits_point(&self, p: Vec2, r: f64) -> bool {
+        self.hits([p.x - r, p.y - r], [p.x + r, p.y + r])
+    }
+
+    /// True when a stroked segment (half-width `r`) intersects this region.
+    fn hits_segment(&self, a: Vec2, b: Vec2, r: f64) -> bool {
+        self.hits(
+            [a.x.min(b.x) - r, a.y.min(b.y) - r],
+            [a.x.max(b.x) + r, a.y.max(b.y) + r],
+        )
+    }
+
+    /// True when a copper geometry's bounds intersect this region.
+    fn hits_geom(&self, geom: &CopperGeom) -> bool {
+        let (min, max) = geom.bounds();
+        self.hits(min, max)
+    }
+}
+
+/// True when `region` is unset (full-board run) or the predicate matches it.
+/// The subject filter every scoped check runs through.
+fn in_scope(region: Option<&DrcRegion>, pred: impl Fn(&DrcRegion) -> bool) -> bool {
+    region.is_none_or(pred)
+}
+
 /// Run all DRC checks on a PCB and return violations.
 ///
 /// Checks performed:
@@ -128,20 +180,49 @@ fn fp_pair_provenance(a_ref: &str, b_ref: &str) -> DrcProvenance {
 /// - Hole-to-hole spacing
 /// - Annular ring width
 pub fn check_drc(pcb: &Pcb) -> Vec<DrcViolation> {
+    check_drc_scoped(pcb, None)
+}
+
+/// Run DRC with the geometric checks scoped to `region` (see [`DrcRegion`]).
+///
+/// The incremental entry point for verify-on-write: a mutator that touched
+/// copper only inside `region` gets a full-fidelity verdict for that copper
+/// (every rule, judged against the whole board via the spatial index) without
+/// paying for a board-wide clearance sweep. Connectivity checks still run
+/// board-global — they are the only rules a local edit can violate remotely.
+///
+/// Two scoped runs over the same region on the same board are element-wise
+/// comparable, so a before/after diff of this function isolates exactly what a
+/// mutation inside the region changed.
+pub fn check_drc_in_region(pcb: &Pcb, min: Vec2, max: Vec2) -> Vec<DrcViolation> {
+    check_drc_scoped(
+        pcb,
+        Some(DrcRegion {
+            min: [min.x.min(max.x), min.y.min(max.y)],
+            max: [min.x.max(max.x), min.y.max(max.y)],
+        }),
+    )
+}
+
+/// Shared body of [`check_drc`] / [`check_drc_in_region`] — one rule set, with
+/// an optional subject scope. Never duplicates rule logic per scope.
+fn check_drc_scoped(pcb: &Pcb, region: Option<DrcRegion>) -> Vec<DrcViolation> {
     let mut violations = Vec::new();
     let index = SpatialIndex::from_pcb(pcb);
     let net_ties = NetTieGroups::from_pcb(pcb);
     let dp_map = build_diff_pair_gap_map(pcb);
+    let region = region.as_ref();
 
-    check_clearance(pcb, &index, &net_ties, &dp_map, &mut violations);
-    check_pad_clearance(pcb, &net_ties, &dp_map, &mut violations);
-    check_min_trace_width(pcb, &mut violations);
-    check_min_drill(pcb, &mut violations);
-    check_edge_clearance(pcb, &mut violations);
-    check_hole_to_hole(pcb, &mut violations);
-    check_annular_ring(pcb, &mut violations);
-    check_keepout(pcb, &mut violations);
-    check_courtyard_overlap(pcb, &mut violations);
+    check_clearance(pcb, &index, &net_ties, &dp_map, region, &mut violations);
+    check_pad_clearance(pcb, &net_ties, &dp_map, region, &mut violations);
+    check_min_trace_width(pcb, region, &mut violations);
+    check_min_drill(pcb, region, &mut violations);
+    check_edge_clearance(pcb, region, &mut violations);
+    check_hole_to_hole(pcb, region, &mut violations);
+    check_annular_ring(pcb, region, &mut violations);
+    check_keepout(pcb, region, &mut violations);
+    check_courtyard_overlap(pcb, region, &mut violations);
+    // Board-global by construction (a union-find over ALL copper): never scoped.
     check_connectivity(pcb, &net_ties, &mut violations);
 
     violations
@@ -199,7 +280,11 @@ fn courtyard_bounds(fp: &Footprint) -> (Vec2, Vec2) {
 /// Flag components whose courtyards overlap on the same board side — a
 /// placement collision. Courtyards are an assembly keep-clear envelope, so any
 /// overlap is an error. Components on opposite sides never collide.
-fn check_courtyard_overlap(pcb: &Pcb, violations: &mut Vec<DrcViolation>) {
+fn check_courtyard_overlap(
+    pcb: &Pcb,
+    region: Option<&DrcRegion>,
+    violations: &mut Vec<DrcViolation>,
+) {
     let boxes: Vec<(usize, (Vec2, Vec2))> = pcb
         .footprints
         .iter()
@@ -207,8 +292,18 @@ fn check_courtyard_overlap(pcb: &Pcb, violations: &mut Vec<DrcViolation>) {
         .map(|(i, fp)| (i, courtyard_bounds(fp)))
         .collect();
 
+    // Scoped runs: a footprint pair is a subject when either courtyard is in
+    // the region.
+    let in_region: Vec<bool> = boxes
+        .iter()
+        .map(|(_, (min, max))| in_scope(region, |r| r.hits([min.x, min.y], [max.x, max.y])))
+        .collect();
+
     for a in 0..boxes.len() {
         for b in (a + 1)..boxes.len() {
+            if !in_region[a] && !in_region[b] {
+                continue;
+            }
             let (ia, (amin, amax)) = &boxes[a];
             let (ib, (bmin, bmax)) = &boxes[b];
             let fa = &pcb.footprints[*ia];
@@ -343,6 +438,7 @@ fn check_clearance(
     index: &SpatialIndex,
     net_ties: &NetTieGroups,
     dp_map: &HashMap<(String, String), f64>,
+    region: Option<&DrcRegion>,
     violations: &mut Vec<DrcViolation>,
 ) {
     let default_clearance = pcb.rules.default_rules.clearance;
@@ -352,6 +448,11 @@ fn check_clearance(
 
     // Check each trace against nearby elements on the same layer
     for trace in &pcb.traces {
+        if !in_scope(region, |r| {
+            r.hits_segment(trace.start, trace.end, trace.width / 2.0)
+        }) {
+            continue;
+        }
         let clearance = net_clearance
             .get(&trace.net)
             .copied()
@@ -424,6 +525,7 @@ fn check_pad_clearance(
     pcb: &Pcb,
     net_ties: &NetTieGroups,
     dp_map: &HashMap<(String, String), f64>,
+    region: Option<&DrcRegion>,
     violations: &mut Vec<DrcViolation>,
 ) {
     let default_clearance = pcb.rules.default_rules.clearance;
@@ -461,8 +563,17 @@ fn check_pad_clearance(
         }
     }
 
+    // Scoped runs: a pad pair is a subject when either pad is in the region.
+    let in_region: Vec<bool> = boxes
+        .iter()
+        .map(|b| in_scope(region, |r| r.hits_geom(&b.geom)))
+        .collect();
+
     for i in 0..boxes.len() {
         for j in (i + 1)..boxes.len() {
+            if !in_region[i] && !in_region[j] {
+                continue;
+            }
             let (a, b) = (&boxes[i], &boxes[j]);
             if a.net == b.net {
                 continue;
@@ -526,11 +637,20 @@ fn check_pad_clearance(
 }
 
 /// Check that all traces meet the minimum trace width.
-fn check_min_trace_width(pcb: &Pcb, violations: &mut Vec<DrcViolation>) {
+fn check_min_trace_width(
+    pcb: &Pcb,
+    region: Option<&DrcRegion>,
+    violations: &mut Vec<DrcViolation>,
+) {
     let net_width = build_net_trace_width_map(pcb);
     let default_width = pcb.rules.default_rules.trace_width;
 
     for trace in &pcb.traces {
+        if !in_scope(region, |r| {
+            r.hits_segment(trace.start, trace.end, trace.width / 2.0)
+        }) {
+            continue;
+        }
         let min_width = net_width.get(&trace.net).copied().unwrap_or(default_width);
 
         if trace.width < min_width - 1e-6 {
@@ -555,11 +675,14 @@ fn check_min_trace_width(pcb: &Pcb, violations: &mut Vec<DrcViolation>) {
 }
 
 /// Check that all drills meet the minimum drill diameter.
-fn check_min_drill(pcb: &Pcb, violations: &mut Vec<DrcViolation>) {
+fn check_min_drill(pcb: &Pcb, region: Option<&DrcRegion>, violations: &mut Vec<DrcViolation>) {
     let min_drill = pcb.rules.min_drill;
 
     // Check via drills
     for via in &pcb.vias {
+        if !in_scope(region, |r| r.hits_point(via.position, via.diameter / 2.0)) {
+            continue;
+        }
         if via.drill < min_drill - 1e-6 {
             violations.push(DrcViolation {
                 rule: DrcRuleType::MinDrill,
@@ -584,6 +707,9 @@ fn check_min_drill(pcb: &Pcb, violations: &mut Vec<DrcViolation>) {
             if let Some(drill) = &pad.drill {
                 if drill.diameter < min_drill - 1e-6 {
                     let abs_pos = crate::geometry::pad_world_position(footprint, pad);
+                    if !in_scope(region, |r| r.hits_point(abs_pos, drill.diameter / 2.0)) {
+                        continue;
+                    }
                     violations.push(DrcViolation {
                         rule: DrcRuleType::MinDrill,
                         severity: DrcSeverity::Error,
@@ -604,7 +730,7 @@ fn check_min_drill(pcb: &Pcb, violations: &mut Vec<DrcViolation>) {
 }
 
 /// Check that all copper elements maintain edge clearance.
-fn check_edge_clearance(pcb: &Pcb, violations: &mut Vec<DrcViolation>) {
+fn check_edge_clearance(pcb: &Pcb, region: Option<&DrcRegion>, violations: &mut Vec<DrcViolation>) {
     let edge_clearance = pcb.rules.edge_clearance;
     let outline = &pcb.outline.vertices;
 
@@ -614,6 +740,11 @@ fn check_edge_clearance(pcb: &Pcb, violations: &mut Vec<DrcViolation>) {
 
     // Check traces against board edges
     for trace in &pcb.traces {
+        if !in_scope(region, |r| {
+            r.hits_segment(trace.start, trace.end, trace.width / 2.0)
+        }) {
+            continue;
+        }
         let mid = Vec2::new(
             (trace.start.x + trace.end.x) / 2.0,
             (trace.start.y + trace.end.y) / 2.0,
@@ -643,6 +774,9 @@ fn check_edge_clearance(pcb: &Pcb, violations: &mut Vec<DrcViolation>) {
 
     // Check vias against board edges
     for via in &pcb.vias {
+        if !in_scope(region, |r| r.hits_point(via.position, via.diameter / 2.0)) {
+            continue;
+        }
         let dist = min_distance_to_polygon(&via.position, outline);
         let effective_dist = dist - via.diameter / 2.0;
         if effective_dist < edge_clearance - 1e-6 {
@@ -664,7 +798,7 @@ fn check_edge_clearance(pcb: &Pcb, violations: &mut Vec<DrcViolation>) {
 }
 
 /// Check hole-to-hole spacing.
-fn check_hole_to_hole(pcb: &Pcb, violations: &mut Vec<DrcViolation>) {
+fn check_hole_to_hole(pcb: &Pcb, region: Option<&DrcRegion>, violations: &mut Vec<DrcViolation>) {
     let min_spacing = pcb.rules.hole_to_hole;
 
     /// Where a drilled hole came from — drives the violation's provenance.
@@ -700,9 +834,18 @@ fn check_hole_to_hole(pcb: &Pcb, violations: &mut Vec<DrcViolation>) {
         }
     }
 
+    // Scoped runs: a hole pair is a subject when either hole is in the region.
+    let in_region: Vec<bool> = holes
+        .iter()
+        .map(|h| in_scope(region, |r| r.hits_point(h.pos, h.radius)))
+        .collect();
+
     // O(n^2) check — fine for typical PCB sizes; use spatial index for large boards
     for i in 0..holes.len() {
         for j in (i + 1)..holes.len() {
+            if !in_region[i] && !in_region[j] {
+                continue;
+            }
             let dx = holes[i].pos.x - holes[j].pos.x;
             let dy = holes[i].pos.y - holes[j].pos.y;
             let center_dist = (dx * dx + dy * dy).sqrt();
@@ -745,11 +888,14 @@ fn check_hole_to_hole(pcb: &Pcb, violations: &mut Vec<DrcViolation>) {
 }
 
 /// Check annular ring width on through-hole pads and vias.
-fn check_annular_ring(pcb: &Pcb, violations: &mut Vec<DrcViolation>) {
+fn check_annular_ring(pcb: &Pcb, region: Option<&DrcRegion>, violations: &mut Vec<DrcViolation>) {
     let min_ring = pcb.rules.min_annular_ring;
 
     // Check vias
     for via in &pcb.vias {
+        if !in_scope(region, |r| r.hits_point(via.position, via.diameter / 2.0)) {
+            continue;
+        }
         let ring = (via.diameter - via.drill) / 2.0;
         if ring < min_ring - 1e-6 {
             violations.push(DrcViolation {
@@ -777,6 +923,9 @@ fn check_annular_ring(pcb: &Pcb, violations: &mut Vec<DrcViolation>) {
                 let ring = (pad_min_dim - drill.diameter) / 2.0;
                 if ring < min_ring - 1e-6 {
                     let abs_pos = crate::geometry::pad_world_position(footprint, pad);
+                    if !in_scope(region, |r| r.hits_point(abs_pos, pad_min_dim / 2.0)) {
+                        continue;
+                    }
                     violations.push(DrcViolation {
                         rule: DrcRuleType::AnnularRing,
                         severity: DrcSeverity::Error,
@@ -797,7 +946,7 @@ fn check_annular_ring(pcb: &Pcb, violations: &mut Vec<DrcViolation>) {
 }
 
 /// Enforce keepout regions: no-tracks / no-vias / no-components.
-fn check_keepout(pcb: &Pcb, violations: &mut Vec<DrcViolation>) {
+fn check_keepout(pcb: &Pcb, region: Option<&DrcRegion>, violations: &mut Vec<DrcViolation>) {
     for keepout in &pcb.keepouts {
         if keepout.outline.len() < 3 {
             continue;
@@ -808,6 +957,11 @@ fn check_keepout(pcb: &Pcb, violations: &mut Vec<DrcViolation>) {
         if keepout.no_tracks {
             for trace in &pcb.traces {
                 if !keepout.layers.contains(&trace.layer) {
+                    continue;
+                }
+                if !in_scope(region, |r| {
+                    r.hits_segment(trace.start, trace.end, trace.width / 2.0)
+                }) {
                     continue;
                 }
                 if segment_polygon_intersects(trace.start, trace.end, &keepout.outline) {
@@ -841,6 +995,9 @@ fn check_keepout(pcb: &Pcb, violations: &mut Vec<DrcViolation>) {
                 if !layer_match {
                     continue;
                 }
+                if !in_scope(region, |r| r.hits_point(via.position, via.diameter / 2.0)) {
+                    continue;
+                }
                 if point_in_polygon(via.position, &keepout.outline) {
                     violations.push(DrcViolation {
                         rule: DrcRuleType::Keepout,
@@ -862,6 +1019,12 @@ fn check_keepout(pcb: &Pcb, violations: &mut Vec<DrcViolation>) {
         // no_components: any footprint whose pads or courtyard fall inside.
         if keepout.no_components {
             for fp in &pcb.footprints {
+                if !in_scope(region, |r| {
+                    let (min, max) = courtyard_bounds(fp);
+                    r.hits([min.x, min.y], [max.x, max.y])
+                }) {
+                    continue;
+                }
                 let mut hit = false;
                 let mut hit_pos = fp.position;
                 for pad in &fp.pads {
@@ -4244,5 +4407,78 @@ mod tests {
             unstitched, 0,
             "THT pads bridge layers — never Unstitched-Pad"
         );
+    }
+
+    /// Board with two spatially-separate clearance faults (near (15,10) and
+    /// (80,70)) plus a copper short far from both, for the region-scope tests.
+    fn pcb_with_scattered_faults() -> Pcb {
+        let mut pcb = clean_pcb();
+        let seg = |x0: f64, y0: f64, x1: f64, y1: f64, net: &str| Trace {
+            start: Vec2::new(x0, y0),
+            end: Vec2::new(x1, y1),
+            width: 0.25,
+            layer: PcbLayer::FCu,
+            net: net.to_string(),
+            source: None,
+        };
+        // Pair A (in the scoped region): 0.35mm center gap ⇒ 0.1mm edge gap
+        // < 0.2mm clearance, but not touching (no short).
+        pcb.traces.push(seg(10.0, 10.0, 20.0, 10.0, "3"));
+        pcb.traces.push(seg(10.0, 10.35, 20.0, 10.35, "4"));
+        // Pair B (outside the region): same fault, other corner of the board.
+        pcb.traces.push(seg(70.0, 70.0, 90.0, 70.0, "5"));
+        pcb.traces.push(seg(70.0, 70.35, 90.0, 70.35, "6"));
+        // A hard short (touching cross-net copper), also outside the region.
+        pcb.traces.push(seg(70.0, 20.0, 80.0, 20.0, "7"));
+        pcb.traces.push(seg(80.0, 20.0, 90.0, 20.0, "8"));
+        pcb
+    }
+
+    /// `check_drc_in_region` keeps only in-region subjects for the geometric
+    /// checks (pair A's clearance faults, not pair B's) while connectivity
+    /// stays board-global (the far-away short is still reported).
+    #[test]
+    fn scoped_drc_filters_geometry_but_keeps_connectivity_global() {
+        let pcb = pcb_with_scattered_faults();
+
+        let full = check_drc(&pcb);
+        // Each too-close trace pair is judged from both subject traces; the
+        // touching pair additionally violates clearance. 3 pairs × 2 = 6.
+        assert_eq!(
+            full.iter()
+                .filter(|v| v.rule == DrcRuleType::Clearance)
+                .count(),
+            6
+        );
+        assert_eq!(
+            full.iter().filter(|v| v.rule == DrcRuleType::Short).count(),
+            1
+        );
+
+        let scoped = check_drc_in_region(&pcb, Vec2::new(5.0, 5.0), Vec2::new(25.0, 15.0));
+        let clearance: Vec<_> = scoped
+            .iter()
+            .filter(|v| v.rule == DrcRuleType::Clearance)
+            .collect();
+        assert_eq!(clearance.len(), 2, "only pair A is in scope");
+        assert!(clearance.iter().all(|v| v.position.y < 20.0));
+        assert_eq!(
+            scoped
+                .iter()
+                .filter(|v| v.rule == DrcRuleType::Short)
+                .count(),
+            1,
+            "shorts come from the global connectivity pass regardless of scope"
+        );
+    }
+
+    /// A region covering the whole board reproduces the full run exactly —
+    /// scoping changes subject selection, never rule logic.
+    #[test]
+    fn scoped_drc_covering_board_matches_full_run() {
+        let pcb = pcb_with_scattered_faults();
+        let full = check_drc(&pcb);
+        let scoped = check_drc_in_region(&pcb, Vec2::new(-10.0, -10.0), Vec2::new(110.0, 90.0));
+        assert_eq!(full, scoped);
     }
 }
