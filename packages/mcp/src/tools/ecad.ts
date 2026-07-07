@@ -4656,9 +4656,13 @@ function striplineZ0(w: number, t: number, h: number, er: number): number {
   return (60 / Math.sqrt(er)) * Math.log((4 * h) / (0.67 * Math.PI * (0.8 * w + t)));
 }
 
-/** Edge-coupling factor for a differential pair; zDiff = 2·z0·k. ↑ in spacing. */
-function diffCouplingK(spacing: number, h: number): number {
-  return 1 - 0.48 * Math.exp((-0.96 * spacing) / h);
+/** Edge-coupling factor for a differential pair; zDiff = 2·z0·k. ↑ in spacing.
+ *  Empirical constants per family, matching the Rust reference
+ *  (vcad-ecad-sim/src/impedance.rs): microstrip (0.48, 0.96),
+ *  stripline (0.347, 2.9). */
+function diffCouplingK(traceType: string, spacing: number, h: number): number {
+  const [a, b] = traceType.includes("stripline") ? [0.347, 2.9] : [0.48, 0.96];
+  return 1 - a * Math.exp((-b * spacing) / h);
 }
 
 /** Single-ended z0 for a trace type (microstrip family vs stripline family). */
@@ -4925,22 +4929,18 @@ export async function calcImpedance(args: Record<string, unknown>) {
   const w = traceWidth;
   const t = copperThickness;
 
-  let z0: number;
-  let erEff: number;
-
-  if (traceType === "stripline") {
-    z0 = striplineZ0(w, t, h, er);
-    erEff = er;
-  } else {
-    z0 = microstripZ0(w, t, h, er);
-    erEff = microstripErEff(w, t, h, er);
-  }
+  // Route by family so diff_stripline gets the stripline formula — the same
+  // dispatch sizeImpedance uses, so the two tools always agree on a geometry.
+  const isStriplineFamily = traceType.includes("stripline");
+  const z0 = singleEndedZ0(traceType, w, t, h, er);
+  // Stripline is fully embedded in the dielectric, so er_eff == er.
+  const erEff = isStriplineFamily ? er : microstripErEff(w, t, h, er);
   const delayPsPerMm = 3.336 * Math.sqrt(erEff);
 
   // Differential pair calculations
   let zDiff: number | undefined;
   if (spacing > 0 && (traceType === "diff_microstrip" || traceType === "diff_stripline")) {
-    zDiff = 2 * z0 * diffCouplingK(spacing, h);
+    zDiff = 2 * z0 * diffCouplingK(traceType, spacing, h);
   }
 
   const result: Record<string, unknown> = {
@@ -4969,7 +4969,7 @@ export async function calcImpedance(args: Record<string, unknown>) {
 
   // Receipt claims for the quantities predicted (method reflects the branch
   // actually taken above — see em-claims.ts for the family).
-  const model = traceType === "stripline" ? "ipc2141-stripline" : "ipc2141-microstrip";
+  const model = isStriplineFamily ? "ipc2141-stripline" : "ipc2141-microstrip";
   const claimInputs = {
     trace_width: traceWidth,
     copper_thickness: copperThickness,
@@ -5054,7 +5054,7 @@ export function sizeImpedance(args: Record<string, unknown>) {
   const residual = isDiff
     ? (x: number[]) => [
         seZ0(x[0]!) - targetZ0,
-        2 * seZ0(x[0]!) * diffCouplingK(x[1]!, h) - (targetDiff as number),
+        2 * seZ0(x[0]!) * diffCouplingK(traceType, x[1]!, h) - (targetDiff as number),
       ]
     : (x: number[]) => [seZ0(x[0]!) - targetZ0];
   const lo = isDiff ? [minW, minS] : [minW];
@@ -5067,7 +5067,7 @@ export function sizeImpedance(args: Record<string, unknown>) {
   const wSnap = snap(cont[0]!, minW, maxW);
   const sSnap = isDiff ? snap(cont[1]!, minS, maxS) : undefined;
   const z0Meas = seZ0(wSnap);
-  const diffMeas = isDiff ? 2 * z0Meas * diffCouplingK(sSnap as number, h) : undefined;
+  const diffMeas = isDiff ? 2 * z0Meas * diffCouplingK(traceType, sSnap as number, h) : undefined;
 
   const within = (meas: number, target: number) =>
     Math.abs(meas - target) <= (tolPct / 100) * target;
