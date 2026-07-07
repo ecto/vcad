@@ -104,6 +104,7 @@ import { toolDefs as previewToolDefs } from "./tools/preview.js";
 import { toolDefs as loonToolDefs } from "./tools/loon.js";
 import { toolDefs as exportToolDefs } from "./tools/export.js";
 import { toolDefs as inspectToolDefs } from "./tools/inspect.js";
+import { toolDefs as parametersToolDefs } from "./tools/parameters.js";
 import { toolDefs as printCheckToolDefs } from "./tools/print-check.js";
 import { toolDefs as renderToolDefs } from "./tools/render.js";
 import { toolDefs as verifyToolDefs } from "./tools/verify.js";
@@ -272,6 +273,7 @@ const STATIC_TOOL_DEFS: readonly ToolDef[] = [
   ...loonToolDefs,
   ...exportToolDefs,
   ...inspectToolDefs,
+  ...parametersToolDefs,
   ...printCheckToolDefs,
   ...renderToolDefs,
   ...verifyToolDefs,
@@ -333,6 +335,10 @@ const LIST_TOOL_ORDER: readonly string[] = [
   "create_cad_loon",
   "export_cad",
   "inspect_cad",
+  // ── Parametric parameters + differentiable seam ─────────────
+  "list_parameters",
+  "set_parameters",
+  "parameter_gradient",
   // ── Print-then-measure calibration loop (3DP) ──────────────
   "predict_print",
   "record_measurement",

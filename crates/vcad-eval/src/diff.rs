@@ -30,7 +30,7 @@ use vcad_kernel_diff::{
 use vcad_kernel_tessellate::frozen::capture_plan;
 use vcad_kernel_tessellate::TessellationParams;
 
-use crate::{evaluate_document, EvalError, EvalOptions};
+use crate::{evaluate_document, EvalError, EvalOptions, EvaluatedMesh};
 
 /// Gradient of one solid part's mass properties with respect to a document
 /// parameter.
@@ -167,5 +167,161 @@ pub fn document_parameter_gradient(
             derivative,
         });
     }
+    Ok(out)
+}
+
+/// A JSON-serializable per-part gradient bundle for the MCP / WASM
+/// parameter-gradient surface (`d QoI / dθ` for one named parameter).
+///
+/// Volume, mass, and centroid — and their θ-derivatives — are exact analytic
+/// seam evaluations ([`document_parameter_gradient`]). Bounding-box extents
+/// and `d_bbox_extents` are **central finite differences**: a bbox extent is
+/// a non-smooth max over vertices, so the seam cannot price it exactly, but a
+/// finite difference of the rebuilt tessellation is well defined away from
+/// topology boundaries.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PartQoiGradient {
+    /// Index of the part in the evaluated scene's solid-part order.
+    pub part_index: usize,
+    /// Signed volume at θ (mm³).
+    pub volume: f64,
+    /// `dVolume/dθ` (analytic).
+    pub d_volume: f64,
+    /// Mass at θ (`density · volume`).
+    pub mass: f64,
+    /// `dMass/dθ` (analytic).
+    pub d_mass: f64,
+    /// Centroid `[x, y, z]` at θ.
+    pub centroid: [f64; 3],
+    /// `dCentroid/dθ` `[x, y, z]` (analytic).
+    pub d_centroid: [f64; 3],
+    /// Axis-aligned bounding-box extents `[x, y, z]` at θ.
+    pub bbox_extents: [f64; 3],
+    /// `dBboxExtents/dθ` `[x, y, z]` (central finite difference).
+    pub d_bbox_extents: [f64; 3],
+}
+
+/// Axis-aligned extents `(max − min)` of a tessellated mesh, per axis.
+fn mesh_extents(mesh: &EvaluatedMesh) -> [f64; 3] {
+    let mut min = [f64::INFINITY; 3];
+    let mut max = [f64::NEG_INFINITY; 3];
+    for v in mesh.positions.chunks_exact(3) {
+        for a in 0..3 {
+            let c = v[a] as f64;
+            if c < min[a] {
+                min[a] = c;
+            }
+            if c > max[a] {
+                max[a] = c;
+            }
+        }
+    }
+    [
+        (max[0] - min[0]).max(0.0),
+        (max[1] - min[1]).max(0.0),
+        (max[2] - min[2]).max(0.0),
+    ]
+}
+
+/// Evaluate the document with `parameter = value` and collect the AABB extents
+/// of every part that has a BRep solid, in the same order as [`solids_at`].
+fn solid_part_bboxes(
+    doc: &Document,
+    parameter: &str,
+    value: f64,
+    options: &EvalOptions,
+) -> Result<Vec<[f64; 3]>, DocDiffError> {
+    let mut d = doc.clone();
+    match d.parameters.get_mut(parameter) {
+        Some(p) => p.value = Expr::Number(value),
+        None => return Err(DocDiffError::UnknownParameter(parameter.to_string())),
+    }
+    let scene = evaluate_document(&d, options)?;
+    Ok(scene
+        .parts
+        .iter()
+        .filter(|p| p.solid.as_ref().and_then(|s| s.as_brep()).is_some())
+        .map(|p| mesh_extents(&p.mesh))
+        .collect())
+}
+
+/// Differentiate the MCP-facing QoI family (volume, mass, centroid, bbox
+/// extents) of every solid part with respect to a named document parameter.
+///
+/// The mass-property QoIs come from [`document_parameter_gradient`] (exact
+/// seam derivatives); bounding-box extents and their derivatives are central
+/// finite differences with step `probe_step` (see [`PartQoiGradient`]). The
+/// same part-count validation as [`document_parameter_gradient`] applies —
+/// a parameter that changes the solid-part count between θ ± probe_step
+/// errors rather than returning a mismatched gradient.
+pub fn document_parameter_qoi_gradient(
+    doc: &Document,
+    parameter: &str,
+    density: f64,
+    tess: &TessellationParams,
+    probe_step: f64,
+) -> Result<Vec<PartQoiGradient>, DocDiffError> {
+    let options = EvalOptions {
+        skip_clash_detection: true,
+        clock: None,
+    };
+    let env = vcad_ir::resolve_parameters(&doc.parameters)
+        .map_err(|e| DocDiffError::Resolve(e.to_string()))?;
+    let theta0 = *env
+        .get(parameter)
+        .ok_or_else(|| DocDiffError::UnknownParameter(parameter.to_string()))?;
+
+    let analytic = document_parameter_gradient(doc, parameter, density, tess, probe_step)?;
+
+    // Central finite differences for the (non-smooth) bounding-box extents.
+    // Mesh positions are f32, so the synthesis `probe_step` (~1e-4) is far too
+    // small a step here — quantization noise (~1e-6 mm) would swamp it. Use a
+    // geometry-relative step so the extent change dominates the noise floor
+    // while staying inside the part's topology neighbourhood.
+    let bbox_step = probe_step.max(theta0.abs() * 1e-3).max(1e-3);
+    let base = solid_part_bboxes(doc, parameter, theta0, &options)?;
+    let plus = solid_part_bboxes(doc, parameter, theta0 + bbox_step, &options)?;
+    let minus = solid_part_bboxes(doc, parameter, theta0 - bbox_step, &options)?;
+    for probe in [base.len(), plus.len(), minus.len()] {
+        if probe != analytic.len() {
+            return Err(DocDiffError::PartCountChanged {
+                base: analytic.len(),
+                probe,
+            });
+        }
+    }
+
+    let inv2h = 1.0 / (2.0 * bbox_step);
+    let out = analytic
+        .iter()
+        .enumerate()
+        .map(|(i, g)| {
+            let d_bbox = [
+                (plus[i][0] - minus[i][0]) * inv2h,
+                (plus[i][1] - minus[i][1]) * inv2h,
+                (plus[i][2] - minus[i][2]) * inv2h,
+            ];
+            PartQoiGradient {
+                part_index: g.part_index,
+                volume: g.properties.volume,
+                d_volume: g.derivative.volume,
+                mass: g.properties.mass,
+                d_mass: g.derivative.mass,
+                centroid: [
+                    g.properties.centroid.x,
+                    g.properties.centroid.y,
+                    g.properties.centroid.z,
+                ],
+                d_centroid: [
+                    g.derivative.centroid.x,
+                    g.derivative.centroid.y,
+                    g.derivative.centroid.z,
+                ],
+                bbox_extents: base[i],
+                d_bbox_extents: d_bbox,
+            }
+        })
+        .collect();
     Ok(out)
 }
