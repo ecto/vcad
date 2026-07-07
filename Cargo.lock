@@ -3911,7 +3911,7 @@ dependencies = [
 
 [[package]]
 name = "phyz"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "tang",
 ]
@@ -7285,6 +7285,7 @@ dependencies = [
  "vcad-kernel-math",
  "vcad-kernel-nurbs",
  "vcad-kernel-primitives",
+ "vcad-kernel-tessellate",
  "vcad-kernel-topo",
 ]
 
