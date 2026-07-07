@@ -68,7 +68,17 @@ import {
   netContinuity as kernelNetContinuity,
 } from "@vcad/engine";
 import type { Engine, NetlistResult, TriangleMesh, NetContinuity } from "@vcad/engine";
-import { registerSession, getSession, undoLastSnapshot, historyDepth } from "./session.js";
+import {
+  registerSession,
+  getSession,
+  undoLastSnapshot,
+  historyDepth,
+  documents,
+  hydrateSession,
+  persistSession,
+  recordHistorySnapshot,
+} from "./session.js";
+import { buildKernelEventPayload } from "./kernel-event.js";
 import { emClaim } from "./em-claims.js";
 import type { NextAction } from "./next-actions.js";
 import { computeEnclosureFitForBoard } from "./enclosure.js";
@@ -77,6 +87,8 @@ import { sizePdnExact, ecadDiffEngineAvailable } from "../wasm/ecad-diff.js";
 import { bundleBytes, storeArtifact } from "./artifact-store.js";
 import { maxInlineArtifactBytes, maxInlineExportBytes } from "./remote.js";
 import type { FabFile } from "@vcad/engine";
+import { behavior, type ToolDef } from "./tool-def.js";
+import type { ToolResult } from "./tool-result.js";
 
 /** Get PCB data from a document — checks PcbBoard nodes first, falls back to legacy doc.pcb */
 function getDocPcb(doc: Document): Pcb | null {
@@ -11783,3 +11795,735 @@ export async function verifyReceipt(args: Record<string, unknown>) {
     },
   };
 }
+
+/**
+ * The ECAD tool surface as a single `ToolDef[]`, assembled by `server.ts` into
+ * the ListTools response and the name→def dispatch Map. Descriptions are
+ * byte-identical to the former inline ListTools literals (a fixture test
+ * asserts this).
+ */
+export const toolDefs: ToolDef[] = [
+  {
+    name: "create_schematic",
+    pack: "ecad",
+    description:
+      "Create a schematic from components plus connectivity, and open it " +
+      "as a server-side session. Declare connectivity as data with `nets` " +
+      '({"PHA": ["L1.1", "J1.1"]}) — more reliable than wire/label ' +
+      "coordinates. Returns a document_id for place_components / " +
+      "route_nets / export_gerber, plus the resolved netlist so broken " +
+      "connectivity is visible immediately.",
+    inputSchema: createSchematicSchema,
+    handler: (a) => createSchematic(a) as ToolResult | Promise<ToolResult>,
+    behavior: behavior({ writesDoc: true }),
+  },
+  {
+    name: "place_components",
+    pack: "ecad",
+    description:
+      "Create the board and place schematic components on it. Mutates the " +
+      "session document (pass document_id). Outline: rectangle " +
+      "(board_width/height), circle with optional center bore " +
+      "(board_shape — e.g. a motor stator), or any polygon (outline, e.g. " +
+      "from board_from_solid). strategy=radial rings components for " +
+      "annular boards. Returns `placement_drc` — the pre-routing DRC subset " +
+      "(shorts, pad clearance, courtyard overlaps, off-board parts); when " +
+      "`placement_drc.clean` is false, fix the floorplan with set_placement " +
+      "before route_nets instead of routing on top of the fault. Also " +
+      "returns a `utilization` report (board vs occupied area, % used, " +
+      "component bounding box, and an advisory suggested_outline) so you can " +
+      "right-size an over-large board in one step.",
+    inputSchema: placeComponentsSchema,
+    handler: (a) => placeComponents(a) as ToolResult | Promise<ToolResult>,
+    behavior: behavior({ writesDoc: true, geometry: true, mount: true }),
+  },
+  {
+    name: "route_nets",
+    pack: "ecad",
+    description:
+      "Route electrical nets on the PCB with copper traces. Connects pads " +
+      "belonging to the same net. Idempotent: re-running rips up the " +
+      "previously autorouted copper on the target nets before routing, so " +
+      "a second call replaces the route instead of stacking shorts. " +
+      "Hand-placed copper (add_trace / add_via / coils) is preserved " +
+      "automatically; `locked_nets` additionally protects whole nets. A " +
+      "net with a copper-pour zone (a plane) is connected by stitching " +
+      "each pad to the plane with a via instead of tracing it — those " +
+      "nets come back in `plane_stitched`. Mutates the session document " +
+      "(pass document_id).",
+    inputSchema: routeNetsSchema,
+    handler: (a) => routeNets(a) as ToolResult | Promise<ToolResult>,
+    behavior: behavior({ writesDoc: true, geometry: true }),
+  },
+  {
+    name: "add_coil",
+    pack: "ecad",
+    description:
+      "Add a spiral copper coil (Archimedean) to the PCB — the primitive " +
+      "for PCB-motor stators and planar inductors. Generates the trace " +
+      "geometry on a layer, assigns it to a net, validates turn-to-turn " +
+      "clearance, and optionally drops a via at the (otherwise trapped) " +
+      "inner endpoint. Returns endpoints, copper length, and a DC " +
+      "resistance estimate.",
+    inputSchema: addCoilSchema,
+    handler: (a) => addCoil(a) as ToolResult | Promise<ToolResult>,
+    behavior: behavior({ writesDoc: true, geometry: true }),
+  },
+  {
+    name: "add_coil_array",
+    pack: "ecad",
+    description:
+      "Lay a ring of `count` spiral coils evenly around `center` at " +
+      "`pitch_radius` — the placement primitive for a PCB-motor stator. " +
+      "Net per coil comes from `net_sequence` (cycled); `chirality` sets " +
+      "winding sense. GEOMETRY ONLY: it has no notion of phases — derive " +
+      "correct per-coil phase/polarity with `winding_layout` first, then " +
+      "map it onto net_sequence/chirality.",
+    inputSchema: addCoilArraySchema,
+    handler: (a) => addCoilArray(a) as ToolResult | Promise<ToolResult>,
+    behavior: behavior({ writesDoc: true, geometry: true }),
+  },
+  {
+    name: "winding_layout",
+    pack: "ecad",
+    description:
+      "Plan a balanced polyphase motor winding (slots + poles → per-coil " +
+      "phase, polarity, winding factor, feasibility) as DATA. Pure — it " +
+      "does NOT take a board or modify anything; inspect the plan, then " +
+      "realize it with add_coil_array/add_coil. Catches infeasible " +
+      "slot/pole combos and wrong polarity before any copper is drawn.",
+    inputSchema: windingLayoutSchema,
+    handler: (a) => windingLayout(a) as ToolResult | Promise<ToolResult>,
+    behavior: behavior({}),
+  },
+  {
+    name: "board_from_solid",
+    pack: "ecad",
+    description:
+      "Derive a PCB outline polygon (with cutouts, e.g. a center bore) " +
+      "from a solid part in a CAD session by projecting its geometry onto " +
+      "the XY plane. Bridges solid modeling and PCB layout: feed the " +
+      "returned `outline` to place_components.",
+    inputSchema: boardFromSolidSchema,
+    handler: (a, c) =>
+      boardFromSolid(a, c.engine) as ToolResult | Promise<ToolResult>,
+    behavior: behavior({}),
+  },
+  {
+    name: "solid_from_board",
+    pack: "ecad",
+    description:
+      "Materialize the session PCB as a solid CAD part — the inverse of " +
+      "board_from_solid. Extrudes the board outline to its thickness " +
+      "through the hole-aware sketch path (bore/cutout polygons survive " +
+      "as real holes), adds simplified per-component keep-out volumes " +
+      "(kernel 3D body extents, else courtyard × package-class height), " +
+      "and gives the substrate a homogenized FR4+copper density so " +
+      "inspect_cad / physics see the real board mass. Inject into an " +
+      "existing CAD session with `document_id_target` (enclosure fit, " +
+      "motor stacks, clash checks) or omit it to mint a fresh session.",
+    inputSchema: solidFromBoardSchema,
+    // Cross-session writer: reads the PCB in `document_id`, writes the CAD
+    // session in `document_id_target` (or mints one). The central
+    // hydrate/snapshot/persist plumbing keys off args.document_id — here the
+    // read-only PCB source — so the target session is hydrated, snapshotted,
+    // persisted, and event-logged here instead.
+    handler: async (args, ctx) => {
+      const targetId =
+        typeof args.document_id_target === "string" ? args.document_id_target : null;
+      if (targetId) {
+        try {
+          await hydrateSession(ctx.sessionStore, targetId);
+        } catch {
+          // Durable load failed — fall back to cache.
+        }
+        if (documents.has(targetId)) recordHistorySnapshot(targetId);
+      }
+      const result = (await solidFromBoard(args)) as ToolResult;
+      const writtenId = result.structuredContent?.document_id;
+      if (!result.isError && typeof writtenId === "string" && documents.has(writtenId)) {
+        try {
+          await persistSession(ctx.sessionStore, writtenId);
+        } catch {
+          // best-effort durable write
+        }
+        try {
+          await ctx.eventStore.append(writtenId, {
+            author: ctx.user?.sub ?? "agent",
+            kind: "kernel",
+            type: "solid_from_board",
+            payload: buildKernelEventPayload("solid_from_board", args, result),
+          });
+        } catch {
+          // best-effort event append
+        }
+      }
+      return result;
+    },
+    behavior: behavior({}),
+  },
+  {
+    name: "list_footprints",
+    pack: "ecad",
+    description:
+      "List the footprint families the parametric engine resolves, each " +
+      "with a canonical example id to drop into create_schematic's " +
+      "`footprint`. Optional `kind` filter (passive/ic/transistor/diode/" +
+      "power/connector). Use this instead of guessing id spellings.",
+    inputSchema: listFootprintsSchema,
+    handler: (a) => listFootprints(a) as ToolResult | Promise<ToolResult>,
+    behavior: behavior({}),
+  },
+  {
+    name: "search_footprints",
+    pack: "ecad",
+    description:
+      "Fuzzy-search footprint families by name/alias (e.g. 'SOIC 8', " +
+      "'jst', 'qfn') and get ranked matches with a canonical example id — " +
+      "resolve a footprint id without a failed create_schematic round-trip.",
+    inputSchema: searchFootprintsSchema,
+    handler: (a) => searchFootprints(a) as ToolResult | Promise<ToolResult>,
+    behavior: behavior({}),
+  },
+  {
+    name: "get_pad_positions",
+    pack: "ecad",
+    description:
+      "Return every footprint pad's absolute board-frame (x, y), copper " +
+      "layer, and net — the coordinates manual routing (add_trace / " +
+      "add_via / add_via_array) needs so trace endpoints land exactly on " +
+      "pads instead of being eyeballed from component centers. Read-only. " +
+      "Optional `net` / `ref` filters narrow the result for targeted routing.",
+    inputSchema: getPadPositionsSchema,
+    handler: (a) => getPadPositions(a) as ToolResult | Promise<ToolResult>,
+    behavior: behavior({}),
+  },
+  {
+    name: "get_footprint",
+    pack: null,
+    description:
+      "Introspect ONE footprint's land pattern in BOTH the footprint-local " +
+      "and board frames — origin, courtyard AABB, and every pad (with the " +
+      "explicit rotation convention) — so connector/IC pad locations are " +
+      "known exactly instead of render-and-guessed. Two modes: `ref` reads " +
+      "a placed footprint (real transform + nets) from the session; " +
+      "`footprint` resolves an id PRE-placement (pass `at`/`rotation`/" +
+      "`side` to project a hypothetical placement). Read-only.",
+    inputSchema: getFootprintSchema,
+    handler: (a) => getFootprint(a) as ToolResult | Promise<ToolResult>,
+    behavior: behavior({}),
+  },
+  {
+    name: "describe_pcb",
+    pack: "ecad",
+    description:
+      "Inspect the session PCB as compact, structured data: board size + " +
+      "outline, stackup (layer names + copper weights), net classes / " +
+      "design rules, zones (net/layer/bbox/fill), trace & via counts by net " +
+      "and layer, component count, the current DRC status, and an " +
+      "exportability/renderability probe that actually serializes the board " +
+      "for fab + 3D preview — surfacing the 'DRC-clean but unexportable' " +
+      "state get_document/read can't see. Read-only.",
+    inputSchema: describePcbSchema,
+    handler: (a) => describePcb(a) as ToolResult | Promise<ToolResult>,
+    behavior: behavior({}),
+  },
+  {
+    name: "add_trace",
+    pack: "ecad",
+    description:
+      "Lay an explicit copper trace: a polyline of segments on a layer, " +
+      "assigned to a net. The general-purpose routing primitive — use it " +
+      "for coil interconnect, buses, and hand-routes that route_nets " +
+      "(pad-driven) won't make. Tagged as manual copper, so route_nets " +
+      "preserves it instead of ripping it up. Mutates the session document.",
+    inputSchema: addTraceSchema,
+    handler: (a) => addTrace(a) as ToolResult | Promise<ToolResult>,
+    behavior: behavior({ writesDoc: true, geometry: true }),
+  },
+  {
+    name: "add_via",
+    pack: "ecad",
+    description:
+      "Drop a via at a point connecting two layers on a net (defaults " +
+      "FCu→BCu, diameter/drill from design rules). Pairs with add_trace " +
+      "for multi-layer routing. Mutates the session document.",
+    inputSchema: addViaSchema,
+    handler: (a) => addVia(a) as ToolResult | Promise<ToolResult>,
+    behavior: behavior({ writesDoc: true, geometry: true }),
+  },
+  {
+    name: "set_stackup",
+    pack: "ecad",
+    description:
+      "Set the board stackup copper weight (e.g. copper_oz: 2) and/or " +
+      "per-layer thickness/material, so DC-resistance and impedance " +
+      "estimates reflect the real fab stackup instead of a default 1 oz. " +
+      "Mutates the session document.",
+    inputSchema: setStackupSchema,
+    handler: (a) => setStackup(a) as ToolResult | Promise<ToolResult>,
+    behavior: behavior({ writesDoc: true, geometry: true }),
+  },
+  {
+    name: "set_placement",
+    pack: "ecad",
+    description:
+      "Place footprints at explicit board-frame coordinates by ref — the " +
+      "floorplan realizer the auto-placer (grid/force_directed/radial) can't " +
+      "express: thermal rings, a quiet IMU corner, rim connectors. Batch; " +
+      "sets position/rotation/side and warns on off-board, in-cutout, or " +
+      "stacked landings. Mutates the session document. Returns the updated " +
+      "`placement_drc` (same shape as place_components) so a move can be " +
+      "re-checked in one call without running run_drc.",
+    inputSchema: setPlacementSchema,
+    handler: (a) => setPlacement(a) as ToolResult | Promise<ToolResult>,
+    behavior: behavior({ writesDoc: true }),
+  },
+  {
+    name: "set_board_outline",
+    pack: "ecad",
+    description:
+      "Resize or reshape the board outline in place — rectangle " +
+      "(board_width/height), circle/annulus (board_shape), or any polygon " +
+      "(outline) — WITHOUT re-placing components, traces, vias, or zones. " +
+      "Unlike re-running place_components, the floorplan is preserved; any " +
+      "footprint whose origin ends up off the new board is reported in " +
+      "`off_board` rather than silently relocated. Mutates the session document.",
+    inputSchema: setBoardOutlineSchema,
+    handler: (a) => setBoardOutline(a) as ToolResult | Promise<ToolResult>,
+    behavior: behavior({ writesDoc: true }),
+  },
+  {
+    name: "add_zone",
+    pack: "ecad",
+    description:
+      "Add a copper pour (ground/power plane) on a net+layer — fills are not " +
+      "traces. `fill_board:true` pours the whole outline (cutouts become " +
+      "voids); or give an explicit polygon for a partial plane. Mutates the " +
+      "session document.",
+    inputSchema: addZoneSchema,
+    handler: (a) => addZone(a) as ToolResult | Promise<ToolResult>,
+    behavior: behavior({ writesDoc: true }),
+  },
+  {
+    name: "delete_zone",
+    pack: "ecad",
+    description:
+      "Remove a copper pour from the board — the take-back for a bad add_zone, " +
+      "without rebuilding the session. Target by `index` (0-based, the add " +
+      "order) or by `net`/`layer` when exactly one zone matches. Returns a " +
+      "`changed` diff of what was removed. To undo the very last mutation of " +
+      "any kind, use `undo` instead. Mutates the session document.",
+    inputSchema: deleteZoneSchema,
+    handler: (a) => deleteZone(a) as ToolResult | Promise<ToolResult>,
+    behavior: behavior({ writesDoc: true, geometry: true }),
+  },
+  {
+    name: "delete_trace",
+    pack: "ecad",
+    description:
+      "Remove a single routed trace segment by `index` (0-based, the add " +
+      "order) or by an unambiguous `net`/`layer` match. The take-back for a " +
+      "stray add_trace. Returns a `changed` diff. Mutates the session document.",
+    inputSchema: deleteTraceSchema,
+    handler: (a) => deleteTrace(a) as ToolResult | Promise<ToolResult>,
+    behavior: behavior({ writesDoc: true, geometry: true }),
+  },
+  {
+    name: "delete_via",
+    pack: "ecad",
+    description:
+      "Remove a single via by `index` (0-based, the add order) or by an " +
+      "unambiguous `net` match. The take-back for a stray add_via. Returns a " +
+      "`changed` diff. Mutates the session document.",
+    inputSchema: deleteViaSchema,
+    handler: (a) => deleteVia(a) as ToolResult | Promise<ToolResult>,
+    behavior: behavior({ writesDoc: true, geometry: true }),
+  },
+  {
+    name: "get_copper",
+    pack: "ecad",
+    description:
+      "Query the board's routed copper — traces, trace arcs, vias, zones — " +
+      "with optional `layer`/`net`/`bbox`/`kind` filters. Each element comes " +
+      "back with its `kind` + `index`: exactly the addressing delete_trace / " +
+      "delete_via / delete_zone accept, so a query can drive a surgical " +
+      "delete without exporting the document. describe_pcb aggregates " +
+      "counts; this returns the elements themselves (geometry, width, net, " +
+      "layer), capped at 200 per page with `offset` pagination and a `total`. " +
+      "Read-only.",
+    inputSchema: getCopperSchema,
+    handler: (a) => getCopper(a) as ToolResult | Promise<ToolResult>,
+    behavior: behavior({}),
+  },
+  {
+    name: "add_net_tie",
+    pack: "ecad",
+    description:
+      "Declare an intentional junction between >= 2 nets (a net-tie) so DRC " +
+      "treats them as one node where they meet — required for wye/star motor " +
+      "neutrals, split grounds (GND+AGND), and current-sense shunt taps, " +
+      "which are otherwise reported as shorts. With `position`+`radius` the " +
+      "tie is region-scoped: clearance/short checks are exempt only for " +
+      "contacts inside the region, and connectivity accepts nets joined " +
+      "through copper when each has a tie-covered contact there — a stray " +
+      "crossing of the same nets elsewhere still fires. Without them the " +
+      "exemption is board-wide (prefer scoped: it keeps DRC honest away " +
+      "from the junction). Nets must exist on the board. Returns the " +
+      "updated tie list with indices. Mutates the session document.",
+    inputSchema: addNetTieSchema,
+    handler: (a) => addNetTie(a) as ToolResult | Promise<ToolResult>,
+    behavior: behavior({ writesDoc: true }),
+  },
+  {
+    name: "delete_net_tie",
+    pack: "ecad",
+    description:
+      "Remove a net tie by `index`, or by matching `nets` (set equality, " +
+      "order-insensitive) and/or `position` — the take-back for a bad " +
+      "add_net_tie. Any junction copper stays on the board; DRC will report " +
+      "it as a short again. Returns the deleted tie and the updated tie " +
+      "list. Mutates the session document.",
+    inputSchema: deleteNetTieSchema,
+    handler: (a) => deleteNetTie(a) as ToolResult | Promise<ToolResult>,
+    behavior: behavior({ writesDoc: true }),
+  },
+  {
+    name: "undo",
+    pack: "ecad",
+    description:
+      "Rewind the most recent mutation on a session — the snapshot taken " +
+      "before the last add_zone / add_trace / add_via / delete_* / route_nets " +
+      "/ place_components (or a CAD create/update/delete) is restored, without " +
+      "re-sending the document. Repeated calls walk further back. Returns a " +
+      "`changed` diff of the board elements the rewind moved.",
+    inputSchema: undoSchema,
+    handler: (a) => undo(a) as ToolResult | Promise<ToolResult>,
+    behavior: behavior({ writesDoc: true, geometry: true }),
+  },
+  {
+    name: "set_design_rules",
+    pack: "ecad",
+    description:
+      "Set the board design rules run_drc enforces (clearance, track width, " +
+      "via, edge/hole/annular) and net classes — the way to give a power or " +
+      "high-voltage class wider clearance than signal nets. run_drc already " +
+      "reads pcb.rules; this writes them. Mutates the session document.",
+    inputSchema: setDesignRulesSchema,
+    handler: (a) => setDesignRules(a) as ToolResult | Promise<ToolResult>,
+    behavior: behavior({ writesDoc: true }),
+  },
+  {
+    name: "size_trace_for_current",
+    pack: "ecad",
+    description:
+      "IPC-2221 conductor ampacity solved for trace width: given current, " +
+      "copper weight, allowed temp rise, and layer (outer/inner), returns the " +
+      "minimum width. The ampacity sibling of size_impedance/size_pdn — pure " +
+      "calc, no document.",
+    inputSchema: sizeTraceForCurrentSchema,
+    handler: (a) =>
+      sizeTraceForCurrent(a) as ToolResult | Promise<ToolResult>,
+    behavior: behavior({}),
+  },
+  {
+    name: "add_via_array",
+    pack: "ecad",
+    description:
+      "Place many vias at once — a grid over a rectangular `region` (thermal " +
+      "vias under FETs, GND-plane stitching) or an explicit `points` list. " +
+      "Grid vias are clipped to the board outline by default. Mutates the " +
+      "session document.",
+    inputSchema: addViaArraySchema,
+    handler: (a) => addViaArray(a) as ToolResult | Promise<ToolResult>,
+    behavior: behavior({ writesDoc: true }),
+  },
+  {
+    name: "add_motor_winding",
+    pack: "ecad",
+    description:
+      "One-shot motor winding realizer: plans a balanced slots/poles/" +
+      "phases winding, drops a spiral coil per tooth with correct phase + " +
+      "polarity, series-connects each phase with planar staggered-radius " +
+      "arcs in the coil-free bore (never crossing), ties the wye/delta " +
+      "termination with a region-scoped net-tie on real board material, " +
+      "and routes phase feeds to same-net pads when present — closing the " +
+      "winding_layout plan into DRC-clean copper. Mutates the session " +
+      "document.",
+    inputSchema: addMotorWindingSchema,
+    handler: (a) => addMotorWinding(a) as ToolResult | Promise<ToolResult>,
+    behavior: behavior({ writesDoc: true, geometry: true }),
+  },
+  {
+    name: "calc_motor",
+    pack: "ecad",
+    description:
+      "Evaluate motor performance AS DATA. mode:'pm' (default): torque " +
+      "constant Kt, back-EMF constant Ke, no-load speed, stall torque, " +
+      "and a speed–torque curve; supply air-gap flux directly or compute " +
+      "it from magnet geometry via the first-order MEC field model, with " +
+      "an optional Carter-like fringing derate (magnet.pole_width_mm). " +
+      "mode:'induction': thin-sheet axial induction rotor (drag-cup / " +
+      "PCB cage) — gap field B1, torque-per-unit-slip, locked-rotor " +
+      "torque, sync speed, rotor sheet loss. Pure: no board, no " +
+      "mutation. First-order steady state.",
+    inputSchema: calcMotorSchema,
+    handler: (a) => calcMotor(a) as ToolResult | Promise<ToolResult>,
+    behavior: behavior({}),
+  },
+  {
+    name: "check_self_start",
+    pack: "ecad",
+    description:
+      "Will it spin? Starting torque (direct, or Kt·I; induction: the " +
+      "locked-rotor torque from calc_motor) vs a friction estimate " +
+      "(direct, or the built-in bearing catalog: 608-2RS/608-ZZ/625/688 " +
+      "× light/medium preload × count). Returns starts (fail-closed vs " +
+      "worst-case friction), best-case verdict, and the margin. Pure " +
+      "calc, no document.",
+    inputSchema: checkSelfStartSchema,
+    handler: (a) => checkSelfStart(a) as ToolResult | Promise<ToolResult>,
+    behavior: behavior({}),
+  },
+  {
+    name: "run_drc",
+    pack: "ecad",
+    description:
+      "Run Design Rule Check (DRC) on a PCB. Checks clearance, trace width, " +
+      "drill size, annular ring, hole-to-hole, and edge clearance. Every " +
+      "violation is tagged with `provenance` (intra_footprint / " +
+      "inter_component / routing) and `generated` (involves a synthesized " +
+      "footprint land pattern); the summary adds `byProvenance`, " +
+      "`generatedArtifacts`, and `realViolations` so the headline count " +
+      "excludes footprint artifacts without hand-triage.",
+    inputSchema: runDrcSchema,
+    handler: (a) => runDrc(a) as ToolResult | Promise<ToolResult>,
+    behavior: behavior({}),
+  },
+  {
+    name: "search_electronic_parts",
+    pack: "ecad",
+    description:
+      "Spec-search the generative parts catalog (offline). A query like " +
+      "'10k 0603 1%' parses to value+package+tolerance and returns the best " +
+      "match plus E-series neighbours, each with a generated footprint, symbol, " +
+      "and 3D body. A part is family+value+package, not a scraped row.",
+    inputSchema: searchElectronicPartsSchema,
+    handler: (a) =>
+      searchElectronicParts(a) as ToolResult | Promise<ToolResult>,
+    behavior: behavior({}),
+  },
+  {
+    name: "resolve_part",
+    pack: "ecad",
+    description:
+      "Resolve a spec query (e.g. '10k 0603 1%') into ONE fully-specified part: " +
+      "E-series-snapped value plus a generated footprint + schematic symbol + 3D " +
+      "body (one parametric source of truth) and any MPN cross-references.",
+    inputSchema: resolvePartSchema,
+    handler: (a) => resolvePart(a) as ToolResult | Promise<ToolResult>,
+    behavior: behavior({}),
+  },
+  {
+    name: "find_alternatives",
+    pack: "ecad",
+    description:
+      "Propose spec-compatible substitutes for the part a query resolves to. " +
+      "Each alternative keeps the value, varies the package, and is labelled " +
+      "identical / needs-reroute / incompatible by re-deriving its footprint.",
+    inputSchema: findAlternativesSchema,
+    handler: (a) => findAlternatives(a) as ToolResult | Promise<ToolResult>,
+    behavior: behavior({}),
+  },
+  {
+    name: "verify_substitution",
+    pack: "ecad",
+    description:
+      "PROVE a part swap on the session PCB: replace `reference` with the part " +
+      "`candidate` resolves to, re-derive its footprint, re-place at the same " +
+      "anchor, re-run DRC (incl. connectivity), and return the before/after " +
+      "violation delta with a `drop_in` verdict. An alternative is only drop-in " +
+      "when it adds no new violations and preserves pin numbering.",
+    inputSchema: verifySubstitutionSchema,
+    handler: (a) =>
+      verifySubstitution(a) as ToolResult | Promise<ToolResult>,
+    behavior: behavior({}),
+  },
+  {
+    name: "build_receipt",
+    pack: "ecad",
+    description:
+      "Build a re-runnable verification Receipt for the session PCB: a content " +
+      "hash, the DRC backend, a canonicalized DRC summary, and per-part " +
+      "provenance — a durable proof that round-trips and re-verifies later as " +
+      "Holds / Stale / Violated. Renders as an audit ledger in the inline viewer.",
+    inputSchema: buildReceiptSchema,
+    handler: (a, c) =>
+      buildReceipt(a, c.engine) as ToolResult | Promise<ToolResult>,
+    behavior: behavior({ mount: true }),
+  },
+  {
+    name: "verify_receipt",
+    pack: "ecad",
+    description:
+      "Re-run a prior Receipt (from build_receipt) against the session's current " +
+      "board and return the verdict — Holds (same board, clean), Stale (board " +
+      "changed), or Violated. Powers the ledger's Re-run button.",
+    inputSchema: verifyReceiptSchema,
+    handler: (a) => verifyReceipt(a) as ToolResult | Promise<ToolResult>,
+    behavior: behavior({ widgetCallable: true }),
+  },
+  {
+    name: "route_diff_pair",
+    pack: null,
+    description:
+      "Route a declared differential pair (net_p/net_n) coupled and length-matched, " +
+      "using the pair's diff-pair net-class gap and width. Routes straight (best on a " +
+      "clear channel); verify with run_drc / critique_route afterwards.",
+    inputSchema: routeDiffPairSchema,
+    handler: (a) => routeDiffPair(a) as ToolResult | Promise<ToolResult>,
+    behavior: behavior({ writesDoc: true }),
+  },
+  {
+    name: "critique_route",
+    pack: null,
+    description:
+      "Audit one net's routing without changing anything: total length, via/" +
+      "layer-change count, the closest approach to other-net copper, and any " +
+      "clearance/short/unconnected DRC issues it's in. Inspect a route before trusting it.",
+    inputSchema: critiqueRouteSchema,
+    handler: (a) => critiqueRoute(a) as ToolResult | Promise<ToolResult>,
+    behavior: behavior({}),
+  },
+  {
+    name: "run_erc",
+    pack: "ecad",
+    description:
+      "Run Electrical Rule Check (ERC) on a schematic. " +
+      "Checks for duplicate references, unconnected pins, and pin type conflicts.",
+    inputSchema: runErcSchema,
+    handler: (a) => runErc(a) as ToolResult | Promise<ToolResult>,
+    behavior: behavior({}),
+  },
+  {
+    name: "export_gerber",
+    pack: "ecad",
+    description:
+      "Export Gerber RS-274X fabrication files from a PCB design. " +
+      "Generates copper layer files, drill file, pick-and-place CSV, and BOM. " +
+      "Gated on a clean DRC by default (require_clean_drc) — a dirty or " +
+      "unverifiable board is BLOCKED with its DRC summary instead of emitting " +
+      "an invalid bundle. Run validate_for_fab first for the full readiness verdict.",
+    inputSchema: exportGerberSchema,
+    handler: (a) => exportGerber(a) as ToolResult | Promise<ToolResult>,
+    behavior: behavior({}),
+  },
+  {
+    name: "export_kicad",
+    pack: null,
+    description:
+      "Export the session as a native, editable KiCad 9 file. " +
+      "filename ending in .kicad_pcb writes the board (footprints, pads, nets, " +
+      "traces, vias, zones, layers, outline); .kicad_sch writes the schematic. " +
+      "Unlike export_gerber (fab-only output), this round-trips: a human can open " +
+      "it in KiCad to finish routing nets the autorouter couldn't close, then " +
+      "re-import. Large files respect the inline byte cap (use output_dir for those).",
+    inputSchema: exportKicadSchema,
+    handler: (a) => exportKicad(a) as ToolResult | Promise<ToolResult>,
+    behavior: behavior({}),
+  },
+  {
+    name: "validate_for_fab",
+    pack: "ecad",
+    description:
+      "The single 'is this board ready to fabricate?' oracle. Runs the whole " +
+      "readiness gate in one call and returns ONE structured verdict: DRC " +
+      "(fail-closed — a board that won't parse is 'unverifiable', never clean), " +
+      "renderability, Gerber-exportability (attempts serialization; names the " +
+      "exact failing field when it can't), unsupported features, the precise " +
+      "blockers, and suggested fixes. Read-only. Use before export_gerber / " +
+      "quote_manufacturing to know — not guess — whether the board is shippable.",
+    inputSchema: validateForFabSchema,
+    handler: (a) => validateForFab(a) as ToolResult | Promise<ToolResult>,
+    behavior: behavior({}),
+  },
+  {
+    name: "calc_impedance",
+    pack: "ecad",
+    description:
+      "Calculate trace impedance using IPC-2141 formulas. " +
+      "Supports microstrip, stripline, and differential pair configurations. " +
+      "Returns Z0, effective Er, and propagation delay. Pass document_id + " +
+      "net to gate the number on realized copper: an impedance for a trace " +
+      "that isn't actually routed/continuous is blocked, not reported.",
+    inputSchema: calcImpedanceSchema,
+    handler: (a) => calcImpedance(a) as ToolResult | Promise<ToolResult>,
+    behavior: behavior({}),
+  },
+  {
+    name: "size_impedance",
+    pack: "ecad",
+    description:
+      "Inverse of calc_impedance: solve trace geometry for a TARGET impedance. " +
+      "Given a target Z0 (and diff Z0 for pairs) + stackup, returns the trace " +
+      "width (and spacing) AS DATA, snapped to the fab grid and re-verified " +
+      "against the same model. Reports a binding DFM min-width/spacing bound " +
+      "and whether the target is reachable — it will not silently hand back a " +
+      "width that misses spec. Pure: no board, no mutation.",
+    inputSchema: sizeImpedanceSchema,
+    handler: (a) => sizeImpedance(a) as ToolResult | Promise<ToolResult>,
+    behavior: behavior({}),
+  },
+  {
+    name: "size_pdn",
+    pack: "ecad",
+    description:
+      "Size copper-segment widths across a power-distribution resistor mesh " +
+      "so each load node's IR-drop meets its budget with minimal copper. " +
+      "Solves G·V=I for node voltages and drives drop→budget with a bounded " +
+      "gradient tuner; returns per-segment widths AS DATA with drops " +
+      "recomputed from a forward solve, and flags any node it can't meet " +
+      "within the width bounds. Pure by default; pass document_id + net to " +
+      "REFUSE a PASS when that power plane isn't galvanically continuous " +
+      "(returns coverage %, stitching-via count, and the worst island).",
+    inputSchema: sizePdnSchema,
+    handler: (a) => sizePdn(a) as ToolResult | Promise<ToolResult>,
+    behavior: behavior({}),
+  },
+  {
+    name: "calc_coil",
+    pack: "ecad",
+    description:
+      "Analyze a planar spiral coil: inductance (modified Wheeler), DC " +
+      "resistance, copper length, and L/R time constant. The analyzer for " +
+      "the planar-magnetics archetype (inductors, sensor coils, motor " +
+      "stators). Pure.",
+    inputSchema: calcCoilSchema,
+    handler: (a) => calcCoil(a) as ToolResult | Promise<ToolResult>,
+    behavior: behavior({}),
+  },
+  {
+    name: "size_coil",
+    pack: "ecad",
+    description:
+      "Inverse of calc_coil: solve the turn count for a target inductance " +
+      "in a given annulus (Wheeler L ∝ turns², so it's closed-form). Reports " +
+      "continuous + integer turns, the inductance achieved, and whether that " +
+      "many turns fit the radial band (else fit-limited). Pure.",
+    inputSchema: sizeCoilSchema,
+    handler: (a) => sizeCoil(a) as ToolResult | Promise<ToolResult>,
+    behavior: behavior({}),
+  },
+  {
+    name: "calc_rf",
+    pack: "ecad",
+    description:
+      "Frequency-domain (AC) analysis of an RLC resonator: sweeps complex " +
+      "impedance over frequency and reports |Z|, phase, and S11/return-loss " +
+      "vs a reference Z0, plus resonance, Q, and the best match in the band. " +
+      "The RF/AC analyzer (calc_impedance is geometry-only). Pure.",
+    inputSchema: calcRfSchema,
+    handler: (a) => calcRf(a) as ToolResult | Promise<ToolResult>,
+    behavior: behavior({}),
+  },
+];

@@ -8,6 +8,7 @@ import {
   type ChangelogEntry,
   type ChangelogCategory,
 } from "@vcad/core";
+import { behavior, type ToolDef } from "./tool-def.js";
 
 interface GetChangelogInput {
   version?: string;
@@ -141,3 +142,16 @@ export function getChangelog(
     ],
   };
 }
+
+export const toolDefs: ToolDef[] = [
+  {
+    name: "get_changelog",
+    pack: null,
+    description:
+      "Query vcad changelog by version, category, feature, or MCP tool. " +
+      "Returns recent changes, new features, breaking changes, and migration guides.",
+    inputSchema: getChangelogSchema,
+    handler: (a) => getChangelog(a),
+    behavior: behavior({}),
+  },
+];

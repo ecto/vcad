@@ -18,6 +18,7 @@ import { storeArtifact } from "./artifact-store.js";
 import { maxInlineArtifactBytes } from "./remote.js";
 import type { SessionStore } from "../session-store.js";
 import type { AuthUser } from "../oauth.js";
+import { behavior, type ToolDef } from "./tool-def.js";
 
 // ─── Session cache (per-connection isolated, or process-wide fallback) ────────
 //
@@ -614,3 +615,59 @@ function openSavedSnapshot(
     parts: copy.roots?.length ?? 0,
   };
 }
+
+export const toolDefs: ToolDef[] = [
+  {
+    name: "open_document",
+    pack: null,
+    description:
+      "Open an editing session for a CAD document. Returns a `document_id` to pass to subsequent tool calls (create, update, place_part, inspect_cad, …). Pass an `initial` IR to begin editing an existing document; omit it for a fresh empty document.",
+    inputSchema: openDocumentSchema,
+    handler: (a) => openDocument(a),
+    behavior: behavior({ writesDoc: true, geometry: true, mount: true }),
+  },
+  {
+    name: "get_document",
+    pack: null,
+    description:
+      "Return the full IR Document JSON for an open session. Use after a series of mutations to capture the result, or to feed into `export_cad` / `open_in_browser`. Very large documents come back as a compact artifact handle instead ({document_id, artifact_url, manifest with sha256, …}) — download the full IR at `artifact_url`.",
+    inputSchema: getDocumentSchema,
+    handler: (a) => getDocumentTool(a),
+    behavior: behavior({ geometry: true, widgetCallable: true, pureJson: true }),
+  },
+  {
+    name: "close_document",
+    pack: null,
+    description:
+      "Close a document session and free its memory. Idempotent — closing an unknown id reports `closed: false`.",
+    inputSchema: closeDocumentSchema,
+    handler: (a) => closeDocument(a),
+    behavior: behavior({}),
+  },
+  {
+    name: "save_document",
+    pack: null,
+    description:
+      "Persist a live session under a name so it can be reopened with " +
+      "load_document. On the hosted server the save is durable: a signed-in " +
+      "user's save goes to their vcad.io account under the (normalized) name; " +
+      "an anonymous save returns an unguessable `saved_…` key to reopen with. " +
+      "On a local/stdio server it writes `<name>.vcad` under VCAD_MCP_STATE_DIR " +
+      "(or the working directory).",
+    inputSchema: saveDocumentSchema,
+    handler: (a, c) => saveDocument(a, c.sessionStore),
+    behavior: behavior({}),
+  },
+  {
+    name: "load_document",
+    pack: null,
+    description:
+      "Reopen a save_document save into a fresh session and return its new " +
+      "document_id. Pass the same name you saved under (or the `saved_…` key " +
+      "an anonymous save returned). The cheap way to resume a board/part " +
+      "across runs instead of rebuilding it.",
+    inputSchema: loadDocumentSchema,
+    handler: (a, c) => loadDocument(a, c.sessionStore),
+    behavior: behavior({ writesDoc: true, geometry: true, mount: true }),
+  },
+];

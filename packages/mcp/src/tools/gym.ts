@@ -16,6 +16,7 @@ import {
   type PhysicsStepResult,
   type PhysicsActionType,
 } from "@vcad/engine";
+import { behavior, type ToolDef } from "./tool-def.js";
 
 /** Observation from the robot environment (re-export for API compatibility) */
 export type Observation = PhysicsObservation;
@@ -530,3 +531,87 @@ export function batchReset(input: unknown): {
     };
   }
 }
+
+export const toolDefs: ToolDef[] = [
+  {
+    name: "create_robot_env",
+    pack: "physics",
+    description:
+      "Create a physics simulation environment from a vcad assembly. " +
+      "Returns an environment ID that can be used with gym_step, gym_reset, and gym_observe. " +
+      "The environment provides a gym-style interface for RL training.",
+    inputSchema: createRobotEnvSchema,
+    handler: (a) => createRobotEnv(a),
+    behavior: behavior({}),
+  },
+  {
+    name: "gym_step",
+    pack: "physics",
+    description:
+      "Step the physics simulation with an action. " +
+      "action_type can be 'torque' (Nm), 'position' (degrees/mm), or 'velocity' (deg/s or mm/s). " +
+      "Returns observation (joint positions/velocities, end effector poses), reward, and done flag.",
+    inputSchema: gymStepSchema,
+    handler: (a) => gymStep(a),
+    behavior: behavior({}),
+  },
+  {
+    name: "gym_reset",
+    pack: "physics",
+    description:
+      "Reset the simulation environment to its initial state. Returns the initial observation.",
+    inputSchema: gymResetSchema,
+    handler: (a) => gymReset(a),
+    behavior: behavior({}),
+  },
+  {
+    name: "gym_observe",
+    pack: "physics",
+    description:
+      "Get the current observation from the simulation without stepping. " +
+      "Returns joint positions, velocities, and end effector poses.",
+    inputSchema: gymObserveSchema,
+    handler: (a) => gymObserve(a),
+    behavior: behavior({}),
+  },
+  {
+    name: "gym_close",
+    pack: "physics",
+    description: "Close and clean up a simulation environment.",
+    inputSchema: gymCloseSchema,
+    handler: (a) => gymClose(a),
+    behavior: behavior({}),
+  },
+  {
+    name: "batch_create_envs",
+    pack: "physics",
+    description:
+      "Create N parallel simulation environments from a single robot assembly. " +
+      "Returns a batch_id for use with batch_step and batch_reset. " +
+      "Enables parallel RL training across multiple environments.",
+    inputSchema: batchCreateEnvsSchema,
+    handler: (a) => batchCreateEnvs(a),
+    behavior: behavior({}),
+  },
+  {
+    name: "batch_step",
+    pack: "physics",
+    description:
+      "Step all environments in a batch simultaneously with per-env actions. " +
+      "Returns observations, rewards, and done flags for all environments. " +
+      "action_type can be 'torque', 'position', or 'velocity'.",
+    inputSchema: batchStepSchema,
+    handler: (a) => batchStep(a),
+    behavior: behavior({}),
+  },
+  {
+    name: "batch_reset",
+    pack: "physics",
+    description:
+      "Reset all environments in a batch to their initial state. " +
+      "Returns initial observations for all environments.",
+    inputSchema: batchResetSchema,
+    handler: (a) => batchReset(a),
+    behavior: behavior({}),
+  },
+];

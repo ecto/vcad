@@ -23,6 +23,8 @@ import { gunzipSync } from "node:zlib";
 import type { SessionStore } from "../session-store.js";
 import { resolveShareToken } from "../session-store.js";
 import { documents, registerSession } from "./session.js";
+import { behavior, type ToolDef } from "./tool-def.js";
+import { ok as okJson, errText as err, type ToolResult } from "./tool-result.js";
 
 export const continueDocumentSchema = {
   type: "object" as const,
@@ -44,33 +46,19 @@ export const continueDocumentSchema = {
   },
 };
 
-type ToolText = {
-  content: Array<{ type: "text"; text: string }>;
-  isError?: boolean;
-};
-
-function err(text: string): ToolText {
-  return { isError: true, content: [{ type: "text", text }] };
-}
+type ToolText = ToolResult;
 
 /** The success payload: the session handle plus a nudge toward the verify loop
  *  (render it, then leave a re-runnable Receipt for any claim). */
 function ok(id: string, doc: Document, name: string): ToolText {
-  return {
-    content: [
-      {
-        type: "text",
-        text: JSON.stringify({
-          document_id: id,
-          parts: doc.roots?.length ?? 0,
-          name,
-          hint:
-            "Render with render_view, then continue the user's work. Leave a " +
-            "re-runnable proof of any claim with verify_part / build_receipt.",
-        }),
-      },
-    ],
-  };
+  return okJson({
+    document_id: id,
+    parts: doc.roots?.length ?? 0,
+    name,
+    hint:
+      "Render with render_view, then continue the user's work. Leave a " +
+      "re-runnable proof of any claim with verify_part / build_receipt.",
+  });
 }
 
 function looksLikeIr(c: unknown): c is Document {
@@ -214,3 +202,27 @@ export async function continueDocument(
   }
   return ok(registerSession(doc), doc, "Shared part");
 }
+
+export const toolDefs: ToolDef[] = [
+  {
+    name: "continue_document",
+    pack: null,
+    description:
+      "Open the user's vcad.io part as an editing session from a 'Continue " +
+      "in Claude' handoff (a share `token`, or an inline `doc` for accountless " +
+      "handoffs). The web app hands you this in the starter prompt; call this " +
+      "first, then render_view it and continue the user's work. Returns a " +
+      "`document_id` for subsequent tool calls. The geometry is fetched " +
+      "server-side — never paste it.",
+    inputSchema: continueDocumentSchema,
+    handler: (a, c) => continueDocument(a, c.sessionStore),
+    behavior: behavior({ writesDoc: true, geometry: true, mount: true }),
+    annotations: {
+      title: "Continue from vcad.io",
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: false,
+      openWorldHint: true,
+    },
+  },
+];
