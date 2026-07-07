@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-07-same-net-bypass-drc",
+  "version": "0.9.4",
+  "date": "2026-07-07",
+  "category": "feat",
+  "title": "DRC warns on same-net bypass contacts",
+  "summary": "New SameNetBypass rule flags copper touching its own net far from any intended junction (e.g. a star trace over a coil's inner via) — the same-net contact that silently short-circuits spiral coils, shunts, and sense traces.",
+  "features": ["pcb", "drc", "coil"],
+  "mcpTools": ["run_drc", "describe_pcb", "validate_for_fab"]
+}

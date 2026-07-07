@@ -3360,11 +3360,15 @@ interface DrcNetPairCount {
  *  conflicts / fab-rule breaks). UnconnectedNet and UnstitchedPad are
  *  "incomplete" rules (route it / stitch it). NetIslands is a hard defect (a
  *  net's copper built as ≥2 galvanically-isolated islands); it carries Error
- *  severity regardless of bucket. */
+ *  severity regardless of bucket. SameNetBypass is a Warning-severity
+ *  connectivity defect: same-net copper touching far from any intended
+ *  junction, short-circuiting the conductor between the points (fatal to
+ *  two-terminal structures like spiral coils). */
 const DRC_CATEGORY: Record<string, "connectivity" | "clearance" | "manufacturing"> = {
   UnconnectedNet: "connectivity",
   UnstitchedPad: "connectivity",
   NetIslands: "connectivity",
+  SameNetBypass: "connectivity",
   Clearance: "clearance",
   Short: "clearance",
   MinTraceWidth: "manufacturing",
@@ -7087,6 +7091,11 @@ export async function describePcb(args: Record<string, unknown>) {
         categories: drcSummary.categories,
         byRule: drcSummary.byRule,
         worstClearance: drcSummary.worstClearance,
+        // Same-net copper touching far from any intended junction — invisible
+        // to clearance/short rules but fatal to two-terminal structures
+        // (coils, shunts). Surfaced by name so a "clean-looking" board that
+        // silently short-circuits its own winding is impossible to miss.
+        sameNetBypass: drcSummary.byRule["SameNetBypass"] ?? 0,
         // `clean` ignores connectivity (unrouted nets are a to-do, not a defect) —
         // same semantics as placement_drc.clean.
         clean: drcSummary.categories.clearance + drcSummary.categories.manufacturing === 0,
