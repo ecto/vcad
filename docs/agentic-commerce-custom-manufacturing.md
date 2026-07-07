@@ -26,19 +26,34 @@ a content hash of the design**. Everything else follows from it.
 ## Roles
 
 - **Design surface** — where the geometry and its manufacturability live
-  (vcad: parametric IR, kernel DFM, cost model). Issues quotes.
-- **Buyer agent** — the AI agent acting for a human. Requests quotes,
-  proposes spends. Never holds payment credentials.
-- **Executor** — the buyer agent's hands (kerf in the reference
-  implementation): drives the fab's public quote/checkout surface under the
-  mandate when the fab has no agent rail. Receives a card *reference*,
-  never funds; every action is evidence-logged.
+  (vcad: parametric IR, kernel DFM, cost model). Produces fab-ready files
+  and a `doc_hash`; issues its own design-cost *estimate*. A **client** of
+  the commerce plane, not its host.
+- **Buyer agent** — the AI agent acting for a human. Integrates the design
+  surface and the commerce plane: carries files from one to the other,
+  requests quotes, proposes spends. Never holds payment credentials, never
+  sees a PAN.
+- **Executor** — the hands: drives the fab's public quote/checkout surface
+  under the mandate when the fab has no agent rail. Receives a card
+  *reference*, never funds; every action is evidence-logged.
 - **Human principal** — approves spend out-of-band (never through the agent's
   own tool channel), funds the wallet, owns disputes.
-- **Merchant of record** — charges the human, pays the fab (vcad in the
-  reference implementation).
+- **Merchant of record** — charges the human, pays the fab, issues the
+  single-use card.
 - **Fab** — manufactures. Accepts or declines each order, exactly as an ACP
   merchant does. Never sees the buyer-side economics.
+
+**The commerce plane (0.2 refinement).** The Executor, Merchant of record,
+wallet, and out-of-band approval surface consolidate into **one
+deployable** — the *commerce plane* (kerf in the reference implementation),
+which is *Stripe for metal*: the design surface and the buyer agent
+integrate it; it never calls back into them. They consolidate for one
+non-negotiable reason — the card issuer must hand the PAN to the executor's
+runtime over a **server-to-server link the agent never mediates**, which is
+what keeps the agent from ever holding card data. So "money plane" and
+"execution plane" are not two services with the agent bridging them; they
+are one. What crosses the design↔commerce boundary is **data** — the
+shared receipt schema and the `doc_hash` — never a service call.
 
 ## Objects
 
@@ -207,14 +222,17 @@ short-lived, single-SKU product feed of one.
 
 ## Status
 
-Implemented in the vcad MCP server (money plane): quotes with `doc_hash`
-and artifact binding (Phase 0, live), hash-and-cap-enforced atomic spend
+Commerce-plane seeds implemented in the vcad MCP server (to migrate into
+the standalone commerce plane): quotes with `doc_hash` and artifact
+binding (Phase 0, live), hash-and-cap-enforced atomic spend
 (`debit_wallet`, migration 027), flag-gated `authorize_spend`/`place_order`
-with out-of-band approval. Implemented in kerf (execution plane): the
+with out-of-band approval. Implemented in kerf (the commerce plane): the
 browser transport against SendCutSend — recorded quote playbook walked to
-an anonymous vendor price with money-adjacent assertions, upload-hash
-chain verified end-to-end, quote capability green (2026-07-07). Open: the
-deterministic playbook runner, wiring executor quotes into the design
-surface's broker as `quoted`/`binding` options, the L1/L2 order rail with
-mandate-compiled cards, standing budgets, and fab-side native adoption —
-now an optimization, not a prerequisite.
+an anonymous vendor price with money-adjacent assertions, the deterministic
+Tier-1 runner + `intent_hash` binding + `quoted`-basis quote assembly
+(tested), and the upload-hash chain verified end-to-end. Open: the concrete
+cloud `BrowserHost` + a first live run to earn a `green` capability;
+`quote` as a **kerf MCP tool the agent calls** (not a vcad broker adapter);
+consolidating the wallet + approval surface + Stripe Issuing into kerf; the
+L1/L2 order rail with mandate-compiled cards; standing budgets; and
+fab-side native adoption — now an optimization, not a prerequisite.

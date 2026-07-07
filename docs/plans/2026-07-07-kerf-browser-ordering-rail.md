@@ -32,6 +32,19 @@ piece left before the quote loop closes is the concrete Browser Use CDP
 browser-use egress. This file is the point-in-time proposal; the living
 design tracks in [kerf's `docs/architecture.md`](https://github.com/ecto/kerf/blob/main/docs/architecture.md).*
 
+*Rev 6 (boundary correction): kerf is **"Stripe for metal"** — the
+**commerce plane** (money **and** execution), not a subordinate "execution
+plane" under a vcad "money plane." **You integrate kerf; kerf does not
+integrate you.** vcad is a design surface and a *client*; the buyer agent
+(Claude) is the integrator, carrying files vcad→kerf and receipt claims
+back. The earlier "vcad's broker runs a kerf quote job / vcad's
+`place_order` issues the card" model inverted the dependency and is
+dropped — see the struck sections below and the canonical
+[boundary section](https://github.com/ecto/kerf/blob/main/docs/architecture.md).
+Money and execution live together in kerf for one reason: the card issuer
+must hand the PAN to the runtime that types it over a link the agent never
+mediates.*
+
 ## The problem
 
 The ordering rail is built and fail-closed — quote → hash-bound mandate →
@@ -107,17 +120,21 @@ Sibling repo, same pattern as `tang`: `ecto/kerf`, consumed by vcad.
   own contributor identity to become "the place you check whether an agent
   can buy from X."
 
-The seam is exactly ACP-CM's role boundary, which is why the split is clean:
+The split is by plane, and the agent is the integrator (Rev 6 — the
+original table put money in vcad and had vcad orchestrate kerf; corrected):
 
-| stays in vcad (money plane) | moves to kerf (execution plane) |
+| design surface (vcad — a *client*) | commerce plane (kerf — money **and** execution) |
 |---|---|
-| wallet, `debit_wallet`, margin | browser runtime, sessions, vault |
-| spend authorizations + human approval UI | driver registry (playbooks, fixtures, canaries) |
-| quotes, `doc_hash` binding, DFM gates | job state machine, evidence pipeline |
-| orders table, receipt assembly | email inbox oracle, tracking scrapes |
-| `ManufacturerAdapter` broker | virtual-card *use* (vcad issues; kerf types) |
+| geometry, DFM gates, files, `doc_hash` | wallet, `debit_wallet`, margin, merchant-of-record |
+| design-cost `quote_manufacturing` (estimate) | binding vendor `quote` (real supplier price) |
+| emits design claims to `vcad-receipt` | spend authorizations + **its own** out-of-band approval surface |
+| — | Stripe Issuing + the runtime that types the card |
+| — | browser/api/email drivers, registry, evidence, tracking |
 
-vcad never learns selectors; kerf never holds funds.
+vcad never learns a selector or touches a card; the agent never sees a
+PAN; kerf never calls back into a design surface. The only thing that
+crosses is the shared `vcad-receipt` schema (data, not calls) and the
+`doc_hash` carried in the intent as provenance.
 
 ### Naming
 
@@ -133,21 +150,26 @@ etymology file.)
 
 ## Architecture
 
+The buyer agent (Claude) holds both MCPs as peers and integrates them;
+neither server calls the other (Rev 6 — was: vcad MCP orchestrating kerf):
+
 ```
-vcad MCP (money plane)                 kerf (execution plane — Vercel)
-┌─────────────────────────┐            ┌──────────────────────────────┐
-│ quote_manufacturing     │  quote job │ kerf-mcp (remote MCP)       │
-│  └ BrowserAdapter ──────┼───────────►│  ├ engine: WDK workflows     │
-│ authorize_spend         │            │  │   ├ playbook steps        │
-│  └ human approves (OOB) │            │  │   └ eve agent (Tier 2)    │
-│ place_order             │  order job │  ├ hooks: approval, takeover,│
-│  ├ verify mandate+hash  │───────────►│  │   inbound email, Stripe $ │
-│  ├ debit wallet         │            │  ├ BrowserHost: Browser Use  │
-│  ├ issue virtual card ──┼─card ref──►│  │   cloud (CDP, live view)  │
-│  └ order row: SUBMITTED │◄─events────│  ├ vault (sessions, creds)   │
-│ get_order_status        │            │  ├ inbox (orders+key@…)      │
-│ build_receipt ◄─claims──┼────────────│  └ evidence store + canaries │
-└─────────────────────────┘            └──────────────────────────────┘
+             ┌──────────────  buyer agent (Claude)  ──────────────┐
+             │  designs in vcad · exports files · calls kerf      │
+             │  never sees a PAN                                  │
+             └──────┬─────────────────────────────────┬──────────┘
+       vcad MCP     │ (files, doc_hash)     kerf MCP   │ (files+config → part)
+┌───────────────────▼──────┐           ┌───────────────▼──────────────────┐
+│ design surface           │           │ commerce plane (kerf — Vercel)    │
+│  create/update/export    │           │  quote / authorize_spend /        │
+│  quote_manufacturing     │           │    place_order / track            │
+│    (kernel-cost estimate)│           │  ├ wallet · MoR · Stripe Issuing  │
+│  build_receipt ◄─────────┼─ claims ──│  ├ out-of-band approval surface   │
+│    (shared vcad-receipt) │  (data)   │  ├ engine: eve workflows + agent  │
+└──────────────────────────┘           │  ├ BrowserHost (CDP, live view)   │
+                                        │  ├ card issuer → runtime (in kerf)│
+                                        │  └ evidence · inbox · canaries    │
+                                        └───────────────────────────────────┘
 ```
 
 ### Driver model — three tiers per step
@@ -318,23 +340,33 @@ wish you had" is the ACP-CM partner pitch. Adapters are designed to be
 the friction and carries near-zero ToS/anti-bot/payment risk — which is why
 it is the MVP, not a compromise.
 
-## vcad integration points (concrete)
+## Integration: peer MCPs, agent as integrator (Rev 6)
 
-- `fabricate/broker.ts`: `CONTRACTED_FABS` hardcode → registry-driven
-  capability data; add a `BrowserAdapter implements ManufacturerAdapter`
-  that runs a kerf quote job and returns `pricing_basis: "binding"` —
-  real SCS prices in the agent loop is the first shipped value, before any
-  ordering.
-- `fabricate/handoff.ts`: L1 evolves the handoff — same struct, plus a
-  staged kerf job ("cart is loaded; here's the review screenshot; click
-  buy in this live view").
-- `place_order`: after debit, issue VCC + submit kerf order job; order rows
-  gain `kerf_job_id` + evidence artifact refs; events stream back into
-  `orders.events`.
-- `vcad-receipt`: new oracle ids listed above; `build_receipt` gains the
-  commerce claims.
-- Supabase: `kerf_jobs` mirror table (or event log) for the app's Orders
-  panel; migration alongside 024/027.
+There is **no vcad→kerf runtime dependency.** vcad stays a design surface;
+kerf is the commerce plane the agent (or the vcad web app, as a client)
+calls. Concretely:
+
+- **The buyer agent integrates.** Claude holds the vcad MCP and the kerf
+  MCP as peers: design in vcad → `export_cad` / `export_gerber` → call
+  kerf's `quote` (binding vendor price), then `authorize_spend` (human
+  approves in **kerf's** surface) → `place_order`. The first shipped value
+  is real SCS prices via kerf's `quote` tool — no vcad broker adapter.
+- **vcad keeps its own estimate.** `quote_manufacturing` stays a
+  design-time kernel-cost *estimate* (design-to-cost); it is not the
+  binding path and does not call kerf. Two different tools: a design
+  estimate (vcad) and a vendor quote (kerf).
+- **`fabricate/handoff.ts` is superseded** by kerf's L1 (staged cart,
+  human clicks buy in the live view) — but that flow lives in kerf, driven
+  by the agent, not wired into vcad.
+- **The money plane moves to kerf.** vcad's `authorize_spend` /
+  `place_order` / wallet (migration 027) are the seed of kerf's commerce
+  plane, not something vcad keeps calling into. Honest cost: kerf grows its
+  own wallet + approval surface + issuing rather than reusing vcad's.
+- **`vcad-receipt` is the shared contract** (data, not calls): kerf emits
+  commerce oracle claims (`kerf/upload-hash`, `kerf/card-settlement`,
+  `kerf/tracking`) into it; vcad's `build_receipt` can ingest them to
+  assemble a unified design→delivery receipt. `doc_hash` rides in the
+  intent as provenance.
 
 ## Sequencing
 
