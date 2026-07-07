@@ -5,6 +5,11 @@
 [convergence strategy](2026-07-06-convergence-strategy.md) (asset 6: agents
 that buy atoms). Working name: **waldo** — see Naming.*
 
+*Rev 2 (same day): runtime is cloud-first — Vercel Workflows (WDK) + eve +
+a cloud browser host; the desktop-sidecar lane is dropped. Card issuer
+decided: Stripe Issuing. The goal is that ordering works entirely via MCP
+from any agent session, with no user machine in the loop.*
+
 ## The problem
 
 The ordering rail is built and fail-closed — quote → hash-bound mandate →
@@ -109,19 +114,19 @@ scoping sidesteps it if needed.
 ## Architecture
 
 ```
-vcad MCP (money plane)                 waldo (execution plane)
+vcad MCP (money plane)                 waldo (execution plane — Vercel)
 ┌─────────────────────────┐            ┌──────────────────────────────┐
-│ quote_manufacturing     │  quote job │ waldo-mcp / job API          │
-│  └ BrowserAdapter ──────┼───────────►│  ├ queue (pg-boss)           │
-│ authorize_spend         │            │  ├ engine: playbook exec     │
-│  └ human approves (OOB) │            │  │   └ agent fallback+repair │
-│ place_order             │  order job │  ├ runtime: Playwright/CDP   │
-│  ├ verify mandate+hash  │───────────►│  │   ├ desktop sidecar       │
-│  ├ debit wallet         │            │  │   └ cloud worker          │
-│  ├ issue virtual card ──┼─card ref──►│  ├ vault (sessions, creds)   │
-│  └ order row: SUBMITTED │◄─events────│  ├ inbox (orders+key@…)      │
-│ get_order_status        │            │  └ evidence store            │
-│ build_receipt ◄─claims──┼────────────│      canaries (scheduled)    │
+│ quote_manufacturing     │  quote job │ waldo-mcp (remote MCP)       │
+│  └ BrowserAdapter ──────┼───────────►│  ├ engine: WDK workflows     │
+│ authorize_spend         │            │  │   ├ playbook steps        │
+│  └ human approves (OOB) │            │  │   └ eve agent (Tier 2)    │
+│ place_order             │  order job │  ├ hooks: approval, takeover,│
+│  ├ verify mandate+hash  │───────────►│  │   inbound email, Stripe $ │
+│  ├ debit wallet         │            │  ├ BrowserHost: Browser Use  │
+│  ├ issue virtual card ──┼─card ref──►│  │   cloud (CDP, live view)  │
+│  └ order row: SUBMITTED │◄─events────│  ├ vault (sessions, creds)   │
+│ get_order_status        │            │  ├ inbox (orders+key@…)      │
+│ build_receipt ◄─claims──┼────────────│  └ evidence store + canaries │
 └─────────────────────────┘            └──────────────────────────────┘
 ```
 
@@ -157,8 +162,8 @@ flywheel.
 ### Payment containment (the legendary part)
 
 `place_order` today: verify mandate ∧ hash ∧ caps ∧ expiry → atomic debit.
-Added step: the debit funds a **single-use virtual card** (Stripe Issuing /
-Lithic / Privacy.com) capped at the authorized total, merchant-locked on
+Added step: the debit funds a **single-use virtual card** (Stripe Issuing —
+decided) capped at the authorized total, merchant-locked on
 first settlement, short-expiry. waldo receives a card *reference*; the
 runtime types the PAN into the payment iframe via CDP **outside model
 context** — the model sees a placeholder, never the number. The issuer's
@@ -200,16 +205,66 @@ box`. New `OracleRef` ids: `waldo/upload-hash`, `waldo/confirmation-email`,
 not be scraped is `Unverifiable`, not assumed — the receipt house rule,
 applied to commerce.
 
-### Deployment: desktop-first
+### Runtime: durable workflows on Vercel — no local anything
 
-The runtime's first home is a **sidecar on the user's machine** (vcad
-already ships a Tauri app): residential IP, real browser profile, existing
-logged-in sessions, and the takeover UX is trivial — a window opens, you
-watch your agent shop, you grab the wheel for CAPTCHAs/2FA/final-click-at-L1,
-it resumes. This one choice defuses most anti-bot friction *and* most trust
-friction at once. Cloud workers (headless + live screencast into the app's
-Orders panel) come second, for teams/scheduled canaries/tracking scrapes.
+The execution plane is cloud-native so "order via MCP" is literally true
+from any agent session, phone included, with no user machine in the loop.
+Two Vercel primitives carry it:
+
+- **Workflow SDK (WDK)** is the job engine. Every money-adjacent action is
+  a `'use step'`: retried on infra failure, **memoized once complete**,
+  every input/output recorded (the trace is a free chunk of the evidence
+  bundle). **Hooks** suspend a run until an external event; **sleep**
+  spans minutes to months.
+- **eve** (Vercel's agent framework, June 2026, same durable substrate) is
+  the Tier-2 substrate: durable agent loop, Vercel Sandbox, and an
+  existing fork-and-deploy template pairing an eve agent with a Browser
+  Use cloud browser, live-watchable.
+
+The browser itself lives in a **browser cloud** behind a `BrowserHost`
+interface (Browser Use cloud first — the eve template exists;
+Browserbase/Steel/Sandbox-Chromium as alternates). Sessions persist by id
+independently of function invocations, so a suspended workflow reattaches
+via CDP on resume; live-view URLs give watch-and-takeover from any device;
+proxies and profile persistence are host features, not waldo code. This is
+why a browser cloud beats running Chromium inside a sandbox with a bounded
+lifetime: checkout spans takeover waits, and the order spans weeks.
+
+**The whole order lifecycle is one durable run:**
+
+| lifecycle moment | workflow primitive |
+|---|---|
+| upload / configure / assert / extract | `'use step'` (retried, memoized) |
+| human approves mandate (out-of-band) | hook ← vcad approval webhook |
+| CAPTCHA / 2FA / L1 buy click | hook ← human resolves in live view |
+| the L2 buy click | dedicated step, gated by the auditor step |
+| confirmation email | hook ← inbound-email webhook |
+| card settlement | hook ← Stripe Issuing webhook |
+| production + shipping lead time | sleep (days–weeks) + tracking steps |
+| delivery | final steps emit receipt claims |
+
+Step memoization reinforces the two-phase click: a completed buy-click
+step never re-executes on replay. The one dangerous window — click sent,
+result not yet durably recorded — is exactly what `RECONCILING` covers:
+a resumed run's first move is the order-history/inbox scan for the
+idempotency key, never a second click.
+
+Payment containment is unchanged in the cloud: card entry and the buy
+click are **server-side steps, not model turns**. The step fetches card
+details from Stripe Issuing and types them via CDP; the PAN never enters
+any model context, and the Tier-2 agent has no buy-click tool to call —
+capability gating is workflow structure, not prompting.
+
+Human surfaces shrink to two: the vcad web app (approve mandates, watch
+the live session, take over in an embedded live view) and push
+notifications. Takeover from a phone is strictly better than a desktop
+sidecar — same trust properties, zero install — and L1 assisted mode
+("cart is staged; click buy in this live view") works from anywhere.
 Human takeover is a first-class job state, not an error.
+
+waldo-mcp is a remote MCP server on Vercel for agent-facing consumption;
+vcad's fabricate broker talks to the same job API service-to-service
+(HTTP + signed webhooks).
 
 ### Transports beyond the browser
 
@@ -227,9 +282,11 @@ across domains" cashes out to: transports × registry, not N integrations.
 ## ToS posture (honest version)
 
 Automating checkout on a user's own account is against some vendors' terms;
-datacenter browsers get fought by anti-bot. Posture: (1) desktop-first is
-the user's own browser, their account, human-authorized spend, human-speed
-interaction, order-scale volume — user-agent automation, not scraping;
+datacenter browsers get fought by anti-bot. Posture: (1) this is user-agent
+automation, not scraping — the user's own vendor account, human-authorized
+spend, human-speed interaction, order-scale volume; residential/stealth
+egress is a per-vendor browser-host option where warranted, not a default
+identity-hiding posture;
 (2) per-vendor autonomy ceilings are policy: a vendor that has said no to
 automation (JLCPCB denied the API app — going around that is a relationship
 decision, not a technical one) stays at **L1 assisted**, where waldo does
@@ -250,7 +307,7 @@ it is the MVP, not a compromise.
   ordering.
 - `fabricate/handoff.ts`: L1 evolves the handoff — same struct, plus a
   staged waldo job ("cart is loaded; here's the review screenshot; click
-  buy here").
+  buy in this live view").
 - `place_order`: after debit, issue VCC + submit waldo order job; order rows
   gain `waldo_job_id` + evidence artifact refs; events stream back into
   `orders.events`.
@@ -267,9 +324,11 @@ it is the MVP, not a compromise.
   **quote-only** playbook. Zero money, zero account, public instant-quote —
   and it immediately upgrades sheet-metal quotes from `estimate` to
   `binding`.
-- **Wave 1:** L1 assisted checkout for SCS (desktop sidecar, staged cart,
-  human clicks buy) + inbox oracle + evidence bundle → receipt claims. The
-  *second* glockenspiel (or the 3DP wave) ships through it.
+- **Wave 1:** L1 assisted checkout for SCS — the workflow stages the cart
+  in a cloud browser session, suspends on a hook, and the human clicks buy
+  in the live view (from any device) — + inbox oracle + evidence bundle →
+  receipt claims. The *second* glockenspiel (or the 3DP wave) ships
+  through it.
 - **Wave 2:** L2 for SCS: virtual-card issuing wired to `place_order`,
   two-oracle confirmation, `RECONCILING` machinery, canaries + freshness in
   quote options. "Order via MCP" becomes literally true.
@@ -281,21 +340,30 @@ it is the MVP, not a compromise.
 - **Wave 4:** email-RFQ transport; registry goes public with the canary
   scoreboard; Tier 2 repair-PR loop.
 
+## Decided
+
+- **Card issuer: Stripe Issuing.** Fits the merchant-of-record posture;
+  issuing, spend controls (amount cap + merchant lock), and settlement
+  webhooks in one API.
+- **Runtime: cloud, on Vercel.** WDK workflows as the job spine, eve for
+  the Tier-2 agent, remote MCP as the agent-facing surface. No local
+  computer use; the desktop sidecar lane is dropped.
+
 ## Open questions
 
-1. **Card issuer.** Stripe Issuing (fits merchant-of-record posture, real
-   API, webhooks) vs Lithic (built for exactly this) vs Privacy.com
-   (consumer-grade, fastest to prototype). Leaning Stripe Issuing for the
-   platform story; Privacy for a week-one spike.
-2. **Desktop sidecar packaging.** Inside the existing Tauri app (an
-   "Orders" surface + bundled runtime) vs a separate `waldo` daemon the app
-   talks to. Leaning in-app for distribution, daemon-shaped internally.
+1. **Browser host.** Browser Use cloud (eve template exists, live view)
+   vs Browserbase vs Chromium-in-Sandbox. Judged on: session persistence
+   across suspended workflows, live-view takeover UX, profile/proxy
+   support, price per session-hour. `BrowserHost` interface either way, so
+   this is swappable.
+2. **eve vs bare WDK for the spine.** eve is a weeks-old beta; the
+   money-adjacent spine wants the most boring substrate available.
+   Proposed layering: waldo-core stays framework-free (schemas, playbook
+   format, assertions); quote/order/reconcile/canary workflows on WDK
+   directly; eve owns the Tier-2 agent loop. Revisit as eve matures — if
+   it stabilizes, more of the engine can migrate into it.
 3. **Registry publicity timing.** The scoreboard is a flywheel but also an
    anti-bot bat-signal. Private until Wave 3, public with the partner-pitch
    framing?
-4. **Engine substrate.** Own thin engine on Playwright + computer-use
-   (recommended: the playbook format, assertion language, and capability
-   gating *are* the product) vs building on Stagehand and inheriting its
-   act/extract caching. Steal ideas either way.
-5. **The name.** waldo / factor / supercargo / prokura — cheap to decide
+4. **The name.** waldo / factor / supercargo / prokura — cheap to decide
    before the repo exists, expensive after.
