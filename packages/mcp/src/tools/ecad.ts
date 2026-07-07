@@ -31,6 +31,7 @@ import type {
   Receipt,
 } from "@vcad/ir";
 import { createDocument } from "@vcad/ir";
+import { summarize, unifiedFromPcbReceipt } from "../receipt-unified.js";
 import { getNodePcb, getPcbNodeIds, buildEntry, agentView } from "@vcad/core";
 import {
   computeRatsnest,
@@ -9616,6 +9617,17 @@ export async function buildReceipt(args: Record<string, unknown>, engine?: Engin
     }
   }
 
+  // The unified DesignReceipt (schema vcad.receipt/1) is the cross-domain
+  // claim ledger — DRC, power continuity, provenance, and enclosure fit as
+  // fail-closed claims. The legacy Receipt stays the re-runnable input to
+  // verify_receipt. Emit both.
+  const unified = unifiedFromPcbReceipt(receipt, ctx.documentId, {
+    ...(enclosureFit ? { enclosureFit } : {}),
+    ...(enclosureId && !enclosureFit && enclosureFitError
+      ? { enclosureFitError }
+      : {}),
+  });
+
   // The receipt rides in structuredContent so the inline viewer renders it
   // as an audit ledger (the only carrier ChatGPT's widget bridge exposes);
   // document_id lets the viewer also fetch the board GLB behind the ledger.
@@ -9625,9 +9637,19 @@ export async function buildReceipt(args: Record<string, unknown>, engine?: Engin
       ? { ...receipt, enclosure_fit_error: enclosureFitError }
       : receipt;
   return {
-    content: [{ type: "text" as const, text: JSON.stringify(textPayload) }],
+    content: [
+      {
+        type: "text" as const,
+        text: JSON.stringify({
+          ...textPayload,
+          unified,
+          unified_summary: summarize(unified),
+        }),
+      },
+    ],
     structuredContent: {
       receipt,
+      unified,
       power_integrity_ok: powerIntegrityOk,
       ...(planeWarnings.length ? { disconnected_planes: planeWarnings } : {}),
       ...(enclosureFit ? { enclosure_fit: enclosureFit } : {}),
@@ -9668,7 +9690,13 @@ export async function verifyReceipt(args: Record<string, unknown>) {
   if (!validity.valid) {
     return pcbValidationError("verify_receipt", validity, args.document_id ? String(args.document_id) : undefined);
   }
-  const receipt = args.receipt as Receipt | undefined;
+  let receipt = args.receipt as Receipt | undefined;
+  // Tolerate the whole build_receipt payload ({ receipt, unified, … } or a
+  // structuredContent echo) being passed back verbatim.
+  if (receipt && typeof receipt === "object" && !receipt.board_hash) {
+    const inner = (receipt as Record<string, unknown>).receipt;
+    if (inner && typeof inner === "object") receipt = inner as Receipt;
+  }
   if (!receipt || typeof receipt !== "object" || !receipt.board_hash) {
     return {
       content: [

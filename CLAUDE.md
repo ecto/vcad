@@ -107,6 +107,7 @@ vcad/
 │   ├── vcad-kernel/               # Unified kernel API
 │   ├── vcad-kernel-wasm/          # WASM bindings for browser
 │   ├── vcad-ir/                   # Intermediate representation
+│   ├── vcad-receipt/              # Unified fail-closed verification receipt schema
 │   ├── vcad-cli/                  # CLI tool
 │   ├── vcad-render/               # Standalone .vcad → isometric SVG renderer
 │   └── vcad/                      # Legacy CSG library (manifold-based)
@@ -301,6 +302,10 @@ target/debug/vcad-render path/to/part.vcad > out.svg
    `Extract<CsgOp, { type: "…" }>` alias in `index.ts` only if a consumer needs
    the variant by name.
 3. Add evaluation logic in `packages/engine/src/evaluate.ts`
+
+`ir:gen` bundles ts-rs bindings from **two** crates: `vcad-ir` and
+`vcad-receipt` (the unified receipt schema). Type names must be unique across
+both — the script fails loudly on collisions.
 
 ## Changelog
 

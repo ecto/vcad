@@ -37,6 +37,7 @@ pub mod materials;
 pub mod model;
 pub mod nesting;
 pub mod poly2d;
+pub mod receipt;
 pub mod relief;
 pub mod sequence;
 pub mod shop_profiles;
@@ -62,6 +63,7 @@ pub use materials::{
 pub use model::{Bend, BendDirection, BendId, Frame, Panel, PanelId, SheetMetalModel};
 pub use nesting::{nest_rectangles, NestingParams, NestingResult, PartFootprint, Placement};
 pub use poly2d::Poly;
+pub use receipt::{cost_claims, manufacturability_claims, sheet_metal_receipt};
 pub use relief::{apply_bend_relief, find_missing_reliefs, ReliefError, ReliefNotch, ReliefParams};
 pub use sequence::{bend_sequence, BendStep};
 pub use shop_profiles::{
