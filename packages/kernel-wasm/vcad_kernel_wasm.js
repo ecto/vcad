@@ -1001,7 +1001,7 @@ export class Solid {
      * @returns {boolean}
      */
     canExportStep() {
-        const ret = wasm.raytracer_canRaytrace(this.__wbg_ptr);
+        const ret = wasm.solid_canExportStep(this.__wbg_ptr);
         return ret !== 0;
     }
     /**
