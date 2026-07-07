@@ -1013,7 +1013,7 @@ fn tessellate_planar_face_core(outer_verts: &[Point3], reversed: bool) -> Triang
     // Returns None if the polygon is too concave for fan triangulation.
     match find_best_fan_center(outer_verts) {
         Some(fan_center) => {
-            // Fan triangulation is valid for this polygon
+            // Fan triangulation from the chosen vertex
             let mut mesh = TriangleMesh::new();
             let n = outer_verts.len();
 
@@ -1036,6 +1036,35 @@ fn tessellate_planar_face_core(outer_verts: &[Point3], reversed: bool) -> Triang
                     mesh.indices.push(i as u32);
                     mesh.indices.push((i + 1) as u32);
                 }
+            }
+
+            // Validate the fan: on a concave polygon the heuristic can pick
+            // a center whose fan folds outside the boundary and cancels
+            // area (an annular-sector cap loses its inner-arc bulge, ~25%
+            // of the face). Compare unsigned fan area to the polygon's
+            // signed (shoelace) area and reroute through ear clipping on
+            // mismatch.
+            let mut signed = Vec3::zeros();
+            for i in 1..n - 1 {
+                let e1 = outer_verts[i] - outer_verts[0];
+                let e2 = outer_verts[i + 1] - outer_verts[0];
+                signed += e1.cross(e2);
+            }
+            let polygon_area = 0.5 * signed.norm();
+            let mut fan_area = 0.0;
+            for t in mesh.indices.chunks(3) {
+                let p = |i: u32| {
+                    let b = i as usize * 3;
+                    Point3::new(
+                        mesh.vertices[b] as f64,
+                        mesh.vertices[b + 1] as f64,
+                        mesh.vertices[b + 2] as f64,
+                    )
+                };
+                fan_area += 0.5 * (p(t[1]) - p(t[0])).cross(p(t[2]) - p(t[0])).norm();
+            }
+            if (fan_area - polygon_area).abs() > polygon_area.max(1e-12) * 1e-6 {
+                return tessellate_concave_polygon(outer_verts, reversed);
             }
 
             mesh
@@ -1480,6 +1509,29 @@ fn merge_overlapping_holes(inner_2d: &mut Vec<Vec<(f64, f64)>>, inner_3d: &mut V
 
         let Some((i, j)) = merge_pair else { break };
 
+        // Nested holes (one entirely inside the other — e.g. a chained
+        // boolean whose new counterbore hole swallowed the previous cavity
+        // hole) union to the OUTER hole; interleaving their vertices by
+        // angle would fabricate a mongrel mid-radius boundary.
+        {
+            let ci = centroid_2d(&inner_2d[i]);
+            let ri = avg_radius_2d(&inner_2d[i], ci);
+            let cj = centroid_2d(&inner_2d[j]);
+            let rj = avg_radius_2d(&inner_2d[j], cj);
+            let dist = ((ci.0 - cj.0).powi(2) + (ci.1 - cj.1).powi(2)).sqrt();
+            let (small, big, r_small, r_big) = if ri <= rj {
+                (i, j, ri, rj)
+            } else {
+                (j, i, rj, ri)
+            };
+            if dist + r_small <= r_big * 1.001 {
+                inner_2d.remove(small);
+                inner_3d.remove(small);
+                let _ = big;
+                continue;
+            }
+        }
+
         // Merge loop j into loop i by combining vertices and sorting by angle
         let mut combined_2d = std::mem::take(&mut inner_2d[i]);
         combined_2d.extend_from_slice(&inner_2d[j]);
@@ -1889,6 +1941,22 @@ fn ear_clip_triangulate(
 
     let mut remaining: Vec<usize> = indices.to_vec();
 
+    // The polygon's winding in this 2D projection is a property of the
+    // input, not of the face-orientation flag: the projection basis is
+    // derived from the first corner's cross product, which points opposite
+    // the loop normal whenever that corner is reflex. Detect the actual
+    // winding by shoelace sign; `reversed` only controls the emitted
+    // triangle order. (Mixing the two made ear detection reject every
+    // genuinely convex corner of a clockwise-projected polygon, silently
+    // dropping area.)
+    let mut shoelace = 0.0;
+    for k in 0..remaining.len() {
+        let p = verts_2d[remaining[k]];
+        let q = verts_2d[remaining[(k + 1) % remaining.len()]];
+        shoelace += p.0 * q.1 - q.0 * p.1;
+    }
+    let winding_ccw = shoelace >= 0.0;
+
     while remaining.len() > 3 {
         let n = remaining.len();
         let mut found_ear = false;
@@ -1903,7 +1971,11 @@ fn ear_clip_triangulate(
 
             // Check if this is a convex vertex (ear candidate)
             let cross = (b.0 - a.0) * (c.1 - a.1) - (b.1 - a.1) * (c.0 - a.0);
-            let is_convex = if reversed { cross < 0.0 } else { cross > 0.0 };
+            let is_convex = if winding_ccw {
+                cross > 0.0
+            } else {
+                cross < 0.0
+            };
 
             if !is_convex {
                 continue;
@@ -2383,6 +2455,14 @@ fn tessellate_cylindrical_face(
         if let Some(mesh) = tessellate_ruled_two_chain(cyl, &verts, reversed) {
             return mesh;
         }
+        // Narrow boolean leftovers (corner slivers a fraction of a degree
+        // wide) can collapse to a single unique angle under the grid path's
+        // 0.01 rad dedup, which then mistakes them for a FULL cylinder and
+        // paints a 2π band. Any small-angular-span loop is near-planar —
+        // fan-triangulate it verbatim instead.
+        if let Some(mesh) = tessellate_small_arc_fan(cyl, &verts, reversed) {
+            return mesh;
+        }
     }
 
     let mut radius = None;
@@ -2675,31 +2755,142 @@ fn tessellate_cylindrical_face(
     mesh
 }
 
-/// Ruled tessellation of a cylinder face bounded by two angle-paired sample
-/// chains (a fillet blend whose ends may be slanted miter-trim curves).
+/// Fan-triangulate a cylinder face whose loop spans a tiny angular arc
+/// (boolean sliver leftovers). Over such a span the surface deviates from
+/// a plane by less than the chord sagitta at the span, so using the loop
+/// polygon verbatim is exact to well below tessellation tolerance — and
+/// avoids the grid path's full-cylinder misdetection when all vertex
+/// angles dedup into one bucket. Returns `None` for spans above ~11°.
+fn tessellate_small_arc_fan(
+    cyl: &vcad_kernel_geom::CylinderSurface,
+    verts: &[Point3],
+    reversed: bool,
+) -> Option<TriangleMesh> {
+    if verts.len() < 3 {
+        return None;
+    }
+    let axis = *cyl.axis.as_ref();
+    let ref_dir = *cyl.ref_dir.as_ref();
+    let y_dir = axis.cross(ref_dir);
+    let angle_of = |p: &Point3| -> f64 {
+        let d = *p - cyl.center;
+        d.dot(y_dir).atan2(d.dot(ref_dir))
+    };
+    // Max pairwise wrapped angular distance.
+    let angles: Vec<f64> = verts.iter().map(angle_of).collect();
+    let mut span = 0.0f64;
+    for i in 0..angles.len() {
+        for j in i + 1..angles.len() {
+            let mut d = (angles[i] - angles[j]).rem_euclid(2.0 * PI);
+            if d > PI {
+                d = 2.0 * PI - d;
+            }
+            span = span.max(d);
+        }
+    }
+    if span > PI / 16.0 {
+        return None;
+    }
+    // Drop consecutive duplicate positions; need a real polygon.
+    let mut poly: Vec<Point3> = Vec::with_capacity(verts.len());
+    for p in verts {
+        if poly
+            .last()
+            .is_none_or(|q: &Point3| (*p - *q).norm() > 1e-12)
+        {
+            poly.push(*p);
+        }
+    }
+    while poly.len() >= 2 && (poly[0] - *poly.last().unwrap()).norm() <= 1e-12 {
+        poly.pop();
+    }
+    if poly.len() < 3 {
+        return None;
+    }
+
+    let radial_normal = |p: &Point3| -> Vec3 {
+        let d = *p - cyl.center;
+        let radial = d - axis * d.dot(axis);
+        let n = radial.norm();
+        if n < 1e-12 {
+            axis
+        } else {
+            radial / n
+        }
+    };
+
+    let centroid = Point3::from(poly.iter().map(|p| p.to_vec()).sum::<Vec3>() / poly.len() as f64);
+    let mut mesh = TriangleMesh::new();
+    for p in std::iter::once(&centroid).chain(poly.iter()) {
+        mesh.vertices
+            .extend_from_slice(&[p.x as f32, p.y as f32, p.z as f32]);
+        let n = radial_normal(p);
+        let (nx, ny, nz) = if reversed {
+            (-n.x as f32, -n.y as f32, -n.z as f32)
+        } else {
+            (n.x as f32, n.y as f32, n.z as f32)
+        };
+        mesh.normals.extend_from_slice(&[nx, ny, nz]);
+    }
+    let n = poly.len() as u32;
+    for i in 0..n {
+        mesh.indices.extend_from_slice(&[0, 1 + i, 1 + (i + 1) % n]);
+    }
+
+    // Match triangle winding to the (possibly reversed) outward radial.
+    for t in mesh.indices.clone().chunks(3) {
+        let p = |i: u32| {
+            let b = i as usize * 3;
+            Point3::new(
+                mesh.vertices[b] as f64,
+                mesh.vertices[b + 1] as f64,
+                mesh.vertices[b + 2] as f64,
+            )
+        };
+        let (a, b, c) = (p(t[0]), p(t[1]), p(t[2]));
+        let nrm = (b - a).cross(c - a);
+        if nrm.norm() < 1e-12 {
+            continue;
+        }
+        let mut outward = radial_normal(&centroid);
+        if reversed {
+            outward = -outward;
+        }
+        if nrm.dot(outward) < 0.0 {
+            for tri in mesh.indices.chunks_mut(3) {
+                tri.swap(1, 2);
+            }
+        }
+        break;
+    }
+    Some(mesh)
+}
+
+/// Ruled tessellation of a cylinder face bounded by two sample chains (a
+/// fillet blend or boolean band whose ends may be slanted/wavy cut curves).
 ///
-/// Detection is deliberately strict so only machine-generated blend loops
-/// take this path: the loop must have even length ≥ 8, split into two
-/// halves whose vertices pair up at **identical** cylinder angles
-/// (`|Δu| < 1e-9`, loop vertex `i` pairing with `L−1−i`), and at least one
-/// half must be non-planar in `v` (a slanted end) — constant-`v` faces keep
-/// the existing grid path unchanged. Returns `None` when any condition
-/// fails.
+/// Detection: the loop must decompose into exactly two monotonic runs of
+/// cylinder angle (one ascending, one descending — i.e. bottom chain out,
+/// top chain back), covering matching angular ranges (within one column,
+/// so a pinch column collapsed to a single shared vertex still parses),
+/// and at least one chain must be non-planar in `v` — constant-`v`
+/// rectangles keep the existing grid path unchanged. Returns `None` when
+/// any condition fails.
 ///
-/// The emitted triangles use the loop's own points verbatim (no surface
-/// re-evaluation), so the strip's boundary welds exactly against the
-/// neighboring planar faces and against the twin blend sharing the miter
-/// curve.
+/// Each loop vertex is used verbatim at its own angle (no surface
+/// re-evaluation), so the strip's boundary welds exactly against
+/// neighboring faces and the twin blend sharing the cut curve; where one
+/// chain lacks a column present in the other, its value is interpolated
+/// between its own adjacent points.
 fn tessellate_ruled_two_chain(
     cyl: &vcad_kernel_geom::CylinderSurface,
     verts: &[Point3],
     reversed: bool,
 ) -> Option<TriangleMesh> {
     let l = verts.len();
-    if l < 8 || !l.is_multiple_of(2) {
+    if l < 4 {
         return None;
     }
-    let half = l / 2;
 
     let axis = *cyl.axis.as_ref();
     let ref_dir = *cyl.ref_dir.as_ref();
@@ -2711,38 +2902,114 @@ fn tessellate_ruled_two_chain(
         (u, v)
     };
 
-    // Pair columns: loop = [chain1 (0..half), chain2 reversed (half..l)],
-    // so column i couples verts[i] with verts[l − 1 − i].
-    let mut v_spread_1 = 0.0f64;
-    let mut v_spread_2 = 0.0f64;
-    let (mut v1_min, mut v1_max) = (f64::MAX, f64::MIN);
-    let (mut v2_min, mut v2_max) = (f64::MAX, f64::MIN);
-    for i in 0..half {
-        let (u_a, v_a) = angle_v(&verts[i]);
-        let (u_b, v_b) = angle_v(&verts[l - 1 - i]);
-        // Compare angles on the circle (handle the ±π wrap).
-        let mut du = u_a - u_b;
-        while du > PI {
+    // Unwrap loop angles into a continuous sequence and split into
+    // monotonic runs. Zero-Δu steps (seam edges, pinch columns) extend the
+    // current run.
+    let uvs: Vec<(f64, f64)> = verts.iter().map(angle_v).collect();
+    let mut unwrapped: Vec<f64> = Vec::with_capacity(l);
+    unwrapped.push(uvs[0].0);
+    for uv in uvs.iter().skip(1) {
+        let prev = *unwrapped.last().unwrap();
+        let mut du = (uv.0 - prev).rem_euclid(2.0 * PI);
+        if du > PI {
             du -= 2.0 * PI;
         }
-        while du < -PI {
-            du += 2.0 * PI;
-        }
-        if du.abs() > 1e-9 {
-            return None;
-        }
-        v1_min = v1_min.min(v_a);
-        v1_max = v1_max.max(v_a);
-        v2_min = v2_min.min(v_b);
-        v2_max = v2_max.max(v_b);
-        v_spread_1 = v_spread_1.max(v1_max - v1_min);
-        v_spread_2 = v_spread_2.max(v2_max - v2_min);
+        unwrapped.push(prev + du);
     }
-    // Both ends planar (constant v) → the existing grid path already
-    // handles this face; keep behavior identical.
-    if v_spread_1 < 1e-9 && v_spread_2 < 1e-9 {
+    const RUN_EPS: f64 = 1e-9;
+    // Run boundaries: indices where the direction of travel flips.
+    let mut dirs: Vec<i8> = Vec::with_capacity(l - 1);
+    for i in 0..l - 1 {
+        let du = unwrapped[i + 1] - unwrapped[i];
+        dirs.push(if du > RUN_EPS {
+            1
+        } else if du < -RUN_EPS {
+            -1
+        } else {
+            0
+        });
+    }
+    // Collapse zeros into the neighboring run direction.
+    let mut run_dir = 0i8;
+    let mut flips: Vec<usize> = Vec::new(); // index where a new run starts
+    for (i, &d) in dirs.iter().enumerate() {
+        if d == 0 {
+            continue;
+        }
+        if run_dir == 0 {
+            run_dir = d;
+        } else if d != run_dir {
+            flips.push(i);
+            run_dir = d;
+        }
+    }
+    // Exactly one flip → two runs (the loop closure provides the second
+    // flip implicitly). Also require the loop to start at a run boundary
+    // modulo zero-steps — if not, rotate the loop so it does.
+    if flips.len() != 1 || run_dir == 0 {
         return None;
     }
+    // Zero-Δu connector steps before the flip (the vertical edge joining
+    // the chains at a shared column, or a collapsed pinch) belong to the
+    // second chain; walk the boundary back over them so both chains keep
+    // their full angular range.
+    let mut split_at = flips[0] + 1; // first vertex of the second run
+    while split_at > 1 && (unwrapped[split_at - 1] - unwrapped[split_at - 2]).abs() <= RUN_EPS {
+        split_at -= 1;
+    }
+    let chain1: Vec<(f64, f64)> = (0..split_at).map(|i| (unwrapped[i], uvs[i].1)).collect();
+    let chain2: Vec<(f64, f64)> = (split_at..l).map(|i| (unwrapped[i], uvs[i].1)).collect();
+    if chain1.len() < 2 || chain2.len() < 2 {
+        return None;
+    }
+    // Normalize both chains to ascending u. chain2 walked back, so its
+    // unwrapped coordinates descend; reverse it.
+    let mut chain_a = chain1;
+    let mut chain_b = chain2;
+    if chain_a[0].0 > chain_a[chain_a.len() - 1].0 {
+        chain_a.reverse();
+    }
+    if chain_b[0].0 > chain_b[chain_b.len() - 1].0 {
+        chain_b.reverse();
+    }
+    // The two chains' unwrapped frames can be offset by 2π (the second run
+    // unwraps continuing from the first); align chain_b's range onto
+    // chain_a's by shifting whole turns.
+    let shift = ((chain_a[0].0 - chain_b[0].0) / (2.0 * PI)).round() * 2.0 * PI;
+    for p in &mut chain_b {
+        p.0 += shift;
+    }
+    let (a0, a1) = (chain_a[0].0, chain_a[chain_a.len() - 1].0);
+    let (b0, b1) = (chain_b[0].0, chain_b[chain_b.len() - 1].0);
+    // Ranges must agree within roughly one column spacing (a pinch column
+    // collapsed into a single shared vertex shortens one chain by a step).
+    let span = (a1 - a0).max(b1 - b0);
+    if span < RUN_EPS {
+        return None;
+    }
+    let max_step = span / (chain_a.len().min(chain_b.len()) as f64 - 1.0).max(1.0);
+    let range_tol = (1.5 * max_step).max(1e-6);
+    if (a0 - b0).abs() > range_tol || (a1 - b1).abs() > range_tol {
+        return None;
+    }
+
+    // Constant-v on both chains → rectangle → grid path.
+    let spread = |c: &[(f64, f64)]| {
+        let (mn, mx) = c
+            .iter()
+            .fold((f64::MAX, f64::MIN), |(a, b), p| (a.min(p.1), b.max(p.1)));
+        mx - mn
+    };
+    if spread(&chain_a) < 1e-9 && spread(&chain_b) < 1e-9 {
+        return None;
+    }
+
+    // Union column grid over the overlapping range; each chain contributes
+    // its own vertices verbatim and chord-interpolates elsewhere.
+    let mut grid: Vec<f64> = chain_a.iter().map(|p| p.0).collect();
+    grid.extend(chain_b.iter().map(|p| p.0));
+    grid.sort_by(|x, y| x.partial_cmp(y).unwrap_or(std::cmp::Ordering::Equal));
+    grid.dedup_by(|x, y| (*x - *y).abs() < RUN_EPS);
 
     let mut mesh = TriangleMesh::new();
     let radial_normal = |p: &Point3| -> Vec3 {
@@ -2755,12 +3022,51 @@ fn tessellate_ruled_two_chain(
             radial / n
         }
     };
+    // 3D point on a chain at grid angle u: the chain's own vertex when the
+    // column matches one (verbatim → exact boundary welds), otherwise the
+    // chord interpolation between its adjacent vertices.
+    let chain_point = |chain: &[(f64, f64)], pts: &[Point3], u: f64| -> Point3 {
+        if u <= chain[0].0 + RUN_EPS {
+            return pts[0];
+        }
+        let last = chain.len() - 1;
+        if u >= chain[last].0 - RUN_EPS {
+            return pts[last];
+        }
+        let i = chain.partition_point(|p| p.0 < u);
+        let (ua, ub) = (chain[i - 1].0, chain[i].0);
+        if (u - ua).abs() < RUN_EPS {
+            return pts[i - 1];
+        }
+        if (ub - u).abs() < RUN_EPS {
+            return pts[i];
+        }
+        let f = (u - ua) / (ub - ua);
+        pts[i - 1] + f * (pts[i] - pts[i - 1])
+    };
+    // Original 3D points per chain, ascending-u order to match chain_a/b.
+    let pts_of = |start: usize, len: usize, reversed_run: bool| -> Vec<Point3> {
+        let mut v: Vec<Point3> = (start..start + len).map(|i| verts[i]).collect();
+        if reversed_run {
+            v.reverse();
+        }
+        v
+    };
+    let a_was_reversed = unwrapped[0] > unwrapped[split_at - 1];
+    let b_was_reversed = unwrapped[split_at] > unwrapped[l - 1];
+    let pts_a = pts_of(0, split_at, a_was_reversed);
+    let pts_b = pts_of(split_at, l - split_at, b_was_reversed);
+
     // Vertex layout: column i contributes bottom (index 2i) and top (2i+1).
-    for i in 0..half {
-        for p in [&verts[i], &verts[l - 1 - i]] {
+    let ncols = grid.len();
+    for &u in &grid {
+        for p in [
+            chain_point(&chain_a, &pts_a, u),
+            chain_point(&chain_b, &pts_b, u),
+        ] {
             mesh.vertices
                 .extend_from_slice(&[p.x as f32, p.y as f32, p.z as f32]);
-            let n = radial_normal(p);
+            let n = radial_normal(&p);
             let (nx, ny, nz) = if reversed {
                 (-n.x as f32, -n.y as f32, -n.z as f32)
             } else {
@@ -2769,7 +3075,7 @@ fn tessellate_ruled_two_chain(
             mesh.normals.extend_from_slice(&[nx, ny, nz]);
         }
     }
-    for i in 0..half - 1 {
+    for i in 0..ncols - 1 {
         let bl = (2 * i) as u32;
         let tl = bl + 1;
         let br = bl + 2;
@@ -4765,9 +5071,14 @@ mod tests {
             .map(|&(x, y)| Point3::new(x, y, 0.0))
             .collect();
 
-        let mesh =
-            earcut_polygon_with_holes(&outer_2d, &[hole_2d.clone()], &outer_3d, &[hole_3d], false)
-                .expect("frame triangulates");
+        let mesh = earcut_polygon_with_holes(
+            &outer_2d,
+            std::slice::from_ref(&hole_2d),
+            &outer_3d,
+            &[hole_3d],
+            false,
+        )
+        .expect("frame triangulates");
         assert!(!mesh.indices.is_empty());
         let mut total = 0.0_f64;
         let mut signs = std::collections::HashSet::new();

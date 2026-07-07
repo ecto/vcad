@@ -414,6 +414,12 @@ pub fn face_sample_point(brep: &BRepSolid, face_id: FaceId) -> Point3 {
     match surface.surface_type() {
         SurfaceKind::Plane => centroid,
         SurfaceKind::Cylinder => {
+            // Wavy band faces (oblique boolean cuts) have boundaries whose v
+            // varies with u; the u-range-midpoint heuristic below can land
+            // entirely outside such a face. Sample inside the band instead.
+            if let Some(p) = crate::cyl_band::band_sample_point(brep, face_id) {
+                return p;
+            }
             // For cylindrical faces, compute a point ON the surface at the middle
             // of the face's U (angular) range. The boundary vertex centroid may
             // be inside the cylinder, not on its surface, leading to wrong classification.
@@ -788,6 +794,14 @@ fn find_coincident_classification(
     }
     let face = &brep.topology.faces[face_id];
     let surface = &brep.geometry.surfaces[face.surface_index];
+    if surface.surface_type() == SurfaceKind::Cylinder {
+        // Two operands can share a cylindrical wall (arc-extruded bodies
+        // built from the same circles, patterned copies of a revolved
+        // part). Without OnSame/OnOpposite for curved pairs, the union of
+        // two overlapping half-annuli keeps both copies of the shared
+        // inner wall and drops both copies of the outer one.
+        return find_coincident_cylinder_classification(brep, face_id, probes, other);
+    }
     if surface.surface_type() != SurfaceKind::Plane {
         return None;
     }
@@ -906,6 +920,82 @@ fn find_coincident_classification(
         } else if dot < -1.0 + ANGLE_TOL {
             return Some(FaceClassification::OnOpposite);
         }
+    }
+    None
+}
+
+/// Coincidence classification for cylindrical faces: when another face
+/// lies on the SAME cylinder surface (equal radius, same axis line) and
+/// every on-face probe falls inside the other face's bounded region, the
+/// faces overlap on the surface and classify OnSame/OnOpposite by their
+/// oriented radial normals. Mirrors the planar coincidence path above.
+fn find_coincident_cylinder_classification(
+    brep: &BRepSolid,
+    face_id: FaceId,
+    probes: &[Point3],
+    other: &BRepSolid,
+) -> Option<FaceClassification> {
+    let face = &brep.topology.faces[face_id];
+    let self_cyl = brep.geometry.surfaces[face.surface_index]
+        .as_any()
+        .downcast_ref::<vcad_kernel_geom::CylinderSurface>()?;
+    let self_forward = face.orientation == vcad_kernel_topo::Orientation::Forward;
+
+    const RADIUS_TOL: f64 = 1e-6;
+    const AXIS_TOL: f64 = 1e-6;
+
+    for (other_fid, other_face) in &other.topology.faces {
+        let other_surf = &other.geometry.surfaces[other_face.surface_index];
+        if other_surf.surface_type() != SurfaceKind::Cylinder {
+            continue;
+        }
+        let other_cyl = match other_surf
+            .as_any()
+            .downcast_ref::<vcad_kernel_geom::CylinderSurface>()
+        {
+            Some(c) => c,
+            None => continue,
+        };
+        if (self_cyl.radius - other_cyl.radius).abs() > RADIUS_TOL {
+            continue;
+        }
+        let a = self_cyl.axis.as_ref();
+        let b = other_cyl.axis.as_ref();
+        if a.cross(b).norm() > AXIS_TOL {
+            continue; // axes not parallel
+        }
+        let d = other_cyl.center - self_cyl.center;
+        let radial_offset = d - d.dot(a) * *a;
+        if radial_offset.norm() > AXIS_TOL {
+            continue; // parallel but different axis line
+        }
+
+        // Same carrier surface. All on-face probes must land inside the
+        // other face's bounded region for full coincidence.
+        let mut checked = 0u32;
+        let mut fully_coincident = true;
+        for p in probes {
+            if !point_in_face(brep, face_id, p) {
+                continue;
+            }
+            checked += 1;
+            if !point_in_face(other, other_fid, p) {
+                fully_coincident = false;
+                break;
+            }
+        }
+        if checked == 0 || !fully_coincident {
+            continue;
+        }
+
+        // Radial normals are sign-symmetric in the axis direction, so
+        // alignment reduces to the orientation flags.
+        let other_forward = other_face.orientation == vcad_kernel_topo::Orientation::Forward;
+        return Some(if self_forward == other_forward {
+            FaceClassification::OnSame
+        } else {
+            FaceClassification::OnOpposite
+        });
     }
     None
 }

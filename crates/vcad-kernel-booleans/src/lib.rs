@@ -17,6 +17,7 @@
 mod api;
 pub mod bbox;
 pub mod classify;
+mod cyl_band;
 pub mod cyl_cyl;
 pub mod mesh;
 mod no_crossing;

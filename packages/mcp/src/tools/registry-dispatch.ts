@@ -16,6 +16,7 @@ import {
   listPartsFromDocument,
 } from "@vcad/core";
 import { getSession } from "./session.js";
+import { appendIntegrity, computeIntegrity } from "./integrity.js";
 
 /**
  * Tools whose execution depends on browser-only state (camera, viewport
@@ -310,6 +311,7 @@ function appendChanged(
 export function dispatchRegistryTool(
   toolName: string,
   args: Record<string, unknown>,
+  engine?: import("@vcad/engine").Engine,
 ): { content: Array<{ type: "text"; text: string }> } {
   const dispatchable = registryDispatchableNames();
   if (!dispatchable.has(toolName)) {
@@ -336,7 +338,17 @@ export function dispatchRegistryTool(
   const before = snapshotParts(doc);
   const result = runMutation(toolName, toolArgs, doc, documentId);
   const changed = diffParts(before, snapshotParts(doc));
-  if (changed) appendChanged(result, changed);
+  if (changed) {
+    appendChanged(result, changed);
+    // Every mutation carries its own integrity certificate (volume, bbox,
+    // CoM, watertightness, CoM-vs-pattern-axis): silently corrupt geometry
+    // must be visible in the mutation response, not only via an
+    // out-of-band inspect_cad (torr session-3 field report).
+    if (engine) {
+      const integrity = computeIntegrity(doc, engine);
+      if (integrity) appendIntegrity(result, integrity);
+    }
+  }
   return result;
 }
 

@@ -265,6 +265,7 @@ import {
 } from "./tools/ecad.js";
 import { checkEnclosureFit, checkEnclosureFitSchema } from "./tools/enclosure.js";
 import { createCadLoon, createCadLoonSchema } from "./tools/loon.js";
+import { appendIntegrity, computeIntegrity } from "./tools/integrity.js";
 import {
   dfmCheck,
   dfmCheckSchema,
@@ -2083,7 +2084,7 @@ export async function createServer(
       // shared planner + applyToolOutcome path. Falls through to the
       // preview block below so these mutations render in the inline viewer.
       if (dispatchableTools.has(name)) {
-        result = dispatchRegistryTool(name, args);
+        result = dispatchRegistryTool(name, args, engine);
         const docId = resolvePreviewDocumentId(name, result, args, engine);
         if (docId) {
           attachPreviewHandle(result, docId, name);
@@ -2125,9 +2126,22 @@ export async function createServer(
           );
           break;
 
-        case "create_cad_loon":
+        case "create_cad_loon": {
           result = createCadLoon(args, engine);
+          // Attach the integrity certificate to the largest mutation of
+          // all: authoring a whole document. The loon evaluation is cheap
+          // relative to the mesh evaluation computeIntegrity runs anyway.
+          try {
+            const doc = engine.evalVcadSource(String(args.source ?? ""));
+            if (doc) {
+              const integrity = computeIntegrity(doc, engine);
+              if (integrity) appendIntegrity(result, integrity);
+            }
+          } catch {
+            // Best-effort: never fail the authoring call over accounting.
+          }
           break;
+        }
 
         case "export_cad":
           result = exportCad(args, engine);
