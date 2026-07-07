@@ -28,6 +28,9 @@ import type {
   Via,
   Zone,
   Vec2,
+  Vec3,
+  CsgOp,
+  SketchSegment2D,
   Receipt,
 } from "@vcad/ir";
 import { createDocument } from "@vcad/ir";
@@ -35,6 +38,7 @@ import { summarize, unifiedFromPcbReceipt } from "../receipt-unified.js";
 import { getNodePcb, getPcbNodeIds, buildEntry, agentView } from "@vcad/core";
 import {
   computeRatsnest,
+  componentMeshes,
   exportFabFiles,
   pcbPreviewMeshes,
   exportKicadPcb,
@@ -10002,6 +10006,485 @@ export function boardFromSolid(args: Record<string, unknown>, engine: Engine) {
         }),
       },
     ],
+  };
+}
+
+// ============================================================================
+// solid_from_board — materialize the session PCB as a solid CAD part
+// (the inverse of board_from_solid)
+// ============================================================================
+
+/** JSON Schema for solid_from_board tool. */
+export const solidFromBoardSchema = {
+  type: "object" as const,
+  properties: {
+    document_id: {
+      type: "string" as const,
+      description:
+        "PCB session id (from create_schematic / open_document) holding the " +
+        "board to materialize as a solid.",
+    },
+    document_id_target: {
+      type: "string" as const,
+      description:
+        "Existing CAD session to inject the part into (e.g. the enclosure " +
+        "or motor-stack assembly it must fit). Omit to mint a fresh CAD " +
+        "session; the response then carries the new document_id plus the " +
+        "document IR (usable with open_document elsewhere).",
+    },
+    include_components: {
+      type: "boolean" as const,
+      description:
+        "Also emit simplified component keep-out volumes — one box per " +
+        "placed footprint, body extents from the kernel's 3D component " +
+        "bodies where available, else courtyard × a per-package-class " +
+        "default height. Default true.",
+    },
+    part_name: {
+      type: "string" as const,
+      description:
+        "Name for the substrate part (default 'board'). Component keep-out " +
+        "parts are named '<part_name>:<ref>'.",
+    },
+  },
+  required: ["document_id"],
+} as const;
+
+/** FR4 substrate density, kg/m³ — matches the app's `__pcb_fr4__` preset. */
+const FR4_DENSITY_KG_M3 = 1850;
+/** Copper density, kg/m³ — matches the app's `copper` preset. */
+const COPPER_DENSITY_KG_M3 = 8960;
+/** 1 oz/ft² copper in mm, the fallback when a stackup layer omits thickness. */
+const DEFAULT_COPPER_THICKNESS_MM = 0.035;
+
+/** Absolute (sign-agnostic) shoelace area of a closed loop, mm². */
+const loopArea = (loop: Vec2[]): number => Math.abs(loopSignedArea(loop));
+
+/** Closed polygon → Line segments for a Sketch2D loop (zero-length runs from
+ *  duplicated vertices are dropped). */
+function loopToSegments(loop: Vec2[]): SketchSegment2D[] {
+  const segs: SketchSegment2D[] = [];
+  for (let i = 0; i < loop.length; i++) {
+    const a = loop[i]!;
+    const b = loop[(i + 1) % loop.length]!;
+    if (Math.hypot(b.x - a.x, b.y - a.y) < 1e-9) continue;
+    segs.push({ type: "Line", start: { x: a.x, y: a.y }, end: { x: b.x, y: b.y } });
+  }
+  return segs;
+}
+
+/** Copper area of one pad, mm² (Oval/RoundRect ≈ their bounding rect). */
+function padAreaMm2(pad: Pad): number {
+  const s = pad.shape;
+  switch (s.type) {
+    case "Circle":
+      return (Math.PI / 4) * s.diameter * s.diameter;
+    case "Rect":
+    case "Oval":
+    case "RoundRect":
+      return s.width * s.height;
+    case "Custom":
+      return loopArea(s.vertices);
+    default:
+      return 0;
+  }
+}
+
+/**
+ * Estimated copper coverage per copper layer, mm²: zones (outline minus
+ * holes; hatched pours count half), traces and arcs (length × width), pad
+ * copper, and via annular rings on their span-end layers. Overlaps between
+ * features are not deduplicated — a slight overestimate on dense boards —
+ * and each layer is capped at the board area.
+ */
+function copperAreaByLayer(pcb: Pcb, boardArea: number): Record<string, number> {
+  const area: Record<string, number> = {};
+  const add = (layer: string, a: number) => {
+    if (!/Cu$/.test(layer) || !(a > 0)) return;
+    area[layer] = (area[layer] ?? 0) + a;
+  };
+  for (const z of pcb.zones) {
+    const holes = (z.holes ?? []).reduce((s, h) => s + loopArea(h), 0);
+    const fill = z.fillType === "Hatched" ? 0.5 : 1;
+    add(z.layer, Math.max(0, loopArea(z.outline) - holes) * fill);
+  }
+  for (const t of pcb.traces) {
+    add(t.layer, Math.hypot(t.end.x - t.start.x, t.end.y - t.start.y) * t.width);
+  }
+  for (const a of pcb.traceArcs ?? []) {
+    const sweep = (Math.abs(a.endAngle - a.startAngle) * Math.PI) / 180;
+    add(a.layer, sweep * a.radius * a.width);
+  }
+  for (const fp of pcb.footprints) {
+    for (const pad of fp.pads) {
+      const padArea = padAreaMm2(pad);
+      for (const layer of pad.layers) add(layer, padArea);
+    }
+  }
+  for (const v of pcb.vias) {
+    const ring = (Math.PI / 4) * Math.max(0, v.diameter * v.diameter - v.drill * v.drill);
+    add(v.startLayer, ring);
+    if (v.endLayer !== v.startLayer) add(v.endLayer, ring);
+  }
+  for (const k of Object.keys(area)) area[k] = Math.min(area[k]!, boardArea);
+  return area;
+}
+
+/** Mass estimate for a bare board: FR4 slab + per-layer copper coverage. */
+interface BoardMassEstimate {
+  fr4VolumeMm3: number;
+  copperVolumeMm3: number;
+  copperAreaByLayer: Record<string, number>;
+  fr4G: number;
+  copperG: number;
+  totalG: number;
+  /** total mass / substrate solid volume — the density that makes the
+   *  extruded slab weigh what the real FR4+copper board weighs. */
+  homogenizedDensityKgM3: number;
+}
+
+/** Compute the board's FR4 + copper mass from outline area and stackup. */
+function estimateBoardMass(pcb: Pcb, boardArea: number): BoardMassEstimate {
+  const thickness = pcb.outline.thickness;
+  const fr4VolumeMm3 = boardArea * thickness;
+  const copperArea = copperAreaByLayer(pcb, boardArea);
+  const thicknessByLayer = new Map<string, number | undefined>(
+    pcb.stackup.layers.map((l) => [l.layer as string, l.copperThickness]),
+  );
+  let copperVolumeMm3 = 0;
+  for (const [layer, a] of Object.entries(copperArea)) {
+    copperVolumeMm3 += a * (thicknessByLayer.get(layer) ?? DEFAULT_COPPER_THICKNESS_MM);
+  }
+  // mass (g) = volume (mm³) × density (kg/m³) / 1e6
+  const fr4G = (fr4VolumeMm3 * FR4_DENSITY_KG_M3) / 1e6;
+  const copperG = (copperVolumeMm3 * COPPER_DENSITY_KG_M3) / 1e6;
+  const totalG = fr4G + copperG;
+  return {
+    fr4VolumeMm3,
+    copperVolumeMm3,
+    copperAreaByLayer: copperArea,
+    fr4G,
+    copperG,
+    totalG,
+    homogenizedDensityKgM3:
+      fr4VolumeMm3 > 0 ? (totalG / fr4VolumeMm3) * 1e6 : FR4_DENSITY_KG_M3,
+  };
+}
+
+/** One simplified component keep-out volume, board-local mm (bottom of the
+ *  substrate at z = 0, top at z = thickness). */
+interface ComponentBoxOut {
+  ref: string;
+  footprint: string;
+  /** "mesh" = kernel 3D body extents; "courtyard" = pad/courtyard bbox ×
+   *  per-package-class default height. */
+  source: "mesh" | "courtyard";
+  min: Vec3;
+  max: Vec3;
+}
+
+/** Footprints that are holes in the board, not bodies on it. */
+const MOUNTING_FP_RE = /mount(ing)?[_-]?hole/i;
+
+/** Default body height (mm) by package-class name — mirrors the kernel's
+ *  component-mesh table (vcad-ecad-pcb::component_mesh::package_height). */
+function packageHeightMm(footprintName: string): number {
+  const n = footprintName.toUpperCase();
+  if (n.includes("0402")) return 0.35;
+  if (n.includes("0603")) return 0.45;
+  if (n.includes("0805")) return 0.5;
+  if (n.includes("1206")) return 0.55;
+  if (n.includes("SOIC")) return 1.75;
+  if (n.includes("QFP")) return 1.6;
+  if (n.includes("DIP")) return 4.0;
+  if (/SOT-?223/.test(n)) return 1.6;
+  if (/SOT-?23/.test(n)) return 1.1;
+  if (n.includes("HEADER")) return 8.5;
+  return 1.0;
+}
+
+/**
+ * Simplified keep-out volume per placed footprint. Preferred source is the
+ * kernel's parametric 3D component bodies (exact XY + Z extents in board
+ * coordinates); when the ECAD WASM is unavailable or a footprint has no
+ * body, fall back to its courtyard/pad bbox extruded to a per-package-class
+ * default height on the correct side of the board.
+ */
+async function componentKeepouts(
+  pcb: Pcb,
+): Promise<{ boxes: ComponentBoxOut[]; warnings: string[] }> {
+  const thickness = pcb.outline.thickness;
+  const warnings: string[] = [];
+  const meshBoxes = new Map<string, { min: Vec3; max: Vec3 }>();
+  try {
+    for (const m of await componentMeshes(pcb)) {
+      let minX = Infinity;
+      let minY = Infinity;
+      let minZ = Infinity;
+      let maxX = -Infinity;
+      let maxY = -Infinity;
+      let maxZ = -Infinity;
+      for (let i = 0; i + 2 < m.positions.length; i += 3) {
+        if (m.positions[i] < minX) minX = m.positions[i];
+        if (m.positions[i] > maxX) maxX = m.positions[i];
+        if (m.positions[i + 1] < minY) minY = m.positions[i + 1];
+        if (m.positions[i + 1] > maxY) maxY = m.positions[i + 1];
+        if (m.positions[i + 2] < minZ) minZ = m.positions[i + 2];
+        if (m.positions[i + 2] > maxZ) maxZ = m.positions[i + 2];
+      }
+      if (
+        Number.isFinite(minX) &&
+        maxX - minX > 1e-6 &&
+        maxY - minY > 1e-6 &&
+        maxZ - minZ > 1e-6
+      ) {
+        meshBoxes.set(m.footprint_ref, {
+          min: { x: minX, y: minY, z: minZ },
+          max: { x: maxX, y: maxY, z: maxZ },
+        });
+      }
+    }
+  } catch {
+    // ECAD WASM unavailable — every footprint takes the courtyard fallback.
+  }
+
+  const boxes: ComponentBoxOut[] = [];
+  for (const fp of pcb.footprints) {
+    // Mounting holes / NPTH-only footprints are voids, not bodies.
+    if (MOUNTING_FP_RE.test(fp.footprintName) || MOUNTING_FP_RE.test(fp.ref)) continue;
+    if (fp.pads.length > 0 && fp.pads.every((p) => p.padType === "NPTH")) continue;
+
+    const mesh = meshBoxes.get(fp.ref);
+    if (mesh) {
+      boxes.push({
+        ref: fp.ref,
+        footprint: fp.footprintName,
+        source: "mesh",
+        min: mesh.min,
+        max: mesh.max,
+      });
+      continue;
+    }
+    const local = localCourtyardAabb(fp.pads, fp.graphics ?? []);
+    const board = boardCourtyardAabb(local, fp.position, fp.rotation ?? 0, fp.front ?? true);
+    if (!board) {
+      warnings.push(`${fp.ref}: no 3D body, pads, or courtyard — keep-out skipped`);
+      continue;
+    }
+    const h = packageHeightMm(fp.footprintName);
+    const front = fp.front ?? true;
+    boxes.push({
+      ref: fp.ref,
+      footprint: fp.footprintName,
+      source: "courtyard",
+      min: { x: board.min.x, y: board.min.y, z: front ? thickness : -h },
+      max: { x: board.max.x, y: board.max.y, z: front ? thickness + h : 0 },
+    });
+  }
+  return { boxes, warnings };
+}
+
+/** Cap on the per-component box list echoed in the response. */
+const KEEPOUT_ECHO_CAP = 32;
+/** Cap on the inline `document` IR echoed when a fresh session is minted. */
+const INLINE_DOC_ECHO_CAP = 100_000;
+
+/**
+ * Materialize the session PCB as a solid CAD part — the inverse of
+ * board_from_solid. The substrate is the board outline extruded to the board
+ * thickness through the hole-aware sketch path, so bore/cutout polygons
+ * survive as real holes (no boolean pass). Optional simplified component
+ * keep-out volumes ride along as child parts. The substrate's material
+ * carries a homogenized FR4+copper density so inspect_cad and physics see
+ * the real board mass, not bare-FR4 mass.
+ *
+ * Injects into `document_id_target` when given (board bottom lands at
+ * z = 0 in that session's frame), else mints a fresh CAD session.
+ */
+export async function solidFromBoard(args: Record<string, unknown>) {
+  const documentId = String(args.document_id ?? "");
+  const doc = getSession(documentId);
+  const pcb = getDocPcb(doc);
+  if (!pcb) {
+    return ecadError(
+      "Document has no PCB — run place_components first (or open a document that has a board)",
+    );
+  }
+  const outline = pcb.outline;
+  if (!outline.vertices || outline.vertices.length < 3) {
+    return ecadError("Board outline needs >= 3 vertices — set_board_outline first");
+  }
+  const thickness = outline.thickness;
+  if (!(thickness > 0)) return ecadError("Board thickness must be > 0");
+
+  const partName =
+    typeof args.part_name === "string" && args.part_name.trim()
+      ? args.part_name.trim()
+      : "board";
+  const includeComponents = args.include_components !== false;
+
+  const cutouts = outline.cutouts ?? [];
+  const boardArea = Math.max(
+    0,
+    loopArea(outline.vertices) - cutouts.reduce((s, c) => s + loopArea(c), 0),
+  );
+  if (!(boardArea > 0)) return ecadError("Board outline has no area to extrude");
+  const mass = estimateBoardMass(pcb, boardArea);
+
+  const warnings: string[] = [];
+  let boxes: ComponentBoxOut[] = [];
+  if (includeComponents && pcb.footprints.length > 0) {
+    const keepouts = await componentKeepouts(pcb);
+    boxes = keepouts.boxes;
+    warnings.push(...keepouts.warnings);
+  }
+
+  // Target: inject into an existing CAD session, or mint a fresh document.
+  const targetId =
+    typeof args.document_id_target === "string" && args.document_id_target
+      ? args.document_id_target
+      : undefined;
+  let target: Document;
+  if (targetId) {
+    try {
+      target = getSession(targetId);
+    } catch (e) {
+      return ecadError(e instanceof Error ? e.message : String(e));
+    }
+  } else {
+    target = createDocument();
+  }
+
+  const existingIds = Object.keys(target.nodes)
+    .map(Number)
+    .filter(Number.isFinite);
+  let nextId = (existingIds.length > 0 ? Math.max(...existingIds) : 0) + 1;
+  const alloc = (name: string | null, op: CsgOp): number => {
+    const id = nextId++;
+    target.nodes[String(id)] = { id, name, op };
+    return id;
+  };
+
+  // Substrate: hole-aware sketch + extrude (#396) — cutouts become interior
+  // walls of one multi-loop solid, no Difference pass. Board bottom at z = 0.
+  const sketchId = alloc(`${partName} profile`, {
+    type: "Sketch2D",
+    origin: { x: 0, y: 0, z: 0 },
+    x_dir: { x: 1, y: 0, z: 0 },
+    y_dir: { x: 0, y: 1, z: 0 },
+    segments: loopToSegments(ensureCcw(outline.vertices)),
+    ...(cutouts.length > 0 ? { holes: cutouts.map((c) => loopToSegments(c)) } : {}),
+  });
+  const substrateId = alloc(partName, {
+    type: "Extrude",
+    sketch: sketchId,
+    direction: { x: 0, y: 0, z: thickness },
+  });
+
+  // Homogenized material: the extruded slab weighs what the real FR4+copper
+  // board weighs, so inspect_cad / physics read a realistic mass off it.
+  let materialKey = `pcb:${partName}`;
+  for (let i = 2; target.materials[materialKey]; i++) materialKey = `pcb:${partName}-${i}`;
+  target.materials[materialKey] = {
+    name: materialKey,
+    color: [0.05, 0.35, 0.18], // FR4 soldermask green
+    metallic: 0.1,
+    roughness: 0.7,
+    density: Math.round(mass.homogenizedDensityKgM3 * 100) / 100,
+  };
+  target.roots.push({ root: substrateId, material: materialKey });
+  target.part_materials[partName] = materialKey;
+
+  const componentPartIds: string[] = [];
+  for (const b of boxes) {
+    const size = {
+      x: b.max.x - b.min.x,
+      y: b.max.y - b.min.y,
+      z: b.max.z - b.min.z,
+    };
+    const cubeId = alloc(null, { type: "Cube", size });
+    const moveId = alloc(`${partName}:${b.ref}`, {
+      type: "Translate",
+      child: cubeId,
+      offset: { x: b.min.x, y: b.min.y, z: b.min.z },
+    });
+    target.roots.push({ root: moveId, material: "default" });
+    componentPartIds.push(String(moveId));
+  }
+
+  const created = !targetId;
+  const outId = targetId ?? registerSession(target);
+
+  const roundVec = (v: Vec3) => ({ x: round3(v.x), y: round3(v.y), z: round3(v.z) });
+  const copperAreaRounded = Object.fromEntries(
+    Object.entries(mass.copperAreaByLayer).map(([k, v]) => [k, round3(v)]),
+  );
+  // Echo the minted IR so the part can travel to another server via
+  // open_document — unless the outline is huge, in which case get_document
+  // on the returned document_id serves it instead.
+  const inlineDoc =
+    created && JSON.stringify(target).length <= INLINE_DOC_ECHO_CAP ? target : undefined;
+
+  const payload = {
+    success: true,
+    document_id: outId,
+    created_session: created,
+    source_document_id: documentId,
+    part_id: String(substrateId),
+    part_name: partName,
+    substrate: {
+      outline_vertices: outline.vertices.length,
+      cutouts: cutouts.length,
+      thickness,
+      area_mm2: round3(boardArea),
+      volume_mm3: round3(mass.fr4VolumeMm3),
+    },
+    components: {
+      included: includeComponents,
+      count: boxes.length,
+      part_ids: componentPartIds,
+      ...(boxes.length > 0
+        ? {
+            boxes: boxes.slice(0, KEEPOUT_ECHO_CAP).map((b) => ({
+              ref: b.ref,
+              footprint: b.footprint,
+              source: b.source,
+              min: roundVec(b.min),
+              max: roundVec(b.max),
+            })),
+            ...(boxes.length > KEEPOUT_ECHO_CAP ? { boxes_truncated: true } : {}),
+          }
+        : {}),
+    },
+    mass: {
+      fr4_g: round3(mass.fr4G),
+      copper_g: round3(mass.copperG),
+      total_g: round3(mass.totalG),
+      fr4_volume_mm3: round3(mass.fr4VolumeMm3),
+      copper_volume_mm3: round3(mass.copperVolumeMm3),
+      copper_area_mm2_by_layer: copperAreaRounded,
+      homogenized_density_kg_m3: Math.round(mass.homogenizedDensityKgM3 * 100) / 100,
+      material: materialKey,
+    },
+    ...(inlineDoc ? { document: inlineDoc } : {}),
+    ...(warnings.length > 0 ? { warnings } : {}),
+    hint: created
+      ? "Fresh CAD session minted — render_view / inspect_cad it, or feed `document` to open_document elsewhere"
+      : "Part injected — render_view / inspect_cad the target session (e.g. run check_enclosure_fit against it)",
+  };
+
+  return {
+    content: [{ type: "text" as const, text: JSON.stringify(payload) }],
+    structuredContent: {
+      solid_from_board: {
+        part_id: String(substrateId),
+        part_name: partName,
+        components: componentPartIds.length,
+        mass_g: round3(mass.totalG),
+      },
+      document_id: outId,
+      source_document_id: documentId,
+    },
   };
 }
 
