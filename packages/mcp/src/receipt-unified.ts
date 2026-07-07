@@ -274,3 +274,236 @@ export function unverifiablePcbReceipt(
     ],
   };
 }
+
+// ─── Spec-first mechanical verification (verify_spec) ─────────────────────────
+//
+// "TDD for CAD": the caller declares a spec (bbox, volume range, watertight,
+// part count, center of mass) BEFORE the geometry exists, then iterates the
+// document until every claim rolls up to pass. The measurement comes from the
+// kernel tessellation (computeIntegrity); the same fail-closed semantics as
+// the PCB adapter apply — an empty spec, a missing measurement, or a claim the
+// kernel can't evaluate is `unverifiable`, never a silent pass.
+
+const MECH_DOMAIN = "mechanical";
+
+/** The oracle behind spec claims: geometry measured from the kernel
+ *  tessellation. The engine exposes no version, so it reads as unknown —
+ *  honest, and (unlike a fabricated version) never masquerades as a pass. */
+const SPEC_ORACLE: OracleRef = { id: "vcad-kernel/integrity", version: "unknown" };
+
+/** Default ± tolerance (mm) for bbox / center-of-mass axes when the caller
+ *  declares none. */
+export const DEFAULT_SPEC_TOL_MM = 0.01;
+
+interface XYZ {
+  x: number;
+  y: number;
+  z: number;
+}
+
+/** An axis-bounded point target: any subset of x/y/z, plus an optional ± tol
+ *  (mm) applied per declared axis. A left-out axis produces no claim. */
+export interface PointSpec {
+  x?: number;
+  y?: number;
+  z?: number;
+  tol?: number;
+}
+
+/**
+ * Caller-supplied spec — the "declare first, iterate to green" contract for
+ * verify_spec. Every field is optional; a field left out simply produces no
+ * claim. A spec that declares nothing is unverifiable (no evidence), never a
+ * pass.
+ */
+export interface DesignSpec {
+  /** Bounding-box minimum corner (any subset of axes) ± tol. */
+  bbox_min?: PointSpec;
+  /** Bounding-box maximum corner (any subset of axes) ± tol. */
+  bbox_max?: PointSpec;
+  /** Enclosed volume must fall within [min, max] mm³ (either bound optional). */
+  volume?: { min?: number; max?: number };
+  /** Whether the solid must be a closed, watertight manifold. */
+  watertight?: boolean;
+  /** Exact number of parts the document must contain. */
+  part_count?: number;
+  /** Center of mass (any subset of axes) ± tol. */
+  center_of_mass?: PointSpec;
+}
+
+/** The measured geometry a spec is graded against — the subset of the kernel
+ *  integrity report the claims read. `null` bbox / CoM mean the kernel could
+ *  not produce that measurement (open or empty geometry). */
+export interface SpecMeasurement {
+  volume_mm3: number;
+  bounding_box: { min: XYZ; max: XYZ } | null;
+  center_of_mass: XYZ | null;
+  watertight: boolean;
+  parts: number;
+}
+
+const round3 = (v: number): number => Math.round(v * 1000) / 1000;
+
+/** Per-axis claims for a point target (a bbox corner or the CoM). When the
+ *  measurement is null the kernel could not produce it, so every declared axis
+ *  is unverifiable — never a silent pass. */
+function pointClaims(
+  idPrefix: string,
+  label: string,
+  target: PointSpec,
+  measured: XYZ | null,
+  reasonIfMissing: string,
+): ReceiptClaim[] {
+  const tol = target.tol ?? DEFAULT_SPEC_TOL_MM;
+  const out: ReceiptClaim[] = [];
+  for (const axis of ["x", "y", "z"] as const) {
+    const want = target[axis];
+    if (want === undefined) continue;
+    const id = `${idPrefix}.${axis}`;
+    const description = `${label} ${axis} within ±${tol} mm of ${want}`;
+    if (measured === null) {
+      out.push(
+        unverifiableClaim(id, MECH_DOMAIN, description, SPEC_ORACLE, reasonIfMissing),
+      );
+      continue;
+    }
+    const got = measured[axis];
+    out.push(
+      claim(id, MECH_DOMAIN, description, SPEC_ORACLE, Math.abs(got - want) <= tol ? "pass" : "fail", {
+        predicted: quantity(want, "mm"),
+        measured: quantity(round3(got), "mm"),
+        details: `tolerance ±${tol} mm`,
+      }),
+    );
+  }
+  return out;
+}
+
+/** Volume-range claim. An unbounded range (no min and no max) asserts nothing
+ *  measurable and is unverifiable, not a vacuous pass. */
+function volumeClaim(range: { min?: number; max?: number }, v: number): ReceiptClaim {
+  const { min: lo, max: hi } = range;
+  if (lo === undefined && hi === undefined) {
+    return unverifiableClaim(
+      "spec.volume",
+      MECH_DOMAIN,
+      "volume within declared range",
+      SPEC_ORACLE,
+      "volume spec declared neither a min nor a max bound",
+    );
+  }
+  const rangeLabel =
+    lo !== undefined && hi !== undefined ? `[${lo}, ${hi}]` : lo !== undefined ? `≥ ${lo}` : `≤ ${hi}`;
+  const okLo = lo === undefined || v >= lo;
+  const okHi = hi === undefined || v <= hi;
+  return claim("spec.volume", MECH_DOMAIN, `volume within ${rangeLabel} mm³`, SPEC_ORACLE, okLo && okHi ? "pass" : "fail", {
+    predicted: quantity(rangeLabel, "mm^3"),
+    measured: quantity(round3(v), "mm^3"),
+  });
+}
+
+/**
+ * Grade a caller-supplied `spec` against the kernel `measurement` and roll it
+ * up into a fail-closed DesignReceipt (one claim per declared field, each
+ * carrying measured-vs-expected). Pass `measurement: null` when the kernel
+ * could not evaluate the document at all — every declared claim becomes
+ * unverifiable, so the receipt can never read as clean.
+ */
+export function unifiedFromSpec(
+  spec: DesignSpec,
+  measurement: SpecMeasurement | null,
+  documentId?: string,
+  fingerprint?: string,
+): DesignReceipt {
+  const claims: ReceiptClaim[] = [];
+  const evalFailed = "kernel could not evaluate the document — no geometry to measure";
+
+  if (spec.bbox_min) {
+    claims.push(
+      ...pointClaims(
+        "spec.bbox.min",
+        "bounding-box min",
+        spec.bbox_min,
+        measurement?.bounding_box?.min ?? null,
+        measurement === null ? evalFailed : "document has no bounding box (no evaluable geometry)",
+      ),
+    );
+  }
+  if (spec.bbox_max) {
+    claims.push(
+      ...pointClaims(
+        "spec.bbox.max",
+        "bounding-box max",
+        spec.bbox_max,
+        measurement?.bounding_box?.max ?? null,
+        measurement === null ? evalFailed : "document has no bounding box (no evaluable geometry)",
+      ),
+    );
+  }
+  if (spec.volume) {
+    claims.push(
+      measurement === null
+        ? unverifiableClaim("spec.volume", MECH_DOMAIN, "volume within declared range", SPEC_ORACLE, evalFailed)
+        : volumeClaim(spec.volume, measurement.volume_mm3),
+    );
+  }
+  if (spec.watertight !== undefined) {
+    const want = spec.watertight;
+    claims.push(
+      measurement === null
+        ? unverifiableClaim("spec.watertight", MECH_DOMAIN, "solid watertightness", SPEC_ORACLE, evalFailed)
+        : claim(
+            "spec.watertight",
+            MECH_DOMAIN,
+            want ? "solid is watertight (closed manifold)" : "solid is not watertight",
+            SPEC_ORACLE,
+            measurement.watertight === want ? "pass" : "fail",
+            { predicted: quantity(want), measured: quantity(measurement.watertight) },
+          ),
+    );
+  }
+  if (spec.part_count !== undefined) {
+    const want = spec.part_count;
+    claims.push(
+      measurement === null
+        ? unverifiableClaim("spec.part_count", MECH_DOMAIN, `document has ${want} part(s)`, SPEC_ORACLE, evalFailed)
+        : claim("spec.part_count", MECH_DOMAIN, `document has ${want} part(s)`, SPEC_ORACLE, measurement.parts === want ? "pass" : "fail", {
+            predicted: quantity(want, "count"),
+            measured: quantity(measurement.parts, "count"),
+          }),
+    );
+  }
+  if (spec.center_of_mass) {
+    claims.push(
+      ...pointClaims(
+        "spec.com",
+        "center of mass",
+        spec.center_of_mass,
+        measurement?.center_of_mass ?? null,
+        measurement === null ? evalFailed : "center of mass is undefined (no enclosed volume)",
+      ),
+    );
+  }
+
+  // Fail-closed: a spec that declares nothing measurable is not a pass. An
+  // empty claim list already rolls up to unverifiable (overallVerdict), but
+  // carry an explicit claim so the receipt says WHY it can't be clean.
+  if (claims.length === 0) {
+    claims.push(
+      unverifiableClaim(
+        "spec.empty",
+        MECH_DOMAIN,
+        "spec declares at least one claim",
+        SPEC_ORACLE,
+        "spec is empty — no claims to verify",
+      ),
+    );
+  }
+
+  return {
+    schema: RECEIPT_SCHEMA,
+    ...(documentId ? { document_id: documentId } : {}),
+    ...(fingerprint ? { document_fingerprint: fingerprint } : {}),
+    claims,
+  };
+}

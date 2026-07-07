@@ -39,6 +39,7 @@ import {
   listEvalTasks,
   listEvalTasksSchema,
 } from "./tools/verify.js";
+import { verifySpec, verifySpecSchema } from "./tools/verify-spec.js";
 import { importStep, importStepSchema } from "./tools/import.js";
 import {
   importKicad,
@@ -1250,6 +1251,12 @@ export async function createServer(
           "List mecheval benchmark tasks (id, suite, tier, title, prompt, check count). Suites: A authoring, B kernel, C mech/physics, D visual, F fit. Pair with verify_part for self-graded practice and verification.",
         inputSchema: listEvalTasksSchema,
       },
+      {
+        name: "verify_spec",
+        description:
+          "TDD for CAD: grade an open session document against a caller-supplied spec and return a fail-closed verification receipt (schema vcad.receipt/1). Declare the spec FIRST — bounding-box min/max ± tolerance, volume range, watertightness, exact part count, center of mass ± tolerance — then iterate the geometry until every claim rolls up to pass. Each claim reports measured vs expected. Fail-closed: an empty spec, a missing measurement, or a claim the kernel can't evaluate is `unverifiable`, never a silent pass. Unlike verify_part this needs no mecheval task — you supply the acceptance criteria.",
+        inputSchema: verifySpecSchema,
+      },
       // ── DFM (Design for Manufacturing) ──────────────────────────
       {
         name: "dfm_check",
@@ -2382,6 +2389,10 @@ export async function createServer(
 
         case "list_eval_tasks":
           result = listEvalTasks(args);
+          break;
+
+        case "verify_spec":
+          result = verifySpec(args, engine);
           break;
 
         case "dfm_check":
