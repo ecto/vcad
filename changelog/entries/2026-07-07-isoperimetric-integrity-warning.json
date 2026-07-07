@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-07-isoperimetric-integrity-warning",
+  "version": "0.9.4",
+  "date": "2026-07-07",
+  "category": "feat",
+  "title": "Isoperimetric impossibility check in integrity + inspect",
+  "summary": "Mutation integrity reports and inspect_cad now flag volume/area pairs that violate A³ ≥ 36πV² — no real solid can produce them, so corrupt volume integrals are warned about instead of returned silently.",
+  "features": ["mcp", "integrity"],
+  "mcpTools": ["inspect_cad"]
+}

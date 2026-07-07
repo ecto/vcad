@@ -696,7 +696,7 @@ export class SliceResult {
      * @returns {number}
      */
     get filamentGrams() {
-        const ret = wasm.circuitsim_dt(this.__wbg_ptr);
+        const ret = wasm.sliceresult_filamentGrams(this.__wbg_ptr);
         return ret;
     }
     /**
@@ -1045,6 +1045,20 @@ export class Solid {
     circularPattern(axis_origin_x, axis_origin_y, axis_origin_z, axis_dir_x, axis_dir_y, axis_dir_z, count, angle_deg) {
         const ret = wasm.op_circular_pattern(this.__wbg_ptr, axis_origin_x, axis_origin_y, axis_origin_z, axis_dir_x, axis_dir_y, axis_dir_z, count, angle_deg);
         return Solid.__wrap(ret);
+    }
+    /**
+     * Minimum signed distance to another solid in mm (see `WasmClearance`):
+     * positive separation, negative penetration depth on intersection.
+     * @param {Solid} other
+     * @returns {any}
+     */
+    clearance(other) {
+        _assertClass(other, Solid);
+        const ret = wasm.solid_clearance(this.__wbg_ptr, other.__wbg_ptr);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
     }
     /**
      * Create a cone/frustum along Z axis.
@@ -5149,7 +5163,7 @@ export function isCamAvailable() {
  * @returns {boolean}
  */
 export function isEcadAvailable() {
-    const ret = wasm.isCamAvailable();
+    const ret = wasm.isEcadAvailable();
     return ret !== 0;
 }
 
@@ -5187,6 +5201,33 @@ export function isPhysicsAvailable() {
 export function isSlicerAvailable() {
     const ret = wasm.isSlicerAvailable();
     return ret !== 0;
+}
+
+/**
+ * Mesh-to-mesh clearance over raw evaluated-mesh buffers (see
+ * `WasmClearance`). Operates on already-placed geometry, so callers can
+ * measure between any two evaluated parts (or merged part groups) without
+ * re-building solids.
+ * @param {Float32Array} positions_a
+ * @param {Uint32Array} indices_a
+ * @param {Float32Array} positions_b
+ * @param {Uint32Array} indices_b
+ * @returns {any}
+ */
+export function mesh_clearance(positions_a, indices_a, positions_b, indices_b) {
+    const ptr0 = passArrayF32ToWasm0(positions_a, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passArray32ToWasm0(indices_a, wasm.__wbindgen_malloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ptr2 = passArrayF32ToWasm0(positions_b, wasm.__wbindgen_malloc);
+    const len2 = WASM_VECTOR_LEN;
+    const ptr3 = passArray32ToWasm0(indices_b, wasm.__wbindgen_malloc);
+    const len3 = WASM_VECTOR_LEN;
+    const ret = wasm.mesh_clearance(ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
 }
 
 /**
@@ -7573,7 +7614,7 @@ function __wbg_get_imports() {
                     const a = state0.a;
                     state0.a = 0;
                     try {
-                        return wasm_bindgen__convert__closures_____invoke__h909ef70400a4aa92(a, state0.b, arg0, arg1);
+                        return wasm_bindgen__convert__closures_____invoke__ha5c982f531a96375(a, state0.b, arg0, arg1);
                     } finally {
                         state0.a = a;
                     }
@@ -8158,13 +8199,13 @@ function __wbg_get_imports() {
             arg0.writeTexture(arg1, arg2, arg3, arg4);
         },
         __wbindgen_cast_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 2596, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 2597, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-            const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h449c01a9b484b49e, wasm_bindgen__convert__closures_____invoke__h97f5d3065e41a070);
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 3098, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 3099, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h937dc6f65bde8529, wasm_bindgen__convert__closures_____invoke__he77dbe0899982831);
             return ret;
         },
         __wbindgen_cast_0000000000000002: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 3309, function: Function { arguments: [Externref], shim_idx: 3310, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-            const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h5fc04d9207857a4f, wasm_bindgen__convert__closures_____invoke__h93fa00cb00fe3f24);
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 3310, function: Function { arguments: [Externref], shim_idx: 3311, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h191db0eea4d7d68c, wasm_bindgen__convert__closures_____invoke__h852de6502a19f22f);
             return ret;
         },
         __wbindgen_cast_0000000000000003: function(arg0) {
@@ -8252,16 +8293,16 @@ function __wbg_get_imports() {
     };
 }
 
-function wasm_bindgen__convert__closures_____invoke__h97f5d3065e41a070(arg0, arg1, arg2) {
-    wasm.wasm_bindgen__convert__closures_____invoke__h97f5d3065e41a070(arg0, arg1, arg2);
+function wasm_bindgen__convert__closures_____invoke__he77dbe0899982831(arg0, arg1, arg2) {
+    wasm.wasm_bindgen__convert__closures_____invoke__he77dbe0899982831(arg0, arg1, arg2);
 }
 
-function wasm_bindgen__convert__closures_____invoke__h93fa00cb00fe3f24(arg0, arg1, arg2) {
-    wasm.wasm_bindgen__convert__closures_____invoke__h93fa00cb00fe3f24(arg0, arg1, arg2);
+function wasm_bindgen__convert__closures_____invoke__h852de6502a19f22f(arg0, arg1, arg2) {
+    wasm.wasm_bindgen__convert__closures_____invoke__h852de6502a19f22f(arg0, arg1, arg2);
 }
 
-function wasm_bindgen__convert__closures_____invoke__h909ef70400a4aa92(arg0, arg1, arg2, arg3) {
-    wasm.wasm_bindgen__convert__closures_____invoke__h909ef70400a4aa92(arg0, arg1, arg2, arg3);
+function wasm_bindgen__convert__closures_____invoke__ha5c982f531a96375(arg0, arg1, arg2, arg3) {
+    wasm.wasm_bindgen__convert__closures_____invoke__ha5c982f531a96375(arg0, arg1, arg2, arg3);
 }
 
 

@@ -146,6 +146,35 @@ pub fn airgap_flux_density(spec: &AirGapSpec) -> f64 {
     phi_g / (a_g * 1e-6)
 }
 
+/// First-order Carter-like fringing derate for the MEC gap field.
+///
+/// [`airgap_flux_density`] assumes flux crosses the gap straight — no
+/// spreading at the pole edges. Real flux fringes outward by roughly one gap
+/// length per pole edge (the classical straight-line-plus-quarter-circle
+/// fringe-tube estimate), so the same total flux crosses an effectively wider
+/// pole and the density *under* the pole face drops. Modeling the widening in
+/// the one dimension that matters (across the pole width `w`, gap `g`):
+///
+/// ```text
+///   B_derated = B_raw · w / (w + 2g)  =  B_raw · ρ / (ρ + 2),   ρ = w/g
+/// ```
+///
+/// This is the fringing analogue of Carter's slotting coefficient — a pure
+/// geometry ratio, first-order in `g/w`. It is honest only while the pole is
+/// wide compared to the gap (`ρ ≳ 2`); below that the fringe tubes overlap
+/// and the closed form under-predicts the field, so treat small-`ρ` results
+/// as a lower bound. Returns 1.0 (no derate) for a non-positive gap and 0.0
+/// for a non-positive pole width.
+pub fn fringing_derate(pole_width_mm: f64, airgap_mm: f64) -> f64 {
+    if airgap_mm <= 0.0 {
+        return 1.0;
+    }
+    if pole_width_mm <= 0.0 {
+        return 0.0;
+    }
+    pole_width_mm / (pole_width_mm + 2.0 * airgap_mm)
+}
+
 /// Coarse coreless / air-cored air-gap flux density (tesla) — **no back-iron**.
 ///
 /// With no soft-iron return path the field is set directly by the coil MMF
@@ -260,6 +289,21 @@ mod tests {
             b_iron > 0.95 * b_ideal,
             "iron drop should be small: {b_iron}"
         );
+    }
+
+    #[test]
+    fn fringing_derate_behaves_like_a_carter_factor() {
+        // Wide pole, small gap: barely any derate.
+        assert!(fringing_derate(20.0, 0.5) > 0.95);
+        // ρ = w/g = 2 → w/(w+2g) = 0.5.
+        assert!((fringing_derate(2.0, 1.0) - 0.5).abs() < 1e-12);
+        // Monotonic: bigger gap, more fringing, lower B.
+        assert!(fringing_derate(10.0, 2.0) < fringing_derate(10.0, 1.0));
+        // Degenerate guards.
+        assert_eq!(fringing_derate(10.0, 0.0), 1.0);
+        assert_eq!(fringing_derate(0.0, 1.0), 0.0);
+        // Always a derate, never a boost.
+        assert!(fringing_derate(5.0, 1.0) < 1.0);
     }
 
     #[test]

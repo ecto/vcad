@@ -28,6 +28,18 @@ pub enum FaceClassification {
     OnOpposite,
 }
 
+/// Closest point on segment (x1,y1)-(x2,y2) to (px,py).
+fn nearest_point_on_segment_2d(px: f64, py: f64, x1: f64, y1: f64, x2: f64, y2: f64) -> (f64, f64) {
+    let dx = x2 - x1;
+    let dy = y2 - y1;
+    let len2 = dx * dx + dy * dy;
+    if len2 < 1e-24 {
+        return (x1, y1);
+    }
+    let t = (((px - x1) * dx + (py - y1) * dy) / len2).clamp(0.0, 1.0);
+    (x1 + t * dx, y1 + t * dy)
+}
+
 /// Compute a sample point in the interior of a face.
 ///
 /// Returns a 3D point that lies on the face's surface, inside its boundary
@@ -216,8 +228,16 @@ pub fn face_sample_point(brep: &BRepSolid, face_id: FaceId) -> Point3 {
 
                 let outer_2d: Vec<(f64, f64)> = vertices.iter().map(&project_2d).collect();
 
-                // Collect all inner loop vertices in 2D
+                // Collect inner loops in 2D. Polygonal loops keep their
+                // vertices; degenerate single-vertex loops are full circles
+                // about the plane origin (the convention `point_in_face`
+                // uses), recorded as (center, radius).
                 let mut inner_loops_2d: Vec<Vec<(f64, f64)>> = Vec::new();
+                let mut circle_holes: Vec<((f64, f64), f64)> = Vec::new();
+                let plane_origin_2d = surface
+                    .as_any()
+                    .downcast_ref::<vcad_kernel_geom::Plane>()
+                    .map(|p| project_2d(&p.origin));
                 for &inner_loop in &face.inner_loops {
                     let inner_verts: Vec<(f64, f64)> = topo
                         .loop_half_edges(inner_loop)
@@ -226,52 +246,124 @@ pub fn face_sample_point(brep: &BRepSolid, face_id: FaceId) -> Point3 {
                             project_2d(&pt)
                         })
                         .collect();
-                    if !inner_verts.is_empty() {
-                        inner_loops_2d.push(inner_verts);
+                    match (inner_verts.len(), plane_origin_2d) {
+                        (0, _) => {}
+                        (1, Some(c)) => {
+                            let dx = inner_verts[0].0 - c.0;
+                            let dy = inner_verts[0].1 - c.1;
+                            circle_holes.push((c, (dx * dx + dy * dy).sqrt()));
+                        }
+                        _ => inner_loops_2d.push(inner_verts),
                     }
                 }
 
-                // Try multiple candidate points along each edge of the outer boundary
-                // Pick the one that's farthest from any hole
-                let mut best_point: Option<Point3> = None;
-                let mut best_dist = 0.0f64;
+                // Distance to the nearest boundary — outer edges, hole edges,
+                // and degenerate hole circles alike. Split sub-faces have
+                // their outer boundary exactly ON the other solid's surface
+                // (the split curve came from intersecting it), so a robust
+                // classification sample must maximize clearance from EVERY
+                // boundary, not merely avoid the holes: a sample sitting on
+                // the outer rim ray-casts against the other solid's
+                // tessellated boundary and misclassifies.
+                let boundary_dist = |x: f64, y: f64| -> f64 {
+                    let mut d = f64::INFINITY;
+                    for i in 0..outer_2d.len() {
+                        let j = (i + 1) % outer_2d.len();
+                        d = d.min(point_to_segment_dist_2d(
+                            x,
+                            y,
+                            outer_2d[i].0,
+                            outer_2d[i].1,
+                            outer_2d[j].0,
+                            outer_2d[j].1,
+                        ));
+                    }
+                    for hole in &inner_loops_2d {
+                        for k in 0..hole.len() {
+                            let l = (k + 1) % hole.len();
+                            d = d.min(point_to_segment_dist_2d(
+                                x, y, hole[k].0, hole[k].1, hole[l].0, hole[l].1,
+                            ));
+                        }
+                    }
+                    for &((cx, cy), r) in &circle_holes {
+                        let dist_c = ((x - cx).powi(2) + (y - cy).powi(2)).sqrt();
+                        d = d.min((dist_c - r).abs());
+                    }
+                    d
+                };
 
-                for i in 0..vertices.len() {
-                    let j = (i + 1) % vertices.len();
-                    let p0 = vertices[i];
-                    let p1 = vertices[j];
-                    let p0_2d = outer_2d[i];
-                    let p1_2d = outer_2d[j];
-
-                    // Try points at 10%, 25%, 50%, 75%, 90% along this edge
-                    for &t in &[0.1, 0.25, 0.5, 0.75, 0.9] {
-                        let candidate_3d = p0 + t * (p1 - p0);
-                        let candidate_2d = (
-                            p0_2d.0 + t * (p1_2d.0 - p0_2d.0),
-                            p0_2d.1 + t * (p1_2d.1 - p0_2d.1),
-                        );
-
-                        // Check distance to nearest hole
-                        let mut min_hole_dist = f64::INFINITY;
-                        for inner_loop_2d in &inner_loops_2d {
-                            for k in 0..inner_loop_2d.len() {
-                                let l = (k + 1) % inner_loop_2d.len();
-                                let dist = point_to_segment_dist_2d(
-                                    candidate_2d.0,
-                                    candidate_2d.1,
-                                    inner_loop_2d[k].0,
-                                    inner_loop_2d[k].1,
-                                    inner_loop_2d[l].0,
-                                    inner_loop_2d[l].1,
-                                );
-                                min_hole_dist = min_hole_dist.min(dist);
+                // Nearest point on any hole boundary — used to pull rim
+                // candidates into the interior band between the outer
+                // boundary and the holes (mid-band on an annular sub-face).
+                let nearest_hole_point = |x: f64, y: f64| -> Option<(f64, f64)> {
+                    let mut best: Option<((f64, f64), f64)> = None;
+                    for hole in &inner_loops_2d {
+                        for k in 0..hole.len() {
+                            let l = (k + 1) % hole.len();
+                            let (px, py) = nearest_point_on_segment_2d(
+                                x, y, hole[k].0, hole[k].1, hole[l].0, hole[l].1,
+                            );
+                            let d = ((x - px).powi(2) + (y - py).powi(2)).sqrt();
+                            if best.is_none_or(|(_, bd)| d < bd) {
+                                best = Some(((px, py), d));
                             }
                         }
-
-                        if min_hole_dist > best_dist {
-                            best_dist = min_hole_dist;
-                            best_point = Some(candidate_3d);
+                    }
+                    for &((cx, cy), r) in &circle_holes {
+                        let dx = x - cx;
+                        let dy = y - cy;
+                        let dist_c = (dx * dx + dy * dy).sqrt();
+                        if dist_c > 1e-12 {
+                            let px = cx + dx / dist_c * r;
+                            let py = cy + dy / dist_c * r;
+                            let d = (dist_c - r).abs();
+                            if best.is_none_or(|(_, bd)| d < bd) {
+                                best = Some(((px, py), d));
+                            }
                         }
+                    }
+                    best.map(|(p, _)| p)
+                };
+
+                let mut best_point: Option<Point3> = None;
+                let mut best_dist = -1.0f64;
+                let mut consider = |x: f64, y: f64| {
+                    // Degenerate circle holes are invisible to the
+                    // polygon-based containment test — reject their
+                    // interiors explicitly.
+                    for &((cx, cy), r) in &circle_holes {
+                        let dist_c = ((x - cx).powi(2) + (y - cy).powi(2)).sqrt();
+                        if dist_c < r - 1e-9 {
+                            return;
+                        }
+                    }
+                    let p3 = v0 + x * u_axis + y * v_axis;
+                    if !point_in_face(brep, face_id, &p3) {
+                        return;
+                    }
+                    let d = boundary_dist(x, y);
+                    if d > best_dist {
+                        best_dist = d;
+                        best_point = Some(p3);
+                    }
+                };
+
+                // Candidates along the outer boundary plus interior variants
+                // pulled part-way toward the nearest hole boundary. The
+                // interior variants dominate whenever they land on the face:
+                // an on-rim candidate scores ~0 clearance by construction.
+                for i in 0..outer_2d.len() {
+                    let j = (i + 1) % outer_2d.len();
+                    for &t in &[0.1, 0.25, 0.5, 0.75, 0.9] {
+                        let ex = outer_2d[i].0 + t * (outer_2d[j].0 - outer_2d[i].0);
+                        let ey = outer_2d[i].1 + t * (outer_2d[j].1 - outer_2d[i].1);
+                        if let Some((hx, hy)) = nearest_hole_point(ex, ey) {
+                            for &s in &[0.5, 0.25, 0.75] {
+                                consider(ex + s * (hx - ex), ey + s * (hy - ey));
+                            }
+                        }
+                        consider(ex, ey);
                     }
                 }
 

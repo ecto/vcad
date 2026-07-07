@@ -519,5 +519,8 @@ mod ts_tests {
         OracleRef::export_all().expect("OracleRef export failed");
         ReceiptSignature::export_all().expect("ReceiptSignature export failed");
         ReceiptSummary::export_all().expect("ReceiptSummary export failed");
+        // Mechanical clearance assertions (not reachable from DesignReceipt —
+        // they ride in claim `details` as JSON).
+        crate::mechanical::ClearanceClaim::export_all().expect("ClearanceClaim export failed");
     }
 }

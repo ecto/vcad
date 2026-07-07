@@ -419,6 +419,9 @@ describe("inspect_cad (session-aware)", () => {
     expect(props.surface_area_mm2).toBeCloseTo(600, 0);
     expect(props.triangles).toBeGreaterThan(0);
     expect(props.parts).toBe(1);
+    // Real geometry satisfies the isoperimetric bound A³ ≥ 36πV², so the
+    // impossibility warnings must be absent on a clean inspection.
+    expect(props.warnings).toBeUndefined();
   });
 });
 

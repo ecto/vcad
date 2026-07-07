@@ -1,4 +1,5 @@
-//! Mechanical-domain adapter: mass properties → receipt claims.
+//! Mechanical-domain adapter: mass properties and clearance assertions →
+//! receipt claims.
 //!
 //! Translates measured mass properties (as computed by `inspect_cad` / the
 //! kernel) plus an optional spec into claims. The adapter is deliberately
@@ -9,6 +10,8 @@
 //! `mass_g` when no material has a density. Here, a mass spec with no
 //! measured mass yields an **unverifiable** claim naming the missing input,
 //! never a silent skip.
+
+use serde::{Deserialize, Serialize};
 
 use crate::{ClaimQuantity, OracleRef, ReceiptClaim};
 
@@ -48,6 +51,91 @@ pub struct MassSpec {
     pub volume_mm3: Option<ExpectedValue>,
     /// Envelope the part must fit inside (x, y, z extents, mm).
     pub max_envelope_mm: Option<[f64; 3]>,
+}
+
+/// A named clearance assertion between two part groups, with its measured
+/// outcome. The wire type behind `mech.clearance.*` receipt claims: the
+/// full struct rides in the claim's `details` so a stored receipt can be
+/// re-verified against a changed document without external context.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "bindings/"))]
+pub struct ClearanceClaim {
+    /// Assertion name, e.g. "air-gap".
+    pub label: String,
+    /// Part ids (stringified root node ids) of the first group.
+    pub group_a: Vec<String>,
+    /// Part ids of the second group.
+    pub group_b: Vec<String>,
+    /// Required minimum separation in mm.
+    pub required_mm: f64,
+    /// Measured minimum distance in mm (negative = penetration depth).
+    pub measured_mm: f64,
+    /// Whether the measured distance satisfies the requirement.
+    pub holds: bool,
+}
+
+impl ClearanceClaim {
+    /// Build a claim, deriving `holds` from the measurement.
+    pub fn new(
+        label: impl Into<String>,
+        group_a: Vec<String>,
+        group_b: Vec<String>,
+        required_mm: f64,
+        measured_mm: f64,
+    ) -> Self {
+        Self {
+            label: label.into(),
+            group_a,
+            group_b,
+            required_mm,
+            measured_mm: if measured_mm == 0.0 { 0.0 } else { measured_mm },
+            holds: measured_mm.is_finite() && measured_mm >= required_mm,
+        }
+    }
+}
+
+/// Build receipt claims from measured clearance assertions.
+///
+/// One claim per assertion, id `mech.clearance.<label>`, with the required
+/// distance as `predicted` and the measured distance as `measured`. The
+/// verdict is re-derived from the numbers (fail-closed): a non-finite
+/// measurement is unverifiable, and an inconsistent `holds` flag never
+/// upgrades a failing measurement to a pass.
+pub fn clearance_claims(assertions: &[ClearanceClaim], oracle: &OracleRef) -> Vec<ReceiptClaim> {
+    assertions
+        .iter()
+        .map(|a| {
+            let id = format!("mech.clearance.{}", a.label);
+            let description = format!("clearance \"{}\" at least {} mm", a.label, a.required_mm);
+            let subject = format!("{} vs {}", a.group_a.join("+"), a.group_b.join("+"));
+            if !a.measured_mm.is_finite() || !a.required_mm.is_finite() {
+                return ReceiptClaim::unverifiable(
+                    id,
+                    DOMAIN,
+                    description,
+                    oracle.clone(),
+                    format!(
+                        "non-finite clearance measurement ({} mm required, {} mm measured)",
+                        a.required_mm, a.measured_mm
+                    ),
+                )
+                .with_subject(subject);
+            }
+            let holds = a.holds && a.measured_mm >= a.required_mm;
+            let mut c = ReceiptClaim::pass(id, DOMAIN, description, oracle.clone())
+                .with_subject(subject)
+                .with_predicted(ClaimQuantity::new(a.required_mm, "mm"))
+                .with_measured(ClaimQuantity::new(a.measured_mm, "mm"));
+            if !holds {
+                c.verdict = crate::ClaimVerdict::Fail;
+            }
+            if let Ok(json) = serde_json::to_string(a) {
+                c = c.with_details(json);
+            }
+            c
+        })
+        .collect()
 }
 
 fn finite_positive(v: f64) -> bool {
@@ -309,6 +397,79 @@ mod tests {
         };
         let claims = mass_properties_claims(&measured, &MassSpec::default(), &oracle());
         assert_eq!(claims[0].verdict, ClaimVerdict::Unverifiable);
+    }
+
+    #[test]
+    fn clearance_that_holds_passes_with_both_values() {
+        let a = ClearanceClaim::new("air-gap", vec!["1".into()], vec!["2".into()], 1.0, 1.02);
+        assert!(a.holds);
+        let claims = clearance_claims(&[a], &oracle());
+        assert_eq!(claims.len(), 1);
+        let c = &claims[0];
+        assert_eq!(c.id, "mech.clearance.air-gap");
+        assert_eq!(c.verdict, ClaimVerdict::Pass);
+        assert_eq!(c.subject.as_deref(), Some("1 vs 2"));
+        assert_eq!(
+            c.predicted.as_ref().unwrap().value,
+            crate::ClaimValue::Number(1.0)
+        );
+        assert_eq!(
+            c.measured.as_ref().unwrap().value,
+            crate::ClaimValue::Number(1.02)
+        );
+        // details carries the typed claim for lossless re-verification
+        let back: ClearanceClaim = serde_json::from_str(c.details.as_deref().unwrap()).unwrap();
+        assert_eq!(back.label, "air-gap");
+        assert_eq!(back.required_mm, 1.0);
+    }
+
+    #[test]
+    fn clearance_violation_fails_with_measured_value() {
+        let a = ClearanceClaim::new(
+            "rotor-screw",
+            vec!["1".into()],
+            vec!["2".into(), "3".into()],
+            0.65,
+            0.4,
+        );
+        assert!(!a.holds);
+        let claims = clearance_claims(&[a], &oracle());
+        assert_eq!(claims[0].verdict, ClaimVerdict::Fail);
+        assert_eq!(
+            claims[0].measured.as_ref().unwrap().value,
+            crate::ClaimValue::Number(0.4)
+        );
+    }
+
+    #[test]
+    fn interference_reports_negative_distance_and_fails() {
+        let a = ClearanceClaim::new("fit", vec!["1".into()], vec!["2".into()], 0.05, -1.3);
+        let claims = clearance_claims(&[a], &oracle());
+        assert_eq!(claims[0].verdict, ClaimVerdict::Fail);
+        assert_eq!(
+            claims[0].measured.as_ref().unwrap().value,
+            crate::ClaimValue::Number(-1.3)
+        );
+    }
+
+    #[test]
+    fn inconsistent_holds_flag_never_upgrades_a_failure() {
+        let mut a = ClearanceClaim::new("gap", vec!["1".into()], vec!["2".into()], 1.0, 0.5);
+        a.holds = true; // lie
+        let claims = clearance_claims(&[a], &oracle());
+        assert_eq!(claims[0].verdict, ClaimVerdict::Fail);
+    }
+
+    #[test]
+    fn non_finite_clearance_is_unverifiable() {
+        let a = ClearanceClaim::new("gap", vec!["1".into()], vec!["2".into()], 1.0, f64::NAN);
+        let claims = clearance_claims(&[a], &oracle());
+        assert_eq!(claims[0].verdict, ClaimVerdict::Unverifiable);
+        // …and it poisons the rollup, never reading clean.
+        assert_eq!(
+            DesignReceipt::with_claims(claims).overall(),
+            ClaimVerdict::Unverifiable
+        );
     }
 
     #[test]

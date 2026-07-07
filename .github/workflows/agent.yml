@@ -118,7 +118,26 @@ jobs:
             and post a comment on the issue describing the conflict instead
             of guessing.
           claude_args: |
+            --model claude-opus-4-8
             --allowedTools "Read,Edit,Write,Glob,Grep,Bash(cargo:*),Bash(npm:*),Bash(git:*),Bash(gh:*),Bash(rustup:*)"
+
+      # The action exits 0 even when the Claude session dies on its first API
+      # call (result JSON carries is_error:true but the step still "succeeds"),
+      # which leaves the issue stuck at agent:running with no branch, no PR,
+      # and no comment. Fail loudly instead: no PR from the expected head
+      # branch means the run produced nothing, and the failure handler below
+      # flips the label to agent:failed and links this run on the issue.
+      - name: Verify agent produced a PR
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          n="$(gh pr list --repo ${{ github.repository }} \
+            --head agent/issue-${{ github.event.issue.number }} \
+            --state all --json number --jq 'length')"
+          if [ "$n" = "0" ]; then
+            echo "::error::Agent run finished without opening a PR from agent/issue-${{ github.event.issue.number }} — see the 'Run agent' step output."
+            exit 1
+          fi
 
       - name: Mark failed on error
         if: failure()
