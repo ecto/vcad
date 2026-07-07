@@ -173,10 +173,7 @@ pub fn revolve(
 
         // Classify the line segment relative to the axis
         let surf_type = classify_line_segment(&p_start, &p_end, &axis_origin, axis.as_ref());
-        let (dr, dt) = (
-            rt[next_i].0 - rt[i].0,
-            rt[next_i].1 - rt[i].1,
-        );
+        let (dr, dt) = (rt[next_i].0 - rt[i].0, rt[next_i].1 - rt[i].1);
 
         if is_full {
             match surf_type {
@@ -496,11 +493,7 @@ where
         [s0, e0, e1, s1]
     };
 
-    let plane = Plane::new(
-        corners[0],
-        corners[1] - corners[0],
-        corners[3] - corners[0],
-    );
+    let plane = Plane::new(corners[0], corners[1] - corners[0], corners[3] - corners[0]);
     let surf_idx = geom.add_surface(Box::new(plane));
 
     let quantize = &quantize_pt;

@@ -333,7 +333,12 @@ fn a2_boolean_over_pattern_gross() {
            [circular-pattern 0 0 0  0 0 1  8 360 {BLADE_FLAT}]]"
     ));
     let expected = 8.0 * per_blade;
-    assert_vol(v_of(&i), expected, 1.0, "pattern(8 flat blades) − annulus30..60");
+    assert_vol(
+        v_of(&i),
+        expected,
+        1.0,
+        "pattern(8 flat blades) − annulus30..60",
+    );
     assert_com_on_z_axis(i.com, 0.05, "pattern(8 flat blades) − annulus30..60");
     assert!(
         i.bbox.1[0] <= 30.1 && i.bbox.0[0] >= -30.1,
@@ -376,7 +381,12 @@ fn c1_revolve_180() {
              #[[line 10 0 20 0] [line 20 0 20 5] [line 20 5 10 5] [line 10 5 10 0]]]]",
     );
     let expected = 0.5 * PI * (400.0 - 100.0) * 5.0;
-    assert_vol(i.volume, expected, 1.0, "180° revolve of rectangle (half washer)");
+    assert_vol(
+        i.volume,
+        expected,
+        1.0,
+        "180° revolve of rectangle (half washer)",
+    );
     // bbox must span the swept half: x ∈ [−20, 20], and y must NOT be flat.
     assert!(
         (i.bbox.1[1] - i.bbox.0[1]) > 15.0,
@@ -394,7 +404,12 @@ fn c1_revolve_360_control() {
            [sketch 0 0 0  1 0 0  0 0 1 \
              #[[line 10 0 20 0] [line 20 0 20 5] [line 20 5 10 5] [line 10 5 10 0]]]]",
     );
-    assert_vol(v, PI * (400.0 - 100.0) * 5.0, 1.0, "360° revolve of rectangle (washer)");
+    assert_vol(
+        v,
+        PI * (400.0 - 100.0) * 5.0,
+        1.0,
+        "360° revolve of rectangle (washer)",
+    );
 }
 
 /// C2, doc_17/doc_18: cylinder ∪ extruded body, both operand orders.
@@ -427,14 +442,26 @@ const HALF_ANNULUS: &str = "[extrude 0 0 5 [sketch 0 0 0  1 0 0  0 1 0 \
 fn c2_extrude_standalone_arc_control() {
     let v_one = volume(HALF_ANNULUS);
     let expected_one = (190.0 / 360.0) * PI * (900.0 - 400.0) * 5.0;
-    assert_vol(v_one, expected_one, 1.0, "standalone 190° half-annulus extrusion");
+    assert_vol(
+        v_one,
+        expected_one,
+        1.0,
+        "standalone 190° half-annulus extrusion",
+    );
 }
 
 #[test]
 fn c2_extrude_union_extrude_half_annuli() {
-    let v = volume(&format!("[union [rotate 0 0 180 {HALF_ANNULUS}] {HALF_ANNULUS}]"));
+    let v = volume(&format!(
+        "[union [rotate 0 0 180 {HALF_ANNULUS}] {HALF_ANNULUS}]"
+    ));
     let expected = PI * (900.0 - 400.0) * 5.0;
-    assert_vol(v, expected, 1.0, "two overlapping half-annuli → full annulus");
+    assert_vol(
+        v,
+        expected,
+        1.0,
+        "two overlapping half-annuli → full annulus",
+    );
 }
 
 // ===========================================================================
@@ -493,7 +520,12 @@ fn d4_three_chained_differences() {
     let v = volume(&format!(
         "[difference {D_CBORE} [difference {D_BORE} [difference {D_CAVITY} {D_HUB}]]]"
     ));
-    assert_vol(v, d_expected(3), 0.5, "((hub − cavity) − bore) − counterbore");
+    assert_vol(
+        v,
+        d_expected(3),
+        0.5,
+        "((hub − cavity) − bore) − counterbore",
+    );
 }
 
 /// Tree-shape equivalence: chained differences ≡ difference of union.
@@ -553,4 +585,3 @@ fn e_pattern_scale_canary() {
 fn v_of(i: &Inspection) -> f64 {
     i.volume
 }
-
