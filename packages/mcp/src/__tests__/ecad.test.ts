@@ -2895,7 +2895,7 @@ describe("add_coil", () => {
   it("run_drc flags a same-net trace over the coil's inner via as SameNetBypass", async () => {
     const id = await circleBoardSession();
     const coil = out(
-      addCoil({
+      await addCoil({
         document_id: id,
         center: { x: 40, y: 40 },
         turns: 10,
