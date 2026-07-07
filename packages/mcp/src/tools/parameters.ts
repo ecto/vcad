@@ -18,6 +18,7 @@
  */
 
 import type { Engine, PartParameterGradient } from "@vcad/engine";
+import { behavior, type ToolDef } from "./tool-def.js";
 import { resolveParameters } from "@vcad/engine";
 import type { Document, Expr, Parameter } from "@vcad/ir";
 import { appendIntegrity, computeIntegrity } from "./integrity.js";
@@ -233,3 +234,35 @@ export function parameterGradient(input: unknown, engine: Engine): ToolResult {
 
   return jsonResult({ parameter, density, parts });
 }
+
+export const toolDefs: ToolDef[] = [
+  {
+    name: "list_parameters",
+    pack: null,
+    description:
+      "List a document's named parameters: raw expression, resolved numeric value, unit, and scrub bounds (min/max). Pair with set_parameters to drive the design and parameter_gradient to differentiate it.",
+    inputSchema: listParametersSchema,
+    handler: (a) => listParameters(a),
+    behavior: behavior({}),
+  },
+  {
+    name: "set_parameters",
+    pack: null,
+    description:
+      "Batch-update named parameter values on an open session document (e.g. { \"r\": 12, \"h\": 8 }). Every name must already be declared; values must be finite numbers. Returns a `changed` diff of the deltas and re-evaluates geometry integrity. Undoable and persisted.",
+    inputSchema: setParametersSchema,
+    // Batch-updates named parameters → geometry changes, so it must
+    // snapshot (undo) and persist like any other document mutator.
+    handler: (a, c) => setParameters(a, c.engine),
+    behavior: behavior({ writesDoc: true }),
+  },
+  {
+    name: "parameter_gradient",
+    pack: null,
+    description:
+      "Differentiate a document's QoIs with respect to a single named parameter via the differentiable seam: per solid part, returns d(volume)/d\u03b8, d(mass)/d\u03b8, d(centroid)/d\u03b8 (exact analytic seam derivatives) and d(bbox extents)/d\u03b8 (finite difference), alongside each QoI's value. The parameter must be bound onto some geometry field. \"Solve for the geometry\" starts here.",
+    inputSchema: parameterGradientSchema,
+    handler: (a, c) => parameterGradient(a, c.engine),
+    behavior: behavior({}),
+  },
+];

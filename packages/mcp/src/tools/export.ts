@@ -10,6 +10,7 @@ import { resolveWithinRoot } from "./safe-path.js";
 import { isRemoteDeployment, maxInlineExportBytes } from "./remote.js";
 import { storeArtifact } from "./artifact-store.js";
 import { resolveDocInput } from "./session.js";
+import { behavior, type ToolDef } from "./tool-def.js";
 
 /**
  * Deliver export bytes: write to disk on local servers, return base64
@@ -157,3 +158,15 @@ export function exportCad(
     parts: scene.parts.length,
   });
 }
+
+export const toolDefs: ToolDef[] = [
+  {
+    name: "export_cad",
+    pack: null,
+    description:
+      "Export a CAD document to a file. Supports STL (3D printing), GLB (visualization), and — for sheet-metal documents — STEP AP214 of the FOLDED body with true cylindrical bend faces (fab 3D pipelines like SendCutSend auto-detect bends/angles/directions; zero data entry). Format is determined by file extension.",
+    inputSchema: exportCadSchema,
+    handler: (a, c) => exportCad(a, c.engine),
+    behavior: behavior({}),
+  },
+];

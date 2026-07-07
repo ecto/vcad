@@ -1,5 +1,11 @@
 /**
  * MCP server implementation with vcad tools.
+ *
+ * server.ts is an ASSEMBLER: every tool is a `ToolDef` exported by its module
+ * (tools/*.ts). This file collects them into the ListTools surface and a
+ * name→def dispatch Map, derives all cross-cutting behavior (viewer `_meta`,
+ * pack gating, doc-writer persist, geometry preview) from each def's `behavior`
+ * flags + `pack`, and runs the shared middleware pipeline around every call.
  */
 
 import { createRequire } from "node:module";
@@ -14,51 +20,7 @@ import {
 import { Engine, getKernelWasm, resetKernelWasm } from "@vcad/engine";
 import { commandRegistry } from "@vcad/core";
 import type { Document } from "@vcad/ir";
-import { exportCad, exportCadSchema } from "./tools/export.js";
-import { inspectCad, inspectCadSchema } from "./tools/inspect.js";
 import {
-  predictPrint,
-  predictPrintSchema,
-  recordMeasurement,
-  recordMeasurementSchema,
-} from "./tools/print-check.js";
-import {
-  renderView,
-  renderViewSchema,
-  renderPcb,
-  renderPcbSchema,
-  renderRatsnest,
-  renderRatsnestSchema,
-  renderStackup,
-  renderStackupSchema,
-} from "./tools/render.js";
-import { recordSimulation, recordSimulationSchema } from "./tools/record.js";
-import {
-  verifyPart,
-  verifyPartSchema,
-  listEvalTasks,
-  listEvalTasksSchema,
-} from "./tools/verify.js";
-import { verifySpec, verifySpecSchema } from "./tools/verify-spec.js";
-import { importStep, importStepSchema } from "./tools/import.js";
-import {
-  importKicad,
-  importKicadSchema,
-  importEagle,
-  importEagleSchema,
-} from "./tools/import-pcb.js";
-import { openInBrowser, openInBrowserSchema } from "./tools/share.js";
-import {
-  openDocument,
-  openDocumentSchema,
-  getDocumentTool,
-  getDocumentSchema,
-  closeDocument,
-  closeDocumentSchema,
-  saveDocument,
-  saveDocumentSchema,
-  loadDocument,
-  loadDocumentSchema,
   documents,
   registerSession,
   getSession,
@@ -68,16 +30,8 @@ import {
   runInSessionScope,
   recordHistorySnapshot,
 } from "./tools/session.js";
-import {
-  continueDocument,
-  continueDocumentSchema,
-} from "./tools/continue-doc.js";
-import {
-  checkpointDocument,
-  checkpointDocumentSchema,
-  branchFrom,
-  branchFromSchema,
-} from "./tools/checkpoint.js";
+import { createCadLoon } from "./tools/loon.js";
+import { previewVersion } from "./tools/preview.js";
 import {
   createSessionStore,
   createSessionEventStore,
@@ -89,38 +43,6 @@ import {
 // /health (http.ts) report the same durability state as server_info.
 export { sessionStoreInfo } from "./session-store.js";
 import { createFabricateStore } from "./fabricate/store.js";
-import {
-  quoteManufacturing,
-  quoteManufacturingSchema,
-  getOrderStatus,
-  getOrderStatusSchema,
-  listOrders,
-  listOrdersSchema,
-} from "./tools/order.js";
-import {
-  authorizeSpend,
-  authorizeSpendSchema,
-  placeOrder,
-  placeOrderSchema,
-} from "./tools/ordering.js";
-import {
-  bomCreate,
-  bomCreateSchema,
-  bomAddLine,
-  bomAddLineSchema,
-  bomExport,
-  bomExportSchema,
-} from "./tools/bom.js";
-import {
-  searchMechanicalParts,
-  searchMechanicalPartsSchema,
-} from "./tools/mech-parts.js";
-import {
-  shareSession,
-  shareSessionSchema,
-  unshareSession,
-  unshareSessionSchema,
-} from "./tools/live-share.js";
 import type { AuthUser } from "./oauth.js";
 
 /** Per-connection context threaded from the transport entry point — the
@@ -148,200 +70,6 @@ import { getStaleness } from "./edge-config.js";
 export { handleLiveRequest } from "./live-route.js";
 export { handleArtifactRequest } from "./artifact-route.js";
 import {
-  createRobotEnv,
-  createRobotEnvSchema,
-  gymStep,
-  gymStepSchema,
-  gymReset,
-  gymResetSchema,
-  gymObserve,
-  gymObserveSchema,
-  gymClose,
-  gymCloseSchema,
-  batchCreateEnvs,
-  batchCreateEnvsSchema,
-  batchStep,
-  batchStepSchema,
-  batchReset,
-  batchResetSchema,
-} from "./tools/gym.js";
-import {
-  loadStructure,
-  loadStructureSchema,
-  inspectMoleculeTool,
-  inspectMoleculeSchema,
-  minimizeEnergyTool,
-  minimizeEnergySchema,
-  mdRun,
-  mdRunSchema,
-  designMaterial,
-  designMaterialSchema,
-  homogenizeMaterialTool,
-  homogenizeMaterialSchema,
-  renderMolecule,
-  renderMoleculeSchema,
-} from "./tools/atoms.js";
-import { getChangelog, getChangelogSchema } from "./tools/changelog.js";
-import {
-  searchPartsTool,
-  searchPartsSchema,
-  placePartTool,
-  placePartSchema,
-} from "./tools/parts.js";
-import {
-  createSchematic,
-  createSchematicSchema,
-  placeComponents,
-  placeComponentsSchema,
-  routeNets,
-  routeNetsSchema,
-  routeDiffPair,
-  routeDiffPairSchema,
-  critiqueRoute,
-  critiqueRouteSchema,
-  runDrc,
-  runDrcSchema,
-  runErc,
-  runErcSchema,
-  exportGerber,
-  exportGerberSchema,
-  exportKicad,
-  exportKicadSchema,
-  validateForFab,
-  validateForFabSchema,
-  calcImpedance,
-  calcImpedanceSchema,
-  sizeImpedance,
-  sizeImpedanceSchema,
-  sizePdn,
-  sizePdnSchema,
-  calcCoil,
-  calcCoilSchema,
-  sizeCoil,
-  sizeCoilSchema,
-  calcRf,
-  calcRfSchema,
-  addCoil,
-  addCoilSchema,
-  addCoilArray,
-  addCoilArraySchema,
-  windingLayout,
-  windingLayoutSchema,
-  boardFromSolid,
-  boardFromSolidSchema,
-  solidFromBoard,
-  solidFromBoardSchema,
-  addTrace,
-  addTraceSchema,
-  getPadPositions,
-  getPadPositionsSchema,
-  getFootprint,
-  getFootprintSchema,
-  describePcb,
-  describePcbSchema,
-  addVia,
-  addViaSchema,
-  setStackup,
-  setStackupSchema,
-  setPlacement,
-  setPlacementSchema,
-  setBoardOutline,
-  setBoardOutlineSchema,
-  addZone,
-  addZoneSchema,
-  deleteZone,
-  deleteZoneSchema,
-  deleteTrace,
-  deleteTraceSchema,
-  deleteVia,
-  deleteViaSchema,
-  getCopper,
-  getCopperSchema,
-  addNetTie,
-  addNetTieSchema,
-  deleteNetTie,
-  deleteNetTieSchema,
-  undo,
-  undoSchema,
-  setDesignRules,
-  setDesignRulesSchema,
-  sizeTraceForCurrent,
-  sizeTraceForCurrentSchema,
-  addViaArray,
-  addViaArraySchema,
-  addMotorWinding,
-  addMotorWindingSchema,
-  calcMotor,
-  calcMotorSchema,
-  checkSelfStart,
-  checkSelfStartSchema,
-  searchElectronicParts,
-  searchElectronicPartsSchema,
-  resolvePart,
-  resolvePartSchema,
-  findAlternatives,
-  findAlternativesSchema,
-  verifySubstitution,
-  verifySubstitutionSchema,
-  buildReceipt,
-  buildReceiptSchema,
-  verifyReceipt,
-  verifyReceiptSchema,
-  listFootprints,
-  listFootprintsSchema,
-  searchFootprints,
-  searchFootprintsSchema,
-} from "./tools/ecad.js";
-import { checkEnclosureFit, checkEnclosureFitSchema } from "./tools/enclosure.js";
-import { checkClearance, checkClearanceSchema } from "./tools/clearance.js";
-import { createCadLoon, createCadLoonSchema } from "./tools/loon.js";
-import {
-  listParameters,
-  listParametersSchema,
-  parameterGradient,
-  parameterGradientSchema,
-  setParameters,
-  setParametersSchema,
-} from "./tools/parameters.js";
-import { appendIntegrity, computeIntegrity } from "./tools/integrity.js";
-import {
-  dfmCheck,
-  dfmCheckSchema,
-  dfmExplain,
-  dfmExplainSchema,
-  dfmSuggestFix,
-  dfmSuggestFixSchema,
-  dfmApplyFix,
-  dfmApplyFixSchema,
-} from "./tools/dfm.js";
-import {
-  sheetMetalCreate,
-  sheetMetalCreateSchema,
-  sheetMetalUnfold,
-  sheetMetalUnfoldSchema,
-  sheetMetalCheck,
-  sheetMetalCheckSchema,
-  sheetMetalMaterials,
-  sheetMetalMaterialsSchema,
-  sheetMetalBendTable,
-  sheetMetalBendTableSchema,
-  sheetMetalCost,
-  sheetMetalCostSchema,
-  sheetMetalSuggestFix,
-  sheetMetalSuggestFixSchema,
-  sheetMetalSequence,
-  sheetMetalSequenceSchema,
-  sheetMetalNest,
-  sheetMetalNestSchema,
-} from "./tools/sheet-metal.js";
-import {
-  getPreviewGlb,
-  getPreviewGlbSchema,
-  getPreviewVersion,
-  getPreviewVersionSchema,
-  previewVersion,
-} from "./tools/preview.js";
-import {
   getViewerHtml,
   VIEWER_RESOURCE_URI,
   VIEWER_CSP,
@@ -353,13 +81,51 @@ import {
 import { fireToolAlert } from "./notify.js";
 import { configureTelemetry, flushTelemetry } from "./telemetry.js";
 
+// ── ToolDef registry: one record per tool, contributed by its module ────────
+import {
+  behavior,
+  type ToolDef,
+  type ToolBehavior,
+  type ToolContext,
+} from "./tools/tool-def.js";
+import type { ToolResult } from "./tools/tool-result.js";
+import { buildKernelEventPayload } from "./tools/kernel-event.js";
+
+import { toolDefs as sessionToolDefs } from "./tools/session.js";
+import { toolDefs as checkpointToolDefs } from "./tools/checkpoint.js";
+import { toolDefs as continueDocToolDefs } from "./tools/continue-doc.js";
+import { toolDefs as orderToolDefs } from "./tools/order.js";
+import { toolDefs as orderingToolDefs } from "./tools/ordering.js";
+import { toolDefs as bomToolDefs } from "./tools/bom.js";
+import { toolDefs as mechPartsToolDefs } from "./tools/mech-parts.js";
+import { toolDefs as liveShareToolDefs } from "./tools/live-share.js";
+import { toolDefs as partsToolDefs } from "./tools/parts.js";
+import { toolDefs as previewToolDefs } from "./tools/preview.js";
+import { toolDefs as loonToolDefs } from "./tools/loon.js";
+import { toolDefs as exportToolDefs } from "./tools/export.js";
+import { toolDefs as inspectToolDefs } from "./tools/inspect.js";
+import { toolDefs as parametersToolDefs } from "./tools/parameters.js";
+import { toolDefs as printCheckToolDefs } from "./tools/print-check.js";
+import { toolDefs as renderToolDefs } from "./tools/render.js";
+import { toolDefs as verifyToolDefs } from "./tools/verify.js";
+import { toolDefs as verifySpecToolDefs } from "./tools/verify-spec.js";
+import { toolDefs as clearanceToolDefs } from "./tools/clearance.js";
+import { toolDefs as dfmToolDefs } from "./tools/dfm.js";
+import { toolDefs as sheetMetalToolDefs } from "./tools/sheet-metal.js";
+import { toolDefs as importToolDefs } from "./tools/import.js";
+import { toolDefs as importPcbToolDefs } from "./tools/import-pcb.js";
+import { toolDefs as shareToolDefs } from "./tools/share.js";
+import { toolDefs as gymToolDefs } from "./tools/gym.js";
+import { toolDefs as atomsToolDefs } from "./tools/atoms.js";
+import { toolDefs as recordToolDefs } from "./tools/record.js";
+import { toolDefs as changelogToolDefs } from "./tools/changelog.js";
+import { toolDefs as ecadToolDefs } from "./tools/ecad.js";
+import { toolDefs as enclosureToolDefs } from "./tools/enclosure.js";
+
 // Re-exported so the Vercel transport entry can drain in-flight PostHog
 // captures before a serverless instance freezes (see services/mcp/entry.ts).
 export { flushTelemetry };
 
-/** Tools that produce or modify geometry and should show the 3D viewer.
- *  Registry-driven kernel tools (create, update, delete, …) are added
- *  dynamically in `createServer` once their names are known. */
 /** Build-time injected version. esbuild's `--define:__VCAD_VERSION__` (see
  *  services/mcp/build.sh) replaces this with the package.json version literal
  *  when bundling the hosted server, where the flattened layout breaks the
@@ -463,102 +229,6 @@ const serverInfoSchema = {
   properties: {},
 };
 
-const GEOMETRY_TOOLS = new Set([
-  "create_cad_loon",
-  "import_step",
-  "import_kicad",
-  "open_document",
-  "get_document",
-  // Opens a web doc (from a "Continue in Claude" share token) as a live session
-  // seeded with its geometry — render it like open_document/load_document.
-  "continue_document",
-  "place_part",
-  "set_material",
-  "dfm_apply_fix",
-  "sheet_metal_create",
-  // Doesn't mutate, but its result carries the flat pattern the viewer
-  // renders as a 2D drawing (cut profile + bend lines).
-  "sheet_metal_unfold",
-  // PCB session mutators — the board (PcbBoard node) renders in the viewer.
-  "place_components",
-  "route_nets",
-  "add_coil",
-  "add_coil_array",
-  "add_trace",
-  "add_via",
-  // Removing copper / rewinding a mutation changes the board — re-render it.
-  "delete_zone",
-  "delete_trace",
-  "delete_via",
-  "undo",
-  "set_stackup",
-  "add_motor_winding",
-  // Materializes a saved board into a live session — show it like open_document.
-  "load_document",
-  // Re-opens a checkpoint snapshot as a live session — seeded with geometry.
-  "branch_from",
-]);
-
-/**
- * Switch-path tools that create or mutate a session Document, so the dispatch
- * layer persists them to the durable store after they run. Registry-path
- * mutators (create / update / delete / set_material) are detected separately
- * via `dispatchableTools`. Readers, exporters, calculators, and planners
- * (`read`, `inspect_cad`, `export_*`, `board_from_solid`, `winding_layout`,
- * `calc_*` / `size_*`, `run_drc`, …) are intentionally absent — they never
- * change the stored document.
- */
-const SWITCH_DOC_WRITERS = new Set<string>([
-  // creators
-  "open_document",
-  "create_cad_loon",
-  "import_step",
-  "import_kicad",
-  "create_schematic",
-  "sheet_metal_create",
-  // Seeds a new session from a web doc's geometry — persist it to the user's
-  // account so the continued part survives a cold instance and shows at vcad.io.
-  "continue_document",
-  // load_document materializes a saved board into a live session; its
-  // local-disk read is a no-op on the serverless deploy, but on success
-  // persisting the loaded doc to the user's account is desirable.
-  "load_document",
-  // Forks/restores a checkpoint into a session; persist so the branch (or the
-  // in-place restore) survives a cold instance like every other session.
-  "branch_from",
-  // CAD / sheet-metal / DFM mutators
-  "place_part",
-  "dfm_apply_fix",
-  // Persists a named clearance spec on the doc when `label` is given.
-  "check_clearance",
-  // PCB / ECAD mutators
-  "place_components",
-  "route_nets",
-  "route_diff_pair",
-  "add_coil",
-  "add_coil_array",
-  "add_motor_winding",
-  "add_trace",
-  "add_via",
-  "add_via_array",
-  "add_zone",
-  "delete_zone",
-  "delete_trace",
-  "delete_via",
-  // Net ties are DRC data, not copper — invisible in the render, but they
-  // change what run_drc accepts, so they must persist (and be undoable).
-  "add_net_tie",
-  "delete_net_tie",
-  "undo",
-  "set_stackup",
-  "set_placement",
-  "set_board_outline",
-  "set_design_rules",
-  // Batch-updates named parameters → geometry changes, so it must snapshot
-  // (undo) and persist like any other document mutator.
-  "set_parameters",
-]);
-
 /** UI metadata for geometry tools — both dialects, hosts read what they
  *  understand: MCP Apps (`ui`/`ui/resourceUri`) for Claude/Cursor, and
  *  OpenAI Apps SDK (`openai/outputTemplate`) for ChatGPT. */
@@ -582,197 +252,206 @@ const WIDGET_CALLABLE_META = {
 };
 
 /**
- * Tools that MOUNT the live 3D canvas — i.e. carry the UI template
- * (`ui.resourceUri` / `openai/outputTemplate`). Per the MCP Apps spec
- * (SEP-1865), the template is static and should be referenced by a SMALL
- * set of tools, not attached to every result: "If you attach a widget
- * template to every tool call, [the host] can re-render your iframe too
- * often." So only the tools that BEGIN a viewable session reference it.
- *
- * Everything else (create/update/delete, route/add_*, place_part, …) is a
- * data tool: it returns `structuredContent` ({document_id, document_version,
- * changed}) and NO template, so it never spawns a fresh iframe. The canvas
- * mounted here stays live by polling `get_preview_version` and re-fetching
- * geometry only when the version changes — one durable surface across a long
- * session instead of one heavy iframe per mutation.
+ * Every static (non-registry) tool, contributed by its module as a `ToolDef`.
+ * Module order is irrelevant here — the ListTools ORDER is `LIST_TOOL_ORDER`
+ * below, and dispatch is by name — so this is just the pool the assembler and
+ * the derived sets draw from. (server_info is minted per-connection inside
+ * createServer because it reports connection/build state; the registry-tier
+ * kernel tools are generated per-connection from the WASM registry.)
  */
-const MOUNT_TOOLS = new Set<string>([
-  // CAD session openers
+const STATIC_TOOL_DEFS: readonly ToolDef[] = [
+  ...sessionToolDefs,
+  ...checkpointToolDefs,
+  ...continueDocToolDefs,
+  ...orderToolDefs,
+  ...orderingToolDefs,
+  ...bomToolDefs,
+  ...mechPartsToolDefs,
+  ...liveShareToolDefs,
+  ...partsToolDefs,
+  ...previewToolDefs,
+  ...loonToolDefs,
+  ...exportToolDefs,
+  ...inspectToolDefs,
+  ...parametersToolDefs,
+  ...printCheckToolDefs,
+  ...renderToolDefs,
+  ...verifyToolDefs,
+  ...verifySpecToolDefs,
+  ...clearanceToolDefs,
+  ...dfmToolDefs,
+  ...sheetMetalToolDefs,
+  ...importToolDefs,
+  ...importPcbToolDefs,
+  ...shareToolDefs,
+  ...gymToolDefs,
+  ...atomsToolDefs,
+  ...recordToolDefs,
+  ...changelogToolDefs,
+  ...ecadToolDefs,
+  ...enclosureToolDefs,
+];
+
+/**
+ * Advertised ORDER of the static tools in ListTools. The registry-tier kernel
+ * tools (create/read/update/delete/…) are spliced in right after `place_part`
+ * (see `assembleToolList`); every other tool appears here exactly once. Order
+ * is presentation only — dispatch and behavior key off the def, not this list.
+ * A boot-time check asserts this covers `STATIC_TOOL_DEFS` + `server_info`.
+ */
+const LIST_TOOL_ORDER: readonly string[] = [
+  // ── Session lifecycle ──────────────────────────────────────
   "open_document",
-  "create_cad_loon",
-  "import_step",
+  "get_document",
+  "close_document",
+  "save_document",
   "load_document",
-  "continue_document",
-  // Re-opens a checkpoint into a (new or restored) session — mount its canvas.
+  "checkpoint_document",
   "branch_from",
-  // PCB: place_components creates the first board geometry (create_schematic
-  // has none yet, so it must NOT mount — the canvas would fetch an empty board)
-  "place_components",
-  // Sheet metal: the part, and the flat-pattern drawing
-  "sheet_metal_create",
-  "sheet_metal_unfold",
-  // Verification ledger artifact
-  "build_receipt",
-]);
-
-/** Tools the viewer iframe calls itself but that must NOT mount a template:
- *  readers reached over the postMessage bridge (deep-link IR fetch, ledger
- *  re-run). They keep `widgetAccessible` so ChatGPT permits the call. */
-const WIDGET_CALLABLE_TOOLS = new Set<string>(["get_document", "verify_receipt"]);
-
-/** App-only geometry/version fetchers the viewer polls. Hidden from the model
- *  (`visibility: ["app"]`); never carry a template (they return data the
- *  iframe consumes, not a surface to render). */
-const PREVIEW_FETCH_TOOLS = new Set<string>([
+  "continue_document",
+  "server_info",
+  // ── vcad Fabricate ─────────────────────────────────────────
+  "quote_manufacturing",
+  "get_order_status",
+  "list_orders",
+  "authorize_spend",
+  "place_order",
+  // ── Project BOM ────────────────────────────────────────────
+  "bom_create",
+  "bom_add_line",
+  "bom_export",
+  "search_mechanical_parts",
+  // ── Live review window ─────────────────────────────────────
+  "share_session",
+  "unshare_session",
+  // ── Stdlib parts library ───────────────────────────────────
+  "search_parts",
+  "place_part",
+  // (registry-driven kernel tools are spliced in here)
+  // ── MCP Apps: app-only preview fetch + version poll ────────
   "get_preview_glb",
   "get_preview_version",
-]);
+  // ── Loon DSL one-shot + core see/measure/export ────────────
+  "create_cad_loon",
+  "export_cad",
+  "inspect_cad",
+  // ── Parametric parameters + differentiable seam ─────────────
+  "list_parameters",
+  "set_parameters",
+  "parameter_gradient",
+  // ── Print-then-measure calibration loop (3DP) ──────────────
+  "predict_print",
+  "record_measurement",
+  // ── Verify-and-iterate loop ────────────────────────────────
+  "render_view",
+  "verify_part",
+  "list_eval_tasks",
+  "verify_spec",
+  // ── DFM ────────────────────────────────────────────────────
+  "dfm_check",
+  "dfm_explain",
+  "dfm_suggest_fix",
+  "dfm_apply_fix",
+  // ── Sheet metal ────────────────────────────────────────────
+  "sheet_metal_create",
+  "sheet_metal_unfold",
+  "sheet_metal_check",
+  "sheet_metal_materials",
+  "sheet_metal_bend_table",
+  "sheet_metal_cost",
+  "sheet_metal_suggest_fix",
+  "sheet_metal_sequence",
+  "sheet_metal_nest",
+  // ── Import + share ─────────────────────────────────────────
+  "import_step",
+  "import_kicad",
+  "import_eagle",
+  "open_in_browser",
+  // ── Physics gym ────────────────────────────────────────────
+  "create_robot_env",
+  "gym_step",
+  "gym_reset",
+  "gym_observe",
+  "gym_close",
+  // ── Atoms ──────────────────────────────────────────────────
+  "load_structure",
+  "inspect_molecule",
+  "minimize_energy",
+  "md_run",
+  "design_material",
+  "homogenize_material",
+  "render_molecule",
+  "record_simulation",
+  "batch_create_envs",
+  "batch_step",
+  "batch_reset",
+  "get_changelog",
+  // ── ECAD (PCB) ─────────────────────────────────────────────
+  "create_schematic",
+  "place_components",
+  "route_nets",
+  "add_coil",
+  "add_coil_array",
+  "winding_layout",
+  "board_from_solid",
+  "solid_from_board",
+  "check_enclosure_fit",
+  "check_clearance",
+  "list_footprints",
+  "search_footprints",
+  "get_pad_positions",
+  "get_footprint",
+  "describe_pcb",
+  "add_trace",
+  "add_via",
+  "set_stackup",
+  "set_placement",
+  "set_board_outline",
+  "add_zone",
+  "delete_zone",
+  "delete_trace",
+  "delete_via",
+  "get_copper",
+  "add_net_tie",
+  "delete_net_tie",
+  "undo",
+  "set_design_rules",
+  "size_trace_for_current",
+  "add_via_array",
+  "add_motor_winding",
+  "calc_motor",
+  "check_self_start",
+  "render_pcb",
+  "render_ratsnest",
+  "render_stackup",
+  "run_drc",
+  "search_electronic_parts",
+  "resolve_part",
+  "find_alternatives",
+  "verify_substitution",
+  "build_receipt",
+  "verify_receipt",
+  "route_diff_pair",
+  "critique_route",
+  "run_erc",
+  "export_gerber",
+  "export_kicad",
+  "validate_for_fab",
+  "calc_impedance",
+  "size_impedance",
+  "size_pdn",
+  "calc_coil",
+  "size_coil",
+  "calc_rf",
+];
 
-/**
- * Single source of truth for viewer `_meta` across the whole tool list.
- * Applied once to the assembled ListTools array so a new tool can never
- * accidentally inherit the template — it has to opt into MOUNT_TOOLS. Strips
- * any stray template meta off data tools.
- */
-function applyViewerMeta<T extends { name: string; _meta?: Record<string, unknown> }>(
-  tools: T[],
-): T[] {
-  return tools.map((t) => {
-    if (PREVIEW_FETCH_TOOLS.has(t.name)) {
-      return { ...t, _meta: { ...WIDGET_CALLABLE_META, ui: { visibility: ["app"] } } };
-    }
-    if (MOUNT_TOOLS.has(t.name)) {
-      return { ...t, _meta: { ...UI_META } };
-    }
-    if (WIDGET_CALLABLE_TOOLS.has(t.name)) {
-      return { ...t, _meta: { ...WIDGET_CALLABLE_META } };
-    }
-    // Data tool: no viewer template. Drop any inherited _meta so it returns
-    // structuredContent only and the host never mounts a per-call iframe.
-    if (t._meta) {
-      const { _meta: _drop, ...rest } = t;
-      void _drop;
-      return rest as T;
-    }
-    return t;
-  });
-}
-
-/**
- * Domain tool packs. The surface is a small always-on core — the
- * make → see → measure → verify → ship loop (session, loon/CRUD
- * authoring, parts library, inspect, render, export, share) — plus
- * these opt-out packs for specialized workflows.
- *
- * `VCAD_MCP_PACKS` trims what is advertised: a comma-separated list of
- * pack names to enable (e.g. "sheet_metal,dfm"), or "none" for core
- * only. Unset enables every pack — backward compatible. Calls to a
- * tool in a disabled pack return an error pointing at the env var.
- */
-const TOOL_PACKS: Record<string, readonly string[]> = {
-  fabricate: [
-    "quote_manufacturing",
-    "get_order_status",
-    "list_orders",
-    "authorize_spend",
-    "place_order",
-  ],
-  // Project-level bill of materials + the curated mechanical COTS catalog.
-  bom: ["bom_create", "bom_add_line", "bom_export", "search_mechanical_parts"],
-  dfm: ["dfm_check", "dfm_explain", "dfm_suggest_fix", "dfm_apply_fix"],
-  sheet_metal: [
-    "sheet_metal_create",
-    "sheet_metal_unfold",
-    "sheet_metal_check",
-    "sheet_metal_materials",
-    "sheet_metal_bend_table",
-    "sheet_metal_cost",
-    "sheet_metal_suggest_fix",
-    "sheet_metal_sequence",
-    "sheet_metal_nest",
-  ],
-  physics: [
-    "create_robot_env",
-    "gym_step",
-    "gym_reset",
-    "gym_observe",
-    "gym_close",
-    "record_simulation",
-    "batch_create_envs",
-    "batch_step",
-    "batch_reset",
-  ],
-  atoms: [
-    "load_structure",
-    "inspect_molecule",
-    "minimize_energy",
-    "md_run",
-    "design_material",
-    "homogenize_material",
-    "render_molecule",
-  ],
-  ecad: [
-    "create_schematic",
-    "place_components",
-    "route_nets",
-    "get_pad_positions",
-    "describe_pcb",
-    "get_copper",
-    "add_trace",
-    "add_via",
-    "add_via_array",
-    "set_stackup",
-    "set_placement",
-    "set_board_outline",
-    "add_zone",
-    "delete_zone",
-    "delete_trace",
-    "delete_via",
-    "add_net_tie",
-    "delete_net_tie",
-    "set_design_rules",
-    "size_trace_for_current",
-    "add_coil",
-    "add_coil_array",
-    "add_motor_winding",
-    "winding_layout",
-    "board_from_solid",
-    "solid_from_board",
-    "check_enclosure_fit",
-    "import_kicad",
-    "import_eagle",
-    "run_drc",
-    "run_erc",
-    "export_gerber",
-    "validate_for_fab",
-    "render_pcb",
-    "render_ratsnest",
-    "render_stackup",
-    "calc_impedance",
-    "size_impedance",
-    "size_pdn",
-    "calc_coil",
-    "size_coil",
-    "calc_rf",
-    "calc_motor",
-    "check_self_start",
-    "search_electronic_parts",
-    "list_footprints",
-    "search_footprints",
-    "resolve_part",
-    "find_alternatives",
-    "verify_substitution",
-    "build_receipt",
-    "verify_receipt",
-  ],
-  // The 3DP print-then-measure calibration loop (predict before printing,
-  // record calipers/scale after — see docs/plans/2026-07-07-3dp-print-then-measure.md).
-  print: ["predict_print", "record_measurement"],
-  // Mecheval self-grading oracle. The benchmark harness already excludes
-  // these during scored runs; hosts that don't want the benchmark
-  // vocabulary at all can drop the pack.
-  eval: ["verify_part", "list_eval_tasks"],
-};
+/** Tools whose text body is a machine-parseable document that consumers
+ *  JSON.parse verbatim — appending a handle block would corrupt it with
+ *  trailing characters (this broke the mecheval harness's .vcad extraction).
+ *  Derived from `behavior.pureJson` so the flag stays the single source. */
+const PURE_JSON_RESULT_TOOLS = new Set(
+  STATIC_TOOL_DEFS.filter((d) => d.behavior.pureJson).map((d) => d.name),
+);
 
 /**
  * Kernel system-prompt sections forwarded to MCP agents via the
@@ -819,7 +498,10 @@ function buildInstructions(kernelPrompt: string | null): string {
   return [header, ...picked].join("\n\n");
 }
 
-/** Tool names hidden by the `VCAD_MCP_PACKS` env var (empty = none).
+/** Tool names hidden by the `VCAD_MCP_PACKS` env var (empty = none). A tool is
+ *  hidden when its `pack` is set and that pack isn't in the enabled list;
+ *  `pack: null` tools (core) and the registry-tier kernel tools are never
+ *  gated. Derived from each ToolDef's `pack` — no separate pack table.
  *  Exported for tests. */
 export function disabledToolNames(): Set<string> {
   const env = process.env.VCAD_MCP_PACKS?.trim();
@@ -828,10 +510,42 @@ export function disabledToolNames(): Set<string> {
     env.split(",").map((s) => s.trim().toLowerCase()).filter(Boolean),
   );
   const disabled = new Set<string>();
-  for (const [pack, tools] of Object.entries(TOOL_PACKS)) {
-    if (!enabled.has(pack)) for (const t of tools) disabled.add(t);
+  for (const d of STATIC_TOOL_DEFS) {
+    if (d.pack && !enabled.has(d.pack)) disabled.add(d.name);
   }
   return disabled;
+}
+
+/**
+ * Single chokepoint for viewer `_meta`, derived from a tool's behavior flags —
+ * so a new tool can never accidentally inherit the template; it has to set
+ * `mount` (or `appOnly`/`widgetCallable`). Precedence matches the old
+ * applyViewerMeta: app-only fetchers first, then mount, then widget-callable;
+ * everything else returns no `_meta` (a data tool the host never mounts).
+ */
+function viewerMetaFor(b: ToolBehavior): Record<string, unknown> | undefined {
+  if (b.appOnly) {
+    return { ...WIDGET_CALLABLE_META, ui: { visibility: ["app"] } };
+  }
+  if (b.mount) return { ...UI_META };
+  if (b.widgetCallable) return { ...WIDGET_CALLABLE_META };
+  return undefined;
+}
+
+/** Project a ToolDef to its advertised ListTools descriptor (name,
+ *  description, inputSchema, optional annotations/outputSchema, and the
+ *  derived viewer `_meta`). */
+function toListDescriptor(def: ToolDef): Record<string, unknown> {
+  const desc: Record<string, unknown> = {
+    name: def.name,
+    description: def.description,
+    inputSchema: def.inputSchema,
+  };
+  if (def.annotations) desc.annotations = def.annotations;
+  if (def.outputSchema) desc.outputSchema = def.outputSchema;
+  const meta = viewerMetaFor(def.behavior);
+  if (meta) desc._meta = meta;
+  return desc;
 }
 
 export async function createServer(
@@ -864,6 +578,16 @@ export async function createServer(
   // Live-window share gate (live_shares). Created per connection like the
   // others. No-op without Supabase env.
   const shareStore = createShareStore();
+
+  // Everything a tool handler may need, threaded per connection.
+  const ctx: ToolContext = {
+    engine,
+    user: context.user,
+    sessionStore,
+    eventStore,
+    fabricateStore,
+    shareStore,
+  };
 
   // Wire the kernel WASM's chat helpers into the shared commandRegistry so
   // `toAnthropicTools` and `planCrud` work on the server too. Same bootstrap
@@ -899,22 +623,24 @@ export async function createServer(
   }
 
   // Names of every kernel-tier tool that the registry dispatcher will
-  // handle. Computed once after wasm bootstrap so the call-site switch can
-  // route by name without re-querying the registry per tool call.
+  // handle. Computed once after wasm bootstrap so server_info can report the
+  // count and the assembler can generate their ToolDefs.
   const dispatchableTools = registryDispatchableNames();
 
-  // Every geometry-mutating tool shows the inline 3D viewer: the static
-  // set plus all registry-driven kernel tools (they all mutate a session
-  // document, so a preview is always meaningful).
-  const uiTools = new Set([...GEOMETRY_TOOLS, ...dispatchableTools]);
-
-  // A tool call writes the session document when it's a switch-path creator/
-  // mutator OR a registry mutator (every dispatchable tool except `read`,
-  // which only inspects). Gates the post-dispatch durable persist so readers
-  // don't trigger a needless write-back.
-  const isDocWriter = (toolName: string): boolean =>
-    SWITCH_DOC_WRITERS.has(toolName) ||
-    (dispatchableTools.has(toolName) && toolName !== "read");
+  // Registry-driven kernel tools, generated per connection from the WASM
+  // registry as ToolDefs — one dispatch pipeline, no special-cased early
+  // return. Each mutates a session document and is geometry (a preview is
+  // always meaningful); `read` alone is a pure reader. viewer `_meta` is
+  // derived like every other tool: they carry no template.
+  const registryDefs: ToolDef[] = registryToolDescriptors().map((d) => ({
+    name: d.name,
+    pack: null,
+    description: d.description,
+    inputSchema: d.inputSchema as Record<string, unknown>,
+    handler: (args: Record<string, unknown>, c: ToolContext) =>
+      dispatchRegistryTool(d.name, args, c.engine) as ToolResult,
+    behavior: behavior({ geometry: true, writesDoc: d.name !== "read" }),
+  }));
 
   // Tools hidden by VCAD_MCP_PACKS (resolved once at server creation).
   const disabledTools = disabledToolNames();
@@ -944,6 +670,95 @@ export async function createServer(
   console.error(
     `[mcp] vcad ${VERSION_WITH_BUILD} (instance ${INSTANCE_ID}) — ${dispatchableTools.size} kernel tools; kernel WASM ${kernelWasmLoaded ? "ok" : "UNAVAILABLE"}`,
   );
+
+  // ── server_info: reports THIS connection's build/runtime state ────────────
+  // Defined here (not in a module) because it closes over per-connection boot
+  // state; still a plain ToolDef so it dispatches through the shared pipeline.
+  const serverInfoDef: ToolDef = {
+    name: "server_info",
+    pack: null,
+    description:
+      "Report the running build's identity: version, git sha (if stamped), " +
+      "tool count, enabled packs, whether the kernel WASM loaded, and whether " +
+      "sessions are durable (`durable` — survive a redeploy/cold start, vs. " +
+      "in-memory only). Call this to confirm a tool exists in THIS build " +
+      "before assuming a stale or version-skewed deploy, and to check " +
+      "durable:true before relying on checkpoints across a long session.",
+    inputSchema: serverInfoSchema,
+    handler: async (): Promise<ToolResult> => {
+      const buildInfo = getBuildInfo();
+      // expected_build_sha/is_stale come from Edge Config (per-request,
+      // TTL-cached): on a warm instance pinned behind a fresh deploy this
+      // flips to is_stale:true so the agent knows to reconnect.
+      const staleness = await getStaleness(buildInfo.build_sha);
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({
+              ...buildInfo,
+              ...sessionStoreInfo(),
+              ...staleness,
+              kernel_wasm: kernelWasmLoaded ? "ok" : "unavailable",
+              ...(kernelWasmMissing.length > 0
+                ? { kernel_wasm_missing_exports: kernelWasmMissing }
+                : {}),
+              kernel_tool_count: dispatchableTools.size,
+              disabled_tool_count: disabledTools.size,
+              packs: process.env.VCAD_MCP_PACKS ?? "all",
+            }),
+          },
+        ],
+      };
+    },
+    behavior: behavior({}),
+  };
+
+  // Every tool this connection can dispatch: static module defs + server_info +
+  // the generated registry defs. Name → def, for O(1) CallTool lookup.
+  const dispatchMap = new Map<string, ToolDef>();
+  for (const d of STATIC_TOOL_DEFS) dispatchMap.set(d.name, d);
+  dispatchMap.set(serverInfoDef.name, serverInfoDef);
+  for (const d of registryDefs) dispatchMap.set(d.name, d);
+
+  // Boot-time drift guard: LIST_TOOL_ORDER must name every static def +
+  // server_info exactly once (registry defs are spliced separately). A missing
+  // or duplicated name is a wiring bug that would silently drop/duplicate a
+  // tool from ListTools.
+  const orderSet = new Set(LIST_TOOL_ORDER);
+  const staticNames = new Set([
+    ...STATIC_TOOL_DEFS.map((d) => d.name),
+    serverInfoDef.name,
+  ]);
+  if (orderSet.size !== LIST_TOOL_ORDER.length) {
+    throw new Error("[mcp] LIST_TOOL_ORDER contains a duplicate tool name");
+  }
+  for (const n of orderSet) {
+    if (!staticNames.has(n)) {
+      throw new Error(`[mcp] LIST_TOOL_ORDER lists unknown tool "${n}"`);
+    }
+  }
+  for (const n of staticNames) {
+    if (!orderSet.has(n)) {
+      throw new Error(`[mcp] tool "${n}" is missing from LIST_TOOL_ORDER`);
+    }
+  }
+
+  /** Assemble the advertised ListTools descriptors in `LIST_TOOL_ORDER`,
+   *  splicing the registry-tier kernel tools in right after `place_part`, then
+   *  dropping any tool disabled by VCAD_MCP_PACKS. Single chokepoint for
+   *  viewer `_meta` via `toListDescriptor`. */
+  const assembleToolList = (): Array<Record<string, unknown>> => {
+    const ordered: ToolDef[] = [];
+    for (const name of LIST_TOOL_ORDER) {
+      const def = dispatchMap.get(name);
+      if (def) ordered.push(def);
+      if (name === "place_part") ordered.push(...registryDefs);
+    }
+    return ordered
+      .map(toListDescriptor)
+      .filter((t) => !disabledTools.has(t.name as string));
+  };
 
   // Connect-time staleness: surface it in the `initialize` instructions so a
   // client learns at handshake — before any tool call — whether this instance
@@ -989,1139 +804,11 @@ export async function createServer(
     },
   );
 
-  // List available tools
+  // List available tools. Single chokepoint for viewer `_meta`: MOUNT tools get
+  // the template, everything else returns data only — so a long session is one
+  // live canvas, not one heavy iframe per tool call.
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    // Single chokepoint for viewer `_meta`: MOUNT_TOOLS get the template,
-    // everything else returns data only — so a long session is one live
-    // canvas, not one heavy iframe per tool call.
-    tools: applyViewerMeta([
-      // ── Session lifecycle ──────────────────────────────────────
-      {
-        name: "open_document",
-        description:
-          "Open an editing session for a CAD document. Returns a `document_id` to pass to subsequent tool calls (create, update, place_part, inspect_cad, …). Pass an `initial` IR to begin editing an existing document; omit it for a fresh empty document.",
-        inputSchema: openDocumentSchema,
-      },
-      {
-        name: "get_document",
-        description:
-          "Return the full IR Document JSON for an open session. Use after a series of mutations to capture the result, or to feed into `export_cad` / `open_in_browser`. Very large documents come back as a compact artifact handle instead ({document_id, artifact_url, manifest with sha256, …}) — download the full IR at `artifact_url`.",
-        inputSchema: getDocumentSchema,
-        // Widget-callable: the viewer's "Open in vcad.io" button fetches
-        // the IR through this tool to build the deep link.
-      },
-      {
-        name: "close_document",
-        description:
-          "Close a document session and free its memory. Idempotent — closing an unknown id reports `closed: false`.",
-        inputSchema: closeDocumentSchema,
-      },
-      {
-        name: "save_document",
-        description:
-          "Persist a live session under a name so it can be reopened with " +
-          "load_document. On the hosted server the save is durable: a signed-in " +
-          "user's save goes to their vcad.io account under the (normalized) name; " +
-          "an anonymous save returns an unguessable `saved_…` key to reopen with. " +
-          "On a local/stdio server it writes `<name>.vcad` under VCAD_MCP_STATE_DIR " +
-          "(or the working directory).",
-        inputSchema: saveDocumentSchema,
-      },
-      {
-        name: "load_document",
-        description:
-          "Reopen a save_document save into a fresh session and return its new " +
-          "document_id. Pass the same name you saved under (or the `saved_…` key " +
-          "an anonymous save returned). The cheap way to resume a board/part " +
-          "across runs instead of rebuilding it.",
-        inputSchema: loadDocumentSchema,
-      },
-      {
-        name: "checkpoint_document",
-        description:
-          "Snapshot a session's current state as a durable, restorable " +
-          "checkpoint. Returns a `checkpoint_id`. Use it at known-good milestones " +
-          "(post-schematic, post-place, post-route) so you can rewind with " +
-          "branch_from instead of rebuilding. The full IR is captured — the " +
-          "netlist (the most expensive, most stable artifact) is the anchor. On a " +
-          "durable deploy a checkpoint survives a redeploy; check server_info for " +
-          "durable:true.",
-        inputSchema: checkpointDocumentSchema,
-      },
-      {
-        name: "branch_from",
-        description:
-          "Re-open a checkpoint (from checkpoint_document). Omit `into` to BRANCH " +
-          "into a fresh session id — a variant to explore. Pass `into: <document_id>` " +
-          "to RESTORE the checkpoint into an existing session in place (same id). " +
-          "The cheap undo for a bad route or place: rewind to a good state rather " +
-          "than rebuilding the netlist.",
-        inputSchema: branchFromSchema,
-      },
-      {
-        name: "continue_document",
-        description:
-          "Open the user's vcad.io part as an editing session from a 'Continue " +
-          "in Claude' handoff (a share `token`, or an inline `doc` for accountless " +
-          "handoffs). The web app hands you this in the starter prompt; call this " +
-          "first, then render_view it and continue the user's work. Returns a " +
-          "`document_id` for subsequent tool calls. The geometry is fetched " +
-          "server-side — never paste it.",
-        inputSchema: continueDocumentSchema,
-        // Directory-ready hints: read-only intent (it opens, never mutates the
-        // source doc), and it reaches the network to resolve the handoff.
-        annotations: {
-          title: "Continue from vcad.io",
-          readOnlyHint: true,
-          destructiveHint: false,
-          idempotentHint: false,
-          openWorldHint: true,
-        },
-      },
-      {
-        name: "server_info",
-        description:
-          "Report the running build's identity: version, git sha (if stamped), " +
-          "tool count, enabled packs, whether the kernel WASM loaded, and whether " +
-          "sessions are durable (`durable` — survive a redeploy/cold start, vs. " +
-          "in-memory only). Call this to confirm a tool exists in THIS build " +
-          "before assuming a stale or version-skewed deploy, and to check " +
-          "durable:true before relying on checkpoints across a long session.",
-        inputSchema: serverInfoSchema,
-      },
-      // ── vcad Fabricate: order custom-manufactured parts ───────
-      {
-        name: "quote_manufacturing",
-        description:
-          "Quote manufacturing a part: measures the design, runs light DFM, and returns margin-inclusive price options per fab (pcb/cnc/3dprint/sheet_metal/cast_metal). Pass `ir` (inline Document — stateless, no open_document needed, serverless-safe, parallel-safe) OR a `document_id` from an open session. Persists a quote + a QUOTED order. Phase 0 is quote-only — prices are estimates and ordering/payment ship next; no money moves. For sheet_metal the result includes `fab_handoff`: curated US instant-quote shops (SendCutSend/OSH Cut/Fabworks), the exact file recipe (DXF via sheet_metal_unfold or folded STEP via export_cad), and what to enter at upload — everything needed to finish the order on the fab's site today.",
-        inputSchema: quoteManufacturingSchema,
-      },
-      {
-        name: "get_order_status",
-        description:
-          "Return the lifecycle row for a Fabricate order (state, fab, totals, event timeline). Read-only.",
-        inputSchema: getOrderStatusSchema,
-      },
-      {
-        name: "list_orders",
-        description:
-          "List the caller's Fabricate orders, newest first. Optional status filter and limit. Read-only.",
-        inputSchema: listOrdersSchema,
-      },
-      {
-        name: "authorize_spend",
-        description:
-          "Propose a spend authorization for a QUOTED order. Creates a DB-backed, revocable authorization (status pending_human) and records the proposal on the session's event log. A HUMAN must approve it in the vcad app before place_order can charge — the agent cannot approve its own spend. Flag-gated (test-mode); no money moves here.",
-        inputSchema: authorizeSpendSchema,
-      },
-      {
-        name: "place_order",
-        description:
-          "Place a QUOTED order once its authorization has been human-approved: performs one atomic wallet debit and moves the order to PAID (fab submission follows in a later step). Refuses if the authorization is still pending approval. Flag-gated (test-mode).",
-        inputSchema: placeOrderSchema,
-      },
-      // ── Project BOM: the deliverable bill of materials ─────────
-      {
-        name: "bom_create",
-        description:
-          "Create a project bill of materials — the deliverable that collects every manufactured part (PCBs, sheet metal, 3D prints; link quote_manufacturing quotes by quote_id) and COTS part (bearings, shafts, screws, magnets; link search_mechanical_parts entries by catalog_id) in one place. Optionally attach a document_id and assembly notes. Pass the full `lines` array to build the whole BOM in ONE call — recommended, since BOMs are in-memory per server instance. All prices are estimates and flagged as such.",
-        inputSchema: bomCreateSchema,
-      },
-      {
-        name: "bom_add_line",
-        description:
-          "Append one line to a BOM from bom_create. kind 'manufactured': name + process (or a quote_id from quote_manufacturing, which auto-fills process, vendor, qty, and the landed unit price) plus optional artifact path and document_id. kind 'cots': name/spec/example_pn/vendor/qty/unit_price_usd, or a catalog_id from search_mechanical_parts to auto-fill spec and a price-band-midpoint estimate. Returns the running totals.",
-        inputSchema: bomAddLineSchema,
-      },
-      {
-        name: "bom_export",
-        description:
-          "Render a BOM as markdown (the shareable deliverable: manufactured-parts table with vendors/prices/artifact sources, COTS table with specs and example PNs, totals, assembly notes), csv (flat, spreadsheet-ready), or json (the full object). Totals include a landed-cost shipping estimate reusing the Fabricate shipping model (per distinct vendor; quote-linked lines are already landed). Also returns a vcad.receipt/1 `receipt_claim` (domain 'bom') carrying the cost estimate for a DesignReceipt — informational, never gates a design verdict. Prices are estimates and every export says so.",
-        inputSchema: bomExportSchema,
-      },
-      {
-        name: "search_mechanical_parts",
-        description:
-          "Spec-search the curated mechanical COTS catalog (offline) — the mechanical sibling of search_electronic_parts: 608/625/688/600x-series bearings, precision ground shafts (3-12 mm), shaft collars, flange couplings, M2/M3 standoffs, machine screws, and ferrite/ceramic disc+ring magnets (Y30/Y35/C8). Filter by type + dimensions (bore_mm, od_mm, width_mm, thread, length_mm, …) and/or free text. Returns spec + example part number + a typical price band — street-price ESTIMATES, not live quotes. Use the result's `id` as `catalog_id` in bom_add_line.",
-        inputSchema: searchMechanicalPartsSchema,
-      },
-      // ── Live review window: share a watchable session link ────
-      {
-        name: "share_session",
-        description:
-          "Share this session as a live, watchable link (mcp.vcad.io/live/<id>). Sessions are PRIVATE by default — this is the explicit opt-in that makes one viewable. Anyone with the returned link can watch the geometry + full event log (read-only) and drop annotations, so the result includes a clear public-link warning. Revoke anytime with unshare_session.",
-        inputSchema: shareSessionSchema,
-      },
-      {
-        name: "unshare_session",
-        description:
-          "Revoke a session's live link — it goes dead and the session is private again.",
-        inputSchema: unshareSessionSchema,
-      },
-      // ── Stdlib parts library (session-aware) ──────────────────
-      {
-        name: "search_parts",
-        description:
-          "Search the stdlib parts library (fasteners, bearings, …). Matches across name, category, synonyms, and catalog part numbers (McMaster / ISO / DIN). Returns an array of {id, name, category, params, xrefs, synonyms} — use `id` with `place_part`. Part numbers like '91290A320' or 'ISO 4762' match directly.",
-        inputSchema: searchPartsSchema,
-      },
-      {
-        name: "place_part",
-        description:
-          "Insert a stdlib part into the session's document. Takes a `document_id`, a `path` (from `search_parts.id`), and an optional `params` map; missing params use declared defaults. The part remains parametric — end users can edit its params from the feature tree.",
-        inputSchema: placePartSchema,
-      },
-      // ── Registry-driven kernel tools (auto-exposed) ───────────
-      // The next block iterates `commandRegistry.toAnthropicTools()` so the
-      // schema lives in one place — the kernel WASM. Same tools, same
-      // behavior as the in-app chat surface; viewport-only tools (camera
-      // and scene-evaluation tools) are filtered out via blocklists in
-      // tools/registry-dispatch.ts. They are DATA tools: each mutates a
-      // session document and returns structuredContent (document_id +
-      // document_version + changed), but carries no UI template — the live
-      // canvas self-refreshes from the version token. (applyViewerMeta is the
-      // single place that decides viewer `_meta`.)
-      ...registryToolDescriptors(),
-      // ── MCP Apps: app-only preview fetch + version poll ────────
-      // visibility: ["app"] (set by applyViewerMeta) — spec-compliant hosts
-      // hide these from the agent's tool list; only the viewer iframe calls
-      // them (via app.callServerTool). Keeps multi-hundred-KB GLB payloads
-      // out of model-visible tool results, and lets the canvas poll a cheap
-      // change token to self-refresh without re-evaluating geometry.
-      {
-        name: "get_preview_glb",
-        description:
-          "Return a base64 GLB preview of an open session document. Internal to the inline 3D viewer — agents should use `export_cad` for geometry exports.",
-        inputSchema: getPreviewGlbSchema,
-      },
-      {
-        name: "get_preview_version",
-        description:
-          "Return a cheap {document_id, version} change token for an open session document (no geometry eval). Internal to the inline 3D viewer's self-refresh poll — agents should ignore it.",
-        inputSchema: getPreviewVersionSchema,
-      },
-      // ── Loon DSL one-shot ──────────────────────────────────────
-      {
-        name: "create_cad_loon",
-        description:
-          "The preferred authoring tool for whole parts and multi-feature models — one call, full vocabulary. Create a CAD document from loon source code. Loon is a Lisp-like language for parametric CAD — the FULL modeling vocabulary (patterns, sketches, extrude/revolve/sweep/loft, assemblies) is available here even where no dedicated MCP tool exists. For incremental single-node edits to an open session, use create/update/delete instead.\n\n" +
-          "Primitives: [cube x y z], [cylinder r h], [sphere r], [cone r-bottom r-top h]\n" +
-          "Booleans (subject-last): [difference tool subject], [union other subject], [intersection other subject]\n" +
-          "Transforms (subject-last): [translate x y z s], [rotate rx ry rz s], [scale sx sy sz s]\n" +
-          "Features: [fillet r s], [chamfer d s], [shell t s]\n" +
-          "Patterns (subject-last): [linear-pattern dx dy dz count spacing s], [circular-pattern ox oy oz ax ay az count angle s] — e.g. a bolt circle is [circular-pattern 0 0 0 0 0 1 6 360 bolt-hole]\n" +
-          "Sketches: [sketch ox oy oz xx xy xz yx yy yz #[segments]] with [line x1 y1 x2 y2] and [arc x1 y1 x2 y2 cx cy ccw]\n" +
-          "Sketch ops (sketch-last): [extrude dx dy dz sk], [revolve aox aoy aoz adx ady adz angle sk], [sweep-line sx sy sz ex ey ez sk], [sweep-helix radius pitch height turns sk], [loft #[sk1 sk2 …]]\n" +
-          "Assemblies: [assembly #[parts] #[instances] #[joints] ground-id] with [part name solid \"material\"], [instance name part-name x y z], [revolute-joint …], [prismatic-joint …], [fixed-joint …], [ball-joint …]\n" +
-          "Pipe: [pipe [cube 50 30 5] [difference [cylinder 3 10]] [fillet 1.0]]\n" +
-          "Let bindings: [let body [cube 50 30 5]]\n" +
-          "Scene: [root solid \"material-name\"]",
-        inputSchema: createCadLoonSchema,
-      },
-      {
-        name: "export_cad",
-        description:
-          "Export a CAD document to a file. Supports STL (3D printing), GLB (visualization), and — for sheet-metal documents — STEP AP214 of the FOLDED body with true cylindrical bend faces (fab 3D pipelines like SendCutSend auto-detect bends/angles/directions; zero data entry). Format is determined by file extension.",
-        inputSchema: exportCadSchema,
-      },
-      {
-        name: "inspect_cad",
-        description:
-          "Inspect an open session document to get aggregate geometry properties: volume, surface area, bounding box, center of mass, triangle count, and mass (if material density is known). For per-part inspection use the chat-surface `inspect_part` / `describe_scene` tools (deferred from this MCP surface in v1).",
-        inputSchema: inspectCadSchema,
-      },
-      // ── Parametric parameters + differentiable seam ─────────────
-      {
-        name: "list_parameters",
-        description:
-          "List a document's named parameters: raw expression, resolved numeric value, unit, and scrub bounds (min/max). Pair with set_parameters to drive the design and parameter_gradient to differentiate it.",
-        inputSchema: listParametersSchema,
-      },
-      {
-        name: "set_parameters",
-        description:
-          "Batch-update named parameter values on an open session document (e.g. { \"r\": 12, \"h\": 8 }). Every name must already be declared; values must be finite numbers. Returns a `changed` diff of the deltas and re-evaluates geometry integrity. Undoable and persisted.",
-        inputSchema: setParametersSchema,
-      },
-      {
-        name: "parameter_gradient",
-        description:
-          "Differentiate a document's QoIs with respect to a single named parameter via the differentiable seam: per solid part, returns d(volume)/dθ, d(mass)/dθ, d(centroid)/dθ (exact analytic seam derivatives) and d(bbox extents)/dθ (finite difference), alongside each QoI's value. The parameter must be bound onto some geometry field. \"Solve for the geometry\" starts here.",
-        inputSchema: parameterGradientSchema,
-      },
-      // ── Print-then-measure calibration loop (3DP) ───────────────
-      {
-        name: "predict_print",
-        description:
-          "Snapshot the design's predicted measurables BEFORE 3D-printing it: kernel-evaluated bbox and mass (at a filament density), plus caller-declared feature dimensions (step heights, hole diameters, wall thicknesses) with design-intent values. Returns a PrintPrediction — save it; after printing, record_measurement joins caliper/scale readings against it. The prediction doubles as the guided measurement worksheet (each measurable carries a human instruction label).",
-        inputSchema: predictPrintSchema,
-      },
-      {
-        name: "record_measurement",
-        description:
-          "Record as-built measurements (caliper dimensions, scale mass) of a printed part against its predict_print snapshot and emit the receipt-vs-reality delta report: per-feature deltas with tolerances, per-axis scale factors (X/Y/Z shrinkage), hole undersize and thin-wall flow offsets, and concrete printer-profile suggestions. Accepts the prediction inline (from a saved prediction.json) when the session's warm instance is gone. Partial measurements are fine.",
-        inputSchema: recordMeasurementSchema,
-      },
-      // ── Verify-and-iterate loop: eyes + oracle ──────────────────
-      {
-        name: "render_view",
-        description:
-          "Render an open session document to an isometric PNG image so you can SEE the current geometry — silhouettes, holes, creases — not just numbers. Drafting-style line art, Z-up, same renderer as the vcad CLI. Call after mutations to visually confirm the part matches intent before declaring done.",
-        inputSchema: renderViewSchema,
-      },
-      {
-        name: "verify_part",
-        description:
-          "Grade an open session document against a mecheval benchmark task using the official deterministic graders (the exact binaries the leaderboard runs). Returns pass/fail per check — bounding box, mass properties, hole positions, STEP round-trip, … — with measured-vs-expected details so you can iterate until green. Use list_eval_tasks to browse task ids.",
-        inputSchema: verifyPartSchema,
-      },
-      {
-        name: "list_eval_tasks",
-        description:
-          "List mecheval benchmark tasks (id, suite, tier, title, prompt, check count). Suites: A authoring, B kernel, C mech/physics, D visual, F fit. Pair with verify_part for self-graded practice and verification.",
-        inputSchema: listEvalTasksSchema,
-      },
-      {
-        name: "verify_spec",
-        description:
-          "TDD for CAD: grade an open session document against a caller-supplied spec and return a fail-closed verification receipt (schema vcad.receipt/1). Declare the spec FIRST — bounding-box min/max ± tolerance, volume range, watertightness, exact part count, center of mass ± tolerance — then iterate the geometry until every claim rolls up to pass. Each claim reports measured vs expected. Fail-closed: an empty spec, a missing measurement, or a claim the kernel can't evaluate is `unverifiable`, never a silent pass. Unlike verify_part this needs no mecheval task — you supply the acceptance criteria.",
-        inputSchema: verifySpecSchema,
-      },
-      // ── DFM (Design for Manufacturing) ──────────────────────────
-      {
-        name: "dfm_check",
-        description:
-          "Run Design-for-Manufacturing checks against an open session document. For solid parts pick a mechanical process (cnc_3axis, fdm, sla, injection, sheet_metal, casting_sand, casting_investment) and get back severities, measurements, face references, and suggested fixes. For PCB documents pick a fab profile (pcb_jlcpcb, pcb_pcbway, pcb_generic_2layer, pcb_generic_4layer) to check the board against that fab's published process capability — min annular ring, min drill, min trace/space by copper weight, copper-to-edge, soldermask dam/sliver, silk-over-pad, acid traps, and via-in-pad — returning a per-rule pass/fail report naming the profile. Each rule's threshold is sourced from a TOML pack at lib/dfm/<process>.toml — pass `rule_pack_toml` to override.",
-        inputSchema: dfmCheckSchema,
-      },
-      {
-        name: "dfm_explain",
-        description:
-          "Return the long-form explanation for a specific DFM issue from the most recent `dfm_check` run on this document.",
-        inputSchema: dfmExplainSchema,
-      },
-      {
-        name: "dfm_suggest_fix",
-        description:
-          "Return the suggested patch (set_param / wrap_op / replace_op / manual) for a DFM issue. Inspect the patch; only call `dfm_apply_fix` when you're ready to mutate the IR.",
-        inputSchema: dfmSuggestFixSchema,
-      },
-      {
-        name: "dfm_apply_fix",
-        description:
-          "Apply an approved DFM fix to the session document. v1 supports `set_param` patches (raise a fillet radius, thicken a wall) — other kinds throw and require manual edits. Re-run `dfm_check` afterwards to confirm the issue cleared.",
-        inputSchema: dfmApplyFixSchema,
-      },
-      // ── Sheet metal (AI-native manufacturability surface) ───────
-      {
-        name: "sheet_metal_create",
-        description:
-          "Create a sheet-metal part: a rectangular or polygon base flange plus an ordered chain of edge flanges, hems, and jogs. Supports `shop_profile` (e.g. \"sendcutsend\") to resolve bend radii/K-factors from the fab's published catalog, and `bend_relief` to cut relief notches at bend ends. Returns a `document_id` (usable with sheet_metal_unfold/check, inspect_cad, export_cad, open_in_browser), the panel/bend model summary, flat bbox + area, and DFM violations.",
-        inputSchema: sheetMetalCreateSchema,
-      },
-      {
-        name: "sheet_metal_unfold",
-        description:
-          "Return the flat pattern (panel outlines, holes, creases, area, bbox) for a sheet-metal session document, plus a fab-ready merged single-silhouette DXF (millimetres): one closed exterior polyline + holes on CUT, DASHED bend centerlines on BEND_UP/BEND_DOWN. DXF carries no bend angles (entered in the fab's UI); for zero data entry export the folded body as STEP via export_cad instead.",
-        inputSchema: sheetMetalUnfoldSchema,
-      },
-      {
-        name: "sheet_metal_check",
-        description:
-          "Run sheet-metal manufacturability for a session document against a shop profile (brake length, min R/t, flange height, hole→bend, bend→bend, bend relief, fixed radius). `shop_profile` is a catalog id string (e.g. \"sendcutsend\") or a capabilities object (field-tolerant: omit keys for generic defaults). Returns structured violations the agent can use to adjust the part and re-check.",
-        inputSchema: sheetMetalCheckSchema,
-      },
-      {
-        name: "sheet_metal_materials",
-        description:
-          "List the built-in sheet-metal materials registry (aluminum soft/hard, mild + stainless steel, brass, copper) with min R/t, yield, modulus, density, and a coarse springback estimate. Use to pick a `material` for sheet_metal_create.",
-        inputSchema: sheetMetalMaterialsSchema,
-      },
-      {
-        name: "sheet_metal_bend_table",
-        description:
-          "Read the kernel's curated bend table — `(material, thickness, radius) → K-factor` rows used to compute bend allowance. Pass `shop_profile` (e.g. \"sendcutsend\") to instead read that fab service's published catalog: fixed radii, K-factors, die widths, min flange sizes, and relief depths per material/thickness.",
-        inputSchema: sheetMetalBendTableSchema,
-      },
-      {
-        name: "sheet_metal_cost",
-        description:
-          "Estimate the manufacturing cost of a sheet-metal session document: material (mass × $/kg), cut (length × $/m), pierces, bends, amortized setup, plus shop markup. Returns a line-itemed breakdown so the agent can see which line dominates and which design changes would lower it. `rates` is field-tolerant; omit it to use generic low-volume laser defaults.",
-        inputSchema: sheetMetalCostSchema,
-      },
-      {
-        name: "sheet_metal_suggest_fix",
-        description:
-          "Translate the structured violations from sheet_metal_check into concrete parameter changes the agent can apply (radius up, flange longer, bends spread, etc.). Pass `violation_index` to target one, omit it to get a suggestion for every open violation. Closes the create → check → fix → re-check self-heal loop.",
-        inputSchema: sheetMetalSuggestFixSchema,
-      },
-      {
-        name: "sheet_metal_sequence",
-        description:
-          "Return a feasible press-brake bend sequence for a sheet-metal part — outermost bends first so the remaining flat stays small and earlier bends don't collide with later ones. Each step includes the springback-compensated brake angle and a one-line rationale.",
-        inputSchema: sheetMetalSequenceSchema,
-      },
-      {
-        name: "sheet_metal_nest",
-        description:
-          "Pack multiple sheet-metal parts on stock sheets using bottom-left fill decreasing. Each part is either a session `document_id` (footprint inferred from the flat pattern) or an explicit `{width_mm, height_mm}`. Returns per-instance placements, sheets used, and utilization — enough to drive a multi-part DXF and a real quote.",
-        inputSchema: sheetMetalNestSchema,
-      },
-      {
-        name: "import_step",
-        description:
-          "Import geometry from a STEP file (.step or .stp). Returns an IR document with ImportedMesh nodes. " +
-          "Supports AP203/AP214 STEP files commonly exported from Fusion 360, SolidWorks, Onshape, etc.",
-        inputSchema: importStepSchema,
-      },
-      {
-        name: "import_kicad",
-        description:
-          "Import an existing KiCad .kicad_pcb board into a live session — board " +
-          "outline, footprints with pads + nets, design rules, and any routed " +
-          "traces/vias/zones. Returns a document_id ready for render_pcb, " +
-          "run_drc, get_pad_positions, route_nets, and export_gerber. Pass " +
-          "content_base64 on hosted servers.",
-        inputSchema: importKicadSchema,
-        _meta: UI_META,
-      },
-      {
-        name: "import_eagle",
-        description:
-          "Import an Eagle .brd file (not yet supported). Export your board from " +
-          "Eagle as KiCad (.kicad_pcb) and use import_kicad instead.",
-        inputSchema: importEagleSchema,
-      },
-      {
-        name: "open_in_browser",
-        description:
-          "Generate a shareable URL to open a CAD document in vcad.io. " +
-          "Takes an IR document (JSON or VCode format) and returns a URL that opens the document in the browser. " +
-          "Documents are compressed (gzip + base64url) for URL embedding. " +
-          "Note: Very large documents may exceed URL length limits (~2KB).",
-        inputSchema: openInBrowserSchema,
-      },
-      {
-        name: "create_robot_env",
-        description:
-          "Create a physics simulation environment from a vcad assembly. " +
-          "Returns an environment ID that can be used with gym_step, gym_reset, and gym_observe. " +
-          "The environment provides a gym-style interface for RL training.",
-        inputSchema: createRobotEnvSchema,
-      },
-      {
-        name: "gym_step",
-        description:
-          "Step the physics simulation with an action. " +
-          "action_type can be 'torque' (Nm), 'position' (degrees/mm), or 'velocity' (deg/s or mm/s). " +
-          "Returns observation (joint positions/velocities, end effector poses), reward, and done flag.",
-        inputSchema: gymStepSchema,
-      },
-      {
-        name: "gym_reset",
-        description:
-          "Reset the simulation environment to its initial state. Returns the initial observation.",
-        inputSchema: gymResetSchema,
-      },
-      {
-        name: "gym_observe",
-        description:
-          "Get the current observation from the simulation without stepping. " +
-          "Returns joint positions, velocities, and end effector poses.",
-        inputSchema: gymObserveSchema,
-      },
-      {
-        name: "gym_close",
-        description: "Close and clean up a simulation environment.",
-        inputSchema: gymCloseSchema,
-      },
-      {
-        name: "load_structure",
-        description:
-          "Import an atomic structure from XYZ / extended-XYZ text (or accept a MoleculeSystem) and return the molecule plus a summary (formula, atom count, radius of gyration, bonds, periodicity). Units are Ångström.",
-        inputSchema: loadStructureSchema,
-      },
-      {
-        name: "inspect_molecule",
-        description:
-          "Structural analysis of a molecule: Hill-order formula, per-element counts, mass, center of mass, radius of gyration, bounding box, bond count, periodicity. The atomic-domain analog of inspect_cad.",
-        inputSchema: inspectMoleculeSchema,
-      },
-      {
-        name: "minimize_energy",
-        description:
-          "Relax a structure to a local energy minimum with FIRE. Force field via config (Lennard-Jones default, harmonic bonds, Coulomb, or the ML-potential stub). Returns the relaxed molecule, a result summary (energy, max force, convergence), and a reproducibility receipt.",
-        inputSchema: minimizeEnergySchema,
-      },
-      {
-        name: "md_run",
-        description:
-          "Run molecular dynamics (velocity-Verlet, optional Berendsen thermostat) for N steps and return the final observation (energies, temperature, max force) and the evolved structure.",
-        inputSchema: mdRunSchema,
-      },
-      {
-        name: "design_material",
-        description:
-          "Inverse design: search an isotropic scale factor that drives a geometric property (nearest-neighbor distance or radius of gyration) to a target value, returning the reshaped molecule and a receipt. The energy-objective inverse design (gradients through the simulation) lives in the Rust kernel.",
-        inputSchema: designMaterialSchema,
-      },
-      {
-        name: "homogenize_material",
-        description:
-          "Homogenize a periodic crystal into bulk material properties — density (kg/m³), cubic elastic constants C11/C12/C44 and VRH isotropic moduli (GPa) — the atoms-to-continuum bridge. Requires a fully periodic cell.",
-        inputSchema: homogenizeMaterialSchema,
-      },
-      {
-        name: "render_molecule",
-        description:
-          "Render a molecule as an isometric ball-and-stick (or space-filling) SVG with CPK colors and depth sorting — agent eyes on atomic structures.",
-        inputSchema: renderMoleculeSchema,
-      },
-      {
-        name: "record_simulation",
-        description:
-          "Step an open physics env N times and return an animated GIF of the run — your eyes on the simulation. " +
-          "Drives the env created via create_robot_env, mutates the paired session document's joint states each step, " +
-          "and re-renders through the same kernel SVG pipeline as render_view. " +
-          "Defaults to passive playback (zero torque) under gravity; pass `action` (constant) or `actions[steps][action_dim]` (per-step) for active control. " +
-          "Hard caps: steps ≤ 600, width_px ≤ 1024. " +
-          "Requires the optional `@resvg/resvg-js` rasterizer and `gifenc` encoder; degrades to a JSON joint-trajectory dump when either is missing.",
-        inputSchema: recordSimulationSchema,
-      },
-      {
-        name: "batch_create_envs",
-        description:
-          "Create N parallel simulation environments from a single robot assembly. " +
-          "Returns a batch_id for use with batch_step and batch_reset. " +
-          "Enables parallel RL training across multiple environments.",
-        inputSchema: batchCreateEnvsSchema,
-      },
-      {
-        name: "batch_step",
-        description:
-          "Step all environments in a batch simultaneously with per-env actions. " +
-          "Returns observations, rewards, and done flags for all environments. " +
-          "action_type can be 'torque', 'position', or 'velocity'.",
-        inputSchema: batchStepSchema,
-      },
-      {
-        name: "batch_reset",
-        description:
-          "Reset all environments in a batch to their initial state. " +
-          "Returns initial observations for all environments.",
-        inputSchema: batchResetSchema,
-      },
-      {
-        name: "get_changelog",
-        description:
-          "Query vcad changelog by version, category, feature, or MCP tool. " +
-          "Returns recent changes, new features, breaking changes, and migration guides.",
-        inputSchema: getChangelogSchema,
-      },
-      {
-        name: "create_schematic",
-        description:
-          "Create a schematic from components plus connectivity, and open it " +
-          "as a server-side session. Declare connectivity as data with `nets` " +
-          '({"PHA": ["L1.1", "J1.1"]}) — more reliable than wire/label ' +
-          "coordinates. Returns a document_id for place_components / " +
-          "route_nets / export_gerber, plus the resolved netlist so broken " +
-          "connectivity is visible immediately.",
-        inputSchema: createSchematicSchema,
-      },
-      {
-        name: "place_components",
-        description:
-          "Create the board and place schematic components on it. Mutates the " +
-          "session document (pass document_id). Outline: rectangle " +
-          "(board_width/height), circle with optional center bore " +
-          "(board_shape — e.g. a motor stator), or any polygon (outline, e.g. " +
-          "from board_from_solid). strategy=radial rings components for " +
-          "annular boards. Returns `placement_drc` — the pre-routing DRC subset " +
-          "(shorts, pad clearance, courtyard overlaps, off-board parts); when " +
-          "`placement_drc.clean` is false, fix the floorplan with set_placement " +
-          "before route_nets instead of routing on top of the fault. Also " +
-          "returns a `utilization` report (board vs occupied area, % used, " +
-          "component bounding box, and an advisory suggested_outline) so you can " +
-          "right-size an over-large board in one step.",
-        inputSchema: placeComponentsSchema,
-      },
-      {
-        name: "route_nets",
-        description:
-          "Route electrical nets on the PCB with copper traces. Connects pads " +
-          "belonging to the same net. Idempotent: re-running rips up the " +
-          "previously autorouted copper on the target nets before routing, so " +
-          "a second call replaces the route instead of stacking shorts. " +
-          "Hand-placed copper (add_trace / add_via / coils) is preserved " +
-          "automatically; `locked_nets` additionally protects whole nets. A " +
-          "net with a copper-pour zone (a plane) is connected by stitching " +
-          "each pad to the plane with a via instead of tracing it — those " +
-          "nets come back in `plane_stitched`. Mutates the session document " +
-          "(pass document_id).",
-        inputSchema: routeNetsSchema,
-      },
-      {
-        name: "add_coil",
-        description:
-          "Add a spiral copper coil (Archimedean) to the PCB — the primitive " +
-          "for PCB-motor stators and planar inductors. Generates the trace " +
-          "geometry on a layer, assigns it to a net, validates turn-to-turn " +
-          "clearance, and optionally drops a via at the (otherwise trapped) " +
-          "inner endpoint. Returns endpoints, copper length, and a DC " +
-          "resistance estimate." +
-          " Verify-on-write: the result carries `drc_delta` — the DRC violations this call introduced (shorts/clearance/connectivity/manufacturing, capped sample with positions) with `clean` to branch on in one step.",
-        inputSchema: addCoilSchema,
-      },
-      {
-        name: "add_coil_array",
-        description:
-          "Lay a ring of `count` spiral coils evenly around `center` at " +
-          "`pitch_radius` — the placement primitive for a PCB-motor stator. " +
-          "Net per coil comes from `net_sequence` (cycled); `chirality` sets " +
-          "winding sense. GEOMETRY ONLY: it has no notion of phases — derive " +
-          "correct per-coil phase/polarity with `winding_layout` first, then " +
-          "map it onto net_sequence/chirality." +
-          " Verify-on-write: the result carries `drc_delta` — the DRC violations this call introduced (shorts/clearance/connectivity/manufacturing, capped sample with positions) with `clean` to branch on in one step.",
-        inputSchema: addCoilArraySchema,
-      },
-      {
-        name: "winding_layout",
-        description:
-          "Plan a balanced polyphase motor winding (slots + poles → per-coil " +
-          "phase, polarity, winding factor, feasibility) as DATA. Pure — it " +
-          "does NOT take a board or modify anything; inspect the plan, then " +
-          "realize it with add_coil_array/add_coil. Catches infeasible " +
-          "slot/pole combos and wrong polarity before any copper is drawn.",
-        inputSchema: windingLayoutSchema,
-      },
-      {
-        name: "board_from_solid",
-        description:
-          "Derive a PCB outline polygon (with cutouts, e.g. a center bore) " +
-          "from a solid part in a CAD session by projecting its geometry onto " +
-          "the XY plane. Bridges solid modeling and PCB layout: feed the " +
-          "returned `outline` to place_components.",
-        inputSchema: boardFromSolidSchema,
-      },
-      {
-        name: "solid_from_board",
-        description:
-          "Materialize the session PCB as a solid CAD part — the inverse of " +
-          "board_from_solid. Extrudes the board outline to its thickness " +
-          "through the hole-aware sketch path (bore/cutout polygons survive " +
-          "as real holes), adds simplified per-component keep-out volumes " +
-          "(kernel 3D body extents, else courtyard × package-class height), " +
-          "and gives the substrate a homogenized FR4+copper density so " +
-          "inspect_cad / physics see the real board mass. Inject into an " +
-          "existing CAD session with `document_id_target` (enclosure fit, " +
-          "motor stacks, clash checks) or omit it to mint a fresh session.",
-        inputSchema: solidFromBoardSchema,
-      },
-      {
-        name: "check_enclosure_fit",
-        description:
-          "Cross-check a board (board session) against the enclosure it ships " +
-          "in (a CAD session holding the case solid) — the verification axis no " +
-          "EDA tool has, because vcad owns both a BRep kernel and a PCB engine. " +
-          "Extracts the case cavity, standoffs, and wall cutouts from the solid " +
-          "mesh, then verifies: board fits with clearance, tall parts clear the " +
-          "lid, mounting holes land on standoffs, and connectors line up with " +
-          "the wall openings. Pass `derive:true` to also get a board outline + " +
-          "holes seeded from the cavity. Surfaced in build_receipt too.",
-        inputSchema: checkEnclosureFitSchema,
-      },
-      {
-        name: "check_clearance",
-        description:
-          "Measure the minimum distance between two groups of parts in a CAD " +
-          "session and assert it stays above `min_mm` — air gaps, press fits, " +
-          "screw-head clearances. Reports the measured minimum (negative = " +
-          "penetration depth), the worst part pair, and pass/fail. Give it a " +
-          "`label` to persist the assertion on the document: build_receipt " +
-          "then emits it as a mech.clearance claim and verify_receipt " +
-          "re-verifies it as Holds / Stale / Violated when geometry changes.",
-        inputSchema: checkClearanceSchema,
-      },
-      {
-        name: "list_footprints",
-        description:
-          "List the footprint families the parametric engine resolves, each " +
-          "with a canonical example id to drop into create_schematic's " +
-          "`footprint`. Optional `kind` filter (passive/ic/transistor/diode/" +
-          "power/connector). Use this instead of guessing id spellings.",
-        inputSchema: listFootprintsSchema,
-      },
-      {
-        name: "search_footprints",
-        description:
-          "Fuzzy-search footprint families by name/alias (e.g. 'SOIC 8', " +
-          "'jst', 'qfn') and get ranked matches with a canonical example id — " +
-          "resolve a footprint id without a failed create_schematic round-trip.",
-        inputSchema: searchFootprintsSchema,
-      },
-      {
-        name: "get_pad_positions",
-        description:
-          "Return every footprint pad's absolute board-frame (x, y), copper " +
-          "layer, and net — the coordinates manual routing (add_trace / " +
-          "add_via / add_via_array) needs so trace endpoints land exactly on " +
-          "pads instead of being eyeballed from component centers. Read-only. " +
-          "Optional `net` / `ref` filters narrow the result for targeted routing.",
-        inputSchema: getPadPositionsSchema,
-      },
-      {
-        name: "get_footprint",
-        description:
-          "Introspect ONE footprint's land pattern in BOTH the footprint-local " +
-          "and board frames — origin, courtyard AABB, and every pad (with the " +
-          "explicit rotation convention) — so connector/IC pad locations are " +
-          "known exactly instead of render-and-guessed. Two modes: `ref` reads " +
-          "a placed footprint (real transform + nets) from the session; " +
-          "`footprint` resolves an id PRE-placement (pass `at`/`rotation`/" +
-          "`side` to project a hypothetical placement). Read-only.",
-        inputSchema: getFootprintSchema,
-      },
-      {
-        name: "describe_pcb",
-        description:
-          "Inspect the session PCB as compact, structured data: board size + " +
-          "outline, stackup (layer names + copper weights), net classes / " +
-          "design rules, zones (net/layer/bbox/fill), trace & via counts by net " +
-          "and layer, component count, the current DRC status, and an " +
-          "exportability/renderability probe that actually serializes the board " +
-          "for fab + 3D preview — surfacing the 'DRC-clean but unexportable' " +
-          "state get_document/read can't see. Read-only.",
-        inputSchema: describePcbSchema,
-      },
-      {
-        name: "add_trace",
-        description:
-          "Lay an explicit copper trace: a polyline of segments on a layer, " +
-          "assigned to a net. The general-purpose routing primitive — use it " +
-          "for coil interconnect, buses, and hand-routes that route_nets " +
-          "(pad-driven) won't make. Tagged as manual copper, so route_nets " +
-          "preserves it instead of ripping it up. Mutates the session document." +
-          " Verify-on-write: the result carries `drc_delta` — the DRC violations this call introduced (shorts/clearance/connectivity/manufacturing, capped sample with positions) with `clean` to branch on in one step.",
-        inputSchema: addTraceSchema,
-      },
-      {
-        name: "add_via",
-        description:
-          "Drop a via at a point connecting two layers on a net (defaults " +
-          "FCu→BCu, diameter/drill from design rules). Pairs with add_trace " +
-          "for multi-layer routing. Mutates the session document." +
-          " Verify-on-write: the result carries `drc_delta` — the DRC violations this call introduced (shorts/clearance/connectivity/manufacturing, capped sample with positions) with `clean` to branch on in one step.",
-        inputSchema: addViaSchema,
-      },
-      {
-        name: "set_stackup",
-        description:
-          "Set the board stackup copper weight (e.g. copper_oz: 2) and/or " +
-          "per-layer thickness/material, so DC-resistance and impedance " +
-          "estimates reflect the real fab stackup instead of a default 1 oz. " +
-          "Mutates the session document." +
-          " Verify-on-write: the result carries `drc_delta` — the DRC violations this call introduced (shorts/clearance/connectivity/manufacturing, capped sample with positions) with `clean` to branch on in one step.",
-        inputSchema: setStackupSchema,
-      },
-      {
-        name: "set_placement",
-        description:
-          "Place footprints at explicit board-frame coordinates by ref — the " +
-          "floorplan realizer the auto-placer (grid/force_directed/radial) can't " +
-          "express: thermal rings, a quiet IMU corner, rim connectors. Batch; " +
-          "sets position/rotation/side and warns on off-board, in-cutout, or " +
-          "stacked landings. Mutates the session document. Returns the updated " +
-          "`placement_drc` (same shape as place_components) so a move can be " +
-          "re-checked in one call without running run_drc.",
-        inputSchema: setPlacementSchema,
-      },
-      {
-        name: "set_board_outline",
-        description:
-          "Resize or reshape the board outline in place — rectangle " +
-          "(board_width/height), circle/annulus (board_shape), or any polygon " +
-          "(outline) — WITHOUT re-placing components, traces, vias, or zones. " +
-          "Unlike re-running place_components, the floorplan is preserved; any " +
-          "footprint whose origin ends up off the new board is reported in " +
-          "`off_board` rather than silently relocated. Mutates the session document." +
-          " Verify-on-write: the result carries `drc_delta` — the DRC violations this call introduced (shorts/clearance/connectivity/manufacturing, capped sample with positions) with `clean` to branch on in one step.",
-        inputSchema: setBoardOutlineSchema,
-        _meta: UI_META,
-      },
-      {
-        name: "add_zone",
-        description:
-          "Add a copper pour (ground/power plane) on a net+layer — fills are not " +
-          "traces. `fill_board:true` pours the whole outline (cutouts become " +
-          "voids); or give an explicit polygon for a partial plane. Mutates the " +
-          "session document.",
-        inputSchema: addZoneSchema,
-      },
-      {
-        name: "delete_zone",
-        description:
-          "Remove a copper pour from the board — the take-back for a bad add_zone, " +
-          "without rebuilding the session. Target by `index` (0-based, the add " +
-          "order) or by `net`/`layer` when exactly one zone matches. Returns a " +
-          "`changed` diff of what was removed. To undo the very last mutation of " +
-          "any kind, use `undo` instead. Mutates the session document." +
-          " Verify-on-write: the result carries `drc_delta` — the DRC violations this call introduced (shorts/clearance/connectivity/manufacturing, capped sample with positions) with `clean` to branch on in one step.",
-        inputSchema: deleteZoneSchema,
-      },
-      {
-        name: "delete_trace",
-        description:
-          "Remove a single routed trace segment by `index` (0-based, the add " +
-          "order) or by an unambiguous `net`/`layer` match. The take-back for a " +
-          "stray add_trace. Returns a `changed` diff. Mutates the session document." +
-          " Verify-on-write: the result carries `drc_delta` — the DRC violations this call introduced (shorts/clearance/connectivity/manufacturing, capped sample with positions) with `clean` to branch on in one step.",
-        inputSchema: deleteTraceSchema,
-      },
-      {
-        name: "delete_via",
-        description:
-          "Remove a single via by `index` (0-based, the add order) or by an " +
-          "unambiguous `net` match. The take-back for a stray add_via. Returns a " +
-          "`changed` diff. Mutates the session document." +
-          " Verify-on-write: the result carries `drc_delta` — the DRC violations this call introduced (shorts/clearance/connectivity/manufacturing, capped sample with positions) with `clean` to branch on in one step.",
-        inputSchema: deleteViaSchema,
-      },
-      {
-        name: "get_copper",
-        description:
-          "Query the board's routed copper — traces, trace arcs, vias, zones — " +
-          "with optional `layer`/`net`/`bbox`/`kind` filters. Each element comes " +
-          "back with its `kind` + `index`: exactly the addressing delete_trace / " +
-          "delete_via / delete_zone accept, so a query can drive a surgical " +
-          "delete without exporting the document. describe_pcb aggregates " +
-          "counts; this returns the elements themselves (geometry, width, net, " +
-          "layer), capped at 200 per page with `offset` pagination and a `total`. " +
-          "Read-only.",
-        inputSchema: getCopperSchema,
-      },
-      {
-        name: "add_net_tie",
-        description:
-          "Declare an intentional junction between >= 2 nets (a net-tie) so DRC " +
-          "treats them as one node where they meet — required for wye/star motor " +
-          "neutrals, split grounds (GND+AGND), and current-sense shunt taps, " +
-          "which are otherwise reported as shorts. With `position`+`radius` the " +
-          "tie is region-scoped: clearance/short checks are exempt only for " +
-          "contacts inside the region, and connectivity accepts nets joined " +
-          "through copper when each has a tie-covered contact there — a stray " +
-          "crossing of the same nets elsewhere still fires. Without them the " +
-          "exemption is board-wide (prefer scoped: it keeps DRC honest away " +
-          "from the junction). Nets must exist on the board. Returns the " +
-          "updated tie list with indices. Mutates the session document." +
-          " Verify-on-write: the result carries `drc_delta` — the DRC violations this call introduced or resolved (a tie edit changes short/clearance exemptions) with `clean` to branch on in one step.",
-        inputSchema: addNetTieSchema,
-      },
-      {
-        name: "delete_net_tie",
-        description:
-          "Remove a net tie by `index`, or by matching `nets` (set equality, " +
-          "order-insensitive) and/or `position` — the take-back for a bad " +
-          "add_net_tie. Any junction copper stays on the board; DRC will report " +
-          "it as a short again. Returns the deleted tie and the updated tie " +
-          "list. Mutates the session document." +
-          " Verify-on-write: the result carries `drc_delta` — the DRC violations this call introduced or resolved (a tie edit changes short/clearance exemptions) with `clean` to branch on in one step.",
-        inputSchema: deleteNetTieSchema,
-      },
-      {
-        name: "undo",
-        description:
-          "Rewind the most recent mutation on a session — the snapshot taken " +
-          "before the last add_zone / add_trace / add_via / delete_* / route_nets " +
-          "/ place_components (or a CAD create/update/delete) is restored, without " +
-          "re-sending the document. Repeated calls walk further back. Returns a " +
-          "`changed` diff of the board elements the rewind moved.",
-        inputSchema: undoSchema,
-      },
-      {
-        name: "set_design_rules",
-        description:
-          "Set the board design rules run_drc enforces (clearance, track width, " +
-          "via, edge/hole/annular) and net classes — the way to give a power or " +
-          "high-voltage class wider clearance than signal nets. run_drc already " +
-          "reads pcb.rules; this writes them. Mutates the session document.",
-        inputSchema: setDesignRulesSchema,
-      },
-      {
-        name: "size_trace_for_current",
-        description:
-          "IPC-2221 conductor ampacity solved for trace width: given current, " +
-          "copper weight, allowed temp rise, and layer (outer/inner), returns the " +
-          "minimum width. The ampacity sibling of size_impedance/size_pdn — pure " +
-          "calc, no document.",
-        inputSchema: sizeTraceForCurrentSchema,
-      },
-      {
-        name: "add_via_array",
-        description:
-          "Place many vias at once — a grid over a rectangular `region` (thermal " +
-          "vias under FETs, GND-plane stitching) or an explicit `points` list. " +
-          "Grid vias are clipped to the board outline by default. Mutates the " +
-          "session document." +
-          " Verify-on-write: the result carries `drc_delta` — the DRC violations this call introduced (shorts/clearance/connectivity/manufacturing, capped sample with positions) with `clean` to branch on in one step.",
-        inputSchema: addViaArraySchema,
-      },
-      {
-        name: "add_motor_winding",
-        description:
-          "One-shot motor winding realizer: plans a balanced slots/poles/" +
-          "phases winding, drops a spiral coil per tooth with correct phase + " +
-          "polarity, series-connects each phase with planar staggered-radius " +
-          "arcs in the coil-free bore (never crossing), ties the wye/delta " +
-          "termination with a region-scoped net-tie on real board material, " +
-          "and routes phase feeds to same-net pads when present — closing the " +
-          "winding_layout plan into DRC-clean copper. Mutates the session " +
-          "document." +
-          " Verify-on-write: the result carries `drc_delta` — the DRC violations this call introduced (shorts/clearance/connectivity/manufacturing, capped sample with positions) with `clean` to branch on in one step.",
-        inputSchema: addMotorWindingSchema,
-      },
-      {
-        name: "calc_motor",
-        description:
-          "Evaluate motor performance AS DATA. mode:'pm' (default): torque " +
-          "constant Kt, back-EMF constant Ke, no-load speed, stall torque, " +
-          "and a speed–torque curve; supply air-gap flux directly or compute " +
-          "it from magnet geometry via the first-order MEC field model, with " +
-          "an optional Carter-like fringing derate (magnet.pole_width_mm). " +
-          "mode:'induction': thin-sheet axial induction rotor (drag-cup / " +
-          "PCB cage) — gap field B1, torque-per-unit-slip, locked-rotor " +
-          "torque, sync speed, rotor sheet loss. Pure: no board, no " +
-          "mutation. First-order steady state.",
-        inputSchema: calcMotorSchema,
-      },
-      {
-        name: "check_self_start",
-        description:
-          "Will it spin? Starting torque (direct, or Kt·I; induction: the " +
-          "locked-rotor torque from calc_motor) vs a friction estimate " +
-          "(direct, or the built-in bearing catalog: 608-2RS/608-ZZ/625/688 " +
-          "× light/medium preload × count). Returns starts (fail-closed vs " +
-          "worst-case friction), best-case verdict, and the margin. Pure " +
-          "calc, no document.",
-        inputSchema: checkSelfStartSchema,
-      },
-      {
-        name: "render_pcb",
-        description:
-          "Render a flat, top-down, per-layer 2D image of a PCB (copper, silk, " +
-          "drills, outline) — agent eyes for boards. Pick `layers` (e.g. " +
-          "[\"F.Cu\", \"F.SilkS\", \"Edge_Cuts\"]); returns a PNG. Complements " +
-          "the isometric render_view and numeric run_drc.",
-        inputSchema: renderPcbSchema,
-      },
-      {
-        name: "render_ratsnest",
-        description:
-          "Render the board with its unrouted-connection ratsnest (per-net MST " +
-          "airwires) overlaid as dashed lines — judge placement quality and " +
-          "crossing density BEFORE routing. Returns a PNG plus the airwire " +
-          "(unconnected-pair) count.",
-        inputSchema: renderRatsnestSchema,
-      },
-      {
-        name: "render_stackup",
-        description:
-          "Render each copper layer of a multilayer board to its own image " +
-          "(with the board edge for framing), so inner planes are legible " +
-          "instead of buried under an all-layers composite. Returns one image " +
-          "per layer plus a layer→image index.",
-        inputSchema: renderStackupSchema,
-      },
-      {
-        name: "run_drc",
-        description:
-          "Run Design Rule Check (DRC) on a PCB. Checks clearance, trace width, " +
-          "drill size, annular ring, hole-to-hole, edge clearance, and " +
-          "connectivity — including SameNetBypass, a warning when same-net " +
-          "copper touches far from any intended junction (e.g. a trace over a " +
-          "coil's inner via, short-circuiting the spiral). Every " +
-          "violation is tagged with `provenance` (intra_footprint / " +
-          "inter_component / routing) and `generated` (involves a synthesized " +
-          "footprint land pattern); the summary adds `byProvenance`, " +
-          "`generatedArtifacts`, and `realViolations` so the headline count " +
-          "excludes footprint artifacts without hand-triage.",
-        inputSchema: runDrcSchema,
-      },
-      {
-        name: "search_electronic_parts",
-        description:
-          "Spec-search the generative parts catalog (offline). A query like " +
-          "'10k 0603 1%' parses to value+package+tolerance and returns the best " +
-          "match plus E-series neighbours, each with a generated footprint, symbol, " +
-          "and 3D body. A part is family+value+package, not a scraped row.",
-        inputSchema: searchElectronicPartsSchema,
-      },
-      {
-        name: "resolve_part",
-        description:
-          "Resolve a spec query (e.g. '10k 0603 1%') into ONE fully-specified part: " +
-          "E-series-snapped value plus a generated footprint + schematic symbol + 3D " +
-          "body (one parametric source of truth) and any MPN cross-references.",
-        inputSchema: resolvePartSchema,
-      },
-      {
-        name: "find_alternatives",
-        description:
-          "Propose spec-compatible substitutes for the part a query resolves to. " +
-          "Each alternative keeps the value, varies the package, and is labelled " +
-          "identical / needs-reroute / incompatible by re-deriving its footprint.",
-        inputSchema: findAlternativesSchema,
-      },
-      {
-        name: "verify_substitution",
-        description:
-          "PROVE a part swap on the session PCB: replace `reference` with the part " +
-          "`candidate` resolves to, re-derive its footprint, re-place at the same " +
-          "anchor, re-run DRC (incl. connectivity), and return the before/after " +
-          "violation delta with a `drop_in` verdict. An alternative is only drop-in " +
-          "when it adds no new violations and preserves pin numbering.",
-        inputSchema: verifySubstitutionSchema,
-      },
-      {
-        name: "build_receipt",
-        description:
-          "Build a re-runnable verification Receipt for the session PCB: a content " +
-          "hash, the DRC backend, a canonicalized DRC summary, and per-part " +
-          "provenance — a durable proof that round-trips and re-verifies later as " +
-          "Holds / Stale / Violated. Persisted clearance specs (check_clearance " +
-          "with a label) join the unified ledger as mech.clearance claims — a " +
-          "CAD-only session with specs gets a mechanical receipt, no PCB needed. " +
-          "Renders as an audit ledger in the inline viewer.",
-        inputSchema: buildReceiptSchema,
-      },
-      {
-        name: "verify_receipt",
-        description:
-          "Re-run a prior receipt (from build_receipt) against the session's current " +
-          "document and return the verdict — Holds (unchanged, clean), Stale " +
-          "(changed but claims still hold), or Violated. Covers the PCB Receipt " +
-          "(board hash + DRC diff) and mech.clearance claims (re-measured against " +
-          "current geometry); worst verdict wins. Powers the ledger's Re-run button.",
-        inputSchema: verifyReceiptSchema,
-      },
-      {
-        name: "route_diff_pair",
-        description:
-          "Route a declared differential pair (net_p/net_n) coupled and length-matched, " +
-          "using the pair's diff-pair net-class gap and width. Routes straight (best on a " +
-          "clear channel); verify with run_drc / critique_route afterwards.",
-        inputSchema: routeDiffPairSchema,
-      },
-      {
-        name: "critique_route",
-        description:
-          "Audit one net's routing without changing anything: total length, via/" +
-          "layer-change count, the closest approach to other-net copper, and any " +
-          "clearance/short/unconnected DRC issues it's in. Inspect a route before trusting it.",
-        inputSchema: critiqueRouteSchema,
-      },
-      {
-        name: "run_erc",
-        description:
-          "Run Electrical Rule Check (ERC) on a schematic. " +
-          "Checks for duplicate references, unconnected pins, and pin type conflicts.",
-        inputSchema: runErcSchema,
-      },
-      {
-        name: "export_gerber",
-        description:
-          "Export Gerber RS-274X fabrication files from a PCB design. " +
-          "Generates copper layer files, drill file, pick-and-place CSV, and BOM. " +
-          "Gated on a clean DRC by default (require_clean_drc) — a dirty or " +
-          "unverifiable board is BLOCKED with its DRC summary instead of emitting " +
-          "an invalid bundle. Run validate_for_fab first for the full readiness verdict.",
-        inputSchema: exportGerberSchema,
-      },
-      {
-        name: "export_kicad",
-        description:
-          "Export the session as a native, editable KiCad 9 file. " +
-          "filename ending in .kicad_pcb writes the board (footprints, pads, nets, " +
-          "traces, vias, zones, layers, outline); .kicad_sch writes the schematic. " +
-          "Unlike export_gerber (fab-only output), this round-trips: a human can open " +
-          "it in KiCad to finish routing nets the autorouter couldn't close, then " +
-          "re-import. Large files respect the inline byte cap (use output_dir for those).",
-        inputSchema: exportKicadSchema,
-      },
-      {
-        name: "validate_for_fab",
-        description:
-          "The single 'is this board ready to fabricate?' oracle. Runs the whole " +
-          "readiness gate in one call and returns ONE structured verdict: DRC " +
-          "(fail-closed — a board that won't parse is 'unverifiable', never clean), " +
-          "renderability, Gerber-exportability (attempts serialization; names the " +
-          "exact failing field when it can't), unsupported features, the precise " +
-          "blockers, and suggested fixes. Read-only. Use before export_gerber / " +
-          "quote_manufacturing to know — not guess — whether the board is shippable.",
-        inputSchema: validateForFabSchema,
-      },
-      {
-        name: "calc_impedance",
-        description:
-          "Calculate trace impedance using IPC-2141 formulas. " +
-          "Supports microstrip, stripline, and differential pair configurations. " +
-          "Returns Z0, effective Er, and propagation delay. Pass document_id + " +
-          "net to gate the number on realized copper: an impedance for a trace " +
-          "that isn't actually routed/continuous is blocked, not reported.",
-        inputSchema: calcImpedanceSchema,
-      },
-      {
-        name: "size_impedance",
-        description:
-          "Inverse of calc_impedance: solve trace geometry for a TARGET impedance. " +
-          "Given a target Z0 (and diff Z0 for pairs) + stackup, returns the trace " +
-          "width (and spacing) AS DATA, snapped to the fab grid and re-verified " +
-          "against the same model. Reports a binding DFM min-width/spacing bound " +
-          "and whether the target is reachable — it will not silently hand back a " +
-          "width that misses spec. Pure: no board, no mutation.",
-        inputSchema: sizeImpedanceSchema,
-      },
-      {
-        name: "size_pdn",
-        description:
-          "Size copper-segment widths across a power-distribution resistor mesh " +
-          "so each load node's IR-drop meets its budget with minimal copper. " +
-          "Solves G·V=I for node voltages and drives drop→budget with a bounded " +
-          "gradient tuner; returns per-segment widths AS DATA with drops " +
-          "recomputed from a forward solve, and flags any node it can't meet " +
-          "within the width bounds. Pure by default; pass document_id + net to " +
-          "REFUSE a PASS when that power plane isn't galvanically continuous " +
-          "(returns coverage %, stitching-via count, and the worst island).",
-        inputSchema: sizePdnSchema,
-      },
-      {
-        name: "calc_coil",
-        description:
-          "Analyze a planar spiral coil: inductance (modified Wheeler), DC " +
-          "resistance, copper length, and L/R time constant. The analyzer for " +
-          "the planar-magnetics archetype (inductors, sensor coils, motor " +
-          "stators). Pure.",
-        inputSchema: calcCoilSchema,
-      },
-      {
-        name: "size_coil",
-        description:
-          "Inverse of calc_coil: solve the turn count for a target inductance " +
-          "in a given annulus (Wheeler L ∝ turns², so it's closed-form). Reports " +
-          "continuous + integer turns, the inductance achieved, and whether that " +
-          "many turns fit the radial band (else fit-limited). Pure.",
-        inputSchema: sizeCoilSchema,
-      },
-      {
-        name: "calc_rf",
-        description:
-          "Frequency-domain (AC) analysis of an RLC resonator: sweeps complex " +
-          "impedance over frequency and reports |Z|, phase, and S11/return-loss " +
-          "vs a reference Z0, plus resonance, Q, and the best match in the band. " +
-          "The RF/AC analyzer (calc_impedance is geometry-only). Pure.",
-        inputSchema: calcRfSchema,
-      },
-    ].filter((t) => !disabledTools.has(t.name))),
+    tools: assembleToolList(),
   }));
 
   // ── MCP Apps: List UI resources ──────────────────────────────
@@ -2207,13 +894,6 @@ export async function createServer(
     return Boolean(ext && ext["io.modelcontextprotocol/ui"]);
   };
 
-  type ToolResult = {
-    content: Array<{ type: string; text: string; annotations?: unknown }>;
-    structuredContent?: Record<string, unknown>;
-    isError?: boolean;
-    _meta?: Record<string, unknown>;
-  };
-
   /**
    * Stamp the running build/runtime identity onto EVERY tool result's `_meta`,
    * not just `server_info`. Warm-instance staleness and version skew then show
@@ -2250,7 +930,7 @@ export async function createServer(
     const { name, arguments: args = {} } = request.params;
 
     if (disabledTools.has(name)) {
-      const disabledResult = {
+      const disabledResult: ToolResult = {
         content: [
           {
             type: "text",
@@ -2263,6 +943,8 @@ export async function createServer(
       await stampResultMeta(disabledResult);
       return disabledResult;
     }
+
+    const def = dispatchMap.get(name);
 
     // Run the whole call in a per-connection session scope: a signed-in user
     // gets an isolated per-request document cache (so a cache hit can't serve
@@ -2290,624 +972,34 @@ export async function createServer(
     // `undo` can rewind it. Gated to writers that target a resident session
     // (creators mint a fresh id and have nothing prior to restore); `undo`
     // itself is excluded so it walks the stack back rather than re-pushing.
-    if (incomingId && name !== "undo" && isDocWriter(name) && documents.has(incomingId)) {
+    if (
+      incomingId &&
+      name !== "undo" &&
+      def?.behavior.writesDoc &&
+      documents.has(incomingId)
+    ) {
       recordHistorySnapshot(incomingId);
     }
 
-    // Inner dispatch. Encloses BOTH the registry path and the switch so the
-    // single persist site below covers every writer — the registry path used
-    // to early-return straight out of the handler, skipping post-processing.
+    // Inner dispatch. Encloses the Map lookup + handler so the single persist
+    // site below covers every writer uniformly. Every tool — including the
+    // registry-tier kernel tools — routes through here; no special-cased path.
     const runTool = async (): Promise<ToolResult> => {
-      let result: ToolResult;
-
-      // Registry-driven dispatch: any kernel tool from
-      // `commandRegistry.toAnthropicTools()` (minus the browser-only and
-      // deferred sets in tools/registry-dispatch.ts) routes through the
-      // shared planner + applyToolOutcome path. Falls through to the
-      // preview block below so these mutations render in the inline viewer.
-      if (dispatchableTools.has(name)) {
-        result = dispatchRegistryTool(name, args, engine);
-        const docId = resolvePreviewDocumentId(name, result, args, engine);
-        if (docId) {
-          attachPreviewHandle(result, docId, name);
-          slimPreviewForInlineUi(result, docId, name, clientHasInlineUi());
-        }
-        fireToolAlert(name, args, result);
-        return result;
+      if (!def) {
+        const unknownResult: ToolResult = {
+          content: [{ type: "text", text: `Unknown tool: ${name}` }],
+          isError: true,
+        };
+        fireToolAlert(name, args, unknownResult);
+        return unknownResult;
       }
 
-      switch (name) {
-        case "open_document":
-          result = openDocument(args);
-          break;
-
-        case "get_document":
-          result = getDocumentTool(args);
-          break;
-
-        case "close_document":
-          result = closeDocument(args);
-          break;
-
-        case "search_parts":
-          result = searchPartsTool(args, engine);
-          break;
-
-        case "place_part":
-          result = placePartTool(args, engine);
-          break;
-
-        case "get_preview_glb":
-          result = await getPreviewGlb(getSession(String(args.document_id ?? "")), engine);
-          break;
-
-        case "get_preview_version":
-          result = getPreviewVersion(
-            getSession(String(args.document_id ?? "")),
-            String(args.document_id ?? ""),
-          );
-          break;
-
-        case "create_cad_loon": {
-          result = createCadLoon(args, engine);
-          // Attach the integrity certificate to the largest mutation of
-          // all: authoring a whole document. The loon evaluation is cheap
-          // relative to the mesh evaluation computeIntegrity runs anyway.
-          try {
-            const doc = engine.evalVcadSource(String(args.source ?? ""));
-            if (doc) {
-              const integrity = computeIntegrity(doc, engine);
-              if (integrity) appendIntegrity(result, integrity);
-            }
-          } catch {
-            // Best-effort: never fail the authoring call over accounting.
-          }
-          break;
-        }
-
-        case "export_cad":
-          result = exportCad(args, engine);
-          break;
-
-        case "inspect_cad":
-          result = inspectCad(args, engine);
-          break;
-        case "list_parameters":
-          result = listParameters(args);
-          break;
-        case "set_parameters":
-          result = setParameters(args, engine);
-          break;
-        case "parameter_gradient":
-          result = parameterGradient(args, engine);
-          break;
-        case "predict_print":
-          result = predictPrint(args, engine);
-          break;
-        case "record_measurement":
-          result = recordMeasurement(args);
-          break;
-
-        case "quote_manufacturing":
-          result = await quoteManufacturing(args, engine, fabricateStore, context.user);
-          break;
-
-        case "get_order_status":
-          result = await getOrderStatus(args, fabricateStore, context.user);
-          break;
-
-        case "list_orders":
-          result = await listOrders(args, fabricateStore, context.user);
-          break;
-
-        case "authorize_spend":
-          result = await authorizeSpend(args, fabricateStore, eventStore, context.user);
-          break;
-
-        case "place_order":
-          result = await placeOrder(args, fabricateStore, eventStore, context.user);
-          break;
-
-        case "bom_create":
-          result = await bomCreate(args, fabricateStore, context.user);
-          break;
-
-        case "bom_add_line":
-          result = await bomAddLine(args, fabricateStore, context.user);
-          break;
-
-        case "bom_export":
-          result = bomExport(args, context.user);
-          break;
-
-        case "search_mechanical_parts":
-          result = searchMechanicalParts(args);
-          break;
-
-        case "share_session":
-          result = await shareSession(args, shareStore, context.user);
-          break;
-
-        case "unshare_session":
-          result = await unshareSession(args, shareStore);
-          break;
-
-        case "render_view":
-          // Image content blocks don't fit the text-only local result
-          // type; the MCP SDK accepts them as-is.
-          result = (await renderView(args)) as unknown as typeof result;
-          break;
-
-        case "verify_part":
-          result = await verifyPart(args);
-          break;
-
-        case "list_eval_tasks":
-          result = listEvalTasks(args);
-          break;
-
-        case "verify_spec":
-          result = verifySpec(args, engine);
-          break;
-
-        case "dfm_check":
-          result = await dfmCheck(args, engine);
-          break;
-
-        case "dfm_explain":
-          result = dfmExplain(args);
-          break;
-
-        case "dfm_suggest_fix":
-          result = dfmSuggestFix(args);
-          break;
-
-        case "dfm_apply_fix":
-          result = dfmApplyFix(args);
-          break;
-
-        case "sheet_metal_create":
-          result = sheetMetalCreate(args, engine);
-          break;
-
-        case "sheet_metal_unfold":
-          result = sheetMetalUnfold(args, engine);
-          break;
-
-        case "sheet_metal_check":
-          result = sheetMetalCheck(args, engine);
-          break;
-
-        case "sheet_metal_materials":
-          result = sheetMetalMaterials(args, engine);
-          break;
-
-        case "sheet_metal_bend_table":
-          result = sheetMetalBendTable(args, engine);
-          break;
-
-        case "sheet_metal_cost":
-          result = sheetMetalCost(args, engine);
-          break;
-
-        case "sheet_metal_suggest_fix":
-          result = sheetMetalSuggestFix(args, engine);
-          break;
-
-        case "sheet_metal_sequence":
-          result = sheetMetalSequence(args, engine);
-          break;
-
-        case "sheet_metal_nest":
-          result = sheetMetalNest(args, engine);
-          break;
-
-        case "import_step":
-          result = importStep(args, engine);
-          break;
-
-        case "import_kicad":
-          result = (await importKicad(args)) as unknown as typeof result;
-          break;
-
-        case "import_eagle":
-          result = importEagle(args) as unknown as typeof result;
-          break;
-
-        case "open_in_browser":
-          result = openInBrowser(args);
-          break;
-
-        case "create_robot_env":
-          result = await createRobotEnv(args);
-          break;
-
-        case "gym_step":
-          result = gymStep(args);
-          break;
-
-        case "gym_reset":
-          result = gymReset(args);
-          break;
-
-        case "gym_observe":
-          result = gymObserve(args);
-          break;
-
-        case "gym_close":
-          result = gymClose(args);
-          break;
-
-        case "load_structure":
-          result = await loadStructure(args);
-          break;
-
-        case "inspect_molecule":
-          result = await inspectMoleculeTool(args);
-          break;
-
-        case "minimize_energy":
-          result = await minimizeEnergyTool(args);
-          break;
-
-        case "md_run":
-          result = await mdRun(args);
-          break;
-
-        case "design_material":
-          result = await designMaterial(args);
-          break;
-
-        case "homogenize_material":
-          result = await homogenizeMaterialTool(args);
-          break;
-
-        case "render_molecule":
-          // renderMolecule can return an image content block (like render_view),
-          // which the text-only ToolResult shape doesn't model — cast as the
-          // sibling renderers do.
-          result = (await renderMolecule(args)) as unknown as typeof result;
-          break;
-
-        case "record_simulation":
-          result = (await recordSimulation(args)) as unknown as typeof result;
-          break;
-
-        case "batch_create_envs":
-          result = await batchCreateEnvs(args);
-          break;
-
-        case "batch_step":
-          result = batchStep(args);
-          break;
-
-        case "batch_reset":
-          result = batchReset(args);
-          break;
-
-        case "get_changelog":
-          result = getChangelog(args);
-          break;
-
-        case "create_schematic":
-          result = await createSchematic(args);
-          break;
-
-        case "place_components":
-          result = await placeComponents(args);
-          break;
-
-        case "route_nets":
-          result = await routeNets(args);
-          break;
-
-        case "add_coil":
-          result = await addCoil(args);
-          break;
-
-        case "add_coil_array":
-          result = await addCoilArray(args);
-          break;
-
-        case "winding_layout":
-          result = windingLayout(args);
-          break;
-
-        case "board_from_solid":
-          result = boardFromSolid(args, engine);
-          break;
-
-        case "solid_from_board": {
-          // Cross-session writer: reads the PCB in `document_id`, writes the
-          // CAD session in `document_id_target` (or mints one). The central
-          // hydrate/snapshot/persist plumbing keys off args.document_id —
-          // here the read-only PCB source — so the target is handled here.
-          const targetId =
-            typeof args.document_id_target === "string" ? args.document_id_target : null;
-          if (targetId) {
-            try {
-              await hydrateSession(sessionStore, targetId);
-            } catch {
-              // Durable load failed — fall back to cache.
-            }
-            if (documents.has(targetId)) recordHistorySnapshot(targetId);
-          }
-          result = await solidFromBoard(args);
-          const writtenId = result.structuredContent?.document_id;
-          if (!result.isError && typeof writtenId === "string" && documents.has(writtenId)) {
-            try {
-              await persistSession(sessionStore, writtenId);
-            } catch {
-              // best-effort durable write
-            }
-            try {
-              await eventStore.append(writtenId, {
-                author: context.user?.sub ?? "agent",
-                kind: "kernel",
-                type: name,
-                payload: buildKernelEventPayload(name, args, result),
-              });
-            } catch {
-              // best-effort event append
-            }
-          }
-          break;
-        }
-
-        case "check_enclosure_fit":
-          result = await checkEnclosureFit(args, engine);
-          break;
-
-        case "check_clearance":
-          result = await checkClearance(args, engine);
-          break;
-
-        case "list_footprints":
-          result = listFootprints(args);
-          break;
-
-        case "search_footprints":
-          result = searchFootprints(args);
-          break;
-
-        case "get_pad_positions":
-          result = getPadPositions(args);
-          break;
-
-        case "get_footprint":
-          result = await getFootprint(args);
-          break;
-
-        case "describe_pcb":
-          result = await describePcb(args);
-          break;
-
-        case "add_trace":
-          result = await addTrace(args);
-          break;
-
-        case "add_via":
-          result = await addVia(args);
-          break;
-
-        case "set_stackup":
-          result = await setStackup(args);
-          break;
-
-        case "set_placement":
-          result = await setPlacement(args);
-          break;
-
-        case "set_board_outline":
-          result = await setBoardOutline(args);
-          break;
-
-        case "add_zone":
-          result = addZone(args);
-          break;
-
-        case "delete_zone":
-          result = await deleteZone(args);
-          break;
-
-        case "delete_trace":
-          result = await deleteTrace(args);
-          break;
-
-        case "delete_via":
-          result = await deleteVia(args);
-          break;
-
-        case "get_copper":
-          result = getCopper(args);
-          break;
-
-        case "add_net_tie":
-          result = await addNetTie(args);
-          break;
-
-        case "delete_net_tie":
-          result = await deleteNetTie(args);
-          break;
-
-        case "undo":
-          result = undo(args);
-          break;
-
-        case "set_design_rules":
-          result = setDesignRules(args);
-          break;
-
-        case "size_trace_for_current":
-          result = sizeTraceForCurrent(args);
-          break;
-
-        case "add_via_array":
-          result = await addViaArray(args);
-          break;
-
-        case "add_motor_winding":
-          result = await addMotorWinding(args);
-          break;
-
-        case "calc_motor":
-          result = await calcMotor(args);
-          break;
-
-        case "check_self_start":
-          result = checkSelfStart(args);
-          break;
-
-        case "render_pcb":
-          result = (await renderPcb(args)) as unknown as typeof result;
-          break;
-
-        case "render_ratsnest":
-          result = (await renderRatsnest(args)) as unknown as typeof result;
-          break;
-
-        case "render_stackup":
-          result = (await renderStackup(args)) as unknown as typeof result;
-          break;
-
-        case "save_document":
-          result = await saveDocument(args, sessionStore);
-          break;
-
-        case "load_document":
-          result = await loadDocument(args, sessionStore);
-          break;
-
-        case "continue_document":
-          result = await continueDocument(args, sessionStore);
-          break;
-
-        case "checkpoint_document":
-          result = await checkpointDocument(args, sessionStore);
-          break;
-
-        case "branch_from":
-          result = await branchFrom(args, sessionStore);
-          break;
-
-        case "server_info": {
-          const buildInfo = getBuildInfo();
-          // expected_build_sha/is_stale come from Edge Config (per-request,
-          // TTL-cached): on a warm instance pinned behind a fresh deploy this
-          // flips to is_stale:true so the agent knows to reconnect.
-          const staleness = await getStaleness(buildInfo.build_sha);
-          result = {
-            content: [
-              {
-                type: "text",
-                text: JSON.stringify({
-                  ...buildInfo,
-                  ...sessionStoreInfo(),
-                  ...staleness,
-                  kernel_wasm: kernelWasmLoaded ? "ok" : "unavailable",
-                  ...(kernelWasmMissing.length > 0
-                    ? { kernel_wasm_missing_exports: kernelWasmMissing }
-                    : {}),
-                  kernel_tool_count: dispatchableTools.size,
-                  disabled_tool_count: disabledTools.size,
-                  packs: process.env.VCAD_MCP_PACKS ?? "all",
-                }),
-              },
-            ],
-          };
-          break;
-        }
-
-        case "run_drc":
-          result = await runDrc(args);
-          break;
-
-        case "search_electronic_parts":
-          result = await searchElectronicParts(args);
-          break;
-
-        case "resolve_part":
-          result = await resolvePart(args);
-          break;
-
-        case "find_alternatives":
-          result = await findAlternatives(args);
-          break;
-
-        case "verify_substitution":
-          result = await verifySubstitution(args);
-          break;
-
-        case "build_receipt":
-          result = await buildReceipt(args, engine);
-          break;
-
-        case "verify_receipt":
-          result = await verifyReceipt(args, engine);
-          break;
-
-        case "route_diff_pair":
-          result = await routeDiffPair(args);
-          break;
-
-        case "critique_route":
-          result = await critiqueRoute(args);
-          break;
-
-        case "run_erc":
-          result = await runErc(args);
-          break;
-
-        case "export_gerber":
-          result = await exportGerber(args);
-          break;
-
-        case "export_kicad":
-          result = await exportKicad(args);
-          break;
-
-        case "validate_for_fab":
-          result = await validateForFab(args);
-          break;
-
-        case "calc_impedance":
-          result = await calcImpedance(args);
-          break;
-
-        case "size_impedance":
-          result = sizeImpedance(args);
-          break;
-
-        case "size_pdn":
-          result = await sizePdn(args);
-          break;
-
-        case "calc_coil":
-          result = calcCoil(args);
-          break;
-
-        case "size_coil":
-          result = sizeCoil(args);
-          break;
-
-        case "calc_rf":
-          result = calcRf(args);
-          break;
-
-        default: {
-          const unknownResult = {
-            content: [{ type: "text", text: `Unknown tool: ${name}` }],
-            isError: true,
-          };
-          fireToolAlert(name, args, unknownResult);
-          return unknownResult;
-        }
-      }
+      const result = await def.handler(args, ctx);
 
       // ── MCP Apps: attach preview handle for geometry tools ──────
-      // The viewer fetches the actual GLB via the app-only
-      // `get_preview_glb` tool, so results stay lean for the model.
-      if (uiTools.has(name) && result.content.length > 0 && !result.isError) {
+      // The viewer fetches the actual GLB via the app-only `get_preview_glb`
+      // tool, so results stay lean for the model.
+      if (def.behavior.geometry && result.content.length > 0 && !result.isError) {
         const docId = resolvePreviewDocumentId(name, result, args, engine);
         if (docId) {
           attachPreviewHandle(result, docId, name);
@@ -2937,7 +1029,7 @@ export async function createServer(
       // effectiveDocId reads the id already resolved into the result/args — it
       // never re-runs resolvePreviewDocumentId, so minting tools
       // (import_step / create_cad_loon) aren't double-registered.
-      if (!result.isError && isDocWriter(name)) {
+      if (!result.isError && def?.behavior.writesDoc) {
         const writtenId = effectiveDocId(result, args);
         if (writtenId) {
           try {
@@ -2998,13 +1090,6 @@ export async function createServer(
 }
 
 /**
- * Attach the preview document id to a tool result: in structuredContent
- * (the spec path) and, when the result text doesn't already mention the
- * id, as a small JSON text block too. Cursor has known gaps forwarding
- * structuredContent to widgets, and the id is useful to agents anyway
- * (it opens the result up for follow-up mutations).
- */
-/**
  * Replace bulky tool-result text (full VCode, large JSON IR, …) with a short
  * summary. Cursor suppresses inline MCP App UI when tool results are huge —
  * the same spill behavior we hit with inlined GLB payloads.
@@ -3047,12 +1132,13 @@ export function slimPreviewForInlineUi(
   ];
 }
 
-/** Tools whose text body is a machine-parseable document that consumers
- *  JSON.parse verbatim — appending a handle block would corrupt it with
- *  trailing characters (this broke the mecheval harness's .vcad
- *  extraction). They get structuredContent only. */
-const PURE_JSON_RESULT_TOOLS = new Set(["get_document"]);
-
+/**
+ * Attach the preview document id to a tool result: in structuredContent
+ * (the spec path) and, when the result text doesn't already mention the
+ * id, as a small JSON text block too. Cursor has known gaps forwarding
+ * structuredContent to widgets, and the id is useful to agents anyway
+ * (it opens the result up for follow-up mutations).
+ */
 function attachPreviewHandle(
   result: {
     content: Array<{ type: string; text: string; annotations?: unknown }>;
@@ -3156,53 +1242,14 @@ function resolvePreviewDocumentId(
 /**
  * The session id a just-finished writer tool touched — WITHOUT minting a new
  * one. Prefers the explicit `document_id` arg, then the id the dispatch already
- * attached to the result (`structuredContent.document_id` for uiTools, or a
- * `{ "document_id": … }` text block, which is how switch-path ECAD tools that
- * aren't uiTools — create_schematic, route_diff_pair, add_via_array, add_zone,
+ * attached to the result (`structuredContent.document_id` for geometry tools, or
+ * a `{ "document_id": … }` text block, which is how switch-path ECAD tools that
+ * aren't geometry — create_schematic, route_diff_pair, add_via_array, add_zone,
  * set_placement, set_design_rules — surface theirs). Every candidate is guarded
  * by `documents.has`, so only a live session is ever persisted. Deliberately
  * does NOT call resolvePreviewDocumentId, which registers a fresh session for
  * import_step / create_cad_loon and would double-mint here.
  */
-/**
- * Build the payload for a `kernel` session_events row: the tool name, its args
- * (minus document_id), and the compact `changed` parts diff the registry path
- * already merged into the result. Capped so a fat call can't bloat the spine —
- * mirrors the >8KB result-slimming discipline; tool + changed (the cheap,
- * high-value parts) are always kept.
- */
-function buildKernelEventPayload(
-  name: string,
-  args: Record<string, unknown>,
-  result: { content: Array<{ type: string; text: string }> },
-): Record<string, unknown> {
-  const { document_id: _docId, ...rest } = args;
-  void _docId;
-  let changed: unknown;
-  for (const block of result.content) {
-    if (block.type !== "text") continue;
-    try {
-      const parsed = JSON.parse(block.text) as { changed?: unknown };
-      if (parsed && parsed.changed !== undefined) {
-        changed = parsed.changed;
-        break;
-      }
-    } catch {
-      // not JSON — skip
-    }
-  }
-  const payload: Record<string, unknown> = { tool: name, args: rest };
-  if (changed !== undefined) payload.changed = changed;
-  try {
-    if (JSON.stringify(payload).length > 8192) {
-      payload.args = { _omitted: true };
-    }
-  } catch {
-    payload.args = { _omitted: true };
-  }
-  return payload;
-}
-
 function effectiveDocId(
   result: {
     content: Array<{ type: string; text: string }>;

@@ -24,6 +24,7 @@ import { runDfm, runPcbDfm } from "@vcad/engine";
 import type { Document, Node, Pcb } from "@vcad/ir";
 import { getNodePcb, getPcbNodeIds } from "@vcad/core";
 import { documents, resolveDocInput } from "./session.js";
+import { behavior, type ToolDef } from "./tool-def.js";
 
 /** Most-recent report per session, used by explain / suggest / apply.
  *  Warm-only, like the print-check registries — NOT durable across a cold
@@ -432,3 +433,42 @@ function applySetParam(
   }
   cursor[parts[parts.length - 1]] = value;
 }
+
+export const toolDefs: ToolDef[] = [
+  {
+    name: "dfm_check",
+    pack: "dfm",
+    description:
+      "Run Design-for-Manufacturing checks against an open session document. For solid parts pick a mechanical process (cnc_3axis, fdm, sla, injection, sheet_metal, casting_sand, casting_investment) and get back severities, measurements, face references, and suggested fixes. For PCB documents pick a fab profile (pcb_jlcpcb, pcb_pcbway, pcb_generic_2layer, pcb_generic_4layer) to check the board against that fab's published process capability — min annular ring, min drill, min trace/space by copper weight, copper-to-edge, soldermask dam/sliver, silk-over-pad, acid traps, and via-in-pad — returning a per-rule pass/fail report naming the profile. Each rule's threshold is sourced from a TOML pack at lib/dfm/<process>.toml — pass `rule_pack_toml` to override.",
+    inputSchema: dfmCheckSchema,
+    handler: (a, c) => dfmCheck(a, c.engine),
+    behavior: behavior({}),
+  },
+  {
+    name: "dfm_explain",
+    pack: "dfm",
+    description:
+      "Return the long-form explanation for a specific DFM issue from the most recent `dfm_check` run on this document.",
+    inputSchema: dfmExplainSchema,
+    handler: (a) => dfmExplain(a),
+    behavior: behavior({}),
+  },
+  {
+    name: "dfm_suggest_fix",
+    pack: "dfm",
+    description:
+      "Return the suggested patch (set_param / wrap_op / replace_op / manual) for a DFM issue. Inspect the patch; only call `dfm_apply_fix` when you're ready to mutate the IR.",
+    inputSchema: dfmSuggestFixSchema,
+    handler: (a) => dfmSuggestFix(a),
+    behavior: behavior({}),
+  },
+  {
+    name: "dfm_apply_fix",
+    pack: "dfm",
+    description:
+      "Apply an approved DFM fix to the session document. v1 supports `set_param` patches (raise a fillet radius, thicken a wall) — other kinds throw and require manual edits. Re-run `dfm_check` afterwards to confirm the issue cleared.",
+    inputSchema: dfmApplyFixSchema,
+    handler: (a) => dfmApplyFix(a),
+    behavior: behavior({ writesDoc: true, geometry: true }),
+  },
+];

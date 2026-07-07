@@ -32,6 +32,7 @@ import {
 } from "@vcad/core";
 import { getSession } from "./session.js";
 import { computeInspection } from "./inspect.js";
+import { behavior, type ToolDef } from "./tool-def.js";
 
 const MEASURABLE_KINDS: readonly MeasurableKind[] = ["dimension", "diameter", "mass"];
 const MEASURABLE_AXES: readonly MeasurableAxis[] = ["X", "Y", "Z", "XY"];
@@ -380,3 +381,24 @@ export function recordMeasurement(input: unknown): ToolResult {
 
   return jsonResult(report);
 }
+
+export const toolDefs: ToolDef[] = [
+  {
+    name: "predict_print",
+    pack: "print",
+    description:
+      "Snapshot the design's predicted measurables BEFORE 3D-printing it: kernel-evaluated bbox and mass (at a filament density), plus caller-declared feature dimensions (step heights, hole diameters, wall thicknesses) with design-intent values. Returns a PrintPrediction — save it; after printing, record_measurement joins caliper/scale readings against it. The prediction doubles as the guided measurement worksheet (each measurable carries a human instruction label).",
+    inputSchema: predictPrintSchema,
+    handler: (a, c) => predictPrint(a, c.engine),
+    behavior: behavior({}),
+  },
+  {
+    name: "record_measurement",
+    pack: "print",
+    description:
+      "Record as-built measurements (caliper dimensions, scale mass) of a printed part against its predict_print snapshot and emit the receipt-vs-reality delta report: per-feature deltas with tolerances, per-axis scale factors (X/Y/Z shrinkage), hole undersize and thin-wall flow offsets, and concrete printer-profile suggestions. Accepts the prediction inline (from a saved prediction.json) when the session's warm instance is gone. Partial measurements are fine.",
+    inputSchema: recordMeasurementSchema,
+    handler: (a) => recordMeasurement(a),
+    behavior: behavior({}),
+  },
+];

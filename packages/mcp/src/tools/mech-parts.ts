@@ -13,6 +13,7 @@
  */
 
 import { MECH_CATALOG_JSON } from "./mech-catalog.generated.js";
+import { behavior, type ToolDef } from "./tool-def.js";
 
 type ToolResult = { content: Array<{ type: "text"; text: string }>; isError?: boolean };
 
@@ -257,3 +258,15 @@ export function searchMechanicalParts(input: unknown): ToolResult {
     ],
   };
 }
+
+export const toolDefs: ToolDef[] = [
+  {
+    name: "search_mechanical_parts",
+    pack: "bom",
+    description:
+      "Spec-search the curated mechanical COTS catalog (offline) — the mechanical sibling of search_electronic_parts: 608/625/688/600x-series bearings, precision ground shafts (3-12 mm), shaft collars, flange couplings, M2/M3 standoffs, machine screws, and ferrite/ceramic disc+ring magnets (Y30/Y35/C8). Filter by type + dimensions (bore_mm, od_mm, width_mm, thread, length_mm, …) and/or free text. Returns spec + example part number + a typical price band — street-price ESTIMATES, not live quotes. Use the result's `id` as `catalog_id` in bom_add_line.",
+    inputSchema: searchMechanicalPartsSchema,
+    handler: (a) => searchMechanicalParts(a),
+    behavior: behavior({}),
+  },
+];

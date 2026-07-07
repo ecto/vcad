@@ -18,6 +18,8 @@ import { getNodePcb, getPcbNodeIds } from "@vcad/core";
 import type { Document, Pcb } from "@vcad/ir";
 import { getSession, resolveDocInput } from "./session.js";
 import { validatePcb, pcbValidationError } from "./pcb-validate.js";
+import { behavior, type ToolDef } from "./tool-def.js";
+import type { ToolResult } from "./tool-result.js";
 
 export const renderViewSchema = {
   type: "object" as const,
@@ -851,3 +853,51 @@ export async function renderStackup(
   });
   return { content };
 }
+
+export const toolDefs: ToolDef[] = [
+  {
+    name: "render_view",
+    pack: null,
+    description:
+      "Render an open session document to an isometric PNG image so you can SEE the current geometry — silhouettes, holes, creases — not just numbers. Drafting-style line art, Z-up, same renderer as the vcad CLI. Call after mutations to visually confirm the part matches intent before declaring done.",
+    inputSchema: renderViewSchema,
+    handler: async (a) => (await renderView(a)) as unknown as ToolResult,
+    behavior: behavior({}),
+  },
+  {
+    name: "render_pcb",
+    pack: "ecad",
+    description:
+      "Render a flat, top-down, per-layer 2D image of a PCB (copper, silk, " +
+      "drills, outline) — agent eyes for boards. Pick `layers` (e.g. " +
+      "[\"F.Cu\", \"F.SilkS\", \"Edge_Cuts\"]); returns a PNG. Complements " +
+      "the isometric render_view and numeric run_drc.",
+    inputSchema: renderPcbSchema,
+    handler: async (a) => (await renderPcb(a)) as unknown as ToolResult,
+    behavior: behavior({}),
+  },
+  {
+    name: "render_ratsnest",
+    pack: "ecad",
+    description:
+      "Render the board with its unrouted-connection ratsnest (per-net MST " +
+      "airwires) overlaid as dashed lines — judge placement quality and " +
+      "crossing density BEFORE routing. Returns a PNG plus the airwire " +
+      "(unconnected-pair) count.",
+    inputSchema: renderRatsnestSchema,
+    handler: async (a) => (await renderRatsnest(a)) as unknown as ToolResult,
+    behavior: behavior({}),
+  },
+  {
+    name: "render_stackup",
+    pack: "ecad",
+    description:
+      "Render each copper layer of a multilayer board to its own image " +
+      "(with the board edge for framing), so inner planes are legible " +
+      "instead of buried under an all-layers composite. Returns one image " +
+      "per layer plus a layer→image index.",
+    inputSchema: renderStackupSchema,
+    handler: async (a) => (await renderStackup(a)) as unknown as ToolResult,
+    behavior: behavior({}),
+  },
+];
