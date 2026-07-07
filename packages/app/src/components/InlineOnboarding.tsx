@@ -21,6 +21,7 @@ import { useOnboardingStore } from "@/stores/onboarding-store";
 import { examples, exampleToVcadFile } from "@/data/examples";
 import type { Example } from "@/data/examples";
 import { MOLECULE_DEMOS, useMoleculeStore } from "@/stores/molecule-store";
+import { analytics } from "@/lib/analytics";
 
 interface InlineOnboardingProps {
   visible: boolean;
@@ -82,6 +83,7 @@ export function InlineOnboarding({ visible }: InlineOnboardingProps) {
 
   function handleOpenExample(example: Example) {
     incrementProjectsCreated();
+    analytics.templateOpened(example.id);
     if (example.urdf) {
       window.dispatchEvent(
         new CustomEvent("vcad:load-example", { detail: { urdf: example.urdf } }),
@@ -94,6 +96,7 @@ export function InlineOnboarding({ visible }: InlineOnboardingProps) {
 
   function handleOpenMolecule(id: string) {
     incrementProjectsCreated();
+    analytics.templateOpened(id);
     useMoleculeStore.getState().loadDemo(id);
     hide();
   }

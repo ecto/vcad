@@ -468,8 +468,12 @@ export function SketchPropertyPanel() {
     if (!active) return;
     function handleCommit() {
       if (!pendingOperation) {
-        // No pending op — just exit.
-        exitSketchMode();
+        // No pending op — just exit. Any drawn segments are dropped, so this
+        // is an abandon from the funnel's perspective, not a completion.
+        const status = exitSketchMode();
+        analytics.sketchAbandoned(
+          status === "has_segments" ? "no_operation" : "empty",
+        );
         return;
       }
       if (!hasSegments && pendingOperation.kind !== "loft") {
