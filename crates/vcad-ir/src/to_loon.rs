@@ -356,7 +356,16 @@ fn op_to_loon(op: &CsgOp, doc: &Document) -> OpResult {
             x_dir,
             y_dir,
             segments,
+            holes,
         } => {
+            // The loon CAD dialect has no hole-loop syntax yet; holed
+            // sketches emit a comment placeholder like other unsupported ops.
+            if holes.as_ref().is_some_and(|h| !h.is_empty()) {
+                return OpResult::Unsupported(
+                    "Sketch2D (with holes)".to_string(),
+                    "[cube 1.0 1.0 1.0] ; TODO: Sketch2D with interior holes not yet supported in loon".to_string(),
+                );
+            }
             let mut buf = String::new();
             let _ = writeln!(buf, "[sketch");
             let _ = writeln!(

@@ -15,8 +15,13 @@ use crate::{bbox, classify, sew, split, ssi, trim};
 /// Per-face split data: intersection curve with entry/exit points.
 type FaceSplits = Vec<(ssi::IntersectionCurve, Point3, Point3)>;
 
-/// Result of computing SSI for one face pair: splits for face A and face B.
-type SsiPairResult = (FaceId, FaceSplits, FaceId, FaceSplits);
+/// Result of computing SSI for one face pair: splits for face A and face B,
+/// plus whether the pair *really* crosses — i.e. the trimmed curve intervals
+/// of both faces overlap on the same intersection curve. Splits are also
+/// recorded when the carrier curve crosses only one face of the pair
+/// (phantom splits from nearby-but-disjoint faces); those must not block
+/// the no-crossing fast path.
+type SsiPairResult = (FaceId, FaceSplits, FaceId, FaceSplits, bool);
 
 /// Debug logging macro - only prints when debug-boolean feature is enabled
 #[allow(unused_macros)]
@@ -551,7 +556,10 @@ pub(crate) fn brep_boolean(
             if a_anchors_circle && split::is_conical_face(&b, face_b) {
                 results_b.push((curve.clone(), circle.center, circle.center));
             }
-            return Some((face_a, results_a, face_b, results_b));
+            // Circle splits are not interval-trimmed; treat any hit as a
+            // real crossing (conservative).
+            let real = !results_a.is_empty() || !results_b.is_empty();
+            return Some((face_a, results_a, face_b, results_b, real));
         }
 
         // TwoSampled is the analytic cylinder × cylinder result (the
@@ -573,7 +581,8 @@ pub(crate) fn brep_boolean(
             if split::is_cylindrical_face(&b, face_b) {
                 results_b.push((curve.clone(), Point3::origin(), Point3::origin()));
             }
-            return Some((face_a, results_a, face_b, results_b));
+            let real = !results_a.is_empty() || !results_b.is_empty();
+            return Some((face_a, results_a, face_b, results_b, real));
         }
 
         // Expand TwoLines into individual Line curves for processing
@@ -612,6 +621,7 @@ pub(crate) fn brep_boolean(
             _ => vec![curve.clone()],
         };
 
+        let mut real_crossing = false;
         for single_curve in &curves_to_process {
             // Trim curve to A's face boundary (for non-circle curves)
             let segs_a = trim::trim_curve_to_face(single_curve, face_a, &a, 64);
@@ -664,9 +674,30 @@ pub(crate) fn brep_boolean(
                     results_b.push((single_curve.clone(), entry, exit));
                 }
             }
+
+            // The pair genuinely crosses only when a positive-length stretch
+            // of the curve lies on BOTH faces: their trimmed t-intervals
+            // must overlap. One-sided segments are phantom splits from the
+            // infinite carrier curve crossing a nearby (but disjoint) face.
+            if !real_crossing {
+                'overlap: for sa in &segs_a {
+                    for sb in &segs_b {
+                        let lo = sa.t_start.max(sb.t_start);
+                        let hi = sa.t_end.min(sb.t_end);
+                        if hi > lo {
+                            let p0 = evaluate_curve(single_curve, lo);
+                            let p1 = evaluate_curve(single_curve, hi);
+                            if (p1 - p0).norm() > 1e-6 {
+                                real_crossing = true;
+                                break 'overlap;
+                            }
+                        }
+                    }
+                }
+            }
         }
 
-        Some((face_a, results_a, face_b, results_b))
+        Some((face_a, results_a, face_b, results_b, real_crossing))
     };
 
     // Use Rayon parallelism only when there are enough pairs to amortize thread overhead
@@ -679,8 +710,10 @@ pub(crate) fn brep_boolean(
     // Merge results into HashMaps
     let mut splits_a: HashMap<FaceId, FaceSplits> = HashMap::new();
     let mut splits_b: HashMap<FaceId, FaceSplits> = HashMap::new();
+    let mut any_real_crossing = false;
 
-    for (face_a, results_a, face_b, results_b) in split_results {
+    for (face_a, results_a, face_b, results_b, real_crossing) in split_results {
+        any_real_crossing |= real_crossing;
         if !results_a.is_empty() {
             splits_a.entry(face_a).or_default().extend(results_a);
         }
@@ -692,6 +725,22 @@ pub(crate) fn brep_boolean(
     debug_bool!("\n--- Stage 2: SSI results ---");
     debug_bool!("Faces of A to split: {}", splits_a.len());
     debug_bool!("Faces of B to split: {}", splits_b.len());
+
+    // No real crossings: the boundaries never cross, so the operands are
+    // disjoint or nested (or merely touching, which `boundaries_touch`
+    // detects and routes to the general pipeline for coincident-face
+    // dedup). Resolving containment with two point queries avoids the
+    // O(|A|·|B|) classify-everything stage below — the difference between
+    // hours and seconds when unioning thousands of disjoint solids.
+    // One-sided (phantom) splits are dropped in this case: they come from
+    // infinite carrier curves crossing a single face and would only
+    // fragment the result.
+    if !any_real_crossing && !crate::no_crossing::boundaries_touch(&a, &b, &pairs) {
+        if let Some(rel) = crate::no_crossing::resolve_containment(&a, &b, segments) {
+            debug_bool!("No-crossing fast path: {:?}", rel);
+            return crate::no_crossing::no_crossing_result(a, b, op, rel);
+        }
+    }
 
     // Apply splits to both solids
     apply_splits_to_solid(&mut a, splits_a, segments, "A");

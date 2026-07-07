@@ -362,6 +362,20 @@ pub fn find_candidate_face_pairs(a: &BRepSolid, b: &BRepSolid) -> Vec<(FaceId, F
         .map(|(fid, _)| (fid, face_aabb(b, fid)))
         .collect();
 
+    // Large × large operands (unioning chip-layer islands accumulates
+    // 100k-face solids) make the quadratic scan below intractable; use a
+    // sweep over x instead.
+    let n_a = a.topology.faces.len();
+    if n_a.saturating_mul(b_faces.len()) > 65_536 {
+        let a_faces: Vec<(FaceId, Aabb3)> = a
+            .topology
+            .faces
+            .iter()
+            .map(|(fid, _)| (fid, face_aabb(a, fid)))
+            .collect();
+        return sweep_candidate_face_pairs(&a_faces, &b_faces);
+    }
+
     let mut pairs = Vec::new();
 
     for (fa_id, _) in &a.topology.faces {
@@ -371,6 +385,63 @@ pub fn find_candidate_face_pairs(a: &BRepSolid, b: &BRepSolid) -> Vec<(FaceId, F
             if aabb_fa.overlaps(aabb_fb) {
                 pairs.push((fa_id, fb_id));
             }
+        }
+    }
+
+    pairs
+}
+
+/// Sweep-and-prune broadphase over the x axis: process faces of both solids
+/// in ascending `min.x`, keeping per-side active lists pruned by `max.x`,
+/// and emit pairs whose y/z extents also overlap. O(n log n + k) for
+/// spatially spread inputs instead of the quadratic all-pairs scan.
+fn sweep_candidate_face_pairs(
+    a_faces: &[(FaceId, Aabb3)],
+    b_faces: &[(FaceId, Aabb3)],
+) -> Vec<(FaceId, FaceId)> {
+    // Event list: (min_x, side, index). Sorted ascending.
+    let mut events: Vec<(f64, bool, usize)> = Vec::with_capacity(a_faces.len() + b_faces.len());
+    events.extend(
+        a_faces
+            .iter()
+            .enumerate()
+            .map(|(i, (_, bb))| (bb.min.x, false, i)),
+    );
+    events.extend(
+        b_faces
+            .iter()
+            .enumerate()
+            .map(|(i, (_, bb))| (bb.min.x, true, i)),
+    );
+    events.sort_by(|x, y| x.0.partial_cmp(&y.0).unwrap_or(std::cmp::Ordering::Equal));
+
+    let mut active_a: Vec<usize> = Vec::new();
+    let mut active_b: Vec<usize> = Vec::new();
+    let mut pairs = Vec::new();
+
+    let yz_overlap = |p: &Aabb3, q: &Aabb3| -> bool {
+        p.min.y <= q.max.y && p.max.y >= q.min.y && p.min.z <= q.max.z && p.max.z >= q.min.z
+    };
+
+    for (min_x, is_b, idx) in events {
+        if is_b {
+            let bb = &b_faces[idx].1;
+            active_a.retain(|&ia| a_faces[ia].1.max.x >= min_x);
+            for &ia in &active_a {
+                if yz_overlap(&a_faces[ia].1, bb) {
+                    pairs.push((a_faces[ia].0, b_faces[idx].0));
+                }
+            }
+            active_b.push(idx);
+        } else {
+            let bb = &a_faces[idx].1;
+            active_b.retain(|&ib| b_faces[ib].1.max.x >= min_x);
+            for &ib in &active_b {
+                if yz_overlap(bb, &b_faces[ib].1) {
+                    pairs.push((a_faces[idx].0, b_faces[ib].0));
+                }
+            }
+            active_a.push(idx);
         }
     }
 
@@ -450,5 +521,51 @@ mod tests {
         assert!((aabb.max.x - 10.0).abs() < 1e-10);
         assert!((aabb.max.y - 10.0).abs() < 1e-10);
         assert!((aabb.max.z - 10.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn sweep_emits_each_pair_exactly_once_even_with_equal_min_x() {
+        // Grid of A boxes and B boxes deliberately sharing min.x values so
+        // event ordering between sides at equal x is arbitrary. The sweep
+        // must match the quadratic reference as a MULTISET: any duplicate
+        // emission would show up as a count mismatch.
+        let mk = |x0: f64, y0: f64| Aabb3 {
+            min: Point3::new(x0, y0, 0.0),
+            max: Point3::new(x0 + 2.0, y0 + 2.0, 1.0),
+        };
+        let a_faces: Vec<(FaceId, Aabb3)> = (0..6)
+            .map(|i| {
+                (
+                    FaceId::from(slotmap::KeyData::from_ffi(i + 1)),
+                    mk((i % 3) as f64, (i / 3) as f64),
+                )
+            })
+            .collect();
+        // B boxes share the same min.x lattice and overlap the A boxes.
+        let b_faces: Vec<(FaceId, Aabb3)> = (0..6)
+            .map(|i| {
+                (
+                    FaceId::from(slotmap::KeyData::from_ffi(100 + i)),
+                    mk((i % 3) as f64, 0.5 + (i / 3) as f64),
+                )
+            })
+            .collect();
+
+        let mut swept = sweep_candidate_face_pairs(&a_faces, &b_faces);
+
+        let mut reference: Vec<(FaceId, FaceId)> = Vec::new();
+        for (fa, ba) in &a_faces {
+            for (fb, bb) in &b_faces {
+                if ba.overlaps(bb) {
+                    reference.push((*fa, *fb));
+                }
+            }
+        }
+        swept.sort();
+        reference.sort();
+        assert_eq!(
+            swept, reference,
+            "sweep must equal quadratic reference exactly (no dups, no misses)"
+        );
     }
 }

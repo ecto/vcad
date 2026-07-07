@@ -29,7 +29,7 @@ mod extrude;
 mod profile;
 mod revolve;
 
-pub use extrude::{extrude, extrude_with_options, ExtrudeOptions};
+pub use extrude::{extrude, extrude_with_holes, extrude_with_options, ExtrudeOptions};
 pub use profile::{SketchProfile, SketchSegment};
 pub use revolve::revolve;
 
@@ -69,4 +69,8 @@ pub enum SketchError {
     /// Profile has no segments.
     #[error("profile has no segments")]
     EmptyProfile,
+
+    /// Interior hole loops are not supported by this operation.
+    #[error("interior hole loops are not supported for {0}")]
+    HolesUnsupported(&'static str),
 }

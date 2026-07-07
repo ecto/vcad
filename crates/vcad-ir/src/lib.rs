@@ -752,6 +752,14 @@ pub enum CsgOp {
         /// The segments forming the closed profile.
         #[tool(expand)]
         segments: Vec<SketchSegment2D>,
+        /// Optional interior hole loops. Each entry is a closed loop of
+        /// segments in the same sketch coordinate system, lying strictly
+        /// inside the outer profile and disjoint from the other holes.
+        /// Extrude turns each loop into an interior wall directly — no
+        /// boolean Difference pass. Loop winding may be CW or CCW.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(feature = "ts-rs", ts(optional))]
+        holes: Option<Vec<Vec<SketchSegment2D>>>,
     },
     #[tool(
         category = "sketch_op",
@@ -1872,6 +1880,7 @@ mod tests {
                     origin: Vec3::new(0.0, 0.0, 0.0),
                     x_dir: Vec3::new(1.0, 0.0, 0.0),
                     y_dir: Vec3::new(0.0, 1.0, 0.0),
+                    holes: None,
                     segments: vec![
                         SketchSegment2D::Line {
                             start: Vec2::new(0.0, 0.0),

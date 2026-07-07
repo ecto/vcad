@@ -1390,6 +1390,7 @@ fn default_sketch() -> CsgOp {
         x_dir: Vec3::new(1.0, 0.0, 0.0),
         y_dir: Vec3::new(0.0, 1.0, 0.0),
         segments: Vec::new(),
+        holes: None,
     }
 }
 
@@ -1722,6 +1723,7 @@ mod tests {
 
         // Sketch JSON the AI would pass (a closed kidney-ish profile).
         let sketch_json = serde_json::to_string(&vcad_ir::CsgOp::Sketch2D {
+            holes: None,
             origin: Vec3::new(0.0, 0.0, 0.0),
             x_dir: Vec3::new(1.0, 0.0, 0.0),
             y_dir: Vec3::new(0.0, 1.0, 0.0),
@@ -1885,6 +1887,7 @@ mod tests {
         // sketch validator ever sees the degenerate profile.
         let mut crdt = CrdtDocument::new(ReplicaId(1));
         let empty_sketch_json = serde_json::to_string(&vcad_ir::CsgOp::Sketch2D {
+            holes: None,
             origin: Vec3::new(0.0, 0.0, 0.0),
             x_dir: Vec3::new(1.0, 0.0, 0.0),
             y_dir: Vec3::new(0.0, 1.0, 0.0),
@@ -1938,6 +1941,7 @@ mod tests {
     fn test_materialize_revolve() {
         let mut crdt = CrdtDocument::new(ReplicaId(1));
         let sketch_json = serde_json::to_string(&vcad_ir::CsgOp::Sketch2D {
+            holes: None,
             origin: Vec3::new(0.0, 0.0, 0.0),
             x_dir: Vec3::new(1.0, 0.0, 0.0),
             y_dir: Vec3::new(0.0, 1.0, 0.0),

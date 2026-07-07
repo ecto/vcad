@@ -2066,6 +2066,9 @@ where
             );
 
             let mut segments = Vec::new();
+            // Hole loops introduced by "H" lines; segments after an "H"
+            // belong to the most recent hole loop.
+            let mut holes: Vec<Vec<SketchSegment2D>> = Vec::new();
 
             // Parse sketch segments until END
             loop {
@@ -2085,7 +2088,18 @@ where
                     continue; // Skip empty lines in sketch
                 }
 
-                match seg_parts[0] {
+                let seg = match seg_parts[0] {
+                    "H" => {
+                        if segments.is_empty() && holes.is_empty() {
+                            return Err(VCodeParseError {
+                                line: *current_line,
+                                message: "sketch hole loop (H) before any outer-loop segment"
+                                    .to_string(),
+                            });
+                        }
+                        holes.push(Vec::new());
+                        continue;
+                    }
                     "L" => {
                         if seg_parts.len() != 5 {
                             return Err(VCodeParseError {
@@ -2093,7 +2107,7 @@ where
                                 message: format!("L requires 4 args, got {}", seg_parts.len() - 1),
                             });
                         }
-                        segments.push(SketchSegment2D::Line {
+                        SketchSegment2D::Line {
                             start: Vec2::new(
                                 parse_f64(seg_parts[1], *current_line)?,
                                 parse_f64(seg_parts[2], *current_line)?,
@@ -2102,7 +2116,7 @@ where
                                 parse_f64(seg_parts[3], *current_line)?,
                                 parse_f64(seg_parts[4], *current_line)?,
                             ),
-                        });
+                        }
                     }
                     "A" => {
                         if seg_parts.len() != 8 {
@@ -2111,7 +2125,7 @@ where
                                 message: format!("A requires 7 args, got {}", seg_parts.len() - 1),
                             });
                         }
-                        segments.push(SketchSegment2D::Arc {
+                        SketchSegment2D::Arc {
                             start: Vec2::new(
                                 parse_f64(seg_parts[1], *current_line)?,
                                 parse_f64(seg_parts[2], *current_line)?,
@@ -2125,7 +2139,7 @@ where
                                 parse_f64(seg_parts[6], *current_line)?,
                             ),
                             ccw: parse_u32(seg_parts[7], *current_line)? != 0,
-                        });
+                        }
                     }
                     _ => {
                         return Err(VCodeParseError {
@@ -2133,6 +2147,10 @@ where
                             message: format!("unknown sketch segment opcode: {}", seg_parts[0]),
                         });
                     }
+                };
+                match holes.last_mut() {
+                    Some(hole) => hole.push(seg),
+                    None => segments.push(seg),
                 }
             }
 
@@ -2141,6 +2159,7 @@ where
                 x_dir,
                 y_dir,
                 segments,
+                holes: if holes.is_empty() { None } else { Some(holes) },
             })
         }
 
@@ -2478,6 +2497,7 @@ fn format_op(
             x_dir,
             y_dir,
             segments,
+            holes,
         } => {
             let mut lines = vec![format!(
                 "SK {} {} {}  {} {} {}  {} {} {}{}",
@@ -2493,28 +2513,37 @@ fn format_op(
                 name_suffix
             )];
 
+            let push_seg = |lines: &mut Vec<String>, seg: &SketchSegment2D| match seg {
+                SketchSegment2D::Line { start, end } => {
+                    lines.push(format!("L {} {} {} {}", start.x, start.y, end.x, end.y));
+                }
+                SketchSegment2D::Arc {
+                    start,
+                    end,
+                    center,
+                    ccw,
+                } => {
+                    lines.push(format!(
+                        "A {} {} {} {} {} {} {}",
+                        start.x,
+                        start.y,
+                        end.x,
+                        end.y,
+                        center.x,
+                        center.y,
+                        if *ccw { 1 } else { 0 }
+                    ));
+                }
+            };
+
             for seg in segments {
-                match seg {
-                    SketchSegment2D::Line { start, end } => {
-                        lines.push(format!("L {} {} {} {}", start.x, start.y, end.x, end.y));
-                    }
-                    SketchSegment2D::Arc {
-                        start,
-                        end,
-                        center,
-                        ccw,
-                    } => {
-                        lines.push(format!(
-                            "A {} {} {} {} {} {} {}",
-                            start.x,
-                            start.y,
-                            end.x,
-                            end.y,
-                            center.x,
-                            center.y,
-                            if *ccw { 1 } else { 0 }
-                        ));
-                    }
+                push_seg(&mut lines, seg);
+            }
+            // Each hole loop starts with an "H" marker line.
+            for hole in holes.iter().flatten() {
+                lines.push("H".to_string());
+                for seg in hole {
+                    push_seg(&mut lines, seg);
                 }
             }
 
@@ -2993,7 +3022,9 @@ mod tests {
                 x_dir,
                 y_dir,
                 segments,
+                holes,
             } => {
+                assert_eq!(*holes, None);
                 assert_eq!(*origin, Vec3::new(0.0, 0.0, 0.0));
                 assert_eq!(*x_dir, Vec3::new(1.0, 0.0, 0.0));
                 assert_eq!(*y_dir, Vec3::new(0.0, 1.0, 0.0));
@@ -3012,6 +3043,32 @@ mod tests {
             }
             _ => panic!("expected Extrude"),
         }
+    }
+
+    #[test]
+    fn test_sketch_with_holes_roundtrip() {
+        // "H" starts an interior hole loop; segments after it belong to the
+        // most recent hole. Round-trips through to_vcode/from_vcode.
+        let compact = "SK 0 0 0  1 0 0  0 1 0\nL 0 0 10 0\nL 10 0 10 10\nL 10 10 0 10\nL 0 10 0 0\nH\nL 2 2 4 2\nL 4 2 4 4\nL 4 4 2 4\nL 2 4 2 2\nEND\nE 0 0 0 5";
+        let doc = from_vcode(compact).unwrap();
+
+        match &doc.nodes[&0].op {
+            CsgOp::Sketch2D {
+                segments, holes, ..
+            } => {
+                assert_eq!(segments.len(), 4);
+                let holes = holes.as_ref().expect("holes should parse");
+                assert_eq!(holes.len(), 1);
+                assert_eq!(holes[0].len(), 4);
+            }
+            _ => panic!("expected Sketch2D"),
+        }
+
+        // Round-trip: formatting re-emits the H marker and reparses equal.
+        let emitted = to_vcode(&doc).unwrap();
+        assert!(emitted.contains("\nH\n"), "expected H marker in: {emitted}");
+        let restored = from_vcode(&emitted).unwrap();
+        assert_eq!(doc.nodes[&0].op, restored.nodes[&0].op);
     }
 
     #[test]

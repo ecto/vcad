@@ -1086,6 +1086,15 @@ fn tessellate_concave_polygon(verts: &[Point3], reversed: bool) -> TriangleMesh 
         })
         .collect();
 
+    // Large concave polygons (e.g. 1000+-vertex chip-layer island caps)
+    // make the O(n³) ear-clip loop below impractical; earcut is near-linear.
+    if n > EARCUT_VERTEX_THRESHOLD {
+        if let Some(mesh) = earcut_polygon_with_holes(&verts_2d, &[], verts, &[], reversed) {
+            return mesh;
+        }
+        // earcut failed — fall through to the ear-clip path below.
+    }
+
     // Build mesh with all 3D vertices
     let mut mesh = TriangleMesh::new();
     for v in verts {
@@ -1345,10 +1354,106 @@ fn tessellate_planar_face_with_holes(
     // that together form a full circle at the same position).
     merge_overlapping_holes(&mut inner_2d, &mut inner_loops);
 
+    // Large multiply-connected faces (chip-layer islands with hundreds of
+    // holes and thousands of boundary vertices) blow up the O(n²)-ish
+    // bridge + ear-clip path below; route them through earcut, which is
+    // near-linear and handles holes natively without Steiner points.
+    let total_verts = outer_2d.len() + inner_2d.iter().map(Vec::len).sum::<usize>();
+    if total_verts > EARCUT_VERTEX_THRESHOLD {
+        if let Some(mesh) =
+            earcut_polygon_with_holes(&outer_2d, &inner_2d, &outer_verts, &inner_loops, reversed)
+        {
+            return mesh;
+        }
+        // earcut failed — fall through to the bridge + ear-clip path below.
+    }
+
     // After merging overlapping arcs, use bridge+ear-clip directly.
     // The merged holes are well-shaped (no more overlapping semicircles),
     // so bridge construction works reliably.
     triangulate_polygon_with_holes(&outer_2d, &inner_2d, &outer_verts, &inner_loops, reversed)
+}
+
+/// Boundary-vertex count above which planar-face triangulation switches
+/// from the bridge/ear-clip path to earcut. Small faces keep the existing
+/// path (its Steiner-ring refinement yields nicer triangles); large faces
+/// need earcut's near-linear running time.
+// Trade-off: below this, the Steiner-ring path yields nicer, more uniform
+// triangles (better shading on ordinary curved caps); above it, its O(n^2)
+// refinement is too slow and earcut wins. 256 keeps a 32-segment arc cap
+// with a few holes on the quality path while chip-scale polygons (GDS
+// layers, thousands of vertices) take the fast path.
+const EARCUT_VERTEX_THRESHOLD: usize = 256;
+
+/// Triangulate a projected planar polygon (with optional holes) via earcut.
+///
+/// `outer_2d`/`inner_2d` are the projected loops; `outer_3d`/`inner_3d` the
+/// corresponding 3D vertices in identical order. No vertices are added or
+/// removed, so the cap stays watertight against adjacent lateral faces.
+fn earcut_polygon_with_holes(
+    outer_2d: &[(f64, f64)],
+    inner_2d: &[Vec<(f64, f64)>],
+    outer_3d: &[Point3],
+    inner_3d: &[Vec<Point3>],
+    reversed: bool,
+) -> Option<TriangleMesh> {
+    let mut mesh = TriangleMesh::new();
+
+    let mut data: Vec<f64> = Vec::with_capacity(2 * (outer_2d.len() + inner_2d.len() * 4));
+    let mut hole_starts: Vec<usize> = Vec::with_capacity(inner_2d.len());
+    for &(x, y) in outer_2d {
+        data.push(x);
+        data.push(y);
+    }
+    for hole in inner_2d {
+        hole_starts.push(data.len() / 2);
+        for &(x, y) in hole {
+            data.push(x);
+            data.push(y);
+        }
+    }
+
+    for v in outer_3d.iter().chain(inner_3d.iter().flatten()) {
+        mesh.vertices.push(v.x as f32);
+        mesh.vertices.push(v.y as f32);
+        mesh.vertices.push(v.z as f32);
+    }
+
+    // A failed or empty triangulation must NOT silently produce a capless
+    // (non-watertight) solid — signal the caller to fall back to the
+    // bridge/ear-clip path instead.
+    let tris = earcutr::earcut(&data, &hole_starts, 2).ok()?;
+    if tris.is_empty() {
+        return None;
+    }
+
+    // earcut's output triangles are uniformly wound; measure that winding
+    // from the TOTAL signed area of the output (immune to any individual
+    // degenerate triangle and to assumptions about which ring the first
+    // triangle came from) and normalize to the same convention as
+    // `ear_clip_triangulate` (CCW in the projected frame unless `reversed`).
+    let mut area2 = 0.0;
+    for t in tris.chunks(3) {
+        let (ax, ay) = (data[2 * t[0]], data[2 * t[0] + 1]);
+        let (bx, by) = (data[2 * t[1]], data[2 * t[1] + 1]);
+        let (cx, cy) = (data[2 * t[2]], data[2 * t[2] + 1]);
+        area2 += (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
+    }
+    let flip = (area2 > 0.0) == reversed;
+
+    for t in tris.chunks(3) {
+        if flip {
+            mesh.indices.push(t[0] as u32);
+            mesh.indices.push(t[2] as u32);
+            mesh.indices.push(t[1] as u32);
+        } else {
+            mesh.indices.push(t[0] as u32);
+            mesh.indices.push(t[1] as u32);
+            mesh.indices.push(t[2] as u32);
+        }
+    }
+
+    Some(mesh)
 }
 
 /// Merge inner loops that overlap (e.g., two semicircular arcs forming a full circle).
@@ -4639,6 +4744,58 @@ mod tests {
             "Area should be ~{:.1}, got {:.1}",
             expected_area,
             area
+        );
+    }
+
+    #[test]
+    fn earcut_frame_triangles_share_winding_and_sum_to_region_area() {
+        // A symmetric square frame (10x10 outer, 6x6 centered hole): the
+        // review conjecture was that "hole triangles" cancel the outer
+        // triangles' signed area. Earcut triangulates the FRAME REGION
+        // only; every output triangle is wound the same way, so the signed
+        // areas share one sign and sum to +/- the frame area (64), never 0.
+        let outer_2d = vec![(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0)];
+        let hole_2d = vec![(2.0, 2.0), (8.0, 2.0), (8.0, 8.0), (2.0, 8.0)];
+        let outer_3d: Vec<Point3> = outer_2d
+            .iter()
+            .map(|&(x, y)| Point3::new(x, y, 0.0))
+            .collect();
+        let hole_3d: Vec<Point3> = hole_2d
+            .iter()
+            .map(|&(x, y)| Point3::new(x, y, 0.0))
+            .collect();
+
+        let mesh =
+            earcut_polygon_with_holes(&outer_2d, &[hole_2d.clone()], &outer_3d, &[hole_3d], false)
+                .expect("frame triangulates");
+        assert!(!mesh.indices.is_empty());
+        let mut total = 0.0_f64;
+        let mut signs = std::collections::HashSet::new();
+        for t in mesh.indices.chunks(3) {
+            let v = |i: u32| {
+                (
+                    mesh.vertices[3 * i as usize] as f64,
+                    mesh.vertices[3 * i as usize + 1] as f64,
+                )
+            };
+            let (ax, ay) = v(t[0]);
+            let (bx, by) = v(t[1]);
+            let (cx, cy) = v(t[2]);
+            let area2 = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
+            if area2.abs() > 1e-12 {
+                signs.insert(area2 > 0.0);
+            }
+            total += area2;
+        }
+        assert_eq!(
+            signs.len(),
+            1,
+            "earcut output triangles must share one winding"
+        );
+        assert!(
+            (total.abs() / 2.0 - 64.0).abs() < 1e-9,
+            "signed areas sum to the frame area, got {}",
+            total / 2.0
         );
     }
 }

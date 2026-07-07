@@ -366,6 +366,7 @@ mod tests {
                     origin: Vec3::new(0.0, 0.0, 0.0),
                     x_dir: Vec3::new(1.0, 0.0, 0.0),
                     y_dir: Vec3::new(0.0, 1.0, 0.0),
+                    holes: None,
                     segments: vec![
                         SketchSegment2D::Line {
                             start: Vec2::new(0.0, 0.0),
@@ -409,6 +410,149 @@ mod tests {
         let scene = evaluate_document(&doc, &EvalOptions::default()).unwrap();
         assert_eq!(scene.parts.len(), 1);
         assert!(!scene.parts[0].mesh.positions.is_empty());
+    }
+
+    fn mesh_volume(mesh: &EvaluatedMesh) -> f64 {
+        let v = &mesh.positions;
+        let mut vol = 0.0;
+        for tri in mesh.indices.chunks(3) {
+            let i = [
+                tri[0] as usize * 3,
+                tri[1] as usize * 3,
+                tri[2] as usize * 3,
+            ];
+            let p: Vec<[f64; 3]> = i
+                .iter()
+                .map(|&k| [v[k] as f64, v[k + 1] as f64, v[k + 2] as f64])
+                .collect();
+            vol += p[0][0] * (p[1][1] * p[2][2] - p[2][1] * p[1][2])
+                - p[1][0] * (p[0][1] * p[2][2] - p[2][1] * p[0][2])
+                + p[2][0] * (p[0][1] * p[1][2] - p[1][1] * p[0][2]);
+        }
+        (vol / 6.0).abs()
+    }
+
+    /// Closed CCW rectangle loop as IR line segments.
+    fn rect_segments(x0: f64, y0: f64, x1: f64, y1: f64) -> Vec<SketchSegment2D> {
+        let p = [
+            Vec2::new(x0, y0),
+            Vec2::new(x1, y0),
+            Vec2::new(x1, y1),
+            Vec2::new(x0, y1),
+        ];
+        (0..4)
+            .map(|i| SketchSegment2D::Line {
+                start: p[i],
+                end: p[(i + 1) % 4],
+            })
+            .collect()
+    }
+
+    fn holed_sketch_doc(holes: Option<Vec<Vec<SketchSegment2D>>>) -> Document {
+        let mut doc = Document::new();
+        doc.nodes.insert(
+            1,
+            Node {
+                id: 1,
+                name: None,
+                op: CsgOp::Sketch2D {
+                    origin: Vec3::new(0.0, 0.0, 0.0),
+                    x_dir: Vec3::new(1.0, 0.0, 0.0),
+                    y_dir: Vec3::new(0.0, 1.0, 0.0),
+                    segments: rect_segments(0.0, 0.0, 20.0, 10.0),
+                    holes,
+                },
+            },
+        );
+        doc.nodes.insert(
+            2,
+            Node {
+                id: 2,
+                name: None,
+                op: CsgOp::Extrude {
+                    sketch: 1,
+                    direction: Vec3::new(0.0, 0.0, 5.0),
+                    twist_angle: None,
+                    scale_end: None,
+                },
+            },
+        );
+        doc.roots.push(SceneEntry {
+            root: 2,
+            material: "default".to_string(),
+            visible: None,
+        });
+        doc
+    }
+
+    #[test]
+    fn evaluate_sketch_extrude_with_holes() {
+        let holes = vec![
+            rect_segments(2.0, 2.0, 6.0, 8.0),
+            rect_segments(12.0, 3.0, 17.0, 7.0),
+        ];
+        let scene =
+            evaluate_document(&holed_sketch_doc(Some(holes)), &EvalOptions::default()).unwrap();
+        assert_eq!(scene.parts.len(), 1);
+        assert!(scene.failures.is_empty(), "failures: {:?}", scene.failures);
+
+        // Volume = (20·10 − 4·6 − 5·4) · 5
+        let expected = (200.0 - 24.0 - 20.0) * 5.0;
+        let vol = mesh_volume(&scene.parts[0].mesh);
+        assert!(
+            (vol - expected).abs() < 1e-3 * expected,
+            "expected {expected}, got {vol}"
+        );
+    }
+
+    #[test]
+    fn sketch2d_json_without_holes_still_parses() {
+        // Serde back-compat: documents written before the `holes` field
+        // existed must load unchanged.
+        let json = r#"{
+            "type": "Sketch2D",
+            "origin": {"x": 0.0, "y": 0.0, "z": 0.0},
+            "x_dir": {"x": 1.0, "y": 0.0, "z": 0.0},
+            "y_dir": {"x": 0.0, "y": 1.0, "z": 0.0},
+            "segments": [
+                {"type": "Line", "start": {"x": 0.0, "y": 0.0}, "end": {"x": 1.0, "y": 0.0}},
+                {"type": "Line", "start": {"x": 1.0, "y": 0.0}, "end": {"x": 1.0, "y": 1.0}},
+                {"type": "Line", "start": {"x": 1.0, "y": 1.0}, "end": {"x": 0.0, "y": 0.0}}
+            ]
+        }"#;
+        let op: CsgOp = serde_json::from_str(json).unwrap();
+        match &op {
+            CsgOp::Sketch2D {
+                holes, segments, ..
+            } => {
+                assert!(holes.is_none());
+                assert_eq!(segments.len(), 3);
+            }
+            other => panic!("expected Sketch2D, got {other:?}"),
+        }
+        // And a hole-free sketch round-trips without emitting the field.
+        let out = serde_json::to_string(&op).unwrap();
+        assert!(
+            !out.contains("holes"),
+            "hole-free sketch serialized holes: {out}"
+        );
+    }
+
+    #[test]
+    fn revolve_rejects_holed_sketch() {
+        let mut doc = holed_sketch_doc(Some(vec![rect_segments(2.0, 2.0, 6.0, 8.0)]));
+        doc.nodes.get_mut(&2).unwrap().op = CsgOp::Revolve {
+            sketch: 1,
+            axis_origin: Vec3::new(-1.0, 0.0, 0.0),
+            axis_dir: Vec3::new(0.0, 1.0, 0.0),
+            angle_deg: 360.0,
+        };
+        let scene = evaluate_document(&doc, &EvalOptions::default()).unwrap();
+        // The failure is recorded per-root rather than aborting evaluation.
+        assert!(
+            !scene.failures.is_empty(),
+            "revolve of a holed sketch should fail"
+        );
     }
 
     #[test]
@@ -509,6 +653,7 @@ mod tests {
                     origin: Vec3::new(0.0, 0.0, 0.0),
                     x_dir: Vec3::new(1.0, 0.0, 0.0),
                     y_dir: Vec3::new(0.0, 1.0, 0.0),
+                    holes: None,
                     segments: vec![
                         SketchSegment2D::Line {
                             start: Vec2::new(5.0, 0.0),

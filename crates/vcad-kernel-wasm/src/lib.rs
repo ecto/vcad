@@ -330,31 +330,59 @@ pub struct WasmSketchProfile {
     pub y_dir: [f64; 3],
     /// Segments forming the closed profile.
     pub segments: Vec<WasmSketchSegment>,
+    /// Optional interior hole loops, each a closed loop of segments in the
+    /// same sketch coordinate system, strictly inside the outer profile.
+    /// Only `extrude` honors holes; other profile consumers reject them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-rs", ts(optional))]
+    pub holes: Option<Vec<Vec<WasmSketchSegment>>>,
+}
+
+/// Convert one JS sketch segment to its kernel equivalent.
+fn to_kernel_segment(s: &WasmSketchSegment) -> SketchSegment {
+    match s {
+        WasmSketchSegment::Line { start, end } => SketchSegment::Line {
+            start: Point2::new(start[0], start[1]),
+            end: Point2::new(end[0], end[1]),
+        },
+        WasmSketchSegment::Arc {
+            start,
+            end,
+            center,
+            ccw,
+        } => SketchSegment::Arc {
+            start: Point2::new(start[0], start[1]),
+            end: Point2::new(end[0], end[1]),
+            center: Point2::new(center[0], center[1]),
+            ccw: *ccw,
+        },
+    }
 }
 
 impl WasmSketchProfile {
-    fn to_kernel_profile(&self) -> Result<SketchProfile, String> {
-        let segments: Vec<SketchSegment> = self
-            .segments
+    /// Interior hole loops converted to kernel segments (empty when absent).
+    fn kernel_holes(&self) -> Vec<Vec<SketchSegment>> {
+        self.holes
+            .as_deref()
+            .unwrap_or(&[])
             .iter()
-            .map(|s| match s {
-                WasmSketchSegment::Line { start, end } => SketchSegment::Line {
-                    start: Point2::new(start[0], start[1]),
-                    end: Point2::new(end[0], end[1]),
-                },
-                WasmSketchSegment::Arc {
-                    start,
-                    end,
-                    center,
-                    ccw,
-                } => SketchSegment::Arc {
-                    start: Point2::new(start[0], start[1]),
-                    end: Point2::new(end[0], end[1]),
-                    center: Point2::new(center[0], center[1]),
-                    ccw: *ccw,
-                },
-            })
-            .collect();
+            .map(|hole| hole.iter().map(to_kernel_segment).collect())
+            .collect()
+    }
+
+    /// Error when the profile carries interior holes, which `op_name`
+    /// doesn't support.
+    fn reject_holes(&self, op_name: &str) -> Result<(), JsError> {
+        if self.holes.as_ref().is_some_and(|h| !h.is_empty()) {
+            return Err(JsError::new(&format!(
+                "interior hole loops are not supported for {op_name}"
+            )));
+        }
+        Ok(())
+    }
+
+    fn to_kernel_profile(&self) -> Result<SketchProfile, String> {
+        let segments: Vec<SketchSegment> = self.segments.iter().map(to_kernel_segment).collect();
 
         SketchProfile::new(
             Point3::new(self.origin[0], self.origin[1], self.origin[2]),
@@ -578,9 +606,14 @@ impl Solid {
 
         let dir = Vec3::new(direction[0], direction[1], direction[2]);
 
-        vcad_kernel::Solid::extrude(kernel_profile, dir)
-            .map(|inner| Solid { inner })
-            .map_err(|e| JsError::new(&e.to_string()))
+        let holes = profile.kernel_holes();
+        if holes.is_empty() {
+            vcad_kernel::Solid::extrude(kernel_profile, dir)
+        } else {
+            vcad_kernel::Solid::extrude_with_holes(kernel_profile, &holes, dir)
+        }
+        .map(|inner| Solid { inner })
+        .map_err(|e| JsError::new(&e.to_string()))
     }
 
     /// Create a solid by extruding a 2D sketch profile with twist and/or scale.
@@ -600,6 +633,7 @@ impl Solid {
         if direction.len() != 3 {
             return Err(JsError::new("Direction must have 3 components"));
         }
+        profile.reject_holes("extrude with twist or taper")?;
 
         let kernel_profile = profile.to_kernel_profile().map_err(|e| JsError::new(&e))?;
 
@@ -628,6 +662,7 @@ impl Solid {
                 "Axis origin and direction must have 3 components",
             ));
         }
+        profile.reject_holes("revolve")?;
 
         let kernel_profile = profile.to_kernel_profile().map_err(|e| JsError::new(&e))?;
 
@@ -661,6 +696,7 @@ impl Solid {
         if start.len() != 3 || end.len() != 3 {
             return Err(JsError::new("Start and end must have 3 components"));
         }
+        profile.reject_holes("sweep")?;
 
         // Use centered profile so it wraps around the path properly
         let kernel_profile = profile
@@ -707,6 +743,7 @@ impl Solid {
 
         let profile: WasmSketchProfile = serde_json::from_str(&profile_json)
             .map_err(|e| JsError::new(&format!("Invalid profile: {}", e)))?;
+        profile.reject_holes("sweep")?;
 
         // Use centered profile so it wraps around the helix path properly
         let kernel_profile = profile
@@ -741,6 +778,9 @@ impl Solid {
 
         if profiles.len() < 2 {
             return Err(JsError::new("Loft requires at least 2 profiles"));
+        }
+        for p in &profiles {
+            p.reject_holes("loft")?;
         }
 
         let kernel_profiles: Result<Vec<_>, _> =
@@ -3466,6 +3506,27 @@ pub fn is_physics_available() -> bool {
 // Internal evaluation helpers
 // =========================================================================
 
+/// Convert one IR sketch segment to the WASM profile representation.
+fn ir_segment_to_wasm(seg: &vcad_ir::SketchSegment2D) -> WasmSketchSegment {
+    match seg {
+        vcad_ir::SketchSegment2D::Line { start, end } => WasmSketchSegment::Line {
+            start: [start.x, start.y],
+            end: [end.x, end.y],
+        },
+        vcad_ir::SketchSegment2D::Arc {
+            start,
+            end,
+            center,
+            ccw,
+        } => WasmSketchSegment::Arc {
+            start: [start.x, start.y],
+            end: [end.x, end.y],
+            center: [center.x, center.y],
+            ccw: *ccw,
+        },
+    }
+}
+
 /// Recursively evaluate a node in the IR DAG.
 fn evaluate_node(doc: &vcad_ir::Document, node_id: vcad_ir::NodeId) -> Result<Solid, JsError> {
     let node = doc
@@ -3657,35 +3718,23 @@ fn evaluate_node(doc: &vcad_ir::Document, node_id: vcad_ir::NodeId) -> Result<So
                     x_dir,
                     y_dir,
                     segments,
+                    holes,
                 } => {
-                    let wasm_segments: Vec<WasmSketchSegment> = segments
-                        .iter()
-                        .map(|seg| match seg {
-                            vcad_ir::SketchSegment2D::Line { start, end } => {
-                                WasmSketchSegment::Line {
-                                    start: [start.x, start.y],
-                                    end: [end.x, end.y],
-                                }
-                            }
-                            vcad_ir::SketchSegment2D::Arc {
-                                start,
-                                end,
-                                center,
-                                ccw,
-                            } => WasmSketchSegment::Arc {
-                                start: [start.x, start.y],
-                                end: [end.x, end.y],
-                                center: [center.x, center.y],
-                                ccw: *ccw,
-                            },
-                        })
-                        .collect();
+                    let wasm_segments: Vec<WasmSketchSegment> =
+                        segments.iter().map(ir_segment_to_wasm).collect();
+                    let wasm_holes: Option<Vec<Vec<WasmSketchSegment>>> =
+                        holes.as_ref().map(|hs| {
+                            hs.iter()
+                                .map(|hole| hole.iter().map(ir_segment_to_wasm).collect())
+                                .collect()
+                        });
 
                     let profile = WasmSketchProfile {
                         origin: [origin.x, origin.y, origin.z],
                         x_dir: [x_dir.x, x_dir.y, x_dir.z],
                         y_dir: [y_dir.x, y_dir.y, y_dir.z],
                         segments: wasm_segments,
+                        holes: wasm_holes,
                     };
 
                     let profile_json = serde_json::to_string(&profile).map_err(|e| {
@@ -3727,35 +3776,22 @@ fn evaluate_node(doc: &vcad_ir::Document, node_id: vcad_ir::NodeId) -> Result<So
                     x_dir,
                     y_dir,
                     segments,
+                    holes,
                 } => {
-                    let wasm_segments: Vec<WasmSketchSegment> = segments
-                        .iter()
-                        .map(|seg| match seg {
-                            vcad_ir::SketchSegment2D::Line { start, end } => {
-                                WasmSketchSegment::Line {
-                                    start: [start.x, start.y],
-                                    end: [end.x, end.y],
-                                }
-                            }
-                            vcad_ir::SketchSegment2D::Arc {
-                                start,
-                                end,
-                                center,
-                                ccw,
-                            } => WasmSketchSegment::Arc {
-                                start: [start.x, start.y],
-                                end: [end.x, end.y],
-                                center: [center.x, center.y],
-                                ccw: *ccw,
-                            },
-                        })
-                        .collect();
+                    if holes.as_ref().is_some_and(|h| !h.is_empty()) {
+                        return Err(JsError::new(
+                            "interior hole loops are not supported for revolve",
+                        ));
+                    }
+                    let wasm_segments: Vec<WasmSketchSegment> =
+                        segments.iter().map(ir_segment_to_wasm).collect();
 
                     let profile = WasmSketchProfile {
                         origin: [origin.x, origin.y, origin.z],
                         x_dir: [x_dir.x, x_dir.y, x_dir.z],
                         y_dir: [y_dir.x, y_dir.y, y_dir.z],
                         segments: wasm_segments,
+                        holes: None,
                     };
 
                     let profile_json = serde_json::to_string(&profile).map_err(|e| {
@@ -3835,6 +3871,7 @@ fn evaluate_node(doc: &vcad_ir::Document, node_id: vcad_ir::NodeId) -> Result<So
                 origin: [0.0, 0.0, 0.0],
                 x_dir: [1.0, 0.0, 0.0],
                 y_dir: [0.0, 1.0, 0.0],
+                holes: None,
                 segments,
             };
             let profile_json = serde_json::to_string(&profile).map_err(|e| {

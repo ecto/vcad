@@ -523,6 +523,24 @@ impl Solid {
         })
     }
 
+    /// Create a solid by extruding a sketch profile with interior holes.
+    ///
+    /// Hole loops are closed segment loops in the outer profile's 2D sketch
+    /// coordinate system; each becomes an interior wall of the resulting
+    /// solid directly (no boolean Difference pass). See
+    /// [`vcad_kernel_sketch::extrude_with_holes`] for preconditions.
+    pub fn extrude_with_holes(
+        profile: vcad_kernel_sketch::SketchProfile,
+        holes: &[Vec<vcad_kernel_sketch::SketchSegment>],
+        direction: Vec3,
+    ) -> Result<Self, vcad_kernel_sketch::SketchError> {
+        let brep = vcad_kernel_sketch::extrude_with_holes(&profile, holes, direction)?;
+        Ok(Solid {
+            repr: SolidRepr::BRep(Box::new(brep)),
+            segments: 32,
+        })
+    }
+
     /// Create a solid by extruding a sketch profile with twist and/or scale.
     ///
     /// # Arguments
