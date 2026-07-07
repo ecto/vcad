@@ -29,6 +29,7 @@ import {
   registryToolDescriptors,
   dispatchRegistryTool,
 } from "../tools/registry-dispatch.js";
+import { getArtifactFile, clearArtifacts } from "../tools/artifact-store.js";
 import { slimPreviewForInlineUi } from "../server.js";
 import {
   createRobotEnv,
@@ -40,6 +41,7 @@ import {
 import { existsSync, unlinkSync, mkdtempSync, rmSync } from "node:fs";
 import { resolve, join } from "node:path";
 import { tmpdir } from "node:os";
+import { createHash } from "node:crypto";
 
 /** Minimal Document with one cube part — replaces what createCadDocument
  *  used to build for downstream tests. */
@@ -131,6 +133,83 @@ describe("session lifecycle", () => {
   it("close_document on unknown id reports closed: false", () => {
     const out = closeDocument({ document_id: "doc_missing" });
     expect(JSON.parse(out.content[0].text).closed).toBe(false);
+  });
+});
+
+describe("get_document returns the IR body (issue #278)", () => {
+  // Regression: get_document is documented to "Return the full IR Document
+  // JSON" but callers observed only a {document_id} stub — useless for
+  // snapshotting board state or handing the document to another connection.
+
+  let prevCap: string | undefined;
+
+  beforeEach(() => {
+    prevCap = process.env.MCP_MAX_INLINE_ARTIFACT_BYTES;
+    clearArtifacts();
+  });
+
+  afterEach(() => {
+    if (prevCap === undefined) delete process.env.MCP_MAX_INLINE_ARTIFACT_BYTES;
+    else process.env.MCP_MAX_INLINE_ARTIFACT_BYTES = prevCap;
+    clearArtifacts();
+  });
+
+  it("a small document comes back with its parts and nodes inline", () => {
+    const open = openDocument({ initial: makeCubeDoc() });
+    const { document_id } = JSON.parse(open.content[0].text);
+
+    const result = getDocumentTool({ document_id });
+    const doc = JSON.parse(result.content[0].text);
+
+    // The IR body — not a {document_id} stub.
+    expect(Object.keys(doc)).not.toEqual(["document_id"]);
+    expect(doc.nodes["1"].op.type).toBe("Cube");
+    expect(doc.roots).toHaveLength(1);
+    expect(doc.version).toBe("0.1");
+  });
+
+  it("an oversized document offloads to the artifact store with a verifiable manifest", () => {
+    // Tighten the inline cap so the offload branch triggers without building
+    // a 64 KiB doc (remote.test.ts covers the default cap value).
+    process.env.MCP_MAX_INLINE_ARTIFACT_BYTES = "2048";
+
+    const big = makeCubeDoc();
+    for (let i = 2; i <= 60; i++) {
+      big.nodes[String(i)] = {
+        id: i,
+        name: `padding_cube_${i}`,
+        op: { type: "Cube", size: { x: i, y: i, z: i } },
+      };
+      big.roots.push({ root: i, material: "default" });
+    }
+    expect(JSON.stringify(big).length).toBeGreaterThan(2048);
+
+    const open = openDocument({ initial: big });
+    const { document_id } = JSON.parse(open.content[0].text);
+
+    const result = getDocumentTool({ document_id });
+    const handle = JSON.parse(result.content[0].text);
+
+    // Compact handle, not the IR — but with enough to act on.
+    expect(handle.document_id).toBe(document_id);
+    expect(handle.parts).toBe(60);
+    expect(handle.nodes).toBe(60);
+    expect(handle.artifact_id).toMatch(/^art_/);
+    expect(handle.artifact_url).toContain(`/artifacts/${handle.artifact_id}`);
+    expect(handle.manifest).toHaveLength(1);
+    expect(handle.manifest[0].file).toBe(`${document_id}.vcad`);
+
+    // The stored bytes ARE the full IR, and the manifest sha256 verifies them.
+    const stored = getArtifactFile(handle.artifact_id, `${document_id}.vcad`);
+    expect(stored).not.toBeNull();
+    const sha = createHash("sha256").update(stored!.buf).digest("hex");
+    expect(sha).toBe(handle.manifest[0].sha256);
+    const roundTripped = JSON.parse(stored!.buf.toString("utf8")) as Document;
+    expect(Object.keys(roundTripped.nodes)).toHaveLength(60);
+    expect(roundTripped.roots).toHaveLength(60);
+
+    // The session stays live — the handle is a snapshot, not a close.
+    expect(documents.has(document_id)).toBe(true);
   });
 });
 

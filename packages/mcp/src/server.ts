@@ -947,7 +947,7 @@ export async function createServer(
       {
         name: "get_document",
         description:
-          "Return the full IR Document JSON for an open session. Use after a series of mutations to capture the result, or to feed into `export_cad` / `open_in_browser`.",
+          "Return the full IR Document JSON for an open session. Use after a series of mutations to capture the result, or to feed into `export_cad` / `open_in_browser`. Very large documents come back as a compact artifact handle instead ({document_id, artifact_url, manifest with sha256, …}) — download the full IR at `artifact_url`.",
         inputSchema: getDocumentSchema,
         // Widget-callable: the viewer's "Open in vcad.io" button fetches
         // the IR through this tool to build the deep link.
