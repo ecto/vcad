@@ -414,6 +414,12 @@ pub fn face_sample_point(brep: &BRepSolid, face_id: FaceId) -> Point3 {
     match surface.surface_type() {
         SurfaceKind::Plane => centroid,
         SurfaceKind::Cylinder => {
+            // Wavy band faces (oblique boolean cuts) have boundaries whose v
+            // varies with u; the u-range-midpoint heuristic below can land
+            // entirely outside such a face. Sample inside the band instead.
+            if let Some(p) = crate::cyl_band::band_sample_point(brep, face_id) {
+                return p;
+            }
             // For cylindrical faces, compute a point ON the surface at the middle
             // of the face's U (angular) range. The boundary vertex centroid may
             // be inside the cylinder, not on its surface, leading to wrong classification.

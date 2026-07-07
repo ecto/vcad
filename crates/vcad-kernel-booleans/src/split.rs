@@ -21,21 +21,78 @@ pub struct SplitResult {
     pub sub_faces: Vec<FaceId>,
 }
 
+/// For a sampled intersection curve, collect the polyline points strictly
+/// between the entry and exit points (ordered entry → exit), so the cut
+/// edge can follow the true curve instead of a single chord. A chord
+/// disagrees with the curved-side split boundary by the arc's sagitta,
+/// which is enough to flip classification probes near the cut (the torr
+/// B1 family). Returns an empty list for non-sampled curves.
+fn cut_polyline_between(
+    curve: &IntersectionCurve,
+    entry_point: &Point3,
+    exit_point: &Point3,
+) -> Vec<Point3> {
+    let IntersectionCurve::Sampled(points) = curve else {
+        return Vec::new();
+    };
+    if points.len() < 3 {
+        return Vec::new();
+    }
+    // Project a point onto the polyline: (segment index + fraction) as a
+    // scalar parameter in [0, N−1].
+    let project = |p: &Point3| -> f64 {
+        let mut best = 0.0f64;
+        let mut best_d = f64::INFINITY;
+        for i in 0..points.len() - 1 {
+            let a = points[i];
+            let b = points[i + 1];
+            let ab = b - a;
+            let len2 = ab.norm_squared();
+            let t = if len2 < 1e-18 {
+                0.0
+            } else {
+                ((*p - a).dot(ab) / len2).clamp(0.0, 1.0)
+            };
+            let q = a + t * ab;
+            let d = (*p - q).norm_squared();
+            if d < best_d {
+                best_d = d;
+                best = i as f64 + t;
+            }
+        }
+        best
+    };
+    let s_entry = project(entry_point);
+    let s_exit = project(exit_point);
+    let (lo, hi, rev) = if s_entry <= s_exit {
+        (s_entry, s_exit, false)
+    } else {
+        (s_exit, s_entry, true)
+    };
+    let mut via: Vec<Point3> = points
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| (*i as f64) > lo + 1e-9 && (*i as f64) < hi - 1e-9)
+        .map(|(_, p)| *p)
+        .collect();
+    if rev {
+        via.reverse();
+    }
+    via
+}
+
 /// Split a face along an intersection curve.
 ///
 /// The curve must already be trimmed to the face's domain. This function:
 /// 1. Projects the curve into UV space
 /// 2. Finds where it enters/exits the face boundary
 /// 3. Splits the boundary loop at entry/exit points
-/// 4. Creates two new face loops
-///
-/// For the initial implementation, this handles the common case of a
-/// planar face split by a line segment. The line must cross the face
-/// boundary at exactly 2 points.
+/// 4. Creates two new face loops, joined along the curve's polyline (or a
+///    straight chord for analytic curves)
 pub fn split_face_by_curve(
     brep: &mut BRepSolid,
     face_id: FaceId,
-    _curve: &IntersectionCurve,
+    curve: &IntersectionCurve,
     entry_point: &Point3,
     exit_point: &Point3,
 ) -> SplitResult {
@@ -87,6 +144,10 @@ pub fn split_face_by_curve(
     // Loop 1: entry_point → (edges from entry to exit) → exit_point → (cut back)
     // Loop 2: exit_point → (edges from exit to entry) → entry_point → (cut back)
 
+    // The cut edge between exit and entry follows the true intersection
+    // curve when it is sampled (via points), not a single chord.
+    let via = cut_polyline_between(curve, entry_point, exit_point);
+
     let mut loop1_points: Vec<Point3> = Vec::new();
     let mut loop2_points: Vec<Point3> = Vec::new();
 
@@ -98,6 +159,8 @@ pub fn split_face_by_curve(
         idx = (idx + 1) % n;
     }
     loop1_points.push(*exit_point);
+    // Close along the cut curve: exit → entry (via reversed).
+    loop1_points.extend(via.iter().rev());
 
     // Walk from exit_edge to entry_edge (other direction)
     loop2_points.push(*exit_point);
@@ -107,6 +170,8 @@ pub fn split_face_by_curve(
         idx = (idx + 1) % n;
     }
     loop2_points.push(*entry_point);
+    // Close along the cut curve: entry → exit (via forward).
+    loop2_points.extend(via.iter());
 
     // Remove consecutive duplicate vertices (can happen when split points
     // coincide with existing vertices)
@@ -221,7 +286,7 @@ fn snap_point(p: Point3) -> Point3 {
 }
 
 /// Find an existing vertex at the given point, or create a new one.
-fn find_or_create_vertex(
+pub(crate) fn find_or_create_vertex(
     brep: &mut BRepSolid,
     point: &Point3,
     tolerance: f64,
@@ -2369,29 +2434,63 @@ pub fn split_cylindrical_face_by_line(
 /// This dispatches to the appropriate split method based on the curve type:
 /// - Circle: horizontal split (perpendicular plane intersection)
 /// - Line: vertical split (parallel plane intersection)
-/// - Sampled: general oblique split - TODO
+/// - Sampled: general oblique split via the band machinery (`cyl_band`)
+///
+/// Faces with wavy (non-constant-v) boundaries — produced by earlier
+/// oblique splits — must NEVER reach the legacy rectangular splitters,
+/// which infer a full-height rectangle from the v-extremes of the loop and
+/// would emit overlapping phantom geometry. When the band machinery
+/// declines such a face (curve misses it, or lands on its boundary), the
+/// face is returned unsplit instead.
 pub fn split_cylindrical_face(
     brep: &mut BRepSolid,
     face_id: FaceId,
     curve: &IntersectionCurve,
 ) -> SplitResult {
+    let wavy = crate::cyl_band::face_is_wavy_band(brep, face_id);
     match curve {
         IntersectionCurve::Circle(circle) => {
+            if wavy {
+                return crate::cyl_band::split_wavy_band_by_circle(brep, face_id, circle)
+                    .unwrap_or(SplitResult {
+                        sub_faces: vec![face_id],
+                    });
+            }
             split_cylindrical_face_by_circle(brep, face_id, circle)
         }
-        IntersectionCurve::Line(line) => split_cylindrical_face_by_line(brep, face_id, line),
+        IntersectionCurve::Line(line) => {
+            if wavy {
+                return crate::cyl_band::split_wavy_band_by_line(brep, face_id, line).unwrap_or(
+                    SplitResult {
+                        sub_faces: vec![face_id],
+                    },
+                );
+            }
+            split_cylindrical_face_by_line(brep, face_id, line)
+        }
         IntersectionCurve::Sampled(points) => {
-            // General oblique cylinder splits are not yet implemented. Log
-            // so the caller at least sees the operation silently failed
-            // instead of producing a geometrically wrong result.
-            eprintln!(
-                "[vcad-kernel-booleans] split_cylindrical_face: oblique Sampled \
-                 intersection ({} points) not yet supported; returning face unsplit. \
-                 Downstream boolean result will be incorrect for this face.",
-                points.len()
-            );
-            SplitResult {
-                sub_faces: vec![face_id],
+            // Oblique intersection (e.g. a tilted plane crossing the
+            // cylinder in an ellipse): split in (u, v) parameter space via
+            // the band machinery.
+            match crate::cyl_band::split_cylindrical_face_by_sampled(brep, face_id, points) {
+                Some(result) => result,
+                None => {
+                    // The curve is not a closed single-valued profile (e.g.
+                    // a bounded cylinder-cylinder quartic arc) or the face
+                    // is outside the band family. Log so the caller sees
+                    // the operation failed instead of silently producing a
+                    // geometrically wrong result.
+                    eprintln!(
+                        "[vcad-kernel-booleans] split_cylindrical_face: Sampled \
+                         intersection ({} points) is not a closed single-valued \
+                         profile on this face; returning face unsplit. Downstream \
+                         boolean result may be incorrect for this face.",
+                        points.len()
+                    );
+                    SplitResult {
+                        sub_faces: vec![face_id],
+                    }
+                }
             }
         }
         IntersectionCurve::Empty | IntersectionCurve::Point(_) => SplitResult {

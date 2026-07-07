@@ -366,50 +366,64 @@ fn apply_splits_to_solid(
                         }
                     }
 
-                    // Re-trim the curve to THIS sub-face's boundary
-                    let segs = trim::trim_curve_to_face(&curve, fid, solid, 64);
-                    debug_bool!(
-                        "  Split {} face {:?}: re-trim got {} segs",
-                        solid_name,
-                        fid,
-                        segs.len()
-                    );
-                    if segs.is_empty() {
-                        // Curve doesn't cross this face, keep it unchanged
-                        debug_bool!("    -> empty segs, keeping face unchanged");
-                        new_faces.push(fid);
-                        continue;
-                    }
-                    // Use the first segment's trimmed entry/exit
-                    let seg = &segs[0];
-                    let entry = evaluate_curve(&curve, seg.t_start);
-                    let exit = evaluate_curve(&curve, seg.t_end);
-                    let len = (exit - entry).norm();
-                    debug_bool!(
-                        "    -> entry=({:.2},{:.2},{:.2}) exit=({:.2},{:.2},{:.2}) len={:.4}",
-                        entry.x,
-                        entry.y,
-                        entry.z,
-                        exit.x,
-                        exit.y,
-                        exit.z,
-                        len
-                    );
-                    if len < 1e-6 {
-                        debug_bool!("    -> too short, keeping face unchanged");
-                        new_faces.push(fid);
-                        continue;
-                    }
-                    let result = split::split_face_by_curve(solid, fid, &curve, &entry, &exit);
-                    debug_bool!(
-                        "    -> split result: {} sub-faces {:?}",
-                        result.sub_faces.len(),
-                        result.sub_faces
-                    );
-                    if result.sub_faces.len() >= 2 {
-                        new_faces.extend(result.sub_faces);
-                    } else {
-                        new_faces.push(fid);
+                    // Generic path: re-trim the curve to each (sub-)face and
+                    // split along every trimmed segment. A curve can cross a
+                    // face more than once (e.g. an ellipse clipping two
+                    // corners), and the first listed segment can be a
+                    // phantom that fails to split — so each face tries every
+                    // segment, and successful splits re-queue their
+                    // sub-faces for the remaining crossings.
+                    let mut pending = vec![fid];
+                    let mut passes = 0usize;
+                    while let Some(cur) = pending.pop() {
+                        passes += 1;
+                        if passes > 32 {
+                            // Defensive bound; no realistic curve crosses a
+                            // face this many times.
+                            new_faces.push(cur);
+                            continue;
+                        }
+                        let segs = trim::trim_curve_to_face(&curve, cur, solid, 64);
+                        debug_bool!(
+                            "  Split {} face {:?}: re-trim got {} segs",
+                            solid_name,
+                            cur,
+                            segs.len()
+                        );
+                        let mut split_applied = false;
+                        for seg in &segs {
+                            let entry = evaluate_curve(&curve, seg.t_start);
+                            let exit = evaluate_curve(&curve, seg.t_end);
+                            let len = (exit - entry).norm();
+                            debug_bool!(
+                                "    -> entry=({:.2},{:.2},{:.2}) exit=({:.2},{:.2},{:.2}) len={:.4}",
+                                entry.x,
+                                entry.y,
+                                entry.z,
+                                exit.x,
+                                exit.y,
+                                exit.z,
+                                len
+                            );
+                            if len < 1e-6 {
+                                continue;
+                            }
+                            let result =
+                                split::split_face_by_curve(solid, cur, &curve, &entry, &exit);
+                            debug_bool!(
+                                "    -> split result: {} sub-faces {:?}",
+                                result.sub_faces.len(),
+                                result.sub_faces
+                            );
+                            if result.sub_faces.len() >= 2 {
+                                pending.extend(result.sub_faces);
+                                split_applied = true;
+                                break;
+                            }
+                        }
+                        if !split_applied {
+                            new_faces.push(cur);
+                        }
                     }
                 }
             }
