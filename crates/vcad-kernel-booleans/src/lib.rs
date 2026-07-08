@@ -18,7 +18,6 @@ mod api;
 pub mod bbox;
 pub mod classify;
 mod cyl_band;
-mod freeze;
 pub mod cyl_cyl;
 pub mod mesh;
 mod no_crossing;
@@ -1954,9 +1953,4 @@ mod tests {
             dev * 100.0
         );
     }
-}
-
-/// Test-only export of the freeze pass.
-pub fn freeze_circle_loops_for_test(brep: &mut vcad_kernel_primitives::BRepSolid, segments: u32) {
-    freeze::freeze_circle_loops(brep, segments);
 }

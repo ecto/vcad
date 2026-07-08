@@ -1,6 +1,9 @@
-//! Debug probe: dump face-loop conformity of a cube∪cube result.
-//! A conforming topology has every loop edge (vertex-pair) traversed once
-//! in each direction across the whole shell.
+//! Regression: boolean results must have CONFORMING face loops — every
+//! loop edge (vertex-pair) traversed once in each direction across the
+//! shell. Trimming used to split one face's boundary at intersection
+//! points while the neighbor kept the whole edge (a T-junction), so the
+//! sewn shell could never close; `repair::split_edges_at_interior_vertices`
+//! heals this.
 
 use std::collections::HashMap;
 
@@ -8,7 +11,7 @@ use vcad_kernel_booleans::{boolean_op, BooleanOp, BooleanResult};
 use vcad_kernel_math::Transform;
 use vcad_kernel_primitives::{make_cube, BRepSolid};
 
-fn loop_conformity(brep: &BRepSolid, label: &str) {
+fn loop_conformity(brep: &BRepSolid, label: &str) -> usize {
     let topo = &brep.topology;
     let solid = &topo.solids[brep.solid_id];
     let shell = &topo.shells[solid.outer_shell];
@@ -48,45 +51,16 @@ fn loop_conformity(brep: &BRepSolid, label: &str) {
         }
     }
     let open: Vec<_> = net.iter().filter(|(_, n)| **n != 0).collect();
-    println!("{label}: faces={nfaces} loop-edges={} nonconforming={}", net.len(), open.len());
+    println!(
+        "{label}: faces={nfaces} loop-edges={} nonconforming={}",
+        net.len(),
+        open.len()
+    );
     for ((a, b), n) in open.iter().take(20) {
         let p = |k: &[i64; 3]| [k[0] as f64 * q, k[1] as f64 * q, k[2] as f64 * q];
         println!("  net={n:+} edge {:?} -> {:?}", p(a), p(b));
     }
-}
-
-#[test]
-fn frozen_cylinder_renders() {
-    use vcad_kernel_primitives::make_cylinder;
-    use vcad_kernel_tessellate::tessellate_brep;
-    let mut cyl = make_cylinder(22.5, 12.57, 32);
-    vcad_kernel_booleans::freeze_circle_loops_for_test(&mut cyl, 32);
-    loop_conformity(&cyl, "frozen cylinder topo");
-    for segs in [32u32, 256] {
-        let mesh = tessellate_brep(&cyl, segs);
-        let mut net = std::collections::HashMap::new();
-        for t in 0..mesh.indices.len() / 3 {
-            for k in 0..3 {
-                let a = mesh.indices[t * 3 + k];
-                let b = mesh.indices[t * 3 + (k + 1) % 3];
-                let key = (a.min(b), a.max(b));
-                *net.entry(key).or_insert(0i64) += if a < b { 1 } else { -1 };
-            }
-        }
-        let open = net.values().filter(|n| **n != 0).count();
-        let mut vol = 0.0f64;
-        for t in 0..mesh.indices.len() / 3 {
-            let p = |i: usize| {
-                let b = mesh.indices[t * 3 + i] as usize * 3;
-                [mesh.vertices[b] as f64, mesh.vertices[b + 1] as f64, mesh.vertices[b + 2] as f64]
-            };
-            let (a, b, c) = (p(0), p(1), p(2));
-            vol += (a[0] * (b[1] * c[2] - b[2] * c[1]) - a[1] * (b[0] * c[2] - b[2] * c[0])
-                + a[2] * (b[0] * c[1] - b[1] * c[0])) / 6.0;
-        }
-        println!("frozen cyl segs={segs}: tris={} open={} vol={:.2} (analytic 19993.3)",
-            mesh.indices.len() / 3, open, vol);
-    }
+    open.len()
 }
 
 #[test]
@@ -98,6 +72,9 @@ fn annulus_conformity() {
         BooleanResult::BRep(b) => *b,
         _ => panic!(),
     };
+    // NOTE: differences copy B faces with the Reversed flag but unchanged
+    // loop order, so a directed census reads ±2 on the bore seams even
+    // though the emitted mesh cancels — informational only, no assertion.
     loop_conformity(&annulus, "annulus");
     // dump face loop shapes
     let topo = &annulus.topology;
@@ -131,8 +108,7 @@ fn cube_union_cube_conformity() {
         .drain(..)
         .map(|s| s.transform(&t))
         .collect();
-    match boolean_op(&a, &b, BooleanOp::Union, 32).expect("boolean") {
-        BooleanResult::BRep(brep) => loop_conformity(&brep, "cube ∪ cube"),
-        _ => panic!("expected BRep result"),
-    }
+    let BooleanResult::BRep(brep) = boolean_op(&a, &b, BooleanOp::Union, 32).expect("boolean");
+    let open = loop_conformity(&brep, "cube ∪ cube");
+    assert_eq!(open, 0, "cube ∪ cube topology must be conforming");
 }

@@ -457,14 +457,6 @@ pub(crate) fn brep_boolean(
     let mut a = solid_a.clone();
     let mut b = solid_b.clone();
 
-    // Freeze analytic full-circle edges into canonical polylines so the
-    // whole pipeline works on one concrete boundary representation (see
-    // crate::freeze). Without this, results that keep an untouched analytic
-    // face are watertight only by resolution coincidence, and any further
-    // boolean on them cannot conform.
-    crate::freeze::freeze_circle_loops(&mut a, segments);
-    crate::freeze::freeze_circle_loops(&mut b, segments);
-
     // 1. Find candidate face pairs via AABB filtering
     let pairs = bbox::find_candidate_face_pairs(&a, &b);
     debug_bool!("\n--- Stage 1: AABB filtering ---");

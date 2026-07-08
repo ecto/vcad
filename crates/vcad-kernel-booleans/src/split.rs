@@ -602,18 +602,17 @@ pub fn split_planar_face_by_circle(
                 if circle_inside && cap_radius > 1e-12 {
                     let tolerance = 1e-6;
 
-                    // Generate circle vertices for the inner disk face —
-                    // canonical sampling so the cylinder wall bordering
-                    // this same circle emits identical points.
-                    let circle_normal =
-                        circle.x_dir.into_inner().cross(&circle.y_dir.into_inner());
-                    let circle_verts: Vec<Point3> = canonical_circle_points(
-                        circle.center,
-                        circle.radius,
-                        circle_normal,
-                        segments,
-                    );
-                    let segments = circle_verts.len() as u32;
+                    // Generate circle vertices for the inner disk face
+                    let circle_verts: Vec<Point3> = (0..segments)
+                        .map(|i| {
+                            let theta = 2.0 * std::f64::consts::PI * (i as f64) / (segments as f64);
+                            let (sin_t, cos_t) = theta.sin_cos();
+                            circle.center
+                                + circle.radius
+                                    * (cos_t * circle.x_dir.into_inner()
+                                        + sin_t * circle.y_dir.into_inner())
+                        })
+                        .collect();
 
                     // Create inner disk face (will be classified as "inside" and removed)
                     let inner_verts: Vec<_> = circle_verts
@@ -747,11 +746,16 @@ pub fn split_planar_face_by_circle(
     }
 
     // Generate circle vertices (CCW when viewed from face normal direction)
-    // on the canonical grid so bordering faces emit identical points.
-    let circle_normal = circle.x_dir.into_inner().cross(&circle.y_dir.into_inner());
-    let circle_verts: Vec<Point3> =
-        canonical_circle_points(circle.center, circle.radius, circle_normal, segments);
-    let segments = circle_verts.len() as u32;
+    // The circle's normal should align with the plane normal
+    let circle_verts: Vec<Point3> = (0..segments)
+        .map(|i| {
+            let theta = 2.0 * std::f64::consts::PI * (i as f64) / (segments as f64);
+            let (sin_t, cos_t) = theta.sin_cos();
+            circle.center
+                + circle.radius
+                    * (cos_t * circle.x_dir.into_inner() + sin_t * circle.y_dir.into_inner())
+        })
+        .collect();
 
     // Create inner face (disk) - uses circle vertices as its outer loop
     // The inner face's loop should be oriented the same as the parent face
@@ -2157,10 +2161,14 @@ pub fn split_cylindrical_face_by_circle(
 }
 
 /// Compute the U parameter for a point on a cylinder surface.
-/// Segment count for discretizing a circle of `radius` so chord sag stays
-/// below 5 µm (floored at the caller's `segments`, capped at 512). Both the
-/// planar-cap and cylinder-wall splitters must use this same count so their
-/// shared arcs discretize identically.
+/// Segment count for discretizing a circle. Both the planar-cap and
+/// cylinder-wall splitters must use this same count so their shared arcs
+/// discretize identically. It also has to agree with the display
+/// tessellator's re-sampling of ANALYTIC circle boundaries that survive the
+/// boolean untouched (`TessellationParams::from_segments(n)` resamples at
+/// exactly `n`), so until boolean results freeze every boundary (see the
+/// kernel-seam-freeze WIP branch) this must stay at the caller's count —
+/// sag-adaptive densification here reopens every analytic/frozen seam.
 pub(crate) fn arc_segments(radius: f64, segments: u32) -> u32 {
     const SAG: f64 = 5e-3;
     let n = if radius > SAG {
@@ -2284,59 +2292,6 @@ pub(crate) fn canonical_arc_points(
     }
     pts.push(end);
     pts
-}
-
-/// Canonical full-circle polyline: all `arc_segments` grid points, CCW
-/// about `normal`, starting at grid angle 0 in the canonical frame. Any two
-/// faces sampling the same circle get identical vertex sets.
-pub(crate) fn canonical_circle_points(
-    center: Point3,
-    radius: f64,
-    normal: vcad_kernel_math::Vec3,
-    segments: u32,
-) -> Vec<Point3> {
-    use std::f64::consts::PI;
-    let mut n_hat = normal.normalize();
-    let mut flipped = false;
-    for c in [n_hat.x, n_hat.y, n_hat.z] {
-        if c.abs() > 1e-9 {
-            if c < 0.0 {
-                n_hat = -n_hat;
-                flipped = true;
-            }
-            break;
-        }
-    }
-    let cand = [
-        vcad_kernel_math::Vec3::new(1.0, 0.0, 0.0),
-        vcad_kernel_math::Vec3::new(0.0, 1.0, 0.0),
-        vcad_kernel_math::Vec3::new(0.0, 0.0, 1.0),
-    ];
-    let e = cand
-        .into_iter()
-        .min_by(|a, b| {
-            a.dot(&n_hat)
-                .abs()
-                .partial_cmp(&b.dot(&n_hat).abs())
-                .unwrap()
-        })
-        .unwrap();
-    let x_axis = (e - n_hat * e.dot(&n_hat)).normalize();
-    let y_axis = n_hat.cross(&x_axis);
-    let n = arc_segments(radius, segments);
-    let step = 2.0 * PI / n as f64;
-    (0..n)
-        .map(|k| {
-            // CCW about the ORIGINAL normal.
-            let a = if flipped {
-                -(k as f64) * step
-            } else {
-                k as f64 * step
-            };
-            let (sin_a, cos_a) = a.sin_cos();
-            snap_point(center + radius * (cos_a * x_axis + sin_a * y_axis))
-        })
-        .collect()
 }
 
 fn compute_cylinder_u(point: &Point3, cyl: &vcad_kernel_geom::CylinderSurface) -> f64 {
@@ -2702,13 +2657,9 @@ pub fn split_cylindrical_face(
     segments: u32,
 ) -> SplitResult {
     let wavy = crate::cyl_band::face_is_wavy_band(brep, face_id);
-    // Dense (frozen-polyline) loops must go through the band machinery: the
-    // legacy rectangular splitters re-emit analytic seam loops, silently
-    // thawing a frozen boundary back into an unconformable one.
-    let dense = brep.topology.loop_len(brep.topology.faces[face_id].outer_loop) > 6;
     match curve {
         IntersectionCurve::Circle(circle) => {
-            if wavy || dense {
+            if wavy {
                 return crate::cyl_band::split_wavy_band_by_circle(brep, face_id, circle, true)
                     .unwrap_or(SplitResult {
                         sub_faces: vec![face_id],
@@ -2726,7 +2677,7 @@ pub fn split_cylindrical_face(
                 .unwrap_or(result)
         }
         IntersectionCurve::Line(line) => {
-            if wavy || dense {
+            if wavy {
                 return crate::cyl_band::split_wavy_band_by_line(brep, face_id, line, true)
                     .unwrap_or(SplitResult {
                         sub_faces: vec![face_id],
@@ -2769,7 +2720,12 @@ pub fn split_cylindrical_face(
         IntersectionCurve::TwoLines(line1, _line2) => {
             // TwoLines should be expanded before calling this function.
             // If we get here, just process the first line.
-            split_cylindrical_face(brep, face_id, &IntersectionCurve::Line(line1.clone()), segments)
+            split_cylindrical_face(
+                brep,
+                face_id,
+                &IntersectionCurve::Line(line1.clone()),
+                segments,
+            )
         }
         IntersectionCurve::TwoSampled(_, _) => {
             // TwoSampled is the analytic Steinmetz pair from
