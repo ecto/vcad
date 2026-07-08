@@ -228,7 +228,7 @@
   },
   {
     "name": "quote_manufacturing",
-    "description": "Quote manufacturing a part: measures the design, runs light DFM, and returns margin-inclusive price options per fab (pcb/cnc/3dprint/sheet_metal/cast_metal). Pass `ir` (inline Document \u2014 stateless, no open_document needed, serverless-safe, parallel-safe) OR a `document_id` from an open session. Persists a quote + a QUOTED order. Phase 0 is quote-only \u2014 prices are estimates and ordering/payment ship next; no money moves. For sheet_metal the result includes `fab_handoff`: curated US instant-quote shops (SendCutSend/OSH Cut/Fabworks), the exact file recipe (DXF via sheet_metal_unfold or folded STEP via export_cad), and what to enter at upload \u2014 everything needed to finish the order on the fab's site today.",
+    "description": "Quote manufacturing a part: measures the design, runs light DFM, and returns margin-inclusive price options per fab (pcb/cnc/3dprint/sheet_metal/cast_metal). Pass `ir` (inline Document \u2014 stateless, no open_document needed, serverless-safe, parallel-safe) OR a `document_id` from an open session. Persists a quote + a QUOTED order. Phase 0 is quote-only \u2014 prices are estimates and ordering/payment ship next; no money moves. For sheet_metal the result includes `fab_handoff`: curated US instant-quote shops (SendCutSend/OSH Cut/Fabworks), the exact file recipe (DXF via sheet_metal_unfold or folded STEP via export_cad), and what to enter at upload \u2014 everything needed to finish the order on the fab's site today. Mounts the inline viewer's order dock, so the quote and its order lifecycle render alongside the model.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -286,6 +286,15 @@
         "process",
         "quantity"
       ]
+    },
+    "_meta": {
+      "ui": {
+        "resourceUri": "ui://vcad/viewer"
+      },
+      "ui/resourceUri": "ui://vcad/viewer",
+      "openai/outputTemplate": "ui://vcad/viewer-openai.html",
+      "openai/toolInvocation/invoking": "Modeling geometry\u2026",
+      "openai/toolInvocation/invoked": "Model updated"
     }
   },
   {
@@ -326,7 +335,7 @@
   },
   {
     "name": "authorize_spend",
-    "description": "Propose a spend authorization for a QUOTED order. Creates a DB-backed, revocable authorization (status pending_human) and records the proposal on the session's event log. A HUMAN must approve it in the vcad app before place_order can charge \u2014 the agent cannot approve its own spend. Flag-gated (test-mode); no money moves here.",
+    "description": "Propose a spend authorization for a QUOTED order. Creates a DB-backed, revocable authorization (status pending_human) and records the proposal on the session's event log. A HUMAN must approve it in the vcad app before place_order can charge \u2014 the agent cannot approve its own spend; when the client supports URL elicitation the approval page is offered to the human in-band. Flag-gated (test-mode); no money moves here.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -347,7 +356,7 @@
   },
   {
     "name": "place_order",
-    "description": "Place a QUOTED order once its authorization has been human-approved: performs one atomic wallet debit and moves the order to PAID (fab submission follows in a later step). Refuses if the authorization is still pending approval. Flag-gated (test-mode).",
+    "description": "Place a QUOTED order once its authorization has been human-approved: performs one atomic wallet debit and moves the order to PAID (fab submission follows in a later step). Refuses if the authorization is still pending approval, if the geometry changed since the quote (doc_hash mismatch \u2014 re-quote), or if the design's persisted clearance claims fail or cannot be re-verified (fail-closed receipt gate). Flag-gated (test-mode).",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -372,6 +381,30 @@
         "order_id",
         "authorization_id"
       ]
+    }
+  },
+  {
+    "name": "get_order_feed",
+    "description": "App-only: the order-dock feed for a document \u2014 orders with fused lifecycle chips, joined quote details, authorization status (+ approve URL while pending), receipt status, and wallet balance. Polled by the inline viewer; read-only.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "document_id": {
+          "type": "string",
+          "description": "Session/document id whose orders to feed."
+        }
+      },
+      "required": [
+        "document_id"
+      ]
+    },
+    "_meta": {
+      "openai/widgetAccessible": true,
+      "ui": {
+        "visibility": [
+          "app"
+        ]
+      }
     }
   },
   {
@@ -966,6 +999,10 @@
         "document_id": {
           "type": "string",
           "description": "Session id of the document to preview."
+        },
+        "instances": {
+          "type": "boolean",
+          "description": "Return one named node per assembly instance (part-local geometry + node transforms) so the replay viewer can bind FK targets. Falls back to the merged parts preview when the document has no instances."
         }
       },
       "required": [
@@ -994,6 +1031,54 @@
       },
       "required": [
         "document_id"
+      ]
+    },
+    "_meta": {
+      "openai/widgetAccessible": true,
+      "ui": {
+        "visibility": [
+          "app"
+        ]
+      }
+    }
+  },
+  {
+    "name": "get_sim_replay",
+    "description": "Return the recorded joint trajectory and per-step instance transforms for a physics env. Internal to the inline viewer's replay UI \u2014 agents should use gym_observe or record_simulation instead.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "env_id": {
+          "type": "string",
+          "description": "Environment ID returned by create_robot_env"
+        }
+      },
+      "required": [
+        "env_id"
+      ]
+    },
+    "_meta": {
+      "openai/widgetAccessible": true,
+      "ui": {
+        "visibility": [
+          "app"
+        ]
+      }
+    }
+  },
+  {
+    "name": "get_sim_version",
+    "description": "Return a cheap {env_id, step_count, version} change token for a physics env (no FK eval). Internal to the inline viewer's replay poll \u2014 agents should ignore it.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "env_id": {
+          "type": "string",
+          "description": "Environment ID returned by create_robot_env"
+        }
+      },
+      "required": [
+        "env_id"
       ]
     },
     "_meta": {
@@ -2062,7 +2147,7 @@
   },
   {
     "name": "create_robot_env",
-    "description": "Create a physics simulation environment from a vcad assembly. Returns an environment ID that can be used with gym_step, gym_reset, and gym_observe. The environment provides a gym-style interface for RL training.",
+    "description": "Create a physics simulation environment from a vcad assembly. Returns an environment ID that can be used with gym_step, gym_reset, and gym_observe. The environment provides a gym-style interface for RL training. Mounts the inline 3D viewer with a play button \u2014 gym_step rollouts replay right in the chat.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -2094,6 +2179,15 @@
         "document",
         "end_effector_ids"
       ]
+    },
+    "_meta": {
+      "ui": {
+        "resourceUri": "ui://vcad/viewer"
+      },
+      "ui/resourceUri": "ui://vcad/viewer",
+      "openai/outputTemplate": "ui://vcad/viewer-openai.html",
+      "openai/toolInvocation/invoking": "Modeling geometry\u2026",
+      "openai/toolInvocation/invoked": "Model updated"
     }
   },
   {

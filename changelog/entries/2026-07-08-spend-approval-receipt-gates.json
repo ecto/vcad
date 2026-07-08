@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-08-spend-approval-receipt-gates",
+  "version": "0.9.4",
+  "date": "2026-07-08",
+  "category": "feat",
+  "title": "Protocol-native spend approval + receipt-gated ordering",
+  "summary": "authorize_spend carries the approval page to the human via MCP URL elicitation, and place_order fail-closed gates money on doc-hash match and re-verified clearance receipt claims.",
+  "features": ["mcp", "fabricate", "elicitation", "receipts"],
+  "mcpTools": ["authorize_spend", "place_order"]
+}

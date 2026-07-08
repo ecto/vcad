@@ -9,6 +9,8 @@
  * sees only the margin-inclusive total.
  */
 
+import type { ConfiguratorIntent } from "./kerf/contract.js";
+
 /** Manufacturing processes vcad can quote. */
 export type Process = "pcb" | "cnc" | "3dprint" | "sheet_metal" | "cast_metal";
 
@@ -39,8 +41,13 @@ export type OrderState =
   | "CANCELED_BY_FAB"
   | "REFUNDED";
 
-/** Whether a price is a vcad local estimate or a binding fab quote. */
-export type PricingBasis = "estimate" | "binding";
+/**
+ * How firm a price is (aligned with kerf's ACP-CM vocabulary):
+ * "estimate" = vcad's own cost model, never gates money; "quoted" = the fab's
+ * own displayed price via the kerf rail (may gate money where the cart
+ * preserves price); "binding" = fab-committed.
+ */
+export type PricingBasis = "estimate" | "quoted" | "binding";
 
 /** Normalized request a broker hands to each adapter. */
 export interface QuoteRequest {
@@ -70,6 +77,14 @@ export interface QuoteRequest {
   baseCostModel?: "kernel" | "sheet_metal_laser";
   /** Resolved kernel-cost catalog material name (e.g. "Aluminum 6061"). */
   materialCatalog?: string;
+  /**
+   * kerf rail (sheet metal, Wave 0): the fully-built ConfiguratorIntent for a
+   * vendor quote. Constructed by quote_manufacturing — order.ts owns intent
+   * construction so the persisted kerf_intent_hash is computed over the exact
+   * object the adapter sends. The kerf adapter forwards it whole; absent ⇒
+   * the adapter returns null and the generic estimator covers.
+   */
+  kerfIntent?: { intent: ConfiguratorIntent };
 }
 
 /** Lean geometry summary used by the cost models. */
@@ -158,6 +173,14 @@ export interface Quote {
   margin_hidden: true;
   expires_at: string;
   created_at: string;
+  /** kerf intent hash the recommended vendor quote is bound to (kerf rail).
+   *  Geometry/config/quantity edit ⇒ new hash ⇒ the vendor quote is dead. */
+  kerf_intent_hash?: string | null;
+  /** kerf quote-job id — the handle for job-state and evidence lookups. */
+  kerf_job_id?: string | null;
+  /** Pricing basis of the recommended option (agents read this to know
+   *  whether the price is an estimate, a fab-displayed quote, or binding). */
+  pricing_basis_best?: PricingBasis;
 }
 
 /** Server-only economics persisted alongside a quote, never returned. */
@@ -216,6 +239,16 @@ export interface FabArtifactRef {
   manifest: Array<{ file: string; bytes: number; sha256: string }>;
 }
 
+/**
+ * Design-receipt verdict recorded on an order by place_order's receipt gate
+ * (M4). "holds" = every clearance claim re-verified at place time; "stale" /
+ * "violated" never reach a PLACED order (the gate refuses; the refusal also
+ * persists "violated" on the still-QUOTED order so the block survives
+ * session non-residency — only a re-quote resets it); "unverified" =
+ * the document carried no claims (or wasn't resident) — flagged, not blocked.
+ */
+export type OrderReceiptStatus = "holds" | "stale" | "violated" | "unverified";
+
 /** The persisted order lifecycle row. */
 export interface Order {
   order_id: string;
@@ -231,6 +264,13 @@ export interface Order {
   /** Fab files bound to this order, kept out of context (set when an artifact
    *  handle is passed to quote_manufacturing / place_order). */
   fab_artifact?: FabArtifactRef | null;
+  /** Spend authorization proposed/consumed for this order (money plane). */
+  authorization_id: string | null;
+  /** Receipt-gate verdict recorded at place time (see OrderReceiptStatus). */
+  receipt_status: OrderReceiptStatus | null;
+  /** kerf intent hash the order's quote was bound to — the geometry-edit
+   *  tripwire place_order names when it refuses on a doc_hash mismatch. */
+  kerf_intent_hash: string | null;
   created_at: string;
   updated_at: string;
 }

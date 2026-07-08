@@ -46,6 +46,21 @@ const receiptHashEl = document.getElementById("receipt-hash")!;
 const receiptBodyEl = document.getElementById("receipt-body")!;
 const receiptRerunBtn = document.getElementById("receipt-rerun") as HTMLButtonElement;
 const receiptCloseBtn = document.getElementById("receipt-close") as HTMLButtonElement;
+const transportEl = document.getElementById("transport")!;
+const tpPlayBtn = document.getElementById("tp-play") as HTMLButtonElement;
+const tpScrubEl = document.getElementById("tp-scrub") as HTMLInputElement;
+const tpStepEl = document.getElementById("tp-step")!;
+const tpSpeedEl = document.getElementById("tp-speed") as HTMLSelectElement;
+const tpSparkLineEl = document.getElementById("tp-spark-line")!;
+const tpSparkDotEl = document.getElementById("tp-spark-dot")!;
+const tpLiveEl = document.getElementById("tp-live") as HTMLButtonElement;
+const tpJointsEl = document.getElementById("tp-joints")!;
+const tpNoteEl = document.getElementById("tp-note")!;
+const ordersEl = document.getElementById("orders")!;
+const ordersBodyEl = document.getElementById("orders-body")!;
+const ordersCountEl = document.getElementById("orders-count")!;
+const ordersFootEl = document.getElementById("orders-foot")!;
+const ordersToggleBtn = document.getElementById("orders-toggle") as HTMLButtonElement;
 
 // Hostless dev harness (`#dev*`): selection affordances stay active but
 // protocol calls are logged instead of sent.
@@ -316,8 +331,18 @@ new ResizeObserver(resize).observe(stageEl);
 resize();
 
 // ── Animation loop ───────────────────────────────────────────
+// Sim replay playback hook — assigned by the transport section below.
+// Declared here (before animate's first synchronous call) so the rAF
+// loop can guard-call it without a TDZ trap.
+let simTick: ((deltaSeconds: number) => void) | null = null;
+let lastFrameMs = performance.now();
+
 function animate(): void {
   requestAnimationFrame(animate);
+  const now = performance.now();
+  const deltaSeconds = (now - lastFrameMs) / 1000;
+  lastFrameMs = now;
+  if (simTick) simTick(deltaSeconds);
   controls.update();
   renderer.render(scene, camera);
 }
@@ -845,6 +870,43 @@ function findPreviewVersion(result: ToolResultLike): string | null {
   return null;
 }
 
+/** Generic payload finder: structuredContent first (the only carrier
+ *  ChatGPT's widget bridge exposes), then any JSON text block that
+ *  satisfies the predicate (Cursor / stdio fallback). */
+function findPayload<T>(
+  result: ToolResultLike,
+  matches: (o: Record<string, unknown>) => boolean,
+): T | null {
+  const sc = result.structuredContent;
+  if (sc && matches(sc)) return sc as unknown as T;
+  for (const block of result.content ?? []) {
+    if (block?.type !== "text" || !block.text) continue;
+    try {
+      const parsed = JSON.parse(block.text) as unknown;
+      if (
+        parsed &&
+        typeof parsed === "object" &&
+        matches(parsed as Record<string, unknown>)
+      ) {
+        return parsed as T;
+      }
+    } catch {
+      // Not JSON — skip
+    }
+  }
+  return null;
+}
+
+/** The GLB mode reported by get_preview_glb ("instances" when the scene
+ *  carries one named node per assembly instance). */
+function findPreviewMode(result: ToolResultLike): string | null {
+  const hit = findPayload<{ mode?: string }>(
+    result,
+    (o) => typeof o.mode === "string",
+  );
+  return hit?.mode ?? null;
+}
+
 /**
  * Fetch a document's GLB via the app-only preview tool and render it in
  * place. Records the version token so the self-refresh poll knows the
@@ -855,9 +917,15 @@ async function fetchAndRenderGlb(
   docId: string,
   changed: PartsChanged | null,
 ): Promise<void> {
+  // In an instance-driven sim session, geometry refreshes must keep the
+  // per-instance node layout or FK playback would lose its bind targets.
+  const wantInstances = simEnvId != null && simUseInstances;
   const previewResult = (await app.callServerTool({
     name: "get_preview_glb",
-    arguments: { document_id: docId },
+    arguments: {
+      document_id: docId,
+      ...(wantInstances ? { instances: true } : {}),
+    },
   })) as ToolResultLike;
   const glb = findInlineGlb(previewResult);
   if (!glb) {
@@ -866,7 +934,10 @@ async function fetchAndRenderGlb(
   }
   const ver = findPreviewVersion(previewResult);
   if (ver) lastPreviewVersion = ver;
-  renderGlbForDoc(glb, docId, changed);
+  // FK stays enabled only when the server actually served instances mode.
+  const isInstancesGlb =
+    wantInstances && findPreviewMode(previewResult) === "instances";
+  renderGlbForDoc(glb, docId, changed, isInstancesGlb);
 }
 
 /** Capture VCode IR text for the "Open in vcad.io" button. */
@@ -962,11 +1033,16 @@ function flashChanged(changed: PartsChanged): void {
 }
 
 /** Render a freshly-fetched GLB for a document, holding the camera and
- *  re-binding the selection when it's the document already on screen. */
+ *  re-binding the selection when it's the document already on screen.
+ *  `simInstancesGlb` marks the load as the sim session's INSTANCES-mode GLB
+ *  — only then are FK bind targets (re)built and pose application enabled;
+ *  any other GLB (flat/inline/part-segmented) disables FK until the
+ *  instances GLB reloads, so replay poses can't land on part-id nodes. */
 function renderGlbForDoc(
   glb: string,
   docId: string | null,
   changed: PartsChanged | null,
+  simInstancesGlb = false,
 ): void {
   const preserveCamera = docId != null && docId === renderedDocId;
   const keepPartId = preserveCamera ? selected?.partId ?? null : null;
@@ -976,6 +1052,16 @@ function renderGlbForDoc(
       if (docId != null) renderedDocId = docId;
       if (keepPartId != null) reselectById(keepPartId);
       if (changed) flashChanged(changed);
+      // Re-bind FK targets after a reload — node objects are new — but ONLY
+      // for the instances-mode sim GLB; other GLBs of the same document use
+      // "<partId>:<name>" node names that would collide with instance ids.
+      if (simEnvId && simInstancesGlb) {
+        buildSimInstanceIndex();
+        simGlbActive = true;
+      } else {
+        simNodeIndex.clear();
+        simGlbActive = false;
+      }
     },
   });
 }
@@ -1177,6 +1263,886 @@ async function rerunReceipt(): Promise<void> {
 receiptRerunBtn.addEventListener("click", () => void rerunReceipt());
 receiptCloseBtn.addEventListener("click", () => receiptEl.classList.remove("visible"));
 
+// ── Sim replay — the play button (create_robot_env) ─────────
+// create_robot_env mounts this canvas; its result text carries
+// { env_id, document_id }. We fetch the instance-segmented GLB (one named
+// node per assembly instance), pull the recorded rollout via the app-only
+// get_sim_replay tool, and play it back client-side: linear interpolation
+// between per-step instance transforms (slerp for rotation), wall-clock
+// step rate = dt × substeps / speed. The trajectory is data, so scrubbing
+// is free; a live-follow badge pins the playhead to the newest step while
+// the agent keeps stepping the env (get_sim_version is the change token).
+
+interface SimTrsLike {
+  translation?: [number, number, number];
+  rotation?: [number, number, number]; // Euler XYZ, degrees
+  scale?: [number, number, number];
+}
+
+interface SimReplayLike {
+  env_id?: string;
+  document_id?: string;
+  dt?: number;
+  substeps?: number;
+  steps?: number;
+  total_steps?: number;
+  reset_epoch?: number;
+  joint_trajectory?: number[][];
+  rewards?: number[];
+  dones?: boolean[];
+  instance_transforms?: Array<Record<string, SimTrsLike | undefined>>;
+  version?: string;
+}
+
+let simEnvId: string | null = null;
+let simDocId: string | null = null;
+let simUseInstances = false;
+let simReplay: SimReplayLike | null = null;
+let simPlayhead = 0; // fractional step position
+let simPlaying = false;
+let simSpeed = 1;
+let simFollow = true; // pin the playhead to the newest step
+let simKnownStepCount = -1; // step counter of the last ADOPTED replay
+let simKnownVersion: string | null = null; // version token of the last ADOPTED replay
+let simLastReadoutStep = -1;
+let lastPushedSimContext = "";
+const simNodeIndex = new Map<string, THREE.Object3D>();
+// FK poses may ONLY be applied while the rendered GLB is the sim session's
+// instances-mode GLB. A flat pattern or a plain/inline (part-segmented) GLB
+// of the SAME document shares node-name shapes ("<id>:<name>") — applying
+// instance transforms to those nodes would visibly mispose parts.
+let simGlbActive = false;
+
+// Scratch objects — reused every frame so playback never churns the GC.
+const _simEuler = new THREE.Euler();
+const _simQa = new THREE.Quaternion();
+const _simQb = new THREE.Quaternion();
+const DEG_TO_RAD = Math.PI / 180;
+
+function simStepCount(): number {
+  const r = simReplay;
+  if (!r) return 0;
+  return Math.max(
+    r.joint_trajectory?.length ?? 0,
+    r.rewards?.length ?? 0,
+    r.instance_transforms?.length ?? 0,
+  );
+}
+
+/** First ABSOLUTE step of the current replay window. The server keeps a
+ *  ring buffer: once total_steps exceeds the window length, index k in the
+ *  window is absolute step `base + k`. The scrub stays window-relative;
+ *  only the readout and the model-context pushes speak absolute steps. */
+function simStepBase(): number {
+  const r = simReplay;
+  if (!r) return 0;
+  const total = r.total_steps ?? 0;
+  return Math.max(total - simStepCount(), 0);
+}
+
+/** create_robot_env result → { env_id, document_id }. structuredContent
+ *  first, then any JSON text block (the documented carrier). */
+function findSimEnv(result: ToolResultLike): { envId: string; docId: string } | null {
+  const hit = findPayload<{ env_id?: unknown; document_id?: unknown }>(
+    result,
+    (o) =>
+      (typeof o.env_id === "string" || typeof o.env_id === "number") &&
+      typeof o.document_id === "string",
+  );
+  if (!hit) return null;
+  return { envId: String(hit.env_id), docId: String(hit.document_id) };
+}
+
+/** Index "<instanceId>:<name>" nodes of the loaded scene for FK binding.
+ *  First match wins so a nested duplicate never shadows the root node. */
+function buildSimInstanceIndex(): void {
+  simNodeIndex.clear();
+  if (!currentModel) return;
+  currentModel.traverse((o) => {
+    const idx = o.name.indexOf(":");
+    if (idx <= 0) return;
+    const id = o.name.slice(0, idx);
+    if (!simNodeIndex.has(id)) simNodeIndex.set(id, o);
+  });
+}
+
+function updateLiveBadge(): void {
+  tpLiveEl.classList.toggle("on", simFollow);
+  tpLiveEl.title = simFollow
+    ? "following the newest step"
+    : "click to jump to the newest step";
+}
+
+/** Brief pulse on the live badge when fresh steps arrive. */
+function flashLiveBadge(): void {
+  tpLiveEl.classList.remove("ping");
+  // Force a reflow so re-adding restarts the animation.
+  void tpLiveEl.offsetWidth;
+  tpLiveEl.classList.add("ping");
+  window.setTimeout(() => tpLiveEl.classList.remove("ping"), 700);
+}
+
+// Reward sparkline: polyline over rewards[], with a progress dot that
+// tracks the playhead. Min/max are cached at rebuild for the dot math.
+let sparkMin = 0;
+let sparkMax = 0;
+
+function rebuildSparkline(): void {
+  const rewards = simReplay?.rewards ?? [];
+  if (rewards.length < 2) {
+    tpSparkLineEl.setAttribute("points", "");
+    tpSparkDotEl.setAttribute("cx", "-10");
+    return;
+  }
+  sparkMin = Infinity;
+  sparkMax = -Infinity;
+  for (const r of rewards) {
+    if (r < sparkMin) sparkMin = r;
+    if (r > sparkMax) sparkMax = r;
+  }
+  const span = sparkMax - sparkMin || 1;
+  const pts: string[] = [];
+  for (let i = 0; i < rewards.length; i++) {
+    const x = (i / (rewards.length - 1)) * 100;
+    const y = 14 - ((rewards[i] - sparkMin) / span) * 12;
+    pts.push(`${x.toFixed(2)},${y.toFixed(2)}`);
+  }
+  tpSparkLineEl.setAttribute("points", pts.join(" "));
+}
+
+function updateSparkDot(step: number): void {
+  const rewards = simReplay?.rewards ?? [];
+  if (rewards.length === 0) {
+    tpSparkDotEl.setAttribute("cx", "-10");
+    return;
+  }
+  const i = Math.min(step, rewards.length - 1);
+  const span = sparkMax - sparkMin || 1;
+  const x = rewards.length > 1 ? (i / (rewards.length - 1)) * 100 : 0;
+  const y = 14 - ((rewards[i] - sparkMin) / span) * 12;
+  tpSparkDotEl.setAttribute("cx", x.toFixed(2));
+  tpSparkDotEl.setAttribute("cy", y.toFixed(2));
+}
+
+/** Step counter, scrub position, joint readout, spark dot — everything
+ *  keyed to the integer step under the playhead. */
+function updateSimReadout(step: number, n: number): void {
+  const last = Math.max(n - 1, 0);
+  // Absolute step numbers in the readout: after ring-buffer wraparound the
+  // window slides, so window index k is episode step base + k.
+  const base = simStepBase();
+  tpStepEl.textContent = `${base + step} / ${base + last}`;
+  tpScrubEl.max = String(last);
+  tpScrubEl.value = String(step);
+  const rep = simReplay;
+  const jt = rep?.joint_trajectory ?? [];
+  const joints = jt.length > 0 ? jt[Math.min(step, jt.length - 1)] ?? [] : [];
+  const bits: string[] = [];
+  for (let i = 0; i < Math.min(joints.length, 6); i++) {
+    bits.push(`j${i + 1} ${joints[i].toFixed(1)}°`);
+  }
+  if (joints.length > 6) bits.push(`+${joints.length - 6} joints`);
+  const rewards = rep?.rewards ?? [];
+  const reward = rewards.length > 0 ? rewards[Math.min(step, rewards.length - 1)] : undefined;
+  if (reward !== undefined) bits.push(`reward ${reward.toFixed(2)}`);
+  tpJointsEl.textContent = bits.join(" · ");
+  if (rep?.dt != null) {
+    tpStepEl.title = `dt ${(rep.dt * 1000).toFixed(0)} ms × ${rep.substeps ?? 1} substeps per step`;
+  }
+  updateSparkDot(step);
+}
+
+/** Apply the interpolated frame at the current playhead to the named
+ *  instance nodes. Transforms are in kernel Z-up space — nodes live under
+ *  modelGroup, which owns the display rotation, so they apply directly. */
+function applySimFrame(forceReadout = false): void {
+  const rep = simReplay;
+  if (!rep) return;
+  const n = simStepCount();
+  if (n === 0) return;
+  const p = Math.min(Math.max(simPlayhead, 0), n - 1);
+  const k = Math.floor(p);
+  const frac = p - k;
+
+  // FK only while the rendered GLB is the instances-mode sim GLB — a flat
+  // pattern or plain part-segmented GLB must never be re-posed (its nodes
+  // are indexed by part id, not instance id).
+  const tf = rep.instance_transforms ?? [];
+  if (simGlbActive && tf.length > 0 && simNodeIndex.size > 0) {
+    const a = tf[Math.min(k, tf.length - 1)];
+    const b = tf[Math.min(k + 1, tf.length - 1)] ?? a;
+    if (a) {
+      for (const id of Object.keys(a)) {
+        const node = simNodeIndex.get(id);
+        const ta = a[id];
+        if (!node || !ta) continue;
+        const tb = b?.[id] ?? ta;
+        const pa = ta.translation;
+        const pb = tb.translation ?? pa;
+        if (pa && pb) {
+          node.position.set(
+            pa[0] + (pb[0] - pa[0]) * frac,
+            pa[1] + (pb[1] - pa[1]) * frac,
+            pa[2] + (pb[2] - pa[2]) * frac,
+          );
+        }
+        const sa = ta.scale;
+        const sb = tb.scale ?? sa;
+        if (sa && sb) {
+          node.scale.set(
+            sa[0] + (sb[0] - sa[0]) * frac,
+            sa[1] + (sb[1] - sa[1]) * frac,
+            sa[2] + (sb[2] - sa[2]) * frac,
+          );
+        }
+        const ra = ta.rotation;
+        const rb = tb.rotation ?? ra;
+        if (ra && rb) {
+          // Euler order "ZYX": the kernel's Transform3D convention is
+          // R = Rz·Ry·Rx (rotate about world X, then Y, then Z — see
+          // crates/vcad-eval/src/kinematics.rs euler_to_matrix and
+          // packages/engine/src/evaluate.ts transformMesh, the authority),
+          // which three.js spells "ZYX". Matches eulerXyzDegToQuat in
+          // src/export/glb.ts, so replay poses agree with the GLB's own
+          // node rotations.
+          _simEuler.set(ra[0] * DEG_TO_RAD, ra[1] * DEG_TO_RAD, ra[2] * DEG_TO_RAD, "ZYX");
+          _simQa.setFromEuler(_simEuler);
+          _simEuler.set(rb[0] * DEG_TO_RAD, rb[1] * DEG_TO_RAD, rb[2] * DEG_TO_RAD, "ZYX");
+          _simQb.setFromEuler(_simEuler);
+          _simQa.slerp(_simQb, frac);
+          node.quaternion.copy(_simQa);
+        }
+      }
+    }
+  }
+
+  const step = Math.floor(p);
+  if (forceReadout || step !== simLastReadoutStep) {
+    simLastReadoutStep = step;
+    updateSimReadout(step, n);
+  }
+}
+
+function setSimPlaying(on: boolean): void {
+  if (simPlaying === on) return;
+  simPlaying = on;
+  tpPlayBtn.textContent = on ? "⏸" : "▶";
+  tpPlayBtn.title = on ? "Pause" : "Play";
+}
+
+/** Short context note on pause so "why did it stop there" typed in chat
+ *  is grounded. Capability-guarded like the selection push; text-only. */
+async function pushSimContext(): Promise<void> {
+  if (!simEnvId || !simReplay) return;
+  const n = simStepCount();
+  if (n === 0) return;
+  const t = Math.min(Math.floor(simPlayhead), n - 1);
+  const rewards = simReplay.rewards ?? [];
+  const r = rewards.length > 0 ? rewards[Math.min(t, rewards.length - 1)] : undefined;
+  // Absolute step in the context note — after ring-buffer wraparound the
+  // window index t is episode step base + t (the model correlates this with
+  // its own action sequence, so window-relative numbers would mislead it).
+  const text = `viewer_sim: paused at step t=${simStepBase() + t}, reward=${r != null ? r.toFixed(3) : "n/a"}`;
+  if (text === lastPushedSimContext) return;
+  lastPushedSimContext = text;
+  if (devMode) {
+    console.log("[vcad-viewer:dev] updateModelContext:", text);
+    return;
+  }
+  const caps = app.getHostCapabilities();
+  if (!caps?.updateModelContext) return;
+  try {
+    await app.updateModelContext({ content: [{ type: "text", text }] });
+  } catch (e) {
+    console.warn("[vcad-viewer] updateModelContext failed:", e);
+  }
+}
+
+/** Install a replay (fresh fetch or dev-synthesized) and refresh the
+ *  transport chrome. Following → snap the playhead to the newest step.
+ *  No-op after exitSimMode: a replay landing from an in-flight fetch must
+ *  never resurrect the transport bar over a different document. */
+function adoptSimReplay(rep: SimReplayLike, jumpToNewest: boolean): void {
+  if (!simEnvId) return; // sim mode exited while the fetch was in flight
+  simReplay = rep;
+  // Commit the change tokens HERE — on successful adoption — so a failed
+  // replay fetch leaves them stale and the next poll retries (see
+  // pollSimVersion).
+  simKnownStepCount = rep.total_steps ?? rep.steps ?? simStepCount();
+  simKnownVersion = typeof rep.version === "string" ? rep.version : null;
+  rebuildSparkline();
+  const n = simStepCount();
+  const hasFk = Boolean(
+    rep.instance_transforms?.some((row) => row && Object.keys(row).length > 0),
+  );
+  tpNoteEl.textContent = hasFk
+    ? ""
+    : "no articulated assembly — showing trajectory only";
+  if (jumpToNewest && simFollow) simPlayhead = Math.max(n - 1, 0);
+  else simPlayhead = Math.min(simPlayhead, Math.max(n - 1, 0));
+  simLastReadoutStep = -1;
+  applySimFrame(true);
+  transportEl.classList.add("visible");
+  updateLiveBadge();
+}
+
+/** Fetch + adopt the replay. Returns true only when a replay was ADOPTED —
+ *  callers (pollSimVersion) treat false as "retry next poll". Guards both
+ *  ends of the round trip against sim mode exiting / switching env while
+ *  the call was in flight (the zombie-transport hazard). */
+async function refreshSimReplay(jumpToNewest: boolean): Promise<boolean> {
+  const envId = simEnvId;
+  if (!envId) return false;
+  const res = (await app.callServerTool({
+    name: "get_sim_replay",
+    arguments: { env_id: envId },
+  })) as ToolResultLike;
+  if (simEnvId !== envId) return false; // exited/switched during the fetch
+  const rep = findPayload<SimReplayLike>(
+    res,
+    (o) => Array.isArray(o.joint_trajectory) || Array.isArray(o.instance_transforms),
+  );
+  if (!rep) return false;
+  adoptSimReplay(rep, jumpToNewest);
+  return true;
+}
+
+/** Fetch the instance-segmented GLB; fall back to the plain preview when
+ *  the server returns nothing or doesn't speak instances mode. */
+async function loadSimGlb(docId: string): Promise<void> {
+  let res = (await app.callServerTool({
+    name: "get_preview_glb",
+    arguments: { document_id: docId, instances: true },
+  })) as ToolResultLike;
+  let glb = findInlineGlb(res);
+  simUseInstances = Boolean(glb) && findPreviewMode(res) === "instances";
+  if (!glb) {
+    res = (await app.callServerTool({
+      name: "get_preview_glb",
+      arguments: { document_id: docId },
+    })) as ToolResultLike;
+    glb = findInlineGlb(res);
+    simUseInstances = false;
+  }
+  if (!glb) {
+    setStatus("no geometry to preview", "idle");
+    return;
+  }
+  const ver = findPreviewVersion(res);
+  if (ver) lastPreviewVersion = ver;
+  // afterLoad rebuilds the FK node index (instances mode only).
+  renderGlbForDoc(glb, docId, null, simUseInstances);
+}
+
+/** Enter (or re-enter) sim mode for a create_robot_env result. */
+async function enterSimMode(envId: string, docId: string): Promise<void> {
+  const isNewEnv = envId !== simEnvId;
+  simEnvId = envId;
+  simDocId = docId;
+  lastDocumentId = docId;
+  docLabelEl.textContent = docId;
+  openBtn.style.display = "inline-flex";
+  if (isNewEnv) {
+    setSimPlaying(false);
+    simReplay = null;
+    simPlayhead = 0;
+    simFollow = true;
+    simKnownStepCount = -1;
+    simKnownVersion = null;
+    simLastReadoutStep = -1;
+    lastPushedSimContext = "";
+  }
+  setStatus(docId === renderedDocId ? "updating…" : "loading simulation…");
+  try {
+    await loadSimGlb(docId);
+  } catch (e) {
+    console.error("[vcad-viewer] sim preview fetch failed:", e);
+    setStatus("preview unavailable", "error");
+    errEl.textContent = e instanceof Error ? e.message : String(e);
+  }
+  try {
+    // If the replay isn't up yet, the sim-version poll below self-heals.
+    await refreshSimReplay(true);
+  } catch (e) {
+    console.warn("[vcad-viewer] get_sim_replay failed:", e);
+    setTicker("replay unavailable", "error");
+  }
+  updateLiveBadge();
+}
+
+/** A different document mounting over a sim session ends the replay. */
+function exitSimMode(): void {
+  simEnvId = null;
+  simDocId = null;
+  simReplay = null;
+  simUseInstances = false;
+  simGlbActive = false;
+  simKnownVersion = null;
+  setSimPlaying(false);
+  simNodeIndex.clear();
+  transportEl.classList.remove("visible");
+}
+
+/** Piggybacks on the adaptive preview poll: cheap step_count token, full
+ *  replay re-fetch only on change. Returns true when new steps arrived so
+ *  the shared loop stays on the fast cadence while the env is stepping. */
+async function pollSimVersion(): Promise<boolean> {
+  if (!simEnvId) return false;
+  if (typeof document !== "undefined" && document.hidden) return false;
+  let count: number | null = null;
+  let version: string | null = null;
+  try {
+    const res = (await app.callServerTool({
+      name: "get_sim_version",
+      arguments: { env_id: simEnvId },
+    })) as ToolResultLike;
+    const v = findPayload<{ step_count?: number; version?: string }>(
+      res,
+      (o) => typeof o.step_count === "number",
+    );
+    count = v?.step_count ?? null;
+    if (typeof v?.version === "string") version = v.version;
+  } catch {
+    return false; // transient failure — next tick retries
+  }
+  if (count == null) return false;
+  // Prefer the version token when both sides have one — it also folds in the
+  // server's reset epoch, so an equal-length rollout after gym_reset still
+  // reads as changed. Fall back to the raw step counter for older servers.
+  const unchanged =
+    version != null && simKnownVersion != null
+      ? version === simKnownVersion
+      : count === simKnownStepCount;
+  if (unchanged) return false;
+  // The known tokens are committed by adoptSimReplay ONLY after the replay
+  // re-fetch succeeds — a transient fetch failure leaves them stale so the
+  // next poll retries instead of freezing playback at the old rollout.
+  let refreshed = false;
+  try {
+    refreshed = await refreshSimReplay(true);
+  } catch {
+    return false;
+  }
+  if (!refreshed) return false;
+  flashLiveBadge();
+  return true;
+}
+
+// Playback engine: wall-clock rate = dt × substeps / speed seconds per
+// step, linear interpolation between rows (slerp for rotation).
+function simFrameTick(deltaSeconds: number): void {
+  if (!simPlaying || !simReplay) return;
+  const n = simStepCount();
+  if (n <= 1) return;
+  const stepSeconds =
+    ((simReplay.dt ?? 0.01) * (simReplay.substeps ?? 1)) / simSpeed;
+  if (stepSeconds <= 0) return;
+  // Clamp delta spikes so a backgrounded tab doesn't teleport the playhead.
+  simPlayhead += Math.min(deltaSeconds, 0.25) / stepSeconds;
+  if (simPlayhead >= n - 1) {
+    simPlayhead = n - 1;
+    setSimPlaying(false);
+    void pushSimContext();
+  }
+  applySimFrame();
+}
+simTick = simFrameTick;
+
+tpPlayBtn.addEventListener("click", () => {
+  if (!simReplay) return;
+  if (simPlaying) {
+    setSimPlaying(false);
+    void pushSimContext();
+    return;
+  }
+  const n = simStepCount();
+  if (n > 1 && simPlayhead >= n - 1) {
+    // Hitting play at the end re-arms live-follow and replays from the top.
+    simFollow = true;
+    updateLiveBadge();
+    simPlayhead = 0;
+  }
+  setSimPlaying(true);
+});
+
+tpScrubEl.addEventListener("input", () => {
+  if (!simReplay) return;
+  setSimPlaying(false); // pause on scrub drag
+  const n = simStepCount();
+  const v = Math.min(Number(tpScrubEl.value) || 0, Math.max(n - 1, 0));
+  simPlayhead = v;
+  if (v < n - 1) {
+    simFollow = false; // scrubbed back — stop chasing the newest step
+    updateLiveBadge();
+  }
+  applySimFrame(true);
+});
+// Context push on drag end only, so scrubbing doesn't spam the host.
+tpScrubEl.addEventListener("change", () => void pushSimContext());
+
+tpSpeedEl.addEventListener("change", () => {
+  simSpeed = Number(tpSpeedEl.value) || 1;
+});
+
+tpLiveEl.addEventListener("click", () => {
+  if (!simReplay) return;
+  simFollow = true;
+  updateLiveBadge();
+  simPlayhead = Math.max(simStepCount() - 1, 0);
+  applySimFrame(true);
+});
+
+// ── Order dock — fused vcad+kerf order lifecycle ─────────────
+// Read-only by contract: get_order_feed is the ONLY tool this dock calls;
+// approval happens on vcad.io via openLink and decline goes through the
+// agent — no money action ever originates in this iframe. Polls slow
+// (10s) normally, fast (2.5s) while any order is transitional
+// (approval/placing), and backs way off after repeated failures (the
+// feed tool may not be deployed on every server yet).
+
+interface OrderAuthorizationLike {
+  status?: string;
+  max_amount_usd?: number;
+  cap_usd?: number; // spec-doc name — guarded alongside the wire name
+  expires_at?: string;
+  approve_url?: string;
+}
+
+interface OrderEventLike {
+  state?: string;
+  type?: string; // spec-doc name for the same field
+  at?: string;
+  note?: string;
+}
+
+interface OrderLike {
+  order_id: string;
+  state_chip?: string;
+  raw_state?: string;
+  process?: string;
+  quantity?: number;
+  total_amount_usd?: number;
+  pricing_basis?: string;
+  vendor?: string;
+  vendor_display_name?: string; // spec-doc name — guarded
+  lead_time_days?: number;
+  quote_expires_at?: string;
+  created_at?: string;
+  events?: OrderEventLike[];
+  authorization?: OrderAuthorizationLike | null;
+  tracking?: unknown;
+  receipt?: { status?: string } | null;
+  kerf_intent_hash?: string;
+}
+
+interface OrderFeedLike {
+  orders?: OrderLike[];
+  wallet_balance_usd?: number | null;
+  version?: string;
+}
+
+const ORDER_STOPS = [
+  "quoted",
+  "approval",
+  "placing",
+  "confirmed",
+  "production",
+  "delivered",
+];
+
+const ORDER_POLL_FAST_MS = 2500;
+const ORDER_POLL_SLOW_MS = 10000;
+const ORDER_POLL_BACKOFF_MS = 60000;
+const ORDER_POLL_FAILURE_LIMIT = 4;
+
+let orderPollStarted = false;
+let orderPollHandle: ReturnType<typeof setTimeout> | undefined;
+let orderPollFailures = 0;
+let lastOrderFeed: OrderFeedLike | null = null;
+let lastOrderFeedVersion: string | null = null;
+let orderDockArmed = false; // first non-empty feed arms the dock for good
+let ordersCollapsed = false;
+const expandedOrders = new Set<string>();
+
+function usd(n: number): string {
+  return (
+    "$" +
+    n.toLocaleString("en-US", {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    })
+  );
+}
+
+function fmtWhen(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
+
+function orderCard(o: OrderLike): HTMLElement {
+  const card = document.createElement("div");
+  card.className = "ord-card";
+
+  // Name line: process · qty.
+  const name = document.createElement("div");
+  name.className = "ord-name";
+  name.textContent = `${o.process ?? "order"}${o.quantity != null ? ` · ×${o.quantity}` : ""}`;
+  card.append(name);
+
+  // Vendor · lead · quote expiry.
+  const subBits: string[] = [];
+  const vendor = o.vendor ?? o.vendor_display_name;
+  if (vendor) subBits.push(vendor);
+  if (o.lead_time_days != null) subBits.push(`${o.lead_time_days}d lead`);
+  if (o.quote_expires_at) subBits.push(`quote expires ${fmtWhen(o.quote_expires_at)}`);
+  if (subBits.length > 0) {
+    const sub = document.createElement("div");
+    sub.className = "ord-sub";
+    sub.textContent = subBits.join(" · ");
+    card.append(sub);
+  }
+
+  // Total + pricing-basis pill (ACP-CM colors users learn to trust).
+  const total = document.createElement("div");
+  total.className = "ord-total";
+  const amount = document.createElement("b");
+  amount.textContent = o.total_amount_usd != null ? usd(o.total_amount_usd) : "—";
+  total.append(amount);
+  const basis = o.pricing_basis;
+  if (basis === "estimate" || basis === "quoted" || basis === "binding") {
+    const pill = document.createElement("span");
+    pill.className = `pill pill-${basis}`;
+    pill.textContent = basis;
+    total.append(pill);
+  }
+  card.append(total);
+
+  // Six-stop timeline; a failed order shows all stops muted + a red chip.
+  const chips = document.createElement("div");
+  chips.className = "ord-chips";
+  const failed = o.state_chip === "failed";
+  const cur = failed ? -1 : ORDER_STOPS.indexOf(o.state_chip ?? "");
+  ORDER_STOPS.forEach((stop, i) => {
+    const c = document.createElement("span");
+    c.className =
+      "ord-chip" +
+      (cur >= 0 && i < cur ? " done" : "") +
+      (i === cur ? " now" : "");
+    c.textContent = stop;
+    chips.append(c);
+  });
+  if (failed) {
+    const c = document.createElement("span");
+    c.className = "ord-chip fail";
+    c.textContent = "failed";
+    chips.append(c);
+  }
+  card.append(chips);
+
+  // RECONCILING = an explained wait, never a retry affordance.
+  if ((o.raw_state ?? "").toUpperCase() === "RECONCILING") {
+    const wait = document.createElement("div");
+    wait.className = "ord-wait";
+    wait.textContent =
+      "reconciling with the vendor — verifying order state, no action needed";
+    card.append(wait);
+  }
+
+  // Approval banner: the human approves on vcad.io — the widget never
+  // approves and offers no decline (that goes through the agent).
+  const auth = o.authorization;
+  if (auth?.status === "pending_human") {
+    const banner = document.createElement("div");
+    banner.className = "ord-banner";
+    const text = document.createElement("div");
+    text.className = "ord-banner-text";
+    const cap = auth.max_amount_usd ?? auth.cap_usd;
+    const bits = ["needs your approval"];
+    if (cap != null) bits.push(`cap ${usd(cap)}`);
+    if (auth.expires_at) bits.push(`expires ${fmtWhen(auth.expires_at)}`);
+    text.textContent = bits.join(" · ");
+    banner.append(text);
+    if (auth.approve_url) {
+      const url = auth.approve_url;
+      const btn = document.createElement("button");
+      btn.className = "btn btn-brand";
+      btn.textContent = "Approve in vcad.io";
+      btn.addEventListener("click", () => {
+        app.openLink({ url }).catch(() => window.open(url, "_blank"));
+      });
+      banner.append(btn);
+    }
+    card.append(banner);
+  }
+
+  // Receipt chip — the design-half verification verdict.
+  const rs = o.receipt?.status ?? "unverified";
+  const rcptRowEl = document.createElement("div");
+  rcptRowEl.className = "ord-rcpt";
+  const rcptChip = document.createElement("span");
+  rcptChip.className =
+    "rcpt-chip " +
+    (rs === "holds" ? "holds" : rs === "stale" || rs === "violated" ? "bad" : "unverified");
+  rcptChip.textContent = `receipt ${rs}`;
+  rcptRowEl.append(rcptChip);
+  card.append(rcptRowEl);
+
+  // Event log expander (collapsed by default) — raw vcad+kerf states.
+  const events = o.events ?? [];
+  if (events.length > 0) {
+    const expanded = expandedOrders.has(o.order_id);
+    const label = (open: boolean): string =>
+      `${events.length} ${events.length === 1 ? "event" : "events"} ${open ? "▾" : "▸"}`;
+    const toggle = document.createElement("button");
+    toggle.className = "ord-evt-toggle";
+    toggle.textContent = label(expanded);
+    const list = document.createElement("div");
+    list.className = "ord-events";
+    list.style.display = expanded ? "block" : "none";
+    for (const ev of events) {
+      const row = document.createElement("div");
+      row.className = "ord-evt";
+      const t = document.createElement("span");
+      t.className = "t";
+      t.textContent = ev.at ? fmtWhen(ev.at) : "";
+      const s = document.createElement("span");
+      s.className = "s";
+      s.textContent = ev.state ?? ev.type ?? "event";
+      row.append(t, s);
+      if (ev.note) {
+        const noteEl = document.createElement("span");
+        noteEl.className = "n";
+        noteEl.textContent = ev.note;
+        noteEl.title = ev.note;
+        row.append(noteEl);
+      }
+      list.append(row);
+    }
+    toggle.addEventListener("click", () => {
+      const open = list.style.display === "none";
+      list.style.display = open ? "block" : "none";
+      if (open) expandedOrders.add(o.order_id);
+      else expandedOrders.delete(o.order_id);
+      toggle.textContent = label(open);
+    });
+    card.append(toggle, list);
+  }
+
+  return card;
+}
+
+function renderOrderFeed(feed: OrderFeedLike): void {
+  const orders = feed.orders ?? [];
+  ordersCountEl.textContent = String(orders.length);
+  ordersBodyEl.innerHTML = "";
+  if (orders.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "ord-sub";
+    empty.textContent = "no orders yet";
+    ordersBodyEl.append(empty);
+  } else {
+    for (const o of orders) ordersBodyEl.append(orderCard(o));
+  }
+  if (feed.wallet_balance_usd != null) {
+    ordersFootEl.textContent = `Wallet ${usd(feed.wallet_balance_usd)}`;
+    ordersFootEl.style.display = "block";
+  } else {
+    ordersFootEl.textContent = "";
+    ordersFootEl.style.display = "none";
+  }
+}
+
+function applyOrderFeed(feed: OrderFeedLike): void {
+  const version = typeof feed.version === "string" ? feed.version : null;
+  const unchanged =
+    version != null && version === lastOrderFeedVersion && lastOrderFeed != null;
+  lastOrderFeed = feed;
+  lastOrderFeedVersion = version;
+  if ((feed.orders?.length ?? 0) > 0) orderDockArmed = true;
+  if (!orderDockArmed) return; // stay hidden until the first non-empty feed
+  if (!unchanged) renderOrderFeed(feed);
+  ordersEl.classList.add("visible");
+}
+
+function orderFeedTransitional(): boolean {
+  return Boolean(
+    lastOrderFeed?.orders?.some(
+      (o) => o.state_chip === "approval" || o.state_chip === "placing",
+    ),
+  );
+}
+
+async function pollOrderFeed(): Promise<void> {
+  if (!lastDocumentId) return; // nothing mounted yet — stay lazy
+  if (typeof document !== "undefined" && document.hidden) return;
+  try {
+    const res = (await app.callServerTool({
+      name: "get_order_feed",
+      arguments: { document_id: lastDocumentId },
+    })) as ToolResultLike;
+    orderPollFailures = 0;
+    const feed = findPayload<OrderFeedLike>(res, (o) => Array.isArray(o.orders));
+    if (feed) applyOrderFeed(feed);
+  } catch {
+    // Tool may not be deployed on this server — count and back off.
+    orderPollFailures++;
+  }
+}
+
+function scheduleNextOrderPoll(): void {
+  const delay =
+    orderPollFailures >= ORDER_POLL_FAILURE_LIMIT
+      ? ORDER_POLL_BACKOFF_MS
+      : orderFeedTransitional()
+        ? ORDER_POLL_FAST_MS
+        : ORDER_POLL_SLOW_MS;
+  if (orderPollHandle) clearTimeout(orderPollHandle);
+  orderPollHandle = setTimeout(() => void runOrderPoll(), delay);
+}
+
+// In-flight guard: visibilitychange fires runOrderPoll directly, and while a
+// poll is awaiting the server its timer id is already consumed — without the
+// guard each hide/show during an in-flight poll would fork a SECOND
+// setTimeout chain that then polls forever in parallel.
+let orderPollInFlight = false;
+
+async function runOrderPoll(): Promise<void> {
+  if (orderPollInFlight) return; // the live chain reschedules on completion
+  orderPollInFlight = true;
+  try {
+    await pollOrderFeed();
+  } finally {
+    orderPollInFlight = false;
+    scheduleNextOrderPoll();
+  }
+}
+
+function startOrderPolling(): void {
+  if (orderPollStarted) return;
+  orderPollStarted = true;
+  if (typeof document !== "undefined") {
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden) return;
+      if (orderPollHandle) clearTimeout(orderPollHandle);
+      void runOrderPoll();
+    });
+  }
+  scheduleNextOrderPoll();
+}
+
+ordersToggleBtn.addEventListener("click", () => {
+  ordersCollapsed = !ordersCollapsed;
+  ordersEl.classList.toggle("collapsed", ordersCollapsed);
+  ordersToggleBtn.textContent = ordersCollapsed ? "▸" : "▾";
+  ordersToggleBtn.title = ordersCollapsed ? "Expand" : "Collapse";
+});
+
 // ── Host protocol ────────────────────────────────────────────
 // MCP Apps hosts (Claude, Cursor) speak the SEP-1865 postMessage
 // protocol via the App class; ChatGPT injects `window.openai` instead —
@@ -1208,7 +2174,8 @@ function applyHostContext(ctx: McpUiHostContext | undefined): void {
   if (ctx.displayMode) currentDisplayMode = ctx.displayMode;
 }
 
-app.onhostcontextchanged = (params) => applyHostContext(params.hostContext);
+app.onhostcontextchanged = (params) =>
+  applyHostContext(params.hostContext as McpUiHostContext | undefined);
 
 app.ontoolinput = () => {
   setStatus("building model…");
@@ -1239,11 +2206,27 @@ async function handleToolResult(result: ToolResultLike): Promise<void> {
   if (flat) {
     const docId = result.structuredContent?.document_id ?? findDocumentId(result);
     if (typeof docId === "string") {
+      // Sim mode is keyed to the sim document — a different document's
+      // flat pattern mounting over it ends the replay.
+      if (simEnvId && docId !== simDocId) exitSimMode();
       lastDocumentId = docId;
       docLabelEl.textContent = docId;
       openBtn.style.display = "inline-flex";
     }
+    // The 2D drawing replaces the 3D model — drop the FK bind targets so a
+    // still-live replay (same document) can't re-pose flat geometry.
+    simNodeIndex.clear();
+    simGlbActive = false;
     renderFlatPattern(flat);
+    return;
+  }
+
+  // Robot sim session (create_robot_env): env_id + document_id ride in the
+  // result text. Mount the instance GLB + replay transport instead of the
+  // plain preview path.
+  const simEnv = findSimEnv(result);
+  if (simEnv) {
+    await enterSimMode(simEnv.envId, simEnv.docId);
     return;
   }
 
@@ -1254,6 +2237,13 @@ async function handleToolResult(result: ToolResultLike): Promise<void> {
   const inline = findInlineGlb(result);
   if (inline) {
     const inlineDoc = result.structuredContent?.document_id ?? findDocumentId(result);
+    // A different document's inline GLB mounting over a sim session ends the
+    // replay; a same-document inline GLB keeps sim mode but disables FK
+    // (renderGlbForDoc default) — inline GLBs are part-segmented, not the
+    // instances-mode layout the replay binds to.
+    if (typeof inlineDoc === "string" && simEnvId && inlineDoc !== simDocId) {
+      exitSimMode();
+    }
     renderGlbForDoc(inline, typeof inlineDoc === "string" ? inlineDoc : null, changed);
     return;
   }
@@ -1267,6 +2257,8 @@ async function handleToolResult(result: ToolResultLike): Promise<void> {
     setStatus("no geometry to preview", "idle");
     return;
   }
+  // A different document mounting over a sim session ends the replay.
+  if (simEnvId && docId !== simDocId) exitSimMode();
   const sameDoc = docId === renderedDocId;
   lastDocumentId = docId;
   docLabelEl.textContent = docId;
@@ -1396,14 +2388,29 @@ async function pollPreviewVersion(): Promise<void> {
 
 function scheduleNextPoll(): void {
   const delay = pollIdleStreak >= POLL_IDLE_THRESHOLD ? POLL_SLOW_MS : POLL_FAST_MS;
+  if (pollHandle) clearTimeout(pollHandle);
   pollHandle = setTimeout(() => void runPoll(), delay);
 }
 
+// Same in-flight guard as the order poll: a visibilitychange while a poll is
+// awaiting the server must not fork a second parallel poll chain.
+let previewPollInFlight = false;
+
 async function runPoll(): Promise<void> {
-  const before = lastPreviewVersion;
-  await pollPreviewVersion();
-  pollIdleStreak = lastPreviewVersion !== before ? 0 : pollIdleStreak + 1;
-  scheduleNextPoll();
+  if (previewPollInFlight) return; // the live chain reschedules on completion
+  previewPollInFlight = true;
+  try {
+    const before = lastPreviewVersion;
+    await pollPreviewVersion();
+    const geomChanged = lastPreviewVersion !== before;
+    // Sim sessions piggyback the same adaptive cadence: fast while the env
+    // is stepping (step_count advancing), slow once it goes quiet.
+    const simChanged = await pollSimVersion();
+    pollIdleStreak = geomChanged || simChanged ? 0 : pollIdleStreak + 1;
+  } finally {
+    previewPollInFlight = false;
+    scheduleNextPoll();
+  }
 }
 
 function startPreviewPolling(): void {
@@ -1448,6 +2455,69 @@ if (location.hash.startsWith("#dev")) {
       bbox: [-60, -40, 60, 40],
     });
     docLabelEl.textContent = "dev-flat";
+  } else if (location.hash === "#dev-sim") {
+    // Articulated pendulum with instance-named nodes ("<instanceId>:<name>")
+    // and a synthesized replay so the transport bar can be exercised
+    // hostless: play/pause, scrub, speed, sparkline, joint readout.
+    const sample = new THREE.Group();
+    const steel = new THREE.MeshStandardMaterial({ color: 0x9da3ab, metalness: 0.9, roughness: 0.35 });
+    const pink = new THREE.MeshStandardMaterial({ color: 0xf92672, metalness: 0.0, roughness: 0.55 });
+    const base = new THREE.Mesh(new THREE.BoxGeometry(50, 50, 10), steel);
+    base.name = "1:base";
+    base.position.z = 5;
+    const arm = new THREE.Mesh(new THREE.BoxGeometry(8, 8, 44), pink);
+    arm.name = "2:arm";
+    arm.position.z = 32;
+    sample.add(base, arm);
+    tameMaterials(sample);
+    modelGroup.add(sample);
+    currentModel = sample;
+    hasModel = true;
+    updateAxesVisibility();
+    controls.target.set(0, 25, 0);
+    camera.position.set(90, 80, 90);
+    controls.update();
+    updateStats(sample, new THREE.Box3().setFromObject(sample).getSize(new THREE.Vector3()));
+    loadingEl.classList.add("hidden");
+    setTicker("ready", "ready");
+    docLabelEl.textContent = "dev-sim";
+
+    simEnvId = "env_dev";
+    simDocId = "doc_dev";
+    simUseInstances = true;
+    buildSimInstanceIndex();
+    simGlbActive = true; // dev harness renders the instance-named scene directly
+    const steps = 240;
+    const joint: number[][] = [];
+    const rewards: number[] = [];
+    const dones: boolean[] = [];
+    const transforms: Array<Record<string, SimTrsLike>> = [];
+    for (let k = 0; k < steps; k++) {
+      const a = 55 * Math.sin(k * 0.06) * Math.exp(-k / 400);
+      joint.push([a]);
+      rewards.push(-Math.abs(a) / 55 + 0.02 * Math.sin(k * 0.5));
+      dones.push(false);
+      transforms.push({
+        "2": { translation: [0, 0, 32], rotation: [0, a, 0], scale: [1, 1, 1] },
+      });
+    }
+    adoptSimReplay(
+      {
+        env_id: "env_dev",
+        document_id: "doc_dev",
+        dt: 0.01,
+        substeps: 2,
+        steps,
+        total_steps: steps,
+        joint_trajectory: joint,
+        rewards,
+        dones,
+        instance_transforms: transforms,
+        version: "dev",
+      },
+      false,
+    );
+    setSimPlaying(true);
   } else {
     const sample = new THREE.Group();
     const steel = new THREE.MeshStandardMaterial({ color: 0x9da3ab, metalness: 0.9, roughness: 0.35 });
@@ -1518,12 +2588,95 @@ if (location.hash.startsWith("#dev")) {
       sourcing: { lines: [1, 2, 3] },
     });
   }
+  if (location.hash === "#dev-orders") {
+    const now = Date.now();
+    const iso = (offsetMs: number): string => new Date(now + offsetMs).toISOString();
+    applyOrderFeed({
+      orders: [
+        {
+          order_id: "ord_dev1",
+          state_chip: "approval",
+          raw_state: "AWAITING_AUTHORIZATION",
+          process: "sheet_metal",
+          quantity: 5,
+          total_amount_usd: 182.4,
+          pricing_basis: "quoted",
+          vendor: "SendCutSend",
+          lead_time_days: 6,
+          quote_expires_at: iso(2 * 86400e3),
+          created_at: iso(-3600e3),
+          events: [
+            { state: "QUOTED", at: iso(-3600e3), note: "laser + bend, 5052-H32 2.0mm" },
+            { state: "AWAITING_AUTHORIZATION", at: iso(-1800e3) },
+          ],
+          authorization: {
+            status: "pending_human",
+            max_amount_usd: 200,
+            expires_at: iso(86400e3),
+            approve_url: "https://vcad.io/authorize/auth_dev",
+          },
+          tracking: null,
+          receipt: { status: "holds" },
+        },
+        {
+          order_id: "ord_dev2",
+          state_chip: "placing",
+          raw_state: "RECONCILING",
+          process: "cnc",
+          quantity: 1,
+          total_amount_usd: 512,
+          pricing_basis: "binding",
+          vendor: "Protolabs",
+          lead_time_days: 9,
+          created_at: iso(-7200e3),
+          events: [
+            { state: "PLACING", at: iso(-600e3) },
+            { state: "RECONCILING", at: iso(-60e3), note: "vendor confirmation pending" },
+          ],
+          authorization: null,
+          tracking: null,
+          receipt: { status: "unverified" },
+        },
+        {
+          order_id: "ord_dev3",
+          state_chip: "failed",
+          raw_state: "FAILED_VALIDATION",
+          process: "3dp_sls",
+          quantity: 12,
+          total_amount_usd: 96.05,
+          pricing_basis: "estimate",
+          vendor: "JLC3DP",
+          created_at: iso(-2 * 86400e3),
+          events: [
+            { state: "QUOTED", at: iso(-2 * 86400e3) },
+            { state: "FAILED_VALIDATION", at: iso(-86400e3), note: "wall thickness below process minimum" },
+          ],
+          authorization: null,
+          tracking: null,
+          receipt: { status: "violated" },
+        },
+      ],
+      wallet_balance_usd: 250,
+      version: "dev",
+    });
+  }
   // Debug handle for poking the scene from the console. `loadGlb` lets a
   // harness swap in an arbitrary base64 GLB (e.g. a generated PCB preview).
   (window as unknown as Record<string, unknown>).__vcad = {
     scene, camera, controls, grid, gridUniforms, contactShadow, renderer,
     select, partInfoFor, modelGroup, loadGlb, renderGlbForDoc,
+    adoptSimReplay, applySimFrame, applyOrderFeed, renderOrderFeed,
     get renderedDocId() { return renderedDocId; },
+    get simState() {
+      return {
+        envId: simEnvId,
+        playhead: simPlayhead,
+        playing: simPlaying,
+        follow: simFollow,
+        steps: simStepCount(),
+        instances: [...simNodeIndex.keys()],
+      };
+    },
   };
 } else {
   // ── Connect (handlers are all registered above) ────────────
@@ -1537,6 +2690,9 @@ if (location.hash.startsWith("#dev")) {
   );
   // Keep the one mounted canvas live as the agent mutates the document.
   startPreviewPolling();
+  // Lazy order feed: ticks idle until a document mounts, then renders the
+  // dock on the first non-empty feed.
+  startOrderPolling();
   // Dock as a side panel when the host supports it, so it persists and
   // updates across the conversation rather than scrolling away.
   void maybeAutoDock();

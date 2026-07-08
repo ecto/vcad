@@ -16,6 +16,7 @@
 import { jlcpcbAdapter } from "./adapters/jlcpcb.js";
 import { digitalMetalAdapter } from "./adapters/digitalmetal.js";
 import { genericEstimateAdapter } from "./adapters/generic.js";
+import { kerfAdapter } from "./adapters/kerf.js";
 import { applyMargin, estimateLandedCost, marginOf } from "./pricing.js";
 import type {
   FabOption,
@@ -26,12 +27,16 @@ import type {
 
 /** Fabs with a real (eventual) contract — eligible to be orderable. The
  *  generic estimator never is. Still requires a BINDING quote to flip
- *  orderable true, which Phase 0 never produces. */
-const CONTRACTED_FABS = new Set(["jlcpcb", "digitalmetal"]);
+ *  orderable true, which no adapter produces yet: the kerf rail's
+ *  "sendcutsend" quotes at basis "quoted" (the fab's own displayed price —
+ *  it suppresses the generic estimator for sheet metal when it actually
+ *  quoted, but stays non-orderable until kerf order execution, Wave 1/2). */
+const CONTRACTED_FABS = new Set(["jlcpcb", "digitalmetal", "sendcutsend"]);
 
 export const DEFAULT_ADAPTERS: readonly ManufacturerAdapter[] = [
   jlcpcbAdapter,
   digitalMetalAdapter,
+  kerfAdapter,
   genericEstimateAdapter,
 ];
 

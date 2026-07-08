@@ -125,6 +125,8 @@ import { toolDefs as recordToolDefs } from "./tools/record.js";
 import { toolDefs as changelogToolDefs } from "./tools/changelog.js";
 import { toolDefs as ecadToolDefs } from "./tools/ecad.js";
 import { toolDefs as enclosureToolDefs } from "./tools/enclosure.js";
+import { toolDefs as simReplayToolDefs } from "./tools/sim-replay.js";
+import { toolDefs as orderFeedToolDefs } from "./tools/order-feed.js";
 
 // Re-exported so the Vercel transport entry can drain in-flight PostHog
 // captures before a serverless instance freezes (see services/mcp/entry.ts).
@@ -296,6 +298,8 @@ const STATIC_TOOL_DEFS: readonly ToolDef[] = [
   ...changelogToolDefs,
   ...ecadToolDefs,
   ...enclosureToolDefs,
+  ...simReplayToolDefs,
+  ...orderFeedToolDefs,
 ];
 
 /**
@@ -324,6 +328,7 @@ const LIST_TOOL_ORDER: readonly string[] = [
   "list_orders",
   "authorize_spend",
   "place_order",
+  "get_order_feed",
   // ── Project BOM ────────────────────────────────────────────
   "bom_create",
   "bom_add_line",
@@ -339,6 +344,8 @@ const LIST_TOOL_ORDER: readonly string[] = [
   // ── MCP Apps: app-only preview fetch + version poll ────────
   "get_preview_glb",
   "get_preview_version",
+  "get_sim_replay",
+  "get_sim_version",
   // ── Atomic multi-op editing ────────────────────────────────
   "apply_edits",
   // ── Loon DSL one-shot + core see/measure/export ────────────
@@ -615,6 +622,16 @@ export async function createServer(
   const shareStore = createShareStore();
 
   // Everything a tool handler may need, threaded per connection.
+  //
+  // `elicit` is the URL-mode elicitation bridge (M3). Its closures reference
+  // the `server` const declared LATER in this function — the same late-closure
+  // pattern as setToolPacksDef: handlers only run after connect, so the
+  // binding is live by the time either function is invoked. No env flag —
+  // capability detection only: `urlSupported` re-reads the client's declared
+  // `elicitation.url` capability at call time (capabilities land only after
+  // initialize). `requestUrl` never throws: the SDK's capability assertion
+  // (and any transport failure) degrades to `{action:"cancel"}`, which callers
+  // treat as a dismissed prompt.
   const ctx: ToolContext = {
     engine,
     user: context.user,
@@ -622,6 +639,27 @@ export async function createServer(
     eventStore,
     fabricateStore,
     shareStore,
+    elicit: {
+      urlSupported: () => {
+        const caps = server.getClientCapabilities() as
+          | { elicitation?: { url?: object } }
+          | undefined;
+        return Boolean(caps?.elicitation?.url);
+      },
+      requestUrl: async (p) => {
+        try {
+          const res = await server.elicitInput({
+            mode: "url",
+            message: p.message,
+            url: p.url,
+            elicitationId: p.elicitationId,
+          });
+          return { action: res.action };
+        } catch {
+          return { action: "cancel" as const };
+        }
+      },
+    },
   };
 
   // Wire the kernel WASM's chat helpers into the shared commandRegistry so
