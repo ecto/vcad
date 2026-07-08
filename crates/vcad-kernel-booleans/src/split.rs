@@ -1343,7 +1343,7 @@ pub fn split_planar_face_by_arc(
     // Arc travels CCW in the (u, v) plane frame = CCW about u×v. Interior
     // points MUST come from the canonical absolute grid so the cylindrical
     // wall bordering this same circle emits identical vertices.
-    let plane_normal = u_axis.cross(&v_axis);
+    let plane_normal = u_axis.cross(v_axis);
     let arc_points_3d = canonical_arc_points(
         circle.center,
         circle.radius,
@@ -2177,7 +2177,7 @@ pub(crate) fn arc_segments(radius: f64, segments: u32) -> u32 {
     } else {
         3
     };
-    n.max(segments).max(3).min(512)
+    n.max(segments).clamp(3, 512)
 }
 
 /// Canonical, frame-independent discretization of a circular arc.
@@ -2221,19 +2221,14 @@ pub(crate) fn canonical_arc_points(
     ];
     let e = cand
         .into_iter()
-        .min_by(|a, b| {
-            a.dot(&n_hat)
-                .abs()
-                .partial_cmp(&b.dot(&n_hat).abs())
-                .unwrap()
-        })
+        .min_by(|a, b| a.dot(n_hat).abs().partial_cmp(&b.dot(n_hat).abs()).unwrap())
         .unwrap();
-    let x_axis = (e - n_hat * e.dot(&n_hat)).normalize();
-    let y_axis = n_hat.cross(&x_axis);
+    let x_axis = (e - n_hat * e.dot(n_hat)).normalize();
+    let y_axis = n_hat.cross(x_axis);
 
     let angle_of = |p: Point3| -> f64 {
         let d = p - center;
-        let a = d.dot(&y_axis).atan2(d.dot(&x_axis));
+        let a = d.dot(y_axis).atan2(d.dot(x_axis));
         if a < 0.0 {
             a + 2.0 * PI
         } else {
@@ -2555,11 +2550,11 @@ pub fn split_cylindrical_face_by_line(
             .map(|p| find_or_create_vertex(brep, &p, tolerance))
             .collect::<Vec<_>>()
     };
-    let mut build_face = |brep: &mut BRepSolid,
-                          v_bot_a: vcad_kernel_topo::VertexId,
-                          v_bot_b: vcad_kernel_topo::VertexId,
-                          v_top_a: vcad_kernel_topo::VertexId,
-                          v_top_b: vcad_kernel_topo::VertexId|
+    let build_face = |brep: &mut BRepSolid,
+                      v_bot_a: vcad_kernel_topo::VertexId,
+                      v_bot_b: vcad_kernel_topo::VertexId,
+                      v_top_a: vcad_kernel_topo::VertexId,
+                      v_top_b: vcad_kernel_topo::VertexId|
      -> (FaceId, HalfEdgeId, HalfEdgeId) {
         let p_bot_a = brep.topology.vertices[v_bot_a].point;
         let p_bot_b = brep.topology.vertices[v_bot_b].point;
@@ -2934,7 +2929,7 @@ pub fn split_circular_face_by_line(
     // Both arcs travel counterclockwise about the plane frame's normal.
     // Sampling MUST be the canonical absolute grid — the cylinder-wall
     // splitter borders the same circles and has to emit identical points.
-    let circle_normal = x_axis.cross(&y_axis);
+    let circle_normal = x_axis.cross(y_axis);
     let arc1_points = canonical_arc_points(
         center,
         radius,

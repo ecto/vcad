@@ -66,7 +66,7 @@ fn split_edges_at_interior_vertices(topo: &mut Topology, tolerance: f64) {
         let a = topo.vertices[v0].point;
         let b = topo.vertices[v1].point;
         let ab = b - a;
-        let len2 = ab.dot(&ab);
+        let len2 = ab.dot(ab);
         if len2 <= tolerance * tolerance {
             continue;
         }
@@ -78,7 +78,7 @@ fn split_edges_at_interior_vertices(topo: &mut Topology, tolerance: f64) {
             if vid == v0 || vid == v1 {
                 continue;
             }
-            let t = (p - a).dot(&ab) / len2;
+            let t = (p - a).dot(ab) / len2;
             // Strict interior: at least `tolerance` away from both endpoints.
             let margin = tolerance / len;
             if t <= margin || t >= 1.0 - margin {

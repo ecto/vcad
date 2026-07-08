@@ -394,10 +394,12 @@ fn a_pattern_boolean_commutation() {
         "[difference [difference [cylinder 30 13] [cylinder 60 13]] \
            [circular-pattern 0 0 0  0 0 1  8 360 {BLADE_FLAT}]]"
     ));
-    // Trim-in-pattern is now EXACT (427.3 analytic); trim-over-pattern
-    // still carries the A2 residual (~+2%, was +4%). Keep the equivalence
-    // check at a tolerance that catches regressions of either side without
-    // failing on the known A2 gap.
+    // Trim-in-pattern is now EXACT (8 × 53.4138 analytic); pin it to its
+    // analytic value so a regression on that side is caught directly.
+    // Trim-over-pattern still carries the A2 residual (~+2%, was +4%), so
+    // the equivalence check runs at a tolerance that flags regressions of
+    // the gap without failing on the known remainder.
+    assert_vol(v_child, 8.0 * 53.4138, 0.5, "trim-in-pattern (exact)");
     assert!(
         (v_child - v_over).abs() <= v_over.abs().max(1.0) * 0.03,
         "trim-in-pattern ({v_child:.3}) vs trim-over-pattern ({v_over:.3}) disagree"
