@@ -45,7 +45,11 @@ export const genericEstimateAdapter: ManufacturerAdapter = {
       `Ballpark estimate — no contracted ${req.process} fab yet, NOT orderable.`,
     ];
     if (req.baseCostMinor != null) {
-      notes.push("Priced via the shared kernel cost model — agrees with the in-app Build quote.");
+      notes.push(
+        req.baseCostModel === "sheet_metal_laser"
+          ? "Priced via the sheet-metal laser cost model (same line items as sheet_metal_cost: material + cut + pierce + bends + amortized setup); vcad margin applied on top."
+          : "Priced via the shared kernel cost model — agrees with the in-app Build quote.",
+      );
     }
     if (!inSpec) {
       notes.push(

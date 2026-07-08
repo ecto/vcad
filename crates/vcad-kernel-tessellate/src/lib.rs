@@ -1416,6 +1416,70 @@ fn tessellate_planar_face_with_holes(
 // layers, thousands of vertices) take the fast path.
 const EARCUT_VERTEX_THRESHOLD: usize = 256;
 
+/// Triangulate a planar polygon with interior holes, purely in 2D.
+///
+/// `outer` is the boundary ring and `holes` the interior rings (either
+/// winding — earcut normalizes internally). Returns index triples into the
+/// combined vertex list (outer ring first, then each hole ring in order),
+/// wound CCW in the 2D plane, or `None` when the polygon is degenerate or
+/// earcut fails. No vertices are added or removed, so callers can pair the
+/// resulting cap with lateral walls built from the same rings and stay
+/// watertight.
+pub fn triangulate_polygon_2d(
+    outer: &[(f64, f64)],
+    holes: &[Vec<(f64, f64)>],
+) -> Option<Vec<[u32; 3]>> {
+    if outer.len() < 3 {
+        return None;
+    }
+    let total = outer.len() + holes.iter().map(Vec::len).sum::<usize>();
+    let mut data: Vec<f64> = Vec::with_capacity(2 * total);
+    let mut hole_starts: Vec<usize> = Vec::with_capacity(holes.len());
+    for &(x, y) in outer {
+        data.push(x);
+        data.push(y);
+    }
+    for hole in holes {
+        hole_starts.push(data.len() / 2);
+        for &(x, y) in hole {
+            data.push(x);
+            data.push(y);
+        }
+    }
+    let tris = earcutr::earcut(&data, &hole_starts, 2).ok()?;
+    if tris.is_empty() {
+        return None;
+    }
+    // Normalize the output winding to CCW via the TOTAL signed area of the
+    // triangulation — immune to any individual degenerate triangle. A zero
+    // (or non-finite) total means the input was fully degenerate (collinear
+    // points earcut still triangulated into non-empty but zero-area output):
+    // the winding is undefined, so reject rather than return a coin-flip
+    // orientation the caller would pair with mis-wound walls.
+    let mut area2 = 0.0;
+    for t in tris.chunks(3) {
+        let (ax, ay) = (data[2 * t[0]], data[2 * t[0] + 1]);
+        let (bx, by) = (data[2 * t[1]], data[2 * t[1] + 1]);
+        let (cx, cy) = (data[2 * t[2]], data[2 * t[2] + 1]);
+        area2 += (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
+    }
+    if !area2.is_finite() || area2 == 0.0 {
+        return None;
+    }
+    let flip = area2 < 0.0;
+    Some(
+        tris.chunks(3)
+            .map(|t| {
+                if flip {
+                    [t[0] as u32, t[2] as u32, t[1] as u32]
+                } else {
+                    [t[0] as u32, t[1] as u32, t[2] as u32]
+                }
+            })
+            .collect(),
+    )
+}
+
 /// Triangulate a projected planar polygon (with optional holes) via earcut.
 ///
 /// `outer_2d`/`inner_2d` are the projected loops; `outer_3d`/`inner_3d` the
@@ -4735,6 +4799,50 @@ mod tests {
                 "vertex {v} normal not unit: {n:?}"
             );
         }
+    }
+
+    #[test]
+    fn triangulate_polygon_2d_square_is_ccw() {
+        let sq = [(0.0, 0.0), (2.0, 0.0), (2.0, 2.0), (0.0, 2.0)];
+        let tris = triangulate_polygon_2d(&sq, &[]).expect("non-degenerate");
+        // Two triangles, and the summed signed area is positive (CCW) and
+        // equals the square's area.
+        assert_eq!(tris.len(), 2);
+        let mut area2 = 0.0;
+        for t in &tris {
+            let p = |i: u32| sq[i as usize];
+            let (a, b, c) = (p(t[0]), p(t[1]), p(t[2]));
+            area2 += (b.0 - a.0) * (c.1 - a.1) - (b.1 - a.1) * (c.0 - a.0);
+        }
+        assert!((area2 / 2.0 - 4.0).abs() < 1e-9, "area {}", area2 / 2.0);
+    }
+
+    #[test]
+    fn triangulate_polygon_2d_cuts_a_hole() {
+        // 10×10 square with a 2×2 CW hole → area 100 − 4 = 96.
+        let outer = [(0.0, 0.0), (10.0, 0.0), (10.0, 10.0), (0.0, 10.0)];
+        let hole = vec![(4.0, 4.0), (4.0, 6.0), (6.0, 6.0), (6.0, 4.0)];
+        let tris = triangulate_polygon_2d(&outer, &[hole.clone()]).expect("holed");
+        let combined: Vec<(f64, f64)> = outer.iter().copied().chain(hole).collect();
+        let mut area2 = 0.0;
+        for t in &tris {
+            let (a, b, c) = (
+                combined[t[0] as usize],
+                combined[t[1] as usize],
+                combined[t[2] as usize],
+            );
+            area2 += (b.0 - a.0) * (c.1 - a.1) - (b.1 - a.1) * (c.0 - a.0);
+        }
+        assert!((area2 / 2.0 - 96.0).abs() < 1e-6, "area {}", area2 / 2.0);
+    }
+
+    #[test]
+    fn triangulate_polygon_2d_rejects_degenerate() {
+        // Fewer than 3 points, and collinear points (zero total area) both
+        // return None rather than a mis-wound or garbage triangulation.
+        assert!(triangulate_polygon_2d(&[(0.0, 0.0), (1.0, 0.0)], &[]).is_none());
+        let collinear = [(0.0, 0.0), (1.0, 0.0), (2.0, 0.0), (3.0, 0.0)];
+        assert!(triangulate_polygon_2d(&collinear, &[]).is_none());
     }
 
     /// A mesh whose normals buffer is shorter than its vertex buffer (partial)

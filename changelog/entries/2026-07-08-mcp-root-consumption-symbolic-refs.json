@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-08-mcp-root-consumption-symbolic-refs",
+  "version": "0.9.4",
+  "date": "2026-07-08",
+  "category": "fix",
+  "title": "MCP creates consume child parts; @N refs in apply_edits",
+  "summary": "Booleans/transforms via MCP no longer leave consumed intermediates as ghost parts that double-count volume; child refs accept string ids, and apply_edits ops reference earlier ops as \"@N\".",
+  "features": ["mcp", "editing"],
+  "mcpTools": ["apply_edits", "create", "inspect_cad"]
+}

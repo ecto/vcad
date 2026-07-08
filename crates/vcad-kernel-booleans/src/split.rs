@@ -9,7 +9,7 @@
 
 use vcad_kernel_math::{Point2, Point3};
 use vcad_kernel_primitives::BRepSolid;
-use vcad_kernel_topo::{FaceId, Orientation};
+use vcad_kernel_topo::{FaceId, HalfEdgeId, Orientation};
 
 use crate::ssi::IntersectionCurve;
 
@@ -1401,29 +1401,19 @@ pub fn split_planar_face_by_arc(
         2.0 * std::f64::consts::PI - inside_start_angle + inside_end_angle
     };
 
-    // Number of segments for the arc (proportional to arc length)
-    let n_arc = ((segments as f64) * arc_span / (2.0 * std::f64::consts::PI))
-        .max(2.0)
-        .ceil() as u32;
-
-    // Generate arc vertices (from inside_start to inside_end, CCW)
-    let (cx, cy) = center_2d;
-    let mut arc_points_2d: Vec<(f64, f64)> = Vec::with_capacity((n_arc + 1) as usize);
-    arc_points_2d.push(inside_start.point_2d);
-    for i in 1..n_arc {
-        let t = i as f64 / n_arc as f64;
-        let angle = inside_start_angle + t * arc_span;
-        let px = cx + circle.radius * angle.cos();
-        let py = cy + circle.radius * angle.sin();
-        arc_points_2d.push((px, py));
-    }
-    arc_points_2d.push(inside_end.point_2d);
-
-    // Convert arc 2D points to 3D
-    let arc_points_3d: Vec<Point3> = arc_points_2d
-        .iter()
-        .map(|&(x, y)| origin + x * u_axis + y * v_axis)
-        .collect();
+    let _ = arc_span;
+    // Arc travels CCW in the (u, v) plane frame = CCW about u×v. Interior
+    // points MUST come from the canonical absolute grid so the cylindrical
+    // wall bordering this same circle emits identical vertices.
+    let plane_normal = u_axis.cross(v_axis);
+    let arc_points_3d = canonical_arc_points(
+        circle.center,
+        circle.radius,
+        plane_normal,
+        inside_start.point,
+        inside_end.point,
+        segments,
+    );
 
     // Build Face 1: the inside-circle portion
     // Walk polygon from inside_end edge to inside_start edge, then add arc back
@@ -2277,6 +2267,134 @@ pub fn split_cylindrical_face_by_circle(
 }
 
 /// Compute the U parameter for a point on a cylinder surface.
+/// Segment count for discretizing a circle. Both the planar-cap and
+/// cylinder-wall splitters must use this same count so their shared arcs
+/// discretize identically. It also has to agree with the display
+/// tessellator's re-sampling of ANALYTIC circle boundaries that survive the
+/// boolean untouched (`TessellationParams::from_segments(n)` resamples at
+/// exactly `n`), so until boolean results freeze every boundary (see the
+/// kernel-seam-freeze WIP branch) this must stay at the caller's count —
+/// sag-adaptive densification here reopens every analytic/frozen seam.
+pub(crate) fn arc_segments(radius: f64, segments: u32) -> u32 {
+    const SAG: f64 = 5e-3;
+    let n = if radius > SAG {
+        let arg = (1.0 - SAG / radius).clamp(-1.0, 1.0);
+        (std::f64::consts::PI / arg.acos()).ceil() as u32
+    } else {
+        3
+    };
+    n.max(segments).clamp(3, 512)
+}
+
+/// Canonical, frame-independent discretization of a circular arc.
+///
+/// Every face that borders (a sub-arc of) the same 3D circle must emit the
+/// same interior points, or the sewn shell can never conform: the planar cap
+/// samples in its plane frame, the cylinder wall in its `ref_dir` frame, and
+/// relative-fraction sampling gives every arc its own phase. This helper
+/// derives a canonical in-plane frame purely from the circle geometry
+/// (sign-normalized axis + most-orthogonal global axis) and samples interior
+/// points on the absolute angular grid `θ_k = 2πk/n` in that frame, so two
+/// faces sharing an arc reproduce bit-identical interior points regardless
+/// of their own parameterizations. Returns `[start, interior…, end]`; travel
+/// is counterclockwise about `normal` from `start` to `end`.
+pub(crate) fn canonical_arc_points(
+    center: Point3,
+    radius: f64,
+    normal: vcad_kernel_math::Vec3,
+    start: Point3,
+    end: Point3,
+    segments: u32,
+) -> Vec<Point3> {
+    use std::f64::consts::PI;
+    let mut n_hat = normal.normalize();
+    // Sign-canonicalize the axis so the grid is invariant under normal flip.
+    let mut flipped = false;
+    for c in [n_hat.x, n_hat.y, n_hat.z] {
+        if c.abs() > 1e-9 {
+            if c < 0.0 {
+                n_hat = -n_hat;
+                flipped = true;
+            }
+            break;
+        }
+    }
+    // Canonical in-plane frame: global axis least parallel to n̂.
+    let cand = [
+        vcad_kernel_math::Vec3::new(1.0, 0.0, 0.0),
+        vcad_kernel_math::Vec3::new(0.0, 1.0, 0.0),
+        vcad_kernel_math::Vec3::new(0.0, 0.0, 1.0),
+    ];
+    let e = cand
+        .into_iter()
+        .min_by(|a, b| a.dot(n_hat).abs().partial_cmp(&b.dot(n_hat).abs()).unwrap())
+        .unwrap();
+    let x_axis = (e - n_hat * e.dot(n_hat)).normalize();
+    let y_axis = n_hat.cross(x_axis);
+
+    let angle_of = |p: Point3| -> f64 {
+        let d = p - center;
+        let a = d.dot(y_axis).atan2(d.dot(x_axis));
+        if a < 0.0 {
+            a + 2.0 * PI
+        } else {
+            a
+        }
+    };
+    let a_start = angle_of(start);
+    let a_end = angle_of(end);
+    // CCW about the ORIGINAL normal; in the canonical frame that is CCW
+    // unless the axis was flipped.
+    let ccw = !flipped;
+    let span = if ccw {
+        (a_end - a_start).rem_euclid(2.0 * PI)
+    } else {
+        (a_start - a_end).rem_euclid(2.0 * PI)
+    };
+    let span = if span < 1e-12 { 2.0 * PI } else { span };
+
+    let n = arc_segments(radius, segments);
+    let step = 2.0 * PI / n as f64;
+    let mut pts = vec![start];
+    // Interior grid angles strictly inside the traversal (ε away from the
+    // endpoints so a grid point coincident with an endpoint isn't doubled).
+    let eps = 1e-9;
+    // Walk grid indices in traversal order: find the first grid angle
+    // strictly after a_start (in travel direction), then step until a_end.
+    let first_idx = if ccw {
+        (a_start / step).floor() + 1.0
+    } else {
+        (a_start / step).ceil() - 1.0
+    };
+    let mut idx = first_idx;
+    loop {
+        let ang = idx * step;
+        let traveled = if ccw {
+            (ang - a_start).rem_euclid(2.0 * PI)
+        } else {
+            (a_start - ang).rem_euclid(2.0 * PI)
+        };
+        if traveled <= eps || traveled >= span - eps {
+            break;
+        }
+        let a = ang.rem_euclid(2.0 * PI);
+        let (sin_a, cos_a) = a.sin_cos();
+        pts.push(snap_point(
+            center + radius * (cos_a * x_axis + sin_a * y_axis),
+        ));
+        if ccw {
+            idx += 1.0;
+        } else {
+            idx -= 1.0;
+        }
+        if pts.len() > n as usize + 2 {
+            break; // safety
+        }
+    }
+    pts.push(end);
+    pts
+}
+
 fn compute_cylinder_u(point: &Point3, cyl: &vcad_kernel_geom::CylinderSurface) -> f64 {
     let d = *point - cyl.center;
     let ref_dir = cyl.ref_dir.as_ref();
@@ -2327,6 +2445,7 @@ pub fn split_cylindrical_face_by_line(
     brep: &mut BRepSolid,
     face_id: FaceId,
     line: &vcad_kernel_geom::Line3d,
+    segments: u32,
 ) -> SplitResult {
     let face = &brep.topology.faces[face_id];
     let surface_index = face.surface_index;
@@ -2521,32 +2640,78 @@ pub fn split_cylindrical_face_by_line(
     // Create two new faces by splitting at the u_split line:
     // Face 1: from start to split (smaller U arc)
     // Face 2: from split to end (larger U arc, or to seam for full face)
+    //
+    // The top/bottom arcs are emitted as DENSE canonical chains (not single
+    // chords): the neighboring cap faces discretize the same circles via
+    // `canonical_arc_points`, so both sides produce identical vertices and
+    // the sewn shell conforms. The resulting two-chain loops are exactly the
+    // shape `tessellate_ruled_two_chain` renders verbatim.
+    let axis = *cyl.axis.as_ref();
+    let bot_center = cyl.center + v_min * axis;
+    let top_center = cyl.center + v_max * axis;
+    let chain_vids = |brep: &mut BRepSolid, center: Point3, from: Point3, to: Point3| {
+        // Increasing u = CCW about the cylinder axis.
+        canonical_arc_points(center, cyl.radius, axis, from, to, segments)
+            .into_iter()
+            .map(|p| find_or_create_vertex(brep, &p, tolerance))
+            .collect::<Vec<_>>()
+    };
+    let build_face = |brep: &mut BRepSolid,
+                      v_bot_a: vcad_kernel_topo::VertexId,
+                      v_bot_b: vcad_kernel_topo::VertexId,
+                      v_top_a: vcad_kernel_topo::VertexId,
+                      v_top_b: vcad_kernel_topo::VertexId|
+     -> (FaceId, HalfEdgeId, HalfEdgeId) {
+        let p_bot_a = brep.topology.vertices[v_bot_a].point;
+        let p_bot_b = brep.topology.vertices[v_bot_b].point;
+        let p_top_a = brep.topology.vertices[v_top_a].point;
+        let p_top_b = brep.topology.vertices[v_top_b].point;
+        // Bottom chain ascending u (a→b), then up, then top chain
+        // descending u (b→a), then down.
+        let mut bot = chain_vids(brep, bot_center, p_bot_a, p_bot_b);
+        let mut top = chain_vids(brep, top_center, p_top_a, p_top_b);
+        // Reuse the canonical endpoint vertex ids.
+        *bot.first_mut().unwrap() = v_bot_a;
+        *bot.last_mut().unwrap() = v_bot_b;
+        *top.first_mut().unwrap() = v_top_a;
+        *top.last_mut().unwrap() = v_top_b;
+        top.reverse(); // descending u: b → a
 
-    // Face 1: arc from start to split
-    let he1_bot = brep.topology.add_half_edge(v_start_bot);
-    let he1_left = brep.topology.add_half_edge(v_split_bottom);
-    let he1_top = brep.topology.add_half_edge(v_split_top);
-    let he1_right = brep.topology.add_half_edge(v_start_top);
+        // Loop origins: bottom chain a..b (b starts the "up" edge), then top
+        // chain b..a (a starts the "down" edge closing to bottom a).
+        let mut origins: Vec<vcad_kernel_topo::VertexId> = Vec::new();
+        origins.extend(&bot[..bot.len() - 1]);
+        origins.extend(&top[..top.len() - 1]);
+        // `up` half-edge is the one whose origin is bot-end (last of bot
+        // slice above is bot[len-2]; the up edge origin is bot[len-1]).
+        origins.insert(bot.len() - 1, bot[bot.len() - 1]);
+        // and the closing `down` half-edge originates at top's last (== a).
+        origins.push(top[top.len() - 1]);
 
-    let loop1 = brep
-        .topology
-        .add_loop(&[he1_bot, he1_left, he1_top, he1_right]);
-    let face1 = brep.topology.add_face(loop1, surface_index, orientation);
+        let hes: Vec<_> = origins
+            .iter()
+            .map(|&v| brep.topology.add_half_edge(v))
+            .collect();
+        let lp = brep.topology.add_loop(&hes);
+        let face = brep.topology.add_face(lp, surface_index, orientation);
+        // Return (face, up_he, down_he) — the vertical edges at u=b and u=a.
+        let up_he = hes[bot.len() - 1];
+        let down_he = hes[hes.len() - 1];
+        (face, up_he, down_he)
+    };
 
-    // Face 2: arc from split to end
-    let he2_bot = brep.topology.add_half_edge(v_split_bottom);
-    let he2_left = brep.topology.add_half_edge(v_end_bot);
-    let he2_top = brep.topology.add_half_edge(v_end_top);
-    let he2_right = brep.topology.add_half_edge(v_split_top);
+    let (face1, he1_up, he1_down) =
+        build_face(brep, v_start_bot, v_split_bottom, v_start_top, v_split_top);
+    let (face2, he2_up, he2_down) =
+        build_face(brep, v_split_bottom, v_end_bot, v_split_top, v_end_top);
 
-    let loop2 = brep
-        .topology
-        .add_loop(&[he2_bot, he2_left, he2_top, he2_right]);
-    let face2 = brep.topology.add_face(loop2, surface_index, orientation);
-
-    // Add twin edges for the shared split line
-    brep.topology.add_edge(he1_left, he2_right);
-    brep.topology.add_edge(he1_top, he2_bot);
+    // Twin the shared vertical split line: face1 goes up at u_split, face2
+    // comes back down at u_split.
+    brep.topology.add_edge(he1_up, he2_down);
+    // For a full face the two sub-faces also share the seam line.
+    if is_full_face {
+        brep.topology.add_edge(he1_down, he2_up);
+    }
 
     // Add faces to shell
     if let Some(shell_id) = brep.topology.faces[face_id].shell {
@@ -2590,6 +2755,7 @@ pub fn split_cylindrical_face(
     brep: &mut BRepSolid,
     face_id: FaceId,
     curve: &IntersectionCurve,
+    segments: u32,
 ) -> SplitResult {
     let wavy = crate::cyl_band::face_is_wavy_band(brep, face_id);
     match curve {
@@ -2618,7 +2784,7 @@ pub fn split_cylindrical_face(
                         sub_faces: vec![face_id],
                     });
             }
-            let result = split_cylindrical_face_by_line(brep, face_id, line);
+            let result = split_cylindrical_face_by_line(brep, face_id, line, segments);
             if result.sub_faces.len() >= 2 {
                 return result;
             }
@@ -2655,7 +2821,12 @@ pub fn split_cylindrical_face(
         IntersectionCurve::TwoLines(line1, _line2) => {
             // TwoLines should be expanded before calling this function.
             // If we get here, just process the first line.
-            split_cylindrical_face(brep, face_id, &IntersectionCurve::Line(line1.clone()))
+            split_cylindrical_face(
+                brep,
+                face_id,
+                &IntersectionCurve::Line(line1.clone()),
+                segments,
+            )
         }
         IntersectionCurve::TwoSampled(_, _) => {
             // TwoSampled is the analytic Steinmetz pair from
@@ -2846,7 +3017,7 @@ pub fn split_circular_face_by_line(
     };
 
     // Order angles so we know which arc is which
-    let (start_angle, end_angle, start_pt, end_pt) = if angle1 < angle2 {
+    let (_start_angle, _end_angle, start_pt, end_pt) = if angle1 < angle2 {
         (angle1, angle2, p1, p2)
     } else {
         (angle2, angle1, p2, p1)
@@ -2861,36 +3032,26 @@ pub fn split_circular_face_by_line(
     // Face 1: arc from start_angle to end_angle (shorter arc if < π, longer otherwise)
     // Face 2: arc from end_angle to start_angle (wrapping around 2π)
 
-    let arc1_span = end_angle - start_angle;
-    let arc2_span = 2.0 * std::f64::consts::PI - arc1_span;
-
-    // Number of segments for each arc (proportional to arc length)
-    let n1 = ((segments as f64) * arc1_span / (2.0 * std::f64::consts::PI)).max(2.0) as u32;
-    let n2 = ((segments as f64) * arc2_span / (2.0 * std::f64::consts::PI)).max(2.0) as u32;
-
-    // Generate arc 1 vertices (from start to end, counterclockwise)
-    let mut arc1_points: Vec<Point3> = Vec::with_capacity((n1 + 1) as usize);
-    arc1_points.push(snap_point(start_pt));
-    for i in 1..n1 {
-        let t = i as f64 / n1 as f64;
-        let angle = start_angle + t * arc1_span;
-        let (sin_a, cos_a) = angle.sin_cos();
-        let pt = center + radius * (cos_a * x_axis + sin_a * y_axis);
-        arc1_points.push(snap_point(pt));
-    }
-    arc1_points.push(snap_point(end_pt));
-
-    // Generate arc 2 vertices (from end to start, counterclockwise, wrapping around)
-    let mut arc2_points: Vec<Point3> = Vec::with_capacity((n2 + 1) as usize);
-    arc2_points.push(snap_point(end_pt));
-    for i in 1..n2 {
-        let t = i as f64 / n2 as f64;
-        let angle = end_angle + t * arc2_span;
-        let (sin_a, cos_a) = angle.sin_cos();
-        let pt = center + radius * (cos_a * x_axis + sin_a * y_axis);
-        arc2_points.push(snap_point(pt));
-    }
-    arc2_points.push(snap_point(start_pt));
+    // Both arcs travel counterclockwise about the plane frame's normal.
+    // Sampling MUST be the canonical absolute grid — the cylinder-wall
+    // splitter borders the same circles and has to emit identical points.
+    let circle_normal = x_axis.cross(y_axis);
+    let arc1_points = canonical_arc_points(
+        center,
+        radius,
+        circle_normal,
+        snap_point(start_pt),
+        snap_point(end_pt),
+        segments,
+    );
+    let arc2_points = canonical_arc_points(
+        center,
+        radius,
+        circle_normal,
+        snap_point(end_pt),
+        snap_point(start_pt),
+        segments,
+    );
 
     // Create Face 1: arc from start to end + chord from end to start
     // Loop: start → arc points → end → chord → back to start
