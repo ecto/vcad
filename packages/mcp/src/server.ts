@@ -71,6 +71,7 @@ import { getStaleness } from "./edge-config.js";
 // server (http.ts).
 export { handleLiveRequest } from "./live-route.js";
 export { handleArtifactRequest } from "./artifact-route.js";
+export { flushArtifacts, artifactStoreInfo } from "./tools/artifact-store.js";
 import {
   getViewerHtml,
   VIEWER_RESOURCE_URI,
@@ -82,6 +83,7 @@ import {
 } from "./viewer.js";
 import { fireToolAlert } from "./notify.js";
 import { configureTelemetry, flushTelemetry } from "./telemetry.js";
+import { artifactStoreInfo as artifactStoreInfoLocal } from "./tools/artifact-store.js";
 
 // ── ToolDef registry: one record per tool, contributed by its module ────────
 import {
@@ -798,6 +800,7 @@ export async function createServer(
             text: JSON.stringify({
               ...buildInfo,
               ...sessionStoreInfo(),
+              ...artifactStoreInfoLocal(),
               ...staleness,
               kernel_wasm: kernelWasmLoaded ? "ok" : "unavailable",
               ...(kernelWasmMissing.length > 0
