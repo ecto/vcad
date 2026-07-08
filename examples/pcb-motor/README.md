@@ -15,7 +15,7 @@ MCP toolchain across three sessions; this example is the third (all-green) pass.
 | `motor-assembly-v3.vcad` | Full assembly (board via `solid_from_board`, 11 parts) with named clearance assertions |
 | `rotor-back-iron-v3.vcad`, `stator-back-iron-v3.vcad` | SendCutSend steel discs (2.7 mm mild steel) |
 | `rotor-dragcup.vcad` | Optional all-copper induction rotor — **verified NOT to self-start** (margin 0.005 vs bearing friction); kept as an eddy-current demo |
-| `motor-base.vcad` + `fab/motor-base.stl` | 3D-printed bearing tower (2× 608-ZZ) |
+| `motor-base.vcad` | 3D-printed bearing tower (2× 608-ZZ); export STL via `export_cad` |
 | `fab/BOM-v3.md` / `.csv` | Order-ready BOM, $269.32 landed, quote-linked |
 | `fab/VERIFICATION-v3.md` | Tool-emitted verification ledger (+ v2 ledger for history) |
 | `fab/stator-v3-gerbers/`, `fab/rotor-gerbers/` | Fab files |
