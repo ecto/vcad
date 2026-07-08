@@ -1,6 +1,7 @@
 [
   {
     "name": "open_document",
+    "title": "Open Document",
     "description": "Open an editing session for a CAD document. Returns a `document_id` to pass to subsequent tool calls (create, update, place_part, inspect_cad, \u2026). Pass an `initial` IR to begin editing an existing document; omit it for a fresh empty document.",
     "inputSchema": {
       "type": "object",
@@ -10,6 +11,9 @@
           "description": "Optional initial Document IR. If omitted, an empty document is created. Pass an existing IR (e.g. from import_step) to begin editing it."
         }
       }
+    },
+    "annotations": {
+      "readOnlyHint": false
     },
     "_meta": {
       "ui": {
@@ -23,6 +27,7 @@
   },
   {
     "name": "get_document",
+    "title": "Get Document",
     "description": "Return the full IR Document JSON for an open session. Use after a series of mutations to capture the result, or to feed into `export_cad` / `open_in_browser`. Very large documents come back as a compact artifact handle instead ({document_id, artifact_url, manifest with sha256, \u2026}) \u2014 download the full IR at `artifact_url`.",
     "inputSchema": {
       "type": "object",
@@ -36,12 +41,16 @@
         "document_id"
       ]
     },
+    "annotations": {
+      "readOnlyHint": true
+    },
     "_meta": {
       "openai/widgetAccessible": true
     }
   },
   {
     "name": "close_document",
+    "title": "Close Document",
     "description": "Close a document session and free its memory. Idempotent \u2014 closing an unknown id reports `closed: false`.",
     "inputSchema": {
       "type": "object",
@@ -54,10 +63,15 @@
       "required": [
         "document_id"
       ]
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": true
     }
   },
   {
     "name": "save_document",
+    "title": "Save Document",
     "description": "Persist a live session under a name so it can be reopened with load_document. On the hosted server the save is durable: a signed-in user's save goes to their vcad.io account under the (normalized) name; an anonymous save returns an unguessable `saved_\u2026` key to reopen with. On a local/stdio server it writes `<name>.vcad` under VCAD_MCP_STATE_DIR (or the working directory).",
     "inputSchema": {
       "type": "object",
@@ -75,10 +89,14 @@
         "document_id",
         "name"
       ]
+    },
+    "annotations": {
+      "readOnlyHint": false
     }
   },
   {
     "name": "load_document",
+    "title": "Load Document",
     "description": "Reopen a save_document save into a fresh session and return its new document_id. Pass the same name you saved under (or the `saved_\u2026` key an anonymous save returned). The cheap way to resume a board/part across runs instead of rebuilding it.",
     "inputSchema": {
       "type": "object",
@@ -92,6 +110,9 @@
         "name"
       ]
     },
+    "annotations": {
+      "readOnlyHint": false
+    },
     "_meta": {
       "ui": {
         "resourceUri": "ui://vcad/viewer"
@@ -104,6 +125,7 @@
   },
   {
     "name": "checkpoint_document",
+    "title": "Checkpoint Document",
     "description": "Snapshot a session's current state as a durable, restorable checkpoint. Returns a `checkpoint_id`. Use it at known-good milestones (post-schematic, post-place, post-route) so you can rewind with branch_from instead of rebuilding. The full IR is captured \u2014 the netlist (the most expensive, most stable artifact) is the anchor. On a durable deploy a checkpoint survives a redeploy; check server_info for durable:true.",
     "inputSchema": {
       "type": "object",
@@ -120,10 +142,14 @@
       "required": [
         "document_id"
       ]
+    },
+    "annotations": {
+      "readOnlyHint": false
     }
   },
   {
     "name": "branch_from",
+    "title": "Branch From Checkpoint",
     "description": "Re-open a checkpoint (from checkpoint_document). Omit `into` to BRANCH into a fresh session id \u2014 a variant to explore. Pass `into: <document_id>` to RESTORE the checkpoint into an existing session in place (same id). The cheap undo for a bad route or place: rewind to a good state rather than rebuilding the netlist.",
     "inputSchema": {
       "type": "object",
@@ -141,6 +167,9 @@
         "checkpoint_id"
       ]
     },
+    "annotations": {
+      "readOnlyHint": false
+    },
     "_meta": {
       "ui": {
         "resourceUri": "ui://vcad/viewer"
@@ -153,6 +182,7 @@
   },
   {
     "name": "continue_document",
+    "title": "Continue Document",
     "description": "Open the user's vcad.io part as an editing session from a 'Continue in Claude' handoff (a share `token`, or an inline `doc` for accountless handoffs). The web app hands you this in the starter prompt; call this first, then render_view it and continue the user's work. Returns a `document_id` for subsequent tool calls. The geometry is fetched server-side \u2014 never paste it.",
     "inputSchema": {
       "type": "object",
@@ -168,10 +198,7 @@
       }
     },
     "annotations": {
-      "title": "Continue from vcad.io",
-      "readOnlyHint": true,
-      "destructiveHint": false,
-      "idempotentHint": false,
+      "readOnlyHint": false,
       "openWorldHint": true
     },
     "_meta": {
@@ -186,22 +213,31 @@
   },
   {
     "name": "server_info",
+    "title": "Server Info",
     "description": "Report the running build's identity: version, git sha (if stamped), tool count, enabled packs, whether the kernel WASM loaded, and whether sessions are durable (`durable` \u2014 survive a redeploy/cold start, vs. in-memory only). Call this to confirm a tool exists in THIS build before assuming a stale or version-skewed deploy, and to check durable:true before relying on checkpoints across a long session.",
     "inputSchema": {
       "type": "object",
       "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": true
     }
   },
   {
     "name": "list_tool_packs",
+    "title": "List Tool Packs",
     "description": "List the optional tool packs and whether each is currently enabled, with its tool count. Packs gate large domain surfaces (ecad, physics, sheet_metal, dfm, \u2026) off the always-on core; a smaller surface costs fewer schema tokens and improves tool selection. Use set_tool_packs to enable/disable them at runtime.",
     "inputSchema": {
       "type": "object",
       "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": true
     }
   },
   {
     "name": "set_tool_packs",
+    "title": "Set Tool Packs",
     "description": "Enable or disable optional tool packs at runtime (see list_tool_packs for names). Pass `enable` and/or `disable` as arrays of pack names, or `set` to replace the enabled set outright (an array, or the string \"all\" / \"none\"). On stdio/persistent connections the tool list updates immediately and emits notifications/tools/list_changed; on the stateless HTTP transport the choice is saved for a signed-in user and applies on the next request (no push notification there). Disabled-pack calls keep returning an actionable error.",
     "inputSchema": {
       "type": "object",
@@ -224,10 +260,14 @@
           "description": "Replace the enabled set: an array of pack names, or \"all\" / \"none\"."
         }
       }
+    },
+    "annotations": {
+      "readOnlyHint": false
     }
   },
   {
     "name": "quote_manufacturing",
+    "title": "Quote Manufacturing",
     "description": "Quote manufacturing a part: measures the design, runs light DFM, and returns margin-inclusive price options per fab (pcb/cnc/3dprint/sheet_metal/cast_metal). Pass `ir` (inline Document \u2014 stateless, no open_document needed, serverless-safe, parallel-safe) OR a `document_id` from an open session. Persists a quote + a QUOTED order. Phase 0 is quote-only \u2014 prices are estimates and ordering/payment ship next; no money moves. For sheet_metal the result includes `fab_handoff`: curated US instant-quote shops (SendCutSend/OSH Cut/Fabworks), the exact file recipe (DXF via sheet_metal_unfold or folded STEP via export_cad), and what to enter at upload \u2014 everything needed to finish the order on the fab's site today.",
     "inputSchema": {
       "type": "object",
@@ -286,10 +326,15 @@
         "process",
         "quantity"
       ]
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "openWorldHint": true
     }
   },
   {
     "name": "get_order_status",
+    "title": "Get Order Status",
     "description": "Return the lifecycle row for a Fabricate order (state, fab, totals, event timeline). Read-only.",
     "inputSchema": {
       "type": "object",
@@ -302,10 +347,15 @@
       "required": [
         "order_id"
       ]
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "openWorldHint": true
     }
   },
   {
     "name": "list_orders",
+    "title": "List Orders",
     "description": "List the caller's Fabricate orders, newest first. Optional status filter and limit. Read-only.",
     "inputSchema": {
       "type": "object",
@@ -322,10 +372,15 @@
         }
       },
       "required": []
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "openWorldHint": true
     }
   },
   {
     "name": "authorize_spend",
+    "title": "Authorize Spend",
     "description": "Propose a spend authorization for a QUOTED order. Creates a DB-backed, revocable authorization (status pending_human) and records the proposal on the session's event log. A HUMAN must approve it in the vcad app before place_order can charge \u2014 the agent cannot approve its own spend. Flag-gated (test-mode); no money moves here.",
     "inputSchema": {
       "type": "object",
@@ -343,10 +398,15 @@
       "required": [
         "order_id"
       ]
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "openWorldHint": true
     }
   },
   {
     "name": "place_order",
+    "title": "Place Order",
     "description": "Place a QUOTED order once its authorization has been human-approved: performs one atomic wallet debit and moves the order to PAID (fab submission follows in a later step). Refuses if the authorization is still pending approval. Flag-gated (test-mode).",
     "inputSchema": {
       "type": "object",
@@ -372,10 +432,16 @@
         "order_id",
         "authorization_id"
       ]
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": true,
+      "openWorldHint": true
     }
   },
   {
     "name": "bom_create",
+    "title": "Create BOM",
     "description": "Create a project bill of materials \u2014 the deliverable that collects every manufactured part (PCBs, sheet metal, 3D prints; link quote_manufacturing quotes by quote_id) and COTS part (bearings, shafts, screws, magnets; link search_mechanical_parts entries by catalog_id) in one place. Optionally attach a document_id and assembly notes. Pass the full `lines` array to build the whole BOM in ONE call \u2014 recommended, since BOMs are in-memory per server instance. All prices are estimates and flagged as such.",
     "inputSchema": {
       "type": "object",
@@ -477,10 +543,14 @@
         }
       },
       "required": []
+    },
+    "annotations": {
+      "readOnlyHint": false
     }
   },
   {
     "name": "bom_add_line",
+    "title": "Add BOM Line",
     "description": "Append one line to a BOM from bom_create. kind 'manufactured': name + process (or a quote_id from quote_manufacturing, which auto-fills process, vendor, qty, and the landed unit price) plus optional artifact path and document_id. kind 'cots': name/spec/example_pn/vendor/qty/unit_price_usd, or a catalog_id from search_mechanical_parts to auto-fill spec and a price-band-midpoint estimate. Returns the running totals.",
     "inputSchema": {
       "type": "object",
@@ -562,10 +632,14 @@
         "bom_id",
         "kind"
       ]
+    },
+    "annotations": {
+      "readOnlyHint": false
     }
   },
   {
     "name": "bom_export",
+    "title": "Export BOM",
     "description": "Render a BOM as markdown (the shareable deliverable: manufactured-parts table with vendors/prices/artifact sources, COTS table with specs and example PNs, totals, assembly notes), csv (flat, spreadsheet-ready), or json (the full object). Totals include a landed-cost shipping estimate reusing the Fabricate shipping model (per distinct vendor; quote-linked lines are already landed). Also returns a vcad.receipt/1 `receipt_claim` (domain 'bom') carrying the cost estimate for a DesignReceipt \u2014 informational, never gates a design verdict. Prices are estimates and every export says so.",
     "inputSchema": {
       "type": "object",
@@ -587,10 +661,14 @@
       "required": [
         "bom_id"
       ]
+    },
+    "annotations": {
+      "readOnlyHint": false
     }
   },
   {
     "name": "search_mechanical_parts",
+    "title": "Search Mechanical Parts",
     "description": "Spec-search the curated mechanical COTS catalog (offline) \u2014 the mechanical sibling of search_electronic_parts: 608/625/688/600x-series bearings, precision ground shafts (3-12 mm), shaft collars, flange couplings, M2/M3 standoffs, machine screws, and ferrite/ceramic disc+ring magnets (Y30/Y35/C8). Filter by type + dimensions (bore_mm, od_mm, width_mm, thread, length_mm, \u2026) and/or free text. Returns spec + example part number + a typical price band \u2014 street-price ESTIMATES, not live quotes. Use the result's `id` as `catalog_id` in bom_add_line.",
     "inputSchema": {
       "type": "object",
@@ -655,10 +733,15 @@
         }
       },
       "required": []
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "openWorldHint": true
     }
   },
   {
     "name": "share_session",
+    "title": "Share Session",
     "description": "Share this session as a live, watchable link (mcp.vcad.io/live/<id>). Sessions are PRIVATE by default \u2014 this is the explicit opt-in that makes one viewable. Anyone with the returned link can watch the geometry + full event log (read-only) and drop annotations, so the result includes a clear public-link warning. Revoke anytime with unshare_session.",
     "inputSchema": {
       "type": "object",
@@ -671,10 +754,14 @@
       "required": [
         "document_id"
       ]
+    },
+    "annotations": {
+      "readOnlyHint": false
     }
   },
   {
     "name": "unshare_session",
+    "title": "Unshare Session",
     "description": "Revoke a session's live link \u2014 it goes dead and the session is private again.",
     "inputSchema": {
       "type": "object",
@@ -687,10 +774,14 @@
       "required": [
         "document_id"
       ]
+    },
+    "annotations": {
+      "readOnlyHint": false
     }
   },
   {
     "name": "search_parts",
+    "title": "Search Stdlib Parts",
     "description": "Search the stdlib parts library (fasteners, bearings, \u2026). Matches across name, category, synonyms, and catalog part numbers (McMaster / ISO / DIN). Returns an array of {id, name, category, params, xrefs, synonyms} \u2014 use `id` with `place_part`. Part numbers like '91290A320' or 'ISO 4762' match directly.",
     "inputSchema": {
       "type": "object",
@@ -708,10 +799,14 @@
           "description": "Maximum number of results (default 10)."
         }
       }
+    },
+    "annotations": {
+      "readOnlyHint": true
     }
   },
   {
     "name": "place_part",
+    "title": "Place Part",
     "description": "Insert a stdlib part into the session's document. Takes a `document_id`, a `path` (from `search_parts.id`), and an optional `params` map; missing params use declared defaults. The part remains parametric \u2014 end users can edit its params from the feature tree.",
     "inputSchema": {
       "type": "object",
@@ -753,10 +848,14 @@
         "document_id",
         "path"
       ]
+    },
+    "annotations": {
+      "readOnlyHint": false
     }
   },
   {
     "name": "create",
+    "title": "Create Feature Node",
     "description": "Add a single feature node to a session document: a primitive (cube/cylinder/sphere/cone), boolean (union/difference/intersection), transform (translate/rotate/scale), sketch-based feature (extrude/revolve/sweep/loft), pattern, or modifier (fillet/chamfer/shell). Per-type parameters are in the Type Catalog in this server's instructions. One node per call \u2014 for whole parts or multi-feature models prefer `create_cad_loon`.",
     "inputSchema": {
       "type": "object",
@@ -814,10 +913,14 @@
         "type",
         "params"
       ]
+    },
+    "annotations": {
+      "readOnlyHint": false
     }
   },
   {
     "name": "read",
+    "title": "Read Nodes",
     "description": "Inspect the current document. Without part_id, lists all parts. With part_id, returns full feature tree and parameters for that part.",
     "inputSchema": {
       "type": "object",
@@ -834,10 +937,14 @@
       "required": [
         "document_id"
       ]
+    },
+    "annotations": {
+      "readOnlyHint": true
     }
   },
   {
     "name": "update",
+    "title": "Update Node",
     "description": "Update parameters on an existing node \u2014 pass only the fields to change. The surgical-edit tool: when geometry is misplaced or mis-sized, prefer this over delete + re-create. Use `read` to find node ids. The result reports a compact `changed` diff of affected parts.",
     "inputSchema": {
       "type": "object",
@@ -860,10 +967,14 @@
         "node_id",
         "params"
       ]
+    },
+    "annotations": {
+      "readOnlyHint": false
     }
   },
   {
     "name": "delete",
+    "title": "Delete Node",
     "description": "Delete a part from the document.",
     "inputSchema": {
       "type": "object",
@@ -881,10 +992,15 @@
         "document_id",
         "part_id"
       ]
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": true
     }
   },
   {
     "name": "set_material",
+    "title": "Set Material",
     "description": "Set a part's material preset. Keys \u2014 metals: aluminum, steel, brass, copper, titanium, chrome, gold, silver; plastics: abs-white, abs-black, abs-red, abs-blue, pla, petg, nylon, resin, acrylic, rubber; organic: oak, walnut, leather, cork, bamboo; glass: glass, glass-tinted; composite: carbon-fiber, fiberglass, kevlar; other: concrete, ceramic, foam.",
     "inputSchema": {
       "type": "object",
@@ -907,10 +1023,14 @@
         "part_id",
         "material"
       ]
+    },
+    "annotations": {
+      "readOnlyHint": false
     }
   },
   {
     "name": "inspect_part",
+    "title": "Inspect Part",
     "description": "Read a part's current world-space geometry: bounding box, size, center, translate, rotation, material, and the set of named anchors (center/min/max/top/bottom/front/back/left/right) you can pass to `place`. Use this to verify what the scene looks like after a tool call without spending tokens on a screenshot \u2014 it's much cheaper than screenshot_viewport. Result is JSON.",
     "inputSchema": {
       "type": "object",
@@ -928,10 +1048,14 @@
         "document_id",
         "part_id"
       ]
+    },
+    "annotations": {
+      "readOnlyHint": true
     }
   },
   {
     "name": "describe_scene",
+    "title": "Describe Scene",
     "description": "One-call snapshot of the whole scene (or a subset of parts): each part's world-space bbox, center, translate, rotate, and material as JSON. Use this INSTEAD of a chain of `inspect_part` calls when you need positions for several parts at once \u2014 one turn, no round-trips. Also use it after a batch of edits to verify where everything ended up.",
     "inputSchema": {
       "type": "object",
@@ -955,10 +1079,14 @@
       "required": [
         "document_id"
       ]
+    },
+    "annotations": {
+      "readOnlyHint": true
     }
   },
   {
     "name": "get_preview_glb",
+    "title": "Get Preview GLB",
     "description": "Return a base64 GLB preview of an open session document. Internal to the inline 3D viewer \u2014 agents should use `export_cad` for geometry exports.",
     "inputSchema": {
       "type": "object",
@@ -972,6 +1100,9 @@
         "document_id"
       ]
     },
+    "annotations": {
+      "readOnlyHint": true
+    },
     "_meta": {
       "openai/widgetAccessible": true,
       "ui": {
@@ -983,6 +1114,7 @@
   },
   {
     "name": "get_preview_version",
+    "title": "Get Preview Version",
     "description": "Return a cheap {document_id, version} change token for an open session document (no geometry eval). Internal to the inline 3D viewer's self-refresh poll \u2014 agents should ignore it.",
     "inputSchema": {
       "type": "object",
@@ -996,6 +1128,9 @@
         "document_id"
       ]
     },
+    "annotations": {
+      "readOnlyHint": true
+    },
     "_meta": {
       "openai/widgetAccessible": true,
       "ui": {
@@ -1007,6 +1142,7 @@
   },
   {
     "name": "apply_edits",
+    "title": "Apply Edits",
     "description": "Apply an ordered list of edit ops (create/update/delete/set_material) to a session document atomically \u2014 all-or-nothing. One call replaces N single-node round-trips: it returns one aggregated `changed` diff over every op and one integrity certificate, and a subsequent `undo` rewinds the whole batch. Any op failing restores the pre-call document byte-for-byte and reports the failing op index. Pass `dry_run: true` to validate and get the per-op plan without mutating. Each op is `{op, ...args}` (e.g. {op:'create', type:'cube', params:{size:{x,y,z}}}); later ops reference nodes created earlier in the batch as \"@N\" (op index N), so a boolean chain never predicts node ids.",
     "inputSchema": {
       "type": "object",
@@ -1032,6 +1168,9 @@
         "ops"
       ]
     },
+    "annotations": {
+      "readOnlyHint": false
+    },
     "_meta": {
       "ui": {
         "resourceUri": "ui://vcad/viewer"
@@ -1044,6 +1183,7 @@
   },
   {
     "name": "create_cad_loon",
+    "title": "Create CAD (Loon)",
     "description": "The preferred authoring tool for whole parts and multi-feature models \u2014 one call, full vocabulary. Create a CAD document from loon source code. Loon is a Lisp-like language for parametric CAD \u2014 the FULL modeling vocabulary (patterns, sketches, extrude/revolve/sweep/loft, assemblies) is available here even where no dedicated MCP tool exists. For incremental single-node edits to an open session, use create/update/delete instead.\n\nPrimitives: [cube x y z], [cylinder r h], [sphere r], [cone r-bottom r-top h]\nBooleans (subject-last): [difference tool subject], [union other subject], [intersection other subject]\nTransforms (subject-last): [translate x y z s], [rotate rx ry rz s], [scale sx sy sz s]\nFeatures: [fillet r s], [chamfer d s], [shell t s]\nPatterns (subject-last): [linear-pattern dx dy dz count spacing s], [circular-pattern ox oy oz ax ay az count angle s] \u2014 e.g. a bolt circle is [circular-pattern 0 0 0 0 0 1 6 360 bolt-hole]\nSketches: [sketch ox oy oz xx xy xz yx yy yz #[segments]] with [line x1 y1 x2 y2] and [arc x1 y1 x2 y2 cx cy ccw]\nSketch ops (sketch-last): [extrude dx dy dz sk], [revolve aox aoy aoz adx ady adz angle sk], [sweep-line sx sy sz ex ey ez sk], [sweep-helix radius pitch height turns sk], [loft #[sk1 sk2 \u2026]]\nAssemblies: [assembly #[parts] #[instances] #[joints] ground-id] with [part name solid \"material\"], [instance name part-name x y z], [revolute-joint \u2026], [prismatic-joint \u2026], [fixed-joint \u2026], [ball-joint \u2026]\nPipe: [pipe [cube 50 30 5] [difference [cylinder 3 10]] [fillet 1.0]]\nLet bindings: [let body [cube 50 30 5]]\nScene: [root solid \"material-name\"]",
     "inputSchema": {
       "type": "object",
@@ -1065,6 +1205,9 @@
         "source"
       ]
     },
+    "annotations": {
+      "readOnlyHint": false
+    },
     "_meta": {
       "ui": {
         "resourceUri": "ui://vcad/viewer"
@@ -1077,6 +1220,7 @@
   },
   {
     "name": "export_cad",
+    "title": "Export CAD",
     "description": "Export a CAD document to a file. Supports STL (3D printing), GLB (visualization), and \u2014 for sheet-metal documents \u2014 STEP AP214 of the FOLDED body with true cylindrical bend faces (fab 3D pipelines like SendCutSend auto-detect bends/angles/directions; zero data entry). Format is determined by file extension.",
     "inputSchema": {
       "type": "object",
@@ -1101,10 +1245,14 @@
       "required": [
         "filename"
       ]
+    },
+    "annotations": {
+      "readOnlyHint": false
     }
   },
   {
     "name": "inspect_cad",
+    "title": "Inspect CAD",
     "description": "Inspect an open session document to get aggregate geometry properties: volume, surface area, bounding box, center of mass, triangle count, and mass (if material density is known). For per-part detail use `inspect_part` (one part) or `describe_scene` (every part at once); for the gap or overlap between two parts use `measure`.",
     "inputSchema": {
       "type": "object",
@@ -1118,10 +1266,14 @@
           "description": "Inline Document IR to inspect instead of a session. Use this stateless path when no `document_id` is resident (e.g. a cold serverless instance)."
         }
       }
+    },
+    "annotations": {
+      "readOnlyHint": true
     }
   },
   {
     "name": "measure",
+    "title": "Measure",
     "description": "Measure geometry in an open session. Pass `part_ids` with two ids to get the minimum distance between those parts (0/negative = contact/overlap) plus each part's world-space bounding box; pass one id to get that part's bbox, volume, and center of mass. Complements `inspect_cad` (whole-document aggregate) and `check_clearance` (named, persisted air-gap assertions). Distances are measured from evaluated tessellations, so accuracy is tessellation-bound.",
     "inputSchema": {
       "type": "object",
@@ -1142,10 +1294,25 @@
         "document_id",
         "part_ids"
       ]
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "measure": {
+          "type": "object"
+        },
+        "document_id": {
+          "type": "string"
+        }
+      }
+    },
+    "annotations": {
+      "readOnlyHint": true
     }
   },
   {
     "name": "list_parameters",
+    "title": "List Parameters",
     "description": "List a document's named parameters: raw expression, resolved numeric value, unit, and scrub bounds (min/max). Pair with set_parameters to drive the design and parameter_gradient to differentiate it.",
     "inputSchema": {
       "type": "object",
@@ -1159,10 +1326,14 @@
           "description": "Inline Document IR to read instead of a session (stateless path)."
         }
       }
+    },
+    "annotations": {
+      "readOnlyHint": true
     }
   },
   {
     "name": "set_parameters",
+    "title": "Set Parameters",
     "description": "Batch-update named parameter values on an open session document (e.g. { \"r\": 12, \"h\": 8 }). Every name must already be declared; values must be finite numbers. Returns a `changed` diff of the deltas and re-evaluates geometry integrity. Undoable and persisted.",
     "inputSchema": {
       "type": "object",
@@ -1183,10 +1354,22 @@
         "document_id",
         "parameters"
       ]
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "changed": {
+          "type": "array"
+        }
+      }
+    },
+    "annotations": {
+      "readOnlyHint": false
     }
   },
   {
     "name": "parameter_gradient",
+    "title": "Parameter Gradient",
     "description": "Differentiate a document's QoIs with respect to a single named parameter via the differentiable seam: per solid part, returns d(volume)/d\u03b8, d(mass)/d\u03b8, d(centroid)/d\u03b8 (exact analytic seam derivatives) and d(bbox extents)/d\u03b8 (finite difference), alongside each QoI's value. The parameter must be bound onto some geometry field. \"Solve for the geometry\" starts here.",
     "inputSchema": {
       "type": "object",
@@ -1215,10 +1398,14 @@
       "required": [
         "parameter"
       ]
+    },
+    "annotations": {
+      "readOnlyHint": true
     }
   },
   {
     "name": "predict_print",
+    "title": "Predict Print",
     "description": "Snapshot the design's predicted measurables BEFORE 3D-printing it: kernel-evaluated bbox and mass (at a filament density), plus caller-declared feature dimensions (step heights, hole diameters, wall thicknesses) with design-intent values. Returns a PrintPrediction \u2014 save it; after printing, record_measurement joins caliper/scale readings against it. The prediction doubles as the guided measurement worksheet (each measurable carries a human instruction label).",
     "inputSchema": {
       "type": "object",
@@ -1306,10 +1493,14 @@
       "required": [
         "document_id"
       ]
+    },
+    "annotations": {
+      "readOnlyHint": true
     }
   },
   {
     "name": "record_measurement",
+    "title": "Record Measurement",
     "description": "Record as-built measurements (caliper dimensions, scale mass) of a printed part against its predict_print snapshot and emit the receipt-vs-reality delta report: per-feature deltas with tolerances, per-axis scale factors (X/Y/Z shrinkage), hole undersize and thin-wall flow offsets, and concrete printer-profile suggestions. Accepts the prediction inline (from a saved prediction.json) when the session's warm instance is gone. Partial measurements are fine.",
     "inputSchema": {
       "type": "object",
@@ -1345,10 +1536,14 @@
       "required": [
         "measurements"
       ]
+    },
+    "annotations": {
+      "readOnlyHint": false
     }
   },
   {
     "name": "render_view",
+    "title": "Render View",
     "description": "Render an open session document to an isometric PNG image so you can SEE the current geometry \u2014 silhouettes, holes, creases \u2014 not just numbers. Drafting-style line art, Z-up, same renderer as the vcad CLI. Call after mutations to visually confirm the part matches intent before declaring done.",
     "inputSchema": {
       "type": "object",
@@ -1377,10 +1572,14 @@
           "description": "Target raster width in pixels (default 800, clamped to 64\u20132048). Ignored when falling back to SVG output."
         }
       }
+    },
+    "annotations": {
+      "readOnlyHint": true
     }
   },
   {
     "name": "verify_part",
+    "title": "Verify Part",
     "description": "Grade an open session document against a mecheval benchmark task using the official deterministic graders (the exact binaries the leaderboard runs). Returns pass/fail per check \u2014 bounding box, mass properties, hole positions, STEP round-trip, \u2026 \u2014 with measured-vs-expected details so you can iterate until green. Use list_eval_tasks to browse task ids.",
     "inputSchema": {
       "type": "object",
@@ -1398,10 +1597,14 @@
         "document_id",
         "task_id"
       ]
+    },
+    "annotations": {
+      "readOnlyHint": true
     }
   },
   {
     "name": "list_eval_tasks",
+    "title": "List Eval Tasks",
     "description": "List mecheval benchmark tasks (id, suite, tier, title, prompt, check count). Suites: A authoring, B kernel, C mech/physics, D visual, F fit. Pair with verify_part for self-graded practice and verification.",
     "inputSchema": {
       "type": "object",
@@ -1411,10 +1614,14 @@
           "description": "Optional suite filter: A (authoring), B (kernel), C (mech/physics), D (visual), F (fit)."
         }
       }
+    },
+    "annotations": {
+      "readOnlyHint": true
     }
   },
   {
     "name": "verify_spec",
+    "title": "Verify Spec",
     "description": "TDD for CAD: grade an open session document against a caller-supplied spec and return a fail-closed verification receipt (schema vcad.receipt/1). Declare the spec FIRST \u2014 bounding-box min/max \u00b1 tolerance, volume range, watertightness, exact part count, center of mass \u00b1 tolerance \u2014 then iterate the geometry until every claim rolls up to pass. Each claim reports measured vs expected. Fail-closed: an empty spec, a missing measurement, or a claim the kernel can't evaluate is `unverifiable`, never a silent pass. Unlike verify_part this needs no mecheval task \u2014 you supply the acceptance criteria.",
     "inputSchema": {
       "type": "object",
@@ -1513,10 +1720,14 @@
         "document_id",
         "spec"
       ]
+    },
+    "annotations": {
+      "readOnlyHint": true
     }
   },
   {
     "name": "dfm_check",
+    "title": "DFM Check",
     "description": "Run Design-for-Manufacturing checks against an open session document. For solid parts pick a mechanical process (cnc_3axis, fdm, sla, injection, sheet_metal, casting_sand, casting_investment) and get back severities, measurements, face references, and suggested fixes. For PCB documents pick a fab profile (pcb_jlcpcb, pcb_pcbway, pcb_generic_2layer, pcb_generic_4layer) to check the board against that fab's published process capability \u2014 min annular ring, min drill, min trace/space by copper weight, copper-to-edge, soldermask dam/sliver, silk-over-pad, acid traps, and via-in-pad \u2014 returning a per-rule pass/fail report naming the profile. Each rule's threshold is sourced from a TOML pack at lib/dfm/<process>.toml \u2014 pass `rule_pack_toml` to override.",
     "inputSchema": {
       "type": "object",
@@ -1554,10 +1765,14 @@
       "required": [
         "process"
       ]
+    },
+    "annotations": {
+      "readOnlyHint": true
     }
   },
   {
     "name": "dfm_explain",
+    "title": "DFM Explain",
     "description": "Return the long-form explanation for a specific DFM issue from the most recent `dfm_check` run on this document.",
     "inputSchema": {
       "type": "object",
@@ -1578,10 +1793,14 @@
       "required": [
         "issue_id"
       ]
+    },
+    "annotations": {
+      "readOnlyHint": true
     }
   },
   {
     "name": "dfm_suggest_fix",
+    "title": "DFM Suggest Fix",
     "description": "Return the suggested patch (set_param / wrap_op / replace_op / manual) for a DFM issue. Inspect the patch; only call `dfm_apply_fix` when you're ready to mutate the IR.",
     "inputSchema": {
       "type": "object",
@@ -1601,10 +1820,14 @@
       "required": [
         "issue_id"
       ]
+    },
+    "annotations": {
+      "readOnlyHint": true
     }
   },
   {
     "name": "dfm_apply_fix",
+    "title": "DFM Apply Fix",
     "description": "Apply an approved DFM fix to the session document. v1 supports `set_param` patches (raise a fillet radius, thicken a wall) \u2014 other kinds throw and require manual edits. Re-run `dfm_check` afterwards to confirm the issue cleared.",
     "inputSchema": {
       "type": "object",
@@ -1628,10 +1851,14 @@
       "required": [
         "issue_id"
       ]
+    },
+    "annotations": {
+      "readOnlyHint": false
     }
   },
   {
     "name": "sheet_metal_create",
+    "title": "Create Sheet Metal",
     "description": "Create a sheet-metal part: a rectangular or polygon base flange plus an ordered chain of edge flanges, hems, and jogs. Supports `shop_profile` (e.g. \"sendcutsend\") to resolve bend radii/K-factors from the fab's published catalog, and `bend_relief` to cut relief notches at bend ends. Returns a `document_id` (usable with sheet_metal_unfold/check, inspect_cad, export_cad, open_in_browser), the panel/bend model summary, flat bbox + area, and DFM violations.",
     "inputSchema": {
       "type": "object",
@@ -1812,6 +2039,9 @@
         "thickness"
       ]
     },
+    "annotations": {
+      "readOnlyHint": false
+    },
     "_meta": {
       "ui": {
         "resourceUri": "ui://vcad/viewer"
@@ -1824,6 +2054,7 @@
   },
   {
     "name": "sheet_metal_unfold",
+    "title": "Unfold Sheet Metal",
     "description": "Return the flat pattern (panel outlines, holes, creases, area, bbox) for a sheet-metal session document, plus a fab-ready merged single-silhouette DXF (millimetres): one closed exterior polyline + holes on CUT, DASHED bend centerlines on BEND_UP/BEND_DOWN. DXF carries no bend angles (entered in the fab's UI); for zero data entry export the folded body as STEP via export_cad instead.",
     "inputSchema": {
       "type": "object",
@@ -1841,6 +2072,9 @@
         "document_id"
       ]
     },
+    "annotations": {
+      "readOnlyHint": true
+    },
     "_meta": {
       "ui": {
         "resourceUri": "ui://vcad/viewer"
@@ -1853,6 +2087,7 @@
   },
   {
     "name": "sheet_metal_check",
+    "title": "Check Sheet Metal",
     "description": "Run sheet-metal manufacturability for a session document against a shop profile (brake length, min R/t, flange height, hole\u2192bend, bend\u2192bend, bend relief, fixed radius). `shop_profile` is a catalog id string (e.g. \"sendcutsend\") or a capabilities object (field-tolerant: omit keys for generic defaults). Returns structured violations the agent can use to adjust the part and re-check.",
     "inputSchema": {
       "type": "object",
@@ -1868,18 +2103,26 @@
       "required": [
         "document_id"
       ]
+    },
+    "annotations": {
+      "readOnlyHint": true
     }
   },
   {
     "name": "sheet_metal_materials",
+    "title": "Sheet Metal Materials",
     "description": "List the built-in sheet-metal materials registry (aluminum soft/hard, mild + stainless steel, brass, copper) with min R/t, yield, modulus, density, and a coarse springback estimate. Use to pick a `material` for sheet_metal_create.",
     "inputSchema": {
       "type": "object",
       "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": true
     }
   },
   {
     "name": "sheet_metal_bend_table",
+    "title": "Sheet Metal Bend Table",
     "description": "Read the kernel's curated bend table \u2014 `(material, thickness, radius) \u2192 K-factor` rows used to compute bend allowance. Pass `shop_profile` (e.g. \"sendcutsend\") to instead read that fab service's published catalog: fixed radii, K-factors, die widths, min flange sizes, and relief depths per material/thickness.",
     "inputSchema": {
       "type": "object",
@@ -1889,10 +2132,14 @@
           "description": "Optional fab-service catalog id (e.g. \"sendcutsend\"). Returns that shop's published catalog \u2014 per-material/thickness fixed inside radii, K-factors, die widths, min flange sizes, relief depths, and max bend lengths \u2014 instead of the built-in generic table."
         }
       }
+    },
+    "annotations": {
+      "readOnlyHint": true
     }
   },
   {
     "name": "sheet_metal_cost",
+    "title": "Sheet Metal Cost",
     "description": "Estimate the manufacturing cost of a sheet-metal session document: material (mass \u00d7 $/kg), cut (length \u00d7 $/m), pierces, bends, amortized setup, plus shop markup. Returns a line-itemed breakdown so the agent can see which line dominates and which design changes would lower it. `rates` is field-tolerant; omit it to use generic low-volume laser defaults.",
     "inputSchema": {
       "type": "object",
@@ -1913,10 +2160,14 @@
       "required": [
         "document_id"
       ]
+    },
+    "annotations": {
+      "readOnlyHint": true
     }
   },
   {
     "name": "sheet_metal_suggest_fix",
+    "title": "Sheet Metal Suggest Fix",
     "description": "Translate the structured violations from sheet_metal_check into concrete parameter changes the agent can apply (radius up, flange longer, bends spread, etc.). Pass `violation_index` to target one, omit it to get a suggestion for every open violation. Closes the create \u2192 check \u2192 fix \u2192 re-check self-heal loop.",
     "inputSchema": {
       "type": "object",
@@ -1936,10 +2187,14 @@
       "required": [
         "document_id"
       ]
+    },
+    "annotations": {
+      "readOnlyHint": true
     }
   },
   {
     "name": "sheet_metal_sequence",
+    "title": "Sheet Metal Bend Sequence",
     "description": "Return a feasible press-brake bend sequence for a sheet-metal part \u2014 outermost bends first so the remaining flat stays small and earlier bends don't collide with later ones. Each step includes the springback-compensated brake angle and a one-line rationale.",
     "inputSchema": {
       "type": "object",
@@ -1952,10 +2207,14 @@
       "required": [
         "document_id"
       ]
+    },
+    "annotations": {
+      "readOnlyHint": true
     }
   },
   {
     "name": "sheet_metal_nest",
+    "title": "Sheet Metal Nest",
     "description": "Pack multiple sheet-metal parts on stock sheets using bottom-left fill decreasing. Each part is either a session `document_id` (footprint inferred from the flat pattern) or an explicit `{width_mm, height_mm}`. Returns per-instance placements, sheets used, and utilization \u2014 enough to drive a multi-part DXF and a real quote.",
     "inputSchema": {
       "type": "object",
@@ -1975,10 +2234,14 @@
       "required": [
         "parts"
       ]
+    },
+    "annotations": {
+      "readOnlyHint": true
     }
   },
   {
     "name": "import_step",
+    "title": "Import STEP",
     "description": "Import geometry from a STEP file (.step or .stp). Returns an IR document with ImportedMesh nodes. Supports AP203/AP214 STEP files commonly exported from Fusion 360, SolidWorks, Onshape, etc.",
     "inputSchema": {
       "type": "object",
@@ -2001,6 +2264,9 @@
         }
       }
     },
+    "annotations": {
+      "readOnlyHint": false
+    },
     "_meta": {
       "ui": {
         "resourceUri": "ui://vcad/viewer"
@@ -2013,6 +2279,7 @@
   },
   {
     "name": "import_kicad",
+    "title": "Import KiCad",
     "description": "Import an existing KiCad .kicad_pcb board into a live session \u2014 board outline, footprints with pads + nets, design rules, and any routed traces/vias/zones. Returns a document_id ready for render_pcb, run_drc, get_pad_positions, route_nets, and export_gerber. Pass content_base64 on hosted servers.",
     "inputSchema": {
       "type": "object",
@@ -2030,10 +2297,14 @@
           "description": "Board name for display (default: filename without extension)."
         }
       }
+    },
+    "annotations": {
+      "readOnlyHint": false
     }
   },
   {
     "name": "import_eagle",
+    "title": "Import EAGLE",
     "description": "Import an Eagle .brd file (not yet supported). Export your board from Eagle as KiCad (.kicad_pcb) and use import_kicad instead.",
     "inputSchema": {
       "type": "object",
@@ -2047,10 +2318,14 @@
           "description": "Base64-encoded .brd contents."
         }
       }
+    },
+    "annotations": {
+      "readOnlyHint": false
     }
   },
   {
     "name": "open_in_browser",
+    "title": "Open in Browser",
     "description": "Generate a shareable URL to open a CAD document in vcad.io. Takes an IR document (JSON or VCode format) and returns a URL that opens the document in the browser. Documents are compressed (gzip + base64url) for URL embedding. Note: Very large documents may exceed URL length limits (~2KB).",
     "inputSchema": {
       "type": "object",
@@ -2067,10 +2342,14 @@
       "required": [
         "document"
       ]
+    },
+    "annotations": {
+      "readOnlyHint": false
     }
   },
   {
     "name": "create_robot_env",
+    "title": "Create Robot Env",
     "description": "Create a physics simulation environment from a vcad assembly. Returns an environment ID that can be used with gym_step, gym_reset, and gym_observe. The environment provides a gym-style interface for RL training.",
     "inputSchema": {
       "type": "object",
@@ -2103,10 +2382,14 @@
         "document",
         "end_effector_ids"
       ]
+    },
+    "annotations": {
+      "readOnlyHint": false
     }
   },
   {
     "name": "gym_step",
+    "title": "Gym Step",
     "description": "Step the physics simulation with an action. action_type can be 'torque' (Nm), 'position' (degrees/mm), or 'velocity' (deg/s or mm/s). Returns observation (joint positions/velocities, end effector poses), reward, and done flag.",
     "inputSchema": {
       "type": "object",
@@ -2137,10 +2420,14 @@
         "action_type",
         "values"
       ]
+    },
+    "annotations": {
+      "readOnlyHint": false
     }
   },
   {
     "name": "gym_reset",
+    "title": "Gym Reset",
     "description": "Reset the simulation environment to its initial state. Returns the initial observation.",
     "inputSchema": {
       "type": "object",
@@ -2153,10 +2440,14 @@
       "required": [
         "env_id"
       ]
+    },
+    "annotations": {
+      "readOnlyHint": false
     }
   },
   {
     "name": "gym_observe",
+    "title": "Gym Observe",
     "description": "Get the current observation from the simulation without stepping. Returns joint positions, velocities, and end effector poses.",
     "inputSchema": {
       "type": "object",
@@ -2169,10 +2460,14 @@
       "required": [
         "env_id"
       ]
+    },
+    "annotations": {
+      "readOnlyHint": true
     }
   },
   {
     "name": "gym_close",
+    "title": "Gym Close",
     "description": "Close and clean up a simulation environment.",
     "inputSchema": {
       "type": "object",
@@ -2185,10 +2480,15 @@
       "required": [
         "env_id"
       ]
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": true
     }
   },
   {
     "name": "load_structure",
+    "title": "Load Structure",
     "description": "Import an atomic structure from XYZ / extended-XYZ text (or accept a MoleculeSystem) and return the molecule plus a summary (formula, atom count, radius of gyration, bonds, periodicity). Units are \u00c5ngstr\u00f6m.",
     "inputSchema": {
       "type": "object",
@@ -2202,10 +2502,14 @@
           "description": "A MoleculeSystem object (alternative to xyz)."
         }
       }
+    },
+    "annotations": {
+      "readOnlyHint": false
     }
   },
   {
     "name": "inspect_molecule",
+    "title": "Inspect Molecule",
     "description": "Structural analysis of a molecule: Hill-order formula, per-element counts, mass, center of mass, radius of gyration, bounding box, bond count, periodicity. The atomic-domain analog of inspect_cad.",
     "inputSchema": {
       "type": "object",
@@ -2218,10 +2522,14 @@
       "required": [
         "molecule"
       ]
+    },
+    "annotations": {
+      "readOnlyHint": true
     }
   },
   {
     "name": "minimize_energy",
+    "title": "Minimize Energy",
     "description": "Relax a structure to a local energy minimum with FIRE. Force field via config (Lennard-Jones default, harmonic bonds, Coulomb, or the ML-potential stub). Returns the relaxed molecule, a result summary (energy, max force, convergence), and a reproducibility receipt.",
     "inputSchema": {
       "type": "object",
@@ -2246,10 +2554,14 @@
       "required": [
         "molecule"
       ]
+    },
+    "annotations": {
+      "readOnlyHint": false
     }
   },
   {
     "name": "md_run",
+    "title": "Run Molecular Dynamics",
     "description": "Run molecular dynamics (velocity-Verlet, optional Berendsen thermostat) for N steps and return the final observation (energies, temperature, max force) and the evolved structure.",
     "inputSchema": {
       "type": "object",
@@ -2271,10 +2583,14 @@
         "molecule",
         "steps"
       ]
+    },
+    "annotations": {
+      "readOnlyHint": false
     }
   },
   {
     "name": "design_material",
+    "title": "Design Material",
     "description": "Inverse design: search an isotropic scale factor that drives a geometric property (nearest-neighbor distance or radius of gyration) to a target value, returning the reshaped molecule and a receipt. The energy-objective inverse design (gradients through the simulation) lives in the Rust kernel.",
     "inputSchema": {
       "type": "object",
@@ -2308,10 +2624,14 @@
         "property",
         "target"
       ]
+    },
+    "annotations": {
+      "readOnlyHint": false
     }
   },
   {
     "name": "homogenize_material",
+    "title": "Homogenize Material",
     "description": "Homogenize a periodic crystal into bulk material properties \u2014 density (kg/m\u00b3), cubic elastic constants C11/C12/C44 and VRH isotropic moduli (GPa) \u2014 the atoms-to-continuum bridge. Requires a fully periodic cell.",
     "inputSchema": {
       "type": "object",
@@ -2358,10 +2678,14 @@
       "required": [
         "molecule"
       ]
+    },
+    "annotations": {
+      "readOnlyHint": true
     }
   },
   {
     "name": "render_molecule",
+    "title": "Render Molecule",
     "description": "Render a molecule as an isometric ball-and-stick (or space-filling) SVG with CPK colors and depth sorting \u2014 agent eyes on atomic structures.",
     "inputSchema": {
       "type": "object",
@@ -2386,10 +2710,14 @@
       "required": [
         "molecule"
       ]
+    },
+    "annotations": {
+      "readOnlyHint": true
     }
   },
   {
     "name": "record_simulation",
+    "title": "Record Simulation",
     "description": "Step an open physics env N times and return an animated GIF of the run \u2014 your eyes on the simulation. Drives the env created via create_robot_env, mutates the paired session document's joint states each step, and re-renders through the same kernel SVG pipeline as render_view. Defaults to passive playback (zero torque) under gravity; pass `action` (constant) or `actions[steps][action_dim]` (per-step) for active control. Hard caps: steps \u2264 600, width_px \u2264 1024. Requires the optional `@resvg/resvg-js` rasterizer and `gifenc` encoder; degrades to a JSON joint-trajectory dump when either is missing.",
     "inputSchema": {
       "type": "object",
@@ -2457,10 +2785,14 @@
         "document_id",
         "steps"
       ]
+    },
+    "annotations": {
+      "readOnlyHint": false
     }
   },
   {
     "name": "batch_create_envs",
+    "title": "Batch Create Envs",
     "description": "Create N parallel simulation environments from a single robot assembly. Returns a batch_id for use with batch_step and batch_reset. Enables parallel RL training across multiple environments.",
     "inputSchema": {
       "type": "object",
@@ -2498,10 +2830,14 @@
         "n_envs",
         "end_effector_ids"
       ]
+    },
+    "annotations": {
+      "readOnlyHint": false
     }
   },
   {
     "name": "batch_step",
+    "title": "Batch Step",
     "description": "Step all environments in a batch simultaneously with per-env actions. Returns observations, rewards, and done flags for all environments. action_type can be 'torque', 'position', or 'velocity'.",
     "inputSchema": {
       "type": "object",
@@ -2535,10 +2871,14 @@
         "action_type",
         "actions"
       ]
+    },
+    "annotations": {
+      "readOnlyHint": false
     }
   },
   {
     "name": "batch_reset",
+    "title": "Batch Reset",
     "description": "Reset all environments in a batch to their initial state. Returns initial observations for all environments.",
     "inputSchema": {
       "type": "object",
@@ -2551,10 +2891,14 @@
       "required": [
         "batch_id"
       ]
+    },
+    "annotations": {
+      "readOnlyHint": false
     }
   },
   {
     "name": "get_changelog",
+    "title": "Get Changelog",
     "description": "Query vcad changelog by version, category, feature, or MCP tool. Returns recent changes, new features, breaking changes, and migration guides.",
     "inputSchema": {
       "type": "object",
@@ -2596,10 +2940,14 @@
           "description": "Maximum number of entries to return (default: 10)"
         }
       }
+    },
+    "annotations": {
+      "readOnlyHint": true
     }
   },
   {
     "name": "create_schematic",
+    "title": "Create Schematic",
     "description": "Create a schematic from components plus connectivity, and open it as a server-side session. Declare connectivity as data with `nets` ({\"PHA\": [\"L1.1\", \"J1.1\"]}) \u2014 more reliable than wire/label coordinates. Returns a document_id for place_components / route_nets / export_gerber, plus the resolved netlist so broken connectivity is visible immediately.",
     "inputSchema": {
       "type": "object",
@@ -2795,10 +3143,14 @@
       "required": [
         "components"
       ]
+    },
+    "annotations": {
+      "readOnlyHint": false
     }
   },
   {
     "name": "place_components",
+    "title": "Place Components",
     "description": "Create the board and place schematic components on it. Mutates the session document (pass document_id). Outline: rectangle (board_width/height), circle with optional center bore (board_shape \u2014 e.g. a motor stator), or any polygon (outline, e.g. from board_from_solid). strategy=radial rings components for annular boards. Returns `placement_drc` \u2014 the pre-routing DRC subset (shorts, pad clearance, courtyard overlaps, off-board parts); when `placement_drc.clean` is false, fix the floorplan with set_placement before route_nets instead of routing on top of the fault. Also returns a `utilization` report (board vs occupied area, % used, component bounding box, and an advisory suggested_outline) so you can right-size an over-large board in one step.",
     "inputSchema": {
       "type": "object",
@@ -2922,6 +3274,9 @@
       },
       "required": []
     },
+    "annotations": {
+      "readOnlyHint": false
+    },
     "_meta": {
       "ui": {
         "resourceUri": "ui://vcad/viewer"
@@ -2934,6 +3289,7 @@
   },
   {
     "name": "route_nets",
+    "title": "Route Nets",
     "description": "Route electrical nets on the PCB with copper traces. Connects pads belonging to the same net. Idempotent: re-running rips up the previously autorouted copper on the target nets before routing, so a second call replaces the route instead of stacking shorts. Hand-placed copper (add_trace / add_via / coils) is preserved automatically; `locked_nets` additionally protects whole nets. A net with a copper-pour zone (a plane) is connected by stitching each pad to the plane with a via instead of tracing it \u2014 those nets come back in `plane_stitched`. Mutates the session document (pass document_id).",
     "inputSchema": {
       "type": "object",
@@ -2974,10 +3330,14 @@
         }
       },
       "required": []
+    },
+    "annotations": {
+      "readOnlyHint": false
     }
   },
   {
     "name": "add_coil",
+    "title": "Add Coil",
     "description": "Add a spiral copper coil (Archimedean) to the PCB \u2014 the primitive for PCB-motor stators and planar inductors. Generates the trace geometry on a layer, assigns it to a net, validates turn-to-turn clearance, and optionally drops a via at the (otherwise trapped) inner endpoint. Returns endpoints, copper length, and a DC resistance estimate. Verify-on-write: the result carries `drc_delta` \u2014 the DRC violations this call introduced (shorts/clearance/connectivity/manufacturing, capped sample with positions) with `clean` to branch on in one step.",
     "inputSchema": {
       "type": "object",
@@ -3074,10 +3434,14 @@
         "trace_width",
         "net"
       ]
+    },
+    "annotations": {
+      "readOnlyHint": false
     }
   },
   {
     "name": "add_coil_array",
+    "title": "Add Coil Array",
     "description": "Lay a ring of `count` spiral coils evenly around `center` at `pitch_radius` \u2014 the placement primitive for a PCB-motor stator. Net per coil comes from `net_sequence` (cycled); `chirality` sets winding sense. GEOMETRY ONLY: it has no notion of phases \u2014 derive correct per-coil phase/polarity with `winding_layout` first, then map it onto net_sequence/chirality. Verify-on-write: the result carries `drc_delta` \u2014 the DRC violations this call introduced (shorts/clearance/connectivity/manufacturing, capped sample with positions) with `clean` to branch on in one step.",
     "inputSchema": {
       "type": "object",
@@ -3179,10 +3543,14 @@
         "outer_radius",
         "trace_width"
       ]
+    },
+    "annotations": {
+      "readOnlyHint": false
     }
   },
   {
     "name": "winding_layout",
+    "title": "Winding Layout",
     "description": "Plan a balanced polyphase motor winding (slots + poles \u2192 per-coil phase, polarity, winding factor, feasibility) as DATA. Pure \u2014 it does NOT take a board or modify anything; inspect the plan, then realize it with add_coil_array/add_coil. Catches infeasible slot/pole combos and wrong polarity before any copper is drawn.",
     "inputSchema": {
       "type": "object",
@@ -3227,10 +3595,14 @@
         "slots",
         "poles"
       ]
+    },
+    "annotations": {
+      "readOnlyHint": true
     }
   },
   {
     "name": "board_from_solid",
+    "title": "Board From Solid",
     "description": "Derive a PCB outline polygon (with cutouts, e.g. a center bore) from a solid part in a CAD session by projecting its geometry onto the XY plane. Bridges solid modeling and PCB layout: feed the returned `outline` to place_components.",
     "inputSchema": {
       "type": "object",
@@ -3259,10 +3631,14 @@
       "required": [
         "document_id"
       ]
+    },
+    "annotations": {
+      "readOnlyHint": false
     }
   },
   {
     "name": "solid_from_board",
+    "title": "Solid From Board",
     "description": "Materialize the session PCB as a solid CAD part \u2014 the inverse of board_from_solid. Extrudes the board outline to its thickness through the hole-aware sketch path (bore/cutout polygons survive as real holes), adds simplified per-component keep-out volumes (kernel 3D body extents, else courtyard \u00d7 package-class height), and gives the substrate a homogenized FR4+copper density so inspect_cad / physics see the real board mass. Inject into an existing CAD session with `document_id_target` (enclosure fit, motor stacks, clash checks) or omit it to mint a fresh session.",
     "inputSchema": {
       "type": "object",
@@ -3287,10 +3663,25 @@
       "required": [
         "document_id"
       ]
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "solid_from_board": {
+          "type": "object"
+        },
+        "document_id": {
+          "type": "string"
+        }
+      }
+    },
+    "annotations": {
+      "readOnlyHint": false
     }
   },
   {
     "name": "check_enclosure_fit",
+    "title": "Check Enclosure Fit",
     "description": "Cross-check a board (board session) against the enclosure it ships in (a CAD session holding the case solid) \u2014 the verification axis no EDA tool has, because vcad owns both a BRep kernel and a PCB engine. Extracts the case cavity, standoffs, and wall cutouts from the solid mesh, then verifies: board fits with clearance, tall parts clear the lid, mounting holes land on standoffs, and connectors line up with the wall openings. Pass `derive:true` to also get a board outline + holes seeded from the cavity. Surfaced in build_receipt too.",
     "inputSchema": {
       "type": "object",
@@ -3352,10 +3743,28 @@
         "document_id",
         "enclosure_document_id"
       ]
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "enclosure_fit": {
+          "type": "object"
+        },
+        "document_id": {
+          "type": "string"
+        },
+        "enclosure_document_id": {
+          "type": "string"
+        }
+      }
+    },
+    "annotations": {
+      "readOnlyHint": false
     }
   },
   {
     "name": "check_clearance",
+    "title": "Check Clearance",
     "description": "Measure the minimum distance between two groups of parts in a CAD session and assert it stays above `min_mm` \u2014 air gaps, press fits, screw-head clearances. Reports the measured minimum (negative = penetration depth), the worst part pair, and pass/fail. Give it a `label` to persist the assertion on the document: build_receipt then emits it as a mech.clearance claim and verify_receipt re-verifies it as Holds / Stale / Violated when geometry changes.",
     "inputSchema": {
       "type": "object",
@@ -3393,10 +3802,25 @@
         "group_b",
         "min_mm"
       ]
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "clearance": {
+          "type": "object"
+        },
+        "document_id": {
+          "type": "string"
+        }
+      }
+    },
+    "annotations": {
+      "readOnlyHint": false
     }
   },
   {
     "name": "list_footprints",
+    "title": "List Footprints",
     "description": "List the footprint families the parametric engine resolves, each with a canonical example id to drop into create_schematic's `footprint`. Optional `kind` filter (passive/ic/transistor/diode/power/connector). Use this instead of guessing id spellings.",
     "inputSchema": {
       "type": "object",
@@ -3407,10 +3831,14 @@
         }
       },
       "required": []
+    },
+    "annotations": {
+      "readOnlyHint": true
     }
   },
   {
     "name": "search_footprints",
+    "title": "Search Footprints",
     "description": "Fuzzy-search footprint families by name/alias (e.g. 'SOIC 8', 'jst', 'qfn') and get ranked matches with a canonical example id \u2014 resolve a footprint id without a failed create_schematic round-trip.",
     "inputSchema": {
       "type": "object",
@@ -3423,10 +3851,14 @@
       "required": [
         "query"
       ]
+    },
+    "annotations": {
+      "readOnlyHint": true
     }
   },
   {
     "name": "get_pad_positions",
+    "title": "Get Pad Positions",
     "description": "Return every footprint pad's absolute board-frame (x, y), copper layer, and net \u2014 the coordinates manual routing (add_trace / add_via / add_via_array) needs so trace endpoints land exactly on pads instead of being eyeballed from component centers. Read-only. Optional `net` / `ref` filters narrow the result for targeted routing.",
     "inputSchema": {
       "type": "object",
@@ -3451,10 +3883,14 @@
       "required": [
         "document_id"
       ]
+    },
+    "annotations": {
+      "readOnlyHint": true
     }
   },
   {
     "name": "get_footprint",
+    "title": "Get Footprint",
     "description": "Introspect ONE footprint's land pattern in BOTH the footprint-local and board frames \u2014 origin, courtyard AABB, and every pad (with the explicit rotation convention) \u2014 so connector/IC pad locations are known exactly instead of render-and-guessed. Two modes: `ref` reads a placed footprint (real transform + nets) from the session; `footprint` resolves an id PRE-placement (pass `at`/`rotation`/`side` to project a hypothetical placement). Read-only.",
     "inputSchema": {
       "type": "object",
@@ -3509,10 +3945,14 @@
         }
       },
       "required": []
+    },
+    "annotations": {
+      "readOnlyHint": true
     }
   },
   {
     "name": "describe_pcb",
+    "title": "Describe PCB",
     "description": "Inspect the session PCB as compact, structured data: board size + outline, stackup (layer names + copper weights), net classes / design rules, zones (net/layer/bbox/fill), trace & via counts by net and layer, component count, the current DRC status, and an exportability/renderability probe that actually serializes the board for fab + 3D preview \u2014 surfacing the 'DRC-clean but unexportable' state get_document/read can't see. Read-only.",
     "inputSchema": {
       "type": "object",
@@ -3529,10 +3969,14 @@
       "required": [
         "document_id"
       ]
+    },
+    "annotations": {
+      "readOnlyHint": true
     }
   },
   {
     "name": "add_trace",
+    "title": "Add Trace",
     "description": "Lay an explicit copper trace: a polyline of segments on a layer, assigned to a net. The general-purpose routing primitive \u2014 use it for coil interconnect, buses, and hand-routes that route_nets (pad-driven) won't make. Tagged as manual copper, so route_nets preserves it instead of ripping it up. Mutates the session document. Verify-on-write: the result carries `drc_delta` \u2014 the DRC violations this call introduced (shorts/clearance/connectivity/manufacturing, capped sample with positions) with `clean` to branch on in one step.",
     "inputSchema": {
       "type": "object",
@@ -3582,10 +4026,14 @@
         "points",
         "net"
       ]
+    },
+    "annotations": {
+      "readOnlyHint": false
     }
   },
   {
     "name": "add_via",
+    "title": "Add Via",
     "description": "Drop a via at a point connecting two layers on a net (defaults FCu\u2192BCu, diameter/drill from design rules). Pairs with add_trace for multi-layer routing. Mutates the session document. Verify-on-write: the result carries `drc_delta` \u2014 the DRC violations this call introduced (shorts/clearance/connectivity/manufacturing, capped sample with positions) with `clean` to branch on in one step.",
     "inputSchema": {
       "type": "object",
@@ -3640,10 +4088,14 @@
         "position",
         "net"
       ]
+    },
+    "annotations": {
+      "readOnlyHint": false
     }
   },
   {
     "name": "set_stackup",
+    "title": "Set Stackup",
     "description": "Set the board stackup copper weight (e.g. copper_oz: 2) and/or per-layer thickness/material, so DC-resistance and impedance estimates reflect the real fab stackup instead of a default 1 oz. Mutates the session document. Verify-on-write: the result carries `drc_delta` \u2014 the DRC violations this call introduced (shorts/clearance/connectivity/manufacturing, capped sample with positions) with `clean` to branch on in one step.",
     "inputSchema": {
       "type": "object",
@@ -3693,10 +4145,14 @@
       "required": [
         "document_id"
       ]
+    },
+    "annotations": {
+      "readOnlyHint": false
     }
   },
   {
     "name": "set_placement",
+    "title": "Set Placement",
     "description": "Place footprints at explicit board-frame coordinates by ref \u2014 the floorplan realizer the auto-placer (grid/force_directed/radial) can't express: thermal rings, a quiet IMU corner, rim connectors. Batch; sets position/rotation/side and warns on off-board, in-cutout, or stacked landings. Mutates the session document. Returns the updated `placement_drc` (same shape as place_components) so a move can be re-checked in one call without running run_drc.",
     "inputSchema": {
       "type": "object",
@@ -3746,10 +4202,14 @@
         "document_id",
         "placements"
       ]
+    },
+    "annotations": {
+      "readOnlyHint": false
     }
   },
   {
     "name": "set_board_outline",
+    "title": "Set Board Outline",
     "description": "Resize or reshape the board outline in place \u2014 rectangle (board_width/height), circle/annulus (board_shape), or any polygon (outline) \u2014 WITHOUT re-placing components, traces, vias, or zones. Unlike re-running place_components, the floorplan is preserved; any footprint whose origin ends up off the new board is reported in `off_board` rather than silently relocated. Mutates the session document. Verify-on-write: the result carries `drc_delta` \u2014 the DRC violations this call introduced (shorts/clearance/connectivity/manufacturing, capped sample with positions) with `clean` to branch on in one step.",
     "inputSchema": {
       "type": "object",
@@ -3853,10 +4313,14 @@
       "required": [
         "document_id"
       ]
+    },
+    "annotations": {
+      "readOnlyHint": false
     }
   },
   {
     "name": "add_zone",
+    "title": "Add Zone",
     "description": "Add a copper pour (ground/power plane) on a net+layer \u2014 fills are not traces. `fill_board:true` pours the whole outline (cutouts become voids); or give an explicit polygon for a partial plane. Mutates the session document.",
     "inputSchema": {
       "type": "object",
@@ -3937,10 +4401,14 @@
         "document_id",
         "net"
       ]
+    },
+    "annotations": {
+      "readOnlyHint": false
     }
   },
   {
     "name": "delete_zone",
+    "title": "Delete Zone",
     "description": "Remove a copper pour from the board \u2014 the take-back for a bad add_zone, without rebuilding the session. Target by `index` (0-based, the add order) or by `net`/`layer` when exactly one zone matches. Returns a `changed` diff of what was removed. To undo the very last mutation of any kind, use `undo` instead. Mutates the session document. Verify-on-write: the result carries `drc_delta` \u2014 the DRC violations this call introduced (shorts/clearance/connectivity/manufacturing, capped sample with positions) with `clean` to branch on in one step.",
     "inputSchema": {
       "type": "object",
@@ -3969,10 +4437,15 @@
       "required": [
         "document_id"
       ]
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": true
     }
   },
   {
     "name": "delete_trace",
+    "title": "Delete Trace",
     "description": "Remove a single routed trace segment by `index` (0-based, the add order) or by an unambiguous `net`/`layer` match. The take-back for a stray add_trace. Returns a `changed` diff. Mutates the session document. Verify-on-write: the result carries `drc_delta` \u2014 the DRC violations this call introduced (shorts/clearance/connectivity/manufacturing, capped sample with positions) with `clean` to branch on in one step.",
     "inputSchema": {
       "type": "object",
@@ -4001,10 +4474,15 @@
       "required": [
         "document_id"
       ]
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": true
     }
   },
   {
     "name": "delete_via",
+    "title": "Delete Via",
     "description": "Remove a single via by `index` (0-based, the add order) or by an unambiguous `net` match. The take-back for a stray add_via. Returns a `changed` diff. Mutates the session document. Verify-on-write: the result carries `drc_delta` \u2014 the DRC violations this call introduced (shorts/clearance/connectivity/manufacturing, capped sample with positions) with `clean` to branch on in one step.",
     "inputSchema": {
       "type": "object",
@@ -4029,10 +4507,15 @@
       "required": [
         "document_id"
       ]
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": true
     }
   },
   {
     "name": "get_copper",
+    "title": "Get Copper",
     "description": "Query the board's routed copper \u2014 traces, trace arcs, vias, zones \u2014 with optional `layer`/`net`/`bbox`/`kind` filters. Each element comes back with its `kind` + `index`: exactly the addressing delete_trace / delete_via / delete_zone accept, so a query can drive a surgical delete without exporting the document. describe_pcb aggregates counts; this returns the elements themselves (geometry, width, net, layer), capped at 200 per page with `offset` pagination and a `total`. Read-only.",
     "inputSchema": {
       "type": "object",
@@ -4093,10 +4576,14 @@
       "required": [
         "document_id"
       ]
+    },
+    "annotations": {
+      "readOnlyHint": true
     }
   },
   {
     "name": "add_net_tie",
+    "title": "Add Net Tie",
     "description": "Declare an intentional junction between >= 2 nets (a net-tie) so DRC treats them as one node where they meet \u2014 required for wye/star motor neutrals, split grounds (GND+AGND), and current-sense shunt taps, which are otherwise reported as shorts. With `position`+`radius` the tie is region-scoped: clearance/short checks are exempt only for contacts inside the region, and connectivity accepts nets joined through copper when each has a tie-covered contact there \u2014 a stray crossing of the same nets elsewhere still fires. Without them the exemption is board-wide (prefer scoped: it keeps DRC honest away from the junction). Nets must exist on the board. Returns the updated tie list with indices. Mutates the session document. Verify-on-write: the result carries `drc_delta` \u2014 the DRC violations this call introduced or resolved (a tie edit changes short/clearance exemptions) with `clean` to branch on in one step.",
     "inputSchema": {
       "type": "object",
@@ -4141,10 +4628,14 @@
         "document_id",
         "nets"
       ]
+    },
+    "annotations": {
+      "readOnlyHint": false
     }
   },
   {
     "name": "delete_net_tie",
+    "title": "Delete Net Tie",
     "description": "Remove a net tie by `index`, or by matching `nets` (set equality, order-insensitive) and/or `position` \u2014 the take-back for a bad add_net_tie. Any junction copper stays on the board; DRC will report it as a short again. Returns the deleted tie and the updated tie list. Mutates the session document. Verify-on-write: the result carries `drc_delta` \u2014 the DRC violations this call introduced or resolved (a tie edit changes short/clearance exemptions) with `clean` to branch on in one step.",
     "inputSchema": {
       "type": "object",
@@ -4188,10 +4679,15 @@
       "required": [
         "document_id"
       ]
+    },
+    "annotations": {
+      "readOnlyHint": false,
+      "destructiveHint": true
     }
   },
   {
     "name": "undo",
+    "title": "Undo",
     "description": "Rewind the most recent mutation on a session \u2014 the snapshot taken before the last add_zone / add_trace / add_via / delete_* / route_nets / place_components (or a CAD create/update/delete) is restored, without re-sending the document. Repeated calls walk further back. Returns a `changed` diff of the board elements the rewind moved.",
     "inputSchema": {
       "type": "object",
@@ -4204,10 +4700,14 @@
       "required": [
         "document_id"
       ]
+    },
+    "annotations": {
+      "readOnlyHint": false
     }
   },
   {
     "name": "set_design_rules",
+    "title": "Set Design Rules",
     "description": "Set the board design rules run_drc enforces (clearance, track width, via, edge/hole/annular) and net classes \u2014 the way to give a power or high-voltage class wider clearance than signal nets. run_drc already reads pcb.rules; this writes them. Mutates the session document.",
     "inputSchema": {
       "type": "object",
@@ -4306,10 +4806,14 @@
       "required": [
         "document_id"
       ]
+    },
+    "annotations": {
+      "readOnlyHint": false
     }
   },
   {
     "name": "size_trace_for_current",
+    "title": "Size Trace for Current",
     "description": "IPC-2221 conductor ampacity solved for trace width: given current, copper weight, allowed temp rise, and layer (outer/inner), returns the minimum width. The ampacity sibling of size_impedance/size_pdn \u2014 pure calc, no document.",
     "inputSchema": {
       "type": "object",
@@ -4338,10 +4842,14 @@
       "required": [
         "current_a"
       ]
+    },
+    "annotations": {
+      "readOnlyHint": true
     }
   },
   {
     "name": "add_via_array",
+    "title": "Add Via Array",
     "description": "Place many vias at once \u2014 a grid over a rectangular `region` (thermal vias under FETs, GND-plane stitching) or an explicit `points` list. Grid vias are clipped to the board outline by default. Mutates the session document. Verify-on-write: the result carries `drc_delta` \u2014 the DRC violations this call introduced (shorts/clearance/connectivity/manufacturing, capped sample with positions) with `clean` to branch on in one step.",
     "inputSchema": {
       "type": "object",
@@ -4430,10 +4938,14 @@
         "document_id",
         "net"
       ]
+    },
+    "annotations": {
+      "readOnlyHint": false
     }
   },
   {
     "name": "add_motor_winding",
+    "title": "Add Motor Winding",
     "description": "One-shot motor winding realizer: plans a balanced slots/poles/phases winding, drops a spiral coil per tooth with correct phase + polarity, series-connects each phase with planar staggered-radius arcs in the coil-free bore (never crossing), ties the wye/delta termination with a region-scoped net-tie on real board material, and routes phase feeds to same-net pads when present \u2014 closing the winding_layout plan into DRC-clean copper. Mutates the session document. Verify-on-write: the result carries `drc_delta` \u2014 the DRC violations this call introduced (shorts/clearance/connectivity/manufacturing, capped sample with positions) with `clean` to branch on in one step.",
     "inputSchema": {
       "type": "object",
@@ -4536,10 +5048,14 @@
         "outer_radius",
         "trace_width"
       ]
+    },
+    "annotations": {
+      "readOnlyHint": false
     }
   },
   {
     "name": "calc_motor",
+    "title": "Calc Motor",
     "description": "Evaluate motor performance AS DATA. mode:'pm' (default): torque constant Kt, back-EMF constant Ke, no-load speed, stall torque, and a speed\u2013torque curve; supply air-gap flux directly or compute it from magnet geometry via the first-order MEC field model, with an optional Carter-like fringing derate (magnet.pole_width_mm). mode:'induction': thin-sheet axial induction rotor (drag-cup / PCB cage) \u2014 gap field B1, torque-per-unit-slip, locked-rotor torque, sync speed, rotor sheet loss. Pure: no board, no mutation. First-order steady state.",
     "inputSchema": {
       "type": "object",
@@ -4609,10 +5125,14 @@
         "pole_pairs",
         "turns_per_phase"
       ]
+    },
+    "annotations": {
+      "readOnlyHint": true
     }
   },
   {
     "name": "check_self_start",
+    "title": "Check Self-Start",
     "description": "Will it spin? Starting torque (direct, or Kt\u00b7I; induction: the locked-rotor torque from calc_motor) vs a friction estimate (direct, or the built-in bearing catalog: 608-2RS/608-ZZ/625/688 \u00d7 light/medium preload \u00d7 count). Returns starts (fail-closed vs worst-case friction), best-case verdict, and the margin. Pure calc, no document.",
     "inputSchema": {
       "type": "object",
@@ -4638,10 +5158,14 @@
           "description": "Bearing-friction estimator (used when friction_torque_nm is omitted). Fields: type ('608-2RS' | '608-ZZ' | '625' | '688'; 625/688 assume shielded non-contact variants), preload ('light' default | 'medium'), count (number of bearings, default 2)."
         }
       }
+    },
+    "annotations": {
+      "readOnlyHint": true
     }
   },
   {
     "name": "render_pcb",
+    "title": "Render PCB",
     "description": "Render a flat, top-down, per-layer 2D image of a PCB (copper, silk, drills, outline) \u2014 agent eyes for boards. Pick `layers` (e.g. [\"F.Cu\", \"F.SilkS\", \"Edge_Cuts\"]); returns a PNG. Complements the isometric render_view and numeric run_drc.",
     "inputSchema": {
       "type": "object",
@@ -4703,10 +5227,14 @@
       "required": [
         "document_id"
       ]
+    },
+    "annotations": {
+      "readOnlyHint": true
     }
   },
   {
     "name": "render_ratsnest",
+    "title": "Render Ratsnest",
     "description": "Render the board with its unrouted-connection ratsnest (per-net MST airwires) overlaid as dashed lines \u2014 judge placement quality and crossing density BEFORE routing. Returns a PNG plus the airwire (unconnected-pair) count.",
     "inputSchema": {
       "type": "object",
@@ -4730,10 +5258,14 @@
       "required": [
         "document_id"
       ]
+    },
+    "annotations": {
+      "readOnlyHint": true
     }
   },
   {
     "name": "render_stackup",
+    "title": "Render Stackup",
     "description": "Render each copper layer of a multilayer board to its own image (with the board edge for framing), so inner planes are legible instead of buried under an all-layers composite. Returns one image per layer plus a layer\u2192image index.",
     "inputSchema": {
       "type": "object",
@@ -4750,10 +5282,14 @@
       "required": [
         "document_id"
       ]
+    },
+    "annotations": {
+      "readOnlyHint": true
     }
   },
   {
     "name": "run_drc",
+    "title": "Run DRC",
     "description": "Run Design Rule Check (DRC) on a PCB. Checks clearance, trace width, drill size, annular ring, hole-to-hole, edge clearance, and connectivity \u2014 including SameNetBypass, a warning when same-net copper touches far from any intended junction (e.g. a trace over a coil's inner via, short-circuiting the spiral). Every violation is tagged with `provenance` (intra_footprint / inter_component / routing) and `generated` (involves a synthesized footprint land pattern); the summary adds `byProvenance`, `generatedArtifacts`, and `realViolations` so the headline count excludes footprint artifacts without hand-triage.",
     "inputSchema": {
       "type": "object",
@@ -4776,10 +5312,14 @@
         }
       },
       "required": []
+    },
+    "annotations": {
+      "readOnlyHint": true
     }
   },
   {
     "name": "search_electronic_parts",
+    "title": "Search Electronic Parts",
     "description": "Spec-search the generative parts catalog (offline). A query like '10k 0603 1%' parses to value+package+tolerance and returns the best match plus E-series neighbours, each with a generated footprint, symbol, and 3D body. A part is family+value+package, not a scraped row.",
     "inputSchema": {
       "type": "object",
@@ -4796,10 +5336,15 @@
       "required": [
         "query"
       ]
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "openWorldHint": true
     }
   },
   {
     "name": "resolve_part",
+    "title": "Resolve Part",
     "description": "Resolve a spec query (e.g. '10k 0603 1%') into ONE fully-specified part: E-series-snapped value plus a generated footprint + schematic symbol + 3D body (one parametric source of truth) and any MPN cross-references.",
     "inputSchema": {
       "type": "object",
@@ -4812,10 +5357,15 @@
       "required": [
         "query"
       ]
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "openWorldHint": true
     }
   },
   {
     "name": "find_alternatives",
+    "title": "Find Alternatives",
     "description": "Propose spec-compatible substitutes for the part a query resolves to. Each alternative keeps the value, varies the package, and is labelled identical / needs-reroute / incompatible by re-deriving its footprint.",
     "inputSchema": {
       "type": "object",
@@ -4828,10 +5378,15 @@
       "required": [
         "query"
       ]
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "openWorldHint": true
     }
   },
   {
     "name": "verify_substitution",
+    "title": "Verify Substitution",
     "description": "PROVE a part swap on the session PCB: replace `reference` with the part `candidate` resolves to, re-derive its footprint, re-place at the same anchor, re-run DRC (incl. connectivity), and return the before/after violation delta with a `drop_in` verdict. An alternative is only drop-in when it adds no new violations and preserves pin numbering.",
     "inputSchema": {
       "type": "object",
@@ -4853,10 +5408,15 @@
         "reference",
         "candidate"
       ]
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "openWorldHint": true
     }
   },
   {
     "name": "build_receipt",
+    "title": "Build Receipt",
     "description": "Build a re-runnable verification Receipt for the session PCB: a content hash, the DRC backend, a canonicalized DRC summary, and per-part provenance \u2014 a durable proof that round-trips and re-verifies later as Holds / Stale / Violated. Persisted clearance specs (check_clearance with a label) join the unified ledger as mech.clearance claims \u2014 a CAD-only session with specs gets a mechanical receipt, no PCB needed. Renders as an audit ledger in the inline viewer.",
     "inputSchema": {
       "type": "object",
@@ -4875,6 +5435,23 @@
         }
       }
     },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "unified": {
+          "type": "object"
+        },
+        "receipt": {
+          "type": "object"
+        },
+        "document_id": {
+          "type": "string"
+        }
+      }
+    },
+    "annotations": {
+      "readOnlyHint": true
+    },
     "_meta": {
       "ui": {
         "resourceUri": "ui://vcad/viewer"
@@ -4887,6 +5464,7 @@
   },
   {
     "name": "verify_receipt",
+    "title": "Verify Receipt",
     "description": "Re-run a prior receipt (from build_receipt) against the session's current document and return the verdict \u2014 Holds (unchanged, clean), Stale (changed but claims still hold), or Violated. Covers the PCB Receipt (board hash + DRC diff) and mech.clearance claims (re-measured against current geometry); worst verdict wins. Powers the ledger's Re-run button.",
     "inputSchema": {
       "type": "object",
@@ -4904,12 +5482,27 @@
         "receipt"
       ]
     },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "verify_receipt": {
+          "type": "object"
+        },
+        "document_id": {
+          "type": "string"
+        }
+      }
+    },
+    "annotations": {
+      "readOnlyHint": true
+    },
     "_meta": {
       "openai/widgetAccessible": true
     }
   },
   {
     "name": "route_diff_pair",
+    "title": "Route Differential Pair",
     "description": "Route a declared differential pair (net_p/net_n) coupled and length-matched, using the pair's diff-pair net-class gap and width. Routes straight (best on a clear channel); verify with run_drc / critique_route afterwards.",
     "inputSchema": {
       "type": "object",
@@ -4935,10 +5528,14 @@
         "net_p",
         "net_n"
       ]
+    },
+    "annotations": {
+      "readOnlyHint": false
     }
   },
   {
     "name": "critique_route",
+    "title": "Critique Route",
     "description": "Audit one net's routing without changing anything: total length, via/layer-change count, the closest approach to other-net copper, and any clearance/short/unconnected DRC issues it's in. Inspect a route before trusting it.",
     "inputSchema": {
       "type": "object",
@@ -4959,10 +5556,14 @@
       "required": [
         "net"
       ]
+    },
+    "annotations": {
+      "readOnlyHint": true
     }
   },
   {
     "name": "run_erc",
+    "title": "Run ERC",
     "description": "Run Electrical Rule Check (ERC) on a schematic. Checks for duplicate references, unconnected pins, and pin type conflicts.",
     "inputSchema": {
       "type": "object",
@@ -4977,10 +5578,14 @@
         }
       },
       "required": []
+    },
+    "annotations": {
+      "readOnlyHint": true
     }
   },
   {
     "name": "export_gerber",
+    "title": "Export Gerber",
     "description": "Export Gerber RS-274X fabrication files from a PCB design. Generates copper layer files, drill file, pick-and-place CSV, and BOM. Gated on a clean DRC by default (require_clean_drc) \u2014 a dirty or unverifiable board is BLOCKED with its DRC summary instead of emitting an invalid bundle. Run validate_for_fab first for the full readiness verdict.",
     "inputSchema": {
       "type": "object",
@@ -5003,10 +5608,14 @@
         }
       },
       "required": []
+    },
+    "annotations": {
+      "readOnlyHint": false
     }
   },
   {
     "name": "export_kicad",
+    "title": "Export KiCad",
     "description": "Export the session as a native, editable KiCad 9 file. filename ending in .kicad_pcb writes the board (footprints, pads, nets, traces, vias, zones, layers, outline); .kicad_sch writes the schematic. Unlike export_gerber (fab-only output), this round-trips: a human can open it in KiCad to finish routing nets the autorouter couldn't close, then re-import. Large files respect the inline byte cap (use output_dir for those).",
     "inputSchema": {
       "type": "object",
@@ -5029,10 +5638,22 @@
         }
       },
       "required": []
+    },
+    "outputSchema": {
+      "type": "object",
+      "properties": {
+        "export_kicad": {
+          "type": "object"
+        }
+      }
+    },
+    "annotations": {
+      "readOnlyHint": false
     }
   },
   {
     "name": "validate_for_fab",
+    "title": "Validate for Fab",
     "description": "The single 'is this board ready to fabricate?' oracle. Runs the whole readiness gate in one call and returns ONE structured verdict: DRC (fail-closed \u2014 a board that won't parse is 'unverifiable', never clean), renderability, Gerber-exportability (attempts serialization; names the exact failing field when it can't), unsupported features, the precise blockers, and suggested fixes. Read-only. Use before export_gerber / quote_manufacturing to know \u2014 not guess \u2014 whether the board is shippable.",
     "inputSchema": {
       "type": "object",
@@ -5048,6 +5669,9 @@
       },
       "required": []
     },
+    "annotations": {
+      "readOnlyHint": true
+    },
     "_meta": {
       "ui": {
         "resourceUri": "ui://vcad/viewer"
@@ -5060,6 +5684,7 @@
   },
   {
     "name": "calc_impedance",
+    "title": "Calc Impedance",
     "description": "Calculate trace impedance using IPC-2141 formulas. Supports microstrip, stripline, and differential pair configurations. Returns Z0, effective Er, and propagation delay. Pass document_id + net to gate the number on realized copper: an impedance for a trace that isn't actually routed/continuous is blocked, not reported.",
     "inputSchema": {
       "type": "object",
@@ -5101,10 +5726,14 @@
         "trace_width",
         "dielectric_height"
       ]
+    },
+    "annotations": {
+      "readOnlyHint": true
     }
   },
   {
     "name": "size_impedance",
+    "title": "Size Impedance",
     "description": "Inverse of calc_impedance: solve trace geometry for a TARGET impedance. Given a target Z0 (and diff Z0 for pairs) + stackup, returns the trace width (and spacing) AS DATA, snapped to the fab grid and re-verified against the same model. Reports a binding DFM min-width/spacing bound and whether the target is reachable \u2014 it will not silently hand back a width that misses spec. Pure: no board, no mutation.",
     "inputSchema": {
       "type": "object",
@@ -5161,10 +5790,14 @@
       "required": [
         "dielectric_height"
       ]
+    },
+    "annotations": {
+      "readOnlyHint": true
     }
   },
   {
     "name": "size_pdn",
+    "title": "Size PDN",
     "description": "Size copper-segment widths across a power-distribution resistor mesh so each load node's IR-drop meets its budget with minimal copper. Solves G\u00b7V=I for node voltages and drives drop\u2192budget with a bounded gradient tuner; returns per-segment widths AS DATA with drops recomputed from a forward solve, and flags any node it can't meet within the width bounds. Pure by default; pass document_id + net to REFUSE a PASS when that power plane isn't galvanically continuous (returns coverage %, stitching-via count, and the worst island).",
     "inputSchema": {
       "type": "object",
@@ -5280,10 +5913,14 @@
         "loads",
         "targets"
       ]
+    },
+    "annotations": {
+      "readOnlyHint": true
     }
   },
   {
     "name": "calc_coil",
+    "title": "Calc Coil",
     "description": "Analyze a planar spiral coil: inductance (modified Wheeler), DC resistance, copper length, and L/R time constant. The analyzer for the planar-magnetics archetype (inductors, sensor coils, motor stators). Pure.",
     "inputSchema": {
       "type": "object",
@@ -5323,10 +5960,14 @@
         "turns",
         "trace_width"
       ]
+    },
+    "annotations": {
+      "readOnlyHint": true
     }
   },
   {
     "name": "size_coil",
+    "title": "Size Coil",
     "description": "Inverse of calc_coil: solve the turn count for a target inductance in a given annulus (Wheeler L \u221d turns\u00b2, so it's closed-form). Reports continuous + integer turns, the inductance achieved, and whether that many turns fit the radial band (else fit-limited). Pure.",
     "inputSchema": {
       "type": "object",
@@ -5374,10 +6015,14 @@
         "outer_radius",
         "trace_width"
       ]
+    },
+    "annotations": {
+      "readOnlyHint": true
     }
   },
   {
     "name": "calc_rf",
+    "title": "Calc RF",
     "description": "Frequency-domain (AC) analysis of an RLC resonator: sweeps complex impedance over frequency and reports |Z|, phase, and S11/return-loss vs a reference Z0, plus resonance, Q, and the best match in the band. The RF/AC analyzer (calc_impedance is geometry-only). Pure.",
     "inputSchema": {
       "type": "object",
@@ -5420,6 +6065,9 @@
         "l_henry",
         "c_farad"
       ]
+    },
+    "annotations": {
+      "readOnlyHint": true
     }
   }
 ]
