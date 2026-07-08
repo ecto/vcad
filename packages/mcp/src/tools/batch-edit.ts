@@ -255,6 +255,8 @@ export const toolDefs: ToolDef[] = [
       "later ops may reference nodes created earlier in the same batch.",
     inputSchema: applyEditsSchema,
     handler: (a, c) => applyEdits(a, c.engine),
-    behavior: behavior({ writesDoc: true, geometry: true }),
+    // mount: a batch edit is a milestone — refresh the viewer at the bottom
+    // of the transcript right after a burst of changes lands.
+    behavior: behavior({ writesDoc: true, geometry: true, mount: true }),
   },
 ];

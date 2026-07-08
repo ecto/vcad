@@ -1007,7 +1007,7 @@
   },
   {
     "name": "apply_edits",
-    "description": "Apply an ordered list of edit ops (create/update/delete/set_material) to a session document atomically — all-or-nothing. One call replaces N single-node round-trips: it returns one aggregated `changed` diff over every op and one integrity certificate, and a subsequent `undo` rewinds the whole batch. Any op failing restores the pre-call document byte-for-byte and reports the failing op index. Pass `dry_run: true` to validate and get the per-op plan without mutating. Each op is `{op, ...args}` (e.g. {op:'create', type:'cube', params:{size:{x,y,z}}}); later ops may reference nodes created earlier in the same batch.",
+    "description": "Apply an ordered list of edit ops (create/update/delete/set_material) to a session document atomically \u2014 all-or-nothing. One call replaces N single-node round-trips: it returns one aggregated `changed` diff over every op and one integrity certificate, and a subsequent `undo` rewinds the whole batch. Any op failing restores the pre-call document byte-for-byte and reports the failing op index. Pass `dry_run: true` to validate and get the per-op plan without mutating. Each op is `{op, ...args}` (e.g. {op:'create', type:'cube', params:{size:{x,y,z}}}); later ops may reference nodes created earlier in the same batch.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -1031,6 +1031,15 @@
         "document_id",
         "ops"
       ]
+    },
+    "_meta": {
+      "ui": {
+        "resourceUri": "ui://vcad/viewer"
+      },
+      "ui/resourceUri": "ui://vcad/viewer",
+      "openai/outputTemplate": "ui://vcad/viewer-openai.html",
+      "openai/toolInvocation/invoking": "Modeling geometry\u2026",
+      "openai/toolInvocation/invoked": "Model updated"
     }
   },
   {
@@ -5038,6 +5047,15 @@
         }
       },
       "required": []
+    },
+    "_meta": {
+      "ui": {
+        "resourceUri": "ui://vcad/viewer"
+      },
+      "ui/resourceUri": "ui://vcad/viewer",
+      "openai/outputTemplate": "ui://vcad/viewer-openai.html",
+      "openai/toolInvocation/invoking": "Modeling geometry\u2026",
+      "openai/toolInvocation/invoked": "Model updated"
     }
   },
   {

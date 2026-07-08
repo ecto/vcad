@@ -12826,7 +12826,9 @@ export const toolDefs: ToolDef[] = [
       "quote_manufacturing to know — not guess — whether the board is shippable.",
     inputSchema: validateForFabSchema,
     handler: (a) => validateForFab(a) as ToolResult | Promise<ToolResult>,
-    behavior: behavior({}),
+    // mount: the readiness verdict is a moment-of-truth — put a live canvas
+    // next to it instead of making the user scroll back up.
+    behavior: behavior({ mount: true }),
   },
   {
     name: "calc_impedance",
