@@ -185,6 +185,177 @@ describe("apply_edits (atomic multi-op batch)", () => {
     await server.close();
   });
 
+  it("consumes intermediate roots: a boolean chain yields exactly ONE part (symbolic @N refs)", async () => {
+    const { client, server } = await connect(engine);
+    const id = await openDoc(client);
+
+    // The issue-repro batch: cylinder → translate → cylinder → translate →
+    // difference. Before the consumption fix this left 5 roots (ghost
+    // intermediates double-counting volume); it must yield exactly one part
+    // whose volume is the difference volume.
+    const res = await client.callTool({
+      name: "apply_edits",
+      arguments: {
+        document_id: id,
+        ops: [
+          { op: "create", type: "cylinder", params: { radius: 10, height: 20 } },
+          { op: "create", type: "translate", params: { child: "@0", offset: { x: 1, y: 2, z: 0 } } },
+          { op: "create", type: "cylinder", params: { radius: 4, height: 20 } },
+          { op: "create", type: "translate", params: { child: "@2", offset: { x: 1, y: 2, z: 0 } } },
+          { op: "create", type: "difference", params: { left: "@1", right: "@3" } },
+        ],
+      },
+    });
+    expect(res.isError ?? false).toBe(false);
+    const parsed = JSON.parse(firstText(res));
+    expect(parsed.applied).toBe(5);
+    // The aggregated diff reports ONE new part — not five.
+    expect(parsed.changed.added).toHaveLength(1);
+
+    // read: exactly one part remains.
+    const read = await client.callTool({
+      name: "read",
+      arguments: { document_id: id },
+    });
+    const parts = JSON.parse(firstText(read)).parts as unknown[];
+    expect(parts).toHaveLength(1);
+
+    // inspect_cad: one part, and total volume is the DIFFERENCE volume
+    // (π·(10²−4²)·20), not big+small+difference double-counted.
+    const insp = await client.callTool({
+      name: "inspect_cad",
+      arguments: { document_id: id },
+    });
+    const inspection = JSON.parse(firstText(insp)) as {
+      parts: number;
+      volume_mm3: number;
+    };
+    expect(inspection.parts).toBe(1);
+    const expected = Math.PI * (10 * 10 - 4 * 4) * 20;
+    expect(Math.abs(inspection.volume_mm3 - expected) / expected).toBeLessThan(0.02);
+
+    await client.close();
+    await server.close();
+  });
+
+  it("keeps back-compat: raw numeric node ids still work as child refs", async () => {
+    const { client, server } = await connect(engine);
+    const id = await openDoc(client);
+
+    // Fresh document: node ids are assigned sequentially from 1.
+    const res = await client.callTool({
+      name: "apply_edits",
+      arguments: {
+        document_id: id,
+        ops: [
+          { op: "create", type: "cylinder", params: { radius: 10, height: 20 } },
+          { op: "create", type: "translate", params: { child: 1, offset: { x: 1, y: 2, z: 0 } } },
+          { op: "create", type: "cylinder", params: { radius: 4, height: 20 } },
+          { op: "create", type: "translate", params: { child: 3, offset: { x: 1, y: 2, z: 0 } } },
+          { op: "create", type: "difference", params: { left: 2, right: 4 } },
+        ],
+      },
+    });
+    expect(res.isError ?? false).toBe(false);
+
+    const read = await client.callTool({
+      name: "read",
+      arguments: { document_id: id },
+    });
+    const parts = JSON.parse(firstText(read)).parts as Array<{ id: string }>;
+    expect(parts).toHaveLength(1);
+    expect(parts[0].id).toBe("5");
+
+    await client.close();
+    await server.close();
+  });
+
+  it("accepts string part ids from prior results in single create calls (and consumes roots there too)", async () => {
+    const { client, server } = await connect(engine);
+    const id = await openDoc(client);
+
+    // Two independent creates, then a difference referencing the returned
+    // string part ids — the dialect every other MCP tool speaks.
+    const a = await client.callTool({
+      name: "create",
+      arguments: { document_id: id, type: "cube", params: { size: { x: 10, y: 10, z: 10 } } },
+    });
+    const aId = JSON.parse(firstText(a)).part_id as string;
+    const b = await client.callTool({
+      name: "create",
+      arguments: { document_id: id, type: "cube", params: { size: { x: 4, y: 4, z: 4 } } },
+    });
+    const bId = JSON.parse(firstText(b)).part_id as string;
+    expect(typeof aId).toBe("string");
+
+    const diff = await client.callTool({
+      name: "create",
+      arguments: {
+        document_id: id,
+        type: "difference",
+        params: { left: aId, right: bId },
+      },
+    });
+    expect(diff.isError ?? false).toBe(false);
+
+    const doc = await getDoc(client, id);
+    expect(doc.roots).toHaveLength(1);
+
+    await client.close();
+    await server.close();
+  });
+
+  it("consumption preserves the consumed root's material and symbolic refs work in part_id positions", async () => {
+    const { client, server } = await connect(engine);
+    const id = await openDoc(client);
+
+    const res = await client.callTool({
+      name: "apply_edits",
+      arguments: {
+        document_id: id,
+        ops: [
+          { op: "create", type: "cube", params: { size: { x: 5, y: 5, z: 5 } } },
+          { op: "set_material", part_id: "@0", material: "steel" },
+          { op: "create", type: "translate", params: { child: "@0", offset: { x: 3, y: 0, z: 0 } } },
+        ],
+      },
+    });
+    expect(res.isError ?? false).toBe(false);
+
+    const doc = await getDoc(client, id);
+    expect(doc.roots).toHaveLength(1);
+    expect((doc.roots[0] as { material: string }).material).toBe("steel");
+
+    await client.close();
+    await server.close();
+  });
+
+  it("rejects forward and dangling @N refs atomically", async () => {
+    const { client, server } = await connect(engine);
+    const id = await openDoc(client);
+
+    const res = await client.callTool({
+      name: "apply_edits",
+      arguments: {
+        document_id: id,
+        ops: [
+          { op: "create", type: "cube", params: { size: { x: 5, y: 5, z: 5 } } },
+          { op: "create", type: "translate", params: { child: "@5", offset: { x: 1, y: 0, z: 0 } } },
+        ],
+      },
+    });
+    expect(res.isError).toBe(true);
+    expect(firstText(res)).toMatch(/op 1/);
+    expect(firstText(res)).toMatch(/@5/);
+
+    // Nothing applied — the valid op 0 rolled back with the batch.
+    const doc = await getDoc(client, id);
+    expect(doc.roots).toHaveLength(0);
+
+    await client.close();
+    await server.close();
+  });
+
   it("rejects an over-cap batch with a clear error", async () => {
     const { client, server } = await connect(engine);
     const id = await openDoc(client);

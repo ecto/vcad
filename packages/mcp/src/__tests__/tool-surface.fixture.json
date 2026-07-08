@@ -1007,7 +1007,7 @@
   },
   {
     "name": "apply_edits",
-    "description": "Apply an ordered list of edit ops (create/update/delete/set_material) to a session document atomically — all-or-nothing. One call replaces N single-node round-trips: it returns one aggregated `changed` diff over every op and one integrity certificate, and a subsequent `undo` rewinds the whole batch. Any op failing restores the pre-call document byte-for-byte and reports the failing op index. Pass `dry_run: true` to validate and get the per-op plan without mutating. Each op is `{op, ...args}` (e.g. {op:'create', type:'cube', params:{size:{x,y,z}}}); later ops may reference nodes created earlier in the same batch.",
+    "description": "Apply an ordered list of edit ops (create/update/delete/set_material) to a session document atomically \u2014 all-or-nothing. One call replaces N single-node round-trips: it returns one aggregated `changed` diff over every op and one integrity certificate, and a subsequent `undo` rewinds the whole batch. Any op failing restores the pre-call document byte-for-byte and reports the failing op index. Pass `dry_run: true` to validate and get the per-op plan without mutating. Each op is `{op, ...args}` (e.g. {op:'create', type:'cube', params:{size:{x,y,z}}}); later ops reference nodes created earlier in the batch as \"@N\" (op index N), so a boolean chain never predicts node ids.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -1017,7 +1017,7 @@
         },
         "ops": {
           "type": "array",
-          "description": "Ordered list of edit ops applied atomically (all-or-nothing). Each op is `{op, ...args}` where op is one of create/update/delete/set_material and the remaining fields are that tool's arguments (minus document_id): create {op, type, params}, update {op, node_id|part_id, ...fields}, delete {op, part_id}, set_material {op, part_id, material}. Later ops may reference nodes created by earlier ops in the same batch. Max 50 per call.",
+          "description": "Ordered list of edit ops applied atomically (all-or-nothing). Each op is `{op, ...args}` where op is one of create/update/delete/set_material and the remaining fields are that tool's arguments (minus document_id): create {op, type, params}, update {op, node_id|part_id, ...fields}, delete {op, part_id}, set_material {op, part_id, material}. Later ops may reference nodes created by earlier ops in the same batch symbolically: \"@N\" (in params.child/left/right/sketch or part_id/node_id) resolves to the node created by op index N \u2014 no need to predict node ids. Max 50 per call.",
           "items": {
             "type": "object"
           }
