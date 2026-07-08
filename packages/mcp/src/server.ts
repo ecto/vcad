@@ -93,6 +93,7 @@ import type { ToolResult } from "./tools/tool-result.js";
 import { buildKernelEventPayload } from "./tools/kernel-event.js";
 
 import { toolDefs as sessionToolDefs } from "./tools/session.js";
+import { toolDefs as batchEditToolDefs } from "./tools/batch-edit.js";
 import { toolDefs as checkpointToolDefs } from "./tools/checkpoint.js";
 import { toolDefs as continueDocToolDefs } from "./tools/continue-doc.js";
 import { toolDefs as orderToolDefs } from "./tools/order.js";
@@ -263,6 +264,7 @@ const WIDGET_CALLABLE_META = {
  */
 const STATIC_TOOL_DEFS: readonly ToolDef[] = [
   ...sessionToolDefs,
+  ...batchEditToolDefs,
   ...checkpointToolDefs,
   ...continueDocToolDefs,
   ...orderToolDefs,
@@ -334,6 +336,8 @@ const LIST_TOOL_ORDER: readonly string[] = [
   // ── MCP Apps: app-only preview fetch + version poll ────────
   "get_preview_glb",
   "get_preview_version",
+  // ── Atomic multi-op editing ────────────────────────────────
+  "apply_edits",
   // ── Loon DSL one-shot + core see/measure/export ────────────
   "create_cad_loon",
   "export_cad",
