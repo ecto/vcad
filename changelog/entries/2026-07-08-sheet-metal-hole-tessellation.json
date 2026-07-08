@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-08-sheet-metal-hole-tessellation",
+  "version": "0.9.4",
+  "date": "2026-07-08",
+  "category": "fix",
+  "title": "Sheet-metal flanges with holes tessellate watertight",
+  "summary": "Panel meshes now cut hole loops into the caps, wall each bore, and wind outward — inspect_cad/verify_spec volume and watertightness match the solid instead of reporting garbage.",
+  "features": ["sheet-metal", "mesh", "verification"],
+  "mcpTools": ["sheet_metal_create", "inspect_cad", "verify_spec"]
+}

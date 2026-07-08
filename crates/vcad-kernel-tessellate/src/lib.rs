@@ -1416,6 +1416,63 @@ fn tessellate_planar_face_with_holes(
 // layers, thousands of vertices) take the fast path.
 const EARCUT_VERTEX_THRESHOLD: usize = 256;
 
+/// Triangulate a planar polygon with interior holes, purely in 2D.
+///
+/// `outer` is the boundary ring and `holes` the interior rings (either
+/// winding — earcut normalizes internally). Returns index triples into the
+/// combined vertex list (outer ring first, then each hole ring in order),
+/// wound CCW in the 2D plane, or `None` when the polygon is degenerate or
+/// earcut fails. No vertices are added or removed, so callers can pair the
+/// resulting cap with lateral walls built from the same rings and stay
+/// watertight.
+pub fn triangulate_polygon_2d(
+    outer: &[(f64, f64)],
+    holes: &[Vec<(f64, f64)>],
+) -> Option<Vec<[u32; 3]>> {
+    if outer.len() < 3 {
+        return None;
+    }
+    let total = outer.len() + holes.iter().map(Vec::len).sum::<usize>();
+    let mut data: Vec<f64> = Vec::with_capacity(2 * total);
+    let mut hole_starts: Vec<usize> = Vec::with_capacity(holes.len());
+    for &(x, y) in outer {
+        data.push(x);
+        data.push(y);
+    }
+    for hole in holes {
+        hole_starts.push(data.len() / 2);
+        for &(x, y) in hole {
+            data.push(x);
+            data.push(y);
+        }
+    }
+    let tris = earcutr::earcut(&data, &hole_starts, 2).ok()?;
+    if tris.is_empty() {
+        return None;
+    }
+    // Normalize the output winding to CCW via the TOTAL signed area of the
+    // triangulation — immune to any individual degenerate triangle.
+    let mut area2 = 0.0;
+    for t in tris.chunks(3) {
+        let (ax, ay) = (data[2 * t[0]], data[2 * t[0] + 1]);
+        let (bx, by) = (data[2 * t[1]], data[2 * t[1] + 1]);
+        let (cx, cy) = (data[2 * t[2]], data[2 * t[2] + 1]);
+        area2 += (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
+    }
+    let flip = area2 < 0.0;
+    Some(
+        tris.chunks(3)
+            .map(|t| {
+                if flip {
+                    [t[0] as u32, t[2] as u32, t[1] as u32]
+                } else {
+                    [t[0] as u32, t[1] as u32, t[2] as u32]
+                }
+            })
+            .collect(),
+    )
+}
+
 /// Triangulate a projected planar polygon (with optional holes) via earcut.
 ///
 /// `outer_2d`/`inner_2d` are the projected loops; `outer_3d`/`inner_3d` the
