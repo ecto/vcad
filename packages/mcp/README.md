@@ -139,6 +139,13 @@ material. Use these for surgical edits, `create_cad_loon` for whole parts.
 - `inspect_cad` — aggregate geometry properties for a session document:
   volume, surface area, bounding box, center of mass, triangle count, and
   mass when material density is known.
+- `inspect_part` — one part's world-space bounding box, size, center,
+  volume, center of mass, material, and the named anchors `place` accepts.
+- `describe_scene` — the same bbox/center/size snapshot for every part (or a
+  chosen subset) in a single call, so you needn't chain `inspect_part`.
+- `measure` — pass two part ids for the minimum distance between them
+  (0/negative = contact/overlap) plus each part's bbox; pass one id for that
+  part's bbox, volume, and center of mass. Distances are tessellation-bound.
 - `render_view` — render the session document to an isometric PNG
   (drafting-style line art, Z-up) so the agent can *see* the geometry,
   not just numbers.

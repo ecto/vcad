@@ -206,7 +206,7 @@ pub struct PartQoiGradient {
 fn mesh_extents(mesh: &EvaluatedMesh) -> [f64; 3] {
     let mut min = [f64::INFINITY; 3];
     let mut max = [f64::NEG_INFINITY; 3];
-    for v in mesh.positions.chunks_exact(3) {
+    for v in mesh.positions.as_chunks::<3>().0 {
         for a in 0..3 {
             let c = v[a] as f64;
             if c < min[a] {
