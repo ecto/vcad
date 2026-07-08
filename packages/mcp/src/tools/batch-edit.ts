@@ -57,7 +57,9 @@ export const applyEditsSchema = {
         "remaining fields are that tool's arguments (minus document_id): " +
         "create {op, type, params}, update {op, node_id|part_id, ...fields}, " +
         "delete {op, part_id}, set_material {op, part_id, material}. Later ops may " +
-        `reference nodes created by earlier ops in the same batch. Max ${MAX_BATCH_OPS} per call.`,
+        'reference nodes created by earlier ops in the same batch symbolically: "@N" ' +
+        "(in params.child/left/right/sketch or part_id/node_id) resolves to the node " +
+        `created by op index N — no need to predict node ids. Max ${MAX_BATCH_OPS} per call.`,
       items: { type: "object" as const },
     },
     dry_run: {
@@ -112,6 +114,58 @@ function normalizeOp(
   return { name: name as AllowedOp, args };
 }
 
+/** Matches a symbolic reference to an earlier op's created node: "@3". */
+const SYMBOLIC_REF = /^@(\d+)$/;
+
+/**
+ * Resolve "@N" symbolic references in one op's args against the node ids
+ * created by earlier ops in the batch, so callers never hand-predict
+ * sequential node ids. Substitutes in the positions that name nodes: the
+ * top-level `part_id`/`node_id` and the child refs inside `params`
+ * (child/left/right/sketch/sketches). Returns a copy; throws on a forward
+ * reference or a reference to an op that created no node.
+ */
+function resolveSymbolicRefs(
+  args: Record<string, unknown>,
+  createdIds: Array<string | undefined>,
+  index: number,
+): Record<string, unknown> {
+  const resolve = (v: unknown): unknown => {
+    if (typeof v !== "string") return v;
+    const m = SYMBOLIC_REF.exec(v);
+    if (!m) return v;
+    const refIdx = Number(m[1]);
+    if (refIdx >= index) {
+      throw new Error(
+        `"@${refIdx}" is not resolvable from op ${index} — symbolic refs may only point at EARLIER ops in the batch`,
+      );
+    }
+    const id = createdIds[refIdx];
+    if (id === undefined) {
+      throw new Error(
+        `"@${refIdx}" refers to op ${refIdx}, which did not create a node`,
+      );
+    }
+    return id;
+  };
+
+  const out = { ...args };
+  for (const key of ["part_id", "node_id"]) {
+    if (key in out) out[key] = resolve(out[key]);
+  }
+  if (out.params && typeof out.params === "object" && !Array.isArray(out.params)) {
+    const params = { ...(out.params as Record<string, unknown>) };
+    for (const key of ["child", "left", "right", "sketch"]) {
+      if (key in params) params[key] = resolve(params[key]);
+    }
+    if (Array.isArray(params.sketches)) {
+      params.sketches = params.sketches.map(resolve);
+    }
+    out.params = params;
+  }
+  return out;
+}
+
 /**
  * Apply every op in order to `doc` (mutated in place), returning a per-op plan
  * entry for each. Throws `BatchOpError` on the first failure — the caller owns
@@ -123,11 +177,19 @@ function applyOps(
   documentId: string,
 ): Array<Record<string, unknown>> {
   const results: Array<Record<string, unknown>> = [];
+  // Node id created by each op so far (undefined for ops that create none),
+  // the targets "@N" refs resolve against.
+  const createdIds: Array<string | undefined> = [];
   for (let i = 0; i < ops.length; i++) {
     const { name, args } = normalizeOp(ops[i], i);
     let result;
     try {
-      result = runMutation(name, args, doc, documentId);
+      result = runMutation(
+        name,
+        resolveSymbolicRefs(args, createdIds, i),
+        doc,
+        documentId,
+      );
     } catch (err) {
       throw new BatchOpError(i, name, err);
     }
@@ -142,6 +204,11 @@ function applyOps(
     }
     const { document_id: _docId, ...rest } = parsed;
     void _docId;
+    createdIds.push(
+      name === "create" && typeof rest.node_id === "string"
+        ? rest.node_id
+        : undefined,
+    );
     results.push({ index: i, op: name, ...rest });
   }
   return results;
@@ -252,7 +319,8 @@ export const toolDefs: ToolDef[] = [
       "failing restores the pre-call document byte-for-byte and reports the failing op " +
       "index. Pass `dry_run: true` to validate and get the per-op plan without mutating. " +
       "Each op is `{op, ...args}` (e.g. {op:'create', type:'cube', params:{size:{x,y,z}}}); " +
-      "later ops may reference nodes created earlier in the same batch.",
+      'later ops reference nodes created earlier in the batch as "@N" (op index N), ' +
+      "so a boolean chain never predicts node ids.",
     inputSchema: applyEditsSchema,
     handler: (a, c) => applyEdits(a, c.engine),
     // mount: a batch edit is a milestone — refresh the viewer at the bottom

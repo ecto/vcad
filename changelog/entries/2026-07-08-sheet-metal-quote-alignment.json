@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-08-sheet-metal-quote-alignment",
+  "version": "0.9.4",
+  "date": "2026-07-08",
+  "category": "fix",
+  "title": "quote_manufacturing sheet metal no longer ~3x high",
+  "summary": "Sheet-metal quotes now price via the same laser cost model as sheet_metal_cost (setup amortized, single explicit margin, domestic shipping), landing within ~25% of the calibrated shop price.",
+  "features": ["mcp", "fabricate", "sheet-metal"],
+  "mcpTools": ["quote_manufacturing", "sheet_metal_cost"]
+}

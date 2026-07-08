@@ -21,6 +21,7 @@ import {
   type SpecMeasurement,
 } from "../receipt-unified.js";
 import { verifySpec } from "../tools/verify-spec.js";
+import { sheetMetalCreate } from "../tools/sheet-metal.js";
 import { documents, registerSession } from "../tools/session.js";
 
 let engine: Engine;
@@ -245,5 +246,113 @@ describe("verifySpec (MCP tool)", () => {
     expect(receipt.claims.some((c) => c.verdict === "unverifiable")).toBe(true);
     expect(receipt.claims.some((c) => c.verdict === "pass")).toBe(false);
     expectValidReceipt(receipt);
+  });
+
+  it("mirrors each claim's spec bound as `expected` in the tool output", () => {
+    // Display alias of the schema's `predicted` — readers of the tool result
+    // looking for "expected" must find the bound, not nothing.
+    const id = registerSession(cubeDoc());
+    const { receipt } = out(
+      verifySpec(
+        { document_id: id, spec: { volume: { min: 5950, max: 6050 }, watertight: true } },
+        engine,
+      ),
+    );
+    for (const c of receipt.claims) {
+      const raw = c as unknown as Record<string, unknown>;
+      expect(raw.expected).toBeDefined();
+      expect(raw.expected).toEqual(c.predicted);
+    }
+    expectValidReceipt(receipt);
+  });
+});
+
+/**
+ * Field-repro regression: a SheetMetalBaseFlangePolygon with hole loops used
+ * to tessellate non-watertight (caps ignored the holes, side quads wound
+ * inside-out) and measure ~2374 mm³ against ~6890 mm³ of truth, so this exact
+ * spec graded `fail` while the STEP export and sheet_metal_cost were sound.
+ */
+describe("verifySpec on sheet-metal flanges with hole loops", () => {
+  function ring(
+    cx: number,
+    cy: number,
+    r: number,
+    n: number,
+    ccw: boolean,
+  ): Array<{ x: number; y: number }> {
+    const pts = Array.from({ length: n }, (_, i) => {
+      const a = (2 * Math.PI * i) / n;
+      return { x: cx + r * Math.cos(a), y: cy + r * Math.sin(a) };
+    });
+    if (!ccw) pts.reverse();
+    return pts;
+  }
+
+  function createFlange(args: Record<string, unknown>): string {
+    const res = sheetMetalCreate(args, engine);
+    const body = JSON.parse(res.content[0].text) as { document_id: string };
+    expect(body.document_id).toBeTruthy();
+    return body.document_id;
+  }
+
+  function grade(
+    id: string,
+    volume: { min: number; max: number },
+  ): ReturnType<typeof summarize> {
+    const res = verifySpec(
+      { document_id: id, spec: { volume, watertight: true, part_count: 1 } },
+      engine,
+    );
+    const parsed = JSON.parse(res.content[0].text) as {
+      receipt: DesignReceipt;
+      summary: ReturnType<typeof summarize>;
+    };
+    expectValidReceipt(parsed.receipt);
+    return parsed.summary;
+  }
+
+  it("64-gon disc flange with a bore and four BCD holes passes volume + watertight", () => {
+    const holes = [ring(0, 0, 4.2, 16, false)];
+    for (let k = 0; k < 4; k++) {
+      const a = (2 * Math.PI * k) / 4;
+      holes.push(ring(11 * Math.cos(a), 11 * Math.sin(a), 1.65, 12, false));
+    }
+    const id = createFlange({
+      outline: ring(0, 0, 29, 64, true),
+      holes,
+      thickness: 2.7,
+      material: "steel-mild",
+    });
+    // Analytic n-gon volume 6888.1 mm³, bounds ±1%.
+    const summary = grade(id, { min: 6820, max: 6960 });
+    expect(summary.overall).toBe("pass");
+    expect(summary.failed).toBe(0);
+  });
+
+  it("square flange with a single rectangular hole passes volume + watertight", () => {
+    const id = createFlange({
+      outline: [
+        { x: 0, y: 0 },
+        { x: 20, y: 0 },
+        { x: 20, y: 10 },
+        { x: 0, y: 10 },
+      ],
+      // CW hole, matching the documented hole-winding convention.
+      holes: [
+        [
+          { x: 5, y: 3 },
+          { x: 5, y: 7 },
+          { x: 8, y: 7 },
+          { x: 8, y: 3 },
+        ],
+      ],
+      thickness: 1,
+      material: "steel-mild",
+    });
+    // Analytic (200 − 12) × 1 = 188 mm³, bounds ±1%.
+    const summary = grade(id, { min: 186.1, max: 189.9 });
+    expect(summary.overall).toBe("pass");
+    expect(summary.failed).toBe(0);
   });
 });

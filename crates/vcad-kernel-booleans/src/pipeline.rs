@@ -201,7 +201,7 @@ fn apply_splits_to_solid(
                                 _ => format!("{:?}", curve),
                             }
                         );
-                        let result = split::split_cylindrical_face(solid, fid, &curve);
+                        let result = split::split_cylindrical_face(solid, fid, &curve, segments);
                         debug_bool!(
                             "    -> Cylindrical split result: {} sub-faces {:?}",
                             result.sub_faces.len(),

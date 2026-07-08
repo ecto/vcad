@@ -16,7 +16,99 @@ pub fn repair_topology(topo: &mut Topology, tolerance: f64) {
     collapse_degenerate_half_edges(topo, tolerance);
     cleanup_loop_spikes(topo, tolerance);
     collapse_degenerate_half_edges(topo, tolerance);
+    split_edges_at_interior_vertices(topo, tolerance);
     pair_half_edges(topo, tolerance);
+}
+
+/// Make loops conforming: split unpaired half-edges at existing vertices
+/// that lie in their interior.
+///
+/// Trimming splits one operand's face boundary at intersection points, but
+/// the neighboring face that shares the untrimmed edge keeps it whole — a
+/// T-junction. The whole edge can never pair with the two halves, so the
+/// sewn shell reports open edges, tessellation inherits seam cracks, and
+/// downstream booleans on the result degrade or blow up. Splitting the
+/// whole edge at the interior vertex (reusing the existing `VertexId`, so
+/// `pair_half_edges` can pair the pieces by id) restores a conforming,
+/// closed shell.
+fn split_edges_at_interior_vertices(topo: &mut Topology, tolerance: f64) {
+    // Snapshot loop vertices (id + position). Only vertices that appear in
+    // loops matter; isolated vertices can't be a neighbor's endpoint.
+    let mut verts: Vec<(vcad_kernel_topo::VertexId, Point3)> = Vec::new();
+    {
+        let mut seen = std::collections::HashSet::new();
+        for (_, he) in &topo.half_edges {
+            if he.loop_id.is_none() {
+                continue;
+            }
+            if seen.insert(he.origin) {
+                verts.push((he.origin, topo.vertices[he.origin].point));
+            }
+        }
+    }
+
+    let he_ids: Vec<_> = topo.half_edges.keys().collect();
+    for he_id in he_ids {
+        // Only unpaired half-edges: a paired edge already conforms with its
+        // twin, and splitting it would need a synchronized twin split.
+        if topo.half_edges[he_id].twin.is_some() || topo.half_edges[he_id].loop_id.is_none() {
+            continue;
+        }
+        let next = match topo.half_edges[he_id].next {
+            Some(n) => n,
+            None => continue,
+        };
+        if next == he_id {
+            continue; // single-edge loop (closed curve)
+        }
+        let v0 = topo.half_edges[he_id].origin;
+        let v1 = topo.half_edges[next].origin;
+        let a = topo.vertices[v0].point;
+        let b = topo.vertices[v1].point;
+        let ab = b - a;
+        let len2 = ab.dot(ab);
+        if len2 <= tolerance * tolerance {
+            continue;
+        }
+        let len = len2.sqrt();
+
+        // Interior vertices within `tolerance` of segment ab, ordered by t.
+        let mut hits: Vec<(f64, vcad_kernel_topo::VertexId)> = Vec::new();
+        for &(vid, p) in &verts {
+            if vid == v0 || vid == v1 {
+                continue;
+            }
+            let t = (p - a).dot(ab) / len2;
+            // Strict interior: at least `tolerance` away from both endpoints.
+            let margin = tolerance / len;
+            if t <= margin || t >= 1.0 - margin {
+                continue;
+            }
+            let foot = a + ab * t;
+            if are_close(&p, &foot, tolerance) {
+                hits.push((t, vid));
+            }
+        }
+        if hits.is_empty() {
+            continue;
+        }
+        hits.sort_by(|x, y| x.0.partial_cmp(&y.0).unwrap());
+        hits.dedup_by_key(|h| h.1);
+
+        // Rechain: he keeps the first sub-segment (origin v0); each hit
+        // starts a new half-edge, the last one ending at the original dest.
+        let loop_id = topo.half_edges[he_id].loop_id;
+        let mut prev = he_id;
+        for &(_, vid) in &hits {
+            let he_new = topo.add_half_edge(vid);
+            topo.half_edges[he_new].loop_id = loop_id;
+            topo.half_edges[he_new].prev = Some(prev);
+            topo.half_edges[he_new].next = Some(next);
+            topo.half_edges[prev].next = Some(he_new);
+            topo.half_edges[next].prev = Some(he_new);
+            prev = he_new;
+        }
+    }
 }
 
 fn collapse_degenerate_half_edges(topo: &mut Topology, tolerance: f64) {
