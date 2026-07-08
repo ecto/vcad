@@ -7,6 +7,9 @@ use crate::error::PhysicsError;
 use crate::world::PhysicsWorld;
 
 /// Observation from the robot environment.
+///
+/// Joint vectors are indexed by [`RobotEnv::joint_ids`] order, which is the
+/// document's `joints` array order (deterministic).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Observation {
     /// Joint positions (radians for revolute, meters for prismatic).
@@ -178,6 +181,14 @@ impl RobotEnv {
     /// Set the maximum episode length.
     pub fn set_max_steps(&mut self, max_steps: u32) {
         self.max_steps = max_steps;
+    }
+
+    /// Joint ids in observation order (document order).
+    ///
+    /// `Observation::joint_positions[i]` / `joint_velocities[i]` and action
+    /// vectors all index against this list.
+    pub fn joint_ids(&self) -> &[String] {
+        &self.joint_ids
     }
 
     /// Get the number of joints (action dimension for position/velocity control).
@@ -380,6 +391,118 @@ mod tests {
         doc.ground_instance_id = Some("base_inst".to_string());
 
         doc
+    }
+
+    /// Three-link chain whose `joints` array is declared in REVERSE of the
+    /// BFS discovery order (leaf joint first). Each joint carries a distinct
+    /// initial state so a permuted observation ordering is detectable.
+    fn create_three_joint_robot_reversed() -> Document {
+        let mut doc = Document::new();
+
+        for (node_id, name) in [(1, "base"), (2, "link1"), (3, "link2"), (4, "link3")] {
+            doc.nodes.insert(
+                node_id,
+                vcad_ir::Node {
+                    id: node_id,
+                    name: Some(name.to_string()),
+                    op: vcad_ir::CsgOp::Cube {
+                        size: Vec3::new(20.0, 20.0, 100.0),
+                    },
+                },
+            );
+        }
+
+        let mut part_defs = HashMap::new();
+        for (root, name) in [(1, "base"), (2, "link1"), (3, "link2"), (4, "link3")] {
+            part_defs.insert(
+                name.to_string(),
+                PartDef {
+                    id: name.to_string(),
+                    name: None,
+                    root,
+                    default_material: None,
+                    inertial: None,
+                },
+            );
+        }
+        doc.part_defs = Some(part_defs);
+
+        doc.instances = Some(
+            ["base", "link1", "link2", "link3"]
+                .iter()
+                .map(|name| Instance {
+                    id: format!("{name}_inst"),
+                    part_def_id: name.to_string(),
+                    name: None,
+                    tags: Vec::new(),
+                    transform: None,
+                    material: None,
+                })
+                .collect(),
+        );
+
+        let make_joint = |id: &str, parent: &str, child: &str, state: f64| Joint {
+            id: id.to_string(),
+            name: None,
+            parent_instance_id: Some(format!("{parent}_inst")),
+            child_instance_id: format!("{child}_inst"),
+            parent_anchor: Vec3::new(0.0, 0.0, 50.0),
+            child_anchor: Vec3::new(0.0, 0.0, -50.0),
+            kind: JointKind::Revolute {
+                axis: Vec3::new(0.0, 1.0, 0.0),
+                limits: Some((-90.0, 90.0)),
+            },
+            state,
+        };
+
+        // Leaf-most joint first: doc order is the opposite of the order the
+        // world builder's BFS from ground discovers them in.
+        doc.joints = Some(vec![
+            make_joint("joint3", "link2", "link3", 30.0),
+            make_joint("joint2", "link1", "link2", 20.0),
+            make_joint("joint1", "base", "link1", 10.0),
+        ]);
+
+        doc.ground_instance_id = Some("base_inst".to_string());
+        doc
+    }
+
+    #[test]
+    fn joint_observation_order_matches_document_order() {
+        let doc = create_three_joint_robot_reversed();
+        let env = RobotEnv::new(doc, vec!["link3_inst".to_string()], None, None).unwrap();
+
+        // The contract: joint_ids() is doc.joints order, not BFS or HashMap
+        // order. Before joint_order landed this permuted run-to-run.
+        assert_eq!(env.joint_ids(), ["joint3", "joint2", "joint1"]);
+
+        // Each observation slot must carry the state of the joint at the
+        // same index of joint_ids(): 30/20/10 degrees, not any permutation.
+        let obs = env.observe();
+        assert_eq!(obs.joint_positions.len(), 3);
+        assert!(
+            (obs.joint_positions[0] - 30.0).abs() < 1e-6,
+            "slot 0 should be joint3 (30 deg), got {}",
+            obs.joint_positions[0]
+        );
+        assert!(
+            (obs.joint_positions[1] - 20.0).abs() < 1e-6,
+            "slot 1 should be joint2 (20 deg), got {}",
+            obs.joint_positions[1]
+        );
+        assert!(
+            (obs.joint_positions[2] - 10.0).abs() < 1e-6,
+            "slot 2 should be joint1 (10 deg), got {}",
+            obs.joint_positions[2]
+        );
+
+        // reset() rebuilds the world from the initial doc — ordering must
+        // survive the round trip.
+        let mut env = env;
+        let obs = env.reset();
+        assert_eq!(env.joint_ids(), ["joint3", "joint2", "joint1"]);
+        assert!((obs.joint_positions[0] - 30.0).abs() < 1e-6);
+        assert!((obs.joint_positions[2] - 10.0).abs() < 1e-6);
     }
 
     #[test]

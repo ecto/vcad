@@ -8,7 +8,12 @@
 import type { Document } from "@vcad/ir";
 import type { PhysicsSim as WasmPhysicsSim } from "@vcad/kernel-wasm";
 
-/** Observation from the physics simulation */
+/**
+ * Observation from the physics simulation.
+ *
+ * Joint vectors are indexed by {@link PhysicsEnv.jointIds} order — the
+ * document's `joints` array order.
+ */
 export interface PhysicsObservation {
   /** Joint positions (degrees for revolute, mm for prismatic) */
   joint_positions: number[];
@@ -90,12 +95,21 @@ export class PhysicsEnv {
   private _numJoints: number;
   private _actionDim: number;
   private _observationDim: number;
+  private _jointIds: string[] | null;
 
   private constructor(sim: WasmPhysicsSim) {
     this.sim = sim;
     this._numJoints = sim.numJoints();
     this._actionDim = sim.actionDim();
     this._observationDim = sim.observationDim();
+    // jointIds() postdates some shipped kernel builds; feature-detect so a
+    // stale WASM degrades to jointIds === null instead of throwing. The
+    // structural cast (not WasmPhysicsSim) keeps typecheck green against a
+    // checked-in .d.ts that predates the binding.
+    const maybeJointIds = (sim as unknown as { jointIds?: () => string[] })
+      .jointIds;
+    this._jointIds =
+      typeof maybeJointIds === "function" ? maybeJointIds.call(sim) : null;
   }
 
   /**
@@ -134,6 +148,15 @@ export class PhysicsEnv {
   /** Number of joints in the simulation */
   get numJoints(): number {
     return this._numJoints;
+  }
+
+  /**
+   * Joint ids in observation order (document `joints` order), or null when
+   * the loaded kernel WASM predates `jointIds()`. Index `i` of
+   * `joint_positions` / `joint_velocities` corresponds to `jointIds[i]`.
+   */
+  get jointIds(): string[] | null {
+    return this._jointIds;
   }
 
   /** Dimension of the action space */
