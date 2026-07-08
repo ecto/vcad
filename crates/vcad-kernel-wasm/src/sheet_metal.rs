@@ -811,114 +811,164 @@ fn tessellate_model(model: &SheetMetalModel) -> MeshDto {
     let mut normals: Vec<f32> = Vec::new();
     let mut indices: Vec<u32> = Vec::new();
     let half_t = model.thickness * 0.5;
+    let signed_area2 = |ring: &[Point2]| -> f64 {
+        let mut a = 0.0;
+        for i in 0..ring.len() {
+            let p = ring[i];
+            let q = ring[(i + 1) % ring.len()];
+            a += p.x * q.y - q.x * p.y;
+        }
+        a
+    };
     for panel in &model.panels {
         let frame = panel.frame_bent;
         let n = frame.normal();
-        let outline = &panel.outline;
-        if outline.len() < 3 {
+        if panel.outline.len() < 3 {
             continue;
         }
-        // Top vertices (outside face, +n side).
-        let base_top = (positions.len() / 3) as u32;
-        for p in outline {
-            let w = frame.to_world(*p);
-            positions.push((w.x + n.x * half_t) as f32);
-            positions.push((w.y + n.y * half_t) as f32);
-            positions.push((w.z + n.z * half_t) as f32);
-            normals.push(n.x as f32);
-            normals.push(n.y as f32);
-            normals.push(n.z as f32);
+        // Normalize ring windings locally: outline CCW, holes CW. That's the
+        // documented convention, but construction doesn't enforce it and the
+        // cap + wall windings below depend on it.
+        let mut outline = panel.outline.clone();
+        if signed_area2(&outline) < 0.0 {
+            outline.reverse();
         }
-        // Bottom vertices.
-        let base_bot = (positions.len() / 3) as u32;
-        for p in outline {
-            let w = frame.to_world(*p);
-            positions.push((w.x - n.x * half_t) as f32);
-            positions.push((w.y - n.y * half_t) as f32);
-            positions.push((w.z - n.z * half_t) as f32);
-            normals.push(-n.x as f32);
-            normals.push(-n.y as f32);
-            normals.push(-n.z as f32);
-        }
-        // Triangulate top with fan from vertex 0.
-        for i in 1..(outline.len() - 1) {
-            indices.push(base_top);
-            indices.push(base_top + i as u32);
-            indices.push(base_top + (i + 1) as u32);
-        }
-        // Triangulate bottom (reverse winding).
-        for i in 1..(outline.len() - 1) {
-            indices.push(base_bot);
-            indices.push(base_bot + (i + 1) as u32);
-            indices.push(base_bot + i as u32);
-        }
-        // Side walls: one quad per outline edge with its own normals.
-        for i in 0..outline.len() {
-            let a = outline[i];
-            let b = outline[(i + 1) % outline.len()];
-            let a_world = frame.to_world(a);
-            let b_world = frame.to_world(b);
-            let edge_x = b_world.x - a_world.x;
-            let edge_y = b_world.y - a_world.y;
-            let edge_z = b_world.z - a_world.z;
-            // Side normal = edge × n, normalised.
-            let mut snx = edge_y * n.z - edge_z * n.y;
-            let mut sny = edge_z * n.x - edge_x * n.z;
-            let mut snz = edge_x * n.y - edge_y * n.x;
-            let m = (snx * snx + sny * sny + snz * snz).sqrt();
-            if m > 1e-12 {
-                snx /= m;
-                sny /= m;
-                snz /= m;
-            } else {
-                snx = 0.0;
-                sny = 0.0;
-                snz = 1.0;
+        let mut holes: Vec<Vec<Point2>> = panel
+            .holes
+            .iter()
+            .filter(|h| h.len() >= 3)
+            .cloned()
+            .collect();
+        for h in &mut holes {
+            if signed_area2(h) > 0.0 {
+                h.reverse();
             }
-            let base = (positions.len() / 3) as u32;
-            // a_top, b_top, b_bot, a_bot.
-            let push = |positions: &mut Vec<f32>, normals: &mut Vec<f32>, x, y, z| {
-                positions.push(x);
-                positions.push(y);
-                positions.push(z);
-                normals.push(snx as f32);
-                normals.push(sny as f32);
-                normals.push(snz as f32);
-            };
-            push(
-                &mut positions,
-                &mut normals,
-                (a_world.x + n.x * half_t) as f32,
-                (a_world.y + n.y * half_t) as f32,
-                (a_world.z + n.z * half_t) as f32,
-            );
-            push(
-                &mut positions,
-                &mut normals,
-                (b_world.x + n.x * half_t) as f32,
-                (b_world.y + n.y * half_t) as f32,
-                (b_world.z + n.z * half_t) as f32,
-            );
-            push(
-                &mut positions,
-                &mut normals,
-                (b_world.x - n.x * half_t) as f32,
-                (b_world.y - n.y * half_t) as f32,
-                (b_world.z - n.z * half_t) as f32,
-            );
-            push(
-                &mut positions,
-                &mut normals,
-                (a_world.x - n.x * half_t) as f32,
-                (a_world.y - n.y * half_t) as f32,
-                (a_world.z - n.z * half_t) as f32,
-            );
-            indices.push(base);
-            indices.push(base + 1);
-            indices.push(base + 2);
-            indices.push(base);
-            indices.push(base + 2);
-            indices.push(base + 3);
+        }
+        let rings: Vec<&[Point2]> = std::iter::once(outline.as_slice())
+            .chain(holes.iter().map(|h| h.as_slice()))
+            .collect();
+
+        // Top (+n) and bottom (−n) cap vertices: every ring, outline first —
+        // the cap triangulation below indexes into this combined order.
+        let base_top = (positions.len() / 3) as u32;
+        for ring in &rings {
+            for p in *ring {
+                let w = frame.to_world(*p);
+                positions.push((w.x + n.x * half_t) as f32);
+                positions.push((w.y + n.y * half_t) as f32);
+                positions.push((w.z + n.z * half_t) as f32);
+                normals.push(n.x as f32);
+                normals.push(n.y as f32);
+                normals.push(n.z as f32);
+            }
+        }
+        let base_bot = (positions.len() / 3) as u32;
+        for ring in &rings {
+            for p in *ring {
+                let w = frame.to_world(*p);
+                positions.push((w.x - n.x * half_t) as f32);
+                positions.push((w.y - n.y * half_t) as f32);
+                positions.push((w.z - n.z * half_t) as f32);
+                normals.push(-n.x as f32);
+                normals.push(-n.y as f32);
+                normals.push(-n.z as f32);
+            }
+        }
+        // Cap triangulation honouring hole loops (earcut; also correct for
+        // concave outlines, unlike a fan). CCW triples in the panel frame
+        // face +n on the top cap; the bottom cap mirrors them.
+        let outer_2d: Vec<(f64, f64)> = outline.iter().map(|p| (p.x, p.y)).collect();
+        let holes_2d: Vec<Vec<(f64, f64)>> = holes
+            .iter()
+            .map(|h| h.iter().map(|p| (p.x, p.y)).collect())
+            .collect();
+        if let Some(tris) = vcad_kernel_tessellate::triangulate_polygon_2d(&outer_2d, &holes_2d) {
+            for t in &tris {
+                indices.push(base_top + t[0]);
+                indices.push(base_top + t[1]);
+                indices.push(base_top + t[2]);
+            }
+            for t in &tris {
+                indices.push(base_bot + t[0]);
+                indices.push(base_bot + t[2]);
+                indices.push(base_bot + t[1]);
+            }
+        }
+        // Lateral walls: outline perimeter + one bore per hole. With the
+        // outline CCW and holes CW, `edge × n` is the outward
+        // (away-from-material) normal for BOTH ring kinds, and one quad
+        // winding faces outward for both.
+        for ring in &rings {
+            for i in 0..ring.len() {
+                let a = ring[i];
+                let b = ring[(i + 1) % ring.len()];
+                let a_world = frame.to_world(a);
+                let b_world = frame.to_world(b);
+                let edge_x = b_world.x - a_world.x;
+                let edge_y = b_world.y - a_world.y;
+                let edge_z = b_world.z - a_world.z;
+                // Side normal = edge × n, normalised.
+                let mut snx = edge_y * n.z - edge_z * n.y;
+                let mut sny = edge_z * n.x - edge_x * n.z;
+                let mut snz = edge_x * n.y - edge_y * n.x;
+                let m = (snx * snx + sny * sny + snz * snz).sqrt();
+                if m > 1e-12 {
+                    snx /= m;
+                    sny /= m;
+                    snz /= m;
+                } else {
+                    snx = 0.0;
+                    sny = 0.0;
+                    snz = 1.0;
+                }
+                let base = (positions.len() / 3) as u32;
+                // a_top, b_top, b_bot, a_bot.
+                let push = |positions: &mut Vec<f32>, normals: &mut Vec<f32>, x, y, z| {
+                    positions.push(x);
+                    positions.push(y);
+                    positions.push(z);
+                    normals.push(snx as f32);
+                    normals.push(sny as f32);
+                    normals.push(snz as f32);
+                };
+                push(
+                    &mut positions,
+                    &mut normals,
+                    (a_world.x + n.x * half_t) as f32,
+                    (a_world.y + n.y * half_t) as f32,
+                    (a_world.z + n.z * half_t) as f32,
+                );
+                push(
+                    &mut positions,
+                    &mut normals,
+                    (b_world.x + n.x * half_t) as f32,
+                    (b_world.y + n.y * half_t) as f32,
+                    (b_world.z + n.z * half_t) as f32,
+                );
+                push(
+                    &mut positions,
+                    &mut normals,
+                    (b_world.x - n.x * half_t) as f32,
+                    (b_world.y - n.y * half_t) as f32,
+                    (b_world.z - n.z * half_t) as f32,
+                );
+                push(
+                    &mut positions,
+                    &mut normals,
+                    (a_world.x - n.x * half_t) as f32,
+                    (a_world.y - n.y * half_t) as f32,
+                    (a_world.z - n.z * half_t) as f32,
+                );
+                // Wound so the face agrees with `edge × n` (outward). The
+                // previous fan-era winding faced inward, which broke the
+                // directed-edge pairing and the signed-volume integral.
+                indices.push(base);
+                indices.push(base + 2);
+                indices.push(base + 1);
+                indices.push(base);
+                indices.push(base + 3);
+                indices.push(base + 2);
+            }
         }
     }
     MeshDto {

@@ -13,6 +13,7 @@
 
 import { createHash } from "node:crypto";
 import type { Engine } from "@vcad/engine";
+import type { DesignReceipt } from "@vcad/ir";
 import { behavior, type ToolDef } from "./tool-def.js";
 import { computeIntegrity } from "./integrity.js";
 import { getSession } from "./session.js";
@@ -22,6 +23,28 @@ import {
   type DesignSpec,
   type SpecMeasurement,
 } from "../receipt-unified.js";
+
+/**
+ * The unified receipt schema names the spec-bound field `predicted` (Rust
+ * `vcad_receipt::ReceiptClaim` — "a spec bound, a rule limit, a declared
+ * target"). Everyone eyeballing a verify_spec claim looks for "expected"
+ * (the tool description promises measured-vs-expected), so mirror the bound
+ * under that name in the tool output. Display alias only: `predicted` stays
+ * the schema field, and round-tripping the receipt through the Rust
+ * deserializer simply drops the alias.
+ */
+function withExpectedAlias(
+  receipt: DesignReceipt,
+): Omit<DesignReceipt, "claims"> & {
+  claims: Array<DesignReceipt["claims"][number] & { expected?: unknown }>;
+} {
+  return {
+    ...receipt,
+    claims: receipt.claims.map((c) =>
+      c.predicted !== undefined ? { ...c, expected: c.predicted } : c,
+    ),
+  };
+}
 
 const pointSpecSchema = {
   type: "object" as const,
@@ -124,7 +147,11 @@ export function verifySpec(
     content: [
       {
         type: "text",
-        text: JSON.stringify({ receipt, summary }, null, 2),
+        text: JSON.stringify(
+          { receipt: withExpectedAlias(receipt), summary },
+          null,
+          2,
+        ),
       },
     ],
   };
