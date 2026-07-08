@@ -174,6 +174,7 @@ export const TOOL_METADATA: Record<string, ToolMetadata> = {
   sheet_metal_suggest_fix: { title: "Sheet Metal Suggest Fix", annotations: RO },
   sheet_metal_sequence: { title: "Sheet Metal Bend Sequence", annotations: RO },
   sheet_metal_nest: { title: "Sheet Metal Nest", annotations: RO },
+  simulate_strike: { title: "Simulate Strike", annotations: RW },
 
   // ── Import + share ─────────────────────────────────────────────────────
   import_step: { title: "Import STEP", annotations: RW },

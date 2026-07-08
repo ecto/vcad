@@ -117,6 +117,7 @@ import { toolDefs as verifySpecToolDefs } from "./tools/verify-spec.js";
 import { toolDefs as clearanceToolDefs } from "./tools/clearance.js";
 import { toolDefs as dfmToolDefs } from "./tools/dfm.js";
 import { toolDefs as sheetMetalToolDefs } from "./tools/sheet-metal.js";
+import { toolDefs as acousticsToolDefs } from "./tools/acoustics.js";
 import { toolDefs as importToolDefs } from "./tools/import.js";
 import { toolDefs as importPcbToolDefs } from "./tools/import-pcb.js";
 import { toolDefs as shareToolDefs } from "./tools/share.js";
@@ -288,6 +289,7 @@ const STATIC_TOOL_DEFS: readonly ToolDef[] = [
   ...clearanceToolDefs,
   ...dfmToolDefs,
   ...sheetMetalToolDefs,
+  ...acousticsToolDefs,
   ...importToolDefs,
   ...importPcbToolDefs,
   ...shareToolDefs,
@@ -374,6 +376,7 @@ const LIST_TOOL_ORDER: readonly string[] = [
   "sheet_metal_suggest_fix",
   "sheet_metal_sequence",
   "sheet_metal_nest",
+  "simulate_strike",
   // ── Import + share ─────────────────────────────────────────
   "import_step",
   "import_kicad",

@@ -2247,6 +2247,55 @@
     }
   },
   {
+    "name": "simulate_strike",
+    "title": "Simulate Strike",
+    "description": "Hear a part before it's cut: simulate a mallet strike on a flat free-free bar (glockenspiel/vibraphone bar) and verify its pitch. Modal frequencies from BOTH the closed-form Euler–Bernoulli model and a hole-aware 1-D FEM (cord holes change A(x), I(x)); strike-excited modal synthesis (mode shape at strike point × half-sine mallet spectrum, Q-based decay) → optional 44.1 kHz WAV → FFT peak extraction → cents-error verdict vs `note`/`expect_hz`. Takes a flat sheet_metal_create `document_id` (dims, material, holes read from the session) or an explicit `bar` spec. E/ρ come from the kernel material registry. The `modes` table {hz, gain, q} is compact enough to drive client-side Web Audio synthesis.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "document_id": {
+          "type": "string",
+          "description": "Session id of a FLAT sheet-metal part (from sheet_metal_create) — the bar's length, width, thickness, material, and hole positions are read from it. Mutually exclusive with `bar`."
+        },
+        "bar": {
+          "type": "object",
+          "description": "Explicit bar spec instead of a document: {length_mm, width_mm, thickness_mm, material?, holes_mm?, hole_dia_mm?}."
+        },
+        "note": {
+          "type": "string",
+          "description": "Target pitch to verify against, e.g. \"C6\", \"F#4\". Alternative to expect_hz."
+        },
+        "expect_hz": {
+          "type": "number",
+          "description": "Target fundamental (Hz) to verify against."
+        },
+        "tolerance_cents": {
+          "type": "number",
+          "description": "Pass/fail tolerance for the verdict (cents). Default 10."
+        },
+        "strike_position": {
+          "type": "number",
+          "description": "Strike point as a fraction of bar length, 0..1. Default 0.5 (center — antinode of mode 1, node of mode 2, like a real player)."
+        },
+        "mallet_contact_ms": {
+          "type": "number",
+          "description": "Mallet contact time (ms). Hard glockenspiel mallet ≈ 0.5 (default); soft ≈ 2 — longer contact low-passes the upper partials."
+        },
+        "duration_s": {
+          "type": "number",
+          "description": "Length of the synthesized strike (s). Default 2.5."
+        },
+        "wav_filename": {
+          "type": "string",
+          "description": "Write the synthesized strike as a 16-bit/44.1kHz WAV with this name (local servers write to the export dir; hosted returns base64). Omit to skip audio and return the modal/verdict data only."
+        }
+      }
+    },
+    "annotations": {
+      "readOnlyHint": false
+    }
+  },
+  {
     "name": "import_step",
     "title": "Import STEP",
     "description": "Import geometry from a STEP file (.step or .stp). Returns an IR document with ImportedMesh nodes. Supports AP203/AP214 STEP files commonly exported from Fusion 360, SolidWorks, Onshape, etc.",
