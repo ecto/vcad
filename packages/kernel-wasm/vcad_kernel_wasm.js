@@ -3702,6 +3702,44 @@ export function digitizeText(text, height, options_json) {
 }
 
 /**
+ * Differentiate a document's mass-property + bounding-box QoIs with respect
+ * to a single named parameter (`d QoI / dθ`) via the differentiable seam.
+ *
+ * # Arguments
+ *
+ * * `doc_json` — a JSON string of a vcad Document that declares `parameter`
+ *   in its `parameters` map (with a binding onto some geometry field).
+ * * `parameter` — the named parameter to differentiate.
+ * * `density` — density fed to the mass integrals (mass = density · volume).
+ * * `probe_step` — finite step used by seeding synthesis to match surfaces
+ *   between θ ± step (the returned volume/mass/centroid derivatives are
+ *   analytic seam evaluations, not finite differences). Pass `0` to use the
+ *   `1e-4` default.
+ *
+ * # Returns
+ *
+ * A JsValue array with one entry per solid part, each
+ * `{ partIndex, volume, dVolume, mass, dMass, centroid, dCentroid,
+ * bboxExtents, dBboxExtents }` (see [`vcad_eval::diff::PartQoiGradient`]).
+ * @param {string} doc_json
+ * @param {string} parameter
+ * @param {number} density
+ * @param {number} probe_step
+ * @returns {any}
+ */
+export function documentParameterGradient(doc_json, parameter, density, probe_step) {
+    const ptr0 = passStringToWasm0(doc_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(parameter, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.documentParameterGradient(ptr0, len0, ptr1, len1, density, probe_step);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+
+/**
  * Convert a Document (as JSON) back to loon source code.
  * @param {string} doc_json
  * @returns {string}
@@ -8229,12 +8267,12 @@ function __wbg_get_imports() {
             arg0.writeTexture(arg1, arg2, arg3, arg4);
         },
         __wbindgen_cast_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 3098, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 3099, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 3135, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 3136, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h937dc6f65bde8529, wasm_bindgen__convert__closures_____invoke__he77dbe0899982831);
             return ret;
         },
         __wbindgen_cast_0000000000000002: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 3310, function: Function { arguments: [Externref], shim_idx: 3311, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 3347, function: Function { arguments: [Externref], shim_idx: 3348, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h191db0eea4d7d68c, wasm_bindgen__convert__closures_____invoke__h852de6502a19f22f);
             return ret;
         },

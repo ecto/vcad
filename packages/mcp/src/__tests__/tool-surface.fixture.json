@@ -1074,6 +1074,79 @@
     }
   },
   {
+    "name": "list_parameters",
+    "description": "List a document's named parameters: raw expression, resolved numeric value, unit, and scrub bounds (min/max). Pair with set_parameters to drive the design and parameter_gradient to differentiate it.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "document_id": {
+          "type": "string",
+          "description": "Session id from open_document."
+        },
+        "document": {
+          "type": "object",
+          "description": "Inline Document IR to read instead of a session (stateless path)."
+        }
+      }
+    }
+  },
+  {
+    "name": "set_parameters",
+    "description": "Batch-update named parameter values on an open session document (e.g. { \"r\": 12, \"h\": 8 }). Every name must already be declared; values must be finite numbers. Returns a `changed` diff of the deltas and re-evaluates geometry integrity. Undoable and persisted.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "document_id": {
+          "type": "string",
+          "description": "Session id from open_document (required to persist)."
+        },
+        "parameters": {
+          "type": "object",
+          "description": "Map of parameter name \u2192 new numeric value, e.g. { \"r\": 12, \"h\": 8 }. Every name must already be declared in the document's parameters.",
+          "additionalProperties": {
+            "type": "number"
+          }
+        }
+      },
+      "required": [
+        "document_id",
+        "parameters"
+      ]
+    }
+  },
+  {
+    "name": "parameter_gradient",
+    "description": "Differentiate a document's QoIs with respect to a single named parameter via the differentiable seam: per solid part, returns d(volume)/d\u03b8, d(mass)/d\u03b8, d(centroid)/d\u03b8 (exact analytic seam derivatives) and d(bbox extents)/d\u03b8 (finite difference), alongside each QoI's value. The parameter must be bound onto some geometry field. \"Solve for the geometry\" starts here.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "document_id": {
+          "type": "string",
+          "description": "Session id from open_document."
+        },
+        "document": {
+          "type": "object",
+          "description": "Inline Document IR to differentiate instead of a session (stateless path)."
+        },
+        "parameter": {
+          "type": "string",
+          "description": "Name of the parameter to differentiate. Must be declared in the document's parameters and bound onto some geometry field."
+        },
+        "density": {
+          "type": "number",
+          "description": "Density fed to the mass integrals (mass = density \u00b7 volume). Defaults to 1 (raw volume moments)."
+        },
+        "probe_step": {
+          "type": "number",
+          "description": "Finite step for seeding synthesis (surface matching). The reported volume/mass/centroid derivatives are analytic, not finite differences. Defaults to 1e-4."
+        }
+      },
+      "required": [
+        "parameter"
+      ]
+    }
+  },
+  {
     "name": "predict_print",
     "description": "Snapshot the design's predicted measurables BEFORE 3D-printing it: kernel-evaluated bbox and mass (at a filament density), plus caller-declared feature dimensions (step heights, hole diameters, wall thicknesses) with design-intent values. Returns a PrintPrediction \u2014 save it; after printing, record_measurement joins caliper/scale readings against it. The prediction doubles as the guided measurement worksheet (each measurable carries a human instruction label).",
     "inputSchema": {

@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-07-parameter-gradient-mcp",
+  "version": "0.9.4",
+  "date": "2026-07-07",
+  "category": "feat",
+  "title": "Parametric gradients over MCP: list/set/differentiate parameters",
+  "summary": "New MCP tools list_parameters, set_parameters (undoable, persisted), and parameter_gradient — d(volume/mass/centroid/bbox)/dθ for a named parameter via the differentiable seam.",
+  "features": ["parametric", "differentiable", "mechanical"],
+  "mcpTools": ["list_parameters", "set_parameters", "parameter_gradient"]
+}

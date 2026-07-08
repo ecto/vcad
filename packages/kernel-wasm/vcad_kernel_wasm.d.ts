@@ -1442,6 +1442,29 @@ export function digitizeSketch(segments_json: string, options_json: string): str
 export function digitizeText(text: string, height: number, options_json: string): string;
 
 /**
+ * Differentiate a document's mass-property + bounding-box QoIs with respect
+ * to a single named parameter (`d QoI / dθ`) via the differentiable seam.
+ *
+ * # Arguments
+ *
+ * * `doc_json` — a JSON string of a vcad Document that declares `parameter`
+ *   in its `parameters` map (with a binding onto some geometry field).
+ * * `parameter` — the named parameter to differentiate.
+ * * `density` — density fed to the mass integrals (mass = density · volume).
+ * * `probe_step` — finite step used by seeding synthesis to match surfaces
+ *   between θ ± step (the returned volume/mass/centroid derivatives are
+ *   analytic seam evaluations, not finite differences). Pass `0` to use the
+ *   `1e-4` default.
+ *
+ * # Returns
+ *
+ * A JsValue array with one entry per solid part, each
+ * `{ partIndex, volume, dVolume, mass, dMass, centroid, dCentroid,
+ * bboxExtents, dBboxExtents }` (see [`vcad_eval::diff::PartQoiGradient`]).
+ */
+export function documentParameterGradient(doc_json: string, parameter: string, density: number, probe_step: number): any;
+
+/**
  * Convert a Document (as JSON) back to loon source code.
  */
 export function documentToLoon(doc_json: string): string;
@@ -2539,6 +2562,7 @@ export interface InitOutput {
     readonly createDetailView: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => [number, number, number];
     readonly decimateMeshGpu: (a: number, b: number, c: number, d: number, e: number) => any;
     readonly deriveParts: (a: number, b: number) => [number, number, number];
+    readonly documentParameterGradient: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
     readonly documentToLoon: (a: number, b: number) => [number, number, number, number];
     readonly documentToLoonChecked: (a: number, b: number) => [number, number, number];
     readonly estimate_cost_for_process: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number];
@@ -2787,34 +2811,6 @@ export interface InitOutput {
     readonly wasmsketchsession_solve: (a: number) => number;
     readonly wasmsketchsession_toggleSelection: (a: number, b: number) => void;
     readonly wasmsketchsession_undo: (a: number) => number;
-    readonly __wbg_get_wasmcamsettings_feed_rate: (a: number) => number;
-    readonly __wbg_get_wasmcamsettings_plunge_rate: (a: number) => number;
-    readonly __wbg_get_wasmcamsettings_retract_z: (a: number) => number;
-    readonly __wbg_get_wasmcamsettings_safe_z: (a: number) => number;
-    readonly __wbg_get_wasmcamsettings_spindle_rpm: (a: number) => number;
-    readonly __wbg_get_wasmcamsettings_stepdown: (a: number) => number;
-    readonly __wbg_get_wasmcamsettings_stepover: (a: number) => number;
-    readonly __wbg_set_wasmcamsettings_feed_rate: (a: number, b: number) => void;
-    readonly __wbg_set_wasmcamsettings_plunge_rate: (a: number, b: number) => void;
-    readonly __wbg_set_wasmcamsettings_retract_z: (a: number, b: number) => void;
-    readonly __wbg_set_wasmcamsettings_safe_z: (a: number, b: number) => void;
-    readonly __wbg_set_wasmcamsettings_spindle_rpm: (a: number, b: number) => void;
-    readonly __wbg_set_wasmcamsettings_stepdown: (a: number, b: number) => void;
-    readonly __wbg_set_wasmcamsettings_stepover: (a: number, b: number) => void;
-    readonly __wbg_wasmcamsettings_free: (a: number, b: number) => void;
-    readonly camDropCutter: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => [number, number, number, number];
-    readonly camExportGcode: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number, number, number];
-    readonly camExportLinuxCnc: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
-    readonly camGenerateCircularPocket: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number, number, number];
-    readonly camGenerateContour: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number) => [number, number, number, number];
-    readonly camGenerateFace: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
-    readonly camGeneratePocket: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
-    readonly camGenerateRoughing3d: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => [number, number, number, number];
-    readonly camGetDefaultTools: () => [number, number, number, number];
-    readonly camToolpathStats: (a: number, b: number) => [number, number, number];
-    readonly isCamAvailable: () => number;
-    readonly wasmcamsettings_fromJson: (a: number, b: number) => [number, number, number];
-    readonly wasmcamsettings_new: () => number;
     readonly __wbg_circuitsim_free: (a: number, b: number) => void;
     readonly circuitsim_dt: (a: number) => number;
     readonly circuitsim_new: (a: number, b: number) => [number, number, number];
@@ -2862,6 +2858,34 @@ export interface InitOutput {
     readonly exportKicadSch: (a: number, b: number) => [number, number, number, number];
     readonly isEcadAvailable: () => number;
     readonly parseKicadPcb: (a: number, b: number) => [number, number, number];
+    readonly __wbg_get_wasmcamsettings_feed_rate: (a: number) => number;
+    readonly __wbg_get_wasmcamsettings_plunge_rate: (a: number) => number;
+    readonly __wbg_get_wasmcamsettings_retract_z: (a: number) => number;
+    readonly __wbg_get_wasmcamsettings_safe_z: (a: number) => number;
+    readonly __wbg_get_wasmcamsettings_spindle_rpm: (a: number) => number;
+    readonly __wbg_get_wasmcamsettings_stepdown: (a: number) => number;
+    readonly __wbg_get_wasmcamsettings_stepover: (a: number) => number;
+    readonly __wbg_set_wasmcamsettings_feed_rate: (a: number, b: number) => void;
+    readonly __wbg_set_wasmcamsettings_plunge_rate: (a: number, b: number) => void;
+    readonly __wbg_set_wasmcamsettings_retract_z: (a: number, b: number) => void;
+    readonly __wbg_set_wasmcamsettings_safe_z: (a: number, b: number) => void;
+    readonly __wbg_set_wasmcamsettings_spindle_rpm: (a: number, b: number) => void;
+    readonly __wbg_set_wasmcamsettings_stepdown: (a: number, b: number) => void;
+    readonly __wbg_set_wasmcamsettings_stepover: (a: number, b: number) => void;
+    readonly __wbg_wasmcamsettings_free: (a: number, b: number) => void;
+    readonly camDropCutter: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => [number, number, number, number];
+    readonly camExportGcode: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number, number, number];
+    readonly camExportLinuxCnc: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
+    readonly camGenerateCircularPocket: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number, number, number];
+    readonly camGenerateContour: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number) => [number, number, number, number];
+    readonly camGenerateFace: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
+    readonly camGeneratePocket: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
+    readonly camGenerateRoughing3d: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => [number, number, number, number];
+    readonly camGetDefaultTools: () => [number, number, number, number];
+    readonly camToolpathStats: (a: number, b: number) => [number, number, number];
+    readonly isCamAvailable: () => number;
+    readonly wasmcamsettings_fromJson: (a: number, b: number) => [number, number, number];
+    readonly wasmcamsettings_new: () => number;
     readonly digitizeSketch: (a: number, b: number, c: number, d: number) => [number, number, number, number];
     readonly digitizeText: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
     readonly isEmbroideryAvailable: () => number;
