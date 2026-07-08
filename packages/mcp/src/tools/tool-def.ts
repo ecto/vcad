@@ -72,10 +72,16 @@ export interface ToolDef {
   inputSchema: Record<string, unknown>;
   handler: ToolHandler;
   behavior: ToolBehavior;
-  /** MCP tool annotations (readOnlyHint, …). Advertised verbatim. */
+  /** Human-readable display name advertised as the tool's `title`. Populated
+   *  from `TOOL_METADATA` at assembly time (see `tool-metadata.ts`); the
+   *  server asserts every advertised tool has one. */
+  title?: string;
+  /** MCP tool annotations (readOnlyHint, destructiveHint, openWorldHint, …).
+   *  Advertised verbatim. Populated from `TOOL_METADATA` at assembly time. */
   annotations?: Record<string, unknown>;
-  /** JSON Schema for the tool's structured result. Reserved for a follow-up;
-   *  unset today. */
+  /** JSON Schema for the tool's structured result. Declared only on tools that
+   *  return `structuredContent` on every success (per MCP spec). Populated
+   *  from `TOOL_METADATA` at assembly time. */
   outputSchema?: Record<string, unknown>;
 }
 
