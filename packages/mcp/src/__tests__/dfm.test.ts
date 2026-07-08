@@ -2,7 +2,13 @@ import { describe, it, expect, beforeAll, beforeEach } from "vitest";
 import { Engine } from "@vcad/engine";
 import type { DfmReport } from "@vcad/engine";
 import type { Document } from "@vcad/ir";
-import { createSchematic, placeComponents, addTrace } from "../tools/ecad.js";
+import {
+  createSchematic,
+  placeComponents,
+  addTrace,
+  addMotorWinding,
+  runDrc,
+} from "../tools/ecad.js";
 import {
   dfmCheck,
   dfmExplain,
@@ -10,7 +16,8 @@ import {
   dfmApplyFix,
   clearDfmState,
 } from "../tools/dfm.js";
-import { documents, openDocument } from "../tools/session.js";
+import { documents, getSession, openDocument } from "../tools/session.js";
+import { getNodePcb, getPcbNodeIds } from "@vcad/core";
 
 let engine: Engine;
 
@@ -127,6 +134,96 @@ describe("dfm_check — PCB fab profiles", () => {
     const tw = res.rules.find((r: { rule: string }) => r.rule === "min_trace_width");
     expect(tw.passed).toBe(true);
     expect(res.fab_profile_name).toBe("Custom fine-line");
+  });
+
+  it("min_clearance is netTie-aware: wye star contacts are exempt, agreeing with DRC", async () => {
+    const created = out(await createSchematic({ components: [resistor("R1", 0)] }));
+    const id = created.document_id;
+    await placeComponents({
+      document_id: id,
+      board_shape: { type: "circle", outer_diameter: 120, inner_diameter: 20 },
+    });
+    const winding = out(
+      await addMotorWinding({
+        document_id: id,
+        slots: 9,
+        poles: 6,
+        center: { x: 60, y: 60 },
+        pitch_radius: 40,
+        inner_radius: 2,
+        outer_radius: 6,
+        trace_width: 0.2,
+        clearance: 0.15,
+        connection: "wye",
+      }),
+    );
+    expect(winding.success).toBe(true);
+    expect(winding.net_ties_added).toBe(1);
+
+    const doc = getSession(id);
+    const board = getNodePcb(doc, getPcbNodeIds(doc)[0]!)!;
+    const tie = board.netTies![0]!;
+    expect(tie.position).toBeDefined();
+    expect(tie.radius).toBeGreaterThan(0);
+
+    // DRC's clearance pass is tie-aware; collect the net pairs it flags.
+    const drc = out(await runDrc({ document_id: id }));
+    const drcPairs = new Set(
+      drc.byNetPair
+        .filter((p: { rule: string }) => p.rule === "Clearance")
+        .map((p: { nets: string[] }) => [...p.nets].sort().join("|")),
+    );
+
+    const res = out(await dfmCheck({ document_id: id, process: "pcb_jlcpcb" }, engine));
+    const mc = res.rules.find((r: { rule: string }) => r.rule === "min_clearance");
+    expect(mc).toBeDefined();
+    for (const loc of mc.locations as Array<{ x: number; y: number; nets?: string[] }>) {
+      // The deliberate wye star junction is exempt: no finding inside the
+      // tie region, and none involving the neutral (it only ever touches
+      // other copper at the star).
+      const d = Math.hypot(loc.x - tie.position!.x, loc.y - tie.position!.y);
+      expect(d).toBeGreaterThan(tie.radius!);
+      expect(loc.nets).not.toContain("WIND_N");
+      // DFM never flags a pair DRC's tie-aware pass doesn't also flag —
+      // the exemption logic is shared, not re-implemented.
+      expect(drcPairs.has([...loc.nets!].sort().join("|"))).toBe(true);
+    }
+  });
+
+  it("min_clearance reports positions and nets for a genuine untied gap", async () => {
+    const id = await placedBoard();
+    // Two parallel different-net traces with a 0.1mm copper gap — a real
+    // spacing defect below JLCPCB's 0.127mm 1oz floor, no tie anywhere.
+    await addTrace({
+      document_id: id,
+      points: [
+        { x: 5, y: 5 },
+        { x: 15, y: 5 },
+      ],
+      net: "MID",
+      width: 0.2,
+    });
+    await addTrace({
+      document_id: id,
+      points: [
+        { x: 5, y: 5.3 },
+        { x: 15, y: 5.3 },
+      ],
+      net: "OTHER",
+      width: 0.2,
+    });
+
+    const res = out(await dfmCheck({ document_id: id, process: "pcb_jlcpcb" }, engine));
+    const mc = res.rules.find((r: { rule: string }) => r.rule === "min_clearance");
+    expect(mc.passed).toBe(false);
+    expect(mc.violations).toBeGreaterThan(0);
+    // Violations carry triageable positions and structured net pairs.
+    const loc = mc.locations.find(
+      (l: { nets?: string[] }) => l.nets?.includes("MID") && l.nets?.includes("OTHER"),
+    );
+    expect(loc).toBeDefined();
+    expect(loc.x).toBeCloseTo(10, 1);
+    expect(loc.y).toBeCloseTo(5.15, 1);
   });
 
   it("errors when a pcb_ profile is used on a document with no board", async () => {
