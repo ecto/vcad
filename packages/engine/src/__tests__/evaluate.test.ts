@@ -213,9 +213,14 @@ describe("CSG operations", () => {
     //   - coplanar-coincidence classification (PR #73) drops the
     //     redundant reversed cylinder-cap at z=20 whose region the
     //     box-top annular already covers, 60 → 44.
+    //   - conforming boolean seams (PR #469) split the cube faces at the
+    //     cylinder-cap crossing vertices (T-junction repair) and emit the
+    //     cap arcs on the canonical angular grid, so the caps fan with
+    //     their full vertex chains instead of coarse corner loops,
+    //     44 → 112.
     // Shape is unchanged — only tessellation density — and the bbox
     // assertions below still catch geometric regressions.
-    expect(tris).toBe(44);
+    expect(tris).toBe(112);
     expect(minX).toBeGreaterThanOrEqual(-0.1);
     expect(minY).toBeGreaterThanOrEqual(-0.1);
   });

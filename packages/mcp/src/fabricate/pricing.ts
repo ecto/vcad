@@ -44,7 +44,11 @@ export function estimateLandedCost(opts: {
   region: string;
   supportsDdp: boolean;
 }): LandedCost {
-  const offshore = opts.region.toUpperCase() !== "US";
+  // "n/a" is the generic vcad estimator (no contracted fab). Its interim
+  // fulfillment rail is the US instant-quote handoff shops (SendCutSend /
+  // OSH Cut / Fabworks), so price it as domestic — not offshore DDP.
+  const region = opts.region.toUpperCase();
+  const offshore = region !== "US" && region !== "N/A";
   if (!offshore) {
     return { shipping_minor: 800, duty_minor: 0, basis: "domestic_estimate" };
   }

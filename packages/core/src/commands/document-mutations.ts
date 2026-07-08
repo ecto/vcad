@@ -101,13 +101,36 @@ export function applyToolOutcome(
         op: outcome.op as unknown as CsgOp,
       };
       doc.nodes[String(id)] = node;
-      // For now, every add_feature creates a new root part. parent_part_id
-      // would imply wrapping the parent's root in a new node; the Rust
-      // planner doesn't currently emit wrapped outcomes for this path
-      // (modifier features go through their own create flow). When that
-      // changes, extend here.
-      const entry: SceneEntry = { root: id, material: "default" };
-      doc.roots.push(entry);
+      // A feature that references existing ROOT nodes as children consumes
+      // those parts: the referenced roots become interior nodes of the new
+      // part and must stop being independent scene entries — otherwise every
+      // boolean/transform chain leaves its intermediates behind as ghost
+      // parts that double-count volume. Mirrors the app docstore's
+      // applyBoolean/wrap semantics. The first consumed entry is reused in
+      // place so its material/visibility/scene position survive; any other
+      // consumed entries (e.g. a boolean's right operand) are dropped.
+      const children = new Set(opChildren(node.op));
+      const consumedIdxs: number[] = [];
+      doc.roots.forEach((r, i) => {
+        if (children.has(r.root)) consumedIdxs.push(i);
+      });
+      if (consumedIdxs.length > 0) {
+        const first = doc.roots[consumedIdxs[0]!]!;
+        const firstPartId = String(first.root);
+        doc.roots[consumedIdxs[0]!] = { ...first, root: id };
+        if (doc.part_materials[firstPartId] !== undefined) {
+          doc.part_materials[String(id)] = doc.part_materials[firstPartId]!;
+          delete doc.part_materials[firstPartId];
+        }
+        for (let k = consumedIdxs.length - 1; k >= 1; k--) {
+          const idx = consumedIdxs[k]!;
+          delete doc.part_materials[String(doc.roots[idx]!.root)];
+          doc.roots.splice(idx, 1);
+        }
+      } else {
+        const entry: SceneEntry = { root: id, material: "default" };
+        doc.roots.push(entry);
+      }
       return { partId: String(id), nodeId: String(id) };
     }
     case "remove_part": {
