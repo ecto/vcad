@@ -204,7 +204,7 @@ interface PartDiffEntry {
 }
 
 /** Compact before/after diff of a mutation, reported back to the agent. */
-interface PartsDiff {
+export interface PartsDiff {
   added: PartDiffEntry[];
   removed: PartDiffEntry[];
   modified: PartDiffEntry[];
@@ -216,7 +216,7 @@ interface PartsDiff {
  * pass over reachable nodes — and exact enough to attribute any
  * mutation to the parts it touched.
  */
-function snapshotParts(
+export function snapshotParts(
   doc: import("@vcad/ir").Document,
 ): Map<string, { name?: string; fingerprint: string }> {
   const map = new Map<string, { name?: string; fingerprint: string }>();
@@ -248,7 +248,7 @@ function snapshotParts(
 }
 
 /** Diff two part snapshots. Returns null when nothing changed. */
-function diffParts(
+export function diffParts(
   before: ReturnType<typeof snapshotParts>,
   after: ReturnType<typeof snapshotParts>,
 ): PartsDiff | null {
@@ -278,7 +278,7 @@ function diffParts(
  *  2. the single JSON text block — kept for the agent and for hosts
  *     (Cursor) with known gaps forwarding structuredContent to widgets.
  */
-function appendChanged(
+export function appendChanged(
   result: {
     content: Array<{ type: "text"; text: string }>;
     structuredContent?: Record<string, unknown>;
@@ -353,7 +353,7 @@ export function dispatchRegistryTool(
 }
 
 /** Execute a mutating registry tool against an open session document. */
-function runMutation(
+export function runMutation(
   toolName: string,
   toolArgs: Record<string, unknown>,
   doc: import("@vcad/ir").Document,

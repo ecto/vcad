@@ -924,6 +924,34 @@
     }
   },
   {
+    "name": "apply_edits",
+    "description": "Apply an ordered list of edit ops (create/update/delete/set_material) to a session document atomically — all-or-nothing. One call replaces N single-node round-trips: it returns one aggregated `changed` diff over every op and one integrity certificate, and a subsequent `undo` rewinds the whole batch. Any op failing restores the pre-call document byte-for-byte and reports the failing op index. Pass `dry_run: true` to validate and get the per-op plan without mutating. Each op is `{op, ...args}` (e.g. {op:'create', type:'cube', params:{size:{x,y,z}}}); later ops may reference nodes created earlier in the same batch.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "document_id": {
+          "type": "string",
+          "description": "Session id from open_document. The batch mutates this session's document."
+        },
+        "ops": {
+          "type": "array",
+          "description": "Ordered list of edit ops applied atomically (all-or-nothing). Each op is `{op, ...args}` where op is one of create/update/delete/set_material and the remaining fields are that tool's arguments (minus document_id): create {op, type, params}, update {op, node_id|part_id, ...fields}, delete {op, part_id}, set_material {op, part_id, material}. Later ops may reference nodes created by earlier ops in the same batch. Max 50 per call.",
+          "items": {
+            "type": "object"
+          }
+        },
+        "dry_run": {
+          "type": "boolean",
+          "description": "When true, run planning/validation for every op against a scratch copy and report the per-op plan WITHOUT mutating the session. Use to preflight a batch."
+        }
+      },
+      "required": [
+        "document_id",
+        "ops"
+      ]
+    }
+  },
+  {
     "name": "create_cad_loon",
     "description": "The preferred authoring tool for whole parts and multi-feature models \u2014 one call, full vocabulary. Create a CAD document from loon source code. Loon is a Lisp-like language for parametric CAD \u2014 the FULL modeling vocabulary (patterns, sketches, extrude/revolve/sweep/loft, assemblies) is available here even where no dedicated MCP tool exists. For incremental single-node edits to an open session, use create/update/delete instead.\n\nPrimitives: [cube x y z], [cylinder r h], [sphere r], [cone r-bottom r-top h]\nBooleans (subject-last): [difference tool subject], [union other subject], [intersection other subject]\nTransforms (subject-last): [translate x y z s], [rotate rx ry rz s], [scale sx sy sz s]\nFeatures: [fillet r s], [chamfer d s], [shell t s]\nPatterns (subject-last): [linear-pattern dx dy dz count spacing s], [circular-pattern ox oy oz ax ay az count angle s] \u2014 e.g. a bolt circle is [circular-pattern 0 0 0 0 0 1 6 360 bolt-hole]\nSketches: [sketch ox oy oz xx xy xz yx yy yz #[segments]] with [line x1 y1 x2 y2] and [arc x1 y1 x2 y2 cx cy ccw]\nSketch ops (sketch-last): [extrude dx dy dz sk], [revolve aox aoy aoz adx ady adz angle sk], [sweep-line sx sy sz ex ey ez sk], [sweep-helix radius pitch height turns sk], [loft #[sk1 sk2 \u2026]]\nAssemblies: [assembly #[parts] #[instances] #[joints] ground-id] with [part name solid \"material\"], [instance name part-name x y z], [revolute-joint \u2026], [prismatic-joint \u2026], [fixed-joint \u2026], [ball-joint \u2026]\nPipe: [pipe [cube 50 30 5] [difference [cylinder 3 10]] [fillet 1.0]]\nLet bindings: [let body [cube 50 30 5]]\nScene: [root solid \"material-name\"]",
     "inputSchema": {
