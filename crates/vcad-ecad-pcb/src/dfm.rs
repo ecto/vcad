@@ -1916,6 +1916,53 @@ mod tests {
         assert!(nets.contains(&"B".to_string()));
     }
 
+    /// Field repro: the stator-v3 9s/6p wye board (examples/pcb-motor). Its
+    /// star point is one region-scoped tie over {PHA,PHB,PHC,WIND_N} at
+    /// (46.691, 27.715) r=2.95, and dfm_check in the field flagged four
+    /// phase↔neutral contacts inside that region as min_clearance errors
+    /// while the tie-aware DRC was clean. Encode those exact contacts here:
+    /// covered by the tie they must pass; with the tie moved 5mm away every
+    /// junction is a genuine violation again.
+    #[test]
+    fn min_clearance_field_repro_stator_v3_star_point() {
+        const TIE: (f64, f64) = (46.691, 27.715);
+        const CONTACTS: [((f64, f64), &str); 4] = [
+            ((46.8485, 27.197), "PHA"),
+            ((46.503, 27.44325), "PHB"),
+            ((46.2035, 27.7515), "PHC"),
+            ((45.66225, 28.0885), "PHC"),
+        ];
+        let board = |tie_at: (f64, f64)| {
+            let mut pcb = base_pcb();
+            for ((x, y), phase) in CONTACTS {
+                // Phase and neutral stubs meeting at the reported contact.
+                pcb.traces.push(fcu_trace((x, y), (x, y + 0.5), phase));
+                pcb.traces.push(fcu_trace((x, y), (x, y - 0.5), "WIND_N"));
+            }
+            pcb.net_ties.push(NetTie {
+                nets: vec!["PHA".into(), "PHB".into(), "PHC".into(), "WIND_N".into()],
+                position: Some(Vec2::new(tie_at.0, tie_at.1)),
+                radius: Some(2.95),
+            });
+            pcb
+        };
+
+        let report = check_dfm(&board(TIE), PcbFabProfile::Jlcpcb, None).unwrap();
+        let mc = find(&report, "min_clearance");
+        assert!(
+            mc.passed && mc.violations == 0,
+            "contacts inside the tie region must be exempt: {mc:?}"
+        );
+        assert!(mc.locations.is_empty());
+
+        let report = check_dfm(&board((TIE.0 - 5.0, TIE.1)), PcbFabProfile::Jlcpcb, None).unwrap();
+        let mc = find(&report, "min_clearance");
+        assert!(
+            !mc.passed && mc.violations >= 4,
+            "with the tie 5mm away every star contact must violate: {mc:?}"
+        );
+    }
+
     #[test]
     fn override_toml_relaxes_threshold() {
         let mut pcb = base_pcb();

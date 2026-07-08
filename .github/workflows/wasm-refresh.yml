@@ -77,6 +77,19 @@ jobs:
           git config user.name  "vcad-agent[bot]"
           git config user.email "vcad-agent@users.noreply.github.com"
           git commit -m "chore(wasm): refresh kernel artifacts for ${GITHUB_SHA:0:7}"
+          # The build can dirty tracked files this job doesn't own — most
+          # commonly Cargo.lock, when a PR pinned a sibling-repo version from
+          # a stale local checkout and cargo re-resolves against the fresh
+          # clones above. Single-writer policy: this job only ever commits the
+          # kernel-wasm artifacts, so surface the drift as a warning and
+          # discard it — a dirty tree here otherwise wedges `pull --rebase`
+          # and silently freezes the published artifacts (see #469→#473,
+          # where a phyz 0.3.1→0.3.0 lockfile regression did exactly that).
+          if ! git diff --quiet; then
+            echo "::warning::discarding non-artifact build dirt (stale sibling pin in a merged PR?):"
+            git --no-pager diff --stat
+            git checkout -- .
+          fi
           # Cheap insurance against a non-artifact merge racing us; a binary
           # conflict here means a policy violation upstream and should fail
           # loudly (re-run via workflow_dispatch after fixing).
