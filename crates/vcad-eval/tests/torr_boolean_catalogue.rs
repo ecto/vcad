@@ -35,6 +35,9 @@ struct Inspection {
     volume: f64,
     com: [f64; 3],
     bbox: ([f64; 3], [f64; 3]),
+    /// Unpaired directed mesh edges (0 for a closed surface). Vertices are
+    /// matched by quantized position, mirroring the MCP integrity block.
+    open_edges: usize,
 }
 
 fn inspect(src: &str) -> Inspection {
@@ -83,10 +86,41 @@ fn inspect(src: &str) -> Inspection {
     } else {
         [0.0; 3]
     };
+    // Open-edge census: net directed traversal per undirected edge, with
+    // vertices matched by quantized position (meshes duplicate vertices per
+    // face). Closed surface ⇒ every edge nets to zero.
+    let open_edges = {
+        let quantum = 1e-5;
+        let vkey = |vi: usize| -> [i64; 3] {
+            let mut k = [0i64; 3];
+            for c in 0..3 {
+                k[c] = (mesh.vertices[vi * 3 + c] as f64 / quantum).round() as i64;
+            }
+            k
+        };
+        let mut net: std::collections::HashMap<([i64; 3], [i64; 3]), i64> =
+            std::collections::HashMap::new();
+        for t in 0..ntri {
+            for k in 0..3 {
+                let a = vkey(mesh.indices[t * 3 + k] as usize);
+                let b = vkey(mesh.indices[t * 3 + (k + 1) % 3] as usize);
+                if a == b {
+                    continue; // degenerate edge collapses under quantization
+                }
+                if a < b {
+                    *net.entry((a, b)).or_default() += 1;
+                } else {
+                    *net.entry((b, a)).or_default() -= 1;
+                }
+            }
+        }
+        net.values().map(|n| n.unsigned_abs() as usize).sum()
+    };
     Inspection {
         volume: vol,
         com,
         bbox,
+        open_edges,
     }
 }
 
@@ -579,6 +613,149 @@ fn e_pattern_scale_canary() {
     );
     assert_vol(i.volume, 200.0, 0.5, "200-instance pattern of unit cubes");
     assert_com_on_z_axis(i.com, 0.05, "200-instance pattern");
+}
+
+// ===========================================================================
+// Cluster F — intersecting-union seam damage (retest 2026-07-08, build
+// 0.9.4+87874b4). The surviving failure family: any union whose operands
+// genuinely intersect a curved or boolean-result mesh leaves unstitched
+// seams (open edges), and a union INTO a boolean-result solid silently
+// drops most of the added material.
+// ===========================================================================
+
+/// Watertight control: a plain primitive union that intersects across a
+/// curved wall. Field observation: volume correct to 0.1% but hundreds of
+/// open edges per blade seam.
+///
+/// F1a — 4 explicitly-placed rotated blades embedded 1 mm into a cylinder
+/// (field: 818 open edges, CoM slightly off a symmetric axis).
+#[test]
+fn f1_union_rotated_blades_into_cylinder_watertight() {
+    let mut src = String::from("[cylinder 22.5 13]");
+    for ang in [0.0, 90.0, 180.0, 270.0] {
+        src = format!(
+            "[union [rotate 0 0 {ang} [translate 21.50 0 0 [rotate 39.29 0 0 \
+               [cube 23.50 0.5 12.57]]]] {src}]"
+        );
+    }
+    let i = inspect(&src);
+    assert!(
+        i.open_edges == 0,
+        "cyl ∪ 4 rotated blades: {} open edges (must be watertight)",
+        i.open_edges
+    );
+    assert_com_on_z_axis(i.com, 0.05, "cyl ∪ 4 rotated blades");
+    // Volume sanity: strictly more than the cylinder, less than cyl + blades.
+    let v_cyl = PI * 22.5 * 22.5 * 13.0;
+    assert!(
+        i.volume > v_cyl && i.volume < v_cyl + 4.0 * V_BLADE,
+        "cyl ∪ blades volume {:.3} outside ({v_cyl:.1}, {:.1})",
+        i.volume,
+        v_cyl + 4.0 * V_BLADE
+    );
+}
+
+/// F1b — the pattern form: 23-blade circular pattern unioned with the
+/// cylinder it embeds into (field: 13,579 open edges, ~590 per seam).
+#[test]
+fn f1_union_pattern_into_cylinder_watertight() {
+    let i = inspect(
+        "[union [cylinder 22.5 13] [circular-pattern 0 0 0  0 0 1  23 360 \
+           [translate 21.50 0 0 [rotate 39.29 0 0 [cube 23.50 0.5 12.57]]]]]",
+    );
+    assert!(
+        i.open_edges == 0,
+        "cyl ∪ 23-blade pattern: {} open edges (must be watertight)",
+        i.open_edges
+    );
+    assert_com_on_z_axis(i.com, 0.05, "cyl ∪ 23-blade pattern");
+}
+
+/// F1 volume form with FLAT blades so the overlap is analytic:
+/// flat blade x∈[21.5,45], y∈[0,0.5], z∈[0,12.57]; overlap with the r22.5
+/// cylinder = ∫₀^0.5 (√(506.25−y²) − 21.5) dy × 12.57 = 6.2734 mm³.
+#[test]
+fn f1_union_flat_blades_into_cylinder_volume() {
+    let overlap = 6.2734;
+    let mut src = String::from("[cylinder 22.5 12.57]");
+    for ang in [0.0, 90.0, 180.0, 270.0] {
+        src = format!("[union [rotate 0 0 {ang} {BLADE_FLAT}] {src}]");
+    }
+    let i = inspect(&src);
+    let expected = PI * 22.5 * 22.5 * 12.57 + 4.0 * (V_BLADE - overlap);
+    assert_vol(v_of(&i), expected, 0.5, "cyl ∪ 4 flat blades");
+    assert!(
+        i.open_edges == 0,
+        "cyl ∪ 4 flat blades: {} open edges (must be watertight)",
+        i.open_edges
+    );
+}
+
+/// F2 — union INTO a boolean-result solid silently drops the added
+/// material. Field: staircase hub ∪ blade row gained +265 mm³ of an
+/// expected +3,149, operand order irrelevant, and the implied added-mass
+/// centroid was physically impossible. Repro: a hub that is itself a
+/// chained-difference result, unioned with 4 embedded flat blades.
+#[test]
+fn f2_union_into_boolean_result_keeps_operand() {
+    // Staircase hub: cylinder r22.5 h12.57 minus a bore r8 minus a
+    // counterbore r14 in the top 4 mm (all analytic, exact per cluster D).
+    let hub = "[difference [translate 0 0 8.57 [cylinder 14 4]] \
+                 [difference [cylinder 8 12.57] [cylinder 22.5 12.57]]]";
+    let overlap = 6.2734; // flat blade ∩ r22.5 wall (see F1 volume test)
+    let v_hub = PI * 12.57 * 22.5 * 22.5 - PI * 64.0 * 12.57 - PI * (196.0 - 64.0) * 4.0;
+    let mut src = hub.to_string();
+    for ang in [0.0, 90.0, 180.0, 270.0] {
+        src = format!("[union [rotate 0 0 {ang} {BLADE_FLAT}] {src}]");
+    }
+    let i = inspect(&src);
+    let expected = v_hub + 4.0 * (V_BLADE - overlap);
+    assert_vol(v_of(&i), expected, 0.5, "staircase hub ∪ 4 flat blades");
+    assert!(
+        i.open_edges == 0,
+        "staircase hub ∪ 4 flat blades: {} open edges (must be watertight)",
+        i.open_edges
+    );
+    // The blades reach r45; if they vanished the bbox stops at the hub wall.
+    assert!(
+        i.bbox.1[0] >= 44.9,
+        "blades vanished from the union: bbox xmax {:.3} (expected 45)",
+        i.bbox.1[0]
+    );
+}
+
+/// F2 order-invariance: boolean-result operand first vs last must agree.
+#[test]
+fn f2_union_operand_order_invariance() {
+    let hub = "[difference [translate 0 0 8.57 [cylinder 14 4]] \
+                 [difference [cylinder 8 12.57] [cylinder 22.5 12.57]]]";
+    let v_a = volume(&format!("[union {hub} {BLADE_FLAT}]"));
+    let v_b = volume(&format!("[union {BLADE_FLAT} {hub}]"));
+    assert!(
+        (v_a - v_b).abs() <= v_a.abs() * 0.005,
+        "union order changes volume: {v_a:.3} vs {v_b:.3}"
+    );
+}
+
+/// F3 — any further boolean on a seam-damaged mesh: >60 s timeout in the
+/// field (`cyl ∪ row ∪ row` — the scale cliff moved from 21 patterns down
+/// to 2). Perf canary; run manually until F1 lands, then unignore.
+#[test]
+#[ignore = "perf canary — run manually: cargo test -p vcad-eval --release -- --ignored f3_chained"]
+fn f3_chained_union_on_union_result() {
+    let row = |z: f64| {
+        format!(
+            "[translate 0 0 {z} [circular-pattern 0 0 0  0 0 1  23 360 \
+               [translate 21.50 0 0 [rotate 39.29 0 0 [cube 23.50 0.5 12.57]]]]]"
+        )
+    };
+    let i = inspect(&format!(
+        "[union [union [cylinder 22.5 40] {}] {}]",
+        row(2.0),
+        row(20.0)
+    ));
+    assert!(i.open_edges == 0, "chained union: {} open edges", i.open_edges);
+    assert_com_on_z_axis(i.com, 0.05, "chained union of two blade rows");
 }
 
 // Small helper so Inspection reads naturally in assert_vol call sites.

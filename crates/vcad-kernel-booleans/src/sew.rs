@@ -198,6 +198,7 @@ pub fn sew_faces(
     // Repair topology issues after merges
     repair::repair_topology(&mut topo, tolerance);
 
+
     // Build shell from all faces
     let all_faces: Vec<FaceId> = topo.faces.keys().collect();
     if all_faces.is_empty() {

@@ -201,7 +201,7 @@ fn apply_splits_to_solid(
                                 _ => format!("{:?}", curve),
                             }
                         );
-                        let result = split::split_cylindrical_face(solid, fid, &curve);
+                        let result = split::split_cylindrical_face(solid, fid, &curve, segments);
                         debug_bool!(
                             "    -> Cylindrical split result: {} sub-faces {:?}",
                             result.sub_faces.len(),
@@ -456,6 +456,14 @@ pub(crate) fn brep_boolean(
     // Clone both solids so we can split them
     let mut a = solid_a.clone();
     let mut b = solid_b.clone();
+
+    // Freeze analytic full-circle edges into canonical polylines so the
+    // whole pipeline works on one concrete boundary representation (see
+    // crate::freeze). Without this, results that keep an untouched analytic
+    // face are watertight only by resolution coincidence, and any further
+    // boolean on them cannot conform.
+    crate::freeze::freeze_circle_loops(&mut a, segments);
+    crate::freeze::freeze_circle_loops(&mut b, segments);
 
     // 1. Find candidate face pairs via AABB filtering
     let pairs = bbox::find_candidate_face_pairs(&a, &b);

@@ -3000,7 +3000,15 @@ fn tessellate_ruled_two_chain(
             .fold((f64::MAX, f64::MIN), |(a, b), p| (a.min(p.1), b.max(p.1)));
         mx - mn
     };
-    if spread(&chain_a) < 1e-9 && spread(&chain_b) < 1e-9 {
+    // Constant-v SPARSE chains are true rectangles — the grid path renders
+    // those smoother (height subdivision, adaptive n). But a DENSE
+    // constant-v two-chain loop is a frozen boundary (canonical polyline
+    // rings from the boolean pipeline); it must render verbatim or the
+    // shell can't conform with the neighboring caps.
+    if spread(&chain_a) < 1e-9
+        && spread(&chain_b) < 1e-9
+        && (chain_a.len() <= 4 || chain_b.len() <= 4)
+    {
         return None;
     }
 
