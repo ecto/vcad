@@ -3,10 +3,9 @@
  * document. Sums volume, surface area, mass (when materials carry
  * density), and the overall bounding box across every part.
  *
- * Per-part inspection (the chat surface's `inspect_part` and
- * `describe_scene`) is deferred to a follow-up — those need
- * scene-relative anchors and aren't yet routable through the IR-direct
- * MCP path.
+ * Per-part inspection lives in `inspect_part` / `describe_scene` (dispatched
+ * through the kernel registry surface) and part-pair clearance in `measure`;
+ * all three reuse the tessellation-bound mesh math exported from here.
  */
 
 import type { Engine, TriangleMesh } from "@vcad/engine";
@@ -31,7 +30,8 @@ export const inspectCadSchema = {
   },
 };
 
-interface BoundingBox {
+/** An axis-aligned bounding box in kernel (Z-up, mm) coordinates. */
+export interface BoundingBox {
   min: { x: number; y: number; z: number };
   max: { x: number; y: number; z: number };
 }
@@ -106,8 +106,10 @@ function getVertex(
   return [mesh.positions[i], mesh.positions[i + 1], mesh.positions[i + 2]];
 }
 
-/** Compute properties for a single mesh. */
-function computeMeshProperties(mesh: TriangleMesh): {
+/** Compute properties for a single mesh. Exported so `measure` and the
+ *  per-part `inspect_part` / `describe_scene` tools share one implementation
+ *  of the tessellation-bound volume/area/bbox/centroid math. */
+export function computeMeshProperties(mesh: TriangleMesh): {
   volume: number;
   area: number;
   bbox: BoundingBox;
@@ -387,7 +389,7 @@ export const toolDefs: ToolDef[] = [
     name: "inspect_cad",
     pack: null,
     description:
-      "Inspect an open session document to get aggregate geometry properties: volume, surface area, bounding box, center of mass, triangle count, and mass (if material density is known). For per-part inspection use the chat-surface `inspect_part` / `describe_scene` tools (deferred from this MCP surface in v1).",
+      "Inspect an open session document to get aggregate geometry properties: volume, surface area, bounding box, center of mass, triangle count, and mass (if material density is known). For per-part detail use `inspect_part` (one part) or `describe_scene` (every part at once); for the gap or overlap between two parts use `measure`.",
     inputSchema: inspectCadSchema,
     handler: (a, c) => inspectCad(a, c.engine),
     behavior: behavior({}),

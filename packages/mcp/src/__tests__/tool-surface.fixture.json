@@ -910,6 +910,54 @@
     }
   },
   {
+    "name": "inspect_part",
+    "description": "Read a part's current world-space geometry: bounding box, size, center, translate, rotation, material, and the set of named anchors (center/min/max/top/bottom/front/back/left/right) you can pass to `place`. Use this to verify what the scene looks like after a tool call without spending tokens on a screenshot \u2014 it's much cheaper than screenshot_viewport. Result is JSON.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "document_id": {
+          "type": "string",
+          "description": "Session id from open_document. The tool mutates this session's document."
+        },
+        "part_id": {
+          "type": "string",
+          "description": "The part ID to inspect."
+        }
+      },
+      "required": [
+        "document_id",
+        "part_id"
+      ]
+    }
+  },
+  {
+    "name": "describe_scene",
+    "description": "One-call snapshot of the whole scene (or a subset of parts): each part's world-space bbox, center, translate, rotate, and material as JSON. Use this INSTEAD of a chain of `inspect_part` calls when you need positions for several parts at once \u2014 one turn, no round-trips. Also use it after a batch of edits to verify where everything ended up.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "document_id": {
+          "type": "string",
+          "description": "Session id from open_document. The tool mutates this session's document."
+        },
+        "part_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Optional list of part IDs to describe. Omit to describe every part."
+        },
+        "limit": {
+          "type": "integer",
+          "description": "Cap the number of parts returned when no part_ids are provided (default 100)."
+        }
+      },
+      "required": [
+        "document_id"
+      ]
+    }
+  },
+  {
     "name": "get_preview_glb",
     "description": "Return a base64 GLB preview of an open session document. Internal to the inline 3D viewer \u2014 agents should use `export_cad` for geometry exports.",
     "inputSchema": {
@@ -1020,7 +1068,7 @@
   },
   {
     "name": "inspect_cad",
-    "description": "Inspect an open session document to get aggregate geometry properties: volume, surface area, bounding box, center of mass, triangle count, and mass (if material density is known). For per-part inspection use the chat-surface `inspect_part` / `describe_scene` tools (deferred from this MCP surface in v1).",
+    "description": "Inspect an open session document to get aggregate geometry properties: volume, surface area, bounding box, center of mass, triangle count, and mass (if material density is known). For per-part detail use `inspect_part` (one part) or `describe_scene` (every part at once); for the gap or overlap between two parts use `measure`.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -1033,6 +1081,103 @@
           "description": "Inline Document IR to inspect instead of a session. Use this stateless path when no `document_id` is resident (e.g. a cold serverless instance)."
         }
       }
+    }
+  },
+  {
+    "name": "measure",
+    "description": "Measure geometry in an open session. Pass `part_ids` with two ids to get the minimum distance between those parts (0/negative = contact/overlap) plus each part's world-space bounding box; pass one id to get that part's bbox, volume, and center of mass. Complements `inspect_cad` (whole-document aggregate) and `check_clearance` (named, persisted air-gap assertions). Distances are measured from evaluated tessellations, so accuracy is tessellation-bound.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "document_id": {
+          "type": "string",
+          "description": "Session id from open_document holding the parts to measure."
+        },
+        "part_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "One or two part ids (or part names). One id \u2192 that part's bbox, volume, and center of mass. Two ids \u2192 the minimum distance between them (0/negative = contact/overlap) plus each part's bbox."
+        }
+      },
+      "required": [
+        "document_id",
+        "part_ids"
+      ]
+    }
+  },
+  {
+    "name": "list_parameters",
+    "description": "List a document's named parameters: raw expression, resolved numeric value, unit, and scrub bounds (min/max). Pair with set_parameters to drive the design and parameter_gradient to differentiate it.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "document_id": {
+          "type": "string",
+          "description": "Session id from open_document."
+        },
+        "document": {
+          "type": "object",
+          "description": "Inline Document IR to read instead of a session (stateless path)."
+        }
+      }
+    }
+  },
+  {
+    "name": "set_parameters",
+    "description": "Batch-update named parameter values on an open session document (e.g. { \"r\": 12, \"h\": 8 }). Every name must already be declared; values must be finite numbers. Returns a `changed` diff of the deltas and re-evaluates geometry integrity. Undoable and persisted.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "document_id": {
+          "type": "string",
+          "description": "Session id from open_document (required to persist)."
+        },
+        "parameters": {
+          "type": "object",
+          "description": "Map of parameter name \u2192 new numeric value, e.g. { \"r\": 12, \"h\": 8 }. Every name must already be declared in the document's parameters.",
+          "additionalProperties": {
+            "type": "number"
+          }
+        }
+      },
+      "required": [
+        "document_id",
+        "parameters"
+      ]
+    }
+  },
+  {
+    "name": "parameter_gradient",
+    "description": "Differentiate a document's QoIs with respect to a single named parameter via the differentiable seam: per solid part, returns d(volume)/d\u03b8, d(mass)/d\u03b8, d(centroid)/d\u03b8 (exact analytic seam derivatives) and d(bbox extents)/d\u03b8 (finite difference), alongside each QoI's value. The parameter must be bound onto some geometry field. \"Solve for the geometry\" starts here.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "document_id": {
+          "type": "string",
+          "description": "Session id from open_document."
+        },
+        "document": {
+          "type": "object",
+          "description": "Inline Document IR to differentiate instead of a session (stateless path)."
+        },
+        "parameter": {
+          "type": "string",
+          "description": "Name of the parameter to differentiate. Must be declared in the document's parameters and bound onto some geometry field."
+        },
+        "density": {
+          "type": "number",
+          "description": "Density fed to the mass integrals (mass = density \u00b7 volume). Defaults to 1 (raw volume moments)."
+        },
+        "probe_step": {
+          "type": "number",
+          "description": "Finite step for seeding synthesis (surface matching). The reported volume/mass/centroid derivatives are analytic, not finite differences. Defaults to 1e-4."
+        }
+      },
+      "required": [
+        "parameter"
+      ]
     }
   },
   {

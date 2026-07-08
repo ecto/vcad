@@ -6181,6 +6181,42 @@ pub fn compute_mesh_volume(positions: &[f32], indices: &[u32]) -> f64 {
     (vol / 6.0).abs()
 }
 
+/// Differentiate a document's mass-property + bounding-box QoIs with respect
+/// to a single named parameter (`d QoI / dθ`) via the differentiable seam.
+///
+/// # Arguments
+///
+/// * `doc_json` — a JSON string of a vcad Document that declares `parameter`
+///   in its `parameters` map (with a binding onto some geometry field).
+/// * `parameter` — the named parameter to differentiate.
+/// * `density` — density fed to the mass integrals (mass = density · volume).
+/// * `probe_step` — finite step used by seeding synthesis to match surfaces
+///   between θ ± step (the returned volume/mass/centroid derivatives are
+///   analytic seam evaluations, not finite differences). Pass `0` to use the
+///   `1e-4` default.
+///
+/// # Returns
+///
+/// A JsValue array with one entry per solid part, each
+/// `{ partIndex, volume, dVolume, mass, dMass, centroid, dCentroid,
+/// bboxExtents, dBboxExtents }` (see [`vcad_eval::diff::PartQoiGradient`]).
+#[wasm_bindgen(js_name = documentParameterGradient)]
+pub fn document_parameter_gradient(
+    doc_json: &str,
+    parameter: &str,
+    density: f64,
+    probe_step: f64,
+) -> Result<JsValue, JsError> {
+    let doc: vcad_ir::Document = serde_json::from_str(doc_json)
+        .map_err(|e| JsError::new(&format!("Failed to parse document: {}", e)))?;
+    let step = if probe_step > 0.0 { probe_step } else { 1e-4 };
+    let tess = vcad_kernel_tessellate::TessellationParams::default();
+    let grads =
+        vcad_eval::diff::document_parameter_qoi_gradient(&doc, parameter, density, &tess, step)
+            .map_err(|e| JsError::new(&e.to_string()))?;
+    serde_wasm_bindgen::to_value(&grads).map_err(|e| JsError::new(&e.to_string()))
+}
+
 // =============================================================================
 // Embroidery module (feature-gated)
 // =============================================================================

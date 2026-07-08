@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-07-mcp-measurement-tools",
+  "version": "0.9.4",
+  "date": "2026-07-07",
+  "category": "feat",
+  "title": "MCP measurement tools: inspect_part, describe_scene, measure",
+  "summary": "MCP agents can now inspect a single part's bbox/volume/center of mass, snapshot every part at once, and measure the min distance (or overlap) between two parts — closing the per-part modeling-loop gap left by aggregate-only inspect_cad.",
+  "features": ["mcp", "measurement", "mechanical"],
+  "mcpTools": ["inspect_part", "describe_scene", "measure"]
+}
