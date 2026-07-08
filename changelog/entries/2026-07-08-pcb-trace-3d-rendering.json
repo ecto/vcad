@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-08-pcb-trace-3d-rendering",
+  "version": "0.9.4",
+  "date": "2026-07-08",
+  "category": "fix",
+  "title": "PCB traces render as continuous copper in 3D preview",
+  "summary": "Trace meshes were inside-out (backface-culled to a broken dashed look), arc traces were missing entirely, and the viewer orbited the origin instead of the part.",
+  "features": ["pcb", "viewer", "mcp"],
+  "mcpTools": ["validate_for_fab", "render_view"]
+}

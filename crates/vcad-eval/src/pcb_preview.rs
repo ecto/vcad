@@ -29,7 +29,8 @@ use vcad_kernel_math::Vec3;
 
 use crate::convert::ir_sketch_to_profile;
 use crate::evaluate::{
-    copper_thickness, pad_to_mesh, trace_to_mesh, via_to_mesh, zone_to_mesh, RawMesh,
+    copper_thickness, pad_to_mesh, trace_arc_to_mesh, trace_to_mesh, via_to_mesh, zone_to_mesh,
+    RawMesh,
 };
 
 /// A single colored sub-mesh of a PCB preview.
@@ -132,6 +133,9 @@ pub fn pcb_preview_meshes(pcb: &Pcb) -> Vec<PcbPreviewMesh> {
     let mut masked = MeshBuf::default(); // traces + pours → mask green
     for trace in &pcb.traces {
         masked.append_raw(&trace_to_mesh(trace, pcb), copper_lift(pcb, trace.layer));
+    }
+    for arc in &pcb.trace_arcs {
+        masked.append_raw(&trace_arc_to_mesh(arc, pcb), copper_lift(pcb, arc.layer));
     }
     for zone in &pcb.zones {
         masked.append_raw(&zone_to_mesh(zone, pcb), copper_lift(pcb, zone.layer));

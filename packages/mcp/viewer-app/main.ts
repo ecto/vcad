@@ -423,19 +423,22 @@ function loadGlb(base64Data: string, opts?: LoadOpts): void {
       hasModel = true;
       updateAxesVisibility();
 
-      const box = new THREE.Box3().setFromObject(currentModel);
-      const center = box.getCenter(new THREE.Vector3());
-      const size = box.getSize(new THREE.Vector3());
+      // setFromObject resolves world (Y-up) coordinates — the model sits
+      // under modelGroup, which already carries the Z-up → Y-up rotation —
+      // so the center/size below are display-space, no further conversion.
+      const worldBox = new THREE.Box3().setFromObject(modelGroup);
+      const worldSize = worldBox.getSize(new THREE.Vector3());
+      const worldCenter = worldBox.getCenter(new THREE.Vector3());
 
       if (!opts?.preserveCamera) {
-        // Fit camera to model. Center is in Z-up space, convert to Y-up.
-        const maxDim = Math.max(size.x, size.y, size.z);
+        // Fit camera to model and orbit around its center (not the origin).
+        const maxDim = Math.max(worldSize.x, worldSize.y, worldSize.z);
         const dist = maxDim * 2;
-        controls.target.set(center.x, center.z, -center.y);
+        controls.target.copy(worldCenter);
         camera.position.set(
-          center.x + dist * 0.7,
-          center.z + dist * 0.7,
-          -center.y + dist * 0.7,
+          worldCenter.x + dist * 0.7,
+          worldCenter.y + dist * 0.7,
+          worldCenter.z + dist * 0.7,
         );
         camera.updateProjectionMatrix();
         controls.update();
@@ -443,16 +446,16 @@ function loadGlb(base64Data: string, opts?: LoadOpts): void {
 
       // Contact shadow under the footprint (world Y-up space) — rebound on
       // every load so the part stays grounded as its footprint morphs.
-      const worldBox = new THREE.Box3().setFromObject(modelGroup);
-      const worldSize = worldBox.getSize(new THREE.Vector3());
-      const worldCenter = worldBox.getCenter(new THREE.Vector3());
       const footprint = Math.max(worldSize.x, worldSize.z) * 1.8;
       contactShadow.scale.set(footprint, footprint, 1);
       contactShadow.position.set(worldCenter.x, -0.01, worldCenter.z);
       contactShadow.visible = true;
 
-      // Size is measured pre-rotation in kernel Z-up mm
-      updateStats(currentModel, size);
+      // Stats report kernel Z-up mm: world (x, z, y) → kernel (x, y, z).
+      updateStats(
+        currentModel,
+        new THREE.Vector3(worldSize.x, worldSize.z, worldSize.y),
+      );
       loadingEl.classList.add("hidden");
       setTicker("ready", "ready");
       opts?.afterLoad?.();

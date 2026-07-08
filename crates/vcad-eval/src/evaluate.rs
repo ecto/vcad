@@ -6,7 +6,7 @@
 use std::collections::HashMap;
 use std::panic::{catch_unwind, AssertUnwindSafe};
 
-use vcad_ir::ecad::{Footprint, Pad, PadShape, Pcb, PcbLayer, Trace, Via, Zone};
+use vcad_ir::ecad::{Footprint, Pad, PadShape, Pcb, PcbLayer, Trace, TraceArc, Via, Zone};
 use vcad_ir::{CsgOp, Document, NodeId, PathCurve};
 use vcad_kernel::Solid;
 use vcad_kernel_geom::Line3d;
@@ -829,6 +829,12 @@ fn evaluate_op_timed(
                     copper_meshes.push(m);
                 }
             }
+            for arc in &board.trace_arcs {
+                let m = trace_arc_to_mesh(arc, board);
+                if !m.0.is_empty() {
+                    copper_meshes.push(m);
+                }
+            }
             for via in &board.vias {
                 copper_meshes.push(via_to_mesh(via, board, 16));
             }
@@ -1510,16 +1516,69 @@ pub(crate) fn copper_thickness(pcb: &Pcb, layer: PcbLayer) -> f64 {
         .unwrap_or(DEFAULT_COPPER_THICKNESS)
 }
 
-/// Generate a box mesh for a trace segment (oriented ribbon at layer Z).
-/// Returns (vertices [x,y,z], triangle indices).
-pub(crate) fn trace_to_mesh(trace: &Trace, pcb: &Pcb) -> RawMesh {
-    let z_top = layer_z_top(pcb, trace.layer);
-    let ct = copper_thickness(pcb, trace.layer);
-    let z_bot = if trace.layer == PcbLayer::FCu {
+/// Top/bottom Z of the copper slab a trace occupies on `layer`, ordered
+/// so `z_hi > z_lo` regardless of which side of the board the layer is on.
+fn trace_z_span(pcb: &Pcb, layer: PcbLayer) -> (f64, f64) {
+    let z_top = layer_z_top(pcb, layer);
+    let ct = copper_thickness(pcb, layer);
+    let z_other = if layer == PcbLayer::FCu {
         z_top - ct
     } else {
         z_top + ct
     };
+    (z_top.min(z_other), z_top.max(z_other))
+}
+
+/// Segment count for a round trace end cap.
+const CAP_SEGS: usize = 12;
+
+/// Append an outward-facing cylinder (round trace end cap / joint disc) of
+/// radius `r` centered at `(cx, cy)`, spanning `z_lo..z_hi`.
+///
+/// The fans and the side wall use *separate* vertex sets so smooth-normal
+/// recomputation keeps the fans flat (±z) instead of blending them with the
+/// wall — a shared ring shades every joint as a bump. The cap also overshoots
+/// the slab by a hair so its coplanar fan never z-fights the segment's top.
+fn append_endcap(verts: &mut Vec<[f64; 3]>, tris: &mut Vec<[u32; 3]>, cx: f64, cy: f64, r: f64, z_lo: f64, z_hi: f64) {
+    let eps = (z_hi - z_lo) * 0.05;
+    let (z_lo, z_hi) = (z_lo - eps, z_hi + eps);
+    let n = CAP_SEGS as u32;
+    let ring = |verts: &mut Vec<[f64; 3]>, z: f64| {
+        let start = verts.len() as u32;
+        for i in 0..CAP_SEGS {
+            let a = 2.0 * std::f64::consts::PI * i as f64 / CAP_SEGS as f64;
+            verts.push([cx + r * a.cos(), cy + r * a.sin(), z]);
+        }
+        start
+    };
+
+    // Top fan (+z).
+    let tc = verts.len() as u32;
+    verts.push([cx, cy, z_hi]);
+    let top = ring(verts, z_hi);
+    // Bottom fan (-z).
+    let bc = verts.len() as u32;
+    verts.push([cx, cy, z_lo]);
+    let bot = ring(verts, z_lo);
+    // Side wall (its own rings).
+    let wt = ring(verts, z_hi);
+    let wb = ring(verts, z_lo);
+
+    for i in 0..n {
+        let j = (i + 1) % n;
+        tris.push([tc, top + i, top + j]);
+        tris.push([bc, bot + j, bot + i]);
+        tris.push([wt + i, wb + j, wt + j]);
+        tris.push([wt + i, wb + i, wb + j]);
+    }
+}
+
+/// Generate a box mesh for a trace segment (oriented ribbon at layer Z) with
+/// round end caps, so chained segments (arc approximations, routed polylines)
+/// read as continuous copper instead of disjoint tiles with gaps at joints.
+/// All faces wind outward. Returns (vertices [x,y,z], triangle indices).
+pub(crate) fn trace_to_mesh(trace: &Trace, pcb: &Pcb) -> RawMesh {
+    let (z_lo, z_hi) = trace_z_span(pcb, trace.layer);
 
     let dx = trace.end.x - trace.start.x;
     let dy = trace.end.y - trace.start.y;
@@ -1536,40 +1595,130 @@ pub(crate) fn trace_to_mesh(trace: &Trace, pcb: &Pcb) -> RawMesh {
     let s = trace.start;
     let e = trace.end;
 
-    // 8 vertices: 4 top, 4 bottom
-    let verts = vec![
-        // top face
-        [s.x + nx, s.y + ny, z_top], // 0
-        [e.x + nx, e.y + ny, z_top], // 1
-        [e.x - nx, e.y - ny, z_top], // 2
-        [s.x - nx, s.y - ny, z_top], // 3
-        // bottom face
-        [s.x + nx, s.y + ny, z_bot], // 4
-        [e.x + nx, e.y + ny, z_bot], // 5
-        [e.x - nx, e.y - ny, z_bot], // 6
-        [s.x - nx, s.y - ny, z_bot], // 7
+    // Corner positions: 4 top, 4 bottom.
+    let c = [
+        [s.x + nx, s.y + ny, z_hi], // 0
+        [e.x + nx, e.y + ny, z_hi], // 1
+        [e.x - nx, e.y - ny, z_hi], // 2
+        [s.x - nx, s.y - ny, z_hi], // 3
+        [s.x + nx, s.y + ny, z_lo], // 4
+        [e.x + nx, e.y + ny, z_lo], // 5
+        [e.x - nx, e.y - ny, z_lo], // 6
+        [s.x - nx, s.y - ny, z_lo], // 7
     ];
 
-    let tris = vec![
-        // top
-        [0, 1, 2],
-        [0, 2, 3],
-        // bottom
-        [4, 6, 5],
-        [4, 7, 6],
-        // front
-        [0, 5, 1],
-        [0, 4, 5],
-        // back
-        [2, 7, 3],
-        [2, 6, 7],
-        // left
-        [0, 3, 7],
-        [0, 7, 4],
-        // right
-        [1, 5, 6],
-        [1, 6, 2],
+    // Each face gets its own 4 vertices so smooth-normal recomputation keeps
+    // faces flat — shared corners average top with walls and shade every
+    // segment as a rounded sausage. Quads are outward-wound (a, b, c, d) →
+    // (a,b,c) + (a,c,d).
+    let quads: [[usize; 4]; 6] = [
+        [0, 3, 2, 1], // top (+z)
+        [4, 5, 6, 7], // bottom (-z)
+        [0, 1, 5, 4], // +normal side
+        [3, 7, 6, 2], // -normal side
+        [0, 4, 7, 3], // start end
+        [1, 2, 6, 5], // end end
     ];
+    let mut verts: Vec<[f64; 3]> = Vec::with_capacity(24);
+    let mut tris: Vec<[u32; 3]> = Vec::with_capacity(12);
+    for q in quads {
+        let b = verts.len() as u32;
+        for &i in &q {
+            verts.push(c[i]);
+        }
+        tris.push([b, b + 1, b + 2]);
+        tris.push([b, b + 2, b + 3]);
+    }
+
+    append_endcap(&mut verts, &mut tris, s.x, s.y, hw, z_lo, z_hi);
+    append_endcap(&mut verts, &mut tris, e.x, e.y, hw, z_lo, z_hi);
+
+    (verts, tris)
+}
+
+/// Generate a mesh for an arc trace: a continuous swept ribbon (shared
+/// vertex rings between sectors — no gaps or overlapping tiles) with round
+/// end caps, matching `trace_to_mesh`'s copper slab Z span.
+pub(crate) fn trace_arc_to_mesh(arc: &TraceArc, pcb: &Pcb) -> RawMesh {
+    if arc.radius <= 1e-9 || arc.width <= 0.0 {
+        return (vec![], vec![]);
+    }
+    let (z_lo, z_hi) = trace_z_span(pcb, arc.layer);
+    let hw = (arc.width / 2.0).min(arc.radius - 1e-9);
+    let r_in = arc.radius - hw;
+    let r_out = arc.radius + hw;
+
+    // Sample with increasing angle (an arc trace has no direction), so the
+    // winding below is uniform.
+    let (a0, a1) = if arc.end_angle >= arc.start_angle {
+        (arc.start_angle, arc.end_angle)
+    } else {
+        (arc.end_angle, arc.start_angle)
+    };
+    let sweep = a1 - a0;
+    if sweep < 1e-9 {
+        return (vec![], vec![]);
+    }
+    let segs = ((sweep / 6.0).ceil() as usize).clamp(4, 256);
+
+    let mut verts: Vec<[f64; 3]> = Vec::with_capacity((segs + 1) * 8 + 2 * (CAP_SEGS * 4 + 2));
+    let mut tris: Vec<[u32; 3]> = Vec::with_capacity(segs * 8);
+
+    // Ring layout per sample i (8 verts): the top face, bottom face, and the
+    // two walls each get their own copies of the shared ring positions, so
+    // smooth-normal recomputation keeps the top flat instead of blending it
+    // with the walls into a rounded tube.
+    //   0 outer-top / 1 inner-top      (top face)
+    //   2 outer-bot / 3 inner-bot      (bottom face)
+    //   4 outer-top / 5 outer-bot      (outer wall)
+    //   6 inner-top / 7 inner-bot      (inner wall)
+    for i in 0..=segs {
+        let a = (a0 + sweep * i as f64 / segs as f64).to_radians();
+        let (c, s) = (a.cos(), a.sin());
+        let ox = arc.center.x + r_out * c;
+        let oy = arc.center.y + r_out * s;
+        let ix = arc.center.x + r_in * c;
+        let iy = arc.center.y + r_in * s;
+        verts.push([ox, oy, z_hi]);
+        verts.push([ix, iy, z_hi]);
+        verts.push([ox, oy, z_lo]);
+        verts.push([ix, iy, z_lo]);
+        verts.push([ox, oy, z_hi]);
+        verts.push([ox, oy, z_lo]);
+        verts.push([ix, iy, z_hi]);
+        verts.push([ix, iy, z_lo]);
+    }
+    for i in 0..segs as u32 {
+        let b = i * 8;
+        let j = b + 8;
+        // Top (+z), bottom (-z).
+        tris.push([b, j, j + 1]);
+        tris.push([b, j + 1, b + 1]);
+        tris.push([b + 2, j + 3, j + 2]);
+        tris.push([b + 2, b + 3, j + 3]);
+        // Outer wall (radially out), inner wall (radially in).
+        tris.push([b + 4, j + 5, j + 4]);
+        tris.push([b + 4, b + 5, j + 5]);
+        tris.push([b + 6, j + 6, j + 7]);
+        tris.push([b + 6, j + 7, b + 7]);
+    }
+
+    // Flat end faces close the ribbon (watertight even without the caps).
+    // Start face outward = -tangent, end face outward = +tangent. They reuse
+    // wall verts — the faces sit under the round caps, so their shading is
+    // never visible.
+    let last = segs as u32 * 8;
+    tris.push([4, 6, 7]);
+    tris.push([4, 7, 5]);
+    tris.push([last + 4, last + 7, last + 6]);
+    tris.push([last + 4, last + 5, last + 7]);
+
+    // Round caps at both arc endpoints (centerline).
+    for a in [a0.to_radians(), a1.to_radians()] {
+        let cx = arc.center.x + arc.radius * a.cos();
+        let cy = arc.center.y + arc.radius * a.sin();
+        append_endcap(&mut verts, &mut tris, cx, cy, hw, z_lo, z_hi);
+    }
 
     (verts, tris)
 }
@@ -1924,5 +2073,120 @@ mod tests {
         let mut fp = two_pad_footprint(0.0);
         fp.pads.clear();
         assert!(footprint_component_world_bbox(&fp).is_none());
+    }
+
+    // ── Copper mesh winding (divergence-theorem signed volume) ──
+    // A closed mesh wound outward has positive signed volume. The old
+    // trace_to_mesh emitted inside-out boxes on FCu, which backface-culled
+    // to a broken "dashed" look in the GLB preview.
+
+    fn signed_volume(mesh: &RawMesh) -> f64 {
+        let (verts, tris) = mesh;
+        tris.iter()
+            .map(|t| {
+                let a = verts[t[0] as usize];
+                let b = verts[t[1] as usize];
+                let c = verts[t[2] as usize];
+                (a[0] * (b[1] * c[2] - b[2] * c[1])
+                    - a[1] * (b[0] * c[2] - b[2] * c[0])
+                    + a[2] * (b[0] * c[1] - b[1] * c[0]))
+                    / 6.0
+            })
+            .sum()
+    }
+
+    fn bare_pcb() -> Pcb {
+        use vcad_ir::ecad::*;
+        Pcb {
+            outline: BoardOutline {
+                vertices: vec![
+                    Vec2 { x: 0.0, y: 0.0 },
+                    Vec2 { x: 50.0, y: 0.0 },
+                    Vec2 { x: 50.0, y: 50.0 },
+                    Vec2 { x: 0.0, y: 50.0 },
+                ],
+                cutouts: vec![],
+                thickness: 1.6,
+            },
+            stackup: LayerStackup { layers: vec![] },
+            nets: vec![],
+            rules: DesignRules {
+                default_rules: NetClassRules {
+                    name: "Default".into(),
+                    trace_width: 0.25,
+                    clearance: 0.2,
+                    via_diameter: 0.8,
+                    via_drill: 0.4,
+                    diff_pair_gap: None,
+                    diff_pair_width: None,
+                },
+                class_rules: vec![],
+                net_class_assignments: Default::default(),
+                edge_clearance: 0.5,
+                hole_to_hole: 0.5,
+                min_annular_ring: 0.15,
+                min_drill: 0.2,
+            },
+            footprints: vec![],
+            traces: vec![],
+            trace_arcs: vec![],
+            vias: vec![],
+            zones: vec![],
+            keepouts: vec![],
+            net_ties: vec![],
+        }
+    }
+
+    #[test]
+    fn trace_mesh_winds_outward_on_both_sides() {
+        let pcb = bare_pcb();
+        for layer in [PcbLayer::FCu, PcbLayer::BCu] {
+            let trace = Trace {
+                net: "N1".into(),
+                start: Vec2 { x: 5.0, y: 5.0 },
+                end: Vec2 { x: 25.0, y: 5.0 },
+                width: 0.5,
+                layer,
+                source: None,
+            };
+            let mesh = trace_to_mesh(&trace, &pcb);
+            let vol = signed_volume(&mesh);
+            // Box: 20 × 0.5 × 0.035 = 0.35 mm³ plus two round caps.
+            assert!(
+                vol > 0.3,
+                "{layer:?} trace mesh should wind outward, signed volume {vol}"
+            );
+        }
+    }
+
+    #[test]
+    fn trace_arc_mesh_is_continuous_and_outward() {
+        let pcb = bare_pcb();
+        let arc = TraceArc {
+            center: Vec2 { x: 25.0, y: 25.0 },
+            radius: 10.0,
+            start_angle: 0.0,
+            end_angle: 180.0,
+            width: 0.5,
+            layer: PcbLayer::FCu,
+            net: "N1".into(),
+        };
+        let mesh = trace_arc_to_mesh(&arc, &pcb);
+        assert!(!mesh.0.is_empty());
+        // Half annulus: π·((10.25)² − (9.75)²)·0.035 ≈ 0.55 mm³ + caps.
+        let vol = signed_volume(&mesh);
+        assert!(
+            (vol - 0.55).abs() < 0.1,
+            "arc trace signed volume {vol} should be ≈ swept copper volume"
+        );
+        // Reversed angle order must yield the same copper, not an
+        // inside-out ribbon.
+        let rev = TraceArc {
+            start_angle: 180.0,
+            end_angle: 0.0,
+            ..arc
+        };
+        let vol_rev = signed_volume(&trace_arc_to_mesh(&rev, &pcb));
+        assert!((vol - vol_rev).abs() < 1e-9);
     }
 }
