@@ -36,6 +36,15 @@ VCAD_WASM_SKIP=1 npm run build --workspaces --if-present
 `VCAD_WASM_SKIP=1` skips the wasm-pack rebuild when `packages/kernel-wasm/vcad_kernel_wasm*`
 artifacts are already checked in; drop it if you need a fresh kernel WASM.
 
+**Never commit the generated `packages/kernel-wasm/vcad_kernel_wasm*` artifacts from a
+feature branch** — wasm-pack output is not byte-reproducible, so two branches that each
+rebuilt them merge-conflict on every merge even when their Rust changes don't overlap.
+They have a single writer: `.github/workflows/wasm-refresh.yml` rebuilds and commits them
+on `main` after any kernel-source merge, and CI (`wasm-artifact-guard`) fails a PR that
+touches them. If you accidentally committed a rebuild, drop it with
+`git checkout origin/main -- 'packages/kernel-wasm/vcad_kernel_wasm*'`. PR CI does not
+depend on the checked-in copies — the TypeScript job consumes WASM built from source.
+
 ## Commands
 
 ```bash
@@ -253,6 +262,9 @@ target/debug/vcad-render path/to/part.vcad > out.svg
 - `create_cad_document` — create parts from primitives + operations
 - `export_cad` — export to STL or GLB
 - `inspect_cad` — get volume, area, bbox, center of mass
+- `check_clearance` — min distance / penetration depth between part groups;
+  labeled assertions persist on the document and re-verify via
+  `build_receipt` / `verify_receipt` as Holds/Stale/Violated
 - `render_view` — render the session document to an isometric PNG (agent eyes)
 - `verify_part` / `list_eval_tasks` — grade the document against mecheval
   benchmark tasks via the official `mecheval-grade` binary (self-grading

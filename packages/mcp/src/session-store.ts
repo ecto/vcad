@@ -685,6 +685,143 @@ export function createShareStore(): ShareStore {
     : new NoopShareStore();
 }
 
+// ─── Tool-pack preference (runtime tool-pack switching, issue #432) ───────────
+//
+// `set_tool_packs` flips which domain packs a connection exposes. On a
+// persistent transport (stdio) the flip lives in the server closure and emits
+// notifications/tools/list_changed. On the STATELESS HTTP transport each
+// request builds a fresh server, so the preference must be re-derivable per
+// request: we persist it keyed by the authenticated user in a durable store and
+// re-read it at the top of the next request. Push notifications don't apply to
+// the stateless transport — the next request simply advertises the new surface.
+
+export interface PackStore {
+  /** True when saves survive across serverless instances (Supabase-backed).
+   *  The in-memory impl persists only within one process/instance. */
+  readonly durable: boolean;
+  /** The caller's saved enabled-pack list, or null when none is stored (fall
+   *  back to VCAD_MCP_PACKS / all packs). Never throws — an outage is a null. */
+  load(): Promise<string[] | null>;
+  /** Persist the caller's enabled-pack list. Best-effort: errors are logged,
+   *  never thrown, and a no-op when there's no user to key on. */
+  save(packs: string[]): Promise<void>;
+}
+
+/** Process-global preference map for the in-memory store, keyed by user id.
+ *  Survives across per-request `createServer` calls WITHIN one instance, so a
+ *  signed-in user's pack choice applies on their next request on the same warm
+ *  instance (and is the fake the HTTP persistence test drives). */
+const inMemoryPackPrefs = new Map<string, string[]>();
+
+/** Test hook: clear the process-global in-memory pack preferences. */
+export function resetInMemoryPackStore(): void {
+  inMemoryPackPrefs.clear();
+}
+
+/**
+ * In-memory pack store = stdio/local and anonymous HTTP: persists to a
+ * process-global map keyed by user id (a no-op when there's no user). Not
+ * durable across serverless instances — that needs Supabase.
+ */
+export class InMemoryPackStore implements PackStore {
+  readonly durable = false;
+  constructor(private userId: string | null) {}
+  async load(): Promise<string[] | null> {
+    if (!this.userId) return null;
+    const v = inMemoryPackPrefs.get(this.userId);
+    return v ? [...v] : null;
+  }
+  async save(packs: string[]): Promise<void> {
+    if (!this.userId) return;
+    inMemoryPackPrefs.set(this.userId, [...packs]);
+  }
+}
+
+/**
+ * Cloud-backed pack store over the `mcp_tool_packs` table (service role, one
+ * row per user). Durable across serverless instances, so a stateless HTTP
+ * request re-derives the user's pack choice regardless of which instance serves
+ * it. Same best-effort discipline as SupabaseSessionStore: a read failure
+ * degrades to "no preference", a write failure is logged, neither throws.
+ */
+export class SupabasePackStore implements PackStore {
+  readonly durable = true;
+  constructor(
+    private cfg: { supabaseUrl: string; serviceRoleKey: string; userId: string },
+  ) {}
+
+  private headers(extra: Record<string, string> = {}): Record<string, string> {
+    return {
+      apikey: this.cfg.serviceRoleKey,
+      Authorization: `Bearer ${this.cfg.serviceRoleKey}`,
+      "Content-Type": "application/json",
+      ...extra,
+    };
+  }
+
+  async load(): Promise<string[] | null> {
+    try {
+      const res = await sessionFetch(
+        `${this.cfg.supabaseUrl}/rest/v1/mcp_tool_packs` +
+          `?user_id=eq.${encodeURIComponent(this.cfg.userId)}&select=packs&limit=1`,
+        {
+          method: "GET",
+          headers: this.headers({ Accept: "application/vnd.pgrst.object+json" }),
+        },
+      );
+      if (!res.ok) return null; // 406 = zero rows → no saved preference
+      const row = (await res.json()) as { packs?: unknown };
+      return Array.isArray(row?.packs) ? row.packs.map(String) : null;
+    } catch (err) {
+      console.error("[pack-store] load failed:", err);
+      return null;
+    }
+  }
+
+  async save(packs: string[]): Promise<void> {
+    try {
+      const res = await sessionFetch(
+        `${this.cfg.supabaseUrl}/rest/v1/mcp_tool_packs?on_conflict=user_id`,
+        {
+          method: "POST",
+          headers: this.headers({
+            Prefer: "resolution=merge-duplicates,return=minimal",
+          }),
+          body: JSON.stringify([{ user_id: this.cfg.userId, packs }]),
+        },
+      );
+      if (!res.ok) {
+        console.error(
+          "[pack-store] save failed:",
+          res.status,
+          await res.text().catch(() => ""),
+        );
+      }
+    } catch (err) {
+      console.error("[pack-store] save failed:", err);
+    }
+  }
+}
+
+/**
+ * Choose the pack store from env + user: Supabase-backed (durable across
+ * instances) for a signed-in user when the service-role key is present, else
+ * the in-memory store (stdio/local, or anonymous HTTP). Mirrors
+ * `createSessionStore`'s env/user gating.
+ */
+export function createPackStore(user: AuthUser | null): PackStore {
+  const url = (process.env.SUPABASE_URL || "").replace(/\/+$/, "");
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
+  if (url && key && user) {
+    return new SupabasePackStore({
+      supabaseUrl: url,
+      serviceRoleKey: key,
+      userId: user.sub,
+    });
+  }
+  return new InMemoryPackStore(user?.sub ?? null);
+}
+
 /**
  * Resolve a session's Document IR by session id ALONE, via the service role —
  * for the capability-keyed live geometry endpoint, which has no logged-in user.

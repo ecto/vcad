@@ -18,6 +18,7 @@ import { storeArtifact } from "./artifact-store.js";
 import { maxInlineArtifactBytes } from "./remote.js";
 import type { SessionStore } from "../session-store.js";
 import type { AuthUser } from "../oauth.js";
+import { behavior, type ToolDef } from "./tool-def.js";
 
 // ─── Session cache (per-connection isolated, or process-wide fallback) ────────
 //
@@ -116,6 +117,46 @@ export function getSession(documentId: string): Document {
     );
   }
   return doc;
+}
+
+// ─── Dual-mode document input (session id OR inline document) ─────────────────
+//
+// The primary path is always a live `document_id` session. But a warm session
+// is process-local: after a cold start or a serverless instance flip the id no
+// longer resolves. An inline `document` object is the stateless escape hatch —
+// the caller pastes the IR it already holds and the tool runs without a
+// resident session. Generalized here (it began as ecad's private helper) so the
+// core read-only tools share one contract and one error string.
+
+/** A resolved document input: session-backed (preferred) or inline (the
+ *  stateless escape hatch for cold serverless instances). */
+export interface DocInputCtx {
+  doc: Document;
+  /** Set when the doc came from a live server session. */
+  documentId?: string;
+}
+
+/**
+ * Resolve a tool's document argument. `document_id` (a live session) is the
+ * primary path; an inline document object is the stateless fallback that still
+ * works when no session is resident (cold instance / instance flip). By default
+ * the inline field is `document`; pass `inlineKeys` to accept aliases (e.g.
+ * export_cad's legacy `ir`), tried in order.
+ */
+export function resolveDocInput(
+  args: Record<string, unknown>,
+  inlineKeys: readonly string[] = ["document"],
+): DocInputCtx {
+  const id = args.document_id ? String(args.document_id) : "";
+  if (id) return { doc: getSession(id), documentId: id };
+  for (const key of inlineKeys) {
+    const inline = args[key];
+    if (inline && typeof inline === "object") return { doc: inline as Document };
+  }
+  const names = inlineKeys.map((k) => `\`${k}\``).join(" or ");
+  throw new Error(
+    `Pass \`document_id\` (from open_document) — or an inline ${names} object for the stateless flow.`,
+  );
 }
 
 // ─── Per-session undo history (in-memory snapshot stack) ──────────────────────
@@ -614,3 +655,59 @@ function openSavedSnapshot(
     parts: copy.roots?.length ?? 0,
   };
 }
+
+export const toolDefs: ToolDef[] = [
+  {
+    name: "open_document",
+    pack: null,
+    description:
+      "Open an editing session for a CAD document. Returns a `document_id` to pass to subsequent tool calls (create, update, place_part, inspect_cad, …). Pass an `initial` IR to begin editing an existing document; omit it for a fresh empty document.",
+    inputSchema: openDocumentSchema,
+    handler: (a) => openDocument(a),
+    behavior: behavior({ writesDoc: true, geometry: true, mount: true }),
+  },
+  {
+    name: "get_document",
+    pack: null,
+    description:
+      "Return the full IR Document JSON for an open session. Use after a series of mutations to capture the result, or to feed into `export_cad` / `open_in_browser`. Very large documents come back as a compact artifact handle instead ({document_id, artifact_url, manifest with sha256, …}) — download the full IR at `artifact_url`.",
+    inputSchema: getDocumentSchema,
+    handler: (a) => getDocumentTool(a),
+    behavior: behavior({ geometry: true, widgetCallable: true, pureJson: true }),
+  },
+  {
+    name: "close_document",
+    pack: null,
+    description:
+      "Close a document session and free its memory. Idempotent — closing an unknown id reports `closed: false`.",
+    inputSchema: closeDocumentSchema,
+    handler: (a) => closeDocument(a),
+    behavior: behavior({}),
+  },
+  {
+    name: "save_document",
+    pack: null,
+    description:
+      "Persist a live session under a name so it can be reopened with " +
+      "load_document. On the hosted server the save is durable: a signed-in " +
+      "user's save goes to their vcad.io account under the (normalized) name; " +
+      "an anonymous save returns an unguessable `saved_…` key to reopen with. " +
+      "On a local/stdio server it writes `<name>.vcad` under VCAD_MCP_STATE_DIR " +
+      "(or the working directory).",
+    inputSchema: saveDocumentSchema,
+    handler: (a, c) => saveDocument(a, c.sessionStore),
+    behavior: behavior({}),
+  },
+  {
+    name: "load_document",
+    pack: null,
+    description:
+      "Reopen a save_document save into a fresh session and return its new " +
+      "document_id. Pass the same name you saved under (or the `saved_…` key " +
+      "an anonymous save returned). The cheap way to resume a board/part " +
+      "across runs instead of rebuilding it.",
+    inputSchema: loadDocumentSchema,
+    handler: (a, c) => loadDocument(a, c.sessionStore),
+    behavior: behavior({ writesDoc: true, geometry: true, mount: true }),
+  },
+];

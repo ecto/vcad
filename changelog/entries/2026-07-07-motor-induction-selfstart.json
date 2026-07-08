@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-07-motor-induction-selfstart",
+  "version": "0.9.4",
+  "date": "2026-07-07",
+  "category": "feat",
+  "title": "Induction motors, fringing derate, and will-it-spin check",
+  "summary": "calc_motor gains a thin-sheet induction mode (drag-cup / PCB rotors) and a Carter-like fringing derate for PM flux; new check_self_start gates starting torque against bearing friction.",
+  "features": ["electromagnetics", "motor", "receipt", "verification"],
+  "mcpTools": ["calc_motor", "check_self_start"]
+}

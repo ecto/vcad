@@ -148,6 +148,7 @@ export type { Ast as ExpressionAst } from "./expressions.js";
 export {
   isEcadAvailable,
   runDrc,
+  runDrcInRegion,
   runPcbDfm,
   getPcbDfmPack,
   tryRunDrc,
@@ -372,6 +373,13 @@ export interface KernelModule {
   evaluateDocument?: (docJson: string, skipClashDetection: boolean) => unknown;
   /** Evaluate loon source → JSON-serialized Document. */
   evalVcadSource?: (source: string) => string;
+  /** d(mass-property + bbox QoIs)/dθ for a named document parameter. */
+  documentParameterGradient?: (
+    docJson: string,
+    parameter: string,
+    density: number,
+    probeStep: number,
+  ) => unknown;
   /** JSON-serialized parts manifest for the stdlib. */
   getPartsManifest?: () => string;
   /** Build a stdlib part's sub-document given path and params JSON. */
@@ -394,6 +402,56 @@ export interface KernelModule {
   getSheetMetalShopCatalog?: (shopId: string) => string;
   /** Folded sheet-metal solid as STEP AP214 → JSON `{step, error}`. */
   sheetMetalFoldedStep?: (chainJson: string) => string;
+  /** Mesh-to-mesh clearance over raw evaluated-mesh buffers. */
+  mesh_clearance?: (
+    positionsA: Float32Array,
+    indicesA: Uint32Array,
+    positionsB: Float32Array,
+    indicesB: Uint32Array,
+  ) => ClearanceResult;
+}
+
+/**
+ * Mesh-to-mesh clearance: minimum separation distance in mm, or the negated
+ * deepest penetration when the meshes intersect (mirrors `WasmClearance`).
+ */
+export interface ClearanceResult {
+  /** Signed distance in mm: `>= 0` separation, `< 0` penetration depth. */
+  distance: number;
+  /** True when the meshes intersect (crossing surfaces or containment). */
+  intersecting: boolean;
+  /** Point on the first mesh realizing the reported distance. */
+  pointA: [number, number, number];
+  /** Point on the second mesh realizing the reported distance. */
+  pointB: [number, number, number];
+}
+
+/**
+ * Per-part gradient of the mass-property + bounding-box QoIs with respect to
+ * a single named document parameter (`d QoI / dθ`), from the differentiable
+ * seam. Volume/mass/centroid derivatives are exact analytic seam evaluations;
+ * `dBboxExtents` is a central finite difference (a bbox extent is a
+ * non-smooth max over vertices).
+ */
+export interface PartParameterGradient {
+  /** Index of the part in the evaluated scene's solid-part order. */
+  partIndex: number;
+  /** Signed volume at θ (mm³). */
+  volume: number;
+  /** dVolume/dθ (analytic). */
+  dVolume: number;
+  /** Mass at θ (`density · volume`). */
+  mass: number;
+  /** dMass/dθ (analytic). */
+  dMass: number;
+  /** Centroid `[x, y, z]` at θ. */
+  centroid: [number, number, number];
+  /** dCentroid/dθ `[x, y, z]` (analytic). */
+  dCentroid: [number, number, number];
+  /** AABB extents `[x, y, z]` at θ. */
+  bboxExtents: [number, number, number];
+  /** dBboxExtents/dθ `[x, y, z]` (central finite difference). */
+  dBboxExtents: [number, number, number];
 }
 
 /** Rendered dimension types from the annotation layer */
@@ -586,6 +644,7 @@ export class Engine {
       createDetailView: wasmModule.createDetailView,
       evaluateDocument: (wasmModule as Record<string, unknown>).evaluateDocument as KernelModule["evaluateDocument"],
       evalVcadSource: (wasmModule as Record<string, unknown>).evalVcadSource as KernelModule["evalVcadSource"],
+      documentParameterGradient: (wasmModule as Record<string, unknown>).documentParameterGradient as KernelModule["documentParameterGradient"],
       getPartsManifest: (wasmModule as Record<string, unknown>).getPartsManifest as KernelModule["getPartsManifest"],
       buildPart: (wasmModule as Record<string, unknown>).buildPart as KernelModule["buildPart"],
       evaluateSheetMetalChain: (wasmModule as Record<string, unknown>).evaluateSheetMetalChain as KernelModule["evaluateSheetMetalChain"],
@@ -597,6 +656,7 @@ export class Engine {
       getSheetMetalBendTable: (wasmModule as Record<string, unknown>).getSheetMetalBendTable as KernelModule["getSheetMetalBendTable"],
       getSheetMetalShopCatalog: (wasmModule as Record<string, unknown>).getSheetMetalShopCatalog as KernelModule["getSheetMetalShopCatalog"],
       sheetMetalFoldedStep: (wasmModule as Record<string, unknown>).sheetMetalFoldedStep as KernelModule["sheetMetalFoldedStep"],
+      mesh_clearance: (wasmModule as Record<string, unknown>).mesh_clearance as KernelModule["mesh_clearance"],
     }, compiledWasmModule);
   }
 
@@ -618,6 +678,34 @@ export class Engine {
     const scene = evaluateDocument(doc, this.kernel, options);
     this.cacheScene(cacheKey, scene);
     return scene;
+  }
+
+  /**
+   * Differentiate a document's mass-property + bounding-box QoIs with respect
+   * to a single named parameter (`d QoI / dθ`) via the differentiable seam.
+   * Returns one entry per solid part. Throws if `parameter` is not declared in
+   * `doc.parameters`, or if the parameter crosses a topology/part-count
+   * boundary at its current value.
+   */
+  parameterGradient(
+    doc: Document,
+    parameter: string,
+    options: { density?: number; probeStep?: number } = {},
+  ): PartParameterGradient[] {
+    const fn = this.kernel.documentParameterGradient;
+    if (typeof fn !== "function") {
+      throw new Error(
+        "kernel WASM is missing documentParameterGradient — rebuild @vcad/kernel-wasm",
+      );
+    }
+    const density = options.density ?? 1.0;
+    const probeStep = options.probeStep ?? 0;
+    return fn(
+      JSON.stringify(doc),
+      parameter,
+      density,
+      probeStep,
+    ) as PartParameterGradient[];
   }
 
   /**
@@ -788,6 +876,21 @@ export class Engine {
       { positions: mesh.positions, indices: mesh.indices },
       viewDirection,
     );
+  }
+
+  /**
+   * Minimum signed distance between two evaluated meshes in mm: `>= 0` is
+   * the separation, `< 0` the deepest penetration when they intersect.
+   * Meshes are measured as placed (positions are used verbatim), so callers
+   * can compare any two parts of an evaluated scene.
+   */
+  meshClearance(a: TriangleMesh, b: TriangleMesh): ClearanceResult {
+    if (typeof this.kernel.mesh_clearance !== "function") {
+      throw new Error(
+        "mesh_clearance is not exported by this kernel WASM build — rebuild packages/kernel-wasm",
+      );
+    }
+    return this.kernel.mesh_clearance(a.positions, a.indices, b.positions, b.indices);
   }
 
   /** Import solids from a STEP file buffer.

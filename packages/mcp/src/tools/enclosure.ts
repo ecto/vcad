@@ -31,6 +31,7 @@ import {
   type TriangleMesh,
 } from "@vcad/engine";
 import { getSession } from "./session.js";
+import { behavior, type ToolDef } from "./tool-def.js";
 
 /** PCB data from a document — PcbBoard nodes first, legacy `doc.pcb` fallback. */
 function getDocPcb(doc: Document): Pcb | null {
@@ -293,3 +294,22 @@ function err(text: string) {
     isError: true as const,
   };
 }
+
+export const toolDefs: ToolDef[] = [
+  {
+    name: "check_enclosure_fit",
+    pack: "ecad",
+    description:
+      "Cross-check a board (board session) against the enclosure it ships " +
+      "in (a CAD session holding the case solid) — the verification axis no " +
+      "EDA tool has, because vcad owns both a BRep kernel and a PCB engine. " +
+      "Extracts the case cavity, standoffs, and wall cutouts from the solid " +
+      "mesh, then verifies: board fits with clearance, tall parts clear the " +
+      "lid, mounting holes land on standoffs, and connectors line up with " +
+      "the wall openings. Pass `derive:true` to also get a board outline + " +
+      "holes seeded from the cavity. Surfaced in build_receipt too.",
+    inputSchema: checkEnclosureFitSchema,
+    handler: (a, c) => checkEnclosureFit(a, c.engine),
+    behavior: behavior({}),
+  },
+];

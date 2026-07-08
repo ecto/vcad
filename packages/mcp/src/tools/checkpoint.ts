@@ -24,19 +24,10 @@ import { randomBytes } from "node:crypto";
 import type { Document } from "@vcad/ir";
 import type { SessionStore } from "../session-store.js";
 import { documents, getSession, registerSession } from "./session.js";
+import { behavior, type ToolDef } from "./tool-def.js";
+import { ok, errText as err, type ToolResult } from "./tool-result.js";
 
-type ToolText = {
-  content: Array<{ type: "text"; text: string }>;
-  isError?: boolean;
-};
-
-function err(text: string): ToolText {
-  return { isError: true, content: [{ type: "text", text }] };
-}
-
-function ok(body: Record<string, unknown>): ToolText {
-  return { content: [{ type: "text", text: JSON.stringify(body) }] };
-}
+type ToolText = ToolResult;
 
 let nextCheckpoint = 1;
 
@@ -230,3 +221,34 @@ export async function branchFrom(
       "checkpoint again to try another variant.",
   });
 }
+
+export const toolDefs: ToolDef[] = [
+  {
+    name: "checkpoint_document",
+    pack: null,
+    description:
+      "Snapshot a session's current state as a durable, restorable " +
+      "checkpoint. Returns a `checkpoint_id`. Use it at known-good milestones " +
+      "(post-schematic, post-place, post-route) so you can rewind with " +
+      "branch_from instead of rebuilding. The full IR is captured — the " +
+      "netlist (the most expensive, most stable artifact) is the anchor. On a " +
+      "durable deploy a checkpoint survives a redeploy; check server_info for " +
+      "durable:true.",
+    inputSchema: checkpointDocumentSchema,
+    handler: (a, c) => checkpointDocument(a, c.sessionStore),
+    behavior: behavior({}),
+  },
+  {
+    name: "branch_from",
+    pack: null,
+    description:
+      "Re-open a checkpoint (from checkpoint_document). Omit `into` to BRANCH " +
+      "into a fresh session id — a variant to explore. Pass `into: <document_id>` " +
+      "to RESTORE the checkpoint into an existing session in place (same id). " +
+      "The cheap undo for a bad route or place: rewind to a good state rather " +
+      "than rebuilding the netlist.",
+    inputSchema: branchFromSchema,
+    handler: (a, c) => branchFrom(a, c.sessionStore),
+    behavior: behavior({ writesDoc: true, geometry: true, mount: true }),
+  },
+];

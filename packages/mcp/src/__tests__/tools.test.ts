@@ -419,6 +419,19 @@ describe("inspect_cad (session-aware)", () => {
     expect(props.surface_area_mm2).toBeCloseTo(600, 0);
     expect(props.triangles).toBeGreaterThan(0);
     expect(props.parts).toBe(1);
+    // Real geometry satisfies the isoperimetric bound A³ ≥ 36πV², so the
+    // impossibility warnings must be absent on a clean inspection.
+    expect(props.warnings).toBeUndefined();
+  });
+
+  it("inspects an inline document with no resident session", () => {
+    // Stateless escape hatch: no open_document, no document_id — pass the IR
+    // directly (survives a cold serverless instance where the session is gone).
+    documents.clear();
+    const result = inspectCad({ document: makeCubeDoc() }, engine);
+    const props = JSON.parse(result.content[0].text);
+    expect(props.volume_mm3).toBeCloseTo(1000, 0);
+    expect(props.parts).toBe(1);
   });
 });
 
@@ -454,6 +467,34 @@ describe("export_cad", () => {
     expect(output.format).toBe("glb");
     expect(output.bytes).toBeGreaterThan(12);
     expect(existsSync(filepath)).toBe(true);
+    unlinkSync(filepath);
+  });
+
+  it("accepts an inline `document` alongside the legacy `ir` alias", () => {
+    const filename = "test_export_document.stl";
+    const filepath = resolve(process.cwd(), filename);
+    if (existsSync(filepath)) unlinkSync(filepath);
+
+    const result = exportCad({ document: makeCubeDoc(), filename }, engine);
+    const output = JSON.parse(result.content[0].text);
+    expect(output.format).toBe("stl");
+    expect(output.bytes).toBeGreaterThan(84);
+    expect(existsSync(filepath)).toBe(true);
+    unlinkSync(filepath);
+  });
+
+  it("exports a resident session by document_id", () => {
+    const filename = "test_export_session.stl";
+    const filepath = resolve(process.cwd(), filename);
+    if (existsSync(filepath)) unlinkSync(filepath);
+
+    const { document_id } = JSON.parse(
+      openDocument({ initial: makeCubeDoc() }).content[0].text,
+    );
+    const result = exportCad({ document_id, filename }, engine);
+    const output = JSON.parse(result.content[0].text);
+    expect(output.format).toBe("stl");
+    expect(output.bytes).toBeGreaterThan(84);
     unlinkSync(filepath);
   });
 });
@@ -1192,6 +1233,18 @@ describe("tool packs (VCAD_MCP_PACKS)", () => {
     const disabled = disabledToolNames();
     delete process.env.VCAD_MCP_PACKS;
     expect(disabled.has("sheet_metal_unfold")).toBe(false);
+    expect(disabled.has("run_drc")).toBe(true);
+  });
+
+  it("keeps `undo` always-on core — never gated by a pack", async () => {
+    const { disabledToolNames } = await import("../server.js");
+    // `undo` is the universal rewind, not an ECAD-only tool; a client that
+    // trims down to a non-ecad pack must still be able to take back a mutation.
+    process.env.VCAD_MCP_PACKS = "dfm";
+    const disabled = disabledToolNames();
+    delete process.env.VCAD_MCP_PACKS;
+    expect(disabled.has("undo")).toBe(false);
+    // The dfm-only case still disables the ecad pack — proves the gate is live.
     expect(disabled.has("run_drc")).toBe(true);
   });
 });

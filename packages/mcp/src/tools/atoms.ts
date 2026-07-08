@@ -19,15 +19,23 @@ import {
   MdEnv,
   type MdConfig,
 } from "@vcad/engine";
+import { rasterize } from "./render.js";
+import { behavior, type ToolDef } from "./tool-def.js";
+import { okPretty as ok, toolResult, type ToolResult } from "./tool-result.js";
 
-type ToolResult = { content: Array<{ type: "text"; text: string }> };
+/** render_molecule may return an image block (PNG) alongside text, so it needs a
+ *  wider content type than the text-only tools. */
+type ImageToolResult = {
+  content: Array<
+    | { type: "text"; text: string }
+    | { type: "image"; data: string; mimeType: string }
+  >;
+  isError?: boolean;
+};
 
-function ok(data: unknown): ToolResult {
-  return { content: [{ type: "text", text: JSON.stringify(data, null, 2) }] };
-}
-function fail(err: unknown): ToolResult {
-  const message = err instanceof Error ? err.message : String(err);
-  return { content: [{ type: "text", text: JSON.stringify({ error: message }) }] };
+function fail(e: unknown): ToolResult {
+  const message = e instanceof Error ? e.message : String(e);
+  return toolResult({ error: message }, { isError: true });
 }
 
 // ---------------------------------------------------------------------------
@@ -400,7 +408,7 @@ function elementColor(mol: MoleculeSystem, i: number): string {
  * the world-class path is the WebGPU ray tracer's impostor-sphere buffer plus a
  * headless-wgpu harness returning PNG (Track B).
  */
-export async function renderMolecule(input: unknown): Promise<ToolResult> {
+export async function renderMolecule(input: unknown): Promise<ImageToolResult> {
   try {
     const args = input as {
       molecule: MoleculeSystem;
@@ -484,10 +492,112 @@ export async function renderMolecule(input: unknown): Promise<ToolResult> {
     }
     parts.push(`</svg>`);
     const svg = parts.join("");
+
+    // Rasterize to PNG so the model receives a visible image block (like
+    // render_view); degrade to raw SVG text when @resvg/resvg-js is absent.
+    const raster = await rasterize(svg, W, "#0d1117");
+    if (raster.png) {
+      return {
+        content: [
+          { type: "image", data: raster.png.toString("base64"), mimeType: "image/png" },
+          {
+            type: "text",
+            text: JSON.stringify({
+              width_px: W,
+              representation: spaceFilling ? "space_filling" : "ball_and_stick",
+              atoms: mol.positions.length,
+              format: "png",
+            }),
+          },
+        ],
+      };
+    }
+    const note =
+      raster.reason === "module-missing"
+        ? "Install @resvg/resvg-js for PNG output; returning raw SVG."
+        : `PNG ${raster.reason}; returning raw SVG.`;
     return {
-      content: [{ type: "text", text: svg }],
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify({
+            width_px: W,
+            representation: spaceFilling ? "space_filling" : "ball_and_stick",
+            atoms: mol.positions.length,
+            format: "svg",
+            note,
+            svg,
+          }),
+        },
+      ],
     };
   } catch (err) {
-    return fail(err);
+    return fail(err) as unknown as ImageToolResult;
   }
 }
+
+export const toolDefs: ToolDef[] = [
+  {
+    name: "load_structure",
+    pack: "atoms",
+    description:
+      "Import an atomic structure from XYZ / extended-XYZ text (or accept a MoleculeSystem) and return the molecule plus a summary (formula, atom count, radius of gyration, bonds, periodicity). Units are Ångström.",
+    inputSchema: loadStructureSchema,
+    handler: (a) => loadStructure(a),
+    behavior: behavior({}),
+  },
+  {
+    name: "inspect_molecule",
+    pack: "atoms",
+    description:
+      "Structural analysis of a molecule: Hill-order formula, per-element counts, mass, center of mass, radius of gyration, bounding box, bond count, periodicity. The atomic-domain analog of inspect_cad.",
+    inputSchema: inspectMoleculeSchema,
+    handler: (a) => inspectMoleculeTool(a),
+    behavior: behavior({}),
+  },
+  {
+    name: "minimize_energy",
+    pack: "atoms",
+    description:
+      "Relax a structure to a local energy minimum with FIRE. Force field via config (Lennard-Jones default, harmonic bonds, Coulomb, or the ML-potential stub). Returns the relaxed molecule, a result summary (energy, max force, convergence), and a reproducibility receipt.",
+    inputSchema: minimizeEnergySchema,
+    handler: (a) => minimizeEnergyTool(a),
+    behavior: behavior({}),
+  },
+  {
+    name: "md_run",
+    pack: "atoms",
+    description:
+      "Run molecular dynamics (velocity-Verlet, optional Berendsen thermostat) for N steps and return the final observation (energies, temperature, max force) and the evolved structure.",
+    inputSchema: mdRunSchema,
+    handler: (a) => mdRun(a),
+    behavior: behavior({}),
+  },
+  {
+    name: "design_material",
+    pack: "atoms",
+    description:
+      "Inverse design: search an isotropic scale factor that drives a geometric property (nearest-neighbor distance or radius of gyration) to a target value, returning the reshaped molecule and a receipt. The energy-objective inverse design (gradients through the simulation) lives in the Rust kernel.",
+    inputSchema: designMaterialSchema,
+    handler: (a) => designMaterial(a),
+    behavior: behavior({}),
+  },
+  {
+    name: "homogenize_material",
+    pack: "atoms",
+    description:
+      "Homogenize a periodic crystal into bulk material properties — density (kg/m³), cubic elastic constants C11/C12/C44 and VRH isotropic moduli (GPa) — the atoms-to-continuum bridge. Requires a fully periodic cell.",
+    inputSchema: homogenizeMaterialSchema,
+    handler: (a) => homogenizeMaterialTool(a),
+    behavior: behavior({}),
+  },
+  {
+    name: "render_molecule",
+    pack: "atoms",
+    description:
+      "Render a molecule as an isometric ball-and-stick (or space-filling) SVG with CPK colors and depth sorting — agent eyes on atomic structures.",
+    inputSchema: renderMoleculeSchema,
+    handler: async (a) => (await renderMolecule(a)) as unknown as ToolResult,
+    behavior: behavior({}),
+  },
+];

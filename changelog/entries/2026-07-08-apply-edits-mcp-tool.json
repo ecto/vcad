@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-08-apply-edits-mcp-tool",
+  "version": "0.9.4",
+  "date": "2026-07-08",
+  "category": "feat",
+  "title": "apply_edits MCP tool: atomic batch editing",
+  "summary": "Apply an ordered list of create/update/delete/set_material ops to a session atomically, with one changed diff, one integrity certificate, and a dry_run mode.",
+  "features": ["mcp", "editing"],
+  "mcpTools": ["apply_edits"]
+}

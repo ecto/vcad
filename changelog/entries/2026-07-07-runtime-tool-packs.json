@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-07-runtime-tool-packs",
+  "version": "0.9.4",
+  "date": "2026-07-07",
+  "category": "feat",
+  "title": "Switch MCP tool packs at runtime",
+  "summary": "Agents can enable/disable tool packs mid-session via list_tool_packs / set_tool_packs, with live notifications/tools/list_changed on stdio.",
+  "features": ["mcp", "tool-packs"],
+  "mcpTools": ["list_tool_packs", "set_tool_packs"]
+}

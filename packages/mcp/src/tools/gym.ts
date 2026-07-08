@@ -16,12 +16,18 @@ import {
   type PhysicsStepResult,
   type PhysicsActionType,
 } from "@vcad/engine";
+import { behavior, type ToolDef } from "./tool-def.js";
 
 /** Observation from the robot environment (re-export for API compatibility) */
 export type Observation = PhysicsObservation;
 
 /** Step result from the environment (re-export for API compatibility) */
 export type StepResult = PhysicsStepResult;
+
+/** MCP tool result for the gym tools. Error paths set `isError: true` so hosts
+ *  (and the central next_actions enrichment) treat them as failures rather than
+ *  reading a `{"error": ...}` body as a successful result. */
+type GymResult = { content: Array<{ type: "text"; text: string }>; isError?: boolean };
 
 /** In-memory storage for active simulations */
 const simulations = new Map<string, PhysicsEnv>();
@@ -136,9 +142,7 @@ export const gymCloseSchema = {
 };
 
 /** Create a new robot simulation environment */
-export async function createRobotEnv(input: unknown): Promise<{
-  content: Array<{ type: "text"; text: string }>;
-}> {
+export async function createRobotEnv(input: unknown): Promise<GymResult> {
   const args = input as {
     document: Document;
     end_effector_ids: string[];
@@ -159,6 +163,7 @@ export async function createRobotEnv(input: unknown): Promise<{
           }),
         },
       ],
+      isError: true,
     };
   }
 
@@ -192,14 +197,13 @@ export async function createRobotEnv(input: unknown): Promise<{
     const message = err instanceof Error ? err.message : String(err);
     return {
       content: [{ type: "text", text: JSON.stringify({ error: message }) }],
+      isError: true,
     };
   }
 }
 
 /** Step the simulation with an action */
-export function gymStep(input: unknown): {
-  content: Array<{ type: "text"; text: string }>;
-} {
+export function gymStep(input: unknown): GymResult {
   const args = input as {
     env_id: string;
     action_type: PhysicsActionType;
@@ -212,6 +216,7 @@ export function gymStep(input: unknown): {
       content: [
         { type: "text", text: JSON.stringify({ error: `Unknown env_id: ${args.env_id}` }) },
       ],
+      isError: true,
     };
   }
 
@@ -224,14 +229,13 @@ export function gymStep(input: unknown): {
     const message = err instanceof Error ? err.message : String(err);
     return {
       content: [{ type: "text", text: JSON.stringify({ error: message }) }],
+      isError: true,
     };
   }
 }
 
 /** Reset the environment to initial state */
-export function gymReset(input: unknown): {
-  content: Array<{ type: "text"; text: string }>;
-} {
+export function gymReset(input: unknown): GymResult {
   const args = input as { env_id: string };
 
   const env = simulations.get(args.env_id);
@@ -240,6 +244,7 @@ export function gymReset(input: unknown): {
       content: [
         { type: "text", text: JSON.stringify({ error: `Unknown env_id: ${args.env_id}` }) },
       ],
+      isError: true,
     };
   }
 
@@ -252,14 +257,13 @@ export function gymReset(input: unknown): {
     const message = err instanceof Error ? err.message : String(err);
     return {
       content: [{ type: "text", text: JSON.stringify({ error: message }) }],
+      isError: true,
     };
   }
 }
 
 /** Get current observation without stepping */
-export function gymObserve(input: unknown): {
-  content: Array<{ type: "text"; text: string }>;
-} {
+export function gymObserve(input: unknown): GymResult {
   const args = input as { env_id: string };
 
   const env = simulations.get(args.env_id);
@@ -268,6 +272,7 @@ export function gymObserve(input: unknown): {
       content: [
         { type: "text", text: JSON.stringify({ error: `Unknown env_id: ${args.env_id}` }) },
       ],
+      isError: true,
     };
   }
 
@@ -280,14 +285,13 @@ export function gymObserve(input: unknown): {
     const message = err instanceof Error ? err.message : String(err);
     return {
       content: [{ type: "text", text: JSON.stringify({ error: message }) }],
+      isError: true,
     };
   }
 }
 
 /** Close and clean up a simulation environment */
-export function gymClose(input: unknown): {
-  content: Array<{ type: "text"; text: string }>;
-} {
+export function gymClose(input: unknown): GymResult {
   const args = input as { env_id: string };
 
   const env = simulations.get(args.env_id);
@@ -303,6 +307,7 @@ export function gymClose(input: unknown): {
     content: [
       { type: "text", text: JSON.stringify({ error: `Unknown env_id: ${args.env_id}` }) },
     ],
+    isError: true,
   };
 }
 
@@ -379,9 +384,7 @@ export const batchResetSchema = {
 };
 
 /** Create N parallel simulation environments from a single assembly */
-export async function batchCreateEnvs(input: unknown): Promise<{
-  content: Array<{ type: "text"; text: string }>;
-}> {
+export async function batchCreateEnvs(input: unknown): Promise<GymResult> {
   const args = input as {
     document: Document;
     n_envs: number;
@@ -402,6 +405,7 @@ export async function batchCreateEnvs(input: unknown): Promise<{
           }),
         },
       ],
+      isError: true,
     };
   }
 
@@ -444,14 +448,13 @@ export async function batchCreateEnvs(input: unknown): Promise<{
     const message = err instanceof Error ? err.message : String(err);
     return {
       content: [{ type: "text", text: JSON.stringify({ error: message }) }],
+      isError: true,
     };
   }
 }
 
 /** Step all environments in a batch simultaneously */
-export function batchStep(input: unknown): {
-  content: Array<{ type: "text"; text: string }>;
-} {
+export function batchStep(input: unknown): GymResult {
   const args = input as {
     batch_id: string;
     action_type: PhysicsActionType;
@@ -464,6 +467,7 @@ export function batchStep(input: unknown): {
       content: [
         { type: "text", text: JSON.stringify({ error: `Unknown batch_id: ${args.batch_id}` }) },
       ],
+      isError: true,
     };
   }
 
@@ -477,6 +481,7 @@ export function batchStep(input: unknown): {
           }),
         },
       ],
+      isError: true,
     };
   }
 
@@ -499,14 +504,13 @@ export function batchStep(input: unknown): {
     const message = err instanceof Error ? err.message : String(err);
     return {
       content: [{ type: "text", text: JSON.stringify({ error: message }) }],
+      isError: true,
     };
   }
 }
 
 /** Reset all environments in a batch */
-export function batchReset(input: unknown): {
-  content: Array<{ type: "text"; text: string }>;
-} {
+export function batchReset(input: unknown): GymResult {
   const args = input as { batch_id: string };
 
   const group = batchGroups.get(args.batch_id);
@@ -515,6 +519,7 @@ export function batchReset(input: unknown): {
       content: [
         { type: "text", text: JSON.stringify({ error: `Unknown batch_id: ${args.batch_id}` }) },
       ],
+      isError: true,
     };
   }
 
@@ -527,6 +532,91 @@ export function batchReset(input: unknown): {
     const message = err instanceof Error ? err.message : String(err);
     return {
       content: [{ type: "text", text: JSON.stringify({ error: message }) }],
+      isError: true,
     };
   }
 }
+
+export const toolDefs: ToolDef[] = [
+  {
+    name: "create_robot_env",
+    pack: "physics",
+    description:
+      "Create a physics simulation environment from a vcad assembly. " +
+      "Returns an environment ID that can be used with gym_step, gym_reset, and gym_observe. " +
+      "The environment provides a gym-style interface for RL training.",
+    inputSchema: createRobotEnvSchema,
+    handler: (a) => createRobotEnv(a),
+    behavior: behavior({}),
+  },
+  {
+    name: "gym_step",
+    pack: "physics",
+    description:
+      "Step the physics simulation with an action. " +
+      "action_type can be 'torque' (Nm), 'position' (degrees/mm), or 'velocity' (deg/s or mm/s). " +
+      "Returns observation (joint positions/velocities, end effector poses), reward, and done flag.",
+    inputSchema: gymStepSchema,
+    handler: (a) => gymStep(a),
+    behavior: behavior({}),
+  },
+  {
+    name: "gym_reset",
+    pack: "physics",
+    description:
+      "Reset the simulation environment to its initial state. Returns the initial observation.",
+    inputSchema: gymResetSchema,
+    handler: (a) => gymReset(a),
+    behavior: behavior({}),
+  },
+  {
+    name: "gym_observe",
+    pack: "physics",
+    description:
+      "Get the current observation from the simulation without stepping. " +
+      "Returns joint positions, velocities, and end effector poses.",
+    inputSchema: gymObserveSchema,
+    handler: (a) => gymObserve(a),
+    behavior: behavior({}),
+  },
+  {
+    name: "gym_close",
+    pack: "physics",
+    description: "Close and clean up a simulation environment.",
+    inputSchema: gymCloseSchema,
+    handler: (a) => gymClose(a),
+    behavior: behavior({}),
+  },
+  {
+    name: "batch_create_envs",
+    pack: "physics",
+    description:
+      "Create N parallel simulation environments from a single robot assembly. " +
+      "Returns a batch_id for use with batch_step and batch_reset. " +
+      "Enables parallel RL training across multiple environments.",
+    inputSchema: batchCreateEnvsSchema,
+    handler: (a) => batchCreateEnvs(a),
+    behavior: behavior({}),
+  },
+  {
+    name: "batch_step",
+    pack: "physics",
+    description:
+      "Step all environments in a batch simultaneously with per-env actions. " +
+      "Returns observations, rewards, and done flags for all environments. " +
+      "action_type can be 'torque', 'position', or 'velocity'.",
+    inputSchema: batchStepSchema,
+    handler: (a) => batchStep(a),
+    behavior: behavior({}),
+  },
+  {
+    name: "batch_reset",
+    pack: "physics",
+    description:
+      "Reset all environments in a batch to their initial state. " +
+      "Returns initial observations for all environments.",
+    inputSchema: batchResetSchema,
+    handler: (a) => batchReset(a),
+    behavior: behavior({}),
+  },
+];

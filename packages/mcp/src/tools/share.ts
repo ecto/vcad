@@ -5,6 +5,7 @@
 import type { Document } from "@vcad/ir";
 import { fromVCode, toVCode } from "@vcad/ir";
 import { gzipSync } from "node:zlib";
+import { behavior, type ToolDef } from "./tool-def.js";
 
 interface ShareInput {
   document: string;  // JSON string or VCode
@@ -133,3 +134,18 @@ export function openInBrowser(
     ],
   };
 }
+
+export const toolDefs: ToolDef[] = [
+  {
+    name: "open_in_browser",
+    pack: null,
+    description:
+      "Generate a shareable URL to open a CAD document in vcad.io. " +
+      "Takes an IR document (JSON or VCode format) and returns a URL that opens the document in the browser. " +
+      "Documents are compressed (gzip + base64url) for URL embedding. " +
+      "Note: Very large documents may exceed URL length limits (~2KB).",
+    inputSchema: openInBrowserSchema,
+    handler: (a) => openInBrowser(a),
+    behavior: behavior({}),
+  },
+];

@@ -10,7 +10,7 @@ Electromagnetics rides the PCB rail: everything the domain designs is copper, so
 
 ## The tools
 
-Eight calculators analyze or size EM structures. They are pure: they take parameters and return numbers, touching no board.
+Nine calculators analyze or size EM structures. They are pure: they take parameters and return numbers, touching no board.
 
 | Tool | What it does |
 |---|---|
@@ -21,7 +21,8 @@ Eight calculators analyze or size EM structures. They are pure: they take parame
 | `size_pdn` | Size power-distribution copper so every load node meets its IR-drop budget |
 | `calc_rf` | RLC frequency response: resonance, Q, S11/return loss against a reference Z0 |
 | `winding_layout` | Polyphase motor winding plan: per-slot phase/polarity and the winding factor |
-| `calc_motor` | First-order motor performance: Kt, Ke, no-load speed, stall torque, speed–torque curve |
+| `calc_motor` | First-order motor performance. PM mode: Kt, Ke, no-load speed, stall torque, speed–torque curve, optional pole-edge fringing derate. Induction mode: thin-sheet axial rotor (drag-cup / PCB cage) — gap field B1, torque-per-unit-slip, locked-rotor torque, sync speed |
+| `check_self_start` | Will it spin? Starting torque vs friction (direct estimate or the built-in bearing-drag catalog), fail-closed with margin |
 
 Three realizers turn plans into copper on the session board: `add_coil` (one Archimedean spiral of traces), `add_coil_array` (a ring of coils with per-coil nets and chirality), and `add_motor_winding` (plan + place + interconnect + terminate a whole stator winding in one call).
 
@@ -40,9 +41,9 @@ Every calculator's output now includes a `claims` array. A claim is one quantita
 }
 ```
 
-The quantities the domain can claim today: inductance, DC resistance, characteristic and differential impedance, effective permittivity, propagation delay, IR drop, resonant frequency, Q factor, winding factor, torque constant, back-EMF constant, no-load speed, stall torque, and air-gap flux density.
+The quantities the domain can claim today: inductance, DC resistance, characteristic and differential impedance, effective permittivity, propagation delay, IR drop, resonant frequency, Q factor, winding factor, torque constant, back-EMF constant, no-load speed, stall torque, air-gap flux density, torque per unit slip, locked-rotor torque, synchronous speed, rotor copper loss, friction torque, and starting margin.
 
-The `method` string names the closed-form model that produced the number — `wheeler-mohan-1999`, `ipc2141-microstrip`, `mec-reluctance`, `star-of-slots`, `first-order-dc-motor`, and friends. Every one is a first-order model: no slotting, fringing, saturation, or field solving. That honesty is the point — a claim states what was predicted, by what model, from what inputs, so a Receipt can ledger it and a later measurement or FEA pass can grade the prediction instead of contradicting a vague number.
+The `method` string names the closed-form model that produced the number — `wheeler-mohan-1999`, `ipc2141-microstrip`, `mec-reluctance`, `mec-fringing-derate`, `star-of-slots`, `first-order-dc-motor`, `thin-sheet-induction`, and friends. Every one is a first-order model: no slotting, fringing, saturation, or field solving. That honesty is the point — a claim states what was predicted, by what model, from what inputs, so a Receipt can ledger it and a later measurement or FEA pass can grade the prediction instead of contradicting a vague number.
 
 ## Differentiable by construction
 

@@ -1,7 +1,10 @@
 # Agentic Commerce for Custom Manufacturing (ACP-CM)
 
-Draft 0.1 — 2026-07-01. Reference implementation: the vcad MCP server
-(`quote_manufacturing` / `authorize_spend` / `place_order`).
+Draft 0.2 — 2026-07-07 (0.1: 2026-07-01). Reference implementations: the
+vcad MCP server — the money plane (`quote_manufacturing` /
+`authorize_spend` / `place_order`) — and [kerf](https://github.com/ecto/kerf)
+— the execution plane (browser-rail quoting and ordering for fabs with no
+API).
 
 ## The gap
 
@@ -26,6 +29,10 @@ a content hash of the design**. Everything else follows from it.
   (vcad: parametric IR, kernel DFM, cost model). Issues quotes.
 - **Buyer agent** — the AI agent acting for a human. Requests quotes,
   proposes spends. Never holds payment credentials.
+- **Executor** — the buyer agent's hands (kerf in the reference
+  implementation): drives the fab's public quote/checkout surface under the
+  mandate when the fab has no agent rail. Receives a card *reference*,
+  never funds; every action is evidence-logged.
 - **Human principal** — approves spend out-of-band (never through the agent's
   own tool channel), funds the wallet, owns disputes.
 - **Merchant of record** — charges the human, pays the fab (vcad in the
@@ -59,6 +66,14 @@ A quote is only meaningful **with** its `doc_hash`. If the design changes, the
 quote is dead — there is nothing to re-price against, only a new quote to
 issue. `pricing_basis` distinguishes the design surface's own estimate from a
 fab-committed price; only `binding` quotes should gate real money.
+
+*0.2 refinement (learned by implementing):* browser-rail quoting surfaces
+a basis between those two — **`quoted`**: the fab's OWN displayed price for
+the exact artifact bytes and configuration, evidence-backed (DOM snapshot +
+screenshot + the upload-hash chain below) but held by no server-side
+reservation. Implementations MAY treat `quoted` as `binding` where the
+fab's cart preserves the price through checkout, and MUST NOT gate money
+on anything weaker.
 
 ### Spend authorization (the mandate)
 
@@ -120,6 +135,55 @@ The **reorder** flow is the parametric dividend: re-evaluate the design (same
 parameters or new ones) → new `doc_hash` → new quote → new mandate. A reorder
 is a first-class re-derivation, never a replay of stale bytes.
 
+## The execution plane (fabs with no rail) — added in 0.2
+
+0.1's open list ended with "fab-side adoption (the partner rail)" — the
+protocol was waiting for counterparties. 0.2 records the finding that
+removed the wait: **the fab's public website is already a counterparty.**
+An executor (kerf) drives the fab's own instant-quote and checkout
+surfaces under the mandate, implementing the fab's half of the protocol
+on its behalf. Adoption becomes a unilateral act: a fab that speaks
+ACP-CM natively gets an `api` transport, a fab that speaks nothing gets a
+`browser` transport, a job shop with an inbox gets `email` — the objects
+above are transport-invariant, and native adoption becomes an
+optimization rather than a prerequisite.
+
+Two mechanisms make the browser transport safe enough to carry money:
+
+- **Mandate compilation.** No delegated-payment token exists on this rail,
+  so the mandate is compiled into the payment instrument itself: the
+  wallet debit funds a single-use virtual card capped at the authorized
+  total, merchant-locked on first settlement, short-expiry. The executor
+  receives a card reference; the runtime types the number outside any
+  model context. Overspend is not mitigated — it is financially
+  impossible — and the issuer's settlement webhook becomes an independent
+  oracle that the fab charged what the human authorized.
+- **Two-oracle confirmation.** A browser-rail order is confirmed only when
+  two independent witnesses agree it exists — confirmation page,
+  confirmation email, card settlement (any two; they share no failure
+  mode). Anything less parks the order in `RECONCILING`, whose first move
+  is finding the order's idempotency key in the fab's own order history —
+  never a second buy click.
+
+### The hash chain
+
+0.1 bound the mandate to `doc_hash` and the order to the artifact
+manifest. The execution plane extends the chain to the fab's own parser:
+
+```
+doc_hash (canonical design IR)
+  → fab_artifact manifest sha256 (exact fab bytes)
+    → intent_hash (order parameters: files + config + qty)
+      → upload-hash (bytes the executor delivered in-page)
+        → the fab's echo (its parser's readback of the geometry)
+```
+
+Each link is a separately checkable claim with a named oracle
+(`kerf/upload-hash` et al.). The first recorded run (SendCutSend,
+2026-07-07) verified the chain end-to-end: the registry-pinned fixture,
+the fetched bytes, the uploaded bytes, and the 100 × 50 mm bounding box
+the fab's parser echoed back were provably the same part.
+
 ## Relationship to ACP
 
 ACP-CM is intended as an **extension profile**, not a rival. Reused as-is:
@@ -143,8 +207,14 @@ short-lived, single-SKU product feed of one.
 
 ## Status
 
-Implemented in the vcad MCP server: quotes with `doc_hash` and artifact
-binding (Phase 0, live), hash-and-cap-enforced atomic spend
+Implemented in the vcad MCP server (money plane): quotes with `doc_hash`
+and artifact binding (Phase 0, live), hash-and-cap-enforced atomic spend
 (`debit_wallet`, migration 027), flag-gated `authorize_spend`/`place_order`
-with out-of-band approval. Open: fab-side adoption (the partner rail),
-binding-quote adapters, standing budgets.
+with out-of-band approval. Implemented in kerf (execution plane): the
+browser transport against SendCutSend — recorded quote playbook walked to
+an anonymous vendor price with money-adjacent assertions, upload-hash
+chain verified end-to-end, quote capability green (2026-07-07). Open: the
+deterministic playbook runner, wiring executor quotes into the design
+surface's broker as `quoted`/`binding` options, the L1/L2 order rail with
+mandate-compiled cards, standing budgets, and fab-side native adoption —
+now an optimization, not a prerequisite.

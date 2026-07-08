@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-07-dfm-inline-serverless-safe",
+  "version": "0.9.4",
+  "date": "2026-07-07",
+  "category": "fix",
+  "title": "DFM follow-ups survive serverless instance flips",
+  "summary": "dfm_explain/dfm_suggest_fix/dfm_apply_fix now accept the report inline, and inspect_cad/render_view/export_cad/dfm_check accept an inline document — so a cold instance no longer breaks the DFM loop.",
+  "features": ["mcp", "dfm", "durability"],
+  "mcpTools": ["dfm_check", "dfm_explain", "dfm_suggest_fix", "dfm_apply_fix", "inspect_cad", "render_view", "export_cad"]
+}

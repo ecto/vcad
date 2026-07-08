@@ -14,10 +14,12 @@ use vcad_kernel_math::{Point2, Point3, Vec3};
 use vcad_kernel_primitives::BRepSolid;
 use vcad_kernel_topo::{FaceId, Orientation, Topology};
 
+pub mod clearance;
 mod creased_normals;
 pub mod frozen;
 mod render_bake;
 
+pub use clearance::{mesh_clearance, ClearanceResult};
 pub use creased_normals::{
     apply_creased_normals, apply_default_creased_normals, DEFAULT_CREASE_ANGLE_RAD,
 };

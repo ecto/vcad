@@ -1,0 +1,9 @@
+{
+  "id": "2026-07-07-boolean-coaxial-volume-corruption",
+  "version": "0.9.4",
+  "date": "2026-07-07",
+  "category": "fix",
+  "title": "Booleans: coaxial stack volume corruption fixed",
+  "summary": "Coaxial cylinder/annulus booleans (press-fit rings, bores through pockets, tangent bosses) no longer inflate or lose volume — split sub-faces now sample, wind, and keep their holes correctly.",
+  "features": ["brep-kernel", "booleans"]
+}

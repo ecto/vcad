@@ -35,6 +35,7 @@ import type {
   SheetMetalHemKind,
 } from "@vcad/ir";
 import { getSession, registerSession } from "./session.js";
+import { behavior, type ToolDef } from "./tool-def.js";
 
 interface FlangeSpec {
   edge_index: number;
@@ -929,3 +930,87 @@ export function sheetMetalCost(
     summary: `${result.breakdown.currency} ${result.breakdown.total_each.toFixed(2)} each @ qty ${result.breakdown.quantity} (mass ${result.breakdown.mass_kg_each.toFixed(3)} kg, ${result.breakdown.cut_length_m.toFixed(2)} m cut, ${result.breakdown.bends} bend(s)).`,
   });
 }
+
+export const toolDefs: ToolDef[] = [
+  {
+    name: "sheet_metal_create",
+    pack: "sheet_metal",
+    description:
+      "Create a sheet-metal part: a rectangular or polygon base flange plus an ordered chain of edge flanges, hems, and jogs. Supports `shop_profile` (e.g. \"sendcutsend\") to resolve bend radii/K-factors from the fab's published catalog, and `bend_relief` to cut relief notches at bend ends. Returns a `document_id` (usable with sheet_metal_unfold/check, inspect_cad, export_cad, open_in_browser), the panel/bend model summary, flat bbox + area, and DFM violations.",
+    inputSchema: sheetMetalCreateSchema,
+    handler: (a, c) => sheetMetalCreate(a, c.engine),
+    behavior: behavior({ writesDoc: true, geometry: true, mount: true }),
+  },
+  {
+    name: "sheet_metal_unfold",
+    pack: "sheet_metal",
+    description:
+      "Return the flat pattern (panel outlines, holes, creases, area, bbox) for a sheet-metal session document, plus a fab-ready merged single-silhouette DXF (millimetres): one closed exterior polyline + holes on CUT, DASHED bend centerlines on BEND_UP/BEND_DOWN. DXF carries no bend angles (entered in the fab's UI); for zero data entry export the folded body as STEP via export_cad instead.",
+    inputSchema: sheetMetalUnfoldSchema,
+    handler: (a, c) => sheetMetalUnfold(a, c.engine),
+    behavior: behavior({ geometry: true, mount: true }),
+  },
+  {
+    name: "sheet_metal_check",
+    pack: "sheet_metal",
+    description:
+      "Run sheet-metal manufacturability for a session document against a shop profile (brake length, min R/t, flange height, hole→bend, bend→bend, bend relief, fixed radius). `shop_profile` is a catalog id string (e.g. \"sendcutsend\") or a capabilities object (field-tolerant: omit keys for generic defaults). Returns structured violations the agent can use to adjust the part and re-check.",
+    inputSchema: sheetMetalCheckSchema,
+    handler: (a, c) => sheetMetalCheck(a, c.engine),
+    behavior: behavior({}),
+  },
+  {
+    name: "sheet_metal_materials",
+    pack: "sheet_metal",
+    description:
+      "List the built-in sheet-metal materials registry (aluminum soft/hard, mild + stainless steel, brass, copper) with min R/t, yield, modulus, density, and a coarse springback estimate. Use to pick a `material` for sheet_metal_create.",
+    inputSchema: sheetMetalMaterialsSchema,
+    handler: (a, c) => sheetMetalMaterials(a, c.engine),
+    behavior: behavior({}),
+  },
+  {
+    name: "sheet_metal_bend_table",
+    pack: "sheet_metal",
+    description:
+      "Read the kernel's curated bend table — `(material, thickness, radius) → K-factor` rows used to compute bend allowance. Pass `shop_profile` (e.g. \"sendcutsend\") to instead read that fab service's published catalog: fixed radii, K-factors, die widths, min flange sizes, and relief depths per material/thickness.",
+    inputSchema: sheetMetalBendTableSchema,
+    handler: (a, c) => sheetMetalBendTable(a, c.engine),
+    behavior: behavior({}),
+  },
+  {
+    name: "sheet_metal_cost",
+    pack: "sheet_metal",
+    description:
+      "Estimate the manufacturing cost of a sheet-metal session document: material (mass × $/kg), cut (length × $/m), pierces, bends, amortized setup, plus shop markup. Returns a line-itemed breakdown so the agent can see which line dominates and which design changes would lower it. `rates` is field-tolerant; omit it to use generic low-volume laser defaults.",
+    inputSchema: sheetMetalCostSchema,
+    handler: (a, c) => sheetMetalCost(a, c.engine),
+    behavior: behavior({}),
+  },
+  {
+    name: "sheet_metal_suggest_fix",
+    pack: "sheet_metal",
+    description:
+      "Translate the structured violations from sheet_metal_check into concrete parameter changes the agent can apply (radius up, flange longer, bends spread, etc.). Pass `violation_index` to target one, omit it to get a suggestion for every open violation. Closes the create → check → fix → re-check self-heal loop.",
+    inputSchema: sheetMetalSuggestFixSchema,
+    handler: (a, c) => sheetMetalSuggestFix(a, c.engine),
+    behavior: behavior({}),
+  },
+  {
+    name: "sheet_metal_sequence",
+    pack: "sheet_metal",
+    description:
+      "Return a feasible press-brake bend sequence for a sheet-metal part — outermost bends first so the remaining flat stays small and earlier bends don't collide with later ones. Each step includes the springback-compensated brake angle and a one-line rationale.",
+    inputSchema: sheetMetalSequenceSchema,
+    handler: (a, c) => sheetMetalSequence(a, c.engine),
+    behavior: behavior({}),
+  },
+  {
+    name: "sheet_metal_nest",
+    pack: "sheet_metal",
+    description:
+      "Pack multiple sheet-metal parts on stock sheets using bottom-left fill decreasing. Each part is either a session `document_id` (footprint inferred from the flat pattern) or an explicit `{width_mm, height_mm}`. Returns per-instance placements, sheets used, and utilization — enough to drive a multi-part DXF and a real quote.",
+    inputSchema: sheetMetalNestSchema,
+    handler: (a, c) => sheetMetalNest(a, c.engine),
+    behavior: behavior({}),
+  },
+];

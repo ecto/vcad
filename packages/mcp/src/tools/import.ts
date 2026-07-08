@@ -11,6 +11,7 @@ import { resolveWithinRoot } from "./safe-path.js";
 import { isRemoteDeployment, maxInlineArtifactBytes } from "./remote.js";
 import { storeArtifact } from "./artifact-store.js";
 import { registerSession } from "./session.js";
+import { behavior, type ToolDef } from "./tool-def.js";
 
 // Cap STEP imports at 100 MB to prevent a remote caller from pinning memory.
 const MAX_STEP_BYTES = 100 * 1024 * 1024;
@@ -224,3 +225,16 @@ export function importStep(
     ],
   };
 }
+
+export const toolDefs: ToolDef[] = [
+  {
+    name: "import_step",
+    pack: null,
+    description:
+      "Import geometry from a STEP file (.step or .stp). Returns an IR document with ImportedMesh nodes. " +
+      "Supports AP203/AP214 STEP files commonly exported from Fusion 360, SolidWorks, Onshape, etc.",
+    inputSchema: importStepSchema,
+    handler: (a, c) => importStep(a, c.engine),
+    behavior: behavior({ writesDoc: true, geometry: true, mount: true }),
+  },
+];
