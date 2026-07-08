@@ -682,6 +682,60 @@ describe("sheet-metal tools", () => {
     ).toBe(true);
   });
 
+  it("engravings ride create → unfold onto the ENGRAVE layer, exempt from DFM", () => {
+    // Motivating case: a note label on a 6.35 mm stainless tuning-fork
+    // handle. Through-cut letters violate min feature at this thickness;
+    // engraving is surface marking, so nothing may trip DFM.
+    const created = JSON.parse(
+      sheetMetalCreate(
+        {
+          width: 120,
+          depth: 20,
+          thickness: 6.35,
+          material: "stainless-304",
+          engravings: [
+            { type: "Text", text: "A4", x: 50, y: 6, height: 8 },
+            { type: "Polyline", points: [[5, 5], [15, 5]] },
+          ],
+        },
+        engine,
+      ).content[0].text,
+    );
+    expect(created.document_id).toBeDefined();
+    expect(created.violations).toHaveLength(0);
+
+    const unfolded = JSON.parse(
+      sheetMetalUnfold(
+        { document_id: created.document_id },
+        engine,
+      ).content[0].text,
+    );
+    // "A4" = A (2 strokes) + 4 (1 stroke) + explicit polyline.
+    expect(unfolded.flat_pattern.engravings_2d).toHaveLength(4);
+    expect(unfolded.dxf).toContain("0\nLAYER\n2\nENGRAVE\n");
+    expect(
+      unfolded.dxf.match(/0\nLWPOLYLINE\n8\nENGRAVE\n/g),
+    ).toHaveLength(4);
+    // Engraving is marking only — exactly one CUT loop (the exterior).
+    expect(unfolded.dxf.match(/0\nLWPOLYLINE\n8\nCUT\n/g)).toHaveLength(1);
+    expect(unfolded.note).toContain("ENGRAVE");
+  });
+
+  it("engraving text with an unsupported glyph fails loudly", () => {
+    expect(() =>
+      sheetMetalCreate(
+        {
+          width: 50,
+          depth: 20,
+          thickness: 1,
+          material: "Al-soft",
+          engravings: [{ type: "Text", text: "Ω4", x: 0, y: 0, height: 6 }],
+        },
+        engine,
+      ),
+    ).toThrow(/no engraving glyph/);
+  });
+
   it("inspect_cad center of mass stays inside the bounding box", () => {
     // Regression: this flange chain tessellates to a non-watertight mesh
     // whose signed-volume integral partially cancels, which used to throw

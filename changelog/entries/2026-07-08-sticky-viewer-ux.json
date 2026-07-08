@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-08-sticky-viewer-ux",
+  "version": "0.9.4",
+  "date": "2026-07-08",
+  "category": "feat",
+  "title": "Sticky live viewer in MCP chats",
+  "summary": "The 3D viewer now re-mounts at milestones (apply_edits, validate_for_fab), auto-docks as pip when the host supports it, and open_document points agents at persistent live-view links.",
+  "features": ["mcp-apps", "viewer"],
+  "mcpTools": ["apply_edits", "validate_for_fab", "open_document"]
+}

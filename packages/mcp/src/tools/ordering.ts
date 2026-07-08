@@ -32,7 +32,7 @@ import type { Engine } from "@vcad/engine";
 import type { Document } from "@vcad/ir";
 import type { AuthUser } from "../oauth.js";
 import { ownerId, type FabricateStore } from "../fabricate/store.js";
-import { resolveArtifactRef } from "./artifact-store.js";
+import { resolveArtifactRefAsync } from "./artifact-store.js";
 import { getSession, hydrateSession } from "./session.js";
 import { docHash } from "./order.js";
 import { clearanceReceiptClaims } from "./clearance.js";
@@ -466,7 +466,7 @@ export async function placeOrder(
   let fabArtifact: FabArtifactRef | null = order.fab_artifact ?? null;
   let lateBinding = false;
   if (fabHandle) {
-    const ref = resolveArtifactRef(fabHandle);
+    const ref = await resolveArtifactRefAsync(fabHandle);
     if (!ref) {
       return err(
         `Unknown or expired fab artifact "${fabHandle}". Re-run export_gerber / export_cad and pass the artifact_id it returns.`,

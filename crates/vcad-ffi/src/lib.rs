@@ -646,6 +646,7 @@ fn build_gripper_slice1() -> Document {
                 thickness: 1.0,
                 material: "al-soft".into(),
                 shop_profile: None,
+                engravings: None,
             },
         },
     );
@@ -1815,6 +1816,7 @@ mod tests {
                     thickness: 1.5,
                     material: "al-soft".into(),
                     shop_profile: None,
+                    engravings: None,
                 },
             },
         );
@@ -1861,6 +1863,7 @@ mod tests {
                     thickness: 1.5,
                     material: "steel".into(),
                     shop_profile: None,
+                    engravings: None,
                 },
             },
         );

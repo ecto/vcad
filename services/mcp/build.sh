@@ -130,6 +130,11 @@ cat > "$OUT/config.json" << 'EOF'
       "dest": "/mcp"
     },
     {
+      "src": "/artifacts/(.*)",
+      "methods": ["GET", "HEAD", "OPTIONS"],
+      "dest": "/mcp"
+    },
+    {
       "src": "/live/(.*)",
       "methods": ["GET", "POST", "OPTIONS"],
       "dest": "/mcp"

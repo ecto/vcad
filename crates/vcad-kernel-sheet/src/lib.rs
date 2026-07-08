@@ -30,6 +30,7 @@ pub mod bend_table;
 pub mod cost;
 pub mod dxf;
 pub mod edge_flange;
+pub mod font;
 pub mod hem;
 pub mod jog;
 pub mod manufacturability;
@@ -53,6 +54,7 @@ pub use dxf::{
     flat_pattern_to_dxf, flat_pattern_to_dxf_with, nested_dxf, DxfOptions, NestedPlacement,
 };
 pub use edge_flange::{add_edge_flange, EdgeFlangeError, FlangePosition};
+pub use font::{text_to_polylines, text_width, FontError};
 pub use hem::{add_hem, HemKind, HemParams};
 pub use jog::{add_jog, JogParams, JogResult};
 pub use manufacturability::{check_manufacturability, Severity, ShopProfile, Violation};

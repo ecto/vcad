@@ -71,6 +71,7 @@ import { getStaleness } from "./edge-config.js";
 // server (http.ts).
 export { handleLiveRequest } from "./live-route.js";
 export { handleArtifactRequest } from "./artifact-route.js";
+export { flushArtifacts, artifactStoreInfo } from "./tools/artifact-store.js";
 import {
   getViewerHtml,
   VIEWER_RESOURCE_URI,
@@ -82,6 +83,7 @@ import {
 } from "./viewer.js";
 import { fireToolAlert } from "./notify.js";
 import { configureTelemetry, flushTelemetry } from "./telemetry.js";
+import { artifactStoreInfo as artifactStoreInfoLocal } from "./tools/artifact-store.js";
 
 // ── ToolDef registry: one record per tool, contributed by its module ────────
 import {
@@ -90,6 +92,7 @@ import {
   type ToolBehavior,
   type ToolContext,
 } from "./tools/tool-def.js";
+import { TOOL_METADATA } from "./tools/tool-metadata.js";
 import type { ToolResult } from "./tools/tool-result.js";
 import { buildKernelEventPayload } from "./tools/kernel-event.js";
 
@@ -116,6 +119,7 @@ import { toolDefs as verifySpecToolDefs } from "./tools/verify-spec.js";
 import { toolDefs as clearanceToolDefs } from "./tools/clearance.js";
 import { toolDefs as dfmToolDefs } from "./tools/dfm.js";
 import { toolDefs as sheetMetalToolDefs } from "./tools/sheet-metal.js";
+import { toolDefs as acousticsToolDefs } from "./tools/acoustics.js";
 import { toolDefs as importToolDefs } from "./tools/import.js";
 import { toolDefs as importPcbToolDefs } from "./tools/import-pcb.js";
 import { toolDefs as shareToolDefs } from "./tools/share.js";
@@ -289,6 +293,7 @@ const STATIC_TOOL_DEFS: readonly ToolDef[] = [
   ...clearanceToolDefs,
   ...dfmToolDefs,
   ...sheetMetalToolDefs,
+  ...acousticsToolDefs,
   ...importToolDefs,
   ...importPcbToolDefs,
   ...shareToolDefs,
@@ -380,6 +385,7 @@ const LIST_TOOL_ORDER: readonly string[] = [
   "sheet_metal_suggest_fix",
   "sheet_metal_sequence",
   "sheet_metal_nest",
+  "simulate_strike",
   // ── Import + share ─────────────────────────────────────────
   "import_step",
   "import_kicad",
@@ -574,12 +580,32 @@ function viewerMetaFor(b: ToolBehavior): Record<string, unknown> | undefined {
   return undefined;
 }
 
-/** Project a ToolDef to its advertised ListTools descriptor (name,
+/** Merge the presentation + behavior metadata (`title`, `annotations`, and any
+ *  `outputSchema`) from `TOOL_METADATA` onto a ToolDef. Throws if the tool has
+ *  no entry — the single enforcement point that keeps the table exhaustive, so
+ *  a new tool can't ship without a truthful title + annotations. */
+function withToolMetadata(def: ToolDef): ToolDef {
+  const meta = TOOL_METADATA[def.name];
+  if (!meta) {
+    throw new Error(
+      `[mcp] tool "${def.name}" has no entry in TOOL_METADATA (title + annotations required)`,
+    );
+  }
+  return {
+    ...def,
+    title: meta.title,
+    annotations: meta.annotations,
+    ...(meta.outputSchema ? { outputSchema: meta.outputSchema } : {}),
+  };
+}
+
+/** Project a ToolDef to its advertised ListTools descriptor (name, title,
  *  description, inputSchema, optional annotations/outputSchema, and the
  *  derived viewer `_meta`). */
 function toListDescriptor(def: ToolDef): Record<string, unknown> {
   const desc: Record<string, unknown> = {
     name: def.name,
+    ...(def.title ? { title: def.title } : {}),
     description: def.description,
     inputSchema: def.inputSchema,
   };
@@ -706,18 +732,20 @@ export async function createServer(
   // always meaningful); the read-only tools (`read`, `inspect_part`,
   // `describe_scene`) are pure readers — no undo snapshot, no persist. viewer
   // `_meta` is derived like every other tool: they carry no template.
-  const registryDefs: ToolDef[] = registryToolDescriptors().map((d) => ({
-    name: d.name,
-    pack: null,
-    description: d.description,
-    inputSchema: d.inputSchema as Record<string, unknown>,
-    handler: (args: Record<string, unknown>, c: ToolContext) =>
-      dispatchRegistryTool(d.name, args, c.engine) as ToolResult,
-    behavior: behavior({
-      geometry: true,
-      writesDoc: !READ_ONLY_REGISTRY_TOOLS.has(d.name),
+  const registryDefs: ToolDef[] = registryToolDescriptors().map((d) =>
+    withToolMetadata({
+      name: d.name,
+      pack: null,
+      description: d.description,
+      inputSchema: d.inputSchema as Record<string, unknown>,
+      handler: (args: Record<string, unknown>, c: ToolContext) =>
+        dispatchRegistryTool(d.name, args, c.engine) as ToolResult,
+      behavior: behavior({
+        geometry: true,
+        writesDoc: !READ_ONLY_REGISTRY_TOOLS.has(d.name),
+      }),
     }),
-  }));
+  );
 
   // ── Runtime tool packs ────────────────────────────────────────────────────
   // The enabled-pack set is mutable per connection: `set_tool_packs` flips it
@@ -810,6 +838,7 @@ export async function createServer(
             text: JSON.stringify({
               ...buildInfo,
               ...sessionStoreInfo(),
+              ...artifactStoreInfoLocal(),
               ...staleness,
               kernel_wasm: kernelWasmLoaded ? "ok" : "unavailable",
               ...(kernelWasmMissing.length > 0
@@ -969,12 +998,28 @@ export async function createServer(
   // Every tool this connection can dispatch: static module defs + server_info +
   // the pack meta-tools + the generated registry defs. Name → def, for O(1)
   // CallTool lookup.
+  // `withToolMetadata` stamps each def's advertised title/annotations/outputSchema
+  // from the central table and throws if any tool is missing an entry — the
+  // boot-time guard that keeps TOOL_METADATA exhaustive.
   const dispatchMap = new Map<string, ToolDef>();
-  for (const d of STATIC_TOOL_DEFS) dispatchMap.set(d.name, d);
-  dispatchMap.set(serverInfoDef.name, serverInfoDef);
-  dispatchMap.set(listToolPacksDef.name, listToolPacksDef);
-  dispatchMap.set(setToolPacksDef.name, setToolPacksDef);
+  for (const d of STATIC_TOOL_DEFS) dispatchMap.set(d.name, withToolMetadata(d));
+  dispatchMap.set(serverInfoDef.name, withToolMetadata(serverInfoDef));
+  dispatchMap.set(listToolPacksDef.name, withToolMetadata(listToolPacksDef));
+  dispatchMap.set(setToolPacksDef.name, withToolMetadata(setToolPacksDef));
   for (const d of registryDefs) dispatchMap.set(d.name, d);
+
+  // Reverse drift guard: every TOOL_METADATA entry must name a real tool, so a
+  // renamed/removed tool doesn't leave a stale annotation entry behind. Skipped
+  // when the kernel WASM registry failed to load (registryDefs empty) — that's
+  // an already-degraded boot, and the registry-tier tools' entries would false-
+  // positive here rather than pointing at a real drift.
+  if (registryDefs.length > 0) {
+    for (const name of Object.keys(TOOL_METADATA)) {
+      if (!dispatchMap.has(name)) {
+        throw new Error(`[mcp] TOOL_METADATA names unknown tool "${name}"`);
+      }
+    }
+  }
 
   // Boot-time drift guard: LIST_TOOL_ORDER must name every static def +
   // server_info + the pack meta-tools exactly once (registry defs are spliced

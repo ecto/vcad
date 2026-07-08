@@ -300,7 +300,16 @@ export function openDocument(args: Record<string, unknown>): {
     content: [
       {
         type: "text",
-        text: JSON.stringify({ document_id: id, parts: doc.roots.length }),
+        text: JSON.stringify({
+          document_id: id,
+          parts: doc.roots.length,
+          // Surfaced so the agent can offer the user a persistent viewport
+          // outside the chat transcript (the inline canvas scrolls away).
+          live_view:
+            "For a live view that stays open while we work, offer the user " +
+            "a shareable watch link (share_session) or a vcad.io deep link " +
+            "(open_in_browser).",
+        }),
       },
     ],
   };

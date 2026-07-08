@@ -1,0 +1,9 @@
+{
+  "id": "2026-07-08-fk-map-result",
+  "version": "0.9.4",
+  "date": "2026-07-08",
+  "category": "fix",
+  "title": "Forward kinematics results no longer silently dropped",
+  "summary": "The engine wrapper misread the WASM FK solver's Map result as a plain object, so assembly instances were never posed by joints; joint state now applies correctly.",
+  "features": ["assembly", "joints", "kinematics"]
+}

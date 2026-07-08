@@ -175,6 +175,13 @@ pub struct SheetMetalModel {
     pub bends: Vec<Bend>,
     /// The reference panel — stays put during unfold/refold.
     pub root: PanelId,
+    /// Surface-marking (laser-engrave) polylines in **root-panel-local**
+    /// 2D coords, on the outside face. Open polylines — no implicit
+    /// closing segment. Engravings never remove material, never join the
+    /// cut silhouette, and are exempt from min-feature DFM rules; they
+    /// ride through unfold verbatim (the root panel doesn't move) onto
+    /// the DXF `ENGRAVE` layer.
+    pub engravings: Vec<Vec<Point2>>,
 }
 
 impl SheetMetalModel {
@@ -188,6 +195,7 @@ impl SheetMetalModel {
             panels: Vec::new(),
             bends: Vec::new(),
             root: 0,
+            engravings: Vec::new(),
         }
     }
 

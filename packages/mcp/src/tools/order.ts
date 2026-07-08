@@ -26,7 +26,7 @@ import { buildKerfSheetMetalIntent, KERF_VENDOR } from "../fabricate/adapters/ke
 import { intentHash } from "../fabricate/kerf/intent-hash.js";
 import type { ConfiguratorIntent, FileRef } from "../fabricate/kerf/contract.js";
 import { captureEvent } from "../telemetry.js";
-import { getArtifactFile, resolveArtifactRef } from "./artifact-store.js";
+import { getArtifactFileAsync, resolveArtifactRefAsync } from "./artifact-store.js";
 import { behavior, type ToolDef } from "./tool-def.js";
 import {
   PROCESSES,
@@ -233,7 +233,7 @@ export async function quoteManufacturing(
   const fabHandle = typeof args.fab_artifact_id === "string" ? args.fab_artifact_id : "";
   let fabArtifact: FabArtifactRef | null = null;
   if (fabHandle) {
-    const ref = resolveArtifactRef(fabHandle);
+    const ref = await resolveArtifactRefAsync(fabHandle);
     if (!ref) {
       return err(
         `Unknown or expired fab artifact "${fabHandle}". Re-run export_gerber / export_cad and pass the artifact_id it returns.`,
@@ -354,7 +354,7 @@ export async function quoteManufacturing(
           "fail-closed rather than guessing a configurator selection (aluminum at inch-native gauges derives today).";
       } else {
         const entry = dxfEntries[0];
-        const stored = getArtifactFile(fabArtifact.artifact_id, entry.file);
+        const stored = await getArtifactFileAsync(fabArtifact.artifact_id, entry.file);
         const actualSha = stored
           ? createHash("sha256").update(stored.buf).digest("hex")
           : null;

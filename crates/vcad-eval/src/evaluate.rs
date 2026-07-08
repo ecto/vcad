@@ -929,6 +929,39 @@ fn evaluate_op_timed(
     }
 }
 
+/// Resolve IR engraving primitives to root-panel-local polylines (text →
+/// single-stroke font polylines via the kernel).
+fn resolve_ir_engravings(
+    engravings: Option<&Vec<vcad_ir::SheetMetalEngraving>>,
+) -> Result<Vec<Vec<vcad_kernel_math::Point2>>, String> {
+    use vcad_kernel_math::Point2;
+    let mut out = Vec::new();
+    for (i, e) in engravings.into_iter().flatten().enumerate() {
+        match e {
+            vcad_ir::SheetMetalEngraving::Polyline { points } => {
+                if points.len() < 2 {
+                    return Err(format!("engraving #{i}: polyline needs >= 2 points"));
+                }
+                out.push(points.iter().map(|p| Point2::new(p.x, p.y)).collect());
+            }
+            vcad_ir::SheetMetalEngraving::Text {
+                text,
+                x,
+                y,
+                height,
+                angle,
+            } => {
+                let strokes = vcad_kernel::vcad_kernel_sheet::text_to_polylines(
+                    text, *x, *y, *height, *angle,
+                )
+                .map_err(|e| format!("engraving #{i} ({text:?}): {e}"))?;
+                out.extend(strokes);
+            }
+        }
+    }
+    Ok(out)
+}
+
 /// Build a [`vcad_kernel_sheet::SheetMetalModel`] from a sheet-metal op chain.
 /// Edge flanges reference their `parent` node, so this recurses down the chain
 /// (mirroring [`collect_transform_chain`]) and applies each flange in order.
@@ -951,11 +984,13 @@ fn build_sheet_model(
             depth,
             thickness,
             material,
+            engravings,
             ..
         } => {
             let mut model =
                 base_flange_rect(*width, *depth, *thickness).map_err(|e| sm(e.to_string()))?;
             model.material = material.clone();
+            model.engravings = resolve_ir_engravings(engravings.as_ref()).map_err(sm)?;
             Ok(model)
         }
 
@@ -964,6 +999,7 @@ fn build_sheet_model(
             holes,
             thickness,
             material,
+            engravings,
             ..
         } => {
             let to_pts = |v: &Vec<vcad_ir::Vec2>| {
@@ -974,6 +1010,7 @@ fn build_sheet_model(
             let mut model = base_flange_polygon_with_holes(outer, hole_loops, *thickness)
                 .map_err(|e| sm(e.to_string()))?;
             model.material = material.clone();
+            model.engravings = resolve_ir_engravings(engravings.as_ref()).map_err(sm)?;
             Ok(model)
         }
 
