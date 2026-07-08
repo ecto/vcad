@@ -2,50 +2,40 @@
  * Forward kinematics solver — backed by Rust WASM.
  *
  * Thin wrapper around the Rust `solve_forward_kinematics` exposed via WASM.
- * The WASM binding returns a Map<string, Transform3D>.
+ * `serde_wasm_bindgen` serializes the Rust HashMap as a JS Map (not a plain
+ * object), so the result is normalized here for both shapes.
  */
 
 import type { Document, Transform3D } from "@vcad/ir";
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-let wasmModule: any = null;
-
-async function loadWasm(): Promise<typeof wasmModule | null> {
-  if (wasmModule) return wasmModule;
-  try {
-    wasmModule = await import("@vcad/kernel-wasm");
-    return wasmModule;
-  } catch {
-    return null;
-  }
-}
-
-// Eagerly start loading
-loadWasm();
+import { getKernelWasmSync } from "./wasm-singleton.js";
 
 /**
  * Solve forward kinematics for an assembly document.
  *
  * Returns a Map from instance ID to world Transform3D.
- * Uses the Rust WASM implementation. If WASM is not yet loaded, returns
- * an empty map (callers should ensure WASM is loaded before physics runs).
+ * Uses the Rust WASM implementation via the shared singleton. If the
+ * singleton hasn't finished initializing (`getKernelWasm()` not yet
+ * awaited anywhere), returns an empty map — callers must ensure WASM is
+ * initialized before relying on FK results.
  */
 export function solveForwardKinematics(
   doc: Document,
 ): Map<string, Transform3D> {
-  if (wasmModule?.solveForwardKinematics) {
-    try {
-      const result = wasmModule.solveForwardKinematics(
-        JSON.stringify(doc),
-      ) as Record<string, Transform3D>;
-      // Convert plain object to Map
-      return new Map(Object.entries(result));
-    } catch (e) {
-      console.warn("[ENGINE] WASM solveForwardKinematics failed:", e);
-      return new Map();
+  const wasm = getKernelWasmSync();
+  if (!wasm?.solveForwardKinematics) return new Map();
+  try {
+    const result: unknown = wasm.solveForwardKinematics(JSON.stringify(doc));
+    // serde_wasm_bindgen returns a JS Map; older glue returned a plain object.
+    if (result instanceof Map) {
+      return result as Map<string, Transform3D>;
     }
+    return new Map(
+      Object.entries(result as Record<string, Transform3D>),
+    );
+  } catch (e) {
+    console.warn("[ENGINE] WASM solveForwardKinematics failed:", e);
+    return new Map();
   }
-  return new Map();
 }
 
 /**
