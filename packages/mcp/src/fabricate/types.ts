@@ -61,6 +61,13 @@ export interface QuoteRequest {
    * back to their local coefficient estimate.
    */
   baseCostMinor?: number;
+  /**
+   * Which estimator produced `baseCostMinor`, so adapter notes stay truthful:
+   * "kernel" = estimateCost / vcad-kernel-cost (the in-app Build quote);
+   * "sheet_metal_laser" = the line-itemed laser model behind sheet_metal_cost
+   * (pre-markup subtotal — the broker's MARGIN_RATE is the single margin layer).
+   */
+  baseCostModel?: "kernel" | "sheet_metal_laser";
   /** Resolved kernel-cost catalog material name (e.g. "Aluminum 6061"). */
   materialCatalog?: string;
 }

@@ -12,8 +12,10 @@ import { telemetryConfig, flushTelemetry } from "../telemetry.js";
 import { InMemoryFabricateStore } from "../fabricate/store.js";
 import { storeArtifact, clearArtifacts } from "../tools/artifact-store.js";
 import { FulfillmentBroker } from "../fabricate/broker.js";
-import { applyMargin, MARGIN_RATE } from "../fabricate/pricing.js";
+import { applyMargin, MARGIN_RATE, estimateLandedCost } from "../fabricate/pricing.js";
 import { digitalMetalAdapter } from "../fabricate/adapters/digitalmetal.js";
+import { catalogMaterial } from "../fabricate/process-map.js";
+import { sheetMetalCreate, sheetMetalCost } from "../tools/sheet-metal.js";
 import type { GeometryMetrics } from "../fabricate/types.js";
 
 function metrics(over: Partial<GeometryMetrics> = {}): GeometryMetrics {
@@ -281,6 +283,135 @@ describe("fabricate quote loop (engine)", () => {
       null,
     );
     expect(res.isError).toBe(true);
+  });
+});
+
+describe("sheet_metal quote ↔ sheet_metal_cost consistency (engine)", () => {
+  let engine: Engine;
+  beforeAll(async () => {
+    engine = await Engine.init();
+  });
+  beforeEach(() => {
+    documents.clear();
+  });
+
+  function circle(cx: number, cy: number, r: number, n: number) {
+    return Array.from({ length: n }, (_, i) => {
+      const a = (2 * Math.PI * i) / n;
+      return { x: cx + r * Math.cos(a), y: cy + r * Math.sin(a) };
+    });
+  }
+
+  /** The reference part: a Ø58 × 2.7 mm mild-steel disc with 5 Ø5 holes —
+   *  the shape SendCutSend prices at ~$12–18/ea at qty 2. */
+  function discSession(): string {
+    const created = JSON.parse(
+      sheetMetalCreate(
+        {
+          outline: circle(0, 0, 29, 64),
+          // Hole loops are CW (outline is CCW) per the create schema.
+          holes: [0, 1, 2, 3, 4].map((i) =>
+            circle(
+              20 * Math.cos((2 * Math.PI * i) / 5),
+              20 * Math.sin((2 * Math.PI * i) / 5),
+              2.5,
+              16,
+            ).reverse(),
+          ),
+          thickness: 2.7,
+          material: "steel-mild",
+        },
+        engine,
+      ).content[0].text,
+    );
+    return created.document_id as string;
+  }
+
+  it("aliases sheet-metal material names onto the kernel cost catalog", () => {
+    // Regression: "mild steel" used to silently fall back to Aluminum 6061.
+    expect(catalogMaterial("sheet_metal", "mild steel")).toBe("Steel 1018");
+    expect(catalogMaterial("sheet_metal", "steel-mild")).toBe("Steel 1018");
+    expect(catalogMaterial("sheet_metal", "al-soft")).toBe("Aluminum 6061");
+  });
+
+  it("quotes a flat disc within 25% of sheet_metal_cost's total_each", async () => {
+    const qty = 2;
+    const documentId = discSession();
+
+    const smc = JSON.parse(
+      sheetMetalCost({ document_id: documentId, quantity: qty }, engine).content[0].text,
+    );
+    const totalEach: number = smc.breakdown.total_each;
+    expect(totalEach).toBeGreaterThan(5); // sanity: a real laser-model price
+
+    const res = await quoteManufacturing(
+      { document_id: documentId, process: "sheet_metal", quantity: qty, material: "mild steel" },
+      engine,
+      new InMemoryFabricateStore(),
+      null,
+    );
+    expect(res.isError).toBeFalsy();
+    const quote = JSON.parse(res.content[0].text);
+
+    // Same costing code path, surfaced in the result.
+    expect(quote.cost_model).toContain("sheet_metal_cost");
+
+    // THE consistency gate: quote_manufacturing is margin-inclusive (25%
+    // MARGIN_RATE + domestic shipping folded into the landed unit price), so
+    // it sits ABOVE sheet_metal_cost's shop price — but never 3x it again.
+    // Both models price from the same pre-markup subtotal, so the unit price
+    // stays within ~25% of sheet_metal_cost's total_each.
+    const unit: number = quote.total_amount_usd / qty;
+    expect(unit).toBeGreaterThan(totalEach * 0.75);
+    expect(unit).toBeLessThan(totalEach * 1.25);
+
+    // Margin handling stays EXPLICIT — the delta decomposes exactly into the
+    // broker margin on the pre-markup subtotal plus flat domestic shipping:
+    //   total = round(subtotal_each × qty × 100) × (1 + MARGIN_RATE) + shipping
+    const shipping = estimateLandedCost({ region: "n/a", supportsDdp: false });
+    expect(shipping.basis).toBe("domestic_estimate");
+    const expectedMinor =
+      applyMargin(Math.round(smc.breakdown.subtotal_each * qty * 100)) +
+      shipping.shipping_minor;
+    expect(quote.total_amount_minor).toBe(expectedMinor);
+  });
+
+  it("amortizes setup in the fallback path for flat solids quoted as sheet_metal", async () => {
+    // A plain solid disc (no sheet-metal chain) exercises the estimateCost
+    // fallback. Setup is one-time per run: per-unit price must drop sharply
+    // with quantity (it used to be flat — setup was charged on every part).
+    const solidDisc = {
+      version: "0.1",
+      nodes: {
+        "1": {
+          id: 1,
+          name: "disc",
+          op: { type: "Cylinder", radius: 29, height: 2.7, segments: 0 },
+        },
+      },
+      materials: {},
+      part_materials: {},
+      roots: [{ root: 1, material: "default" }],
+    } as unknown as Document;
+
+    const store = new InMemoryFabricateStore();
+    const at = async (qty: number) => {
+      const res = await quoteManufacturing(
+        { ir: solidDisc, process: "sheet_metal", quantity: qty, material: "mild steel" },
+        engine,
+        store,
+        null,
+      );
+      expect(res.isError).toBeFalsy();
+      const quote = JSON.parse(res.content[0].text);
+      expect(quote.cost_model).toContain("kernel");
+      expect(quote.material_catalog).toBe("Steel 1018");
+      return quote.total_amount_usd / qty;
+    };
+
+    const unit1 = await at(1);
+    const unit10 = await at(10);
+    expect(unit10).toBeLessThan(unit1 / 2);
   });
 });
 
