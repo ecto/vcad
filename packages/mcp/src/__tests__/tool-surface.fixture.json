@@ -2,7 +2,7 @@
   {
     "name": "open_document",
     "title": "Open Document",
-    "description": "Open an editing session for a CAD document. Returns a `document_id` to pass to subsequent tool calls (create, update, place_part, inspect_cad, …). Pass an `initial` IR to begin editing an existing document; omit it for a fresh empty document.",
+    "description": "Open an editing session for a CAD document. Returns a `document_id` to pass to subsequent tool calls (create, update, place_part, inspect_cad, \u2026). Pass an `initial` IR to begin editing an existing document; omit it for a fresh empty document.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -21,14 +21,14 @@
       },
       "ui/resourceUri": "ui://vcad/viewer",
       "openai/outputTemplate": "ui://vcad/viewer-openai.html",
-      "openai/toolInvocation/invoking": "Modeling geometry…",
+      "openai/toolInvocation/invoking": "Modeling geometry\u2026",
       "openai/toolInvocation/invoked": "Model updated"
     }
   },
   {
     "name": "get_document",
     "title": "Get Document",
-    "description": "Return the full IR Document JSON for an open session. Use after a series of mutations to capture the result, or to feed into `export_cad` / `open_in_browser`. Very large documents come back as a compact artifact handle instead ({document_id, artifact_url, manifest with sha256, …}) — download the full IR at `artifact_url`.",
+    "description": "Return the full IR Document JSON for an open session. Use after a series of mutations to capture the result, or to feed into `export_cad` / `open_in_browser`. Very large documents come back as a compact artifact handle instead ({document_id, artifact_url, manifest with sha256, \u2026}) \u2014 download the full IR at `artifact_url`.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -51,7 +51,7 @@
   {
     "name": "close_document",
     "title": "Close Document",
-    "description": "Close a document session and free its memory. Idempotent — closing an unknown id reports `closed: false`.",
+    "description": "Close a document session and free its memory. Idempotent \u2014 closing an unknown id reports `closed: false`.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -72,7 +72,7 @@
   {
     "name": "save_document",
     "title": "Save Document",
-    "description": "Persist a live session under a name so it can be reopened with load_document. On the hosted server the save is durable: a signed-in user's save goes to their vcad.io account under the (normalized) name; an anonymous save returns an unguessable `saved_…` key to reopen with. On a local/stdio server it writes `<name>.vcad` under VCAD_MCP_STATE_DIR (or the working directory).",
+    "description": "Persist a live session under a name so it can be reopened with load_document. On the hosted server the save is durable: a signed-in user's save goes to their vcad.io account under the (normalized) name; an anonymous save returns an unguessable `saved_\u2026` key to reopen with. On a local/stdio server it writes `<name>.vcad` under VCAD_MCP_STATE_DIR (or the working directory).",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -97,13 +97,13 @@
   {
     "name": "load_document",
     "title": "Load Document",
-    "description": "Reopen a save_document save into a fresh session and return its new document_id. Pass the same name you saved under (or the `saved_…` key an anonymous save returned). The cheap way to resume a board/part across runs instead of rebuilding it.",
+    "description": "Reopen a save_document save into a fresh session and return its new document_id. Pass the same name you saved under (or the `saved_\u2026` key an anonymous save returned). The cheap way to resume a board/part across runs instead of rebuilding it.",
     "inputSchema": {
       "type": "object",
       "properties": {
         "name": {
           "type": "string",
-          "description": "The name passed to save_document (or the `saved_…` key an anonymous save returned). On a local/stdio server this reads <name>.vcad from the state directory."
+          "description": "The name passed to save_document (or the `saved_\u2026` key an anonymous save returned). On a local/stdio server this reads <name>.vcad from the state directory."
         }
       },
       "required": [
@@ -119,14 +119,14 @@
       },
       "ui/resourceUri": "ui://vcad/viewer",
       "openai/outputTemplate": "ui://vcad/viewer-openai.html",
-      "openai/toolInvocation/invoking": "Modeling geometry…",
+      "openai/toolInvocation/invoking": "Modeling geometry\u2026",
       "openai/toolInvocation/invoked": "Model updated"
     }
   },
   {
     "name": "checkpoint_document",
     "title": "Checkpoint Document",
-    "description": "Snapshot a session's current state as a durable, restorable checkpoint. Returns a `checkpoint_id`. Use it at known-good milestones (post-schematic, post-place, post-route) so you can rewind with branch_from instead of rebuilding. The full IR is captured — the netlist (the most expensive, most stable artifact) is the anchor. On a durable deploy a checkpoint survives a redeploy; check server_info for durable:true.",
+    "description": "Snapshot a session's current state as a durable, restorable checkpoint. Returns a `checkpoint_id`. Use it at known-good milestones (post-schematic, post-place, post-route) so you can rewind with branch_from instead of rebuilding. The full IR is captured \u2014 the netlist (the most expensive, most stable artifact) is the anchor. On a durable deploy a checkpoint survives a redeploy; check server_info for durable:true.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -150,7 +150,7 @@
   {
     "name": "branch_from",
     "title": "Branch From Checkpoint",
-    "description": "Re-open a checkpoint (from checkpoint_document). Omit `into` to BRANCH into a fresh session id — a variant to explore. Pass `into: <document_id>` to RESTORE the checkpoint into an existing session in place (same id). The cheap undo for a bad route or place: rewind to a good state rather than rebuilding the netlist.",
+    "description": "Re-open a checkpoint (from checkpoint_document). Omit `into` to BRANCH into a fresh session id \u2014 a variant to explore. Pass `into: <document_id>` to RESTORE the checkpoint into an existing session in place (same id). The cheap undo for a bad route or place: rewind to a good state rather than rebuilding the netlist.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -160,7 +160,7 @@
         },
         "into": {
           "type": "string",
-          "description": "Optional. An existing session id to RESTORE the checkpoint into — overwrites that session's content but keeps its id, so existing handles keep working. Omit to BRANCH into a fresh session id instead."
+          "description": "Optional. An existing session id to RESTORE the checkpoint into \u2014 overwrites that session's content but keeps its id, so existing handles keep working. Omit to BRANCH into a fresh session id instead."
         }
       },
       "required": [
@@ -176,14 +176,14 @@
       },
       "ui/resourceUri": "ui://vcad/viewer",
       "openai/outputTemplate": "ui://vcad/viewer-openai.html",
-      "openai/toolInvocation/invoking": "Modeling geometry…",
+      "openai/toolInvocation/invoking": "Modeling geometry\u2026",
       "openai/toolInvocation/invoked": "Model updated"
     }
   },
   {
     "name": "continue_document",
     "title": "Continue Document",
-    "description": "Open the user's vcad.io part as an editing session from a 'Continue in Claude' handoff (a share `token`, or an inline `doc` for accountless handoffs). The web app hands you this in the starter prompt; call this first, then render_view it and continue the user's work. Returns a `document_id` for subsequent tool calls. The geometry is fetched server-side — never paste it.",
+    "description": "Open the user's vcad.io part as an editing session from a 'Continue in Claude' handoff (a share `token`, or an inline `doc` for accountless handoffs). The web app hands you this in the starter prompt; call this first, then render_view it and continue the user's work. Returns a `document_id` for subsequent tool calls. The geometry is fetched server-side \u2014 never paste it.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -207,14 +207,14 @@
       },
       "ui/resourceUri": "ui://vcad/viewer",
       "openai/outputTemplate": "ui://vcad/viewer-openai.html",
-      "openai/toolInvocation/invoking": "Modeling geometry…",
+      "openai/toolInvocation/invoking": "Modeling geometry\u2026",
       "openai/toolInvocation/invoked": "Model updated"
     }
   },
   {
     "name": "server_info",
     "title": "Server Info",
-    "description": "Report the running build's identity: version, git sha (if stamped), tool count, enabled packs, whether the kernel WASM loaded, and whether sessions are durable (`durable` — survive a redeploy/cold start, vs. in-memory only). Call this to confirm a tool exists in THIS build before assuming a stale or version-skewed deploy, and to check durable:true before relying on checkpoints across a long session.",
+    "description": "Report the running build's identity: version, git sha (if stamped), tool count, enabled packs, whether the kernel WASM loaded, and whether sessions are durable (`durable` \u2014 survive a redeploy/cold start, vs. in-memory only). Call this to confirm a tool exists in THIS build before assuming a stale or version-skewed deploy, and to check durable:true before relying on checkpoints across a long session.",
     "inputSchema": {
       "type": "object",
       "properties": {}
@@ -226,7 +226,7 @@
   {
     "name": "list_tool_packs",
     "title": "List Tool Packs",
-    "description": "List the optional tool packs and whether each is currently enabled, with its tool count. Packs gate large domain surfaces (ecad, physics, sheet_metal, dfm, …) off the always-on core; a smaller surface costs fewer schema tokens and improves tool selection. Use set_tool_packs to enable/disable them at runtime.",
+    "description": "List the optional tool packs and whether each is currently enabled, with its tool count. Packs gate large domain surfaces (ecad, physics, sheet_metal, dfm, \u2026) off the always-on core; a smaller surface costs fewer schema tokens and improves tool selection. Use set_tool_packs to enable/disable them at runtime.",
     "inputSchema": {
       "type": "object",
       "properties": {}
@@ -268,13 +268,13 @@
   {
     "name": "quote_manufacturing",
     "title": "Quote Manufacturing",
-    "description": "Quote manufacturing a part: measures the design, runs light DFM, and returns margin-inclusive price options per fab (pcb/cnc/3dprint/sheet_metal/cast_metal). Pass `ir` (inline Document — stateless, no open_document needed, serverless-safe, parallel-safe) OR a `document_id` from an open session. Persists a quote + a QUOTED order. Phase 0 is quote-only — prices are estimates and ordering/payment ship next; no money moves. For sheet_metal the result includes `fab_handoff`: curated US instant-quote shops (SendCutSend/OSH Cut/Fabworks), the exact file recipe (DXF via sheet_metal_unfold or folded STEP via export_cad), and what to enter at upload — everything needed to finish the order on the fab's site today.",
+    "description": "Quote manufacturing a part: measures the design, runs light DFM, and returns margin-inclusive price options per fab (pcb/cnc/3dprint/sheet_metal/cast_metal). Pass `ir` (inline Document \u2014 stateless, no open_document needed, serverless-safe, parallel-safe) OR a `document_id` from an open session. Persists a quote + a QUOTED order. Phase 0 is quote-only \u2014 prices are estimates and ordering/payment ship next; no money moves. For sheet_metal the result includes `fab_handoff`: curated US instant-quote shops (SendCutSend/OSH Cut/Fabworks), the exact file recipe (DXF via sheet_metal_unfold or folded STEP via export_cad), and what to enter at upload \u2014 everything needed to finish the order on the fab's site today.",
     "inputSchema": {
       "type": "object",
       "properties": {
         "ir": {
           "type": "object",
-          "description": "Inline Document IR to quote directly — a STATELESS alternative to document_id. Needs no open_document, holds no session, and is immune to the serverless cold-start/instance issue, so it's the robust choice for one-shot or parallel quotes. Provide this OR document_id."
+          "description": "Inline Document IR to quote directly \u2014 a STATELESS alternative to document_id. Needs no open_document, holds no session, and is immune to the serverless cold-start/instance issue, so it's the robust choice for one-shot or parallel quotes. Provide this OR document_id."
         },
         "document_id": {
           "type": "string",
@@ -319,7 +319,7 @@
         },
         "fab_artifact_id": {
           "type": "string",
-          "description": "Optional artifact id (or artifact_url) of a fab bundle returned by export_gerber / export_cad. Binds those files to the order WITHOUT re-sending them through model context — the files stay in the artifact store and are fetched at fab-submission time. The manifest's per-file sha256 is recorded so the order is traceable to the exact bytes."
+          "description": "Optional artifact id (or artifact_url) of a fab bundle returned by export_gerber / export_cad. Binds those files to the order WITHOUT re-sending them through model context \u2014 the files stay in the artifact store and are fetched at fab-submission time. The manifest's per-file sha256 is recorded so the order is traceable to the exact bytes."
         }
       },
       "required": [
@@ -381,7 +381,7 @@
   {
     "name": "authorize_spend",
     "title": "Authorize Spend",
-    "description": "Propose a spend authorization for a QUOTED order. Creates a DB-backed, revocable authorization (status pending_human) and records the proposal on the session's event log. A HUMAN must approve it in the vcad app before place_order can charge — the agent cannot approve its own spend. Flag-gated (test-mode); no money moves here.",
+    "description": "Propose a spend authorization for a QUOTED order. Creates a DB-backed, revocable authorization (status pending_human) and records the proposal on the session's event log. A HUMAN must approve it in the vcad app before place_order can charge \u2014 the agent cannot approve its own spend. Flag-gated (test-mode); no money moves here.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -392,7 +392,7 @@
         "max_amount_minor": {
           "type": "integer",
           "minimum": 1,
-          "description": "Optional spend ceiling in minor units (USD cents). Defaults to the order total; must be ≥ the order total."
+          "description": "Optional spend ceiling in minor units (USD cents). Defaults to the order total; must be \u2265 the order total."
         }
       },
       "required": [
@@ -442,7 +442,7 @@
   {
     "name": "bom_create",
     "title": "Create BOM",
-    "description": "Create a project bill of materials — the deliverable that collects every manufactured part (PCBs, sheet metal, 3D prints; link quote_manufacturing quotes by quote_id) and COTS part (bearings, shafts, screws, magnets; link search_mechanical_parts entries by catalog_id) in one place. Optionally attach a document_id and assembly notes. Pass the full `lines` array to build the whole BOM in ONE call — recommended, since BOMs are in-memory per server instance. All prices are estimates and flagged as such.",
+    "description": "Create a project bill of materials \u2014 the deliverable that collects every manufactured part (PCBs, sheet metal, 3D prints; link quote_manufacturing quotes by quote_id) and COTS part (bearings, shafts, screws, magnets; link search_mechanical_parts entries by catalog_id) in one place. Optionally attach a document_id and assembly notes. Pass the full `lines` array to build the whole BOM in ONE call \u2014 recommended, since BOMs are in-memory per server instance. All prices are estimates and flagged as such.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -504,7 +504,7 @@
               },
               "quote_id": {
                 "type": "string",
-                "description": "Manufactured only: quote id from quote_manufacturing — auto-fills process, vendor, qty, and landed unit price."
+                "description": "Manufactured only: quote id from quote_manufacturing \u2014 auto-fills process, vendor, qty, and landed unit price."
               },
               "order_id": {
                 "type": "string",
@@ -516,7 +516,7 @@
               },
               "artifact": {
                 "type": "string",
-                "description": "Manufactured only: fab artifact path or artifact id (gerber zip, STEP, STL) — recorded verbatim."
+                "description": "Manufactured only: fab artifact path or artifact id (gerber zip, STEP, STL) \u2014 recorded verbatim."
               },
               "material": {
                 "type": "string",
@@ -532,14 +532,14 @@
               },
               "catalog_id": {
                 "type": "string",
-                "description": "COTS only: id from search_mechanical_parts — auto-fills name, spec, example PN, and a price-band-midpoint estimate."
+                "description": "COTS only: id from search_mechanical_parts \u2014 auto-fills name, spec, example PN, and a price-band-midpoint estimate."
               }
             },
             "required": [
               "kind"
             ]
           },
-          "description": "Optional full line list to build the BOM in ONE call (recommended on serverless — BOMs are in-memory per instance, so one-shot creation is the robust path)."
+          "description": "Optional full line list to build the BOM in ONE call (recommended on serverless \u2014 BOMs are in-memory per instance, so one-shot creation is the robust path)."
         }
       },
       "required": []
@@ -597,7 +597,7 @@
         },
         "quote_id": {
           "type": "string",
-          "description": "Manufactured only: quote id from quote_manufacturing — auto-fills process, vendor, qty, and landed unit price."
+          "description": "Manufactured only: quote id from quote_manufacturing \u2014 auto-fills process, vendor, qty, and landed unit price."
         },
         "order_id": {
           "type": "string",
@@ -609,7 +609,7 @@
         },
         "artifact": {
           "type": "string",
-          "description": "Manufactured only: fab artifact path or artifact id (gerber zip, STEP, STL) — recorded verbatim."
+          "description": "Manufactured only: fab artifact path or artifact id (gerber zip, STEP, STL) \u2014 recorded verbatim."
         },
         "material": {
           "type": "string",
@@ -625,7 +625,7 @@
         },
         "catalog_id": {
           "type": "string",
-          "description": "COTS only: id from search_mechanical_parts — auto-fills name, spec, example PN, and a price-band-midpoint estimate."
+          "description": "COTS only: id from search_mechanical_parts \u2014 auto-fills name, spec, example PN, and a price-band-midpoint estimate."
         }
       },
       "required": [
@@ -640,7 +640,7 @@
   {
     "name": "bom_export",
     "title": "Export BOM",
-    "description": "Render a BOM as markdown (the shareable deliverable: manufactured-parts table with vendors/prices/artifact sources, COTS table with specs and example PNs, totals, assembly notes), csv (flat, spreadsheet-ready), or json (the full object). Totals include a landed-cost shipping estimate reusing the Fabricate shipping model (per distinct vendor; quote-linked lines are already landed). Also returns a vcad.receipt/1 `receipt_claim` (domain 'bom') carrying the cost estimate for a DesignReceipt — informational, never gates a design verdict. Prices are estimates and every export says so.",
+    "description": "Render a BOM as markdown (the shareable deliverable: manufactured-parts table with vendors/prices/artifact sources, COTS table with specs and example PNs, totals, assembly notes), csv (flat, spreadsheet-ready), or json (the full object). Totals include a landed-cost shipping estimate reusing the Fabricate shipping model (per distinct vendor; quote-linked lines are already landed). Also returns a vcad.receipt/1 `receipt_claim` (domain 'bom') carrying the cost estimate for a DesignReceipt \u2014 informational, never gates a design verdict. Prices are estimates and every export says so.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -669,7 +669,7 @@
   {
     "name": "search_mechanical_parts",
     "title": "Search Mechanical Parts",
-    "description": "Spec-search the curated mechanical COTS catalog (offline) — the mechanical sibling of search_electronic_parts: 608/625/688/600x-series bearings, precision ground shafts (3-12 mm), shaft collars, flange couplings, M2/M3 standoffs, machine screws, and ferrite/ceramic disc+ring magnets (Y30/Y35/C8). Filter by type + dimensions (bore_mm, od_mm, width_mm, thread, length_mm, …) and/or free text. Returns spec + example part number + a typical price band — street-price ESTIMATES, not live quotes. Use the result's `id` as `catalog_id` in bom_add_line.",
+    "description": "Spec-search the curated mechanical COTS catalog (offline) \u2014 the mechanical sibling of search_electronic_parts: 608/625/688/600x-series bearings, precision ground shafts (3-12 mm), shaft collars, flange couplings, M2/M3 standoffs, machine screws, and ferrite/ceramic disc+ring magnets (Y30/Y35/C8). Filter by type + dimensions (bore_mm, od_mm, width_mm, thread, length_mm, \u2026) and/or free text. Returns spec + example part number + a typical price band \u2014 street-price ESTIMATES, not live quotes. Use the result's `id` as `catalog_id` in bom_add_line.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -704,7 +704,7 @@
         },
         "diameter_mm": {
           "type": "number",
-          "description": "Generic diameter in mm — matches shaft diameter or a disc/ring OD."
+          "description": "Generic diameter in mm \u2014 matches shaft diameter or a disc/ring OD."
         },
         "width_mm": {
           "type": "number",
@@ -720,7 +720,7 @@
         },
         "length_mm": {
           "type": "number",
-          "description": "Length in mm — matched against the entry's available lengths (screws, standoffs, shafts)."
+          "description": "Length in mm \u2014 matched against the entry's available lengths (screws, standoffs, shafts)."
         },
         "tolerance_mm": {
           "type": "number",
@@ -742,7 +742,7 @@
   {
     "name": "share_session",
     "title": "Share Session",
-    "description": "Share this session as a live, watchable link (mcp.vcad.io/live/<id>). Sessions are PRIVATE by default — this is the explicit opt-in that makes one viewable. Anyone with the returned link can watch the geometry + full event log (read-only) and drop annotations, so the result includes a clear public-link warning. Revoke anytime with unshare_session.",
+    "description": "Share this session as a live, watchable link (mcp.vcad.io/live/<id>). Sessions are PRIVATE by default \u2014 this is the explicit opt-in that makes one viewable. Anyone with the returned link can watch the geometry + full event log (read-only) and drop annotations, so the result includes a clear public-link warning. Revoke anytime with unshare_session.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -762,13 +762,13 @@
   {
     "name": "unshare_session",
     "title": "Unshare Session",
-    "description": "Revoke a session's live link — it goes dead and the session is private again.",
+    "description": "Revoke a session's live link \u2014 it goes dead and the session is private again.",
     "inputSchema": {
       "type": "object",
       "properties": {
         "document_id": {
           "type": "string",
-          "description": "Session id to stop sharing — the live link goes dead."
+          "description": "Session id to stop sharing \u2014 the live link goes dead."
         }
       },
       "required": [
@@ -782,7 +782,7 @@
   {
     "name": "search_parts",
     "title": "Search Stdlib Parts",
-    "description": "Search the stdlib parts library (fasteners, bearings, …). Matches across name, category, synonyms, and catalog part numbers (McMaster / ISO / DIN). Returns an array of {id, name, category, params, xrefs, synonyms} — use `id` with `place_part`. Part numbers like '91290A320' or 'ISO 4762' match directly.",
+    "description": "Search the stdlib parts library (fasteners, bearings, \u2026). Matches across name, category, synonyms, and catalog part numbers (McMaster / ISO / DIN). Returns an array of {id, name, category, params, xrefs, synonyms} \u2014 use `id` with `place_part`. Part numbers like '91290A320' or 'ISO 4762' match directly.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -792,7 +792,7 @@
         },
         "category": {
           "type": "string",
-          "description": "Optional category filter ('Fasteners', 'Bearings', …)."
+          "description": "Optional category filter ('Fasteners', 'Bearings', \u2026)."
         },
         "limit": {
           "type": "integer",
@@ -807,7 +807,7 @@
   {
     "name": "place_part",
     "title": "Place Part",
-    "description": "Insert a stdlib part into the session's document. Takes a `document_id`, a `path` (from `search_parts.id`), and an optional `params` map; missing params use declared defaults. The part remains parametric — end users can edit its params from the feature tree.",
+    "description": "Insert a stdlib part into the session's document. Takes a `document_id`, a `path` (from `search_parts.id`), and an optional `params` map; missing params use declared defaults. The part remains parametric \u2014 end users can edit its params from the feature tree.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -821,7 +821,7 @@
         },
         "params": {
           "type": "object",
-          "description": "Parameter name → value map. Missing params take the part's declared defaults.",
+          "description": "Parameter name \u2192 value map. Missing params take the part's declared defaults.",
           "additionalProperties": true
         },
         "position": {
@@ -856,7 +856,7 @@
   {
     "name": "create",
     "title": "Create Feature Node",
-    "description": "Add a single feature node to a session document: a primitive (cube/cylinder/sphere/cone), boolean (union/difference/intersection), transform (translate/rotate/scale), sketch-based feature (extrude/revolve/sweep/loft), pattern, or modifier (fillet/chamfer/shell). Per-type parameters are in the Type Catalog in this server's instructions. One node per call — for whole parts or multi-feature models prefer `create_cad_loon`.",
+    "description": "Add a single feature node to a session document: a primitive (cube/cylinder/sphere/cone), boolean (union/difference/intersection), transform (translate/rotate/scale), sketch-based feature (extrude/revolve/sweep/loft), pattern, or modifier (fillet/chamfer/shell). Per-type parameters are in the Type Catalog in this server's instructions. One node per call \u2014 for whole parts or multi-feature models prefer `create_cad_loon`.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -865,11 +865,11 @@
           "description": "Session id from open_document. The tool mutates this session's document."
         },
         "name": {
-          "description": "Optional human-readable name for this feature (e.g. 'Front Wheel', 'Top Tube', 'Seat Post'). Strongly recommended — makes the feature tree readable. Keep short (1-3 words).",
+          "description": "Optional human-readable name for this feature (e.g. 'Front Wheel', 'Top Tube', 'Seat Post'). Strongly recommended \u2014 makes the feature tree readable. Keep short (1-3 words).",
           "type": "string"
         },
         "params": {
-          "description": "Parameters for the chosen `type` — see the Type Catalog in this server's instructions (e.g. cube: {size:{x,y,z}}, cylinder: {radius,height}).",
+          "description": "Parameters for the chosen `type` \u2014 see the Type Catalog in this server's instructions (e.g. cube: {size:{x,y,z}}, cylinder: {radius,height}).",
           "type": "object"
         },
         "parent_part_id": {
@@ -945,7 +945,7 @@
   {
     "name": "update",
     "title": "Update Node",
-    "description": "Update parameters on an existing node — pass only the fields to change. The surgical-edit tool: when geometry is misplaced or mis-sized, prefer this over delete + re-create. Use `read` to find node ids. The result reports a compact `changed` diff of affected parts.",
+    "description": "Update parameters on an existing node \u2014 pass only the fields to change. The surgical-edit tool: when geometry is misplaced or mis-sized, prefer this over delete + re-create. Use `read` to find node ids. The result reports a compact `changed` diff of affected parts.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -1001,7 +1001,7 @@
   {
     "name": "set_material",
     "title": "Set Material",
-    "description": "Set a part's material preset. Keys — metals: aluminum, steel, brass, copper, titanium, chrome, gold, silver; plastics: abs-white, abs-black, abs-red, abs-blue, pla, petg, nylon, resin, acrylic, rubber; organic: oak, walnut, leather, cork, bamboo; glass: glass, glass-tinted; composite: carbon-fiber, fiberglass, kevlar; other: concrete, ceramic, foam.",
+    "description": "Set a part's material preset. Keys \u2014 metals: aluminum, steel, brass, copper, titanium, chrome, gold, silver; plastics: abs-white, abs-black, abs-red, abs-blue, pla, petg, nylon, resin, acrylic, rubber; organic: oak, walnut, leather, cork, bamboo; glass: glass, glass-tinted; composite: carbon-fiber, fiberglass, kevlar; other: concrete, ceramic, foam.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -1031,7 +1031,7 @@
   {
     "name": "inspect_part",
     "title": "Inspect Part",
-    "description": "Read a part's current world-space geometry: bounding box, size, center, translate, rotation, material, and the set of named anchors (center/min/max/top/bottom/front/back/left/right) you can pass to `place`. Use this to verify what the scene looks like after a tool call without spending tokens on a screenshot — it's much cheaper than screenshot_viewport. Result is JSON.",
+    "description": "Read a part's current world-space geometry: bounding box, size, center, translate, rotation, material, and the set of named anchors (center/min/max/top/bottom/front/back/left/right) you can pass to `place`. Use this to verify what the scene looks like after a tool call without spending tokens on a screenshot \u2014 it's much cheaper than screenshot_viewport. Result is JSON.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -1056,7 +1056,7 @@
   {
     "name": "describe_scene",
     "title": "Describe Scene",
-    "description": "One-call snapshot of the whole scene (or a subset of parts): each part's world-space bbox, center, translate, rotate, and material as JSON. Use this INSTEAD of a chain of `inspect_part` calls when you need positions for several parts at once — one turn, no round-trips. Also use it after a batch of edits to verify where everything ended up.",
+    "description": "One-call snapshot of the whole scene (or a subset of parts): each part's world-space bbox, center, translate, rotate, and material as JSON. Use this INSTEAD of a chain of `inspect_part` calls when you need positions for several parts at once \u2014 one turn, no round-trips. Also use it after a batch of edits to verify where everything ended up.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -1087,7 +1087,7 @@
   {
     "name": "get_preview_glb",
     "title": "Get Preview GLB",
-    "description": "Return a base64 GLB preview of an open session document. Internal to the inline 3D viewer — agents should use `export_cad` for geometry exports.",
+    "description": "Return a base64 GLB preview of an open session document. Internal to the inline 3D viewer \u2014 agents should use `export_cad` for geometry exports.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -1115,7 +1115,7 @@
   {
     "name": "get_preview_version",
     "title": "Get Preview Version",
-    "description": "Return a cheap {document_id, version} change token for an open session document (no geometry eval). Internal to the inline 3D viewer's self-refresh poll — agents should ignore it.",
+    "description": "Return a cheap {document_id, version} change token for an open session document (no geometry eval). Internal to the inline 3D viewer's self-refresh poll \u2014 agents should ignore it.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -1170,12 +1170,21 @@
     },
     "annotations": {
       "readOnlyHint": false
+    },
+    "_meta": {
+      "ui": {
+        "resourceUri": "ui://vcad/viewer"
+      },
+      "ui/resourceUri": "ui://vcad/viewer",
+      "openai/outputTemplate": "ui://vcad/viewer-openai.html",
+      "openai/toolInvocation/invoking": "Modeling geometry\u2026",
+      "openai/toolInvocation/invoked": "Model updated"
     }
   },
   {
     "name": "create_cad_loon",
     "title": "Create CAD (Loon)",
-    "description": "The preferred authoring tool for whole parts and multi-feature models — one call, full vocabulary. Create a CAD document from loon source code. Loon is a Lisp-like language for parametric CAD — the FULL modeling vocabulary (patterns, sketches, extrude/revolve/sweep/loft, assemblies) is available here even where no dedicated MCP tool exists. For incremental single-node edits to an open session, use create/update/delete instead.\n\nPrimitives: [cube x y z], [cylinder r h], [sphere r], [cone r-bottom r-top h]\nBooleans (subject-last): [difference tool subject], [union other subject], [intersection other subject]\nTransforms (subject-last): [translate x y z s], [rotate rx ry rz s], [scale sx sy sz s]\nFeatures: [fillet r s], [chamfer d s], [shell t s]\nPatterns (subject-last): [linear-pattern dx dy dz count spacing s], [circular-pattern ox oy oz ax ay az count angle s] — e.g. a bolt circle is [circular-pattern 0 0 0 0 0 1 6 360 bolt-hole]\nSketches: [sketch ox oy oz xx xy xz yx yy yz #[segments]] with [line x1 y1 x2 y2] and [arc x1 y1 x2 y2 cx cy ccw]\nSketch ops (sketch-last): [extrude dx dy dz sk], [revolve aox aoy aoz adx ady adz angle sk], [sweep-line sx sy sz ex ey ez sk], [sweep-helix radius pitch height turns sk], [loft #[sk1 sk2 …]]\nAssemblies: [assembly #[parts] #[instances] #[joints] ground-id] with [part name solid \"material\"], [instance name part-name x y z], [revolute-joint …], [prismatic-joint …], [fixed-joint …], [ball-joint …]\nPipe: [pipe [cube 50 30 5] [difference [cylinder 3 10]] [fillet 1.0]]\nLet bindings: [let body [cube 50 30 5]]\nScene: [root solid \"material-name\"]",
+    "description": "The preferred authoring tool for whole parts and multi-feature models \u2014 one call, full vocabulary. Create a CAD document from loon source code. Loon is a Lisp-like language for parametric CAD \u2014 the FULL modeling vocabulary (patterns, sketches, extrude/revolve/sweep/loft, assemblies) is available here even where no dedicated MCP tool exists. For incremental single-node edits to an open session, use create/update/delete instead.\n\nPrimitives: [cube x y z], [cylinder r h], [sphere r], [cone r-bottom r-top h]\nBooleans (subject-last): [difference tool subject], [union other subject], [intersection other subject]\nTransforms (subject-last): [translate x y z s], [rotate rx ry rz s], [scale sx sy sz s]\nFeatures: [fillet r s], [chamfer d s], [shell t s]\nPatterns (subject-last): [linear-pattern dx dy dz count spacing s], [circular-pattern ox oy oz ax ay az count angle s] \u2014 e.g. a bolt circle is [circular-pattern 0 0 0 0 0 1 6 360 bolt-hole]\nSketches: [sketch ox oy oz xx xy xz yx yy yz #[segments]] with [line x1 y1 x2 y2] and [arc x1 y1 x2 y2 cx cy ccw]\nSketch ops (sketch-last): [extrude dx dy dz sk], [revolve aox aoy aoz adx ady adz angle sk], [sweep-line sx sy sz ex ey ez sk], [sweep-helix radius pitch height turns sk], [loft #[sk1 sk2 \u2026]]\nAssemblies: [assembly #[parts] #[instances] #[joints] ground-id] with [part name solid \"material\"], [instance name part-name x y z], [revolute-joint \u2026], [prismatic-joint \u2026], [fixed-joint \u2026], [ball-joint \u2026]\nPipe: [pipe [cube 50 30 5] [difference [cylinder 3 10]] [fillet 1.0]]\nLet bindings: [let body [cube 50 30 5]]\nScene: [root solid \"material-name\"]",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -1205,14 +1214,14 @@
       },
       "ui/resourceUri": "ui://vcad/viewer",
       "openai/outputTemplate": "ui://vcad/viewer-openai.html",
-      "openai/toolInvocation/invoking": "Modeling geometry…",
+      "openai/toolInvocation/invoking": "Modeling geometry\u2026",
       "openai/toolInvocation/invoked": "Model updated"
     }
   },
   {
     "name": "export_cad",
     "title": "Export CAD",
-    "description": "Export a CAD document to a file. Supports STL (3D printing), GLB (visualization), and — for sheet-metal documents — STEP AP214 of the FOLDED body with true cylindrical bend faces (fab 3D pipelines like SendCutSend auto-detect bends/angles/directions; zero data entry). Format is determined by file extension.",
+    "description": "Export a CAD document to a file. Supports STL (3D printing), GLB (visualization), and \u2014 for sheet-metal documents \u2014 STEP AP214 of the FOLDED body with true cylindrical bend faces (fab 3D pipelines like SendCutSend auto-detect bends/angles/directions; zero data entry). Format is determined by file extension.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -1230,7 +1239,7 @@
         },
         "filename": {
           "type": "string",
-          "description": "Output filename with extension (.stl, .glb, or — for sheet-metal documents — .step/.stp), relative to the server working directory (or VCAD_MCP_EXPORT_DIR if set). STEP exports the FOLDED sheet-metal body (AP214) with true cylindrical bend faces sized by the document's shop profile, so fab services with a 3D pipeline (e.g. SendCutSend) auto-detect bends, angles, and directions with zero data entry."
+          "description": "Output filename with extension (.stl, .glb, or \u2014 for sheet-metal documents \u2014 .step/.stp), relative to the server working directory (or VCAD_MCP_EXPORT_DIR if set). STEP exports the FOLDED sheet-metal body (AP214) with true cylindrical bend faces sized by the document's shop profile, so fab services with a 3D pipeline (e.g. SendCutSend) auto-detect bends, angles, and directions with zero data entry."
         }
       },
       "required": [
@@ -1278,7 +1287,7 @@
           "items": {
             "type": "string"
           },
-          "description": "One or two part ids (or part names). One id → that part's bbox, volume, and center of mass. Two ids → the minimum distance between them (0/negative = contact/overlap) plus each part's bbox."
+          "description": "One or two part ids (or part names). One id \u2192 that part's bbox, volume, and center of mass. Two ids \u2192 the minimum distance between them (0/negative = contact/overlap) plus each part's bbox."
         }
       },
       "required": [
@@ -1335,7 +1344,7 @@
         },
         "parameters": {
           "type": "object",
-          "description": "Map of parameter name → new numeric value, e.g. { \"r\": 12, \"h\": 8 }. Every name must already be declared in the document's parameters.",
+          "description": "Map of parameter name \u2192 new numeric value, e.g. { \"r\": 12, \"h\": 8 }. Every name must already be declared in the document's parameters.",
           "additionalProperties": {
             "type": "number"
           }
@@ -1361,7 +1370,7 @@
   {
     "name": "parameter_gradient",
     "title": "Parameter Gradient",
-    "description": "Differentiate a document's QoIs with respect to a single named parameter via the differentiable seam: per solid part, returns d(volume)/dθ, d(mass)/dθ, d(centroid)/dθ (exact analytic seam derivatives) and d(bbox extents)/dθ (finite difference), alongside each QoI's value. The parameter must be bound onto some geometry field. \"Solve for the geometry\" starts here.",
+    "description": "Differentiate a document's QoIs with respect to a single named parameter via the differentiable seam: per solid part, returns d(volume)/d\u03b8, d(mass)/d\u03b8, d(centroid)/d\u03b8 (exact analytic seam derivatives) and d(bbox extents)/d\u03b8 (finite difference), alongside each QoI's value. The parameter must be bound onto some geometry field. \"Solve for the geometry\" starts here.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -1379,7 +1388,7 @@
         },
         "density": {
           "type": "number",
-          "description": "Density fed to the mass integrals (mass = density · volume). Defaults to 1 (raw volume moments)."
+          "description": "Density fed to the mass integrals (mass = density \u00b7 volume). Defaults to 1 (raw volume moments)."
         },
         "probe_step": {
           "type": "number",
@@ -1397,7 +1406,7 @@
   {
     "name": "predict_print",
     "title": "Predict Print",
-    "description": "Snapshot the design's predicted measurables BEFORE 3D-printing it: kernel-evaluated bbox and mass (at a filament density), plus caller-declared feature dimensions (step heights, hole diameters, wall thicknesses) with design-intent values. Returns a PrintPrediction — save it; after printing, record_measurement joins caliper/scale readings against it. The prediction doubles as the guided measurement worksheet (each measurable carries a human instruction label).",
+    "description": "Snapshot the design's predicted measurables BEFORE 3D-printing it: kernel-evaluated bbox and mass (at a filament density), plus caller-declared feature dimensions (step heights, hole diameters, wall thicknesses) with design-intent values. Returns a PrintPrediction \u2014 save it; after printing, record_measurement joins caliper/scale readings against it. The prediction doubles as the guided measurement worksheet (each measurable carries a human instruction label).",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -1415,7 +1424,7 @@
         },
         "measurables": {
           "type": "array",
-          "description": "Named features the human will measure, with design-intent values — step heights, hole diameters, wall thicknesses. Merged with the auto measurables (bbox_x/y/z, mass). Derive `predicted` from the same parameters that built the geometry so prediction and part cannot drift.",
+          "description": "Named features the human will measure, with design-intent values \u2014 step heights, hole diameters, wall thicknesses. Merged with the auto measurables (bbox_x/y/z, mass). Derive `predicted` from the same parameters that built the geometry so prediction and part cannot drift.",
           "items": {
             "type": "object",
             "properties": {
@@ -1469,7 +1478,7 @@
               },
               "tolerance": {
                 "type": "number",
-                "description": "± tolerance; defaults to max(0.1mm, 0.2%) for dimensions, 5% for mass."
+                "description": "\u00b1 tolerance; defaults to max(0.1mm, 0.2%) for dimensions, 5% for mass."
               }
             },
             "required": [
@@ -1502,7 +1511,7 @@
         },
         "measurements": {
           "type": "object",
-          "description": "Measured values keyed by measurable id, in each measurable's own unit (mm or g), e.g. {\"bbox_x\": 79.82, \"hole_3mm\": 2.85, \"mass\": 26.4}. A partial set is fine — unmeasured ids are reported as missing, not errors.",
+          "description": "Measured values keyed by measurable id, in each measurable's own unit (mm or g), e.g. {\"bbox_x\": 79.82, \"hole_3mm\": 2.85, \"mass\": 26.4}. A partial set is fine \u2014 unmeasured ids are reported as missing, not errors.",
           "additionalProperties": {
             "type": "number"
           }
@@ -1521,7 +1530,7 @@
         },
         "prediction": {
           "type": "object",
-          "description": "A full PrintPrediction (as returned by predict_print) to measure against. Overrides the cached prediction — use this to replay a prediction.json after the session's warm instance recycled."
+          "description": "A full PrintPrediction (as returned by predict_print) to measure against. Overrides the cached prediction \u2014 use this to replay a prediction.json after the session's warm instance recycled."
         }
       },
       "required": [
@@ -1535,7 +1544,7 @@
   {
     "name": "render_view",
     "title": "Render View",
-    "description": "Render an open session document to an isometric PNG image so you can SEE the current geometry — silhouettes, holes, creases — not just numbers. Drafting-style line art, Z-up, same renderer as the vcad CLI. Call after mutations to visually confirm the part matches intent before declaring done.",
+    "description": "Render an open session document to an isometric PNG image so you can SEE the current geometry \u2014 silhouettes, holes, creases \u2014 not just numbers. Drafting-style line art, Z-up, same renderer as the vcad CLI. Call after mutations to visually confirm the part matches intent before declaring done.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -1560,7 +1569,7 @@
         },
         "width_px": {
           "type": "number",
-          "description": "Target raster width in pixels (default 800, clamped to 64–2048). Ignored when falling back to SVG output."
+          "description": "Target raster width in pixels (default 800, clamped to 64\u20132048). Ignored when falling back to SVG output."
         }
       }
     },
@@ -1571,13 +1580,13 @@
   {
     "name": "verify_part",
     "title": "Verify Part",
-    "description": "Grade an open session document against a mecheval benchmark task using the official deterministic graders (the exact binaries the leaderboard runs). Returns pass/fail per check — bounding box, mass properties, hole positions, STEP round-trip, … — with measured-vs-expected details so you can iterate until green. Use list_eval_tasks to browse task ids.",
+    "description": "Grade an open session document against a mecheval benchmark task using the official deterministic graders (the exact binaries the leaderboard runs). Returns pass/fail per check \u2014 bounding box, mass properties, hole positions, STEP round-trip, \u2026 \u2014 with measured-vs-expected details so you can iterate until green. Use list_eval_tasks to browse task ids.",
     "inputSchema": {
       "type": "object",
       "properties": {
         "document_id": {
           "type": "string",
-          "description": "Session id from open_document — the candidate document to grade."
+          "description": "Session id from open_document \u2014 the candidate document to grade."
         },
         "task_id": {
           "type": "string",
@@ -1613,13 +1622,13 @@
   {
     "name": "verify_spec",
     "title": "Verify Spec",
-    "description": "TDD for CAD: grade an open session document against a caller-supplied spec and return a fail-closed verification receipt (schema vcad.receipt/1). Declare the spec FIRST — bounding-box min/max ± tolerance, volume range, watertightness, exact part count, center of mass ± tolerance — then iterate the geometry until every claim rolls up to pass. Each claim reports measured vs expected. Fail-closed: an empty spec, a missing measurement, or a claim the kernel can't evaluate is `unverifiable`, never a silent pass. Unlike verify_part this needs no mecheval task — you supply the acceptance criteria.",
+    "description": "TDD for CAD: grade an open session document against a caller-supplied spec and return a fail-closed verification receipt (schema vcad.receipt/1). Declare the spec FIRST \u2014 bounding-box min/max \u00b1 tolerance, volume range, watertightness, exact part count, center of mass \u00b1 tolerance \u2014 then iterate the geometry until every claim rolls up to pass. Each claim reports measured vs expected. Fail-closed: an empty spec, a missing measurement, or a claim the kernel can't evaluate is `unverifiable`, never a silent pass. Unlike verify_part this needs no mecheval task \u2014 you supply the acceptance criteria.",
     "inputSchema": {
       "type": "object",
       "properties": {
         "document_id": {
           "type": "string",
-          "description": "Session id from open_document — the document to grade."
+          "description": "Session id from open_document \u2014 the document to grade."
         },
         "spec": {
           "type": "object",
@@ -1639,10 +1648,10 @@
                 },
                 "tol": {
                   "type": "number",
-                  "description": "± tolerance in mm applied per declared axis (default 0.01)."
+                  "description": "\u00b1 tolerance in mm applied per declared axis (default 0.01)."
                 }
               },
-              "description": "Bounding-box minimum corner (any subset of axes) ± tol."
+              "description": "Bounding-box minimum corner (any subset of axes) \u00b1 tol."
             },
             "bbox_max": {
               "type": "object",
@@ -1658,22 +1667,22 @@
                 },
                 "tol": {
                   "type": "number",
-                  "description": "± tolerance in mm applied per declared axis (default 0.01)."
+                  "description": "\u00b1 tolerance in mm applied per declared axis (default 0.01)."
                 }
               },
-              "description": "Bounding-box maximum corner (any subset of axes) ± tol."
+              "description": "Bounding-box maximum corner (any subset of axes) \u00b1 tol."
             },
             "volume": {
               "type": "object",
-              "description": "Enclosed volume must fall within [min, max] mm³ (either bound optional).",
+              "description": "Enclosed volume must fall within [min, max] mm\u00b3 (either bound optional).",
               "properties": {
                 "min": {
                   "type": "number",
-                  "description": "Minimum volume (mm³)."
+                  "description": "Minimum volume (mm\u00b3)."
                 },
                 "max": {
                   "type": "number",
-                  "description": "Maximum volume (mm³)."
+                  "description": "Maximum volume (mm\u00b3)."
                 }
               }
             },
@@ -1699,10 +1708,10 @@
                 },
                 "tol": {
                   "type": "number",
-                  "description": "± tolerance in mm applied per declared axis (default 0.01)."
+                  "description": "\u00b1 tolerance in mm applied per declared axis (default 0.01)."
                 }
               },
-              "description": "Center of mass (any subset of axes) ± tol."
+              "description": "Center of mass (any subset of axes) \u00b1 tol."
             }
           }
         }
@@ -1719,7 +1728,7 @@
   {
     "name": "dfm_check",
     "title": "DFM Check",
-    "description": "Run Design-for-Manufacturing checks against an open session document. For solid parts pick a mechanical process (cnc_3axis, fdm, sla, injection, sheet_metal, casting_sand, casting_investment) and get back severities, measurements, face references, and suggested fixes. For PCB documents pick a fab profile (pcb_jlcpcb, pcb_pcbway, pcb_generic_2layer, pcb_generic_4layer) to check the board against that fab's published process capability — min annular ring, min drill, min trace/space by copper weight, copper-to-edge, soldermask dam/sliver, silk-over-pad, acid traps, and via-in-pad — returning a per-rule pass/fail report naming the profile. Each rule's threshold is sourced from a TOML pack at lib/dfm/<process>.toml — pass `rule_pack_toml` to override.",
+    "description": "Run Design-for-Manufacturing checks against an open session document. For solid parts pick a mechanical process (cnc_3axis, fdm, sla, injection, sheet_metal, casting_sand, casting_investment) and get back severities, measurements, face references, and suggested fixes. For PCB documents pick a fab profile (pcb_jlcpcb, pcb_pcbway, pcb_generic_2layer, pcb_generic_4layer) to check the board against that fab's published process capability \u2014 min annular ring, min drill, min trace/space by copper weight, copper-to-edge, soldermask dam/sliver, silk-over-pad, acid traps, and via-in-pad \u2014 returning a per-rule pass/fail report naming the profile. Each rule's threshold is sourced from a TOML pack at lib/dfm/<process>.toml \u2014 pass `rule_pack_toml` to override.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -1746,7 +1755,7 @@
             "pcb_generic_2layer",
             "pcb_generic_4layer"
           ],
-          "description": "Manufacturing process (mechanical part) or PCB fab profile (board) to evaluate against. Mechanical: cnc_3axis, fdm, sla, injection, sheet_metal, casting_sand, casting_investment. PCB fab profiles: pcb_jlcpcb, pcb_pcbway, pcb_generic_2layer, pcb_generic_4layer — these run when the document is a PCB and check the board against that fab's published process capability (min annular ring, drill, trace/space by copper weight, copper-to-edge, soldermask dam/sliver, silk-over-pad, acid traps, via-in-pad). Each pack is bundled at lib/dfm/<process>.toml."
+          "description": "Manufacturing process (mechanical part) or PCB fab profile (board) to evaluate against. Mechanical: cnc_3axis, fdm, sla, injection, sheet_metal, casting_sand, casting_investment. PCB fab profiles: pcb_jlcpcb, pcb_pcbway, pcb_generic_2layer, pcb_generic_4layer \u2014 these run when the document is a PCB and check the board against that fab's published process capability (min annular ring, drill, trace/space by copper weight, copper-to-edge, soldermask dam/sliver, silk-over-pad, acid traps, via-in-pad). Each pack is bundled at lib/dfm/<process>.toml."
         },
         "rule_pack_toml": {
           "type": "string",
@@ -1770,7 +1779,7 @@
       "properties": {
         "document_id": {
           "type": "string",
-          "description": "Session id — looks the issue up in the report dfm_check cached for it."
+          "description": "Session id \u2014 looks the issue up in the report dfm_check cached for it."
         },
         "issue_id": {
           "type": "string",
@@ -1778,7 +1787,7 @@
         },
         "report": {
           "type": "object",
-          "description": "The DFM report dfm_check returned, passed back inline. Use this when the warm report cache is empty (cold serverless instance / instance flip) — it resolves the issue without a resident session."
+          "description": "The DFM report dfm_check returned, passed back inline. Use this when the warm report cache is empty (cold serverless instance / instance flip) \u2014 it resolves the issue without a resident session."
         }
       },
       "required": [
@@ -1798,14 +1807,14 @@
       "properties": {
         "document_id": {
           "type": "string",
-          "description": "Session id — looks the issue up in the report dfm_check cached for it."
+          "description": "Session id \u2014 looks the issue up in the report dfm_check cached for it."
         },
         "issue_id": {
           "type": "string"
         },
         "report": {
           "type": "object",
-          "description": "The DFM report dfm_check returned, passed back inline — the stateless path when the warm report cache is empty (cold serverless instance)."
+          "description": "The DFM report dfm_check returned, passed back inline \u2014 the stateless path when the warm report cache is empty (cold serverless instance)."
         }
       },
       "required": [
@@ -1819,7 +1828,7 @@
   {
     "name": "dfm_apply_fix",
     "title": "DFM Apply Fix",
-    "description": "Apply an approved DFM fix to the session document. v1 supports `set_param` patches (raise a fillet radius, thicken a wall) — other kinds throw and require manual edits. Re-run `dfm_check` afterwards to confirm the issue cleared.",
+    "description": "Apply an approved DFM fix to the session document. v1 supports `set_param` patches (raise a fillet radius, thicken a wall) \u2014 other kinds throw and require manual edits. Re-run `dfm_check` afterwards to confirm the issue cleared.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -1829,14 +1838,14 @@
         },
         "document": {
           "type": "object",
-          "description": "Inline Document IR to mutate instead of a session — the stateless path when no `document_id` is resident. The mutated document is echoed back."
+          "description": "Inline Document IR to mutate instead of a session \u2014 the stateless path when no `document_id` is resident. The mutated document is echoed back."
         },
         "issue_id": {
           "type": "string"
         },
         "report": {
           "type": "object",
-          "description": "The DFM report dfm_check returned, passed back inline — resolves the issue's fix when the warm report cache is empty (cold serverless instance)."
+          "description": "The DFM report dfm_check returned, passed back inline \u2014 resolves the issue's fix when the warm report cache is empty (cold serverless instance)."
         }
       },
       "required": [
@@ -1886,10 +1895,10 @@
         },
         "shop_profile": {
           "type": "string",
-          "description": "Optional fab-service catalog id, e.g. \"sendcutsend\". When set, every bend's inside radius and K-factor resolve from the shop's published bending calculator for the chosen material/thickness, so the flat pattern matches their tooling exactly. Custom `radius` values are REJECTED with an error naming the shop's fixed radius — omit `radius` on flanges/jogs to get it automatically. The material/thickness must exist in the shop's catalog (see sheet_metal_bend_table with shop_profile)."
+          "description": "Optional fab-service catalog id, e.g. \"sendcutsend\". When set, every bend's inside radius and K-factor resolve from the shop's published bending calculator for the chosen material/thickness, so the flat pattern matches their tooling exactly. Custom `radius` values are REJECTED with an error naming the shop's fixed radius \u2014 omit `radius` on flanges/jogs to get it automatically. The material/thickness must exist in the shop's catalog (see sheet_metal_bend_table with shop_profile)."
         },
         "bend_relief": {
-          "description": "Cut bend-relief notches at the ends of every bend. Pass `true` for defaults (width = max(1.5·t, 1 mm), depth = R + t, or the shop's published relief depth under a shop profile), or `{width_mm?, depth_mm?}` to size them explicitly. Parametric: affects the 3D body, flat pattern, and DXF."
+          "description": "Cut bend-relief notches at the ends of every bend. Pass `true` for defaults (width = max(1.5\u00b7t, 1 mm), depth = R + t, or the shop's published relief depth under a shop profile), or `{width_mm?, depth_mm?}` to size them explicitly. Parametric: affects the 3D body, flat pattern, and DXF."
         },
         "flanges": {
           "type": "array",
@@ -1907,7 +1916,7 @@
               },
               "angle": {
                 "type": "number",
-                "description": "Bend angle in radians. Default π/2 (90°)."
+                "description": "Bend angle in radians. Default \u03c0/2 (90\u00b0)."
               },
               "radius": {
                 "type": "number",
@@ -1938,7 +1947,7 @@
         },
         "jogs": {
           "type": "array",
-          "description": "Optional jogs (Z-shaped offsets) applied after all flanges and hems. Two 90° bends in series.",
+          "description": "Optional jogs (Z-shaped offsets) applied after all flanges and hems. Two 90\u00b0 bends in series.",
           "items": {
             "type": "object",
             "properties": {
@@ -1980,7 +1989,7 @@
         },
         "hems": {
           "type": "array",
-          "description": "Optional hems (180° folds) applied after all flanges. Use for edge stiffening / burr removal.",
+          "description": "Optional hems (180\u00b0 folds) applied after all flanges. Use for edge stiffening / burr removal.",
           "items": {
             "type": "object",
             "properties": {
@@ -1990,7 +1999,7 @@
               },
               "length": {
                 "type": "number",
-                "description": "Back-flange length (mm) — how far the hem extends past the fold."
+                "description": "Back-flange length (mm) \u2014 how far the hem extends past the fold."
               },
               "kind": {
                 "type": "string",
@@ -2039,7 +2048,7 @@
       },
       "ui/resourceUri": "ui://vcad/viewer",
       "openai/outputTemplate": "ui://vcad/viewer-openai.html",
-      "openai/toolInvocation/invoking": "Modeling geometry…",
+      "openai/toolInvocation/invoking": "Modeling geometry\u2026",
       "openai/toolInvocation/invoked": "Model updated"
     }
   },
@@ -2072,14 +2081,14 @@
       },
       "ui/resourceUri": "ui://vcad/viewer",
       "openai/outputTemplate": "ui://vcad/viewer-openai.html",
-      "openai/toolInvocation/invoking": "Modeling geometry…",
+      "openai/toolInvocation/invoking": "Modeling geometry\u2026",
       "openai/toolInvocation/invoked": "Model updated"
     }
   },
   {
     "name": "sheet_metal_check",
     "title": "Check Sheet Metal",
-    "description": "Run sheet-metal manufacturability for a session document against a shop profile (brake length, min R/t, flange height, hole→bend, bend→bend, bend relief, fixed radius). `shop_profile` is a catalog id string (e.g. \"sendcutsend\") or a capabilities object (field-tolerant: omit keys for generic defaults). Returns structured violations the agent can use to adjust the part and re-check.",
+    "description": "Run sheet-metal manufacturability for a session document against a shop profile (brake length, min R/t, flange height, hole\u2192bend, bend\u2192bend, bend relief, fixed radius). `shop_profile` is a catalog id string (e.g. \"sendcutsend\") or a capabilities object (field-tolerant: omit keys for generic defaults). Returns structured violations the agent can use to adjust the part and re-check.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -2088,7 +2097,7 @@
           "description": "Session id from sheet_metal_create."
         },
         "shop_profile": {
-          "description": "Optional shop capabilities. Either a catalog id string (e.g. \"sendcutsend\" — resolves the shop's published limits for the part's material/thickness, including fixed bend radius and relief depth) or a capabilities object. Object form is field-tolerant: omitted keys fall back to the generic shop. Keys: name, max_bend_length_mm, min_bend_radius_ratio, min_flange_height_mm, min_hole_to_bend_mm, min_distance_between_bends_mm, die_width_mm, relief_width_mm, relief_depth_mm, fixed_bend_radius_mm. Omit entirely to use the part's own shop_profile (if created with one), else generic."
+          "description": "Optional shop capabilities. Either a catalog id string (e.g. \"sendcutsend\" \u2014 resolves the shop's published limits for the part's material/thickness, including fixed bend radius and relief depth) or a capabilities object. Object form is field-tolerant: omitted keys fall back to the generic shop. Keys: name, max_bend_length_mm, min_bend_radius_ratio, min_flange_height_mm, min_hole_to_bend_mm, min_distance_between_bends_mm, die_width_mm, relief_width_mm, relief_depth_mm, fixed_bend_radius_mm. Omit entirely to use the part's own shop_profile (if created with one), else generic."
         }
       },
       "required": [
@@ -2114,13 +2123,13 @@
   {
     "name": "sheet_metal_bend_table",
     "title": "Sheet Metal Bend Table",
-    "description": "Read the kernel's curated bend table — `(material, thickness, radius) → K-factor` rows used to compute bend allowance. Pass `shop_profile` (e.g. \"sendcutsend\") to instead read that fab service's published catalog: fixed radii, K-factors, die widths, min flange sizes, and relief depths per material/thickness.",
+    "description": "Read the kernel's curated bend table \u2014 `(material, thickness, radius) \u2192 K-factor` rows used to compute bend allowance. Pass `shop_profile` (e.g. \"sendcutsend\") to instead read that fab service's published catalog: fixed radii, K-factors, die widths, min flange sizes, and relief depths per material/thickness.",
     "inputSchema": {
       "type": "object",
       "properties": {
         "shop_profile": {
           "type": "string",
-          "description": "Optional fab-service catalog id (e.g. \"sendcutsend\"). Returns that shop's published catalog — per-material/thickness fixed inside radii, K-factors, die widths, min flange sizes, relief depths, and max bend lengths — instead of the built-in generic table."
+          "description": "Optional fab-service catalog id (e.g. \"sendcutsend\"). Returns that shop's published catalog \u2014 per-material/thickness fixed inside radii, K-factors, die widths, min flange sizes, relief depths, and max bend lengths \u2014 instead of the built-in generic table."
         }
       }
     },
@@ -2131,7 +2140,7 @@
   {
     "name": "sheet_metal_cost",
     "title": "Sheet Metal Cost",
-    "description": "Estimate the manufacturing cost of a sheet-metal session document: material (mass × $/kg), cut (length × $/m), pierces, bends, amortized setup, plus shop markup. Returns a line-itemed breakdown so the agent can see which line dominates and which design changes would lower it. `rates` is field-tolerant; omit it to use generic low-volume laser defaults.",
+    "description": "Estimate the manufacturing cost of a sheet-metal session document: material (mass \u00d7 $/kg), cut (length \u00d7 $/m), pierces, bends, amortized setup, plus shop markup. Returns a line-itemed breakdown so the agent can see which line dominates and which design changes would lower it. `rates` is field-tolerant; omit it to use generic low-volume laser defaults.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -2145,7 +2154,7 @@
         },
         "rates": {
           "type": "object",
-          "description": "Optional shop pricing — field-tolerant (omit keys to use generic). Keys: currency, material_usd_per_kg, cut_usd_per_m, pierce_usd_each, bend_usd_each, setup_usd, markup_pct."
+          "description": "Optional shop pricing \u2014 field-tolerant (omit keys to use generic). Keys: currency, material_usd_per_kg, cut_usd_per_m, pierce_usd_each, bend_usd_each, setup_usd, markup_pct."
         }
       },
       "required": [
@@ -2159,7 +2168,7 @@
   {
     "name": "sheet_metal_suggest_fix",
     "title": "Sheet Metal Suggest Fix",
-    "description": "Translate the structured violations from sheet_metal_check into concrete parameter changes the agent can apply (radius up, flange longer, bends spread, etc.). Pass `violation_index` to target one, omit it to get a suggestion for every open violation. Closes the create → check → fix → re-check self-heal loop.",
+    "description": "Translate the structured violations from sheet_metal_check into concrete parameter changes the agent can apply (radius up, flange longer, bends spread, etc.). Pass `violation_index` to target one, omit it to get a suggestion for every open violation. Closes the create \u2192 check \u2192 fix \u2192 re-check self-heal loop.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -2168,7 +2177,7 @@
           "description": "Session id from sheet_metal_create."
         },
         "shop_profile": {
-          "description": "Optional shop profile — a catalog id string (e.g. \"sendcutsend\") or a capabilities object, same as sheet_metal_check. Defaults to the part's own shop profile, else generic."
+          "description": "Optional shop profile \u2014 a catalog id string (e.g. \"sendcutsend\") or a capabilities object, same as sheet_metal_check. Defaults to the part's own shop profile, else generic."
         },
         "violation_index": {
           "type": "number",
@@ -2186,7 +2195,7 @@
   {
     "name": "sheet_metal_sequence",
     "title": "Sheet Metal Bend Sequence",
-    "description": "Return a feasible press-brake bend sequence for a sheet-metal part — outermost bends first so the remaining flat stays small and earlier bends don't collide with later ones. Each step includes the springback-compensated brake angle and a one-line rationale.",
+    "description": "Return a feasible press-brake bend sequence for a sheet-metal part \u2014 outermost bends first so the remaining flat stays small and earlier bends don't collide with later ones. Each step includes the springback-compensated brake angle and a one-line rationale.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -2206,7 +2215,7 @@
   {
     "name": "sheet_metal_nest",
     "title": "Sheet Metal Nest",
-    "description": "Pack multiple sheet-metal parts on stock sheets using bottom-left fill decreasing. Each part is either a session `document_id` (footprint inferred from the flat pattern) or an explicit `{width_mm, height_mm}`. Returns per-instance placements, sheets used, and utilization — enough to drive a multi-part DXF and a real quote.",
+    "description": "Pack multiple sheet-metal parts on stock sheets using bottom-left fill decreasing. Each part is either a session `document_id` (footprint inferred from the flat pattern) or an explicit `{width_mm, height_mm}`. Returns per-instance placements, sheets used, and utilization \u2014 enough to drive a multi-part DXF and a real quote.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -2219,7 +2228,7 @@
         },
         "params": {
           "type": "object",
-          "description": "Stock + spacing. Keys: stock_width_mm, stock_height_mm, spacing_mm, edge_margin_mm, allow_rotation. Field-tolerant — defaults to a 4'×8' sheet with 3 mm spacing."
+          "description": "Stock + spacing. Keys: stock_width_mm, stock_height_mm, spacing_mm, edge_margin_mm, allow_rotation. Field-tolerant \u2014 defaults to a 4'\u00d78' sheet with 3 mm spacing."
         }
       },
       "required": [
@@ -2264,14 +2273,14 @@
       },
       "ui/resourceUri": "ui://vcad/viewer",
       "openai/outputTemplate": "ui://vcad/viewer-openai.html",
-      "openai/toolInvocation/invoking": "Modeling geometry…",
+      "openai/toolInvocation/invoking": "Modeling geometry\u2026",
       "openai/toolInvocation/invoked": "Model updated"
     }
   },
   {
     "name": "import_kicad",
     "title": "Import KiCad",
-    "description": "Import an existing KiCad .kicad_pcb board into a live session — board outline, footprints with pads + nets, design rules, and any routed traces/vias/zones. Returns a document_id ready for render_pcb, run_drc, get_pad_positions, route_nets, and export_gerber. Pass content_base64 on hosted servers.",
+    "description": "Import an existing KiCad .kicad_pcb board into a live session \u2014 board outline, footprints with pads + nets, design rules, and any routed traces/vias/zones. Returns a document_id ready for render_pcb, run_drc, get_pad_positions, route_nets, and export_gerber. Pass content_base64 on hosted servers.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -2480,7 +2489,7 @@
   {
     "name": "load_structure",
     "title": "Load Structure",
-    "description": "Import an atomic structure from XYZ / extended-XYZ text (or accept a MoleculeSystem) and return the molecule plus a summary (formula, atom count, radius of gyration, bonds, periodicity). Units are Ångström.",
+    "description": "Import an atomic structure from XYZ / extended-XYZ text (or accept a MoleculeSystem) and return the molecule plus a summary (formula, atom count, radius of gyration, bonds, periodicity). Units are \u00c5ngstr\u00f6m.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -2539,7 +2548,7 @@
         },
         "force_tol": {
           "type": "number",
-          "description": "Force tolerance eV/Å (default 1e-4)."
+          "description": "Force tolerance eV/\u00c5 (default 1e-4)."
         }
       },
       "required": [
@@ -2600,7 +2609,7 @@
         },
         "target": {
           "type": "number",
-          "description": "Target property value (Å)."
+          "description": "Target property value (\u00c5)."
         },
         "scale_bounds": {
           "type": "array",
@@ -2623,13 +2632,13 @@
   {
     "name": "homogenize_material",
     "title": "Homogenize Material",
-    "description": "Homogenize a periodic crystal into bulk material properties — density (kg/m³), cubic elastic constants C11/C12/C44 and VRH isotropic moduli (GPa) — the atoms-to-continuum bridge. Requires a fully periodic cell.",
+    "description": "Homogenize a periodic crystal into bulk material properties \u2014 density (kg/m\u00b3), cubic elastic constants C11/C12/C44 and VRH isotropic moduli (GPa) \u2014 the atoms-to-continuum bridge. Requires a fully periodic cell.",
     "inputSchema": {
       "type": "object",
       "properties": {
         "molecule": {
           "type": "object",
-          "description": "MoleculeSystem to homogenize — must have a periodic cell."
+          "description": "MoleculeSystem to homogenize \u2014 must have a periodic cell."
         },
         "force_field": {
           "type": "string",
@@ -2647,15 +2656,15 @@
         },
         "sigma": {
           "type": "number",
-          "description": "LJ sigma (Å)."
+          "description": "LJ sigma (\u00c5)."
         },
         "cutoff": {
           "type": "number",
-          "description": "LJ cutoff (Å)."
+          "description": "LJ cutoff (\u00c5)."
         },
         "bond_k": {
           "type": "number",
-          "description": "Harmonic bond force constant (eV/Å²) for the 'bonds'/'auto' force field (default 20). Moduli scale linearly with it."
+          "description": "Harmonic bond force constant (eV/\u00c5\u00b2) for the 'bonds'/'auto' force field (default 20). Moduli scale linearly with it."
         },
         "strain": {
           "type": "number",
@@ -2677,7 +2686,7 @@
   {
     "name": "render_molecule",
     "title": "Render Molecule",
-    "description": "Render a molecule as an isometric ball-and-stick (or space-filling) SVG with CPK colors and depth sorting — agent eyes on atomic structures.",
+    "description": "Render a molecule as an isometric ball-and-stick (or space-filling) SVG with CPK colors and depth sorting \u2014 agent eyes on atomic structures.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -2709,7 +2718,7 @@
   {
     "name": "record_simulation",
     "title": "Record Simulation",
-    "description": "Step an open physics env N times and return an animated GIF of the run — your eyes on the simulation. Drives the env created via create_robot_env, mutates the paired session document's joint states each step, and re-renders through the same kernel SVG pipeline as render_view. Defaults to passive playback (zero torque) under gravity; pass `action` (constant) or `actions[steps][action_dim]` (per-step) for active control. Hard caps: steps ≤ 600, width_px ≤ 1024. Requires the optional `@resvg/resvg-js` rasterizer and `gifenc` encoder; degrades to a JSON joint-trajectory dump when either is missing.",
+    "description": "Step an open physics env N times and return an animated GIF of the run \u2014 your eyes on the simulation. Drives the env created via create_robot_env, mutates the paired session document's joint states each step, and re-renders through the same kernel SVG pipeline as render_view. Defaults to passive playback (zero torque) under gravity; pass `action` (constant) or `actions[steps][action_dim]` (per-step) for active control. Hard caps: steps \u2264 600, width_px \u2264 1024. Requires the optional `@resvg/resvg-js` rasterizer and `gifenc` encoder; degrades to a JSON joint-trajectory dump when either is missing.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -2723,7 +2732,7 @@
         },
         "steps": {
           "type": "number",
-          "description": "Number of simulation steps to record (1–600)."
+          "description": "Number of simulation steps to record (1\u2013600)."
         },
         "action_type": {
           "type": "string",
@@ -2753,7 +2762,7 @@
         },
         "fps": {
           "type": "number",
-          "description": "Playback frame rate of the encoded GIF (1–60, default 30)."
+          "description": "Playback frame rate of the encoded GIF (1\u201360, default 30)."
         },
         "view": {
           "type": "string",
@@ -2768,7 +2777,7 @@
         },
         "width_px": {
           "type": "number",
-          "description": "Raster width per frame (64–1024, default 480)."
+          "description": "Raster width per frame (64\u20131024, default 480)."
         }
       },
       "required": [
@@ -2939,7 +2948,7 @@
   {
     "name": "create_schematic",
     "title": "Create Schematic",
-    "description": "Create a schematic from components plus connectivity, and open it as a server-side session. Declare connectivity as data with `nets` ({\"PHA\": [\"L1.1\", \"J1.1\"]}) — more reliable than wire/label coordinates. Returns a document_id for place_components / route_nets / export_gerber, plus the resolved netlist so broken connectivity is visible immediately.",
+    "description": "Create a schematic from components plus connectivity, and open it as a server-side session. Declare connectivity as data with `nets` ({\"PHA\": [\"L1.1\", \"J1.1\"]}) \u2014 more reliable than wire/label coordinates. Returns a document_id for place_components / route_nets / export_gerber, plus the resolved netlist so broken connectivity is visible immediately.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -2983,7 +2992,7 @@
               },
               "pins": {
                 "type": "array",
-                "description": "Component pins. Optional when `part` (or `value`) names a part in the database — pins are auto-resolved. Provide explicitly to override the database or to define a part it doesn't cover.",
+                "description": "Component pins. Optional when `part` (or `value`) names a part in the database \u2014 pins are auto-resolved. Provide explicitly to override the database or to define a part it doesn't cover.",
                 "items": {
                   "type": "object",
                   "properties": {
@@ -3122,7 +3131,7 @@
         },
         "nets": {
           "type": "object",
-          "description": "Explicit netlist: net name → array of pin refs (\"REF.PIN\"), e.g. {\"PHA\": [\"L1.1\", \"J1.1\"], \"GND\": [\"C1.2\", \"U1.4\"]}. The most reliable way to declare connectivity — no wire/label coordinates needed. Merged with any wire-derived connectivity; explicit names win.",
+          "description": "Explicit netlist: net name \u2192 array of pin refs (\"REF.PIN\"), e.g. {\"PHA\": [\"L1.1\", \"J1.1\"], \"GND\": [\"C1.2\", \"U1.4\"]}. The most reliable way to declare connectivity \u2014 no wire/label coordinates needed. Merged with any wire-derived connectivity; explicit names win.",
           "additionalProperties": {
             "type": "array",
             "items": {
@@ -3142,13 +3151,13 @@
   {
     "name": "place_components",
     "title": "Place Components",
-    "description": "Create the board and place schematic components on it. Mutates the session document (pass document_id). Outline: rectangle (board_width/height), circle with optional center bore (board_shape — e.g. a motor stator), or any polygon (outline, e.g. from board_from_solid). strategy=radial rings components for annular boards. Returns `placement_drc` — the pre-routing DRC subset (shorts, pad clearance, courtyard overlaps, off-board parts); when `placement_drc.clean` is false, fix the floorplan with set_placement before route_nets instead of routing on top of the fault. Also returns a `utilization` report (board vs occupied area, % used, component bounding box, and an advisory suggested_outline) so you can right-size an over-large board in one step.",
+    "description": "Create the board and place schematic components on it. Mutates the session document (pass document_id). Outline: rectangle (board_width/height), circle with optional center bore (board_shape \u2014 e.g. a motor stator), or any polygon (outline, e.g. from board_from_solid). strategy=radial rings components for annular boards. Returns `placement_drc` \u2014 the pre-routing DRC subset (shorts, pad clearance, courtyard overlaps, off-board parts); when `placement_drc.clean` is false, fix the floorplan with set_placement before route_nets instead of routing on top of the fault. Also returns a `utilization` report (board vs occupied area, % used, component bounding box, and an advisory suggested_outline) so you can right-size an over-large board in one step.",
     "inputSchema": {
       "type": "object",
       "properties": {
         "document_id": {
           "type": "string",
-          "description": "Session id from create_schematic or open_document. Preferred — the tool mutates the server-side session, so the full document never crosses the wire."
+          "description": "Session id from create_schematic or open_document. Preferred \u2014 the tool mutates the server-side session, so the full document never crosses the wire."
         },
         "document": {
           "type": "object",
@@ -3164,7 +3173,7 @@
         },
         "board_shape": {
           "type": "object",
-          "description": "Non-rectangular outline shorthand. Circle: {type: 'circle', outer_diameter, inner_diameter?} — inner_diameter > 0 adds a center bore cutout (e.g. a motor stator). Centered at (outer_diameter/2, outer_diameter/2) unless `center` is given.",
+          "description": "Non-rectangular outline shorthand. Circle: {type: 'circle', outer_diameter, inner_diameter?} \u2014 inner_diameter > 0 adds a center bore cutout (e.g. a motor stator). Centered at (outer_diameter/2, outer_diameter/2) unless `center` is given.",
           "properties": {
             "type": {
               "type": "string",
@@ -3248,7 +3257,7 @@
         },
         "strategy": {
           "type": "string",
-          "description": "Placement strategy: grid, force_directed, radial (default: grid). force_directed pulls net-sharing parts together and pushes overlapping courtyards apart (size-aware), then legalizes any different-net pad overlap to clearance so it never bakes in a short — prefer it for dense, multi-cluster boards (power stage + MCU + connectors) where routability matters. If the board is too small to separate every cross-net pad it reports `placement_conflicts` and success:false. radial places components evenly on a ring — natural for circular boards like motor stators."
+          "description": "Placement strategy: grid, force_directed, radial (default: grid). force_directed pulls net-sharing parts together and pushes overlapping courtyards apart (size-aware), then legalizes any different-net pad overlap to clearance so it never bakes in a short \u2014 prefer it for dense, multi-cluster boards (power stage + MCU + connectors) where routability matters. If the board is too small to separate every cross-net pad it reports `placement_conflicts` and success:false. radial places components evenly on a ring \u2014 natural for circular boards like motor stators."
         },
         "radial_radius": {
           "type": "number",
@@ -3260,7 +3269,7 @@
         },
         "edge_margin": {
           "type": "number",
-          "description": "Edge clearance in mm used when computing the advisory `utilization.suggested_outline` (default: max of the design-rule edge clearance and 2mm). Does not affect placement — only the suggested right-sized outline reported back."
+          "description": "Edge clearance in mm used when computing the advisory `utilization.suggested_outline` (default: max of the design-rule edge clearance and 2mm). Does not affect placement \u2014 only the suggested right-sized outline reported back."
         }
       },
       "required": []
@@ -3274,20 +3283,20 @@
       },
       "ui/resourceUri": "ui://vcad/viewer",
       "openai/outputTemplate": "ui://vcad/viewer-openai.html",
-      "openai/toolInvocation/invoking": "Modeling geometry…",
+      "openai/toolInvocation/invoking": "Modeling geometry\u2026",
       "openai/toolInvocation/invoked": "Model updated"
     }
   },
   {
     "name": "route_nets",
     "title": "Route Nets",
-    "description": "Route electrical nets on the PCB with copper traces. Connects pads belonging to the same net. Idempotent: re-running rips up the previously autorouted copper on the target nets before routing, so a second call replaces the route instead of stacking shorts. Hand-placed copper (add_trace / add_via / coils) is preserved automatically; `locked_nets` additionally protects whole nets. A net with a copper-pour zone (a plane) is connected by stitching each pad to the plane with a via instead of tracing it — those nets come back in `plane_stitched`. Mutates the session document (pass document_id).",
+    "description": "Route electrical nets on the PCB with copper traces. Connects pads belonging to the same net. Idempotent: re-running rips up the previously autorouted copper on the target nets before routing, so a second call replaces the route instead of stacking shorts. Hand-placed copper (add_trace / add_via / coils) is preserved automatically; `locked_nets` additionally protects whole nets. A net with a copper-pour zone (a plane) is connected by stitching each pad to the plane with a via instead of tracing it \u2014 those nets come back in `plane_stitched`. Mutates the session document (pass document_id).",
     "inputSchema": {
       "type": "object",
       "properties": {
         "document_id": {
           "type": "string",
-          "description": "Session id from create_schematic or open_document. Preferred — the tool mutates the server-side session, so the full document never crosses the wire."
+          "description": "Session id from create_schematic or open_document. Preferred \u2014 the tool mutates the server-side session, so the full document never crosses the wire."
         },
         "document": {
           "type": "object",
@@ -3305,19 +3314,19 @@
           "items": {
             "type": "string"
           },
-          "description": "Nets whose existing copper is preserved — never ripped up or re-routed by this call. Copper on these nets survives across route_nets passes; the kernel still routes every other net. Nets carrying hand-placed traces (add_trace / coil tools) get this protection automatically via copper provenance, so locking is only needed for copper the tools didn't tag (e.g. imported or injected boards)."
+          "description": "Nets whose existing copper is preserved \u2014 never ripped up or re-routed by this call. Copper on these nets survives across route_nets passes; the kernel still routes every other net. Nets carrying hand-placed traces (add_trace / coil tools) get this protection automatically via copper provenance, so locking is only needed for copper the tools didn't tag (e.g. imported or injected boards)."
         },
         "strategy": {
           "type": "string",
-          "description": "Net ordering: 'auto' (default — one negotiated whole-board pass, best quality), 'power_first' (route power/plane nets before signals), 'fanout_desc' (high pin-count nets first, to claim channels), or 'fanout_asc'. Non-auto strategies route in priority tiers, each tier seeing the previous tiers' copper as obstacles."
+          "description": "Net ordering: 'auto' (default \u2014 one negotiated whole-board pass, best quality), 'power_first' (route power/plane nets before signals), 'fanout_desc' (high pin-count nets first, to claim channels), or 'fanout_asc'. Non-auto strategies route in priority tiers, each tier seeing the previous tiers' copper as obstacles."
         },
         "trace_width": {
           "type": "number",
-          "description": "Fallback trace width in mm for nets with NO net class. Per-net-class widths AND clearances are applied automatically from the design rules (set_design_rules classes) — e.g. a VBAT/phase net in a 'power' class routes at the class width even if you pass a thin trace_width here. So you do NOT need one route_nets call per width; set classes once and route all nets together. Defaults to the default-class width."
+          "description": "Fallback trace width in mm for nets with NO net class. Per-net-class widths AND clearances are applied automatically from the design rules (set_design_rules classes) \u2014 e.g. a VBAT/phase net in a 'power' class routes at the class width even if you pass a thin trace_width here. So you do NOT need one route_nets call per width; set classes once and route all nets together. Defaults to the default-class width."
         },
         "receipt": {
           "type": "boolean",
-          "description": "When true, wrap the route in a before/after DRC and return a `receipt` verdict (what it fixed, what it introduced incl. shorts, with each violation attributed to footprint vs routing) — instead of just a document_id. Re-routing rips up the prior autorouted copper first (idempotent by construction); the receipt proves it, surfacing any re-route that would short the board."
+          "description": "When true, wrap the route in a before/after DRC and return a `receipt` verdict (what it fixed, what it introduced incl. shorts, with each violation attributed to footprint vs routing) \u2014 instead of just a document_id. Re-routing rips up the prior autorouted copper first (idempotent by construction); the receipt proves it, surfacing any re-route that would short the board."
         }
       },
       "required": []
@@ -3329,13 +3338,13 @@
   {
     "name": "add_coil",
     "title": "Add Coil",
-    "description": "Add a spiral copper coil (Archimedean) to the PCB — the primitive for PCB-motor stators and planar inductors. Generates the trace geometry on a layer, assigns it to a net, validates turn-to-turn clearance, and optionally drops a via at the (otherwise trapped) inner endpoint. Returns endpoints, copper length, and a DC resistance estimate. Verify-on-write: the result carries `drc_delta` — the DRC violations this call introduced (shorts/clearance/connectivity/manufacturing, capped sample with positions) with `clean` to branch on in one step.",
+    "description": "Add a spiral copper coil (Archimedean) to the PCB \u2014 the primitive for PCB-motor stators and planar inductors. Generates the trace geometry on a layer, assigns it to a net, validates turn-to-turn clearance, and optionally drops a via at the (otherwise trapped) inner endpoint. Returns endpoints, copper length, and a DC resistance estimate. Verify-on-write: the result carries `drc_delta` \u2014 the DRC violations this call introduced (shorts/clearance/connectivity/manufacturing, capped sample with positions) with `clean` to branch on in one step.",
     "inputSchema": {
       "type": "object",
       "properties": {
         "document_id": {
           "type": "string",
-          "description": "Session id from create_schematic or open_document. Preferred — the tool mutates the server-side session, so the full document never crosses the wire."
+          "description": "Session id from create_schematic or open_document. Preferred \u2014 the tool mutates the server-side session, so the full document never crosses the wire."
         },
         "document": {
           "type": "object",
@@ -3414,7 +3423,7 @@
           "items": {
             "type": "string"
           },
-          "description": "Build a STACKED multilayer coil: same spiral geometry on each copper layer (fields add), stitched together with vias at alternating inner/ outer terminals. Length 2 means front+back. When given, `layer` and the single-via escape (inner_via/via_to_layer) are ignored — stitching handles inter-layer connections."
+          "description": "Build a STACKED multilayer coil: same spiral geometry on each copper layer (fields add), stitched together with vias at alternating inner/ outer terminals. Length 2 means front+back. When given, `layer` and the single-via escape (inner_via/via_to_layer) are ignored \u2014 stitching handles inter-layer connections."
         }
       },
       "required": [
@@ -3433,13 +3442,13 @@
   {
     "name": "add_coil_array",
     "title": "Add Coil Array",
-    "description": "Lay a ring of `count` spiral coils evenly around `center` at `pitch_radius` — the placement primitive for a PCB-motor stator. Net per coil comes from `net_sequence` (cycled); `chirality` sets winding sense. GEOMETRY ONLY: it has no notion of phases — derive correct per-coil phase/polarity with `winding_layout` first, then map it onto net_sequence/chirality. Verify-on-write: the result carries `drc_delta` — the DRC violations this call introduced (shorts/clearance/connectivity/manufacturing, capped sample with positions) with `clean` to branch on in one step.",
+    "description": "Lay a ring of `count` spiral coils evenly around `center` at `pitch_radius` \u2014 the placement primitive for a PCB-motor stator. Net per coil comes from `net_sequence` (cycled); `chirality` sets winding sense. GEOMETRY ONLY: it has no notion of phases \u2014 derive correct per-coil phase/polarity with `winding_layout` first, then map it onto net_sequence/chirality. Verify-on-write: the result carries `drc_delta` \u2014 the DRC violations this call introduced (shorts/clearance/connectivity/manufacturing, capped sample with positions) with `clean` to branch on in one step.",
     "inputSchema": {
       "type": "object",
       "properties": {
         "document_id": {
           "type": "string",
-          "description": "Session id from create_schematic or open_document. Preferred — the tool mutates the server-side session, so the full document never crosses the wire."
+          "description": "Session id from create_schematic or open_document. Preferred \u2014 the tool mutates the server-side session, so the full document never crosses the wire."
         },
         "document": {
           "type": "object",
@@ -3510,7 +3519,7 @@
         },
         "chirality": {
           "type": "string",
-          "description": "Spiral winding sense: 'uniform' (all ccw, default), 'alternating' (ccw, cw, ccw, …), or a fixed 'ccw'/'cw'. GEOMETRY ONLY — it carries no phase/polarity meaning; derive correct per-coil polarity with winding_layout."
+          "description": "Spiral winding sense: 'uniform' (all ccw, default), 'alternating' (ccw, cw, ccw, \u2026), or a fixed 'ccw'/'cw'. GEOMETRY ONLY \u2014 it carries no phase/polarity meaning; derive correct per-coil polarity with winding_layout."
         },
         "segments_per_turn": {
           "type": "number",
@@ -3542,7 +3551,7 @@
   {
     "name": "winding_layout",
     "title": "Winding Layout",
-    "description": "Plan a balanced polyphase motor winding (slots + poles → per-coil phase, polarity, winding factor, feasibility) as DATA. Pure — it does NOT take a board or modify anything; inspect the plan, then realize it with add_coil_array/add_coil. Catches infeasible slot/pole combos and wrong polarity before any copper is drawn.",
+    "description": "Plan a balanced polyphase motor winding (slots + poles \u2192 per-coil phase, polarity, winding factor, feasibility) as DATA. Pure \u2014 it does NOT take a board or modify anything; inspect the plan, then realize it with add_coil_array/add_coil. Catches infeasible slot/pole combos and wrong polarity before any copper is drawn.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -3564,18 +3573,18 @@
         },
         "connection": {
           "type": "string",
-          "description": "'wye' (default) or 'delta' — phase termination topology"
+          "description": "'wye' (default) or 'delta' \u2014 phase termination topology"
         },
         "layer": {
           "type": "string",
-          "description": "'double' (default — one coil per tooth, the general FSCW case) or 'single'. Odd slot counts force double."
+          "description": "'double' (default \u2014 one coil per tooth, the general FSCW case) or 'single'. Odd slot counts force double."
         },
         "phase_nets": {
           "type": "array",
           "items": {
             "type": "string"
           },
-          "description": "Net name per phase, in order (default ['PHA','PHB','PHC',…])"
+          "description": "Net name per phase, in order (default ['PHA','PHB','PHC',\u2026])"
         },
         "neutral_net": {
           "type": "string",
@@ -3616,7 +3625,7 @@
         },
         "simplify_tolerance": {
           "type": "number",
-          "description": "Polygon simplification tolerance in mm (default: 1.5 × cell size)"
+          "description": "Polygon simplification tolerance in mm (default: 1.5 \u00d7 cell size)"
         }
       },
       "required": [
@@ -3630,7 +3639,7 @@
   {
     "name": "solid_from_board",
     "title": "Solid From Board",
-    "description": "Materialize the session PCB as a solid CAD part — the inverse of board_from_solid. Extrudes the board outline to its thickness through the hole-aware sketch path (bore/cutout polygons survive as real holes), adds simplified per-component keep-out volumes (kernel 3D body extents, else courtyard × package-class height), and gives the substrate a homogenized FR4+copper density so inspect_cad / physics see the real board mass. Inject into an existing CAD session with `document_id_target` (enclosure fit, motor stacks, clash checks) or omit it to mint a fresh session.",
+    "description": "Materialize the session PCB as a solid CAD part \u2014 the inverse of board_from_solid. Extrudes the board outline to its thickness through the hole-aware sketch path (bore/cutout polygons survive as real holes), adds simplified per-component keep-out volumes (kernel 3D body extents, else courtyard \u00d7 package-class height), and gives the substrate a homogenized FR4+copper density so inspect_cad / physics see the real board mass. Inject into an existing CAD session with `document_id_target` (enclosure fit, motor stacks, clash checks) or omit it to mint a fresh session.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -3644,7 +3653,7 @@
         },
         "include_components": {
           "type": "boolean",
-          "description": "Also emit simplified component keep-out volumes — one box per placed footprint, body extents from the kernel's 3D component bodies where available, else courtyard × a per-package-class default height. Default true."
+          "description": "Also emit simplified component keep-out volumes \u2014 one box per placed footprint, body extents from the kernel's 3D component bodies where available, else courtyard \u00d7 a per-package-class default height. Default true."
         },
         "part_name": {
           "type": "string",
@@ -3673,7 +3682,7 @@
   {
     "name": "check_enclosure_fit",
     "title": "Check Enclosure Fit",
-    "description": "Cross-check a board (board session) against the enclosure it ships in (a CAD session holding the case solid) — the verification axis no EDA tool has, because vcad owns both a BRep kernel and a PCB engine. Extracts the case cavity, standoffs, and wall cutouts from the solid mesh, then verifies: board fits with clearance, tall parts clear the lid, mounting holes land on standoffs, and connectors line up with the wall openings. Pass `derive:true` to also get a board outline + holes seeded from the cavity. Surfaced in build_receipt too.",
+    "description": "Cross-check a board (board session) against the enclosure it ships in (a CAD session holding the case solid) \u2014 the verification axis no EDA tool has, because vcad owns both a BRep kernel and a PCB engine. Extracts the case cavity, standoffs, and wall cutouts from the solid mesh, then verifies: board fits with clearance, tall parts clear the lid, mounting holes land on standoffs, and connectors line up with the wall openings. Pass `derive:true` to also get a board outline + holes seeded from the cavity. Surfaced in build_receipt too.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -3756,7 +3765,7 @@
   {
     "name": "check_clearance",
     "title": "Check Clearance",
-    "description": "Measure the minimum distance between two groups of parts in a CAD session and assert it stays above `min_mm` — air gaps, press fits, screw-head clearances. Reports the measured minimum (negative = penetration depth), the worst part pair, and pass/fail. Give it a `label` to persist the assertion on the document: build_receipt then emits it as a mech.clearance claim and verify_receipt re-verifies it as Holds / Stale / Violated when geometry changes.",
+    "description": "Measure the minimum distance between two groups of parts in a CAD session and assert it stays above `min_mm` \u2014 air gaps, press fits, screw-head clearances. Reports the measured minimum (negative = penetration depth), the worst part pair, and pass/fail. Give it a `label` to persist the assertion on the document: build_receipt then emits it as a mech.clearance claim and verify_receipt re-verifies it as Holds / Stale / Violated when geometry changes.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -3830,7 +3839,7 @@
   {
     "name": "search_footprints",
     "title": "Search Footprints",
-    "description": "Fuzzy-search footprint families by name/alias (e.g. 'SOIC 8', 'jst', 'qfn') and get ranked matches with a canonical example id — resolve a footprint id without a failed create_schematic round-trip.",
+    "description": "Fuzzy-search footprint families by name/alias (e.g. 'SOIC 8', 'jst', 'qfn') and get ranked matches with a canonical example id \u2014 resolve a footprint id without a failed create_schematic round-trip.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -3850,13 +3859,13 @@
   {
     "name": "get_pad_positions",
     "title": "Get Pad Positions",
-    "description": "Return every footprint pad's absolute board-frame (x, y), copper layer, and net — the coordinates manual routing (add_trace / add_via / add_via_array) needs so trace endpoints land exactly on pads instead of being eyeballed from component centers. Read-only. Optional `net` / `ref` filters narrow the result for targeted routing.",
+    "description": "Return every footprint pad's absolute board-frame (x, y), copper layer, and net \u2014 the coordinates manual routing (add_trace / add_via / add_via_array) needs so trace endpoints land exactly on pads instead of being eyeballed from component centers. Read-only. Optional `net` / `ref` filters narrow the result for targeted routing.",
     "inputSchema": {
       "type": "object",
       "properties": {
         "document_id": {
           "type": "string",
-          "description": "Session id from create_schematic or open_document. Preferred — the tool mutates the server-side session, so the full document never crosses the wire."
+          "description": "Session id from create_schematic or open_document. Preferred \u2014 the tool mutates the server-side session, so the full document never crosses the wire."
         },
         "document": {
           "type": "object",
@@ -3864,11 +3873,11 @@
         },
         "net": {
           "type": "string",
-          "description": "Optional net filter — return only pads on this net (e.g. 'GND', 'IMU_CS')."
+          "description": "Optional net filter \u2014 return only pads on this net (e.g. 'GND', 'IMU_CS')."
         },
         "ref": {
           "type": "string",
-          "description": "Optional reference-designator filter — return only pads on this component (e.g. 'U1')."
+          "description": "Optional reference-designator filter \u2014 return only pads on this component (e.g. 'U1')."
         }
       },
       "required": [
@@ -3882,13 +3891,13 @@
   {
     "name": "get_footprint",
     "title": "Get Footprint",
-    "description": "Introspect ONE footprint's land pattern in BOTH the footprint-local and board frames — origin, courtyard AABB, and every pad (with the explicit rotation convention) — so connector/IC pad locations are known exactly instead of render-and-guessed. Two modes: `ref` reads a placed footprint (real transform + nets) from the session; `footprint` resolves an id PRE-placement (pass `at`/`rotation`/`side` to project a hypothetical placement). Read-only.",
+    "description": "Introspect ONE footprint's land pattern in BOTH the footprint-local and board frames \u2014 origin, courtyard AABB, and every pad (with the explicit rotation convention) \u2014 so connector/IC pad locations are known exactly instead of render-and-guessed. Two modes: `ref` reads a placed footprint (real transform + nets) from the session; `footprint` resolves an id PRE-placement (pass `at`/`rotation`/`side` to project a hypothetical placement). Read-only.",
     "inputSchema": {
       "type": "object",
       "properties": {
         "document_id": {
           "type": "string",
-          "description": "Session id from create_schematic or open_document. Preferred — the tool mutates the server-side session, so the full document never crosses the wire."
+          "description": "Session id from create_schematic or open_document. Preferred \u2014 the tool mutates the server-side session, so the full document never crosses the wire."
         },
         "document": {
           "type": "object",
@@ -3904,7 +3913,7 @@
         },
         "ref": {
           "type": "string",
-          "description": "Reference designator of a PLACED footprint to introspect (e.g. 'J1') — reads its real board-frame transform, nets, and courtyard from the session document. Requires document_id. Use instead of `footprint`."
+          "description": "Reference designator of a PLACED footprint to introspect (e.g. 'J1') \u2014 reads its real board-frame transform, nets, and courtyard from the session document. Requires document_id. Use instead of `footprint`."
         },
         "at": {
           "type": "object",
@@ -3944,13 +3953,13 @@
   {
     "name": "describe_pcb",
     "title": "Describe PCB",
-    "description": "Inspect the session PCB as compact, structured data: board size + outline, stackup (layer names + copper weights), net classes / design rules, zones (net/layer/bbox/fill), trace & via counts by net and layer, component count, the current DRC status, and an exportability/renderability probe that actually serializes the board for fab + 3D preview — surfacing the 'DRC-clean but unexportable' state get_document/read can't see. Read-only.",
+    "description": "Inspect the session PCB as compact, structured data: board size + outline, stackup (layer names + copper weights), net classes / design rules, zones (net/layer/bbox/fill), trace & via counts by net and layer, component count, the current DRC status, and an exportability/renderability probe that actually serializes the board for fab + 3D preview \u2014 surfacing the 'DRC-clean but unexportable' state get_document/read can't see. Read-only.",
     "inputSchema": {
       "type": "object",
       "properties": {
         "document_id": {
           "type": "string",
-          "description": "Session id from create_schematic or open_document. Preferred — the tool mutates the server-side session, so the full document never crosses the wire."
+          "description": "Session id from create_schematic or open_document. Preferred \u2014 the tool mutates the server-side session, so the full document never crosses the wire."
         },
         "document": {
           "type": "object",
@@ -3968,13 +3977,13 @@
   {
     "name": "add_trace",
     "title": "Add Trace",
-    "description": "Lay an explicit copper trace: a polyline of segments on a layer, assigned to a net. The general-purpose routing primitive — use it for coil interconnect, buses, and hand-routes that route_nets (pad-driven) won't make. Tagged as manual copper, so route_nets preserves it instead of ripping it up. Mutates the session document. Verify-on-write: the result carries `drc_delta` — the DRC violations this call introduced (shorts/clearance/connectivity/manufacturing, capped sample with positions) with `clean` to branch on in one step.",
+    "description": "Lay an explicit copper trace: a polyline of segments on a layer, assigned to a net. The general-purpose routing primitive \u2014 use it for coil interconnect, buses, and hand-routes that route_nets (pad-driven) won't make. Tagged as manual copper, so route_nets preserves it instead of ripping it up. Mutates the session document. Verify-on-write: the result carries `drc_delta` \u2014 the DRC violations this call introduced (shorts/clearance/connectivity/manufacturing, capped sample with positions) with `clean` to branch on in one step.",
     "inputSchema": {
       "type": "object",
       "properties": {
         "document_id": {
           "type": "string",
-          "description": "Session id from create_schematic or open_document. Preferred — the tool mutates the server-side session, so the full document never crosses the wire."
+          "description": "Session id from create_schematic or open_document. Preferred \u2014 the tool mutates the server-side session, so the full document never crosses the wire."
         },
         "document": {
           "type": "object",
@@ -4025,13 +4034,13 @@
   {
     "name": "add_via",
     "title": "Add Via",
-    "description": "Drop a via at a point connecting two layers on a net (defaults FCu→BCu, diameter/drill from design rules). Pairs with add_trace for multi-layer routing. Mutates the session document. Verify-on-write: the result carries `drc_delta` — the DRC violations this call introduced (shorts/clearance/connectivity/manufacturing, capped sample with positions) with `clean` to branch on in one step.",
+    "description": "Drop a via at a point connecting two layers on a net (defaults FCu\u2192BCu, diameter/drill from design rules). Pairs with add_trace for multi-layer routing. Mutates the session document. Verify-on-write: the result carries `drc_delta` \u2014 the DRC violations this call introduced (shorts/clearance/connectivity/manufacturing, capped sample with positions) with `clean` to branch on in one step.",
     "inputSchema": {
       "type": "object",
       "properties": {
         "document_id": {
           "type": "string",
-          "description": "Session id from create_schematic or open_document. Preferred — the tool mutates the server-side session, so the full document never crosses the wire."
+          "description": "Session id from create_schematic or open_document. Preferred \u2014 the tool mutates the server-side session, so the full document never crosses the wire."
         },
         "document": {
           "type": "object",
@@ -4087,13 +4096,13 @@
   {
     "name": "set_stackup",
     "title": "Set Stackup",
-    "description": "Set the board stackup copper weight (e.g. copper_oz: 2) and/or per-layer thickness/material, so DC-resistance and impedance estimates reflect the real fab stackup instead of a default 1 oz. Mutates the session document. Verify-on-write: the result carries `drc_delta` — the DRC violations this call introduced (shorts/clearance/connectivity/manufacturing, capped sample with positions) with `clean` to branch on in one step.",
+    "description": "Set the board stackup copper weight (e.g. copper_oz: 2) and/or per-layer thickness/material, so DC-resistance and impedance estimates reflect the real fab stackup instead of a default 1 oz. Mutates the session document. Verify-on-write: the result carries `drc_delta` \u2014 the DRC violations this call introduced (shorts/clearance/connectivity/manufacturing, capped sample with positions) with `clean` to branch on in one step.",
     "inputSchema": {
       "type": "object",
       "properties": {
         "document_id": {
           "type": "string",
-          "description": "Session id from create_schematic or open_document. Preferred — the tool mutates the server-side session, so the full document never crosses the wire."
+          "description": "Session id from create_schematic or open_document. Preferred \u2014 the tool mutates the server-side session, so the full document never crosses the wire."
         },
         "document": {
           "type": "object",
@@ -4101,7 +4110,7 @@
         },
         "copper_oz": {
           "type": "number",
-          "description": "Copper weight in oz/ft² applied to ALL copper layers (1 oz = 0.0348 mm). The knob that fixes coil DC-resistance estimates, which assumed 1 oz."
+          "description": "Copper weight in oz/ft\u00b2 applied to ALL copper layers (1 oz = 0.0348 mm). The knob that fixes coil DC-resistance estimates, which assumed 1 oz."
         },
         "layers": {
           "type": "array",
@@ -4114,7 +4123,7 @@
               },
               "copper_oz": {
                 "type": "number",
-                "description": "Copper weight, oz/ft²"
+                "description": "Copper weight, oz/ft\u00b2"
               },
               "copper_thickness_mm": {
                 "type": "number",
@@ -4144,13 +4153,13 @@
   {
     "name": "set_placement",
     "title": "Set Placement",
-    "description": "Place footprints at explicit board-frame coordinates by ref — the floorplan realizer the auto-placer (grid/force_directed/radial) can't express: thermal rings, a quiet IMU corner, rim connectors. Batch; sets position/rotation/side and warns on off-board, in-cutout, or stacked landings. Mutates the session document. Returns the updated `placement_drc` (same shape as place_components) so a move can be re-checked in one call without running run_drc.",
+    "description": "Place footprints at explicit board-frame coordinates by ref \u2014 the floorplan realizer the auto-placer (grid/force_directed/radial) can't express: thermal rings, a quiet IMU corner, rim connectors. Batch; sets position/rotation/side and warns on off-board, in-cutout, or stacked landings. Mutates the session document. Returns the updated `placement_drc` (same shape as place_components) so a move can be re-checked in one call without running run_drc.",
     "inputSchema": {
       "type": "object",
       "properties": {
         "document_id": {
           "type": "string",
-          "description": "Session id from create_schematic or open_document. Preferred — the tool mutates the server-side session, so the full document never crosses the wire."
+          "description": "Session id from create_schematic or open_document. Preferred \u2014 the tool mutates the server-side session, so the full document never crosses the wire."
         },
         "document": {
           "type": "object",
@@ -4158,7 +4167,7 @@
         },
         "placements": {
           "type": "array",
-          "description": "Absolute per-component placements in the board-local frame (mm). Each entry targets a placed footprint by `ref`. Realizes a deliberate floorplan the auto-placer (grid/force_directed/radial) can't — thermal rings, a quiet IMU corner, rim connectors. Off-board, in-cutout, and stacked positions are reported as warnings, not silently accepted.",
+          "description": "Absolute per-component placements in the board-local frame (mm). Each entry targets a placed footprint by `ref`. Realizes a deliberate floorplan the auto-placer (grid/force_directed/radial) can't \u2014 thermal rings, a quiet IMU corner, rim connectors. Off-board, in-cutout, and stacked positions are reported as warnings, not silently accepted.",
           "items": {
             "type": "object",
             "properties": {
@@ -4180,7 +4189,7 @@
               },
               "side": {
                 "type": "string",
-                "description": "'top' (default) or 'bottom' — 'bottom' mirrors the footprint to the back copper"
+                "description": "'top' (default) or 'bottom' \u2014 'bottom' mirrors the footprint to the back copper"
               }
             },
             "required": [
@@ -4201,13 +4210,13 @@
   {
     "name": "set_board_outline",
     "title": "Set Board Outline",
-    "description": "Resize or reshape the board outline in place — rectangle (board_width/height), circle/annulus (board_shape), or any polygon (outline) — WITHOUT re-placing components, traces, vias, or zones. Unlike re-running place_components, the floorplan is preserved; any footprint whose origin ends up off the new board is reported in `off_board` rather than silently relocated. Mutates the session document. Verify-on-write: the result carries `drc_delta` — the DRC violations this call introduced (shorts/clearance/connectivity/manufacturing, capped sample with positions) with `clean` to branch on in one step.",
+    "description": "Resize or reshape the board outline in place \u2014 rectangle (board_width/height), circle/annulus (board_shape), or any polygon (outline) \u2014 WITHOUT re-placing components, traces, vias, or zones. Unlike re-running place_components, the floorplan is preserved; any footprint whose origin ends up off the new board is reported in `off_board` rather than silently relocated. Mutates the session document. Verify-on-write: the result carries `drc_delta` \u2014 the DRC violations this call introduced (shorts/clearance/connectivity/manufacturing, capped sample with positions) with `clean` to branch on in one step.",
     "inputSchema": {
       "type": "object",
       "properties": {
         "document_id": {
           "type": "string",
-          "description": "Session id from create_schematic or open_document. Preferred — the tool mutates the server-side session, so the full document never crosses the wire."
+          "description": "Session id from create_schematic or open_document. Preferred \u2014 the tool mutates the server-side session, so the full document never crosses the wire."
         },
         "document": {
           "type": "object",
@@ -4215,7 +4224,7 @@
         },
         "board_width": {
           "type": "number",
-          "description": "Rectangle width in mm — origin-corner outline (0,0)→(w,h). Pair with board_height."
+          "description": "Rectangle width in mm \u2014 origin-corner outline (0,0)\u2192(w,h). Pair with board_height."
         },
         "board_height": {
           "type": "number",
@@ -4312,13 +4321,13 @@
   {
     "name": "add_zone",
     "title": "Add Zone",
-    "description": "Add a copper pour (ground/power plane) on a net+layer — fills are not traces. `fill_board:true` pours the whole outline (cutouts become voids); or give an explicit polygon for a partial plane. Mutates the session document.",
+    "description": "Add a copper pour (ground/power plane) on a net+layer \u2014 fills are not traces. `fill_board:true` pours the whole outline (cutouts become voids); or give an explicit polygon for a partial plane. Mutates the session document.",
     "inputSchema": {
       "type": "object",
       "properties": {
         "document_id": {
           "type": "string",
-          "description": "Session id from create_schematic or open_document. Preferred — the tool mutates the server-side session, so the full document never crosses the wire."
+          "description": "Session id from create_schematic or open_document. Preferred \u2014 the tool mutates the server-side session, so the full document never crosses the wire."
         },
         "document": {
           "type": "object",
@@ -4353,7 +4362,7 @@
               "y"
             ]
           },
-          "description": "Explicit pour polygon, board-local mm (>= 3 points) — for a partial plane (e.g. a VBAT pour over the FET drains). Omit with fill_board:true for a board-spanning plane."
+          "description": "Explicit pour polygon, board-local mm (>= 3 points) \u2014 for a partial plane (e.g. a VBAT pour over the FET drains). Omit with fill_board:true for a board-spanning plane."
         },
         "clearance": {
           "type": "number",
@@ -4361,7 +4370,7 @@
         },
         "thermal_relief": {
           "type": "string",
-          "description": "Pour-to-same-net-pad connection: 'Relief' (default, spoke thermals — solderable), 'Direct' (solid copper), or 'None'."
+          "description": "Pour-to-same-net-pad connection: 'Relief' (default, spoke thermals \u2014 solderable), 'Direct' (solid copper), or 'None'."
         },
         "thermal_gap": {
           "type": "number",
@@ -4377,7 +4386,7 @@
         },
         "min_area": {
           "type": "number",
-          "description": "Discard isolated copper islands smaller than this, mm²"
+          "description": "Discard isolated copper islands smaller than this, mm\u00b2"
         },
         "priority": {
           "type": "number",
@@ -4400,13 +4409,13 @@
   {
     "name": "delete_zone",
     "title": "Delete Zone",
-    "description": "Remove a copper pour from the board — the take-back for a bad add_zone, without rebuilding the session. Target by `index` (0-based, the add order) or by `net`/`layer` when exactly one zone matches. Returns a `changed` diff of what was removed. To undo the very last mutation of any kind, use `undo` instead. Mutates the session document. Verify-on-write: the result carries `drc_delta` — the DRC violations this call introduced (shorts/clearance/connectivity/manufacturing, capped sample with positions) with `clean` to branch on in one step.",
+    "description": "Remove a copper pour from the board \u2014 the take-back for a bad add_zone, without rebuilding the session. Target by `index` (0-based, the add order) or by `net`/`layer` when exactly one zone matches. Returns a `changed` diff of what was removed. To undo the very last mutation of any kind, use `undo` instead. Mutates the session document. Verify-on-write: the result carries `drc_delta` \u2014 the DRC violations this call introduced (shorts/clearance/connectivity/manufacturing, capped sample with positions) with `clean` to branch on in one step.",
     "inputSchema": {
       "type": "object",
       "properties": {
         "document_id": {
           "type": "string",
-          "description": "Session id from create_schematic or open_document. Preferred — the tool mutates the server-side session, so the full document never crosses the wire."
+          "description": "Session id from create_schematic or open_document. Preferred \u2014 the tool mutates the server-side session, so the full document never crosses the wire."
         },
         "document": {
           "type": "object",
@@ -4437,13 +4446,13 @@
   {
     "name": "delete_trace",
     "title": "Delete Trace",
-    "description": "Remove a single routed trace segment by `index` (0-based, the add order) or by an unambiguous `net`/`layer` match. The take-back for a stray add_trace. Returns a `changed` diff. Mutates the session document. Verify-on-write: the result carries `drc_delta` — the DRC violations this call introduced (shorts/clearance/connectivity/manufacturing, capped sample with positions) with `clean` to branch on in one step.",
+    "description": "Remove a single routed trace segment by `index` (0-based, the add order) or by an unambiguous `net`/`layer` match. The take-back for a stray add_trace. Returns a `changed` diff. Mutates the session document. Verify-on-write: the result carries `drc_delta` \u2014 the DRC violations this call introduced (shorts/clearance/connectivity/manufacturing, capped sample with positions) with `clean` to branch on in one step.",
     "inputSchema": {
       "type": "object",
       "properties": {
         "document_id": {
           "type": "string",
-          "description": "Session id from create_schematic or open_document. Preferred — the tool mutates the server-side session, so the full document never crosses the wire."
+          "description": "Session id from create_schematic or open_document. Preferred \u2014 the tool mutates the server-side session, so the full document never crosses the wire."
         },
         "document": {
           "type": "object",
@@ -4474,13 +4483,13 @@
   {
     "name": "delete_via",
     "title": "Delete Via",
-    "description": "Remove a single via by `index` (0-based, the add order) or by an unambiguous `net` match. The take-back for a stray add_via. Returns a `changed` diff. Mutates the session document. Verify-on-write: the result carries `drc_delta` — the DRC violations this call introduced (shorts/clearance/connectivity/manufacturing, capped sample with positions) with `clean` to branch on in one step.",
+    "description": "Remove a single via by `index` (0-based, the add order) or by an unambiguous `net` match. The take-back for a stray add_via. Returns a `changed` diff. Mutates the session document. Verify-on-write: the result carries `drc_delta` \u2014 the DRC violations this call introduced (shorts/clearance/connectivity/manufacturing, capped sample with positions) with `clean` to branch on in one step.",
     "inputSchema": {
       "type": "object",
       "properties": {
         "document_id": {
           "type": "string",
-          "description": "Session id from create_schematic or open_document. Preferred — the tool mutates the server-side session, so the full document never crosses the wire."
+          "description": "Session id from create_schematic or open_document. Preferred \u2014 the tool mutates the server-side session, so the full document never crosses the wire."
         },
         "document": {
           "type": "object",
@@ -4507,13 +4516,13 @@
   {
     "name": "get_copper",
     "title": "Get Copper",
-    "description": "Query the board's routed copper — traces, trace arcs, vias, zones — with optional `layer`/`net`/`bbox`/`kind` filters. Each element comes back with its `kind` + `index`: exactly the addressing delete_trace / delete_via / delete_zone accept, so a query can drive a surgical delete without exporting the document. describe_pcb aggregates counts; this returns the elements themselves (geometry, width, net, layer), capped at 200 per page with `offset` pagination and a `total`. Read-only.",
+    "description": "Query the board's routed copper \u2014 traces, trace arcs, vias, zones \u2014 with optional `layer`/`net`/`bbox`/`kind` filters. Each element comes back with its `kind` + `index`: exactly the addressing delete_trace / delete_via / delete_zone accept, so a query can drive a surgical delete without exporting the document. describe_pcb aggregates counts; this returns the elements themselves (geometry, width, net, layer), capped at 200 per page with `offset` pagination and a `total`. Read-only.",
     "inputSchema": {
       "type": "object",
       "properties": {
         "document_id": {
           "type": "string",
-          "description": "Session id from create_schematic or open_document. Preferred — the tool mutates the server-side session, so the full document never crosses the wire."
+          "description": "Session id from create_schematic or open_document. Preferred \u2014 the tool mutates the server-side session, so the full document never crosses the wire."
         },
         "document": {
           "type": "object",
@@ -4575,13 +4584,13 @@
   {
     "name": "add_net_tie",
     "title": "Add Net Tie",
-    "description": "Declare an intentional junction between >= 2 nets (a net-tie) so DRC treats them as one node where they meet — required for wye/star motor neutrals, split grounds (GND+AGND), and current-sense shunt taps, which are otherwise reported as shorts. With `position`+`radius` the tie is region-scoped: clearance/short checks are exempt only for contacts inside the region, and connectivity accepts nets joined through copper when each has a tie-covered contact there — a stray crossing of the same nets elsewhere still fires. Without them the exemption is board-wide (prefer scoped: it keeps DRC honest away from the junction). Nets must exist on the board. Returns the updated tie list with indices. Mutates the session document. Verify-on-write: the result carries `drc_delta` — the DRC violations this call introduced or resolved (a tie edit changes short/clearance exemptions) with `clean` to branch on in one step.",
+    "description": "Declare an intentional junction between >= 2 nets (a net-tie) so DRC treats them as one node where they meet \u2014 required for wye/star motor neutrals, split grounds (GND+AGND), and current-sense shunt taps, which are otherwise reported as shorts. With `position`+`radius` the tie is region-scoped: clearance/short checks are exempt only for contacts inside the region, and connectivity accepts nets joined through copper when each has a tie-covered contact there \u2014 a stray crossing of the same nets elsewhere still fires. Without them the exemption is board-wide (prefer scoped: it keeps DRC honest away from the junction). Nets must exist on the board. Returns the updated tie list with indices. Mutates the session document. Verify-on-write: the result carries `drc_delta` \u2014 the DRC violations this call introduced or resolved (a tie edit changes short/clearance exemptions) with `clean` to branch on in one step.",
     "inputSchema": {
       "type": "object",
       "properties": {
         "document_id": {
           "type": "string",
-          "description": "Session id from create_schematic or open_document. Preferred — the tool mutates the server-side session, so the full document never crosses the wire."
+          "description": "Session id from create_schematic or open_document. Preferred \u2014 the tool mutates the server-side session, so the full document never crosses the wire."
         },
         "document": {
           "type": "object",
@@ -4592,7 +4601,7 @@
           "items": {
             "type": "string"
           },
-          "description": "Names of the nets joined at this tie (>= 2, all must exist on the board) — e.g. the three phases + neutral of a wye, or GND + AGND."
+          "description": "Names of the nets joined at this tie (>= 2, all must exist on the board) \u2014 e.g. the three phases + neutral of a wye, or GND + AGND."
         },
         "position": {
           "type": "object",
@@ -4627,13 +4636,13 @@
   {
     "name": "delete_net_tie",
     "title": "Delete Net Tie",
-    "description": "Remove a net tie by `index`, or by matching `nets` (set equality, order-insensitive) and/or `position` — the take-back for a bad add_net_tie. Any junction copper stays on the board; DRC will report it as a short again. Returns the deleted tie and the updated tie list. Mutates the session document. Verify-on-write: the result carries `drc_delta` — the DRC violations this call introduced or resolved (a tie edit changes short/clearance exemptions) with `clean` to branch on in one step.",
+    "description": "Remove a net tie by `index`, or by matching `nets` (set equality, order-insensitive) and/or `position` \u2014 the take-back for a bad add_net_tie. Any junction copper stays on the board; DRC will report it as a short again. Returns the deleted tie and the updated tie list. Mutates the session document. Verify-on-write: the result carries `drc_delta` \u2014 the DRC violations this call introduced or resolved (a tie edit changes short/clearance exemptions) with `clean` to branch on in one step.",
     "inputSchema": {
       "type": "object",
       "properties": {
         "document_id": {
           "type": "string",
-          "description": "Session id from create_schematic or open_document. Preferred — the tool mutates the server-side session, so the full document never crosses the wire."
+          "description": "Session id from create_schematic or open_document. Preferred \u2014 the tool mutates the server-side session, so the full document never crosses the wire."
         },
         "document": {
           "type": "object",
@@ -4664,7 +4673,7 @@
             "x",
             "y"
           ],
-          "description": "Match region-scoped ties centered here (±0.001 mm) — disambiguates when the same net set is tied at several junctions (e.g. the three X–Y ties of a delta winding)."
+          "description": "Match region-scoped ties centered here (\u00b10.001 mm) \u2014 disambiguates when the same net set is tied at several junctions (e.g. the three X\u2013Y ties of a delta winding)."
         }
       },
       "required": [
@@ -4679,7 +4688,7 @@
   {
     "name": "undo",
     "title": "Undo",
-    "description": "Rewind the most recent mutation on a session — the snapshot taken before the last add_zone / add_trace / add_via / delete_* / route_nets / place_components (or a CAD create/update/delete) is restored, without re-sending the document. Repeated calls walk further back. Returns a `changed` diff of the board elements the rewind moved.",
+    "description": "Rewind the most recent mutation on a session \u2014 the snapshot taken before the last add_zone / add_trace / add_via / delete_* / route_nets / place_components (or a CAD create/update/delete) is restored, without re-sending the document. Repeated calls walk further back. Returns a `changed` diff of the board elements the rewind moved.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -4699,13 +4708,13 @@
   {
     "name": "set_design_rules",
     "title": "Set Design Rules",
-    "description": "Set the board design rules run_drc enforces (clearance, track width, via, edge/hole/annular) and net classes — the way to give a power or high-voltage class wider clearance than signal nets. run_drc already reads pcb.rules; this writes them. Mutates the session document.",
+    "description": "Set the board design rules run_drc enforces (clearance, track width, via, edge/hole/annular) and net classes \u2014 the way to give a power or high-voltage class wider clearance than signal nets. run_drc already reads pcb.rules; this writes them. Mutates the session document.",
     "inputSchema": {
       "type": "object",
       "properties": {
         "document_id": {
           "type": "string",
-          "description": "Session id from create_schematic or open_document. Preferred — the tool mutates the server-side session, so the full document never crosses the wire."
+          "description": "Session id from create_schematic or open_document. Preferred \u2014 the tool mutates the server-side session, so the full document never crosses the wire."
         },
         "document": {
           "type": "object",
@@ -4753,7 +4762,7 @@
         },
         "classes": {
           "type": "array",
-          "description": "Net classes, each overriding the default clearance/width for its nets — DRC honors per-class clearance and trace width. This is how to enforce a high-voltage / power class (give VBAT and the phase nets a wide clearance) separate from signal nets. NOTE: creepage is not yet a distinct rule — model HV spacing as a high-clearance class here.",
+          "description": "Net classes, each overriding the default clearance/width for its nets \u2014 DRC honors per-class clearance and trace width. This is how to enforce a high-voltage / power class (give VBAT and the phase nets a wide clearance) separate from signal nets. NOTE: creepage is not yet a distinct rule \u2014 model HV spacing as a high-clearance class here.",
           "items": {
             "type": "object",
             "properties": {
@@ -4805,7 +4814,7 @@
   {
     "name": "size_trace_for_current",
     "title": "Size Trace for Current",
-    "description": "IPC-2221 conductor ampacity solved for trace width: given current, copper weight, allowed temp rise, and layer (outer/inner), returns the minimum width. The ampacity sibling of size_impedance/size_pdn — pure calc, no document.",
+    "description": "IPC-2221 conductor ampacity solved for trace width: given current, copper weight, allowed temp rise, and layer (outer/inner), returns the minimum width. The ampacity sibling of size_impedance/size_pdn \u2014 pure calc, no document.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -4815,15 +4824,15 @@
         },
         "copper_oz": {
           "type": "number",
-          "description": "Copper weight, oz/ft² (default 1; 1 oz ≈ 0.0348 mm). Match set_stackup."
+          "description": "Copper weight, oz/ft\u00b2 (default 1; 1 oz \u2248 0.0348 mm). Match set_stackup."
         },
         "temp_rise_c": {
           "type": "number",
-          "description": "Allowed conductor temperature rise above ambient, °C (default 10)"
+          "description": "Allowed conductor temperature rise above ambient, \u00b0C (default 10)"
         },
         "layer": {
           "type": "string",
-          "description": "'outer' (default, in free air) or 'inner' (buried; derated ~2× because it sheds heat poorly, so it needs much more width for the same current)."
+          "description": "'outer' (default, in free air) or 'inner' (buried; derated ~2\u00d7 because it sheds heat poorly, so it needs much more width for the same current)."
         },
         "fab_grid_mm": {
           "type": "number",
@@ -4841,13 +4850,13 @@
   {
     "name": "add_via_array",
     "title": "Add Via Array",
-    "description": "Place many vias at once — a grid over a rectangular `region` (thermal vias under FETs, GND-plane stitching) or an explicit `points` list. Grid vias are clipped to the board outline by default. Mutates the session document. Verify-on-write: the result carries `drc_delta` — the DRC violations this call introduced (shorts/clearance/connectivity/manufacturing, capped sample with positions) with `clean` to branch on in one step.",
+    "description": "Place many vias at once \u2014 a grid over a rectangular `region` (thermal vias under FETs, GND-plane stitching) or an explicit `points` list. Grid vias are clipped to the board outline by default. Mutates the session document. Verify-on-write: the result carries `drc_delta` \u2014 the DRC violations this call introduced (shorts/clearance/connectivity/manufacturing, capped sample with positions) with `clean` to branch on in one step.",
     "inputSchema": {
       "type": "object",
       "properties": {
         "document_id": {
           "type": "string",
-          "description": "Session id from create_schematic or open_document. Preferred — the tool mutates the server-side session, so the full document never crosses the wire."
+          "description": "Session id from create_schematic or open_document. Preferred \u2014 the tool mutates the server-side session, so the full document never crosses the wire."
         },
         "document": {
           "type": "object",
@@ -4859,7 +4868,7 @@
         },
         "region": {
           "type": "object",
-          "description": "Rectangular region (board-local mm) filled with a via grid at `pitch` spacing — thermal-via fields under FETs, GND-plane stitching.",
+          "description": "Rectangular region (board-local mm) filled with a via grid at `pitch` spacing \u2014 thermal-via fields under FETs, GND-plane stitching.",
           "properties": {
             "x": {
               "type": "number"
@@ -4898,7 +4907,7 @@
               "y"
             ]
           },
-          "description": "Explicit via centers (board-local mm) — alternative to `region` for hand stitching."
+          "description": "Explicit via centers (board-local mm) \u2014 alternative to `region` for hand stitching."
         },
         "pitch": {
           "type": "number",
@@ -4937,13 +4946,13 @@
   {
     "name": "add_motor_winding",
     "title": "Add Motor Winding",
-    "description": "One-shot motor winding realizer: plans a balanced slots/poles/phases winding, drops a spiral coil per tooth with correct phase + polarity, series-connects each phase with planar staggered-radius arcs in the coil-free bore (never crossing), ties the wye/delta termination with a region-scoped net-tie on real board material, and routes phase feeds to same-net pads when present — closing the winding_layout plan into DRC-clean copper. Mutates the session document. Verify-on-write: the result carries `drc_delta` — the DRC violations this call introduced (shorts/clearance/connectivity/manufacturing, capped sample with positions) with `clean` to branch on in one step.",
+    "description": "One-shot motor winding realizer: plans a balanced slots/poles/phases winding, drops a spiral coil per tooth with correct phase + polarity, series-connects each phase with planar staggered-radius arcs in the coil-free bore (never crossing), ties the wye/delta termination with a region-scoped net-tie on real board material, and routes phase feeds to same-net pads when present \u2014 closing the winding_layout plan into DRC-clean copper. Mutates the session document. Verify-on-write: the result carries `drc_delta` \u2014 the DRC violations this call introduced (shorts/clearance/connectivity/manufacturing, capped sample with positions) with `clean` to branch on in one step.",
     "inputSchema": {
       "type": "object",
       "properties": {
         "document_id": {
           "type": "string",
-          "description": "Session id from create_schematic or open_document. Preferred — the tool mutates the server-side session, so the full document never crosses the wire."
+          "description": "Session id from create_schematic or open_document. Preferred \u2014 the tool mutates the server-side session, so the full document never crosses the wire."
         },
         "document": {
           "type": "object",
@@ -5047,13 +5056,13 @@
   {
     "name": "calc_motor",
     "title": "Calc Motor",
-    "description": "Evaluate motor performance AS DATA. mode:'pm' (default): torque constant Kt, back-EMF constant Ke, no-load speed, stall torque, and a speed–torque curve; supply air-gap flux directly or compute it from magnet geometry via the first-order MEC field model, with an optional Carter-like fringing derate (magnet.pole_width_mm). mode:'induction': thin-sheet axial induction rotor (drag-cup / PCB cage) — gap field B1, torque-per-unit-slip, locked-rotor torque, sync speed, rotor sheet loss. Pure: no board, no mutation. First-order steady state.",
+    "description": "Evaluate motor performance AS DATA. mode:'pm' (default): torque constant Kt, back-EMF constant Ke, no-load speed, stall torque, and a speed\u2013torque curve; supply air-gap flux directly or compute it from magnet geometry via the first-order MEC field model, with an optional Carter-like fringing derate (magnet.pole_width_mm). mode:'induction': thin-sheet axial induction rotor (drag-cup / PCB cage) \u2014 gap field B1, torque-per-unit-slip, locked-rotor torque, sync speed, rotor sheet loss. Pure: no board, no mutation. First-order steady state.",
     "inputSchema": {
       "type": "object",
       "properties": {
         "mode": {
           "type": "string",
-          "description": "'pm' (default): permanent-magnet machine — Kt/Ke from air-gap flux; requires inner/outer radius, phase_resistance_ohm, supply_voltage_v. 'induction': thin-sheet axial induction rotor (drag-cup / PCB cage) — torque from eddy currents; requires phase_current_a, electrical_freq_hz, effective_gap_mm, sheet_conductance_s, inner/outer radius."
+          "description": "'pm' (default): permanent-magnet machine \u2014 Kt/Ke from air-gap flux; requires inner/outer radius, phase_resistance_ohm, supply_voltage_v. 'induction': thin-sheet axial induction rotor (drag-cup / PCB cage) \u2014 torque from eddy currents; requires phase_current_a, electrical_freq_hz, effective_gap_mm, sheet_conductance_s, inner/outer radius."
         },
         "pole_pairs": {
           "type": "number",
@@ -5089,7 +5098,7 @@
         },
         "magnet": {
           "type": "object",
-          "description": "PM mode: optional magnet/geometry to compute B_gap when airgap_flux_tesla is omitted (NdFeB defaults). Fields: remanence_tesla, magnet_thickness_mm, airgap_mm, recoil_mu_rel, magnet_area_mm2, gap_area_mm2, iron_mu_rel. Add pole_width_mm (magnet pole face width across the fringing direction) to also apply the first-order Carter-like fringing derate w/(w+2g) — the tool then reports raw AND derated B and uses the derated value for Kt."
+          "description": "PM mode: optional magnet/geometry to compute B_gap when airgap_flux_tesla is omitted (NdFeB defaults). Fields: remanence_tesla, magnet_thickness_mm, airgap_mm, recoil_mu_rel, magnet_area_mm2, gap_area_mm2, iron_mu_rel. Add pole_width_mm (magnet pole face width across the fringing direction) to also apply the first-order Carter-like fringing derate w/(w+2g) \u2014 the tool then reports raw AND derated B and uses the derated value for Kt."
         },
         "phase_current_a": {
           "type": "number",
@@ -5101,15 +5110,15 @@
         },
         "effective_gap_mm": {
           "type": "number",
-          "description": "Induction mode (required): TOTAL non-ferromagnetic flux path, mm — all air gaps plus the rotor sheet and any PCB substrate between back-irons (e.g. 4.7 for a PCB-stator sandwich)."
+          "description": "Induction mode (required): TOTAL non-ferromagnetic flux path, mm \u2014 all air gaps plus the rotor sheet and any PCB substrate between back-irons (e.g. 4.7 for a PCB-stator sandwich)."
         },
         "sheet_conductance_s": {
           "type": "number",
-          "description": "Induction mode (required): rotor sheet surface conductance σs = σ·thickness, siemens. E.g. 2×2oz copper: 5.8e7 S/m × 0.14e-3 m ≈ 8120 S."
+          "description": "Induction mode (required): rotor sheet surface conductance \u03c3s = \u03c3\u00b7thickness, siemens. E.g. 2\u00d72oz copper: 5.8e7 S/m \u00d7 0.14e-3 m \u2248 8120 S."
         },
         "end_effect_factor": {
           "type": "number",
-          "description": "Induction mode: Russell–Norsworthy end-effect factor (0..1] — fraction of ideal torque surviving the eddy return paths outside the active annulus. Default 0.65."
+          "description": "Induction mode: Russell\u2013Norsworthy end-effect factor (0..1] \u2014 fraction of ideal torque surviving the eddy return paths outside the active annulus. Default 0.65."
         }
       },
       "required": [
@@ -5124,17 +5133,17 @@
   {
     "name": "check_self_start",
     "title": "Check Self-Start",
-    "description": "Will it spin? Starting torque (direct, or Kt·I; induction: the locked-rotor torque from calc_motor) vs a friction estimate (direct, or the built-in bearing catalog: 608-2RS/608-ZZ/625/688 × light/medium preload × count). Returns starts (fail-closed vs worst-case friction), best-case verdict, and the margin. Pure calc, no document.",
+    "description": "Will it spin? Starting torque (direct, or Kt\u00b7I; induction: the locked-rotor torque from calc_motor) vs a friction estimate (direct, or the built-in bearing catalog: 608-2RS/608-ZZ/625/688 \u00d7 light/medium preload \u00d7 count). Returns starts (fail-closed vs worst-case friction), best-case verdict, and the margin. Pure calc, no document.",
     "inputSchema": {
       "type": "object",
       "properties": {
         "available_torque_nm": {
           "type": "number",
-          "description": "Torque available at standstill, N·m — PM: Kt·I (or pass kt_nm_per_a + current_a instead); induction: locked_rotor_torque_nm from calc_motor mode:'induction'."
+          "description": "Torque available at standstill, N\u00b7m \u2014 PM: Kt\u00b7I (or pass kt_nm_per_a + current_a instead); induction: locked_rotor_torque_nm from calc_motor mode:'induction'."
         },
         "kt_nm_per_a": {
           "type": "number",
-          "description": "Alternative to available_torque_nm: torque constant Kt (N·m/A), multiplied by current_a."
+          "description": "Alternative to available_torque_nm: torque constant Kt (N\u00b7m/A), multiplied by current_a."
         },
         "current_a": {
           "type": "number",
@@ -5142,7 +5151,7 @@
         },
         "friction_torque_nm": {
           "type": "number",
-          "description": "Direct friction estimate, N·m (single value or a measurement). Overrides `bearings` when given."
+          "description": "Direct friction estimate, N\u00b7m (single value or a measurement). Overrides `bearings` when given."
         },
         "bearings": {
           "type": "object",
@@ -5157,7 +5166,7 @@
   {
     "name": "render_pcb",
     "title": "Render PCB",
-    "description": "Render a flat, top-down, per-layer 2D image of a PCB (copper, silk, drills, outline) — agent eyes for boards. Pick `layers` (e.g. [\"F.Cu\", \"F.SilkS\", \"Edge_Cuts\"]); returns a PNG. Complements the isometric render_view and numeric run_drc.",
+    "description": "Render a flat, top-down, per-layer 2D image of a PCB (copper, silk, drills, outline) \u2014 agent eyes for boards. Pick `layers` (e.g. [\"F.Cu\", \"F.SilkS\", \"Edge_Cuts\"]); returns a PNG. Complements the isometric render_view and numeric run_drc.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -5174,7 +5183,7 @@
         },
         "width_px": {
           "type": "number",
-          "description": "Target raster width in pixels (default 1200, clamped 64–2048)."
+          "description": "Target raster width in pixels (default 1200, clamped 64\u20132048)."
         },
         "theme": {
           "type": "string",
@@ -5212,7 +5221,7 @@
         },
         "hero": {
           "type": "boolean",
-          "description": "Marketing/hero still: adds a copper bloom. Off by default — never use for verification renders (glow misrepresents copper extents)."
+          "description": "Marketing/hero still: adds a copper bloom. Off by default \u2014 never use for verification renders (glow misrepresents copper extents)."
         }
       },
       "required": [
@@ -5226,7 +5235,7 @@
   {
     "name": "render_ratsnest",
     "title": "Render Ratsnest",
-    "description": "Render the board with its unrouted-connection ratsnest (per-net MST airwires) overlaid as dashed lines — judge placement quality and crossing density BEFORE routing. Returns a PNG plus the airwire (unconnected-pair) count.",
+    "description": "Render the board with its unrouted-connection ratsnest (per-net MST airwires) overlaid as dashed lines \u2014 judge placement quality and crossing density BEFORE routing. Returns a PNG plus the airwire (unconnected-pair) count.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -5243,7 +5252,7 @@
         },
         "width_px": {
           "type": "number",
-          "description": "Target raster width in pixels (default 900, clamped 64–2048)."
+          "description": "Target raster width in pixels (default 900, clamped 64\u20132048)."
         }
       },
       "required": [
@@ -5257,7 +5266,7 @@
   {
     "name": "render_stackup",
     "title": "Render Stackup",
-    "description": "Render each copper layer of a multilayer board to its own image (with the board edge for framing), so inner planes are legible instead of buried under an all-layers composite. Returns one image per layer plus a layer→image index.",
+    "description": "Render each copper layer of a multilayer board to its own image (with the board edge for framing), so inner planes are legible instead of buried under an all-layers composite. Returns one image per layer plus a layer\u2192image index.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -5267,7 +5276,7 @@
         },
         "width_px": {
           "type": "number",
-          "description": "Per-layer raster width in pixels (default 700, clamped 64–2048)."
+          "description": "Per-layer raster width in pixels (default 700, clamped 64\u20132048)."
         }
       },
       "required": [
@@ -5281,13 +5290,13 @@
   {
     "name": "run_drc",
     "title": "Run DRC",
-    "description": "Run Design Rule Check (DRC) on a PCB. Checks clearance, trace width, drill size, annular ring, hole-to-hole, edge clearance, and connectivity — including SameNetBypass, a warning when same-net copper touches far from any intended junction (e.g. a trace over a coil's inner via, short-circuiting the spiral). Every violation is tagged with `provenance` (intra_footprint / inter_component / routing) and `generated` (involves a synthesized footprint land pattern); the summary adds `byProvenance`, `generatedArtifacts`, and `realViolations` so the headline count excludes footprint artifacts without hand-triage.",
+    "description": "Run Design Rule Check (DRC) on a PCB. Checks clearance, trace width, drill size, annular ring, hole-to-hole, edge clearance, and connectivity \u2014 including SameNetBypass, a warning when same-net copper touches far from any intended junction (e.g. a trace over a coil's inner via, short-circuiting the spiral). Every violation is tagged with `provenance` (intra_footprint / inter_component / routing) and `generated` (involves a synthesized footprint land pattern); the summary adds `byProvenance`, `generatedArtifacts`, and `realViolations` so the headline count excludes footprint artifacts without hand-triage.",
     "inputSchema": {
       "type": "object",
       "properties": {
         "document_id": {
           "type": "string",
-          "description": "Session id from create_schematic or open_document. Preferred — the tool mutates the server-side session, so the full document never crosses the wire."
+          "description": "Session id from create_schematic or open_document. Preferred \u2014 the tool mutates the server-side session, so the full document never crosses the wire."
         },
         "document": {
           "type": "object",
@@ -5295,7 +5304,7 @@
         },
         "detail": {
           "type": "string",
-          "description": "'summary' (default) returns counts by rule + net-pair, the worst clearance, and a capped representative sample — small, even with tens of thousands of violations. 'full' additionally attaches the complete `details` array."
+          "description": "'summary' (default) returns counts by rule + net-pair, the worst clearance, and a capped representative sample \u2014 small, even with tens of thousands of violations. 'full' additionally attaches the complete `details` array."
         },
         "sample_size": {
           "type": "number",
@@ -5342,7 +5351,7 @@
       "properties": {
         "query": {
           "type": "string",
-          "description": "Either a passive spec query (e.g. '10k 0603 1%') — E-series-snapped, returns footprint + symbol + 3D body + MPN xrefs — or a jellybean part name/alias (e.g. 'NE555', 'LM358', 'LM555'), which returns its universal pin definitions (number, name, electrical type) plus datasheet and notes."
+          "description": "Either a passive spec query (e.g. '10k 0603 1%') \u2014 E-series-snapped, returns footprint + symbol + 3D body + MPN xrefs \u2014 or a jellybean part name/alias (e.g. 'NE555', 'LM358', 'LM555'), which returns its universal pin definitions (number, name, electrical type) plus datasheet and notes."
         }
       },
       "required": [
@@ -5408,7 +5417,7 @@
   {
     "name": "build_receipt",
     "title": "Build Receipt",
-    "description": "Build a re-runnable verification Receipt for the session PCB: a content hash, the DRC backend, a canonicalized DRC summary, and per-part provenance — a durable proof that round-trips and re-verifies later as Holds / Stale / Violated. Persisted clearance specs (check_clearance with a label) join the unified ledger as mech.clearance claims — a CAD-only session with specs gets a mechanical receipt, no PCB needed. Renders as an audit ledger in the inline viewer.",
+    "description": "Build a re-runnable verification Receipt for the session PCB: a content hash, the DRC backend, a canonicalized DRC summary, and per-part provenance \u2014 a durable proof that round-trips and re-verifies later as Holds / Stale / Violated. Persisted clearance specs (check_clearance with a label) join the unified ledger as mech.clearance claims \u2014 a CAD-only session with specs gets a mechanical receipt, no PCB needed. Renders as an audit ledger in the inline viewer.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -5418,7 +5427,7 @@
         },
         "enclosure_document_id": {
           "type": "string",
-          "description": "Optional CAD session id holding the enclosure solid. When given, the Receipt also carries a cross-domain enclosure-fit verdict (board fits, components clear the lid, holes land on standoffs, connectors align) — proof the board fits its case, not just that copper passes DRC."
+          "description": "Optional CAD session id holding the enclosure solid. When given, the Receipt also carries a cross-domain enclosure-fit verdict (board fits, components clear the lid, holes land on standoffs, connectors align) \u2014 proof the board fits its case, not just that copper passes DRC."
         },
         "clearance": {
           "type": "number",
@@ -5449,14 +5458,14 @@
       },
       "ui/resourceUri": "ui://vcad/viewer",
       "openai/outputTemplate": "ui://vcad/viewer-openai.html",
-      "openai/toolInvocation/invoking": "Modeling geometry…",
+      "openai/toolInvocation/invoking": "Modeling geometry\u2026",
       "openai/toolInvocation/invoked": "Model updated"
     }
   },
   {
     "name": "verify_receipt",
     "title": "Verify Receipt",
-    "description": "Re-run a prior receipt (from build_receipt) against the session's current document and return the verdict — Holds (unchanged, clean), Stale (changed but claims still hold), or Violated. Covers the PCB Receipt (board hash + DRC diff) and mech.clearance claims (re-measured against current geometry); worst verdict wins. Powers the ledger's Re-run button.",
+    "description": "Re-run a prior receipt (from build_receipt) against the session's current document and return the verdict \u2014 Holds (unchanged, clean), Stale (changed but claims still hold), or Violated. Covers the PCB Receipt (board hash + DRC diff) and mech.clearance claims (re-measured against current geometry); worst verdict wins. Powers the ledger's Re-run button.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -5500,7 +5509,7 @@
       "properties": {
         "document_id": {
           "type": "string",
-          "description": "Session id from create_schematic or open_document. Preferred — the tool mutates the server-side session, so the full document never crosses the wire."
+          "description": "Session id from create_schematic or open_document. Preferred \u2014 the tool mutates the server-side session, so the full document never crosses the wire."
         },
         "document": {
           "type": "object",
@@ -5533,7 +5542,7 @@
       "properties": {
         "document_id": {
           "type": "string",
-          "description": "Session id from create_schematic or open_document. Preferred — the tool mutates the server-side session, so the full document never crosses the wire."
+          "description": "Session id from create_schematic or open_document. Preferred \u2014 the tool mutates the server-side session, so the full document never crosses the wire."
         },
         "document": {
           "type": "object",
@@ -5541,7 +5550,7 @@
         },
         "net": {
           "type": "string",
-          "description": "Net to audit (read-only — mutates nothing)."
+          "description": "Net to audit (read-only \u2014 mutates nothing)."
         }
       },
       "required": [
@@ -5561,7 +5570,7 @@
       "properties": {
         "document_id": {
           "type": "string",
-          "description": "Session id from create_schematic or open_document. Preferred — the tool mutates the server-side session, so the full document never crosses the wire."
+          "description": "Session id from create_schematic or open_document. Preferred \u2014 the tool mutates the server-side session, so the full document never crosses the wire."
         },
         "document": {
           "type": "object",
@@ -5577,13 +5586,13 @@
   {
     "name": "export_gerber",
     "title": "Export Gerber",
-    "description": "Export Gerber RS-274X fabrication files from a PCB design. Generates copper layer files, drill file, pick-and-place CSV, and BOM. Gated on a clean DRC by default (require_clean_drc) — a dirty or unverifiable board is BLOCKED with its DRC summary instead of emitting an invalid bundle. Run validate_for_fab first for the full readiness verdict.",
+    "description": "Export Gerber RS-274X fabrication files from a PCB design. Generates copper layer files, drill file, pick-and-place CSV, and BOM. Gated on a clean DRC by default (require_clean_drc) \u2014 a dirty or unverifiable board is BLOCKED with its DRC summary instead of emitting an invalid bundle. Run validate_for_fab first for the full readiness verdict.",
     "inputSchema": {
       "type": "object",
       "properties": {
         "document_id": {
           "type": "string",
-          "description": "Session id from create_schematic or open_document. Preferred — the tool mutates the server-side session, so the full document never crosses the wire."
+          "description": "Session id from create_schematic or open_document. Preferred \u2014 the tool mutates the server-side session, so the full document never crosses the wire."
         },
         "document": {
           "type": "object",
@@ -5591,11 +5600,11 @@
         },
         "output_dir": {
           "type": "string",
-          "description": "Directory to write the fabrication files to (created if missing). Resolved on the MCP server's filesystem — on hosted/sandboxed servers the write may fail. When omitted (or the write fails), a small bundle is returned inline, but a bundle over the inline byte cap (~168 KB Gerber sets exceed it) is written to the artifact store and the result carries { artifact_url, manifest, artifact_id } instead of the files — pass that artifact_id to quote_manufacturing / place_order so the fab files never transit model context."
+          "description": "Directory to write the fabrication files to (created if missing). Resolved on the MCP server's filesystem \u2014 on hosted/sandboxed servers the write may fail. When omitted (or the write fails), a small bundle is returned inline, but a bundle over the inline byte cap (~168 KB Gerber sets exceed it) is written to the artifact store and the result carries { artifact_url, manifest, artifact_id } instead of the files \u2014 pass that artifact_id to quote_manufacturing / place_order so the fab files never transit model context."
         },
         "require_clean_drc": {
           "type": "boolean",
-          "description": "Gate the export on a clean DRC (default TRUE). When set, the board is DRC-checked first and the export is BLOCKED — returning `blocked:true` plus the DRC summary — if it has any errors (shorts, clearance, unconnected nets, fab-rule breaks) or the check is unverifiable (fail-closed: a board that won't even parse never counts as clean). Set false only to force a Gerber bundle from a board you know is dirty; the resulting files would otherwise fabricate an invalid board. Use validate_for_fab first for the full readiness verdict."
+          "description": "Gate the export on a clean DRC (default TRUE). When set, the board is DRC-checked first and the export is BLOCKED \u2014 returning `blocked:true` plus the DRC summary \u2014 if it has any errors (shorts, clearance, unconnected nets, fab-rule breaks) or the check is unverifiable (fail-closed: a board that won't even parse never counts as clean). Set false only to force a Gerber bundle from a board you know is dirty; the resulting files would otherwise fabricate an invalid board. Use validate_for_fab first for the full readiness verdict."
         }
       },
       "required": []
@@ -5613,7 +5622,7 @@
       "properties": {
         "document_id": {
           "type": "string",
-          "description": "Session id from create_schematic or open_document. Preferred — the tool mutates the server-side session, so the full document never crosses the wire."
+          "description": "Session id from create_schematic or open_document. Preferred \u2014 the tool mutates the server-side session, so the full document never crosses the wire."
         },
         "document": {
           "type": "object",
@@ -5625,7 +5634,7 @@
         },
         "output_dir": {
           "type": "string",
-          "description": "Directory to write the file to (created if missing). Resolved on the MCP server's filesystem — on hosted/sandboxed servers the write may fail or be invisible, in which case the file content is returned inline instead. When omitted, the content is returned inline (subject to a size cap)."
+          "description": "Directory to write the file to (created if missing). Resolved on the MCP server's filesystem \u2014 on hosted/sandboxed servers the write may fail or be invisible, in which case the file content is returned inline instead. When omitted, the content is returned inline (subject to a size cap)."
         }
       },
       "required": []
@@ -5645,13 +5654,13 @@
   {
     "name": "validate_for_fab",
     "title": "Validate for Fab",
-    "description": "The single 'is this board ready to fabricate?' oracle. Runs the whole readiness gate in one call and returns ONE structured verdict: DRC (fail-closed — a board that won't parse is 'unverifiable', never clean), renderability, Gerber-exportability (attempts serialization; names the exact failing field when it can't), unsupported features, the precise blockers, and suggested fixes. Read-only. Use before export_gerber / quote_manufacturing to know — not guess — whether the board is shippable.",
+    "description": "The single 'is this board ready to fabricate?' oracle. Runs the whole readiness gate in one call and returns ONE structured verdict: DRC (fail-closed \u2014 a board that won't parse is 'unverifiable', never clean), renderability, Gerber-exportability (attempts serialization; names the exact failing field when it can't), unsupported features, the precise blockers, and suggested fixes. Read-only. Use before export_gerber / quote_manufacturing to know \u2014 not guess \u2014 whether the board is shippable.",
     "inputSchema": {
       "type": "object",
       "properties": {
         "document_id": {
           "type": "string",
-          "description": "Session id from create_schematic or open_document. Preferred — the tool mutates the server-side session, so the full document never crosses the wire."
+          "description": "Session id from create_schematic or open_document. Preferred \u2014 the tool mutates the server-side session, so the full document never crosses the wire."
         },
         "document": {
           "type": "object",
@@ -5662,6 +5671,15 @@
     },
     "annotations": {
       "readOnlyHint": true
+    },
+    "_meta": {
+      "ui": {
+        "resourceUri": "ui://vcad/viewer"
+      },
+      "ui/resourceUri": "ui://vcad/viewer",
+      "openai/outputTemplate": "ui://vcad/viewer-openai.html",
+      "openai/toolInvocation/invoking": "Modeling geometry\u2026",
+      "openai/toolInvocation/invoked": "Model updated"
     }
   },
   {
@@ -5697,7 +5715,7 @@
         },
         "document_id": {
           "type": "string",
-          "description": "Optional: session id of a PCB to verify against. With `net`, the impedance is only certified when that net's trace is actually realized as continuous copper — a split/unrouted trace returns a blocked result."
+          "description": "Optional: session id of a PCB to verify against. With `net`, the impedance is only certified when that net's trace is actually realized as continuous copper \u2014 a split/unrouted trace returns a blocked result."
         },
         "net": {
           "type": "string",
@@ -5716,7 +5734,7 @@
   {
     "name": "size_impedance",
     "title": "Size Impedance",
-    "description": "Inverse of calc_impedance: solve trace geometry for a TARGET impedance. Given a target Z0 (and diff Z0 for pairs) + stackup, returns the trace width (and spacing) AS DATA, snapped to the fab grid and re-verified against the same model. Reports a binding DFM min-width/spacing bound and whether the target is reachable — it will not silently hand back a width that misses spec. Pure: no board, no mutation.",
+    "description": "Inverse of calc_impedance: solve trace geometry for a TARGET impedance. Given a target Z0 (and diff Z0 for pairs) + stackup, returns the trace width (and spacing) AS DATA, snapped to the fab grid and re-verified against the same model. Reports a binding DFM min-width/spacing bound and whether the target is reachable \u2014 it will not silently hand back a width that misses spec. Pure: no board, no mutation.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -5726,11 +5744,11 @@
         },
         "target_z0": {
           "type": "number",
-          "description": "Target single-ended characteristic impedance in Ω (default 50). For diff pairs this is the per-line target (default target_diff_z0/2)."
+          "description": "Target single-ended characteristic impedance in \u03a9 (default 50). For diff pairs this is the per-line target (default target_diff_z0/2)."
         },
         "target_diff_z0": {
           "type": "number",
-          "description": "Target differential impedance in Ω for diff_* types (default 100)"
+          "description": "Target differential impedance in \u03a9 for diff_* types (default 100)"
         },
         "dielectric_height": {
           "type": "number",
@@ -5766,7 +5784,7 @@
         },
         "tolerance_pct": {
           "type": "number",
-          "description": "Pass band: |measured − target| ≤ this %% of target (default 5)"
+          "description": "Pass band: |measured \u2212 target| \u2264 this %% of target (default 5)"
         }
       },
       "required": [
@@ -5780,7 +5798,7 @@
   {
     "name": "size_pdn",
     "title": "Size PDN",
-    "description": "Size copper-segment widths across a power-distribution resistor mesh so each load node's IR-drop meets its budget with minimal copper. Solves G·V=I for node voltages and drives drop→budget with a bounded gradient tuner; returns per-segment widths AS DATA with drops recomputed from a forward solve, and flags any node it can't meet within the width bounds. Pure by default; pass document_id + net to REFUSE a PASS when that power plane isn't galvanically continuous (returns coverage %, stitching-via count, and the worst island).",
+    "description": "Size copper-segment widths across a power-distribution resistor mesh so each load node's IR-drop meets its budget with minimal copper. Solves G\u00b7V=I for node voltages and drives drop\u2192budget with a bounded gradient tuner; returns per-segment widths AS DATA with drops recomputed from a forward solve, and flags any node it can't meet within the width bounds. Pure by default; pass document_id + net to REFUSE a PASS when that power plane isn't galvanically continuous (returns coverage %, stitching-via count, and the worst island).",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -5835,7 +5853,7 @@
         },
         "targets": {
           "type": "array",
-          "description": "Per-node IR-drop budget in V. Widths are sized so each node's drop meets its budget with minimal copper (the solver drives drop → budget).",
+          "description": "Per-node IR-drop budget in V. Widths are sized so each node's drop meets its budget with minimal copper (the solver drives drop \u2192 budget).",
           "items": {
             "type": "object",
             "properties": {
@@ -5858,7 +5876,7 @@
         },
         "resistivity": {
           "type": "number",
-          "description": "Copper resistivity Ω·mm (default 1.68e-5)"
+          "description": "Copper resistivity \u03a9\u00b7mm (default 1.68e-5)"
         },
         "min_width": {
           "type": "number",
@@ -5874,7 +5892,7 @@
         },
         "tolerance_pct": {
           "type": "number",
-          "description": "Budget is met if drop ≤ target·(1 + this%) (default 5)"
+          "description": "Budget is met if drop \u2264 target\u00b7(1 + this%) (default 5)"
         },
         "engine": {
           "type": "string",
@@ -5882,7 +5900,7 @@
         },
         "document_id": {
           "type": "string",
-          "description": "Optional: session id of a PCB this PDN mesh represents. With `net`, the sizing PASS is gated on that power plane being galvanically continuous — a plane split into islands returns a blocked result with coverage stats."
+          "description": "Optional: session id of a PCB this PDN mesh represents. With `net`, the sizing PASS is gated on that power plane being galvanically continuous \u2014 a plane split into islands returns a blocked result with coverage stats."
         },
         "net": {
           "type": "string",
@@ -5929,7 +5947,7 @@
         },
         "resistivity": {
           "type": "number",
-          "description": "Copper resistivity Ω·mm (default 1.68e-5)"
+          "description": "Copper resistivity \u03a9\u00b7mm (default 1.68e-5)"
         },
         "geometry": {
           "type": "string",
@@ -5950,7 +5968,7 @@
   {
     "name": "size_coil",
     "title": "Size Coil",
-    "description": "Inverse of calc_coil: solve the turn count for a target inductance in a given annulus (Wheeler L ∝ turns², so it's closed-form). Reports continuous + integer turns, the inductance achieved, and whether that many turns fit the radial band (else fit-limited). Pure.",
+    "description": "Inverse of calc_coil: solve the turn count for a target inductance in a given annulus (Wheeler L \u221d turns\u00b2, so it's closed-form). Reports continuous + integer turns, the inductance achieved, and whether that many turns fit the radial band (else fit-limited). Pure.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -5980,7 +5998,7 @@
         },
         "resistivity": {
           "type": "number",
-          "description": "Copper resistivity Ω·mm (default 1.68e-5)"
+          "description": "Copper resistivity \u03a9\u00b7mm (default 1.68e-5)"
         },
         "geometry": {
           "type": "string",
@@ -6015,7 +6033,7 @@
         },
         "r_ohm": {
           "type": "number",
-          "description": "Resistance in Ω"
+          "description": "Resistance in \u03a9"
         },
         "l_henry": {
           "type": "number",
@@ -6031,11 +6049,11 @@
         },
         "f_start_hz": {
           "type": "number",
-          "description": "Sweep start frequency (default 0.1·f0)"
+          "description": "Sweep start frequency (default 0.1\u00b7f0)"
         },
         "f_stop_hz": {
           "type": "number",
-          "description": "Sweep stop frequency (default 10·f0)"
+          "description": "Sweep stop frequency (default 10\u00b7f0)"
         },
         "points": {
           "type": "number",

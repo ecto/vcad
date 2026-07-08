@@ -323,6 +323,8 @@ export const toolDefs: ToolDef[] = [
       "so a boolean chain never predicts node ids.",
     inputSchema: applyEditsSchema,
     handler: (a, c) => applyEdits(a, c.engine),
-    behavior: behavior({ writesDoc: true, geometry: true }),
+    // mount: a batch edit is a milestone — refresh the viewer at the bottom
+    // of the transcript right after a burst of changes lands.
+    behavior: behavior({ writesDoc: true, geometry: true, mount: true }),
   },
 ];

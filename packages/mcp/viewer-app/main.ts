@@ -1208,7 +1208,12 @@ function applyHostContext(ctx: McpUiHostContext | undefined): void {
   if (ctx.displayMode) currentDisplayMode = ctx.displayMode;
 }
 
-app.onhostcontextchanged = (params) => applyHostContext(params.hostContext);
+app.onhostcontextchanged = (params) => {
+  applyHostContext(params.hostContext);
+  // Hosts may announce availableDisplayModes only after connect — retry the
+  // one-shot dock when the context (finally) says pip is supported.
+  void maybeAutoDock();
+};
 
 app.ontoolinput = () => {
   setStatus("building model…");
