@@ -23,7 +23,7 @@ import { toDfmProcess, catalogMaterial } from "../fabricate/process-map.js";
 import { ownerId, type FabricateStore } from "../fabricate/store.js";
 import { buildFabHandoff } from "../fabricate/handoff.js";
 import { captureEvent } from "../telemetry.js";
-import { resolveArtifactRef } from "./artifact-store.js";
+import { resolveArtifactRefAsync } from "./artifact-store.js";
 import { behavior, type ToolDef } from "./tool-def.js";
 import {
   PROCESSES,
@@ -129,7 +129,7 @@ export async function quoteManufacturing(
   const fabHandle = typeof args.fab_artifact_id === "string" ? args.fab_artifact_id : "";
   let fabArtifact: FabArtifactRef | null = null;
   if (fabHandle) {
-    const ref = resolveArtifactRef(fabHandle);
+    const ref = await resolveArtifactRefAsync(fabHandle);
     if (!ref) {
       return err(
         `Unknown or expired fab artifact "${fabHandle}". Re-run export_gerber / export_cad and pass the artifact_id it returns.`,

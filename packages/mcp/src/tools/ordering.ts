@@ -20,7 +20,7 @@
 import { randomUUID } from "node:crypto";
 import type { AuthUser } from "../oauth.js";
 import { ownerId, type FabricateStore } from "../fabricate/store.js";
-import { resolveArtifactRef } from "./artifact-store.js";
+import { resolveArtifactRefAsync } from "./artifact-store.js";
 import type { SessionEventStore } from "../session-store.js";
 import type { FabArtifactRef, SpendAuthorization } from "../fabricate/types.js";
 import { behavior, type ToolDef } from "./tool-def.js";
@@ -219,7 +219,7 @@ export async function placeOrder(
   const fabHandle = typeof args.fab_artifact_id === "string" ? args.fab_artifact_id : "";
   let fabArtifact: FabArtifactRef | null = order.fab_artifact ?? null;
   if (fabHandle) {
-    const ref = resolveArtifactRef(fabHandle);
+    const ref = await resolveArtifactRefAsync(fabHandle);
     if (!ref) {
       return err(
         `Unknown or expired fab artifact "${fabHandle}". Re-run export_gerber / export_cad and pass the artifact_id it returns.`,

@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-08-artifact-store-durable",
+  "version": "0.9.4",
+  "date": "2026-07-08",
+  "category": "fix",
+  "title": "Artifact URLs actually resolve: /artifacts routed + durable store",
+  "summary": "export_gerber/export_cad artifact handles now work: the /artifacts route is wired into the serverless deployment (it was missing, so every download 403'd at the platform), and artifacts persist to a durable mcp_artifacts table so a handle minted on one instance resolves on any other — quote_manufacturing no longer rejects a fab_artifact_id minted minutes earlier as \"Unknown or expired\".",
+  "features": ["mcp", "fabricate", "artifacts"],
+  "mcpTools": ["export_gerber", "export_cad", "get_document", "quote_manufacturing", "place_order"]
+}

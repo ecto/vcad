@@ -19,6 +19,8 @@ import {
   flushTelemetry,
   handleLiveRequest,
   handleArtifactRequest,
+  flushArtifacts,
+  artifactStoreInfo,
 } from "@vcad/mcp/server";
 import {
   getOAuthConfig,
@@ -131,6 +133,7 @@ export default async function handler(
         // prod deploy → open sessions are in-memory only and a redeploy drops
         // them. Verifiable with `curl https://mcp.vcad.io/health`.
         ...sessionStoreInfo(),
+        ...artifactStoreInfo(),
         engine: !!engine,
         timestamp: new Date().toISOString(),
       });
@@ -192,9 +195,11 @@ export default async function handler(
     try {
       await transport.handleRequest(req, res);
     } finally {
-      // Drain PostHog captures before the serverless instance can freeze —
-      // an in-flight fetch is killed the instant the function returns.
-      await flushTelemetry();
+      // Drain PostHog captures AND pending durable artifact writes before
+      // the serverless instance can freeze — an in-flight fetch is killed
+      // the instant the function returns, and an unflushed artifact would
+      // reintroduce the 404-from-another-instance bug.
+      await Promise.all([flushTelemetry(), flushArtifacts()]);
       await transport.close();
       await server.close();
     }
