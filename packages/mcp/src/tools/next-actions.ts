@@ -161,14 +161,14 @@ export function suggestNextActions(
         tool: toolName,
       });
     }
-    // Booleans take numeric ids of pre-created children, not inline geometry.
+    // Booleans take ids of pre-created children, not inline geometry.
     if (
       (type === "union" || type === "difference" || type === "intersection") &&
       lower.includes("node")
     ) {
       actions.push({
         action:
-          "Create both child nodes first, then reference their numeric ids — inline child definitions aren't supported.",
+          "Create both child nodes first, then reference their ids (numeric or string) — inline child definitions aren't supported.",
       });
     }
     if (actions.length) return actions;

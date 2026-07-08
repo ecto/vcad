@@ -109,11 +109,11 @@ export const CREATE_PARAM_HINTS: Record<string, string> = {
   sphere: "{radius, segments? (default 32)}",
   cone: "{radius_bottom, radius_top, height, segments? (default 64)} — axis along Z",
   union:
-    "{left, right} — numeric node ids of existing nodes. Create both children first, then combine; inline child definitions are not supported.",
+    "{left, right} — node ids of existing nodes (numeric or string). Create both children first, then combine; inline child definitions are not supported.",
   difference:
-    "{left, right} — numeric node ids of existing nodes (left minus right). Create both children first; inline child definitions are not supported.",
+    "{left, right} — node ids of existing nodes (left minus right; numeric or string). Create both children first; inline child definitions are not supported.",
   intersection:
-    "{left, right} — numeric node ids of existing nodes. Create both children first; inline child definitions are not supported.",
+    "{left, right} — node ids of existing nodes (numeric or string). Create both children first; inline child definitions are not supported.",
   translate: "{child: nodeId, offset: {x, y, z}}",
   rotate: "{child: nodeId, angles: {x, y, z}} — degrees",
   scale: "{child: nodeId, factor: {x, y, z}}",
@@ -123,6 +123,51 @@ export const CREATE_PARAM_HINTS: Record<string, string> = {
   fillet: "{child: nodeId, radius}",
   chamfer: "{child: nodeId, distance}",
 };
+
+/** Param keys that reference another node by id (CsgOp child refs). */
+const NODE_REF_PARAM_KEYS = ["child", "left", "right", "sketch"] as const;
+
+/** Coerce a single node reference: the Rust planner's serde parse wants
+ *  JSON numbers for CsgOp child refs, but part ids travel as strings
+ *  everywhere else on the MCP surface ("5" from a prior result's part_id).
+ *  Accept both by converting digit-strings to numbers. */
+function coerceNodeRef(v: unknown): unknown {
+  if (typeof v === "string" && /^\d+$/.test(v)) return Number(v);
+  return v;
+}
+
+/**
+ * Unify the two id dialects at the dispatch boundary so agents can pass
+ * either. Top-level `node_id`/`part_id` are strings on the planner side —
+ * accept numbers by stringifying. Child refs inside create/update `params`
+ * (child/left/right/sketch/sketches) are numeric NodeIds on the planner
+ * side — accept digit-strings by numbering. Returns a copy; never mutates.
+ */
+export function normalizeNodeRefs(
+  toolName: string,
+  args: Record<string, unknown>,
+): Record<string, unknown> {
+  const out = { ...args };
+  for (const key of ["node_id", "part_id"]) {
+    if (typeof out[key] === "number") out[key] = String(out[key]);
+  }
+  if (
+    (toolName === "create" || toolName === "update") &&
+    out.params &&
+    typeof out.params === "object" &&
+    !Array.isArray(out.params)
+  ) {
+    const params = { ...(out.params as Record<string, unknown>) };
+    for (const key of NODE_REF_PARAM_KEYS) {
+      if (key in params) params[key] = coerceNodeRef(params[key]);
+    }
+    if (Array.isArray(params.sketches)) {
+      params.sketches = params.sketches.map(coerceNodeRef);
+    }
+    out.params = params;
+  }
+  return out;
+}
 
 /** Fill defaultable fields into create/update params in place. */
 function applyParamDefaults(args: Record<string, unknown>): Record<string, unknown> {
@@ -378,10 +423,11 @@ export function dispatchRegistryTool(
 /** Execute a mutating registry tool against an open session document. */
 export function runMutation(
   toolName: string,
-  toolArgs: Record<string, unknown>,
+  rawArgs: Record<string, unknown>,
   doc: import("@vcad/ir").Document,
   documentId: string,
 ): { content: Array<{ type: "text"; text: string }> } {
+  const toolArgs = normalizeNodeRefs(toolName, rawArgs);
   // `delete` and `set_material` go directly to applyToolOutcome — the
   // Rust planner expects CRDT stable_ids, but the IR-direct MCP path
   // uses stringified NodeIds for part_id. The args are already
