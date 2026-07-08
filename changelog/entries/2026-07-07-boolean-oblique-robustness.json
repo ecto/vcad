@@ -1,0 +1,9 @@
+{
+  "id": "2026-07-07-boolean-oblique-robustness",
+  "version": "0.9.4",
+  "date": "2026-07-07",
+  "category": "fix",
+  "title": "Booleans: oblique cuts, patterns, and touching walls",
+  "summary": "Oblique plane-cylinder cuts now split correctly: near-containment intersections, pattern-child trims, chained differences, and shared-wall unions no longer silently corrupt geometry.",
+  "features": ["kernel", "booleans", "patterns"]
+}

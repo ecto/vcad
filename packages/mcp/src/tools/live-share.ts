@@ -11,15 +11,8 @@
 import type { AuthUser } from "../oauth.js";
 import type { ShareStore } from "../session-store.js";
 import { getRuntimeFlag } from "../edge-config.js";
-
-type ToolResult = { content: Array<{ type: "text"; text: string }>; isError?: boolean };
-
-function ok(payload: unknown): ToolResult {
-  return { content: [{ type: "text", text: JSON.stringify(payload, null, 2) }] };
-}
-function err(message: string): ToolResult {
-  return { content: [{ type: "text", text: JSON.stringify({ error: message }) }], isError: true };
-}
+import { behavior, type ToolDef } from "./tool-def.js";
+import { okPretty as ok, err, type ToolResult } from "./tool-result.js";
 
 /** True when the live window is enabled on this server at all. Reads the flag
  *  from Edge Config (env fallback) so a warm instance picks up a flip without a
@@ -101,3 +94,24 @@ export async function unshareSession(
     note: "Live link revoked — the link now 404s and no further live updates are broadcast for this session. (A viewer already connected keeps only the events they had already received; their socket isn't force-closed.)",
   });
 }
+
+export const toolDefs: ToolDef[] = [
+  {
+    name: "share_session",
+    pack: null,
+    description:
+      "Share this session as a live, watchable link (mcp.vcad.io/live/<id>). Sessions are PRIVATE by default — this is the explicit opt-in that makes one viewable. Anyone with the returned link can watch the geometry + full event log (read-only) and drop annotations, so the result includes a clear public-link warning. Revoke anytime with unshare_session.",
+    inputSchema: shareSessionSchema,
+    handler: (a, c) => shareSession(a, c.shareStore, c.user),
+    behavior: behavior({}),
+  },
+  {
+    name: "unshare_session",
+    pack: null,
+    description:
+      "Revoke a session's live link — it goes dead and the session is private again.",
+    inputSchema: unshareSessionSchema,
+    handler: (a, c) => unshareSession(a, c.shareStore),
+    behavior: behavior({}),
+  },
+];

@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-07-diff-stripline-model-fix",
+  "version": "0.9.4",
+  "date": "2026-07-07",
+  "category": "fix",
+  "title": "diff_stripline impedance now uses the stripline model",
+  "summary": "calc_impedance computed differential-stripline Z0 with the microstrip formula and microstrip coupling constants, disagreeing with size_impedance; both now share the stripline model per the Rust reference.",
+  "features": ["electromagnetics", "pcb", "impedance"],
+  "mcpTools": ["calc_impedance", "size_impedance"]
+}

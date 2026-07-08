@@ -161,14 +161,14 @@ export function suggestNextActions(
         tool: toolName,
       });
     }
-    // Booleans take numeric ids of pre-created children, not inline geometry.
+    // Booleans take ids of pre-created children, not inline geometry.
     if (
       (type === "union" || type === "difference" || type === "intersection") &&
       lower.includes("node")
     ) {
       actions.push({
         action:
-          "Create both child nodes first, then reference their numeric ids — inline child definitions aren't supported.",
+          "Create both child nodes first, then reference their ids (numeric or string) — inline child definitions aren't supported.",
       });
     }
     if (actions.length) return actions;
@@ -290,6 +290,21 @@ export function happyPathNext(toolName: string, docId?: string): NextAction[] {
         withDoc({
           action: "Render the board to visually cross-check the layout.",
           tool: "render_pcb",
+        }),
+      ];
+    // docId here is the CAD session that received the solid (the result body's
+    // document_id wins over args), not the PCB source — exactly the session
+    // these consumers want.
+    case "solid_from_board":
+      return [
+        withDoc({
+          action: "Render the board solid to visually cross-check it.",
+          tool: "render_view",
+        }),
+        withDoc({
+          action:
+            "Measure the solid — volume, bbox, and the homogenized FR4+copper mass.",
+          tool: "inspect_cad",
         }),
       ];
     default:

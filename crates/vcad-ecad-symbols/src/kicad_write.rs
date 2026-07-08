@@ -1234,6 +1234,7 @@ mod tests {
                 width: 0.25,
                 layer: PcbLayer::FCu,
                 net: "VCC".into(),
+                source: None,
             }],
             trace_arcs: vec![],
             vias: vec![Via {
@@ -1243,6 +1244,7 @@ mod tests {
                 start_layer: PcbLayer::FCu,
                 end_layer: PcbLayer::BCu,
                 net: "VCC".into(),
+                source: None,
             }],
             zones: vec![Zone {
                 outline: vec![

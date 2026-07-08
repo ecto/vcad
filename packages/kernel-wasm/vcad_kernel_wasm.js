@@ -1001,7 +1001,7 @@ export class Solid {
      * @returns {boolean}
      */
     canExportStep() {
-        const ret = wasm.raytracer_canRaytrace(this.__wbg_ptr);
+        const ret = wasm.solid_canExportStep(this.__wbg_ptr);
         return ret !== 0;
     }
     /**
@@ -1047,6 +1047,20 @@ export class Solid {
         return Solid.__wrap(ret);
     }
     /**
+     * Minimum signed distance to another solid in mm (see `WasmClearance`):
+     * positive separation, negative penetration depth on intersection.
+     * @param {Solid} other
+     * @returns {any}
+     */
+    clearance(other) {
+        _assertClass(other, Solid);
+        const ret = wasm.solid_clearance(this.__wbg_ptr, other.__wbg_ptr);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
+    }
+    /**
      * Create a cone/frustum along Z axis.
      * @param {number} radius_bottom
      * @param {number} radius_top
@@ -1082,13 +1096,19 @@ export class Solid {
     }
     /**
      * Boolean difference (self − other).
+     *
+     * Returns a JS error (instead of trapping the WASM instance) when the
+     * kernel reports a boolean failure.
      * @param {Solid} other
      * @returns {Solid}
      */
     difference(other) {
         _assertClass(other, Solid);
         const ret = wasm.solid_difference(this.__wbg_ptr, other.__wbg_ptr);
-        return Solid.__wrap(ret);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return Solid.__wrap(ret[0]);
     }
     /**
      * Create an empty solid.
@@ -1181,13 +1201,19 @@ export class Solid {
     }
     /**
      * Boolean intersection (self ∩ other).
+     *
+     * Returns a JS error (instead of trapping the WASM instance) when the
+     * kernel reports a boolean failure.
      * @param {Solid} other
      * @returns {Solid}
      */
     intersection(other) {
         _assertClass(other, Solid);
         const ret = wasm.solid_intersection(this.__wbg_ptr, other.__wbg_ptr);
-        return Solid.__wrap(ret);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return Solid.__wrap(ret[0]);
     }
     /**
      * Check if the solid is empty (has no geometry).
@@ -1567,13 +1593,19 @@ export class Solid {
     }
     /**
      * Boolean union (self ∪ other).
+     *
+     * Returns a JS error (instead of trapping the WASM instance) when the
+     * kernel reports a boolean failure.
      * @param {Solid} other
      * @returns {Solid}
      */
     union(other) {
         _assertClass(other, Solid);
         const ret = wasm.solid_union(this.__wbg_ptr, other.__wbg_ptr);
-        return Solid.__wrap(ret);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return Solid.__wrap(ret[0]);
     }
     /**
      * Compute the volume of the solid.
@@ -3670,6 +3702,44 @@ export function digitizeText(text, height, options_json) {
 }
 
 /**
+ * Differentiate a document's mass-property + bounding-box QoIs with respect
+ * to a single named parameter (`d QoI / dθ`) via the differentiable seam.
+ *
+ * # Arguments
+ *
+ * * `doc_json` — a JSON string of a vcad Document that declares `parameter`
+ *   in its `parameters` map (with a binding onto some geometry field).
+ * * `parameter` — the named parameter to differentiate.
+ * * `density` — density fed to the mass integrals (mass = density · volume).
+ * * `probe_step` — finite step used by seeding synthesis to match surfaces
+ *   between θ ± step (the returned volume/mass/centroid derivatives are
+ *   analytic seam evaluations, not finite differences). Pass `0` to use the
+ *   `1e-4` default.
+ *
+ * # Returns
+ *
+ * A JsValue array with one entry per solid part, each
+ * `{ partIndex, volume, dVolume, mass, dMass, centroid, dCentroid,
+ * bboxExtents, dBboxExtents }` (see [`vcad_eval::diff::PartQoiGradient`]).
+ * @param {string} doc_json
+ * @param {string} parameter
+ * @param {number} density
+ * @param {number} probe_step
+ * @returns {any}
+ */
+export function documentParameterGradient(doc_json, parameter, density, probe_step) {
+    const ptr0 = passStringToWasm0(doc_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(parameter, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ret = wasm.documentParameterGradient(ptr0, len0, ptr1, len1, density, probe_step);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+
+/**
  * Convert a Document (as JSON) back to loon source code.
  * @param {string} doc_json
  * @returns {string}
@@ -3776,6 +3846,36 @@ export function ecadCheckDrc(pcb_json) {
     const ptr0 = passStringToWasm0(pcb_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len0 = WASM_VECTOR_LEN;
     const ret = wasm.ecadCheckDrc(ptr0, len0);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+
+/**
+ * Run DRC with the geometric checks scoped to an axis-aligned region
+ * (mm) — the incremental verify-on-write entry point. Only elements
+ * intersecting the region are subjects of the clearance/width/drill/edge
+ * checks (each still judged against the whole board); connectivity
+ * (shorts, islands, unrouted nets) always runs board-global.
+ *
+ * # Arguments
+ * * `pcb_json` - JSON-serialized `Pcb` struct
+ * * `min_x`, `min_y`, `max_x`, `max_y` - region corners (mm)
+ *
+ * # Returns
+ * Array of DRC violations as JsValue.
+ * @param {string} pcb_json
+ * @param {number} min_x
+ * @param {number} min_y
+ * @param {number} max_x
+ * @param {number} max_y
+ * @returns {any}
+ */
+export function ecadCheckDrcInRegion(pcb_json, min_x, min_y, max_x, max_y) {
+    const ptr0 = passStringToWasm0(pcb_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ret = wasm.ecadCheckDrcInRegion(ptr0, len0, min_x, min_y, max_x, max_y);
     if (ret[2]) {
         throw takeFromExternrefTable0(ret[1]);
     }
@@ -5169,6 +5269,33 @@ export function isPhysicsAvailable() {
 export function isSlicerAvailable() {
     const ret = wasm.isSlicerAvailable();
     return ret !== 0;
+}
+
+/**
+ * Mesh-to-mesh clearance over raw evaluated-mesh buffers (see
+ * `WasmClearance`). Operates on already-placed geometry, so callers can
+ * measure between any two evaluated parts (or merged part groups) without
+ * re-building solids.
+ * @param {Float32Array} positions_a
+ * @param {Uint32Array} indices_a
+ * @param {Float32Array} positions_b
+ * @param {Uint32Array} indices_b
+ * @returns {any}
+ */
+export function mesh_clearance(positions_a, indices_a, positions_b, indices_b) {
+    const ptr0 = passArrayF32ToWasm0(positions_a, wasm.__wbindgen_malloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passArray32ToWasm0(indices_a, wasm.__wbindgen_malloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ptr2 = passArrayF32ToWasm0(positions_b, wasm.__wbindgen_malloc);
+    const len2 = WASM_VECTOR_LEN;
+    const ptr3 = passArray32ToWasm0(indices_b, wasm.__wbindgen_malloc);
+    const len3 = WASM_VECTOR_LEN;
+    const ret = wasm.mesh_clearance(ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
 }
 
 /**
@@ -7555,7 +7682,7 @@ function __wbg_get_imports() {
                     const a = state0.a;
                     state0.a = 0;
                     try {
-                        return wasm_bindgen__convert__closures_____invoke__h3c7e771ac0cfa72e(a, state0.b, arg0, arg1);
+                        return wasm_bindgen__convert__closures_____invoke__ha5c982f531a96375(a, state0.b, arg0, arg1);
                     } finally {
                         state0.a = a;
                     }
@@ -8140,13 +8267,13 @@ function __wbg_get_imports() {
             arg0.writeTexture(arg1, arg2, arg3, arg4);
         },
         __wbindgen_cast_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 2474, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 2475, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-            const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h30743bca3150d93c, wasm_bindgen__convert__closures_____invoke__hcf7d3eaee8800b37);
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 3155, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 3156, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h937dc6f65bde8529, wasm_bindgen__convert__closures_____invoke__he77dbe0899982831);
             return ret;
         },
         __wbindgen_cast_0000000000000002: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 3258, function: Function { arguments: [Externref], shim_idx: 3259, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-            const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__hfdadf281ff0f1c56, wasm_bindgen__convert__closures_____invoke__h9bdf540eb7e61590);
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 3367, function: Function { arguments: [Externref], shim_idx: 3368, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h191db0eea4d7d68c, wasm_bindgen__convert__closures_____invoke__h852de6502a19f22f);
             return ret;
         },
         __wbindgen_cast_0000000000000003: function(arg0) {
@@ -8234,16 +8361,16 @@ function __wbg_get_imports() {
     };
 }
 
-function wasm_bindgen__convert__closures_____invoke__hcf7d3eaee8800b37(arg0, arg1, arg2) {
-    wasm.wasm_bindgen__convert__closures_____invoke__hcf7d3eaee8800b37(arg0, arg1, arg2);
+function wasm_bindgen__convert__closures_____invoke__he77dbe0899982831(arg0, arg1, arg2) {
+    wasm.wasm_bindgen__convert__closures_____invoke__he77dbe0899982831(arg0, arg1, arg2);
 }
 
-function wasm_bindgen__convert__closures_____invoke__h9bdf540eb7e61590(arg0, arg1, arg2) {
-    wasm.wasm_bindgen__convert__closures_____invoke__h9bdf540eb7e61590(arg0, arg1, arg2);
+function wasm_bindgen__convert__closures_____invoke__h852de6502a19f22f(arg0, arg1, arg2) {
+    wasm.wasm_bindgen__convert__closures_____invoke__h852de6502a19f22f(arg0, arg1, arg2);
 }
 
-function wasm_bindgen__convert__closures_____invoke__h3c7e771ac0cfa72e(arg0, arg1, arg2, arg3) {
-    wasm.wasm_bindgen__convert__closures_____invoke__h3c7e771ac0cfa72e(arg0, arg1, arg2, arg3);
+function wasm_bindgen__convert__closures_____invoke__ha5c982f531a96375(arg0, arg1, arg2, arg3) {
+    wasm.wasm_bindgen__convert__closures_____invoke__ha5c982f531a96375(arg0, arg1, arg2, arg3);
 }
 
 

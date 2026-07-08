@@ -23,11 +23,13 @@ import {
   loadDocument,
   documents,
 } from "../tools/session.js";
+import { InMemorySessionStore } from "../session-store.js";
 import {
   registryDispatchableNames,
   registryToolDescriptors,
   dispatchRegistryTool,
 } from "../tools/registry-dispatch.js";
+import { getArtifactFile, clearArtifacts } from "../tools/artifact-store.js";
 import { slimPreviewForInlineUi } from "../server.js";
 import {
   createRobotEnv,
@@ -39,6 +41,7 @@ import {
 import { existsSync, unlinkSync, mkdtempSync, rmSync } from "node:fs";
 import { resolve, join } from "node:path";
 import { tmpdir } from "node:os";
+import { createHash } from "node:crypto";
 
 /** Minimal Document with one cube part — replaces what createCadDocument
  *  used to build for downstream tests. */
@@ -133,6 +136,83 @@ describe("session lifecycle", () => {
   });
 });
 
+describe("get_document returns the IR body (issue #278)", () => {
+  // Regression: get_document is documented to "Return the full IR Document
+  // JSON" but callers observed only a {document_id} stub — useless for
+  // snapshotting board state or handing the document to another connection.
+
+  let prevCap: string | undefined;
+
+  beforeEach(() => {
+    prevCap = process.env.MCP_MAX_INLINE_ARTIFACT_BYTES;
+    clearArtifacts();
+  });
+
+  afterEach(() => {
+    if (prevCap === undefined) delete process.env.MCP_MAX_INLINE_ARTIFACT_BYTES;
+    else process.env.MCP_MAX_INLINE_ARTIFACT_BYTES = prevCap;
+    clearArtifacts();
+  });
+
+  it("a small document comes back with its parts and nodes inline", () => {
+    const open = openDocument({ initial: makeCubeDoc() });
+    const { document_id } = JSON.parse(open.content[0].text);
+
+    const result = getDocumentTool({ document_id });
+    const doc = JSON.parse(result.content[0].text);
+
+    // The IR body — not a {document_id} stub.
+    expect(Object.keys(doc)).not.toEqual(["document_id"]);
+    expect(doc.nodes["1"].op.type).toBe("Cube");
+    expect(doc.roots).toHaveLength(1);
+    expect(doc.version).toBe("0.1");
+  });
+
+  it("an oversized document offloads to the artifact store with a verifiable manifest", () => {
+    // Tighten the inline cap so the offload branch triggers without building
+    // a 64 KiB doc (remote.test.ts covers the default cap value).
+    process.env.MCP_MAX_INLINE_ARTIFACT_BYTES = "2048";
+
+    const big = makeCubeDoc();
+    for (let i = 2; i <= 60; i++) {
+      big.nodes[String(i)] = {
+        id: i,
+        name: `padding_cube_${i}`,
+        op: { type: "Cube", size: { x: i, y: i, z: i } },
+      };
+      big.roots.push({ root: i, material: "default" });
+    }
+    expect(JSON.stringify(big).length).toBeGreaterThan(2048);
+
+    const open = openDocument({ initial: big });
+    const { document_id } = JSON.parse(open.content[0].text);
+
+    const result = getDocumentTool({ document_id });
+    const handle = JSON.parse(result.content[0].text);
+
+    // Compact handle, not the IR — but with enough to act on.
+    expect(handle.document_id).toBe(document_id);
+    expect(handle.parts).toBe(60);
+    expect(handle.nodes).toBe(60);
+    expect(handle.artifact_id).toMatch(/^art_/);
+    expect(handle.artifact_url).toContain(`/artifacts/${handle.artifact_id}`);
+    expect(handle.manifest).toHaveLength(1);
+    expect(handle.manifest[0].file).toBe(`${document_id}.vcad`);
+
+    // The stored bytes ARE the full IR, and the manifest sha256 verifies them.
+    const stored = getArtifactFile(handle.artifact_id, `${document_id}.vcad`);
+    expect(stored).not.toBeNull();
+    const sha = createHash("sha256").update(stored!.buf).digest("hex");
+    expect(sha).toBe(handle.manifest[0].sha256);
+    const roundTripped = JSON.parse(stored!.buf.toString("utf8")) as Document;
+    expect(Object.keys(roundTripped.nodes)).toHaveLength(60);
+    expect(roundTripped.roots).toHaveLength(60);
+
+    // The session stays live — the handle is a snapshot, not a close.
+    expect(documents.has(document_id)).toBe(true);
+  });
+});
+
 describe("get_document body survives inline-UI slimming", () => {
   // Regression: get_document is in GEOMETRY_TOOLS, so on a client that
   // declared MCP Apps support, slimPreviewForInlineUi used to replace the
@@ -217,11 +297,14 @@ describe("session persistence (save_document / load_document)", () => {
     rmSync(stateDir, { recursive: true, force: true });
   });
 
-  it("round-trips a session to disk and back", () => {
+  it("round-trips a session to disk and back", async () => {
     const open = openDocument({ initial: makeCubeDoc() });
     const { document_id } = JSON.parse(open.content[0].text);
 
-    const save = saveDocument({ document_id, name: "my-part" });
+    const save = await saveDocument(
+      { document_id, name: "my-part" },
+      new InMemorySessionStore(),
+    );
     const saved = JSON.parse(save.content[0].text);
     expect(saved.saved).toBe(true);
     expect(saved.name).toBe("my-part");
@@ -231,7 +314,10 @@ describe("session persistence (save_document / load_document)", () => {
     // Simulate a cold start: drop the in-process session.
     documents.clear();
 
-    const load = loadDocument({ name: "my-part" });
+    const load = await loadDocument(
+      { name: "my-part" },
+      new InMemorySessionStore(),
+    );
     expect(load.isError).toBeFalsy();
     const loaded = JSON.parse(load.content[0].text);
     expect(loaded.document_id).toMatch(/^doc_/);
@@ -245,8 +331,11 @@ describe("session persistence (save_document / load_document)", () => {
     expect(Object.keys(fetched.nodes)).toContain("1");
   });
 
-  it("load_document on a missing file returns an isError result", () => {
-    const load = loadDocument({ name: "does-not-exist" });
+  it("load_document on a missing file returns an isError result", async () => {
+    const load = await loadDocument(
+      { name: "does-not-exist" },
+      new InMemorySessionStore(),
+    );
     expect(load.isError).toBe(true);
     expect(load.content[0].text).toContain('No saved document named "does-not-exist"');
     expect(load.content[0].text).toContain(stateDir);
@@ -330,6 +419,19 @@ describe("inspect_cad (session-aware)", () => {
     expect(props.surface_area_mm2).toBeCloseTo(600, 0);
     expect(props.triangles).toBeGreaterThan(0);
     expect(props.parts).toBe(1);
+    // Real geometry satisfies the isoperimetric bound A³ ≥ 36πV², so the
+    // impossibility warnings must be absent on a clean inspection.
+    expect(props.warnings).toBeUndefined();
+  });
+
+  it("inspects an inline document with no resident session", () => {
+    // Stateless escape hatch: no open_document, no document_id — pass the IR
+    // directly (survives a cold serverless instance where the session is gone).
+    documents.clear();
+    const result = inspectCad({ document: makeCubeDoc() }, engine);
+    const props = JSON.parse(result.content[0].text);
+    expect(props.volume_mm3).toBeCloseTo(1000, 0);
+    expect(props.parts).toBe(1);
   });
 });
 
@@ -365,6 +467,34 @@ describe("export_cad", () => {
     expect(output.format).toBe("glb");
     expect(output.bytes).toBeGreaterThan(12);
     expect(existsSync(filepath)).toBe(true);
+    unlinkSync(filepath);
+  });
+
+  it("accepts an inline `document` alongside the legacy `ir` alias", () => {
+    const filename = "test_export_document.stl";
+    const filepath = resolve(process.cwd(), filename);
+    if (existsSync(filepath)) unlinkSync(filepath);
+
+    const result = exportCad({ document: makeCubeDoc(), filename }, engine);
+    const output = JSON.parse(result.content[0].text);
+    expect(output.format).toBe("stl");
+    expect(output.bytes).toBeGreaterThan(84);
+    expect(existsSync(filepath)).toBe(true);
+    unlinkSync(filepath);
+  });
+
+  it("exports a resident session by document_id", () => {
+    const filename = "test_export_session.stl";
+    const filepath = resolve(process.cwd(), filename);
+    if (existsSync(filepath)) unlinkSync(filepath);
+
+    const { document_id } = JSON.parse(
+      openDocument({ initial: makeCubeDoc() }).content[0].text,
+    );
+    const result = exportCad({ document_id, filename }, engine);
+    const output = JSON.parse(result.content[0].text);
+    expect(output.format).toBe("stl");
+    expect(output.bytes).toBeGreaterThan(84);
     unlinkSync(filepath);
   });
 });
@@ -550,6 +680,60 @@ describe("sheet-metal tools", () => {
           v.detail.kind === "BendRadiusBelowMinimum",
       ),
     ).toBe(true);
+  });
+
+  it("engravings ride create → unfold onto the ENGRAVE layer, exempt from DFM", () => {
+    // Motivating case: a note label on a 6.35 mm stainless tuning-fork
+    // handle. Through-cut letters violate min feature at this thickness;
+    // engraving is surface marking, so nothing may trip DFM.
+    const created = JSON.parse(
+      sheetMetalCreate(
+        {
+          width: 120,
+          depth: 20,
+          thickness: 6.35,
+          material: "stainless-304",
+          engravings: [
+            { type: "Text", text: "A4", x: 50, y: 6, height: 8 },
+            { type: "Polyline", points: [[5, 5], [15, 5]] },
+          ],
+        },
+        engine,
+      ).content[0].text,
+    );
+    expect(created.document_id).toBeDefined();
+    expect(created.violations).toHaveLength(0);
+
+    const unfolded = JSON.parse(
+      sheetMetalUnfold(
+        { document_id: created.document_id },
+        engine,
+      ).content[0].text,
+    );
+    // "A4" = A (2 strokes) + 4 (1 stroke) + explicit polyline.
+    expect(unfolded.flat_pattern.engravings_2d).toHaveLength(4);
+    expect(unfolded.dxf).toContain("0\nLAYER\n2\nENGRAVE\n");
+    expect(
+      unfolded.dxf.match(/0\nLWPOLYLINE\n8\nENGRAVE\n/g),
+    ).toHaveLength(4);
+    // Engraving is marking only — exactly one CUT loop (the exterior).
+    expect(unfolded.dxf.match(/0\nLWPOLYLINE\n8\nCUT\n/g)).toHaveLength(1);
+    expect(unfolded.note).toContain("ENGRAVE");
+  });
+
+  it("engraving text with an unsupported glyph fails loudly", () => {
+    expect(() =>
+      sheetMetalCreate(
+        {
+          width: 50,
+          depth: 20,
+          thickness: 1,
+          material: "Al-soft",
+          engravings: [{ type: "Text", text: "Ω4", x: 0, y: 0, height: 6 }],
+        },
+        engine,
+      ),
+    ).toThrow(/no engraving glyph/);
   });
 
   it("inspect_cad center of mass stays inside the bounding box", () => {
@@ -1103,6 +1287,18 @@ describe("tool packs (VCAD_MCP_PACKS)", () => {
     const disabled = disabledToolNames();
     delete process.env.VCAD_MCP_PACKS;
     expect(disabled.has("sheet_metal_unfold")).toBe(false);
+    expect(disabled.has("run_drc")).toBe(true);
+  });
+
+  it("keeps `undo` always-on core — never gated by a pack", async () => {
+    const { disabledToolNames } = await import("../server.js");
+    // `undo` is the universal rewind, not an ECAD-only tool; a client that
+    // trims down to a non-ecad pack must still be able to take back a mutation.
+    process.env.VCAD_MCP_PACKS = "dfm";
+    const disabled = disabledToolNames();
+    delete process.env.VCAD_MCP_PACKS;
+    expect(disabled.has("undo")).toBe(false);
+    // The dfm-only case still disables the ecad pack — proves the gate is live.
     expect(disabled.has("run_drc")).toBe(true);
   });
 });

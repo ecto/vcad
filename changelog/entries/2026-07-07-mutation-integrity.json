@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-07-mutation-integrity",
+  "version": "0.9.4",
+  "date": "2026-07-07",
+  "category": "feat",
+  "title": "Integrity metrics on every mutation",
+  "summary": "CAD mutations now return volume, bbox, center of mass, watertightness, and CoM-vs-pattern-axis distance plus warnings, so corrupt geometry is visible at edit time.",
+  "features": ["mcp", "integrity", "verification"],
+  "mcpTools": ["create_cad_loon", "create", "update", "delete"]
+}

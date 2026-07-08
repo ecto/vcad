@@ -16,6 +16,12 @@ import {
   listPartsFromDocument,
 } from "@vcad/core";
 import { getSession } from "./session.js";
+import { appendIntegrity, computeIntegrity } from "./integrity.js";
+import {
+  describeSceneResult,
+  inspectPartResult,
+  MeasureError,
+} from "./measure.js";
 
 /**
  * Tools whose execution depends on browser-only state (camera, viewport
@@ -32,11 +38,12 @@ const BROWSER_ONLY_TOOLS = new Set<string>([
 /**
  * Tools the registry exposes but whose execution path goes through
  * `executeCrudInner` (TS, app-only) rather than the Rust planner —
- * including ones that need an evaluated scene (`inspect_part`,
- * `describe_scene`, `place`) or the docstore-shaped feature builder
- * (`tube`, `polyline_tube`, `linear_pattern`, `circular_pattern`,
- * `mirror`). Skipping for v1 — these can be ported to the IR-direct
- * path as a follow-up.
+ * the docstore-shaped feature builder (`tube`, `polyline_tube`,
+ * `linear_pattern`, `circular_pattern`, `mirror`) and anchor-based
+ * `place`. Skipping for v1 — these can be ported to the IR-direct path
+ * as a follow-up. (`inspect_part` / `describe_scene` were here too but are
+ * now dispatched: they need an evaluated scene, not the planner, so they
+ * are answered directly below like `read`.)
  */
 const DEFERRED_TOOLS = new Set<string>([
   "tube",
@@ -44,13 +51,23 @@ const DEFERRED_TOOLS = new Set<string>([
   "linear_pattern",
   "circular_pattern",
   "mirror",
-  "inspect_part",
-  "describe_scene",
   "place",
   // search_parts / place_part are implemented separately in parts.ts —
   // they take a Document directly and don't need the planner round-trip.
   "search_parts",
   "place_part",
+]);
+
+/**
+ * Dispatchable registry tools that only READ the scene — no mutation, no undo
+ * snapshot, no persist. `read` inspects the IR directly; `inspect_part` /
+ * `describe_scene` evaluate the scene and measure tessellations. The server
+ * derives each registry tool's `writesDoc` flag from this set.
+ */
+export const READ_ONLY_REGISTRY_TOOLS = new Set<string>([
+  "read",
+  "inspect_part",
+  "describe_scene",
 ]);
 
 /**
@@ -92,11 +109,11 @@ export const CREATE_PARAM_HINTS: Record<string, string> = {
   sphere: "{radius, segments? (default 32)}",
   cone: "{radius_bottom, radius_top, height, segments? (default 64)} — axis along Z",
   union:
-    "{left, right} — numeric node ids of existing nodes. Create both children first, then combine; inline child definitions are not supported.",
+    "{left, right} — node ids of existing nodes (numeric or string). Create both children first, then combine; inline child definitions are not supported.",
   difference:
-    "{left, right} — numeric node ids of existing nodes (left minus right). Create both children first; inline child definitions are not supported.",
+    "{left, right} — node ids of existing nodes (left minus right; numeric or string). Create both children first; inline child definitions are not supported.",
   intersection:
-    "{left, right} — numeric node ids of existing nodes. Create both children first; inline child definitions are not supported.",
+    "{left, right} — node ids of existing nodes (numeric or string). Create both children first; inline child definitions are not supported.",
   translate: "{child: nodeId, offset: {x, y, z}}",
   rotate: "{child: nodeId, angles: {x, y, z}} — degrees",
   scale: "{child: nodeId, factor: {x, y, z}}",
@@ -106,6 +123,51 @@ export const CREATE_PARAM_HINTS: Record<string, string> = {
   fillet: "{child: nodeId, radius}",
   chamfer: "{child: nodeId, distance}",
 };
+
+/** Param keys that reference another node by id (CsgOp child refs). */
+const NODE_REF_PARAM_KEYS = ["child", "left", "right", "sketch"] as const;
+
+/** Coerce a single node reference: the Rust planner's serde parse wants
+ *  JSON numbers for CsgOp child refs, but part ids travel as strings
+ *  everywhere else on the MCP surface ("5" from a prior result's part_id).
+ *  Accept both by converting digit-strings to numbers. */
+function coerceNodeRef(v: unknown): unknown {
+  if (typeof v === "string" && /^\d+$/.test(v)) return Number(v);
+  return v;
+}
+
+/**
+ * Unify the two id dialects at the dispatch boundary so agents can pass
+ * either. Top-level `node_id`/`part_id` are strings on the planner side —
+ * accept numbers by stringifying. Child refs inside create/update `params`
+ * (child/left/right/sketch/sketches) are numeric NodeIds on the planner
+ * side — accept digit-strings by numbering. Returns a copy; never mutates.
+ */
+export function normalizeNodeRefs(
+  toolName: string,
+  args: Record<string, unknown>,
+): Record<string, unknown> {
+  const out = { ...args };
+  for (const key of ["node_id", "part_id"]) {
+    if (typeof out[key] === "number") out[key] = String(out[key]);
+  }
+  if (
+    (toolName === "create" || toolName === "update") &&
+    out.params &&
+    typeof out.params === "object" &&
+    !Array.isArray(out.params)
+  ) {
+    const params = { ...(out.params as Record<string, unknown>) };
+    for (const key of NODE_REF_PARAM_KEYS) {
+      if (key in params) params[key] = coerceNodeRef(params[key]);
+    }
+    if (Array.isArray(params.sketches)) {
+      params.sketches = params.sketches.map(coerceNodeRef);
+    }
+    out.params = params;
+  }
+  return out;
+}
 
 /** Fill defaultable fields into create/update params in place. */
 function applyParamDefaults(args: Record<string, unknown>): Record<string, unknown> {
@@ -203,7 +265,7 @@ interface PartDiffEntry {
 }
 
 /** Compact before/after diff of a mutation, reported back to the agent. */
-interface PartsDiff {
+export interface PartsDiff {
   added: PartDiffEntry[];
   removed: PartDiffEntry[];
   modified: PartDiffEntry[];
@@ -215,7 +277,7 @@ interface PartsDiff {
  * pass over reachable nodes — and exact enough to attribute any
  * mutation to the parts it touched.
  */
-function snapshotParts(
+export function snapshotParts(
   doc: import("@vcad/ir").Document,
 ): Map<string, { name?: string; fingerprint: string }> {
   const map = new Map<string, { name?: string; fingerprint: string }>();
@@ -247,7 +309,7 @@ function snapshotParts(
 }
 
 /** Diff two part snapshots. Returns null when nothing changed. */
-function diffParts(
+export function diffParts(
   before: ReturnType<typeof snapshotParts>,
   after: ReturnType<typeof snapshotParts>,
 ): PartsDiff | null {
@@ -277,7 +339,7 @@ function diffParts(
  *  2. the single JSON text block — kept for the agent and for hosts
  *     (Cursor) with known gaps forwarding structuredContent to widgets.
  */
-function appendChanged(
+export function appendChanged(
   result: {
     content: Array<{ type: "text"; text: string }>;
     structuredContent?: Record<string, unknown>;
@@ -310,6 +372,7 @@ function appendChanged(
 export function dispatchRegistryTool(
   toolName: string,
   args: Record<string, unknown>,
+  engine?: import("@vcad/engine").Engine,
 ): { content: Array<{ type: "text"; text: string }> } {
   const dispatchable = registryDispatchableNames();
   if (!dispatchable.has(toolName)) {
@@ -333,20 +396,38 @@ export function dispatchRegistryTool(
     return handleRead(doc, toolArgs);
   }
 
+  // `inspect_part` / `describe_scene` need an evaluated scene, not the Rust
+  // planner (they were app-only, reading the browser docstore + engine
+  // scene). Answer them directly from the session document + engine.
+  if (toolName === "inspect_part" || toolName === "describe_scene") {
+    return handleMeasureRead(toolName, doc, toolArgs, engine);
+  }
+
   const before = snapshotParts(doc);
   const result = runMutation(toolName, toolArgs, doc, documentId);
   const changed = diffParts(before, snapshotParts(doc));
-  if (changed) appendChanged(result, changed);
+  if (changed) {
+    appendChanged(result, changed);
+    // Every mutation carries its own integrity certificate (volume, bbox,
+    // CoM, watertightness, CoM-vs-pattern-axis): silently corrupt geometry
+    // must be visible in the mutation response, not only via an
+    // out-of-band inspect_cad (torr session-3 field report).
+    if (engine) {
+      const integrity = computeIntegrity(doc, engine);
+      if (integrity) appendIntegrity(result, integrity);
+    }
+  }
   return result;
 }
 
 /** Execute a mutating registry tool against an open session document. */
-function runMutation(
+export function runMutation(
   toolName: string,
-  toolArgs: Record<string, unknown>,
+  rawArgs: Record<string, unknown>,
   doc: import("@vcad/ir").Document,
   documentId: string,
 ): { content: Array<{ type: "text"; text: string }> } {
+  const toolArgs = normalizeNodeRefs(toolName, rawArgs);
   // `delete` and `set_material` go directly to applyToolOutcome — the
   // Rust planner expects CRDT stable_ids, but the IR-direct MCP path
   // uses stringified NodeIds for part_id. The args are already
@@ -440,6 +521,45 @@ function runMutation(
         }),
       },
     ],
+  };
+}
+
+/**
+ * Answer `inspect_part` / `describe_scene` from the evaluated scene. Both are
+ * pure reads (the mesh math lives in measure.ts). Requires the engine — over
+ * MCP it is always threaded from the connection; a missing one is a wiring bug,
+ * surfaced clearly rather than as an opaque undefined-deref.
+ */
+function handleMeasureRead(
+  toolName: string,
+  doc: import("@vcad/ir").Document,
+  args: Record<string, unknown>,
+  engine?: import("@vcad/engine").Engine,
+): { content: Array<{ type: "text"; text: string }> } {
+  if (!engine) {
+    throw new Error(
+      `Tool "${toolName}" needs the kernel engine — none was threaded into the dispatcher.`,
+    );
+  }
+  let payload: Record<string, unknown>;
+  try {
+    payload =
+      toolName === "inspect_part"
+        ? inspectPartResult(doc, engine, String(args.part_id ?? ""))
+        : describeSceneResult(
+            doc,
+            engine,
+            Array.isArray(args.part_ids)
+              ? (args.part_ids as unknown[]).map((x) => String(x))
+              : undefined,
+            typeof args.limit === "number" ? args.limit : undefined,
+          );
+  } catch (e) {
+    if (e instanceof MeasureError) throw new Error(e.message);
+    throw e;
+  }
+  return {
+    content: [{ type: "text", text: JSON.stringify(payload) }],
   };
 }
 

@@ -758,3 +758,20 @@ export function simulateStrike(
 
 const round2 = (x: number) => Math.round(x * 100) / 100;
 const round4 = (x: number) => Math.round(x * 10000) / 10000;
+
+// ─── ToolDef registry entry ───────────────────────────────────────────────
+
+import { behavior, type ToolDef } from "./tool-def.js";
+
+/** Tool table contributed to the server assembler. */
+export const toolDefs: ToolDef[] = [
+  {
+    name: "simulate_strike",
+    pack: "sheet_metal",
+    description:
+      "Hear a part before it's cut: simulate a mallet strike on a flat free-free bar (glockenspiel/vibraphone bar) and verify its pitch. Modal frequencies from BOTH the closed-form Euler–Bernoulli model and a hole-aware 1-D FEM (cord holes change A(x), I(x)); strike-excited modal synthesis (mode shape at strike point × half-sine mallet spectrum, Q-based decay) → optional 44.1 kHz WAV → FFT peak extraction → cents-error verdict vs `note`/`expect_hz`. Takes a flat sheet_metal_create `document_id` (dims, material, holes read from the session) or an explicit `bar` spec. E/ρ come from the kernel material registry. The `modes` table {hz, gain, q} is compact enough to drive client-side Web Audio synthesis.",
+    inputSchema: simulateStrikeSchema,
+    handler: (a, c) => simulateStrike(a, c.engine),
+    behavior: behavior({}),
+  },
+];

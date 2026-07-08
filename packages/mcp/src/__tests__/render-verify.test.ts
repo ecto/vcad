@@ -103,6 +103,19 @@ describe("render_view", () => {
     expect(JSON.parse(meta!.text).view).toBe("isometric");
   });
 
+  it("renders an inline document with no resident session", async () => {
+    // Stateless path: no open_document, empty session cache — pass the IR
+    // directly so a cold serverless instance can still render.
+    documents.clear();
+    const out = await renderView({ document: makeCubeDoc() });
+    expect(out.isError).toBeFalsy();
+    const image = out.content.find((c) => c.type === "image") as
+      | { type: "image"; data: string; mimeType: string }
+      | undefined;
+    expect(image, "expected an image block (is @resvg/resvg-js installed?)").toBeDefined();
+    expect(image!.mimeType).toBe("image/png");
+  });
+
   it("respects width_px clamping", async () => {
     const documentId = openWith(makeCubeDoc());
     const out = await renderView({ document_id: documentId, width_px: 128 });

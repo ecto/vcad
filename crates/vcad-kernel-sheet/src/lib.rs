@@ -30,6 +30,7 @@ pub mod bend_table;
 pub mod cost;
 pub mod dxf;
 pub mod edge_flange;
+pub mod font;
 pub mod hem;
 pub mod jog;
 pub mod manufacturability;
@@ -37,6 +38,7 @@ pub mod materials;
 pub mod model;
 pub mod nesting;
 pub mod poly2d;
+pub mod receipt;
 pub mod relief;
 pub mod sequence;
 pub mod shop_profiles;
@@ -52,6 +54,7 @@ pub use dxf::{
     flat_pattern_to_dxf, flat_pattern_to_dxf_with, nested_dxf, DxfOptions, NestedPlacement,
 };
 pub use edge_flange::{add_edge_flange, EdgeFlangeError, FlangePosition};
+pub use font::{text_to_polylines, text_width, FontError};
 pub use hem::{add_hem, HemKind, HemParams};
 pub use jog::{add_jog, JogParams, JogResult};
 pub use manufacturability::{check_manufacturability, Severity, ShopProfile, Violation};
@@ -62,6 +65,7 @@ pub use materials::{
 pub use model::{Bend, BendDirection, BendId, Frame, Panel, PanelId, SheetMetalModel};
 pub use nesting::{nest_rectangles, NestingParams, NestingResult, PartFootprint, Placement};
 pub use poly2d::Poly;
+pub use receipt::{cost_claims, manufacturability_claims, sheet_metal_receipt};
 pub use relief::{apply_bend_relief, find_missing_reliefs, ReliefError, ReliefNotch, ReliefParams};
 pub use sequence::{bend_sequence, BendStep};
 pub use shop_profiles::{

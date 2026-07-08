@@ -9,7 +9,7 @@
 
 use vcad_kernel_math::{Point2, Point3};
 use vcad_kernel_primitives::BRepSolid;
-use vcad_kernel_topo::{FaceId, Orientation};
+use vcad_kernel_topo::{FaceId, HalfEdgeId, Orientation};
 
 use crate::ssi::IntersectionCurve;
 
@@ -21,21 +21,78 @@ pub struct SplitResult {
     pub sub_faces: Vec<FaceId>,
 }
 
+/// For a sampled intersection curve, collect the polyline points strictly
+/// between the entry and exit points (ordered entry → exit), so the cut
+/// edge can follow the true curve instead of a single chord. A chord
+/// disagrees with the curved-side split boundary by the arc's sagitta,
+/// which is enough to flip classification probes near the cut (the torr
+/// B1 family). Returns an empty list for non-sampled curves.
+fn cut_polyline_between(
+    curve: &IntersectionCurve,
+    entry_point: &Point3,
+    exit_point: &Point3,
+) -> Vec<Point3> {
+    let IntersectionCurve::Sampled(points) = curve else {
+        return Vec::new();
+    };
+    if points.len() < 3 {
+        return Vec::new();
+    }
+    // Project a point onto the polyline: (segment index + fraction) as a
+    // scalar parameter in [0, N−1].
+    let project = |p: &Point3| -> f64 {
+        let mut best = 0.0f64;
+        let mut best_d = f64::INFINITY;
+        for i in 0..points.len() - 1 {
+            let a = points[i];
+            let b = points[i + 1];
+            let ab = b - a;
+            let len2 = ab.norm_squared();
+            let t = if len2 < 1e-18 {
+                0.0
+            } else {
+                ((*p - a).dot(ab) / len2).clamp(0.0, 1.0)
+            };
+            let q = a + t * ab;
+            let d = (*p - q).norm_squared();
+            if d < best_d {
+                best_d = d;
+                best = i as f64 + t;
+            }
+        }
+        best
+    };
+    let s_entry = project(entry_point);
+    let s_exit = project(exit_point);
+    let (lo, hi, rev) = if s_entry <= s_exit {
+        (s_entry, s_exit, false)
+    } else {
+        (s_exit, s_entry, true)
+    };
+    let mut via: Vec<Point3> = points
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| (*i as f64) > lo + 1e-9 && (*i as f64) < hi - 1e-9)
+        .map(|(_, p)| *p)
+        .collect();
+    if rev {
+        via.reverse();
+    }
+    via
+}
+
 /// Split a face along an intersection curve.
 ///
 /// The curve must already be trimmed to the face's domain. This function:
 /// 1. Projects the curve into UV space
 /// 2. Finds where it enters/exits the face boundary
 /// 3. Splits the boundary loop at entry/exit points
-/// 4. Creates two new face loops
-///
-/// For the initial implementation, this handles the common case of a
-/// planar face split by a line segment. The line must cross the face
-/// boundary at exactly 2 points.
+/// 4. Creates two new face loops, joined along the curve's polyline (or a
+///    straight chord for analytic curves)
 pub fn split_face_by_curve(
     brep: &mut BRepSolid,
     face_id: FaceId,
-    _curve: &IntersectionCurve,
+    curve: &IntersectionCurve,
     entry_point: &Point3,
     exit_point: &Point3,
 ) -> SplitResult {
@@ -87,6 +144,10 @@ pub fn split_face_by_curve(
     // Loop 1: entry_point → (edges from entry to exit) → exit_point → (cut back)
     // Loop 2: exit_point → (edges from exit to entry) → entry_point → (cut back)
 
+    // The cut edge between exit and entry follows the true intersection
+    // curve when it is sampled (via points), not a single chord.
+    let via = cut_polyline_between(curve, entry_point, exit_point);
+
     let mut loop1_points: Vec<Point3> = Vec::new();
     let mut loop2_points: Vec<Point3> = Vec::new();
 
@@ -98,6 +159,8 @@ pub fn split_face_by_curve(
         idx = (idx + 1) % n;
     }
     loop1_points.push(*exit_point);
+    // Close along the cut curve: exit → entry (via reversed).
+    loop1_points.extend(via.iter().rev());
 
     // Walk from exit_edge to entry_edge (other direction)
     loop2_points.push(*exit_point);
@@ -107,6 +170,8 @@ pub fn split_face_by_curve(
         idx = (idx + 1) % n;
     }
     loop2_points.push(*entry_point);
+    // Close along the cut curve: entry → exit (via forward).
+    loop2_points.extend(via.iter());
 
     // Remove consecutive duplicate vertices (can happen when split points
     // coincide with existing vertices)
@@ -221,7 +286,7 @@ fn snap_point(p: Point3) -> Point3 {
 }
 
 /// Find an existing vertex at the given point, or create a new one.
-fn find_or_create_vertex(
+pub(crate) fn find_or_create_vertex(
     brep: &mut BRepSolid,
     point: &Point3,
     tolerance: f64,
@@ -526,19 +591,71 @@ pub fn split_planar_face_by_circle(
                 let cap_radius = on_plane.norm();
 
                 // Check: is the intersection circle coplanar and fully inside?
+                // Tangency counts as inside — a boss ring exactly inscribed to
+                // the cap rim (offset + r == cap_radius) must still punch its
+                // hole through the cap; leaving the membrane whole corrupts
+                // the volume integral by the full contact-disk flux.
                 let circle_to_plane = (circle.center - center).dot(normal).abs();
                 let circle_center_offset = {
                     let d = circle.center - center;
                     (d - d.dot(normal) * normal).norm()
                 };
+                // A circle that IS the cap's own rim (concentric, same
+                // radius — e.g. a press-fit ring whose wall lies exactly on
+                // the wall that bounds this cap) has nothing to split:
+                // admitting it would punch a hole covering the entire cap
+                // and leave a duplicate full-size disk. This is the
+                // degenerate-loop analog of `circle_is_own_boundary`.
+                if circle_to_plane < 1e-6
+                    && circle_center_offset < 1e-6
+                    && (circle.radius - cap_radius).abs() < 1e-6
+                {
+                    return SplitResult {
+                        sub_faces: vec![face_id],
+                    };
+                }
                 let circle_inside = circle_to_plane < 1e-6
-                    && circle_center_offset + circle.radius + 1e-6 < cap_radius;
+                    && circle_center_offset + circle.radius <= cap_radius + 1e-6;
+                // Partial overlap: part of the circle is within the rim, part
+                // sticks out (a boss overhanging the edge of a disc).
+                let circle_overlaps = circle_to_plane < 1e-6
+                    && !circle_inside
+                    && circle_center_offset - circle.radius < cap_radius - 1e-6
+                    && circle_center_offset < cap_radius + circle.radius - 1e-6;
+
+                if circle_overlaps && cap_radius > 1e-12 {
+                    // The degenerate single-vertex outer loop can't express a
+                    // partial split. Sample the rim into an explicit polygon
+                    // outer loop and re-enter this function: the polygonal
+                    // path detects the partial overlap and routes to the arc
+                    // splitter. Sample densely — the polygon becomes the
+                    // cap's real boundary from here on, and a coarse rim
+                    // under-integrates the cap area.
+                    let n_rim = segments.max(128) as usize;
+                    let cap_x = on_plane.normalize();
+                    let cap_y = normal.cross(cap_x);
+                    let rim_ids: Vec<_> = (0..n_rim)
+                        .map(|i| {
+                            let theta = 2.0 * std::f64::consts::PI * (i as f64) / (n_rim as f64);
+                            let p =
+                                center + cap_radius * (theta.cos() * cap_x + theta.sin() * cap_y);
+                            find_or_create_vertex(brep, &p, 1e-6)
+                        })
+                        .collect();
+                    let rim_hes: Vec<_> = rim_ids
+                        .iter()
+                        .map(|&v| brep.topology.add_half_edge(v))
+                        .collect();
+                    let new_outer = brep.topology.add_loop(&rim_hes);
+                    brep.topology.faces[face_id].outer_loop = new_outer;
+                    return split_planar_face_by_circle(brep, face_id, circle, segments);
+                }
 
                 if circle_inside && cap_radius > 1e-12 {
                     let tolerance = 1e-6;
 
                     // Generate circle vertices for the inner disk face
-                    let circle_verts: Vec<Point3> = (0..segments)
+                    let raw_circle_verts: Vec<Point3> = (0..segments)
                         .map(|i| {
                             let theta = 2.0 * std::f64::consts::PI * (i as f64) / (segments as f64);
                             let (sin_t, cos_t) = theta.sin_cos();
@@ -548,6 +665,36 @@ pub fn split_planar_face_by_circle(
                                         + sin_t * circle.y_dir.into_inner())
                         })
                         .collect();
+
+                    // The SSI circle's (x_dir, y_dir) frame is arbitrary, so
+                    // the generated ring can wind either way. The tessellator
+                    // expects loops CCW around the STORED surface normal
+                    // (`Orientation::Reversed` flips triangles afterwards) —
+                    // normalize the disk loop to that convention. The disk is
+                    // usually classified Inside and dropped, but when it
+                    // survives (a bore mouth kept as the visible floor under
+                    // a press-fit ring) a backwards loop tessellates facing
+                    // into the solid and the volume integral goes negative.
+                    let cap_x_dir = on_plane.normalize();
+                    let cap_y_dir = normal.cross(cap_x_dir);
+                    let circle_signed_area = {
+                        let project = |p: &Point3| -> (f64, f64) {
+                            let d = *p - center;
+                            (d.dot(cap_x_dir), d.dot(cap_y_dir))
+                        };
+                        let pts_2d: Vec<_> = raw_circle_verts.iter().map(project).collect();
+                        let mut a = 0.0;
+                        for i in 0..pts_2d.len() {
+                            let j = (i + 1) % pts_2d.len();
+                            a += pts_2d[i].0 * pts_2d[j].1 - pts_2d[j].0 * pts_2d[i].1;
+                        }
+                        a / 2.0
+                    };
+                    let circle_verts: Vec<Point3> = if circle_signed_area < 0.0 {
+                        raw_circle_verts.iter().rev().cloned().collect()
+                    } else {
+                        raw_circle_verts
+                    };
 
                     // Create inner disk face (will be classified as "inside" and removed)
                     let inner_verts: Vec<_> = circle_verts
@@ -563,32 +710,49 @@ pub fn split_planar_face_by_circle(
                         .topology
                         .add_face(inner_loop, surface_index, orientation);
 
-                    // Add the circle as an inner loop (hole) on the original cap face.
-                    // Determine correct winding: inner loop should be opposite to outer.
-                    // For a degenerate outer loop we use the plane normal to decide:
-                    // outer is CCW from above → inner should be CW from above.
-                    let cap_x_dir = on_plane.normalize();
-                    let cap_y_dir = normal.cross(cap_x_dir);
-                    let circle_signed_area = {
-                        let project = |p: &Point3| -> (f64, f64) {
-                            let d = *p - center;
-                            (d.dot(cap_x_dir), d.dot(cap_y_dir))
-                        };
-                        let pts_2d: Vec<_> = circle_verts.iter().map(project).collect();
-                        let mut a = 0.0;
-                        for i in 0..pts_2d.len() {
-                            let j = (i + 1) % pts_2d.len();
-                            a += pts_2d[i].0 * pts_2d[j].1 - pts_2d[j].0 * pts_2d[i].1;
+                    // Route the cap's pre-existing inner loops (holes from prior
+                    // booleans) to the sub-face that now contains them, mirroring
+                    // the polygonal-outer-loop path below. A hole inside the
+                    // splitting circle belongs to the new disk face; leaving it on
+                    // the cap both strands a nested hole on the ring and lets the
+                    // disk seal the hole with a phantom membrane (e.g. a bearing
+                    // bore closed at its mouth), which corrupts point-in-solid
+                    // parity for every later boolean against this solid.
+                    let existing_inner: Vec<_> = brep.topology.faces[face_id].inner_loops.clone();
+                    for lp in existing_inner {
+                        let lp_verts: Vec<Point3> = brep
+                            .topology
+                            .loop_half_edges(lp)
+                            .map(|he| {
+                                brep.topology.vertices[brep.topology.half_edges[he].origin].point
+                            })
+                            .collect();
+                        if lp_verts.is_empty() {
+                            continue;
                         }
-                        a / 2.0
-                    };
+                        let test_pt = if lp_verts.len() == 1 {
+                            lp_verts[0]
+                        } else {
+                            let n = lp_verts.len() as f64;
+                            Point3::new(
+                                lp_verts.iter().map(|v| v.x).sum::<f64>() / n,
+                                lp_verts.iter().map(|v| v.y).sum::<f64>() / n,
+                                lp_verts.iter().map(|v| v.z).sum::<f64>() / n,
+                            )
+                        };
+                        if (test_pt - circle.center).norm() < circle.radius - tolerance {
+                            brep.topology.faces[face_id]
+                                .inner_loops
+                                .retain(|&l| l != lp);
+                            brep.topology.faces[inner_face].inner_loops.push(lp);
+                        }
+                    }
 
-                    // Inner loop winding should be CW (negative area in face-normal space)
-                    let hole_verts: Vec<Point3> = if circle_signed_area > 0.0 {
-                        circle_verts.iter().rev().cloned().collect()
-                    } else {
-                        circle_verts.clone()
-                    };
+                    // Add the circle as an inner loop (hole) on the original cap face.
+                    // Inner loops wind opposite to the outer convention: the
+                    // disk loop is CCW around the surface normal, so the hole
+                    // is its reverse (CW).
+                    let hole_verts: Vec<Point3> = circle_verts.iter().rev().cloned().collect();
 
                     let hole_vert_ids: Vec<_> = hole_verts
                         .iter()
@@ -642,9 +806,9 @@ pub fn split_planar_face_by_circle(
         };
     }
 
-    // Generate circle vertices (CCW when viewed from face normal direction)
-    // The circle's normal should align with the plane normal
-    let circle_verts: Vec<Point3> = (0..segments)
+    // Generate circle vertices in the SSI circle's own (x_dir, y_dir) frame;
+    // the winding relative to the face is normalized below.
+    let raw_circle_verts: Vec<Point3> = (0..segments)
         .map(|i| {
             let theta = 2.0 * std::f64::consts::PI * (i as f64) / (segments as f64);
             let (sin_t, cos_t) = theta.sin_cos();
@@ -653,28 +817,6 @@ pub fn split_planar_face_by_circle(
                     * (cos_t * circle.x_dir.into_inner() + sin_t * circle.y_dir.into_inner())
         })
         .collect();
-
-    // Create inner face (disk) - uses circle vertices as its outer loop
-    // The inner face's loop should be oriented the same as the parent face
-    let tolerance = 1e-6;
-    let inner_verts: Vec<_> = circle_verts
-        .iter()
-        .map(|p| find_or_create_vertex(brep, p, tolerance))
-        .collect();
-
-    let inner_hes: Vec<_> = inner_verts
-        .iter()
-        .map(|&v| brep.topology.add_half_edge(v))
-        .collect();
-
-    let inner_loop = brep.topology.add_loop(&inner_hes);
-    let inner_face = brep
-        .topology
-        .add_face(inner_loop, surface_index, orientation);
-
-    // Create outer face (polygon with hole)
-    // The outer loop stays the same; we add the circle as an inner loop
-    // The inner loop must have OPPOSITE winding to the outer loop in the face's 2D projection
 
     // Compute the face's 2D coordinate system using the plane surface normal
     // instead of deriving from vertices, which can produce inconsistent normals
@@ -720,17 +862,40 @@ pub fn split_planar_face_by_circle(
     };
 
     let outer_area = signed_area(&loop_verts);
-    let circle_area = signed_area(&circle_verts);
+    let circle_area = signed_area(&raw_circle_verts);
 
-    // Inner loop should have opposite sign to outer loop
-    // If they have the same sign, we need to reverse the circle vertices
-    let need_reverse = (outer_area > 0.0) == (circle_area > 0.0);
-
-    let inner_loop_verts: Vec<Point3> = if need_reverse {
-        circle_verts.iter().rev().cloned().collect()
+    // The disk sub-face's outer loop must wind the SAME way as the parent's
+    // outer loop (both are outer loops of faces with identical surface and
+    // orientation — the tessellator triangulates by loop order and flips for
+    // `Orientation::Reversed`, so a backwards disk loop would tessellate
+    // facing into the solid and corrupt the volume integral whenever the
+    // disk survives classification). The hole loop is its reverse.
+    let circle_verts: Vec<Point3> = if (outer_area > 0.0) == (circle_area > 0.0) {
+        raw_circle_verts
     } else {
-        circle_verts.clone()
+        raw_circle_verts.iter().rev().cloned().collect()
     };
+
+    // Create inner face (disk) - uses circle vertices as its outer loop
+    let tolerance = 1e-6;
+    let inner_verts: Vec<_> = circle_verts
+        .iter()
+        .map(|p| find_or_create_vertex(brep, p, tolerance))
+        .collect();
+
+    let inner_hes: Vec<_> = inner_verts
+        .iter()
+        .map(|&v| brep.topology.add_half_edge(v))
+        .collect();
+
+    let inner_loop = brep.topology.add_loop(&inner_hes);
+    let inner_face = brep
+        .topology
+        .add_face(inner_loop, surface_index, orientation);
+
+    // Create outer face (polygon with hole): the outer loop stays the same;
+    // the circle joins as an inner loop with opposite winding to the outer.
+    let inner_loop_verts: Vec<Point3> = circle_verts.iter().rev().cloned().collect();
 
     let outer_inner_verts: Vec<_> = inner_loop_verts
         .iter()
@@ -1236,29 +1401,19 @@ pub fn split_planar_face_by_arc(
         2.0 * std::f64::consts::PI - inside_start_angle + inside_end_angle
     };
 
-    // Number of segments for the arc (proportional to arc length)
-    let n_arc = ((segments as f64) * arc_span / (2.0 * std::f64::consts::PI))
-        .max(2.0)
-        .ceil() as u32;
-
-    // Generate arc vertices (from inside_start to inside_end, CCW)
-    let (cx, cy) = center_2d;
-    let mut arc_points_2d: Vec<(f64, f64)> = Vec::with_capacity((n_arc + 1) as usize);
-    arc_points_2d.push(inside_start.point_2d);
-    for i in 1..n_arc {
-        let t = i as f64 / n_arc as f64;
-        let angle = inside_start_angle + t * arc_span;
-        let px = cx + circle.radius * angle.cos();
-        let py = cy + circle.radius * angle.sin();
-        arc_points_2d.push((px, py));
-    }
-    arc_points_2d.push(inside_end.point_2d);
-
-    // Convert arc 2D points to 3D
-    let arc_points_3d: Vec<Point3> = arc_points_2d
-        .iter()
-        .map(|&(x, y)| origin + x * u_axis + y * v_axis)
-        .collect();
+    let _ = arc_span;
+    // Arc travels CCW in the (u, v) plane frame = CCW about u×v. Interior
+    // points MUST come from the canonical absolute grid so the cylindrical
+    // wall bordering this same circle emits identical vertices.
+    let plane_normal = u_axis.cross(v_axis);
+    let arc_points_3d = canonical_arc_points(
+        circle.center,
+        circle.radius,
+        plane_normal,
+        inside_start.point,
+        inside_end.point,
+        segments,
+    );
 
     // Build Face 1: the inside-circle portion
     // Walk polygon from inside_end edge to inside_start edge, then add arc back
@@ -1395,6 +1550,50 @@ pub fn split_planar_face_by_arc(
         brep.topology.shells[shell_id]
             .faces
             .retain(|&f| f != face_id);
+    }
+
+    // Re-home the original face's inner loops (holes from prior booleans)
+    // onto whichever sub-face contains them — dropping them here would seal
+    // each hole with a phantom membrane that corrupts point-in-solid parity
+    // and the volume integral. A degenerate single-vertex loop is a full
+    // circle; its seam vertex stands in for the whole hole, which is safe
+    // because the arc split never runs between a hole and its own boundary.
+    let existing_inner: Vec<_> = brep.topology.faces[face_id].inner_loops.clone();
+    if !existing_inner.is_empty() {
+        let face1_2d: Vec<(f64, f64)> = face1_points
+            .iter()
+            .map(|p| {
+                let d = *p - origin;
+                (d.dot(u_axis), d.dot(v_axis))
+            })
+            .collect();
+        for lp in existing_inner {
+            let lp_verts: Vec<Point3> = brep
+                .topology
+                .loop_half_edges(lp)
+                .map(|he| brep.topology.vertices[brep.topology.half_edges[he].origin].point)
+                .collect();
+            if lp_verts.is_empty() {
+                continue;
+            }
+            let test_pt = if lp_verts.len() == 1 {
+                lp_verts[0]
+            } else {
+                let n = lp_verts.len() as f64;
+                Point3::new(
+                    lp_verts.iter().map(|v| v.x).sum::<f64>() / n,
+                    lp_verts.iter().map(|v| v.y).sum::<f64>() / n,
+                    lp_verts.iter().map(|v| v.z).sum::<f64>() / n,
+                )
+            };
+            let d = test_pt - origin;
+            let target = if point_in_polygon_2d(d.dot(u_axis), d.dot(v_axis), &face1_2d) {
+                face1
+            } else {
+                face2
+            };
+            brep.topology.faces[target].inner_loops.push(lp);
+        }
     }
 
     // Remove the original face
@@ -2068,6 +2267,134 @@ pub fn split_cylindrical_face_by_circle(
 }
 
 /// Compute the U parameter for a point on a cylinder surface.
+/// Segment count for discretizing a circle. Both the planar-cap and
+/// cylinder-wall splitters must use this same count so their shared arcs
+/// discretize identically. It also has to agree with the display
+/// tessellator's re-sampling of ANALYTIC circle boundaries that survive the
+/// boolean untouched (`TessellationParams::from_segments(n)` resamples at
+/// exactly `n`), so until boolean results freeze every boundary (see the
+/// kernel-seam-freeze WIP branch) this must stay at the caller's count —
+/// sag-adaptive densification here reopens every analytic/frozen seam.
+pub(crate) fn arc_segments(radius: f64, segments: u32) -> u32 {
+    const SAG: f64 = 5e-3;
+    let n = if radius > SAG {
+        let arg = (1.0 - SAG / radius).clamp(-1.0, 1.0);
+        (std::f64::consts::PI / arg.acos()).ceil() as u32
+    } else {
+        3
+    };
+    n.max(segments).clamp(3, 512)
+}
+
+/// Canonical, frame-independent discretization of a circular arc.
+///
+/// Every face that borders (a sub-arc of) the same 3D circle must emit the
+/// same interior points, or the sewn shell can never conform: the planar cap
+/// samples in its plane frame, the cylinder wall in its `ref_dir` frame, and
+/// relative-fraction sampling gives every arc its own phase. This helper
+/// derives a canonical in-plane frame purely from the circle geometry
+/// (sign-normalized axis + most-orthogonal global axis) and samples interior
+/// points on the absolute angular grid `θ_k = 2πk/n` in that frame, so two
+/// faces sharing an arc reproduce bit-identical interior points regardless
+/// of their own parameterizations. Returns `[start, interior…, end]`; travel
+/// is counterclockwise about `normal` from `start` to `end`.
+pub(crate) fn canonical_arc_points(
+    center: Point3,
+    radius: f64,
+    normal: vcad_kernel_math::Vec3,
+    start: Point3,
+    end: Point3,
+    segments: u32,
+) -> Vec<Point3> {
+    use std::f64::consts::PI;
+    let mut n_hat = normal.normalize();
+    // Sign-canonicalize the axis so the grid is invariant under normal flip.
+    let mut flipped = false;
+    for c in [n_hat.x, n_hat.y, n_hat.z] {
+        if c.abs() > 1e-9 {
+            if c < 0.0 {
+                n_hat = -n_hat;
+                flipped = true;
+            }
+            break;
+        }
+    }
+    // Canonical in-plane frame: global axis least parallel to n̂.
+    let cand = [
+        vcad_kernel_math::Vec3::new(1.0, 0.0, 0.0),
+        vcad_kernel_math::Vec3::new(0.0, 1.0, 0.0),
+        vcad_kernel_math::Vec3::new(0.0, 0.0, 1.0),
+    ];
+    let e = cand
+        .into_iter()
+        .min_by(|a, b| a.dot(n_hat).abs().partial_cmp(&b.dot(n_hat).abs()).unwrap())
+        .unwrap();
+    let x_axis = (e - n_hat * e.dot(n_hat)).normalize();
+    let y_axis = n_hat.cross(x_axis);
+
+    let angle_of = |p: Point3| -> f64 {
+        let d = p - center;
+        let a = d.dot(y_axis).atan2(d.dot(x_axis));
+        if a < 0.0 {
+            a + 2.0 * PI
+        } else {
+            a
+        }
+    };
+    let a_start = angle_of(start);
+    let a_end = angle_of(end);
+    // CCW about the ORIGINAL normal; in the canonical frame that is CCW
+    // unless the axis was flipped.
+    let ccw = !flipped;
+    let span = if ccw {
+        (a_end - a_start).rem_euclid(2.0 * PI)
+    } else {
+        (a_start - a_end).rem_euclid(2.0 * PI)
+    };
+    let span = if span < 1e-12 { 2.0 * PI } else { span };
+
+    let n = arc_segments(radius, segments);
+    let step = 2.0 * PI / n as f64;
+    let mut pts = vec![start];
+    // Interior grid angles strictly inside the traversal (ε away from the
+    // endpoints so a grid point coincident with an endpoint isn't doubled).
+    let eps = 1e-9;
+    // Walk grid indices in traversal order: find the first grid angle
+    // strictly after a_start (in travel direction), then step until a_end.
+    let first_idx = if ccw {
+        (a_start / step).floor() + 1.0
+    } else {
+        (a_start / step).ceil() - 1.0
+    };
+    let mut idx = first_idx;
+    loop {
+        let ang = idx * step;
+        let traveled = if ccw {
+            (ang - a_start).rem_euclid(2.0 * PI)
+        } else {
+            (a_start - ang).rem_euclid(2.0 * PI)
+        };
+        if traveled <= eps || traveled >= span - eps {
+            break;
+        }
+        let a = ang.rem_euclid(2.0 * PI);
+        let (sin_a, cos_a) = a.sin_cos();
+        pts.push(snap_point(
+            center + radius * (cos_a * x_axis + sin_a * y_axis),
+        ));
+        if ccw {
+            idx += 1.0;
+        } else {
+            idx -= 1.0;
+        }
+        if pts.len() > n as usize + 2 {
+            break; // safety
+        }
+    }
+    pts.push(end);
+    pts
+}
+
 fn compute_cylinder_u(point: &Point3, cyl: &vcad_kernel_geom::CylinderSurface) -> f64 {
     let d = *point - cyl.center;
     let ref_dir = cyl.ref_dir.as_ref();
@@ -2118,6 +2445,7 @@ pub fn split_cylindrical_face_by_line(
     brep: &mut BRepSolid,
     face_id: FaceId,
     line: &vcad_kernel_geom::Line3d,
+    segments: u32,
 ) -> SplitResult {
     let face = &brep.topology.faces[face_id];
     let surface_index = face.surface_index;
@@ -2312,32 +2640,78 @@ pub fn split_cylindrical_face_by_line(
     // Create two new faces by splitting at the u_split line:
     // Face 1: from start to split (smaller U arc)
     // Face 2: from split to end (larger U arc, or to seam for full face)
+    //
+    // The top/bottom arcs are emitted as DENSE canonical chains (not single
+    // chords): the neighboring cap faces discretize the same circles via
+    // `canonical_arc_points`, so both sides produce identical vertices and
+    // the sewn shell conforms. The resulting two-chain loops are exactly the
+    // shape `tessellate_ruled_two_chain` renders verbatim.
+    let axis = *cyl.axis.as_ref();
+    let bot_center = cyl.center + v_min * axis;
+    let top_center = cyl.center + v_max * axis;
+    let chain_vids = |brep: &mut BRepSolid, center: Point3, from: Point3, to: Point3| {
+        // Increasing u = CCW about the cylinder axis.
+        canonical_arc_points(center, cyl.radius, axis, from, to, segments)
+            .into_iter()
+            .map(|p| find_or_create_vertex(brep, &p, tolerance))
+            .collect::<Vec<_>>()
+    };
+    let build_face = |brep: &mut BRepSolid,
+                      v_bot_a: vcad_kernel_topo::VertexId,
+                      v_bot_b: vcad_kernel_topo::VertexId,
+                      v_top_a: vcad_kernel_topo::VertexId,
+                      v_top_b: vcad_kernel_topo::VertexId|
+     -> (FaceId, HalfEdgeId, HalfEdgeId) {
+        let p_bot_a = brep.topology.vertices[v_bot_a].point;
+        let p_bot_b = brep.topology.vertices[v_bot_b].point;
+        let p_top_a = brep.topology.vertices[v_top_a].point;
+        let p_top_b = brep.topology.vertices[v_top_b].point;
+        // Bottom chain ascending u (a→b), then up, then top chain
+        // descending u (b→a), then down.
+        let mut bot = chain_vids(brep, bot_center, p_bot_a, p_bot_b);
+        let mut top = chain_vids(brep, top_center, p_top_a, p_top_b);
+        // Reuse the canonical endpoint vertex ids.
+        *bot.first_mut().unwrap() = v_bot_a;
+        *bot.last_mut().unwrap() = v_bot_b;
+        *top.first_mut().unwrap() = v_top_a;
+        *top.last_mut().unwrap() = v_top_b;
+        top.reverse(); // descending u: b → a
 
-    // Face 1: arc from start to split
-    let he1_bot = brep.topology.add_half_edge(v_start_bot);
-    let he1_left = brep.topology.add_half_edge(v_split_bottom);
-    let he1_top = brep.topology.add_half_edge(v_split_top);
-    let he1_right = brep.topology.add_half_edge(v_start_top);
+        // Loop origins: bottom chain a..b (b starts the "up" edge), then top
+        // chain b..a (a starts the "down" edge closing to bottom a).
+        let mut origins: Vec<vcad_kernel_topo::VertexId> = Vec::new();
+        origins.extend(&bot[..bot.len() - 1]);
+        origins.extend(&top[..top.len() - 1]);
+        // `up` half-edge is the one whose origin is bot-end (last of bot
+        // slice above is bot[len-2]; the up edge origin is bot[len-1]).
+        origins.insert(bot.len() - 1, bot[bot.len() - 1]);
+        // and the closing `down` half-edge originates at top's last (== a).
+        origins.push(top[top.len() - 1]);
 
-    let loop1 = brep
-        .topology
-        .add_loop(&[he1_bot, he1_left, he1_top, he1_right]);
-    let face1 = brep.topology.add_face(loop1, surface_index, orientation);
+        let hes: Vec<_> = origins
+            .iter()
+            .map(|&v| brep.topology.add_half_edge(v))
+            .collect();
+        let lp = brep.topology.add_loop(&hes);
+        let face = brep.topology.add_face(lp, surface_index, orientation);
+        // Return (face, up_he, down_he) — the vertical edges at u=b and u=a.
+        let up_he = hes[bot.len() - 1];
+        let down_he = hes[hes.len() - 1];
+        (face, up_he, down_he)
+    };
 
-    // Face 2: arc from split to end
-    let he2_bot = brep.topology.add_half_edge(v_split_bottom);
-    let he2_left = brep.topology.add_half_edge(v_end_bot);
-    let he2_top = brep.topology.add_half_edge(v_end_top);
-    let he2_right = brep.topology.add_half_edge(v_split_top);
+    let (face1, he1_up, he1_down) =
+        build_face(brep, v_start_bot, v_split_bottom, v_start_top, v_split_top);
+    let (face2, he2_up, he2_down) =
+        build_face(brep, v_split_bottom, v_end_bot, v_split_top, v_end_top);
 
-    let loop2 = brep
-        .topology
-        .add_loop(&[he2_bot, he2_left, he2_top, he2_right]);
-    let face2 = brep.topology.add_face(loop2, surface_index, orientation);
-
-    // Add twin edges for the shared split line
-    brep.topology.add_edge(he1_left, he2_right);
-    brep.topology.add_edge(he1_top, he2_bot);
+    // Twin the shared vertical split line: face1 goes up at u_split, face2
+    // comes back down at u_split.
+    brep.topology.add_edge(he1_up, he2_down);
+    // For a full face the two sub-faces also share the seam line.
+    if is_full_face {
+        brep.topology.add_edge(he1_down, he2_up);
+    }
 
     // Add faces to shell
     if let Some(shell_id) = brep.topology.faces[face_id].shell {
@@ -2369,29 +2743,76 @@ pub fn split_cylindrical_face_by_line(
 /// This dispatches to the appropriate split method based on the curve type:
 /// - Circle: horizontal split (perpendicular plane intersection)
 /// - Line: vertical split (parallel plane intersection)
-/// - Sampled: general oblique split - TODO
+/// - Sampled: general oblique split via the band machinery (`cyl_band`)
+///
+/// Faces with wavy (non-constant-v) boundaries — produced by earlier
+/// oblique splits — must NEVER reach the legacy rectangular splitters,
+/// which infer a full-height rectangle from the v-extremes of the loop and
+/// would emit overlapping phantom geometry. When the band machinery
+/// declines such a face (curve misses it, or lands on its boundary), the
+/// face is returned unsplit instead.
 pub fn split_cylindrical_face(
     brep: &mut BRepSolid,
     face_id: FaceId,
     curve: &IntersectionCurve,
+    segments: u32,
 ) -> SplitResult {
+    let wavy = crate::cyl_band::face_is_wavy_band(brep, face_id);
     match curve {
         IntersectionCurve::Circle(circle) => {
-            split_cylindrical_face_by_circle(brep, face_id, circle)
+            if wavy {
+                return crate::cyl_band::split_wavy_band_by_circle(brep, face_id, circle, true)
+                    .unwrap_or(SplitResult {
+                        sub_faces: vec![face_id],
+                    });
+            }
+            let result = split_cylindrical_face_by_circle(brep, face_id, circle);
+            if result.sub_faces.len() >= 2 {
+                return result;
+            }
+            // The legacy splitter only parses degenerate seam loops and
+            // 4-corner rectangles; arc-extruded walls carry dense sampled
+            // loops it refuses. Retry through the band machinery, which
+            // parses any two-chain loop (rectangular included).
+            crate::cyl_band::split_wavy_band_by_circle(brep, face_id, circle, false)
+                .unwrap_or(result)
         }
-        IntersectionCurve::Line(line) => split_cylindrical_face_by_line(brep, face_id, line),
+        IntersectionCurve::Line(line) => {
+            if wavy {
+                return crate::cyl_band::split_wavy_band_by_line(brep, face_id, line, true)
+                    .unwrap_or(SplitResult {
+                        sub_faces: vec![face_id],
+                    });
+            }
+            let result = split_cylindrical_face_by_line(brep, face_id, line, segments);
+            if result.sub_faces.len() >= 2 {
+                return result;
+            }
+            crate::cyl_band::split_wavy_band_by_line(brep, face_id, line, false).unwrap_or(result)
+        }
         IntersectionCurve::Sampled(points) => {
-            // General oblique cylinder splits are not yet implemented. Log
-            // so the caller at least sees the operation silently failed
-            // instead of producing a geometrically wrong result.
-            eprintln!(
-                "[vcad-kernel-booleans] split_cylindrical_face: oblique Sampled \
-                 intersection ({} points) not yet supported; returning face unsplit. \
-                 Downstream boolean result will be incorrect for this face.",
-                points.len()
-            );
-            SplitResult {
-                sub_faces: vec![face_id],
+            // Oblique intersection (e.g. a tilted plane crossing the
+            // cylinder in an ellipse): split in (u, v) parameter space via
+            // the band machinery.
+            match crate::cyl_band::split_cylindrical_face_by_sampled(brep, face_id, points) {
+                Some(result) => result,
+                None => {
+                    // The curve is not a closed single-valued profile (e.g.
+                    // a bounded cylinder-cylinder quartic arc) or the face
+                    // is outside the band family. Log so the caller sees
+                    // the operation failed instead of silently producing a
+                    // geometrically wrong result.
+                    eprintln!(
+                        "[vcad-kernel-booleans] split_cylindrical_face: Sampled \
+                         intersection ({} points) is not a closed single-valued \
+                         profile on this face; returning face unsplit. Downstream \
+                         boolean result may be incorrect for this face.",
+                        points.len()
+                    );
+                    SplitResult {
+                        sub_faces: vec![face_id],
+                    }
+                }
             }
         }
         IntersectionCurve::Empty | IntersectionCurve::Point(_) => SplitResult {
@@ -2400,7 +2821,12 @@ pub fn split_cylindrical_face(
         IntersectionCurve::TwoLines(line1, _line2) => {
             // TwoLines should be expanded before calling this function.
             // If we get here, just process the first line.
-            split_cylindrical_face(brep, face_id, &IntersectionCurve::Line(line1.clone()))
+            split_cylindrical_face(
+                brep,
+                face_id,
+                &IntersectionCurve::Line(line1.clone()),
+                segments,
+            )
         }
         IntersectionCurve::TwoSampled(_, _) => {
             // TwoSampled is the analytic Steinmetz pair from
@@ -2591,7 +3017,7 @@ pub fn split_circular_face_by_line(
     };
 
     // Order angles so we know which arc is which
-    let (start_angle, end_angle, start_pt, end_pt) = if angle1 < angle2 {
+    let (_start_angle, _end_angle, start_pt, end_pt) = if angle1 < angle2 {
         (angle1, angle2, p1, p2)
     } else {
         (angle2, angle1, p2, p1)
@@ -2606,36 +3032,26 @@ pub fn split_circular_face_by_line(
     // Face 1: arc from start_angle to end_angle (shorter arc if < π, longer otherwise)
     // Face 2: arc from end_angle to start_angle (wrapping around 2π)
 
-    let arc1_span = end_angle - start_angle;
-    let arc2_span = 2.0 * std::f64::consts::PI - arc1_span;
-
-    // Number of segments for each arc (proportional to arc length)
-    let n1 = ((segments as f64) * arc1_span / (2.0 * std::f64::consts::PI)).max(2.0) as u32;
-    let n2 = ((segments as f64) * arc2_span / (2.0 * std::f64::consts::PI)).max(2.0) as u32;
-
-    // Generate arc 1 vertices (from start to end, counterclockwise)
-    let mut arc1_points: Vec<Point3> = Vec::with_capacity((n1 + 1) as usize);
-    arc1_points.push(snap_point(start_pt));
-    for i in 1..n1 {
-        let t = i as f64 / n1 as f64;
-        let angle = start_angle + t * arc1_span;
-        let (sin_a, cos_a) = angle.sin_cos();
-        let pt = center + radius * (cos_a * x_axis + sin_a * y_axis);
-        arc1_points.push(snap_point(pt));
-    }
-    arc1_points.push(snap_point(end_pt));
-
-    // Generate arc 2 vertices (from end to start, counterclockwise, wrapping around)
-    let mut arc2_points: Vec<Point3> = Vec::with_capacity((n2 + 1) as usize);
-    arc2_points.push(snap_point(end_pt));
-    for i in 1..n2 {
-        let t = i as f64 / n2 as f64;
-        let angle = end_angle + t * arc2_span;
-        let (sin_a, cos_a) = angle.sin_cos();
-        let pt = center + radius * (cos_a * x_axis + sin_a * y_axis);
-        arc2_points.push(snap_point(pt));
-    }
-    arc2_points.push(snap_point(start_pt));
+    // Both arcs travel counterclockwise about the plane frame's normal.
+    // Sampling MUST be the canonical absolute grid — the cylinder-wall
+    // splitter borders the same circles and has to emit identical points.
+    let circle_normal = x_axis.cross(y_axis);
+    let arc1_points = canonical_arc_points(
+        center,
+        radius,
+        circle_normal,
+        snap_point(start_pt),
+        snap_point(end_pt),
+        segments,
+    );
+    let arc2_points = canonical_arc_points(
+        center,
+        radius,
+        circle_normal,
+        snap_point(end_pt),
+        snap_point(start_pt),
+        segments,
+    );
 
     // Create Face 1: arc from start to end + chord from end to start
     // Loop: start → arc points → end → chord → back to start

@@ -18,6 +18,7 @@
 use std::path::Path;
 
 pub use vcad_kernel_booleans;
+pub use vcad_kernel_cam;
 pub use vcad_kernel_constraints;
 pub use vcad_kernel_cost;
 pub use vcad_kernel_dfm;
@@ -29,19 +30,26 @@ pub use vcad_kernel_sheet;
 pub use vcad_kernel_shell;
 pub use vcad_kernel_sketch;
 pub use vcad_kernel_step;
+pub use vcad_kernel_stocksim;
 pub use vcad_kernel_sweep;
 pub use vcad_kernel_tessellate;
 pub use vcad_kernel_text;
 pub use vcad_kernel_topo;
 
+pub mod cam_verify;
+pub use cam_verify::verify_toolpaths;
+
 pub mod sheet_fold;
 pub use sheet_fold::folded_sheet_solid;
 
+pub use vcad_kernel_booleans::BooleanError;
 use vcad_kernel_booleans::{boolean_op, BooleanOp, BooleanResult};
 use vcad_kernel_math::{Point3, Transform, Vec3};
 use vcad_kernel_primitives::BRepSolid;
 use vcad_kernel_step::StepError;
-use vcad_kernel_tessellate::{tessellate_brep, TriangleMesh};
+use vcad_kernel_tessellate::{mesh_clearance, tessellate_brep, TriangleMesh};
+
+pub use vcad_kernel_tessellate::ClearanceResult;
 
 /// Error returned when STEP export fails.
 #[derive(Debug)]
@@ -265,41 +273,93 @@ impl Solid {
     // =========================================================================
 
     /// Boolean union (self ∪ other).
+    ///
+    /// Infallible: on a kernel [`BooleanError`] the operands are merged as
+    /// tessellated meshes instead. Use [`Solid::try_union`] to observe the
+    /// error (the WASM bindings do, so the browser gets a JS error instead
+    /// of a trapped instance).
     pub fn union(&self, other: &Solid) -> Solid {
         self.boolean(other, BooleanOp::Union)
     }
 
     /// Boolean difference (self − other).
+    ///
+    /// Infallible: on a kernel [`BooleanError`] the target is returned
+    /// unchanged (the cut simply doesn't apply). Use
+    /// [`Solid::try_difference`] to observe the error.
     pub fn difference(&self, other: &Solid) -> Solid {
         self.boolean(other, BooleanOp::Difference)
     }
 
     /// Boolean intersection (self ∩ other).
+    ///
+    /// Infallible: on a kernel [`BooleanError`] the target is returned
+    /// unchanged. Use [`Solid::try_intersection`] to observe the error.
     pub fn intersection(&self, other: &Solid) -> Solid {
         self.boolean(other, BooleanOp::Intersection)
     }
 
+    /// Fallible boolean union — surfaces kernel errors instead of degrading.
+    pub fn try_union(&self, other: &Solid) -> Result<Solid, BooleanError> {
+        self.try_boolean(other, BooleanOp::Union)
+    }
+
+    /// Fallible boolean difference — surfaces kernel errors instead of
+    /// degrading.
+    pub fn try_difference(&self, other: &Solid) -> Result<Solid, BooleanError> {
+        self.try_boolean(other, BooleanOp::Difference)
+    }
+
+    /// Fallible boolean intersection — surfaces kernel errors instead of
+    /// degrading.
+    pub fn try_intersection(&self, other: &Solid) -> Result<Solid, BooleanError> {
+        self.try_boolean(other, BooleanOp::Intersection)
+    }
+
     fn boolean(&self, other: &Solid, op: BooleanOp) -> Solid {
+        self.try_boolean(other, op).unwrap_or_else(|_| {
+            // Degrade gracefully instead of panicking: a visible-but-crude
+            // result beats poisoning the process (in the browser a panic
+            // kills the WASM instance for the rest of the session).
+            match op {
+                BooleanOp::Union => {
+                    let segments = resolve_segments(self.segments.max(other.segments));
+                    let mut combined = self.to_mesh(segments);
+                    combined.merge(&other.to_mesh(segments));
+                    Solid {
+                        repr: SolidRepr::Mesh(combined),
+                        segments,
+                    }
+                }
+                // The cut/overlap couldn't be computed — leave the target
+                // untouched, mirroring how `fillet` returns its input when a
+                // blend degenerates.
+                BooleanOp::Difference | BooleanOp::Intersection => self.clone(),
+            }
+        })
+    }
+
+    fn try_boolean(&self, other: &Solid, op: BooleanOp) -> Result<Solid, BooleanError> {
         match (&self.repr, &other.repr) {
-            (SolidRepr::Empty, _) => match op {
+            (SolidRepr::Empty, _) => Ok(match op {
                 BooleanOp::Union => other.clone(),
                 BooleanOp::Difference | BooleanOp::Intersection => Solid::empty(),
-            },
-            (_, SolidRepr::Empty) => match op {
+            }),
+            (_, SolidRepr::Empty) => Ok(match op {
                 BooleanOp::Union | BooleanOp::Difference => self.clone(),
                 BooleanOp::Intersection => Solid::empty(),
-            },
+            }),
             (SolidRepr::BRep(a), SolidRepr::BRep(b)) => {
                 // Resolve before the splitter sees it: an operand carrying the
                 // raw `0` sentinel (e.g. a BRep built outside the primitive
                 // constructors) must not drive a 0-vertex circle loop.
                 let segments = resolve_segments(self.segments.max(other.segments));
-                let result = boolean_op(a.as_ref(), b.as_ref(), op, segments);
+                let result = boolean_op(a.as_ref(), b.as_ref(), op, segments)?;
                 let BooleanResult::BRep(brep) = result;
-                Solid {
+                Ok(Solid {
                     repr: SolidRepr::BRep(brep),
                     segments,
-                }
+                })
             }
             // For mesh-only solids, tessellate BRep first then combine meshes
             _ => {
@@ -310,10 +370,10 @@ impl Solid {
                 // This is a Phase 1 limitation — proper mesh CSG comes in Phase 2.
                 let mut combined = mesh_a;
                 combined.merge(&mesh_b);
-                Solid {
+                Ok(Solid {
                     repr: SolidRepr::Mesh(combined),
                     segments,
-                }
+                })
             }
         }
     }
@@ -790,6 +850,20 @@ impl Solid {
             && max_a[1] >= min_b[1]
             && min_a[2] <= max_b[2]
             && max_a[2] >= min_b[2]
+    }
+
+    /// Minimum signed distance between this solid and `other` in mm.
+    ///
+    /// Positive is the minimum separation, negative the deepest penetration
+    /// when the solids intersect (see
+    /// [`vcad_kernel_tessellate::clearance`]). Tessellation-based: both
+    /// solids are meshed at their own `segments` setting, so curved-surface
+    /// results carry the usual chord error (raise `segments` for tight
+    /// fits). Returns `None` when either solid is empty.
+    pub fn clearance(&self, other: &Solid) -> Option<ClearanceResult> {
+        let mesh_a = self.to_mesh(self.segments);
+        let mesh_b = other.to_mesh(other.segments);
+        mesh_clearance(&mesh_a, &mesh_b)
     }
 
     /// Fast vertex-only AABB (no tessellation). Slightly underestimates for curved surfaces.
@@ -1403,6 +1477,51 @@ mod tests {
     fn test_empty() {
         let empty = Solid::empty();
         assert!(empty.is_empty());
+    }
+
+    /// Rotor/stator air gap: a 5 mm rotor inside a ring stator with a 1 mm
+    /// radial design gap measures ≈1 mm (within chord error at 128 segments).
+    #[test]
+    fn test_clearance_rotor_stator_gap() {
+        let rotor = Solid::cylinder(5.0, 10.0, 128);
+        let stator = Solid::cylinder(10.0, 10.0, 128).difference(&Solid::cylinder(6.0, 12.0, 128));
+        let r = rotor.clearance(&stator).unwrap();
+        assert!(!r.intersecting);
+        assert!(
+            (r.distance - 1.0).abs() < 0.02,
+            "air gap = {} mm, expected ≈1.0",
+            r.distance
+        );
+    }
+
+    /// Shrinking the gap moves the measured value with it.
+    #[test]
+    fn test_clearance_tracks_geometry() {
+        let rotor = Solid::cylinder(5.6, 10.0, 128);
+        let stator = Solid::cylinder(10.0, 10.0, 128).difference(&Solid::cylinder(6.0, 12.0, 128));
+        let r = rotor.clearance(&stator).unwrap();
+        assert!(!r.intersecting);
+        assert!(
+            (r.distance - 0.4).abs() < 0.02,
+            "air gap = {} mm, expected ≈0.4",
+            r.distance
+        );
+    }
+
+    /// An oversized rotor intersects the stator: negative distance.
+    #[test]
+    fn test_clearance_interference_is_negative() {
+        let rotor = Solid::cylinder(7.0, 10.0, 64);
+        let stator = Solid::cylinder(10.0, 10.0, 64).difference(&Solid::cylinder(6.0, 12.0, 64));
+        let r = rotor.clearance(&stator).unwrap();
+        assert!(r.intersecting);
+        assert!(r.distance < 0.0, "distance = {}, expected < 0", r.distance);
+    }
+
+    #[test]
+    fn test_clearance_empty_is_none() {
+        let cube = Solid::cube(10.0, 10.0, 10.0);
+        assert!(cube.clearance(&Solid::empty()).is_none());
     }
 
     #[test]

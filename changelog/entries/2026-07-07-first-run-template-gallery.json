@@ -1,0 +1,9 @@
+{
+  "id": "2026-07-07-first-run-template-gallery",
+  "version": "0.9.4",
+  "date": "2026-07-07",
+  "category": "feat",
+  "title": "First visit opens the template gallery",
+  "summary": "First-time visitors now land on the example gallery instead of a blank canvas — one click opens a real, editable part. Returning users with documents go straight to their work.",
+  "features": ["onboarding", "examples", "app"]
+}

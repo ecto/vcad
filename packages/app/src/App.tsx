@@ -333,7 +333,12 @@ export function App() {
   const statusBarVisible = useUiStore((s) => s.statusBarVisible);
   const selPart = selIds.size === 1 ? partIndex.get(Array.from(selIds)[0]!) : undefined;
   const hasSelectedEmbroideryPart = selPart != null && isEmbroideryPatternPart(selPart);
+  // First-run template gallery: only surfaces when boot found no existing
+  // document (fresh profile). Once the user has any saved document, boot
+  // resolves to it and the gallery never shows again.
+  const firstVisit = useBootStore((s) => s.firstVisit);
   const showOnboarding =
+    firstVisit &&
     !welcomeModalDismissed &&
     !welcomeHiddenThisSession &&
     parts.length === 0 &&

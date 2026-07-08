@@ -21,6 +21,8 @@ import {
   DEFAULT_MATERIAL,
   type GlbMesh,
 } from "../export/glb.js";
+import { getSession } from "./session.js";
+import { behavior, type ToolDef } from "./tool-def.js";
 
 /**
  * Generate a base64-encoded GLB preview from an IR document.
@@ -244,3 +246,29 @@ export function getPreviewVersion(
     ],
   };
 }
+
+export const toolDefs: ToolDef[] = [
+  {
+    name: "get_preview_glb",
+    pack: null,
+    description:
+      "Return a base64 GLB preview of an open session document. Internal to the inline 3D viewer — agents should use `export_cad` for geometry exports.",
+    inputSchema: getPreviewGlbSchema,
+    handler: async (a, c) =>
+      getPreviewGlb(getSession(String(a.document_id ?? "")), c.engine),
+    behavior: behavior({ appOnly: true }),
+  },
+  {
+    name: "get_preview_version",
+    pack: null,
+    description:
+      "Return a cheap {document_id, version} change token for an open session document (no geometry eval). Internal to the inline 3D viewer's self-refresh poll — agents should ignore it.",
+    inputSchema: getPreviewVersionSchema,
+    handler: (a) =>
+      getPreviewVersion(
+        getSession(String(a.document_id ?? "")),
+        String(a.document_id ?? ""),
+      ),
+    behavior: behavior({ appOnly: true }),
+  },
+];

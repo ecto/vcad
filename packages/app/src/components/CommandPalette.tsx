@@ -44,6 +44,7 @@ import { useLocaleStore } from "@/stores/locale-store";
 import { useAppCommands } from "@/hooks/useAppCommands";
 import { cn } from "@/lib/utils";
 import { examples, exampleToVcadFile, type Example } from "@/data/examples";
+import { analytics } from "@/lib/analytics";
 
 const ICONS: Record<string, typeof Cube> = {
   Cube,
@@ -339,6 +340,7 @@ export function CommandPalette({ open, onOpenChange, onAboutOpen }: CommandPalet
   // quadruped) get routed through the global event handler in App.tsx,
   // which knows how to call the engine's URDF importer.
   const handleOpenExample = useCallback((example: Example) => {
+    analytics.templateOpened(example.id);
     if (example.urdf) {
       window.dispatchEvent(
         new CustomEvent("vcad:load-example", { detail: { urdf: example.urdf } }),

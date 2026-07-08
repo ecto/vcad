@@ -299,6 +299,60 @@ pub struct WasmMesh {
     pub face_kinds: Option<Vec<u8>>,
 }
 
+/// Mesh-to-mesh clearance result: minimum separation (or penetration
+/// depth if negative) between two solids/meshes.
+#[derive(Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-rs", derive(TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "generated/"))]
+pub struct WasmClearance {
+    /// Signed distance in mm: minimum separation when non-negative, the
+    /// negated deepest penetration when the meshes intersect.
+    pub distance: f64,
+    /// True when the meshes intersect (crossing surfaces or containment).
+    pub intersecting: bool,
+    /// Point on the first mesh realizing the reported distance.
+    #[serde(rename = "pointA")]
+    pub point_a: [f64; 3],
+    /// Point on the second mesh realizing the reported distance.
+    #[serde(rename = "pointB")]
+    pub point_b: [f64; 3],
+}
+
+impl From<vcad_kernel::ClearanceResult> for WasmClearance {
+    fn from(r: vcad_kernel::ClearanceResult) -> Self {
+        Self {
+            distance: r.distance,
+            intersecting: r.intersecting,
+            point_a: r.point_a,
+            point_b: r.point_b,
+        }
+    }
+}
+
+/// Mesh-to-mesh clearance over raw evaluated-mesh buffers (see
+/// `WasmClearance`). Operates on already-placed geometry, so callers can
+/// measure between any two evaluated parts (or merged part groups) without
+/// re-building solids.
+#[wasm_bindgen]
+pub fn mesh_clearance(
+    positions_a: &[f32],
+    indices_a: &[u32],
+    positions_b: &[f32],
+    indices_b: &[u32],
+) -> Result<JsValue, JsError> {
+    let mesh_of = |positions: &[f32], indices: &[u32]| {
+        let mut m = vcad_kernel_tessellate::TriangleMesh::new();
+        m.vertices = positions.to_vec();
+        m.indices = indices.to_vec();
+        m
+    };
+    let a = mesh_of(positions_a, indices_a);
+    let b = mesh_of(positions_b, indices_b);
+    let r = vcad_kernel_tessellate::mesh_clearance(&a, &b)
+        .ok_or_else(|| JsError::new("clearance requires two non-empty meshes"))?;
+    serde_wasm_bindgen::to_value(&WasmClearance::from(r)).map_err(|e| JsError::new(&e.to_string()))
+}
+
 /// A 2D sketch segment (line or arc) for WASM input.
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "type")]
@@ -802,16 +856,25 @@ impl Solid {
     // =========================================================================
 
     /// Boolean union (self ∪ other).
+    ///
+    /// Returns a JS error (instead of trapping the WASM instance) when the
+    /// kernel reports a boolean failure.
     #[wasm_bindgen(js_name = union)]
-    pub fn union(&self, other: &Solid) -> Solid {
-        Solid {
-            inner: self.inner.union(&other.inner),
-        }
+    pub fn union(&self, other: &Solid) -> Result<Solid, JsError> {
+        Ok(Solid {
+            inner: self
+                .inner
+                .try_union(&other.inner)
+                .map_err(|e| JsError::new(&e.to_string()))?,
+        })
     }
 
     /// Boolean difference (self − other).
+    ///
+    /// Returns a JS error (instead of trapping the WASM instance) when the
+    /// kernel reports a boolean failure.
     #[wasm_bindgen(js_name = difference)]
-    pub fn difference(&self, other: &Solid) -> Solid {
+    pub fn difference(&self, other: &Solid) -> Result<Solid, JsError> {
         // Log input solid info with more detail
         let self_tris = self.inner.num_triangles();
         let other_tris = other.inner.num_triangles();
@@ -827,7 +890,10 @@ impl Solid {
         ).into());
 
         let result = Solid {
-            inner: self.inner.difference(&other.inner),
+            inner: self
+                .inner
+                .try_difference(&other.inner)
+                .map_err(|e| JsError::new(&e.to_string()))?,
         };
 
         let result_tris_before_mesh = result.inner.num_triangles();
@@ -964,15 +1030,21 @@ impl Solid {
             .into(),
         );
 
-        result
+        Ok(result)
     }
 
     /// Boolean intersection (self ∩ other).
+    ///
+    /// Returns a JS error (instead of trapping the WASM instance) when the
+    /// kernel reports a boolean failure.
     #[wasm_bindgen(js_name = intersection)]
-    pub fn intersection(&self, other: &Solid) -> Solid {
-        Solid {
-            inner: self.inner.intersection(&other.inner),
-        }
+    pub fn intersection(&self, other: &Solid) -> Result<Solid, JsError> {
+        Ok(Solid {
+            inner: self
+                .inner
+                .try_intersection(&other.inner)
+                .map_err(|e| JsError::new(&e.to_string()))?,
+        })
     }
 
     // =========================================================================
@@ -1174,6 +1246,18 @@ impl Solid {
     pub fn bounding_box(&self) -> Vec<f64> {
         let (min, max) = self.inner.bounding_box();
         vec![min[0], min[1], min[2], max[0], max[1], max[2]]
+    }
+
+    /// Minimum signed distance to another solid in mm (see `WasmClearance`):
+    /// positive separation, negative penetration depth on intersection.
+    #[wasm_bindgen(js_name = clearance)]
+    pub fn clearance(&self, other: &Solid) -> Result<JsValue, JsError> {
+        let r = self
+            .inner
+            .clearance(&other.inner)
+            .ok_or_else(|| JsError::new("clearance requires two non-empty solids"))?;
+        serde_wasm_bindgen::to_value(&WasmClearance::from(r))
+            .map_err(|e| JsError::new(&e.to_string()))
     }
 
     /// Run DFM directly on this solid's BRep.
@@ -3599,19 +3683,19 @@ fn evaluate_node(doc: &vcad_ir::Document, node_id: vcad_ir::NodeId) -> Result<So
         vcad_ir::CsgOp::Union { left, right } => {
             let l = evaluate_node(doc, *left)?;
             let r = evaluate_node(doc, *right)?;
-            Ok(l.union(&r))
+            l.union(&r)
         }
 
         vcad_ir::CsgOp::Difference { left, right } => {
             let l = evaluate_node(doc, *left)?;
             let r = evaluate_node(doc, *right)?;
-            Ok(l.difference(&r))
+            l.difference(&r)
         }
 
         vcad_ir::CsgOp::Intersection { left, right } => {
             let l = evaluate_node(doc, *left)?;
             let r = evaluate_node(doc, *right)?;
-            Ok(l.intersection(&r))
+            l.intersection(&r)
         }
 
         vcad_ir::CsgOp::Translate { child, offset } => {
@@ -5055,6 +5139,35 @@ mod ecad_wasm {
         serde_wasm_bindgen::to_value(&violations).map_err(|e| JsError::new(&e.to_string()))
     }
 
+    /// Run DRC with the geometric checks scoped to an axis-aligned region
+    /// (mm) — the incremental verify-on-write entry point. Only elements
+    /// intersecting the region are subjects of the clearance/width/drill/edge
+    /// checks (each still judged against the whole board); connectivity
+    /// (shorts, islands, unrouted nets) always runs board-global.
+    ///
+    /// # Arguments
+    /// * `pcb_json` - JSON-serialized `Pcb` struct
+    /// * `min_x`, `min_y`, `max_x`, `max_y` - region corners (mm)
+    ///
+    /// # Returns
+    /// Array of DRC violations as JsValue.
+    #[wasm_bindgen(js_name = ecadCheckDrcInRegion)]
+    pub fn ecad_check_drc_in_region(
+        pcb_json: &str,
+        min_x: f64,
+        min_y: f64,
+        max_x: f64,
+        max_y: f64,
+    ) -> Result<JsValue, JsError> {
+        let pcb: Pcb = serde_json::from_str(pcb_json).map_err(|e| JsError::new(&e.to_string()))?;
+        let violations = vcad_ecad_pcb::drc::check_drc_in_region(
+            &pcb,
+            vcad_ir::Vec2::new(min_x, min_y),
+            vcad_ir::Vec2::new(max_x, max_y),
+        );
+        serde_wasm_bindgen::to_value(&violations).map_err(|e| JsError::new(&e.to_string()))
+    }
+
     /// Run Design-for-Manufacturing checks on a PCB against a fab profile.
     ///
     /// Where DRC validates a board against its *own* declared design rules, DFM
@@ -6068,6 +6181,42 @@ pub fn compute_mesh_volume(positions: &[f32], indices: &[u32]) -> f64 {
     (vol / 6.0).abs()
 }
 
+/// Differentiate a document's mass-property + bounding-box QoIs with respect
+/// to a single named parameter (`d QoI / dθ`) via the differentiable seam.
+///
+/// # Arguments
+///
+/// * `doc_json` — a JSON string of a vcad Document that declares `parameter`
+///   in its `parameters` map (with a binding onto some geometry field).
+/// * `parameter` — the named parameter to differentiate.
+/// * `density` — density fed to the mass integrals (mass = density · volume).
+/// * `probe_step` — finite step used by seeding synthesis to match surfaces
+///   between θ ± step (the returned volume/mass/centroid derivatives are
+///   analytic seam evaluations, not finite differences). Pass `0` to use the
+///   `1e-4` default.
+///
+/// # Returns
+///
+/// A JsValue array with one entry per solid part, each
+/// `{ partIndex, volume, dVolume, mass, dMass, centroid, dCentroid,
+/// bboxExtents, dBboxExtents }` (see [`vcad_eval::diff::PartQoiGradient`]).
+#[wasm_bindgen(js_name = documentParameterGradient)]
+pub fn document_parameter_gradient(
+    doc_json: &str,
+    parameter: &str,
+    density: f64,
+    probe_step: f64,
+) -> Result<JsValue, JsError> {
+    let doc: vcad_ir::Document = serde_json::from_str(doc_json)
+        .map_err(|e| JsError::new(&format!("Failed to parse document: {}", e)))?;
+    let step = if probe_step > 0.0 { probe_step } else { 1e-4 };
+    let tess = vcad_kernel_tessellate::TessellationParams::default();
+    let grads =
+        vcad_eval::diff::document_parameter_qoi_gradient(&doc, parameter, density, &tess, step)
+            .map_err(|e| JsError::new(&e.to_string()))?;
+    serde_wasm_bindgen::to_value(&grads).map_err(|e| JsError::new(&e.to_string()))
+}
+
 // =============================================================================
 // Embroidery module (feature-gated)
 // =============================================================================
@@ -6626,6 +6775,7 @@ mod ts_tests {
         // Types are auto-exported via #[ts(export)] attribute
         // This test ensures all types compile correctly with ts-rs
         WasmMesh::export_all().expect("WasmMesh export failed");
+        WasmClearance::export_all().expect("WasmClearance export failed");
         WasmSketchSegment::export_all().expect("WasmSketchSegment export failed");
         WasmSketchProfile::export_all().expect("WasmSketchProfile export failed");
         GpuGeometryResult::export_all().expect("GpuGeometryResult export failed");

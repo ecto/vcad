@@ -1031,6 +1031,12 @@ pub enum CsgOp {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         #[cfg_attr(feature = "ts-rs", ts(optional))]
         shop_profile: Option<String>,
+        /// Optional surface-marking (laser engrave) primitives on the base
+        /// flange's outside face. No material removal — exempt from
+        /// min-feature DFM rules; emitted on the DXF `ENGRAVE` layer.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(feature = "ts-rs", ts(optional))]
+        engravings: Option<Vec<SheetMetalEngraving>>,
     },
 
     #[tool(hidden)]
@@ -1051,6 +1057,11 @@ pub enum CsgOp {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         #[cfg_attr(feature = "ts-rs", ts(optional))]
         shop_profile: Option<String>,
+        /// Optional surface-marking (laser engrave) primitives on the base
+        /// flange's outside face (see `SheetMetalBaseFlangeRect`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(feature = "ts-rs", ts(optional))]
+        engravings: Option<Vec<SheetMetalEngraving>>,
     },
 
     #[tool(hidden)]
@@ -1150,6 +1161,39 @@ pub enum CsgOp {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         #[cfg_attr(feature = "ts-rs", ts(optional))]
         depth: Option<f64>,
+    },
+}
+
+/// A surface-marking (laser engrave) primitive on a sheet-metal base
+/// flange. Coordinates are base-flange-local 2D (mm, same frame as the
+/// outline). Engraving is a marking pass — no material removal — so it is
+/// exempt from through-cut minimum-feature DFM rules and never joins the
+/// cut silhouette; it lands on the flat-pattern DXF's `ENGRAVE` layer.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "bindings/"))]
+#[serde(tag = "type")]
+pub enum SheetMetalEngraving {
+    /// An open polyline stroke (pen path — no implicit closing segment).
+    Polyline {
+        /// Stroke points (mm), at least 2.
+        points: Vec<Vec2>,
+    },
+    /// A text label rendered to single-stroke (Hershey-style) polylines by
+    /// the kernel. Supports `A–Z`, `0–9`, space, and `-./#+:`; lowercase
+    /// is upcased; other characters fail evaluation.
+    Text {
+        /// The label text (e.g. `"A4"`).
+        text: String,
+        /// Baseline start X (mm).
+        x: f64,
+        /// Baseline start Y (mm).
+        y: f64,
+        /// Cap height (mm).
+        height: f64,
+        /// Baseline rotation (radians CCW from +X). Default 0.
+        #[serde(default)]
+        angle: f64,
     },
 }
 
@@ -1674,6 +1718,32 @@ pub struct Document {
     /// resolve, so the kernel never sees expressions.
     #[serde(default, skip_serializing_if = "Bindings::is_empty")]
     pub bindings: Bindings,
+
+    // Verification (optional, zero-cost when empty)
+    /// Named clearance/clash assertions between part groups, re-measured by
+    /// `check_clearance` and receipt verification whenever geometry changes.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub clearance_specs: Vec<ClearanceSpec>,
+}
+
+/// A named minimum-clearance assertion between two groups of parts.
+///
+/// Persisted on the document so safety-critical distances (rotor air gaps,
+/// bearing fits, screw-head clearances) are re-verified as geometry changes
+/// instead of being hand-computed once and silently invalidated later.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "bindings/"))]
+pub struct ClearanceSpec {
+    /// Unique human-readable name, e.g. "air-gap".
+    pub label: String,
+    /// Part ids (stringified root node ids) forming the first group.
+    pub group_a: Vec<String>,
+    /// Part ids forming the second group.
+    pub group_b: Vec<String>,
+    /// Required minimum separation in mm: the assertion holds when the
+    /// measured minimum distance between the groups is at least this value.
+    pub min_mm: f64,
 }
 
 impl Default for Document {
@@ -1694,6 +1764,7 @@ impl Default for Document {
             molecule: None,
             parameters: HashMap::new(),
             bindings: Bindings::new(),
+            clearance_specs: Vec::new(),
         }
     }
 }

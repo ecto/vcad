@@ -522,8 +522,14 @@ pub(crate) fn no_crossing_result(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::api::boolean_op;
+    use crate::api::BooleanResult;
     use vcad_kernel_primitives::make_cube;
+
+    /// Test wrapper: unwrap the now-fallible `boolean_op` — none of the
+    /// geometry here should hit an SSI error.
+    fn boolean_op(a: &BRepSolid, b: &BRepSolid, op: BooleanOp, segments: u32) -> BooleanResult {
+        crate::api::boolean_op(a, b, op, segments).expect("boolean_op should succeed")
+    }
 
     fn translated(mut s: BRepSolid, d: Vec3) -> BRepSolid {
         let t = vcad_kernel_math::Transform::translation(d.x, d.y, d.z);
@@ -634,8 +640,13 @@ mod tests {
 #[cfg(test)]
 mod probe_tests {
     use super::*;
-    use crate::api::boolean_op;
     use vcad_kernel_sketch_probe::*;
+
+    /// Test wrapper: unwrap the now-fallible `boolean_op` — none of the
+    /// geometry here should hit an SSI error.
+    fn boolean_op(a: &BRepSolid, b: &BRepSolid, op: BooleanOp, segments: u32) -> BooleanResult {
+        crate::api::boolean_op(a, b, op, segments).expect("boolean_op should succeed")
+    }
 
     /// Two interdigitated comb prisms, geometrically disjoint but with
     /// heavily overlapping AABBs and coplanar caps — the GDS island shape.

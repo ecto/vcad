@@ -18,6 +18,8 @@ import {
   calcCoil,
   sizeCoil,
   calcRf,
+  calcMotor,
+  checkSelfStart,
   addCoil,
   addCoilArray,
   windingLayout,
@@ -35,6 +37,9 @@ import {
   deleteZone,
   deleteTrace,
   deleteVia,
+  getCopper,
+  addNetTie,
+  deleteNetTie,
   undo,
   setDesignRules,
   sizeTraceForCurrent,
@@ -454,6 +459,37 @@ describe("get_pad_positions", () => {
     }
   });
 
+  it("agrees with the Rust pad_world_position transform on a rotated footprint", async () => {
+    const created = out(
+      await createSchematic({
+        components: [resistor("R1", 0)],
+      }),
+    );
+    const id = created.document_id;
+    await placeComponents({ document_id: id, board_width: 40, board_height: 20 });
+
+    // Pin the placed footprint to the exact fixture the Rust kernel test
+    // `pad_world_position_rotated_matches_ts_tool` asserts in
+    // crates/vcad-ecad-pcb/src/geometry.rs. Both sides hardcode the same
+    // world coordinates (origin (10, 20), rotation 190°), so the Rust copper
+    // pipeline (DRC / routing / pours) and this reporting tool cannot drift
+    // apart on the pad transform. If you change one side, change both.
+    const board = getPcbBoard(getSession(id));
+    const fp = board.footprints.find((f) => f.ref === "R1")!;
+    fp.position = { x: 10, y: 20 };
+    fp.rotation = 190;
+    fp.pads[0]!.position = { x: 7.62, y: 0 };
+    fp.pads[1]!.position = { x: 2.54, y: -1.27 };
+
+    const res = out(await getPadPositions({ document_id: id, ref: "R1" }));
+    const pads = res.pads as PadPos[];
+    expect(pads.length).toBe(2);
+    expect(pads[0]!.x).toBeCloseTo(2.496, 3);
+    expect(pads[0]!.y).toBeCloseTo(18.677, 3);
+    expect(pads[1]!.x).toBeCloseTo(7.278, 3);
+    expect(pads[1]!.y).toBeCloseTo(20.81, 3);
+  });
+
   it("filters by net and by ref", async () => {
     const created = out(
       await createSchematic({
@@ -803,15 +839,15 @@ describe("route_nets locked_nets", () => {
     expect(hasDetour(getPcbBoard(getSession(id)))).toBe(true);
   });
 
-  it("rips up the same net when it is not locked (control)", async () => {
+  it("preserves manual add_trace copper even when the net is NOT locked", async () => {
     const created = out(
       await createSchematic({
-        components: [resistor("R1", 0), resistor("R2", 20)],
-        nets: { MID: ["R1.2", "R2.1"] },
+        components: [resistor("R1", 0), resistor("R2", 20), resistor("R3", 40)],
+        nets: { MID: ["R1.2", "R2.1"], NETB: ["R2.2", "R3.1"] },
       }),
     );
     const id = created.document_id;
-    await placeComponents({ document_id: id, board_width: 40, board_height: 20 });
+    await placeComponents({ document_id: id, board_width: 60, board_height: 20 });
     await addTrace({
       document_id: id,
       net: "MID",
@@ -823,11 +859,80 @@ describe("route_nets locked_nets", () => {
     });
     expect(hasDetour(getPcbBoard(getSession(id)))).toBe(true);
 
+    // No locked_nets: provenance alone protects the hand-placed copper. The
+    // net is preserved wholesale (the kernel can't route "around" existing
+    // copper) and reported so the caller knows it was skipped.
+    const res = out(await routeNets({ document_id: id }));
+    expect(res.success).toBe(true);
+    expect(res.manual_nets_preserved).toEqual(["MID"]);
+    expect(res.traces_removed ?? 0).toBe(0);
+    expect((res.warnings ?? []).join(" ")).toContain("MID");
+    const board = getPcbBoard(getSession(id));
+    expect(hasDetour(board)).toBe(true);
+    // Other nets still route normally around the preserved copper.
+    expect(board.traces.some((t) => t.net === "NETB")).toBe(true);
+  });
+
+  it("rips up untagged (pre-provenance) copper on an unlocked net (control)", async () => {
+    const created = out(
+      await createSchematic({
+        components: [resistor("R1", 0), resistor("R2", 20)],
+        nets: { MID: ["R1.2", "R2.1"] },
+      }),
+    );
+    const id = created.document_id;
+    await placeComponents({ document_id: id, board_width: 40, board_height: 20 });
+    // Inject a raw trace with no `source` — the shape of a document saved
+    // before copper provenance existed. Legacy copper stays disposable, so a
+    // re-route replaces it instead of stacking on top of it.
+    getPcbBoard(getSession(id)).traces.push({
+      start: { x: 1, y: 9 },
+      end: { x: 1, y: 1 },
+      width: 0.25,
+      layer: "FCu",
+      net: "MID",
+    });
+    expect(hasDetour(getPcbBoard(getSession(id)))).toBe(true);
+
     const res = out(await routeNets({ document_id: id }));
     expect(res.traces_removed).toBeGreaterThan(0);
     expect(hasDetour(getPcbBoard(getSession(id)))).toBe(false);
   });
+
+  it("keeps a manual via while re-routing the net's traces", async () => {
+    const created = out(
+      await createSchematic({
+        components: [resistor("R1", 0), resistor("R2", 20)],
+        nets: { MID: ["R1.2", "R2.1"] },
+      }),
+    );
+    const id = created.document_id;
+    await placeComponents({ document_id: id, board_width: 40, board_height: 20 });
+    out(await routeNets({ document_id: id }));
+    out(
+      await addVia({
+        document_id: id,
+        net: "MID",
+        position: { x: 2, y: 2 },
+      }),
+    );
+
+    // A via alone doesn't block re-routing (the ratsnest only counts traces),
+    // so the net is re-owned: autorouted copper replaced, manual via kept.
+    const res = out(await routeNets({ document_id: id }));
+    expect(res.success).toBe(true);
+    expect(res.traces_removed).toBeGreaterThan(0);
+    expect(res.manual_nets_preserved).toBeUndefined();
+    const board = getPcbBoard(getSession(id));
+    expect(
+      board.vias.some(
+        (v) => v.net === "MID" && v.source === "manual" && v.position.x === 2,
+      ),
+    ).toBe(true);
+    expect(board.traces.some((t) => t.net === "MID")).toBe(true);
+  });
 });
+
 
 describe("route_nets strategy", () => {
   const mkBoard = async () => {
@@ -1325,7 +1430,11 @@ describe("ecad session flow", () => {
     // Deliberately NOT routed → MID's two pads sit in disjoint copper groups,
     // so DRC reports an UnconnectedNet error and the board is not fab-clean.
 
-    const blocked = out(await exportGerber({ document_id: id })); // require_clean_drc defaults true
+    const blockedResult = await exportGerber({ document_id: id }); // require_clean_drc defaults true
+    // The gate tripping is a verdict, not a tool failure — isError would make
+    // clients and telemetry read a working guard as a crash.
+    expect((blockedResult as { isError?: boolean }).isError).toBeUndefined();
+    const blocked = out(blockedResult);
     expect(blocked.success).toBe(false);
     expect(blocked.blocked).toBe(true);
     expect(blocked.drc.errors).toBeGreaterThan(0);
@@ -2143,13 +2252,15 @@ describe("explicit netlist (nets as data)", () => {
 });
 
 describe("route_nets idempotency", () => {
-  // The exact board from the field bug report. Before the fix, routing an
-  // already-routed board a second time stacked copper: the kernel ratsnest
-  // skips nets that already have a trace, so the second route_all came back
-  // empty, the no-kernel fallback in routeNets misfired, and it chained naive
-  // straight segments over the clean route — turning a handful of inherent
-  // violations into dozens of shorts. The fix rips up the target nets' copper
-  // before routing, so re-running replaces the route instead of adding to it.
+  // The exact board from the field bug report (issue #277). Before the fix,
+  // routing an already-routed board a second time stacked copper: the kernel
+  // ratsnest skips nets that already have a trace, so the second route_all
+  // came back empty, the no-kernel fallback in routeNets misfired, and it
+  // chained naive straight segments over the clean route — turning a handful
+  // of inherent violations into dozens of shorts. The fix rips up the target
+  // nets' *autorouted* copper before routing (hand-placed copper is
+  // provenance-tagged and preserved), so re-running replaces the route
+  // instead of adding to it.
   const soic8 = (ref: string, x: number) => ({
     ref,
     value: "U",
@@ -2208,6 +2319,10 @@ describe("route_nets idempotency", () => {
     return id;
   };
 
+  /** Segment identity — stacked copper shows up as exact duplicates. */
+  const segKey = (t: { net: string; layer: string; start: Vec2; end: Vec2 }) =>
+    `${t.net}|${t.layer}|${t.start.x},${t.start.y}->${t.end.x},${t.end.y}`;
+
   it("a second route_nets does not stack copper or add violations", async () => {
     const id = await buildBoard();
 
@@ -2218,20 +2333,62 @@ describe("route_nets idempotency", () => {
     const vias1 = board1.vias.length;
     const drc1 = out(await runDrc({ document_id: id }));
     expect(traces1).toBeGreaterThan(0);
+    // A single pass never stacks copper on itself — the duplicate-free
+    // baseline the re-route must hold.
+    const keys1 = board1.traces.map(segKey);
+    expect(new Set(keys1).size).toBe(keys1.length);
 
     // Second route — must rip up and re-lay the same copper, not append a second
     // set. After the rip-up the board is pads-only again, exactly as it was
     // before the first route, so the deterministic router reproduces it byte
     // for byte.
-    out(await routeNets({ document_id: id }));
+    const r2 = out(await routeNets({ document_id: id }));
     const board2 = getPcbBoard(getSession(id));
     const drc2 = out(await runDrc({ document_id: id }));
 
+    // The rip-up is visible in the result, not silent.
+    expect(r2.traces_removed).toBeGreaterThan(0);
     expect(board2.traces.length).toBe(traces1);
     expect(board2.vias.length).toBe(vias1);
+    // No two identical segments — the stacked-copper signature.
+    const keys2 = board2.traces.map(segKey);
+    expect(new Set(keys2).size).toBe(keys2.length);
+    // Every piece of autorouted copper carries its provenance, so the next
+    // re-route knows it is disposable.
+    expect(board2.traces.every((t) => t.source === "autoroute")).toBe(true);
+    expect(board2.vias.every((v) => v.source === "autoroute")).toBe(true);
     expect(drc2.violations).toBe(drc1.violations);
     // The headline symptom: the re-route must never introduce shorts.
     expect(drc2.byRule.Short ?? 0).toBe(0);
+  });
+
+  it("a scoped re-route of one net leaves the other nets' copper untouched", async () => {
+    const id = await buildBoard();
+    out(await routeNets({ document_id: id }));
+
+    const before = getPcbBoard(getSession(id));
+    const othersBefore = before.traces.filter((t) => t.net !== "SIG2").map(segKey).sort();
+    const sig2Before = before.traces.filter((t) => t.net === "SIG2").length;
+    expect(sig2Before).toBeGreaterThan(0);
+
+    const r = out(await routeNets({ document_id: id, nets: ["SIG2"] }));
+    expect(r.success).toBe(true);
+    expect(r.traces_removed).toBeGreaterThan(0);
+
+    const after = getPcbBoard(getSession(id));
+    // SIG2 was replaced (still routed, no duplicate segments), not doubled.
+    // The scoped pass routes against different obstacles than the original
+    // negotiated pass, so the exact path may differ — but stacking would at
+    // least double the segment count.
+    const sig2After = after.traces.filter((t) => t.net === "SIG2");
+    expect(sig2After.length).toBeGreaterThan(0);
+    expect(sig2After.length).toBeLessThan(sig2Before * 2);
+    const sig2Keys = sig2After.map(segKey);
+    expect(new Set(sig2Keys).size).toBe(sig2Keys.length);
+    // Copper on every other net is byte-identical.
+    expect(after.traces.filter((t) => t.net !== "SIG2").map(segKey).sort()).toEqual(
+      othersBefore,
+    );
   });
 
   it("routing three times in a row stays flat — no monotonic copper growth", async () => {
@@ -2311,7 +2468,7 @@ describe("route_nets idempotency", () => {
     // A standalone coil on its own net — a free spiral whose terminals dangle by
     // design and whose net has no pads. It must survive every route_nets call.
     const coil = out(
-      addCoil({
+      await addCoil({
         document_id: id,
         center: { x: 25, y: 17 },
         turns: 4,
@@ -2694,7 +2851,7 @@ describe("add_coil", () => {
   it("generates a spiral on a net with sane endpoints, length, and resistance", async () => {
     const id = await circleBoardSession();
     const coil = out(
-      addCoil({
+      await addCoil({
         document_id: id,
         center: { x: 40, y: 40 },
         turns: 5,
@@ -2735,9 +2892,46 @@ describe("add_coil", () => {
     }
   });
 
+  it("run_drc flags a same-net trace over the coil's inner via as SameNetBypass", async () => {
+    const id = await circleBoardSession();
+    const coil = out(
+      await addCoil({
+        document_id: id,
+        center: { x: 40, y: 40 },
+        turns: 10,
+        inner_radius: 2.6,
+        outer_radius: 7.2,
+        trace_width: 0.25,
+        clearance: 0.2,
+        net: "PHA",
+        inner_via: true,
+      }),
+    );
+    expect(coil.success).toBe(true);
+
+    // The old add_motor_winding failure: a same-net star trace from the outer
+    // endpoint straight along the terminal ray, over the inner via — no
+    // net-based rule can see it, but it short-circuits the spiral.
+    out(
+      await addTrace({
+        document_id: id,
+        net: "PHA",
+        layer: "FCu",
+        width: 0.25,
+        points: [coil.outer_endpoint, { x: 41, y: 40 }],
+      }),
+    );
+
+    const drc = out(await runDrc({ document_id: id }));
+    expect(drc.byRule?.SameNetBypass ?? 0).toBeGreaterThan(0);
+    // Warning severity, bucketed under connectivity.
+    expect(drc.warnings).toBeGreaterThan(0);
+    expect(drc.categories.connectivity).toBeGreaterThan(0);
+  });
+
   it("rejects coils whose turns don't fit the clearance, with the max that would", async () => {
     const id = await circleBoardSession();
-    const res = addCoil({
+    const res = await addCoil({
       document_id: id,
       center: { x: 40, y: 40 },
       turns: 30,
@@ -2753,7 +2947,7 @@ describe("add_coil", () => {
 
   it("requires a PCB on the document", async () => {
     const created = out(await createSchematic({ components: [resistor("R1", 0)] }));
-    const res = addCoil({
+    const res = await addCoil({
       document_id: created.document_id,
       center: { x: 0, y: 0 },
       turns: 2,
@@ -2858,7 +3052,7 @@ describe("add_coil_array", () => {
 
   it("lays a 3-phase ring: 3 coils 120° apart, nets cycled", async () => {
     const id = await ringBoard();
-    const res = out(addCoilArray({ document_id: id, ...base, net_sequence: ["PHA", "PHB", "PHC"] }));
+    const res = out(await addCoilArray({ document_id: id, ...base, net_sequence: ["PHA", "PHB", "PHC"] }));
     expect(res.success).toBe(true);
     expect(res.coils_added).toBe(3);
     expect(res.total_traces).toBeGreaterThan(0);
@@ -2878,14 +3072,14 @@ describe("add_coil_array", () => {
 
   it("chirality 'alternating' flips winding sense per coil", async () => {
     const id = await ringBoard();
-    const res = out(addCoilArray({ document_id: id, ...base, net: "X", chirality: "alternating" }));
+    const res = out(await addCoilArray({ document_id: id, ...base, net: "X", chirality: "alternating" }));
     expect(res.results.map((r: { direction: string }) => r.direction)).toEqual(["ccw", "cw", "ccw"]);
   });
 
   it("cycles net_sequence when shorter than count", async () => {
     const id = await ringBoard();
     const res = out(
-      addCoilArray({ document_id: id, ...base, count: 4, net_sequence: ["A", "B"] }),
+      await addCoilArray({ document_id: id, ...base, count: 4, net_sequence: ["A", "B"] }),
     );
     expect(res.results.map((r: { net: string }) => r.net)).toEqual(["A", "B", "A", "B"]);
   });
@@ -2893,20 +3087,20 @@ describe("add_coil_array", () => {
   it("mutates the same session that addCoil writes to", async () => {
     const id = await ringBoard();
     const before = getPcbBoard(getSession(id)).traces.length;
-    out(addCoilArray({ document_id: id, ...base, net_sequence: ["PHA", "PHB", "PHC"] }));
+    out(await addCoilArray({ document_id: id, ...base, net_sequence: ["PHA", "PHB", "PHC"] }));
     expect(getPcbBoard(getSession(id)).traces.length).toBeGreaterThan(before);
   });
 
   it("rejects count < 1", async () => {
     const id = await ringBoard();
-    const res = addCoilArray({ document_id: id, ...base, count: 0, net: "X" });
+    const res = await addCoilArray({ document_id: id, ...base, count: 0, net: "X" });
     expect(res.isError).toBe(true);
   });
 
   it("collects per-coil geometry failures instead of throwing", async () => {
     const id = await ringBoard();
     // outer_radius <= inner_radius fails inside addCoil for every coil.
-    const res = addCoilArray({
+    const res = await addCoilArray({
       document_id: id,
       ...base,
       inner_radius: 8,
@@ -2930,7 +3124,7 @@ describe("add_trace / add_via / set_stackup", () => {
   it("add_trace adds N-1 segments and ensures the net", async () => {
     const id = await board();
     const res = out(
-      addTrace({
+      await addTrace({
         document_id: id,
         net: "SIG",
         points: [
@@ -2952,23 +3146,27 @@ describe("add_trace / add_via / set_stackup", () => {
 
   it("add_trace rejects < 2 points and non-copper layers", async () => {
     const id = await board();
-    expect(addTrace({ document_id: id, net: "X", points: [{ x: 0, y: 0 }] }).isError).toBe(true);
     expect(
-      addTrace({
-        document_id: id,
-        net: "X",
-        layer: "FSilkS",
-        points: [
-          { x: 0, y: 0 },
-          { x: 1, y: 1 },
-        ],
-      }).isError,
+      (await addTrace({ document_id: id, net: "X", points: [{ x: 0, y: 0 }] })).isError,
+    ).toBe(true);
+    expect(
+      (
+        await addTrace({
+          document_id: id,
+          net: "X",
+          layer: "FSilkS",
+          points: [
+            { x: 0, y: 0 },
+            { x: 1, y: 1 },
+          ],
+        })
+      ).isError,
     ).toBe(true);
   });
 
   it("add_via adds a via with default span and ensures the net", async () => {
     const id = await board();
-    const res = out(addVia({ document_id: id, net: "GND", position: { x: 5, y: 5 } }));
+    const res = out(await addVia({ document_id: id, net: "GND", position: { x: 5, y: 5 } }));
     expect(res.success).toBe(true);
     expect(res.position).toEqual({ x: 5, y: 5 });
     const b = getPcbBoard(getSession(id));
@@ -2982,7 +3180,7 @@ describe("add_trace / add_via / set_stackup", () => {
 
   it("set_stackup copper_oz changes copperThickness on all copper layers", async () => {
     const id = await board();
-    const res = out(setStackup({ document_id: id, copper_oz: 2 }));
+    const res = out(await setStackup({ document_id: id, copper_oz: 2 }));
     expect(res.success).toBe(true);
     const b = getPcbBoard(getSession(id));
     for (const l of b.stackup.layers.filter((s) => /Cu$/.test(s.layer))) {
@@ -2994,7 +3192,7 @@ describe("add_trace / add_via / set_stackup", () => {
     // 1 oz baseline coil.
     const id1 = await board();
     const c1oz = out(
-      addCoil({
+      await addCoil({
         document_id: id1,
         center: { x: 25, y: 25 },
         turns: 3,
@@ -3007,9 +3205,9 @@ describe("add_trace / add_via / set_stackup", () => {
     );
     // 2 oz coil on a fresh board (thicker copper → lower resistance).
     const id2 = await board();
-    out(setStackup({ document_id: id2, copper_oz: 2 }));
+    out(await setStackup({ document_id: id2, copper_oz: 2 }));
     const c2oz = out(
-      addCoil({
+      await addCoil({
         document_id: id2,
         center: { x: 25, y: 25 },
         turns: 3,
@@ -3027,7 +3225,7 @@ describe("add_trace / add_via / set_stackup", () => {
   it("set_stackup per-layer creates a missing copper layer entry", async () => {
     const id = await board();
     const res = out(
-      setStackup({
+      await setStackup({
         document_id: id,
         layers: [{ layer: "In1Cu", copper_oz: 0.5, material: "FR4" }],
       }),
@@ -3058,7 +3256,7 @@ describe("add_coil lead-out and multilayer", () => {
     const id = await circleBoardSession();
     const center = { x: 40, y: 40 };
     const plain = out(
-      addCoil({
+      await addCoil({
         document_id: id,
         center,
         turns: 4,
@@ -3076,7 +3274,7 @@ describe("add_coil lead-out and multilayer", () => {
 
     const id2 = await circleBoardSession();
     const led = out(
-      addCoil({
+      await addCoil({
         document_id: id2,
         center,
         turns: 4,
@@ -3103,7 +3301,7 @@ describe("add_coil lead-out and multilayer", () => {
   it("layers:[FCu,BCu] stacks the coil on both layers with a stitch via", async () => {
     const id = await circleBoardSession();
     const res = out(
-      addCoil({
+      await addCoil({
         document_id: id,
         center: { x: 40, y: 40 },
         turns: 3,
@@ -3151,7 +3349,7 @@ describe("add_motor_winding", () => {
   it("realizes a feasible 12s/10p wye winding: 12 coils, interconnect, a net-tie", async () => {
     const id = await statorBoard();
     const res = out(
-      addMotorWinding({
+      await addMotorWinding({
         document_id: id,
         slots: 12,
         poles: 10,
@@ -3170,7 +3368,9 @@ describe("add_motor_winding", () => {
     expect(res.connection).toBe("wye");
     expect(res.interconnect_traces).toBeGreaterThan(0);
     expect(res.net_ties_added).toBe(1);
-    expect(res.vias_added).toBe(24); // inner + outer via per coil
+    // 2 terminal vias per coil (center + outer lead-out), 2 layer-hop vias per
+    // series link (3 phases × 3 links), 1 hop via per star drop (3 phases).
+    expect(res.vias_added).toBe(45);
     expect(res.winding_factor).toBeGreaterThan(0.9);
 
     const b = getPcbBoard(getSession(id));
@@ -3189,7 +3389,7 @@ describe("add_motor_winding", () => {
   it("delta winding adds a net-tie per junction", async () => {
     const id = await statorBoard();
     const res = out(
-      addMotorWinding({
+      await addMotorWinding({
         document_id: id,
         slots: 12,
         poles: 10,
@@ -3210,7 +3410,7 @@ describe("add_motor_winding", () => {
 
   it("rejects an infeasible slot/pole/phase combination", async () => {
     const id = await statorBoard();
-    const res = addMotorWinding({
+    const res = await addMotorWinding({
       document_id: id,
       slots: 9,
       poles: 12,
@@ -3222,6 +3422,213 @@ describe("add_motor_winding", () => {
       trace_width: 0.2,
     });
     expect(res.isError).toBe(true);
+  });
+
+  // --- 9s/6p regression: planar interconnect, scoped star, routed feeds ----
+  //
+  // Reproduces the reported geometry bugs: (1) straight-chord series links
+  // crossing on the return layer (cross-net Shorts), (2) star chords riding a
+  // coil's terminal ray over its same-net inner via (a silent electrical
+  // bypass of the last coil of each phase), (3) the star junction landing at
+  // the board center over the shaft-bore cutout, with phase feeds never
+  // routed to their pads (NetIslands).
+
+  /** n-gon approximation of a circle, CCW. */
+  function circlePts(cx: number, cy: number, r: number, n = 64): Vec2[] {
+    return Array.from({ length: n }, (_, i) => {
+      const a = (i / n) * 2 * Math.PI;
+      return {
+        x: Math.round((cx + r * Math.cos(a)) * 1000) / 1000,
+        y: Math.round((cy + r * Math.sin(a)) * 1000) / 1000,
+      };
+    });
+  }
+
+  /** Perpendicular distance from p to segment ab (test-local copy). */
+  function distToSeg(p: Vec2, a: Vec2, b: Vec2): number {
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const len2 = dx * dx + dy * dy;
+    if (len2 === 0) return Math.hypot(p.x - a.x, p.y - a.y);
+    const t = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2));
+    return Math.hypot(p.x - (a.x + t * dx), p.y - (a.y + t * dy));
+  }
+
+  /**
+   * The bypass invariant: no trace may pass within clearance of a same-net
+   * via it isn't terminating at — copper riding a terminal ray over a via
+   * electrically shorts out everything between the two contact points.
+   */
+  function findViaBypasses(pcb: Pcb, clearance: number): string[] {
+    const issues: string[] = [];
+    for (const v of pcb.vias) {
+      for (const t of pcb.traces) {
+        if (t.net !== v.net) continue;
+        const lim = v.diameter / 2 + t.width / 2 + clearance - 1e-6;
+        const d = distToSeg(v.position, t.start, t.end);
+        if (d >= lim) continue;
+        const atStart = Math.hypot(v.position.x - t.start.x, v.position.y - t.start.y) <= 1e-3;
+        const atEnd = Math.hypot(v.position.x - t.end.x, v.position.y - t.end.y) <= 1e-3;
+        if (atStart || atEnd) continue;
+        issues.push(
+          `net '${v.net}' via at (${v.position.x},${v.position.y}) is ${d.toFixed(3)}mm from ` +
+            `a passing same-net trace (${t.start.x},${t.start.y})→(${t.end.x},${t.end.y})`,
+        );
+      }
+    }
+    return issues;
+  }
+
+  /** Read the hand-built board back from a registered session. */
+  function boardOf(id: string): Pcb {
+    return (getSession(id) as Document & { pcb?: Pcb }).pcb!;
+  }
+
+  /**
+   * 70mm circular stator board with a shaft bore at (35,35) — the reported
+   * repro — plus one SMD testpoint per phase net so feed routing (and the
+   * NetIslands rule) is exercised.
+   */
+  function statorBoard9s6p(withPads: boolean, boreRadius = 10): string {
+    const tp = (ref: string, net: string, angleDeg: number) => {
+      const a = (angleDeg * Math.PI) / 180;
+      return {
+        ref,
+        value: "TP",
+        footprintName: "test:tp",
+        position: {
+          x: Math.round((35 + 33.5 * Math.cos(a)) * 1000) / 1000,
+          y: Math.round((35 + 33.5 * Math.sin(a)) * 1000) / 1000,
+        },
+        rotation: 0,
+        front: true,
+        pads: [
+          {
+            number: "1",
+            padType: "SMD",
+            shape: { type: "Rect", width: 1.5, height: 1.5 },
+            position: { x: 0, y: 0 },
+            layers: ["FCu"],
+            net,
+          },
+        ],
+      };
+    };
+    const pcb = {
+      outline: {
+        vertices: circlePts(35, 35, 35),
+        cutouts: [circlePts(35, 35, boreRadius)],
+        thickness: 1.6,
+      },
+      stackup: {
+        layers: [
+          { layer: "FCu", copperThickness: 0.035, dielectricThickness: 1.5, dielectricEr: 4.5, material: "FR4" },
+          { layer: "BCu", copperThickness: 0.035 },
+        ],
+      },
+      nets: withPads
+        ? [
+            { id: "PHA", name: "PHA" },
+            { id: "PHB", name: "PHB" },
+            { id: "PHC", name: "PHC" },
+          ]
+        : [],
+      rules: {
+        defaultRules: { name: "Default", traceWidth: 0.25, clearance: 0.15, viaDiameter: 0.8, viaDrill: 0.4 },
+        classRules: [],
+        netClassAssignments: {},
+        edgeClearance: 0.5,
+        holeToHole: 0.5,
+        minAnnularRing: 0.15,
+        minDrill: 0.2,
+      },
+      // Testpoints near each phase's feed escape ray (phase starts at slots
+      // 0/1/2 → 0°/40°/80°).
+      footprints: withPads ? [tp("TP1", "PHA", 350), tp("TP2", "PHB", 30), tp("TP3", "PHC", 70)] : [],
+      traces: [],
+      vias: [],
+      zones: [],
+    } as unknown as Pcb;
+    const doc = createDocument();
+    (doc as Document & { pcb?: Pcb }).pcb = pcb;
+    return registerSession(doc);
+  }
+
+  const wind9s6p = (id: string, connection: "wye" | "delta") =>
+    addMotorWinding({
+      document_id: id,
+      slots: 9,
+      poles: 6,
+      center: { x: 35, y: 35 },
+      pitch_radius: 22.5,
+      inner_radius: 2.6,
+      outer_radius: 7.2,
+      turns_per_coil: 10,
+      trace_width: 0.25,
+      clearance: 0.15,
+      connection,
+    });
+
+  it("9s/6p wye: 0 shorts, no same-net via bypass, star off the bore, feeds routed", async () => {
+    const id = statorBoard9s6p(true);
+    const res = out(await wind9s6p(id, "wye"));
+    expect(res.errors).toBeUndefined();
+    expect(res.success).toBe(true);
+    expect(res.coils_placed).toBe(9);
+
+    // (3) The star junction sits on real board material — never at the board
+    // center, never over the 10mm-radius bore cutout.
+    expect(res.star_junction).toBeDefined();
+    const starDist = Math.hypot(res.star_junction.x - 35, res.star_junction.y - 35);
+    expect(starDist).toBeGreaterThan(10.5);
+    // …and the tie recording it is region-scoped, not board-wide.
+    const b = boardOf(id);
+    expect(b.netTies!.length).toBe(1);
+    expect(b.netTies![0].position).toBeDefined();
+    expect(b.netTies![0].radius).toBeDefined();
+    expect(b.netTies![0].radius!).toBeLessThan(6);
+
+    // (3b) Feeds reached the phase testpoints.
+    expect(res.feeds_routed).toEqual(expect.arrayContaining(["PHA", "PHB", "PHC"]));
+    expect(res.feeds_unrouted).toBeUndefined();
+
+    // (2) The bypass invariant, re-checked independently of the tool's audit:
+    // no trace within clearance of a same-net via it isn't terminating at.
+    expect(findViaBypasses(b, 0.15)).toEqual([]);
+
+    // (1) Kernel DRC: no shorts (series links / star are planar; the wye
+    // junction is exempted by its scoped tie), no stranded copper (feeds
+    // landed), no clearance faults. The board is DRC-clean outright.
+    const drc = out(await runDrc({ document_id: id, detail: "full" }));
+    expect(drc.byRule?.Short ?? 0).toBe(0);
+    expect(drc.byRule?.NetIslands ?? 0).toBe(0);
+    expect(drc.byRule?.Clearance ?? 0).toBe(0);
+    expect(drc.violations).toBe(0);
+  });
+
+  it("9s/6p delta: 0 shorts and no bypass with per-junction scoped ties", async () => {
+    // Delta needs 2 rings per phase (series + return links); the Ø20 bore
+    // doesn't fit 6 — use a Ø12 bore for the delta variant.
+    const id = statorBoard9s6p(false, 6);
+    const res = out(await wind9s6p(id, "delta"));
+    expect(res.errors).toBeUndefined();
+    expect(res.success).toBe(true);
+    expect(res.coils_placed).toBe(9);
+    expect(res.net_ties_added).toBe(3);
+
+    const b = boardOf(id);
+    expect(findViaBypasses(b, 0.15)).toEqual([]);
+
+    const drc = out(await runDrc({ document_id: id, detail: "full" }));
+    expect(drc.byRule?.Short ?? 0).toBe(0);
+    expect(drc.byRule?.Clearance ?? 0).toBe(0);
+  });
+
+  it("9s/6p delta on the Ø20 bore fails loudly — the rings don't fit", async () => {
+    const id = statorBoard9s6p(false, 10);
+    const res = await wind9s6p(id, "delta");
+    expect(res.isError).toBe(true);
+    expect(res.content[0]!.text).toContain("interconnect doesn't fit");
   });
 });
 
@@ -3259,6 +3666,31 @@ describe("run_drc summary aggregation", () => {
     expect(summary.sample.length).toBe(2);
     expect(summary.sampleCapped).toBe(true);
     expect(summary.details).toBeUndefined();
+  });
+
+  it("buckets SameNetBypass into the connectivity category", () => {
+    const violations = [
+      {
+        rule: "SameNetBypass",
+        severity: "Warning",
+        message:
+          "Same-net bypass on net 'PHA': copper at (57.20, 40.00) touches copper at " +
+          "(52.60, 40.00) that is 481 conductor hops away — the contact short-circuits " +
+          "everything between them (fatal to a two-terminal structure like a spiral " +
+          "coil, shunt, or sense trace)",
+        position: { x: 52.6, y: 40 },
+        actual: 481,
+        required: 3,
+      },
+    ];
+    const summary = aggregateDrc(violations, 20, "summary");
+    expect(summary.categories.connectivity).toBe(1);
+    expect(summary.categories.clearance).toBe(0);
+    expect(summary.categories.manufacturing).toBe(0);
+    expect(summary.warnings).toBe(1);
+    expect(summary.errors).toBe(0);
+    // The single-net message yields a [net, ""] pair for the roll-up.
+    expect(summary.byNetPair.some((p) => p.nets[0] === "PHA" && p.nets[1] === "")).toBe(true);
   });
 
   it("detail='full' attaches the complete violation array", () => {
@@ -4236,6 +4668,326 @@ describe("delete_zone / delete_trace / delete_via", () => {
   });
 });
 
+describe("get_copper", () => {
+  /** Board with two traces (MID/AUX), one via, and a back-side GND pour. */
+  async function boardWithCopper(): Promise<string> {
+    const id = await boardWithTwoResistors();
+    out(
+      await addTrace({
+        document_id: id,
+        net: "MID",
+        points: [
+          { x: 10, y: 10 },
+          { x: 20, y: 10 },
+        ],
+      }),
+    );
+    out(
+      await addTrace({
+        document_id: id,
+        net: "AUX",
+        layer: "BCu",
+        points: [
+          { x: 30, y: 30 },
+          { x: 40, y: 30 },
+        ],
+      }),
+    );
+    out(await addVia({ document_id: id, net: "MID", position: { x: 20, y: 10 } }));
+    out(await addZone({ document_id: id, net: "GND", layer: "BCu", fill_board: true }));
+    return id;
+  }
+
+  it("returns every element with delete-compatible kind + index", async () => {
+    const id = await boardWithCopper();
+    const res = out(await getCopper({ document_id: id }));
+    expect(res.success).toBe(true);
+    expect(res.total).toBe(4);
+    expect(res.count).toBe(4);
+    expect(res.next_offset).toBeUndefined();
+    expect(res.total_by_kind).toEqual({ trace: 2, via: 1, zone: 1 });
+
+    // Deterministic order: traces, arcs, vias, zones — index order within each.
+    expect(res.elements.map((e: { kind: string }) => e.kind)).toEqual([
+      "trace",
+      "trace",
+      "via",
+      "zone",
+    ]);
+    expect(res.elements[0]).toMatchObject({
+      kind: "trace",
+      index: 0,
+      net: "MID",
+      layer: "FCu",
+      start: { x: 10, y: 10 },
+      end: { x: 20, y: 10 },
+      source: "manual",
+    });
+    expect(res.elements[2]).toMatchObject({
+      kind: "via",
+      index: 0,
+      net: "MID",
+      layers: ["FCu", "BCu"],
+      position: { x: 20, y: 10 },
+    });
+    // Zones report bbox + vertex count, not the (possibly huge) outline.
+    expect(res.elements[3]).toMatchObject({ kind: "zone", index: 0, net: "GND", layer: "BCu" });
+    expect(res.elements[3].bbox).toEqual({ min: { x: 0, y: 0 }, max: { x: 50, y: 50 } });
+    expect(res.elements[3].vertices).toBeGreaterThanOrEqual(3);
+    expect(res.elements[3].outline).toBeUndefined();
+  });
+
+  it("filters by kind, net, layer, and bbox", async () => {
+    const id = await boardWithCopper();
+
+    const vias = out(await getCopper({ document_id: id, kind: "via" }));
+    expect(vias.total).toBe(1);
+    expect(vias.elements[0].kind).toBe("via");
+
+    const mid = out(await getCopper({ document_id: id, net: "MID" }));
+    expect(mid.total).toBe(2); // FCu trace + via
+    expect(mid.elements.every((e: { net: string }) => e.net === "MID")).toBe(true);
+
+    // BCu: the AUX trace, the pour — and the via, whose barrel spans FCu→BCu.
+    const bcu = out(await getCopper({ document_id: id, layer: "BCu" }));
+    expect(bcu.total).toBe(3);
+    expect(bcu.elements.map((e: { kind: string }) => e.kind).sort()).toEqual([
+      "trace",
+      "via",
+      "zone",
+    ]);
+
+    // Spatial: only the MID trace's neighborhood, kind-scoped so the
+    // board-spanning pour doesn't match.
+    const near = out(
+      await getCopper({ document_id: id, kind: "trace", bbox: { x: 5, y: 5, w: 10, h: 10 } }),
+    );
+    expect(near.total).toBe(1);
+    expect(near.elements[0]).toMatchObject({ kind: "trace", net: "MID" });
+
+    // Empty match is a success with total 0, not an error.
+    const none = out(await getCopper({ document_id: id, net: "GHOST" }));
+    expect(none.total).toBe(0);
+    expect(none.elements).toEqual([]);
+  });
+
+  it("query indices drive surgical deletes", async () => {
+    const id = await boardWithCopper();
+    const aux = out(await getCopper({ document_id: id, kind: "trace", net: "AUX" }));
+    expect(aux.total).toBe(1);
+    const del = out(await deleteTrace({ document_id: id, index: aux.elements[0].index }));
+    expect(del.deleted).toMatchObject({ kind: "trace", net: "AUX" });
+    expect(out(await getCopper({ document_id: id, kind: "trace" })).total).toBe(1);
+  });
+
+  it("paginates with offset and reports the uncapped total", async () => {
+    const id = await boardWithTwoResistors();
+    for (let i = 0; i < 5; i++) {
+      out(await addVia({ document_id: id, net: "MID", position: { x: 10 + i * 5, y: 40 } }));
+    }
+    const p1 = out(await getCopper({ document_id: id, kind: "via", limit: 2 }));
+    expect(p1.total).toBe(5);
+    expect(p1.count).toBe(2);
+    expect(p1.next_offset).toBe(2);
+    expect(p1.elements.map((e: { index: number }) => e.index)).toEqual([0, 1]);
+
+    const p2 = out(await getCopper({ document_id: id, kind: "via", limit: 2, offset: 4 }));
+    expect(p2.count).toBe(1);
+    expect(p2.elements[0].index).toBe(4);
+    expect(p2.next_offset).toBeUndefined();
+  });
+
+  it("rejects a bad kind, a malformed layer, and a bad bbox", async () => {
+    const id = await boardWithTwoResistors();
+    expect(isErr(await getCopper({ document_id: id, kind: "wire" }))).toBe(true);
+    expect(isErr(await getCopper({ document_id: id, layer: "F.Cu" }))).toBe(true);
+    expect(isErr(await getCopper({ document_id: id, bbox: { x: 0, y: 0 } }))).toBe(true);
+  });
+});
+
+describe("add_net_tie / delete_net_tie", () => {
+  /** Board whose netlist has four nets (one pad each) and no routing. */
+  async function boardWithFourNets(): Promise<string> {
+    const created = out(
+      await createSchematic({
+        components: [resistor("R1", 0), resistor("R2", 20)],
+        nets: { PHA: ["R1.1"], PHB: ["R1.2"], GND: ["R2.1"], AGND: ["R2.2"] },
+      }),
+    );
+    const id = created.document_id as string;
+    out(await placeComponents({ document_id: id, board_width: 50, board_height: 50 }));
+    return id;
+  }
+
+  it("authors a board-wide tie and returns the updated tie list", async () => {
+    const id = await boardWithFourNets();
+    const res = out(await addNetTie({ document_id: id, nets: ["GND", "AGND"] }));
+    expect(res.success).toBe(true);
+    expect(res.tie).toMatchObject({ index: 0, nets: ["GND", "AGND"], scope: "board_wide" });
+    expect(res.net_ties).toEqual([res.tie]);
+    expect(res.net_ties_total).toBe(1);
+    expect(res.changed).toEqual([
+      { action: "added", kind: "netTie", index: 0, net: "GND+AGND" },
+    ]);
+
+    const board = getPcbBoard(getSession(id));
+    expect(board.netTies).toHaveLength(1);
+    expect(board.netTies![0]).toEqual({ nets: ["GND", "AGND"] });
+  });
+
+  it("authors a region-scoped tie with position + radius", async () => {
+    const id = await boardWithFourNets();
+    const res = out(
+      await addNetTie({
+        document_id: id,
+        nets: ["PHA", "PHB", "GND"],
+        position: { x: 25, y: 25 },
+        radius: 3,
+      }),
+    );
+    expect(res.tie).toMatchObject({
+      scope: "region",
+      position: { x: 25, y: 25 },
+      radius: 3,
+    });
+    const board = getPcbBoard(getSession(id));
+    expect(board.netTies![0].position).toEqual({ x: 25, y: 25 });
+    expect(board.netTies![0].radius).toBe(3);
+  });
+
+  it("rejects unknown nets, < 2 distinct nets, and a half-scoped region", async () => {
+    const id = await boardWithFourNets();
+    // Unknown net — the error names it so the typo is findable.
+    const bad = await addNetTie({ document_id: id, nets: ["GND", "GROUND"] });
+    expect(isErr(bad)).toBe(true);
+    expect((bad as { content: Array<{ text: string }> }).content[0].text).toContain("GROUND");
+
+    expect(isErr(await addNetTie({ document_id: id, nets: ["GND"] }))).toBe(true);
+    // Duplicates collapse — still one distinct net.
+    expect(isErr(await addNetTie({ document_id: id, nets: ["GND", "GND"] }))).toBe(true);
+    // position without radius (or vice versa) would silently become a
+    // board-wide exemption in the kernel — rejected outright.
+    expect(
+      isErr(await addNetTie({ document_id: id, nets: ["GND", "AGND"], position: { x: 1, y: 1 } })),
+    ).toBe(true);
+    expect(isErr(await addNetTie({ document_id: id, nets: ["GND", "AGND"], radius: 2 }))).toBe(true);
+    expect(
+      isErr(
+        await addNetTie({
+          document_id: id,
+          nets: ["GND", "AGND"],
+          position: { x: 1, y: 1 },
+          radius: 0,
+        }),
+      ),
+    ).toBe(true);
+    expect(getPcbBoard(getSession(id)).netTies ?? []).toHaveLength(0);
+  });
+
+  it("deletes by index, by net set, and by position; guards a mismatched index", async () => {
+    const id = await boardWithFourNets();
+    out(await addNetTie({ document_id: id, nets: ["GND", "AGND"] }));
+    out(
+      await addNetTie({
+        document_id: id,
+        nets: ["PHA", "PHB"],
+        position: { x: 10, y: 10 },
+        radius: 2,
+      }),
+    );
+    out(
+      await addNetTie({
+        document_id: id,
+        nets: ["PHB", "PHA"],
+        position: { x: 40, y: 40 },
+        radius: 2,
+      }),
+    );
+
+    // Net-set match alone is ambiguous across the two PHA/PHB junctions…
+    expect(isErr(await deleteNetTie({ document_id: id, nets: ["PHA", "PHB"] }))).toBe(true);
+    // …position disambiguates (order-insensitive net match).
+    const byPos = out(
+      await deleteNetTie({ document_id: id, nets: ["PHB", "PHA"], position: { x: 40, y: 40 } }),
+    );
+    expect(byPos.deleted).toMatchObject({ index: 2, nets: ["PHB", "PHA"] });
+    expect(byPos.net_ties_total).toBe(2);
+    expect(byPos.changed).toEqual([
+      { action: "removed", kind: "netTie", index: 2, net: "PHB+PHA" },
+    ]);
+
+    // Index + mismatched nets is a guard, not a delete.
+    expect(isErr(await deleteNetTie({ document_id: id, index: 0, nets: ["PHA", "PHB"] }))).toBe(
+      true,
+    );
+    // No selector at all → error; out-of-range index → error.
+    expect(isErr(await deleteNetTie({ document_id: id }))).toBe(true);
+    expect(isErr(await deleteNetTie({ document_id: id, index: 9 }))).toBe(true);
+
+    const bySet = out(await deleteNetTie({ document_id: id, nets: ["AGND", "GND"] }));
+    expect(bySet.deleted.nets).toEqual(["GND", "AGND"]);
+    const byIndex = out(await deleteNetTie({ document_id: id, index: 0 }));
+    expect(byIndex.net_ties_total).toBe(0);
+    expect(getPcbBoard(getSession(id)).netTies).toHaveLength(0);
+  });
+
+  it("a region-scoped tie exempts the junction short in DRC; deleting it re-arms", async () => {
+    const id = await boardWithFourNets();
+    // Pin the floorplan to the top edge so no pad sits near the junction the
+    // test builds — only the deliberate crossing may short.
+    out(
+      await setPlacement({
+        document_id: id,
+        placements: [
+          { ref: "R1", x: 10, y: 45 },
+          { ref: "R2", x: 35, y: 45 },
+        ],
+      }),
+    );
+    // A PHB stub ending ON the PHA trace — a T-junction at (20, 25), the
+    // shape of a real tie point (shunt tap, star chord meeting the neutral).
+    out(
+      await addTrace({
+        document_id: id,
+        net: "PHA",
+        points: [
+          { x: 10, y: 25 },
+          { x: 30, y: 25 },
+        ],
+      }),
+    );
+    out(
+      await addTrace({
+        document_id: id,
+        net: "PHB",
+        points: [
+          { x: 20, y: 15 },
+          { x: 20, y: 25 },
+        ],
+      }),
+    );
+
+    const before = out(await runDrc({ document_id: id }));
+    expect(before.byRule?.Short ?? 0).toBeGreaterThan(0);
+
+    out(
+      await addNetTie({
+        document_id: id,
+        nets: ["PHA", "PHB"],
+        position: { x: 20, y: 25 },
+        radius: 3,
+      }),
+    );
+    const tied = out(await runDrc({ document_id: id }));
+    expect(tied.byRule?.Short ?? 0).toBe(0);
+
+    // Take the tie back — the same copper is a short again (fail-closed).
+    out(await deleteNetTie({ document_id: id, nets: ["PHA", "PHB"] }));
+    const rearmed = out(await runDrc({ document_id: id }));
+    expect(rearmed.byRule?.Short ?? 0).toBeGreaterThan(0);
+  });
+});
+
 describe("undo (snapshot rewind)", () => {
   it("rewinds the last mutation and reports what the rewind removed", async () => {
     const id = await boardWithTwoResistors();
@@ -4788,5 +5540,479 @@ describe("layer-name validation at write boundaries", () => {
     expect(isErr(res)).toBe(true);
     expect(errText(res)).toContain("copper_layer");
     expect(errText(res)).toContain("did you mean 'FCu'");
+  });
+});
+
+describe("EM receipt claims", () => {
+  const stack = { dielectric_height: 0.2, copper_thickness: 0.035, dielectric_er: 4.3 };
+
+  it("calc_impedance claims Z0, er_eff, and delay with the model that computed them", async () => {
+    const r = out(await calcImpedance({ trace_width: 0.3, ...stack }));
+    expect(r.claims.map((c: any) => c.quantity)).toEqual([
+      "characteristic_impedance",
+      "effective_permittivity",
+      "propagation_delay",
+    ]);
+    for (const c of r.claims) {
+      expect(c.domain).toBe("em");
+      expect(c.method).toBe("ipc2141-microstrip");
+      expect(c.inputs.trace_width).toBe(0.3);
+    }
+    const z0 = r.claims.find((c: any) => c.quantity === "characteristic_impedance");
+    expect(z0.predicted).toBe(r.z0);
+    expect(z0.unit).toBe("ohm");
+  });
+
+  it("a differential pair adds a differential_impedance claim", async () => {
+    const r = out(
+      await calcImpedance({
+        trace_width: 0.15,
+        spacing: 0.15,
+        trace_type: "diff_microstrip",
+        ...stack,
+      }),
+    );
+    const diff = r.claims.find((c: any) => c.quantity === "differential_impedance");
+    expect(diff.predicted).toBe(r.z_diff);
+    expect(diff.method).toBe("edge-coupled-diff-pair");
+    expect(diff.inputs.spacing).toBe(0.15);
+  });
+
+  it("size_impedance claims describe the snapped geometry it recommends", () => {
+    const r = out(sizeImpedance({ trace_type: "microstrip", target_z0: 50, ...stack }));
+    const z0 = r.claims.find((c: any) => c.quantity === "characteristic_impedance");
+    expect(z0.predicted).toBe(r.measured.z0);
+    expect(z0.inputs.trace_width).toBe(r.width_mm);
+  });
+
+  it("calc_coil and size_coil claim inductance and DC resistance", () => {
+    const r = out(calcCoil({ inner_radius: 2, outer_radius: 6, turns: 10, trace_width: 0.2 }));
+    const ind = r.claims.find((c: any) => c.quantity === "inductance");
+    expect(ind.predicted).toBe(r.inductance_nh);
+    expect(ind.unit).toBe("nH");
+    expect(ind.method).toBe("wheeler-mohan-1999");
+    expect(r.claims.find((c: any) => c.quantity === "dc_resistance").predicted).toBe(
+      r.dc_resistance_ohm,
+    );
+
+    const s = out(
+      sizeCoil({ target_inductance_nh: 500, inner_radius: 2, outer_radius: 8, trace_width: 0.15 }),
+    );
+    const sInd = s.claims.find((c: any) => c.quantity === "inductance");
+    expect(sInd.predicted).toBe(s.achieved_inductance_nh);
+    expect(sInd.inputs.turns).toBe(s.turns);
+  });
+
+  it("calc_rf claims resonance and Q", () => {
+    const r = out(calcRf({ topology: "series_rlc", r_ohm: 50, l_henry: 10e-9, c_farad: 10e-12 }));
+    const f0 = r.claims.find((c: any) => c.quantity === "resonant_frequency");
+    expect(f0.predicted).toBe(r.resonance_hz);
+    expect(f0.unit).toBe("Hz");
+    expect(r.claims.find((c: any) => c.quantity === "q_factor").predicted).toBe(r.q_factor);
+  });
+
+  it("size_pdn claims one IR drop per budgeted node", async () => {
+    const r = out(
+      await sizePdn({
+        nodes: 2,
+        edges: [{ a: 0, b: 1, length: 10 }],
+        loads: [{ node: 1, current: 1.0 }],
+        targets: [{ node: 1, max_drop: 0.05 }],
+      }),
+    );
+    expect(r.claims).toHaveLength(1);
+    expect(r.claims[0].quantity).toBe("ir_drop");
+    expect(r.claims[0].predicted).toBe(r.measured_drops_v[0]);
+    expect(r.claims[0].inputs.node).toBe(1);
+  });
+
+  it("winding_layout claims the winding factor only for a feasible plan", () => {
+    const plan = out(windingLayout({ slots: 9, poles: 12 }));
+    const kw = plan.claims.find((c: any) => c.quantity === "winding_factor");
+    expect(kw.predicted).toBe(plan.windingFactor);
+    expect(kw.method).toBe("star-of-slots");
+    const bad = out(windingLayout({ slots: 9, poles: 12, layer: "single" }));
+    expect(bad.claims).toBeUndefined();
+  });
+
+  it("calc_motor claims Kt/Ke/speed/stall, plus B_gap when it computed it", async () => {
+    const r = out(
+      await calcMotor({
+        pole_pairs: 6,
+        turns_per_phase: 60,
+        winding_factor: 0.866,
+        inner_radius_mm: 5,
+        outer_radius_mm: 30,
+        phase_resistance_ohm: 0.5,
+        supply_voltage_v: 24,
+        magnet: {},
+      }),
+    );
+    const q = (name: string) => r.claims.find((c: any) => c.quantity === name);
+    expect(q("torque_constant").predicted).toBe(r.kt_nm_per_a);
+    expect(q("torque_constant").unit).toBe("N·m/A");
+    expect(q("back_emf_constant").predicted).toBe(r.ke_v_s_per_rad);
+    expect(q("no_load_speed").predicted).toBe(r.no_load_speed_rad_s);
+    expect(q("stall_torque").predicted).toBe(r.stall_torque_nm);
+    const b = q("airgap_flux_density");
+    expect(b.method).toBe("mec-reluctance");
+    expect(b.predicted).toBe(r.airgap_flux_tesla);
+    // Every claim in the family carries the uniform shape.
+    for (const c of r.claims) {
+      expect(c.domain).toBe("em");
+      expect(typeof c.predicted).toBe("number");
+      expect(typeof c.unit).toBe("string");
+      expect(typeof c.method).toBe("string");
+      expect(c.inputs).toBeTruthy();
+    }
+  });
+
+  it("calc_motor induction mode claims B1, slip torque, sync speed, and rotor loss", async () => {
+    const r = out(
+      await calcMotor({
+        mode: "induction",
+        pole_pairs: 3,
+        turns_per_phase: 30,
+        winding_factor: 0.866,
+        phase_current_a: 1.5,
+        electrical_freq_hz: 100,
+        effective_gap_mm: 4.7,
+        sheet_conductance_s: 8120,
+        inner_radius_mm: 15.3,
+        outer_radius_mm: 28.5,
+      }),
+    );
+    const quantities = r.claims.map((c: any) => c.quantity);
+    expect(quantities).toEqual([
+      "airgap_flux_density",
+      "torque_per_unit_slip",
+      "locked_rotor_torque",
+      "synchronous_speed",
+      "rotor_copper_loss",
+    ]);
+    for (const c of r.claims) {
+      expect(c.domain).toBe("em");
+      expect(c.method).toBe("thin-sheet-induction");
+      expect(c.inputs.sheet_conductance_s).toBe(8120);
+      expect(c.inputs.end_effect_factor).toBe(0.65);
+    }
+    const lr = r.claims.find((c: any) => c.quantity === "locked_rotor_torque");
+    expect(lr.predicted).toBe(r.locked_rotor_torque_nm);
+    expect(lr.unit).toBe("N·m");
+  });
+
+  it("calc_motor PM fringing derate claims both the raw MEC B and the derated B", async () => {
+    const r = out(
+      await calcMotor({
+        pole_pairs: 6,
+        turns_per_phase: 60,
+        winding_factor: 0.866,
+        inner_radius_mm: 5,
+        outer_radius_mm: 30,
+        phase_resistance_ohm: 0.5,
+        supply_voltage_v: 24,
+        magnet: { airgap_mm: 1, pole_width_mm: 10 },
+      }),
+    );
+    const bClaims = r.claims.filter((c: any) => c.quantity === "airgap_flux_density");
+    expect(bClaims.map((c: any) => c.method)).toEqual(["mec-reluctance", "mec-fringing-derate"]);
+    expect(bClaims[0].predicted).toBe(r.airgap_flux_raw_tesla);
+    expect(bClaims[1].predicted).toBe(r.airgap_flux_tesla);
+    expect(bClaims[1].inputs.pole_width_mm).toBe(10);
+  });
+
+  it("check_self_start claims the catalog friction estimate and the margin", () => {
+    const r = out(
+      checkSelfStart({
+        available_torque_nm: 5e-3,
+        bearings: { type: "608-2RS", preload: "light", count: 2 },
+      }),
+    );
+    const friction = r.claims.find((c: any) => c.quantity === "friction_torque");
+    expect(friction.method).toBe("bearing-friction-catalog");
+    expect(friction.predicted).toBeCloseTo(4e-3, 9);
+    const margin = r.claims.find((c: any) => c.quantity === "start_margin");
+    expect(margin.method).toBe("torque-friction-margin");
+    expect(margin.predicted).toBe(r.margin);
+    // A direct friction estimate is the caller's number, not a prediction.
+    const direct = out(checkSelfStart({ available_torque_nm: 1e-3, friction_torque_nm: 2e-3 }));
+    expect(direct.claims.map((c: any) => c.quantity)).toEqual(["start_margin"]);
+  });
+});
+
+describe("calc_motor induction mode (thin-sheet axial rotor)", () => {
+  // The validation reference from the tool spec: N=30, kw=0.866, p=3,
+  // I=1.5 A rms, f=100 Hz, g=4.7 mm, σs=8120 S (2×2oz copper), r1=15.3,
+  // r2=28.5 → B1 ≈ 4.7 mT, locked-rotor ≈ 18 µN·m before end effect.
+  const reference = {
+    mode: "induction",
+    pole_pairs: 3,
+    turns_per_phase: 30,
+    winding_factor: 0.866,
+    phase_current_a: 1.5,
+    electrical_freq_hz: 100,
+    effective_gap_mm: 4.7,
+    sheet_conductance_s: 8120,
+    inner_radius_mm: 15.3,
+    outer_radius_mm: 28.5,
+  };
+
+  it("pins the reference machine: B1 ≈ 4.7 mT, raw locked-rotor ≈ 18 µN·m, 2000 rpm sync", async () => {
+    const r = out(await calcMotor(reference));
+    expect(r.success).toBe(true);
+    expect(r.mode).toBe("induction");
+    expect(r.b1_tesla).toBeCloseTo(4.69e-3, 4);
+    expect(r.locked_rotor_torque_raw_nm).toBeCloseTo(17.8e-6, 7);
+    // Default Russell–Norsworthy end effect 0.65 scales the delivered torque.
+    expect(r.end_effect_factor).toBe(0.65);
+    expect(r.locked_rotor_torque_nm).toBeCloseTo(0.65 * r.locked_rotor_torque_raw_nm, 9);
+    expect(r.torque_per_unit_slip_nm).toBe(r.locked_rotor_torque_nm);
+    expect(r.sync_rpm).toBe(2000);
+    // Locked-rotor sheet loss is the air-gap power T·ωsync.
+    const omegaSync = (2 * Math.PI * 100) / 3;
+    expect(r.copper_loss_w).toBeCloseTo(r.locked_rotor_torque_nm * omegaSync, 7);
+  });
+
+  it("honors an explicit end_effect_factor", async () => {
+    const r = out(await calcMotor({ ...reference, end_effect_factor: 1 }));
+    expect(r.locked_rotor_torque_nm).toBe(r.locked_rotor_torque_raw_nm);
+  });
+
+  it("torque scales with conductance and current squared, field inversely with gap", async () => {
+    const base = out(await calcMotor(reference));
+    const thick = out(await calcMotor({ ...reference, sheet_conductance_s: 16240 }));
+    expect(thick.locked_rotor_torque_nm / base.locked_rotor_torque_nm).toBeCloseTo(2, 4);
+    const hot = out(await calcMotor({ ...reference, phase_current_a: 3 }));
+    expect(hot.locked_rotor_torque_nm / base.locked_rotor_torque_nm).toBeCloseTo(4, 4);
+    const far = out(await calcMotor({ ...reference, effective_gap_mm: 9.4 }));
+    expect(far.b1_tesla / base.b1_tesla).toBeCloseTo(0.5, 4);
+  });
+
+  it("rejects missing or non-physical induction inputs", async () => {
+    for (const bad of [
+      { ...reference, phase_current_a: undefined },
+      { ...reference, electrical_freq_hz: 0 },
+      { ...reference, effective_gap_mm: -1 },
+      { ...reference, sheet_conductance_s: undefined },
+      { ...reference, end_effect_factor: 1.5 },
+      { ...reference, mode: "linear" },
+    ]) {
+      expect(isErr(await calcMotor(bad as Record<string, unknown>))).toBe(true);
+    }
+  });
+
+  it("PM mode still requires its electrical inputs", async () => {
+    const res = await calcMotor({
+      pole_pairs: 6,
+      turns_per_phase: 60,
+      inner_radius_mm: 5,
+      outer_radius_mm: 30,
+    });
+    expect(isErr(res)).toBe(true);
+  });
+});
+
+describe("calc_motor PM fringing derate", () => {
+  const base = {
+    pole_pairs: 6,
+    turns_per_phase: 60,
+    winding_factor: 0.866,
+    inner_radius_mm: 5,
+    outer_radius_mm: 30,
+    phase_resistance_ohm: 0.5,
+    supply_voltage_v: 24,
+  };
+
+  it("reports raw and derated B and uses the derated value for Kt", async () => {
+    const plain = out(await calcMotor({ ...base, magnet: { airgap_mm: 1 } }));
+    const derated = out(
+      await calcMotor({ ...base, magnet: { airgap_mm: 1, pole_width_mm: 10 } }),
+    );
+    // w/(w+2g) = 10/12.
+    expect(derated.fringing_derate).toBeCloseTo(10 / 12, 3);
+    expect(derated.airgap_flux_raw_tesla).toBe(plain.airgap_flux_tesla);
+    expect(derated.airgap_flux_tesla).toBeCloseTo(
+      plain.airgap_flux_tesla * (10 / 12),
+      3,
+    );
+    // Kt scales linearly with the gap flux.
+    expect(derated.kt_nm_per_a / plain.kt_nm_per_a).toBeCloseTo(10 / 12, 2);
+    // Without pole_width_mm nothing changes and no derate fields appear.
+    expect(plain.fringing_derate).toBeUndefined();
+    expect(plain.airgap_flux_raw_tesla).toBeUndefined();
+  });
+
+  it("a wide pole barely derates; derate shrinks as the gap grows", async () => {
+    const wide = out(await calcMotor({ ...base, magnet: { airgap_mm: 0.5, pole_width_mm: 40 } }));
+    expect(wide.fringing_derate).toBeGreaterThan(0.95);
+    const bigGap = out(await calcMotor({ ...base, magnet: { airgap_mm: 3, pole_width_mm: 10 } }));
+    expect(bigGap.fringing_derate).toBeLessThan(wide.fringing_derate);
+  });
+
+  it("rejects a non-positive pole width", async () => {
+    expect(isErr(await calcMotor({ ...base, magnet: { pole_width_mm: 0 } }))).toBe(true);
+  });
+});
+
+describe("check_self_start", () => {
+  it("608-2RS light pair lands at the documented 1–4 mN·m and gates fail-closed", () => {
+    const r = out(
+      checkSelfStart({
+        available_torque_nm: 2e-3, // 2 mN·m available
+        bearings: { type: "608-2RS", preload: "light", count: 2 },
+      }),
+    );
+    expect(r.friction_torque_mnm).toEqual({ min: 1, max: 4 });
+    // Beats the optimistic end, not the worst case → fail-closed no-start.
+    expect(r.starts).toBe(false);
+    expect(r.starts_best_case).toBe(true);
+    expect(r.margin).toBeCloseTo(0.5, 6);
+
+    const strong = out(
+      checkSelfStart({
+        available_torque_nm: 12e-3,
+        bearings: { type: "608-2RS", preload: "light", count: 2 },
+      }),
+    );
+    expect(strong.starts).toBe(true);
+    expect(strong.margin).toBeCloseTo(3, 6);
+  });
+
+  it("computes available torque from Kt·I when not given directly", () => {
+    const r = out(
+      checkSelfStart({
+        kt_nm_per_a: 0.004,
+        current_a: 1.5,
+        bearings: { type: "608-ZZ", count: 2 },
+      }),
+    );
+    expect(r.available_torque_nm).toBeCloseTo(0.006, 9);
+    expect(r.available_torque_source).toBe("kt_times_current");
+    expect(r.starts).toBe(true);
+  });
+
+  it("shielded and miniature presets are far freer than sealed 608s", () => {
+    const sealed = out(
+      checkSelfStart({ available_torque_nm: 1e-3, bearings: { type: "608-2RS", count: 2 } }),
+    );
+    const shielded = out(
+      checkSelfStart({ available_torque_nm: 1e-3, bearings: { type: "608-ZZ", count: 2 } }),
+    );
+    expect(shielded.friction_torque_mnm.max).toBeLessThan(sealed.friction_torque_mnm.max);
+    expect(shielded.starts).toBe(true);
+    for (const type of ["625", "688"]) {
+      const r = out(checkSelfStart({ available_torque_nm: 1e-3, bearings: { type, count: 2 } }));
+      expect(r.starts).toBe(true);
+      expect(r.bearings.per_bearing_mnm.max).toBeLessThanOrEqual(0.6);
+    }
+  });
+
+  it("medium preload and more bearings scale the range", () => {
+    const light = out(
+      checkSelfStart({ available_torque_nm: 1, bearings: { type: "608-2RS", preload: "light", count: 2 } }),
+    );
+    const medium = out(
+      checkSelfStart({ available_torque_nm: 1, bearings: { type: "608-2RS", preload: "medium", count: 2 } }),
+    );
+    expect(medium.friction_torque_mnm.max).toBeGreaterThan(light.friction_torque_mnm.max);
+    const quad = out(
+      checkSelfStart({ available_torque_nm: 1, bearings: { type: "608-2RS", preload: "light", count: 4 } }),
+    );
+    expect(quad.friction_torque_mnm.max).toBeCloseTo(2 * light.friction_torque_mnm.max, 9);
+  });
+
+  it("a direct friction estimate overrides the catalog", () => {
+    const r = out(
+      checkSelfStart({
+        available_torque_nm: 3e-3,
+        friction_torque_nm: 2e-3,
+        bearings: { type: "608-2RS", count: 2 },
+      }),
+    );
+    expect(r.friction_source).toBe("direct");
+    expect(r.friction_torque_mnm).toEqual({ min: 2, max: 2 });
+    expect(r.starts).toBe(true);
+    expect(r.margin).toBeCloseTo(1.5, 6);
+  });
+
+  it("an induction locked-rotor µN·m machine does NOT start on sealed bearings", () => {
+    // The reference thin-sheet machine: ~11.6 µN·m delivered locked-rotor
+    // torque vs a pair of 608-2RS at 1–4 mN·m — two orders of magnitude short.
+    const r = out(
+      checkSelfStart({
+        available_torque_nm: 11.6e-6,
+        bearings: { type: "608-2RS", preload: "light", count: 2 },
+      }),
+    );
+    expect(r.starts).toBe(false);
+    expect(r.starts_best_case).toBe(false);
+    expect(r.margin).toBeLessThan(0.01);
+  });
+
+  it("rejects bad inputs", () => {
+    expect(isErr(checkSelfStart({}))).toBe(true);
+    expect(isErr(checkSelfStart({ available_torque_nm: -1 }))).toBe(true);
+    expect(isErr(checkSelfStart({ kt_nm_per_a: 0.01 }))).toBe(true);
+    expect(
+      isErr(checkSelfStart({ available_torque_nm: 1, bearings: { type: "6900" } })),
+    ).toBe(true);
+    expect(
+      isErr(checkSelfStart({ available_torque_nm: 1, bearings: { type: "625", preload: "heavy" } })),
+    ).toBe(true);
+    expect(
+      isErr(checkSelfStart({ available_torque_nm: 1, bearings: { count: 1.5 } })),
+    ).toBe(true);
+    expect(isErr(checkSelfStart({ available_torque_nm: 1, friction_torque_nm: 0 }))).toBe(true);
+  });
+});
+
+describe("diff_stripline model consistency (calc_impedance vs size_impedance)", () => {
+  const stack = { dielectric_height: 0.4, copper_thickness: 0.035, dielectric_er: 4.3 };
+
+  it("diff_stripline computes its base Z0 with the stripline formula", async () => {
+    const diff = out(
+      await calcImpedance({ trace_type: "diff_stripline", trace_width: 0.15, spacing: 0.2, ...stack }),
+    );
+    const se = out(
+      await calcImpedance({ trace_type: "stripline", trace_width: 0.15, ...stack }),
+    );
+    // Same base Z0 as plain stripline — NOT the microstrip formula.
+    expect(diff.z0).toBeCloseTo(se.z0, 6);
+    // Fully embedded in the dielectric → er_eff == er (and the delay follows).
+    expect(diff.er_eff).toBeCloseTo(4.3, 6);
+    // Claims name the model actually used.
+    const z0claim = diff.claims.find((c: any) => c.quantity === "characteristic_impedance");
+    expect(z0claim.method).toBe("ipc2141-stripline");
+  });
+
+  it("size_impedance(diff_stripline) geometry is reproduced by calc_impedance — same model", async () => {
+    const sized = out(
+      sizeImpedance({ trace_type: "diff_stripline", target_z0: 50, target_diff_z0: 90, ...stack }),
+    );
+    expect(sized.within_tolerance).toBe(true);
+    const calc = out(
+      await calcImpedance({
+        trace_type: "diff_stripline",
+        trace_width: sized.width_mm,
+        spacing: sized.spacing_mm,
+        ...stack,
+      }),
+    );
+    expect(calc.z0).toBeCloseTo(sized.measured.z0, 1);
+    expect(calc.z_diff).toBeCloseTo(sized.measured.diff_z0, 1);
+  });
+
+  it("stripline and microstrip diff pairs use their own coupling constants", async () => {
+    // Same s/h for both families; compare the implied coupling k = z_diff / (2·z0).
+    const geo = { trace_width: 0.15, spacing: 0.4, ...stack }; // s/h = 1
+    const micro = out(await calcImpedance({ trace_type: "diff_microstrip", ...geo }));
+    const strip = out(await calcImpedance({ trace_type: "diff_stripline", ...geo }));
+    const kMicro = micro.z_diff / (2 * micro.z0);
+    const kStrip = strip.z_diff / (2 * strip.z0);
+    // Analytic constants at s/h = 1: microstrip 1 − 0.48·e^−0.96, stripline 1 − 0.347·e^−2.9.
+    expect(kMicro).toBeCloseTo(1 - 0.48 * Math.exp(-0.96), 2);
+    expect(kStrip).toBeCloseTo(1 - 0.347 * Math.exp(-2.9), 2);
+    // Stripline couples less at the same spacing — the pair sits closer to 2·Z0.
+    expect(kStrip).toBeGreaterThan(kMicro);
   });
 });

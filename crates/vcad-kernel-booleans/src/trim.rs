@@ -843,32 +843,133 @@ pub fn trim_curve_to_face(
             )
         }
         IntersectionCurve::Sampled(points) => {
-            // For sampled curves, test each point directly
-            let mut segments = Vec::new();
+            // Test sample points, refining intervals that pass near the
+            // face boundary: a crossing narrower than one sample step (a
+            // corner sliver poking a few tenths of a millimeter through a
+            // face) is invisible to endpoint tests alone — both endpoints
+            // sit outside while the interior dips in. A segment can only
+            // contain a hidden crossing if it approaches the boundary
+            // within its own length, so subdivide exactly those.
             let n = points.len();
             if n == 0 {
-                return segments;
+                return Vec::new();
             }
 
-            let mut in_segment = false;
-            let mut seg_start = 0.0;
+            // Boundary polygon(s) of the face for the proximity test.
+            let face = &brep.topology.faces[face_id];
+            let mut boundary_loops: Vec<Vec<Point3>> = Vec::new();
+            let outer: Vec<Point3> = brep
+                .topology
+                .loop_half_edges(face.outer_loop)
+                .map(|he| brep.topology.vertices[brep.topology.half_edges[he].origin].point)
+                .collect();
+            if outer.len() >= 2 {
+                boundary_loops.push(outer);
+            }
+            for &inner in &face.inner_loops {
+                let verts: Vec<Point3> = brep
+                    .topology
+                    .loop_half_edges(inner)
+                    .map(|he| brep.topology.vertices[brep.topology.half_edges[he].origin].point)
+                    .collect();
+                if verts.len() >= 2 {
+                    boundary_loops.push(verts);
+                }
+            }
+            let dist_to_boundary = |p: &Point3| -> f64 {
+                let mut best = f64::INFINITY;
+                for poly in &boundary_loops {
+                    let m = poly.len();
+                    for i in 0..m {
+                        let a = poly[i];
+                        let b = poly[(i + 1) % m];
+                        let ab = b - a;
+                        let len2 = ab.norm_squared();
+                        let t = if len2 < 1e-18 {
+                            0.0
+                        } else {
+                            ((*p - a).dot(ab) / len2).clamp(0.0, 1.0)
+                        };
+                        best = best.min((*p - (a + t * ab)).norm());
+                    }
+                }
+                best
+            };
 
+            // (t, inside) samples: originals plus refinement points.
+            let mut samples: Vec<(f64, bool)> = Vec::with_capacity(n * 2);
             for (i, p) in points.iter().enumerate() {
                 let t = i as f64 / (n - 1).max(1) as f64;
-                let inside = point_in_face(brep, face_id, p);
+                samples.push((t, point_in_face(brep, face_id, p)));
+            }
+            const SUBDIVISIONS: usize = 16;
+            for i in 0..n - 1 {
+                let (pa, pb) = (points[i], points[i + 1]);
+                let seg_len = (pb - pa).norm();
+                if seg_len < 1e-12 {
+                    continue;
+                }
+                if dist_to_boundary(&pa).min(dist_to_boundary(&pb)) > seg_len {
+                    continue; // segment cannot reach the boundary
+                }
+                let t0 = i as f64 / (n - 1) as f64;
+                let t1 = (i + 1) as f64 / (n - 1) as f64;
+                for k in 1..SUBDIVISIONS {
+                    let f = k as f64 / SUBDIVISIONS as f64;
+                    let p = pa + f * (pb - pa);
+                    samples.push((t0 + f * (t1 - t0), point_in_face(brep, face_id, &p)));
+                }
+            }
+            samples.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
 
+            // Bisect each inside/outside transition so segment endpoints
+            // land ON the face boundary (within curve-parameter noise), not
+            // half a sample step off it. Downstream face splitting matches
+            // these endpoints to boundary edges; endpoints floating in the
+            // face interior get assigned to the wrong edge and the split is
+            // refused. NOTE: probes must interpolate the polyline
+            // (`sample_curve` rounds to the nearest sample, which would snap
+            // every probe onto the coarse grid and collapse the bracket).
+            let lerp_curve = |t: f64| -> Point3 {
+                let x = t.clamp(0.0, 1.0) * (n - 1) as f64;
+                let i = (x.floor() as usize).min(n.saturating_sub(2));
+                let f = x - i as f64;
+                points[i] + f * (points[i + 1] - points[i])
+            };
+            let bisect = |t_a: f64, in_a: bool, t_b: f64| -> f64 {
+                let (mut lo, mut hi) = (t_a, t_b);
+                for _ in 0..40 {
+                    let tm = 0.5 * (lo + hi);
+                    if point_in_face(brep, face_id, &lerp_curve(tm)) == in_a {
+                        lo = tm;
+                    } else {
+                        hi = tm;
+                    }
+                }
+                0.5 * (lo + hi)
+            };
+
+            let mut segments = Vec::new();
+            let mut in_segment = false;
+            let mut seg_start = 0.0;
+            let mut prev: Option<(f64, bool)> = None;
+            for &(t, inside) in &samples {
+                let boundary_t = match prev {
+                    Some((pt, pin)) if pin != inside => bisect(pt, pin, t),
+                    _ => t,
+                };
                 if inside && !in_segment {
-                    seg_start = t;
+                    seg_start = boundary_t;
                     in_segment = true;
                 } else if !inside && in_segment {
                     segments.push(TrimmedSegment {
                         t_start: seg_start,
-                        t_end: t,
+                        t_end: boundary_t,
                     });
                     in_segment = false;
                 }
+                prev = Some((t, inside));
             }
-
             if in_segment {
                 segments.push(TrimmedSegment {
                     t_start: seg_start,

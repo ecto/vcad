@@ -24,6 +24,7 @@ import { ownerId, type FabricateStore } from "../fabricate/store.js";
 import { buildFabHandoff } from "../fabricate/handoff.js";
 import { captureEvent } from "../telemetry.js";
 import { resolveArtifactRef } from "./artifact-store.js";
+import { behavior, type ToolDef } from "./tool-def.js";
 import {
   PROCESSES,
   type DfmSummary,
@@ -34,17 +35,9 @@ import {
   type Process,
   type Quote,
 } from "../fabricate/types.js";
-
-type ToolResult = { content: Array<{ type: "text"; text: string }>; isError?: boolean };
+import { okPretty as ok, err, type ToolResult } from "./tool-result.js";
 
 const QUOTE_TTL_MS = 24 * 60 * 60 * 1000; // 24h. Phase 1 shortens this for duty volatility.
-
-function ok(payload: unknown): ToolResult {
-  return { content: [{ type: "text", text: JSON.stringify(payload, null, 2) }] };
-}
-function err(message: string): ToolResult {
-  return { content: [{ type: "text", text: JSON.stringify({ error: message }) }], isError: true };
-}
 
 // ── quote_manufacturing ────────────────────────────────────────────────────
 
@@ -164,15 +157,54 @@ export async function quoteManufacturing(
   const dfmProcess = toDfmProcess(process);
   const materialCatalog = dfmProcess ? catalogMaterial(process, requestedMaterial) : undefined;
   let baseCostMinor: number | undefined;
-  if (dfmProcess && materialCatalog && metrics.ok && metrics.volume_mm3 > 0) {
+  let baseCostModel: "kernel" | "sheet_metal_laser" | undefined;
+
+  // Sheet metal with a sheet-metal chain in the document: price via the SAME
+  // line-itemed laser model sheet_metal_cost uses (material + cut + pierce +
+  // bends + setup amortized over qty), so the two tools can never drift apart.
+  // The fab cost is the PRE-markup subtotal: the laser model's markup_pct and
+  // the broker's MARGIN_RATE describe the same economic layer, and stacking
+  // both would double-margin the quote. Expected relation to sheet_metal_cost:
+  //   quote_unit ≈ total_each × (1 + MARGIN_RATE) / (1 + markup_pct/100)
+  //              + shipping / qty
+  // (see the consistency test in __tests__/fabricate.test.ts).
+  if (process === "sheet_metal") {
+    try {
+      const sm = engine.costSheetMetal(ir, undefined, quantity);
+      if (sm) {
+        baseCostMinor = Math.round(sm.breakdown.subtotal_each * quantity * 100);
+        baseCostModel = "sheet_metal_laser";
+      }
+    } catch {
+      // No usable sheet chain — fall through to the volume-based estimate.
+    }
+  }
+
+  if (baseCostMinor == null && dfmProcess && materialCatalog && metrics.ok && metrics.volume_mm3 > 0) {
     try {
       const est = await estimateCost({
         process: dfmProcess,
         material: materialCatalog,
         partVolumeMm3: metrics.volume_mm3,
+        // Sheet metal: the WASM binding reinterprets stockVolumeMm3 as the
+        // blank AREA (mm²); pass the real footprint so blank area / thickness
+        // are true instead of the (2 × volume, 0.5 mm) fallback.
+        ...(process === "sheet_metal" && metrics.footprint_mm2 > 0
+          ? { stockVolumeMm3: metrics.footprint_mm2 }
+          : {}),
       });
       if (est && est.total_usd > 0) {
-        baseCostMinor = Math.round(est.total_usd * 100) * quantity;
+        if (process === "sheet_metal") {
+          // Setup is one-time per run — amortize it instead of paying it on
+          // every unit (the dominant term for small flat parts).
+          const perUnitUsd = Math.max(0, est.total_usd - est.setup_cost_usd);
+          baseCostMinor =
+            Math.round(perUnitUsd * 100) * quantity +
+            Math.round(est.setup_cost_usd * 100);
+        } else {
+          baseCostMinor = Math.round(est.total_usd * 100) * quantity;
+        }
+        baseCostModel = "kernel";
       }
     } catch {
       // estimateCost unavailable (e.g. unknown material) — adapters fall back
@@ -190,6 +222,7 @@ export async function quoteManufacturing(
     layers: typeof args.layers === "number" ? args.layers : undefined,
     boardAreaMm2: typeof args.board_area_mm2 === "number" ? args.board_area_mm2 : undefined,
     baseCostMinor,
+    baseCostModel,
     materialCatalog,
   });
 
@@ -269,9 +302,11 @@ export async function quoteManufacturing(
     material: quote.material,
     material_catalog: materialCatalog ?? null,
     cost_model:
-      baseCostMinor != null
-        ? "vcad kernel cost model (consistent with the in-app Build quote)"
-        : "adapter-local estimate",
+      baseCostModel === "sheet_metal_laser"
+        ? "sheet-metal laser cost model (same line items as sheet_metal_cost; vcad margin applied on top)"
+        : baseCostMinor != null
+          ? "vcad kernel cost model (consistent with the in-app Build quote)"
+          : "adapter-local estimate",
     geometry: metrics.ok
       ? {
           parts: metrics.parts,
@@ -394,3 +429,33 @@ export async function listOrders(
     })),
   });
 }
+
+export const toolDefs: ToolDef[] = [
+  {
+    name: "quote_manufacturing",
+    pack: "fabricate",
+    description:
+      "Quote manufacturing a part: measures the design, runs light DFM, and returns margin-inclusive price options per fab (pcb/cnc/3dprint/sheet_metal/cast_metal). Pass `ir` (inline Document — stateless, no open_document needed, serverless-safe, parallel-safe) OR a `document_id` from an open session. Persists a quote + a QUOTED order. Phase 0 is quote-only — prices are estimates and ordering/payment ship next; no money moves. For sheet_metal the result includes `fab_handoff`: curated US instant-quote shops (SendCutSend/OSH Cut/Fabworks), the exact file recipe (DXF via sheet_metal_unfold or folded STEP via export_cad), and what to enter at upload — everything needed to finish the order on the fab's site today.",
+    inputSchema: quoteManufacturingSchema,
+    handler: (a, c) => quoteManufacturing(a, c.engine, c.fabricateStore, c.user),
+    behavior: behavior({}),
+  },
+  {
+    name: "get_order_status",
+    pack: "fabricate",
+    description:
+      "Return the lifecycle row for a Fabricate order (state, fab, totals, event timeline). Read-only.",
+    inputSchema: getOrderStatusSchema,
+    handler: (a, c) => getOrderStatus(a, c.fabricateStore, c.user),
+    behavior: behavior({}),
+  },
+  {
+    name: "list_orders",
+    pack: "fabricate",
+    description:
+      "List the caller's Fabricate orders, newest first. Optional status filter and limit. Read-only.",
+    inputSchema: listOrdersSchema,
+    handler: (a, c) => listOrders(a, c.fabricateStore, c.user),
+    behavior: behavior({}),
+  },
+];

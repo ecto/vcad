@@ -2,7 +2,13 @@
  *  each mutation in a deterministic before/after DRC snapshot. Browser- and
  *  node-safe; consumed by both the app (live ledger) and the MCP server. */
 export * from "./types.js";
-export { buildEntry, buildReceipt, classifyCause, fingerprintSnapshot } from "./engine.js";
+export {
+  buildEntry,
+  buildReceipt,
+  classifyCause,
+  diffViolations,
+  fingerprintSnapshot,
+} from "./engine.js";
 export type { MutationStep, BuildReceiptInput } from "./engine.js";
 export { ReceiptSession, agentView, headline } from "./session.js";
 export type {

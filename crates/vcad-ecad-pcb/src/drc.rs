@@ -45,6 +45,12 @@ pub enum DrcRuleType {
     /// An SMD pad names a copper-plane net but has no galvanic path to that
     /// plane — it needs a stitching via (or a dog-bone escape via on fine pitch).
     UnstitchedPad,
+    /// Same-net copper contact far from any intended junction — a trace body
+    /// touching copper of its own net that is many hops away along the
+    /// conductor (e.g. a star trace overlapping a spiral coil's inner via).
+    /// Invisible to every net-based rule, but it short-circuits the structure
+    /// between the two points.
+    SameNetBypass,
 }
 
 /// DRC violation severity.
@@ -118,6 +124,58 @@ fn fp_pair_provenance(a_ref: &str, b_ref: &str) -> DrcProvenance {
     }
 }
 
+/// Axis-aligned region scoping an incremental DRC run.
+///
+/// A scoped run keeps only the elements whose copper bounds intersect this
+/// region as *subjects* of the per-element and pairwise checks (clearance,
+/// widths, drills, edge, hole-to-hole, keepouts, courtyards). Pairwise checks
+/// fire when **either** party is in scope, so a subject in the region is still
+/// judged against everything around it. Connectivity (shorts through copper,
+/// unrouted nets, net islands, unstitched pads) is always board-global — a
+/// local copper edit changes the electrical graph everywhere.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DrcRegion {
+    /// Minimum corner `[x, y]` (mm).
+    pub min: [f64; 2],
+    /// Maximum corner `[x, y]` (mm).
+    pub max: [f64; 2],
+}
+
+impl DrcRegion {
+    /// True when the AABB `(min, max)` intersects this region.
+    fn hits(&self, min: [f64; 2], max: [f64; 2]) -> bool {
+        min[0] <= self.max[0]
+            && max[0] >= self.min[0]
+            && min[1] <= self.max[1]
+            && max[1] >= self.min[1]
+    }
+
+    /// True when a disc of radius `r` at `p` intersects this region.
+    fn hits_point(&self, p: Vec2, r: f64) -> bool {
+        self.hits([p.x - r, p.y - r], [p.x + r, p.y + r])
+    }
+
+    /// True when a stroked segment (half-width `r`) intersects this region.
+    fn hits_segment(&self, a: Vec2, b: Vec2, r: f64) -> bool {
+        self.hits(
+            [a.x.min(b.x) - r, a.y.min(b.y) - r],
+            [a.x.max(b.x) + r, a.y.max(b.y) + r],
+        )
+    }
+
+    /// True when a copper geometry's bounds intersect this region.
+    fn hits_geom(&self, geom: &CopperGeom) -> bool {
+        let (min, max) = geom.bounds();
+        self.hits(min, max)
+    }
+}
+
+/// True when `region` is unset (full-board run) or the predicate matches it.
+/// The subject filter every scoped check runs through.
+fn in_scope(region: Option<&DrcRegion>, pred: impl Fn(&DrcRegion) -> bool) -> bool {
+    region.is_none_or(pred)
+}
+
 /// Run all DRC checks on a PCB and return violations.
 ///
 /// Checks performed:
@@ -127,21 +185,52 @@ fn fp_pair_provenance(a_ref: &str, b_ref: &str) -> DrcProvenance {
 /// - Edge clearance
 /// - Hole-to-hole spacing
 /// - Annular ring width
+/// - Connectivity (shorts, unrouted nets, net islands, unstitched pads, and
+///   same-net bypass contacts)
 pub fn check_drc(pcb: &Pcb) -> Vec<DrcViolation> {
+    check_drc_scoped(pcb, None)
+}
+
+/// Run DRC with the geometric checks scoped to `region` (see [`DrcRegion`]).
+///
+/// The incremental entry point for verify-on-write: a mutator that touched
+/// copper only inside `region` gets a full-fidelity verdict for that copper
+/// (every rule, judged against the whole board via the spatial index) without
+/// paying for a board-wide clearance sweep. Connectivity checks still run
+/// board-global — they are the only rules a local edit can violate remotely.
+///
+/// Two scoped runs over the same region on the same board are element-wise
+/// comparable, so a before/after diff of this function isolates exactly what a
+/// mutation inside the region changed.
+pub fn check_drc_in_region(pcb: &Pcb, min: Vec2, max: Vec2) -> Vec<DrcViolation> {
+    check_drc_scoped(
+        pcb,
+        Some(DrcRegion {
+            min: [min.x.min(max.x), min.y.min(max.y)],
+            max: [min.x.max(max.x), min.y.max(max.y)],
+        }),
+    )
+}
+
+/// Shared body of [`check_drc`] / [`check_drc_in_region`] — one rule set, with
+/// an optional subject scope. Never duplicates rule logic per scope.
+fn check_drc_scoped(pcb: &Pcb, region: Option<DrcRegion>) -> Vec<DrcViolation> {
     let mut violations = Vec::new();
     let index = SpatialIndex::from_pcb(pcb);
     let net_ties = NetTieGroups::from_pcb(pcb);
     let dp_map = build_diff_pair_gap_map(pcb);
+    let region = region.as_ref();
 
-    check_clearance(pcb, &index, &net_ties, &dp_map, &mut violations);
-    check_pad_clearance(pcb, &net_ties, &dp_map, &mut violations);
-    check_min_trace_width(pcb, &mut violations);
-    check_min_drill(pcb, &mut violations);
-    check_edge_clearance(pcb, &mut violations);
-    check_hole_to_hole(pcb, &mut violations);
-    check_annular_ring(pcb, &mut violations);
-    check_keepout(pcb, &mut violations);
-    check_courtyard_overlap(pcb, &mut violations);
+    check_clearance(pcb, &index, &net_ties, &dp_map, region, &mut violations);
+    check_pad_clearance(pcb, &net_ties, &dp_map, region, &mut violations);
+    check_min_trace_width(pcb, region, &mut violations);
+    check_min_drill(pcb, region, &mut violations);
+    check_edge_clearance(pcb, region, &mut violations);
+    check_hole_to_hole(pcb, region, &mut violations);
+    check_annular_ring(pcb, region, &mut violations);
+    check_keepout(pcb, region, &mut violations);
+    check_courtyard_overlap(pcb, region, &mut violations);
+    // Board-global by construction (a union-find over ALL copper): never scoped.
     check_connectivity(pcb, &net_ties, &mut violations);
 
     violations
@@ -199,7 +288,11 @@ fn courtyard_bounds(fp: &Footprint) -> (Vec2, Vec2) {
 /// Flag components whose courtyards overlap on the same board side — a
 /// placement collision. Courtyards are an assembly keep-clear envelope, so any
 /// overlap is an error. Components on opposite sides never collide.
-fn check_courtyard_overlap(pcb: &Pcb, violations: &mut Vec<DrcViolation>) {
+fn check_courtyard_overlap(
+    pcb: &Pcb,
+    region: Option<&DrcRegion>,
+    violations: &mut Vec<DrcViolation>,
+) {
     let boxes: Vec<(usize, (Vec2, Vec2))> = pcb
         .footprints
         .iter()
@@ -207,8 +300,18 @@ fn check_courtyard_overlap(pcb: &Pcb, violations: &mut Vec<DrcViolation>) {
         .map(|(i, fp)| (i, courtyard_bounds(fp)))
         .collect();
 
+    // Scoped runs: a footprint pair is a subject when either courtyard is in
+    // the region.
+    let in_region: Vec<bool> = boxes
+        .iter()
+        .map(|(_, (min, max))| in_scope(region, |r| r.hits([min.x, min.y], [max.x, max.y])))
+        .collect();
+
     for a in 0..boxes.len() {
         for b in (a + 1)..boxes.len() {
+            if !in_region[a] && !in_region[b] {
+                continue;
+            }
             let (ia, (amin, amax)) = &boxes[a];
             let (ib, (bmin, bmax)) = &boxes[b];
             let fa = &pcb.footprints[*ia];
@@ -288,26 +391,48 @@ impl NetTieGroups {
     /// Returns true if nets `a` and `b` are tied together (and, for
     /// region-scoped ties, the contact point lies within the region).
     pub(crate) fn exempt(&self, a: &str, b: &str, at: Vec2) -> bool {
-        if a == b {
-            return true;
-        }
-        for g in &self.groups {
+        a == b || !self.covering_group_ids(a, b, at).is_empty()
+    }
+
+    /// Indices of tie groups that join `a` and `b` and whose region (if any)
+    /// contains `at`. A board-wide group (no region) always covers.
+    pub(crate) fn covering_group_ids(&self, a: &str, b: &str, at: Vec2) -> Vec<usize> {
+        let mut ids = Vec::new();
+        for (idx, g) in self.groups.iter().enumerate() {
             let joins = g.nets.iter().any(|n| n == a) && g.nets.iter().any(|n| n == b);
             if !joins {
                 continue;
             }
             match g.region {
-                None => return true,
+                None => ids.push(idx),
                 Some((c, r2)) => {
                     let dx = at.x - c.x;
                     let dy = at.y - c.y;
                     if dx * dx + dy * dy <= r2 {
-                        return true;
+                        ids.push(idx);
                     }
                 }
             }
         }
-        false
+        ids
+    }
+
+    /// True if `net` belongs to any tie group whose region (if any) contains
+    /// `at` — the point lies in a declared junction area involving the net.
+    /// Used by same-net bypass detection: copper meeting inside a tie region
+    /// (a star point, a neutral bar) is joined there by design.
+    pub(crate) fn covers_net_at(&self, net: &str, at: Vec2) -> bool {
+        self.groups.iter().any(|g| {
+            g.nets.iter().any(|n| n == net)
+                && match g.region {
+                    None => true,
+                    Some((c, r2)) => {
+                        let dx = at.x - c.x;
+                        let dy = at.y - c.y;
+                        dx * dx + dy * dy <= r2
+                    }
+                }
+        })
     }
 
     /// Returns true if nets `a` and `b` are tied board-wide (no region scope).
@@ -339,6 +464,7 @@ fn check_clearance(
     index: &SpatialIndex,
     net_ties: &NetTieGroups,
     dp_map: &HashMap<(String, String), f64>,
+    region: Option<&DrcRegion>,
     violations: &mut Vec<DrcViolation>,
 ) {
     let default_clearance = pcb.rules.default_rules.clearance;
@@ -348,6 +474,11 @@ fn check_clearance(
 
     // Check each trace against nearby elements on the same layer
     for trace in &pcb.traces {
+        if !in_scope(region, |r| {
+            r.hits_segment(trace.start, trace.end, trace.width / 2.0)
+        }) {
+            continue;
+        }
         let clearance = net_clearance
             .get(&trace.net)
             .copied()
@@ -420,6 +551,7 @@ fn check_pad_clearance(
     pcb: &Pcb,
     net_ties: &NetTieGroups,
     dp_map: &HashMap<(String, String), f64>,
+    region: Option<&DrcRegion>,
     violations: &mut Vec<DrcViolation>,
 ) {
     let default_clearance = pcb.rules.default_rules.clearance;
@@ -443,10 +575,7 @@ fn check_pad_clearance(
             let Some(net) = pad.net.as_deref() else {
                 continue;
             };
-            let center = Vec2::new(
-                fp.position.x + pad.position.x,
-                fp.position.y + pad.position.y,
-            );
+            let center = crate::geometry::pad_world_position(fp, pad);
             let rot = (fp.rotation + pad.rotation).to_radians();
             boxes.push(PadBox {
                 center,
@@ -460,8 +589,17 @@ fn check_pad_clearance(
         }
     }
 
+    // Scoped runs: a pad pair is a subject when either pad is in the region.
+    let in_region: Vec<bool> = boxes
+        .iter()
+        .map(|b| in_scope(region, |r| r.hits_geom(&b.geom)))
+        .collect();
+
     for i in 0..boxes.len() {
         for j in (i + 1)..boxes.len() {
+            if !in_region[i] && !in_region[j] {
+                continue;
+            }
             let (a, b) = (&boxes[i], &boxes[j]);
             if a.net == b.net {
                 continue;
@@ -525,11 +663,20 @@ fn check_pad_clearance(
 }
 
 /// Check that all traces meet the minimum trace width.
-fn check_min_trace_width(pcb: &Pcb, violations: &mut Vec<DrcViolation>) {
+fn check_min_trace_width(
+    pcb: &Pcb,
+    region: Option<&DrcRegion>,
+    violations: &mut Vec<DrcViolation>,
+) {
     let net_width = build_net_trace_width_map(pcb);
     let default_width = pcb.rules.default_rules.trace_width;
 
     for trace in &pcb.traces {
+        if !in_scope(region, |r| {
+            r.hits_segment(trace.start, trace.end, trace.width / 2.0)
+        }) {
+            continue;
+        }
         let min_width = net_width.get(&trace.net).copied().unwrap_or(default_width);
 
         if trace.width < min_width - 1e-6 {
@@ -554,11 +701,14 @@ fn check_min_trace_width(pcb: &Pcb, violations: &mut Vec<DrcViolation>) {
 }
 
 /// Check that all drills meet the minimum drill diameter.
-fn check_min_drill(pcb: &Pcb, violations: &mut Vec<DrcViolation>) {
+fn check_min_drill(pcb: &Pcb, region: Option<&DrcRegion>, violations: &mut Vec<DrcViolation>) {
     let min_drill = pcb.rules.min_drill;
 
     // Check via drills
     for via in &pcb.vias {
+        if !in_scope(region, |r| r.hits_point(via.position, via.diameter / 2.0)) {
+            continue;
+        }
         if via.drill < min_drill - 1e-6 {
             violations.push(DrcViolation {
                 rule: DrcRuleType::MinDrill,
@@ -582,10 +732,10 @@ fn check_min_drill(pcb: &Pcb, violations: &mut Vec<DrcViolation>) {
         for pad in &footprint.pads {
             if let Some(drill) = &pad.drill {
                 if drill.diameter < min_drill - 1e-6 {
-                    let abs_pos = Vec2::new(
-                        footprint.position.x + pad.position.x,
-                        footprint.position.y + pad.position.y,
-                    );
+                    let abs_pos = crate::geometry::pad_world_position(footprint, pad);
+                    if !in_scope(region, |r| r.hits_point(abs_pos, drill.diameter / 2.0)) {
+                        continue;
+                    }
                     violations.push(DrcViolation {
                         rule: DrcRuleType::MinDrill,
                         severity: DrcSeverity::Error,
@@ -606,7 +756,7 @@ fn check_min_drill(pcb: &Pcb, violations: &mut Vec<DrcViolation>) {
 }
 
 /// Check that all copper elements maintain edge clearance.
-fn check_edge_clearance(pcb: &Pcb, violations: &mut Vec<DrcViolation>) {
+fn check_edge_clearance(pcb: &Pcb, region: Option<&DrcRegion>, violations: &mut Vec<DrcViolation>) {
     let edge_clearance = pcb.rules.edge_clearance;
     let outline = &pcb.outline.vertices;
 
@@ -616,6 +766,11 @@ fn check_edge_clearance(pcb: &Pcb, violations: &mut Vec<DrcViolation>) {
 
     // Check traces against board edges
     for trace in &pcb.traces {
+        if !in_scope(region, |r| {
+            r.hits_segment(trace.start, trace.end, trace.width / 2.0)
+        }) {
+            continue;
+        }
         let mid = Vec2::new(
             (trace.start.x + trace.end.x) / 2.0,
             (trace.start.y + trace.end.y) / 2.0,
@@ -645,6 +800,9 @@ fn check_edge_clearance(pcb: &Pcb, violations: &mut Vec<DrcViolation>) {
 
     // Check vias against board edges
     for via in &pcb.vias {
+        if !in_scope(region, |r| r.hits_point(via.position, via.diameter / 2.0)) {
+            continue;
+        }
         let dist = min_distance_to_polygon(&via.position, outline);
         let effective_dist = dist - via.diameter / 2.0;
         if effective_dist < edge_clearance - 1e-6 {
@@ -666,7 +824,7 @@ fn check_edge_clearance(pcb: &Pcb, violations: &mut Vec<DrcViolation>) {
 }
 
 /// Check hole-to-hole spacing.
-fn check_hole_to_hole(pcb: &Pcb, violations: &mut Vec<DrcViolation>) {
+fn check_hole_to_hole(pcb: &Pcb, region: Option<&DrcRegion>, violations: &mut Vec<DrcViolation>) {
     let min_spacing = pcb.rules.hole_to_hole;
 
     /// Where a drilled hole came from — drives the violation's provenance.
@@ -692,10 +850,7 @@ fn check_hole_to_hole(pcb: &Pcb, violations: &mut Vec<DrcViolation>) {
         let generated = fp_is_generated(footprint);
         for pad in &footprint.pads {
             if let Some(drill) = &pad.drill {
-                let abs_pos = Vec2::new(
-                    footprint.position.x + pad.position.x,
-                    footprint.position.y + pad.position.y,
-                );
+                let abs_pos = crate::geometry::pad_world_position(footprint, pad);
                 holes.push(Hole {
                     pos: abs_pos,
                     radius: drill.diameter / 2.0,
@@ -705,9 +860,18 @@ fn check_hole_to_hole(pcb: &Pcb, violations: &mut Vec<DrcViolation>) {
         }
     }
 
+    // Scoped runs: a hole pair is a subject when either hole is in the region.
+    let in_region: Vec<bool> = holes
+        .iter()
+        .map(|h| in_scope(region, |r| r.hits_point(h.pos, h.radius)))
+        .collect();
+
     // O(n^2) check — fine for typical PCB sizes; use spatial index for large boards
     for i in 0..holes.len() {
         for j in (i + 1)..holes.len() {
+            if !in_region[i] && !in_region[j] {
+                continue;
+            }
             let dx = holes[i].pos.x - holes[j].pos.x;
             let dy = holes[i].pos.y - holes[j].pos.y;
             let center_dist = (dx * dx + dy * dy).sqrt();
@@ -750,11 +914,14 @@ fn check_hole_to_hole(pcb: &Pcb, violations: &mut Vec<DrcViolation>) {
 }
 
 /// Check annular ring width on through-hole pads and vias.
-fn check_annular_ring(pcb: &Pcb, violations: &mut Vec<DrcViolation>) {
+fn check_annular_ring(pcb: &Pcb, region: Option<&DrcRegion>, violations: &mut Vec<DrcViolation>) {
     let min_ring = pcb.rules.min_annular_ring;
 
     // Check vias
     for via in &pcb.vias {
+        if !in_scope(region, |r| r.hits_point(via.position, via.diameter / 2.0)) {
+            continue;
+        }
         let ring = (via.diameter - via.drill) / 2.0;
         if ring < min_ring - 1e-6 {
             violations.push(DrcViolation {
@@ -781,10 +948,10 @@ fn check_annular_ring(pcb: &Pcb, violations: &mut Vec<DrcViolation>) {
                 let pad_min_dim = pad_min_dimension(pad);
                 let ring = (pad_min_dim - drill.diameter) / 2.0;
                 if ring < min_ring - 1e-6 {
-                    let abs_pos = Vec2::new(
-                        footprint.position.x + pad.position.x,
-                        footprint.position.y + pad.position.y,
-                    );
+                    let abs_pos = crate::geometry::pad_world_position(footprint, pad);
+                    if !in_scope(region, |r| r.hits_point(abs_pos, pad_min_dim / 2.0)) {
+                        continue;
+                    }
                     violations.push(DrcViolation {
                         rule: DrcRuleType::AnnularRing,
                         severity: DrcSeverity::Error,
@@ -805,7 +972,7 @@ fn check_annular_ring(pcb: &Pcb, violations: &mut Vec<DrcViolation>) {
 }
 
 /// Enforce keepout regions: no-tracks / no-vias / no-components.
-fn check_keepout(pcb: &Pcb, violations: &mut Vec<DrcViolation>) {
+fn check_keepout(pcb: &Pcb, region: Option<&DrcRegion>, violations: &mut Vec<DrcViolation>) {
     for keepout in &pcb.keepouts {
         if keepout.outline.len() < 3 {
             continue;
@@ -816,6 +983,11 @@ fn check_keepout(pcb: &Pcb, violations: &mut Vec<DrcViolation>) {
         if keepout.no_tracks {
             for trace in &pcb.traces {
                 if !keepout.layers.contains(&trace.layer) {
+                    continue;
+                }
+                if !in_scope(region, |r| {
+                    r.hits_segment(trace.start, trace.end, trace.width / 2.0)
+                }) {
                     continue;
                 }
                 if segment_polygon_intersects(trace.start, trace.end, &keepout.outline) {
@@ -849,6 +1021,9 @@ fn check_keepout(pcb: &Pcb, violations: &mut Vec<DrcViolation>) {
                 if !layer_match {
                     continue;
                 }
+                if !in_scope(region, |r| r.hits_point(via.position, via.diameter / 2.0)) {
+                    continue;
+                }
                 if point_in_polygon(via.position, &keepout.outline) {
                     violations.push(DrcViolation {
                         rule: DrcRuleType::Keepout,
@@ -870,13 +1045,16 @@ fn check_keepout(pcb: &Pcb, violations: &mut Vec<DrcViolation>) {
         // no_components: any footprint whose pads or courtyard fall inside.
         if keepout.no_components {
             for fp in &pcb.footprints {
+                if !in_scope(region, |r| {
+                    let (min, max) = courtyard_bounds(fp);
+                    r.hits([min.x, min.y], [max.x, max.y])
+                }) {
+                    continue;
+                }
                 let mut hit = false;
                 let mut hit_pos = fp.position;
                 for pad in &fp.pads {
-                    let pad_pos = Vec2::new(
-                        fp.position.x + pad.position.x,
-                        fp.position.y + pad.position.y,
-                    );
+                    let pad_pos = crate::geometry::pad_world_position(fp, pad);
                     if point_in_polygon(pad_pos, &keepout.outline) {
                         hit = true;
                         hit_pos = pad_pos;
@@ -1173,21 +1351,23 @@ fn pours_touch(a: &[Vec<Vec2>], b: &[Vec<Vec2>]) -> bool {
     false
 }
 
-/// Connectivity flood-fill: detects shorts (one component, ≥2 distinct nets)
-/// and unrouted nets (one net split across ≥2 components).
+/// Connectivity flood-fill: detects shorts (one component, ≥2 distinct nets),
+/// unrouted nets (one net split across ≥2 components), stranded copper
+/// islands, unstitched plane pads, and same-net bypass contacts.
 fn check_connectivity(pcb: &Pcb, net_ties: &NetTieGroups, violations: &mut Vec<DrcViolation>) {
     // Union-find over geometric touch (same-layer, overlapping/touching) — the
     // same graph `analyze_net_continuity` reads, so DRC and the realized-plane
     // gates agree on what is connected.
-    let (nodes, mut dsu) = build_connectivity(pcb);
+    let (nodes, mut dsu, contacts) = build_connectivity_with_contacts(pcb);
     if nodes.is_empty() {
         return;
     }
 
-    detect_shorts(&nodes, &mut dsu, net_ties, violations);
+    detect_shorts(&nodes, &mut dsu, net_ties, &contacts, violations);
     detect_unrouted(pcb, &nodes, &mut dsu, net_ties, violations);
     detect_net_islands(pcb, &nodes, &mut dsu, violations);
     detect_unstitched_pads(pcb, &nodes, &mut dsu, violations);
+    detect_same_net_bypass(&nodes, net_ties, &contacts, violations);
 }
 
 /// Build connectivity nodes from all copper on the board.
@@ -1226,10 +1406,7 @@ fn build_conn_nodes(pcb: &Pcb) -> Vec<ConnNode> {
 
     for fp in &pcb.footprints {
         for pad in &fp.pads {
-            let center = Vec2::new(
-                fp.position.x + pad.position.x,
-                fp.position.y + pad.position.y,
-            );
+            let center = crate::geometry::pad_world_position(fp, pad);
             let rot = (fp.rotation + pad.rotation).to_radians();
             let mut layers = 0u16;
             for &l in &pad.layers {
@@ -1334,14 +1511,77 @@ fn split_pour_islands(rings: &[Vec<Vec2>]) -> Vec<Vec<Vec<Vec2>>> {
     islands
 }
 
-/// Emit a `Short` violation for any component carrying ≥2 distinct declared
-/// nets that are not net-tied.
+/// Emit a `Short` violation for unintentional cross-net copper contact.
+///
+/// Two passes:
+///
+/// 1. **Direct contacts.** Every geometric touch between differently-netted
+///    copper is judged at its contact point: covered by a tie group (board-wide
+///    or a scoped region containing the point) it is an intentional junction;
+///    otherwise it is a short, reported where the copper actually meets. This
+///    is what lets a region-scoped [`vcad_ir::ecad::NetTie`] do its job — a
+///    star/neutral junction is exempt exactly there, while a stray crossing of
+///    the same two nets elsewhere on the board still fires.
+///
+/// 2. **Indirect joins.** A connected component carrying two nets whose copper
+///    never directly touches (they're joined through other copper) is still a
+///    short — unless both nets are *anchored* into a common tie group within
+///    that component, i.e. each has a tie-covered direct contact with a member
+///    of the group. That is precisely a wye junction: PHA and PHB never touch,
+///    but both touch the neutral inside the tie region.
 fn detect_shorts(
     nodes: &[ConnNode],
     dsu: &mut Dsu,
     net_ties: &NetTieGroups,
+    contacts: &[NodeContact],
     violations: &mut Vec<DrcViolation>,
 ) {
+    let pair_key = |a: &str, b: &str| -> (String, String) {
+        if a <= b {
+            (a.to_string(), b.to_string())
+        } else {
+            (b.to_string(), a.to_string())
+        }
+    };
+
+    let mut seen_pairs: std::collections::HashSet<(String, String)> = Default::default();
+    // Pairs with ≥1 direct contact in a component — judged in pass 1, so the
+    // component-level pass must not re-judge (and mis-report) them.
+    let mut direct: std::collections::HashSet<(usize, (String, String))> = Default::default();
+    // (component, net) → tie groups the net has a covered contact with.
+    let mut anchored: HashMap<(usize, String), std::collections::HashSet<usize>> = HashMap::new();
+
+    for c in contacts {
+        let na = &nodes[c.i].net;
+        let nb = &nodes[c.j].net;
+        // Only cross-net contacts between declared nets are candidate shorts.
+        if na.is_empty() || nb.is_empty() || na == nb {
+            continue;
+        }
+        let root = dsu.find(c.i);
+        direct.insert((root, pair_key(na, nb)));
+        let covering = net_ties.covering_group_ids(na, nb, c.at);
+        if covering.is_empty() {
+            if seen_pairs.insert(pair_key(na, nb)) {
+                violations.push(DrcViolation {
+                    rule: DrcRuleType::Short,
+                    severity: DrcSeverity::Error,
+                    position: c.at,
+                    message: format!("Short: nets '{}' and '{}' are connected by copper", na, nb),
+                    actual: 0.0,
+                    required: 0.0,
+                    provenance: DrcProvenance::Routing,
+                    generated: false,
+                });
+            }
+        } else {
+            for g in covering {
+                anchored.entry((root, na.clone())).or_default().insert(g);
+                anchored.entry((root, nb.clone())).or_default().insert(g);
+            }
+        }
+    }
+
     // Gather declared nets per component, with a representative position.
     let mut comp_nets: HashMap<usize, Vec<(String, Vec2)>> = HashMap::new();
     for (i, node) in nodes.iter().enumerate() {
@@ -1355,8 +1595,7 @@ fn detect_shorts(
         }
     }
 
-    let mut seen_pairs: std::collections::HashSet<(String, String)> = Default::default();
-    for nets in comp_nets.values() {
+    for (root, nets) in &comp_nets {
         if nets.len() < 2 {
             continue;
         }
@@ -1367,11 +1606,22 @@ fn detect_shorts(
                 if net_ties.tied_board_wide(na, nb) {
                     continue;
                 }
-                let key = if na <= nb {
-                    (na.clone(), nb.clone())
-                } else {
-                    (nb.clone(), na.clone())
+                let key = pair_key(na, nb);
+                if direct.contains(&(*root, key.clone())) {
+                    continue; // judged at its contact points in pass 1
+                }
+                // Indirectly joined. Intentional iff some tie group joining
+                // both nets anchors each of them in this component.
+                let shared_anchor = match (
+                    anchored.get(&(*root, na.clone())),
+                    anchored.get(&(*root, nb.clone())),
+                ) {
+                    (Some(ga), Some(gb)) => ga.iter().any(|g| gb.contains(g)),
+                    _ => false,
                 };
+                if shared_anchor {
+                    continue;
+                }
                 if !seen_pairs.insert(key) {
                     continue;
                 }
@@ -1699,6 +1949,176 @@ fn detect_unstitched_pads(
     }
 }
 
+// ============================================================================
+// Same-net bypass detection
+// ============================================================================
+
+/// Maximum intended-adjacency hops between two touching same-net elements
+/// before the contact reads as a bypass. At or under the limit the touch is a
+/// local artifact (a stitching via reached through its pour, a tight polyline
+/// corner); over it the touch short-circuits real conductor length.
+const BYPASS_HOP_LIMIT: usize = 3;
+
+/// Classify a same-net copper touch as an *intended* junction (an adjacency
+/// edge of the conductor graph) or a suspect body contact.
+///
+/// Intended junctions are the ways copper is deliberately joined:
+/// - traces chained end-to-end (their capsule end caps overlap),
+/// - a trace terminating on a via or pad (an endpoint lands on the copper),
+/// - via↔via, via↔pad and pad↔pad overlaps (land-pattern geometry), and
+/// - anything a same-net pour floods over (zone fills and stitching-via
+///   arrays are the pour doing its job).
+///
+/// What's left — a trace *body* crossing same-net copper it doesn't terminate
+/// on — is exactly the geometry that silently destroys a two-terminal
+/// structure (a spiral coil, a shunt, a sense trace), and is judged by
+/// conductor-graph distance in [`detect_same_net_bypass`].
+fn is_intended_junction(a: &NodeGeom, b: &NodeGeom) -> bool {
+    let (ga, gb) = match (a, b) {
+        (NodeGeom::Pour(_), _) | (_, NodeGeom::Pour(_)) => return true,
+        (NodeGeom::Copper(ga), NodeGeom::Copper(gb)) => (ga, gb),
+    };
+    let close = |p: Vec2, q: Vec2, tol: f64| {
+        let dx = p.x - q.x;
+        let dy = p.y - q.y;
+        (dx * dx + dy * dy).sqrt() <= tol
+    };
+    match (ga, gb) {
+        (
+            CopperGeom::Segment {
+                a: a1,
+                b: b1,
+                half_w: h1,
+            },
+            CopperGeom::Segment {
+                a: a2,
+                b: b2,
+                half_w: h2,
+            },
+        ) => {
+            let tol = h1 + h2 + TOUCH_EPS;
+            close(*a1, *a2, tol)
+                || close(*a1, *b2, tol)
+                || close(*b1, *a2, tol)
+                || close(*b1, *b2, tol)
+        }
+        (CopperGeom::Segment { a, b, half_w }, CopperGeom::Disc { center, r })
+        | (CopperGeom::Disc { center, r }, CopperGeom::Segment { a, b, half_w }) => {
+            let tol = half_w + r + TOUCH_EPS;
+            close(*a, *center, tol) || close(*b, *center, tol)
+        }
+        (CopperGeom::Segment { a, b, half_w }, rect @ CopperGeom::Rect { .. })
+        | (rect @ CopperGeom::Rect { .. }, CopperGeom::Segment { a, b, half_w }) => {
+            let tol = half_w + TOUCH_EPS;
+            rect.point_distance(*a) <= tol || rect.point_distance(*b) <= tol
+        }
+        // Overlapping vias/pads (via-in-pad, stacked land patterns) are
+        // deliberate — only a trace body can wander somewhere it shouldn't.
+        _ => true,
+    }
+}
+
+/// Shortest hop count between two nodes over the intended-adjacency graph
+/// (breadth-first), or `None` when no path exists.
+fn adjacency_hops(adjacency: &[Vec<usize>], from: usize, to: usize) -> Option<usize> {
+    if from == to {
+        return Some(0);
+    }
+    let mut depth = vec![usize::MAX; adjacency.len()];
+    depth[from] = 0;
+    let mut queue = std::collections::VecDeque::from([from]);
+    while let Some(n) = queue.pop_front() {
+        for &m in &adjacency[n] {
+            if depth[m] != usize::MAX {
+                continue;
+            }
+            depth[m] = depth[n] + 1;
+            if m == to {
+                return Some(depth[m]);
+            }
+            queue.push_back(m);
+        }
+    }
+    None
+}
+
+/// Emit a `SameNetBypass` warning for copper that touches its own net far from
+/// any intended junction.
+///
+/// The field failure this encodes: `add_motor_winding`'s old star traces ran
+/// exactly along a coil's terminal ray and overlapped the coil's inner via —
+/// same net, so no clearance/short rule fired, but the contact electrically
+/// shorted out the spiral (a third of the winding dead). Any two-terminal
+/// copper structure is silently destroyed by same-net contact across its body.
+///
+/// Method: split each net's contact-graph edges into *intended junctions*
+/// ([`is_intended_junction`] — end-to-end chaining, terminations, pour floods)
+/// and *suspect body contacts*. A suspect whose two elements are more than
+/// [`BYPASS_HOP_LIMIT`] hops apart along the intended-adjacency graph bridges
+/// two distant regions of the conductor — a bypass. Warning severity: the
+/// geometry is same-net, so some touches are legitimate; exemptions:
+/// - pours and anything touching them (zone fills, stitching-via arrays on
+///   pour nets reach each other through the pour within the hop limit),
+/// - contacts inside a net-tie region involving the net (declared junctions),
+/// - contacts joining otherwise-disconnected groups (a T-junction is the
+///   net's link, not a bypass of conductor between the points).
+fn detect_same_net_bypass(
+    nodes: &[ConnNode],
+    net_ties: &NetTieGroups,
+    contacts: &[NodeContact],
+    violations: &mut Vec<DrcViolation>,
+) {
+    let mut adjacency: Vec<Vec<usize>> = vec![Vec::new(); nodes.len()];
+    let mut suspects: Vec<&NodeContact> = Vec::new();
+    for c in contacts {
+        let net = &nodes[c.i].net;
+        if net.is_empty() || net != &nodes[c.j].net {
+            continue;
+        }
+        if is_intended_junction(&nodes[c.i].geom, &nodes[c.j].geom) {
+            adjacency[c.i].push(c.j);
+            adjacency[c.j].push(c.i);
+        } else {
+            suspects.push(c);
+        }
+    }
+
+    for c in suspects {
+        let net = &nodes[c.i].net;
+        // A net-tie region is a declared junction area (a winding's star
+        // point, a neutral bar) — same-net contact there is by design.
+        if net_ties.covers_net_at(net, c.at) {
+            continue;
+        }
+        // Disconnected under intended adjacency: this contact is the piece
+        // that joins the two groups (a T-junction or the net's only link),
+        // not a bypass of the conductor between them.
+        let Some(hops) = adjacency_hops(&adjacency, c.i, c.j) else {
+            continue;
+        };
+        if hops <= BYPASS_HOP_LIMIT {
+            continue;
+        }
+        let (pa, pb) = (nodes[c.i].pos, nodes[c.j].pos);
+        violations.push(DrcViolation {
+            rule: DrcRuleType::SameNetBypass,
+            severity: DrcSeverity::Warning,
+            position: c.at,
+            message: format!(
+                "Same-net bypass on net '{net}': copper at ({:.2}, {:.2}) touches copper at \
+                 ({:.2}, {:.2}) that is {hops} conductor hops away — the contact \
+                 short-circuits everything between them (fatal to a two-terminal \
+                 structure like a spiral coil, shunt, or sense trace)",
+                pa.x, pa.y, pb.x, pb.y
+            ),
+            actual: hops as f64,
+            required: BYPASS_HOP_LIMIT as f64,
+            provenance: DrcProvenance::Routing,
+            generated: false,
+        });
+    }
+}
+
 /// A simple disjoint-set (union-find) with path compression + union by size.
 struct Dsu {
     parent: Vec<usize>,
@@ -1790,16 +2210,133 @@ pub struct NetContinuity {
 /// [`check_connectivity`] builds) and return the nodes alongside it, so callers
 /// can analyze one or many nets without rebuilding the connectivity.
 fn build_connectivity(pcb: &Pcb) -> (Vec<ConnNode>, Dsu) {
+    let (nodes, dsu, _) = build_connectivity_with_contacts(pcb);
+    (nodes, dsu)
+}
+
+/// A direct geometric touch between two connectivity nodes — one edge of the
+/// contact graph — with the approximate location where the copper meets.
+/// Cross-net edges are the candidate shorts (each judged against the net-tie
+/// regions); same-net edges feed [`detect_same_net_bypass`], which needs the
+/// contact graph rather than just the union.
+struct NodeContact {
+    /// Index of the first node.
+    i: usize,
+    /// Index of the second node.
+    j: usize,
+    /// Approximate contact location.
+    at: Vec2,
+}
+
+/// [`build_connectivity`], additionally recording every copper contact so
+/// short detection can judge each cross-net junction at the point where it
+/// happens and bypass detection can walk the same-net contact graph.
+fn build_connectivity_with_contacts(pcb: &Pcb) -> (Vec<ConnNode>, Dsu, Vec<NodeContact>) {
     let nodes = build_conn_nodes(pcb);
     let mut dsu = Dsu::new(nodes.len());
+    let mut contacts = Vec::new();
     for i in 0..nodes.len() {
         for j in (i + 1)..nodes.len() {
             if nodes[i].touches(&nodes[j]) {
                 dsu.union(i, j);
+                contacts.push(NodeContact {
+                    i,
+                    j,
+                    at: contact_point(&nodes[i].geom, &nodes[j].geom),
+                });
             }
         }
     }
-    (nodes, dsu)
+    (nodes, dsu, contacts)
+}
+
+/// Closest point on segment `ab` to point `p`.
+fn closest_point_on_segment(p: Vec2, a: Vec2, b: Vec2) -> Vec2 {
+    let abx = b.x - a.x;
+    let aby = b.y - a.y;
+    let len2 = abx * abx + aby * aby;
+    if len2 <= f64::EPSILON {
+        return a;
+    }
+    let t = (((p.x - a.x) * abx + (p.y - a.y) * aby) / len2).clamp(0.0, 1.0);
+    Vec2::new(a.x + t * abx, a.y + t * aby)
+}
+
+/// Closest pair of points between segments `p1p2` and `p3p4` (centerlines).
+fn segment_closest_points(p1: Vec2, p2: Vec2, p3: Vec2, p4: Vec2) -> (Vec2, Vec2) {
+    // Candidate pairs from each endpoint projected onto the other segment;
+    // for touching/overlapping copper this lands inside the overlap, which is
+    // all the tie-region check needs.
+    let candidates = [
+        (closest_point_on_segment(p3, p1, p2), p3),
+        (closest_point_on_segment(p4, p1, p2), p4),
+        (p1, closest_point_on_segment(p1, p3, p4)),
+        (p2, closest_point_on_segment(p2, p3, p4)),
+    ];
+    let mut best = candidates[0];
+    let mut best_d2 = f64::MAX;
+    for (a, b) in candidates {
+        let dx = a.x - b.x;
+        let dy = a.y - b.y;
+        let d2 = dx * dx + dy * dy;
+        if d2 < best_d2 {
+            best_d2 = d2;
+            best = (a, b);
+        }
+    }
+    best
+}
+
+/// Representative point of a copper geometry.
+fn copper_rep_point(g: &CopperGeom) -> Vec2 {
+    match g {
+        CopperGeom::Segment { a, b, .. } => Vec2::new((a.x + b.x) / 2.0, (a.y + b.y) / 2.0),
+        CopperGeom::Disc { center, .. } | CopperGeom::Rect { center, .. } => *center,
+    }
+}
+
+/// Approximate location where two touching node geometries meet.
+///
+/// Used to judge region-scoped net ties. Tie radii are sized generously by the
+/// tools that write them (millimetres of slack around the junction), so a
+/// nearby representative point is sufficient — exact overlap geometry is not.
+fn contact_point(a: &NodeGeom, b: &NodeGeom) -> Vec2 {
+    match (a, b) {
+        (NodeGeom::Copper(ga), NodeGeom::Copper(gb)) => match (ga, gb) {
+            (
+                CopperGeom::Segment { a: a1, b: b1, .. },
+                CopperGeom::Segment { a: a2, b: b2, .. },
+            ) => {
+                let (p, q) = segment_closest_points(*a1, *b1, *a2, *b2);
+                Vec2::new((p.x + q.x) / 2.0, (p.y + q.y) / 2.0)
+            }
+            (CopperGeom::Segment { a, b, .. }, CopperGeom::Disc { center, .. })
+            | (CopperGeom::Disc { center, .. }, CopperGeom::Segment { a, b, .. })
+            | (CopperGeom::Segment { a, b, .. }, CopperGeom::Rect { center, .. })
+            | (CopperGeom::Rect { center, .. }, CopperGeom::Segment { a, b, .. }) => {
+                closest_point_on_segment(*center, *a, *b)
+            }
+            _ => {
+                let p = copper_rep_point(ga);
+                let q = copper_rep_point(gb);
+                Vec2::new((p.x + q.x) / 2.0, (p.y + q.y) / 2.0)
+            }
+        },
+        (NodeGeom::Pour(_), NodeGeom::Copper(g)) | (NodeGeom::Copper(g), NodeGeom::Pour(_)) => {
+            copper_rep_point(g)
+        }
+        (NodeGeom::Pour(ra), NodeGeom::Pour(rb)) => {
+            let p = ra
+                .first()
+                .map(|r| polygon_centroid(r))
+                .unwrap_or(Vec2::new(0.0, 0.0));
+            let q = rb
+                .first()
+                .map(|r| polygon_centroid(r))
+                .unwrap_or(Vec2::new(0.0, 0.0));
+            Vec2::new((p.x + q.x) / 2.0, (p.y + q.y) / 2.0)
+        }
+    }
 }
 
 /// Compute one net's continuity from a pre-built connectivity graph.
@@ -2190,6 +2727,7 @@ mod tests {
                     width: 0.25,
                     layer: PcbLayer::FCu,
                     net: "1".to_string(),
+                    source: None,
                 },
                 Trace {
                     start: Vec2::new(20.0, 50.0),
@@ -2197,6 +2735,7 @@ mod tests {
                     width: 0.25,
                     layer: PcbLayer::FCu,
                     net: "2".to_string(),
+                    source: None,
                 },
             ],
             trace_arcs: vec![],
@@ -2207,6 +2746,7 @@ mod tests {
                 start_layer: PcbLayer::FCu,
                 end_layer: PcbLayer::BCu,
                 net: "1".to_string(),
+                source: None,
             }],
             zones: vec![],
             keepouts: vec![],
@@ -2251,6 +2791,7 @@ mod tests {
                 start_layer: PcbLayer::FCu,
                 end_layer: PcbLayer::BCu,
                 net: "2".to_string(),
+                source: None,
             });
 
             let shorts: Vec<_> = check_drc(&pcb)
@@ -2294,6 +2835,7 @@ mod tests {
             width: 0.25,
             layer: PcbLayer::FCu,
             net: "3".to_string(),
+            source: None,
         });
         let shorts: Vec<_> = check_drc(&pcb)
             .into_iter()
@@ -2342,6 +2884,7 @@ mod tests {
             width: 0.25,
             layer: PcbLayer::FCu,
             net: "3".to_string(),
+            source: None,
         });
         let shorts: Vec<_> = check_drc(&pcb)
             .into_iter()
@@ -2366,6 +2909,105 @@ mod tests {
         );
     }
 
+    /// One-pad SMD footprint for the rotated-placement regression tests.
+    fn one_pad_footprint(
+        reference: &str,
+        position: Vec2,
+        rotation: f64,
+        pad_local: Vec2,
+        net: &str,
+    ) -> Footprint {
+        Footprint {
+            reference: reference.to_string(),
+            value: "X".to_string(),
+            footprint_name: "TEST_1PAD".to_string(),
+            position,
+            rotation,
+            front: true,
+            pads: vec![Pad {
+                number: "1".to_string(),
+                pad_type: PadType::SMD,
+                shape: PadShape::Rect {
+                    width: 1.2,
+                    height: 1.2,
+                },
+                position: pad_local,
+                rotation: 0.0,
+                drill: None,
+                net: Some(net.to_string()),
+                layers: vec![PcbLayer::FCu],
+            }],
+            graphics: vec![],
+            model_3d: None,
+            properties: std::collections::HashMap::new(),
+        }
+    }
+
+    /// DRC must judge pad copper at the ROTATED world position — the position
+    /// `get_pad_positions` reports and the Gerber writer exports. Regression
+    /// for the pad transform dropping the footprint rotation: J1's pad sits at
+    /// local (+5, 0) on a 180°-rotated footprint, so its real copper is at
+    /// (65, 60); the unrotated phantom position (75, 60) would sit dead on
+    /// R1's foreign-net pad and produced a bogus clearance/short.
+    #[test]
+    fn rotated_footprint_pads_are_judged_at_rotated_positions() {
+        let mut pcb = clean_pcb();
+        pcb.footprints.push(one_pad_footprint(
+            "J1",
+            Vec2::new(70.0, 60.0),
+            180.0,
+            Vec2::new(5.0, 0.0),
+            "1",
+        ));
+        pcb.footprints.push(one_pad_footprint(
+            "R1",
+            Vec2::new(75.0, 60.0),
+            0.0,
+            Vec2::new(0.0, 0.0),
+            "2",
+        ));
+        let conflicts: Vec<_> = check_drc(&pcb)
+            .into_iter()
+            .filter(|v| matches!(v.rule, DrcRuleType::Clearance | DrcRuleType::Short))
+            .collect();
+        assert!(
+            conflicts.is_empty(),
+            "rotated pad copper is 10mm from R1 — a violation means DRC placed \
+             it at the unrotated phantom position: {:?}",
+            conflicts
+        );
+    }
+
+    /// Positive control for the test above: when the ROTATED position really
+    /// does land on a foreign-net pad, DRC must still flag it.
+    #[test]
+    fn rotated_footprint_real_pad_overlap_is_still_flagged() {
+        let mut pcb = clean_pcb();
+        // 180° rotation puts J1's pad at (80 − 5, 60) = (75, 60) — on R1.
+        pcb.footprints.push(one_pad_footprint(
+            "J1",
+            Vec2::new(80.0, 60.0),
+            180.0,
+            Vec2::new(5.0, 0.0),
+            "1",
+        ));
+        pcb.footprints.push(one_pad_footprint(
+            "R1",
+            Vec2::new(75.0, 60.0),
+            0.0,
+            Vec2::new(0.0, 0.0),
+            "2",
+        ));
+        let conflicts: Vec<_> = check_drc(&pcb)
+            .into_iter()
+            .filter(|v| matches!(v.rule, DrcRuleType::Clearance | DrcRuleType::Short))
+            .collect();
+        assert!(
+            !conflicts.is_empty(),
+            "overlapping foreign-net pads at the rotated position must be flagged"
+        );
+    }
+
     #[test]
     fn detect_min_trace_width_violation() {
         let mut pcb = clean_pcb();
@@ -2375,6 +3017,7 @@ mod tests {
             width: 0.1, // below 0.25 minimum
             layer: PcbLayer::FCu,
             net: "1".to_string(),
+            source: None,
         });
 
         let violations = check_drc(&pcb);
@@ -2442,6 +3085,7 @@ mod tests {
             start_layer: PcbLayer::FCu,
             end_layer: PcbLayer::BCu,
             net: "2".to_string(),
+            source: None,
         });
 
         let violations = check_drc(&pcb);
@@ -2466,6 +3110,7 @@ mod tests {
             width: 0.25,
             layer: PcbLayer::FCu,
             net: "1".to_string(),
+            source: None,
         });
 
         let violations = check_drc(&pcb);
@@ -2490,6 +3135,7 @@ mod tests {
             start_layer: PcbLayer::FCu,
             end_layer: PcbLayer::BCu,
             net: "2".to_string(),
+            source: None,
         });
 
         let violations = check_drc(&pcb);
@@ -2514,6 +3160,7 @@ mod tests {
             start_layer: PcbLayer::FCu,
             end_layer: PcbLayer::BCu,
             net: "1".to_string(),
+            source: None,
         });
 
         let violations = check_drc(&pcb);
@@ -2540,6 +3187,7 @@ mod tests {
             width: 0.25,
             layer: PcbLayer::FCu,
             net: "1".to_string(),
+            source: None,
         });
         pcb.traces.push(Trace {
             start: Vec2::new(20.0, 40.3),
@@ -2547,6 +3195,7 @@ mod tests {
             width: 0.25,
             layer: PcbLayer::FCu,
             net: "2".to_string(),
+            source: None,
         });
 
         let violations = check_drc(&pcb);
@@ -2618,6 +3267,7 @@ mod tests {
             width: 0.2,
             layer: PcbLayer::FCu,
             net: net.into(),
+            source: None,
         };
         pcb.traces.push(leg(40.0, "USB_P"));
         pcb.traces.push(leg(40.3, "USB_N"));
@@ -2670,6 +3320,7 @@ mod tests {
             width: 0.25,
             layer: PcbLayer::FCu,
             net: net.to_string(),
+            source: None,
         }
     }
 
@@ -3006,6 +3657,7 @@ mod tests {
             start_layer: PcbLayer::FCu,
             end_layer: PcbLayer::BCu,
             net: "1".to_string(),
+            source: None,
         });
 
         let violations = check_drc(&pcb);
@@ -3087,6 +3739,116 @@ mod tests {
         assert!(
             !clearance.is_empty(),
             "junction outside tie region should still violate clearance"
+        );
+    }
+
+    /// A region-scoped tie covering the junction exempts the galvanic Short
+    /// there — the whole point of a scoped tie (e.g. a winding's star point).
+    #[test]
+    fn scoped_net_tie_exempts_short_at_junction() {
+        let mut pcb = clean_pcb();
+        pcb.traces.clear();
+        pcb.traces.push(trace((40.0, 50.0), (50.0, 50.0), "1"));
+        pcb.traces.push(trace((50.0, 50.0), (60.0, 50.0), "2"));
+        pcb.net_ties.push(NetTie {
+            nets: vec!["1".to_string(), "2".to_string()],
+            position: Some(Vec2::new(50.0, 50.0)),
+            radius: Some(2.0),
+        });
+
+        let violations = check_drc(&pcb);
+        let bad: Vec<_> = violations
+            .iter()
+            .filter(|v| v.rule == DrcRuleType::Short || v.rule == DrcRuleType::Clearance)
+            .collect();
+        assert!(
+            bad.is_empty(),
+            "junction inside scoped tie region must be exempt, got: {:?}",
+            bad
+        );
+    }
+
+    /// The scoped exemption is local: the same two nets touching AGAIN outside
+    /// the tie region is still a short, reported at the stray contact.
+    #[test]
+    fn scoped_net_tie_does_not_exempt_stray_contact() {
+        let mut pcb = clean_pcb();
+        pcb.traces.clear();
+        // Intentional junction at (50,50), tied there.
+        pcb.traces.push(trace((40.0, 50.0), (50.0, 50.0), "1"));
+        pcb.traces.push(trace((50.0, 50.0), (60.0, 50.0), "2"));
+        // Stray second contact between the same nets at (50,20).
+        pcb.traces.push(trace((40.0, 20.0), (50.0, 20.0), "1"));
+        pcb.traces.push(trace((50.0, 20.0), (60.0, 20.0), "2"));
+        pcb.net_ties.push(NetTie {
+            nets: vec!["1".to_string(), "2".to_string()],
+            position: Some(Vec2::new(50.0, 50.0)),
+            radius: Some(2.0),
+        });
+
+        let shorts: Vec<_> = check_drc(&pcb)
+            .into_iter()
+            .filter(|v| v.rule == DrcRuleType::Short)
+            .collect();
+        assert!(
+            !shorts.is_empty(),
+            "same nets touching outside the tie region must still short"
+        );
+        let p = shorts[0].position;
+        assert!(
+            (p.y - 20.0).abs() < 1.0,
+            "short must be reported at the stray contact, got {:?}",
+            p
+        );
+    }
+
+    /// Wye/star junction: three phase nets each touch the neutral inside one
+    /// scoped tie region and are thereby joined pairwise *indirectly*. No pair
+    /// touches directly, and every join is intentional — no shorts.
+    #[test]
+    fn scoped_net_tie_exempts_wye_star_junction() {
+        let mut pcb = clean_pcb();
+        pcb.traces.clear();
+        // Neutral bar at y=50, x in [48,52].
+        pcb.traces.push(trace((48.0, 50.0), (52.0, 50.0), "WIND_N"));
+        // Three phases arriving at the bar.
+        pcb.traces.push(trace((48.0, 50.0), (40.0, 58.0), "PHA"));
+        pcb.traces.push(trace((50.0, 50.0), (50.0, 60.0), "PHB"));
+        pcb.traces.push(trace((52.0, 50.0), (60.0, 58.0), "PHC"));
+        pcb.net_ties.push(NetTie {
+            nets: vec![
+                "PHA".to_string(),
+                "PHB".to_string(),
+                "PHC".to_string(),
+                "WIND_N".to_string(),
+            ],
+            position: Some(Vec2::new(50.0, 50.0)),
+            radius: Some(3.0),
+        });
+
+        let shorts: Vec<_> = check_drc(&pcb)
+            .into_iter()
+            .filter(|v| v.rule == DrcRuleType::Short)
+            .collect();
+        assert!(
+            shorts.is_empty(),
+            "star junction under a scoped tie must not short, got: {:?}",
+            shorts
+        );
+
+        // A genuine PHA/PHB crossing far from the junction still fires.
+        pcb.traces.push(trace((10.0, 10.0), (30.0, 10.0), "PHA"));
+        pcb.traces.push(trace((20.0, 5.0), (20.0, 15.0), "PHB"));
+        let shorts: Vec<_> = check_drc(&pcb)
+            .into_iter()
+            .filter(|v| v.rule == DrcRuleType::Short)
+            .collect();
+        assert!(
+            shorts
+                .iter()
+                .any(|v| v.message.contains("PHA") && v.message.contains("PHB")),
+            "crossing outside the tie region must still short, got: {:?}",
+            shorts
         );
     }
 
@@ -3216,6 +3978,7 @@ mod tests {
             start_layer: PcbLayer::FCu,
             end_layer: PcbLayer::BCu,
             net: "1".to_string(),
+            source: None,
         });
 
         let violations = check_drc(&pcb);
@@ -3227,6 +3990,89 @@ mod tests {
             unrouted.is_empty(),
             "via should bridge FCu/BCu pads on same net, got: {:?}",
             unrouted
+        );
+    }
+
+    /// Issue #378 regression: connectivity must place a rotated footprint's
+    /// pads at their TRUE (rotation-applied) world positions — the same
+    /// positions get_pad_positions, the ratsnest, and the routers report.
+    /// Before the fix the pad nodes sat at the unrotated (phantom) offsets, so
+    /// copper laid between the true positions (a hand route) never touched
+    /// them and UnconnectedNet could not clear.
+    #[test]
+    fn connectivity_credits_copper_at_rotated_pad_positions() {
+        let mut pcb = clean_pcb();
+        pcb.traces.clear();
+        pcb.vias.clear();
+        // Both footprints rotated 90°, pads 2mm off the footprint origin along
+        // local +X. True pad centers land 2mm along +Y instead:
+        //   J1 pad: (20, 42)   [phantom would be (22, 40)]
+        //   J2 pad: (50, 42)   [phantom would be (52, 40)]
+        pcb.footprints.push(footprint(
+            "J1",
+            (20.0, 40.0),
+            90.0,
+            vec![smd_pad("1", (2.0, 0.0), "1")],
+        ));
+        pcb.footprints.push(footprint(
+            "J2",
+            (50.0, 40.0),
+            90.0,
+            vec![smd_pad("1", (2.0, 0.0), "1")],
+        ));
+
+        // Sanity: with no copper the net is open.
+        let open: Vec<_> = check_drc(&pcb)
+            .into_iter()
+            .filter(|v| v.rule == DrcRuleType::UnconnectedNet)
+            .collect();
+        assert!(!open.is_empty(), "unrouted rotated pads should report open");
+
+        // Hand-route between the TRUE rotated pad centers.
+        pcb.traces.push(trace((20.0, 42.0), (50.0, 42.0), "1"));
+
+        let violations = check_drc(&pcb);
+        let bad: Vec<_> = violations
+            .iter()
+            .filter(|v| v.rule == DrcRuleType::UnconnectedNet || v.rule == DrcRuleType::Short)
+            .collect();
+        assert!(
+            bad.is_empty(),
+            "copper at the true rotated pad positions must clear UnconnectedNet, got: {:?}",
+            bad
+        );
+    }
+
+    /// Issue #378 counterpart: copper laid at the phantom (unrotated) offsets
+    /// must NOT be credited — those locations hold no pad copper on a rotated
+    /// footprint.
+    #[test]
+    fn connectivity_ignores_copper_at_phantom_unrotated_positions() {
+        let mut pcb = clean_pcb();
+        pcb.traces.clear();
+        pcb.vias.clear();
+        pcb.footprints.push(footprint(
+            "J1",
+            (20.0, 40.0),
+            90.0,
+            vec![smd_pad("1", (2.0, 0.0), "1")],
+        ));
+        pcb.footprints.push(footprint(
+            "J2",
+            (50.0, 40.0),
+            90.0,
+            vec![smd_pad("1", (2.0, 0.0), "1")],
+        ));
+        // Trace between the unrotated offsets — thin air on this board.
+        pcb.traces.push(trace((22.0, 40.0), (52.0, 40.0), "1"));
+
+        let unrouted: Vec<_> = check_drc(&pcb)
+            .into_iter()
+            .filter(|v| v.rule == DrcRuleType::UnconnectedNet)
+            .collect();
+        assert!(
+            !unrouted.is_empty(),
+            "copper at phantom unrotated positions must not credit connectivity"
         );
     }
 
@@ -3284,6 +4130,7 @@ mod tests {
             start_layer: PcbLayer::FCu,
             end_layer: PcbLayer::BCu,
             net: "2".to_string(),
+            source: None,
         });
         let v = check_drc(&pcb);
         let d = v.iter().find(|v| v.rule == DrcRuleType::MinDrill).unwrap();
@@ -3407,6 +4254,7 @@ mod tests {
                 width: 0.25,
                 layer: PcbLayer::FCu,
                 net: "3V3".to_string(),
+                source: None,
             },
             Trace {
                 start: Vec2::new(35.0, 40.0),
@@ -3414,6 +4262,7 @@ mod tests {
                 width: 0.25,
                 layer: PcbLayer::FCu,
                 net: "3V3".to_string(),
+                source: None,
             },
         ];
 
@@ -3462,6 +4311,7 @@ mod tests {
             width: 0.25,
             layer: PcbLayer::FCu,
             net: "3V3".to_string(),
+            source: None,
         }];
 
         let c = analyze_net_continuity(&pcb, "3V3");
@@ -3627,6 +4477,7 @@ mod tests {
             start_layer: PcbLayer::FCu,
             end_layer: PcbLayer::In1Cu,
             net: "3".to_string(),
+            source: None,
         });
         let after: Vec<_> = check_drc(&pcb)
             .into_iter()
@@ -3803,6 +4654,7 @@ mod tests {
             start_layer: PcbLayer::FCu,
             end_layer: PcbLayer::BCu,
             net: "3".to_string(),
+            source: None,
         });
 
         let unstitched = check_drc(&pcb)
@@ -3810,6 +4662,274 @@ mod tests {
             .filter(|x| x.rule == DrcRuleType::UnstitchedPad)
             .count();
         assert_eq!(unstitched, 0, "a stitching via must clear the violation");
+    }
+
+    // ----- SameNetBypass DRC rule -----
+
+    /// Archimedean spiral matching the MCP `add_coil` geometry (48 segments
+    /// per turn, r linear in θ, coordinates rounded to 1e-3 mm), pushed as
+    /// chained FCu traces. Returns `(inner endpoint, outer endpoint)`.
+    fn add_spiral(
+        pcb: &mut Pcb,
+        center: Vec2,
+        turns: usize,
+        inner_r: f64,
+        outer_r: f64,
+        width: f64,
+        net: &str,
+    ) -> (Vec2, Vec2) {
+        let round3 = |v: f64| (v * 1000.0).round() / 1000.0;
+        let steps = turns * 48;
+        let mut pts: Vec<Vec2> = Vec::new();
+        for s in 0..=steps {
+            let t = s as f64 / steps as f64;
+            let theta = t * turns as f64 * std::f64::consts::TAU;
+            let r = inner_r + t * (outer_r - inner_r);
+            let p = Vec2::new(
+                round3(center.x + r * theta.cos()),
+                round3(center.y + r * theta.sin()),
+            );
+            if pts.last() != Some(&p) {
+                pts.push(p);
+            }
+        }
+        for w in pts.windows(2) {
+            pcb.traces.push(Trace {
+                start: w[0],
+                end: w[1],
+                width,
+                layer: PcbLayer::FCu,
+                net: net.to_string(),
+                source: None,
+            });
+        }
+        (pts[0], *pts.last().expect("spiral has points"))
+    }
+
+    /// A 10-turn coil (the `add_coil` test geometry: inner r 2.6, outer r 7.2,
+    /// 0.25mm trace) with its inner terminal via, plus the field failure: a
+    /// SAME-NET trace running from the outer endpoint straight along the
+    /// terminal ray, over the inner via and across the turns. No net-based
+    /// rule can see it, but it short-circuits the spiral → SameNetBypass.
+    #[test]
+    fn same_net_bypass_flags_trace_over_coil_inner_via() {
+        let mut pcb = clean_pcb();
+        pcb.traces.clear();
+        pcb.vias.clear();
+        pcb.nets.push(Net {
+            id: "COIL".to_string(),
+            name: "COIL".to_string(),
+        });
+        let center = Vec2::new(50.0, 40.0);
+        let (inner, outer) = add_spiral(&mut pcb, center, 10, 2.6, 7.2, 0.25, "COIL");
+        assert!((inner.x - 52.6).abs() < 1e-9 && (inner.y - 40.0).abs() < 1e-9);
+        assert!((outer.x - 57.2).abs() < 1e-9 && (outer.y - 40.0).abs() < 1e-9);
+        // The coil's inner terminal via.
+        pcb.vias.push(Via {
+            position: inner,
+            diameter: 0.6,
+            drill: 0.3,
+            start_layer: PcbLayer::FCu,
+            end_layer: PcbLayer::BCu,
+            net: "COIL".to_string(),
+            source: None,
+        });
+        // The bypass: same net, straight from the outer endpoint along the
+        // terminal ray, over the inner via.
+        pcb.traces.push(Trace {
+            start: outer,
+            end: Vec2::new(51.0, 40.0),
+            width: 0.25,
+            layer: PcbLayer::FCu,
+            net: "COIL".to_string(),
+            source: None,
+        });
+
+        let v = check_drc(&pcb);
+        let bypass: Vec<_> = v
+            .iter()
+            .filter(|x| x.rule == DrcRuleType::SameNetBypass)
+            .collect();
+        assert!(
+            !bypass.is_empty(),
+            "a same-net trace over the coil body/inner via must warn, got: {:?}",
+            v.iter().map(|x| (&x.rule, &x.message)).collect::<Vec<_>>()
+        );
+        assert!(
+            bypass.iter().all(|x| x.severity == DrcSeverity::Warning),
+            "same-net bypass is a warning, not an error"
+        );
+        assert!(
+            bypass.iter().any(|x| x.message.contains("'COIL'")),
+            "message names the net: {:?}",
+            bypass[0].message
+        );
+        // The via overlap itself is among the flagged contacts.
+        assert!(
+            bypass
+                .iter()
+                .any(|x| (x.position.x - 52.6).abs() < 0.5 && (x.position.y - 40.0).abs() < 0.5),
+            "the inner-via contact must be flagged, positions: {:?}",
+            bypass.iter().map(|x| x.position).collect::<Vec<_>>()
+        );
+    }
+
+    /// The sanctioned lead-out: the same spiral + inner via, but the lead
+    /// leaves the outer terminal jogged 5° off the terminal ray, heading
+    /// outward — it meets the coil only at the shared terminal endpoint.
+    /// Endpoint-chained copper is an intended junction → no warning.
+    #[test]
+    fn same_net_bypass_clear_for_jogged_lead() {
+        let mut pcb = clean_pcb();
+        pcb.traces.clear();
+        pcb.vias.clear();
+        pcb.nets.push(Net {
+            id: "COIL".to_string(),
+            name: "COIL".to_string(),
+        });
+        let center = Vec2::new(50.0, 40.0);
+        let (inner, outer) = add_spiral(&mut pcb, center, 10, 2.6, 7.2, 0.25, "COIL");
+        pcb.vias.push(Via {
+            position: inner,
+            diameter: 0.6,
+            drill: 0.3,
+            start_layer: PcbLayer::FCu,
+            end_layer: PcbLayer::BCu,
+            net: "COIL".to_string(),
+            source: None,
+        });
+        // Jogged approach: outer endpoint → r 9.5 at +5° off the terminal ray.
+        let jog = 5.0_f64.to_radians();
+        pcb.traces.push(Trace {
+            start: outer,
+            end: Vec2::new(center.x + 9.5 * jog.cos(), center.y + 9.5 * jog.sin()),
+            width: 0.25,
+            layer: PcbLayer::FCu,
+            net: "COIL".to_string(),
+            source: None,
+        });
+
+        let bypass: Vec<_> = check_drc(&pcb)
+            .into_iter()
+            .filter(|x| x.rule == DrcRuleType::SameNetBypass)
+            .collect();
+        assert!(
+            bypass.is_empty(),
+            "a jogged lead touching only the terminal must not warn, got: {bypass:?}"
+        );
+    }
+
+    /// A GND via-stitched pour stays silent: stitching vias reach the rest of
+    /// the net through the pour (an intended junction), and a via dropped
+    /// mid-trace resolves within the hop limit via trace → end-via → pour.
+    #[test]
+    fn same_net_bypass_clear_for_via_stitched_pour() {
+        let mut pcb = clean_pcb();
+        pcb.traces.clear();
+        pcb.vias.clear();
+        // GND (net "2") pour on BCu.
+        pcb.zones.push(plane_zone(
+            &[
+                Vec2::new(10.0, 10.0),
+                Vec2::new(70.0, 10.0),
+                Vec2::new(70.0, 70.0),
+                Vec2::new(10.0, 70.0),
+            ],
+            "2",
+            PcbLayer::BCu,
+        ));
+        // A GND trace on FCu, terminated by a stitching via into the plane…
+        pcb.traces.push(trace((20.0, 40.0), (40.0, 40.0), "2"));
+        let via = |x: f64, y: f64| Via {
+            position: Vec2::new(x, y),
+            diameter: 0.8,
+            drill: 0.4,
+            start_layer: PcbLayer::FCu,
+            end_layer: PcbLayer::BCu,
+            net: "2".to_string(),
+            source: None,
+        };
+        pcb.vias.push(via(40.0, 40.0));
+        // …a stitching via dropped on the trace BODY (not an endpoint)…
+        pcb.vias.push(via(30.0, 40.0));
+        // …and a free-standing stitching-via array on the pour.
+        pcb.vias.push(via(55.0, 55.0));
+        pcb.vias.push(via(58.0, 55.0));
+        pcb.vias.push(via(55.0, 58.0));
+
+        let bypass: Vec<_> = check_drc(&pcb)
+            .into_iter()
+            .filter(|x| x.rule == DrcRuleType::SameNetBypass)
+            .collect();
+        assert!(
+            bypass.is_empty(),
+            "stitched pours and via arrays are not bypasses, got: {bypass:?}"
+        );
+    }
+
+    /// A same-net contact inside a declared net-tie region is by design (a
+    /// star point / neutral bar): the identical geometry warns without the
+    /// tie and stays silent with it.
+    #[test]
+    fn same_net_bypass_respects_net_tie_regions() {
+        let build = || {
+            let mut pcb = clean_pcb();
+            pcb.traces.clear();
+            pcb.vias.clear();
+            // A 6-segment U-shaped chain on net "1"…
+            pcb.traces.push(trace((10.0, 10.0), (20.0, 10.0), "1"));
+            pcb.traces.push(trace((20.0, 10.0), (30.0, 10.0), "1"));
+            pcb.traces.push(trace((30.0, 10.0), (30.0, 20.0), "1"));
+            pcb.traces.push(trace((30.0, 20.0), (20.0, 20.0), "1"));
+            pcb.traces.push(trace((20.0, 20.0), (10.0, 20.0), "1"));
+            // …whose last segment loops back onto the FIRST segment's body
+            // (5 hops away along the chain — a bypass of the whole U).
+            pcb.traces.push(trace((10.0, 20.0), (15.0, 10.0), "1"));
+            pcb
+        };
+
+        let flagged = check_drc(&build())
+            .into_iter()
+            .filter(|x| x.rule == DrcRuleType::SameNetBypass)
+            .count();
+        assert!(
+            flagged > 0,
+            "a loop-back onto the chain's far end must warn"
+        );
+
+        let mut tied = build();
+        tied.net_ties.push(NetTie {
+            nets: vec!["1".to_string(), "2".to_string()],
+            position: Some(Vec2::new(15.0, 10.0)),
+            radius: Some(2.0),
+        });
+        let flagged = check_drc(&tied)
+            .into_iter()
+            .filter(|x| x.rule == DrcRuleType::SameNetBypass)
+            .count();
+        assert_eq!(flagged, 0, "the same contact inside a tie region is exempt");
+    }
+
+    /// A T-junction — a stub whose endpoint lands on another trace's body and
+    /// is the net's ONLY link between the two pieces — is load-bearing, not a
+    /// bypass: nothing is short-circuited because nothing else connects them.
+    #[test]
+    fn same_net_bypass_ignores_t_junction() {
+        let mut pcb = clean_pcb();
+        pcb.traces.clear();
+        pcb.vias.clear();
+        // A bus and a stub tapping its middle (net "1").
+        pcb.traces.push(trace((10.0, 40.0), (40.0, 40.0), "1"));
+        pcb.traces.push(trace((25.0, 40.0), (25.0, 50.0), "1"));
+
+        let bypass: Vec<_> = check_drc(&pcb)
+            .into_iter()
+            .filter(|x| x.rule == DrcRuleType::SameNetBypass)
+            .collect();
+        assert!(
+            bypass.is_empty(),
+            "a T-junction is the net's link, not a bypass, got: {bypass:?}"
+        );
     }
 
     /// A THT pad's plated barrel already bridges to an inner plane, so the rule
@@ -3838,5 +4958,78 @@ mod tests {
             unstitched, 0,
             "THT pads bridge layers — never Unstitched-Pad"
         );
+    }
+
+    /// Board with two spatially-separate clearance faults (near (15,10) and
+    /// (80,70)) plus a copper short far from both, for the region-scope tests.
+    fn pcb_with_scattered_faults() -> Pcb {
+        let mut pcb = clean_pcb();
+        let seg = |x0: f64, y0: f64, x1: f64, y1: f64, net: &str| Trace {
+            start: Vec2::new(x0, y0),
+            end: Vec2::new(x1, y1),
+            width: 0.25,
+            layer: PcbLayer::FCu,
+            net: net.to_string(),
+            source: None,
+        };
+        // Pair A (in the scoped region): 0.35mm center gap ⇒ 0.1mm edge gap
+        // < 0.2mm clearance, but not touching (no short).
+        pcb.traces.push(seg(10.0, 10.0, 20.0, 10.0, "3"));
+        pcb.traces.push(seg(10.0, 10.35, 20.0, 10.35, "4"));
+        // Pair B (outside the region): same fault, other corner of the board.
+        pcb.traces.push(seg(70.0, 70.0, 90.0, 70.0, "5"));
+        pcb.traces.push(seg(70.0, 70.35, 90.0, 70.35, "6"));
+        // A hard short (touching cross-net copper), also outside the region.
+        pcb.traces.push(seg(70.0, 20.0, 80.0, 20.0, "7"));
+        pcb.traces.push(seg(80.0, 20.0, 90.0, 20.0, "8"));
+        pcb
+    }
+
+    /// `check_drc_in_region` keeps only in-region subjects for the geometric
+    /// checks (pair A's clearance faults, not pair B's) while connectivity
+    /// stays board-global (the far-away short is still reported).
+    #[test]
+    fn scoped_drc_filters_geometry_but_keeps_connectivity_global() {
+        let pcb = pcb_with_scattered_faults();
+
+        let full = check_drc(&pcb);
+        // Each too-close trace pair is judged from both subject traces; the
+        // touching pair additionally violates clearance. 3 pairs × 2 = 6.
+        assert_eq!(
+            full.iter()
+                .filter(|v| v.rule == DrcRuleType::Clearance)
+                .count(),
+            6
+        );
+        assert_eq!(
+            full.iter().filter(|v| v.rule == DrcRuleType::Short).count(),
+            1
+        );
+
+        let scoped = check_drc_in_region(&pcb, Vec2::new(5.0, 5.0), Vec2::new(25.0, 15.0));
+        let clearance: Vec<_> = scoped
+            .iter()
+            .filter(|v| v.rule == DrcRuleType::Clearance)
+            .collect();
+        assert_eq!(clearance.len(), 2, "only pair A is in scope");
+        assert!(clearance.iter().all(|v| v.position.y < 20.0));
+        assert_eq!(
+            scoped
+                .iter()
+                .filter(|v| v.rule == DrcRuleType::Short)
+                .count(),
+            1,
+            "shorts come from the global connectivity pass regardless of scope"
+        );
+    }
+
+    /// A region covering the whole board reproduces the full run exactly —
+    /// scoping changes subject selection, never rule logic.
+    #[test]
+    fn scoped_drc_covering_board_matches_full_run() {
+        let pcb = pcb_with_scattered_faults();
+        let full = check_drc(&pcb);
+        let scoped = check_drc_in_region(&pcb, Vec2::new(-10.0, -10.0), Vec2::new(110.0, 90.0));
+        assert_eq!(full, scoped);
     }
 }

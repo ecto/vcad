@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { validatePcb, pcbValidationError, VALID_LAYERS } from "../tools/pcb-validate.js";
+import { PCB_LAYERS } from "../tools/pcb-layers.js";
 import type { Pcb } from "@vcad/ir";
 
 function minimalPcb(overrides: Partial<Pcb> = {}): Pcb {
@@ -15,6 +16,18 @@ function minimalPcb(overrides: Partial<Pcb> = {}): Pcb {
     ...overrides,
   } as Pcb;
 }
+
+describe("PCB layer list (single source)", () => {
+  it("is the 21-name canonical list shared with the validator", () => {
+    expect(PCB_LAYERS).toHaveLength(21);
+    // pcb-validate's VALID_LAYERS must be derived from the shared PCB_LAYERS —
+    // same names, no drift between the two modules.
+    expect(new Set(VALID_LAYERS)).toEqual(new Set(PCB_LAYERS));
+    for (const layer of PCB_LAYERS) {
+      expect(VALID_LAYERS.has(layer)).toBe(true);
+    }
+  });
+});
 
 describe("validatePcb", () => {
   it("passes a well-formed board", () => {

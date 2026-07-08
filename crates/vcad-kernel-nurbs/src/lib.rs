@@ -624,6 +624,49 @@ impl NurbsCurve {
         Self::new(pts, knots, 2)
     }
 
+    /// Create a NURBS circle lying in the plane spanned by `x_dir` / `y_dir`.
+    ///
+    /// The parameter domain is `[0, 2π]` and coincides with the STEP circle
+    /// angle convention at the quadrant points (rational quadratic arcs
+    /// reparameterize nonlinearly between them, so intermediate parameters
+    /// are only approximately the geometric angle).
+    pub fn circle_in_frame(center: Point3, x_dir: Dir3, y_dir: Dir3, radius: f64) -> Self {
+        use std::f64::consts::{FRAC_1_SQRT_2, TAU};
+        let w = FRAC_1_SQRT_2;
+        let x = *x_dir.as_ref();
+        let y = *y_dir.as_ref();
+        let p = |a: f64, b: f64| center + x * (radius * a) + y * (radius * b);
+
+        let pts = vec![
+            WeightedPoint::new(p(1.0, 0.0), 1.0),
+            WeightedPoint::new(p(1.0, 1.0), w),
+            WeightedPoint::new(p(0.0, 1.0), 1.0),
+            WeightedPoint::new(p(-1.0, 1.0), w),
+            WeightedPoint::new(p(-1.0, 0.0), 1.0),
+            WeightedPoint::new(p(-1.0, -1.0), w),
+            WeightedPoint::new(p(0.0, -1.0), 1.0),
+            WeightedPoint::new(p(1.0, -1.0), w),
+            WeightedPoint::new(p(1.0, 0.0), 1.0),
+        ];
+
+        let knots = vec![
+            0.0,
+            0.0,
+            0.0,
+            0.25 * TAU,
+            0.25 * TAU,
+            0.5 * TAU,
+            0.5 * TAU,
+            0.75 * TAU,
+            0.75 * TAU,
+            TAU,
+            TAU,
+            TAU,
+        ];
+
+        Self::new(pts, knots, 2)
+    }
+
     /// Insert a knot using Boehm's algorithm (rational version).
     pub fn insert_knot(&self, t: f64) -> Self {
         let n = self.control_points.len() - 1;
@@ -786,6 +829,104 @@ impl NurbsSurface {
         (
             (self.knots_u[self.degree_u], self.knots_u[self.n_u]),
             (self.knots_v[self.degree_v], self.knots_v[self.n_v]),
+        )
+    }
+
+    /// Create an exact surface of revolution: the full 360° sweep of
+    /// `profile` about the axis through `axis_point` along `axis_dir`.
+    ///
+    /// Uses the standard 9-control-point rational quadratic circle
+    /// construction (Piegl & Tiller, *The NURBS Book*, §8.3): each profile
+    /// control point is swept into 9 weighted control points around the
+    /// axis, which reproduces the surface of revolution exactly.
+    ///
+    /// The `u` parameter is the sweep angle with domain `[0, 2π]` (matching
+    /// the STEP `SURFACE_OF_REVOLUTION` convention of `u` = angle); `v` is
+    /// the profile curve parameter (its knot vector is reused verbatim), so
+    /// the surface normal `∂u × ∂v` points the same way as the STEP surface
+    /// normal.
+    pub fn revolution(profile: &NurbsCurve, axis_point: Point3, axis_dir: Dir3) -> Self {
+        use std::f64::consts::{FRAC_1_SQRT_2, FRAC_PI_4, SQRT_2, TAU};
+        const N_U: usize = 9;
+
+        let a = *axis_dir.as_ref();
+        let mut pts = Vec::with_capacity(profile.control_points.len() * N_U);
+        for wp in &profile.control_points {
+            let rel = wp.point - axis_point;
+            let foot = axis_point + a * rel.dot(a);
+            let radial = wp.point - foot;
+            let r = radial.norm();
+            let (x, y) = if r > 1e-14 {
+                let x = radial / r;
+                (x, a.cross(x))
+            } else {
+                // Control point on the axis: all 9 swept points coincide.
+                (Vec3::zeros(), Vec3::zeros())
+            };
+            for i in 0..N_U {
+                let theta = FRAC_PI_4 * i as f64;
+                // Even indices lie on the swept circle; odd indices are the
+                // tangent-intersection corners at distance r·√2 with weight
+                // scaled by cos(45°).
+                let (scale, w) = if i % 2 == 0 {
+                    (r, wp.weight)
+                } else {
+                    (r * SQRT_2, wp.weight * FRAC_1_SQRT_2)
+                };
+                let p = foot + (x * theta.cos() + y * theta.sin()) * scale;
+                pts.push(WeightedPoint::new(p, w));
+            }
+        }
+
+        let knots_u = vec![
+            0.0,
+            0.0,
+            0.0,
+            0.25 * TAU,
+            0.25 * TAU,
+            0.5 * TAU,
+            0.5 * TAU,
+            0.75 * TAU,
+            0.75 * TAU,
+            TAU,
+            TAU,
+            TAU,
+        ];
+
+        Self::new(
+            pts,
+            N_U,
+            profile.control_points.len(),
+            knots_u,
+            profile.knots.clone(),
+            2,
+            profile.degree,
+        )
+    }
+
+    /// Create an exact extruded (translational sweep) surface: `profile`
+    /// swept along `direction`.
+    ///
+    /// The `u` parameter is the profile curve parameter (knot vector reused
+    /// verbatim, matching the STEP `SURFACE_OF_LINEAR_EXTRUSION` convention
+    /// of `u` = curve parameter); `v ∈ [0, 1]` sweeps from the profile to
+    /// `profile + direction`, so the surface normal `∂u × ∂v` matches the
+    /// STEP normal `C'(u) × direction`.
+    pub fn extrusion(profile: &NurbsCurve, direction: Vec3) -> Self {
+        let n_u = profile.control_points.len();
+        let mut pts = Vec::with_capacity(n_u * 2);
+        pts.extend_from_slice(&profile.control_points);
+        for wp in &profile.control_points {
+            pts.push(WeightedPoint::new(wp.point + direction, wp.weight));
+        }
+        Self::new(
+            pts,
+            n_u,
+            2,
+            profile.knots.clone(),
+            vec![0.0, 0.0, 1.0, 1.0],
+            profile.degree,
+            1,
         )
     }
 }
@@ -1251,6 +1392,138 @@ mod tests {
 
         let n = surf.normal(Point2::new(0.5, 0.5));
         assert!((n.as_ref().z.abs() - 1.0).abs() < 1e-6);
+    }
+
+    // ---- Revolution / extrusion tests ----
+
+    #[test]
+    fn test_circle_in_frame_arbitrary_plane() {
+        // Circle in the XZ plane (normal = Y), radius 4, centered at (10, 2, 0)
+        let center = Point3::new(10.0, 2.0, 0.0);
+        let x = Dir3::new_normalize(Vec3::x());
+        let y = Dir3::new_normalize(Vec3::z());
+        let circle = NurbsCurve::circle_in_frame(center, x, y, 4.0);
+
+        let (t_min, t_max) = circle.parameter_domain();
+        assert!((t_max - std::f64::consts::TAU).abs() < 1e-12);
+        for i in 0..=32 {
+            let t = t_min + (t_max - t_min) * i as f64 / 32.0;
+            let p = circle.eval(t);
+            let d = p - center;
+            assert!(d.y.abs() < 1e-10, "point should stay in plane: {}", d.y);
+            assert!(
+                (d.norm() - 4.0).abs() < 1e-8,
+                "radius at t={}: {}",
+                t,
+                d.norm()
+            );
+        }
+    }
+
+    #[test]
+    fn test_revolution_of_parallel_line_is_cylinder() {
+        // Segment at x=5 from z=0 to z=8, revolved about the Z axis.
+        let profile = NurbsCurve::new(
+            vec![
+                WeightedPoint::unweighted(Point3::new(5.0, 0.0, 0.0)),
+                WeightedPoint::unweighted(Point3::new(5.0, 0.0, 8.0)),
+            ],
+            vec![0.0, 0.0, 1.0, 1.0],
+            1,
+        );
+        let surf =
+            NurbsSurface::revolution(&profile, Point3::origin(), Dir3::new_normalize(Vec3::z()));
+
+        let ((u0, u1), (v0, v1)) = surf.parameter_domain();
+        for i in 0..=16 {
+            for j in 0..=8 {
+                let u = u0 + (u1 - u0) * i as f64 / 16.0;
+                let v = v0 + (v1 - v0) * j as f64 / 8.0;
+                let p = surf.eval(u, v);
+                let r = (p.x * p.x + p.y * p.y).sqrt();
+                assert!((r - 5.0).abs() < 1e-8, "radius at ({u},{v}): {r}");
+                assert!((-1e-9..=8.0 + 1e-9).contains(&p.z), "z: {}", p.z);
+            }
+        }
+        // v sweeps the profile: v=0 at z=0, v=1 at z=8
+        assert!(surf.eval(0.0, 0.0).z.abs() < 1e-9);
+        assert!((surf.eval(0.0, 1.0).z - 8.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_revolution_normal_orientation() {
+        use vcad_kernel_geom::Surface;
+        // Profile line going UP parallel to +Z at x=5: STEP normal
+        // (du × dv) must point radially outward.
+        let profile = NurbsCurve::new(
+            vec![
+                WeightedPoint::unweighted(Point3::new(5.0, 0.0, 0.0)),
+                WeightedPoint::unweighted(Point3::new(5.0, 0.0, 8.0)),
+            ],
+            vec![0.0, 0.0, 1.0, 1.0],
+            1,
+        );
+        let surf =
+            NurbsSurface::revolution(&profile, Point3::origin(), Dir3::new_normalize(Vec3::z()));
+        let n = surf.normal(Point2::new(0.1, 0.5));
+        let p = surf.eval(0.1, 0.5);
+        let outward = Vec3::new(p.x, p.y, 0.0).normalize();
+        assert!(
+            n.as_ref().dot(outward) > 0.9,
+            "normal should be outward: {:?}",
+            n
+        );
+    }
+
+    #[test]
+    fn test_revolution_of_offset_circle_is_torus() {
+        // Circle of radius 2 centered at (10, 0, 0) in the XZ plane,
+        // revolved about Z: torus R=10, r=2.
+        let profile = NurbsCurve::circle_in_frame(
+            Point3::new(10.0, 0.0, 0.0),
+            Dir3::new_normalize(Vec3::x()),
+            Dir3::new_normalize(Vec3::z()),
+            2.0,
+        );
+        let surf =
+            NurbsSurface::revolution(&profile, Point3::origin(), Dir3::new_normalize(Vec3::z()));
+
+        let ((u0, u1), (v0, v1)) = surf.parameter_domain();
+        for i in 0..=12 {
+            for j in 0..=12 {
+                let u = u0 + (u1 - u0) * i as f64 / 12.0;
+                let v = v0 + (v1 - v0) * j as f64 / 12.0;
+                let p = surf.eval(u, v);
+                // Torus implicit: (sqrt(x²+y²) - R)² + z² = r²
+                let ring = (p.x * p.x + p.y * p.y).sqrt() - 10.0;
+                let dist = (ring * ring + p.z * p.z).sqrt();
+                assert!((dist - 2.0).abs() < 1e-8, "torus dist at ({u},{v}): {dist}");
+            }
+        }
+    }
+
+    #[test]
+    fn test_extrusion_of_circle_is_cylinder() {
+        let profile = NurbsCurve::circle_in_frame(
+            Point3::origin(),
+            Dir3::new_normalize(Vec3::x()),
+            Dir3::new_normalize(Vec3::y()),
+            3.0,
+        );
+        let surf = NurbsSurface::extrusion(&profile, Vec3::new(0.0, 0.0, 12.0));
+
+        let ((u0, u1), (v0, v1)) = surf.parameter_domain();
+        for i in 0..=16 {
+            for j in 0..=4 {
+                let u = u0 + (u1 - u0) * i as f64 / 16.0;
+                let v = v0 + (v1 - v0) * j as f64 / 4.0;
+                let p = surf.eval(u, v);
+                let r = (p.x * p.x + p.y * p.y).sqrt();
+                assert!((r - 3.0).abs() < 1e-8, "radius at ({u},{v}): {r}");
+            }
+        }
+        assert!(surf.eval(0.0, 0.0).z.abs() < 1e-9);
+        assert!((surf.eval(0.0, 1.0).z - 12.0).abs() < 1e-9);
     }
 
     // ---- Knot utilities tests ----

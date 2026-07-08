@@ -1,0 +1,9 @@
+{
+  "id": "2026-07-07-boolean-ssi-error",
+  "version": "0.9.4",
+  "date": "2026-07-07",
+  "category": "fix",
+  "title": "Boolean SSI failures no longer crash the app",
+  "summary": "Surface-surface intersection failures in booleans now propagate as typed errors instead of panicking, so the browser surfaces a catchable error rather than a dead WASM kernel.",
+  "features": ["booleans", "stability", "wasm"]
+}

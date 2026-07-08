@@ -802,25 +802,14 @@ fn evaluate_op_timed(
 
             // Add component bounding boxes estimated from footprint pad extents
             for fp in &board.footprints {
-                if fp.pads.is_empty() {
+                let Some((min_x, min_y, max_x, max_y)) = footprint_component_world_bbox(fp) else {
                     continue;
-                }
-                let mut min_x = f64::INFINITY;
-                let mut min_y = f64::INFINITY;
-                let mut max_x = f64::NEG_INFINITY;
-                let mut max_y = f64::NEG_INFINITY;
-                for pad in &fp.pads {
-                    let (pw, ph) = pad_extent(&pad.shape);
-                    min_x = min_x.min(pad.position.x - pw / 2.0);
-                    max_x = max_x.max(pad.position.x + pw / 2.0);
-                    min_y = min_y.min(pad.position.y - ph / 2.0);
-                    max_y = max_y.max(pad.position.y + ph / 2.0);
-                }
+                };
                 let w = max_x - min_x;
                 let h = max_y - min_y;
                 let comp_h = 1.0; // component height estimate (mm)
-                let cx = fp.position.x + (min_x + max_x) / 2.0;
-                let cy = fp.position.y + (min_y + max_y) / 2.0;
+                let cx = (min_x + max_x) / 2.0;
+                let cy = (min_y + max_y) / 2.0;
 
                 let comp_box = Solid::cube(w, h, comp_h);
                 let z_off = if fp.front {
@@ -940,6 +929,39 @@ fn evaluate_op_timed(
     }
 }
 
+/// Resolve IR engraving primitives to root-panel-local polylines (text →
+/// single-stroke font polylines via the kernel).
+fn resolve_ir_engravings(
+    engravings: Option<&Vec<vcad_ir::SheetMetalEngraving>>,
+) -> Result<Vec<Vec<vcad_kernel_math::Point2>>, String> {
+    use vcad_kernel_math::Point2;
+    let mut out = Vec::new();
+    for (i, e) in engravings.into_iter().flatten().enumerate() {
+        match e {
+            vcad_ir::SheetMetalEngraving::Polyline { points } => {
+                if points.len() < 2 {
+                    return Err(format!("engraving #{i}: polyline needs >= 2 points"));
+                }
+                out.push(points.iter().map(|p| Point2::new(p.x, p.y)).collect());
+            }
+            vcad_ir::SheetMetalEngraving::Text {
+                text,
+                x,
+                y,
+                height,
+                angle,
+            } => {
+                let strokes = vcad_kernel::vcad_kernel_sheet::text_to_polylines(
+                    text, *x, *y, *height, *angle,
+                )
+                .map_err(|e| format!("engraving #{i} ({text:?}): {e}"))?;
+                out.extend(strokes);
+            }
+        }
+    }
+    Ok(out)
+}
+
 /// Build a [`vcad_kernel_sheet::SheetMetalModel`] from a sheet-metal op chain.
 /// Edge flanges reference their `parent` node, so this recurses down the chain
 /// (mirroring [`collect_transform_chain`]) and applies each flange in order.
@@ -962,11 +984,13 @@ fn build_sheet_model(
             depth,
             thickness,
             material,
+            engravings,
             ..
         } => {
             let mut model =
                 base_flange_rect(*width, *depth, *thickness).map_err(|e| sm(e.to_string()))?;
             model.material = material.clone();
+            model.engravings = resolve_ir_engravings(engravings.as_ref()).map_err(sm)?;
             Ok(model)
         }
 
@@ -975,6 +999,7 @@ fn build_sheet_model(
             holes,
             thickness,
             material,
+            engravings,
             ..
         } => {
             let to_pts = |v: &Vec<vcad_ir::Vec2>| {
@@ -985,6 +1010,7 @@ fn build_sheet_model(
             let mut model = base_flange_polygon_with_holes(outer, hole_loops, *thickness)
                 .map_err(|e| sm(e.to_string()))?;
             model.material = material.clone();
+            model.engravings = resolve_ir_engravings(engravings.as_ref()).map_err(sm)?;
             Ok(model)
         }
 
@@ -1391,6 +1417,45 @@ fn op_name(op: &CsgOp) -> String {
 }
 
 /// Estimate the width/height extent of a pad shape.
+/// World-space AABB `(min_x, min_y, max_x, max_y)` of a footprint's estimated
+/// component box, derived from pad extents in the footprint-local frame and
+/// rotated by the footprint rotation. Returns `None` for footprints with no pads.
+fn footprint_component_world_bbox(fp: &vcad_ir::ecad::Footprint) -> Option<(f64, f64, f64, f64)> {
+    if fp.pads.is_empty() {
+        return None;
+    }
+    let mut min_x = f64::INFINITY;
+    let mut min_y = f64::INFINITY;
+    let mut max_x = f64::NEG_INFINITY;
+    let mut max_y = f64::NEG_INFINITY;
+    for pad in &fp.pads {
+        let (pw, ph) = pad_extent(&pad.shape);
+        min_x = min_x.min(pad.position.x - pw / 2.0);
+        max_x = max_x.max(pad.position.x + pw / 2.0);
+        min_y = min_y.min(pad.position.y - ph / 2.0);
+        max_y = max_y.max(pad.position.y + ph / 2.0);
+    }
+    let (sin_r, cos_r) = fp.rotation.to_radians().sin_cos();
+    let mut wmin_x = f64::INFINITY;
+    let mut wmin_y = f64::INFINITY;
+    let mut wmax_x = f64::NEG_INFINITY;
+    let mut wmax_y = f64::NEG_INFINITY;
+    for (lx, ly) in [
+        (min_x, min_y),
+        (min_x, max_y),
+        (max_x, min_y),
+        (max_x, max_y),
+    ] {
+        let wx = fp.position.x + lx * cos_r - ly * sin_r;
+        let wy = fp.position.y + lx * sin_r + ly * cos_r;
+        wmin_x = wmin_x.min(wx);
+        wmax_x = wmax_x.max(wx);
+        wmin_y = wmin_y.min(wy);
+        wmax_y = wmax_y.max(wy);
+    }
+    Some((wmin_x, wmin_y, wmax_x, wmax_y))
+}
+
 fn pad_extent(shape: &PadShape) -> (f64, f64) {
     match shape {
         PadShape::Circle { diameter } => (*diameter, *diameter),
@@ -1793,5 +1858,71 @@ fn tri_to_evaluated_render(mut tri: TriangleMesh) -> EvaluatedMesh {
         } else {
             None
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use vcad_ir::ecad::PadType;
+    use vcad_ir::Vec2;
+
+    fn pad(number: &str, x: f64, y: f64, w: f64, h: f64) -> Pad {
+        Pad {
+            number: number.to_string(),
+            pad_type: PadType::SMD,
+            shape: PadShape::Rect {
+                width: w,
+                height: h,
+            },
+            position: Vec2 { x, y },
+            rotation: 0.0,
+            drill: None,
+            net: None,
+            layers: vec![PcbLayer::FCu],
+        }
+    }
+
+    fn two_pad_footprint(rotation: f64) -> Footprint {
+        Footprint {
+            reference: "R1".to_string(),
+            value: "10k".to_string(),
+            footprint_name: "R_0805".to_string(),
+            position: Vec2 { x: 10.0, y: 5.0 },
+            rotation,
+            front: true,
+            pads: vec![pad("1", -1.0, 0.0, 1.0, 1.4), pad("2", 1.0, 0.0, 1.0, 1.4)],
+            graphics: Vec::new(),
+            model_3d: None,
+            properties: Default::default(),
+        }
+    }
+
+    #[test]
+    fn component_bbox_unrotated() {
+        let (min_x, min_y, max_x, max_y) =
+            footprint_component_world_bbox(&two_pad_footprint(0.0)).unwrap();
+        assert!((max_x - min_x - 3.0).abs() < 1e-9);
+        assert!((max_y - min_y - 1.4).abs() < 1e-9);
+        assert!(((min_x + max_x) / 2.0 - 10.0).abs() < 1e-9);
+        assert!(((min_y + max_y) / 2.0 - 5.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn component_bbox_rotated_90_swaps_extents() {
+        let (min_x, min_y, max_x, max_y) =
+            footprint_component_world_bbox(&two_pad_footprint(90.0)).unwrap();
+        // 90° rotation swaps width/height of the local pad-extent AABB.
+        assert!((max_x - min_x - 1.4).abs() < 1e-9);
+        assert!((max_y - min_y - 3.0).abs() < 1e-9);
+        assert!(((min_x + max_x) / 2.0 - 10.0).abs() < 1e-9);
+        assert!(((min_y + max_y) / 2.0 - 5.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn component_bbox_no_pads_is_none() {
+        let mut fp = two_pad_footprint(0.0);
+        fp.pads.clear();
+        assert!(footprint_component_world_bbox(&fp).is_none());
     }
 }

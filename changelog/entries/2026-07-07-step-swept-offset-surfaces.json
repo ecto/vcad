@@ -1,0 +1,9 @@
+{
+  "id": "2026-07-07-step-swept-offset-surfaces",
+  "version": "0.9.4",
+  "date": "2026-07-07",
+  "category": "feat",
+  "title": "STEP import: revolution, extrusion, offset surfaces",
+  "summary": "SURFACE_OF_REVOLUTION, SURFACE_OF_LINEAR_EXTRUSION, and OFFSET_SURFACE now import — analytic when exact, NURBS otherwise — so SolidWorks/Fusion/Catia exports stop losing faces.",
+  "features": ["step-import", "brep-kernel", "nurbs"]
+}

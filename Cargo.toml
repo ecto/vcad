@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/vcad-ir",
+    "crates/vcad-receipt",
     "crates/vcad-parts",
     "crates/vcad",
     "crates/vcad-kernel-math",
@@ -76,6 +77,7 @@ members = [
 # is actually working on the desktop shell opts in with `-p vcad-desktop`.
 default-members = [
     "crates/vcad-ir",
+    "crates/vcad-receipt",
     "crates/vcad-parts",
     "crates/vcad",
     "crates/vcad-kernel-math",
@@ -169,6 +171,7 @@ opencascade = { version = "0.2" }
 # by scripts/sync-version.mjs — don't hand-edit them, edit a changelog entry and
 # run `npm run version:sync`.
 vcad-ir = { path = "crates/vcad-ir", version = "0.9.4" }
+vcad-receipt = { path = "crates/vcad-receipt", version = "0.9.4" }
 vcad-parts = { path = "crates/vcad-parts", version = "0.9.4" }
 vcad-kernel = { path = "crates/vcad-kernel", version = "0.9.4" }
 vcad-kernel-math = { path = "crates/vcad-kernel-math", version = "0.9.4" }

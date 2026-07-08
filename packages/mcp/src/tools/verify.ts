@@ -29,6 +29,8 @@ import { dirname, join } from "path";
 import { fileURLToPath } from "url";
 import { promisify } from "util";
 import { getSession } from "./session.js";
+import { behavior, type ToolDef } from "./tool-def.js";
+import { toolResult, type ToolResult } from "./tool-result.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -59,16 +61,10 @@ export const listEvalTasksSchema = {
   },
 };
 
-interface TextResult {
-  content: Array<{ type: "text"; text: string }>;
-  isError?: boolean;
-}
+type TextResult = ToolResult;
 
 function textResult(payload: unknown, isError = false): TextResult {
-  return {
-    content: [{ type: "text", text: JSON.stringify(payload) }],
-    ...(isError ? { isError: true } : {}),
-  };
+  return toolResult(payload, { isError });
 }
 
 /** Walk up from `start` looking for a directory containing `probe`. */
@@ -267,3 +263,24 @@ export async function verifyPart(
     rmSync(scratch, { recursive: true, force: true });
   }
 }
+
+export const toolDefs: ToolDef[] = [
+  {
+    name: "verify_part",
+    pack: "eval",
+    description:
+      "Grade an open session document against a mecheval benchmark task using the official deterministic graders (the exact binaries the leaderboard runs). Returns pass/fail per check — bounding box, mass properties, hole positions, STEP round-trip, … — with measured-vs-expected details so you can iterate until green. Use list_eval_tasks to browse task ids.",
+    inputSchema: verifyPartSchema,
+    handler: (a) => verifyPart(a),
+    behavior: behavior({}),
+  },
+  {
+    name: "list_eval_tasks",
+    pack: "eval",
+    description:
+      "List mecheval benchmark tasks (id, suite, tier, title, prompt, check count). Suites: A authoring, B kernel, C mech/physics, D visual, F fit. Pair with verify_part for self-graded practice and verification.",
+    inputSchema: listEvalTasksSchema,
+    handler: (a) => listEvalTasks(a),
+    behavior: behavior({}),
+  },
+];

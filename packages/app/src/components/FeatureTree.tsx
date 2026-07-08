@@ -58,6 +58,7 @@ import { useEmbroideryStore } from "@/stores/embroidery-store";
 import type { PrimitiveKind, PartInfo, BooleanPartInfo, PrimitivePartInfo, SweepPartInfo, ExtrudePartInfo, RevolvePartInfo, FilletPartInfo, ChamferPartInfo, ShellPartInfo } from "@vcad/core";
 import type { PartInstance, Joint, JointKind } from "@vcad/ir";
 import { cn } from "@/lib/utils";
+import { analytics } from "@/lib/analytics";
 import { MoleculeTreeSection } from "./MoleculeTree";
 import { getPartSummary } from "./tree/part-summary";
 import { InlineCubeDimensions, InlineCylinderDimensions, InlineSphereDimensions, InlineExtrudeDimensions, InlineRevolveDimensions, InlineFilletDimensions, InlineChamferDimensions, InlineShellDimensions, InlineSweepProperties } from "./tree/InlineDimensions";
@@ -199,7 +200,10 @@ function SketchTreeSection() {
           type="button"
           onClick={() => {
             const exited = requestExit();
-            if (exited) addToast(t("tree.sketch.cancelled"), "info");
+            if (exited) {
+              analytics.sketchAbandoned("empty");
+              addToast(t("tree.sketch.cancelled"), "info");
+            }
           }}
           className="px-2 py-1 text-xs text-text-muted hover:text-text hover:bg-hover/60"
           title={t("tree.sketch.cancel_tooltip")}
@@ -222,6 +226,7 @@ function SketchTreeSection() {
               type="button"
               onClick={() => {
                 confirmExit();
+                analytics.sketchAbandoned("discarded");
                 addToast(t("tree.sketch.discarded"), "info");
               }}
               className="flex-1 rounded-md px-2 py-1.5 text-xs font-medium bg-red-600 hover:bg-red-700 text-white transition-colors"

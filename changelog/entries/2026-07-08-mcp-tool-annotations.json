@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-08-mcp-tool-annotations",
+  "version": "0.9.4",
+  "date": "2026-07-08",
+  "category": "feat",
+  "title": "MCP tools declare titles, annotations, and output schemas",
+  "summary": "Every MCP tool now advertises a human-readable title and truthful annotations (readOnly/destructive/openWorld hints); tools that always return structured content declare a matching outputSchema.",
+  "features": ["mcp", "tooling"],
+  "mcpTools": []
+}

@@ -3,14 +3,16 @@
  * document. Sums volume, surface area, mass (when materials carry
  * density), and the overall bounding box across every part.
  *
- * Per-part inspection (the chat surface's `inspect_part` and
- * `describe_scene`) is deferred to a follow-up — those need
- * scene-relative anchors and aren't yet routable through the IR-direct
- * MCP path.
+ * Per-part inspection lives in `inspect_part` / `describe_scene` (dispatched
+ * through the kernel registry surface) and part-pair clearance in `measure`;
+ * all three reuse the tessellation-bound mesh math exported from here.
  */
 
 import type { Engine, TriangleMesh } from "@vcad/engine";
-import { getSession } from "./session.js";
+import type { Document } from "@vcad/ir";
+import { isoperimetricViolation } from "./integrity.js";
+import { resolveDocInput } from "./session.js";
+import { behavior, type ToolDef } from "./tool-def.js";
 
 export const inspectCadSchema = {
   type: "object" as const,
@@ -19,17 +21,23 @@ export const inspectCadSchema = {
       type: "string" as const,
       description: "Session id from open_document.",
     },
+    document: {
+      type: "object" as const,
+      description:
+        "Inline Document IR to inspect instead of a session. Use this stateless " +
+        "path when no `document_id` is resident (e.g. a cold serverless instance).",
+    },
   },
-  required: ["document_id"],
 };
 
-interface BoundingBox {
+/** An axis-aligned bounding box in kernel (Z-up, mm) coordinates. */
+export interface BoundingBox {
   min: { x: number; y: number; z: number };
   max: { x: number; y: number; z: number };
 }
 
 /** Per-part mass information. */
-interface PartMassInfo {
+export interface PartMassInfo {
   name: string;
   volume_mm3: number;
   material: string;
@@ -37,7 +45,7 @@ interface PartMassInfo {
   mass_g?: number;
 }
 
-interface InspectResult {
+export interface InspectResult {
   volume_mm3: number;
   surface_area_mm2: number;
   bounding_box: BoundingBox;
@@ -46,6 +54,12 @@ interface InspectResult {
   parts: number;
   mass_g?: number;
   part_masses?: PartMassInfo[];
+  /**
+   * Geometry-integrity violations (e.g. a part whose volume/area pair
+   * breaks the isoperimetric bound A³ ≥ 36πV², which no real solid can).
+   * Absent when the inspection is clean.
+   */
+  warnings?: string[];
 }
 
 /** Calculate signed volume of a triangle with origin. */
@@ -92,8 +106,10 @@ function getVertex(
   return [mesh.positions[i], mesh.positions[i + 1], mesh.positions[i + 2]];
 }
 
-/** Compute properties for a single mesh. */
-function computeMeshProperties(mesh: TriangleMesh): {
+/** Compute properties for a single mesh. Exported so `measure` and the
+ *  per-part `inspect_part` / `describe_scene` tools share one implementation
+ *  of the tessellation-bound volume/area/bbox/centroid math. */
+export function computeMeshProperties(mesh: TriangleMesh): {
   volume: number;
   area: number;
   bbox: BoundingBox;
@@ -200,14 +216,10 @@ function computeMeshProperties(mesh: TriangleMesh): {
   };
 }
 
-export function inspectCad(
-  input: unknown,
-  engine: Engine,
-): { content: Array<{ type: "text"; text: string }> } {
-  const args = (input ?? {}) as Record<string, unknown>;
-  const documentId = String(args.document_id ?? "");
-  const ir = getSession(documentId);
-
+/** Evaluate a document and aggregate its geometry properties. Shared by
+ *  `inspect_cad` and `predict_print` (which snapshots the same numbers as
+ *  pre-print measurables). */
+export function computeInspection(ir: Document, engine: Engine): InspectResult {
   // Evaluate the document
   const scene = engine.evaluate(ir);
 
@@ -231,6 +243,7 @@ export function inspectCad(
   };
 
   const partMasses: PartMassInfo[] = [];
+  const warnings: string[] = [];
 
   // Find the root nodes to get part names
   const rootNameMap = new Map<number, string>();
@@ -270,6 +283,20 @@ export function inspectCad(
     // Get part name from root or use index
     const rootEntry = ir.roots[i];
     const partName = rootEntry ? rootNameMap.get(rootEntry.root) ?? `part_${i + 1}` : `part_${i + 1}`;
+
+    // Isoperimetric impossibility: A³ ≥ 36πV² for any real solid, so a
+    // violating (volume, area) pair means the volume integral is corrupt
+    // (wrong-but-watertight boolean result) — flag it instead of returning
+    // the impossible numbers silently.
+    const impossible = isoperimetricViolation(props.volume, props.area);
+    if (impossible) {
+      warnings.push(
+        `part "${partName}" volume ${Math.round(props.volume * 1000) / 1000} mm³ is isoperimetrically impossible ` +
+          `for its ${Math.round(props.area * 1000) / 1000} mm² of surface (A³ ≥ 36πV² for any real solid; this ` +
+          `area can enclose at most ≈${Math.round(impossible.max_volume_mm3 * 1000) / 1000} mm³) — the volume ` +
+          `integral is corrupt, do not trust this geometry`,
+      );
+    }
 
     const partMassInfo: PartMassInfo = {
       name: partName,
@@ -331,6 +358,22 @@ export function inspectCad(
     result.part_masses = partMasses;
   }
 
+  if (warnings.length > 0) {
+    result.warnings = warnings;
+  }
+
+  return result;
+}
+
+export function inspectCad(
+  input: unknown,
+  engine: Engine,
+): { content: Array<{ type: "text"; text: string }> } {
+  const args = (input ?? {}) as Record<string, unknown>;
+  const { doc: ir } = resolveDocInput(args);
+
+  const result = computeInspection(ir, engine);
+
   return {
     content: [
       {
@@ -340,3 +383,15 @@ export function inspectCad(
     ],
   };
 }
+
+export const toolDefs: ToolDef[] = [
+  {
+    name: "inspect_cad",
+    pack: null,
+    description:
+      "Inspect an open session document to get aggregate geometry properties: volume, surface area, bounding box, center of mass, triangle count, and mass (if material density is known). For per-part detail use `inspect_part` (one part) or `describe_scene` (every part at once); for the gap or overlap between two parts use `measure`.",
+    inputSchema: inspectCadSchema,
+    handler: (a, c) => inspectCad(a, c.engine),
+    behavior: behavior({}),
+  },
+];

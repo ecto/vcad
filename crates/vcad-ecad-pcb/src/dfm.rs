@@ -30,6 +30,7 @@ use serde::{Deserialize, Serialize};
 use vcad_ir::ecad::{FootprintGraphic, Pad, PadShape, PadType, Pcb, PcbLayer};
 use vcad_ir::Vec2;
 
+use crate::drc::NetTieGroups;
 use crate::spatial::{copper_elements, pad_geom, CopperElement, CopperGeom};
 
 /// Distance comparison epsilon (mm). Matches the DRC engine's tolerance.
@@ -228,6 +229,9 @@ pub struct DfmLocation {
     pub y: f64,
     /// Short human label (net, ref, measured value).
     pub label: String,
+    /// The two net names in contact, for net-pair findings (clearance).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub nets: Option<[String; 2]>,
 }
 
 /// The pass/fail verdict for one rule.
@@ -460,11 +464,16 @@ fn midpoint(a: Vec2, b: Vec2) -> Vec2 {
 }
 
 fn push_loc(locs: &mut Vec<DfmLocation>, p: Vec2, label: String) {
+    push_loc_nets(locs, p, label, None);
+}
+
+fn push_loc_nets(locs: &mut Vec<DfmLocation>, p: Vec2, label: String, nets: Option<[String; 2]>) {
     if locs.len() < MAX_LOCS {
         locs.push(DfmLocation {
             x: p.x,
             y: p.y,
             label,
+            nets,
         });
     }
 }
@@ -538,10 +547,7 @@ fn pad_min_dimension(pad: &Pad) -> f64 {
 
 /// Absolute board-frame center of a pad on its footprint.
 fn pad_center(fp: &vcad_ir::ecad::Footprint, pad: &Pad) -> Vec2 {
-    Vec2::new(
-        fp.position.x + pad.position.x,
-        fp.position.y + pad.position.y,
-    )
+    crate::geometry::pad_world_position(fp, pad)
 }
 
 /// Assemble a "minimum metric" rule result (smaller is worse).
@@ -630,6 +636,7 @@ fn check_min_trace_width(pcb: &Pcb, rule: &Rule, oz: f64) -> PcbDfmRuleResult {
 fn check_min_clearance(pcb: &Pcb, rule: &Rule, oz: f64) -> PcbDfmRuleResult {
     let limit = rule.oz_threshold(oz).unwrap_or(0.0);
     let elems = copper_elements(pcb);
+    let net_ties = NetTieGroups::from_pcb(pcb);
     // Bucket by layer so we only compare coplanar copper, then pairwise within
     // each layer (i<j, different net). Mirrors the DRC engine's O(n²) pad pass;
     // fine for typical board element counts, and DFM is an on-demand check.
@@ -650,17 +657,26 @@ fn check_min_clearance(pcb: &Pcb, rule: &Rule, oz: f64) -> PcbDfmRuleResult {
                 if a.net == b.net {
                     continue; // same net never violates spacing
                 }
+                let pa = Vec2::new((a.min[0] + a.max[0]) / 2.0, (a.min[1] + a.max[1]) / 2.0);
+                let pb = Vec2::new((b.min[0] + b.max[0]) / 2.0, (b.min[1] + b.max[1]) / 2.0);
+                let contact = midpoint(pa, pb);
+                // A deliberate junction between net-tied nets is not a spacing
+                // defect — same exemption (and region scoping) the DRC engine
+                // applies. Skipped pairs also stay out of `worst`, so a
+                // passing report never shows a 0mm tied contact as tightest.
+                if net_ties.exempt(&a.net, &b.net, contact) {
+                    continue;
+                }
                 applicable = true;
                 let d = a.geom.distance_to(&b.geom);
                 worst = worst.min(d);
                 if d < limit - EPS {
                     violations += 1;
-                    let pa = Vec2::new((a.min[0] + a.max[0]) / 2.0, (a.min[1] + a.max[1]) / 2.0);
-                    let pb = Vec2::new((b.min[0] + b.max[0]) / 2.0, (b.min[1] + b.max[1]) / 2.0);
-                    push_loc(
+                    push_loc_nets(
                         &mut locs,
-                        midpoint(pa, pb),
+                        contact,
                         format!("'{}'↔'{}' {:.3}mm", a.net, b.net, d),
+                        Some([a.net.clone(), b.net.clone()]),
                     );
                 }
             }
@@ -1579,6 +1595,7 @@ mod tests {
             width: 0.3,
             layer: PcbLayer::FCu,
             net: "SIG".into(),
+            source: None,
         });
         let report = check_dfm(&pcb, PcbFabProfile::Jlcpcb, None).unwrap();
         assert_eq!(report.profile, "jlcpcb");
@@ -1601,6 +1618,7 @@ mod tests {
             width: 0.08,
             layer: PcbLayer::FCu,
             net: "SIG".into(),
+            source: None,
         });
         // 2) A via with a 0.1mm drill — below JLC 0.2mm min drill, and a
         //    0.05mm annular ring (0.2 dia / 0.1 drill) below 0.13mm.
@@ -1611,6 +1629,7 @@ mod tests {
             start_layer: PcbLayer::FCu,
             end_layer: PcbLayer::BCu,
             net: "SIG".into(),
+            source: None,
         });
 
         let report = check_dfm(&pcb, PcbFabProfile::Jlcpcb, None).unwrap();
@@ -1648,6 +1667,7 @@ mod tests {
             width: 0.15,
             layer: PcbLayer::FCu,
             net: "SIG".into(),
+            source: None,
         });
         let report = check_dfm(&pcb, PcbFabProfile::Jlcpcb, None).unwrap();
         assert_eq!(report.copper_weight_oz, 2.0);
@@ -1691,6 +1711,7 @@ mod tests {
             start_layer: PcbLayer::FCu,
             end_layer: PcbLayer::BCu,
             net: "SIG".into(),
+            source: None,
         });
 
         let jlc = check_dfm(&pcb, PcbFabProfile::Jlcpcb, None).unwrap();
@@ -1765,6 +1786,7 @@ mod tests {
             width: 0.3,
             layer: PcbLayer::FCu,
             net: "SIG".into(),
+            source: None,
         });
         pcb.traces.push(Trace {
             start: Vec2::new(20.0, 20.0),
@@ -1772,12 +1794,173 @@ mod tests {
             width: 0.3,
             layer: PcbLayer::FCu,
             net: "SIG".into(),
+            source: None,
         });
         let report = check_dfm(&pcb, PcbFabProfile::Jlcpcb, None).unwrap();
         let at = find(&report, "acid_trap");
         assert!(at.applicable);
         assert!(!at.passed, "a sub-90° junction is an acid trap");
         assert!(at.measured.unwrap() < 90.0);
+    }
+
+    fn fcu_trace(start: (f64, f64), end: (f64, f64), net: &str) -> Trace {
+        Trace {
+            start: Vec2::new(start.0, start.1),
+            end: Vec2::new(end.0, end.1),
+            width: 0.3,
+            layer: PcbLayer::FCu,
+            net: net.into(),
+            source: None,
+        }
+    }
+
+    /// Four radials meeting at a star point (25,20) — the junction shape
+    /// `add_motor_winding`'s wye interconnect realizes.
+    fn wye_junction_pcb() -> Pcb {
+        let mut pcb = base_pcb();
+        pcb.traces
+            .push(fcu_trace((25.0, 20.0), (20.0, 20.0), "PHA"));
+        pcb.traces
+            .push(fcu_trace((25.0, 20.0), (30.0, 20.0), "PHB"));
+        pcb.traces
+            .push(fcu_trace((25.0, 20.0), (25.0, 25.0), "PHC"));
+        pcb.traces
+            .push(fcu_trace((25.0, 20.0), (25.0, 15.0), "WIND_N"));
+        pcb
+    }
+
+    #[test]
+    fn min_clearance_exempts_region_scoped_wye_tie() {
+        // Control: without the tie, the touching phase nets violate spacing.
+        let bare = wye_junction_pcb();
+        let report = check_dfm(&bare, PcbFabProfile::Jlcpcb, None).unwrap();
+        assert!(
+            !find(&report, "min_clearance").passed,
+            "untied star junction must fail min_clearance"
+        );
+
+        // With the region-scoped tie covering the junction (what the wye
+        // realizer emits), the same contacts are deliberate and exempt.
+        let mut tied = wye_junction_pcb();
+        tied.net_ties.push(NetTie {
+            nets: vec!["PHA".into(), "PHB".into(), "PHC".into(), "WIND_N".into()],
+            position: Some(Vec2::new(25.0, 20.0)),
+            radius: Some(5.0),
+        });
+        let report = check_dfm(&tied, PcbFabProfile::Jlcpcb, None).unwrap();
+        let mc = find(&report, "min_clearance");
+        assert!(
+            mc.passed,
+            "tied wye junction must pass min_clearance: {mc:?}"
+        );
+        assert_eq!(mc.violations, 0);
+        // Exempt pairs stay out of `measured` too — every different-net pair
+        // here is tied, so the rule has nothing left to measure.
+        assert!(!mc.applicable);
+        assert_eq!(mc.measured, None);
+    }
+
+    #[test]
+    fn min_clearance_region_scoped_tie_elsewhere_does_not_exempt() {
+        let mut pcb = wye_junction_pcb();
+        // Same nets tied, but the region is nowhere near the junction.
+        pcb.net_ties.push(NetTie {
+            nets: vec!["PHA".into(), "PHB".into(), "PHC".into(), "WIND_N".into()],
+            position: Some(Vec2::new(5.0, 5.0)),
+            radius: Some(2.0),
+        });
+        let report = check_dfm(&pcb, PcbFabProfile::Jlcpcb, None).unwrap();
+        assert!(
+            !find(&report, "min_clearance").passed,
+            "contacts outside the tie region must still violate"
+        );
+    }
+
+    #[test]
+    fn min_clearance_ignores_same_net_junctions() {
+        let mut pcb = base_pcb();
+        pcb.traces
+            .push(fcu_trace((10.0, 10.0), (20.0, 10.0), "SIG"));
+        pcb.traces
+            .push(fcu_trace((20.0, 10.0), (20.0, 20.0), "SIG"));
+        let report = check_dfm(&pcb, PcbFabProfile::Jlcpcb, None).unwrap();
+        let mc = find(&report, "min_clearance");
+        assert!(mc.passed, "same-net junction is never a spacing defect");
+        assert!(!mc.applicable, "no different-net pairs to check");
+    }
+
+    #[test]
+    fn min_clearance_reports_position_and_nets_for_genuine_gap() {
+        let mut pcb = base_pcb();
+        // Two parallel different-net traces: 0.4mm center gap − 0.3mm width
+        // = 0.1mm copper gap, below JLC's 0.127mm 1oz floor. No tie covers
+        // them; an unrelated tie must not exempt anything.
+        pcb.traces.push(fcu_trace((10.0, 10.0), (20.0, 10.0), "A"));
+        pcb.traces.push(fcu_trace((10.0, 10.4), (20.0, 10.4), "B"));
+        pcb.net_ties.push(NetTie {
+            nets: vec!["X".into(), "Y".into()],
+            position: None,
+            radius: None,
+        });
+        let report = check_dfm(&pcb, PcbFabProfile::Jlcpcb, None).unwrap();
+        let mc = find(&report, "min_clearance");
+        assert!(!mc.passed, "a genuine 0.1mm different-net gap must fail");
+        assert_eq!(mc.violations, 1);
+        assert!((mc.measured.unwrap() - 0.1).abs() < 1e-6);
+        // The violation carries a triageable position and structured nets.
+        let loc = &mc.locations[0];
+        assert!((loc.x - 15.0).abs() < 1e-6);
+        assert!((loc.y - 10.2).abs() < 1e-6);
+        let nets = loc.nets.as_ref().expect("clearance location carries nets");
+        assert!(nets.contains(&"A".to_string()));
+        assert!(nets.contains(&"B".to_string()));
+    }
+
+    /// Field repro: the stator-v3 9s/6p wye board (examples/pcb-motor). Its
+    /// star point is one region-scoped tie over {PHA,PHB,PHC,WIND_N} at
+    /// (46.691, 27.715) r=2.95, and dfm_check in the field flagged four
+    /// phase↔neutral contacts inside that region as min_clearance errors
+    /// while the tie-aware DRC was clean. Encode those exact contacts here:
+    /// covered by the tie they must pass; with the tie moved 5mm away every
+    /// junction is a genuine violation again.
+    #[test]
+    fn min_clearance_field_repro_stator_v3_star_point() {
+        const TIE: (f64, f64) = (46.691, 27.715);
+        const CONTACTS: [((f64, f64), &str); 4] = [
+            ((46.8485, 27.197), "PHA"),
+            ((46.503, 27.44325), "PHB"),
+            ((46.2035, 27.7515), "PHC"),
+            ((45.66225, 28.0885), "PHC"),
+        ];
+        let board = |tie_at: (f64, f64)| {
+            let mut pcb = base_pcb();
+            for ((x, y), phase) in CONTACTS {
+                // Phase and neutral stubs meeting at the reported contact.
+                pcb.traces.push(fcu_trace((x, y), (x, y + 0.5), phase));
+                pcb.traces.push(fcu_trace((x, y), (x, y - 0.5), "WIND_N"));
+            }
+            pcb.net_ties.push(NetTie {
+                nets: vec!["PHA".into(), "PHB".into(), "PHC".into(), "WIND_N".into()],
+                position: Some(Vec2::new(tie_at.0, tie_at.1)),
+                radius: Some(2.95),
+            });
+            pcb
+        };
+
+        let report = check_dfm(&board(TIE), PcbFabProfile::Jlcpcb, None).unwrap();
+        let mc = find(&report, "min_clearance");
+        assert!(
+            mc.passed && mc.violations == 0,
+            "contacts inside the tie region must be exempt: {mc:?}"
+        );
+        assert!(mc.locations.is_empty());
+
+        let report = check_dfm(&board((TIE.0 - 5.0, TIE.1)), PcbFabProfile::Jlcpcb, None).unwrap();
+        let mc = find(&report, "min_clearance");
+        assert!(
+            !mc.passed && mc.violations >= 4,
+            "with the tie 5mm away every star contact must violate: {mc:?}"
+        );
     }
 
     #[test]
@@ -1789,6 +1972,7 @@ mod tests {
             width: 0.08,
             layer: PcbLayer::FCu,
             net: "SIG".into(),
+            source: None,
         });
         // A bespoke pack that allows 0.05mm traces.
         let custom = r#"

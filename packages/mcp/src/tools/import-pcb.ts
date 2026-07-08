@@ -16,6 +16,8 @@ import { readFileSync, existsSync, statSync } from "node:fs";
 import { resolveWithinRoot } from "./safe-path.js";
 import { isRemoteDeployment } from "./remote.js";
 import { registerSession } from "./session.js";
+import { behavior, type ToolDef } from "./tool-def.js";
+import type { ToolResult } from "./tool-result.js";
 
 /** Cap imports at 64 MB so a remote caller can't pin memory. */
 const MAX_PCB_BYTES = 64 * 1024 * 1024;
@@ -196,3 +198,29 @@ export function importEagle(_input: unknown) {
       "KiCad (File > Export > KiCad .kicad_pcb) and use import_kicad instead.",
   );
 }
+
+export const toolDefs: ToolDef[] = [
+  {
+    name: "import_kicad",
+    pack: "ecad",
+    description:
+      "Import an existing KiCad .kicad_pcb board into a live session — board " +
+      "outline, footprints with pads + nets, design rules, and any routed " +
+      "traces/vias/zones. Returns a document_id ready for render_pcb, " +
+      "run_drc, get_pad_positions, route_nets, and export_gerber. Pass " +
+      "content_base64 on hosted servers.",
+    inputSchema: importKicadSchema,
+    handler: async (a) => (await importKicad(a)) as unknown as ToolResult,
+    behavior: behavior({ writesDoc: true, geometry: true }),
+  },
+  {
+    name: "import_eagle",
+    pack: "ecad",
+    description:
+      "Import an Eagle .brd file (not yet supported). Export your board from " +
+      "Eagle as KiCad (.kicad_pcb) and use import_kicad instead.",
+    inputSchema: importEagleSchema,
+    handler: (a) => importEagle(a) as unknown as ToolResult,
+    behavior: behavior({}),
+  },
+];

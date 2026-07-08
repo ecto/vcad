@@ -36,6 +36,15 @@ VCAD_WASM_SKIP=1 npm run build --workspaces --if-present
 `VCAD_WASM_SKIP=1` skips the wasm-pack rebuild when `packages/kernel-wasm/vcad_kernel_wasm*`
 artifacts are already checked in; drop it if you need a fresh kernel WASM.
 
+**Never commit the generated `packages/kernel-wasm/vcad_kernel_wasm*` artifacts from a
+feature branch** — wasm-pack output is not byte-reproducible, so two branches that each
+rebuilt them merge-conflict on every merge even when their Rust changes don't overlap.
+They have a single writer: `.github/workflows/wasm-refresh.yml` rebuilds and commits them
+on `main` after any kernel-source merge, and CI (`wasm-artifact-guard`) fails a PR that
+touches them. If you accidentally committed a rebuild, drop it with
+`git checkout origin/main -- 'packages/kernel-wasm/vcad_kernel_wasm*'`. PR CI does not
+depend on the checked-in copies — the TypeScript job consumes WASM built from source.
+
 ## Commands
 
 ```bash
@@ -102,16 +111,17 @@ vcad/
 │   ├── vcad-kernel-raytrace/      # Direct BRep ray tracing
 │   ├── vcad-kernel-physics/       # phyz physics simulation
 │   ├── vcad-kernel-urdf/          # URDF robot description import
+│   ├── vcad-kernel-cam/           # 2.5D CAM toolpath generation + G-code post
+│   ├── vcad-kernel-stocksim/      # CAM stock sim (octree SDF) + toolpath verification oracle
 │   ├── vcad-kernel/               # Unified kernel API
 │   ├── vcad-kernel-wasm/          # WASM bindings for browser
 │   ├── vcad-ir/                   # Intermediate representation
+│   ├── vcad-receipt/              # Unified fail-closed verification receipt schema
 │   ├── vcad-cli/                  # CLI tool
 │   ├── vcad-render/               # Standalone .vcad → isometric SVG renderer
 │   └── vcad/                      # Legacy CSG library (manifold-based)
 │
 │   # Work-in-progress crates (built but not yet wired to any consumer):
-│   # - vcad-kernel-stocksim     # CAM stock sim (octree SDF, marching cubes); no consumers yet
-│   #
 │   # - vcad-kernel-diff         # Differentiable seam, COMPLETE (M0–M11 + closeout):
 │   #                            # dx/dθ of frozen tessellations, mass-property QoIs,
 │   #                            # differentiable fillet radius, reverse-mode adjoint,
@@ -252,6 +262,9 @@ target/debug/vcad-render path/to/part.vcad > out.svg
 - `create_cad_document` — create parts from primitives + operations
 - `export_cad` — export to STL or GLB
 - `inspect_cad` — get volume, area, bbox, center of mass
+- `check_clearance` — min distance / penetration depth between part groups;
+  labeled assertions persist on the document and re-verify via
+  `build_receipt` / `verify_receipt` as Holds/Stale/Violated
 - `render_view` — render the session document to an isometric PNG (agent eyes)
 - `verify_part` / `list_eval_tasks` — grade the document against mecheval
   benchmark tasks via the official `mecheval-grade` binary (self-grading
@@ -301,6 +314,10 @@ target/debug/vcad-render path/to/part.vcad > out.svg
    `Extract<CsgOp, { type: "…" }>` alias in `index.ts` only if a consumer needs
    the variant by name.
 3. Add evaluation logic in `packages/engine/src/evaluate.ts`
+
+`ir:gen` bundles ts-rs bindings from **two** crates: `vcad-ir` and
+`vcad-receipt` (the unified receipt schema). Type names must be unique across
+both — the script fails loudly on collisions.
 
 ## Changelog
 

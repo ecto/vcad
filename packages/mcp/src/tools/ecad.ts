@@ -25,15 +25,28 @@ import type {
   PadType,
   PcbLayer,
   Trace,
+  TraceArc,
   Via,
   Zone,
   Vec2,
+  Vec3,
+  CsgOp,
+  SketchSegment2D,
   Receipt,
+  DesignReceipt,
+  ReceiptStatus,
 } from "@vcad/ir";
 import { createDocument } from "@vcad/ir";
-import { getNodePcb, getPcbNodeIds, buildEntry, agentView } from "@vcad/core";
+import { RECEIPT_SCHEMA, summarize, unifiedFromPcbReceipt } from "../receipt-unified.js";
+import {
+  clearanceReceiptClaims,
+  hasClearanceClaims,
+  verifyClearanceClaims,
+} from "./clearance.js";
+import { getNodePcb, getPcbNodeIds, buildEntry, agentView, diffViolations } from "@vcad/core";
 import {
   computeRatsnest,
+  componentMeshes,
   exportFabFiles,
   pcbPreviewMeshes,
   exportKicadPcb,
@@ -48,6 +61,7 @@ import {
   routeDiffPair as kernelRouteDiffPair,
   critiqueRoute as kernelCritiqueRoute,
   runDrc as kernelRunDrc,
+  runDrcInRegion as kernelRunDrcInRegion,
   runErc as kernelRunErc,
   checkErc as kernelCheckErc,
   evaluateMotor,
@@ -62,14 +76,30 @@ import {
   netContinuity as kernelNetContinuity,
 } from "@vcad/engine";
 import type { Engine, NetlistResult, TriangleMesh, NetContinuity } from "@vcad/engine";
-import { registerSession, getSession, undoLastSnapshot, historyDepth } from "./session.js";
+import {
+  registerSession,
+  getSession,
+  undoLastSnapshot,
+  historyDepth,
+  documents,
+  hydrateSession,
+  persistSession,
+  recordHistorySnapshot,
+  resolveDocInput,
+  type DocInputCtx,
+} from "./session.js";
+import { buildKernelEventPayload } from "./kernel-event.js";
+import { emClaim } from "./em-claims.js";
 import type { NextAction } from "./next-actions.js";
 import { computeEnclosureFitForBoard } from "./enclosure.js";
 import { validatePcb, pcbValidationError } from "./pcb-validate.js";
+import { PCB_LAYERS } from "./pcb-layers.js";
 import { sizePdnExact, ecadDiffEngineAvailable } from "../wasm/ecad-diff.js";
 import { bundleBytes, storeArtifact } from "./artifact-store.js";
 import { maxInlineArtifactBytes, maxInlineExportBytes } from "./remote.js";
 import type { FabFile } from "@vcad/engine";
+import { behavior, type ToolDef } from "./tool-def.js";
+import type { ToolResult } from "./tool-result.js";
 
 /** Get PCB data from a document — checks PcbBoard nodes first, falls back to legacy doc.pcb */
 function getDocPcb(doc: Document): Pcb | null {
@@ -260,19 +290,11 @@ function ecadUnverifiable(
 // PCB layer name validation — the single gate guarding every write boundary
 // ============================================================================
 
-/**
- * Every legal PCB layer name, in board order — the canonical serde variants of
- * the Rust `PcbLayer` enum (crates/vcad-ir/src/ecad.rs). This is the single
- * source of truth the write boundaries validate against. The old scattered
- * `/Cu$/` regex checks let malformed dotted KiCad names (`In1.Cu`) slip through,
- * which then corrupted documents and broke render_pcb / export_gerber.
- */
-const PCB_LAYERS: readonly PcbLayer[] = [
-  "FCu", "BCu", "In1Cu", "In2Cu", "In3Cu", "In4Cu", "In5Cu", "In6Cu",
-  "FSilkS", "BSilkS", "FMask", "BMask", "FPaste", "BPaste",
-  "FFab", "BFab", "FCrtYd", "BCrtYd",
-  "EdgeCuts", "UserDrawings", "UserComments",
-];
+// The legal PCB layer names live in ./pcb-layers.ts (imported as PCB_LAYERS) —
+// the single runtime copy, shared with pcb-validate.ts, mirroring the Rust
+// `PcbLayer` enum (crates/vcad-ir/src/ecad.rs). The old scattered `/Cu$/` regex
+// checks let malformed dotted KiCad names (`In1.Cu`) slip through, which then
+// corrupted documents and broke render_pcb / export_gerber.
 
 /** Fast membership test for any legal layer name. */
 const PCB_LAYER_SET: ReadonlySet<string> = new Set(PCB_LAYERS);
@@ -353,36 +375,18 @@ function validateCopperLayer(raw: unknown): LayerOk | LayerErr {
 // ============================================================================
 // Document resolution — session-based (document_id) with inline fallback
 // ============================================================================
-
-/** A resolved document input: session-backed (preferred) or inline (legacy). */
-interface EcadDocCtx {
-  doc: Document;
-  /** Set when the doc came from (or was registered as) a server session. */
-  documentId?: string;
-}
-
-/**
- * Resolve the document argument for ECAD tools. `document_id` (a session
- * from create_schematic / open_document) is preferred; an inline `document`
- * object is still accepted for backward compatibility and is mutated and
- * echoed back like the pre-session API did.
- */
-function resolveDocInput(args: Record<string, unknown>): EcadDocCtx {
-  const id = args.document_id ? String(args.document_id) : "";
-  if (id) return { doc: getSession(id), documentId: id };
-  const doc = args.document as Document | undefined;
-  if (doc && typeof doc === "object") return { doc };
-  throw new Error(
-    "Pass `document_id` (from create_schematic or open_document) — or an inline `document` for the legacy stateless flow.",
-  );
-}
+//
+// `resolveDocInput` now lives in session.ts and is shared with the core
+// read-only tools (inspect_cad / render_view / export_cad / dfm_check). ECAD
+// tools echo the full mutated document back for the inline path, so they keep
+// their own result-payload helper below.
 
 /**
  * The document part of a mutating tool's response. Session docs are mutated
  * server-side, so only the id is echoed; inline docs get the full mutated
  * document back (the caller has no other way to retrieve it).
  */
-function docResultPayload(ctx: EcadDocCtx): Record<string, unknown> {
+function docResultPayload(ctx: DocInputCtx): Record<string, unknown> {
   return ctx.documentId
     ? { document_id: ctx.documentId }
     : { document: ctx.doc };
@@ -901,11 +905,14 @@ export const routeNetsSchema = {
       items: { type: "string" as const },
       description:
         "Net IDs to route (empty = route all). Re-running is safe and " +
-        "self-cleaning: routing rips up the prior copper on each net first and " +
-        "lays a complete fresh route, so trace counts don't grow across " +
-        "iterations. After a set_placement move, nets whose pads no longer sit " +
-        "under their copper are detected as stale and re-routed too (even if not " +
-        "listed here); the result reports `traces_removed`/`vias_removed` and " +
+        "self-cleaning: routing rips up the prior *autorouted* copper on each " +
+        "net first and lays a complete fresh route, so trace counts don't grow " +
+        "across iterations. Hand-placed copper (add_trace / add_via / coil " +
+        "tools) is never ripped: a net carrying a manual trace is preserved " +
+        "wholesale and reported in `manual_nets_preserved`. After a " +
+        "set_placement move, nets whose pads no longer sit under their copper " +
+        "are detected as stale and re-routed too (even if not listed here); " +
+        "the result reports `traces_removed`/`vias_removed` and " +
         "`stale_nets_cleared` so the cleanup is visible.",
     },
     locked_nets: {
@@ -913,10 +920,12 @@ export const routeNetsSchema = {
       items: { type: "string" as const },
       description:
         "Nets whose existing copper is preserved — never ripped up or " +
-        "re-routed by this call. Use for hand-routed traces/vias (e.g. a " +
-        "manual via bridge, or a stitched plane net) that the autorouter's " +
-        "self-cleaning would otherwise delete. Copper on these nets survives " +
-        "across route_nets passes; the kernel still routes every other net.",
+        "re-routed by this call. Copper on these nets survives across " +
+        "route_nets passes; the kernel still routes every other net. Nets " +
+        "carrying hand-placed traces (add_trace / coil tools) get this " +
+        "protection automatically via copper provenance, so locking is only " +
+        "needed for copper the tools didn't tag (e.g. imported or injected " +
+        "boards).",
     },
     strategy: {
       type: "string" as const,
@@ -940,7 +949,7 @@ export const routeNetsSchema = {
     receipt: {
       type: "boolean" as const,
       description:
-        "When true, wrap the route in a before/after DRC and return a `receipt` verdict (what it fixed, what it introduced incl. shorts, with each violation attributed to footprint vs routing) — instead of just a document_id. Routing is not idempotent; this surfaces a re-route that silently shorts the board.",
+        "When true, wrap the route in a before/after DRC and return a `receipt` verdict (what it fixed, what it introduced incl. shorts, with each violation attributed to footprint vs routing) — instead of just a document_id. Re-routing rips up the prior autorouted copper first (idempotent by construction); the receipt proves it, surfacing any re-route that would short the board.",
     },
   },
   required: [],
@@ -2963,8 +2972,8 @@ export async function routeNets(args: Record<string, unknown>) {
 
   const width = traceWidth || pcb.rules.defaultRules.traceWidth;
 
-  // Receipt: snapshot DRC before the (non-idempotent) route so the after-diff
-  // can attribute exactly what this call fixed and what it introduced.
+  // Receipt: snapshot DRC before the route so the after-diff can attribute
+  // exactly what this call fixed and what it introduced.
   const wantReceipt = Boolean(args.receipt);
   const beforeSnap = wantReceipt ? await drcPcb(pcb, "full", 500) : null;
 
@@ -3013,13 +3022,32 @@ export async function routeNets(args: Record<string, unknown>) {
     targetNets.add(net);
   }
 
+  // Copper provenance (issue #277): only *autorouted* copper is disposable.
+  // Traces carrying `source: "manual"` (add_trace / add_via / coil tools) are
+  // hand-placed work the router must not destroy. A net with a manual trace
+  // can't be partially re-routed either — the kernel's ratsnest treats any
+  // existing trace as "already routed" and skips the net, so ripping just its
+  // autorouted segments would strand it with no way to close it again.
+  // Such nets are therefore preserved wholesale (implicitly locked) and
+  // reported in `manual_nets_preserved`; delete the manual copper
+  // (delete_trace / delete_via) to hand the net back to the autorouter.
+  // Copper with no `source` (pre-provenance documents, or injected directly)
+  // is treated as autorouted — exactly the rip-up those documents already got.
+  // Manual *vias* alone don't block re-routing (the ratsnest ignores vias);
+  // they simply survive the rip-up while the net's traces are re-laid.
+  const manualNets = new Set<string>();
+  for (const t of pcb.traces) {
+    if (t.source === "manual" && targetNets.has(t.net)) manualNets.add(t.net);
+  }
+  for (const n of manualNets) targetNets.delete(n);
+
   let tracesRemoved = 0;
   let viasRemoved = 0;
   if (targetNets.size > 0) {
     const beforeT = pcb.traces.length;
     const beforeV = pcb.vias.length;
-    pcb.traces = pcb.traces.filter((t) => !targetNets.has(t.net));
-    pcb.vias = pcb.vias.filter((v) => !targetNets.has(v.net));
+    pcb.traces = pcb.traces.filter((t) => !targetNets.has(t.net) || t.source === "manual");
+    pcb.vias = pcb.vias.filter((v) => !targetNets.has(v.net) || v.source === "manual");
     tracesRemoved = beforeT - pcb.traces.length;
     viasRemoved = beforeV - pcb.vias.length;
   }
@@ -3051,18 +3079,20 @@ export async function routeNets(args: Record<string, unknown>) {
   // re-reading the board.
   const realizedWidths: Record<string, number> = {};
   // Nets the kernel should route: the effective set minus any the caller
-  // locked. A locked net is neither ripped up (above) nor re-routed here, so
-  // its hand-placed copper stays exactly as authored. An empty effectiveFilter
-  // means "route everything", so to subtract locked nets we make the all-set
-  // explicit; with no locked nets it stays empty (behavior unchanged).
+  // locked and minus nets preserved for their manual copper. A preserved net
+  // is neither ripped up (above) nor re-routed here, so its hand-placed
+  // copper stays exactly as authored. An empty effectiveFilter means "route
+  // everything", so to subtract preserved nets we make the all-set explicit;
+  // with nothing preserved it stays empty (behavior unchanged).
+  const preservedNets = new Set<string>([...lockedNets, ...manualNets]);
   let routeFilter = effectiveFilter;
-  if (lockedNets.size > 0) {
+  if (preservedNets.size > 0) {
     if (effectiveFilter.length > 0) {
-      routeFilter = effectiveFilter.filter((n) => !lockedNets.has(n));
+      routeFilter = effectiveFilter.filter((n) => !preservedNets.has(n));
     } else {
       const allRoutable = new Set<string>();
       for (const [net, conns] of netConnections) {
-        if (conns.length >= 2 && !lockedNets.has(net)) allRoutable.add(net);
+        if (conns.length >= 2 && !preservedNets.has(net)) allRoutable.add(net);
       }
       routeFilter = [...allRoutable];
     }
@@ -3098,6 +3128,7 @@ export async function routeNets(args: Record<string, unknown>) {
         // valid PcbLayer value.
         layer: t.layer as PcbLayer,
         net: t.net,
+        source: "autoroute",
       });
       realizedWidths[t.net] = Math.max(realizedWidths[t.net] ?? 0, t.width);
       tracesAdded++;
@@ -3110,6 +3141,7 @@ export async function routeNets(args: Record<string, unknown>) {
         startLayer: "FCu",
         endLayer: "BCu",
         net: v.net,
+        source: "autoroute",
       });
       viasAdded++;
     }
@@ -3130,7 +3162,7 @@ export async function routeNets(args: Record<string, unknown>) {
     const universe =
       routeFilter.length > 0
         ? routeFilter
-        : [...netConnections.keys()].filter((n) => !lockedNets.has(n));
+        : [...netConnections.keys()].filter((n) => !preservedNets.has(n));
     const tiers = [...new Set(universe.map(tierOf))].sort((a, b) => a - b);
     for (const tier of tiers) {
       const nets = universe.filter((n) => tierOf(n) === tier);
@@ -3153,7 +3185,8 @@ export async function routeNets(args: Record<string, unknown>) {
     // behavior; flagged because it may cross copper).
     for (const [netId, conns] of netConnections) {
       if (conns.length < 2) continue;
-      if (lockedNets.has(netId)) continue; // never reroute a locked net
+      // Never reroute a locked net or one preserved for its manual copper.
+      if (preservedNets.has(netId)) continue;
       if (effectiveFilter.length > 0 && !effectiveFilter.includes(netId)) continue;
       const positions = conns.map((c) => {
         const fp = pcb.footprints.find((f) => f.ref === c.component_ref)!;
@@ -3167,6 +3200,7 @@ export async function routeNets(args: Record<string, unknown>) {
           width,
           layer: "FCu",
           net: netId,
+          source: "autoroute",
         });
         tracesAdded++;
       }
@@ -3214,11 +3248,19 @@ export async function routeNets(args: Record<string, unknown>) {
   }
   // Stale nets the caller didn't ask for but we ripped up and re-routed because a
   // pad had moved out from under their copper. Surface them so a scoped re-route
-  // is honest about the extra cleanup it did.
-  const staleCleared = [...staleNets].filter((n) => !netsFilter.includes(n));
+  // is honest about the extra cleanup it did. Nets preserved for manual copper
+  // were NOT actually cleared, so they don't belong in this message.
+  const staleCleared = [...staleNets].filter(
+    (n) => !netsFilter.includes(n) && !manualNets.has(n),
+  );
   if (netsFilter.length > 0 && staleCleared.length > 0) {
     warnings.push(
       `ripped up orphaned copper on ${staleCleared.length} net(s) whose pads moved after the last route and re-routed them: ${staleCleared.join(", ")}`,
+    );
+  }
+  if (manualNets.size > 0) {
+    warnings.push(
+      `${manualNets.size} net(s) carry hand-placed copper (add_trace / add_via / coil tools) and were preserved as-is — neither ripped up nor re-routed: ${[...manualNets].sort().join(", ")}. Delete that copper (delete_trace / delete_via) first if route_nets should re-own the net`,
     );
   }
 
@@ -3269,6 +3311,9 @@ export async function routeNets(args: Record<string, unknown>) {
           ...(viasRemoved > 0 ? { vias_removed: viasRemoved } : {}),
           ...(staleCleared.length > 0 ? { stale_nets_cleared: staleCleared } : {}),
           ...(lockedNets.size > 0 ? { locked_nets: [...lockedNets] } : {}),
+          ...(manualNets.size > 0
+            ? { manual_nets_preserved: [...manualNets].sort() }
+            : {}),
           ...(planeStitched.length > 0 ? { plane_stitched: planeStitched } : {}),
           ...(Object.keys(realizedWidths).length > 0
             ? { track_widths_mm: realizedWidths }
@@ -3323,11 +3368,15 @@ interface DrcNetPairCount {
  *  conflicts / fab-rule breaks). UnconnectedNet and UnstitchedPad are
  *  "incomplete" rules (route it / stitch it). NetIslands is a hard defect (a
  *  net's copper built as ≥2 galvanically-isolated islands); it carries Error
- *  severity regardless of bucket. */
+ *  severity regardless of bucket. SameNetBypass is a Warning-severity
+ *  connectivity defect: same-net copper touching far from any intended
+ *  junction, short-circuiting the conductor between the points (fatal to
+ *  two-terminal structures like spiral coils). */
 const DRC_CATEGORY: Record<string, "connectivity" | "clearance" | "manufacturing"> = {
   UnconnectedNet: "connectivity",
   UnstitchedPad: "connectivity",
   NetIslands: "connectivity",
+  SameNetBypass: "connectivity",
   Clearance: "clearance",
   Short: "clearance",
   MinTraceWidth: "manufacturing",
@@ -3582,6 +3631,8 @@ export async function routeDiffPair(args: Record<string, unknown>) {
         width,
         layer: "FCu",
         net: leg.net,
+        // Router output: rippable by a route_nets re-route of these nets.
+        source: "autoroute",
       });
       added++;
     }
@@ -3717,6 +3768,258 @@ export async function drcPcb(
 }
 
 // ============================================================================
+// drc_delta — verify-on-write for every copper-mutating tool
+// ============================================================================
+//
+// Field report: add_motor_winding returned a bare document_version for a board
+// it had just shorted in 3 places and islanded in 3 more — the agent only
+// learned from a separate run_drc. Every copper mutator now wraps its mutation
+// in a before/after DRC snapshot and reports what it *introduced* (the
+// route_nets `receipt` diff, extracted into `drcDelta`); `drc_delta.clean` is
+// the one-step branch an agent needs.
+//
+// Cost control: boards with >= DRC_DELTA_FULL_BOARD_MAX elements scope the
+// geometric checks to the mutation's inflated bbox via the kernel's region DRC
+// (`check_drc_in_region`); connectivity always runs board-global — it is the
+// only rule class a local copper edit can violate remotely. Smaller boards
+// just take full-board snapshots.
+
+/** Counts of introduced violations split by what they mean for the board.
+ *  Unlike run_drc's categories, shorts get their own bucket — the worst class,
+ *  so an agent can triage without parsing rule names. */
+export interface DrcDeltaCategories {
+  shorts: number;
+  clearance: number;
+  connectivity: number;
+  manufacturing: number;
+}
+
+/** Verify-on-write verdict attached to every copper-mutating tool result:
+ *  what this one call broke (and fixed), from before/after DRC snapshots. */
+export interface DrcDelta {
+  /** True iff the mutation introduced no new violations. */
+  clean: boolean;
+  /** Violations this mutation introduced (multiset diff, exact). */
+  introduced: number;
+  /** Violations this mutation fixed. */
+  resolved: number;
+  /** Introduced counts by category — `shorts` is the drop-everything bucket. */
+  by_category: DrcDeltaCategories;
+  /** Worst-first capped sample of the introduced violations, with positions. */
+  sample: DrcViol[];
+  sample_capped: boolean;
+  /** "full" board snapshots, or geometric checks scoped to the mutation's
+   *  inflated bbox ("region" — connectivity still board-global). */
+  scope: "full" | "region";
+  /** Present when a snapshot could not be verified (kernel refused the board).
+   *  `clean` is forced false — an unverifiable board is NOT a clean one. */
+  unverifiable?: { reason: string; offending_field?: string };
+}
+
+/** Category of one rule for the delta triage. */
+function deltaCategory(rule: string): keyof DrcDeltaCategories {
+  if (rule === "Short") return "shorts";
+  return DRC_CATEGORY[rule] ?? "manufacturing";
+}
+
+/** Sample cap for `drc_delta.sample` — enough to act on, small enough to read. */
+const DRC_DELTA_SAMPLE_CAP = 10;
+
+/**
+ * Diff two DRC snapshots into the violations a mutation INTRODUCED (and
+ * resolved). The extracted core of the route_nets receipt: the same multiset
+ * identity (`@vcad/core` `diffViolations`), reduced to the one verdict a
+ * mutator should self-report. Both snapshots must come from the same scope
+ * (full board, or the same region) — the callers guarantee that.
+ */
+export function drcDelta(
+  before: DrcSummary | DrcUnverifiable,
+  after: DrcSummary | DrcUnverifiable,
+  scope: "full" | "region" = "full",
+): DrcDelta {
+  const empty: DrcDeltaCategories = {
+    shorts: 0,
+    clearance: 0,
+    connectivity: 0,
+    manufacturing: 0,
+  };
+  if (!before.success || !after.success) {
+    const bad = !before.success ? before : (after as DrcUnverifiable);
+    return {
+      clean: false,
+      introduced: 0,
+      resolved: 0,
+      by_category: empty,
+      sample: [],
+      sample_capped: false,
+      scope,
+      unverifiable: {
+        reason: bad.reason,
+        ...(bad.offending_field ? { offending_field: bad.offending_field } : {}),
+      },
+    };
+  }
+
+  // Snapshots are taken with detail:"full", so `details` is the complete list
+  // and the diff is exact; `sample` only backstops a foreign snapshot.
+  const { introduced, fixed } = diffViolations(
+    before.details ?? before.sample,
+    after.details ?? after.sample,
+  );
+
+  const by_category: DrcDeltaCategories = { ...empty };
+  for (const v of introduced) by_category[deltaCategory(v.rule)] += 1;
+
+  // Worst-first: shorts → connectivity → clearance → manufacturing, errors
+  // before warnings — so a truncated sample never hides the short.
+  const rank: Record<keyof DrcDeltaCategories, number> = {
+    shorts: 0,
+    connectivity: 1,
+    clearance: 2,
+    manufacturing: 3,
+  };
+  const sorted = [...(introduced as DrcViol[])].sort(
+    (a, b) =>
+      rank[deltaCategory(a.rule)] - rank[deltaCategory(b.rule)] ||
+      (a.severity === "Error" ? 0 : 1) - (b.severity === "Error" ? 0 : 1),
+  );
+
+  return {
+    clean: introduced.length === 0,
+    introduced: introduced.length,
+    resolved: fixed.length,
+    by_category,
+    sample: sorted.slice(0, DRC_DELTA_SAMPLE_CAP),
+    sample_capped: introduced.length > DRC_DELTA_SAMPLE_CAP,
+    scope,
+  };
+}
+
+/** Boards with fewer elements than this always take full-board snapshots —
+ *  the region machinery only pays off past it. */
+const DRC_DELTA_FULL_BOARD_MAX = 2000;
+
+/** Board size in copper-ish elements, for the full-vs-region scope decision. */
+function pcbElementCount(pcb: Pcb): number {
+  let pads = 0;
+  for (const fp of pcb.footprints) pads += fp.pads.length;
+  return (
+    pcb.traces.length +
+    (pcb.traceArcs?.length ?? 0) +
+    pcb.vias.length +
+    pcb.zones.length +
+    pads
+  );
+}
+
+/** The largest clearance any net class demands — the region inflation that
+ *  keeps every element the mutation could conflict with in scope. */
+function maxBoardClearance(pcb: Pcb): number {
+  let c = pcb.rules.defaultRules.clearance;
+  for (const cls of pcb.rules.classRules ?? []) c = Math.max(c, cls.clearance);
+  return c;
+}
+
+/** World-space bbox of a mutation's copper, inflated by the element radius.
+ *  Returns "full" when any coordinate is non-finite (bad args are the tool's
+ *  problem — the delta must not silently scope them out). */
+function boundsOfPoints(
+  points: Vec2[],
+  inflate = 0,
+): { min: Vec2; max: Vec2 } | "full" {
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const p of points) {
+    minX = Math.min(minX, p.x);
+    minY = Math.min(minY, p.y);
+    maxX = Math.max(maxX, p.x);
+    maxY = Math.max(maxY, p.y);
+  }
+  const b = {
+    min: { x: minX - inflate, y: minY - inflate },
+    max: { x: maxX + inflate, y: maxY + inflate },
+  };
+  const vals = [b.min.x, b.min.y, b.max.x, b.max.y];
+  return vals.every(Number.isFinite) ? b : "full";
+}
+
+/** Mutation footprint for the drc_delta scope: a copper bbox, "full" for
+ *  board-scale mutations (outline changes, motor windings), or null when the
+ *  mutation moves no copper at all (set_stackup) — a no-op delta is expected
+ *  but still verified. */
+type DrcDeltaBounds = { min: Vec2; max: Vec2 } | "full" | null;
+
+/** Region-scoped DRC snapshot — same summary shape as {@link drcPcb}. */
+async function drcPcbInRegion(
+  pcb: Pcb,
+  region: { min: Vec2; max: Vec2 },
+): Promise<DrcSummary | DrcUnverifiable> {
+  if (await isEcadAvailable()) {
+    const outcome = await kernelRunDrcInRegion(pcb, region.min, region.max);
+    if (outcome.status === "errored") {
+      return {
+        success: false,
+        status: "errored",
+        reason: outcome.reason,
+        ...(outcome.offending_field ? { offending_field: outcome.offending_field } : {}),
+      };
+    }
+    return aggregateDrc(outcome.value as unknown as DrcViol[], 20, "full");
+  }
+  // No kernel: the scalar fallback is linear and cheap — run it unscoped.
+  return drcPcb(pcb, "full", 20);
+}
+
+/** An in-flight verify-on-write capture: the before snapshot is taken, the
+ *  after snapshot and diff happen in {@link DrcDeltaCapture.finish}. */
+export interface DrcDeltaCapture {
+  /** Take the after snapshot (same scope as before) and diff. Call once,
+   *  after the mutation has been applied to the same live `pcb`. */
+  finish(): Promise<DrcDelta>;
+}
+
+/**
+ * Start a verify-on-write capture for a mutation about to land in `bounds`.
+ * Call after arg validation (so error paths don't pay for a snapshot) and
+ * immediately before the first board mutation; `finish()` after the last one.
+ */
+export async function beginDrcDelta(
+  pcb: Pcb,
+  bounds: DrcDeltaBounds,
+): Promise<DrcDeltaCapture> {
+  const full = bounds === "full" || pcbElementCount(pcb) < DRC_DELTA_FULL_BOARD_MAX;
+  let region: { min: Vec2; max: Vec2 } | null = null;
+  if (!full) {
+    // `!full` already excludes bounds === "full" (aliased-condition narrowing).
+    if (bounds) {
+      // Inflate by the worst clearance in play (plus the kernel's own 1mm
+      // search margin) so borderline subjects at the bbox edge stay in scope.
+      const pad = maxBoardClearance(pcb) + 1.0;
+      region = {
+        min: { x: bounds.min.x - pad, y: bounds.min.y - pad },
+        max: { x: bounds.max.x + pad, y: bounds.max.y + pad },
+      };
+    } else {
+      // No copper moved: a degenerate region keeps the geometric checks empty
+      // while connectivity still verifies globally.
+      region = { min: { x: 0, y: 0 }, max: { x: 0, y: 0 } };
+    }
+  }
+  const scope: "full" | "region" = region ? "region" : "full";
+  const snapshot = (): Promise<DrcSummary | DrcUnverifiable> =>
+    region ? drcPcbInRegion(pcb, region) : drcPcb(pcb, "full", 20);
+  const before = await snapshot();
+  return {
+    async finish(): Promise<DrcDelta> {
+      const after = await snapshot();
+      return drcDelta(before, after, scope);
+    },
+  };
+}
+
+// ============================================================================
 // Post-placement DRC — the lightweight subset that makes sense before routing
 // ============================================================================
 
@@ -3758,7 +4061,7 @@ function parsePadClearance(
 
 /** Sorted, NUL-joined net-pair key so (A,B) and (B,A) collapse. */
 function netPairKey(a: string, b: string): string {
-  return a <= b ? `${a} ${b}` : `${b} ${a}`;
+  return a <= b ? `${a}\x00${b}` : `${b}\x00${a}`;
 }
 
 /** Run the lightweight pre-routing DRC subset against a freshly-placed board.
@@ -3811,7 +4114,7 @@ export async function summarizePlacementDrc(pcb: Pcb): Promise<PlacementDrc> {
   }
 
   const shorts: PlacementShort[] = [...shortPairs].map((key) => {
-    const [a, b] = key.split(" ") as [string, string];
+    const [a, b] = key.split("\x00") as [string, string];
     const refs = new Set<string>();
     for (const p of padPairs) {
       if (netPairKey(p.parsed.nets[0], p.parsed.nets[1]) === key) {
@@ -4148,6 +4451,11 @@ export async function exportGerber(args: Record<string, unknown>) {
         verdict.status === "unverifiable"
           ? verdict.reason
           : `${verdict.summary.errors} DRC error(s) must be resolved before fabrication`;
+      // A blocked export is a VERDICT, not a tool failure — same posture as
+      // validate_for_fab's `verdict: "blocked"`. The tool ran, evaluated the
+      // gate, and reported a structured refusal with escape hatches; isError
+      // here would (and did) make every working gate trip read as a tool
+      // crash in clients and telemetry.
       return {
         content: [
           {
@@ -4165,7 +4473,6 @@ export async function exportGerber(args: Record<string, unknown>) {
             }),
           },
         ],
-        isError: true,
       };
     }
   }
@@ -4607,9 +4914,13 @@ function striplineZ0(w: number, t: number, h: number, er: number): number {
   return (60 / Math.sqrt(er)) * Math.log((4 * h) / (0.67 * Math.PI * (0.8 * w + t)));
 }
 
-/** Edge-coupling factor for a differential pair; zDiff = 2·z0·k. ↑ in spacing. */
-function diffCouplingK(spacing: number, h: number): number {
-  return 1 - 0.48 * Math.exp((-0.96 * spacing) / h);
+/** Edge-coupling factor for a differential pair; zDiff = 2·z0·k. ↑ in spacing.
+ *  Empirical constants per family, matching the Rust reference
+ *  (vcad-ecad-sim/src/impedance.rs): microstrip (0.48, 0.96),
+ *  stripline (0.347, 2.9). */
+function diffCouplingK(traceType: string, spacing: number, h: number): number {
+  const [a, b] = traceType.includes("stripline") ? [0.347, 2.9] : [0.48, 0.96];
+  return 1 - a * Math.exp((-b * spacing) / h);
 }
 
 /** Single-ended z0 for a trace type (microstrip family vs stripline family). */
@@ -4876,22 +5187,18 @@ export async function calcImpedance(args: Record<string, unknown>) {
   const w = traceWidth;
   const t = copperThickness;
 
-  let z0: number;
-  let erEff: number;
-
-  if (traceType === "stripline") {
-    z0 = striplineZ0(w, t, h, er);
-    erEff = er;
-  } else {
-    z0 = microstripZ0(w, t, h, er);
-    erEff = microstripErEff(w, t, h, er);
-  }
+  // Route by family so diff_stripline gets the stripline formula — the same
+  // dispatch sizeImpedance uses, so the two tools always agree on a geometry.
+  const isStriplineFamily = traceType.includes("stripline");
+  const z0 = singleEndedZ0(traceType, w, t, h, er);
+  // Stripline is fully embedded in the dielectric, so er_eff == er.
+  const erEff = isStriplineFamily ? er : microstripErEff(w, t, h, er);
   const delayPsPerMm = 3.336 * Math.sqrt(erEff);
 
   // Differential pair calculations
   let zDiff: number | undefined;
   if (spacing > 0 && (traceType === "diff_microstrip" || traceType === "diff_stripline")) {
-    zDiff = 2 * z0 * diffCouplingK(spacing, h);
+    zDiff = 2 * z0 * diffCouplingK(traceType, spacing, h);
   }
 
   const result: Record<string, unknown> = {
@@ -4917,6 +5224,31 @@ export async function calcImpedance(args: Record<string, unknown>) {
   const gate = await resolveRealizedNet(args);
   if (gate.kind === "incomplete") return ecadError(gate.message);
   applyRealizedGate(result, gate, { conductor: "trace", noun: "Impedance" });
+
+  // Receipt claims for the quantities predicted (method reflects the branch
+  // actually taken above — see em-claims.ts for the family).
+  const model = isStriplineFamily ? "ipc2141-stripline" : "ipc2141-microstrip";
+  const claimInputs = {
+    trace_width: traceWidth,
+    copper_thickness: copperThickness,
+    dielectric_height: dielectricHeight,
+    dielectric_er: er,
+    trace_type: traceType,
+  };
+  const claims = [
+    emClaim("characteristic_impedance", result.z0 as number, "ohm", model, claimInputs),
+    emClaim("effective_permittivity", result.er_eff as number, "dimensionless", model, claimInputs),
+    emClaim("propagation_delay", result.delay_ps_per_mm as number, "ps/mm", model, claimInputs),
+  ];
+  if (result.z_diff !== undefined) {
+    claims.push(
+      emClaim("differential_impedance", result.z_diff as number, "ohm", "edge-coupled-diff-pair", {
+        ...claimInputs,
+        spacing,
+      }),
+    );
+  }
+  result.claims = claims;
 
   return {
     content: [
@@ -4980,7 +5312,7 @@ export function sizeImpedance(args: Record<string, unknown>) {
   const residual = isDiff
     ? (x: number[]) => [
         seZ0(x[0]!) - targetZ0,
-        2 * seZ0(x[0]!) * diffCouplingK(x[1]!, h) - (targetDiff as number),
+        2 * seZ0(x[0]!) * diffCouplingK(traceType, x[1]!, h) - (targetDiff as number),
       ]
     : (x: number[]) => [seZ0(x[0]!) - targetZ0];
   const lo = isDiff ? [minW, minS] : [minW];
@@ -4993,7 +5325,7 @@ export function sizeImpedance(args: Record<string, unknown>) {
   const wSnap = snap(cont[0]!, minW, maxW);
   const sSnap = isDiff ? snap(cont[1]!, minS, maxS) : undefined;
   const z0Meas = seZ0(wSnap);
-  const diffMeas = isDiff ? 2 * z0Meas * diffCouplingK(sSnap as number, h) : undefined;
+  const diffMeas = isDiff ? 2 * z0Meas * diffCouplingK(traceType, sSnap as number, h) : undefined;
 
   const within = (meas: number, target: number) =>
     Math.abs(meas - target) <= (tolPct / 100) * target;
@@ -5052,6 +5384,31 @@ export function sizeImpedance(args: Record<string, unknown>) {
     ...(reason ? { reason } : {}),
   };
 
+  // Receipt claims about the recommended (snapped) geometry.
+  const seModel = traceType.includes("stripline") ? "ipc2141-stripline" : "ipc2141-microstrip";
+  const claimInputs = {
+    trace_type: traceType,
+    trace_width: r4(wSnap),
+    ...(isDiff ? { spacing: r4(sSnap as number) } : {}),
+    copper_thickness: t,
+    dielectric_height: h,
+    dielectric_er: er,
+  };
+  payload.claims = [
+    emClaim("characteristic_impedance", r2(z0Meas), "ohm", seModel, claimInputs),
+    ...(isDiff
+      ? [
+          emClaim(
+            "differential_impedance",
+            r2(diffMeas as number),
+            "ohm",
+            "edge-coupled-diff-pair",
+            claimInputs,
+          ),
+        ]
+      : []),
+  ];
+
   return { content: [{ type: "text" as const, text: JSON.stringify(payload) }] };
 }
 
@@ -5101,6 +5458,16 @@ export async function sizePdn(args: Record<string, unknown>) {
     });
     return { content: [{ type: "text" as const, text: JSON.stringify(payload) }] };
   };
+  // One IR-drop receipt claim per budgeted node — same model regardless of
+  // which engine (TS solver or Rust adjoint) produced the widths.
+  const pdnClaims = (drops: number[], segments: number) =>
+    targets.map((tg, i) =>
+      emClaim("ir_drop", Math.round(drops[i]! * 1e6) / 1e6, "V", "dc-resistor-mesh", {
+        node: tg.node,
+        max_drop_v: tg.max_drop,
+        segments,
+      }),
+    );
 
   // Optionally route into the Rust kernel engine (implicit-function adjoint)
   // via WASM. Falls through to the TS solver if the artifact isn't available.
@@ -5137,6 +5504,7 @@ export async function sizePdn(args: Record<string, unknown>) {
         targets,
         converged: exact.converged,
         ...(overBudget.length ? { over_budget: overBudget } : {}),
+        claims: pdnClaims(drops, widths.length),
       });
     }
   }
@@ -5244,6 +5612,8 @@ export async function sizePdn(args: Record<string, unknown>) {
     fab_grid_mm: grid,
     ...(active.length ? { active_constraints: active } : {}),
     ...(overBudget.length ? { over_budget: overBudget } : {}),
+    // One IR-drop claim per budgeted node, at the sized copper widths.
+    claims: pdnClaims(measured, ne),
   });
 }
 
@@ -5291,6 +5661,20 @@ export function calcCoil(args: Record<string, unknown>) {
           // L/R time constant in microseconds.
           time_constant_us: r3((inductanceNh * 1e-9) / resistance / 1e-6),
           inputs: { inner_radius: innerR, outer_radius: outerR, trace_width: w, copper_thickness: t },
+          claims: [
+            emClaim("inductance", r3(inductanceNh), "nH", "wheeler-mohan-1999", {
+              turns,
+              inner_radius: innerR,
+              outer_radius: outerR,
+              geometry,
+            }),
+            emClaim("dc_resistance", r3(resistance), "ohm", "dc-trace-resistance", {
+              wire_length_mm: r3(wireLen),
+              trace_width: w,
+              copper_thickness: t,
+              resistivity: rho,
+            }),
+          ],
         }),
       },
     ],
@@ -5360,6 +5744,21 @@ export function sizeCoil(args: Record<string, unknown>) {
           max_turns_fit: maxTurnsFit,
           dc_resistance_ohm: r3(resistance),
           wire_length_mm: r3(wireLen),
+          // Claims describe the integer-turn coil actually recommended.
+          claims: [
+            emClaim("inductance", r3(achievedNh), "nH", "wheeler-mohan-1999", {
+              turns,
+              inner_radius: innerR,
+              outer_radius: outerR,
+              geometry,
+            }),
+            emClaim("dc_resistance", r3(resistance), "ohm", "dc-trace-resistance", {
+              wire_length_mm: r3(wireLen),
+              trace_width: w,
+              copper_thickness: t,
+              resistivity: rho,
+            }),
+          ],
         }),
       },
     ],
@@ -5454,6 +5853,24 @@ export function calcRf(args: Record<string, unknown>) {
           },
           z0_ohm: z0,
           samples,
+          claims: [
+            emClaim("resonant_frequency", Math.round(f0), "Hz", "rlc-analytic", {
+              topology,
+              r_ohm: r,
+              l_henry: l,
+              c_farad: c,
+            }),
+            ...(Number.isFinite(q)
+              ? [
+                  emClaim("q_factor", r3(q), "dimensionless", "rlc-analytic", {
+                    topology,
+                    r_ohm: r,
+                    l_henry: l,
+                    c_farad: c,
+                  }),
+                ]
+              : []),
+          ],
         }),
       },
     ],
@@ -5472,7 +5889,15 @@ const round3 = (v: number) => Math.round(v * 1000) / 1000;
  * turn-to-turn gap against clearance, assigns every segment to a net, and
  * can drop a via at the inner endpoint (which is otherwise trapped).
  */
-export function addCoil(args: Record<string, unknown>) {
+export async function addCoil(
+  args: Record<string, unknown>,
+  opts?: {
+    /** Composite tools (add_coil_array / add_motor_winding) wrap the WHOLE
+     *  batch in one drc_delta capture — per-coil snapshots would multiply the
+     *  DRC cost by the coil count for no extra signal. */
+    skipDrcDelta?: boolean;
+  },
+) {
   const ctx = resolveDocInput(args);
   const pcb = getDocPcb(ctx.doc);
   if (!pcb) {
@@ -5564,6 +5989,15 @@ export function addCoil(args: Record<string, unknown>) {
     if (T.x !== pts[0].x || T.y !== pts[0].y) pts.unshift(T);
   }
 
+  // The coil's copper (spiral + lead-out + any inner/stitch vias, which all
+  // land on spiral points) stays inside the sampled polyline's bbox.
+  const drcCap = opts?.skipDrcDelta
+    ? null
+    : await beginDrcDelta(
+        pcb,
+        boundsOfPoints(pts, Math.max(traceWidth, pcb.rules.defaultRules.viaDiameter) / 2),
+      );
+
   if (!pcb.nets.some((n) => n.id === net)) {
     pcb.nets.push({ id: net, name: net });
   }
@@ -5583,7 +6017,14 @@ export function addCoil(args: Record<string, unknown>) {
     for (let li = 0; li < layersIn.length; li++) {
       const lyr = layersIn[li] as PcbLayer;
       for (let i = 0; i + 1 < pts.length; i++) {
-        pcb.traces.push({ start: pts[i], end: pts[i + 1], width: traceWidth, layer: lyr, net });
+        pcb.traces.push({
+          start: pts[i],
+          end: pts[i + 1],
+          width: traceWidth,
+          layer: lyr,
+          net,
+          source: "manual",
+        });
         totalTraces++;
       }
       totalLengthMm += perLayerLen;
@@ -5601,6 +6042,7 @@ export function addCoil(args: Record<string, unknown>) {
           startLayer: lyr,
           endLayer: layersIn[li + 1] as PcbLayer,
           net,
+          source: "manual",
         });
         stitchVias.push({ position: stitchPt, startLayer: lyr, endLayer: layersIn[li + 1] as PcbLayer });
       }
@@ -5634,6 +6076,7 @@ export function addCoil(args: Record<string, unknown>) {
             terminals: { a: terminalA, b: terminalB },
             inner_endpoint: pts[0],
             outer_endpoint: pts[pts.length - 1],
+            ...(drcCap ? { drc_delta: await drcCap.finish() } : {}),
             ...docResultPayload(ctx),
           }),
         },
@@ -5651,6 +6094,7 @@ export function addCoil(args: Record<string, unknown>) {
       width: traceWidth,
       layer,
       net,
+      source: "manual",
     });
     tracesAdded++;
     lengthMm += Math.hypot(pts[i + 1].x - pts[i].x, pts[i + 1].y - pts[i].y);
@@ -5668,6 +6112,7 @@ export function addCoil(args: Record<string, unknown>) {
       startLayer: layer,
       endLayer: viaTo,
       net,
+      source: "manual" as const,
     };
     pcb.vias.push(v);
     via = { position: v.position, startLayer: layer, endLayer: viaTo };
@@ -5694,6 +6139,7 @@ export function addCoil(args: Record<string, unknown>) {
           inner_endpoint: pts[0],
           outer_endpoint: pts[pts.length - 1],
           ...(via ? { via } : {}),
+          ...(drcCap ? { drc_delta: await drcCap.finish() } : {}),
           ...docResultPayload(ctx),
         }),
       },
@@ -5721,7 +6167,7 @@ function segLength(pts: Vec2[]): number {
  * convenience with NO phase/polarity meaning. For an electrically-correct phase
  * and polarity per coil, plan with `winding_layout` first and map its result.
  */
-export function addCoilArray(args: Record<string, unknown>) {
+export async function addCoilArray(args: Record<string, unknown>) {
   const ctx = resolveDocInput(args);
   const pcb = getDocPcb(ctx.doc);
   if (!pcb) {
@@ -5766,6 +6212,18 @@ export function addCoilArray(args: Record<string, unknown>) {
   // Re-use the same session/doc so each delegated addCoil mutates this board.
   const childDoc = ctx.documentId ? { document_id: ctx.documentId } : { document: ctx.doc };
 
+  // One capture around the WHOLE ring (each coil reaches outer_radius from a
+  // center on the pitch circle); the delegated addCoil calls skip their own.
+  const outerR = typeof args.outer_radius === "number" ? (args.outer_radius as number) : NaN;
+  const reach = pitchRadius + outerR + pcb.rules.defaultRules.viaDiameter;
+  const drcCap = await beginDrcDelta(
+    pcb,
+    boundsOfPoints([
+      { x: center.x - reach, y: center.y - reach },
+      { x: center.x + reach, y: center.y + reach },
+    ]),
+  );
+
   const results: Array<Record<string, unknown>> = [];
   const errors: string[] = [];
   let totalTraces = 0;
@@ -5779,7 +6237,7 @@ export function addCoilArray(args: Record<string, unknown>) {
     };
     const coilNet = netSequence?.length ? netSequence[i % netSequence.length] : net;
     const direction = dirFor(i);
-    const res = addCoil({
+    const res = await addCoil({
       ...childDoc,
       center: coilCenter,
       turns: args.turns,
@@ -5794,7 +6252,7 @@ export function addCoilArray(args: Record<string, unknown>) {
       segments_per_turn: args.segments_per_turn,
       inner_via: args.inner_via,
       via_to_layer: args.via_to_layer,
-    });
+    }, { skipDrcDelta: true });
     if (res.isError) {
       errors.push(`coil ${i} (net ${coilNet}): ${res.content[0]!.text}`);
       continue;
@@ -5815,6 +6273,7 @@ export function addCoilArray(args: Record<string, unknown>) {
           total_traces: totalTraces,
           results,
           ...(errors.length ? { errors } : {}),
+          drc_delta: await drcCap.finish(),
           ...docResultPayload(ctx),
         }),
       },
@@ -5981,7 +6440,24 @@ export function windingLayout(args: Record<string, unknown>) {
     ...(neutralNet ? { neutralNet } : {}),
   };
 
-  return { content: [{ type: "text" as const, text: JSON.stringify(plan) }] };
+  // A winding factor is only a claim about a buildable winding.
+  const payload = {
+    ...plan,
+    ...(feasible
+      ? {
+          claims: [
+            emClaim("winding_factor", plan.windingFactor, "dimensionless", "star-of-slots", {
+              slots,
+              poles,
+              phases,
+              layer,
+            }),
+          ],
+        }
+      : {}),
+  };
+
+  return { content: [{ type: "text" as const, text: JSON.stringify(payload) }] };
 }
 
 // ============================================================================
@@ -6052,7 +6528,7 @@ export const setBoardOutlineSchema = {
  * board. This is the non-destructive counterpart to re-running place_components
  * with new dimensions (which would reset the floorplan).
  */
-export function setBoardOutline(args: Record<string, unknown>) {
+export async function setBoardOutline(args: Record<string, unknown>) {
   const ctx = resolveDocInput(args);
   const pcb = getDocPcb(ctx.doc);
   if (!pcb) {
@@ -6119,6 +6595,10 @@ export function setBoardOutline(args: Record<string, unknown>) {
 
   const thickness = (args.thickness as number) ?? pcb.outline.thickness ?? 1.6;
 
+  // A new outline re-judges EVERY copper element's edge clearance (and can
+  // strand copper off-board) — inherently board-wide, so never region-scoped.
+  const drcCap = await beginDrcDelta(pcb, "full");
+
   pcb.outline = {
     vertices,
     ...(cutouts && cutouts.length > 0 ? { cutouts } : {}),
@@ -6155,6 +6635,7 @@ export function setBoardOutline(args: Record<string, unknown>) {
           },
           components_kept: pcb.footprints.length,
           ...(offBoard.length > 0 ? { off_board: offBoard } : {}),
+          drc_delta: await drcCap.finish(),
           ...docResultPayload(ctx),
         }),
       },
@@ -6907,6 +7388,11 @@ export async function describePcb(args: Record<string, unknown>) {
         categories: drcSummary.categories,
         byRule: drcSummary.byRule,
         worstClearance: drcSummary.worstClearance,
+        // Same-net copper touching far from any intended junction — invisible
+        // to clearance/short rules but fatal to two-terminal structures
+        // (coils, shunts). Surfaced by name so a "clean-looking" board that
+        // silently short-circuits its own winding is impossible to miss.
+        sameNetBypass: drcSummary.byRule["SameNetBypass"] ?? 0,
         // `clean` ignores connectivity (unrouted nets are a to-do, not a defect) —
         // same semantics as placement_drc.clean.
         clean: drcSummary.categories.clearance + drcSummary.categories.manufacturing === 0,
@@ -7019,7 +7505,7 @@ export const addTraceSchema = {
  * copper layer of the board. Ensures the net exists. The atomic routing
  * primitive add_coil / add_motor_winding lean on.
  */
-export function addTrace(args: Record<string, unknown>) {
+export async function addTrace(args: Record<string, unknown>) {
   const ctx = resolveDocInput(args);
   const pcb = getDocPcb(ctx.doc);
   const fail = ecadError;
@@ -7045,6 +7531,8 @@ export function addTrace(args: Record<string, unknown>) {
   const layer = layerRes.layer;
   if (!(width > 0)) return fail("width must be > 0");
 
+  const drcCap = await beginDrcDelta(pcb, boundsOfPoints(points, width / 2));
+
   if (!pcb.nets.some((n) => n.id === net)) {
     pcb.nets.push({ id: net, name: net });
   }
@@ -7054,7 +7542,9 @@ export function addTrace(args: Record<string, unknown>) {
   for (let i = 0; i + 1 < points.length; i++) {
     const start = { x: round3(points[i].x), y: round3(points[i].y) };
     const end = { x: round3(points[i + 1].x), y: round3(points[i + 1].y) };
-    const trace: Trace = { start, end, width, layer, net };
+    // Tagged manual: route_nets preserves this copper instead of ripping it
+    // up on a re-route (issue #277).
+    const trace: Trace = { start, end, width, layer, net, source: "manual" };
     pcb.traces.push(trace);
     tracesAdded++;
     lengthMm += Math.hypot(end.x - start.x, end.y - start.y);
@@ -7070,6 +7560,7 @@ export function addTrace(args: Record<string, unknown>) {
           length_mm: Math.round(lengthMm * 1000) / 1000,
           net,
           layer,
+          drc_delta: await drcCap.finish(),
           ...docResultPayload(ctx),
         }),
       },
@@ -7106,7 +7597,7 @@ export const addViaSchema = {
  * Push a single via (layer-spanning connection) onto the board. Ensures the net
  * exists. The escape primitive for trapped spiral ends and inter-layer hops.
  */
-export function addVia(args: Record<string, unknown>) {
+export async function addVia(args: Record<string, unknown>) {
   const ctx = resolveDocInput(args);
   const pcb = getDocPcb(ctx.doc);
   const fail = ecadError;
@@ -7132,12 +7623,15 @@ export function addVia(args: Record<string, unknown>) {
   if ("error" in endRes) return fail(`end_layer: ${endRes.error}`);
   const endLayer = endRes.layer;
 
+  const drcCap = await beginDrcDelta(pcb, boundsOfPoints([position], diameter / 2));
+
   if (!pcb.nets.some((n) => n.id === net)) {
     pcb.nets.push({ id: net, name: net });
   }
 
   const pos = { x: round3(position.x), y: round3(position.y) };
-  const via: Via = { position: pos, diameter, drill, startLayer, endLayer, net };
+  // Tagged manual: survives route_nets rip-up (issue #277).
+  const via: Via = { position: pos, diameter, drill, startLayer, endLayer, net, source: "manual" };
   pcb.vias.push(via);
 
   return {
@@ -7150,6 +7644,7 @@ export function addVia(args: Record<string, unknown>) {
           position: pos,
           start_layer: startLayer,
           end_layer: endLayer,
+          drc_delta: await drcCap.finish(),
           ...docResultPayload(ctx),
         }),
       },
@@ -7200,7 +7695,7 @@ export const setStackupSchema = {
  * Closes the gap where coil DC-resistance was permanently computed at 1 oz
  * because nothing could set copper weight.
  */
-export function setStackup(args: Record<string, unknown>) {
+export async function setStackup(args: Record<string, unknown>) {
   const ctx = resolveDocInput(args);
   const pcb = getDocPcb(ctx.doc);
   const fail = ecadError;
@@ -7219,6 +7714,10 @@ export function setStackup(args: Record<string, unknown>) {
     return fail("provide `copper_oz` and/or a non-empty `layers` array");
   }
   if (copperOz != null && !(copperOz > 0)) return fail("copper_oz must be > 0");
+
+  // Stackup edits move no copper, so a no-op delta is the expected outcome —
+  // but it is verified, not assumed (null bounds: connectivity still runs).
+  const drcCap = await beginDrcDelta(pcb, null);
 
   const stackup = pcb.stackup.layers;
 
@@ -7264,6 +7763,7 @@ export function setStackup(args: Record<string, unknown>) {
         text: JSON.stringify({
           success: true,
           stackup: pcb.stackup.layers,
+          drc_delta: await drcCap.finish(),
           ...docResultPayload(ctx),
         }),
       },
@@ -7644,10 +8144,12 @@ export function addZone(args: Record<string, unknown>) {
 // `changed` diff of what left the board, mirroring the other mutators. For a
 // "take back the very last thing I did" the `undo` tool is the broader hammer.
 
-/** A removed (or, for undo, re-added) board element, for the `changed` diff. */
+/** A removed (or, for undo, re-added) board element, for the `changed` diff.
+ *  For `netTie` entries `net` is the joined nets as "A+B+C" (a tie has no
+ *  single net of its own). */
 interface PcbElementChange {
   action: "removed" | "added";
-  kind: "zone" | "trace" | "traceArc" | "via";
+  kind: "zone" | "trace" | "traceArc" | "via" | "netTie";
   index: number;
   net: string;
   layer?: string;
@@ -7662,7 +8164,7 @@ function elementLayer(kind: PcbElementChange["kind"], el: Zone | Trace | Via): s
 /** Shared body for delete_zone / delete_trace / delete_via. Resolves the target
  *  element (by `index`, or by an unambiguous net[/layer] match), splices it out,
  *  and returns the standard result with a `changed: [{action:'removed', …}]`. */
-function deletePcbElement(args: Record<string, unknown>, kind: "zone" | "trace" | "via") {
+async function deletePcbElement(args: Record<string, unknown>, kind: "zone" | "trace" | "via") {
   const ctx = resolveDocInput(args);
   const pcb = getDocPcb(ctx.doc);
   const fail = ecadError;
@@ -7714,6 +8216,21 @@ function deletePcbElement(args: Record<string, unknown>, kind: "zone" | "trace" 
     return fail(`pass \`index\` (0..${coll.length - 1}) or a \`net\` to identify the ${kind} to delete`);
   }
 
+  // Removing copper can't create clearance faults, but it CAN sever a net
+  // into islands or orphan a plane stitch — the delta's connectivity pass
+  // (always board-global) is what catches that.
+  const target = coll[index]!;
+  const bounds =
+    kind === "zone"
+      ? boundsOfPoints((target as Zone).outline)
+      : kind === "trace"
+        ? boundsOfPoints(
+            [(target as Trace).start, (target as Trace).end],
+            (target as Trace).width / 2,
+          )
+        : boundsOfPoints([(target as Via).position], (target as Via).diameter / 2);
+  const drcCap = await beginDrcDelta(pcb, bounds);
+
   const [removed] = coll.splice(index, 1);
   const change: PcbElementChange = {
     action: "removed",
@@ -7732,6 +8249,7 @@ function deletePcbElement(args: Record<string, unknown>, kind: "zone" | "trace" 
           deleted: change,
           [`${plural}_total`]: coll.length,
           changed: [change],
+          drc_delta: await drcCap.finish(),
           ...docResultPayload(ctx),
         }),
       },
@@ -7797,6 +8315,606 @@ export function deleteVia(args: Record<string, unknown>) {
 }
 
 // ============================================================================
+// get_copper — read/query routed copper (the discovery side of the algebra)
+// ============================================================================
+//
+// add_trace/add_via/add_zone write copper and delete_trace/delete_via/
+// delete_zone remove it by index — but nothing let an agent SEE what copper
+// exists: describe_pcb only aggregates counts, so finding "the trace shorting
+// GND to PHA near the star point" meant exporting the whole document. This is
+// the read companion: filter by layer/net/bbox/kind and get each element back
+// with the same `index` (per-collection, add order) the delete_* tools accept.
+
+/** The queryable copper collections, in report order. */
+type CopperKind = "trace" | "traceArc" | "via" | "zone";
+const COPPER_KINDS: readonly CopperKind[] = ["trace", "traceArc", "via", "zone"];
+
+/** Axis-aligned bbox as {min, max}. */
+interface Bbox {
+  min: Vec2;
+  max: Vec2;
+}
+
+/** Conservative bounding box of a copper element (copper extent included). */
+function copperElementBbox(kind: CopperKind, el: Trace | TraceArc | Via | Zone): Bbox {
+  switch (kind) {
+    case "trace": {
+      const t = el as Trace;
+      const r = t.width / 2;
+      return {
+        min: { x: Math.min(t.start.x, t.end.x) - r, y: Math.min(t.start.y, t.end.y) - r },
+        max: { x: Math.max(t.start.x, t.end.x) + r, y: Math.max(t.start.y, t.end.y) + r },
+      };
+    }
+    case "traceArc": {
+      // Full-circle bound — conservative (a quarter arc reports the whole
+      // circle's box), but never misses copper on a bbox query.
+      const a = el as TraceArc;
+      const r = a.radius + a.width / 2;
+      return {
+        min: { x: a.center.x - r, y: a.center.y - r },
+        max: { x: a.center.x + r, y: a.center.y + r },
+      };
+    }
+    case "via": {
+      const v = el as Via;
+      const r = v.diameter / 2;
+      return {
+        min: { x: v.position.x - r, y: v.position.y - r },
+        max: { x: v.position.x + r, y: v.position.y + r },
+      };
+    }
+    case "zone": {
+      const z = el as Zone;
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      for (const p of z.outline) {
+        if (p.x < minX) minX = p.x;
+        if (p.y < minY) minY = p.y;
+        if (p.x > maxX) maxX = p.x;
+        if (p.y > maxY) maxY = p.y;
+      }
+      return { min: { x: minX, y: minY }, max: { x: maxX, y: maxY } };
+    }
+  }
+}
+
+/** True when a via's barrel spans `layer` (start/end plus every copper layer
+ *  between, by stackup order) — a through via FCu→BCu carries In1Cu too. */
+function viaSpansLayer(via: Via, layer: PcbLayer): boolean {
+  const lo = COPPER_LAYERS.indexOf(via.startLayer);
+  const hi = COPPER_LAYERS.indexOf(via.endLayer);
+  const at = COPPER_LAYERS.indexOf(layer);
+  if (lo < 0 || hi < 0 || at < 0) return via.startLayer === layer || via.endLayer === layer;
+  return at >= Math.min(lo, hi) && at <= Math.max(lo, hi);
+}
+
+/** Hard cap on elements per get_copper page — keeps a dense board's response
+ *  bounded; the caller pages with `offset` (the result carries `total`). */
+const GET_COPPER_CAP = 200;
+
+/** JSON Schema for get_copper tool. */
+export const getCopperSchema = {
+  type: "object" as const,
+  properties: {
+    ...docInputProperties,
+    kind: {
+      type: "string" as const,
+      description:
+        "Restrict to one collection: 'trace', 'traceArc', 'via', or 'zone'. " +
+        "Omit for all four.",
+    },
+    layer: {
+      type: "string" as const,
+      description:
+        "Copper-layer filter (e.g. 'FCu', 'BCu', 'In1Cu'). Traces/arcs/zones " +
+        "match their own layer; a via matches every layer its barrel spans.",
+    },
+    net: { type: "string" as const, description: "Net filter (exact id, e.g. 'GND')." },
+    bbox: {
+      type: "object" as const,
+      description:
+        "Spatial filter, board-local mm: keep elements whose bounding box " +
+        "overlaps the rectangle x..x+w, y..y+h (conservative for arcs).",
+      properties: {
+        x: { type: "number" as const },
+        y: { type: "number" as const },
+        w: { type: "number" as const },
+        h: { type: "number" as const },
+      },
+      required: ["x", "y", "w", "h"],
+    },
+    offset: {
+      type: "number" as const,
+      description: "Skip this many matches (pagination; default 0).",
+    },
+    limit: {
+      type: "number" as const,
+      description: `Max elements returned (default and cap ${GET_COPPER_CAP}).`,
+    },
+  },
+  required: ["document_id"],
+};
+
+/**
+ * Query the board's routed copper — traces, trace arcs, vias, zones — with
+ * optional layer/net/bbox/kind filters. Each element is returned with its
+ * `kind` and `index`: the exact addressing delete_trace / delete_via /
+ * delete_zone accept, so a query result can drive a surgical delete without
+ * ever exporting the document. Read-only.
+ */
+export function getCopper(args: Record<string, unknown>) {
+  const ctx = resolveDocInput(args);
+  const pcb = getDocPcb(ctx.doc);
+  const fail = ecadError;
+  if (!pcb) {
+    return fail(
+      "Document has no PCB — run place_components first (or open a document that has a board)",
+    );
+  }
+
+  let kinds: readonly CopperKind[] = COPPER_KINDS;
+  if (args.kind != null) {
+    const k = String(args.kind);
+    if (!COPPER_KINDS.includes(k as CopperKind)) {
+      return fail(`kind '${k}' is not valid; legal: ${COPPER_KINDS.join(", ")}`);
+    }
+    kinds = [k as CopperKind];
+  }
+
+  let wantLayer: PcbLayer | undefined;
+  if (args.layer != null) {
+    const layerRes = validateCopperLayer(args.layer);
+    if ("error" in layerRes) return fail(layerRes.error);
+    wantLayer = layerRes.layer;
+  }
+  const wantNet = args.net != null ? String(args.net) : undefined;
+
+  let queryBox: Bbox | undefined;
+  if (args.bbox != null) {
+    const b = args.bbox as Record<string, unknown>;
+    if (
+      typeof b.x !== "number" || typeof b.y !== "number" ||
+      typeof b.w !== "number" || typeof b.h !== "number"
+    ) {
+      return fail("bbox must be {x, y, w, h} in board-local mm");
+    }
+    if ((b.w as number) < 0 || (b.h as number) < 0) return fail("bbox w and h must be >= 0");
+    queryBox = {
+      min: { x: b.x as number, y: b.y as number },
+      max: { x: (b.x as number) + (b.w as number), y: (b.y as number) + (b.h as number) },
+    };
+  }
+
+  const offset = typeof args.offset === "number" ? Math.max(0, Math.floor(args.offset)) : 0;
+  const limit =
+    typeof args.limit === "number"
+      ? Math.min(GET_COPPER_CAP, Math.max(1, Math.floor(args.limit)))
+      : GET_COPPER_CAP;
+
+  const overlaps = (a: Bbox, b: Bbox): boolean =>
+    a.min.x <= b.max.x && a.max.x >= b.min.x && a.min.y <= b.max.y && a.max.y >= b.min.y;
+
+  const layerMatches = (kind: CopperKind, el: Trace | TraceArc | Via | Zone): boolean => {
+    if (wantLayer === undefined) return true;
+    if (kind === "via") return viaSpansLayer(el as Via, wantLayer);
+    return (el as Trace | TraceArc | Zone).layer === wantLayer;
+  };
+
+  const rv = (v: Vec2): Vec2 => ({ x: round3(v.x), y: round3(v.y) });
+  const rbox = (b: Bbox): Bbox => ({ min: rv(b.min), max: rv(b.max) });
+
+  /** The reported view of one element — identity first, geometry after. */
+  const describe = (
+    kind: CopperKind,
+    index: number,
+    el: Trace | TraceArc | Via | Zone,
+  ): Record<string, unknown> => {
+    switch (kind) {
+      case "trace": {
+        const t = el as Trace;
+        return {
+          kind, index, net: t.net, layer: t.layer,
+          start: rv(t.start), end: rv(t.end), width: t.width,
+          ...(t.source ? { source: t.source } : {}),
+        };
+      }
+      case "traceArc": {
+        const a = el as TraceArc;
+        return {
+          kind, index, net: a.net, layer: a.layer,
+          center: rv(a.center), radius: round3(a.radius),
+          start_angle: a.startAngle, end_angle: a.endAngle, width: a.width,
+        };
+      }
+      case "via": {
+        const v = el as Via;
+        return {
+          kind, index, net: v.net, layers: [v.startLayer, v.endLayer],
+          position: rv(v.position), diameter: v.diameter, drill: v.drill,
+          ...(v.source ? { source: v.source } : {}),
+        };
+      }
+      case "zone": {
+        // A pour's outline can run to hundreds of vertices (board fills) —
+        // report its bbox + vertex count; the index is enough to delete it.
+        const z = el as Zone;
+        return {
+          kind, index, net: z.net, layer: z.layer,
+          bbox: rbox(copperElementBbox("zone", z)), vertices: z.outline.length,
+          ...(z.holes && z.holes.length > 0 ? { holes: z.holes.length } : {}),
+          clearance: z.clearance, priority: z.priority ?? 0,
+        };
+      }
+    }
+  };
+
+  const collections: Record<CopperKind, Array<Trace | TraceArc | Via | Zone>> = {
+    trace: pcb.traces,
+    traceArc: pcb.traceArcs ?? [],
+    via: pcb.vias,
+    zone: pcb.zones,
+  };
+
+  // Match in deterministic order (traces, arcs, vias, zones; index order
+  // within each) so offset-paging never skips or repeats an element.
+  const matched: Array<{ kind: CopperKind; index: number; el: Trace | TraceArc | Via | Zone }> = [];
+  const totalByKind: Partial<Record<CopperKind, number>> = {};
+  for (const kind of kinds) {
+    collections[kind].forEach((el, index) => {
+      if (wantNet !== undefined && el.net !== wantNet) return;
+      if (!layerMatches(kind, el)) return;
+      if (queryBox && !overlaps(copperElementBbox(kind, el), queryBox)) return;
+      matched.push({ kind, index, el });
+      totalByKind[kind] = (totalByKind[kind] ?? 0) + 1;
+    });
+  }
+
+  const page = matched.slice(offset, offset + limit);
+  const elements = page.map((m) => describe(m.kind, m.index, m.el));
+
+  return {
+    content: [
+      {
+        type: "text" as const,
+        text: JSON.stringify({
+          success: true,
+          total: matched.length,
+          total_by_kind: totalByKind,
+          count: elements.length,
+          offset,
+          ...(offset + elements.length < matched.length
+            ? { next_offset: offset + elements.length }
+            : {}),
+          elements,
+          ...docResultPayload(ctx),
+        }),
+      },
+    ],
+  };
+}
+
+// ============================================================================
+// add_net_tie / delete_net_tie — intentional net junctions
+// ============================================================================
+//
+// Wye motor windings, split grounds joined at one stitch, and current-sense
+// shunts all REQUIRE two named nets to touch on purpose — without a declared
+// tie, DRC correctly reports the junction as a short. Until now only the
+// add_motor_winding realizer could author a NetTie; an agent hand-building a
+// wye had to do offline JSON surgery on the saved .vcad. These tools complete
+// the algebra: author and remove ties on the live session.
+
+/** Tolerance for matching a tie by position in delete_net_tie, mm. */
+const TIE_POSITION_TOL = 1e-3;
+
+/** The reported view of one net tie: the stored fields plus its index (the
+ *  addressing delete_net_tie accepts) and the DRC scope it resolves to. */
+function describeNetTie(tie: NetTie, index: number): Record<string, unknown> {
+  return {
+    index,
+    nets: tie.nets,
+    ...(tie.position ? { position: tie.position } : {}),
+    ...(tie.radius !== undefined ? { radius: tie.radius } : {}),
+    scope: tie.position && tie.radius !== undefined ? "region" : "board_wide",
+  };
+}
+
+/** The full tie list, as returned by both tie tools after a mutation. */
+function netTieList(pcb: Pcb): Array<Record<string, unknown>> {
+  return (pcb.netTies ?? []).map((t, i) => describeNetTie(t, i));
+}
+
+/** JSON Schema for add_net_tie tool. */
+export const addNetTieSchema = {
+  type: "object" as const,
+  properties: {
+    ...docInputProperties,
+    nets: {
+      type: "array" as const,
+      items: { type: "string" as const },
+      description:
+        "Names of the nets joined at this tie (>= 2, all must exist on the " +
+        "board) — e.g. the three phases + neutral of a wye, or GND + AGND.",
+    },
+    position: {
+      ...vec2Schema,
+      description:
+        "Center of the allowed join region, board-local mm. Give WITH `radius` " +
+        "to scope the exemption; omit both for a board-wide tie.",
+    },
+    radius: {
+      type: "number" as const,
+      description:
+        "Radius of the allowed join region, mm (> 0). Requires `position`. " +
+        "Size it to cover the junction copper with margin (~1 trace width): " +
+        "DRC judges each contact at an estimated contact point (e.g. a trace " +
+        "midpoint), not the exact geometric touch.",
+    },
+  },
+  required: ["document_id", "nets"],
+};
+
+/**
+ * Declare an intentional junction between two or more nets (a net-tie) so DRC
+ * treats them as one electrical node where they meet — the primitive behind
+ * wye/star neutral points, split-ground stitches, and current-sense shunt
+ * taps. Region-scoped (position+radius) ties exempt clearance/short checks
+ * only for contacts inside the region — and connectivity: nets joined through
+ * copper are legal when each has a tie-covered contact there (a stray crossing
+ * of the same nets elsewhere still fires). Region-less ties exempt the pair
+ * board-wide. Mutates the session document.
+ */
+export async function addNetTie(args: Record<string, unknown>) {
+  const ctx = resolveDocInput(args);
+  const pcb = getDocPcb(ctx.doc);
+  const fail = ecadError;
+  if (!pcb) {
+    return fail(
+      "Document has no PCB — run place_components first (or open a document that has a board)",
+    );
+  }
+
+  const rawNets = Array.isArray(args.nets) ? (args.nets as unknown[]) : undefined;
+  if (!rawNets) return fail("nets is required — the >= 2 net names this tie joins");
+  const nets: string[] = [];
+  for (const n of rawNets) {
+    const name = String(n ?? "").trim();
+    if (!name) return fail("every entry in nets must be a non-empty net name");
+    if (!nets.includes(name)) nets.push(name);
+  }
+  if (nets.length < 2) return fail("a net tie joins at least 2 distinct nets");
+
+  // A tie on a net that doesn't exist is a typo, not an intention — and it
+  // would silently exempt nothing. Validate against the board's netlist.
+  const known = new Set(pcb.nets.map((n) => n.id));
+  const unknown = nets.filter((n) => !known.has(n));
+  if (unknown.length > 0) {
+    const names = pcb.nets.map((n) => n.id);
+    const shown = names.slice(0, 30).join(", ");
+    return fail(
+      `unknown net${unknown.length > 1 ? "s" : ""} ${unknown.map((n) => `'${n}'`).join(", ")} — ` +
+        `board nets: ${shown}${names.length > 30 ? `, … (${names.length} total)` : ""}`,
+    );
+  }
+
+  // The kernel only forms a scoped region when BOTH position and radius are
+  // present (NetTieGroups in drc.rs); one without the other would silently
+  // degrade to a board-wide exemption. Fail closed instead.
+  const hasPosition = args.position != null;
+  const hasRadius = args.radius != null;
+  if (hasPosition !== hasRadius) {
+    return fail(
+      "position and radius must be given together — one without the other " +
+        "would silently become a board-wide exemption. Pass both to scope the " +
+        "tie to a region, or neither for an explicit board-wide tie.",
+    );
+  }
+  let position: Vec2 | undefined;
+  let radius: number | undefined;
+  if (hasPosition) {
+    const p = args.position as Record<string, unknown>;
+    if (typeof p.x !== "number" || typeof p.y !== "number") {
+      return fail("position must be {x, y} in board-local mm");
+    }
+    radius = args.radius as number;
+    if (typeof radius !== "number" || !(radius > 0)) return fail("radius must be > 0 mm");
+    position = { x: round3(p.x as number), y: round3(p.y as number) };
+    radius = round3(radius);
+  }
+
+  // A tie mutates DRC *semantics*, not copper: it exempts (and, deleted,
+  // re-convicts) short/clearance findings. A region-scoped tie only changes
+  // verdicts inside its circle; a board-wide tie can change them anywhere the
+  // tied nets' copper meets.
+  const drcCap = await beginDrcDelta(
+    pcb,
+    position && radius !== undefined
+      ? boundsOfPoints([position], radius)
+      : "full",
+  );
+
+  pcb.netTies = pcb.netTies ?? [];
+  const tie: NetTie = {
+    nets,
+    ...(position ? { position } : {}),
+    ...(radius !== undefined ? { radius } : {}),
+  };
+  pcb.netTies.push(tie);
+  const index = pcb.netTies.length - 1;
+
+  const change: PcbElementChange = {
+    action: "added",
+    kind: "netTie",
+    index,
+    net: nets.join("+"),
+  };
+
+  return {
+    content: [
+      {
+        type: "text" as const,
+        text: JSON.stringify({
+          success: true,
+          tie: describeNetTie(tie, index),
+          net_ties: netTieList(pcb),
+          net_ties_total: pcb.netTies.length,
+          changed: [change],
+          drc_delta: await drcCap.finish(),
+          ...docResultPayload(ctx),
+        }),
+      },
+    ],
+  };
+}
+
+/** JSON Schema for delete_net_tie tool. */
+export const deleteNetTieSchema = {
+  type: "object" as const,
+  properties: {
+    ...docInputProperties,
+    index: {
+      type: "number" as const,
+      description:
+        "Zero-based position in pcb.netTies (as reported by add_net_tie / get_document).",
+    },
+    nets: {
+      type: "array" as const,
+      items: { type: "string" as const },
+      description:
+        "Match ties joining exactly this net set (order-insensitive). With " +
+        "`index`, a guard; without it, identifies the tie when exactly one matches.",
+    },
+    position: {
+      ...vec2Schema,
+      description:
+        `Match region-scoped ties centered here (±${TIE_POSITION_TOL} mm) — ` +
+        "disambiguates when the same net set is tied at several junctions " +
+        "(e.g. the three X–Y ties of a delta winding).",
+    },
+  },
+  required: ["document_id"],
+};
+
+/** Remove a net tie by `index`, or by matching `nets` (set equality) and/or
+ *  `position` — the take-back for a bad add_net_tie. The junction's copper (if
+ *  any) stays; DRC will report it as a short again. Mutates the session. */
+export async function deleteNetTie(args: Record<string, unknown>) {
+  const ctx = resolveDocInput(args);
+  const pcb = getDocPcb(ctx.doc);
+  const fail = ecadError;
+  if (!pcb) {
+    return fail(
+      "Document has no PCB — run place_components first (or open a document that has a board)",
+    );
+  }
+  const ties = pcb.netTies ?? [];
+  if (ties.length === 0) return fail("board has no net ties to delete");
+
+  let wantNets: string[] | undefined;
+  if (args.nets != null) {
+    if (!Array.isArray(args.nets)) return fail("nets must be an array of net names");
+    wantNets = (args.nets as unknown[]).map((n) => String(n ?? "").trim()).sort();
+  }
+  let wantPos: Vec2 | undefined;
+  if (args.position != null) {
+    const p = args.position as Record<string, unknown>;
+    if (typeof p.x !== "number" || typeof p.y !== "number") {
+      return fail("position must be {x, y} in board-local mm");
+    }
+    wantPos = { x: p.x as number, y: p.y as number };
+  }
+
+  const matchesFilter = (tie: NetTie): boolean => {
+    if (wantNets) {
+      const have = [...tie.nets].sort();
+      if (have.length !== wantNets.length || have.some((n, i) => n !== wantNets![i])) return false;
+    }
+    if (wantPos) {
+      if (!tie.position) return false;
+      if (
+        Math.abs(tie.position.x - wantPos.x) > TIE_POSITION_TOL ||
+        Math.abs(tie.position.y - wantPos.y) > TIE_POSITION_TOL
+      ) {
+        return false;
+      }
+    }
+    return true;
+  };
+
+  let index: number;
+  if (typeof args.index === "number") {
+    index = args.index as number;
+    if (!Number.isInteger(index) || index < 0 || index >= ties.length) {
+      return fail(`index ${index} out of range — board has ${ties.length} net ties (0..${ties.length - 1})`);
+    }
+    // A nets/position given alongside the index is a guard against deleting
+    // the wrong tie — confirm the indexed tie actually matches.
+    if (!matchesFilter(ties[index]!)) {
+      return fail(
+        `net tie at index ${index} joins [${ties[index]!.nets.join(", ")}]` +
+          `${ties[index]!.position ? ` at (${ties[index]!.position!.x}, ${ties[index]!.position!.y})` : ""}, ` +
+          "not the nets/position you specified",
+      );
+    }
+  } else if (wantNets || wantPos) {
+    const matches = ties.flatMap((t, i) => (matchesFilter(t) ? [i] : []));
+    const sel = [
+      wantNets ? `[${wantNets.join(", ")}]` : undefined,
+      wantPos ? `(${wantPos.x}, ${wantPos.y})` : undefined,
+    ]
+      .filter(Boolean)
+      .join(" at ");
+    if (matches.length === 0) return fail(`no net tie matches ${sel}`);
+    if (matches.length > 1) {
+      return fail(
+        `${matches.length} net ties match ${sel} (indices ${matches.join(", ")}) — pass \`index\` or \`position\` to pick one`,
+      );
+    }
+    index = matches[0]!;
+  } else {
+    return fail(
+      `pass \`index\` (0..${ties.length - 1}), \`nets\`, or \`position\` to identify the tie to delete`,
+    );
+  }
+
+  // Removing a tie un-exempts whatever it was excusing — copper contact at
+  // the junction reads as a Short again. Scope to the tie's region when it
+  // has one; a board-wide tie could have been excusing contact anywhere.
+  const target = ties[index]!;
+  const drcCap = await beginDrcDelta(
+    pcb,
+    target.position && target.radius != null
+      ? boundsOfPoints([target.position], target.radius)
+      : "full",
+  );
+
+  const [removed] = ties.splice(index, 1);
+  const change: PcbElementChange = {
+    action: "removed",
+    kind: "netTie",
+    index,
+    net: removed!.nets.join("+"),
+  };
+
+  return {
+    content: [
+      {
+        type: "text" as const,
+        text: JSON.stringify({
+          success: true,
+          deleted: describeNetTie(removed!, index),
+          net_ties: netTieList(pcb),
+          net_ties_total: ties.length,
+          changed: [change],
+          drc_delta: await drcCap.finish(),
+          ...docResultPayload(ctx),
+        }),
+      },
+    ],
+  };
+}
+
+// ============================================================================
 // undo — rewind the last mutation on a session (snapshot stack)
 // ============================================================================
 
@@ -7839,11 +8957,16 @@ function diffElementArray(
 /** Board-element diff between two PCBs (or null when neither has a board). */
 function diffPcbElements(before: Pcb | null, after: Pcb | null): PcbElementChange[] {
   if (!before || !after) return [];
+  // Ties carry no single `net` — view them with the joined names so the
+  // generic differ (which keys on full JSON and reads `.net`) can report them.
+  const tieView = (ties?: NetTie[]) =>
+    (ties ?? []).map((t) => ({ ...t, net: t.nets.join("+") }));
   return [
     ...diffElementArray("zone", before.zones ?? [], after.zones ?? []),
     ...diffElementArray("trace", before.traces ?? [], after.traces ?? []),
     ...diffElementArray("traceArc", (before.traceArcs ?? []) as never, (after.traceArcs ?? []) as never),
     ...diffElementArray("via", before.vias ?? [], after.vias ?? []),
+    ...diffElementArray("netTie", tieView(before.netTies) as never, tieView(after.netTies) as never),
   ];
 }
 
@@ -8177,7 +9300,7 @@ const MAX_VIA_ARRAY = 2000;
  * vias, plane stitching) or an explicit list of `points`. Grid vias are clipped
  * to the board outline by default. Mutates the session document.
  */
-export function addViaArray(args: Record<string, unknown>) {
+export async function addViaArray(args: Record<string, unknown>) {
   const ctx = resolveDocInput(args);
   const pcb = getDocPcb(ctx.doc);
   const fail = (text: string) => ({
@@ -8269,6 +9392,8 @@ export function addViaArray(args: Record<string, unknown>) {
     );
   }
 
+  const drcCap = await beginDrcDelta(pcb, boundsOfPoints(kept, diameter / 2));
+
   if (!pcb.nets.some((n) => n.id === net)) pcb.nets.push({ id: net, name: net });
 
   for (const p of kept) {
@@ -8279,6 +9404,7 @@ export function addViaArray(args: Record<string, unknown>) {
       startLayer,
       endLayer,
       net,
+      source: "manual",
     });
   }
 
@@ -8294,6 +9420,7 @@ export function addViaArray(args: Record<string, unknown>) {
           ...(skipped > 0 ? { skipped_outside_board: skipped } : {}),
           start_layer: startLayer,
           end_layer: endLayer,
+          drc_delta: await drcCap.finish(),
           ...docResultPayload(ctx),
         }),
       },
@@ -8304,6 +9431,69 @@ export function addViaArray(args: Record<string, unknown>) {
 // ============================================================================
 // add_motor_winding — plan → copper realizer (closes the winding loop)
 // ============================================================================
+
+/** Point at polar (r, ang·rad) around c. Not rounded — round at push time. */
+function windPolar(c: Vec2, r: number, ang: number): Vec2 {
+  return { x: c.x + r * Math.cos(ang), y: c.y + r * Math.sin(ang) };
+}
+
+/** Angle of p around c, radians normalized to [0, 2π). */
+function windAngle(c: Vec2, p: Vec2): number {
+  const a = Math.atan2(p.y - c.y, p.x - c.x);
+  return a < 0 ? a + 2 * Math.PI : a;
+}
+
+/** Minimum centerline distance between segments ab and cd. */
+function windSegSegDist(a: Vec2, b: Vec2, c: Vec2, d: Vec2): number {
+  if (segmentCrossing(a, b, c, d)) return 0;
+  return Math.min(
+    pointSegDist(a, c, d),
+    pointSegDist(b, c, d),
+    pointSegDist(c, a, b),
+    pointSegDist(d, a, b),
+  );
+}
+
+/** Approximate closest-approach point between segments ab and cd. */
+function windSegClosestPt(a: Vec2, b: Vec2, c: Vec2, d: Vec2): Vec2 {
+  const clamp = (p: Vec2, s: Vec2, e: Vec2): Vec2 => {
+    const dx = e.x - s.x;
+    const dy = e.y - s.y;
+    const len2 = dx * dx + dy * dy;
+    if (len2 === 0) return s;
+    const t = Math.max(0, Math.min(1, ((p.x - s.x) * dx + (p.y - s.y) * dy) / len2));
+    return { x: s.x + t * dx, y: s.y + t * dy };
+  };
+  let best: [Vec2, Vec2] = [a, clamp(a, c, d)];
+  let bestD = Infinity;
+  for (const [p, q] of [
+    [a, clamp(a, c, d)],
+    [b, clamp(b, c, d)],
+    [c, clamp(c, a, b)],
+    [d, clamp(d, a, b)],
+  ] as Array<[Vec2, Vec2]>) {
+    const dd = Math.hypot(p.x - q.x, p.y - q.y);
+    if (dd < bestD) {
+      bestD = dd;
+      best = [p, q];
+    }
+  }
+  return { x: (best[0].x + best[1].x) / 2, y: (best[0].y + best[1].y) / 2 };
+}
+
+/**
+ * Arc polyline at radius r around c from angle a0 to a1 (radians). Sweeps
+ * CCW when a1 > a0, CW when a1 < a0. Chord sagitta capped at 0.02mm so the
+ * polyline never strays meaningfully off its ring radius.
+ */
+function windArcPoints(c: Vec2, r: number, a0: number, a1: number): Vec2[] {
+  const sweep = a1 - a0;
+  const maxStep = Math.max(0.01, 2 * Math.acos(Math.max(0, 1 - 0.02 / Math.max(r, 0.02))));
+  const n = Math.max(1, Math.ceil(Math.abs(sweep) / maxStep));
+  const pts: Vec2[] = [];
+  for (let i = 0; i <= n; i++) pts.push(windPolar(c, r, a0 + (sweep * i) / n));
+  return pts;
+}
 
 /** JSON Schema for add_motor_winding tool. */
 export const addMotorWindingSchema = {
@@ -8329,7 +9519,9 @@ export const addMotorWindingSchema = {
     copper_layer: { type: "string" as const, description: "Layer the spirals are drawn on (default 'FCu')" },
     return_layer: {
       type: "string" as const,
-      description: "Layer for interconnect + neutral/loop (default 'BCu')",
+      description:
+        "Layer for the interconnect's radial drops and terminal vias; the " +
+        "interconnect arcs ride the spiral layer (default 'BCu')",
     },
     phase_nets: {
       type: "array" as const,
@@ -8354,14 +9546,36 @@ export const addMotorWindingSchema = {
 
 /**
  * One-shot motor-winding realizer: plans a balanced polyphase winding with
- * winding_layout, drops a spiral coil per tooth (each escaping to the return
- * layer via inner+outer vias), series-connects coils within each phase on the
- * return layer, and terminates the phases (wye star or delta loop) — recording
- * the join as a NetTie so DRC treats it as intentional, not a short. The
- * interconnect is a baseline straight-line realizer; the new DRC honestly flags
- * any crossings it introduces for follow-up routing.
+ * winding_layout, drops a spiral coil per tooth, series-connects coils within
+ * each phase, and terminates the phases (wye star or delta loop) with a
+ * region-scoped NetTie at each junction so DRC treats the join as intentional.
+ *
+ * The interconnect is planar by construction:
+ *
+ * - Each coil's terminals land on vias placed clear of the spiral body — the
+ *   inner terminal leads to a via at the coil center (the bore is copper-free),
+ *   the outer leads radially outward past the last turn. A via dropped directly
+ *   on the spiral endpoint would overlap the adjacent turn (turn pitch is
+ *   usually smaller than via radius + trace half-width) and silently short it.
+ * - Every phase gets one arc ring in the coil-free bore around the winding
+ *   center: series hops ride that ring on the spiral layer, reached by radial
+ *   drops on the return layer, joined only through vias. Rings are staggered
+ *   by via-to-via pitch, so arcs never cross anything.
+ * - Approach angles are jogged so no return-layer radial runs along a terminal
+ *   ray past a same-net via it doesn't terminate at (which would electrically
+ *   bypass a coil).
+ * - The wye star is a short radial junction across the phase-ring ends at an
+ *   angle chosen on real board material (never over a bore cutout, never at
+ *   the board center), carrying the neutral net under a scoped NetTie.
+ * - Phase (and neutral) feeds are routed to same-net pads when any exist, via
+ *   staggered escape arcs outside the coil ring, each candidate checked for
+ *   collisions before it is committed; unroutable feeds are reported, never
+ *   guessed.
+ *
+ * A post-build audit re-checks both invariants (no same-net via bypass, no
+ * cross-net contact outside a tie region) and reports violations as errors.
  */
-export function addMotorWinding(args: Record<string, unknown>) {
+export async function addMotorWinding(args: Record<string, unknown>) {
   const ctx = resolveDocInput(args);
   const pcb = getDocPcb(ctx.doc);
   const fail = ecadError;
@@ -8415,9 +9629,167 @@ export function addMotorWinding(args: Record<string, unknown>) {
   let vias = 0;
   let interconnectTraces = 0;
 
-  // b. One spiral per tooth; both terminals reachable on the return layer.
-  //    Keyed by slot so the series walk can find each coil's endpoints.
-  const coilTerminals = new Map<number, { inner: Vec2; outer: Vec2 }>();
+  const TAU = Math.PI * 2;
+  const rules = pcb.rules;
+  const viaDia = rules.defaultRules.viaDiameter;
+  const viaDrill = rules.defaultRules.viaDrill;
+  const clearance = (args.clearance as number) ?? rules.defaultRules.clearance;
+  const halfW = traceWidth / 2;
+  const viaR = viaDia / 2;
+  const MARGIN = 0.05;
+
+  // Pads by net — feed targets (pre-existing pads only; this tool adds none).
+  const padsByNet = new Map<string, Array<{ pos: Vec2; onReturnLayer: boolean; size: number }>>();
+  for (const fp of pcb.footprints) {
+    for (const pad of fp.pads) {
+      if (!pad.net) continue;
+      const arr = padsByNet.get(pad.net) ?? [];
+      arr.push({
+        pos: padWorld(fp, pad),
+        onReturnLayer: pad.layers.includes(returnLayer),
+        size: padApproxRadius(pad),
+      });
+      padsByNet.set(pad.net, arr);
+    }
+  }
+  const neutral =
+    connection === "wye"
+      ? (plan.neutralNet ?? (args.neutral_net ? String(args.neutral_net) : "WIND_N"))
+      : undefined;
+  const neutralFeedWanted = !!(neutral && (padsByNet.get(neutral)?.length ?? 0) > 0);
+
+  // Interconnect geometry, validated up front so an unroutable request fails
+  // BEFORE any copper lands: one arc ring per phase (plus one for delta return
+  // links / the neutral feed) in the coil-free bore. Ring pitch is the worst
+  // pairwise requirement — via-to-via clearance or drilled hole-to-hole — so
+  // staggered rings can never interact.
+  const planPhases = Object.keys(plan.phaseSeries).length;
+  const ringSpacing = Math.max(viaDia + clearance, viaDrill + rules.holeToHole) + MARGIN;
+  const ringOuterBound = pitchRadius - outerR - (viaR + halfW + clearance + MARGIN);
+  const nRings =
+    connection === "wye" ? planPhases + (neutralFeedWanted ? 1 : 0) : planPhases * 2;
+  const ringInnermost = ringOuterBound - (nRings - 1) * ringSpacing;
+  const interconnectNeeded = plan.coils.length > 1 || connection === "wye";
+  const onMaterial = (p: Vec2): boolean =>
+    pointInPolygon(p, pcb.outline.vertices) &&
+    !(pcb.outline.cutouts ?? []).some((c) => c.length >= 3 && pointInPolygon(p, c));
+
+  if (interconnectNeeded) {
+    // The rings must land on real board material: clear of any outline cutout
+    // that intrudes into the bore (e.g. a shaft bore), by edge clearance.
+    let cutoutReach = 0;
+    for (const cut of pcb.outline.cutouts ?? []) {
+      if (cut.length < 3) continue;
+      const dists = cut.map((v) => Math.hypot(v.x - center.x, v.y - center.y));
+      if (Math.min(...dists) < ringOuterBound + viaR + rules.edgeClearance) {
+        cutoutReach = Math.max(cutoutReach, Math.max(...dists));
+      }
+    }
+    const minInner = Math.max(viaR + rules.edgeClearance, cutoutReach + viaR + rules.edgeClearance);
+    if (!(ringInnermost >= minInner)) {
+      return fail(
+        `interconnect doesn't fit: ${nRings} arc ring(s) at ${round3(ringSpacing)}mm pitch ` +
+          `need radii ${round3(ringInnermost)}–${round3(ringOuterBound)}mm around the winding ` +
+          `center, but the innermost usable radius is ${round3(minInner)}mm` +
+          (cutoutReach > 0 ? ` (a bore/cutout reaches ${round3(cutoutReach)}mm)` : "") +
+          `. Increase pitch_radius, reduce outer_radius, or shrink the bore.`,
+      );
+    }
+  }
+
+  // Jog angle: sized so a radial run at (terminal ray ± jog) clears every via
+  // sitting ON the terminal ray, at every radius down to the innermost ring —
+  // the no-bypass invariant. Also spaces same-ring via pairs at one coil.
+  const viaSep = Math.max(viaDia + clearance, viaDrill + rules.holeToHole) + MARGIN;
+  const jog = interconnectNeeded
+    ? Math.asin(Math.min(1, viaSep / Math.max(ringInnermost, viaSep)))
+    : 0;
+
+  // Wye star angle: past the last coil ray (plus jogs), short of the first
+  // coil's feed jog window near 2π — and on real board material, so the
+  // junction never lands over a bore cutout (and never at the board center).
+  let starAngle: number | undefined;
+  if (connection === "wye" && interconnectNeeded) {
+    const maxCoilAngle = ((plan.coils.length - 1) / Math.max(1, plan.coils.length)) * TAU;
+    const wFrom = maxCoilAngle + 2 * jog;
+    const wTo = TAU - 2.5 * jog;
+    const rTop = ringOuterBound;
+    const rBot = ringOuterBound - (planPhases - 1) * ringSpacing;
+    const rMid = (rTop + rBot) / 2;
+    const steps = 24;
+    for (let i = 0; i <= steps && wTo > wFrom; i++) {
+      const a = wFrom + ((wTo - wFrom) * i) / steps;
+      const jc = windPolar(center, rMid, a);
+      const probe = (rTop - rBot) / 2 + viaR + rules.edgeClearance;
+      let ok = onMaterial(jc);
+      for (let k = 0; k < 8 && ok; k++) {
+        ok = onMaterial(windPolar(jc, probe, (k * TAU) / 8));
+      }
+      if (ok) {
+        starAngle = a;
+        break;
+      }
+    }
+    if (starAngle == null) {
+      return fail(
+        "no board material for the star junction in the reachable angular window — " +
+          "the outline/cutouts leave nowhere to land the neutral. Adjust the outline " +
+          "or the winding placement.",
+      );
+    }
+  }
+
+  // The field-report tool: it used to return a bare document_version for a
+  // board it had just shorted. Full-board capture — a winding spans the stator
+  // annulus, the bore interconnect rings, AND rim feed escapes out to the
+  // board edge, so a bbox scope would cover most of the board anyway.
+  const drcCap = await beginDrcDelta(pcb, "full");
+
+  const tracesBase = pcb.traces.length;
+  const viasBase = pcb.vias.length;
+  const pushTrace = (a: Vec2, b: Vec2, layer: PcbLayer, net: string): boolean => {
+    const ra = { x: round3(a.x), y: round3(a.y) };
+    const rb = { x: round3(b.x), y: round3(b.y) };
+    if (ra.x === rb.x && ra.y === rb.y) return false;
+    pcb.traces.push({ start: ra, end: rb, width: traceWidth, layer, net, source: "manual" });
+    return true;
+  };
+  const pushVia = (p: Vec2, net: string): Vec2 => {
+    const rp = { x: round3(p.x), y: round3(p.y) };
+    pcb.vias.push({
+      position: rp,
+      diameter: viaDia,
+      drill: viaDrill,
+      startLayer: copperLayer,
+      endLayer: returnLayer,
+      net,
+      source: "manual",
+    });
+    vias++;
+    return rp;
+  };
+  const pushPolyline = (pts: Vec2[], layer: PcbLayer, net: string): void => {
+    for (let i = 0; i + 1 < pts.length; i++) {
+      if (pushTrace(pts[i]!, pts[i + 1]!, layer, net)) interconnectTraces++;
+    }
+  };
+
+  // b. One spiral per tooth. Terminal strategy: the spiral's own endpoints are
+  //    NOT via sites — a via on the spiral start/end overlaps the adjacent turn
+  //    (turn pitch < via radius + trace half-width), silently bypassing it.
+  //    Instead the inner endpoint leads to a via at the coil CENTER (guaranteed
+  //    copper-free bore) and the outer endpoint leads radially outward far
+  //    enough for the via pad to clear the outermost turn.
+  const leadOut = viaR + halfW + clearance + MARGIN;
+  interface CoilTerm {
+    net: string;
+    centerVia: Vec2;
+    centerAngle: number;
+    outerVia: Vec2;
+    outerAngle: number;
+  }
+  const coilTerminals = new Map<number, CoilTerm>();
+  const coilTraceRanges: Array<[number, number]> = [];
   for (const coil of plan.coils) {
     const angle = (coil.angleDeg * Math.PI) / 180;
     const coilCenter = {
@@ -8425,7 +9797,8 @@ export function addMotorWinding(args: Record<string, unknown>) {
       y: round3(center.y + pitchRadius * Math.sin(angle)),
     };
     const dir = coil.polarity === 1 ? "ccw" : "cw";
-    const res = addCoil({
+    const beforeTraces = pcb.traces.length;
+    const res = await addCoil({
       ...childDoc,
       center: coilCenter,
       turns: turnsPerCoil,
@@ -8438,103 +9811,461 @@ export function addMotorWinding(args: Record<string, unknown>) {
       start_angle_deg: coil.angleDeg,
       clearance: args.clearance,
       segments_per_turn: args.segments_per_turn,
-      inner_via: true,
-      via_to_layer: returnLayer,
-    });
+      inner_via: false,
+    }, { skipDrcDelta: true });
     if (res.isError) {
       errors.push(`coil slot ${coil.slot} (net ${coil.net}): ${res.content[0]!.text}`);
       continue;
     }
+    coilTraceRanges.push([beforeTraces, pcb.traces.length]);
     const payload = JSON.parse(res.content[0]!.text) as {
       inner_endpoint: Vec2;
       outer_endpoint: Vec2;
     };
     coilsPlaced++;
-    vias++; // the inner via add_coil placed
-    // Add an outer via so the outer terminal is also reachable on returnLayer.
-    pcb.vias.push({
-      position: payload.outer_endpoint,
-      diameter: pcb.rules.defaultRules.viaDiameter,
-      drill: pcb.rules.defaultRules.viaDrill,
-      startLayer: copperLayer,
-      endLayer: returnLayer,
-      net: coil.net,
-    });
-    vias++;
-    coilTerminals.set(coil.slot, {
-      inner: payload.inner_endpoint,
-      outer: payload.outer_endpoint,
-    });
-  }
-
-  // c. Series interconnect on the return layer, per phase, in plan order.
-  //    Connect coil k's outer terminal to coil k+1's inner terminal.
-  const phaseEnds: Record<string, { start: Vec2; end: Vec2 }> = {};
-  for (const [netName, slotSeq] of Object.entries(plan.phaseSeries)) {
-    const present = slotSeq.filter((s) => coilTerminals.has(s));
-    if (present.length === 0) continue;
-    const first = coilTerminals.get(present[0]!)!;
-    let prevEnd = first.outer;
-    phaseEnds[netName] = { start: first.inner, end: first.outer };
-    for (let i = 1; i < present.length; i++) {
-      const term = coilTerminals.get(present[i]!)!;
-      pcb.traces.push({
-        start: prevEnd,
-        end: term.inner,
-        width: traceWidth,
-        layer: returnLayer,
-        net: netName,
-      });
+    // Inner lead-in: spiral start → coil center, via there (spiral layer run).
+    if (pushTrace(payload.inner_endpoint, coilCenter, copperLayer, coil.net)) {
       interconnectTraces++;
-      prevEnd = term.outer;
     }
-    phaseEnds[netName]!.end = prevEnd;
+    const centerVia = pushVia(coilCenter, coil.net);
+    // Outer lead-out: spiral end → radially outward, via clear of the last turn.
+    const outDirAng = windAngle(coilCenter, payload.outer_endpoint);
+    const rOut = Math.hypot(
+      payload.outer_endpoint.x - coilCenter.x,
+      payload.outer_endpoint.y - coilCenter.y,
+    );
+    const outerViaPos = windPolar(coilCenter, rOut + leadOut, outDirAng);
+    if (pushTrace(payload.outer_endpoint, outerViaPos, copperLayer, coil.net)) {
+      interconnectTraces++;
+    }
+    const outerVia = pushVia(outerViaPos, coil.net);
+    coilTerminals.set(coil.slot, {
+      net: coil.net,
+      centerVia,
+      centerAngle: windAngle(center, centerVia),
+      outerVia,
+      outerAngle: windAngle(center, outerVia),
+    });
   }
 
-  // d. Termination + net-tie so DRC sees an intentional join, not a short.
-  const phaseNetNames = Object.keys(phaseEnds);
+  // Phases that actually placed coils, in plan order.
+  const phaseList = Object.keys(plan.phaseSeries).filter((n) =>
+    plan.phaseSeries[n]!.some((s) => coilTerminals.has(s)),
+  );
+  const seriesRing = (p: number) => ringOuterBound - p * ringSpacing;
+  const buildInterconnect =
+    coilsPlaced > 0 && (coilsPlaced > 1 || connection === "wye");
+
+  // Return-layer drop from an outer terminal via to a ring: short jog chord at
+  // the terminal radius (off the terminal ray), then a radial to the ring, then
+  // a layer-hop via. Returns the ring angle the arc starts at.
+  const buildDescent = (term: CoilTerm, ringR: number, net: string): number => {
+    const aFrom = term.outerAngle + jog;
+    const rO = Math.hypot(term.outerVia.x - center.x, term.outerVia.y - center.y);
+    const jogEnd = windPolar(center, rO, aFrom);
+    if (pushTrace(term.outerVia, jogEnd, returnLayer, net)) interconnectTraces++;
+    const hop = windPolar(center, ringR, aFrom);
+    if (pushTrace(jogEnd, hop, returnLayer, net)) interconnectTraces++;
+    pushVia(hop, net);
+    return aFrom;
+  };
+
+  // d. Series links per phase: ride the phase's ring on the spiral layer from
+  //    (previous coil's outer drop) to the next coil's center-via ray, then hop
+  //    back to the return layer and run the radial up to the center via.
+  const phaseChain = new Map<string, { first: CoilTerm; last: CoilTerm }>();
+  phaseList.forEach((netName, p) => {
+    const present = plan.phaseSeries[netName]!.filter((s) => coilTerminals.has(s));
+    const ringR = seriesRing(p);
+    const first = coilTerminals.get(present[0]!)!;
+    let last = first;
+    for (let i = 1; i < present.length; i++) {
+      const prev = coilTerminals.get(present[i - 1]!)!;
+      const cur = coilTerminals.get(present[i]!)!;
+      const aFrom = buildDescent(prev, ringR, netName);
+      let aTo = cur.centerAngle;
+      while (aTo <= aFrom + 1e-9) aTo += TAU;
+      pushPolyline(windArcPoints(center, ringR, aFrom, aTo), copperLayer, netName);
+      const hopEnd = pushVia(windPolar(center, ringR, aTo), netName);
+      if (pushTrace(hopEnd, cur.centerVia, returnLayer, netName)) interconnectTraces++;
+      last = cur;
+    }
+    phaseChain.set(netName, { first, last });
+  });
+
+  // e. Termination + scoped net-tie at each junction.
   pcb.netTies = pcb.netTies ?? [];
   let netTiesAdded = 0;
-  if (connection === "wye") {
-    const neutral = plan.neutralNet ?? (args.neutral_net ? String(args.neutral_net) : "WIND_N");
-    for (const netName of phaseNetNames) {
-      pcb.traces.push({
-        start: phaseEnds[netName]!.end,
-        end: center,
-        width: traceWidth,
-        layer: returnLayer,
-        net: netName,
-      });
-      interconnectTraces++;
+  let starJunction: Vec2 | undefined;
+  let neutralFeedVia: Vec2 | undefined;
+
+  if (connection === "wye" && buildInterconnect && phaseList.length > 0 && starAngle != null) {
+    const rTop = seriesRing(0);
+    const rBot = seriesRing(phaseList.length - 1);
+
+    // Each phase ring continues past its last coil to the star angle…
+    phaseList.forEach((netName, p) => {
+      const ringR = seriesRing(p);
+      const { last } = phaseChain.get(netName)!;
+      const aFrom = buildDescent(last, ringR, netName);
+      let aTo = starAngle!;
+      while (aTo <= aFrom + 1e-9) aTo += TAU;
+      pushPolyline(windArcPoints(center, ringR, aFrom, aTo), copperLayer, netName);
+    });
+    // …and the neutral is a short radial across the ring ends, on the spiral
+    // layer, touching each phase exactly at its arc end.
+    const neutralNet = neutral!;
+    if (!pcb.nets.some((n) => n.id === neutralNet)) {
+      pcb.nets.push({ id: neutralNet, name: neutralNet });
     }
+    const jTop = windPolar(center, rTop, starAngle);
+    const jBot = windPolar(center, rBot, starAngle);
+    if (pushTrace(jTop, jBot, copperLayer, neutralNet)) interconnectTraces++;
+    if (neutralFeedWanted) {
+      const rN = ringOuterBound - phaseList.length * ringSpacing;
+      const jN = windPolar(center, rN, starAngle);
+      if (pushTrace(jBot, jN, copperLayer, neutralNet)) interconnectTraces++;
+      neutralFeedVia = pushVia(jN, neutralNet);
+    }
+    starJunction = { x: round3((jTop.x + jBot.x) / 2), y: round3((jTop.y + jBot.y) / 2) };
     pcb.netTies.push({
-      nets: [...phaseNetNames, neutral],
-      position: center,
-      radius: Math.max(2, innerR),
+      nets: [...phaseList, neutralNet],
+      position: starJunction,
+      radius: round3((rTop - rBot) / 2 + (neutralFeedWanted ? ringSpacing : 0) + traceWidth + 1),
     });
     netTiesAdded++;
-  } else {
-    // delta: phase[i].end → phase[(i+1)%n].start, one tie per junction.
-    const n = phaseNetNames.length;
-    for (let i = 0; i < n; i++) {
-      const a = phaseNetNames[i]!;
-      const b = phaseNetNames[(i + 1) % n]!;
-      pcb.traces.push({
-        start: phaseEnds[a]!.end,
-        end: phaseEnds[b]!.start,
-        width: traceWidth,
-        layer: returnLayer,
-        net: a,
-      });
-      interconnectTraces++;
+  } else if (connection === "delta" && buildInterconnect && phaseList.length > 1) {
+    // Delta: phase[i]'s end rides its own link ring to phase[i+1]'s first-coil
+    // ray, then ascends to that coil's center via — the junction, tied there.
+    const n = phaseList.length;
+    for (let p = 0; p < n; p++) {
+      const a = phaseList[p]!;
+      const b = phaseList[(p + 1) % n]!;
+      const endTerm = phaseChain.get(a)!.last;
+      const startTerm = phaseChain.get(b)!.first;
+      const ringR = ringOuterBound - (n + p) * ringSpacing;
+      const aFrom = buildDescent(endTerm, ringR, a);
+      let aTo = startTerm.centerAngle;
+      while (aTo <= aFrom + 1e-9) aTo += TAU;
+      pushPolyline(windArcPoints(center, ringR, aFrom, aTo), copperLayer, a);
+      const hopEnd = pushVia(windPolar(center, ringR, aTo), a);
+      // Ascend to phase b's center via — the X–Y junction. The last stretch is
+      // its own short segment so DRC's contact-point estimate (a trace's
+      // midpoint) lands inside the tie region.
+      const junctionR = Math.hypot(
+        startTerm.centerVia.x - center.x,
+        startTerm.centerVia.y - center.y,
+      );
+      const approach = windPolar(center, junctionR - viaSep, aTo);
+      if (pushTrace(hopEnd, approach, returnLayer, a)) interconnectTraces++;
+      if (pushTrace(approach, startTerm.centerVia, returnLayer, a)) interconnectTraces++;
       pcb.netTies.push({
         nets: [a, b],
-        position: phaseEnds[b]!.start,
-        radius: Math.max(2, innerR),
+        position: startTerm.centerVia,
+        radius: round3(viaR + traceWidth + clearance + 1),
       });
       netTiesAdded++;
     }
   }
+
+  // f. Phase/neutral feeds to same-net pads, when any exist. Escape scheme:
+  //    jog off the first coil's center-via ray (opposite side from the series
+  //    escapes), radial out on the return layer past the outer terminals, a
+  //    staggered escape arc to the pad's angle, then a drop onto the pad (via
+  //    if the pad doesn't reach the return layer). Every candidate is checked
+  //    against all existing copper before it is committed; ring assignments
+  //    and arc directions are searched, and anything unroutable is reported.
+  const phaseFeeds: Record<string, Vec2> = {};
+  const feedsRouted: string[] = [];
+  const feedsUnrouted: string[] = [];
+  {
+    interface FeedSpec {
+      net: string;
+      start: Vec2;
+      startRadius: number;
+      angle: number;
+      useJog: boolean;
+    }
+    const specs: FeedSpec[] = [];
+    for (const netName of phaseList) {
+      const first = phaseChain.get(netName)?.first;
+      if (!first) continue;
+      phaseFeeds[netName] = first.centerVia;
+      if ((padsByNet.get(netName)?.length ?? 0) > 0) {
+        specs.push({
+          net: netName,
+          start: first.centerVia,
+          startRadius: Math.hypot(first.centerVia.x - center.x, first.centerVia.y - center.y),
+          angle: first.centerAngle,
+          useJog: true,
+        });
+      }
+    }
+    if (neutralFeedWanted && neutralFeedVia && starJunction) {
+      phaseFeeds[neutral!] = neutralFeedVia;
+      specs.push({
+        net: neutral!,
+        start: neutralFeedVia,
+        startRadius: Math.hypot(neutralFeedVia.x - center.x, neutralFeedVia.y - center.y),
+        angle: windAngle(center, neutralFeedVia),
+        useJog: false,
+      });
+    }
+
+    if (specs.length > 0) {
+      const outerViaRadii = [...coilTerminals.values()].map((t) =>
+        Math.hypot(t.outerVia.x - center.x, t.outerVia.y - center.y),
+      );
+      const rEscBase =
+        (outerViaRadii.length ? Math.max(...outerViaRadii) : pitchRadius + outerR) +
+        viaR +
+        halfW +
+        clearance +
+        MARGIN;
+      // Outer material limit: nearest outline edge from the winding center.
+      let rimDist = Infinity;
+      const ov = pcb.outline.vertices;
+      for (let i = 0; i < ov.length; i++) {
+        rimDist = Math.min(rimDist, pointSegDist(center, ov[i]!, ov[(i + 1) % ov.length]!));
+      }
+      const rEscMax = rimDist - rules.edgeClearance - viaR;
+
+      type Candidate = {
+        traces: Array<{ a: Vec2; b: Vec2; layer: PcbLayer }>;
+        vias: Vec2[];
+      };
+      const buildFeed = (spec: FeedSpec, ringIdx: number, dirSign: 1 | -1): Candidate | null => {
+        const rEsc = rEscBase + ringIdx * ringSpacing;
+        if (rEsc + halfW > rEscMax) return null;
+        const pads = padsByNet.get(spec.net)!;
+        const target = pads.reduce((best, p) =>
+          Math.hypot(p.pos.x - spec.start.x, p.pos.y - spec.start.y) <
+          Math.hypot(best.pos.x - spec.start.x, best.pos.y - spec.start.y)
+            ? p
+            : best,
+        );
+        const aEsc = spec.useJog ? spec.angle - jog : spec.angle;
+        const traces: Candidate["traces"] = [];
+        const cvias: Vec2[] = [];
+        let prev = spec.start;
+        if (spec.useJog) {
+          const jogEnd = windPolar(center, spec.startRadius, aEsc);
+          traces.push({ a: prev, b: jogEnd, layer: returnLayer });
+          prev = jogEnd;
+        }
+        const escTop = windPolar(center, rEsc, aEsc);
+        traces.push({ a: prev, b: escTop, layer: returnLayer });
+        let aPad = windAngle(center, target.pos);
+        if (dirSign > 0) {
+          while (aPad <= aEsc + 1e-9) aPad += TAU;
+        } else {
+          while (aPad >= aEsc - 1e-9) aPad -= TAU;
+        }
+        // Stop the arc short of the pad's ray so the last chord stays clear of
+        // the pad drop-via — the final diagonal then terminates AT the via
+        // instead of riding past it (which the bypass audit would flag).
+        const padR = Math.hypot(target.pos.x - center.x, target.pos.y - center.y);
+        const lim = viaR + halfW + clearance + MARGIN;
+        let standoff = 0;
+        if (Math.abs(rEsc - padR) < lim && rEsc > 0 && padR > 0) {
+          const cosD = (rEsc * rEsc + padR * padR - lim * lim) / (2 * rEsc * padR);
+          standoff = Math.acos(Math.max(-1, Math.min(1, cosD)));
+        }
+        const arcEnd = aPad - dirSign * standoff;
+        if (Math.abs(arcEnd - aEsc) > 1e-6 && dirSign * (arcEnd - aEsc) > 0) {
+          const arc = windArcPoints(center, rEsc, aEsc, arcEnd);
+          for (let i = 0; i + 1 < arc.length; i++) {
+            traces.push({ a: arc[i]!, b: arc[i + 1]!, layer: returnLayer });
+          }
+          traces.push({ a: arc[arc.length - 1]!, b: target.pos, layer: returnLayer });
+        } else {
+          traces.push({ a: escTop, b: target.pos, layer: returnLayer });
+        }
+        if (!target.onReturnLayer) cvias.push(target.pos);
+        return { traces, vias: cvias };
+      };
+
+      // Collision check against all existing copper (and board material).
+      const feedClear = (cand: Candidate, net: string): boolean => {
+        for (const t of cand.traces) {
+          if (!onMaterial(t.a) || !onMaterial(t.b)) return false;
+          for (const other of pcb.traces) {
+            if (other.net === net || other.layer !== t.layer) continue;
+            if (windSegSegDist(t.a, t.b, other.start, other.end) < halfW + other.width / 2 + clearance) {
+              return false;
+            }
+          }
+          for (const v of pcb.vias) {
+            if (v.net === net) continue;
+            if (pointSegDist(v.position, t.a, t.b) < v.diameter / 2 + halfW + clearance) return false;
+          }
+          for (const fp of pcb.footprints) {
+            for (const pad of fp.pads) {
+              if (pad.net === net) continue;
+              const pw = padWorld(fp, pad);
+              if (pointSegDist(pw, t.a, t.b) < padApproxRadius(pad) + halfW + clearance) return false;
+            }
+          }
+        }
+        for (const v of cand.vias) {
+          for (const other of pcb.vias) {
+            const d = Math.hypot(other.position.x - v.x, other.position.y - v.y);
+            if (other.net !== net && d < viaDia + clearance) return false;
+            if (d < viaDrill + rules.holeToHole && d > 1e-6) return false;
+          }
+          for (const other of pcb.traces) {
+            if (other.net === net) continue;
+            if (pointSegDist(v, other.start, other.end) < viaR + other.width / 2 + clearance) {
+              return false;
+            }
+          }
+        }
+        return true;
+      };
+
+      const commit = (cand: Candidate, net: string) => {
+        for (const t of cand.traces) {
+          if (pushTrace(t.a, t.b, t.layer, net)) interconnectTraces++;
+        }
+        for (const v of cand.vias) pushVia(v, net);
+      };
+
+      // Search ring assignments (≤4 feeds → ≤24 permutations), directions
+      // greedily per feed; first fully-clear assignment wins.
+      const perms = (idx: number[]): number[][] =>
+        idx.length <= 1
+          ? [idx]
+          : idx.flatMap((v, i) => perms([...idx.slice(0, i), ...idx.slice(i + 1)]).map((r) => [v, ...r]));
+      let done = false;
+      for (const perm of perms(specs.map((_, i) => i))) {
+        const staged: Array<{ cand: Candidate; net: string }> = [];
+        let ok = true;
+        for (let s = 0; s < specs.length && ok; s++) {
+          const spec = specs[s]!;
+          let placed = false;
+          for (const dirSign of [1, -1] as const) {
+            const cand = buildFeed(spec, perm[s]!, dirSign);
+            if (!cand) continue;
+            // check against pcb + already-staged candidates
+            const stagedHit = staged.some((st) =>
+              st.net !== spec.net &&
+              st.cand.traces.some((a) =>
+                cand.traces.some(
+                  (b) => a.layer === b.layer && windSegSegDist(a.a, a.b, b.a, b.b) < traceWidth + clearance,
+                ),
+              ),
+            );
+            if (!stagedHit && feedClear(cand, spec.net)) {
+              staged.push({ cand, net: spec.net });
+              placed = true;
+              break;
+            }
+          }
+          if (!placed) ok = false;
+        }
+        if (ok) {
+          for (const st of staged) commit(st.cand, st.net);
+          feedsRouted.push(...staged.map((st) => st.net));
+          done = true;
+          break;
+        }
+      }
+      if (!done) {
+        // Fall back to routing whatever fits, first-fit; report the rest.
+        for (const spec of specs) {
+          let placed = false;
+          for (let ringIdx = 0; ringIdx < specs.length && !placed; ringIdx++) {
+            for (const dirSign of [1, -1] as const) {
+              const cand = buildFeed(spec, ringIdx, dirSign);
+              if (cand && feedClear(cand, spec.net)) {
+                commit(cand, spec.net);
+                placed = true;
+                break;
+              }
+            }
+          }
+          (placed ? feedsRouted : feedsUnrouted).push(spec.net);
+        }
+      }
+    }
+  }
+
+  // g. Post-build audit: re-verify the two invariants on the copper this call
+  //    added. (1) No trace within clearance of a same-net via it doesn't
+  //    terminate at — the silent-bypass case. (2) No cross-net copper contact
+  //    or sub-clearance approach outside a declared tie region.
+  const auditIssues: string[] = [];
+  {
+    const near = (a: Vec2, b: Vec2) => Math.hypot(a.x - b.x, a.y - b.y) <= 1e-3;
+    const tieExempt = (a: string, b: string, at: Vec2): boolean =>
+      (pcb.netTies ?? []).some(
+        (t) =>
+          t.nets.includes(a) &&
+          t.nets.includes(b) &&
+          (!t.position ||
+            t.radius == null ||
+            Math.hypot(at.x - t.position.x, at.y - t.position.y) <= t.radius),
+      );
+    const isCoilTrace = (idx: number) =>
+      coilTraceRanges.some(([s, e]) => idx >= s && idx < e);
+    const bboxFar = (a1: Vec2, b1: Vec2, a2: Vec2, b2: Vec2, lim: number) =>
+      Math.min(a1.x, b1.x) > Math.max(a2.x, b2.x) + lim ||
+      Math.min(a2.x, b2.x) > Math.max(a1.x, b1.x) + lim ||
+      Math.min(a1.y, b1.y) > Math.max(a2.y, b2.y) + lim ||
+      Math.min(a2.y, b2.y) > Math.max(a1.y, b1.y) + lim;
+
+    for (let vi = viasBase; vi < pcb.vias.length; vi++) {
+      const v = pcb.vias[vi]!;
+      for (let ti = tracesBase; ti < pcb.traces.length; ti++) {
+        const t = pcb.traces[ti]!;
+        if (t.net !== v.net) continue;
+        const lim = v.diameter / 2 + t.width / 2 + clearance - 1e-6;
+        if (bboxFar(t.start, t.end, v.position, v.position, lim)) continue;
+        const d = pointSegDist(v.position, t.start, t.end);
+        if (d >= lim) continue;
+        if (near(v.position, t.start) || near(v.position, t.end)) continue;
+        auditIssues.push(
+          `audit: net '${t.net}' trace (${t.start.x},${t.start.y})→(${t.end.x},${t.end.y}) passes ` +
+            `${round3(d)}mm from a same-net via at (${v.position.x},${v.position.y}) it doesn't ` +
+            `terminate at — electrical bypass`,
+        );
+      }
+    }
+
+    for (let ti = tracesBase; ti < pcb.traces.length; ti++) {
+      const t = pcb.traces[ti]!;
+      const tIsCoil = isCoilTrace(ti);
+      for (let tj = tracesBase; tj < pcb.traces.length; tj++) {
+        if (tj <= ti || (tIsCoil && isCoilTrace(tj))) continue;
+        const u = pcb.traces[tj]!;
+        if (u.net === t.net || u.layer !== t.layer) continue;
+        const lim = t.width / 2 + u.width / 2 + clearance - 1e-6;
+        if (bboxFar(t.start, t.end, u.start, u.end, lim)) continue;
+        const d = windSegSegDist(t.start, t.end, u.start, u.end);
+        if (d >= lim) continue;
+        const at = windSegClosestPt(t.start, t.end, u.start, u.end);
+        if (tieExempt(t.net, u.net, at)) continue;
+        auditIssues.push(
+          `audit: nets '${t.net}'/'${u.net}' copper ${round3(d)}mm apart at ` +
+            `(${round3(at.x)},${round3(at.y)}) on ${t.layer}, outside any tie region`,
+        );
+      }
+      for (let vi = viasBase; vi < pcb.vias.length; vi++) {
+        const v = pcb.vias[vi]!;
+        if (v.net === t.net) continue;
+        const lim = v.diameter / 2 + t.width / 2 + clearance - 1e-6;
+        if (bboxFar(t.start, t.end, v.position, v.position, lim)) continue;
+        const d = pointSegDist(v.position, t.start, t.end);
+        if (d >= lim) continue;
+        if (tieExempt(t.net, v.net, v.position)) continue;
+        auditIssues.push(
+          `audit: net '${t.net}' trace ${round3(d)}mm from net '${v.net}' via at ` +
+            `(${v.position.x},${v.position.y}), outside any tie region`,
+        );
+      }
+    }
+  }
+  errors.push(...auditIssues);
 
   return {
     content: [
@@ -8543,22 +10274,38 @@ export function addMotorWinding(args: Record<string, unknown>) {
         text: JSON.stringify({
           success: errors.length === 0,
           coils_placed: coilsPlaced,
-          coils_failed: errors.length,
+          coils_failed: plan.coils.length - coilsPlaced,
           interconnect_traces: interconnectTraces,
           vias_added: vias,
           net_ties_added: netTiesAdded,
           connection,
           winding_factor: plan.windingFactor,
+          ...(starJunction ? { star_junction: starJunction } : {}),
+          phase_feeds: phaseFeeds,
+          ...(feedsRouted.length ? { feeds_routed: feedsRouted } : {}),
+          ...(feedsUnrouted.length ? { feeds_unrouted: feedsUnrouted } : {}),
           interconnect_note:
-            "Series interconnect and termination are straight-line on the return " +
-            "layer and may cross; run_drc will flag any crossings for routing cleanup.",
+            "Interconnect is planar by construction: per-phase staggered-radius arcs " +
+            "on the spiral layer in the coil-free bore, radial drops on the return " +
+            "layer, joined only through vias, with approach angles jogged so no trace " +
+            "rides a terminal ray past a same-net via. A post-build audit re-checked " +
+            "these invariants" +
+            (auditIssues.length ? " and FOUND VIOLATIONS (see errors)." : "."),
           ...(errors.length ? { errors } : {}),
+          drc_delta: await drcCap.finish(),
           ...docResultPayload(ctx),
         }),
       },
     ],
     ...(errors.length && coilsPlaced === 0 ? { isError: true as const } : {}),
   };
+}
+
+/** Coarse pad radius from its shape, for feed-escape collision checks. */
+function padApproxRadius(pad: Pad): number {
+  const s = pad.shape as { type: string; diameter?: number; width?: number; height?: number };
+  if (s.type === "Circle") return (s.diameter ?? 1) / 2;
+  return Math.max(s.width ?? 1, s.height ?? 1) / 2;
 }
 
 // ============================================================================
@@ -8568,45 +10315,183 @@ export function addMotorWinding(args: Record<string, unknown>) {
 export const calcMotorSchema = {
   type: "object" as const,
   properties: {
+    mode: {
+      type: "string" as const,
+      description:
+        "'pm' (default): permanent-magnet machine — Kt/Ke from air-gap flux; " +
+        "requires inner/outer radius, phase_resistance_ohm, supply_voltage_v. " +
+        "'induction': thin-sheet axial induction rotor (drag-cup / PCB cage) — " +
+        "torque from eddy currents; requires phase_current_a, electrical_freq_hz, " +
+        "effective_gap_mm, sheet_conductance_s, inner/outer radius.",
+    },
     pole_pairs: { type: "number" as const, description: "Pole pairs p (electrical periods per mechanical rev)." },
     turns_per_phase: { type: "number" as const, description: "Series turns per phase N." },
     winding_factor: { type: "number" as const, description: "Winding factor kw (default 0.95). Use the value from winding_layout for accuracy." },
-    inner_radius_mm: { type: "number" as const, description: "Inner (bore) stator radius, mm." },
-    outer_radius_mm: { type: "number" as const, description: "Outer stator radius, mm." },
-    phase_resistance_ohm: { type: "number" as const, description: "Per-phase resistance, ohms (e.g. the add_coil DC estimate)." },
-    supply_voltage_v: { type: "number" as const, description: "DC bus / supply voltage, volts." },
+    inner_radius_mm: { type: "number" as const, description: "Inner (bore) stator radius, mm. In induction mode: inner radius of the active annulus the field sweeps." },
+    outer_radius_mm: { type: "number" as const, description: "Outer stator radius, mm. In induction mode: outer radius of the active annulus." },
+    phase_resistance_ohm: { type: "number" as const, description: "Per-phase resistance, ohms (e.g. the add_coil DC estimate). PM mode only (required)." },
+    supply_voltage_v: { type: "number" as const, description: "DC bus / supply voltage, volts. PM mode only (required)." },
     airgap_flux_tesla: {
       type: "number" as const,
-      description: "Air-gap flux density B_gap (T). Omit to COMPUTE it from `magnet` via the MEC model.",
+      description: "PM mode: air-gap flux density B_gap (T). Omit to COMPUTE it from `magnet` via the MEC model.",
     },
     magnet: {
       type: "object" as const,
       description:
-        "Optional magnet/geometry to compute B_gap when airgap_flux_tesla is omitted (NdFeB defaults). Fields: remanence_tesla, magnet_thickness_mm, airgap_mm, recoil_mu_rel, magnet_area_mm2, gap_area_mm2, iron_mu_rel.",
+        "PM mode: optional magnet/geometry to compute B_gap when airgap_flux_tesla is omitted (NdFeB defaults). " +
+        "Fields: remanence_tesla, magnet_thickness_mm, airgap_mm, recoil_mu_rel, magnet_area_mm2, gap_area_mm2, iron_mu_rel. " +
+        "Add pole_width_mm (magnet pole face width across the fringing direction) to also apply the first-order " +
+        "Carter-like fringing derate w/(w+2g) — the tool then reports raw AND derated B and uses the derated value for Kt.",
+    },
+    phase_current_a: { type: "number" as const, description: "Induction mode (required): phase current, A RMS (balanced 3-phase drive)." },
+    electrical_freq_hz: { type: "number" as const, description: "Induction mode (required): electrical drive frequency, Hz." },
+    effective_gap_mm: {
+      type: "number" as const,
+      description:
+        "Induction mode (required): TOTAL non-ferromagnetic flux path, mm — all air gaps plus the rotor sheet " +
+        "and any PCB substrate between back-irons (e.g. 4.7 for a PCB-stator sandwich).",
+    },
+    sheet_conductance_s: {
+      type: "number" as const,
+      description:
+        "Induction mode (required): rotor sheet surface conductance σs = σ·thickness, siemens. " +
+        "E.g. 2×2oz copper: 5.8e7 S/m × 0.14e-3 m ≈ 8120 S.",
+    },
+    end_effect_factor: {
+      type: "number" as const,
+      description:
+        "Induction mode: Russell–Norsworthy end-effect factor (0..1] — fraction of ideal torque surviving the " +
+        "eddy return paths outside the active annulus. Default 0.65.",
     },
   },
-  required: [
-    "pole_pairs",
-    "turns_per_phase",
-    "inner_radius_mm",
-    "outer_radius_mm",
-    "phase_resistance_ohm",
-    "supply_voltage_v",
-  ],
+  required: ["pole_pairs", "turns_per_phase"],
 };
 
+/** Round to 6 significant digits — micro-newton-metre torques survive, noise doesn't. */
+const sig6 = (v: number) => (v === 0 || !Number.isFinite(v) ? v : Number(v.toPrecision(6)));
+
 /**
- * Evaluate a motor's headline performance — torque constant, back-EMF constant,
- * no-load speed, stall torque, and a speed–torque curve — from its magnetics +
- * electrical parameters. Pure analysis (no board, no mutation). The air-gap flux
- * is either supplied directly or computed from magnet geometry via the
- * first-order MEC reluctance model. First-order steady state: no slotting,
- * fringing, saturation, or losses.
+ * Thin-sheet axial induction branch of calc_motor. A TypeScript mirror of the
+ * `vcad_ecad_sim::induction` closed form (same pattern as calc_coil /
+ * calc_impedance mirroring their Rust twins):
+ *
+ *   F1 = (3/2)·(4/π)·(kw·N/(2p))·I_pk      rotating MMF fundamental
+ *   B1 = μ0·F1/g                           g = total non-ferromagnetic path
+ *   T(s) = k_ee·π·σs·s·(ωe/p)·B1²·(r2⁴−r1⁴)/4   linear-in-slip eddy torque
+ *
+ * k_ee is the Russell–Norsworthy end-effect factor (eddy return paths close
+ * outside the active annulus). First-order: no breakdown peak, no magnetizing/
+ * leakage reactance, no stator copper loss (no resistance input).
+ */
+function calcMotorInduction(
+  args: Record<string, unknown>,
+  polePairs: number,
+  turnsPerPhase: number,
+  windingFactor: number,
+  innerR: number,
+  outerR: number,
+) {
+  const fail = ecadError;
+  const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : NaN);
+  const iRms = num(args.phase_current_a);
+  const freqHz = num(args.electrical_freq_hz);
+  const gapMm = num(args.effective_gap_mm);
+  const sigmaS = num(args.sheet_conductance_s);
+  const endEffect = Number.isFinite(num(args.end_effect_factor))
+    ? num(args.end_effect_factor)
+    : 0.65;
+
+  if (!(iRms > 0)) return fail("induction mode: phase_current_a (A rms) must be > 0");
+  if (!(freqHz > 0)) return fail("induction mode: electrical_freq_hz must be > 0");
+  if (!(gapMm > 0)) return fail("induction mode: effective_gap_mm must be > 0");
+  if (!(sigmaS > 0)) return fail("induction mode: sheet_conductance_s must be > 0");
+  if (!(endEffect > 0 && endEffect <= 1)) {
+    return fail("induction mode: end_effect_factor must be in (0, 1]");
+  }
+
+  // Rotating MMF fundamental of a balanced 3-phase winding.
+  const iPk = iRms * Math.SQRT2;
+  const f1 = 1.5 * (4 / Math.PI) * ((windingFactor * turnsPerPhase) / (2 * polePairs)) * iPk;
+  const b1 = (MU0 * f1) / (gapMm * 1e-3);
+
+  const omegaSync = (2 * Math.PI * freqHz) / polePairs; // mechanical rad/s
+  const annulusM4 = (Math.pow(outerR * 1e-3, 4) - Math.pow(innerR * 1e-3, 4)) / 4;
+  const torquePerSlipRaw = Math.PI * sigmaS * omegaSync * b1 * b1 * annulusM4;
+  const torquePerSlip = endEffect * torquePerSlipRaw;
+  const syncRpm = (60 * freqHz) / polePairs;
+  // Locked rotor (s = 1): all air-gap power T·ωsync dissipates in the sheet.
+  const copperLossW = torquePerSlip * omegaSync;
+
+  const inductionInputs = {
+    pole_pairs: polePairs,
+    turns_per_phase: turnsPerPhase,
+    winding_factor: windingFactor,
+    phase_current_a: iRms,
+    electrical_freq_hz: freqHz,
+    effective_gap_mm: gapMm,
+    sheet_conductance_s: sigmaS,
+    inner_radius_mm: innerR,
+    outer_radius_mm: outerR,
+    end_effect_factor: endEffect,
+  };
+  const claim = (q: Parameters<typeof emClaim>[0], v: number, unit: string) =>
+    emClaim(q, sig6(v), unit, "thin-sheet-induction", inductionInputs);
+  return {
+    content: [
+      {
+        type: "text" as const,
+        text: JSON.stringify({
+          success: true,
+          mode: "induction",
+          b1_tesla: sig6(b1),
+          torque_per_unit_slip_nm: sig6(torquePerSlip),
+          locked_rotor_torque_nm: sig6(torquePerSlip),
+          locked_rotor_torque_raw_nm: sig6(torquePerSlipRaw),
+          sync_rpm: sig6(syncRpm),
+          copper_loss_w: sig6(copperLossW),
+          end_effect_factor: endEffect,
+          note:
+            "First-order thin-sheet induction model: torque linear in slip (T(s) = K·s, " +
+            "no breakdown peak), B1 impressed by the winding MMF (no magnetizing/leakage " +
+            "reactance, no slotting/saturation), Russell–Norsworthy end-effect factor " +
+            "applied to torque. copper_loss_w is the ROTOR sheet dissipation at locked " +
+            "rotor (T·ωsync); stator copper loss is not modeled (no resistance input). " +
+            "Feed locked_rotor_torque_nm to check_self_start to answer 'will it spin?'.",
+          claims: [
+            claim("airgap_flux_density", b1, "T"),
+            claim("torque_per_unit_slip", torquePerSlip, "N·m"),
+            claim("locked_rotor_torque", torquePerSlip, "N·m"),
+            claim("synchronous_speed", syncRpm, "rpm"),
+            claim("rotor_copper_loss", copperLossW, "W"),
+          ],
+        }),
+      },
+    ],
+  };
+}
+
+/**
+ * Evaluate a motor's headline performance AS DATA — pure analysis, no board,
+ * no mutation. Two machine models behind one tool:
+ *
+ * - `mode: "pm"` (default) — torque constant, back-EMF constant, no-load
+ *   speed, stall torque, and a speed–torque curve from magnetics + electrical
+ *   parameters. Air-gap flux is supplied directly or computed from magnet
+ *   geometry via the first-order MEC reluctance model; pass
+ *   `magnet.pole_width_mm` to additionally apply a Carter-like fringing
+ *   derate (raw and derated B both reported).
+ * - `mode: "induction"` — thin-sheet axial induction rotor (drag-cup / PCB
+ *   cage): fundamental gap field B1, torque-per-unit-slip, locked-rotor
+ *   torque, synchronous speed, rotor sheet loss.
  */
 export async function calcMotor(args: Record<string, unknown>) {
   const fail = ecadError;
 
   const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : NaN);
+  const mode = typeof args.mode === "string" ? args.mode : "pm";
+  if (mode !== "pm" && mode !== "induction") {
+    return fail("mode must be 'pm' (default) or 'induction'");
+  }
   const polePairs = num(args.pole_pairs);
   const turnsPerPhase = num(args.turns_per_phase);
   const windingFactor = Number.isFinite(num(args.winding_factor)) ? num(args.winding_factor) : 0.95;
@@ -8618,17 +10503,25 @@ export async function calcMotor(args: Record<string, unknown>) {
   if (!(polePairs > 0)) return fail("pole_pairs must be > 0");
   if (!(turnsPerPhase > 0)) return fail("turns_per_phase must be > 0");
   if (!(outerR > innerR && innerR >= 0)) return fail("outer_radius_mm must be > inner_radius_mm >= 0");
+
+  if (mode === "induction") {
+    return calcMotorInduction(args, polePairs, turnsPerPhase, windingFactor, innerR, outerR);
+  }
+
   if (!(phaseR > 0)) return fail("phase_resistance_ohm must be > 0");
   if (!(supplyV > 0)) return fail("supply_voltage_v must be > 0");
 
   // Resolve air-gap flux: explicit value, else compute from magnet geometry.
   let bGap = num(args.airgap_flux_tesla);
   let bGapSource: "supplied" | "computed" = "supplied";
+  let magnetSpec: Parameters<typeof airgapFluxDensity>[0] | undefined;
+  // Optional first-order fringing derate on the MEC flux (see below).
+  let fringing: { poleWidthMm: number; derate: number; bRawTesla: number } | undefined;
   if (!Number.isFinite(bGap)) {
     const m = (args.magnet ?? {}) as Record<string, unknown>;
     const mnum = (v: unknown, d: number) =>
       typeof v === "number" && Number.isFinite(v) ? (v as number) : d;
-    const computed = await airgapFluxDensity({
+    magnetSpec = {
       remanenceTesla: mnum(m.remanence_tesla, 1.2),
       magnetThicknessMm: mnum(m.magnet_thickness_mm, 3),
       recoilMuRel: mnum(m.recoil_mu_rel, 1.05),
@@ -8638,7 +10531,8 @@ export async function calcMotor(args: Record<string, unknown>) {
       ironMuRel: typeof m.iron_mu_rel === "number" ? (m.iron_mu_rel as number) : null,
       ironPathMm: mnum(m.iron_path_mm, 0),
       ironAreaMm2: mnum(m.iron_area_mm2, 1),
-    });
+    };
+    const computed = await airgapFluxDensity(magnetSpec);
     if (computed == null) {
       return fail(
         "air-gap flux is required: pass airgap_flux_tesla, or `magnet` params (ECAD WASM must be available to compute B_gap).",
@@ -8646,6 +10540,18 @@ export async function calcMotor(args: Record<string, unknown>) {
     }
     bGap = computed;
     bGapSource = "computed";
+
+    // Carter-like pole-edge fringing derate (mirrors
+    // vcad_ecad_sim::airgap::fringing_derate): flux fringes outward ~one gap
+    // length per pole edge, so B under the pole drops by w/(w+2g). First-order,
+    // honest only for pole width ≳ 2× gap. Opt-in via magnet.pole_width_mm.
+    if (m.pole_width_mm !== undefined) {
+      const poleW = num(m.pole_width_mm);
+      if (!(poleW > 0)) return fail("magnet.pole_width_mm must be > 0");
+      const derate = poleW / (poleW + 2 * magnetSpec.airgapMm);
+      fringing = { poleWidthMm: poleW, derate, bRawTesla: bGap };
+      bGap *= derate;
+    }
   }
 
   const perf = await evaluateMotor({
@@ -8663,14 +10569,79 @@ export async function calcMotor(args: Record<string, unknown>) {
   }
 
   const r4 = (n: number) => Math.round(n * 1e4) / 1e4;
+  const motorInputs = {
+    pole_pairs: polePairs,
+    turns_per_phase: turnsPerPhase,
+    winding_factor: windingFactor,
+    inner_radius_mm: innerR,
+    outer_radius_mm: outerR,
+    phase_resistance_ohm: phaseR,
+    supply_voltage_v: supplyV,
+    airgap_flux_tesla: r4(bGap),
+  };
+  const claims = [
+    emClaim("torque_constant", r4(perf.ktNmPerA), "N·m/A", "first-order-dc-motor", motorInputs),
+    emClaim("back_emf_constant", r4(perf.keVSPerRad), "V·s/rad", "first-order-dc-motor", motorInputs),
+    emClaim("no_load_speed", r4(perf.noLoadSpeedRadS), "rad/s", "first-order-dc-motor", motorInputs),
+    emClaim("stall_torque", r4(perf.stallTorqueNm), "N·m", "first-order-dc-motor", motorInputs),
+  ];
+  if (bGapSource === "computed" && magnetSpec) {
+    const mecInputs = {
+      remanence_tesla: magnetSpec.remanenceTesla,
+      magnet_thickness_mm: magnetSpec.magnetThicknessMm,
+      recoil_mu_rel: magnetSpec.recoilMuRel,
+      airgap_mm: magnetSpec.airgapMm,
+      magnet_area_mm2: magnetSpec.magnetAreaMm2,
+      gap_area_mm2: magnetSpec.gapAreaMm2,
+      ...(magnetSpec.ironMuRel != null
+        ? {
+            iron_mu_rel: magnetSpec.ironMuRel,
+            iron_path_mm: magnetSpec.ironPathMm,
+            iron_area_mm2: magnetSpec.ironAreaMm2,
+          }
+        : {}),
+    };
+    // The raw MEC prediction stays a claim of its own even when derated —
+    // a fringing-aware FEA pass grades the derate, not the network.
+    claims.push(
+      emClaim(
+        "airgap_flux_density",
+        r4(fringing ? fringing.bRawTesla : bGap),
+        "T",
+        "mec-reluctance",
+        mecInputs,
+      ),
+    );
+    if (fringing) {
+      claims.push(
+        emClaim("airgap_flux_density", r4(bGap), "T", "mec-fringing-derate", {
+          ...mecInputs,
+          pole_width_mm: fringing.poleWidthMm,
+          fringing_derate: r4(fringing.derate),
+        }),
+      );
+    }
+  }
   return {
     content: [
       {
         type: "text" as const,
         text: JSON.stringify({
           success: true,
+          mode: "pm",
           airgap_flux_tesla: r4(bGap),
           airgap_flux_source: bGapSource,
+          ...(fringing
+            ? {
+                airgap_flux_raw_tesla: r4(fringing.bRawTesla),
+                fringing_derate: r4(fringing.derate),
+                fringing_note:
+                  "Carter-like first-order derate: B under the pole drops by " +
+                  "w/(w+2g) as flux fringes ~one gap length past each pole edge. " +
+                  "Kt/Ke and the curve use the DERATED flux. Honest for pole " +
+                  "width ≳ 2× gap; below that treat it as a lower bound.",
+              }
+            : {}),
           winding_factor: windingFactor,
           kt_nm_per_a: r4(perf.ktNmPerA),
           ke_v_s_per_rad: r4(perf.keVSPerRad),
@@ -8681,7 +10652,204 @@ export async function calcMotor(args: Record<string, unknown>) {
             speed_rad_s: r4(p.speedRadS),
             torque_nm: r4(p.torqueNm),
           })),
-          note: "First-order steady-state estimate (no slotting/fringing/saturation/losses).",
+          note: fringing
+            ? "First-order steady-state estimate (no slotting/saturation/losses; " +
+              "pole-edge fringing derated via magnet.pole_width_mm)."
+            : "First-order steady-state estimate (no slotting/fringing/saturation/losses; " +
+              "pass magnet.pole_width_mm to derate for fringing).",
+          claims,
+        }),
+      },
+    ],
+  };
+}
+
+// ============================================================================
+// check_self_start — will it spin? starting torque vs bearing friction
+// ============================================================================
+
+/**
+ * Documented typical running-friction torque per bearing, mN·m, by preset and
+ * preload class. Low-speed drag in small deep-groove bearings is dominated by
+ * seal contact and grease churning, so seal type matters more than load:
+ *
+ * - `608-2RS` (8×22×7, contact rubber seals): the lip drag dominates —
+ *   0.5–2 mN·m each at light preload (a pair lands at the oft-quoted
+ *   1–4 mN·m), roughly double under medium preload.
+ * - `608-ZZ` (8×22×7, non-contact metal shields): no lip contact, an order
+ *   of magnitude freer.
+ * - `625` (5×16×5) and `688` (8×16×5 thin-section): miniature bearings,
+ *   figures for the common shielded (ZZ-type, non-contact) variants.
+ *
+ * Ranges are catalog-typical for greased bearings at room temperature; a
+ * cold, over-greased, or axially pinched bearing can exceed the top end.
+ */
+const BEARING_FRICTION_MNM: Record<
+  string,
+  Record<"light" | "medium", { min: number; max: number }>
+> = {
+  "608-2RS": {
+    light: { min: 0.5, max: 2.0 },
+    medium: { min: 1.0, max: 4.0 },
+  },
+  "608-ZZ": {
+    light: { min: 0.05, max: 0.3 },
+    medium: { min: 0.15, max: 0.8 },
+  },
+  "625": {
+    light: { min: 0.03, max: 0.2 },
+    medium: { min: 0.1, max: 0.5 },
+  },
+  "688": {
+    light: { min: 0.03, max: 0.25 },
+    medium: { min: 0.1, max: 0.6 },
+  },
+};
+
+export const checkSelfStartSchema = {
+  type: "object" as const,
+  properties: {
+    available_torque_nm: {
+      type: "number" as const,
+      description:
+        "Torque available at standstill, N·m — PM: Kt·I (or pass kt_nm_per_a + current_a " +
+        "instead); induction: locked_rotor_torque_nm from calc_motor mode:'induction'.",
+    },
+    kt_nm_per_a: {
+      type: "number" as const,
+      description: "Alternative to available_torque_nm: torque constant Kt (N·m/A), multiplied by current_a.",
+    },
+    current_a: {
+      type: "number" as const,
+      description: "Alternative to available_torque_nm: standstill phase current (A), multiplied by kt_nm_per_a.",
+    },
+    friction_torque_nm: {
+      type: "number" as const,
+      description:
+        "Direct friction estimate, N·m (single value or a measurement). Overrides `bearings` when given.",
+    },
+    bearings: {
+      type: "object" as const,
+      description:
+        "Bearing-friction estimator (used when friction_torque_nm is omitted). Fields: " +
+        "type ('608-2RS' | '608-ZZ' | '625' | '688'; 625/688 assume shielded non-contact variants), " +
+        "preload ('light' default | 'medium'), count (number of bearings, default 2).",
+    },
+  },
+};
+
+/**
+ * The single most important motor design question — will it spin? — as a pure
+ * fail-closed check: starting torque (given directly, or Kt·I) against a
+ * friction estimate (given directly, or from documented typical bearing-drag
+ * ranges). `starts` is judged against the WORST-CASE (max) friction; a design
+ * that only beats the optimistic end is reported `starts: false` with
+ * `starts_best_case: true` so the margin story is visible.
+ */
+export function checkSelfStart(args: Record<string, unknown>) {
+  const fail = ecadError;
+  const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : NaN);
+
+  // Available starting torque: direct, or Kt·I.
+  let available = num(args.available_torque_nm);
+  let availableSource: "direct" | "kt_times_current" = "direct";
+  if (!Number.isFinite(available)) {
+    const kt = num(args.kt_nm_per_a);
+    const i = num(args.current_a);
+    if (!(kt > 0) || !(i > 0)) {
+      return fail(
+        "pass available_torque_nm (> 0), or both kt_nm_per_a and current_a (> 0) to compute Kt·I",
+      );
+    }
+    available = kt * i;
+    availableSource = "kt_times_current";
+  }
+  if (!(available > 0)) return fail("available_torque_nm must be > 0");
+
+  // Friction estimate: direct value, or the bearing catalog.
+  let frictionMinNm: number;
+  let frictionMaxNm: number;
+  let frictionSource: "direct" | "bearing-catalog" = "direct";
+  let bearing:
+    | { type: string; preload: "light" | "medium"; count: number; per_bearing_mnm: { min: number; max: number } }
+    | undefined;
+  const directFriction = num(args.friction_torque_nm);
+  if (Number.isFinite(directFriction)) {
+    if (!(directFriction > 0)) return fail("friction_torque_nm must be > 0");
+    frictionMinNm = directFriction;
+    frictionMaxNm = directFriction;
+  } else {
+    const b = (args.bearings ?? {}) as Record<string, unknown>;
+    const type = typeof b.type === "string" ? b.type : "608-2RS";
+    const table = BEARING_FRICTION_MNM[type];
+    if (!table) {
+      return fail(
+        `unknown bearing type '${type}' — presets: ${Object.keys(BEARING_FRICTION_MNM).join(", ")} ` +
+          "(or pass friction_torque_nm directly)",
+      );
+    }
+    const preload = b.preload === "medium" ? "medium" : b.preload === "light" || b.preload === undefined ? "light" : null;
+    if (preload === null) return fail("bearings.preload must be 'light' or 'medium'");
+    const count = Number.isFinite(num(b.count)) ? num(b.count) : 2;
+    if (!(count >= 1 && Number.isInteger(count))) return fail("bearings.count must be an integer >= 1");
+    const range = table[preload];
+    frictionMinNm = range.min * count * 1e-3;
+    frictionMaxNm = range.max * count * 1e-3;
+    frictionSource = "bearing-catalog";
+    bearing = { type, preload, count, per_bearing_mnm: range };
+  }
+
+  const starts = available > frictionMaxNm;
+  const startsBestCase = available > frictionMinNm;
+  const margin = available / frictionMaxNm;
+
+  const claimInputs: Record<string, number | string> = {
+    available_torque_nm: sig6(available),
+    available_torque_source: availableSource,
+    friction_source: frictionSource,
+    ...(bearing
+      ? {
+          bearing_type: bearing.type,
+          bearing_preload: bearing.preload,
+          bearing_count: bearing.count,
+        }
+      : { friction_torque_nm: sig6(frictionMaxNm) }),
+  };
+  return {
+    content: [
+      {
+        type: "text" as const,
+        text: JSON.stringify({
+          success: true,
+          starts,
+          starts_best_case: startsBestCase,
+          margin: sig6(margin),
+          available_torque_nm: sig6(available),
+          available_torque_source: availableSource,
+          friction_torque_mnm: { min: sig6(frictionMinNm * 1e3), max: sig6(frictionMaxNm * 1e3) },
+          friction_source: frictionSource,
+          ...(bearing ? { bearings: bearing } : {}),
+          note:
+            "`starts` is fail-closed: available torque vs the WORST-CASE (max) friction " +
+            "estimate; `margin` = available / worst-case (aim for ≥ 2 to absorb cogging, " +
+            "cold grease, and preload spread). Bearing ranges are documented catalog-" +
+            "typical running drag for greased bearings, not measurements of yours.",
+          claims: [
+            // The friction estimate is only a claim when this tool predicted it
+            // (catalog lookup); a passthrough of the caller's number is not.
+            ...(frictionSource === "bearing-catalog"
+              ? [
+                  emClaim(
+                    "friction_torque",
+                    sig6(frictionMaxNm),
+                    "N·m",
+                    "bearing-friction-catalog",
+                    claimInputs,
+                  ),
+                ]
+              : []),
+            emClaim("start_margin", sig6(margin), "dimensionless", "torque-friction-margin", claimInputs),
+          ],
         }),
       },
     ],
@@ -9164,6 +11332,485 @@ export function boardFromSolid(args: Record<string, unknown>, engine: Engine) {
   };
 }
 
+// ============================================================================
+// solid_from_board — materialize the session PCB as a solid CAD part
+// (the inverse of board_from_solid)
+// ============================================================================
+
+/** JSON Schema for solid_from_board tool. */
+export const solidFromBoardSchema = {
+  type: "object" as const,
+  properties: {
+    document_id: {
+      type: "string" as const,
+      description:
+        "PCB session id (from create_schematic / open_document) holding the " +
+        "board to materialize as a solid.",
+    },
+    document_id_target: {
+      type: "string" as const,
+      description:
+        "Existing CAD session to inject the part into (e.g. the enclosure " +
+        "or motor-stack assembly it must fit). Omit to mint a fresh CAD " +
+        "session; the response then carries the new document_id plus the " +
+        "document IR (usable with open_document elsewhere).",
+    },
+    include_components: {
+      type: "boolean" as const,
+      description:
+        "Also emit simplified component keep-out volumes — one box per " +
+        "placed footprint, body extents from the kernel's 3D component " +
+        "bodies where available, else courtyard × a per-package-class " +
+        "default height. Default true.",
+    },
+    part_name: {
+      type: "string" as const,
+      description:
+        "Name for the substrate part (default 'board'). Component keep-out " +
+        "parts are named '<part_name>:<ref>'.",
+    },
+  },
+  required: ["document_id"],
+} as const;
+
+/** FR4 substrate density, kg/m³ — matches the app's `__pcb_fr4__` preset. */
+const FR4_DENSITY_KG_M3 = 1850;
+/** Copper density, kg/m³ — matches the app's `copper` preset. */
+const COPPER_DENSITY_KG_M3 = 8960;
+/** 1 oz/ft² copper in mm, the fallback when a stackup layer omits thickness. */
+const DEFAULT_COPPER_THICKNESS_MM = 0.035;
+
+/** Absolute (sign-agnostic) shoelace area of a closed loop, mm². */
+const loopArea = (loop: Vec2[]): number => Math.abs(loopSignedArea(loop));
+
+/** Closed polygon → Line segments for a Sketch2D loop (zero-length runs from
+ *  duplicated vertices are dropped). */
+function loopToSegments(loop: Vec2[]): SketchSegment2D[] {
+  const segs: SketchSegment2D[] = [];
+  for (let i = 0; i < loop.length; i++) {
+    const a = loop[i]!;
+    const b = loop[(i + 1) % loop.length]!;
+    if (Math.hypot(b.x - a.x, b.y - a.y) < 1e-9) continue;
+    segs.push({ type: "Line", start: { x: a.x, y: a.y }, end: { x: b.x, y: b.y } });
+  }
+  return segs;
+}
+
+/** Copper area of one pad, mm² (Oval/RoundRect ≈ their bounding rect). */
+function padAreaMm2(pad: Pad): number {
+  const s = pad.shape;
+  switch (s.type) {
+    case "Circle":
+      return (Math.PI / 4) * s.diameter * s.diameter;
+    case "Rect":
+    case "Oval":
+    case "RoundRect":
+      return s.width * s.height;
+    case "Custom":
+      return loopArea(s.vertices);
+    default:
+      return 0;
+  }
+}
+
+/**
+ * Estimated copper coverage per copper layer, mm²: zones (outline minus
+ * holes; hatched pours count half), traces and arcs (length × width), pad
+ * copper, and via annular rings on their span-end layers. Overlaps between
+ * features are not deduplicated — a slight overestimate on dense boards —
+ * and each layer is capped at the board area.
+ */
+function copperAreaByLayer(pcb: Pcb, boardArea: number): Record<string, number> {
+  const area: Record<string, number> = {};
+  const add = (layer: string, a: number) => {
+    if (!/Cu$/.test(layer) || !(a > 0)) return;
+    area[layer] = (area[layer] ?? 0) + a;
+  };
+  for (const z of pcb.zones) {
+    const holes = (z.holes ?? []).reduce((s, h) => s + loopArea(h), 0);
+    const fill = z.fillType === "Hatched" ? 0.5 : 1;
+    add(z.layer, Math.max(0, loopArea(z.outline) - holes) * fill);
+  }
+  for (const t of pcb.traces) {
+    add(t.layer, Math.hypot(t.end.x - t.start.x, t.end.y - t.start.y) * t.width);
+  }
+  for (const a of pcb.traceArcs ?? []) {
+    const sweep = (Math.abs(a.endAngle - a.startAngle) * Math.PI) / 180;
+    add(a.layer, sweep * a.radius * a.width);
+  }
+  for (const fp of pcb.footprints) {
+    for (const pad of fp.pads) {
+      const padArea = padAreaMm2(pad);
+      for (const layer of pad.layers) add(layer, padArea);
+    }
+  }
+  for (const v of pcb.vias) {
+    const ring = (Math.PI / 4) * Math.max(0, v.diameter * v.diameter - v.drill * v.drill);
+    add(v.startLayer, ring);
+    if (v.endLayer !== v.startLayer) add(v.endLayer, ring);
+  }
+  for (const k of Object.keys(area)) area[k] = Math.min(area[k]!, boardArea);
+  return area;
+}
+
+/** Mass estimate for a bare board: FR4 slab + per-layer copper coverage. */
+interface BoardMassEstimate {
+  fr4VolumeMm3: number;
+  copperVolumeMm3: number;
+  copperAreaByLayer: Record<string, number>;
+  fr4G: number;
+  copperG: number;
+  totalG: number;
+  /** total mass / substrate solid volume — the density that makes the
+   *  extruded slab weigh what the real FR4+copper board weighs. */
+  homogenizedDensityKgM3: number;
+}
+
+/** Compute the board's FR4 + copper mass from outline area and stackup. */
+function estimateBoardMass(pcb: Pcb, boardArea: number): BoardMassEstimate {
+  const thickness = pcb.outline.thickness;
+  const fr4VolumeMm3 = boardArea * thickness;
+  const copperArea = copperAreaByLayer(pcb, boardArea);
+  const thicknessByLayer = new Map<string, number | undefined>(
+    pcb.stackup.layers.map((l) => [l.layer as string, l.copperThickness]),
+  );
+  let copperVolumeMm3 = 0;
+  for (const [layer, a] of Object.entries(copperArea)) {
+    copperVolumeMm3 += a * (thicknessByLayer.get(layer) ?? DEFAULT_COPPER_THICKNESS_MM);
+  }
+  // mass (g) = volume (mm³) × density (kg/m³) / 1e6
+  const fr4G = (fr4VolumeMm3 * FR4_DENSITY_KG_M3) / 1e6;
+  const copperG = (copperVolumeMm3 * COPPER_DENSITY_KG_M3) / 1e6;
+  const totalG = fr4G + copperG;
+  return {
+    fr4VolumeMm3,
+    copperVolumeMm3,
+    copperAreaByLayer: copperArea,
+    fr4G,
+    copperG,
+    totalG,
+    homogenizedDensityKgM3:
+      fr4VolumeMm3 > 0 ? (totalG / fr4VolumeMm3) * 1e6 : FR4_DENSITY_KG_M3,
+  };
+}
+
+/** One simplified component keep-out volume, board-local mm (bottom of the
+ *  substrate at z = 0, top at z = thickness). */
+interface ComponentBoxOut {
+  ref: string;
+  footprint: string;
+  /** "mesh" = kernel 3D body extents; "courtyard" = pad/courtyard bbox ×
+   *  per-package-class default height. */
+  source: "mesh" | "courtyard";
+  min: Vec3;
+  max: Vec3;
+}
+
+/** Footprints that are holes in the board, not bodies on it. */
+const MOUNTING_FP_RE = /mount(ing)?[_-]?hole/i;
+
+/** Default body height (mm) by package-class name — mirrors the kernel's
+ *  component-mesh table (vcad-ecad-pcb::component_mesh::package_height). */
+function packageHeightMm(footprintName: string): number {
+  const n = footprintName.toUpperCase();
+  if (n.includes("0402")) return 0.35;
+  if (n.includes("0603")) return 0.45;
+  if (n.includes("0805")) return 0.5;
+  if (n.includes("1206")) return 0.55;
+  if (n.includes("SOIC")) return 1.75;
+  if (n.includes("QFP")) return 1.6;
+  if (n.includes("DIP")) return 4.0;
+  if (/SOT-?223/.test(n)) return 1.6;
+  if (/SOT-?23/.test(n)) return 1.1;
+  if (n.includes("HEADER")) return 8.5;
+  return 1.0;
+}
+
+/**
+ * Simplified keep-out volume per placed footprint. Preferred source is the
+ * kernel's parametric 3D component bodies (exact XY + Z extents in board
+ * coordinates); when the ECAD WASM is unavailable or a footprint has no
+ * body, fall back to its courtyard/pad bbox extruded to a per-package-class
+ * default height on the correct side of the board.
+ */
+async function componentKeepouts(
+  pcb: Pcb,
+): Promise<{ boxes: ComponentBoxOut[]; warnings: string[] }> {
+  const thickness = pcb.outline.thickness;
+  const warnings: string[] = [];
+  const meshBoxes = new Map<string, { min: Vec3; max: Vec3 }>();
+  try {
+    for (const m of await componentMeshes(pcb)) {
+      let minX = Infinity;
+      let minY = Infinity;
+      let minZ = Infinity;
+      let maxX = -Infinity;
+      let maxY = -Infinity;
+      let maxZ = -Infinity;
+      for (let i = 0; i + 2 < m.positions.length; i += 3) {
+        if (m.positions[i] < minX) minX = m.positions[i];
+        if (m.positions[i] > maxX) maxX = m.positions[i];
+        if (m.positions[i + 1] < minY) minY = m.positions[i + 1];
+        if (m.positions[i + 1] > maxY) maxY = m.positions[i + 1];
+        if (m.positions[i + 2] < minZ) minZ = m.positions[i + 2];
+        if (m.positions[i + 2] > maxZ) maxZ = m.positions[i + 2];
+      }
+      if (
+        Number.isFinite(minX) &&
+        maxX - minX > 1e-6 &&
+        maxY - minY > 1e-6 &&
+        maxZ - minZ > 1e-6
+      ) {
+        meshBoxes.set(m.footprint_ref, {
+          min: { x: minX, y: minY, z: minZ },
+          max: { x: maxX, y: maxY, z: maxZ },
+        });
+      }
+    }
+  } catch {
+    // ECAD WASM unavailable — every footprint takes the courtyard fallback.
+  }
+
+  const boxes: ComponentBoxOut[] = [];
+  for (const fp of pcb.footprints) {
+    // Mounting holes / NPTH-only footprints are voids, not bodies.
+    if (MOUNTING_FP_RE.test(fp.footprintName) || MOUNTING_FP_RE.test(fp.ref)) continue;
+    if (fp.pads.length > 0 && fp.pads.every((p) => p.padType === "NPTH")) continue;
+
+    const mesh = meshBoxes.get(fp.ref);
+    if (mesh) {
+      boxes.push({
+        ref: fp.ref,
+        footprint: fp.footprintName,
+        source: "mesh",
+        min: mesh.min,
+        max: mesh.max,
+      });
+      continue;
+    }
+    const local = localCourtyardAabb(fp.pads, fp.graphics ?? []);
+    const board = boardCourtyardAabb(local, fp.position, fp.rotation ?? 0, fp.front ?? true);
+    if (!board) {
+      warnings.push(`${fp.ref}: no 3D body, pads, or courtyard — keep-out skipped`);
+      continue;
+    }
+    const h = packageHeightMm(fp.footprintName);
+    const front = fp.front ?? true;
+    boxes.push({
+      ref: fp.ref,
+      footprint: fp.footprintName,
+      source: "courtyard",
+      min: { x: board.min.x, y: board.min.y, z: front ? thickness : -h },
+      max: { x: board.max.x, y: board.max.y, z: front ? thickness + h : 0 },
+    });
+  }
+  return { boxes, warnings };
+}
+
+/** Cap on the per-component box list echoed in the response. */
+const KEEPOUT_ECHO_CAP = 32;
+/** Cap on the inline `document` IR echoed when a fresh session is minted. */
+const INLINE_DOC_ECHO_CAP = 100_000;
+
+/**
+ * Materialize the session PCB as a solid CAD part — the inverse of
+ * board_from_solid. The substrate is the board outline extruded to the board
+ * thickness through the hole-aware sketch path, so bore/cutout polygons
+ * survive as real holes (no boolean pass). Optional simplified component
+ * keep-out volumes ride along as child parts. The substrate's material
+ * carries a homogenized FR4+copper density so inspect_cad and physics see
+ * the real board mass, not bare-FR4 mass.
+ *
+ * Injects into `document_id_target` when given (board bottom lands at
+ * z = 0 in that session's frame), else mints a fresh CAD session.
+ */
+export async function solidFromBoard(args: Record<string, unknown>) {
+  const documentId = String(args.document_id ?? "");
+  const doc = getSession(documentId);
+  const pcb = getDocPcb(doc);
+  if (!pcb) {
+    return ecadError(
+      "Document has no PCB — run place_components first (or open a document that has a board)",
+    );
+  }
+  const outline = pcb.outline;
+  if (!outline.vertices || outline.vertices.length < 3) {
+    return ecadError("Board outline needs >= 3 vertices — set_board_outline first");
+  }
+  const thickness = outline.thickness;
+  if (!(thickness > 0)) return ecadError("Board thickness must be > 0");
+
+  const partName =
+    typeof args.part_name === "string" && args.part_name.trim()
+      ? args.part_name.trim()
+      : "board";
+  const includeComponents = args.include_components !== false;
+
+  const cutouts = outline.cutouts ?? [];
+  const boardArea = Math.max(
+    0,
+    loopArea(outline.vertices) - cutouts.reduce((s, c) => s + loopArea(c), 0),
+  );
+  if (!(boardArea > 0)) return ecadError("Board outline has no area to extrude");
+  const mass = estimateBoardMass(pcb, boardArea);
+
+  const warnings: string[] = [];
+  let boxes: ComponentBoxOut[] = [];
+  if (includeComponents && pcb.footprints.length > 0) {
+    const keepouts = await componentKeepouts(pcb);
+    boxes = keepouts.boxes;
+    warnings.push(...keepouts.warnings);
+  }
+
+  // Target: inject into an existing CAD session, or mint a fresh document.
+  const targetId =
+    typeof args.document_id_target === "string" && args.document_id_target
+      ? args.document_id_target
+      : undefined;
+  let target: Document;
+  if (targetId) {
+    try {
+      target = getSession(targetId);
+    } catch (e) {
+      return ecadError(e instanceof Error ? e.message : String(e));
+    }
+  } else {
+    target = createDocument();
+  }
+
+  const existingIds = Object.keys(target.nodes)
+    .map(Number)
+    .filter(Number.isFinite);
+  let nextId = (existingIds.length > 0 ? Math.max(...existingIds) : 0) + 1;
+  const alloc = (name: string | null, op: CsgOp): number => {
+    const id = nextId++;
+    target.nodes[String(id)] = { id, name, op };
+    return id;
+  };
+
+  // Substrate: hole-aware sketch + extrude (#396) — cutouts become interior
+  // walls of one multi-loop solid, no Difference pass. Board bottom at z = 0.
+  const sketchId = alloc(`${partName} profile`, {
+    type: "Sketch2D",
+    origin: { x: 0, y: 0, z: 0 },
+    x_dir: { x: 1, y: 0, z: 0 },
+    y_dir: { x: 0, y: 1, z: 0 },
+    segments: loopToSegments(ensureCcw(outline.vertices)),
+    ...(cutouts.length > 0 ? { holes: cutouts.map((c) => loopToSegments(c)) } : {}),
+  });
+  const substrateId = alloc(partName, {
+    type: "Extrude",
+    sketch: sketchId,
+    direction: { x: 0, y: 0, z: thickness },
+  });
+
+  // Homogenized material: the extruded slab weighs what the real FR4+copper
+  // board weighs, so inspect_cad / physics read a realistic mass off it.
+  let materialKey = `pcb:${partName}`;
+  for (let i = 2; target.materials[materialKey]; i++) materialKey = `pcb:${partName}-${i}`;
+  target.materials[materialKey] = {
+    name: materialKey,
+    color: [0.05, 0.35, 0.18], // FR4 soldermask green
+    metallic: 0.1,
+    roughness: 0.7,
+    density: Math.round(mass.homogenizedDensityKgM3 * 100) / 100,
+  };
+  target.roots.push({ root: substrateId, material: materialKey });
+  target.part_materials[partName] = materialKey;
+
+  const componentPartIds: string[] = [];
+  for (const b of boxes) {
+    const size = {
+      x: b.max.x - b.min.x,
+      y: b.max.y - b.min.y,
+      z: b.max.z - b.min.z,
+    };
+    const cubeId = alloc(null, { type: "Cube", size });
+    const moveId = alloc(`${partName}:${b.ref}`, {
+      type: "Translate",
+      child: cubeId,
+      offset: { x: b.min.x, y: b.min.y, z: b.min.z },
+    });
+    target.roots.push({ root: moveId, material: "default" });
+    componentPartIds.push(String(moveId));
+  }
+
+  const created = !targetId;
+  const outId = targetId ?? registerSession(target);
+
+  const roundVec = (v: Vec3) => ({ x: round3(v.x), y: round3(v.y), z: round3(v.z) });
+  const copperAreaRounded = Object.fromEntries(
+    Object.entries(mass.copperAreaByLayer).map(([k, v]) => [k, round3(v)]),
+  );
+  // Echo the minted IR so the part can travel to another server via
+  // open_document — unless the outline is huge, in which case get_document
+  // on the returned document_id serves it instead.
+  const inlineDoc =
+    created && JSON.stringify(target).length <= INLINE_DOC_ECHO_CAP ? target : undefined;
+
+  const payload = {
+    success: true,
+    document_id: outId,
+    created_session: created,
+    source_document_id: documentId,
+    part_id: String(substrateId),
+    part_name: partName,
+    substrate: {
+      outline_vertices: outline.vertices.length,
+      cutouts: cutouts.length,
+      thickness,
+      area_mm2: round3(boardArea),
+      volume_mm3: round3(mass.fr4VolumeMm3),
+    },
+    components: {
+      included: includeComponents,
+      count: boxes.length,
+      part_ids: componentPartIds,
+      ...(boxes.length > 0
+        ? {
+            boxes: boxes.slice(0, KEEPOUT_ECHO_CAP).map((b) => ({
+              ref: b.ref,
+              footprint: b.footprint,
+              source: b.source,
+              min: roundVec(b.min),
+              max: roundVec(b.max),
+            })),
+            ...(boxes.length > KEEPOUT_ECHO_CAP ? { boxes_truncated: true } : {}),
+          }
+        : {}),
+    },
+    mass: {
+      fr4_g: round3(mass.fr4G),
+      copper_g: round3(mass.copperG),
+      total_g: round3(mass.totalG),
+      fr4_volume_mm3: round3(mass.fr4VolumeMm3),
+      copper_volume_mm3: round3(mass.copperVolumeMm3),
+      copper_area_mm2_by_layer: copperAreaRounded,
+      homogenized_density_kg_m3: Math.round(mass.homogenizedDensityKgM3 * 100) / 100,
+      material: materialKey,
+    },
+    ...(inlineDoc ? { document: inlineDoc } : {}),
+    ...(warnings.length > 0 ? { warnings } : {}),
+    hint: created
+      ? "Fresh CAD session minted — render_view / inspect_cad it, or feed `document` to open_document elsewhere"
+      : "Part injected — render_view / inspect_cad the target session (e.g. run check_enclosure_fit against it)",
+  };
+
+  return {
+    content: [{ type: "text" as const, text: JSON.stringify(payload) }],
+    structuredContent: {
+      solid_from_board: {
+        part_id: String(substrateId),
+        part_name: partName,
+        components: componentPartIds.length,
+        mass_g: round3(mass.totalG),
+      },
+      document_id: outId,
+      source_document_id: documentId,
+    },
+  };
+}
+
 // ===========================================================================
 // Generative parts catalog + verified substitution
 // (vcad-ecad-parts / vcad-ecad-verify)
@@ -9236,7 +11883,8 @@ export const buildReceiptSchema = {
   properties: {
     document_id: {
       type: "string",
-      description: "Session id holding the PCB to certify.",
+      description:
+        "Session id holding the PCB and/or clearance-spec'd CAD parts to certify.",
     },
     enclosure_document_id: {
       type: "string",
@@ -9337,10 +11985,36 @@ export async function verifySubstitution(args: Record<string, unknown>) {
 export async function buildReceipt(args: Record<string, unknown>, engine?: Engine) {
   const ctx = resolveDocInput(args);
   const pcb = getDocPcb(ctx.doc);
+  const clearanceSpecs = ctx.doc.clearance_specs ?? [];
   if (!pcb) {
+    if (clearanceSpecs.length === 0) {
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: "Error: Document has no PCB and no clearance specs — nothing to certify. (Persist mechanical assertions with check_clearance + label first.)",
+          },
+        ],
+        isError: true,
+      };
+    }
+    // Mechanical-only receipt: re-measure every persisted clearance spec.
+    const unified: DesignReceipt = {
+      schema: RECEIPT_SCHEMA,
+      ...(ctx.documentId ? { document_id: ctx.documentId } : {}),
+      claims: clearanceReceiptClaims(ctx.doc, engine),
+    };
     return {
-      content: [{ type: "text" as const, text: "Error: Document has no PCB" }],
-      isError: true,
+      content: [
+        {
+          type: "text" as const,
+          text: JSON.stringify({ unified, unified_summary: summarize(unified) }),
+        },
+      ],
+      structuredContent: {
+        unified,
+        ...(ctx.documentId ? { document_id: ctx.documentId } : {}),
+      },
     };
   }
   const validity = validatePcb(pcb);
@@ -9385,6 +12059,22 @@ export async function buildReceipt(args: Record<string, unknown>, engine?: Engin
     }
   }
 
+  // The unified DesignReceipt (schema vcad.receipt/1) is the cross-domain
+  // claim ledger — DRC, power continuity, provenance, and enclosure fit as
+  // fail-closed claims. The legacy Receipt stays the re-runnable input to
+  // verify_receipt. Emit both.
+  const unified = unifiedFromPcbReceipt(receipt, ctx.documentId, {
+    ...(enclosureFit ? { enclosureFit } : {}),
+    ...(enclosureId && !enclosureFit && enclosureFitError
+      ? { enclosureFitError }
+      : {}),
+  });
+  // Persisted mechanical clearance assertions ride in the same ledger, so a
+  // board+mechanics document certifies both domains in one receipt.
+  if (clearanceSpecs.length > 0) {
+    unified.claims.push(...clearanceReceiptClaims(ctx.doc, engine));
+  }
+
   // The receipt rides in structuredContent so the inline viewer renders it
   // as an audit ledger (the only carrier ChatGPT's widget bridge exposes);
   // document_id lets the viewer also fetch the board GLB behind the ledger.
@@ -9394,9 +12084,19 @@ export async function buildReceipt(args: Record<string, unknown>, engine?: Engin
       ? { ...receipt, enclosure_fit_error: enclosureFitError }
       : receipt;
   return {
-    content: [{ type: "text" as const, text: JSON.stringify(textPayload) }],
+    content: [
+      {
+        type: "text" as const,
+        text: JSON.stringify({
+          ...textPayload,
+          unified,
+          unified_summary: summarize(unified),
+        }),
+      },
+    ],
     structuredContent: {
       receipt,
+      unified,
       power_integrity_ok: powerIntegrityOk,
       ...(planeWarnings.length ? { disconnected_planes: planeWarnings } : {}),
       ...(enclosureFit ? { enclosure_fit: enclosureFit } : {}),
@@ -9422,41 +12122,117 @@ export const verifyReceiptSchema = {
   required: ["receipt"],
 } as const;
 
-/** Re-run a prior Receipt against the session's current board. Returns the
- *  verdict: Holds (same board, clean), Stale (board changed), or Violated. */
-export async function verifyReceipt(args: Record<string, unknown>) {
+/** Worst-wins rollup across verification domains. */
+function worstStatus(statuses: ReceiptStatus[]): ReceiptStatus {
+  if (statuses.includes("Violated")) return "Violated";
+  if (statuses.includes("Stale")) return "Stale";
+  return "Holds";
+}
+
+/** Re-run a prior Receipt against the session's current document. Returns the
+ *  verdict: Holds (unchanged, clean), Stale (document changed but claims still
+ *  hold), or Violated. Handles the re-runnable PCB Receipt (board hash + DRC
+ *  diff), the unified DesignReceipt's mech.clearance claims (re-measured
+ *  against current geometry), or both at once — worst verdict wins. */
+export async function verifyReceipt(args: Record<string, unknown>, engine?: Engine) {
   const ctx = resolveDocInput(args);
-  const pcb = getDocPcb(ctx.doc);
-  if (!pcb) {
-    return {
-      content: [{ type: "text" as const, text: "Error: Document has no PCB" }],
-      isError: true,
-    };
-  }
-  const validity = validatePcb(pcb);
-  if (!validity.valid) {
-    return pcbValidationError("verify_receipt", validity, args.document_id ? String(args.document_id) : undefined);
-  }
-  const receipt = args.receipt as Receipt | undefined;
-  if (!receipt || typeof receipt !== "object" || !receipt.board_hash) {
+  const raw = args.receipt as Record<string, unknown> | undefined;
+  if (!raw || typeof raw !== "object") {
     return {
       content: [
         {
           type: "text" as const,
-          text: "Error: missing `receipt` — pass a Receipt produced by build_receipt.",
+          text: "Error: missing `receipt` — pass a receipt produced by build_receipt.",
         },
       ],
       isError: true,
     };
   }
-  const status = await kernelVerifyReceipt(pcb, receipt);
-  if (!status) {
+
+  // Legacy re-runnable PCB Receipt: the arg itself, or nested under
+  // `.receipt` when the whole build_receipt payload is passed back verbatim.
+  let legacy: Receipt | undefined;
+  if (typeof raw.board_hash === "string" && raw.board_hash) {
+    legacy = raw as unknown as Receipt;
+  } else if (raw.receipt && typeof raw.receipt === "object") {
+    const inner = raw.receipt as Record<string, unknown>;
+    if (typeof inner.board_hash === "string" && inner.board_hash) {
+      legacy = inner as unknown as Receipt;
+    }
+  }
+
+  // Unified DesignReceipt: the arg itself, or nested under `.unified`.
+  let unified: DesignReceipt | undefined;
+  if (typeof raw.schema === "string" && Array.isArray(raw.claims)) {
+    unified = raw as unknown as DesignReceipt;
+  } else if (raw.unified && typeof raw.unified === "object") {
+    const inner = raw.unified as Record<string, unknown>;
+    if (typeof inner.schema === "string" && Array.isArray(inner.claims)) {
+      unified = inner as unknown as DesignReceipt;
+    }
+  }
+  const clearanceReceipt = unified && hasClearanceClaims(unified) ? unified : undefined;
+
+  if (!legacy && !clearanceReceipt) {
     return {
-      content: [{ type: "text" as const, text: "Error: ECAD engine unavailable" }],
+      content: [
+        {
+          type: "text" as const,
+          text: "Error: `receipt` carries nothing re-verifiable — pass a PCB Receipt (board_hash) or a unified DesignReceipt with mech.clearance claims, as produced by build_receipt.",
+        },
+      ],
       isError: true,
     };
   }
-  const payload = { status, board_hash: receipt.board_hash };
+
+  const statuses: ReceiptStatus[] = [];
+
+  let boardHash: string | undefined;
+  if (legacy) {
+    const pcb = getDocPcb(ctx.doc);
+    if (!pcb) {
+      return {
+        content: [{ type: "text" as const, text: "Error: Document has no PCB" }],
+        isError: true,
+      };
+    }
+    const validity = validatePcb(pcb);
+    if (!validity.valid) {
+      return pcbValidationError("verify_receipt", validity, args.document_id ? String(args.document_id) : undefined);
+    }
+    const status = await kernelVerifyReceipt(pcb, legacy);
+    if (!status) {
+      return {
+        content: [{ type: "text" as const, text: "Error: ECAD engine unavailable" }],
+        isError: true,
+      };
+    }
+    statuses.push(status);
+    boardHash = legacy.board_hash;
+  }
+
+  let clearance: ReturnType<typeof verifyClearanceClaims> | undefined;
+  if (clearanceReceipt) {
+    if (!engine) {
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: "Error: clearance re-verification needs the kernel engine; unavailable in this context",
+          },
+        ],
+        isError: true,
+      };
+    }
+    clearance = verifyClearanceClaims(ctx.doc, engine, clearanceReceipt);
+    statuses.push(clearance.status);
+  }
+
+  const payload = {
+    status: worstStatus(statuses),
+    ...(boardHash ? { board_hash: boardHash } : {}),
+    ...(clearance ? { clearance } : {}),
+  };
   return {
     content: [{ type: "text" as const, text: JSON.stringify(payload) }],
     structuredContent: {
@@ -9465,3 +12241,672 @@ export async function verifyReceipt(args: Record<string, unknown>) {
     },
   };
 }
+
+/**
+ * The ECAD tool surface as a single `ToolDef[]`, assembled by `server.ts` into
+ * the ListTools response and the name→def dispatch Map. Descriptions are
+ * byte-identical to the former inline ListTools literals (a fixture test
+ * asserts this).
+ */
+export const toolDefs: ToolDef[] = [
+  {
+    name: "create_schematic",
+    pack: "ecad",
+    description:
+      "Create a schematic from components plus connectivity, and open it " +
+      "as a server-side session. Declare connectivity as data with `nets` " +
+      '({"PHA": ["L1.1", "J1.1"]}) — more reliable than wire/label ' +
+      "coordinates. Returns a document_id for place_components / " +
+      "route_nets / export_gerber, plus the resolved netlist so broken " +
+      "connectivity is visible immediately.",
+    inputSchema: createSchematicSchema,
+    handler: (a) => createSchematic(a) as ToolResult | Promise<ToolResult>,
+    behavior: behavior({ writesDoc: true }),
+  },
+  {
+    name: "place_components",
+    pack: "ecad",
+    description:
+      "Create the board and place schematic components on it. Mutates the " +
+      "session document (pass document_id). Outline: rectangle " +
+      "(board_width/height), circle with optional center bore " +
+      "(board_shape — e.g. a motor stator), or any polygon (outline, e.g. " +
+      "from board_from_solid). strategy=radial rings components for " +
+      "annular boards. Returns `placement_drc` — the pre-routing DRC subset " +
+      "(shorts, pad clearance, courtyard overlaps, off-board parts); when " +
+      "`placement_drc.clean` is false, fix the floorplan with set_placement " +
+      "before route_nets instead of routing on top of the fault. Also " +
+      "returns a `utilization` report (board vs occupied area, % used, " +
+      "component bounding box, and an advisory suggested_outline) so you can " +
+      "right-size an over-large board in one step.",
+    inputSchema: placeComponentsSchema,
+    handler: (a) => placeComponents(a) as ToolResult | Promise<ToolResult>,
+    behavior: behavior({ writesDoc: true, geometry: true, mount: true }),
+  },
+  {
+    name: "route_nets",
+    pack: "ecad",
+    description:
+      "Route electrical nets on the PCB with copper traces. Connects pads " +
+      "belonging to the same net. Idempotent: re-running rips up the " +
+      "previously autorouted copper on the target nets before routing, so " +
+      "a second call replaces the route instead of stacking shorts. " +
+      "Hand-placed copper (add_trace / add_via / coils) is preserved " +
+      "automatically; `locked_nets` additionally protects whole nets. A " +
+      "net with a copper-pour zone (a plane) is connected by stitching " +
+      "each pad to the plane with a via instead of tracing it — those " +
+      "nets come back in `plane_stitched`. Mutates the session document " +
+      "(pass document_id).",
+    inputSchema: routeNetsSchema,
+    handler: (a) => routeNets(a) as ToolResult | Promise<ToolResult>,
+    behavior: behavior({ writesDoc: true, geometry: true }),
+  },
+  {
+    name: "add_coil",
+    pack: "ecad",
+    description:
+      "Add a spiral copper coil (Archimedean) to the PCB \u2014 the primitive for PCB-motor stators and planar inductors. Generates the trace geometry on a layer, assigns it to a net, validates turn-to-turn clearance, and optionally drops a via at the (otherwise trapped) inner endpoint. Returns endpoints, copper length, and a DC resistance estimate. Verify-on-write: the result carries `drc_delta` \u2014 the DRC violations this call introduced (shorts/clearance/connectivity/manufacturing, capped sample with positions) with `clean` to branch on in one step.",
+    inputSchema: addCoilSchema,
+    handler: (a) => addCoil(a) as ToolResult | Promise<ToolResult>,
+    behavior: behavior({ writesDoc: true, geometry: true }),
+  },
+  {
+    name: "add_coil_array",
+    pack: "ecad",
+    description:
+      "Lay a ring of `count` spiral coils evenly around `center` at `pitch_radius` \u2014 the placement primitive for a PCB-motor stator. Net per coil comes from `net_sequence` (cycled); `chirality` sets winding sense. GEOMETRY ONLY: it has no notion of phases \u2014 derive correct per-coil phase/polarity with `winding_layout` first, then map it onto net_sequence/chirality. Verify-on-write: the result carries `drc_delta` \u2014 the DRC violations this call introduced (shorts/clearance/connectivity/manufacturing, capped sample with positions) with `clean` to branch on in one step.",
+    inputSchema: addCoilArraySchema,
+    handler: (a) => addCoilArray(a) as ToolResult | Promise<ToolResult>,
+    behavior: behavior({ writesDoc: true, geometry: true }),
+  },
+  {
+    name: "winding_layout",
+    pack: "ecad",
+    description:
+      "Plan a balanced polyphase motor winding (slots + poles → per-coil " +
+      "phase, polarity, winding factor, feasibility) as DATA. Pure — it " +
+      "does NOT take a board or modify anything; inspect the plan, then " +
+      "realize it with add_coil_array/add_coil. Catches infeasible " +
+      "slot/pole combos and wrong polarity before any copper is drawn.",
+    inputSchema: windingLayoutSchema,
+    handler: (a) => windingLayout(a) as ToolResult | Promise<ToolResult>,
+    behavior: behavior({}),
+  },
+  {
+    name: "board_from_solid",
+    pack: "ecad",
+    description:
+      "Derive a PCB outline polygon (with cutouts, e.g. a center bore) " +
+      "from a solid part in a CAD session by projecting its geometry onto " +
+      "the XY plane. Bridges solid modeling and PCB layout: feed the " +
+      "returned `outline` to place_components.",
+    inputSchema: boardFromSolidSchema,
+    handler: (a, c) =>
+      boardFromSolid(a, c.engine) as ToolResult | Promise<ToolResult>,
+    behavior: behavior({}),
+  },
+  {
+    name: "solid_from_board",
+    pack: "ecad",
+    description:
+      "Materialize the session PCB as a solid CAD part — the inverse of " +
+      "board_from_solid. Extrudes the board outline to its thickness " +
+      "through the hole-aware sketch path (bore/cutout polygons survive " +
+      "as real holes), adds simplified per-component keep-out volumes " +
+      "(kernel 3D body extents, else courtyard × package-class height), " +
+      "and gives the substrate a homogenized FR4+copper density so " +
+      "inspect_cad / physics see the real board mass. Inject into an " +
+      "existing CAD session with `document_id_target` (enclosure fit, " +
+      "motor stacks, clash checks) or omit it to mint a fresh session.",
+    inputSchema: solidFromBoardSchema,
+    // Cross-session writer: reads the PCB in `document_id`, writes the CAD
+    // session in `document_id_target` (or mints one). The central
+    // hydrate/snapshot/persist plumbing keys off args.document_id — here the
+    // read-only PCB source — so the target session is hydrated, snapshotted,
+    // persisted, and event-logged here instead.
+    handler: async (args, ctx) => {
+      const targetId =
+        typeof args.document_id_target === "string" ? args.document_id_target : null;
+      if (targetId) {
+        try {
+          await hydrateSession(ctx.sessionStore, targetId);
+        } catch {
+          // Durable load failed — fall back to cache.
+        }
+        if (documents.has(targetId)) recordHistorySnapshot(targetId);
+      }
+      const result = (await solidFromBoard(args)) as ToolResult;
+      const writtenId = result.structuredContent?.document_id;
+      if (!result.isError && typeof writtenId === "string" && documents.has(writtenId)) {
+        try {
+          await persistSession(ctx.sessionStore, writtenId);
+        } catch {
+          // best-effort durable write
+        }
+        try {
+          await ctx.eventStore.append(writtenId, {
+            author: ctx.user?.sub ?? "agent",
+            kind: "kernel",
+            type: "solid_from_board",
+            payload: buildKernelEventPayload("solid_from_board", args, result),
+          });
+        } catch {
+          // best-effort event append
+        }
+      }
+      return result;
+    },
+    behavior: behavior({}),
+  },
+  {
+    name: "list_footprints",
+    pack: "ecad",
+    description:
+      "List the footprint families the parametric engine resolves, each " +
+      "with a canonical example id to drop into create_schematic's " +
+      "`footprint`. Optional `kind` filter (passive/ic/transistor/diode/" +
+      "power/connector). Use this instead of guessing id spellings.",
+    inputSchema: listFootprintsSchema,
+    handler: (a) => listFootprints(a) as ToolResult | Promise<ToolResult>,
+    behavior: behavior({}),
+  },
+  {
+    name: "search_footprints",
+    pack: "ecad",
+    description:
+      "Fuzzy-search footprint families by name/alias (e.g. 'SOIC 8', " +
+      "'jst', 'qfn') and get ranked matches with a canonical example id — " +
+      "resolve a footprint id without a failed create_schematic round-trip.",
+    inputSchema: searchFootprintsSchema,
+    handler: (a) => searchFootprints(a) as ToolResult | Promise<ToolResult>,
+    behavior: behavior({}),
+  },
+  {
+    name: "get_pad_positions",
+    pack: "ecad",
+    description:
+      "Return every footprint pad's absolute board-frame (x, y), copper " +
+      "layer, and net — the coordinates manual routing (add_trace / " +
+      "add_via / add_via_array) needs so trace endpoints land exactly on " +
+      "pads instead of being eyeballed from component centers. Read-only. " +
+      "Optional `net` / `ref` filters narrow the result for targeted routing.",
+    inputSchema: getPadPositionsSchema,
+    handler: (a) => getPadPositions(a) as ToolResult | Promise<ToolResult>,
+    behavior: behavior({}),
+  },
+  {
+    name: "get_footprint",
+    pack: null,
+    description:
+      "Introspect ONE footprint's land pattern in BOTH the footprint-local " +
+      "and board frames — origin, courtyard AABB, and every pad (with the " +
+      "explicit rotation convention) — so connector/IC pad locations are " +
+      "known exactly instead of render-and-guessed. Two modes: `ref` reads " +
+      "a placed footprint (real transform + nets) from the session; " +
+      "`footprint` resolves an id PRE-placement (pass `at`/`rotation`/" +
+      "`side` to project a hypothetical placement). Read-only.",
+    inputSchema: getFootprintSchema,
+    handler: (a) => getFootprint(a) as ToolResult | Promise<ToolResult>,
+    behavior: behavior({}),
+  },
+  {
+    name: "describe_pcb",
+    pack: "ecad",
+    description:
+      "Inspect the session PCB as compact, structured data: board size + " +
+      "outline, stackup (layer names + copper weights), net classes / " +
+      "design rules, zones (net/layer/bbox/fill), trace & via counts by net " +
+      "and layer, component count, the current DRC status, and an " +
+      "exportability/renderability probe that actually serializes the board " +
+      "for fab + 3D preview — surfacing the 'DRC-clean but unexportable' " +
+      "state get_document/read can't see. Read-only.",
+    inputSchema: describePcbSchema,
+    handler: (a) => describePcb(a) as ToolResult | Promise<ToolResult>,
+    behavior: behavior({}),
+  },
+  {
+    name: "add_trace",
+    pack: "ecad",
+    description:
+      "Lay an explicit copper trace: a polyline of segments on a layer, assigned to a net. The general-purpose routing primitive \u2014 use it for coil interconnect, buses, and hand-routes that route_nets (pad-driven) won't make. Tagged as manual copper, so route_nets preserves it instead of ripping it up. Mutates the session document. Verify-on-write: the result carries `drc_delta` \u2014 the DRC violations this call introduced (shorts/clearance/connectivity/manufacturing, capped sample with positions) with `clean` to branch on in one step.",
+    inputSchema: addTraceSchema,
+    handler: (a) => addTrace(a) as ToolResult | Promise<ToolResult>,
+    behavior: behavior({ writesDoc: true, geometry: true }),
+  },
+  {
+    name: "add_via",
+    pack: "ecad",
+    description:
+      "Drop a via at a point connecting two layers on a net (defaults FCu\u2192BCu, diameter/drill from design rules). Pairs with add_trace for multi-layer routing. Mutates the session document. Verify-on-write: the result carries `drc_delta` \u2014 the DRC violations this call introduced (shorts/clearance/connectivity/manufacturing, capped sample with positions) with `clean` to branch on in one step.",
+    inputSchema: addViaSchema,
+    handler: (a) => addVia(a) as ToolResult | Promise<ToolResult>,
+    behavior: behavior({ writesDoc: true, geometry: true }),
+  },
+  {
+    name: "set_stackup",
+    pack: "ecad",
+    description:
+      "Set the board stackup copper weight (e.g. copper_oz: 2) and/or per-layer thickness/material, so DC-resistance and impedance estimates reflect the real fab stackup instead of a default 1 oz. Mutates the session document. Verify-on-write: the result carries `drc_delta` \u2014 the DRC violations this call introduced (shorts/clearance/connectivity/manufacturing, capped sample with positions) with `clean` to branch on in one step.",
+    inputSchema: setStackupSchema,
+    handler: (a) => setStackup(a) as ToolResult | Promise<ToolResult>,
+    behavior: behavior({ writesDoc: true, geometry: true }),
+  },
+  {
+    name: "set_placement",
+    pack: "ecad",
+    description:
+      "Place footprints at explicit board-frame coordinates by ref — the " +
+      "floorplan realizer the auto-placer (grid/force_directed/radial) can't " +
+      "express: thermal rings, a quiet IMU corner, rim connectors. Batch; " +
+      "sets position/rotation/side and warns on off-board, in-cutout, or " +
+      "stacked landings. Mutates the session document. Returns the updated " +
+      "`placement_drc` (same shape as place_components) so a move can be " +
+      "re-checked in one call without running run_drc.",
+    inputSchema: setPlacementSchema,
+    handler: (a) => setPlacement(a) as ToolResult | Promise<ToolResult>,
+    behavior: behavior({ writesDoc: true }),
+  },
+  {
+    name: "set_board_outline",
+    pack: "ecad",
+    description:
+      "Resize or reshape the board outline in place \u2014 rectangle (board_width/height), circle/annulus (board_shape), or any polygon (outline) \u2014 WITHOUT re-placing components, traces, vias, or zones. Unlike re-running place_components, the floorplan is preserved; any footprint whose origin ends up off the new board is reported in `off_board` rather than silently relocated. Mutates the session document. Verify-on-write: the result carries `drc_delta` \u2014 the DRC violations this call introduced (shorts/clearance/connectivity/manufacturing, capped sample with positions) with `clean` to branch on in one step.",
+    inputSchema: setBoardOutlineSchema,
+    handler: (a) => setBoardOutline(a) as ToolResult | Promise<ToolResult>,
+    behavior: behavior({ writesDoc: true }),
+  },
+  {
+    name: "add_zone",
+    pack: "ecad",
+    description:
+      "Add a copper pour (ground/power plane) on a net+layer — fills are not " +
+      "traces. `fill_board:true` pours the whole outline (cutouts become " +
+      "voids); or give an explicit polygon for a partial plane. Mutates the " +
+      "session document.",
+    inputSchema: addZoneSchema,
+    handler: (a) => addZone(a) as ToolResult | Promise<ToolResult>,
+    behavior: behavior({ writesDoc: true }),
+  },
+  {
+    name: "delete_zone",
+    pack: "ecad",
+    description:
+      "Remove a copper pour from the board \u2014 the take-back for a bad add_zone, without rebuilding the session. Target by `index` (0-based, the add order) or by `net`/`layer` when exactly one zone matches. Returns a `changed` diff of what was removed. To undo the very last mutation of any kind, use `undo` instead. Mutates the session document. Verify-on-write: the result carries `drc_delta` \u2014 the DRC violations this call introduced (shorts/clearance/connectivity/manufacturing, capped sample with positions) with `clean` to branch on in one step.",
+    inputSchema: deleteZoneSchema,
+    handler: (a) => deleteZone(a) as ToolResult | Promise<ToolResult>,
+    behavior: behavior({ writesDoc: true, geometry: true }),
+  },
+  {
+    name: "delete_trace",
+    pack: "ecad",
+    description:
+      "Remove a single routed trace segment by `index` (0-based, the add order) or by an unambiguous `net`/`layer` match. The take-back for a stray add_trace. Returns a `changed` diff. Mutates the session document. Verify-on-write: the result carries `drc_delta` \u2014 the DRC violations this call introduced (shorts/clearance/connectivity/manufacturing, capped sample with positions) with `clean` to branch on in one step.",
+    inputSchema: deleteTraceSchema,
+    handler: (a) => deleteTrace(a) as ToolResult | Promise<ToolResult>,
+    behavior: behavior({ writesDoc: true, geometry: true }),
+  },
+  {
+    name: "delete_via",
+    pack: "ecad",
+    description:
+      "Remove a single via by `index` (0-based, the add order) or by an unambiguous `net` match. The take-back for a stray add_via. Returns a `changed` diff. Mutates the session document. Verify-on-write: the result carries `drc_delta` \u2014 the DRC violations this call introduced (shorts/clearance/connectivity/manufacturing, capped sample with positions) with `clean` to branch on in one step.",
+    inputSchema: deleteViaSchema,
+    handler: (a) => deleteVia(a) as ToolResult | Promise<ToolResult>,
+    behavior: behavior({ writesDoc: true, geometry: true }),
+  },
+  {
+    name: "get_copper",
+    pack: "ecad",
+    description:
+      "Query the board's routed copper — traces, trace arcs, vias, zones — " +
+      "with optional `layer`/`net`/`bbox`/`kind` filters. Each element comes " +
+      "back with its `kind` + `index`: exactly the addressing delete_trace / " +
+      "delete_via / delete_zone accept, so a query can drive a surgical " +
+      "delete without exporting the document. describe_pcb aggregates " +
+      "counts; this returns the elements themselves (geometry, width, net, " +
+      "layer), capped at 200 per page with `offset` pagination and a `total`. " +
+      "Read-only.",
+    inputSchema: getCopperSchema,
+    handler: (a) => getCopper(a) as ToolResult | Promise<ToolResult>,
+    behavior: behavior({}),
+  },
+  {
+    name: "add_net_tie",
+    pack: "ecad",
+    description:
+      "Declare an intentional junction between >= 2 nets (a net-tie) so DRC treats them as one node where they meet \u2014 required for wye/star motor neutrals, split grounds (GND+AGND), and current-sense shunt taps, which are otherwise reported as shorts. With `position`+`radius` the tie is region-scoped: clearance/short checks are exempt only for contacts inside the region, and connectivity accepts nets joined through copper when each has a tie-covered contact there \u2014 a stray crossing of the same nets elsewhere still fires. Without them the exemption is board-wide (prefer scoped: it keeps DRC honest away from the junction). Nets must exist on the board. Returns the updated tie list with indices. Mutates the session document. Verify-on-write: the result carries `drc_delta` \u2014 the DRC violations this call introduced or resolved (a tie edit changes short/clearance exemptions) with `clean` to branch on in one step.",
+    inputSchema: addNetTieSchema,
+    handler: (a) => addNetTie(a) as ToolResult | Promise<ToolResult>,
+    behavior: behavior({ writesDoc: true }),
+  },
+  {
+    name: "delete_net_tie",
+    pack: "ecad",
+    description:
+      "Remove a net tie by `index`, or by matching `nets` (set equality, order-insensitive) and/or `position` \u2014 the take-back for a bad add_net_tie. Any junction copper stays on the board; DRC will report it as a short again. Returns the deleted tie and the updated tie list. Mutates the session document. Verify-on-write: the result carries `drc_delta` \u2014 the DRC violations this call introduced or resolved (a tie edit changes short/clearance exemptions) with `clean` to branch on in one step.",
+    inputSchema: deleteNetTieSchema,
+    handler: (a) => deleteNetTie(a) as ToolResult | Promise<ToolResult>,
+    behavior: behavior({ writesDoc: true }),
+  },
+  {
+    name: "undo",
+    // Always-on core (#442): undo serves every session type, so it must not
+    // disappear when the ecad pack is disabled.
+    pack: null,
+    description:
+      "Rewind the most recent mutation on a session — the snapshot taken " +
+      "before the last add_zone / add_trace / add_via / delete_* / route_nets " +
+      "/ place_components (or a CAD create/update/delete) is restored, without " +
+      "re-sending the document. Repeated calls walk further back. Returns a " +
+      "`changed` diff of the board elements the rewind moved.",
+    inputSchema: undoSchema,
+    handler: (a) => undo(a) as ToolResult | Promise<ToolResult>,
+    behavior: behavior({ writesDoc: true, geometry: true }),
+  },
+  {
+    name: "set_design_rules",
+    pack: "ecad",
+    description:
+      "Set the board design rules run_drc enforces (clearance, track width, " +
+      "via, edge/hole/annular) and net classes — the way to give a power or " +
+      "high-voltage class wider clearance than signal nets. run_drc already " +
+      "reads pcb.rules; this writes them. Mutates the session document.",
+    inputSchema: setDesignRulesSchema,
+    handler: (a) => setDesignRules(a) as ToolResult | Promise<ToolResult>,
+    behavior: behavior({ writesDoc: true }),
+  },
+  {
+    name: "size_trace_for_current",
+    pack: "ecad",
+    description:
+      "IPC-2221 conductor ampacity solved for trace width: given current, " +
+      "copper weight, allowed temp rise, and layer (outer/inner), returns the " +
+      "minimum width. The ampacity sibling of size_impedance/size_pdn — pure " +
+      "calc, no document.",
+    inputSchema: sizeTraceForCurrentSchema,
+    handler: (a) =>
+      sizeTraceForCurrent(a) as ToolResult | Promise<ToolResult>,
+    behavior: behavior({}),
+  },
+  {
+    name: "add_via_array",
+    pack: "ecad",
+    description:
+      "Place many vias at once \u2014 a grid over a rectangular `region` (thermal vias under FETs, GND-plane stitching) or an explicit `points` list. Grid vias are clipped to the board outline by default. Mutates the session document. Verify-on-write: the result carries `drc_delta` \u2014 the DRC violations this call introduced (shorts/clearance/connectivity/manufacturing, capped sample with positions) with `clean` to branch on in one step.",
+    inputSchema: addViaArraySchema,
+    handler: (a) => addViaArray(a) as ToolResult | Promise<ToolResult>,
+    behavior: behavior({ writesDoc: true }),
+  },
+  {
+    name: "add_motor_winding",
+    pack: "ecad",
+    description:
+      "One-shot motor winding realizer: plans a balanced slots/poles/phases winding, drops a spiral coil per tooth with correct phase + polarity, series-connects each phase with planar staggered-radius arcs in the coil-free bore (never crossing), ties the wye/delta termination with a region-scoped net-tie on real board material, and routes phase feeds to same-net pads when present \u2014 closing the winding_layout plan into DRC-clean copper. Mutates the session document. Verify-on-write: the result carries `drc_delta` \u2014 the DRC violations this call introduced (shorts/clearance/connectivity/manufacturing, capped sample with positions) with `clean` to branch on in one step.",
+    inputSchema: addMotorWindingSchema,
+    handler: (a) => addMotorWinding(a) as ToolResult | Promise<ToolResult>,
+    behavior: behavior({ writesDoc: true, geometry: true }),
+  },
+  {
+    name: "calc_motor",
+    pack: "ecad",
+    description:
+      "Evaluate motor performance AS DATA. mode:'pm' (default): torque " +
+      "constant Kt, back-EMF constant Ke, no-load speed, stall torque, " +
+      "and a speed–torque curve; supply air-gap flux directly or compute " +
+      "it from magnet geometry via the first-order MEC field model, with " +
+      "an optional Carter-like fringing derate (magnet.pole_width_mm). " +
+      "mode:'induction': thin-sheet axial induction rotor (drag-cup / " +
+      "PCB cage) — gap field B1, torque-per-unit-slip, locked-rotor " +
+      "torque, sync speed, rotor sheet loss. Pure: no board, no " +
+      "mutation. First-order steady state.",
+    inputSchema: calcMotorSchema,
+    handler: (a) => calcMotor(a) as ToolResult | Promise<ToolResult>,
+    behavior: behavior({}),
+  },
+  {
+    name: "check_self_start",
+    pack: "ecad",
+    description:
+      "Will it spin? Starting torque (direct, or Kt·I; induction: the " +
+      "locked-rotor torque from calc_motor) vs a friction estimate " +
+      "(direct, or the built-in bearing catalog: 608-2RS/608-ZZ/625/688 " +
+      "× light/medium preload × count). Returns starts (fail-closed vs " +
+      "worst-case friction), best-case verdict, and the margin. Pure " +
+      "calc, no document.",
+    inputSchema: checkSelfStartSchema,
+    handler: (a) => checkSelfStart(a) as ToolResult | Promise<ToolResult>,
+    behavior: behavior({}),
+  },
+  {
+    name: "run_drc",
+    pack: "ecad",
+    description:
+      "Run Design Rule Check (DRC) on a PCB. Checks clearance, trace width, drill size, annular ring, hole-to-hole, edge clearance, and connectivity \u2014 including SameNetBypass, a warning when same-net copper touches far from any intended junction (e.g. a trace over a coil's inner via, short-circuiting the spiral). Every violation is tagged with `provenance` (intra_footprint / inter_component / routing) and `generated` (involves a synthesized footprint land pattern); the summary adds `byProvenance`, `generatedArtifacts`, and `realViolations` so the headline count excludes footprint artifacts without hand-triage.",
+    inputSchema: runDrcSchema,
+    handler: (a) => runDrc(a) as ToolResult | Promise<ToolResult>,
+    behavior: behavior({}),
+  },
+  {
+    name: "search_electronic_parts",
+    pack: "ecad",
+    description:
+      "Spec-search the generative parts catalog (offline). A query like " +
+      "'10k 0603 1%' parses to value+package+tolerance and returns the best " +
+      "match plus E-series neighbours, each with a generated footprint, symbol, " +
+      "and 3D body. A part is family+value+package, not a scraped row.",
+    inputSchema: searchElectronicPartsSchema,
+    handler: (a) =>
+      searchElectronicParts(a) as ToolResult | Promise<ToolResult>,
+    behavior: behavior({}),
+  },
+  {
+    name: "resolve_part",
+    pack: "ecad",
+    description:
+      "Resolve a spec query (e.g. '10k 0603 1%') into ONE fully-specified part: " +
+      "E-series-snapped value plus a generated footprint + schematic symbol + 3D " +
+      "body (one parametric source of truth) and any MPN cross-references.",
+    inputSchema: resolvePartSchema,
+    handler: (a) => resolvePart(a) as ToolResult | Promise<ToolResult>,
+    behavior: behavior({}),
+  },
+  {
+    name: "find_alternatives",
+    pack: "ecad",
+    description:
+      "Propose spec-compatible substitutes for the part a query resolves to. " +
+      "Each alternative keeps the value, varies the package, and is labelled " +
+      "identical / needs-reroute / incompatible by re-deriving its footprint.",
+    inputSchema: findAlternativesSchema,
+    handler: (a) => findAlternatives(a) as ToolResult | Promise<ToolResult>,
+    behavior: behavior({}),
+  },
+  {
+    name: "verify_substitution",
+    pack: "ecad",
+    description:
+      "PROVE a part swap on the session PCB: replace `reference` with the part " +
+      "`candidate` resolves to, re-derive its footprint, re-place at the same " +
+      "anchor, re-run DRC (incl. connectivity), and return the before/after " +
+      "violation delta with a `drop_in` verdict. An alternative is only drop-in " +
+      "when it adds no new violations and preserves pin numbering.",
+    inputSchema: verifySubstitutionSchema,
+    handler: (a) =>
+      verifySubstitution(a) as ToolResult | Promise<ToolResult>,
+    behavior: behavior({}),
+  },
+  {
+    name: "build_receipt",
+    pack: "ecad",
+    description:
+      "Build a re-runnable verification Receipt for the session PCB: a content hash, the DRC backend, a canonicalized DRC summary, and per-part provenance \u2014 a durable proof that round-trips and re-verifies later as Holds / Stale / Violated. Persisted clearance specs (check_clearance with a label) join the unified ledger as mech.clearance claims \u2014 a CAD-only session with specs gets a mechanical receipt, no PCB needed. Renders as an audit ledger in the inline viewer.",
+    inputSchema: buildReceiptSchema,
+    handler: (a, c) =>
+      buildReceipt(a, c.engine) as ToolResult | Promise<ToolResult>,
+    behavior: behavior({ mount: true }),
+  },
+  {
+    name: "verify_receipt",
+    pack: "ecad",
+    description:
+      "Re-run a prior receipt (from build_receipt) against the session's current document and return the verdict \u2014 Holds (unchanged, clean), Stale (changed but claims still hold), or Violated. Covers the PCB Receipt (board hash + DRC diff) and mech.clearance claims (re-measured against current geometry); worst verdict wins. Powers the ledger's Re-run button.",
+    inputSchema: verifyReceiptSchema,
+    handler: (a) => verifyReceipt(a) as ToolResult | Promise<ToolResult>,
+    behavior: behavior({ widgetCallable: true }),
+  },
+  {
+    name: "route_diff_pair",
+    pack: null,
+    description:
+      "Route a declared differential pair (net_p/net_n) coupled and length-matched, " +
+      "using the pair's diff-pair net-class gap and width. Routes straight (best on a " +
+      "clear channel); verify with run_drc / critique_route afterwards.",
+    inputSchema: routeDiffPairSchema,
+    handler: (a) => routeDiffPair(a) as ToolResult | Promise<ToolResult>,
+    behavior: behavior({ writesDoc: true }),
+  },
+  {
+    name: "critique_route",
+    pack: null,
+    description:
+      "Audit one net's routing without changing anything: total length, via/" +
+      "layer-change count, the closest approach to other-net copper, and any " +
+      "clearance/short/unconnected DRC issues it's in. Inspect a route before trusting it.",
+    inputSchema: critiqueRouteSchema,
+    handler: (a) => critiqueRoute(a) as ToolResult | Promise<ToolResult>,
+    behavior: behavior({}),
+  },
+  {
+    name: "run_erc",
+    pack: "ecad",
+    description:
+      "Run Electrical Rule Check (ERC) on a schematic. " +
+      "Checks for duplicate references, unconnected pins, and pin type conflicts.",
+    inputSchema: runErcSchema,
+    handler: (a) => runErc(a) as ToolResult | Promise<ToolResult>,
+    behavior: behavior({}),
+  },
+  {
+    name: "export_gerber",
+    pack: "ecad",
+    description:
+      "Export Gerber RS-274X fabrication files from a PCB design. " +
+      "Generates copper layer files, drill file, pick-and-place CSV, and BOM. " +
+      "Gated on a clean DRC by default (require_clean_drc) — a dirty or " +
+      "unverifiable board is BLOCKED with its DRC summary instead of emitting " +
+      "an invalid bundle. Run validate_for_fab first for the full readiness verdict.",
+    inputSchema: exportGerberSchema,
+    handler: (a) => exportGerber(a) as ToolResult | Promise<ToolResult>,
+    behavior: behavior({}),
+  },
+  {
+    name: "export_kicad",
+    pack: null,
+    description:
+      "Export the session as a native, editable KiCad 9 file. " +
+      "filename ending in .kicad_pcb writes the board (footprints, pads, nets, " +
+      "traces, vias, zones, layers, outline); .kicad_sch writes the schematic. " +
+      "Unlike export_gerber (fab-only output), this round-trips: a human can open " +
+      "it in KiCad to finish routing nets the autorouter couldn't close, then " +
+      "re-import. Large files respect the inline byte cap (use output_dir for those).",
+    inputSchema: exportKicadSchema,
+    handler: (a) => exportKicad(a) as ToolResult | Promise<ToolResult>,
+    behavior: behavior({}),
+  },
+  {
+    name: "validate_for_fab",
+    pack: "ecad",
+    description:
+      "The single 'is this board ready to fabricate?' oracle. Runs the whole " +
+      "readiness gate in one call and returns ONE structured verdict: DRC " +
+      "(fail-closed — a board that won't parse is 'unverifiable', never clean), " +
+      "renderability, Gerber-exportability (attempts serialization; names the " +
+      "exact failing field when it can't), unsupported features, the precise " +
+      "blockers, and suggested fixes. Read-only. Use before export_gerber / " +
+      "quote_manufacturing to know — not guess — whether the board is shippable.",
+    inputSchema: validateForFabSchema,
+    handler: (a) => validateForFab(a) as ToolResult | Promise<ToolResult>,
+    // mount: the readiness verdict is a moment-of-truth — put a live canvas
+    // next to it instead of making the user scroll back up.
+    behavior: behavior({ mount: true }),
+  },
+  {
+    name: "calc_impedance",
+    pack: "ecad",
+    description:
+      "Calculate trace impedance using IPC-2141 formulas. " +
+      "Supports microstrip, stripline, and differential pair configurations. " +
+      "Returns Z0, effective Er, and propagation delay. Pass document_id + " +
+      "net to gate the number on realized copper: an impedance for a trace " +
+      "that isn't actually routed/continuous is blocked, not reported.",
+    inputSchema: calcImpedanceSchema,
+    handler: (a) => calcImpedance(a) as ToolResult | Promise<ToolResult>,
+    behavior: behavior({}),
+  },
+  {
+    name: "size_impedance",
+    pack: "ecad",
+    description:
+      "Inverse of calc_impedance: solve trace geometry for a TARGET impedance. " +
+      "Given a target Z0 (and diff Z0 for pairs) + stackup, returns the trace " +
+      "width (and spacing) AS DATA, snapped to the fab grid and re-verified " +
+      "against the same model. Reports a binding DFM min-width/spacing bound " +
+      "and whether the target is reachable — it will not silently hand back a " +
+      "width that misses spec. Pure: no board, no mutation.",
+    inputSchema: sizeImpedanceSchema,
+    handler: (a) => sizeImpedance(a) as ToolResult | Promise<ToolResult>,
+    behavior: behavior({}),
+  },
+  {
+    name: "size_pdn",
+    pack: "ecad",
+    description:
+      "Size copper-segment widths across a power-distribution resistor mesh " +
+      "so each load node's IR-drop meets its budget with minimal copper. " +
+      "Solves G·V=I for node voltages and drives drop→budget with a bounded " +
+      "gradient tuner; returns per-segment widths AS DATA with drops " +
+      "recomputed from a forward solve, and flags any node it can't meet " +
+      "within the width bounds. Pure by default; pass document_id + net to " +
+      "REFUSE a PASS when that power plane isn't galvanically continuous " +
+      "(returns coverage %, stitching-via count, and the worst island).",
+    inputSchema: sizePdnSchema,
+    handler: (a) => sizePdn(a) as ToolResult | Promise<ToolResult>,
+    behavior: behavior({}),
+  },
+  {
+    name: "calc_coil",
+    pack: "ecad",
+    description:
+      "Analyze a planar spiral coil: inductance (modified Wheeler), DC " +
+      "resistance, copper length, and L/R time constant. The analyzer for " +
+      "the planar-magnetics archetype (inductors, sensor coils, motor " +
+      "stators). Pure.",
+    inputSchema: calcCoilSchema,
+    handler: (a) => calcCoil(a) as ToolResult | Promise<ToolResult>,
+    behavior: behavior({}),
+  },
+  {
+    name: "size_coil",
+    pack: "ecad",
+    description:
+      "Inverse of calc_coil: solve the turn count for a target inductance " +
+      "in a given annulus (Wheeler L ∝ turns², so it's closed-form). Reports " +
+      "continuous + integer turns, the inductance achieved, and whether that " +
+      "many turns fit the radial band (else fit-limited). Pure.",
+    inputSchema: sizeCoilSchema,
+    handler: (a) => sizeCoil(a) as ToolResult | Promise<ToolResult>,
+    behavior: behavior({}),
+  },
+  {
+    name: "calc_rf",
+    pack: "ecad",
+    description:
+      "Frequency-domain (AC) analysis of an RLC resonator: sweeps complex " +
+      "impedance over frequency and reports |Z|, phase, and S11/return-loss " +
+      "vs a reference Z0, plus resonance, Q, and the best match in the band. " +
+      "The RF/AC analyzer (calc_impedance is geometry-only). Pure.",
+    inputSchema: calcRfSchema,
+    handler: (a) => calcRf(a) as ToolResult | Promise<ToolResult>,
+    behavior: behavior({}),
+  },
+];

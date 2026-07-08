@@ -6,6 +6,7 @@ import { useNotificationStore } from "../stores/notification-store";
 import { useLogStore } from "../stores/log-store";
 import { useChangelogStore } from "../stores/changelog-store";
 import { ensureNotRecording } from "@/lib/recording-guard";
+import { analytics } from "@/lib/analytics";
 
 // Track last Escape time for double-tap emergency exit
 let lastEscapeTime = 0;
@@ -409,8 +410,15 @@ export function useKeyboardShortcuts() {
         // Double-tap: force exit from any sketch state
         if (isDoubleTap) {
           if (active || faceSelectionMode || pendingExit) {
-            exitSketchMode();
+            const status = exitSketchMode();
             cancelFaceSelection();
+            analytics.sketchAbandoned(
+              !active
+                ? "face_selection"
+                : status === "has_segments"
+                  ? "discarded"
+                  : "empty",
+            );
             useNotificationStore.getState().addToast("Sketch cancelled", "info");
             useUiStore.getState().setFocusZone("viewport");
             return;
@@ -420,6 +428,7 @@ export function useKeyboardShortcuts() {
         // Cancel face selection mode
         if (faceSelectionMode) {
           cancelFaceSelection();
+          analytics.sketchAbandoned("face_selection");
           useNotificationStore.getState().addToast("Face selection cancelled", "info");
           useUiStore.getState().setFocusZone("viewport");
           return;
@@ -441,6 +450,7 @@ export function useKeyboardShortcuts() {
           // Request exit - returns true if exited immediately (empty sketch)
           const exited = requestExit();
           if (exited) {
+            analytics.sketchAbandoned("empty");
             useNotificationStore.getState().addToast("Sketch cancelled", "info");
           }
           // If not exited, confirmation dialog will show in SketchConfirmationCorner

@@ -28,6 +28,18 @@ pub enum FaceClassification {
     OnOpposite,
 }
 
+/// Closest point on segment (x1,y1)-(x2,y2) to (px,py).
+fn nearest_point_on_segment_2d(px: f64, py: f64, x1: f64, y1: f64, x2: f64, y2: f64) -> (f64, f64) {
+    let dx = x2 - x1;
+    let dy = y2 - y1;
+    let len2 = dx * dx + dy * dy;
+    if len2 < 1e-24 {
+        return (x1, y1);
+    }
+    let t = (((px - x1) * dx + (py - y1) * dy) / len2).clamp(0.0, 1.0);
+    (x1 + t * dx, y1 + t * dy)
+}
+
 /// Compute a sample point in the interior of a face.
 ///
 /// Returns a 3D point that lies on the face's surface, inside its boundary
@@ -216,8 +228,16 @@ pub fn face_sample_point(brep: &BRepSolid, face_id: FaceId) -> Point3 {
 
                 let outer_2d: Vec<(f64, f64)> = vertices.iter().map(&project_2d).collect();
 
-                // Collect all inner loop vertices in 2D
+                // Collect inner loops in 2D. Polygonal loops keep their
+                // vertices; degenerate single-vertex loops are full circles
+                // about the plane origin (the convention `point_in_face`
+                // uses), recorded as (center, radius).
                 let mut inner_loops_2d: Vec<Vec<(f64, f64)>> = Vec::new();
+                let mut circle_holes: Vec<((f64, f64), f64)> = Vec::new();
+                let plane_origin_2d = surface
+                    .as_any()
+                    .downcast_ref::<vcad_kernel_geom::Plane>()
+                    .map(|p| project_2d(&p.origin));
                 for &inner_loop in &face.inner_loops {
                     let inner_verts: Vec<(f64, f64)> = topo
                         .loop_half_edges(inner_loop)
@@ -226,52 +246,124 @@ pub fn face_sample_point(brep: &BRepSolid, face_id: FaceId) -> Point3 {
                             project_2d(&pt)
                         })
                         .collect();
-                    if !inner_verts.is_empty() {
-                        inner_loops_2d.push(inner_verts);
+                    match (inner_verts.len(), plane_origin_2d) {
+                        (0, _) => {}
+                        (1, Some(c)) => {
+                            let dx = inner_verts[0].0 - c.0;
+                            let dy = inner_verts[0].1 - c.1;
+                            circle_holes.push((c, (dx * dx + dy * dy).sqrt()));
+                        }
+                        _ => inner_loops_2d.push(inner_verts),
                     }
                 }
 
-                // Try multiple candidate points along each edge of the outer boundary
-                // Pick the one that's farthest from any hole
-                let mut best_point: Option<Point3> = None;
-                let mut best_dist = 0.0f64;
+                // Distance to the nearest boundary — outer edges, hole edges,
+                // and degenerate hole circles alike. Split sub-faces have
+                // their outer boundary exactly ON the other solid's surface
+                // (the split curve came from intersecting it), so a robust
+                // classification sample must maximize clearance from EVERY
+                // boundary, not merely avoid the holes: a sample sitting on
+                // the outer rim ray-casts against the other solid's
+                // tessellated boundary and misclassifies.
+                let boundary_dist = |x: f64, y: f64| -> f64 {
+                    let mut d = f64::INFINITY;
+                    for i in 0..outer_2d.len() {
+                        let j = (i + 1) % outer_2d.len();
+                        d = d.min(point_to_segment_dist_2d(
+                            x,
+                            y,
+                            outer_2d[i].0,
+                            outer_2d[i].1,
+                            outer_2d[j].0,
+                            outer_2d[j].1,
+                        ));
+                    }
+                    for hole in &inner_loops_2d {
+                        for k in 0..hole.len() {
+                            let l = (k + 1) % hole.len();
+                            d = d.min(point_to_segment_dist_2d(
+                                x, y, hole[k].0, hole[k].1, hole[l].0, hole[l].1,
+                            ));
+                        }
+                    }
+                    for &((cx, cy), r) in &circle_holes {
+                        let dist_c = ((x - cx).powi(2) + (y - cy).powi(2)).sqrt();
+                        d = d.min((dist_c - r).abs());
+                    }
+                    d
+                };
 
-                for i in 0..vertices.len() {
-                    let j = (i + 1) % vertices.len();
-                    let p0 = vertices[i];
-                    let p1 = vertices[j];
-                    let p0_2d = outer_2d[i];
-                    let p1_2d = outer_2d[j];
-
-                    // Try points at 10%, 25%, 50%, 75%, 90% along this edge
-                    for &t in &[0.1, 0.25, 0.5, 0.75, 0.9] {
-                        let candidate_3d = p0 + t * (p1 - p0);
-                        let candidate_2d = (
-                            p0_2d.0 + t * (p1_2d.0 - p0_2d.0),
-                            p0_2d.1 + t * (p1_2d.1 - p0_2d.1),
-                        );
-
-                        // Check distance to nearest hole
-                        let mut min_hole_dist = f64::INFINITY;
-                        for inner_loop_2d in &inner_loops_2d {
-                            for k in 0..inner_loop_2d.len() {
-                                let l = (k + 1) % inner_loop_2d.len();
-                                let dist = point_to_segment_dist_2d(
-                                    candidate_2d.0,
-                                    candidate_2d.1,
-                                    inner_loop_2d[k].0,
-                                    inner_loop_2d[k].1,
-                                    inner_loop_2d[l].0,
-                                    inner_loop_2d[l].1,
-                                );
-                                min_hole_dist = min_hole_dist.min(dist);
+                // Nearest point on any hole boundary — used to pull rim
+                // candidates into the interior band between the outer
+                // boundary and the holes (mid-band on an annular sub-face).
+                let nearest_hole_point = |x: f64, y: f64| -> Option<(f64, f64)> {
+                    let mut best: Option<((f64, f64), f64)> = None;
+                    for hole in &inner_loops_2d {
+                        for k in 0..hole.len() {
+                            let l = (k + 1) % hole.len();
+                            let (px, py) = nearest_point_on_segment_2d(
+                                x, y, hole[k].0, hole[k].1, hole[l].0, hole[l].1,
+                            );
+                            let d = ((x - px).powi(2) + (y - py).powi(2)).sqrt();
+                            if best.is_none_or(|(_, bd)| d < bd) {
+                                best = Some(((px, py), d));
                             }
                         }
-
-                        if min_hole_dist > best_dist {
-                            best_dist = min_hole_dist;
-                            best_point = Some(candidate_3d);
+                    }
+                    for &((cx, cy), r) in &circle_holes {
+                        let dx = x - cx;
+                        let dy = y - cy;
+                        let dist_c = (dx * dx + dy * dy).sqrt();
+                        if dist_c > 1e-12 {
+                            let px = cx + dx / dist_c * r;
+                            let py = cy + dy / dist_c * r;
+                            let d = (dist_c - r).abs();
+                            if best.is_none_or(|(_, bd)| d < bd) {
+                                best = Some(((px, py), d));
+                            }
                         }
+                    }
+                    best.map(|(p, _)| p)
+                };
+
+                let mut best_point: Option<Point3> = None;
+                let mut best_dist = -1.0f64;
+                let mut consider = |x: f64, y: f64| {
+                    // Degenerate circle holes are invisible to the
+                    // polygon-based containment test — reject their
+                    // interiors explicitly.
+                    for &((cx, cy), r) in &circle_holes {
+                        let dist_c = ((x - cx).powi(2) + (y - cy).powi(2)).sqrt();
+                        if dist_c < r - 1e-9 {
+                            return;
+                        }
+                    }
+                    let p3 = v0 + x * u_axis + y * v_axis;
+                    if !point_in_face(brep, face_id, &p3) {
+                        return;
+                    }
+                    let d = boundary_dist(x, y);
+                    if d > best_dist {
+                        best_dist = d;
+                        best_point = Some(p3);
+                    }
+                };
+
+                // Candidates along the outer boundary plus interior variants
+                // pulled part-way toward the nearest hole boundary. The
+                // interior variants dominate whenever they land on the face:
+                // an on-rim candidate scores ~0 clearance by construction.
+                for i in 0..outer_2d.len() {
+                    let j = (i + 1) % outer_2d.len();
+                    for &t in &[0.1, 0.25, 0.5, 0.75, 0.9] {
+                        let ex = outer_2d[i].0 + t * (outer_2d[j].0 - outer_2d[i].0);
+                        let ey = outer_2d[i].1 + t * (outer_2d[j].1 - outer_2d[i].1);
+                        if let Some((hx, hy)) = nearest_hole_point(ex, ey) {
+                            for &s in &[0.5, 0.25, 0.75] {
+                                consider(ex + s * (hx - ex), ey + s * (hy - ey));
+                            }
+                        }
+                        consider(ex, ey);
                     }
                 }
 
@@ -414,6 +506,12 @@ pub fn face_sample_point(brep: &BRepSolid, face_id: FaceId) -> Point3 {
     match surface.surface_type() {
         SurfaceKind::Plane => centroid,
         SurfaceKind::Cylinder => {
+            // Wavy band faces (oblique boolean cuts) have boundaries whose v
+            // varies with u; the u-range-midpoint heuristic below can land
+            // entirely outside such a face. Sample inside the band instead.
+            if let Some(p) = crate::cyl_band::band_sample_point(brep, face_id) {
+                return p;
+            }
             // For cylindrical faces, compute a point ON the surface at the middle
             // of the face's U (angular) range. The boundary vertex centroid may
             // be inside the cylinder, not on its surface, leading to wrong classification.
@@ -788,6 +886,14 @@ fn find_coincident_classification(
     }
     let face = &brep.topology.faces[face_id];
     let surface = &brep.geometry.surfaces[face.surface_index];
+    if surface.surface_type() == SurfaceKind::Cylinder {
+        // Two operands can share a cylindrical wall (arc-extruded bodies
+        // built from the same circles, patterned copies of a revolved
+        // part). Without OnSame/OnOpposite for curved pairs, the union of
+        // two overlapping half-annuli keeps both copies of the shared
+        // inner wall and drops both copies of the outer one.
+        return find_coincident_cylinder_classification(brep, face_id, probes, other);
+    }
     if surface.surface_type() != SurfaceKind::Plane {
         return None;
     }
@@ -906,6 +1012,82 @@ fn find_coincident_classification(
         } else if dot < -1.0 + ANGLE_TOL {
             return Some(FaceClassification::OnOpposite);
         }
+    }
+    None
+}
+
+/// Coincidence classification for cylindrical faces: when another face
+/// lies on the SAME cylinder surface (equal radius, same axis line) and
+/// every on-face probe falls inside the other face's bounded region, the
+/// faces overlap on the surface and classify OnSame/OnOpposite by their
+/// oriented radial normals. Mirrors the planar coincidence path above.
+fn find_coincident_cylinder_classification(
+    brep: &BRepSolid,
+    face_id: FaceId,
+    probes: &[Point3],
+    other: &BRepSolid,
+) -> Option<FaceClassification> {
+    let face = &brep.topology.faces[face_id];
+    let self_cyl = brep.geometry.surfaces[face.surface_index]
+        .as_any()
+        .downcast_ref::<vcad_kernel_geom::CylinderSurface>()?;
+    let self_forward = face.orientation == vcad_kernel_topo::Orientation::Forward;
+
+    const RADIUS_TOL: f64 = 1e-6;
+    const AXIS_TOL: f64 = 1e-6;
+
+    for (other_fid, other_face) in &other.topology.faces {
+        let other_surf = &other.geometry.surfaces[other_face.surface_index];
+        if other_surf.surface_type() != SurfaceKind::Cylinder {
+            continue;
+        }
+        let other_cyl = match other_surf
+            .as_any()
+            .downcast_ref::<vcad_kernel_geom::CylinderSurface>()
+        {
+            Some(c) => c,
+            None => continue,
+        };
+        if (self_cyl.radius - other_cyl.radius).abs() > RADIUS_TOL {
+            continue;
+        }
+        let a = self_cyl.axis.as_ref();
+        let b = other_cyl.axis.as_ref();
+        if a.cross(b).norm() > AXIS_TOL {
+            continue; // axes not parallel
+        }
+        let d = other_cyl.center - self_cyl.center;
+        let radial_offset = d - d.dot(a) * *a;
+        if radial_offset.norm() > AXIS_TOL {
+            continue; // parallel but different axis line
+        }
+
+        // Same carrier surface. All on-face probes must land inside the
+        // other face's bounded region for full coincidence.
+        let mut checked = 0u32;
+        let mut fully_coincident = true;
+        for p in probes {
+            if !point_in_face(brep, face_id, p) {
+                continue;
+            }
+            checked += 1;
+            if !point_in_face(other, other_fid, p) {
+                fully_coincident = false;
+                break;
+            }
+        }
+        if checked == 0 || !fully_coincident {
+            continue;
+        }
+
+        // Radial normals are sign-symmetric in the axis direction, so
+        // alignment reduces to the orientation flags.
+        let other_forward = other_face.orientation == vcad_kernel_topo::Orientation::Forward;
+        return Some(if self_forward == other_forward {
+            FaceClassification::OnSame
+        } else {
+            FaceClassification::OnOpposite
+        });
     }
     None
 }

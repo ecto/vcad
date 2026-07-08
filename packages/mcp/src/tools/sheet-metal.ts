@@ -32,9 +32,11 @@ import type {
   Document,
   Node,
   SheetMetalDirection,
+  SheetMetalEngraving,
   SheetMetalHemKind,
 } from "@vcad/ir";
 import { getSession, registerSession } from "./session.js";
+import { behavior, type ToolDef } from "./tool-def.js";
 
 interface FlangeSpec {
   edge_index: number;
@@ -80,6 +82,7 @@ function buildSheetMetalDoc(
     outline?: { x: number; y: number }[];
     holes?: { x: number; y: number }[][];
     shop_profile?: string;
+    engravings?: SheetMetalEngraving[];
   },
   flanges: FlangeSpec[],
   hems: HemSpec[],
@@ -90,6 +93,10 @@ function buildSheetMetalDoc(
   const nodes: Record<string, Node> = {};
   const shopProfile =
     base.shop_profile !== undefined ? { shop_profile: base.shop_profile } : {};
+  const engravings =
+    base.engravings !== undefined && base.engravings.length > 0
+      ? { engravings: base.engravings }
+      : {};
   const baseNode: Node =
     base.outline !== undefined
       ? {
@@ -102,6 +109,7 @@ function buildSheetMetalDoc(
             thickness: base.thickness,
             material: base.material,
             ...shopProfile,
+            ...engravings,
           },
         }
       : {
@@ -114,6 +122,7 @@ function buildSheetMetalDoc(
             thickness: base.thickness,
             material: base.material,
             ...shopProfile,
+            ...engravings,
           },
         };
   nodes["0"] = baseNode;
@@ -199,6 +208,55 @@ function buildSheetMetalDoc(
   return doc;
 }
 
+/** Normalise agent-supplied engraving specs to IR `SheetMetalEngraving`s.
+ *  Point pairs (`[x, y]`) and objects (`{x, y}`) are both accepted, same as
+ *  the outline/holes inputs. Malformed entries throw — a silently dropped
+ *  part label is worse than an error. */
+function normaliseEngravings(raw: unknown[]): SheetMetalEngraving[] {
+  return raw.map((e, i) => {
+    const o = (e ?? {}) as Record<string, unknown>;
+    if (o.type === "Text" || (o.type === undefined && typeof o.text === "string")) {
+      if (typeof o.text !== "string" || o.text.length === 0) {
+        throw new Error(`engravings[${i}]: Text needs a non-empty \`text\``);
+      }
+      const height = Number(o.height);
+      if (!(height > 0)) {
+        throw new Error(`engravings[${i}]: Text needs \`height\` > 0 (cap height, mm)`);
+      }
+      return {
+        type: "Text",
+        text: o.text,
+        x: Number(o.x ?? 0),
+        y: Number(o.y ?? 0),
+        height,
+        angle: Number(o.angle ?? 0),
+      };
+    }
+    if (o.type === "Polyline" || Array.isArray(o.points)) {
+      const points = Array.isArray(o.points)
+        ? o.points
+            .map((p) => {
+              if (Array.isArray(p) && p.length >= 2)
+                return { x: Number(p[0]), y: Number(p[1]) };
+              if (p && typeof p === "object" && "x" in p && "y" in p) {
+                const q = p as { x: unknown; y: unknown };
+                return { x: Number(q.x), y: Number(q.y) };
+              }
+              return null;
+            })
+            .filter((p): p is { x: number; y: number } => p !== null)
+        : [];
+      if (points.length < 2) {
+        throw new Error(`engravings[${i}]: Polyline needs >= 2 points`);
+      }
+      return { type: "Polyline", points };
+    }
+    throw new Error(
+      `engravings[${i}]: expected {type: "Text", text, x, y, height} or {type: "Polyline", points}`,
+    );
+  });
+}
+
 function renderedOf(engine: Engine, doc: Document): SheetMetalRendered {
   const scene = engine.evaluate(doc);
   for (const part of scene.parts) {
@@ -263,6 +321,12 @@ export const sheetMetalCreateSchema = {
       type: "string" as const,
       description:
         'Optional fab-service catalog id, e.g. "sendcutsend". When set, every bend\'s inside radius and K-factor resolve from the shop\'s published bending calculator for the chosen material/thickness, so the flat pattern matches their tooling exactly. Custom `radius` values are REJECTED with an error naming the shop\'s fixed radius — omit `radius` on flanges/jogs to get it automatically. The material/thickness must exist in the shop\'s catalog (see sheet_metal_bend_table with shop_profile).',
+    },
+    engravings: {
+      type: "array" as const,
+      description:
+        'Optional surface-marking (laser engrave) primitives on the base flange\'s outside face, e.g. part labels. Each item is `{type: "Text", text, x, y, height, angle?}` (single-stroke font: A-Z, 0-9, space, "-./#+:"; lowercase upcased; height = cap height mm; angle radians CCW, default 0) or `{type: "Polyline", points: [{x,y}|[x,y], ...]}` (open stroke). Marking only — no material removal, exempt from min-feature DFM rules (unlike through-cuts, which need features ≳50% of thickness), emitted on the DXF ENGRAVE layer and returned in the flat pattern as `engravings_2d`.',
+      items: { type: "object" as const },
     },
     bend_relief: {
       description:
@@ -430,6 +494,9 @@ export function sheetMetalCreate(
     ...(typeof a.shop_profile === "string" && a.shop_profile.length > 0
       ? { shop_profile: a.shop_profile }
       : {}),
+    ...(Array.isArray(a.engravings)
+      ? { engravings: normaliseEngravings(a.engravings) }
+      : {}),
   };
   const flanges = Array.isArray(a.flanges)
     ? (a.flanges as FlangeSpec[])
@@ -490,7 +557,7 @@ export function sheetMetalUnfold(
   return textResult({
     flat_pattern: rendered.flatPattern,
     ...(includeDxf ? { dxf: rendered.dxf } : {}),
-    note: "The DXF is a fab-ready merged silhouette: one closed exterior LWPOLYLINE plus hole loops on CUT, and DASHED bend centerlines (on the allowance midline) on BEND_UP/BEND_DOWN. DXF carries no bend angles — you enter those in the fab's UI. For zero data entry, export the folded body as STEP instead (export_cad with a .step filename); bends are auto-detected by the shop, but radii/K must match their tooling at model time (use shop_profile in sheet_metal_create).",
+    note: "The DXF is a fab-ready merged silhouette: one closed exterior LWPOLYLINE plus hole loops on CUT, DASHED bend centerlines (on the allowance midline) on BEND_UP/BEND_DOWN, and any surface markings as open polylines on ENGRAVE (select the laser-marking/engraving service for that layer in the fab's UI). DXF carries no bend angles — you enter those in the fab's UI. For zero data entry, export the folded body as STEP instead (export_cad with a .step filename); bends are auto-detected by the shop, but radii/K must match their tooling at model time (use shop_profile in sheet_metal_create).",
   });
 }
 
@@ -929,3 +996,87 @@ export function sheetMetalCost(
     summary: `${result.breakdown.currency} ${result.breakdown.total_each.toFixed(2)} each @ qty ${result.breakdown.quantity} (mass ${result.breakdown.mass_kg_each.toFixed(3)} kg, ${result.breakdown.cut_length_m.toFixed(2)} m cut, ${result.breakdown.bends} bend(s)).`,
   });
 }
+
+export const toolDefs: ToolDef[] = [
+  {
+    name: "sheet_metal_create",
+    pack: "sheet_metal",
+    description:
+      "Create a sheet-metal part: a rectangular or polygon base flange plus an ordered chain of edge flanges, hems, and jogs. Supports `shop_profile` (e.g. \"sendcutsend\") to resolve bend radii/K-factors from the fab's published catalog, `bend_relief` to cut relief notches at bend ends, and `engravings` (text labels via a built-in single-stroke font, or raw polylines) surface-marked on the base flange — no material removal, exempt from min-feature DFM, emitted on the DXF ENGRAVE layer. Returns a `document_id` (usable with sheet_metal_unfold/check, inspect_cad, export_cad, open_in_browser), the panel/bend model summary, flat bbox + area, and DFM violations.",
+    inputSchema: sheetMetalCreateSchema,
+    handler: (a, c) => sheetMetalCreate(a, c.engine),
+    behavior: behavior({ writesDoc: true, geometry: true, mount: true }),
+  },
+  {
+    name: "sheet_metal_unfold",
+    pack: "sheet_metal",
+    description:
+      "Return the flat pattern (panel outlines, holes, creases, engravings, area, bbox) for a sheet-metal session document, plus a fab-ready merged single-silhouette DXF (millimetres): one closed exterior polyline + holes on CUT, DASHED bend centerlines on BEND_UP/BEND_DOWN, surface markings as open polylines on ENGRAVE. DXF carries no bend angles (entered in the fab's UI); for zero data entry export the folded body as STEP via export_cad instead.",
+    inputSchema: sheetMetalUnfoldSchema,
+    handler: (a, c) => sheetMetalUnfold(a, c.engine),
+    behavior: behavior({ geometry: true, mount: true }),
+  },
+  {
+    name: "sheet_metal_check",
+    pack: "sheet_metal",
+    description:
+      "Run sheet-metal manufacturability for a session document against a shop profile (brake length, min R/t, flange height, hole→bend, bend→bend, bend relief, fixed radius). `shop_profile` is a catalog id string (e.g. \"sendcutsend\") or a capabilities object (field-tolerant: omit keys for generic defaults). Returns structured violations the agent can use to adjust the part and re-check.",
+    inputSchema: sheetMetalCheckSchema,
+    handler: (a, c) => sheetMetalCheck(a, c.engine),
+    behavior: behavior({}),
+  },
+  {
+    name: "sheet_metal_materials",
+    pack: "sheet_metal",
+    description:
+      "List the built-in sheet-metal materials registry (aluminum soft/hard, mild + stainless steel, brass, copper) with min R/t, yield, modulus, density, and a coarse springback estimate. Use to pick a `material` for sheet_metal_create.",
+    inputSchema: sheetMetalMaterialsSchema,
+    handler: (a, c) => sheetMetalMaterials(a, c.engine),
+    behavior: behavior({}),
+  },
+  {
+    name: "sheet_metal_bend_table",
+    pack: "sheet_metal",
+    description:
+      "Read the kernel's curated bend table — `(material, thickness, radius) → K-factor` rows used to compute bend allowance. Pass `shop_profile` (e.g. \"sendcutsend\") to instead read that fab service's published catalog: fixed radii, K-factors, die widths, min flange sizes, and relief depths per material/thickness.",
+    inputSchema: sheetMetalBendTableSchema,
+    handler: (a, c) => sheetMetalBendTable(a, c.engine),
+    behavior: behavior({}),
+  },
+  {
+    name: "sheet_metal_cost",
+    pack: "sheet_metal",
+    description:
+      "Estimate the manufacturing cost of a sheet-metal session document: material (mass × $/kg), cut (length × $/m), pierces, bends, amortized setup, plus shop markup. Returns a line-itemed breakdown so the agent can see which line dominates and which design changes would lower it. `rates` is field-tolerant; omit it to use generic low-volume laser defaults.",
+    inputSchema: sheetMetalCostSchema,
+    handler: (a, c) => sheetMetalCost(a, c.engine),
+    behavior: behavior({}),
+  },
+  {
+    name: "sheet_metal_suggest_fix",
+    pack: "sheet_metal",
+    description:
+      "Translate the structured violations from sheet_metal_check into concrete parameter changes the agent can apply (radius up, flange longer, bends spread, etc.). Pass `violation_index` to target one, omit it to get a suggestion for every open violation. Closes the create → check → fix → re-check self-heal loop.",
+    inputSchema: sheetMetalSuggestFixSchema,
+    handler: (a, c) => sheetMetalSuggestFix(a, c.engine),
+    behavior: behavior({}),
+  },
+  {
+    name: "sheet_metal_sequence",
+    pack: "sheet_metal",
+    description:
+      "Return a feasible press-brake bend sequence for a sheet-metal part — outermost bends first so the remaining flat stays small and earlier bends don't collide with later ones. Each step includes the springback-compensated brake angle and a one-line rationale.",
+    inputSchema: sheetMetalSequenceSchema,
+    handler: (a, c) => sheetMetalSequence(a, c.engine),
+    behavior: behavior({}),
+  },
+  {
+    name: "sheet_metal_nest",
+    pack: "sheet_metal",
+    description:
+      "Pack multiple sheet-metal parts on stock sheets using bottom-left fill decreasing. Each part is either a session `document_id` (footprint inferred from the flat pattern) or an explicit `{width_mm, height_mm}`. Returns per-instance placements, sheets used, and utilization — enough to drive a multi-part DXF and a real quote.",
+    inputSchema: sheetMetalNestSchema,
+    handler: (a, c) => sheetMetalNest(a, c.engine),
+    behavior: behavior({}),
+  },
+];
