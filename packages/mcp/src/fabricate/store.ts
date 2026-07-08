@@ -263,7 +263,7 @@ export class SupabaseFabricateStore implements FabricateStore {
       total_amount_minor: quote.total_amount_minor,
       currency: quote.currency,
       expires_at: quote.expires_at,
-      // Migration-033 columns — stripped on retry if the DB predates them.
+      // Migration-034 columns — stripped on retry if the DB predates them.
       kerf_intent_hash: quote.kerf_intent_hash ?? null,
       kerf_job_id: quote.kerf_job_id ?? null,
     };
@@ -302,7 +302,7 @@ export class SupabaseFabricateStore implements FabricateStore {
       ship_to: order.ship_to,
       events: order.events,
       authorization_id: order.authorization_id, // column since migration 027
-      // Migration-033 columns — stripped on retry if the DB predates them, so
+      // Migration-034 columns — stripped on retry if the DB predates them, so
       // a pre-migration deploy degrades to the 024/027 row instead of losing
       // the whole write. fab_artifact is the handle only, never bytes.
       fab_artifact: order.fab_artifact ?? null,
@@ -431,7 +431,7 @@ export class SupabaseFabricateStore implements FabricateStore {
     if (patch?.authorization_id !== undefined) {
       base.authorization_id = patch.authorization_id; // column since 027
     }
-    // receipt_status is a migration-033 column — patched tolerantly: if the
+    // receipt_status is a migration-034 column — patched tolerantly: if the
     // full PATCH is rejected specifically for column skew on a pre-migration
     // DB, retry without it so the state transition itself never fails there.
     const full =
@@ -453,7 +453,7 @@ export class SupabaseFabricateStore implements FabricateStore {
     try {
       let res = await patchOnce(full);
       if (!res.ok && full !== base) {
-        // Only strip the 033 column when the failure IS column skew — any
+        // Only strip the 034 column when the failure IS column skew — any
         // other failure (transient 5xx, timeout, rate limit) must not
         // silently drop the money-audit field from a then-successful retry.
         const bodyText = await res.text().catch(() => "");
@@ -541,7 +541,7 @@ export class SupabaseFabricateStore implements FabricateStore {
 
   /**
    * Insert that tolerates column skew: if the full row is rejected BECAUSE the
-   * migration-033 columns aren't deployed yet (PostgREST fails the WHOLE
+   * migration-034 columns aren't deployed yet (PostgREST fails the WHOLE
    * insert on one unknown key), retry once WITHOUT `newerKeys` so a
    * pre-migration database degrades to the older row shape instead of losing
    * the write entirely. The stripped retry ONLY fires when the first failure

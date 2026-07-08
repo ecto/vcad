@@ -38,7 +38,7 @@ the design session of 2026-07-08; the UI contracts below encode their decisions.
 >   deterministic CI. Quote jobs terminate `STAGED → DELIVERED` (deliberate
 >   core transition addition; money invariants untouched).
 > - Operator actions outstanding: push kerf branch + deploy, `supabase db push`
->   migration 033, build the `/authorize/<id>` web-app route (L2 lane).
+>   migration 034, build the `/authorize/<id>` web-app route (L2 lane).
 
 ---
 
