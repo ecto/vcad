@@ -275,6 +275,8 @@ export interface PcbDfmLocation {
   x: number;
   y: number;
   label: string;
+  /** The two net names in contact, for net-pair findings (clearance). */
+  nets?: [string, string];
 }
 
 /** Pass/fail verdict for one DFM rule (mirrors `PcbDfmRuleResult`). */

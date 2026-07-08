@@ -1,0 +1,16 @@
+{
+  "id": "2026-07-08-dfm-clearance-nettie-aware",
+  "version": "0.9.4",
+  "date": "2026-07-08",
+  "category": "fix",
+  "title": "dfm_check min_clearance honors netTies and reports positions",
+  "summary": "PCB DFM min_clearance no longer flags deliberate net-tie junctions (e.g. a wye winding's star point) as 0mm spacing defects — it reuses DRC's region-scoped NetTie exemption — and each violation now carries its board position and net pair for triage.",
+  "features": [
+    "ecad",
+    "pcb",
+    "dfm"
+  ],
+  "mcpTools": [
+    "dfm_check"
+  ]
+}
