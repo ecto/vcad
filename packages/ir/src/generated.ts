@@ -667,7 +667,13 @@ material: string,
  * set, every bend's radius and K-factor resolve through the shop's
  * published table — custom radii are rejected.
  */
-shop_profile?: string, } | { "type": "SheetMetalBaseFlangePolygon", 
+shop_profile?: string, 
+/**
+ * Optional surface-marking (laser engrave) primitives on the base
+ * flange's outside face. No material removal — exempt from
+ * min-feature DFM rules; emitted on the DXF `ENGRAVE` layer.
+ */
+engravings?: Array<SheetMetalEngraving>, } | { "type": "SheetMetalBaseFlangePolygon", 
 /**
  * CCW outer boundary (mm, in the XY plane).
  */
@@ -687,7 +693,12 @@ material: string,
 /**
  * Optional built-in shop catalog id (see `SheetMetalBaseFlangeRect`).
  */
-shop_profile?: string, } | { "type": "SheetMetalEdgeFlange", 
+shop_profile?: string, 
+/**
+ * Optional surface-marking (laser engrave) primitives on the base
+ * flange's outside face (see `SheetMetalBaseFlangeRect`).
+ */
+engravings?: Array<SheetMetalEngraving>, } | { "type": "SheetMetalEdgeFlange", 
 /**
  * Parent node (must produce a sheet-metal model).
  */
@@ -2578,6 +2589,39 @@ end: Vec2, };
  * crate stays light on kernel deps.
  */
 export type SheetMetalDirection = "Up" | "Down";
+
+/**
+ * A surface-marking (laser engrave) primitive on a sheet-metal base
+ * flange. Coordinates are base-flange-local 2D (mm, same frame as the
+ * outline). Engraving is a marking pass — no material removal — so it is
+ * exempt from through-cut minimum-feature DFM rules and never joins the
+ * cut silhouette; it lands on the flat-pattern DXF's `ENGRAVE` layer.
+ */
+export type SheetMetalEngraving = { "type": "Polyline", 
+/**
+ * Stroke points (mm), at least 2.
+ */
+points: Array<Vec2>, } | { "type": "Text", 
+/**
+ * The label text (e.g. `"A4"`).
+ */
+text: string, 
+/**
+ * Baseline start X (mm).
+ */
+x: number, 
+/**
+ * Baseline start Y (mm).
+ */
+y: number, 
+/**
+ * Cap height (mm).
+ */
+height: number, 
+/**
+ * Baseline rotation (radians CCW from +X). Default 0.
+ */
+angle: number, };
 
 /**
  * Kind of hem fold. `Closed` brings the faces together; `Open` leaves a

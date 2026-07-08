@@ -13,6 +13,7 @@ import type {
   Node,
   NodeId,
   SheetMetalDirection,
+  SheetMetalEngraving,
   SheetMetalHemKind,
 } from "@vcad/ir";
 import type { TriangleMesh } from "./mesh.js";
@@ -106,6 +107,9 @@ export interface SheetMetalFlatPattern {
    *  exterior, the rest are CW holes — what the DXF CUT layer carries.
    *  Empty when the flat pattern is empty or disconnected. */
   silhouette_2d: [number, number][][];
+  /** Surface-marking (engrave) polylines in global flat 2D — open strokes
+   *  for the viewer to draw; what the DXF ENGRAVE layer carries. */
+  engravings_2d: [number, number][][];
   creases: SheetMetalFlatCrease[];
   area_mm2: number;
   /** `[min_x, min_y, max_x, max_y]`. */
@@ -253,6 +257,18 @@ interface RawResult {
   error: string | null;
 }
 
+/** Wire shape of one engrave primitive — mirrors the kernel's `EngravingOp`. */
+type ChainEngraving =
+  | { type: "Polyline"; points: [number, number][] }
+  | {
+      type: "Text";
+      text: string;
+      x: number;
+      y: number;
+      height: number;
+      angle?: number;
+    };
+
 interface ChainOpBase {
   type: "BaseFlangeRect";
   width: number;
@@ -261,6 +277,8 @@ interface ChainOpBase {
   material: string;
   /** Optional built-in shop catalog id (e.g. `"sendcutsend"`). */
   shopProfile?: string;
+  /** Optional surface-marking primitives on the base flange. */
+  engravings?: ChainEngraving[];
 }
 
 interface ChainOpBasePolygon {
@@ -271,6 +289,8 @@ interface ChainOpBasePolygon {
   material: string;
   /** Optional built-in shop catalog id (e.g. `"sendcutsend"`). */
   shopProfile?: string;
+  /** Optional surface-marking primitives on the base flange. */
+  engravings?: ChainEngraving[];
 }
 
 interface ChainOpEdge {
@@ -322,6 +342,30 @@ type ChainOp =
   | ChainOpJog
   | ChainOpBendRelief;
 
+/** Map IR engravings to the kernel chain's wire shape (Vec2 → pairs). */
+function engravingsToChain(
+  engravings: SheetMetalEngraving[] | undefined,
+): { engravings?: ChainEngraving[] } {
+  if (!engravings || engravings.length === 0) return {};
+  return {
+    engravings: engravings.map((e) =>
+      e.type === "Polyline"
+        ? {
+            type: "Polyline",
+            points: e.points.map((p) => [p.x, p.y] as [number, number]),
+          }
+        : {
+            type: "Text",
+            text: e.text,
+            x: e.x,
+            y: e.y,
+            height: e.height,
+            angle: e.angle,
+          },
+    ),
+  };
+}
+
 /**
  * Walk back from `rootId` through any chain of sheet-metal ops, returning
  * the chain in base-to-tip order. Returns `null` if the root isn't a
@@ -351,6 +395,7 @@ export function buildSheetMetalChain(
         ...(op.shop_profile !== undefined
           ? { shopProfile: op.shop_profile }
           : {}),
+        ...engravingsToChain(op.engravings),
       });
       material = op.material;
       break;
@@ -364,6 +409,7 @@ export function buildSheetMetalChain(
         ...(op.shop_profile !== undefined
           ? { shopProfile: op.shop_profile }
           : {}),
+        ...engravingsToChain(op.engravings),
       });
       material = op.material;
       break;

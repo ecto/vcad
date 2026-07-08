@@ -302,6 +302,7 @@ mod tests {
             ],
             panel_holes_2d: vec![vec![], vec![]],
             creases: vec![],
+            engravings_2d: vec![],
             area_mm2: 200.0,
         };
         match silhouette(&flat) {

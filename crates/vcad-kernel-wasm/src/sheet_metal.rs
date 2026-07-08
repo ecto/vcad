@@ -61,6 +61,10 @@ enum ChainOp {
         /// published table — custom radii are rejected.
         #[serde(default)]
         shop_profile: Option<String>,
+        /// Optional surface-marking (engrave) primitives on the base
+        /// flange's outside face.
+        #[serde(default)]
+        engravings: Vec<EngravingOp>,
     },
     /// Initialise the model from an arbitrary CCW polygon (with optional
     /// CW hole loops) in the XY plane.
@@ -75,6 +79,10 @@ enum ChainOp {
         /// Optional built-in shop catalog id (see `BaseFlangeRect`).
         #[serde(default)]
         shop_profile: Option<String>,
+        /// Optional surface-marking (engrave) primitives on the base
+        /// flange's outside face.
+        #[serde(default)]
+        engravings: Vec<EngravingOp>,
     },
     /// Add a flange off `edge_index` of `panel_id`.
     EdgeFlange {
@@ -126,6 +134,51 @@ enum ChainOp {
     },
 }
 
+/// A surface-marking (laser engrave) primitive on the base flange. Wire
+/// shape mirrors `vcad_ir::SheetMetalEngraving`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all_fields = "camelCase")]
+enum EngravingOp {
+    /// Open polyline stroke, points as `[x, y]` pairs (mm).
+    Polyline { points: Vec<[f64; 2]> },
+    /// Text rendered to single-stroke polylines by the kernel font.
+    Text {
+        text: String,
+        x: f64,
+        y: f64,
+        height: f64,
+        #[serde(default)]
+        angle: f64,
+    },
+}
+
+/// Resolve engrave ops to root-panel-local polylines (text → strokes).
+fn resolve_engravings(ops: &[EngravingOp]) -> Result<Vec<Vec<Point2>>, String> {
+    let mut out = Vec::new();
+    for (i, op) in ops.iter().enumerate() {
+        match op {
+            EngravingOp::Polyline { points } => {
+                if points.len() < 2 {
+                    return Err(format!("engraving #{i}: polyline needs >= 2 points"));
+                }
+                out.push(points.iter().map(|p| Point2::new(p[0], p[1])).collect());
+            }
+            EngravingOp::Text {
+                text,
+                x,
+                y,
+                height,
+                angle,
+            } => {
+                let strokes = vcad_kernel_sheet::text_to_polylines(text, *x, *y, *height, *angle)
+                    .map_err(|e| format!("engraving #{i} ({text:?}): {e}"))?;
+                out.extend(strokes);
+            }
+        }
+    }
+    Ok(out)
+}
+
 /// What the binding returns to the web app. `mesh` is empty on error;
 /// `error` is non-empty when something went wrong inside the kernel.
 #[derive(Debug, Clone, Serialize, Default)]
@@ -170,6 +223,9 @@ struct FlatPatternDto {
     /// the flat pattern is empty or disconnected (the `error` field
     /// explains the latter when the DXF fails).
     silhouette_2d: Vec<Vec<[f64; 2]>>,
+    /// Surface-marking (engrave) polylines in global flat 2D — open
+    /// strokes for the viewer to draw; what the DXF ENGRAVE layer carries.
+    engravings_2d: Vec<Vec<[f64; 2]>>,
     creases: Vec<FlatCreaseDto>,
     area_mm2: f64,
     /// `[min_x, min_y, max_x, max_y]`.
@@ -681,11 +737,13 @@ fn build_model(chain: &[ChainOp], table: &BendTable) -> Result<SheetMetalModel, 
             depth,
             thickness,
             material,
+            engravings,
             ..
         } => {
             let mut m = base_flange_rect(*width, *depth, *thickness)
                 .map_err(|e| format!("base flange: {e}"))?;
             m.material = material.clone();
+            m.engravings = resolve_engravings(engravings)?;
             m
         }
         ChainOp::BaseFlangePolygon {
@@ -693,6 +751,7 @@ fn build_model(chain: &[ChainOp], table: &BendTable) -> Result<SheetMetalModel, 
             holes,
             thickness,
             material,
+            engravings,
             ..
         } => {
             let to_pts = |loop_pts: &[[f64; 2]]| -> Vec<Point2> {
@@ -703,6 +762,7 @@ fn build_model(chain: &[ChainOp], table: &BendTable) -> Result<SheetMetalModel, 
             let mut m = base_flange_polygon_with_holes(outline_pts, hole_loops, *thickness)
                 .map_err(|e| format!("base flange (polygon): {e}"))?;
             m.material = material.clone();
+            m.engravings = resolve_engravings(engravings)?;
             m
         }
         _ => {
@@ -1007,6 +1067,11 @@ fn flat_pattern_to_dto(flat: FlatPattern) -> FlatPatternDto {
         }
         Err(_) => Vec::new(),
     };
+    let engravings_2d = flat
+        .engravings_2d
+        .iter()
+        .map(|pl| pl.iter().map(|p| [p.x, p.y]).collect())
+        .collect();
     let creases = flat
         .creases
         .iter()
@@ -1025,6 +1090,7 @@ fn flat_pattern_to_dto(flat: FlatPattern) -> FlatPatternDto {
         panel_outlines_2d,
         panel_holes_2d,
         silhouette_2d,
+        engravings_2d,
         creases,
         area_mm2: flat.area_mm2,
         bbox: [bbox.0 .0, bbox.0 .1, bbox.1 .0, bbox.1 .1],
@@ -1116,6 +1182,50 @@ mod tests {
         assert_eq!(viols[0]["severity"], "Error");
         assert_eq!(viols[0]["rule"], "sheet.flange_height");
         assert_eq!(viols[0]["detail"]["kind"], "FlangeBelowMinHeight");
+    }
+
+    #[test]
+    fn engravings_flow_to_dxf_and_flat_pattern() {
+        let chain = r#"[
+            {"type":"BaseFlangeRect","width":100,"depth":50,"thickness":6.35,"material":"stainless-304",
+             "engravings":[
+               {"type":"Text","text":"A4","x":40,"y":20,"height":8},
+               {"type":"Polyline","points":[[5,5],[95,5]]}
+             ]},
+            {"type":"EdgeFlange","panelId":0,"edgeIndex":0,"length":25,"angle":1.5707963267948966,"radius":12.7,"direction":"Up","manualK":0.42}
+        ]"#;
+        let parsed: serde_json::Value =
+            serde_json::from_str(&evaluate_sheet_metal_chain(chain)).unwrap();
+        assert!(parsed["error"].is_null(), "got error: {parsed}");
+        let engr = parsed["flat_pattern"]["engravings_2d"].as_array().unwrap();
+        // "A4" = A (2 strokes) + 4 (1 stroke), plus the explicit polyline.
+        assert_eq!(engr.len(), 4);
+        let dxf = parsed["dxf"].as_str().unwrap();
+        assert!(dxf.contains("0\nLAYER\n2\nENGRAVE\n"));
+        assert_eq!(dxf.matches("0\nLWPOLYLINE\n8\nENGRAVE\n").count(), 4);
+        // Engraving is marking only: no extra CUT loops, no min-feature
+        // violations from 1–2 mm strokes in 6.35 mm stock.
+        assert_eq!(dxf.matches("0\nLWPOLYLINE\n8\nCUT").count(), 1);
+        assert_eq!(
+            parsed["violations"].as_array().unwrap().len(),
+            0,
+            "engraving must not trip DFM: {}",
+            parsed["violations"]
+        );
+    }
+
+    #[test]
+    fn unsupported_engrave_char_fails_loudly() {
+        let chain = r#"[
+            {"type":"BaseFlangeRect","width":100,"depth":50,"thickness":1,"material":"Al-soft",
+             "engravings":[{"type":"Text","text":"Ω","x":0,"y":0,"height":6}]}
+        ]"#;
+        let parsed: serde_json::Value =
+            serde_json::from_str(&evaluate_sheet_metal_chain(chain)).unwrap();
+        assert!(parsed["error"]
+            .as_str()
+            .unwrap()
+            .contains("no engraving glyph"));
     }
 
     #[test]

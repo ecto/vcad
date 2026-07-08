@@ -46,10 +46,15 @@ pub const LAYER_CUT: &str = "CUT";
 pub const LAYER_BEND_UP: &str = "BEND_UP";
 /// DXF layer name for bend-down creases.
 pub const LAYER_BEND_DOWN: &str = "BEND_DOWN";
+/// DXF layer name for surface-marking (laser engrave) geometry. Open
+/// polylines, CONTINUOUS linetype — never merged into the cut silhouette
+/// and never dashed (dashed reads as a bend line to fab parsers).
+pub const LAYER_ENGRAVE: &str = "ENGRAVE";
 
 const COLOR_CUT: i32 = 1; // red
 const COLOR_BEND_UP: i32 = 5; // blue
 const COLOR_BEND_DOWN: i32 = 4; // cyan
+const COLOR_ENGRAVE: i32 = 6; // magenta
 
 /// Linetype applied to every bend line. Fab services detect bend lines by
 /// dashed linetype — solid lines are invisible to their parsers.
@@ -94,6 +99,7 @@ pub fn flat_pattern_to_dxf_with(
         let sil = silhouette_or_empty(flat)?;
         write_silhouette_entities(&mut s, &sil, &|p| p);
     }
+    write_engrave_entities(&mut s, flat, &|p| p);
     let _ = writeln!(s, "0\nENDSEC");
     let _ = writeln!(s, "0\nEOF");
     Ok(s)
@@ -148,6 +154,13 @@ fn write_legacy_entities(s: &mut String, flat: &FlatPattern, xform: &dyn Fn(Poin
     }
 }
 
+fn write_engrave_entities(s: &mut String, flat: &FlatPattern, xform: &dyn Fn(Point2) -> Point2) {
+    for pl in &flat.engravings_2d {
+        let pts: Vec<Point2> = pl.iter().map(|&p| xform(p)).collect();
+        write_polyline_open(s, &pts, LAYER_ENGRAVE);
+    }
+}
+
 fn write_bend_line(s: &mut String, a: Point2, b: Point2, direction: BendDirection) {
     let layer = match direction {
         BendDirection::Up => LAYER_BEND_UP,
@@ -181,10 +194,11 @@ fn write_tables(s: &mut String) {
     let _ = writeln!(s, "0\nENDTAB");
 
     // Layer table.
-    let _ = writeln!(s, "0\nTABLE\n2\nLAYER\n70\n3");
+    let _ = writeln!(s, "0\nTABLE\n2\nLAYER\n70\n4");
     write_layer(s, LAYER_CUT, COLOR_CUT, LTYPE_CONTINUOUS);
     write_layer(s, LAYER_BEND_UP, COLOR_BEND_UP, LTYPE_DASHED);
     write_layer(s, LAYER_BEND_DOWN, COLOR_BEND_DOWN, LTYPE_DASHED);
+    write_layer(s, LAYER_ENGRAVE, COLOR_ENGRAVE, LTYPE_CONTINUOUS);
     let _ = writeln!(s, "0\nENDTAB");
 
     let _ = writeln!(s, "0\nENDSEC");
@@ -195,12 +209,22 @@ fn write_layer(s: &mut String, name: &str, color: i32, ltype: &str) {
 }
 
 fn write_polyline(s: &mut String, pts: &[Point2], layer: &str) {
+    write_polyline_flags(s, pts, layer, 1); // closed
+}
+
+/// Open polyline — no implicit closing segment. Engrave strokes are pen
+/// paths, not loops; closing them would burn a spurious return stroke.
+fn write_polyline_open(s: &mut String, pts: &[Point2], layer: &str) {
+    write_polyline_flags(s, pts, layer, 0);
+}
+
+fn write_polyline_flags(s: &mut String, pts: &[Point2], layer: &str, flags: u32) {
     if pts.len() < 2 {
         return;
     }
     let _ = writeln!(s, "0\nLWPOLYLINE\n8\n{layer}");
     let _ = writeln!(s, "90\n{}", pts.len());
-    let _ = writeln!(s, "70\n1"); // closed
+    let _ = writeln!(s, "70\n{flags}");
     for p in pts {
         let _ = writeln!(s, "10\n{:.6}\n20\n{:.6}", p.x, p.y);
     }
@@ -281,6 +305,7 @@ fn build_sheet_dxf(
         };
         let sil = silhouette_or_empty(p.flat)?;
         write_silhouette_entities(&mut s, &sil, &xform);
+        write_engrave_entities(&mut s, p.flat, &xform);
     }
     let _ = writeln!(s, "0\nENDSEC");
     let _ = writeln!(s, "0\nEOF");
@@ -473,12 +498,55 @@ mod tests {
     }
 
     #[test]
+    fn engravings_land_on_engrave_layer_as_open_polylines() {
+        let mut flat = l_bracket_flat();
+        flat.engravings_2d = crate::font::text_to_polylines("A4", 30.0, 20.0, 6.0, 0.0).unwrap();
+        let dxf = flat_pattern_to_dxf(&flat).unwrap();
+        // Layer declared, geometry present, CONTINUOUS (not dashed — dashed
+        // reads as a bend line to fab parsers).
+        assert!(dxf.contains("0\nLAYER\n2\nENGRAVE\n"));
+        let n = dxf.matches("0\nLWPOLYLINE\n8\nENGRAVE\n").count();
+        assert_eq!(n, flat.engravings_2d.len());
+        // Open flag (70\n0) on engrave polylines; the CUT exterior stays closed.
+        assert!(dxf.contains("0\nLWPOLYLINE\n8\nENGRAVE\n90\n3\n70\n0\n"));
+        assert!(!dxf.contains("8\nENGRAVE\n6\nDASHED"));
+        // Engraving must not change the cut silhouette.
+        assert_eq!(dxf.matches("0\nLWPOLYLINE\n8\nCUT").count(), 1);
+    }
+
+    #[test]
+    fn engrave_layer_declared_even_when_unused() {
+        let dxf = flat_pattern_to_dxf(&l_bracket_flat()).unwrap();
+        assert!(dxf.contains("0\nLAYER\n2\nENGRAVE\n"));
+        assert!(!dxf.contains("0\nLWPOLYLINE\n8\nENGRAVE"));
+    }
+
+    #[test]
+    fn nested_dxf_transforms_engravings() {
+        let mut flat = l_bracket_flat();
+        flat.engravings_2d = vec![vec![Point2::new(1.0, 1.0), Point2::new(5.0, 1.0)]];
+        let placements = vec![NestedPlacement {
+            flat: &flat,
+            sheet: 0,
+            dx_mm: 300.0,
+            dy_mm: 0.0,
+            rotated: false,
+        }];
+        let dxfs = nested_dxf(&placements).unwrap();
+        // Flat bbox min is (0, -BA-25); the engrave x should be shifted by
+        // 300 - min_x = 301.
+        assert!(dxfs[0].contains("0\nLWPOLYLINE\n8\nENGRAVE"));
+        assert!(dxfs[0].contains("10\n301.000000"));
+    }
+
+    #[test]
     fn empty_pattern_is_still_valid_dxf() {
         let flat = FlatPattern {
             thickness: 1.0,
             panel_outlines_2d: vec![],
             panel_holes_2d: vec![],
             creases: vec![],
+            engravings_2d: vec![],
             area_mm2: 0.0,
         };
         let dxf = flat_pattern_to_dxf(&flat).unwrap();
