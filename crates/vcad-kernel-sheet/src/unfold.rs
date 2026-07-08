@@ -194,6 +194,11 @@ pub struct FlatPattern {
     pub panel_holes_2d: Vec<Vec<Vec<Point2>>>,
     /// Crease lines.
     pub creases: Vec<FlatCrease>,
+    /// Surface-marking (engrave) polylines in global flat 2D coords —
+    /// open polylines, no material removal, drawn on the DXF `ENGRAVE`
+    /// layer. Excluded from the cut silhouette, area, bbox, and DFM
+    /// min-feature rules.
+    pub engravings_2d: Vec<Vec<Point2>>,
     /// Total flat-pattern area (mm²) — sum of panel areas + bend-allowance
     /// rectangles. Used by costing.
     pub area_mm2: f64,
@@ -302,11 +307,20 @@ impl FlatPattern {
         let area_mm2 =
             polygon_area_sum(&panel_outlines_2d, &panel_holes_2d) + bend_strip_area(model);
 
+        // Engravings live in root-panel-local coords; project them through
+        // the root's flat frame like any root-panel geometry.
+        let engravings_2d: Vec<Vec<Point2>> = model
+            .engravings
+            .iter()
+            .map(|pl| pl.iter().map(|&p| to_global(root.frame_flat, p)).collect())
+            .collect();
+
         Self {
             thickness: model.thickness,
             panel_outlines_2d,
             panel_holes_2d,
             creases,
+            engravings_2d,
             area_mm2,
         }
     }

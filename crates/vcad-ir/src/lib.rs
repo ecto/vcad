@@ -1031,6 +1031,12 @@ pub enum CsgOp {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         #[cfg_attr(feature = "ts-rs", ts(optional))]
         shop_profile: Option<String>,
+        /// Optional surface-marking (laser engrave) primitives on the base
+        /// flange's outside face. No material removal — exempt from
+        /// min-feature DFM rules; emitted on the DXF `ENGRAVE` layer.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(feature = "ts-rs", ts(optional))]
+        engravings: Option<Vec<SheetMetalEngraving>>,
     },
 
     #[tool(hidden)]
@@ -1051,6 +1057,11 @@ pub enum CsgOp {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         #[cfg_attr(feature = "ts-rs", ts(optional))]
         shop_profile: Option<String>,
+        /// Optional surface-marking (laser engrave) primitives on the base
+        /// flange's outside face (see `SheetMetalBaseFlangeRect`).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[cfg_attr(feature = "ts-rs", ts(optional))]
+        engravings: Option<Vec<SheetMetalEngraving>>,
     },
 
     #[tool(hidden)]
@@ -1150,6 +1161,39 @@ pub enum CsgOp {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         #[cfg_attr(feature = "ts-rs", ts(optional))]
         depth: Option<f64>,
+    },
+}
+
+/// A surface-marking (laser engrave) primitive on a sheet-metal base
+/// flange. Coordinates are base-flange-local 2D (mm, same frame as the
+/// outline). Engraving is a marking pass — no material removal — so it is
+/// exempt from through-cut minimum-feature DFM rules and never joins the
+/// cut silhouette; it lands on the flat-pattern DXF's `ENGRAVE` layer.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "bindings/"))]
+#[serde(tag = "type")]
+pub enum SheetMetalEngraving {
+    /// An open polyline stroke (pen path — no implicit closing segment).
+    Polyline {
+        /// Stroke points (mm), at least 2.
+        points: Vec<Vec2>,
+    },
+    /// A text label rendered to single-stroke (Hershey-style) polylines by
+    /// the kernel. Supports `A–Z`, `0–9`, space, and `-./#+:`; lowercase
+    /// is upcased; other characters fail evaluation.
+    Text {
+        /// The label text (e.g. `"A4"`).
+        text: String,
+        /// Baseline start X (mm).
+        x: f64,
+        /// Baseline start Y (mm).
+        y: f64,
+        /// Cap height (mm).
+        height: f64,
+        /// Baseline rotation (radians CCW from +X). Default 0.
+        #[serde(default)]
+        angle: f64,
     },
 }
 
