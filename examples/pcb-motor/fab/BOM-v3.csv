@@ -1,0 +1,16 @@
+kind,name,process,material,spec,example_pn,vendor,qty,unit_price_usd,total_usd,pricing_basis,quote_id,order_id,document_id,artifact,notes
+manufactured,"Stator PCB v3 (9s/6p, 70mm, 2oz)",pcb,,,,jlcpcb,5,9.55,47.75,quote_estimate,99c8e3ee-d201-4bb1-a308-73e9fb22de6f,,doc_3_J6MQfcFmcYnZ,fab/stator-v3-gerbers/,
+manufactured,Rotor drag-cup PCB (OPTIONAL demo),pcb,,,,jlcpcb,5,8.40,42.00,quote_estimate,536ee66f-39a8-40b8-8db8-d56758b82e98,,doc_7_VNzkQU4r003i,fab/rotor-gerbers/,not needed for PM motor; verified will not self-start
+manufactured,"Rotor back-iron D58x2.7, 4x M4 taps BCD22",sheet_metal,mild steel 2.7mm,,,SendCutSend,2,20.97,41.94,quote_estimate,8958172e-ecc8-4333-affa-67edbd0092fe,,doc_1_1X8fwdlC67xi,rotor-back-iron-v3.vcad,
+manufactured,Stator back-iron D70x2.7 bore-mount,sheet_metal,mild steel 2.7mm,,,SendCutSend,2,21.06,42.12,quote_estimate,fbe6a364-51ac-4c59-bc34-b52e784fa899,,doc_5_uxMhtVgPVbab,stator-back-iron-v3.vcad,
+manufactured,Bearing-tower base (3D print),3dprint,abs,,,home FDM,1,1.00,1.00,manual_estimate,123e9644-eb0b-46d0-9d73-2d9eb62db813,,doc_6_X4i9Hxj9C4Br,fab/motor-base.stl,
+cots,608ZZ deep-groove ball bearing,,,"bore 8 mm, od 22 mm, width 7 mm, ZZ (metal shields), low — shielded, light grease",608ZZ,,2,0.75,1.50,catalog_estimate,,,,,ZZ mandatory: self-start margin 9.25 vs 1.39 (2RS)
+cots,"Ferrite disc magnet 15x3 mm, Y30",,,"disc, od 15 mm, thickness 3 mm, Y30, Br 370-400 mT, sintered ferrite (ceramic), max_temp_c 250",Y30 D15x3,,10,0.43,4.30,catalog_estimate,,,,,6 + 4 spare; alternating N/S; zero rare-earth
+cots,"Rigid flange coupling, 8 mm bore",,,"bore 8 mm, flange_dia 30 mm, bcd 22 mm, bolt_holes 4, M4, hub_length 12 mm, set screw, steel or aluminum",8mm flange coupling,,1,4.00,4.00,catalog_estimate,,,,,
+cots,"Precision ground shaft, 8 mm",,,"diameter 8 mm, h6, hardened bearing steel, chrome plated, lengths 100/150/200/300/500 mm",8mm x 300mm linear shaft,,1,8.00,8.00,catalog_estimate,,,,,cut to 40mm
+cots,M3 button head cap screw (ISO 7380),,,"M3, button, 2mm hex, 10.9 alloy steel, black oxide, lengths 4/5/6/8/10/12/16/20 mm",ISO 7380 M3x8,,1,0.11,0.11,catalog_estimate,,,,,3x M3x10 bore-mount
+cots,M4x8 button head screws,,,"ISO 7380, hub to rotor iron",ISO 7380 M4x8,bolt depot,4,0.15,0.60,manual_estimate,,,,,
+cots,Polyimide film disc D70,,,0.13mm insulation,kapton 70mm,Amazon,1,6.00,6.00,manual_estimate,,,,,
+cots,Structural epoxy,,,2-part,3M DP420,Amazon,1,6.00,6.00,manual_estimate,,,,,
+cots,JST-XH 4-pin harness,,,pre-crimped,XHP-4,Amazon,1,3.00,3.00,manual_estimate,,,,,
+cots,BLDC driver,,,sensorless 10A+ 12V,ST B-G431B-ESC1,DigiKey,1,21.00,21.00,manual_estimate,,,,,
