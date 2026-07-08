@@ -54,6 +54,9 @@ export interface GlbMesh {
   clearcoat?: number;
   /** Clearcoat roughness 0..1. */
   clearcoatRoughness?: number;
+  /** Base-color alpha 0..1; below 1 the material is alpha-BLENDed
+   *  (translucent soldermask shell). Defaults to opaque. */
+  alpha?: number;
 }
 
 /** A PBR material resolved from a {@link GlbMesh}, deduped across meshes. */
@@ -66,6 +69,7 @@ interface GlbMaterial {
   emissiveStrength: number;
   clearcoat: number;
   clearcoatRoughness: number;
+  alpha: number;
 }
 
 const isEmissive = (e: [number, number, number]): boolean =>
@@ -89,7 +93,8 @@ export function buildGlb(inputMeshes: GlbMesh[], name: string): Uint8Array {
     const emissiveStrength = m.emissiveStrength ?? 1;
     const clearcoat = m.clearcoat ?? 0;
     const clearcoatRoughness = m.clearcoatRoughness ?? 0;
-    const key = `${m.color[0]},${m.color[1]},${m.color[2]},${m.metallic},${m.roughness},${emissive[0]},${emissive[1]},${emissive[2]},${emissiveStrength},${clearcoat},${clearcoatRoughness}`;
+    const alpha = m.alpha ?? 1;
+    const key = `${m.color[0]},${m.color[1]},${m.color[2]},${m.metallic},${m.roughness},${emissive[0]},${emissive[1]},${emissive[2]},${emissiveStrength},${clearcoat},${clearcoatRoughness},${alpha}`;
     const existing = materialMap.get(key);
     if (existing !== undefined) return existing;
     const idx = materials.length;
@@ -103,6 +108,7 @@ export function buildGlb(inputMeshes: GlbMesh[], name: string): Uint8Array {
       emissiveStrength,
       clearcoat,
       clearcoatRoughness,
+      alpha,
     });
     return idx;
   };
@@ -114,6 +120,7 @@ export function buildGlb(inputMeshes: GlbMesh[], name: string): Uint8Array {
       emissiveStrength: 1,
       clearcoat: 0,
       clearcoatRoughness: 0,
+      alpha: 1,
     });
   }
 
@@ -281,11 +288,17 @@ export function buildGlb(inputMeshes: GlbMesh[], name: string): Uint8Array {
     const mat: Record<string, unknown> = {
       name: m.name,
       pbrMetallicRoughness: {
-        baseColorFactor: [...m.color, 1.0],
+        baseColorFactor: [...m.color, m.alpha],
         metallicFactor: m.metallic,
         roughnessFactor: m.roughness,
       },
     };
+    if (m.alpha < 1) {
+      // Translucent (soldermask shell): alpha-blended and double-sided so
+      // the underside of the shell doesn't vanish at grazing angles.
+      mat.alphaMode = "BLEND";
+      mat.doubleSided = true;
+    }
     if (isEmissive(m.emissive)) {
       mat.emissiveFactor = m.emissive;
     }

@@ -1027,6 +1027,9 @@ export interface PcbPreviewMesh {
   clearcoat?: number;
   /** Clearcoat roughness, 0..1. */
   clearcoat_roughness?: number;
+  /** Base-color alpha 0..1; below 1 = alpha-blended translucent material
+   *  (the soldermask shell). Older WASM omits it (opaque). */
+  alpha?: number;
 }
 
 /**

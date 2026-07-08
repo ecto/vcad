@@ -836,7 +836,7 @@ fn evaluate_op_timed(
                 }
             }
             for via in &board.vias {
-                copper_meshes.push(via_to_mesh(via, board, 16));
+                copper_meshes.push(via_to_mesh(via, board, 16, 0.0));
             }
             for fp in &board.footprints {
                 for pad in &fp.pads {
@@ -1723,10 +1723,12 @@ pub(crate) fn trace_arc_to_mesh(arc: &TraceArc, pcb: &Pcb) -> RawMesh {
     (verts, tris)
 }
 
-/// Generate a cylindrical via mesh (outer cylinder + top/bottom annular rings).
-pub(crate) fn via_to_mesh(via: &Via, pcb: &Pcb, n_seg: usize) -> RawMesh {
-    let z_top = pcb.outline.thickness;
-    let z_bot = 0.0;
+/// Generate a cylindrical via mesh (outer cylinder + top/bottom annular
+/// rings). `z_over` extends the barrel past both board faces — the layered
+/// preview uses it to punch the annular rings through the soldermask shells.
+pub(crate) fn via_to_mesh(via: &Via, pcb: &Pcb, n_seg: usize, z_over: f64) -> RawMesh {
+    let z_top = pcb.outline.thickness + z_over;
+    let z_bot = -z_over;
     let r_outer = via.diameter / 2.0;
     let r_inner = via.drill / 2.0;
     let cx = via.position.x;
