@@ -1955,8 +1955,7 @@ mod tests {
         );
         assert!(mc.locations.is_empty());
 
-        let report =
-            check_dfm(&board((TIE.0 - 5.0, TIE.1)), PcbFabProfile::Jlcpcb, None).unwrap();
+        let report = check_dfm(&board((TIE.0 - 5.0, TIE.1)), PcbFabProfile::Jlcpcb, None).unwrap();
         let mc = find(&report, "min_clearance");
         assert!(
             !mc.passed && mc.violations >= 4,
