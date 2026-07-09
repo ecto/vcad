@@ -939,6 +939,7 @@
             "shell",
             "fillet",
             "chamfer",
+            "edge_blend",
             "text_2_d",
             "sweep",
             "loft"

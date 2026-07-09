@@ -119,6 +119,96 @@ export const STATIC_TOOL_SCHEMAS: ToolSchemaEntry[] = [
       }
     },
     {
+      "name": "torus",
+      "description": "Torus centered at origin with axis along Z.",
+      "category": "primitive",
+      "ai_hint": "Axis along Z. Use for rings, donuts, O-rings, gaskets, fillets-as-primitives.",
+      "input_schema": {
+        "properties": {
+          "major_radius": {
+            "description": "Major radius — distance from the central axis to the tube center.",
+            "type": "number"
+          },
+          "minor_radius": {
+            "description": "Minor radius — radius of the tube cross-section.",
+            "type": "number"
+          },
+          "segments": {
+            "description": "Number of circular segments per ring (0 = auto).",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "major_radius",
+          "minor_radius",
+          "segments"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "wedge",
+      "description": "Right-triangular-prism wedge with corner at origin.",
+      "category": "primitive",
+      "ai_hint": "Right-triangular-prism wedge. Corner at origin, legs along +X and +Z, extruded along +Y.",
+      "input_schema": {
+        "properties": {
+          "size": {
+            "description": "Wedge size: leg along +X, extrusion length along +Y, leg along +Z.",
+            "properties": {
+              "x": {
+                "type": "number"
+              },
+              "y": {
+                "type": "number"
+              },
+              "z": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "x",
+              "y",
+              "z"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "size"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "prism",
+      "description": "Regular n-gonal right prism centered on Z.",
+      "category": "primitive",
+      "ai_hint": "Regular n-gonal right prism on Z. Use for hex nuts (sides=6), triangular bars, etc.",
+      "input_schema": {
+        "properties": {
+          "height": {
+            "description": "Extrusion height along +Z.",
+            "type": "number"
+          },
+          "radius": {
+            "description": "Polygon circumradius (distance from center to each vertex).",
+            "type": "number"
+          },
+          "sides": {
+            "description": "Number of polygon sides (>= 3).",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "sides",
+          "radius",
+          "height"
+        ],
+        "type": "object"
+      }
+    },
+    {
       "name": "union",
       "description": "Boolean union of two geometries.",
       "category": "boolean",
@@ -299,12 +389,82 @@ export const STATIC_TOOL_SCHEMAS: ToolSchemaEntry[] = [
       }
     },
     {
+      "name": "mirror",
+      "description": "Reflection of the child across a plane.",
+      "category": "transform",
+      "ai_hint": "Reflect across a plane. plane_origin is any point on the plane; plane_normal points outward.",
+      "input_schema": {
+        "properties": {
+          "child": {
+            "description": "Child node to mirror.",
+            "type": "string"
+          },
+          "plane_normal": {
+            "description": "Normal vector of the mirror plane (need not be unit).",
+            "properties": {
+              "x": {
+                "type": "number"
+              },
+              "y": {
+                "type": "number"
+              },
+              "z": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "x",
+              "y",
+              "z"
+            ],
+            "type": "object"
+          },
+          "plane_origin": {
+            "description": "A point on the mirror plane.",
+            "properties": {
+              "x": {
+                "type": "number"
+              },
+              "y": {
+                "type": "number"
+              },
+              "z": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "x",
+              "y",
+              "z"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "child",
+          "plane_origin",
+          "plane_normal"
+        ],
+        "type": "object"
+      }
+    },
+    {
       "name": "sketch_2_d",
       "description": "A 2D sketch profile on a plane.  The sketch defines a closed profile in a local 2D coordinate system. Use with [`CsgOp::Extrude`] or [`CsgOp::Revolve`] to create 3D geometry.",
       "category": "sketch_op",
       "ai_hint": "Defines a closed 2D profile. Segments are Line{start,end} or Arc{start,end,center,ccw}. Usually used inline with extrude/revolve — prefer creating extrude directly with inline sketch.",
       "input_schema": {
         "properties": {
+          "holes": {
+            "description": "Optional interior hole loops. Each entry is a closed loop of segments in the same sketch coordinate system, lying strictly inside the outer profile and disjoint from the other holes. Extrude turns each loop into an interior wall directly — no boolean Difference pass. Loop winding may be CW or CCW.",
+            "items": {
+              "items": {
+                "type": "object"
+              },
+              "type": "array"
+            },
+            "type": "array"
+          },
           "origin": {
             "description": "Origin point of the sketch plane in 3D.",
             "properties": {
@@ -785,6 +945,34 @@ export const STATIC_TOOL_SCHEMAS: ToolSchemaEntry[] = [
         "required": [
           "child",
           "distance"
+        ],
+        "type": "object"
+      }
+    },
+    {
+      "name": "edge_blend",
+      "description": "Edge blend — chamfer/fillet/variable blend on query-selected edges.  `edges` resolves against the child's topology at evaluation time, so selections survive upstream parameter changes. The profile is either constant or keyed along each edge: `shape` interpolates a flat chamfer (`0`) into a round fillet (`1`), and `size` is the tangent setback (chamfer leg = fillet radius). Edges sharing a vertex with an already-blended edge are skipped (miter corners are a planned follow-up).",
+      "category": "modifier",
+      "ai_hint": "Per-edge blend with a declarative selector: pick edges by query (Near a point / Direction / All plane-plane edges), then apply a Constant or Keyed profile. shape 0 = chamfer, 1 = fillet; size = chamfer leg / fillet radius in mm. Keyed profiles morph along the edge — e.g. chamfer lofting into a fillet.",
+      "input_schema": {
+        "properties": {
+          "child": {
+            "description": "Child node to blend.",
+            "type": "string"
+          },
+          "edges": {
+            "description": "Which edges to blend.",
+            "type": "object"
+          },
+          "profile": {
+            "description": "Cross-section profile along each selected edge.",
+            "type": "object"
+          }
+        },
+        "required": [
+          "child",
+          "edges",
+          "profile"
         ],
         "type": "object"
       }
