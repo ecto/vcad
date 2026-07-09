@@ -184,7 +184,10 @@ export default async function handler(
   // MCP endpoint — parse body for POST, then delegate to transport
   try {
     const engine = await getEngine();
-    const server = await createServer(engine, { user });
+    // assumeUiClient: stateless per-request Server — the UI-extension
+    // capability from `initialize` never reaches tools/call, so attach the
+    // inline `_meta` preview unconditionally (see ServerContext in @vcad/mcp).
+    const server = await createServer(engine, { user, assumeUiClient: true });
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: undefined, // stateless
       enableJsonResponse: true, // return JSON instead of SSE — Vercel buffers responses and adds Content-Length which breaks SSE streaming

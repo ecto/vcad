@@ -51,6 +51,16 @@ import type { AuthUser } from "./oauth.js";
  *  otherwise null (stdio, anonymous HTTP, or OAuth disabled). */
 export interface ServerContext {
   user: AuthUser | null;
+  /** Stateless HTTP handles each request on a fresh Server, so the client
+   *  capabilities declared at `initialize` (including the MCP Apps UI
+   *  extension) are gone by the time `tools/call` arrives — the caps-based
+   *  gate can never fire. Set this to have mount results carry the inline
+   *  `_meta` preview anyway: `_meta` is host plumbing, never model-visible,
+   *  and clients without a viewer ignore it per spec, so over-attaching
+   *  costs only wire bytes while under-attaching costs the viewer its
+   *  zero-round-trip first paint. Leave unset for stateful transports
+   *  (stdio), where the real capability check works. */
+  assumeUiClient?: boolean;
 }
 import {
   registryToolDescriptors,
@@ -1320,7 +1330,10 @@ export async function createServer(
           // the content-addressed GLB cache for the poll loop. Best-effort
           // and size-capped; hosts that strip `_meta` (and oversized docs)
           // fall back to the fetch path unchanged.
-          if (def.behavior.mount && clientHasInlineUi()) {
+          if (
+            def.behavior.mount &&
+            (clientHasInlineUi() || context.assumeUiClient === true)
+          ) {
             await attachInlinePreview(result, docId, engine);
           }
         }
