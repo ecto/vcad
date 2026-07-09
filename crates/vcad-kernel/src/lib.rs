@@ -35,6 +35,7 @@ pub use vcad_kernel_sweep;
 pub use vcad_kernel_tessellate;
 pub use vcad_kernel_text;
 pub use vcad_kernel_topo;
+pub use vcad_kernel_topopt;
 
 pub mod cam_verify;
 pub use cam_verify::verify_toolpaths;
@@ -819,6 +820,23 @@ impl Solid {
             SolidRepr::BRep(brep) => tessellate_brep(brep.as_ref(), segments),
             SolidRepr::Mesh(m) => m.clone(),
         }
+    }
+
+    /// Run SIMP topology optimization inside this solid's volume.
+    ///
+    /// The solid's tessellation becomes the design domain (material can
+    /// only appear where the solid already has volume); the spec supplies
+    /// loads, supports, and the target volume fraction. Returns the
+    /// optimized organic structure as a mesh-backed solid together with
+    /// the run diagnostics (compliance history, achieved volume fraction,
+    /// grid size).
+    pub fn topology_optimize(
+        &self,
+        spec: &vcad_kernel_topopt::TopoOptSpec,
+    ) -> Result<(Solid, vcad_kernel_topopt::TopoOptResult), vcad_kernel_topopt::TopoOptError> {
+        let mesh = self.to_mesh(self.segments);
+        let result = vcad_kernel_topopt::optimize_mesh(&mesh, spec)?;
+        Ok((Solid::from_mesh(result.mesh.clone()), result))
     }
 
     /// Compute the volume of the solid from its triangle mesh.

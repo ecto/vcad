@@ -353,6 +353,104 @@ pub fn mesh_clearance(
     serde_wasm_bindgen::to_value(&WasmClearance::from(r)).map_err(|e| JsError::new(&e.to_string()))
 }
 
+/// Result of a topology optimization run (see `vcad-kernel-topopt`).
+#[derive(Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-rs", derive(TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "generated/"))]
+pub struct WasmTopoOptResult {
+    /// Optimized structure as a watertight surface mesh (mm, Z-up).
+    pub mesh: WasmMesh,
+    /// Compliance after each SIMP iteration (decreasing = stiffer).
+    #[serde(rename = "complianceHistory")]
+    pub compliance_history: Vec<f64>,
+    /// SIMP iterations actually run.
+    pub iterations: u32,
+    /// Whether the density change converged below the spec tolerance.
+    pub converged: bool,
+    /// Material fraction of the design domain actually used.
+    #[serde(rename = "volumeFraction")]
+    pub volume_fraction: f64,
+    /// Voxel grid dimensions `[nx, ny, nz]`.
+    pub grid: [u32; 3],
+    /// Voxel edge length in mm.
+    #[serde(rename = "voxelSize")]
+    pub voxel_size: f64,
+}
+
+fn topopt_response(
+    result: vcad_kernel::vcad_kernel_topopt::TopoOptResult,
+) -> Result<JsValue, JsError> {
+    let out = WasmTopoOptResult {
+        mesh: WasmMesh {
+            positions: result.mesh.vertices,
+            indices: result.mesh.indices,
+            normals: if result.mesh.normals.is_empty() {
+                None
+            } else {
+                Some(result.mesh.normals)
+            },
+            face_kinds: None,
+        },
+        compliance_history: result.compliance_history,
+        iterations: result.iterations as u32,
+        converged: result.converged,
+        volume_fraction: result.volume_fraction_achieved,
+        grid: [
+            result.grid[0] as u32,
+            result.grid[1] as u32,
+            result.grid[2] as u32,
+        ],
+        voxel_size: result.voxel_size,
+    };
+    serde_wasm_bindgen::to_value(&out).map_err(|e| JsError::new(&e.to_string()))
+}
+
+/// SIMP topology optimization over a box design domain.
+///
+/// `spec_json` is a serialized `vcad_kernel_topopt::TopoOptSpec` (loads,
+/// supports, volume fraction, resolution, ...). Returns a
+/// `WasmTopoOptResult`.
+#[wasm_bindgen(js_name = topologyOptimizeBox)]
+#[allow(clippy::too_many_arguments)]
+pub fn topology_optimize_box(
+    spec_json: &str,
+    min_x: f64,
+    min_y: f64,
+    min_z: f64,
+    max_x: f64,
+    max_y: f64,
+    max_z: f64,
+) -> Result<JsValue, JsError> {
+    let spec: vcad_kernel::vcad_kernel_topopt::TopoOptSpec =
+        serde_json::from_str(spec_json).map_err(|e| JsError::new(&format!("bad spec: {e}")))?;
+    let result = vcad_kernel::vcad_kernel_topopt::optimize_box(
+        [min_x, min_y, min_z],
+        [max_x, max_y, max_z],
+        &spec,
+    )
+    .map_err(|e| JsError::new(&e.to_string()))?;
+    topopt_response(result)
+}
+
+/// SIMP topology optimization inside an existing (closed) evaluated mesh:
+/// the mesh's interior becomes the design domain, so material only appears
+/// where the original part had volume.
+#[wasm_bindgen(js_name = topologyOptimizeMesh)]
+pub fn topology_optimize_mesh(
+    spec_json: &str,
+    positions: &[f32],
+    indices: &[u32],
+) -> Result<JsValue, JsError> {
+    let spec: vcad_kernel::vcad_kernel_topopt::TopoOptSpec =
+        serde_json::from_str(spec_json).map_err(|e| JsError::new(&format!("bad spec: {e}")))?;
+    let mut mesh = vcad_kernel_tessellate::TriangleMesh::new();
+    mesh.vertices = positions.to_vec();
+    mesh.indices = indices.to_vec();
+    let result = vcad_kernel::vcad_kernel_topopt::optimize_mesh(&mesh, &spec)
+        .map_err(|e| JsError::new(&e.to_string()))?;
+    topopt_response(result)
+}
+
 /// A 2D sketch segment (line or arc) for WASM input.
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "type")]

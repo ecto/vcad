@@ -7033,6 +7033,7 @@ dependencies = [
  "vcad-kernel-tessellate",
  "vcad-kernel-text",
  "vcad-kernel-topo",
+ "vcad-kernel-topopt",
 ]
 
 [[package]]
@@ -7343,6 +7344,15 @@ version = "0.9.4"
 dependencies = [
  "slotmap",
  "vcad-kernel-math",
+]
+
+[[package]]
+name = "vcad-kernel-topopt"
+version = "0.9.4"
+dependencies = [
+ "serde",
+ "serde_json",
+ "vcad-kernel-tessellate",
 ]
 
 [[package]]

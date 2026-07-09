@@ -1502,6 +1502,195 @@
     }
   },
   {
+    "name": "topology_optimize",
+    "title": "Topology Optimize",
+    "description": "SIMP topology optimization: find the stiffest material layout under given loads and supports using only `volume_fraction` of the design domain — the organic, bone-like structures topology optimization is known for. The domain is either an existing part's volume (`part`: lightweight it in place) or an axis-aligned box (`domain_box`: grow a bracket into an envelope). Loads and supports are world-frame box regions (mm, Z-up); a zero-thickness box selects the nearest plane of structure nodes (e.g. a face of the domain). The result is inserted into the document as a frozen mesh part; compliance history and achieved volume fraction are reported. Deterministic for a given spec. Cost scales with resolution³ — start at the default 48 and refine.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "document_id": {
+          "type": "string",
+          "description": "Session document. Required with `part`; optional with `domain_box` (omitted = a new document is created for the result)."
+        },
+        "part": {
+          "type": "string",
+          "description": "Part id or name whose volume becomes the design domain — material only appears inside this part. Mutually exclusive with `domain_box`."
+        },
+        "domain_box": {
+          "type": "object",
+          "required": [
+            "min",
+            "max"
+          ],
+          "properties": {
+            "min": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3,
+              "description": "Minimum corner [x, y, z] in mm."
+            },
+            "max": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3,
+              "description": "Maximum corner [x, y, z] in mm."
+            }
+          },
+          "description": "Axis-aligned box design domain in mm (world frame, Z-up). Mutually exclusive with `part`."
+        },
+        "loads": {
+          "type": "array",
+          "minItems": 1,
+          "description": "Loads. Each is a total force vector (N) distributed over the grid nodes inside its region. Regions are world-frame boxes; a zero-thickness box selects the nearest plane of nodes.",
+          "items": {
+            "type": "object",
+            "required": [
+              "region",
+              "force"
+            ],
+            "properties": {
+              "region": {
+                "type": "object",
+                "required": [
+                  "min",
+                  "max"
+                ],
+                "properties": {
+                  "min": {
+                    "type": "array",
+                    "items": {
+                      "type": "number"
+                    },
+                    "minItems": 3,
+                    "maxItems": 3,
+                    "description": "Minimum corner [x, y, z] in mm."
+                  },
+                  "max": {
+                    "type": "array",
+                    "items": {
+                      "type": "number"
+                    },
+                    "minItems": 3,
+                    "maxItems": 3,
+                    "description": "Maximum corner [x, y, z] in mm."
+                  }
+                }
+              },
+              "force": {
+                "type": "array",
+                "items": {
+                  "type": "number"
+                },
+                "minItems": 3,
+                "maxItems": 3,
+                "description": "Total force [fx, fy, fz]."
+              }
+            }
+          }
+        },
+        "supports": {
+          "type": "array",
+          "minItems": 1,
+          "description": "Fixed (anchored) regions.",
+          "items": {
+            "type": "object",
+            "required": [
+              "region"
+            ],
+            "properties": {
+              "region": {
+                "type": "object",
+                "required": [
+                  "min",
+                  "max"
+                ],
+                "properties": {
+                  "min": {
+                    "type": "array",
+                    "items": {
+                      "type": "number"
+                    },
+                    "minItems": 3,
+                    "maxItems": 3,
+                    "description": "Minimum corner [x, y, z] in mm."
+                  },
+                  "max": {
+                    "type": "array",
+                    "items": {
+                      "type": "number"
+                    },
+                    "minItems": 3,
+                    "maxItems": 3,
+                    "description": "Maximum corner [x, y, z] in mm."
+                  }
+                }
+              },
+              "fix": {
+                "type": "array",
+                "items": {
+                  "type": "boolean"
+                },
+                "minItems": 3,
+                "maxItems": 3,
+                "description": "Which translations are fixed [x, y, z]; default all true."
+              }
+            }
+          }
+        },
+        "volume_fraction": {
+          "type": "number",
+          "description": "Fraction of the domain volume to keep as material, in (0, 1). Default 0.3."
+        },
+        "resolution": {
+          "type": "number",
+          "description": "Voxels along the longest domain axis (8–128). Higher = finer detail but slower. Default 48."
+        },
+        "max_iterations": {
+          "type": "number",
+          "description": "Max SIMP iterations. Default 40."
+        },
+        "filter_radius": {
+          "type": "number",
+          "description": "Sensitivity filter radius in voxels — larger removes thin members. Default 1.5."
+        },
+        "name": {
+          "type": "string",
+          "description": "Name for the optimized part (default derives from the source)."
+        },
+        "material": {
+          "type": "string",
+          "description": "Material key for the optimized part."
+        },
+        "hide_source": {
+          "type": "boolean",
+          "description": "With `part`: hide the source part after inserting the optimized body (the source node is kept for undo/reference). Default true."
+        }
+      },
+      "required": [
+        "loads",
+        "supports"
+      ]
+    },
+    "annotations": {
+      "readOnlyHint": false
+    },
+    "_meta": {
+      "ui": {
+        "resourceUri": "ui://vcad/viewer"
+      },
+      "ui/resourceUri": "ui://vcad/viewer",
+      "openai/outputTemplate": "ui://vcad/viewer-openai.html",
+      "openai/toolInvocation/invoking": "Modeling geometry…",
+      "openai/toolInvocation/invoked": "Model updated"
+    }
+  },
+  {
     "name": "predict_print",
     "title": "Predict Print",
     "description": "Snapshot the design's predicted measurables BEFORE 3D-printing it: kernel-evaluated bbox and mass (at a filament density), plus caller-declared feature dimensions (step heights, hole diameters, wall thicknesses) with design-intent values. Returns a PrintPrediction — save it; after printing, record_measurement joins caliper/scale readings against it. The prediction doubles as the guided measurement worksheet (each measurable carries a human instruction label).",

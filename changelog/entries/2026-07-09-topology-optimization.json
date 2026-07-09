@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-09-topology-optimization",
+  "version": "0.9.4",
+  "date": "2026-07-09",
+  "category": "feat",
+  "title": "Topology optimization",
+  "summary": "SIMP topology optimization in the kernel: grow the stiffest organic structure for given loads and supports inside a box envelope or an existing part's volume.",
+  "features": ["kernel", "topology-optimization", "simulation", "mcp"],
+  "mcpTools": ["topology_optimize"]
+}

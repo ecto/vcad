@@ -414,6 +414,91 @@ export interface KernelModule {
     positionsB: Float32Array,
     indicesB: Uint32Array,
   ) => ClearanceResult;
+  /** SIMP topology optimization over a box design domain. */
+  topologyOptimizeBox?: (
+    specJson: string,
+    minX: number,
+    minY: number,
+    minZ: number,
+    maxX: number,
+    maxY: number,
+    maxZ: number,
+  ) => unknown;
+  /** SIMP topology optimization inside a closed evaluated mesh. */
+  topologyOptimizeMesh?: (
+    specJson: string,
+    positions: Float32Array,
+    indices: Uint32Array,
+  ) => unknown;
+}
+
+/** Axis-aligned box region (mm) selecting grid nodes for loads/supports. */
+export interface TopoOptRegion {
+  /** Minimum corner `[x, y, z]` in mm. */
+  min: [number, number, number];
+  /** Maximum corner `[x, y, z]` in mm. */
+  max: [number, number, number];
+}
+
+/** A load for topology optimization: total force spread over a region. */
+export interface TopoOptLoad {
+  region: TopoOptRegion;
+  /** Total force vector `[fx, fy, fz]` (any consistent unit). */
+  force: [number, number, number];
+}
+
+/** A support (fixed boundary) for topology optimization. */
+export interface TopoOptSupport {
+  region: TopoOptRegion;
+  /** Which translational directions are fixed; defaults to fully fixed. */
+  fix?: [boolean, boolean, boolean];
+}
+
+/**
+ * Topology optimization parameters (mirrors `vcad_kernel_topopt::TopoOptSpec`;
+ * unset fields take the kernel defaults).
+ */
+export interface TopoOptSpec {
+  loads: TopoOptLoad[];
+  supports: TopoOptSupport[];
+  /** Material fraction of the domain to keep, in (0, 1). Default 0.3. */
+  volume_fraction?: number;
+  /** Voxels along the longest domain axis (8–128). Default 48. */
+  resolution?: number;
+  /** SIMP penalization exponent. Default 3. */
+  penalty?: number;
+  /** Sensitivity filter radius in voxels. Default 1.5. */
+  filter_radius?: number;
+  /** Max optimization iterations. Default 40. */
+  max_iterations?: number;
+  /** Convergence tolerance on density change. Default 0.01. */
+  tolerance?: number;
+  /** Poisson's ratio. Default 0.3. */
+  poisson?: number;
+  /** Taubin smoothing passes on the extracted surface. Default 5. */
+  smooth_iterations?: number;
+}
+
+/** Result of a topology optimization run (mirrors `WasmTopoOptResult`). */
+export interface TopoOptResult {
+  /** Optimized structure as a watertight surface mesh (mm, Z-up). */
+  mesh: {
+    positions: Float32Array | number[];
+    indices: Uint32Array | number[];
+    normals?: Float32Array | number[];
+  };
+  /** Compliance after each SIMP iteration (decreasing = stiffer). */
+  complianceHistory: number[];
+  /** SIMP iterations actually run. */
+  iterations: number;
+  /** Whether the density change converged below the tolerance. */
+  converged: boolean;
+  /** Material fraction of the design domain actually used. */
+  volumeFraction: number;
+  /** Voxel grid dimensions `[nx, ny, nz]`. */
+  grid: [number, number, number];
+  /** Voxel edge length in mm. */
+  voxelSize: number;
 }
 
 /**
@@ -662,6 +747,8 @@ export class Engine {
       getSheetMetalShopCatalog: (wasmModule as Record<string, unknown>).getSheetMetalShopCatalog as KernelModule["getSheetMetalShopCatalog"],
       sheetMetalFoldedStep: (wasmModule as Record<string, unknown>).sheetMetalFoldedStep as KernelModule["sheetMetalFoldedStep"],
       mesh_clearance: (wasmModule as Record<string, unknown>).mesh_clearance as KernelModule["mesh_clearance"],
+      topologyOptimizeBox: (wasmModule as Record<string, unknown>).topologyOptimizeBox as KernelModule["topologyOptimizeBox"],
+      topologyOptimizeMesh: (wasmModule as Record<string, unknown>).topologyOptimizeMesh as KernelModule["topologyOptimizeMesh"],
     }, compiledWasmModule);
   }
 
@@ -896,6 +983,50 @@ export class Engine {
       );
     }
     return this.kernel.mesh_clearance(a.positions, a.indices, b.positions, b.indices);
+  }
+
+  /**
+   * SIMP topology optimization over a box design domain: find the stiffest
+   * material layout inside `[min, max]` (mm) using only
+   * `spec.volume_fraction` of the volume, under the spec's loads and
+   * supports. Returns the optimized structure as a watertight mesh plus run
+   * diagnostics.
+   */
+  topologyOptimizeBox(
+    min: [number, number, number],
+    max: [number, number, number],
+    spec: TopoOptSpec,
+  ): TopoOptResult {
+    const fn = this.kernel.topologyOptimizeBox;
+    if (typeof fn !== "function") {
+      throw new Error(
+        "topologyOptimizeBox is not exported by this kernel WASM build — rebuild packages/kernel-wasm",
+      );
+    }
+    return fn(
+      JSON.stringify(spec),
+      min[0],
+      min[1],
+      min[2],
+      max[0],
+      max[1],
+      max[2],
+    ) as TopoOptResult;
+  }
+
+  /**
+   * SIMP topology optimization inside a closed evaluated mesh: the mesh's
+   * interior becomes the design domain, so material only appears where the
+   * original part had volume ("lightweight this bracket").
+   */
+  topologyOptimizeMesh(mesh: TriangleMesh, spec: TopoOptSpec): TopoOptResult {
+    const fn = this.kernel.topologyOptimizeMesh;
+    if (typeof fn !== "function") {
+      throw new Error(
+        "topologyOptimizeMesh is not exported by this kernel WASM build — rebuild packages/kernel-wasm",
+      );
+    }
+    return fn(JSON.stringify(spec), mesh.positions, mesh.indices) as TopoOptResult;
   }
 
   /** Import solids from a STEP file buffer.
