@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>vcad — Your agent already knows how to use it.</title>
+  <meta name="description" content="140 MCP tools over a real kernel, with checks no prompt can skip." />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2064%2064'%3E%3Cpath%20d='M6%2010%20L58%2010%20L32%2056%20Z'%20fill='%23F5F5F6'/%3E%3C/svg%3E" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap" />
+  <link rel="stylesheet" href="/src/style.css" />
+</head>
+<body>
+  <header class="nav" data-dim>
+    <a class="wordmark" href="/" aria-label="vcad home">
+      <svg class="tri" viewBox="0 0 24 23" aria-hidden="true"><path d="M0 0 L24 0 L12 23 Z"/></svg><span>cad</span>
+    </a>
+    <nav class="nav-links">
+      <a href="/design/">Design</a><a href="/prove/">Prove</a><a href="/make/">Make</a><a href="/agents/" class="active">Agents</a><a href="/pricing/">Pricing</a>
+      <a class="nav-app snap" href="https://app.vcad.io">Web app</a>
+    </nav>
+  </header>
+  <main>
+    <section class="page-hero" data-dim>
+      <p class="sec-tag mono">agents</p>
+      <h1>Your agent already<br>knows how to use it.</h1>
+      <p class="sub">vcad is agent-native: 140 MCP tools over the same kernel humans use, with fail-closed checks no prompt can talk its way past.</p>
+    </section>
+
+    <section class="psec psec-tight" data-dim>
+      <p class="sec-tag mono">watch one work</p>
+      <div class="terminal" id="demoTerminal" title="Click to skip" style="max-width:520px;margin:0;">
+        <p class="mono t-dim" id="demoPrompt"></p>
+        <p class="mono t-body" id="demoL1"></p>
+        <p class="mono t-body" id="demoL2"></p>
+        <p class="mono t-ask" id="demoL3"></p>
+      </div>
+      <p class="mono" style="font-size:11px;color:#3A3D42;margin-top:14px;">a real session shape: model → check → quote → ask permission. the agent cannot skip the middle two.</p>
+    </section>
+
+    <section class="psec" data-dim>
+      <p class="sec-tag mono">the vocabulary</p>
+      <h2>140 tools. One kernel.</h2>
+      <p class="sec-sub">Modeling, inspection, sheet metal, boards, physics, quoting, ordering — every tool returns data an agent can act on, and mutations report exactly what changed.</p>
+      <div class="tool-wall">
+        <span>create_cad_loon</span><span>apply_edits</span><span>inspect_cad</span><span>measure</span><span>render_view</span><span>export_cad</span><span>import_step</span><span>check_clearance</span><span>dfm_check</span><span>dfm_suggest_fix</span><span>build_receipt</span><span>verify_receipt</span><span>sheet_metal_create</span><span>sheet_metal_unfold</span><span>sheet_metal_nest</span><span>create_schematic</span><span>place_components</span><span>route_nets</span><span>run_drc</span><span>run_erc</span><span>export_gerber</span><span>export_kicad</span><span>search_parts</span><span>bom_create</span><span>quote_manufacturing</span><span>place_order</span><span>get_order_status</span><span>create_robot_env</span><span>gym_step</span><span>gym_observe</span><span>calc_motor</span><span>winding_layout</span><span>homogenize_material</span><span>predict_print</span><span>record_measurement</span><span>verify_part</span>
+        <span style="color:#3A3D42;border-style:dashed;">…and a hundred more</span>
+      </div>
+    </section>
+
+    <section class="psec psec-tight" data-dim>
+      <div class="two-col">
+        <div>
+          <p class="sec-tag mono">fail-closed</p>
+          <h2>Trust the work,<br>not the model.</h2>
+          <p class="sec-sub">Agents hallucinate; kernels don't. Every agent edit runs the same DFM, clearance, and DRC checks a human's would — and export is blocked until they pass. The receipt is how you audit what your agent did.</p>
+        </div>
+        <div class="receipt-json">
+          <p><span class="c">export_gerber</span>()</p>
+          <p><span class="k">blocked</span> · drc: 2 clearance violations</p>
+          <p><span class="d">fix or ask — the board doesn't ship dirty</span></p>
+        </div>
+      </div>
+    </section>
+
+    <section class="psec" data-dim>
+      <p class="sec-tag mono">connect</p>
+      <h2>Two lines, any agent.</h2>
+      <div class="receipt-json" style="max-width:520px;">
+        <p><span class="d"># claude code</span></p>
+        <p>claude mcp add --transport http vcad https://mcp.vcad.io/mcp</p>
+        <p><span class="d"># anything that speaks mcp</span></p>
+        <p>{ "mcpServers": { "vcad": { "url": "https://mcp.vcad.io/mcp" } } }</p>
+      </div>
+      <p class="mono" style="font-size:11px;color:#7A7E86;margin-top:14px;">claude · claude code · cursor · chatgpt — if it speaks mcp, it has a seat</p>
+    </section>
+  </main>
+
+  <section class="page-close" data-dim>
+    <h2>Give yours a seat.</h2>
+    <div class="cta-row">
+      <div class="agent-cta agent-primary snap"><button class="agent-main" id="agentMain2"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M7 1 L12.2 4 L12.2 10 L7 13 L1.8 10 L1.8 4 Z" fill="none" stroke="#F25C1F" stroke-width="1.4"></path></svg> Open in Claude</button></div>
+      <a class="btn-secondary snap" href="https://app.vcad.io">Open the web app</a>
+    </div>
+    <div class="doors"><a href="/prove/">What it can prove →</a> <a href="/kernel/">The kernel, in numbers →</a></div>
+  </section>
+  <footer class="titleblock" data-dim>
+    <a class="tb-cell tb-muni" href="https://muni.works" aria-label="Municipal Robotics">
+      <svg viewBox="-60 -60 880 400" role="img" aria-hidden="true">
+        <g stroke="#ff6600" stroke-width="40" stroke-linecap="round" stroke-linejoin="round" fill="none">
+          <path d="M 20 240 L 20 100 C 20 50, 80 50, 100 50 C 140 50, 160 70, 160 100"/>
+          <path d="M 160 240 L 160 100"/>
+          <path d="M 160 100 C 160 50, 220 50, 240 50 C 280 50, 300 70, 300 100 L 300 240 C 300 270, 330 280, 370 280 C 410 280, 440 270, 440 240 L 440 100"/>
+          <path d="M 440 100 C 440 50, 500 50, 520 50 C 560 50, 600 70, 600 100 L 600 240 C 600 270, 630 280, 670 280 C 710 280, 740 270, 740 240 L 740 100"/>
+        </g>
+        <circle cx="740" cy="30" r="28" fill="#ff6600"/>
+      </svg>
+      <span><span class="mono t-dim2">Built by</span><span class="mono">Municipal Robotics</span></span>
+    </a>
+    <div class="tb-cell"><span class="mono t-dim2">Title</span><span class="mono">vcad.io/agents</span></div>
+    <div class="tb-cell"><span class="mono t-dim2">Drawn by</span><span class="mono">humans + agents</span></div>
+    <div class="tb-cell"><span class="mono t-dim2">Rev</span><span class="mono">0.1.0</span></div>
+    <div class="tb-cell"><span class="mono t-dim2">Checked</span><span class="mono t-dim2">local build</span></div>
+  </footer>
+  <div id="copyToast" class="mono" hidden>copied</div>
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>

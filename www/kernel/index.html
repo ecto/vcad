@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>vcad — The kernel, in numbers.</title>
+  <meta name="description" content="Half-edge BRep, exact predicates, 4-stage booleans, STEP AP214 — open source, in Rust, in your browser." />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2064%2064'%3E%3Cpath%20d='M6%2010%20L58%2010%20L32%2056%20Z'%20fill='%23F5F5F6'/%3E%3C/svg%3E" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap" />
+  <link rel="stylesheet" href="/src/style.css" />
+</head>
+<body>
+  <header class="nav" data-dim>
+    <a class="wordmark" href="/" aria-label="vcad home">
+      <svg class="tri" viewBox="0 0 24 23" aria-hidden="true"><path d="M0 0 L24 0 L12 23 Z"/></svg><span>cad</span>
+    </a>
+    <nav class="nav-links">
+      <a href="/design/">Design</a><a href="/prove/">Prove</a><a href="/make/">Make</a><a href="/agents/">Agents</a><a href="/pricing/">Pricing</a>
+      <a class="nav-app snap" href="https://app.vcad.io">Web app</a>
+    </nav>
+  </header>
+  <main>
+    <section class="page-hero" data-dim>
+      <p class="sec-tag mono">kernel</p>
+      <h1>The kernel, in numbers.</h1>
+      <p class="sub">A boundary-representation kernel written in Rust, compiled to run in your browser and your agent. The dense page, on purpose.</p>
+    </section>
+
+    <section class="psec psec-tight" data-dim>
+      <p class="sec-tag mono">geometry</p>
+      <div class="srow"><span class="mono">representation</span><span class="mono">half-edge BRep · arena-allocated topology</span></div>
+      <div class="srow"><span class="mono">surfaces</span><span class="mono">plane · cylinder · cone · sphere · torus · NURBS</span></div>
+      <div class="srow"><span class="mono">predicates</span><span class="mono">Shewchuk adaptive-precision exact — orient2d/3d · incircle · insphere</span></div>
+      <div class="srow"><span class="mono">booleans</span><span class="mono">4-stage: AABB broadphase → surface intersection → ray + winding classification → sew &amp; repair</span></div>
+      <div class="srow"><span class="mono">operations</span><span class="mono">union · difference · intersection · fillet · chamfer · shell · sweep · loft · revolve · linear/circular pattern · mirror</span></div>
+      <div class="srow"><span class="mono">constraints</span><span class="mono">Levenberg–Marquardt · 12 constraint types · symbolic Jacobian</span></div>
+      <div class="srow"><span class="mono">units</span><span class="mono">f64 millimeters · Z-up, right-handed</span></div>
+    </section>
+
+    <section class="psec psec-tight" data-dim>
+      <p class="sec-tag mono">exchange</p>
+      <div class="srow"><span class="mono">solids</span><span class="mono">STEP AP214 in/out · STL · GLB</span></div>
+      <div class="srow"><span class="mono">boards</span><span class="mono">Gerber · KiCad 9 native (.kicad_pcb / .kicad_sch) · Eagle in</span></div>
+      <div class="srow"><span class="mono">flat</span><span class="mono">DXF flat patterns with derived bend allowances</span></div>
+      <div class="srow"><span class="mono">machines</span><span class="mono">2.5D CAM · G-code post · toolpath verification against a stock sim</span></div>
+      <div class="srow"><span class="mono">robots</span><span class="mono">URDF in · gym interface (reset / step / observe)</span></div>
+      <div class="srow"><span class="mono">rendering</span><span class="mono">tessellation with creased normals · direct BRep ray tracing (WebGPU)</span></div>
+    </section>
+
+    <section class="psec psec-tight" data-dim>
+      <p class="sec-tag mono">delivery</p>
+      <div class="srow"><span class="mono">wasm</span><span class="mono">4.4 MB gzipped · the same kernel this site's hero runs</span></div>
+      <div class="srow"><span class="mono">differentiable</span><span class="mono">d(mass properties)/d(named parameter) · adjoint through physics rollouts</span></div>
+      <div class="srow"><span class="mono">verification</span><span class="mono">DFM rule packs per process · clearance assertions · vcad.receipt/1</span></div>
+      <div class="srow"><span class="mono">benchmarks</span><span class="mono">published with receipts, or not at all — coming at rev b</span></div>
+    </section>
+
+    <section class="psec" data-dim>
+      <p class="sec-tag mono">the crates</p>
+      <h2>Open source, all the way down.</h2>
+      <div class="tool-wall">
+        <span>vcad-kernel-math</span><span>vcad-kernel-topo</span><span>vcad-kernel-geom</span><span>vcad-kernel-primitives</span><span>vcad-kernel-booleans</span><span>vcad-kernel-tessellate</span><span>vcad-kernel-nurbs</span><span>vcad-kernel-fillet</span><span>vcad-kernel-sketch</span><span>vcad-kernel-constraints</span><span>vcad-kernel-sweep</span><span>vcad-kernel-shell</span><span>vcad-kernel-step</span><span>vcad-kernel-drafting</span><span>vcad-kernel-raytrace</span><span>vcad-kernel-physics</span><span>vcad-kernel-cam</span><span>vcad-kernel-stocksim</span><span>vcad-kernel-urdf</span><span>vcad-ir</span><span>vcad-receipt</span><span>vcad-cli</span>
+      </div>
+      <p class="mono" style="font-size:12px;margin-top:22px;"><a class="orange" href="https://github.com/ecto/vcad">github.com/ecto/vcad →</a></p>
+    </section>
+  </main>
+
+  <section class="page-close" data-dim>
+    <h2>Run it yourself.</h2>
+    <div class="cta-row">
+      <div class="agent-cta agent-primary snap"><button class="agent-main" id="agentMain2"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M7 1 L12.2 4 L12.2 10 L7 13 L1.8 10 L1.8 4 Z" fill="none" stroke="#F25C1F" stroke-width="1.4"></path></svg> Open in Claude</button></div>
+      <a class="btn-secondary snap" href="https://app.vcad.io">Open the web app</a>
+    </div>
+    <div class="doors"><a href="/design/">What it enables →</a> <a href="/agents/">What agents do with it →</a></div>
+  </section>
+  <footer class="titleblock" data-dim>
+    <a class="tb-cell tb-muni" href="https://muni.works" aria-label="Municipal Robotics">
+      <svg viewBox="-60 -60 880 400" role="img" aria-hidden="true">
+        <g stroke="#ff6600" stroke-width="40" stroke-linecap="round" stroke-linejoin="round" fill="none">
+          <path d="M 20 240 L 20 100 C 20 50, 80 50, 100 50 C 140 50, 160 70, 160 100"/>
+          <path d="M 160 240 L 160 100"/>
+          <path d="M 160 100 C 160 50, 220 50, 240 50 C 280 50, 300 70, 300 100 L 300 240 C 300 270, 330 280, 370 280 C 410 280, 440 270, 440 240 L 440 100"/>
+          <path d="M 440 100 C 440 50, 500 50, 520 50 C 560 50, 600 70, 600 100 L 600 240 C 600 270, 630 280, 670 280 C 710 280, 740 270, 740 240 L 740 100"/>
+        </g>
+        <circle cx="740" cy="30" r="28" fill="#ff6600"/>
+      </svg>
+      <span><span class="mono t-dim2">Built by</span><span class="mono">Municipal Robotics</span></span>
+    </a>
+    <div class="tb-cell"><span class="mono t-dim2">Title</span><span class="mono">vcad.io/kernel</span></div>
+    <div class="tb-cell"><span class="mono t-dim2">Drawn by</span><span class="mono">humans + agents</span></div>
+    <div class="tb-cell"><span class="mono t-dim2">Rev</span><span class="mono">0.1.0</span></div>
+    <div class="tb-cell"><span class="mono t-dim2">Checked</span><span class="mono t-dim2">local build</span></div>
+  </footer>
+  <div id="copyToast" class="mono" hidden>copied</div>
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>

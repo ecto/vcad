@@ -1,0 +1,240 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>vcad — CAD that proves its work.</title>
+  <meta name="description" content="CAD that proves its work. Design it. Prove it. Make it." />
+  <meta property="og:title" content="vcad — CAD that proves its work." />
+  <meta property="og:description" content="Open-source parametric CAD with a real kernel, built for agents and humans. Every part ships with a receipt." />
+  <meta property="og:url" content="https://vcad.io" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2064%2064'%3E%3Cpath%20d='M6%2010%20L58%2010%20L32%2056%20Z'%20fill='%23F5F5F6'/%3E%3C/svg%3E" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap" />
+  <link rel="stylesheet" href="/src/style.css" />
+</head>
+<body>
+
+  <div id="boot" aria-hidden="true">
+    <svg viewBox="0 0 64 64" class="boot-tri"><path d="M6 10 L58 10 L32 56 Z" fill="#F5F5F6"/></svg>
+    <p class="boot-line mono">kernel ready</p>
+  </div>
+
+  <header class="nav" data-dim>
+    <a class="wordmark" href="/" aria-label="vcad home">
+      <svg class="tri" viewBox="0 0 24 23" aria-hidden="true"><path d="M0 0 L24 0 L12 23 Z"/></svg><span>cad</span>
+    </a>
+    <nav class="nav-links">
+      <a href="/design/">Design</a>
+      <a href="/prove/">Prove</a>
+      <a href="/make/">Make</a>
+      <a href="/agents/">Agents</a>
+      <a href="/pricing/">Pricing</a>
+      <a class="nav-app snap" href="https://app.vcad.io">Web app</a>
+    </nav>
+  </header>
+
+  <main>
+
+    <section class="hero" data-dim>
+      <canvas id="heroEngine" aria-hidden="true"></canvas>
+      <p class="mono hero-engine-caption" id="heroEngineCaption" aria-hidden="true"></p>
+      <span class="tick tick-tl" aria-hidden="true"></span>
+      <span class="tick tick-tr" aria-hidden="true"></span>
+      <span class="tick tick-bl" aria-hidden="true"></span>
+      <span class="tick tick-br" aria-hidden="true"></span>
+
+      <div class="hero-measure" id="heroMeasure" aria-hidden="true">
+        <svg width="100%" height="16" preserveAspectRatio="none">
+          <line x1="0" y1="9" x2="100%" y2="9" stroke="#F25C1F" stroke-width="1"/>
+          <line x1="0.5" y1="3" x2="0.5" y2="15" stroke="#F25C1F" stroke-width="1"/>
+          <line x1="99.9%" y1="3" x2="99.9%" y2="15" stroke="#F25C1F" stroke-width="1"/>
+        </svg>
+        <span class="mono" id="heroMeasureValue"></span>
+      </div>
+
+      <h1 id="heroHeadline">Design it. Prove it.<br>Make it.</h1>
+      <p class="sub">Sketch it at breakfast. Hold it on Thursday.</p>
+
+      <div class="cta-row">
+        <div class="agent-cta agent-primary snap" id="agentCta">
+          <button class="agent-main" id="agentMain" aria-haspopup="true" aria-expanded="false">
+            <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M7 1 L12.2 4 L12.2 10 L7 13 L1.8 10 L1.8 4 Z" fill="none" stroke="#F25C1F" stroke-width="1.4"/></svg>
+            Open in Claude
+          </button>
+          <button class="agent-chev" id="agentChev" aria-label="Other agents">
+            <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M2 4 L6 8 L10 4" fill="none" stroke="currentColor" stroke-width="1.4"/></svg>
+          </button>
+          <div class="agent-menu" id="agentMenu" hidden>
+            <button data-copy="claude mcp add --transport http vcad https://mcp.vcad.io/mcp">Claude Code <span class="mono">cli</span></button>
+            <button data-copy="https://mcp.vcad.io/mcp">Cursor <span class="mono">mcp url</span></button>
+            <button data-copy="https://mcp.vcad.io/mcp">ChatGPT <span class="mono">connector</span></button>
+            <button class="agent-copyall" data-copy='{"mcpServers":{"vcad":{"url":"https://mcp.vcad.io/mcp"}}}'>Copy setup for anything else</button>
+          </div>
+        </div>
+        <a class="btn-secondary snap" href="https://app.vcad.io">Open the web app</a>
+      </div>
+
+      <div class="hero-viewport" data-dim id="heroViewport">
+        <svg class="hero-part" width="260" height="160" viewBox="0 0 180 110" aria-label="Bracket part being modeled, dimensioned">
+          <g id="partEdges" stroke="#4A505A" fill="none" stroke-width="1.4">
+            <path class="trace" d="M40 80 L90 55 L140 80 L90 105 Z"/>
+            <path class="trace" d="M40 40 L90 15 L140 40 L140 80 M40 40 L40 80 M40 40 L90 65 L140 40 M90 65 L90 105"/>
+          </g>
+          <path id="partChamfer" d="M90 15 L140 40" stroke="#F25C1F" stroke-width="2" fill="none"/>
+          <text id="partChamferLabel" x="122" y="18" class="svg-dim" fill="#F25C1F">chamfer 2.0 ⏎</text>
+          <g id="partDims">
+            <g stroke="#F25C1F" stroke-width="1"><path d="M148 40 L148 80 M145 40 L151 40 M145 80 L151 80"/></g>
+            <text x="153" y="62" class="svg-dim">120.0</text>
+            <text x="58" y="10" class="svg-dim">ø 8.5</text>
+          </g>
+        </svg>
+        <p class="mono receipt-line" id="partReceipt"><span class="t-dim2">checking…</span></p>
+      </div>
+    </section>
+
+    <section class="triptych-wrap" data-dim>
+      <p class="section-intro">From napkin sketch to anodized aluminum, with a receipt at every step.</p>
+      <div class="triptych">
+        <div class="panel reveal">
+          <h2>Design it</h2>
+          <p>Sketch it, or say it. Parametric solids, assemblies, boards — one document.</p>
+          <div class="panel-chip">
+            <svg width="80" height="52" viewBox="0 0 80 52" aria-hidden="true"><g stroke="#5A616B" fill="none" stroke-width="1.2"><path d="M15 40 L40 28 L65 40 L40 52 Z M15 20 L40 8 L65 20 L65 40 M15 20 L15 40 M15 20 L40 32 L65 20 M40 32 L40 52"/></g><path d="M40 8 L65 20" stroke="#F25C1F" stroke-width="1.4"/></svg>
+          </div>
+        </div>
+        <div class="panel reveal">
+          <h2>Prove it</h2>
+          <p>DFM, clearance, mass, cost — checked on every edit, not at export.</p>
+          <div class="panel-chip mono chip-checks">
+            <span>dfm · 14 rules <b class="green">✓</b></span>
+            <span>clearance ≥ 2.0 <b class="green">✓</b></span>
+            <span>mass 142.7 g <b class="green">✓</b></span>
+          </div>
+        </div>
+        <div class="panel reveal">
+          <h2>Make it</h2>
+          <p>Quote and order from the canvas. Or export clean files for your own machine.</p>
+          <div class="panel-chip mono chip-quote">
+            <span>$23.40 · ships thu</span>
+            <span class="orange">make it? ⏎</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <div class="cut" aria-hidden="true"><span class="mono">cut a · 0.2</span></div>
+
+    <section class="demo shifted-1" data-dim>
+      <div class="terminal" id="demoTerminal" title="Click to skip">
+        <p class="mono t-dim" id="demoPrompt"></p>
+        <p class="mono t-body" id="demoL1"></p>
+        <p class="mono t-body" id="demoL2"></p>
+        <p class="mono t-ask" id="demoL3"></p>
+      </div>
+      <p class="demo-caption">That's the whole product. The screen part of it, anyway.</p>
+    </section>
+
+    <section class="gallery shifted-1" data-dim>
+      <h2 class="gallery-head">Made with vcad. Measured after.</h2>
+      <p class="gallery-sub">The bracket, the enclosure, the instrument you keep meaning to build — build it.</p>
+      <div class="gallery-grid">
+        <figure class="reveal">
+          <div class="fig-art">
+            <svg width="60" height="60" viewBox="0 0 60 60" aria-hidden="true"><path d="M22 6 L22 32 Q22 40 30 40 Q38 40 38 32 L38 6 M27 40 L27 52 L33 52 L33 40" stroke="#8B929C" fill="none" stroke-width="1.6"/></svg>
+          </div>
+          <figcaption>
+            <p>Tuning fork</p>
+            <p class="mono">predicted 440.0 Hz ± 2.1 · order in progress</p>
+          </figcaption>
+        </figure>
+        <figure class="reveal">
+          <div class="fig-art fig-bars" aria-hidden="true">
+            <i style="height:44px"></i><i style="height:38px"></i><i style="height:33px"></i><i style="height:29px"></i><i style="height:25px"></i>
+          </div>
+          <figcaption>
+            <p>Glockenspiel</p>
+            <p class="mono">13 bars · ±5 cents in the strike sim</p>
+          </figcaption>
+        </figure>
+        <figure class="reveal">
+          <div class="fig-art">
+            <svg width="56" height="56" viewBox="0 0 56 56" aria-hidden="true"><circle cx="28" cy="28" r="22" fill="none" stroke="#2A2C31" stroke-width="1.4"/><circle cx="28" cy="28" r="5" fill="none" stroke="#8B929C" stroke-width="1.4"/><g stroke="#F25C1F" stroke-width="1" fill="none"><path d="M28 8 A20 20 0 0 1 45 18"/><path d="M48 28 A20 20 0 0 1 38 45"/><path d="M28 48 A20 20 0 0 1 11 38"/><path d="M8 28 A20 20 0 0 1 18 11"/></g></svg>
+          </div>
+          <figcaption>
+            <p>PCB motor</p>
+            <p class="mono">9 slots 6 poles · windings drc-clean</p>
+          </figcaption>
+        </figure>
+      </div>
+      <p class="gallery-cta mono">What will you make? <a class="orange" href="https://app.vcad.io">Start designing →</a></p>
+    </section>
+
+    <div class="cut" aria-hidden="true"><span class="mono">cut b · 0.2</span></div>
+
+    <section class="receipt shifted-2" id="receiptSection" data-dim>
+      <h2>Nothing ships unproven.</h2>
+      <div class="receipt-stage">
+        <svg class="seal" width="96" height="96" viewBox="0 0 64 64" role="img" aria-label="Verification ring">
+          <circle cx="32" cy="32" r="29" fill="none" stroke="#26282D" stroke-width="2.5"/>
+          <circle id="sealRing" cx="32" cy="32" r="29" fill="none" stroke="#3ECF8E" stroke-width="2.5"
+                  stroke-linecap="butt" transform="rotate(-90 32 32)"
+                  stroke-dasharray="182.2" stroke-dashoffset="182.2"/>
+          <text id="sealCount" x="32" y="37" text-anchor="middle" class="seal-count">0/4</text>
+        </svg>
+        <div class="receipt-card mono" id="receiptCard">
+          <p><span class="t-dim2">vcad.receipt/1</span><span id="receiptVerdict" class="t-dim2">running</span></p>
+          <p data-check><span>dfm · 14 rules</span><span class="mark">·</span></p>
+          <p data-check><span>clearance ≥ 2.0 mm</span><span class="mark">·</span></p>
+          <p data-check><span>mass 142.7 g ± 0.4</span><span class="mark">·</span></p>
+          <p data-check><span>gerber drc</span><span class="mark">·</span></p>
+        </div>
+      </div>
+      <p class="receipt-caption mono">14 checks between you and a bad part.</p>
+    </section>
+
+    <section class="deal shifted-2" id="deal" data-dim>
+      <h2>Free to design.<br><span class="t-dim3">3% when you make.</span></h2>
+      <p class="mono deal-caption">open source · no license server · full kernel in the free tier</p>
+    </section>
+
+    <section class="agent-close shifted-2" data-dim>
+      <h2>Your agent already knows how to use it.</h2>
+      <div class="cta-row">
+        <div class="agent-cta agent-cta-2" id="agentCta2">
+          <button class="agent-main" id="agentMain2">
+            <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M7 1 L12.2 4 L12.2 10 L7 13 L1.8 10 L1.8 4 Z" fill="none" stroke="#F25C1F" stroke-width="1.4"/></svg>
+            Open in Claude
+          </button>
+        </div>
+      </div>
+      <p class="mono agent-note">claude code · cursor · chatgpt · or copy the setup above</p>
+    </section>
+
+  </main>
+
+  <footer class="titleblock" data-dim>
+    <a class="tb-cell tb-muni" href="https://muni.works" aria-label="Municipal Robotics">
+      <svg viewBox="-60 -60 880 400" role="img" aria-hidden="true">
+        <g stroke="#ff6600" stroke-width="40" stroke-linecap="round" stroke-linejoin="round" fill="none">
+          <path d="M 20 240 L 20 100 C 20 50, 80 50, 100 50 C 140 50, 160 70, 160 100"/>
+          <path d="M 160 240 L 160 100"/>
+          <path d="M 160 100 C 160 50, 220 50, 240 50 C 280 50, 300 70, 300 100 L 300 240 C 300 270, 330 280, 370 280 C 410 280, 440 270, 440 240 L 440 100"/>
+          <path d="M 440 100 C 440 50, 500 50, 520 50 C 560 50, 600 70, 600 100 L 600 240 C 600 270, 630 280, 670 280 C 710 280, 740 270, 740 240 L 740 100"/>
+        </g>
+        <circle cx="740" cy="30" r="28" fill="#ff6600"/>
+      </svg>
+      <span><span class="mono t-dim2">Built by</span><span class="mono">Municipal Robotics</span></span>
+    </a>
+    <div class="tb-cell"><span class="mono t-dim2">Title</span><span class="mono">vcad.io</span></div>
+    <div class="tb-cell"><span class="mono t-dim2">Drawn by</span><span class="mono">humans + agents</span></div>
+    <div class="tb-cell"><span class="mono t-dim2">Rev</span><span class="mono" id="tbRev">0.1.0</span></div>
+    <div class="tb-cell"><span class="mono t-dim2">Checked</span><span class="mono t-dim2" id="tbChecked">local build</span></div>
+  </footer>
+
+  <div id="copyToast" class="mono" hidden>copied</div>
+
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>

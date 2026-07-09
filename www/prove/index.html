@@ -1,0 +1,124 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>vcad — Nothing ships unproven.</title>
+  <meta name="description" content="Checked on every edit, receipted on every export. The part of CAD every other tool left out." />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2064%2064'%3E%3Cpath%20d='M6%2010%20L58%2010%20L32%2056%20Z'%20fill='%23F5F5F6'/%3E%3C/svg%3E" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap" />
+  <link rel="stylesheet" href="/src/style.css" />
+</head>
+<body>
+  <header class="nav" data-dim>
+    <a class="wordmark" href="/" aria-label="vcad home">
+      <svg class="tri" viewBox="0 0 24 23" aria-hidden="true"><path d="M0 0 L24 0 L12 23 Z"/></svg><span>cad</span>
+    </a>
+    <nav class="nav-links">
+      <a href="/design/">Design</a><a href="/prove/" class="active">Prove</a><a href="/make/">Make</a><a href="/agents/">Agents</a><a href="/pricing/">Pricing</a>
+      <a class="nav-app snap" href="https://app.vcad.io">Web app</a>
+    </nav>
+  </header>
+  <main>
+    <section class="page-hero" data-dim>
+      <p class="sec-tag mono">prove</p>
+      <h1>Nothing ships unproven.</h1>
+      <p class="sub">Checked on every edit. Receipted on every export. This is the part of CAD every other tool left out.</p>
+    </section>
+
+    <section class="psec psec-tight" data-dim>
+      <h2>Every CAD tool stops at the file.</h2>
+      <p class="sec-sub">You find out at the machine. That part is scrap now, and the shop bills you for the discovery. vcad moves the discovery to the edit — where it costs nothing.</p>
+    </section>
+
+    <section class="psec" data-dim id="breakSection">
+      <p class="sec-tag mono">try it</p>
+      <h2>Break the part.</h2>
+      <p class="sec-sub">A real part in the real kernel, running in this page. One wall, one slider, the rules watching.</p>
+      <div class="break-grid">
+        <canvas id="proveCanvas" aria-label="Live kernel part, wall thickness varies with the slider"></canvas>
+        <div class="break-panel">
+          <label class="mono">wall thickness <span id="wallVal">3.5 mm</span></label>
+          <input type="range" id="wallSlider" min="0.4" max="6" step="0.1" value="3.5" />
+          <div class="check-list mono" id="proveChecks"></div>
+          <p class="mono" id="proveVerdict"></p>
+        </div>
+      </div>
+    </section>
+
+    <section class="psec" data-dim>
+      <p class="sec-tag mono">the artifact</p>
+      <h2>Anatomy of a receipt.</h2>
+      <p class="sec-sub">Every export carries one. It's a file format, not a feature — anything can read it, anything can re-verify it.</p>
+      <div class="receipt-json">
+        <p>{ <span class="k">"schema"</span>: <span class="g">"vcad.receipt/1"</span>,</p>
+        <p>&nbsp;&nbsp;<span class="k">"claims"</span>: [ … ],&nbsp;&nbsp;<span class="c">← what was promised</span></p>
+        <p>&nbsp;&nbsp;<span class="k">"checks"</span>: [ … ],&nbsp;&nbsp;<span class="c">← what actually ran</span></p>
+        <p>&nbsp;&nbsp;<span class="k">"provenance"</span>: { … },&nbsp;&nbsp;<span class="c">← where every number came from</span></p>
+        <p>&nbsp;&nbsp;<span class="k">"verdict"</span>: <span class="g">"pass"</span> }</p>
+      </div>
+    </section>
+
+    <section class="psec psec-tight" data-dim>
+      <p class="sec-tag mono">fail-closed</p>
+      <h2>The three laws.</h2>
+      <div class="laws">
+        <p>Zero claims <span>never passes.</span></p>
+        <p>Unverifiable <span>never passes.</span></p>
+        <p>Edited <span>goes stale — and stays stale until it's re-proven.</span></p>
+      </div>
+    </section>
+
+    <section class="psec" data-dim>
+      <p class="sec-tag mono">provenance</p>
+      <h2>Every number knows its parents.</h2>
+      <p class="sec-sub">Hover the numbers. A claim's trust is the minimum over everything it was computed from — down to the handbook value or the measurement that grounds it.</p>
+      <p style="font-size:15px;color:#C9CBCF;line-height:2.2;">This bracket weighs <span class="prov mono" data-p="volume × density · 6061-t6 handbook ρ 2.70">142.7 g ± 0.4</span>, holds <span class="prov mono" data-p="fea · yield σ 276 MPa · fitted tier">40 N at 2.1× margin</span>, and its bend springs back <span class="prov mono" data-p="k-factor table AL-soft/R1.0-t2.0 · handbook — the weakest link">1.8°</span>.</p>
+      <p class="mono" style="font-size:11px;color:#3A3D42;margin-top:16px;">■ axiomatic · <span class="green">●</span> measured · ◐ fitted · <span class="orange">○</span> handbook — the weakest link is where the next measurement goes</p>
+    </section>
+
+    <section class="psec psec-tight" data-dim>
+      <p class="sec-tag mono">the loop</p>
+      <h2>Predicted, then measured.</h2>
+      <p class="sec-sub">Parts come back from the machine and get measured. Measurements flow into the physics. Predictions tighten. Once a year we publish the score: the State of the Gap.</p>
+      <div class="receipt-json" style="max-width:420px;">
+        <p><span class="k">predicted</span>&nbsp;&nbsp;440.0 Hz ± 2.1</p>
+        <p><span class="g">measured</span>&nbsp;&nbsp;&nbsp;pending — the fork is at the cutter</p>
+        <p><span class="d">honesty note: this table shows real instruments only</span></p>
+      </div>
+    </section>
+  </main>
+
+  <section class="page-close" data-dim>
+    <h2>Prove yours.</h2>
+    <div class="cta-row">
+      <div class="agent-cta agent-primary snap"><button class="agent-main" id="agentMain2"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M7 1 L12.2 4 L12.2 10 L7 13 L1.8 10 L1.8 4 Z" fill="none" stroke="#F25C1F" stroke-width="1.4"></path></svg> Open in Claude</button></div>
+      <a class="btn-secondary snap" href="https://app.vcad.io">Open the web app</a>
+    </div>
+    <div class="doors"><a href="/design/">What designing feels like →</a> <a href="/kernel/">The kernel, in numbers →</a></div>
+  </section>
+  <footer class="titleblock" data-dim>
+    <a class="tb-cell tb-muni" href="https://muni.works" aria-label="Municipal Robotics">
+      <svg viewBox="-60 -60 880 400" role="img" aria-hidden="true">
+        <g stroke="#ff6600" stroke-width="40" stroke-linecap="round" stroke-linejoin="round" fill="none">
+          <path d="M 20 240 L 20 100 C 20 50, 80 50, 100 50 C 140 50, 160 70, 160 100"/>
+          <path d="M 160 240 L 160 100"/>
+          <path d="M 160 100 C 160 50, 220 50, 240 50 C 280 50, 300 70, 300 100 L 300 240 C 300 270, 330 280, 370 280 C 410 280, 440 270, 440 240 L 440 100"/>
+          <path d="M 440 100 C 440 50, 500 50, 520 50 C 560 50, 600 70, 600 100 L 600 240 C 600 270, 630 280, 670 280 C 710 280, 740 270, 740 240 L 740 100"/>
+        </g>
+        <circle cx="740" cy="30" r="28" fill="#ff6600"/>
+      </svg>
+      <span><span class="mono t-dim2">Built by</span><span class="mono">Municipal Robotics</span></span>
+    </a>
+    <div class="tb-cell"><span class="mono t-dim2">Title</span><span class="mono">vcad.io/prove</span></div>
+    <div class="tb-cell"><span class="mono t-dim2">Drawn by</span><span class="mono">humans + agents</span></div>
+    <div class="tb-cell"><span class="mono t-dim2">Rev</span><span class="mono">0.1.0</span></div>
+    <div class="tb-cell"><span class="mono t-dim2">Checked</span><span class="mono t-dim2">local build</span></div>
+  </footer>
+  <div id="copyToast" class="mono" hidden>copied</div>
+  <script type="module" src="/src/main.js"></script>
+  <script type="module" src="/src/prove-demo.js"></script>
+</body>
+</html>
