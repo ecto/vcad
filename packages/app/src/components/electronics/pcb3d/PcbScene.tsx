@@ -14,10 +14,7 @@ import type { Vec2 } from "@vcad/ir";
 import { useElectronicsStore } from "@/stores/electronics-store";
 import { worldToPcb, layerZ } from "./pcb-geometry";
 
-import { PcbBoardMesh } from "./PcbBoardMesh";
-import { PcbTraceMesh } from "./PcbTraceMesh";
-import { PcbPadMesh } from "./PcbPadMesh";
-import { PcbViaMesh } from "./PcbViaMesh";
+import { PcbKernelBoard } from "./PcbKernelBoard";
 import { PcbFootprint3D } from "./PcbFootprint3D";
 import { PcbComponentBodies3D } from "./PcbComponentBodies3D";
 import { PcbRatsnest3D } from "./PcbRatsnest3D";
@@ -291,35 +288,20 @@ export function PcbScene({ showBoard = true }: { showBoard?: boolean } = {}) {
         onPointerUp={onPlanePointerUp}
       />
 
-      {/* Board outline — suppressed (showBoard=false) when the board's kernel
-          body already renders as a part in the main scene during modeless
-          edit focus, to avoid a duplicate / z-fighting FR4 slab. */}
-      {showBoard && <PcbBoardMesh pcb={pcb} explosion={stackupExplosion} />}
-
-      {/* Traces */}
-      <PcbTraceMesh
+      {/* Board + copper — unified kernel meshes (same source as the MCP
+          viewer): laminate, translucent soldermask shells, raw copper under
+          the mask, exposed ENIG pads/vias. Selection/hover highlights are
+          index-subset overlays on the kernel entity ranges. showBoard=false
+          suppresses the board-body roles when the board's kernel part
+          already renders in the main scene (avoids a duplicate slab). */}
+      <PcbKernelBoard
         pcb={pcb}
         layers={pcbLayers}
         activeNet={activeNet}
         hoveredNet={hoveredNet}
+        selection={selection}
         explosion={stackupExplosion}
-      />
-
-      {/* Pads */}
-      <PcbPadMesh
-        pcb={pcb}
-        layers={pcbLayers}
-        activeNet={activeNet}
-        hoveredNet={hoveredNet}
-        explosion={stackupExplosion}
-      />
-
-      {/* Vias */}
-      <PcbViaMesh
-        pcb={pcb}
-        activeNet={activeNet}
-        hoveredNet={hoveredNet}
-        explosion={stackupExplosion}
+        showBoard={showBoard}
       />
 
       {/* Footprint graphics (silkscreen, courtyard, ref text) */}

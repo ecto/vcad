@@ -354,6 +354,14 @@ export function ViewportContent({
       ? getPcbBoardTransform(useDocumentStore.getState().document, part)
       : null;
   }, [pcbEditFocus, activeBoardNodeId, parts]);
+  // The focused board's part id: its SceneMesh is skipped during edit focus
+  // because PcbScene's unified kernel renderer (laminate + translucent mask +
+  // copper) draws the full board — the merged gray/FR4 solid would z-fight
+  // and hide the mask ghosting.
+  const focusedBoardPartId = useMemo(() => {
+    if (!pcbEditFocus || activeBoardNodeId == null) return null;
+    return findPcbBoardPart(parts, activeBoardNodeId)?.id ?? null;
+  }, [pcbEditFocus, activeBoardNodeId, parts]);
   const xrPresenting = useXRPresenting();
   const orbitRef = useRef<OrbitControlsImpl>(null);
   const { camera, invalidate } = useThree();
@@ -1777,9 +1785,10 @@ export function ViewportContent({
       {/* ═══════════════════════════════════════════════════════════════════
           PCB EDIT FOCUS: render the focused board's copper/footprints/ratsnest
           in the main scene, alongside (not instead of) the mechanical assembly.
-          The FR4 slab is suppressed here (showBoard={false}) because the
-          PcbBoard kernel op now evaluates to a real extruded slab that renders
-          as an ordinary part via SceneMesh — drawing it again would z-fight.
+          PcbScene's unified kernel renderer draws the FULL board here —
+          laminate, translucent soldermask, copper — and the focused board's
+          merged-solid SceneMesh is skipped above (focusedBoardPartId), so
+          nothing z-fights.
           ═══════════════════════════════════════════════════════════════════ */}
       {pcbEditFocus && (
         <group rotation={[-Math.PI / 2, 0, 0]}>
@@ -1800,7 +1809,7 @@ export function ViewportContent({
               boardTransform?.scale.z ?? 1,
             ]}
           >
-            <PcbScene showBoard={false} />
+            <PcbScene showBoard />
           </group>
         </group>
       )}
@@ -1877,6 +1886,9 @@ export function ViewportContent({
                 scene?.parts.map((evalPart, idx) => {
                   const partInfo = parts[idx];
                   if (!partInfo) return null;
+                  // The focused board renders via PcbScene's unified kernel
+                  // meshes instead of its merged solid.
+                  if (partInfo.id === focusedBoardPartId) return null;
                   return (
                     <SceneMesh
                       key={partInfo.id}

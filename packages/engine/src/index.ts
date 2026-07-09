@@ -211,6 +211,7 @@ export type {
   RatsnestLine,
   ComponentMesh,
   PcbPreviewMesh,
+  PcbPreviewEntity,
   CircuitObservation,
   CircuitSimHandle,
   FootprintTemplate,

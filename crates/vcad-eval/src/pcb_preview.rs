@@ -33,6 +33,30 @@ use crate::evaluate::{
     RawMesh,
 };
 
+/// A triangle range inside a [`PcbPreviewMesh`] that belongs to one PCB
+/// entity (trace, arc, zone, pad, via). Consumers map a raycast `faceIndex`
+/// (or a net name) back to board data without re-deriving any geometry —
+/// this is what lets the app editor pick and highlight against kernel
+/// meshes instead of maintaining a parallel procedural renderer.
+#[derive(Debug, Clone, Serialize)]
+pub struct PreviewEntity {
+    /// Entity kind: `"trace"`, `"trace_arc"`, `"zone"`, `"pad"`, or `"via"`.
+    pub kind: String,
+    /// Index into the corresponding `Pcb` collection (for pads, the pad
+    /// index within its footprint).
+    pub index: u32,
+    /// Footprint index (pads only).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub footprint: Option<u32>,
+    /// Net the entity belongs to, when it has one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub net: Option<String>,
+    /// First index (into `indices`) of the entity's triangle range.
+    pub start: u32,
+    /// Number of indices in the range (a multiple of 3).
+    pub count: u32,
+}
+
 /// A single colored sub-mesh of a PCB preview.
 ///
 /// Positions/indices/normals follow the usual flat-buffer layout; the GLB
@@ -65,6 +89,15 @@ pub struct PcbPreviewMesh {
     /// Base-color alpha, 0..1. `1.0` = opaque; below 1 the GLB material is
     /// alpha-blended (the translucent soldermask shell).
     pub alpha: f32,
+    /// Board layer this mesh belongs to (`"FCu"`, `"BCu"`, `"In1Cu"`, …,
+    /// `"FSilkS"`), when it is layer-specific. Layer-spanning meshes (board
+    /// body, vias, components) omit it. Lets consumers toggle layer
+    /// visibility and apply stackup-explosion offsets per mesh.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub layer: Option<String>,
+    /// Per-entity triangle ranges for picking/highlighting (copper meshes;
+    /// empty elsewhere).
+    pub entities: Vec<PreviewEntity>,
 }
 
 // The finished-board read comes from layering, not paint: raw copper sits on
@@ -138,18 +171,59 @@ pub fn pcb_preview_meshes(pcb: &Pcb) -> Vec<PcbPreviewMesh> {
     // Traces, arc traces, and pours are raw metallic copper on the laminate.
     // They read through the translucent shell as the classic light-green
     // routing; the darker laminate between them completes the two-green look.
-    let mut masked = MeshBuf::default();
-    for trace in &pcb.traces {
-        masked.append_raw(&trace_to_mesh(trace, pcb), copper_lift(pcb, trace.layer));
+    // Batched per copper layer (stable stackup order) so consumers can toggle
+    // layer visibility / explode the stackup; each entity records its
+    // triangle range for picking.
+    let mut masked_by_layer: Vec<(PcbLayer, MeshBuf)> = Vec::new();
+    let layer_buf = |layers: &mut Vec<(PcbLayer, MeshBuf)>, layer: PcbLayer| -> usize {
+        match layers.iter().position(|(l, _)| *l == layer) {
+            Some(i) => i,
+            None => {
+                layers.push((layer, MeshBuf::default()));
+                layers.len() - 1
+            }
+        }
+    };
+    for (i, trace) in pcb.traces.iter().enumerate() {
+        let bi = layer_buf(&mut masked_by_layer, trace.layer);
+        masked_by_layer[bi].1.append_entity(
+            &trace_to_mesh(trace, pcb),
+            copper_lift(pcb, trace.layer),
+            "trace",
+            i as u32,
+            None,
+            Some(&trace.net),
+        );
     }
-    for arc in &pcb.trace_arcs {
-        masked.append_raw(&trace_arc_to_mesh(arc, pcb), copper_lift(pcb, arc.layer));
+    for (i, arc) in pcb.trace_arcs.iter().enumerate() {
+        let bi = layer_buf(&mut masked_by_layer, arc.layer);
+        masked_by_layer[bi].1.append_entity(
+            &trace_arc_to_mesh(arc, pcb),
+            copper_lift(pcb, arc.layer),
+            "trace_arc",
+            i as u32,
+            None,
+            Some(&arc.net),
+        );
     }
-    for zone in &pcb.zones {
-        masked.append_raw(&zone_to_mesh(zone, pcb), copper_lift(pcb, zone.layer));
+    for (i, zone) in pcb.zones.iter().enumerate() {
+        let bi = layer_buf(&mut masked_by_layer, zone.layer);
+        masked_by_layer[bi].1.append_entity(
+            &zone_to_mesh(zone, pcb),
+            copper_lift(pcb, zone.layer),
+            "zone",
+            i as u32,
+            None,
+            Some(&zone.net),
+        );
     }
-    if !masked.is_empty() {
-        out.push(masked.finish("copper_masked", COPPER_BARE, 0.45, 0.4));
+    for (layer, buf) in masked_by_layer {
+        if buf.is_empty() {
+            continue;
+        }
+        let mut m = buf.finish("copper_masked", COPPER_BARE, 0.45, 0.4);
+        m.layer = Some(layer_name(layer));
+        out.push(m);
     }
 
     // ---- Translucent soldermask shells (one per face) ----
@@ -182,6 +256,9 @@ pub fn pcb_preview_meshes(pcb: &Pcb) -> Vec<PcbPreviewMesh> {
         m.alpha = MASK_ALPHA;
         m.clearcoat = MASK_CLEARCOAT;
         m.clearcoat_roughness = MASK_CLEARCOAT_ROUGH;
+        // Tag each shell with the copper face it covers, so layer toggles
+        // and stackup explosion carry the mask along with its copper.
+        m.layer = Some(layer_name(if up { PcbLayer::FCu } else { PcbLayer::BCu }));
         out.push(m);
     }
 
@@ -189,28 +266,50 @@ pub fn pcb_preview_meshes(pcb: &Pcb) -> Vec<PcbPreviewMesh> {
     // mirror). Pads and via rings are lifted just past the mask shell so they
     // read as the only exposed metal — the openings a real mask would have.
     let exposed_over = MASK_OVER + 0.015;
-    let mut exposed = MeshBuf::default();
-    for fp in &pcb.footprints {
-        for pad in &fp.pads {
+    let mut pads_by_layer: Vec<(PcbLayer, MeshBuf)> = Vec::new();
+    for (fi, fp) in pcb.footprints.iter().enumerate() {
+        for (pi, pad) in fp.pads.iter().enumerate() {
             let layer = pad_layer(pad, fp);
             let lift = copper_lift(pcb, layer)
                 + match layer {
                     PcbLayer::BCu => -exposed_over,
                     _ => exposed_over,
                 };
-            exposed.append_raw(&pad_to_mesh(pad, fp, pcb), lift);
+            let bi = layer_buf(&mut pads_by_layer, layer);
+            pads_by_layer[bi].1.append_entity(
+                &pad_to_mesh(pad, fp, pcb),
+                lift,
+                "pad",
+                pi as u32,
+                Some(fi as u32),
+                pad.net.as_deref(),
+            );
         }
     }
-    for via in &pcb.vias {
+    for (layer, buf) in pads_by_layer {
+        if buf.is_empty() {
+            continue;
+        }
+        let mut m = buf.finish("copper", COPPER_ENIG, 0.7, 0.45);
+        m.layer = Some(layer_name(layer));
+        out.push(m);
+    }
+    // Vias span the whole stackup, so they stay in a layer-less mesh.
+    let mut vias_buf = MeshBuf::default();
+    for (i, via) in pcb.vias.iter().enumerate() {
         // Overshoot the barrel past both shells so the annular rings punch
         // through the mask instead of ghosting under it.
-        exposed.append_raw(
+        vias_buf.append_entity(
             &via_to_mesh(via, pcb, 24, ct_top.max(ct_bot) + exposed_over),
             0.0,
+            "via",
+            i as u32,
+            None,
+            Some(&via.net),
         );
     }
-    if !exposed.is_empty() {
-        out.push(exposed.finish("copper", COPPER_ENIG, 0.7, 0.45));
+    if !vias_buf.is_empty() {
+        out.push(vias_buf.finish("copper", COPPER_ENIG, 0.7, 0.45));
     }
 
     // ---- Component bodies (real packages, grouped by full material) ----
@@ -257,12 +356,22 @@ pub fn pcb_preview_meshes(pcb: &Pcb) -> Vec<PcbPreviewMesh> {
     }
 
     // ---- Silkscreen (white): footprint outlines + reference designators ----
-    let mut silk = MeshBuf::default();
-    for fp in &pcb.footprints {
-        add_footprint_silk(&mut silk, fp, t);
-    }
-    if !silk.is_empty() {
-        out.push(silk.finish("silkscreen", SILK_WHITE, 0.0, 0.9));
+    // Split per side so front/back silk follow their layer's visibility.
+    for front in [true, false] {
+        let mut silk = MeshBuf::default();
+        for fp in pcb.footprints.iter().filter(|fp| fp.front == front) {
+            add_footprint_silk(&mut silk, fp, t);
+        }
+        if silk.is_empty() {
+            continue;
+        }
+        let mut m = silk.finish("silkscreen", SILK_WHITE, 0.0, 0.9);
+        m.layer = Some(layer_name(if front {
+            PcbLayer::FSilkS
+        } else {
+            PcbLayer::BSilkS
+        }));
+        out.push(m);
     }
 
     // Center every mesh on z=0 to match the merged PcbBoard solid.
@@ -529,6 +638,15 @@ fn add_arc(
     add_polyline(buf, &pts, hw, z);
 }
 
+/// Serialized name of a layer, matching `PcbLayer`'s serde variant names
+/// (`"FCu"`, `"BCu"`, `"In1Cu"`, `"FSilkS"`, …).
+fn layer_name(layer: PcbLayer) -> String {
+    serde_json::to_value(layer)
+        .ok()
+        .and_then(|v| v.as_str().map(str::to_string))
+        .unwrap_or_else(|| format!("{layer:?}"))
+}
+
 /// Accumulates triangles into flat position/index/normal buffers.
 #[derive(Default)]
 struct MeshBuf {
@@ -538,6 +656,8 @@ struct MeshBuf {
     normals: Vec<f32>,
     /// Emissive color stashed for grouped component materials (LEDs).
     emissive: [f32; 3],
+    /// Per-entity triangle ranges recorded by `append_entity`.
+    entities: Vec<PreviewEntity>,
 }
 
 impl MeshBuf {
@@ -560,6 +680,33 @@ impl MeshBuf {
         }
         // Hand-built copper has no normals — force a recompute on finish.
         self.normals.clear();
+    }
+
+    /// Append a `RawMesh` and record its triangle range as a pickable entity.
+    #[allow(clippy::too_many_arguments)]
+    fn append_entity(
+        &mut self,
+        raw: &RawMesh,
+        dz: f64,
+        kind: &str,
+        index: u32,
+        footprint: Option<u32>,
+        net: Option<&str>,
+    ) {
+        let start = self.indices.len() as u32;
+        self.append_raw(raw, dz);
+        let count = self.indices.len() as u32 - start;
+        if count == 0 {
+            return;
+        }
+        self.entities.push(PreviewEntity {
+            kind: kind.to_string(),
+            index,
+            footprint,
+            net: net.map(str::to_string),
+            start,
+            count,
+        });
     }
 
     /// Append an indexed mesh that carries its own per-vertex normals.
@@ -596,6 +743,8 @@ impl MeshBuf {
             clearcoat: 0.0,
             clearcoat_roughness: 0.0,
             alpha: 1.0,
+            layer: None,
+            entities: self.entities,
         }
     }
 }
@@ -909,6 +1058,55 @@ mod tests {
             cu_max_z >= shell_max_z,
             "exposed copper {cu_max_z} should clear the mask shell {shell_max_z}"
         );
+    }
+
+    #[test]
+    fn copper_meshes_carry_layers_and_entity_ranges() {
+        let trace = Trace {
+            net: "GND".into(),
+            start: Vec2::new(5.0, 5.0),
+            end: Vec2::new(20.0, 5.0),
+            width: 0.25,
+            layer: PcbLayer::FCu,
+            source: None,
+        };
+        let pcb = board_with(vec![chip("R1", 10.0, 10.0)], vec![trace]);
+        let meshes = pcb_preview_meshes(&pcb);
+
+        // Trace copper: layer-tagged, one entity spanning its whole range.
+        let masked = meshes.iter().find(|m| m.role == "copper_masked").unwrap();
+        assert_eq!(masked.layer.as_deref(), Some("FCu"));
+        assert_eq!(masked.entities.len(), 1);
+        let e = &masked.entities[0];
+        assert_eq!((e.kind.as_str(), e.index, e.net.as_deref()), ("trace", 0, Some("GND")));
+        assert_eq!(e.start, 0);
+        assert_eq!(e.count as usize, masked.indices.len());
+
+        // Pad copper: layer-tagged with footprint-scoped pad entities.
+        let pads = meshes
+            .iter()
+            .find(|m| m.role == "copper" && m.layer.is_some())
+            .unwrap();
+        assert_eq!(pads.layer.as_deref(), Some("FCu"));
+        assert_eq!(pads.entities.len(), 1);
+        assert_eq!(pads.entities[0].kind, "pad");
+        assert_eq!(pads.entities[0].footprint, Some(0));
+
+        // Entity ranges must tile within the index buffer.
+        for m in &meshes {
+            for e in &m.entities {
+                assert_eq!(e.count % 3, 0, "role {}", m.role);
+                assert!(
+                    (e.start + e.count) as usize <= m.indices.len(),
+                    "role {}",
+                    m.role
+                );
+            }
+        }
+
+        // Silkscreen is per-side layer-tagged.
+        let silk = meshes.iter().find(|m| m.role == "silkscreen").unwrap();
+        assert_eq!(silk.layer.as_deref(), Some("FSilkS"));
     }
 
     #[test]
