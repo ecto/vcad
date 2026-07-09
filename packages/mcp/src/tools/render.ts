@@ -20,6 +20,11 @@ import { getSession, resolveDocInput } from "./session.js";
 import { validatePcb, pcbValidationError } from "./pcb-validate.js";
 import { behavior, type ToolDef } from "./tool-def.js";
 import type { ToolResult } from "./tool-result.js";
+import {
+  makePngRenderAsset,
+  renderAssetSummary,
+  withRenderAssets,
+} from "./render-assets.js";
 
 export const renderViewSchema = {
   type: "object" as const,
@@ -55,6 +60,7 @@ type ContentBlock =
 interface RenderViewResult {
   content: ContentBlock[];
   isError?: boolean;
+  structuredContent?: Record<string, unknown>;
 }
 
 /** px-per-mm passed to the kernel renderer; the raster step handles
@@ -239,7 +245,13 @@ export async function renderView(
 
   const raster = await rasterize(svg, widthPx);
   if (raster.png) {
-    return {
+    const asset = makePngRenderAsset(raster.png, {
+      tool: "render_view",
+      filename: `${documentId || "inline"}-${viewLabel}-${widthPx}.png`,
+      width: widthPx,
+      alt: `vcad ${viewLabel} render`,
+    });
+    return withRenderAssets({
       content: [
         {
           type: "image",
@@ -253,10 +265,12 @@ export async function renderView(
             view: viewLabel,
             width_px: widthPx,
             format: "png",
+            asset: renderAssetSummary(asset),
+            suggested_final_markdown: asset.markdown,
           }),
         },
       ],
-    };
+    }, [asset]);
   }
 
   // Rasterizer unavailable or failed — degrade to raw SVG text (size
@@ -454,7 +468,13 @@ export async function renderPcb(
 
   const raster = await rasterize(svg, widthPx, theme === "light" ? "white" : "#0E1014");
   if (raster.png) {
-    return {
+    const asset = makePngRenderAsset(raster.png, {
+      tool: "render_pcb",
+      filename: `${documentId || "board"}-${layers.join("-")}-${widthPx}.png`,
+      width: widthPx,
+      alt: `PCB render of ${layers.join(", ")}`,
+    });
+    return withRenderAssets({
       content: [
         { type: "image", data: raster.png.toString("base64"), mimeType: "image/png" },
         {
@@ -465,10 +485,12 @@ export async function renderPcb(
             width_px: widthPx,
             theme,
             format: "png",
+            asset: renderAssetSummary(asset),
+            suggested_final_markdown: asset.markdown,
           }),
         },
       ],
-    };
+    }, [asset]);
   }
 
   const note =
@@ -677,12 +699,26 @@ export async function renderRatsnest(
 
   const raster = await rasterize(svg, widthPx);
   if (raster.png) {
-    return {
+    const asset = makePngRenderAsset(raster.png, {
+      tool: "render_ratsnest",
+      filename: `${documentId || "board"}-ratsnest-${widthPx}.png`,
+      width: widthPx,
+      alt: `PCB ratsnest render with ${lines.length} airwires`,
+    });
+    return withRenderAssets({
       content: [
         { type: "image", data: raster.png.toString("base64"), mimeType: "image/png" },
-        { type: "text", text: JSON.stringify({ ...meta, format: "png" }) },
+        {
+          type: "text",
+          text: JSON.stringify({
+            ...meta,
+            format: "png",
+            asset: renderAssetSummary(asset),
+            suggested_final_markdown: asset.markdown,
+          }),
+        },
       ],
-    };
+    }, [asset]);
   }
   const note =
     raster.reason === "module-missing"
@@ -798,6 +834,7 @@ export async function renderStackup(
   const pcbJson = JSON.stringify(pcb);
   const content: ContentBlock[] = [];
   const index: Array<{ layer: string; image_index: number }> = [];
+  const assets: ReturnType<typeof makePngRenderAsset>[] = [];
   let resvgMissing = false;
   for (const layer of copper) {
     let svg: string;
@@ -817,6 +854,15 @@ export async function renderStackup(
         data: raster.png.toString("base64"),
         mimeType: "image/png",
       });
+      assets.push(
+        makePngRenderAsset(raster.png, {
+          tool: "render_stackup",
+          filename: `${documentId || "board"}-${layer}-${widthPx}.png`,
+          width: widthPx,
+          alt: `PCB ${layer} layer render`,
+          role: "layer_render",
+        }),
+      );
     } else if (raster.reason === "module-missing") {
       resvgMissing = true;
       break;
@@ -849,9 +895,11 @@ export async function renderStackup(
       width_px: widthPx,
       format: "png",
       layers: index,
+      assets: assets.map(renderAssetSummary),
+      suggested_final_markdown: assets.map((a) => a.markdown),
     }),
   });
-  return { content };
+  return withRenderAssets({ content }, assets);
 }
 
 export const toolDefs: ToolDef[] = [

@@ -47,7 +47,19 @@ describe("render_molecule", () => {
         type: "text";
         text: string;
       };
-      expect(JSON.parse(meta.text).format).toBe("png");
+      const parsedMeta = JSON.parse(meta.text);
+      expect(parsedMeta.format).toBe("png");
+      expect(parsedMeta.asset.url).toMatch(/\/artifacts\/art_[^/]+\/.+\.png$/);
+      expect(parsedMeta.suggested_final_markdown).toBe(parsedMeta.asset.markdown);
+      const asset = out.structuredContent?.assets as
+        | Array<{ url?: string; mimeType?: string; markdown?: string; height?: number }>
+        | undefined;
+      expect(asset?.[0]?.url).toMatch(/\/artifacts\/art_[^/]+\/.+\.png$/);
+      expect(asset?.[0]?.mimeType).toBe("image/png");
+      expect(asset?.[0]?.height).toBe(320);
+      expect(out.structuredContent?.suggestedFinalMarkdown).toEqual([
+        asset![0]!.markdown,
+      ]);
     } else {
       // Fallback path: raw SVG text with an honest note about why.
       const meta = out.content[0] as { type: "text"; text: string };
