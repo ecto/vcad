@@ -275,7 +275,10 @@ export async function recordSimulation(
   // Align observation slots to doc joints by id (kernels exposing jointIds),
   // falling back to positional order for older WASM builds. Resolved once,
   // up front, so an env/document mismatch fails before we burn steps.
-  const obsJoints = resolveObservationJoints(docClone.joints!, env.jointIds);
+  // docClone.joints mirrors doc.joints, which the guard above proved
+  // non-empty; `?? []` drops the non-null assertion so a future refactor
+  // that moves the guard can't turn this into a hard TypeError.
+  const obsJoints = resolveObservationJoints(docClone.joints ?? [], env.jointIds);
   if ("error" in obsJoints) {
     return errorResult(`record_simulation refused: ${obsJoints.error}`);
   }

@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-08-order-dock-kerf-quotes",
+  "version": "0.9.4",
+  "date": "2026-07-08",
+  "category": "feat",
+  "title": "Order dock + live SendCutSend quotes via kerf",
+  "summary": "The viewer grows an order dock rendering the fused vcad+kerf order lifecycle with approval deep-links, and sheet-metal quotes can carry the fab's own displayed price (pricing_basis \"quoted\").",
+  "features": ["mcp", "fabricate", "viewer", "kerf", "sheet-metal"],
+  "mcpTools": ["quote_manufacturing", "get_order_feed"]
+}

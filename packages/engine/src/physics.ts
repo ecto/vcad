@@ -106,10 +106,16 @@ export class PhysicsEnv {
     // stale WASM degrades to jointIds === null instead of throwing. The
     // structural cast (not WasmPhysicsSim) keeps typecheck green against a
     // checked-in .d.ts that predates the binding.
-    const maybeJointIds = (sim as unknown as { jointIds?: () => string[] })
+    const maybeJointIds = (sim as unknown as { jointIds?: () => unknown })
       .jointIds;
-    this._jointIds =
+    const rawJointIds =
       typeof maybeJointIds === "function" ? maybeJointIds.call(sim) : null;
+    // Runtime-check the shape: if a future binding returns something other
+    // than a string[] (e.g. a bare JsValue), degrade to null rather than
+    // stashing a non-array that would misindex observations downstream.
+    this._jointIds = Array.isArray(rawJointIds)
+      ? (rawJointIds as string[])
+      : null;
   }
 
   /**

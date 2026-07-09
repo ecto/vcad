@@ -109,6 +109,67 @@ describe("Fabricate ordering — enabled (test-mode)", () => {
     expect(
       (placed!.payload as { fab_artifact?: { artifact_id?: string } }).fab_artifact?.artifact_id,
     ).toBe(handle.artifact_id);
+
+    // No bundle was bound at quote time, so this was a LATE binding — the
+    // order timeline records it (provenance gap made visible).
+    const orderRow = await store.getOrder("ord_1", user.sub);
+    expect(
+      orderRow?.events.some((e) => e.note?.includes("late-bound at place time")),
+    ).toBe(true);
+  });
+
+  it("refuses to SWAP the fab bundle after approval — quoted artifact is pinned", async () => {
+    const user: AuthUser = { sub: "u-swap", email: "x@y.z" };
+    const store = new InMemoryFabricateStore();
+    const es = new RecordingEventStore();
+    const quoted = storeArtifact([{ name: "bracket-v1.dxf", content: "v1 flat pattern" }]);
+    const swapped = storeArtifact([{ name: "bracket-v2.dxf", content: "v2 BIGGER part" }]);
+    await store.saveOrder(
+      makeOrder({
+        fab_artifact: {
+          artifact_id: quoted.artifact_id,
+          artifact_url: quoted.artifact_url,
+          bytes: quoted.bytes,
+          manifest: quoted.manifest,
+        },
+      }),
+      4000,
+      user.sub,
+    );
+
+    const a = json(await authorizeSpend({ order_id: "ord_1" }, store, es, user));
+    store.approveAuthorizationForTest(a.authorization_id, user.sub);
+    store.creditWalletForTest(user.sub, 10000);
+
+    const res = await placeOrder(
+      {
+        order_id: "ord_1",
+        authorization_id: a.authorization_id,
+        fab_artifact_id: swapped.artifact_id,
+      },
+      store,
+      es,
+      user,
+    );
+    expect(res.isError).toBe(true);
+    expect(text(res)).toContain("re-quote to change files");
+    // Refused BEFORE any money movement: order still QUOTED, no spine event.
+    expect((await store.getOrder("ord_1", user.sub))?.state).toBe("QUOTED");
+    expect(es.events.some((e) => e.type === "order_placed")).toBe(false);
+
+    // Re-passing the SAME artifact the quote bound is fine (not a swap).
+    const same = await placeOrder(
+      {
+        order_id: "ord_1",
+        authorization_id: a.authorization_id,
+        fab_artifact_id: quoted.artifact_id,
+      },
+      store,
+      es,
+      user,
+    );
+    expect(same.isError).toBeFalsy();
+    expect(json(same).fab_artifact.artifact_id).toBe(quoted.artifact_id);
   });
 
   it("rejects a place_order with an unknown fab artifact handle before any debit", async () => {

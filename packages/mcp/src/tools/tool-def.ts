@@ -52,6 +52,25 @@ export interface ToolContext {
   eventStore: SessionEventStore;
   fabricateStore: FabricateStore;
   shareStore: ShareStore;
+  /**
+   * Server-injected elicitation bridge (MCP URL-mode elicitation, SDK ≥1.29).
+   * Injected by `createServer` when the transport can carry an in-band
+   * elicitation round-trip; absent on stdio/legacy clients. `urlSupported()`
+   * re-checks the client's `elicitation.url` capability at CALL time
+   * (capabilities land only after initialize); `requestUrl` sends a
+   * `mode:"url"` elicitation and resolves with the human's action. Tools must
+   * treat this as an accelerator, never a dependency: every flow it fronts
+   * (e.g. spend approval) keeps its out-of-band fallback, and a thrown
+   * elicitation must never lose work already persisted.
+   */
+  elicit?: {
+    urlSupported(): boolean;
+    requestUrl(p: {
+      message: string;
+      url: string;
+      elicitationId: string;
+    }): Promise<{ action: "accept" | "decline" | "cancel" }>;
+  };
 }
 
 /** A tool's implementation. `args` is the raw MCP argument object. */
