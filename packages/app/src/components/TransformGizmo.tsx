@@ -38,8 +38,9 @@ function kernelEulerToDisplayQuat(
   angles: { x: number; y: number; z: number },
   out: THREE.Quaternion,
 ): THREE.Quaternion {
+  // Kernel euler convention is extrinsic X→Y→Z (matrix Rz·Ry·Rx) = three.js "ZYX".
   const kernelQuat = _tempQuat.setFromEuler(
-    _tempEuler.set(angles.x * DEG2RAD, angles.y * DEG2RAD, angles.z * DEG2RAD),
+    _tempEuler.set(angles.x * DEG2RAD, angles.y * DEG2RAD, angles.z * DEG2RAD, "ZYX"),
   );
   return out.copy(COORD_QUAT).multiply(kernelQuat);
 }
@@ -47,7 +48,7 @@ function kernelEulerToDisplayQuat(
 /** Display quaternion → kernel Euler angles (strips coord rotation) */
 function displayQuatToKernelEuler(q: THREE.Quaternion): { x: number; y: number; z: number } {
   _tempQuat.copy(COORD_QUAT_INV).multiply(q);
-  _tempEuler.setFromQuaternion(_tempQuat, "XYZ");
+  _tempEuler.setFromQuaternion(_tempQuat, "ZYX");
   return {
     x: _tempEuler.x * RAD2DEG,
     y: _tempEuler.y * RAD2DEG,

@@ -129,7 +129,8 @@ export function useElectronicsSync() {
               (xf.rotationDeg.x * Math.PI) / 180,
               (xf.rotationDeg.y * Math.PI) / 180,
               (xf.rotationDeg.z * Math.PI) / 180,
-              "XYZ",
+              // Kernel euler = extrinsic X→Y→Z (Rz·Ry·Rx) = three.js "ZYX"
+              "ZYX",
             ),
           ),
           new THREE.Vector3(xf.scale.x, xf.scale.y, xf.scale.z),

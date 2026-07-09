@@ -1793,6 +1793,8 @@ export function ViewportContent({
               ((boardTransform?.rotationDeg.x ?? 0) * Math.PI) / 180,
               ((boardTransform?.rotationDeg.y ?? 0) * Math.PI) / 180,
               ((boardTransform?.rotationDeg.z ?? 0) * Math.PI) / 180,
+              // Kernel euler = extrinsic X→Y→Z (Rz·Ry·Rx) = three.js "ZYX"
+              "ZYX",
             ]}
             scale={[
               boardTransform?.scale.x ?? 1,
