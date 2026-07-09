@@ -248,6 +248,10 @@ export async function createRobotEnv(input: unknown): Promise<GymResult> {
       env_id: envId,
       document_id: documentId,
       num_joints: env.numJoints,
+      // Observation/action ordering contract: joint_positions[i],
+      // joint_velocities[i], and action values[i] all refer to joint_ids[i].
+      // Null when the loaded kernel WASM predates jointIds().
+      joint_ids: env.jointIds,
       action_dim: env.actionDim,
       observation_dim: env.observationDim,
       end_effector_ids: args.end_effector_ids,

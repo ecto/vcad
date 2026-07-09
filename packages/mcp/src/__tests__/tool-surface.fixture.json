@@ -2891,7 +2891,7 @@
         },
         "document_id": {
           "type": "string",
-          "description": "Session document id from open_document. Must describe the same assembly the env was created from (same joint order)."
+          "description": "Session document id from open_document. Must describe the same assembly the env was created from (same joint ids)."
         },
         "steps": {
           "type": "number",

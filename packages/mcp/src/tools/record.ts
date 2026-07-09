@@ -18,6 +18,7 @@ import { getKernelWasm, resetKernelWasm } from "@vcad/engine";
 import type { Document } from "@vcad/ir";
 import { getSession } from "./session.js";
 import { getSimulation } from "./gym.js";
+import { resolveObservationJoints } from "./joint-order.js";
 import type { PhysicsActionType } from "@vcad/engine";
 import { behavior, type ToolDef } from "./tool-def.js";
 import type { ToolResult } from "./tool-result.js";
@@ -32,7 +33,7 @@ export const recordSimulationSchema = {
     document_id: {
       type: "string" as const,
       description:
-        "Session document id from open_document. Must describe the same assembly the env was created from (same joint order).",
+        "Session document id from open_document. Must describe the same assembly the env was created from (same joint ids).",
     },
     steps: {
       type: "number" as const,
@@ -271,6 +272,17 @@ export async function recordSimulation(
   // gym_observe afterward to see the final pose.
   const docClone: Document = JSON.parse(JSON.stringify(doc));
 
+  // Align observation slots to doc joints by id (kernels exposing jointIds),
+  // falling back to positional order for older WASM builds. Resolved once,
+  // up front, so an env/document mismatch fails before we burn steps.
+  // docClone.joints mirrors doc.joints, which the guard above proved
+  // non-empty; `?? []` drops the non-null assertion so a future refactor
+  // that moves the guard can't turn this into a hard TypeError.
+  const obsJoints = resolveObservationJoints(docClone.joints ?? [], env.jointIds);
+  if ("error" in obsJoints) {
+    return errorResult(`record_simulation refused: ${obsJoints.error}`);
+  }
+
   const jointTrajectory: number[][] = [];
   const delayMs = Math.max(1, Math.round(1000 / fps));
 
@@ -284,12 +296,9 @@ export async function recordSimulation(
     const result = env.step(actionType, perStepActions.values[s]!);
     const obs = result.observation;
 
-    // Joint-order contract: obs.joint_positions[j] → docClone.joints[j] —
-    // positional, the same assumption get_sim_replay makes (see the caveat
-    // there: the kernel emits joint_positions in RobotEnv's joint_ids order).
-    for (let j = 0; j < docClone.joints!.length; j++) {
+    for (let j = 0; j < obsJoints.joints.length; j++) {
       const pos = obs.joint_positions[j];
-      if (typeof pos === "number") docClone.joints![j]!.state = pos;
+      if (typeof pos === "number") obsJoints.joints[j]!.state = pos;
     }
     jointTrajectory.push([...obs.joint_positions]);
 

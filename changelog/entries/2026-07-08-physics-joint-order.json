@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-08-physics-joint-order",
+  "version": "0.9.4",
+  "date": "2026-07-08",
+  "category": "fix",
+  "title": "Deterministic joint ordering in physics observations",
+  "summary": "Observation vectors now index joints in document order, create_robot_env reports joint_ids, and record_simulation maps poses by joint id — multi-joint replays can no longer permute.",
+  "features": ["physics", "simulation", "assembly"],
+  "mcpTools": ["create_robot_env", "record_simulation", "gym_observe"]
+}
