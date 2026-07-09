@@ -465,7 +465,7 @@ pub fn resolve_edge_query(brep: &BRepSolid, query: &EdgeQuery) -> Vec<ResolvedEd
                     },
                 ));
             }
-            out.sort_by(|x, y| x.0.cmp(&y.0));
+            out.sort_by_key(|x| x.0);
             out.into_iter().map(|(_, r)| r).collect()
         }
     }
