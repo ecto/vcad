@@ -284,6 +284,9 @@ export async function recordSimulation(
     const result = env.step(actionType, perStepActions.values[s]!);
     const obs = result.observation;
 
+    // Joint-order contract: obs.joint_positions[j] → docClone.joints[j] —
+    // positional, the same assumption get_sim_replay makes (see the caveat
+    // there: the kernel emits joint_positions in RobotEnv's joint_ids order).
     for (let j = 0; j < docClone.joints!.length; j++) {
       const pos = obs.joint_positions[j];
       if (typeof pos === "number") docClone.joints![j]!.state = pos;

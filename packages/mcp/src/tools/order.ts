@@ -22,8 +22,11 @@ import { FulfillmentBroker } from "../fabricate/broker.js";
 import { toDfmProcess, catalogMaterial } from "../fabricate/process-map.js";
 import { ownerId, type FabricateStore } from "../fabricate/store.js";
 import { buildFabHandoff } from "../fabricate/handoff.js";
+import { buildKerfSheetMetalIntent, KERF_VENDOR } from "../fabricate/adapters/kerf.js";
+import { intentHash } from "../fabricate/kerf/intent-hash.js";
+import type { ConfiguratorIntent, FileRef } from "../fabricate/kerf/contract.js";
 import { captureEvent } from "../telemetry.js";
-import { resolveArtifactRefAsync } from "./artifact-store.js";
+import { getArtifactFileAsync, resolveArtifactRefAsync } from "./artifact-store.js";
 import { behavior, type ToolDef } from "./tool-def.js";
 import {
   PROCESSES,
@@ -95,8 +98,109 @@ function quoteDfm(process: Process, metrics: GeometryMetrics): DfmSummary {
   return { checked: true, passed: violations.length === 0, violations };
 }
 
-function docHash(ir: unknown): string {
+/** sha256(JSON)[0..16] — the design fingerprint persisted on quotes and
+ *  re-checked by place_order's geometry gate (exported so the gate hashes
+ *  with the exact same function, never a near-copy). */
+export function docHash(ir: unknown): string {
   return createHash("sha256").update(JSON.stringify(ir)).digest("hex").slice(0, 16);
+}
+
+/** Pull material + thickness (mm) off the document's sheet-metal base flange,
+ *  mirroring what sheet_metal_create writes (tools/sheet-metal.ts). Null when
+ *  the document has no sheet-metal chain. */
+function sheetMetalParams(ir: Document): { material: string; thicknessMm: number } | null {
+  for (const node of Object.values(ir.nodes ?? {})) {
+    const op = node.op;
+    if (
+      op.type === "SheetMetalBaseFlangeRect" ||
+      op.type === "SheetMetalBaseFlangePolygon"
+    ) {
+      if (op.thickness > 0) return { material: op.material, thicknessMm: op.thickness };
+    }
+  }
+  return null;
+}
+
+/**
+ * vcad/registry material names → SendCutSend's vendor-native alloy labels
+ * (the exact link text the SCS configurator's alloy step shows — recorded
+ * 2026-07-07 in kerf's sendcutsend manifest: 2024 T3, 5052 H32, 6061 T6,
+ * 7075 T6, MIC-6). Only aluminum maps today; anything unmapped fails closed
+ * (no kerfIntent) rather than guessing a label the playbook can't select.
+ */
+const SCS_ALLOY_LABELS: Record<string, string> = {
+  // Soft/bendable aluminum → 5052 H32 (SCS's default bendable sheet alloy).
+  "5052": "5052 H32",
+  "5052 h32": "5052 H32",
+  "5052-h32": "5052 H32",
+  "al-soft": "5052 H32",
+  aluminum: "5052 H32",
+  aluminium: "5052 H32",
+  al: "5052 H32",
+  // Hard aluminum → 6061 T6 (flat-only at SCS — no bends).
+  "6061": "6061 T6",
+  "6061 t6": "6061 T6",
+  "6061-t6": "6061 T6",
+  "al-hard": "6061 T6",
+  "2024": "2024 T3",
+  "2024 t3": "2024 T3",
+  "2024-t3": "2024 T3",
+  "7075": "7075 T6",
+  "7075 t6": "7075 T6",
+  "7075-t6": "7075 T6",
+};
+
+/**
+ * SendCutSend aluminum thickness → the (radio value code, display label)
+ * pair the kerf SCS quote playbook dereferences: `/config/thickness` must
+ * equal the checked radio's stable VALUE code ("ALU-125") and
+ * `/config/thickness_label` is the visible tile label the select step
+ * clicks (`.125" (3.2 MM)`). Derivation is confident only for inch-native
+ * mils in the recorded ALU-040..ALU-500 range (label format verified
+ * against kerf's recorded pairs: ALU-040 '.040" (1.0 MM)', ALU-125
+ * '.125" (3.2 MM)', ALU-250 '.250" (6.3 MM)'); anything else returns null
+ * and the whole kerfIntent is omitted — fail-closed, never a silently
+ * mis-selected thickness.
+ */
+function scsAluminumThickness(
+  thicknessMm: number,
+): { code: string; label: string } | null {
+  const mils = (thicknessMm / 25.4) * 1000;
+  const rounded = Math.round(mils);
+  if (Math.abs(mils - rounded) > 0.25) return null;
+  if (rounded < 40 || rounded > 500) return null; // recorded SCS ALU range
+  const mmLabel = (Math.round(thicknessMm * 10) / 10).toFixed(1);
+  return {
+    code: `ALU-${rounded}`,
+    label: `.${String(rounded).padStart(3, "0")}" (${mmLabel} MM)`,
+  };
+}
+
+/**
+ * Full vendor-native SendCutSend sheet-metal config — EXACTLY the pointers
+ * kerf's SCS quote playbook dereferences (playbooks/quote.json):
+ * `/config/units`, `/config/material_category`, `/config/material_family`,
+ * `/config/material`, `/config/thickness`, `/config/thickness_label` (the
+ * playbook's resolveValueRef THROWS on a missing pointer, so a partial
+ * config kills the run). Returns null when any value can't be derived
+ * vendor-natively — the caller then omits the kerfIntent entirely.
+ */
+export function scsSheetConfig(
+  material: string,
+  thicknessMm: number,
+): Record<string, string | number | boolean> | null {
+  const alloy = SCS_ALLOY_LABELS[material.trim().toLowerCase()];
+  if (!alloy) return null;
+  const th = scsAluminumThickness(thicknessMm);
+  if (!th) return null;
+  return {
+    units: "MM", // vcad documents are always millimeters
+    material_category: "Metals",
+    material_family: "Aluminum",
+    material: alloy,
+    thickness: th.code,
+    thickness_label: th.label,
+  };
 }
 
 const toUsd = (minor: number): number => Math.round(minor) / 100;
@@ -212,6 +316,78 @@ export async function quoteManufacturing(
     }
   }
 
+  // ── kerf rail (Wave 0, sheet metal): with a fab bundle bound, build the
+  // ConfiguratorIntent HERE — order.ts owns intent construction so the
+  // persisted kerf_intent_hash is computed over the exact object the adapter
+  // sends — and thread it through the broker to the SendCutSend-via-kerf
+  // adapter. kerf's posted-intent API requires the actual DXF bytes inline
+  // (`bytes_base64` per file, hash-checked at the door), so the single DXF's
+  // bytes are read from the artifact store, re-hashed against the manifest
+  // sha256, and attached as a WIRE-ONLY field — the intent hash stays over
+  // sha256s alone (see intent-hash.ts). Every underivable input fails closed:
+  // no intent, a note, and the generic estimator covers.
+  let kerfIntent: ConfiguratorIntent | null = null;
+  let kerfSkipNote: string | null = null;
+  if (process === "sheet_metal" && fabArtifact) {
+    const dxfEntries = fabArtifact.manifest.filter((m) =>
+      m.file.toLowerCase().endsWith(".dxf"),
+    );
+    const sheet = sheetMetalParams(ir);
+    if (dxfEntries.length === 0) {
+      kerfSkipNote =
+        "kerf vendor quote skipped: the bound fab artifact has no .dxf files (export the flat pattern via sheet_metal_unfold).";
+    } else if (dxfEntries.length > 1) {
+      // The SCS playbook uploads only /files/0 — pricing one file of a
+      // multi-part bundle and presenting it as the whole order would
+      // misprice, so multi-DXF intents are refused outright.
+      kerfSkipNote =
+        "kerf vendor quote skipped: multi-DXF orders not yet kerf-quotable (the vendor playbook uploads a single file; quoting only the first DXF would misprice the bundle).";
+    } else if (!sheet) {
+      kerfSkipNote =
+        "kerf vendor quote skipped: no sheet-metal base flange in the document to derive material/thickness config from.";
+    } else {
+      const material = requestedMaterial ?? sheet.material ?? "5052";
+      const config = scsSheetConfig(material, sheet.thicknessMm);
+      if (!config) {
+        kerfSkipNote =
+          `kerf vendor quote skipped: no vendor-native SendCutSend config for material "${material}" at ${sheet.thicknessMm} mm — ` +
+          "fail-closed rather than guessing a configurator selection (aluminum at inch-native gauges derives today).";
+      } else {
+        const entry = dxfEntries[0];
+        const stored = await getArtifactFileAsync(fabArtifact.artifact_id, entry.file);
+        const actualSha = stored
+          ? createHash("sha256").update(stored.buf).digest("hex")
+          : null;
+        if (!stored || actualSha !== entry.sha256) {
+          // Never send bytes that don't hash to the manifest's pin — kerf's
+          // upload-hash oracle would (rightly) refuse, and a mismatch here
+          // means the artifact store no longer holds what was quoted.
+          console.error(
+            `[quote_manufacturing] kerf intent skipped: artifact ${fabArtifact.artifact_id} file "${entry.file}" ` +
+              (stored
+                ? `sha256 mismatch (manifest ${entry.sha256}, bytes ${actualSha})`
+                : "bytes unavailable in the artifact store"),
+          );
+          kerfSkipNote =
+            "kerf vendor quote skipped: the fab artifact's DXF bytes are unavailable or do not match the manifest sha256 — re-run the export and re-quote.";
+        } else {
+          const files: FileRef[] = [
+            {
+              name: entry.file,
+              bytes: entry.bytes,
+              sha256: entry.sha256,
+              media_type: "image/vnd.dxf",
+              // Wire-only: kerf strips this at the door after hash-checking;
+              // it never participates in intentHash.
+              bytes_base64: stored.buf.toString("base64"),
+            },
+          ];
+          kerfIntent = buildKerfSheetMetalIntent({ files, config, quantity });
+        }
+      }
+    }
+  }
+
   const broker = new FulfillmentBroker();
   const result = await broker.quote({
     process,
@@ -224,10 +400,23 @@ export async function quoteManufacturing(
     baseCostMinor,
     baseCostModel,
     materialCatalog,
+    ...(kerfIntent ? { kerfIntent: { intent: kerfIntent } } : {}),
   });
 
   if (!result.recommended) {
     return err(`No fab adapter could quote process "${process}".`);
+  }
+
+  // kerf provenance: when the recommendation came from the kerf rail, bind
+  // the quote to its intent hash (kerf discipline: geometry/config/quantity
+  // edit ⇒ new hash ⇒ the vendor quote is dead) and record the quote-job id
+  // for job-state/evidence lookups.
+  let kerfIntentHash: string | null = null;
+  let kerfJobId: string | null = null;
+  if (kerfIntent && result.recommended.fab === KERF_VENDOR) {
+    kerfIntentHash = intentHash(kerfIntent);
+    const jobNote = result.recommended.notes.find((n) => n.startsWith("kerf job "));
+    kerfJobId = jobNote ? jobNote.slice("kerf job ".length) : null;
   }
 
   const now = new Date();
@@ -251,6 +440,9 @@ export async function quoteManufacturing(
     margin_hidden: true,
     expires_at: expiresAt,
     created_at: now.toISOString(),
+    kerf_intent_hash: kerfIntentHash,
+    kerf_job_id: kerfJobId,
+    pricing_basis_best: result.recommended.pricing_basis,
   };
 
   const order: Order = {
@@ -265,6 +457,9 @@ export async function quoteManufacturing(
     ship_to: (args.ship_to as unknown) ?? null,
     events: [{ state: "QUOTED", at: now.toISOString(), note: "quote_manufacturing" }],
     fab_artifact: fabArtifact,
+    authorization_id: null,
+    receipt_status: null,
+    kerf_intent_hash: kerfIntentHash,
     created_at: now.toISOString(),
     updated_at: now.toISOString(),
   };
@@ -294,7 +489,7 @@ export async function quoteManufacturing(
   }
 
   // Agent-facing payload: margin-inclusive prices only; fab cost / margin never appear.
-  return ok({
+  const quoteResult = ok({
     quote_id: quoteId,
     order_id: orderId,
     process,
@@ -329,6 +524,10 @@ export async function quoteManufacturing(
       notes: o.notes,
     })),
     recommended_fab: result.recommended.fab,
+    // Pricing basis of the recommended option — agents branch on this:
+    // "estimate" never gates money; "quoted" is the fab's own displayed price
+    // (kerf rail); "binding" is fab-committed.
+    pricing_basis: result.recommended.pricing_basis,
     total_amount_usd: toUsd(quote.total_amount_minor),
     total_amount_minor: quote.total_amount_minor,
     currency: "USD",
@@ -349,13 +548,28 @@ export async function quoteManufacturing(
           files: fabArtifact.manifest.length,
         }
       : null,
+    ...(kerfIntentHash
+      ? { kerf_intent_hash: kerfIntentHash, ...(kerfJobId ? { kerf_job_id: kerfJobId } : {}) }
+      : {}),
     note:
-      "Phase 0: quote-only. Prices are local ESTIMATES (no binding fab quote yet) and ordering/payment ships in Phase 1. " +
+      (result.recommended.pricing_basis === "quoted"
+        ? "The recommended price is the fab's OWN displayed quote (via the kerf rail), bound to kerf_intent_hash — any geometry/config/quantity edit kills it (re-quote). Ordering/payment still ships separately. "
+        : "Phase 0: quote-only. Prices are local ESTIMATES (no binding fab quote yet) and ordering/payment ships in Phase 1. ") +
       "An order row was created at state QUOTED — see it with get_order_status / list_orders." +
       (fabArtifact
         ? " Fab files are bound by reference (artifact_id) — they stay in the artifact store and never transit model context."
-        : ""),
+        : "") +
+      (kerfSkipNote ? ` ${kerfSkipNote}` : ""),
   });
+  // quote_manufacturing mounts the viewer (behavior.mount) but isn't a
+  // geometry tool, so the dispatch never attaches a preview handle — surface
+  // the session id in structuredContent so the mounted order dock knows which
+  // document to render and poll. Inline-IR quotes have no live session and
+  // stay handle-less (the dock can't bind a session that doesn't exist).
+  if (documentId) {
+    quoteResult.structuredContent = { document_id: documentId };
+  }
+  return quoteResult;
 }
 
 // ── get_order_status ─────────────────────────────────────────────────────────
@@ -435,10 +649,10 @@ export const toolDefs: ToolDef[] = [
     name: "quote_manufacturing",
     pack: "fabricate",
     description:
-      "Quote manufacturing a part: measures the design, runs light DFM, and returns margin-inclusive price options per fab (pcb/cnc/3dprint/sheet_metal/cast_metal). Pass `ir` (inline Document — stateless, no open_document needed, serverless-safe, parallel-safe) OR a `document_id` from an open session. Persists a quote + a QUOTED order. Phase 0 is quote-only — prices are estimates and ordering/payment ship next; no money moves. For sheet_metal the result includes `fab_handoff`: curated US instant-quote shops (SendCutSend/OSH Cut/Fabworks), the exact file recipe (DXF via sheet_metal_unfold or folded STEP via export_cad), and what to enter at upload — everything needed to finish the order on the fab's site today.",
+      "Quote manufacturing a part: measures the design, runs light DFM, and returns margin-inclusive price options per fab (pcb/cnc/3dprint/sheet_metal/cast_metal). Pass `ir` (inline Document — stateless, no open_document needed, serverless-safe, parallel-safe) OR a `document_id` from an open session. Persists a quote + a QUOTED order. Phase 0 is quote-only — prices are estimates and ordering/payment ship next; no money moves. For sheet_metal the result includes `fab_handoff`: curated US instant-quote shops (SendCutSend/OSH Cut/Fabworks), the exact file recipe (DXF via sheet_metal_unfold or folded STEP via export_cad), and what to enter at upload — everything needed to finish the order on the fab's site today. Mounts the inline viewer's order dock, so the quote and its order lifecycle render alongside the model.",
     inputSchema: quoteManufacturingSchema,
     handler: (a, c) => quoteManufacturing(a, c.engine, c.fabricateStore, c.user),
-    behavior: behavior({}),
+    behavior: behavior({ mount: true }),
   },
   {
     name: "get_order_status",

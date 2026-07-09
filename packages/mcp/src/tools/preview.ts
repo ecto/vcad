@@ -18,6 +18,7 @@ import { getNodePcb } from "@vcad/core";
 import {
   buildGlb,
   buildPartLabels,
+  eulerXyzDegToQuat,
   DEFAULT_MATERIAL,
   type GlbMesh,
 } from "../export/glb.js";
@@ -108,6 +109,61 @@ export async function generateGlbPreview(
 }
 
 /**
+ * Generate a base64 GLB preview with one named node PER ASSEMBLY INSTANCE,
+ * for the replay viewer's FK playback. Node names follow
+ * `"<instanceId>:<name>"` (mirroring the `"<part_id>:<name>"` root
+ * convention) so the viewer can bind per-step transforms from
+ * `get_sim_replay` back to nodes. Geometry stays part-local — the FK-solved
+ * world pose rides on the glTF node TRS — and instances of one partDef share
+ * a single glTF mesh via `meshKey`.
+ *
+ * Returns null when the scene has no instances (or evaluation fails), so the
+ * caller can fall back to the parts path and the flag is safe on any doc.
+ */
+export function generateInstancesGlbPreview(
+  doc: Document,
+  engine: Engine,
+): string | null {
+  try {
+    const scene = engine.evaluate(doc);
+    const instances = scene?.instances;
+    if (!instances || instances.length === 0) return null;
+
+    const meshes: GlbMesh[] = instances.map((inst) => ({
+      name: `${inst.instanceId}:${inst.name ?? ""}`,
+      positions: inst.mesh.positions,
+      indices: inst.mesh.indices,
+      normals: inst.mesh.normals,
+      color: DEFAULT_MATERIAL.color,
+      metallic: DEFAULT_MATERIAL.metallic,
+      roughness: DEFAULT_MATERIAL.roughness,
+      meshKey: inst.partDefId,
+      transform: inst.transform
+        ? {
+            translation: [
+              inst.transform.translation.x,
+              inst.transform.translation.y,
+              inst.transform.translation.z,
+            ],
+            rotationQuat: eulerXyzDegToQuat(inst.transform.rotation),
+            scale: [
+              inst.transform.scale.x,
+              inst.transform.scale.y,
+              inst.transform.scale.z,
+            ],
+          }
+        : undefined,
+    }));
+
+    return uint8ArrayToBase64(buildGlb(meshes, "preview"));
+  } catch {
+    // Evaluation failures fall back to the parts path (or its own
+    // empty-geometry signal) rather than erroring the viewer poll.
+    return null;
+  }
+}
+
+/**
  * Push a board's layered preview meshes onto `meshes`, all carrying the
  * board's part-identity `name` so a click anywhere on the board resolves to
  * the PCB part.
@@ -160,6 +216,13 @@ export const getPreviewGlbSchema = {
       type: "string" as const,
       description: "Session id of the document to preview.",
     },
+    instances: {
+      type: "boolean" as const,
+      description:
+        "Return one named node per assembly instance (part-local geometry + " +
+        "node transforms) so the replay viewer can bind FK targets. Falls " +
+        "back to the merged parts preview when the document has no instances.",
+    },
   },
   required: ["document_id"],
 };
@@ -171,11 +234,34 @@ export const getPreviewGlbSchema = {
  * This tool exists for the MCP Apps viewer (`visibility: ["app"]`) — it
  * keeps multi-hundred-KB geometry payloads out of model-visible tool
  * results. Agents wanting geometry should use `export_cad` instead.
+ *
+ * With `instances: true` the GLB carries one node per assembly instance
+ * (see {@link generateInstancesGlbPreview}) and the envelope adds
+ * `mode: "instances"`; documents without instances fall back to the
+ * normal parts preview, so the flag is safe on any doc.
  */
 export async function getPreviewGlb(
   doc: Document,
   engine: Engine,
+  instances = false,
 ): Promise<{ content: Array<{ type: "text"; text: string }> }> {
+  if (instances) {
+    const instGlb = generateInstancesGlbPreview(doc, engine);
+    if (instGlb) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({
+              _vcad_glb: instGlb,
+              version: previewVersion(doc),
+              mode: "instances",
+            }),
+          },
+        ],
+      };
+    }
+  }
   const glbBase64 = await generateGlbPreview(doc, engine);
   if (!glbBase64) {
     // No previewable geometry yet (e.g. a freshly opened empty document the
@@ -255,7 +341,11 @@ export const toolDefs: ToolDef[] = [
       "Return a base64 GLB preview of an open session document. Internal to the inline 3D viewer — agents should use `export_cad` for geometry exports.",
     inputSchema: getPreviewGlbSchema,
     handler: async (a, c) =>
-      getPreviewGlb(getSession(String(a.document_id ?? "")), c.engine),
+      getPreviewGlb(
+        getSession(String(a.document_id ?? "")),
+        c.engine,
+        a.instances === true,
+      ),
     behavior: behavior({ appOnly: true }),
   },
   {

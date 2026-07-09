@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-08-physics-replay-inline-viewer",
+  "version": "0.9.4",
+  "date": "2026-07-08",
+  "category": "feat",
+  "title": "Physics replay in the inline viewer",
+  "summary": "create_robot_env mounts the chat viewer with a transport bar: play/pause/scrub/speed a gym rollout with kernel-FK-accurate poses, plus live-follow while the agent is still stepping.",
+  "features": ["mcp", "physics", "viewer", "mcp-apps"],
+  "mcpTools": ["create_robot_env", "get_sim_replay", "get_sim_version", "get_preview_glb"]
+}

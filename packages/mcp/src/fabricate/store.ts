@@ -10,8 +10,10 @@
 
 import type { AuthUser } from "../oauth.js";
 import type {
+  AuthorizationStatus,
   DebitResult,
   Order,
+  OrderReceiptStatus,
   OrderState,
   Quote,
   QuoteEconomics,
@@ -32,6 +34,14 @@ export interface DebitParams {
   idempotencyKey: string;
 }
 
+/** Enrichment columns a state transition may carry alongside state+events
+ *  (place_order records its receipt verdict; authorize_spend links the
+ *  proposed authorization). Optional so plain transitions stay one-argument. */
+export interface OrderStatePatch {
+  receipt_status?: OrderReceiptStatus;
+  authorization_id?: string | null;
+}
+
 export interface FabricateStore {
   saveQuote(quote: Quote, econ: QuoteEconomics, userId: string): Promise<void>;
   /** Read a persisted quote, ownership-scoped (BOM lines link quotes by id). */
@@ -44,10 +54,25 @@ export interface FabricateStore {
   createAuthorization(authz: SpendAuthorization, userId: string): Promise<void>;
   /** Read an authorization, ownership-scoped. */
   getAuthorization(id: string, userId: string): Promise<SpendAuthorization | null>;
+  /** Flip an authorization's status (e.g. elicitation decline → revoked).
+   *  Never a substitute for the human approval flow — approval stays
+   *  web-app/out-of-band; this records lifecycle outcomes. */
+  setAuthorizationStatus(id: string, userId: string, status: AuthorizationStatus): Promise<void>;
   /** Atomic, balance-floored, idempotent debit. The ONLY way credits leave. */
   debit(p: DebitParams): Promise<DebitResult>;
-  /** Transition an order's state and append a lifecycle event. */
-  setOrderState(orderId: string, userId: string, state: OrderState, note: string): Promise<void>;
+  /** Transition an order's state, append a lifecycle event, and optionally
+   *  patch enrichment fields (receipt_status / authorization_id). */
+  setOrderState(
+    orderId: string,
+    userId: string,
+    state: OrderState,
+    note: string,
+    patch?: OrderStatePatch,
+  ): Promise<void>;
+  /** Read the caller's prepaid wallet balance (minor units), or null when it
+   *  can't be read (no wallet row, store outage) — callers must treat null as
+   *  "unknown", never as zero. */
+  getWalletBalance(userId: string): Promise<number | null>;
 }
 
 // ── In-memory (module-global so it survives across calls in one process) ──
@@ -94,6 +119,15 @@ export class InMemoryFabricateStore implements FabricateStore {
   }
   async getAuthorization(id: string, userId: string): Promise<SpendAuthorization | null> {
     return memAuthz.get(memKey(userId, id)) ?? null;
+  }
+  async setAuthorizationStatus(
+    id: string,
+    userId: string,
+    status: AuthorizationStatus,
+  ): Promise<void> {
+    const a = memAuthz.get(memKey(userId, id));
+    if (!a) return;
+    memAuthz.set(memKey(userId, id), { ...a, status });
   }
 
   /**
@@ -149,12 +183,24 @@ export class InMemoryFabricateStore implements FabricateStore {
     return result;
   }
 
-  async setOrderState(orderId: string, userId: string, state: OrderState, note: string): Promise<void> {
+  async setOrderState(
+    orderId: string,
+    userId: string,
+    state: OrderState,
+    note: string,
+    patch?: OrderStatePatch,
+  ): Promise<void> {
     const rec = memOrders.get(memKey(userId, orderId));
     if (!rec) return;
     rec.order.state = state;
     rec.order.events.push({ state, at: new Date().toISOString(), note });
+    if (patch?.receipt_status !== undefined) rec.order.receipt_status = patch.receipt_status;
+    if (patch?.authorization_id !== undefined) rec.order.authorization_id = patch.authorization_id;
     rec.order.updated_at = new Date().toISOString();
+  }
+
+  async getWalletBalance(userId: string): Promise<number | null> {
+    return memWallets.get(userId) ?? null;
   }
 
   // ── test-only seams (NOT on the FabricateStore interface) ──
@@ -217,8 +263,11 @@ export class SupabaseFabricateStore implements FabricateStore {
       total_amount_minor: quote.total_amount_minor,
       currency: quote.currency,
       expires_at: quote.expires_at,
+      // Migration-034 columns — stripped on retry if the DB predates them.
+      kerf_intent_hash: quote.kerf_intent_hash ?? null,
+      kerf_job_id: quote.kerf_job_id ?? null,
     };
-    await this.insert("quotes", row);
+    await this.insertTolerant("quotes", row, ["kerf_intent_hash", "kerf_job_id"]);
   }
 
   async getQuote(quoteId: string, userId: string): Promise<Quote | null> {
@@ -239,11 +288,6 @@ export class SupabaseFabricateStore implements FabricateStore {
   }
 
   async saveOrder(order: Order, fabCostMinor: number, userId: string): Promise<void> {
-    // `fab_artifact` is intentionally NOT written here — there is no orders
-    // column for it yet, and including an unknown key would fail the whole
-    // PostgREST insert. The durable cloud record of the fab bundle is the
-    // `order_placed` session-event (place_order); the handle is also re-suppliable
-    // at place_order time. A dedicated orders.fab_artifact column is the follow-up.
     const row = {
       id: order.order_id,
       user_id: userId,
@@ -257,8 +301,20 @@ export class SupabaseFabricateStore implements FabricateStore {
       currency: order.currency,
       ship_to: order.ship_to,
       events: order.events,
+      authorization_id: order.authorization_id, // column since migration 027
+      // Migration-034 columns — stripped on retry if the DB predates them, so
+      // a pre-migration deploy degrades to the 024/027 row instead of losing
+      // the whole write. fab_artifact is the handle only, never bytes.
+      fab_artifact: order.fab_artifact ?? null,
+      receipt_status: order.receipt_status,
+      kerf_intent_hash: order.kerf_intent_hash,
     };
-    await this.insert("orders", row, "id");
+    await this.insertTolerant(
+      "orders",
+      row,
+      ["fab_artifact", "receipt_status", "kerf_intent_hash"],
+      "id",
+    );
   }
 
   async getOrder(orderId: string, userId: string): Promise<Order | null> {
@@ -352,14 +408,38 @@ export class SupabaseFabricateStore implements FabricateStore {
     }
   }
 
-  async setOrderState(orderId: string, userId: string, state: OrderState, note: string): Promise<void> {
+  async setOrderState(
+    orderId: string,
+    userId: string,
+    state: OrderState,
+    note: string,
+    patch?: OrderStatePatch,
+  ): Promise<void> {
     const order = await this.getOrder(orderId, userId);
-    const events = [
-      ...(order?.events ?? []),
-      { state, at: new Date().toISOString(), note },
-    ];
-    try {
-      const res = await fabricateFetch(
+    const base: Record<string, unknown> = { state };
+    if (order) {
+      base.events = [...order.events, { state, at: new Date().toISOString(), note }];
+    } else {
+      // The pre-read failed (transient network / non-2xx). Appending would
+      // replace the whole events jsonb with a singleton — wiping the money
+      // audit trail — so PATCH state (+patch fields) WITHOUT the events key
+      // and keep whatever history the row already holds.
+      console.error(
+        `[fabricate-store] setOrderState ${orderId}: pre-read failed — patching without events to preserve history (dropped event: ${state} "${note}")`,
+      );
+    }
+    if (patch?.authorization_id !== undefined) {
+      base.authorization_id = patch.authorization_id; // column since 027
+    }
+    // receipt_status is a migration-034 column — patched tolerantly: if the
+    // full PATCH is rejected specifically for column skew on a pre-migration
+    // DB, retry without it so the state transition itself never fails there.
+    const full =
+      patch?.receipt_status !== undefined
+        ? { ...base, receipt_status: patch.receipt_status }
+        : base;
+    const patchOnce = async (body: Record<string, unknown>) =>
+      fabricateFetch(
         this.url(
           "orders",
           `?id=eq.${encodeURIComponent(orderId)}&user_id=eq.${encodeURIComponent(userId)}`,
@@ -367,9 +447,23 @@ export class SupabaseFabricateStore implements FabricateStore {
         {
           method: "PATCH",
           headers: this.headers({ Prefer: "return=minimal" }),
-          body: JSON.stringify({ state, events }),
+          body: JSON.stringify(body),
         },
       );
+    try {
+      let res = await patchOnce(full);
+      if (!res.ok && full !== base) {
+        // Only strip the 034 column when the failure IS column skew — any
+        // other failure (transient 5xx, timeout, rate limit) must not
+        // silently drop the money-audit field from a then-successful retry.
+        const bodyText = await res.text().catch(() => "");
+        if (isColumnSkew(res.status, bodyText)) {
+          res = await patchOnce(base);
+        } else {
+          console.error("[fabricate-store] setOrderState failed:", res.status, bodyText);
+          return;
+        }
+      }
       if (!res.ok) {
         console.error(
           "[fabricate-store] setOrderState failed:",
@@ -382,11 +476,119 @@ export class SupabaseFabricateStore implements FabricateStore {
     }
   }
 
+  async setAuthorizationStatus(
+    id: string,
+    userId: string,
+    status: AuthorizationStatus,
+  ): Promise<void> {
+    const now = new Date().toISOString();
+    const body: Record<string, unknown> = { status };
+    if (status === "revoked") body.revoked_at = now;
+    if (status === "consumed") body.consumed_at = now;
+    try {
+      const res = await fabricateFetch(
+        this.url(
+          "spend_authorizations",
+          `?id=eq.${encodeURIComponent(id)}&user_id=eq.${encodeURIComponent(userId)}`,
+        ),
+        {
+          method: "PATCH",
+          headers: this.headers({ Prefer: "return=minimal" }),
+          body: JSON.stringify(body),
+        },
+      );
+      if (!res.ok) {
+        console.error(
+          "[fabricate-store] setAuthorizationStatus failed:",
+          res.status,
+          await res.text().catch(() => ""),
+        );
+      }
+    } catch (err) {
+      console.error("[fabricate-store] setAuthorizationStatus failed:", err);
+    }
+  }
+
+  async getWalletBalance(userId: string): Promise<number | null> {
+    try {
+      const res = await fabricateFetch(
+        this.url(
+          "wallets",
+          `?user_id=eq.${encodeURIComponent(userId)}&select=credit_balance_minor&limit=1`,
+        ),
+        { method: "GET", headers: this.headers({ Accept: "application/vnd.pgrst.object+json" }) },
+      );
+      if (!res.ok) return null;
+      const row = (await res.json()) as Record<string, unknown>;
+      const minor = Number(row?.credit_balance_minor);
+      return Number.isFinite(minor) ? minor : null;
+    } catch (err) {
+      console.error("[fabricate-store] getWalletBalance failed:", err);
+      return null;
+    }
+  }
+
   private async insert(
     table: string,
     row: Record<string, unknown>,
     onConflict?: string,
   ): Promise<void> {
+    const res = await this.postRow(table, row, onConflict);
+    if (!res.ok) {
+      console.error(`[fabricate-store] insert ${table} failed:`, res.status, res.text);
+    }
+  }
+
+  /**
+   * Insert that tolerates column skew: if the full row is rejected BECAUSE the
+   * migration-034 columns aren't deployed yet (PostgREST fails the WHOLE
+   * insert on one unknown key), retry once WITHOUT `newerKeys` so a
+   * pre-migration database degrades to the older row shape instead of losing
+   * the write entirely. The stripped retry ONLY fires when the first failure
+   * is actually column skew (see {@link isColumnSkew}) — any other failure
+   * (transient 5xx, timeout, rate limit) keeps the original error path so a
+   * flaky-then-successful retry can never silently drop money-audit fields.
+   * Best-effort like every store write — never throws.
+   */
+  private async insertTolerant(
+    table: string,
+    row: Record<string, unknown>,
+    newerKeys: readonly string[],
+    onConflict?: string,
+  ): Promise<void> {
+    const first = await this.postRow(table, row, onConflict);
+    if (first.ok) return;
+    if (!isColumnSkew(first.status, first.text)) {
+      console.error(`[fabricate-store] insert ${table} failed:`, first.status, first.text);
+      return;
+    }
+    const stripped: Record<string, unknown> = { ...row };
+    for (const k of newerKeys) delete stripped[k];
+    const second = await this.postRow(table, stripped, onConflict);
+    if (second.ok) {
+      console.error(
+        `[fabricate-store] insert ${table}: wrote without [${newerKeys.join(", ")}] ` +
+          `(pre-migration schema? first attempt: ${first.status} ${first.text})`,
+      );
+      return;
+    }
+    console.error(
+      `[fabricate-store] insert ${table} failed:`,
+      first.status,
+      first.text,
+      "| retry without newer keys:",
+      second.status,
+      second.text,
+    );
+  }
+
+  /** POST one row; reports the outcome instead of logging so tolerant callers
+   *  can retry before deciding what to say. Never throws. */
+  private async postRow(
+    table: string,
+    row: Record<string, unknown>,
+    onConflict?: string,
+  ): Promise<{ ok: boolean; status: number; text: string }> {
     try {
       const q = onConflict ? `?on_conflict=${onConflict}` : "";
       const res = await fabricateFetch(this.url(table, q), {
@@ -398,17 +600,32 @@ export class SupabaseFabricateStore implements FabricateStore {
         }),
         body: JSON.stringify([row]),
       });
-      if (!res.ok) {
-        console.error(
-          `[fabricate-store] insert ${table} failed:`,
-          res.status,
-          await res.text().catch(() => ""),
-        );
-      }
+      if (res.ok) return { ok: true, status: res.status, text: "" };
+      return {
+        ok: false,
+        status: res.status,
+        text: await res.text().catch(() => ""),
+      };
     } catch (err) {
-      console.error(`[fabricate-store] insert ${table} failed:`, err);
+      return { ok: false, status: 0, text: err instanceof Error ? err.message : String(err) };
     }
   }
+}
+
+/**
+ * True when a PostgREST failure is an unknown-column rejection (schema skew:
+ * the DB predates a migration that added the column). PostgREST reports this
+ * as HTTP 400 with code PGRST204 ("Could not find the 'x' column of 'y' in
+ * the schema cache") or a raw Postgres `column ... does not exist`. ONLY this
+ * shape may trigger the stripped retry in the tolerant writers — anything
+ * else keeps the original error path.
+ */
+function isColumnSkew(status: number, bodyText: string): boolean {
+  return (
+    status === 400 &&
+    (bodyText.includes("PGRST204") ||
+      /column .* does not exist|Could not find/i.test(bodyText))
+  );
 }
 
 /** Map a PostgREST quotes row to a Quote (inverse of saveQuote's row shape).
@@ -435,6 +652,12 @@ function rowToQuote(row: unknown): Quote {
     margin_hidden: true,
     expires_at: String(r.expires_at ?? ""),
     created_at: String(r.created_at ?? ""),
+    kerf_intent_hash: (r.kerf_intent_hash as string) ?? null,
+    kerf_job_id: (r.kerf_job_id as string) ?? null,
+    // Not a column — the recommended option leads the sorted fab_options.
+    pricing_basis_best: Array.isArray(r.fab_options)
+      ? (r.fab_options as Quote["fab_options"])[0]?.pricing_basis
+      : undefined,
   };
 }
 
@@ -452,9 +675,17 @@ function rowToOrder(row: unknown): Order {
     currency: String(r.currency ?? "USD"),
     ship_to: r.ship_to ?? null,
     events: Array.isArray(r.events) ? (r.events as Order["events"]) : [],
+    fab_artifact: (r.fab_artifact as Order["fab_artifact"]) ?? null,
+    authorization_id: (r.authorization_id as string) ?? null,
+    receipt_status: isReceiptStatus(r.receipt_status) ? r.receipt_status : null,
+    kerf_intent_hash: (r.kerf_intent_hash as string) ?? null,
     created_at: String(r.created_at ?? ""),
     updated_at: String(r.updated_at ?? ""),
   };
+}
+
+function isReceiptStatus(v: unknown): v is OrderReceiptStatus {
+  return v === "holds" || v === "stale" || v === "violated" || v === "unverified";
 }
 
 /** Map a PostgREST spend_authorizations row to a SpendAuthorization. */
