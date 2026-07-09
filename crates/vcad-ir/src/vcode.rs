@@ -2888,16 +2888,22 @@ mod tests {
             visible: None,
         });
 
+        // Emission order over the nodes HashMap is nondeterministic, so
+        // restored ids may be permuted — locate the EdgeBlend by variant.
+        let find_blend = |doc: &Document| -> CsgOp {
+            doc.nodes
+                .values()
+                .find(|n| matches!(n.op, CsgOp::EdgeBlend { .. }))
+                .expect("restored doc should contain an EdgeBlend node")
+                .op
+                .clone()
+        };
+
         let compact = to_vcode(&doc).unwrap();
         assert!(compact.contains("EB "), "vcode: {compact}");
         let restored = from_vcode(&compact).unwrap();
-        match &restored.nodes[&1].op {
-            CsgOp::EdgeBlend {
-                child,
-                edges,
-                profile,
-            } => {
-                assert_eq!(*child, 0);
+        match find_blend(&restored) {
+            CsgOp::EdgeBlend { edges, profile, .. } => {
                 assert!(matches!(edges, crate::EdgeQuery::Direction { .. }));
                 match profile {
                     crate::BlendProfile::Keyed { keys } => {
@@ -2922,11 +2928,11 @@ mod tests {
             },
         };
         let restored = from_vcode(&to_vcode(&doc).unwrap()).unwrap();
-        match &restored.nodes[&1].op {
+        match find_blend(&restored) {
             CsgOp::EdgeBlend { edges, profile, .. } => {
                 assert!(matches!(edges, crate::EdgeQuery::Near { .. }));
                 assert!(
-                    matches!(profile, crate::BlendProfile::Constant { size, shape } if *size == 1.5 && *shape == 0.5)
+                    matches!(profile, crate::BlendProfile::Constant { size, shape } if size == 1.5 && shape == 0.5)
                 );
             }
             other => panic!("expected EdgeBlend, got {other:?}"),
