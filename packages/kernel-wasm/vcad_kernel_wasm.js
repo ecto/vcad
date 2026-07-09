@@ -227,6 +227,19 @@ export class PhysicsSim {
         return ret >>> 0;
     }
     /**
+     * Joint ids in observation order (document `joints` order).
+     *
+     * `joint_positions[i]` / `joint_velocities[i]` in every observation
+     * correspond to `jointIds()[i]`, as do action vector entries.
+     * @returns {string[]}
+     */
+    jointIds() {
+        const ret = wasm.physicssim_jointIds(this.__wbg_ptr);
+        var v1 = getArrayJsValueFromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 4, 4);
+        return v1;
+    }
+    /**
      * Create a new physics simulation from a vcad document JSON.
      *
      * # Arguments
@@ -8528,6 +8541,17 @@ function getArrayI32FromWasm0(ptr, len) {
 function getArrayI8FromWasm0(ptr, len) {
     ptr = ptr >>> 0;
     return getInt8ArrayMemory0().subarray(ptr / 1, ptr / 1 + len);
+}
+
+function getArrayJsValueFromWasm0(ptr, len) {
+    ptr = ptr >>> 0;
+    const mem = getDataViewMemory0();
+    const result = [];
+    for (let i = ptr; i < ptr + 4 * len; i += 4) {
+        result.push(wasm.__wbindgen_externrefs.get(mem.getUint32(i, true)));
+    }
+    wasm.__externref_drop_slice(ptr, len);
+    return result;
 }
 
 function getArrayU16FromWasm0(ptr, len) {
