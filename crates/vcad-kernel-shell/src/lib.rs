@@ -208,12 +208,12 @@ pub fn shell_brep_analytical(
         };
 
         let old_verts = topo.loop_vertices(face.outer_loop);
-        // Reverse vertex order for inner face (face inward)
-        let new_verts: Vec<VertexId> = old_verts
-            .iter()
-            .rev()
-            .map(|v| inner_vertex_map[v])
-            .collect();
+        // Keep the loop wound consistent with the offset surface's stored
+        // normal (which matches the outer face's): the tessellator reverses
+        // winding for `Orientation::Reversed` faces itself, so pre-reversing
+        // the loop here would cancel that flip and leave the cavity wound
+        // outward (counting as solid volume instead of void).
+        let new_verts: Vec<VertexId> = old_verts.iter().map(|v| inner_vertex_map[v]).collect();
 
         let mut hes = Vec::new();
         for (j, &nv) in new_verts.iter().enumerate() {
@@ -689,6 +689,28 @@ mod tests {
             12,
             "should have 12 surfaces"
         );
+    }
+
+    #[test]
+    fn test_shell_cube_analytical_volume() {
+        // The tessellated analytical shell must enclose outer − inner volume:
+        // the cavity subtracts. A winding bug here makes the cavity *add*
+        // (volume > the solid cube), which inverts thickness→mass scaling.
+        for &t in &[0.8, 1.0, 2.0, 3.5] {
+            let cube = vcad_kernel_primitives::make_cube(10.0, 10.0, 10.0);
+            let shelled = shell_brep_analytical(&cube, t, &[]).unwrap();
+            let mesh = vcad_kernel_tessellate::tessellate_brep(&shelled, 32);
+            let vol = compute_volume(&mesh);
+            let expected = 1000.0 - (10.0 - 2.0 * t).powi(3);
+            // Relative tolerance: tessellated vertices are f32.
+            assert!(
+                (vol - expected).abs() < expected * 1e-5,
+                "shell thickness {}: volume {} != expected {}",
+                t,
+                vol,
+                expected
+            );
+        }
     }
 
     #[test]

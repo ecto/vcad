@@ -1,0 +1,9 @@
+{
+  "id": "2026-07-09-shell-cavity-volume",
+  "version": "0.9.4",
+  "date": "2026-07-09",
+  "category": "fix",
+  "title": "Shelled solids no longer report cavity as solid volume",
+  "summary": "shell() wound the inner cavity outward, so volume/mass of hollow parts reported outer + cavity — a thinner wall showed a heavier part. Volume, mass properties, and downstream booleans are now correct.",
+  "features": ["kernel", "shell", "inspect"]
+}
