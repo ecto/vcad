@@ -14,6 +14,7 @@
 import type { Document } from "@vcad/ir";
 import { getKernelWasm, resetKernelWasm } from "@vcad/engine";
 import { getEnvRecord } from "./gym.js";
+import { resolveObservationJoints } from "./joint-order.js";
 import { behavior, type ToolDef } from "./tool-def.js";
 
 /** MCP tool result for the replay tools. Error paths set `isError: true` so
@@ -157,21 +158,17 @@ export async function getSimReplay(input: unknown): Promise<ReplayResult> {
   }
 
   // Per-step FK: clone the stored assembly ONCE, write each trajectory row
-  // into the clone's joints[j].state, and let the kernel solver reconstruct
-  // world poses (the record_simulation pattern, tools/record.ts). The
-  // per-row serialization happens at the WASM boundary, so the single clone
-  // never aliases across rows.
+  // into the FK clone's joints, and let the kernel solver reconstruct world
+  // poses (the record_simulation pattern, tools/record.ts). The per-row
+  // serialization happens at the WASM boundary, so the single clone never
+  // aliases across rows.
   //
-  // Joint-order contract: trajectory row[j] is written into doc.joints[j] —
-  // the SAME positional assumption record_simulation ships on (record.ts,
-  // its obs.joint_positions[j] → docClone.joints[j].state loop). The order
-  // is the kernel's: RobotEnv captures PhysicsWorld::joint_ids() at
-  // construction and emits observation.joint_positions in that fixed order
-  // (crates/vcad-kernel-physics gym.rs observe()). NOTE joint_ids() today
-  // iterates the joint_to_index HashMap (world.rs), so for multi-joint
-  // documents the emitted order is not guaranteed to equal doc.joints order
-  // — if the kernel ever exposes its joint id list, both this loop and
-  // record.ts should map by id instead of index.
+  // Observation slots map onto doc joints BY ID via resolveObservationJoints
+  // (shared with record_simulation): trajectory row[i] is the kernel's
+  // joint_positions[i], which refers to jointIds[i], so a permuted kernel
+  // joint order can't land a pose on the wrong joint. Older WASM builds
+  // without jointIds() leave record.jointIds null and fall back to positional
+  // order. Resolved once, before the row loop.
   const instanceTransforms: Array<Record<string, SimTrs>> = [];
   const jointCount = record.document.joints?.length ?? 0;
   const instanceCount = record.document.instances?.length ?? 0;
@@ -182,16 +179,25 @@ export async function getSimReplay(input: unknown): Promise<ReplayResult> {
       };
       if (typeof wasm.solveForwardKinematics === "function") {
         const docClone: Document = JSON.parse(JSON.stringify(record.document));
-        for (const row of record.trajectory) {
-          for (let j = 0; j < docClone.joints!.length; j++) {
-            const pos = row[j];
-            if (typeof pos === "number") docClone.joints![j]!.state = pos;
+        const obsJoints = resolveObservationJoints(
+          docClone.joints!,
+          record.jointIds,
+        );
+        // A mismatch means the record's jointIds don't match its own document
+        // — impossible for a live env, so degrade to a transform-less replay
+        // (the viewer falls back to static geometry) rather than mis-posing.
+        if (!("error" in obsJoints)) {
+          for (const row of record.trajectory) {
+            for (let j = 0; j < obsJoints.joints.length; j++) {
+              const pos = row[j];
+              if (typeof pos === "number") obsJoints.joints[j]!.state = pos;
+            }
+            instanceTransforms.push(
+              toTransformRecord(
+                wasm.solveForwardKinematics(JSON.stringify(docClone)),
+              ),
+            );
           }
-          instanceTransforms.push(
-            toTransformRecord(
-              wasm.solveForwardKinematics(JSON.stringify(docClone)),
-            ),
-          );
         }
       }
     } catch (err) {
