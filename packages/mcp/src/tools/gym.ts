@@ -77,6 +77,12 @@ export interface EnvRecord {
   dt: number;
   /** Physics substeps per step. */
   substeps: number;
+  /** Observation-order joint id list captured from the env at creation, so
+   *  replay FK maps `trajectory[row][i]` onto the doc joint with id
+   *  `jointIds[i]` (via resolveObservationJoints) rather than by position.
+   *  Null when the loaded kernel WASM predates `jointIds()` — replay then
+   *  falls back to positional order, matching the shipped assumption. */
+  jointIds: string[] | null;
 }
 
 /** Replay records keyed by env_id, populated by create_robot_env. */
@@ -242,6 +248,7 @@ export async function createRobotEnv(input: unknown): Promise<GymResult> {
       resetEpoch: 0,
       dt: args.dt ?? 1 / 240,
       substeps: args.substeps ?? 4,
+      jointIds: env.jointIds,
     });
 
     const info = {
