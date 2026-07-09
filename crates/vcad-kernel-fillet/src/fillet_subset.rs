@@ -502,7 +502,7 @@ pub(crate) fn fillet_plane_chain_edges(
 /// Decide which of the two tangent points continues the loop toward the
 /// previous vertex and which toward the next, so the inserted arc keeps
 /// the face's boundary orientation.
-fn orient_cap_tangents(
+pub(crate) fn orient_cap_tangents(
     pos: Point3,
     prev: Point3,
     next: Point3,
@@ -522,7 +522,7 @@ fn orient_cap_tangents(
 /// Sample the short circular arc from `from` to `to` about `center`,
 /// returning `segments + 1` points (inclusive of both ends). `axis` only
 /// fixes the rotation plane; the traversal always takes the ≤π arc.
-fn sample_arc(
+pub(crate) fn sample_arc(
     center: Point3,
     from: Point3,
     to: Point3,
@@ -581,7 +581,7 @@ fn cylinder_orientation(loop_positions: &[Point3], axis: &Vec3, center: &Point3)
 
 /// Add a planar/cylindrical face to the working topology from an ordered
 /// list of boundary positions, welding coincident vertices via the cache.
-fn add_face(
+pub(crate) fn add_face(
     positions: &[Point3],
     surf_idx: usize,
     orientation: Orientation,

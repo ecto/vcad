@@ -49,7 +49,8 @@ fn validate_op(doc: &Document, node_id: NodeId, op: &CsgOp) -> Result<(), EvalEr
         | CsgOp::CircularPattern { child, .. }
         | CsgOp::Shell { child, .. }
         | CsgOp::Fillet { child, .. }
-        | CsgOp::Chamfer { child, .. } => {
+        | CsgOp::Chamfer { child, .. }
+        | CsgOp::EdgeBlend { child, .. } => {
             check_ref(doc, *child, || at("child"))?;
         }
         CsgOp::Extrude { sketch, .. }
@@ -127,6 +128,7 @@ fn csg_op_name(op: &CsgOp) -> &'static str {
         CsgOp::Shell { .. } => "Shell",
         CsgOp::Fillet { .. } => "Fillet",
         CsgOp::Chamfer { .. } => "Chamfer",
+        CsgOp::EdgeBlend { .. } => "EdgeBlend",
         CsgOp::Sketch2D { .. } => "Sketch2D",
         CsgOp::Text2D { .. } => "Text2D",
         CsgOp::Extrude { .. } => "Extrude",

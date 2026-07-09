@@ -829,6 +829,13 @@ function evaluateOp(
       return child.chamfer(op.distance);
     }
 
+    case "EdgeBlend": {
+      const child = evaluateNode(op.child, nodes, Solid, cache, depth + 1);
+      return child.edgeBlend(
+        JSON.stringify({ edges: op.edges, profile: op.profile }),
+      );
+    }
+
     case "Sweep": {
       const sketchNode = nodes[String(op.sketch)];
       if (!sketchNode || sketchNode.op.type !== "Sketch2D") {
@@ -1057,6 +1064,7 @@ function remapNodeIds(node: Node, idMap: Map<number, number>): Node {
     case "Shell":
     case "Fillet":
     case "Chamfer":
+    case "EdgeBlend":
       newOp = { ...op, child: m(op.child) };
       break;
     case "Extrude":

@@ -448,6 +448,54 @@ impl Solid {
         }
     }
 
+    /// Per-edge blend on query-selected edges with a keyed profile.
+    ///
+    /// `query` picks plane-plane edges declaratively (all / nearest to a
+    /// point / by direction); `keys` describes the cross-section along
+    /// each edge — `shape` interpolates a flat chamfer (`0`) into a round
+    /// fillet (`1`), `size` is the tangent setback (chamfer leg = fillet
+    /// radius). A single key is a constant profile; multiple keys loft
+    /// between sections (e.g. a chamfer morphing into a fillet).
+    ///
+    /// `EdgeQuery::All` with a constant pure-fillet or pure-chamfer
+    /// profile routes to the analytic all-edge pipelines (cylindrical /
+    /// planar blend surfaces with corner patches). Everything else uses
+    /// the per-edge loft builder; edges that share a vertex with an
+    /// already-blended edge are skipped (miter corners are a follow-up).
+    /// Returns the solid unchanged for mesh-only or empty solids
+    /// (fail-soft, mirroring `fillet`).
+    pub fn edge_blend(
+        &self,
+        query: &vcad_kernel_fillet::EdgeQuery,
+        keys: &[vcad_kernel_fillet::BlendKey],
+    ) -> Solid {
+        let SolidRepr::BRep(brep) = &self.repr else {
+            return self.clone();
+        };
+        if keys.is_empty() {
+            return self.clone();
+        }
+
+        // Fast path: whole-solid constant fillet/chamfer already have
+        // dedicated pipelines with analytic blend surfaces and corner
+        // patches — use them.
+        if matches!(query, vcad_kernel_fillet::EdgeQuery::All) && keys.len() == 1 {
+            let s = keys[0].section;
+            if s.shape >= 1.0 - 1e-12 {
+                return self.fillet(s.size);
+            }
+            if s.shape <= 1e-12 {
+                return self.chamfer(s.size);
+            }
+        }
+
+        let (blended, _outcome) = vcad_kernel_fillet::apply_edge_blend(brep, query, keys);
+        Solid {
+            repr: SolidRepr::BRep(Box::new(blended)),
+            segments: self.segments,
+        }
+    }
+
     /// Shell (hollow) the solid by offsetting all faces inward.
     ///
     /// Creates a hollow shell with walls of the specified thickness.

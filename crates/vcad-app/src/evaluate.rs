@@ -186,6 +186,15 @@ fn evaluate_node(doc: &Document, node_id: NodeId) -> Result<Option<Solid>> {
             let c = evaluate_node(doc, *child)?;
             c.map(|s| s.chamfer(*distance))
         }
+        CsgOp::EdgeBlend {
+            child,
+            edges,
+            profile,
+        } => {
+            let c = evaluate_node(doc, *child)?;
+            let (query, keys) = kernel_blend_args(edges, profile);
+            c.map(|s| s.edge_blend(&query, &keys))
+        }
         CsgOp::StepImport { path } => Solid::from_step(path).ok(),
         // STL meshes feed the physics path directly; the editor doesn't yet
         // build a BRep from a triangle soup.
@@ -210,4 +219,45 @@ fn evaluate_node(doc: &Document, node_id: NodeId) -> Result<Option<Solid>> {
     };
 
     Ok(solid)
+}
+
+/// Convert IR edge-blend arguments to their kernel equivalents.
+fn kernel_blend_args(
+    edges: &vcad_ir::EdgeQuery,
+    profile: &vcad_ir::BlendProfile,
+) -> (
+    vcad_kernel::vcad_kernel_fillet::EdgeQuery,
+    Vec<vcad_kernel::vcad_kernel_fillet::BlendKey>,
+) {
+    use vcad_kernel::vcad_kernel_fillet as kf;
+    let q = match edges {
+        vcad_ir::EdgeQuery::All => kf::EdgeQuery::All,
+        vcad_ir::EdgeQuery::Near { point } => kf::EdgeQuery::Near {
+            point: vcad_kernel_math::Point3::new(point.x, point.y, point.z),
+        },
+        vcad_ir::EdgeQuery::Direction { axis, tol_deg } => kf::EdgeQuery::Direction {
+            axis: vcad_kernel_math::Vec3::new(axis.x, axis.y, axis.z),
+            tol_deg: *tol_deg,
+        },
+    };
+    let keys = match profile {
+        vcad_ir::BlendProfile::Constant { size, shape } => vec![kf::BlendKey {
+            t: 0.0,
+            section: kf::BlendSection {
+                size: *size,
+                shape: *shape,
+            },
+        }],
+        vcad_ir::BlendProfile::Keyed { keys } => keys
+            .iter()
+            .map(|k| kf::BlendKey {
+                t: k.t,
+                section: kf::BlendSection {
+                    size: k.size,
+                    shape: k.shape,
+                },
+            })
+            .collect(),
+    };
+    (q, keys)
 }

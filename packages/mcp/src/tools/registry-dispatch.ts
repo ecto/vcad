@@ -122,6 +122,8 @@ export const CREATE_PARAM_HINTS: Record<string, string> = {
   shell: "{child: nodeId, thickness}",
   fillet: "{child: nodeId, radius}",
   chamfer: "{child: nodeId, distance}",
+  edge_blend:
+    '{child: nodeId, edges: {type: "All"} | {type: "Near", point: {x,y,z}} | {type: "Direction", axis: {x,y,z}, tol_deg}, profile: {type: "Constant", size, shape} | {type: "Keyed", keys: [{t, size, shape}]}} — shape 0 = chamfer, 1 = fillet; size in mm',
 };
 
 /** Param keys that reference another node by id (CsgOp child refs). */
@@ -624,6 +626,7 @@ function childrenOf(op: import("@vcad/ir").CsgOp): number[] {
     case "Shell":
     case "Fillet":
     case "Chamfer":
+    case "EdgeBlend":
       return [op.child];
     case "Extrude":
     case "Revolve":

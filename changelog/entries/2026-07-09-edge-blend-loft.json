@@ -1,0 +1,9 @@
+{
+  "id": "2026-07-09-edge-blend-loft",
+  "version": "0.9.4",
+  "date": "2026-07-09",
+  "category": "feat",
+  "title": "Edge blends: queries + chamfer-into-fillet lofts",
+  "summary": "New EdgeBlend op: select edges declaratively (near a point, by direction, all) and apply constant or keyframed profiles that morph a chamfer into a fillet along each edge.",
+  "features": ["kernel", "fillet", "chamfer", "modeling", "edge-queries"]
+}

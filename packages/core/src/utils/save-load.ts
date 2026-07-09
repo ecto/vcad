@@ -723,6 +723,7 @@ function getChildNodes(op: CsgOp): NodeId[] {
     case "CircularPattern":
     case "Fillet":
     case "Chamfer":
+    case "EdgeBlend":
     case "Shell":
       return [op.child];
     case "Union":

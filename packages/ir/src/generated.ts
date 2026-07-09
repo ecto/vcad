@@ -46,6 +46,40 @@ bottom: [number, number, number], } | { "type": "Transparent" };
 export type Bindings = Record<string, Expr>;
 
 /**
+ * A blend-profile keyframe along an edge.
+ */
+export type BlendKey = { 
+/**
+ * Position along the edge (0 = start endpoint, 1 = end endpoint).
+ */
+t: number, 
+/**
+ * Tangent setback at this key (chamfer leg = fillet radius), mm.
+ */
+size: number, 
+/**
+ * Profile shape at this key: 0 = flat chamfer, 1 = round fillet.
+ */
+shape: number, };
+
+/**
+ * Cross-section profile of an edge blend.
+ */
+export type BlendProfile = { "type": "Constant", 
+/**
+ * Tangent setback (chamfer leg = fillet radius), mm.
+ */
+size: number, 
+/**
+ * Profile shape: 0 = flat chamfer, 1 = round fillet.
+ */
+shape: number, } | { "type": "Keyed", 
+/**
+ * Profile keyframes (any order; clamped to `[0, 1]`).
+ */
+keys: Array<BlendKey>, };
+
+/**
  * Bloom effect settings.
  */
 export type Bloom = { 
@@ -524,7 +558,19 @@ child: number,
 /**
  * Chamfer distance.
  */
-distance: number, } | { "type": "Text2D", 
+distance: number, } | { "type": "EdgeBlend", 
+/**
+ * Child node to blend.
+ */
+child: number, 
+/**
+ * Which edges to blend.
+ */
+edges: EdgeQuery, 
+/**
+ * Cross-section profile along each selected edge.
+ */
+profile: BlendProfile, } | { "type": "Text2D", 
 /**
  * Origin point of the text plane in 3D.
  */
@@ -1011,6 +1057,26 @@ oval?: boolean,
  * Secondary diameter for oval drill.
  */
 ovalHeight?: number, };
+
+/**
+ * A declarative edge selector, resolved against the current topology at
+ * evaluation time. Queries express intent ("the edge near this corner",
+ * "all vertical edges") instead of fragile indices, so selections survive
+ * regeneration after upstream parameter changes.
+ */
+export type EdgeQuery = { "type": "All" } | { "type": "Near", 
+/**
+ * Selection point in model space.
+ */
+point: Vec3, } | { "type": "Direction", 
+/**
+ * Reference direction.
+ */
+axis: Vec3, 
+/**
+ * Angular tolerance in degrees.
+ */
+tol_deg: number, };
 
 /**
  * An embroidery design for the IR.
