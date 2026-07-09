@@ -811,7 +811,24 @@ type ToolResultLike = {
   content?: ContentBlock[];
   structuredContent?: Record<string, unknown>;
   isError?: boolean;
+  _meta?: Record<string, unknown>;
 };
+
+/** A ready-to-render preview the server rode along in the mount result's
+ *  `_meta` — first paint without a get_preview_glb round trip. */
+type InlineMetaPreview = {
+  document_id?: string;
+  glb?: string;
+  version?: string;
+  mode?: string;
+};
+
+function findMetaPreview(result: ToolResultLike): InlineMetaPreview | null {
+  const p = result._meta?.["vcad.io/preview"];
+  if (!p || typeof p !== "object") return null;
+  const preview = p as InlineMetaPreview;
+  return typeof preview.glb === "string" && preview.glb.length > 0 ? preview : null;
+}
 
 /** Find an inline `_vcad_glb` payload in result content blocks (legacy
  *  servers attached the GLB directly to the tool result). */
@@ -1043,12 +1060,17 @@ function renderGlbForDoc(
   docId: string | null,
   changed: PartsChanged | null,
   simInstancesGlb = false,
+  versionToken: string | null = null,
 ): void {
   const preserveCamera = docId != null && docId === renderedDocId;
   const keepPartId = preserveCamera ? selected?.partId ?? null : null;
   loadGlb(glb, {
     preserveCamera,
     afterLoad: () => {
+      // Advance the change token only once the GLB actually parsed and
+      // mounted — a failed render must leave the token behind so the next
+      // result (or poll tick) re-fetches instead of skipping past it.
+      if (versionToken != null) lastPreviewVersion = versionToken;
       if (docId != null) renderedDocId = docId;
       if (keepPartId != null) reselectById(keepPartId);
       if (changed) flashChanged(changed);
@@ -2269,6 +2291,46 @@ async function handleToolResult(result: ToolResultLike): Promise<void> {
   // A session document exists, so the deep link can always lazily fetch
   // the doc on click even when no VCode rode along in the result.
   openBtn.style.display = "inline-flex";
+
+  // Fast path 1: the server rode a ready-to-render GLB along in `_meta`
+  // (mount tools) — paint it now, no round trip. Skipped in a live
+  // instances-mode replay for this document: the inline GLB is
+  // part-segmented and would drop the FK bind targets.
+  const metaPreview = findMetaPreview(result);
+  const wantSimInstances = simEnvId != null && docId === simDocId && simUseInstances;
+  if (metaPreview && !wantSimInstances && metaPreview.mode !== "instances") {
+    try {
+      // The version token advances inside afterLoad — only after a
+      // successful parse+mount — so a corrupt inline GLB can't strand
+      // lastPreviewVersion on a version that never rendered (fast path 2
+      // would then skip the fetch that recovers it).
+      renderGlbForDoc(
+        metaPreview.glb!,
+        docId,
+        changed,
+        false,
+        metaPreview.version ?? null,
+      );
+      return;
+    } catch (e) {
+      // Corrupt inline payload (e.g. bad base64) — fall through to the
+      // fetch path, which rebuilds the GLB server-side.
+      console.warn("[vcad-viewer] inline preview render failed:", e);
+    }
+  }
+
+  // Fast path 2: the result's change token matches what is already on
+  // screen — nothing to fetch, the render is current.
+  const resultVersion = result.structuredContent?.document_version;
+  if (
+    sameDoc &&
+    typeof resultVersion === "string" &&
+    resultVersion === lastPreviewVersion
+  ) {
+    setTicker("ready", "ready");
+    return;
+  }
+
   // Same document already on screen → keep showing it under a subtle
   // ticker rather than the full loading overlay, so it accretes in place.
   if (sameDoc) setTicker("updating…", "busy");
