@@ -1539,7 +1539,15 @@ const CAP_SEGS: usize = 12;
 /// recomputation keeps the fans flat (±z) instead of blending them with the
 /// wall — a shared ring shades every joint as a bump. The cap also overshoots
 /// the slab by a hair so its coplanar fan never z-fights the segment's top.
-fn append_endcap(verts: &mut Vec<[f64; 3]>, tris: &mut Vec<[u32; 3]>, cx: f64, cy: f64, r: f64, z_lo: f64, z_hi: f64) {
+fn append_endcap(
+    verts: &mut Vec<[f64; 3]>,
+    tris: &mut Vec<[u32; 3]>,
+    cx: f64,
+    cy: f64,
+    r: f64,
+    z_lo: f64,
+    z_hi: f64,
+) {
     let eps = (z_hi - z_lo) * 0.05;
     let (z_lo, z_hi) = (z_lo - eps, z_hi + eps);
     let n = CAP_SEGS as u32;
@@ -2089,8 +2097,7 @@ mod tests {
                 let a = verts[t[0] as usize];
                 let b = verts[t[1] as usize];
                 let c = verts[t[2] as usize];
-                (a[0] * (b[1] * c[2] - b[2] * c[1])
-                    - a[1] * (b[0] * c[2] - b[2] * c[0])
+                (a[0] * (b[1] * c[2] - b[2] * c[1]) - a[1] * (b[0] * c[2] - b[2] * c[0])
                     + a[2] * (b[0] * c[1] - b[1] * c[0]))
                     / 6.0
             })

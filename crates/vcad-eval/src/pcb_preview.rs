@@ -814,8 +814,10 @@ fn filter_by_normal_z_sign(src: &MeshBuf, up: bool) -> MeshBuf {
             let base = (out.positions.len() / 3) as u32;
             for k in 0..3 {
                 let i = src.indices[tri + k] as usize;
-                out.positions.extend_from_slice(&src.positions[i * 3..i * 3 + 3]);
-                out.normals.extend_from_slice(&src.normals[i * 3..i * 3 + 3]);
+                out.positions
+                    .extend_from_slice(&src.positions[i * 3..i * 3 + 3]);
+                out.normals
+                    .extend_from_slice(&src.normals[i * 3..i * 3 + 3]);
             }
             out.indices.extend_from_slice(&[base, base + 1, base + 2]);
         }
@@ -975,7 +977,11 @@ mod tests {
         for shell in &shells {
             assert_eq!(shell.color, MASK_GREEN);
             // Translucent — copper must ghost through — with a satin coat.
-            assert!(shell.alpha > 0.3 && shell.alpha < 0.9, "alpha {}", shell.alpha);
+            assert!(
+                shell.alpha > 0.3 && shell.alpha < 0.9,
+                "alpha {}",
+                shell.alpha
+            );
             assert!(
                 shell.clearcoat > 0.0 && shell.clearcoat <= 0.6,
                 "soldermask should be a satin sheen, got {}",
@@ -988,7 +994,10 @@ mod tests {
             .flat_map(|s| s.positions.iter().skip(2).step_by(3))
             .cloned()
             .fold(f32::MIN, f32::max);
-        assert!(max_z > 0.8, "top shell should clear the board top, max z {max_z}");
+        assert!(
+            max_z > 0.8,
+            "top shell should clear the board top, max z {max_z}"
+        );
         let edge = meshes.iter().find(|m| m.role == "substrate").unwrap();
         assert_eq!(edge.color, FR4_EDGE_TAN);
         assert_eq!(edge.clearcoat, 0.0);
@@ -1078,7 +1087,10 @@ mod tests {
         assert_eq!(masked.layer.as_deref(), Some("FCu"));
         assert_eq!(masked.entities.len(), 1);
         let e = &masked.entities[0];
-        assert_eq!((e.kind.as_str(), e.index, e.net.as_deref()), ("trace", 0, Some("GND")));
+        assert_eq!(
+            (e.kind.as_str(), e.index, e.net.as_deref()),
+            ("trace", 0, Some("GND"))
+        );
         assert_eq!(e.start, 0);
         assert_eq!(e.count as usize, masked.indices.len());
 
