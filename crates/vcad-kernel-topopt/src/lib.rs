@@ -250,7 +250,7 @@ mod tests {
 
         // Mesh must stay inside the design domain (small tolerance for
         // smoothing overshoot).
-        for v in result.mesh.vertices.chunks_exact(3) {
+        for v in result.mesh.vertices.as_chunks::<3>().0 {
             assert!(v[0] >= -0.5 && v[0] <= 24.5);
             assert!(v[1] >= -0.5 && v[1] <= 6.5);
             assert!(v[2] >= -0.5 && v[2] <= 12.5);

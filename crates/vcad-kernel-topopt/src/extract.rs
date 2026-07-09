@@ -188,7 +188,7 @@ fn taubin_smooth(positions: &mut [[f64; 3]], indices: &[u32], pairs: usize) {
     // Vertex adjacency from triangle edges.
     let nv = positions.len();
     let mut neighbors: Vec<Vec<u32>> = vec![Vec::new(); nv];
-    for tri in indices.chunks_exact(3) {
+    for tri in indices.as_chunks::<3>().0 {
         for k in 0..3 {
             let a = tri[k] as usize;
             let b = tri[(k + 1) % 3];
@@ -227,7 +227,7 @@ fn taubin_smooth(positions: &mut [[f64; 3]], indices: &[u32], pairs: usize) {
 /// Assemble a [`TriangleMesh`] with area-weighted vertex normals.
 fn build_mesh(positions: &[[f64; 3]], indices: &[u32]) -> TriangleMesh {
     let mut normals = vec![[0.0f64; 3]; positions.len()];
-    for tri in indices.chunks_exact(3) {
+    for tri in indices.as_chunks::<3>().0 {
         let a = positions[tri[0] as usize];
         let b = positions[tri[1] as usize];
         let c = positions[tri[2] as usize];
@@ -272,7 +272,7 @@ mod tests {
     /// triangles, once in each direction.
     fn assert_watertight(mesh: &TriangleMesh) {
         let mut edges: HashMap<(u32, u32), i32> = HashMap::new();
-        for tri in mesh.indices.chunks_exact(3) {
+        for tri in mesh.indices.as_chunks::<3>().0 {
             for k in 0..3 {
                 let a = tri[k];
                 let b = tri[(k + 1) % 3];
@@ -299,7 +299,7 @@ mod tests {
         // between the outermost cell center and the zero padding sample).
         let mut min = [f32::INFINITY; 3];
         let mut max = [f32::NEG_INFINITY; 3];
-        for v in mesh.vertices.chunks_exact(3) {
+        for v in mesh.vertices.as_chunks::<3>().0 {
             for x in 0..3 {
                 min[x] = min[x].min(v[x]);
                 max[x] = max[x].max(v[x]);
@@ -325,14 +325,14 @@ mod tests {
         let mesh = extract_mesh(&domain, &densities, 5);
         assert_watertight(&mesh);
         let mut max = [f32::NEG_INFINITY; 3];
-        for v in mesh.vertices.chunks_exact(3) {
+        for v in mesh.vertices.as_chunks::<3>().0 {
             for x in 0..3 {
                 max[x] = max[x].max(v[x]);
             }
         }
         // Taubin smoothing must not collapse the part.
-        for x in 0..3 {
-            assert!(max[x] > 5.0, "axis {x} shrank to {}", max[x]);
+        for (axis, m) in max.iter().enumerate() {
+            assert!(*m > 5.0, "axis {axis} shrank to {m}");
         }
     }
 
