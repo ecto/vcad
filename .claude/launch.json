@@ -2,6 +2,12 @@
   "version": "0.0.1",
   "configurations": [
     {
+      "name": "landing",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev", "--prefix", "www"],
+      "port": 4173
+    },
+    {
       "name": "vcad-app",
       "runtimeExecutable": "bash",
       "runtimeArgs": [

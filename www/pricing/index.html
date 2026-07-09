@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>vcad — Free to design. 3% when you make.</title>
+  <meta name="description" content="Open source, no license server. vcad earns only when a real part gets made." />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2064%2064'%3E%3Cpath%20d='M6%2010%20L58%2010%20L32%2056%20Z'%20fill='%23F5F5F6'/%3E%3C/svg%3E" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap" />
+  <link rel="stylesheet" href="/src/style.css" />
+</head>
+<body>
+  <header class="nav" data-dim>
+    <a class="wordmark" href="/" aria-label="vcad home">
+      <svg class="tri" viewBox="0 0 24 23" aria-hidden="true"><path d="M0 0 L24 0 L12 23 Z"/></svg><span>cad</span>
+    </a>
+    <nav class="nav-links">
+      <a href="/design/">Design</a><a href="/prove/">Prove</a><a href="/make/">Make</a><a href="/agents/">Agents</a><a href="/pricing/" class="active">Pricing</a>
+      <a class="nav-app snap" href="https://app.vcad.io">Web app</a>
+    </nav>
+  </header>
+  <main>
+    <section class="page-hero" data-dim>
+      <p class="sec-tag mono">pricing</p>
+      <h1>Free to design.<br>3% when you make.</h1>
+      <p class="sub">The kernel, the app, and the agent tools are free. vcad earns money only when a real part gets made — aligned with you, not with your seat count.</p>
+    </section>
+
+    <section class="psec psec-tight" data-dim>
+      <div class="tiers">
+        <div class="tier">
+          <p class="mono">Design</p>
+          <p class="tier-price">$0</p>
+          <ul><li>Full kernel, no gates</li><li>Unlimited documents</li><li>All 140 MCP tools</li><li>Every export format</li><li>Open source</li></ul>
+        </div>
+        <div class="tier tier-hot">
+          <p class="mono">Make</p>
+          <p class="tier-price">3% <small>of orders</small></p>
+          <ul><li>Live quotes, real processes</li><li>Ordering from the canvas</li><li>Receipts archived</li><li>Order tracking</li><li>Pay only when you make</li></ul>
+        </div>
+        <div class="tier">
+          <p class="mono">Team</p>
+          <p class="tier-price">$20 <small>/seat/mo</small></p>
+          <ul><li>Shared documents</li><li>Agent fleets</li><li>Machine profiles</li><li>Audit trail</li><li>Priority fab lanes</li></ul>
+        </div>
+      </div>
+    </section>
+
+    <section class="psec psec-tight" data-dim>
+      <p class="sec-tag mono">the fine print, plainly</p>
+      <div class="srow"><span class="mono">own machine?</span><span class="mono">export is free forever — the 3% is only on orders we broker</span></div>
+      <div class="srow"><span class="mono">lock-in?</span><span class="mono">none — .vcad is documented json, STEP out is one click, the kernel is open source</span></div>
+      <div class="srow"><span class="mono">licenses?</span><span class="mono">no license server, no dongles, no phone-home</span></div>
+      <div class="srow"><span class="mono">agents?</span><span class="mono">same free tier as humans — a seat is a seat</span></div>
+    </section>
+  </main>
+
+  <section class="page-close" data-dim>
+    <h2>Start free.</h2>
+    <div class="cta-row">
+      <div class="agent-cta agent-primary snap"><button class="agent-main" id="agentMain2"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M7 1 L12.2 4 L12.2 10 L7 13 L1.8 10 L1.8 4 Z" fill="none" stroke="#F25C1F" stroke-width="1.4"></path></svg> Open in Claude</button></div>
+      <a class="btn-secondary snap" href="https://app.vcad.io">Open the web app</a>
+    </div>
+    <div class="doors"><a href="/make/">What making looks like →</a> <a href="/kernel/">What free includes →</a></div>
+  </section>
+  <footer class="titleblock" data-dim>
+    <a class="tb-cell tb-muni" href="https://muni.works" aria-label="Municipal Robotics">
+      <svg viewBox="-60 -60 880 400" role="img" aria-hidden="true">
+        <g stroke="#ff6600" stroke-width="40" stroke-linecap="round" stroke-linejoin="round" fill="none">
+          <path d="M 20 240 L 20 100 C 20 50, 80 50, 100 50 C 140 50, 160 70, 160 100"/>
+          <path d="M 160 240 L 160 100"/>
+          <path d="M 160 100 C 160 50, 220 50, 240 50 C 280 50, 300 70, 300 100 L 300 240 C 300 270, 330 280, 370 280 C 410 280, 440 270, 440 240 L 440 100"/>
+          <path d="M 440 100 C 440 50, 500 50, 520 50 C 560 50, 600 70, 600 100 L 600 240 C 600 270, 630 280, 670 280 C 710 280, 740 270, 740 240 L 740 100"/>
+        </g>
+        <circle cx="740" cy="30" r="28" fill="#ff6600"/>
+      </svg>
+      <span><span class="mono t-dim2">Built by</span><span class="mono">Municipal Robotics</span></span>
+    </a>
+    <div class="tb-cell"><span class="mono t-dim2">Title</span><span class="mono">vcad.io/pricing</span></div>
+    <div class="tb-cell"><span class="mono t-dim2">Drawn by</span><span class="mono">humans + agents</span></div>
+    <div class="tb-cell"><span class="mono t-dim2">Rev</span><span class="mono">0.1.0</span></div>
+    <div class="tb-cell"><span class="mono t-dim2">Checked</span><span class="mono t-dim2">local build</span></div>
+  </footer>
+  <div id="copyToast" class="mono" hidden>copied</div>
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>

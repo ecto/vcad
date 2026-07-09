@@ -1,0 +1,15 @@
+{
+  "name": "@vcad/landing",
+  "version": "0.1.0",
+  "private": true,
+  "description": "vcad.io landing page — static, framework-free",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --port 4173 --strictPort",
+    "build": "vite build",
+    "preview": "vite preview --port 4173 --strictPort"
+  },
+  "devDependencies": {
+    "vite": "^6.3.5"
+  }
+}

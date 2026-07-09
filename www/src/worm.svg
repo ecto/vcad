@@ -1,0 +1,20 @@
+<!-- the vcad worm — a Muni-homage continuous-ribbon wordmark, drawn 2026-07-08.
+     retired from the footer (replaced by the real Municipal Robotics logo)
+     but archived because it rocks. candidates: 404 page, merch, stickers. -->
+<svg viewBox="0 0 560 170" xmlns="http://www.w3.org/2000/svg">
+  <path d="M30 50 L72 126 L114 50
+           C138 20 176 24 194 58
+           C158 52 136 68 136 90
+           C136 112 158 124 190 108
+           C222 62 280 46 302 68
+           C264 62 250 82 252 100
+           C254 120 284 124 304 104
+           C310 84 308 72 304 66
+           C314 88 316 108 320 120
+           C344 134 380 126 394 106
+           C358 114 338 98 340 78
+           C342 58 370 50 392 64
+           C400 70 402 82 400 98
+           C396 68 396 36 400 16"
+        fill="none" stroke="#1B1D21" stroke-width="24" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

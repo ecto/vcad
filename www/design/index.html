@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>vcad — One document, every domain.</title>
+  <meta name="description" content="Solids, sheet metal, boards, sketches — one parametric document, one kernel." />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2064%2064'%3E%3Cpath%20d='M6%2010%20L58%2010%20L32%2056%20Z'%20fill='%23F5F5F6'/%3E%3C/svg%3E" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&family=JetBrains+Mono:wght@400;500&display=swap" />
+  <link rel="stylesheet" href="/src/style.css" />
+</head>
+<body>
+  <header class="nav" data-dim>
+    <a class="wordmark" href="/" aria-label="vcad home">
+      <svg class="tri" viewBox="0 0 24 23" aria-hidden="true"><path d="M0 0 L24 0 L12 23 Z"/></svg><span>cad</span>
+    </a>
+    <nav class="nav-links">
+      <a href="/design/" class="active">Design</a><a href="/prove/">Prove</a><a href="/make/">Make</a><a href="/agents/">Agents</a><a href="/pricing/">Pricing</a>
+      <a class="nav-app snap" href="https://app.vcad.io">Web app</a>
+    </nav>
+  </header>
+  <main>
+    <section class="page-hero" data-dim>
+      <p class="sec-tag mono">design</p>
+      <h1>One document,<br>every domain.</h1>
+      <p class="sub">Solids, sheet metal, circuit boards, sketches, simulations — one parametric document, one kernel underneath all of it.</p>
+    </section>
+
+    <section class="psec psec-tight" data-dim>
+      <p class="sec-tag mono">domains</p>
+      <h2>The walls between tools are gone.</h2>
+      <p class="sec-sub">The enclosure knows about the board inside it. The bracket knows what the physics sim did to it. Change one, and everything downstream recomputes.</p>
+      <div class="card-grid">
+        <div class="hcard"><canvas class="engine-card" data-part="mechanical" aria-hidden="true"></canvas><h3>Mechanical</h3><p>BRep solids with real booleans, fillets, shells, and patterns. STEP in, STEP out.</p><span class="mono">brep · step · assemblies</span></div>
+        <div class="hcard"><canvas class="engine-card" data-part="sheetmetal" aria-hidden="true"></canvas><h3>Sheet metal</h3><p>Flanges, hems, and jogs with derived bend allowances. Unfolds to a cuttable DXF.</p><span class="mono">unfold · k-factor · dxf</span></div>
+        <div class="hcard"><canvas class="engine-card" data-part="electronics" aria-hidden="true"></canvas><h3>Electronics</h3><p>Schematic to routed board. DRC that understands copper, and Gerbers a fab accepts.</p><span class="mono">nets · drc · gerber</span></div>
+        <div class="hcard"><canvas class="engine-card" data-part="simulation" aria-hidden="true"></canvas><h3>Simulation</h3><p>Articulated physics on your actual assembly — joints, torques, a gym for training agents.</p><span class="mono">phyz · joints · gym</span></div>
+        <div class="hcard"><canvas class="engine-card" data-part="drafting" aria-hidden="true"></canvas><h3>Drafting</h3><p>Orthographic views, dimensions, and GD&amp;T from the model. The drawing is derived, never drawn.</p><span class="mono">views · dims · gd&amp;t</span></div>
+        <div class="hcard"><canvas class="engine-card" data-part="atoms" aria-hidden="true"></canvas><h3>Atoms</h3><p>Material cards homogenized from atomistics. The tower goes all the way down.</p><span class="mono">md · homogenize · cards</span></div>
+      </div>
+    </section>
+
+    <section class="psec" data-dim>
+      <div class="two-col">
+        <div>
+          <p class="sec-tag mono">two hands</p>
+          <h2>Sketch it, or say it.</h2>
+          <p class="sec-sub">The app is constraint-driven sketching, direct manipulation, and a ⌘K that does everything. Your agent gets the same 140 tools through MCP — same kernel, same checks, same document.</p>
+          <p class="mono" style="font-size:12px;color:#F25C1F;">Every mutation previews before it lands. ⏎ commits.</p>
+        </div>
+        <div class="receipt-json">
+          <p><span class="d">// same document, either hand</span></p>
+          <p><span class="k">you:</span> drag the flange to 32 mm</p>
+          <p><span class="k">agent:</span> <span class="c">apply_edits</span>("flange.length = 32")</p>
+          <p><span class="k">kernel:</span> rebuilt · <span class="g">✓ 14 checks</span> · Δ mass +3.1 g</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="psec psec-tight" data-dim>
+      <p class="sec-tag mono">parametric to the bone</p>
+      <h2>Numbers, not geometry soup.</h2>
+      <p class="sec-sub">Every dimension is a live parameter with provenance. Change the bolt circle and the drawing, the DXF, the quote, and the mass all follow — because they were never separate things.</p>
+      <div class="srow"><span class="mono">in</span><span class="mono">STEP AP214 · KiCad · Eagle · URDF · XYZ</span></div>
+      <div class="srow"><span class="mono">out</span><span class="mono">STEP AP214 · STL · GLB · DXF · Gerber · KiCad · G-code · SVG</span></div>
+      <div class="srow"><span class="mono">units</span><span class="mono">f64 millimeters · Z-up · right-handed</span></div>
+    </section>
+  </main>
+
+  <section class="page-close" data-dim>
+    <h2>Design yours.</h2>
+    <div class="cta-row">
+      <div class="agent-cta agent-primary snap"><button class="agent-main" id="agentMain2"><svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M7 1 L12.2 4 L12.2 10 L7 13 L1.8 10 L1.8 4 Z" fill="none" stroke="#F25C1F" stroke-width="1.4"></path></svg> Open in Claude</button></div>
+      <a class="btn-secondary snap" href="https://app.vcad.io">Open the web app</a>
+    </div>
+    <div class="doors"><a href="/prove/">How it's proven →</a> <a href="/make/">How it gets made →</a></div>
+  </section>
+  <footer class="titleblock" data-dim>
+    <a class="tb-cell tb-muni" href="https://muni.works" aria-label="Municipal Robotics">
+      <svg viewBox="-60 -60 880 400" role="img" aria-hidden="true">
+        <g stroke="#ff6600" stroke-width="40" stroke-linecap="round" stroke-linejoin="round" fill="none">
+          <path d="M 20 240 L 20 100 C 20 50, 80 50, 100 50 C 140 50, 160 70, 160 100"/>
+          <path d="M 160 240 L 160 100"/>
+          <path d="M 160 100 C 160 50, 220 50, 240 50 C 280 50, 300 70, 300 100 L 300 240 C 300 270, 330 280, 370 280 C 410 280, 440 270, 440 240 L 440 100"/>
+          <path d="M 440 100 C 440 50, 500 50, 520 50 C 560 50, 600 70, 600 100 L 600 240 C 600 270, 630 280, 670 280 C 710 280, 740 270, 740 240 L 740 100"/>
+        </g>
+        <circle cx="740" cy="30" r="28" fill="#ff6600"/>
+      </svg>
+      <span><span class="mono t-dim2">Built by</span><span class="mono">Municipal Robotics</span></span>
+    </a>
+    <div class="tb-cell"><span class="mono t-dim2">Title</span><span class="mono">vcad.io/design</span></div>
+    <div class="tb-cell"><span class="mono t-dim2">Drawn by</span><span class="mono">humans + agents</span></div>
+    <div class="tb-cell"><span class="mono t-dim2">Rev</span><span class="mono">0.1.0</span></div>
+    <div class="tb-cell"><span class="mono t-dim2">Checked</span><span class="mono t-dim2">local build</span></div>
+  </footer>
+  <div id="copyToast" class="mono" hidden>copied</div>
+  <script type="module" src="/src/main.js"></script>
+  <script type="module" src="/src/engine-card.js"></script>
+</body>
+</html>
