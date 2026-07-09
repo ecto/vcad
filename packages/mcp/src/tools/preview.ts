@@ -269,6 +269,7 @@ function pushPcbPreview(
       emissiveStrength: glows ? 3.0 : 1,
       clearcoat: pm.clearcoat ?? 0,
       clearcoatRoughness: pm.clearcoat_roughness ?? 0,
+      alpha: pm.alpha ?? 1,
     });
   }
 }

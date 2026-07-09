@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-08-translucent-soldermask-preview",
+  "version": "0.9.4",
+  "date": "2026-07-08",
+  "category": "feat",
+  "title": "Copper ghosts through a translucent soldermask in 3D",
+  "summary": "PCB previews now layer real copper foil under a translucent green mask shell — routing reads through the mask like a photographed board, with pads and via rings punched out as ENIG gold.",
+  "features": ["pcb", "viewer", "mcp"],
+  "mcpTools": ["validate_for_fab", "render_view"]
+}

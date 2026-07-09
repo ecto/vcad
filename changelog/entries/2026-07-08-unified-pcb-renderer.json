@@ -1,0 +1,9 @@
+{
+  "id": "2026-07-08-unified-pcb-renderer",
+  "version": "0.9.4",
+  "date": "2026-07-08",
+  "category": "feat",
+  "title": "App 3D board view unified with the kernel renderer",
+  "summary": "The app's PCB 3D view now renders the kernel's preview meshes — same translucent soldermask, copper, and ENIG pads as the MCP viewer — with selection, net highlight, layer toggles, and explosion intact.",
+  "features": ["pcb", "app", "viewer"]
+}

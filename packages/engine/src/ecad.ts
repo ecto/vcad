@@ -1027,6 +1027,32 @@ export interface PcbPreviewMesh {
   clearcoat?: number;
   /** Clearcoat roughness, 0..1. */
   clearcoat_roughness?: number;
+  /** Base-color alpha 0..1; below 1 = alpha-blended translucent material
+   *  (the soldermask shell). Older WASM omits it (opaque). */
+  alpha?: number;
+  /** Board layer this mesh belongs to ("FCu", "BCu", "In1Cu", …, "FSilkS")
+   *  when layer-specific; layer-spanning meshes (board body, vias,
+   *  components) omit it. */
+  layer?: string;
+  /** Per-entity triangle ranges for picking/highlighting (copper meshes). */
+  entities?: PcbPreviewEntity[];
+}
+
+/** A triangle range inside a {@link PcbPreviewMesh} belonging to one PCB
+ *  entity — maps a raycast faceIndex (or a net) back to board data. */
+export interface PcbPreviewEntity {
+  /** "trace" | "trace_arc" | "zone" | "pad" | "via". */
+  kind: string;
+  /** Index into the corresponding Pcb collection (pads: within footprint). */
+  index: number;
+  /** Footprint index (pads only). */
+  footprint?: number;
+  /** Net the entity belongs to, when it has one. */
+  net?: string;
+  /** First index (into `indices`) of the entity's triangle range. */
+  start: number;
+  /** Number of indices in the range (multiple of 3). */
+  count: number;
 }
 
 /**

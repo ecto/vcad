@@ -90,6 +90,21 @@ configureVersionHistoryStorage(storageAdapter);
 initSyncListeners();
 installLastOpenedTracker();
 
+// Dev-only automation hook: expose the core stores so headless harnesses
+// (and quick console debugging) can drive the app without UI scripting.
+// Never shipped — guarded by import.meta.env.DEV.
+if (import.meta.env.DEV) {
+  void Promise.all([import("@vcad/core"), import("@/stores/electronics-store")]).then(
+    ([core, electronics]) => {
+      (window as unknown as Record<string, unknown>).__vcadDev = {
+        useDocumentStore: core.useDocumentStore,
+        useCoreElectronicsStore: core.useCoreElectronicsStore,
+        useElectronicsStore: electronics.useElectronicsStore,
+      };
+    },
+  );
+}
+
 /**
  * Defer the first sync until bootstrap finishes.
  *
