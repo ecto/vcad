@@ -31,7 +31,7 @@ import {
   recordHistorySnapshot,
 } from "./tools/session.js";
 import { createCadLoon } from "./tools/loon.js";
-import { previewVersion } from "./tools/preview.js";
+import { previewVersion, previewGlbFor } from "./tools/preview.js";
 import {
   createSessionStore,
   createSessionEventStore,
@@ -1312,6 +1312,17 @@ export async function createServer(
         if (docId) {
           attachPreviewHandle(result, docId, name);
           slimPreviewForInlineUi(result, docId, name, clientHasInlineUi());
+          // Mount tools carry the UI template, so this exact result is what
+          // the freshly-mounted iframe receives. Ride the preview GLB along
+          // in `_meta` (host-only — never model-visible) so first paint
+          // needs ZERO extra round trips: no get_preview_glb call, no
+          // session re-hydration, no second evaluate+tessellate. Also warms
+          // the content-addressed GLB cache for the poll loop. Best-effort
+          // and size-capped; hosts that strip `_meta` (and oversized docs)
+          // fall back to the fetch path unchanged.
+          if (def.behavior.mount && clientHasInlineUi()) {
+            await attachInlinePreview(result, docId, engine);
+          }
         }
       }
 
@@ -1478,6 +1489,43 @@ function attachPreviewHandle(
       type: "text",
       text: JSON.stringify({ document_id: docId }),
     });
+  }
+}
+
+/** Upper bound for a preview GLB riding inline in a mount result's `_meta`.
+ *  Matches the artifact-offload text ethos: big geometry goes through the
+ *  fetch path; this fast path is for the common small-to-medium part. */
+const INLINE_PREVIEW_MAX_BASE64 = 1_500_000;
+
+/**
+ * Attach a ready-to-render preview GLB to a mount-tool result's `_meta`
+ * (`vcad.io/preview`), so the iframe the host mounts for this result can
+ * paint immediately instead of round-tripping `get_preview_glb` (which pays
+ * session re-hydration plus a full evaluate + tessellate). `_meta` is
+ * host/app-plumbing — it never reaches the model, so the lean-results
+ * discipline that moved GLBs out of content blocks is preserved.
+ * Best-effort: any failure or an oversized GLB just leaves the result on
+ * the existing fetch path.
+ */
+export async function attachInlinePreview(
+  result: { _meta?: Record<string, unknown> },
+  docId: string,
+  engine: Engine,
+): Promise<void> {
+  try {
+    const preview = await previewGlbFor(getSession(docId), engine);
+    if (!preview || preview.glb.length > INLINE_PREVIEW_MAX_BASE64) return;
+    result._meta = {
+      ...result._meta,
+      "vcad.io/preview": {
+        document_id: docId,
+        glb: preview.glb,
+        version: preview.version,
+        ...(preview.mode ? { mode: preview.mode } : {}),
+      },
+    };
+  } catch {
+    // session not resolvable / eval failed — viewer falls back to fetching
   }
 }
 

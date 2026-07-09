@@ -25,6 +25,76 @@ import {
 import { getSession } from "./session.js";
 import { behavior, type ToolDef } from "./tool-def.js";
 
+// ─── Content-addressed GLB cache ─────────────────────────────────────────────
+//
+// The viewer's first paint used to pay a full engine.evaluate + tessellation
+// on EVERY get_preview_glb call — including the fetch that happens ~1s after
+// the mutation tool already evaluated the same document. Cache the built GLB
+// keyed by (content hash, mode): the value is a pure function of the document
+// content, so the cache is tenant-safe (two users with identical content get
+// identical bytes) and never serves stale geometry (any edit flips the hash).
+const GLB_CACHE_MAX = 16;
+const glbCache = new Map<string, string>();
+
+function glbCacheGet(key: string): string | undefined {
+  const hit = glbCache.get(key);
+  if (hit !== undefined) {
+    // LRU touch: re-insert so the hottest entries survive eviction.
+    glbCache.delete(key);
+    glbCache.set(key, hit);
+  }
+  return hit;
+}
+
+function glbCachePut(key: string, glb: string): void {
+  glbCache.delete(key);
+  glbCache.set(key, glb);
+  while (glbCache.size > GLB_CACHE_MAX) {
+    const oldest = glbCache.keys().next().value;
+    if (oldest === undefined) break;
+    glbCache.delete(oldest);
+  }
+}
+
+/** A ready-to-render preview envelope: base64 GLB + change token (+ mode). */
+export interface PreviewGlb {
+  glb: string;
+  version: string;
+  mode?: "instances";
+}
+
+/**
+ * Build (or fetch from cache) the preview GLB for a document. Single shared
+ * path for the `get_preview_glb` tool and the dispatch layer's inline
+ * `_meta` preview, so both populate/benefit from the same cache. Returns
+ * null when the document has no previewable geometry.
+ */
+export async function previewGlbFor(
+  doc: Document,
+  engine: Engine,
+  instances = false,
+): Promise<PreviewGlb | null> {
+  const version = previewVersion(doc);
+  if (instances) {
+    const key = `${version}:instances`;
+    const cached = glbCacheGet(key);
+    if (cached !== undefined) return { glb: cached, version, mode: "instances" };
+    const instGlb = generateInstancesGlbPreview(doc, engine);
+    if (instGlb) {
+      glbCachePut(key, instGlb);
+      return { glb: instGlb, version, mode: "instances" };
+    }
+    // No instances — fall through to the parts preview (flag is safe on any doc).
+  }
+  const key = `${version}:parts`;
+  const cached = glbCacheGet(key);
+  if (cached !== undefined) return { glb: cached, version };
+  const glb = await generateGlbPreview(doc, engine);
+  if (!glb) return null;
+  glbCachePut(key, glb);
+  return { glb, version };
+}
+
 /**
  * Generate a base64-encoded GLB preview from an IR document.
  * Returns null only when the document has no previewable geometry at all.
@@ -245,40 +315,27 @@ export async function getPreviewGlb(
   engine: Engine,
   instances = false,
 ): Promise<{ content: Array<{ type: "text"; text: string }> }> {
-  if (instances) {
-    const instGlb = generateInstancesGlbPreview(doc, engine);
-    if (instGlb) {
-      return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify({
-              _vcad_glb: instGlb,
-              version: previewVersion(doc),
-              mode: "instances",
-            }),
-          },
-        ],
-      };
-    }
-  }
-  const glbBase64 = await generateGlbPreview(doc, engine);
-  if (!glbBase64) {
-    // No previewable geometry yet (e.g. a freshly opened empty document the
-    // agent is about to build into). Return a soft signal, not an error — the
-    // viewer shows "no geometry" and the self-refresh poll just waits for the
-    // next change, and routine empty previews don't inflate the tool error rate.
+  const preview = await previewGlbFor(doc, engine, instances);
+  if (preview) {
     return {
-      content: [{ type: "text", text: JSON.stringify({ _vcad_glb: null }) }],
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify({
+            _vcad_glb: preview.glb,
+            version: preview.version,
+            ...(preview.mode ? { mode: preview.mode } : {}),
+          }),
+        },
+      ],
     };
   }
+  // No previewable geometry yet (e.g. a freshly opened empty document the
+  // agent is about to build into). Return a soft signal, not an error — the
+  // viewer shows "no geometry" and the self-refresh poll just waits for the
+  // next change, and routine empty previews don't inflate the tool error rate.
   return {
-    content: [
-      {
-        type: "text",
-        text: JSON.stringify({ _vcad_glb: glbBase64, version: previewVersion(doc) }),
-      },
-    ],
+    content: [{ type: "text", text: JSON.stringify({ _vcad_glb: null }) }],
   };
 }
 
