@@ -239,6 +239,7 @@ export const TOOL_METADATA: Record<string, ToolMetadata> = {
       document_id: { type: "string" },
     }),
   },
+  topology_optimize: { title: "Topology Optimize", annotations: RW },
   list_footprints: { title: "List Footprints", annotations: RO },
   search_footprints: { title: "Search Footprints", annotations: RO },
   get_pad_positions: { title: "Get Pad Positions", annotations: RO },

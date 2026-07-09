@@ -25,6 +25,7 @@ vcad-kernel-cost = { workspace = true }
 vcad-kernel-dfm = { workspace = true }
 vcad-kernel-cam = { workspace = true }
 vcad-kernel-stocksim = { workspace = true }
+vcad-kernel-topopt = { workspace = true }
 
 [dev-dependencies]
 serde_json = { workspace = true }

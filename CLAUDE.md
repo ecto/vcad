@@ -113,6 +113,7 @@ vcad/
 │   ├── vcad-kernel-urdf/          # URDF robot description import
 │   ├── vcad-kernel-cam/           # 2.5D CAM toolpath generation + G-code post
 │   ├── vcad-kernel-stocksim/      # CAM stock sim (octree SDF) + toolpath verification oracle
+│   ├── vcad-kernel-topopt/        # SIMP topology optimization (voxel FEA + surface nets)
 │   ├── vcad-kernel/               # Unified kernel API
 │   ├── vcad-kernel-wasm/          # WASM bindings for browser
 │   ├── vcad-ir/                   # Intermediate representation
@@ -266,6 +267,9 @@ target/debug/vcad-render path/to/part.vcad > out.svg
   labeled assertions persist on the document and re-verify via
   `build_receipt` / `verify_receipt` as Holds/Stale/Violated
 - `render_view` — render the session document to an isometric PNG (agent eyes)
+- `topology_optimize` — SIMP topology optimization: stiffest material layout
+  for given loads/supports inside a box envelope or an existing part's volume;
+  result lands in the document as a frozen mesh part
 - `verify_part` / `list_eval_tasks` — grade the document against mecheval
   benchmark tasks via the official `mecheval-grade` binary (self-grading
   oracle; the benchmark harness excludes these during scored runs)
