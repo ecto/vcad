@@ -555,6 +555,11 @@ describe("gym tools", () => {
     } else {
       expect(info.env_id).toBeDefined();
       expect(info.num_joints).toBeGreaterThanOrEqual(0);
+      // Observation-ordering contract: joint_ids is doc.joints order (null
+      // only for kernel WASM builds that predate jointIds()).
+      if (info.joint_ids !== null) {
+        expect(info.joint_ids).toEqual(["joint1"]);
+      }
       expect(info.end_effector_ids).toContain("link1_inst");
       gymClose({ env_id: info.env_id });
     }

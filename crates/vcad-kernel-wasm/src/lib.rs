@@ -3532,6 +3532,15 @@ impl PhysicsSim {
         self.env.num_joints()
     }
 
+    /// Joint ids in observation order (document `joints` order).
+    ///
+    /// `joint_positions[i]` / `joint_velocities[i]` in every observation
+    /// correspond to `jointIds()[i]`, as do action vector entries.
+    #[wasm_bindgen(js_name = jointIds)]
+    pub fn joint_ids(&self) -> Vec<String> {
+        self.env.joint_ids().to_vec()
+    }
+
     /// Get the observation dimension.
     #[wasm_bindgen(js_name = observationDim)]
     pub fn observation_dim(&self) -> usize {

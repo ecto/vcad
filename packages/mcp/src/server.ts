@@ -31,7 +31,7 @@ import {
   recordHistorySnapshot,
 } from "./tools/session.js";
 import { createCadLoon } from "./tools/loon.js";
-import { previewVersion } from "./tools/preview.js";
+import { previewVersion, previewGlbFor } from "./tools/preview.js";
 import {
   createSessionStore,
   createSessionEventStore,
@@ -51,6 +51,16 @@ import type { AuthUser } from "./oauth.js";
  *  otherwise null (stdio, anonymous HTTP, or OAuth disabled). */
 export interface ServerContext {
   user: AuthUser | null;
+  /** Stateless HTTP handles each request on a fresh Server, so the client
+   *  capabilities declared at `initialize` (including the MCP Apps UI
+   *  extension) are gone by the time `tools/call` arrives — the caps-based
+   *  gate can never fire. Set this to have mount results carry the inline
+   *  `_meta` preview anyway: `_meta` is host plumbing, never model-visible,
+   *  and clients without a viewer ignore it per spec, so over-attaching
+   *  costs only wire bytes while under-attaching costs the viewer its
+   *  zero-round-trip first paint. Leave unset for stateful transports
+   *  (stdio), where the real capability check works. */
+  assumeUiClient?: boolean;
 }
 import {
   registryToolDescriptors,
@@ -71,6 +81,7 @@ import { getStaleness } from "./edge-config.js";
 // server (http.ts).
 export { handleLiveRequest } from "./live-route.js";
 export { handleArtifactRequest } from "./artifact-route.js";
+export { flushArtifacts, artifactStoreInfo } from "./tools/artifact-store.js";
 import {
   getViewerHtml,
   VIEWER_RESOURCE_URI,
@@ -82,6 +93,7 @@ import {
 } from "./viewer.js";
 import { fireToolAlert } from "./notify.js";
 import { configureTelemetry, flushTelemetry } from "./telemetry.js";
+import { artifactStoreInfo as artifactStoreInfoLocal } from "./tools/artifact-store.js";
 
 // ── ToolDef registry: one record per tool, contributed by its module ────────
 import {
@@ -117,6 +129,7 @@ import { toolDefs as verifySpecToolDefs } from "./tools/verify-spec.js";
 import { toolDefs as clearanceToolDefs } from "./tools/clearance.js";
 import { toolDefs as dfmToolDefs } from "./tools/dfm.js";
 import { toolDefs as sheetMetalToolDefs } from "./tools/sheet-metal.js";
+import { toolDefs as acousticsToolDefs } from "./tools/acoustics.js";
 import { toolDefs as importToolDefs } from "./tools/import.js";
 import { toolDefs as importPcbToolDefs } from "./tools/import-pcb.js";
 import { toolDefs as shareToolDefs } from "./tools/share.js";
@@ -126,6 +139,8 @@ import { toolDefs as recordToolDefs } from "./tools/record.js";
 import { toolDefs as changelogToolDefs } from "./tools/changelog.js";
 import { toolDefs as ecadToolDefs } from "./tools/ecad.js";
 import { toolDefs as enclosureToolDefs } from "./tools/enclosure.js";
+import { toolDefs as simReplayToolDefs } from "./tools/sim-replay.js";
+import { toolDefs as orderFeedToolDefs } from "./tools/order-feed.js";
 
 // Re-exported so the Vercel transport entry can drain in-flight PostHog
 // captures before a serverless instance freezes (see services/mcp/entry.ts).
@@ -288,6 +303,7 @@ const STATIC_TOOL_DEFS: readonly ToolDef[] = [
   ...clearanceToolDefs,
   ...dfmToolDefs,
   ...sheetMetalToolDefs,
+  ...acousticsToolDefs,
   ...importToolDefs,
   ...importPcbToolDefs,
   ...shareToolDefs,
@@ -297,6 +313,8 @@ const STATIC_TOOL_DEFS: readonly ToolDef[] = [
   ...changelogToolDefs,
   ...ecadToolDefs,
   ...enclosureToolDefs,
+  ...simReplayToolDefs,
+  ...orderFeedToolDefs,
 ];
 
 /**
@@ -325,6 +343,7 @@ const LIST_TOOL_ORDER: readonly string[] = [
   "list_orders",
   "authorize_spend",
   "place_order",
+  "get_order_feed",
   // ── Project BOM ────────────────────────────────────────────
   "bom_create",
   "bom_add_line",
@@ -340,6 +359,8 @@ const LIST_TOOL_ORDER: readonly string[] = [
   // ── MCP Apps: app-only preview fetch + version poll ────────
   "get_preview_glb",
   "get_preview_version",
+  "get_sim_replay",
+  "get_sim_version",
   // ── Atomic multi-op editing ────────────────────────────────
   "apply_edits",
   // ── Loon DSL one-shot + core see/measure/export ────────────
@@ -374,6 +395,7 @@ const LIST_TOOL_ORDER: readonly string[] = [
   "sheet_metal_suggest_fix",
   "sheet_metal_sequence",
   "sheet_metal_nest",
+  "simulate_strike",
   // ── Import + share ─────────────────────────────────────────
   "import_step",
   "import_kicad",
@@ -636,6 +658,16 @@ export async function createServer(
   const shareStore = createShareStore();
 
   // Everything a tool handler may need, threaded per connection.
+  //
+  // `elicit` is the URL-mode elicitation bridge (M3). Its closures reference
+  // the `server` const declared LATER in this function — the same late-closure
+  // pattern as setToolPacksDef: handlers only run after connect, so the
+  // binding is live by the time either function is invoked. No env flag —
+  // capability detection only: `urlSupported` re-reads the client's declared
+  // `elicitation.url` capability at call time (capabilities land only after
+  // initialize). `requestUrl` never throws: the SDK's capability assertion
+  // (and any transport failure) degrades to `{action:"cancel"}`, which callers
+  // treat as a dismissed prompt.
   const ctx: ToolContext = {
     engine,
     user: context.user,
@@ -643,6 +675,27 @@ export async function createServer(
     eventStore,
     fabricateStore,
     shareStore,
+    elicit: {
+      urlSupported: () => {
+        const caps = server.getClientCapabilities() as
+          | { elicitation?: { url?: object } }
+          | undefined;
+        return Boolean(caps?.elicitation?.url);
+      },
+      requestUrl: async (p) => {
+        try {
+          const res = await server.elicitInput({
+            mode: "url",
+            message: p.message,
+            url: p.url,
+            elicitationId: p.elicitationId,
+          });
+          return { action: res.action };
+        } catch {
+          return { action: "cancel" as const };
+        }
+      },
+    },
   };
 
   // Wire the kernel WASM's chat helpers into the shared commandRegistry so
@@ -795,6 +848,7 @@ export async function createServer(
             text: JSON.stringify({
               ...buildInfo,
               ...sessionStoreInfo(),
+              ...artifactStoreInfoLocal(),
               ...staleness,
               kernel_wasm: kernelWasmLoaded ? "ok" : "unavailable",
               ...(kernelWasmMissing.length > 0
@@ -1268,6 +1322,20 @@ export async function createServer(
         if (docId) {
           attachPreviewHandle(result, docId, name);
           slimPreviewForInlineUi(result, docId, name, clientHasInlineUi());
+          // Mount tools carry the UI template, so this exact result is what
+          // the freshly-mounted iframe receives. Ride the preview GLB along
+          // in `_meta` (host-only — never model-visible) so first paint
+          // needs ZERO extra round trips: no get_preview_glb call, no
+          // session re-hydration, no second evaluate+tessellate. Also warms
+          // the content-addressed GLB cache for the poll loop. Best-effort
+          // and size-capped; hosts that strip `_meta` (and oversized docs)
+          // fall back to the fetch path unchanged.
+          if (
+            def.behavior.mount &&
+            (clientHasInlineUi() || context.assumeUiClient === true)
+          ) {
+            await attachInlinePreview(result, docId, engine);
+          }
         }
       }
 
@@ -1434,6 +1502,43 @@ function attachPreviewHandle(
       type: "text",
       text: JSON.stringify({ document_id: docId }),
     });
+  }
+}
+
+/** Upper bound for a preview GLB riding inline in a mount result's `_meta`.
+ *  Matches the artifact-offload text ethos: big geometry goes through the
+ *  fetch path; this fast path is for the common small-to-medium part. */
+const INLINE_PREVIEW_MAX_BASE64 = 1_500_000;
+
+/**
+ * Attach a ready-to-render preview GLB to a mount-tool result's `_meta`
+ * (`vcad.io/preview`), so the iframe the host mounts for this result can
+ * paint immediately instead of round-tripping `get_preview_glb` (which pays
+ * session re-hydration plus a full evaluate + tessellate). `_meta` is
+ * host/app-plumbing — it never reaches the model, so the lean-results
+ * discipline that moved GLBs out of content blocks is preserved.
+ * Best-effort: any failure or an oversized GLB just leaves the result on
+ * the existing fetch path.
+ */
+export async function attachInlinePreview(
+  result: { _meta?: Record<string, unknown> },
+  docId: string,
+  engine: Engine,
+): Promise<void> {
+  try {
+    const preview = await previewGlbFor(getSession(docId), engine);
+    if (!preview || preview.glb.length > INLINE_PREVIEW_MAX_BASE64) return;
+    result._meta = {
+      ...result._meta,
+      "vcad.io/preview": {
+        document_id: docId,
+        glb: preview.glb,
+        version: preview.version,
+        ...(preview.mode ? { mode: preview.mode } : {}),
+      },
+    };
+  } catch {
+    // session not resolvable / eval failed — viewer falls back to fetching
   }
 }
 

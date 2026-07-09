@@ -268,7 +268,7 @@
   {
     "name": "quote_manufacturing",
     "title": "Quote Manufacturing",
-    "description": "Quote manufacturing a part: measures the design, runs light DFM, and returns margin-inclusive price options per fab (pcb/cnc/3dprint/sheet_metal/cast_metal). Pass `ir` (inline Document — stateless, no open_document needed, serverless-safe, parallel-safe) OR a `document_id` from an open session. Persists a quote + a QUOTED order. Phase 0 is quote-only — prices are estimates and ordering/payment ship next; no money moves. For sheet_metal the result includes `fab_handoff`: curated US instant-quote shops (SendCutSend/OSH Cut/Fabworks), the exact file recipe (DXF via sheet_metal_unfold or folded STEP via export_cad), and what to enter at upload — everything needed to finish the order on the fab's site today.",
+    "description": "Quote manufacturing a part: measures the design, runs light DFM, and returns margin-inclusive price options per fab (pcb/cnc/3dprint/sheet_metal/cast_metal). Pass `ir` (inline Document — stateless, no open_document needed, serverless-safe, parallel-safe) OR a `document_id` from an open session. Persists a quote + a QUOTED order. Phase 0 is quote-only — prices are estimates and ordering/payment ship next; no money moves. For sheet_metal the result includes `fab_handoff`: curated US instant-quote shops (SendCutSend/OSH Cut/Fabworks), the exact file recipe (DXF via sheet_metal_unfold or folded STEP via export_cad), and what to enter at upload — everything needed to finish the order on the fab's site today. Mounts the inline viewer's order dock, so the quote and its order lifecycle render alongside the model.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -330,6 +330,15 @@
     "annotations": {
       "readOnlyHint": false,
       "openWorldHint": true
+    },
+    "_meta": {
+      "ui": {
+        "resourceUri": "ui://vcad/viewer"
+      },
+      "ui/resourceUri": "ui://vcad/viewer",
+      "openai/outputTemplate": "ui://vcad/viewer-openai.html",
+      "openai/toolInvocation/invoking": "Modeling geometry…",
+      "openai/toolInvocation/invoked": "Model updated"
     }
   },
   {
@@ -381,7 +390,7 @@
   {
     "name": "authorize_spend",
     "title": "Authorize Spend",
-    "description": "Propose a spend authorization for a QUOTED order. Creates a DB-backed, revocable authorization (status pending_human) and records the proposal on the session's event log. A HUMAN must approve it in the vcad app before place_order can charge — the agent cannot approve its own spend. Flag-gated (test-mode); no money moves here.",
+    "description": "Propose a spend authorization for a QUOTED order. Creates a DB-backed, revocable authorization (status pending_human) and records the proposal on the session's event log. A HUMAN must approve it in the vcad app before place_order can charge — the agent cannot approve its own spend; when the client supports URL elicitation the approval page is offered to the human in-band. Flag-gated (test-mode); no money moves here.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -407,7 +416,7 @@
   {
     "name": "place_order",
     "title": "Place Order",
-    "description": "Place a QUOTED order once its authorization has been human-approved: performs one atomic wallet debit and moves the order to PAID (fab submission follows in a later step). Refuses if the authorization is still pending approval. Flag-gated (test-mode).",
+    "description": "Place a QUOTED order once its authorization has been human-approved: performs one atomic wallet debit and moves the order to PAID (fab submission follows in a later step). Refuses if the authorization is still pending approval, if the geometry changed since the quote (doc_hash mismatch — re-quote), or if the design's persisted clearance claims fail or cannot be re-verified (fail-closed receipt gate). Flag-gated (test-mode).",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -437,6 +446,35 @@
       "readOnlyHint": false,
       "destructiveHint": true,
       "openWorldHint": true
+    }
+  },
+  {
+    "name": "get_order_feed",
+    "title": "Get Order Feed",
+    "description": "App-only: the order-dock feed for a document — orders with fused lifecycle chips, joined quote details, authorization status (+ approve URL while pending), receipt status, and wallet balance. Polled by the inline viewer; read-only.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "document_id": {
+          "type": "string",
+          "description": "Session/document id whose orders to feed."
+        }
+      },
+      "required": [
+        "document_id"
+      ]
+    },
+    "annotations": {
+      "readOnlyHint": true,
+      "openWorldHint": true
+    },
+    "_meta": {
+      "openai/widgetAccessible": true,
+      "ui": {
+        "visibility": [
+          "app"
+        ]
+      }
     }
   },
   {
@@ -1094,6 +1132,10 @@
         "document_id": {
           "type": "string",
           "description": "Session id of the document to preview."
+        },
+        "instances": {
+          "type": "boolean",
+          "description": "Return one named node per assembly instance (part-local geometry + node transforms) so the replay viewer can bind FK targets. Falls back to the merged parts preview when the document has no instances."
         }
       },
       "required": [
@@ -1126,6 +1168,62 @@
       },
       "required": [
         "document_id"
+      ]
+    },
+    "annotations": {
+      "readOnlyHint": true
+    },
+    "_meta": {
+      "openai/widgetAccessible": true,
+      "ui": {
+        "visibility": [
+          "app"
+        ]
+      }
+    }
+  },
+  {
+    "name": "get_sim_replay",
+    "title": "Get Sim Replay",
+    "description": "Return the recorded joint trajectory and per-step instance transforms for a physics env. Internal to the inline viewer's replay UI — agents should use gym_observe or record_simulation instead.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "env_id": {
+          "type": "string",
+          "description": "Environment ID returned by create_robot_env"
+        }
+      },
+      "required": [
+        "env_id"
+      ]
+    },
+    "annotations": {
+      "readOnlyHint": true
+    },
+    "_meta": {
+      "openai/widgetAccessible": true,
+      "ui": {
+        "visibility": [
+          "app"
+        ]
+      }
+    }
+  },
+  {
+    "name": "get_sim_version",
+    "title": "Get Sim Version",
+    "description": "Return a cheap {env_id, step_count, version} change token for a physics env (no FK eval). Internal to the inline viewer's replay poll — agents should ignore it.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "env_id": {
+          "type": "string",
+          "description": "Environment ID returned by create_robot_env"
+        }
+      },
+      "required": [
+        "env_id"
       ]
     },
     "annotations": {
@@ -2247,6 +2345,55 @@
     }
   },
   {
+    "name": "simulate_strike",
+    "title": "Simulate Strike",
+    "description": "Hear a part before it's cut: simulate a mallet strike on a flat free-free bar (glockenspiel/vibraphone bar) and verify its pitch. Modal frequencies from BOTH the closed-form Euler–Bernoulli model and a hole-aware 1-D FEM (cord holes change A(x), I(x)); strike-excited modal synthesis (mode shape at strike point × half-sine mallet spectrum, Q-based decay) → optional 44.1 kHz WAV → FFT peak extraction → cents-error verdict vs `note`/`expect_hz`. Takes a flat sheet_metal_create `document_id` (dims, material, holes read from the session) or an explicit `bar` spec. E/ρ come from the kernel material registry. The `modes` table {hz, gain, q} is compact enough to drive client-side Web Audio synthesis.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "document_id": {
+          "type": "string",
+          "description": "Session id of a FLAT sheet-metal part (from sheet_metal_create) — the bar's length, width, thickness, material, and hole positions are read from it. Mutually exclusive with `bar`."
+        },
+        "bar": {
+          "type": "object",
+          "description": "Explicit bar spec instead of a document: {length_mm, width_mm, thickness_mm, material?, holes_mm?, hole_dia_mm?}."
+        },
+        "note": {
+          "type": "string",
+          "description": "Target pitch to verify against, e.g. \"C6\", \"F#4\". Alternative to expect_hz."
+        },
+        "expect_hz": {
+          "type": "number",
+          "description": "Target fundamental (Hz) to verify against."
+        },
+        "tolerance_cents": {
+          "type": "number",
+          "description": "Pass/fail tolerance for the verdict (cents). Default 10."
+        },
+        "strike_position": {
+          "type": "number",
+          "description": "Strike point as a fraction of bar length, 0..1. Default 0.5 (center — antinode of mode 1, node of mode 2, like a real player)."
+        },
+        "mallet_contact_ms": {
+          "type": "number",
+          "description": "Mallet contact time (ms). Hard glockenspiel mallet ≈ 0.5 (default); soft ≈ 2 — longer contact low-passes the upper partials."
+        },
+        "duration_s": {
+          "type": "number",
+          "description": "Length of the synthesized strike (s). Default 2.5."
+        },
+        "wav_filename": {
+          "type": "string",
+          "description": "Write the synthesized strike as a 16-bit/44.1kHz WAV with this name (local servers write to the export dir; hosted returns base64). Omit to skip audio and return the modal/verdict data only."
+        }
+      }
+    },
+    "annotations": {
+      "readOnlyHint": false
+    }
+  },
+  {
     "name": "import_step",
     "title": "Import STEP",
     "description": "Import geometry from a STEP file (.step or .stp). Returns an IR document with ImportedMesh nodes. Supports AP203/AP214 STEP files commonly exported from Fusion 360, SolidWorks, Onshape, etc.",
@@ -2357,7 +2504,7 @@
   {
     "name": "create_robot_env",
     "title": "Create Robot Env",
-    "description": "Create a physics simulation environment from a vcad assembly. Returns an environment ID that can be used with gym_step, gym_reset, and gym_observe. The environment provides a gym-style interface for RL training.",
+    "description": "Create a physics simulation environment from a vcad assembly. Returns an environment ID that can be used with gym_step, gym_reset, and gym_observe. The environment provides a gym-style interface for RL training. Mounts the inline 3D viewer with a play button — gym_step rollouts replay right in the chat.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -2392,6 +2539,15 @@
     },
     "annotations": {
       "readOnlyHint": false
+    },
+    "_meta": {
+      "ui": {
+        "resourceUri": "ui://vcad/viewer"
+      },
+      "ui/resourceUri": "ui://vcad/viewer",
+      "openai/outputTemplate": "ui://vcad/viewer-openai.html",
+      "openai/toolInvocation/invoking": "Modeling geometry…",
+      "openai/toolInvocation/invoked": "Model updated"
     }
   },
   {
@@ -2735,7 +2891,7 @@
         },
         "document_id": {
           "type": "string",
-          "description": "Session document id from open_document. Must describe the same assembly the env was created from (same joint order)."
+          "description": "Session document id from open_document. Must describe the same assembly the env was created from (same joint ids)."
         },
         "steps": {
           "type": "number",

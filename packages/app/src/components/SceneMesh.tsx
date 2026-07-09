@@ -741,11 +741,13 @@ export const SceneMesh = memo(function SceneMesh({
         transform.translation.y,
         transform.translation.z,
       );
+      // Kernel euler convention is extrinsic X→Y→Z (matrix Rz·Ry·Rx), which
+      // is three.js order "ZYX" — must match engine transformMesh / evaluate.rs.
       const euler = new THREE.Euler(
         transform.rotation.x * DEG2RAD,
         transform.rotation.y * DEG2RAD,
         transform.rotation.z * DEG2RAD,
-        "XYZ",
+        "ZYX",
       );
       m.quaternion.setFromEuler(euler);
       m.scale.set(transform.scale.x, transform.scale.y, transform.scale.z);

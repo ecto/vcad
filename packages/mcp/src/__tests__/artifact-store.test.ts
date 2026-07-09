@@ -200,3 +200,176 @@ describe("import_step large-result offload", () => {
     expect(out.summary.bodies).toBe(1);
   });
 });
+
+// ── Durable backend (mcp_artifacts) ─────────────────────────────────────────
+//
+// Fakes the PostgREST surface via the injectable sessionFetch seam (the same
+// hook the session-store tests use) and simulates a serverless COLD START by
+// clearing the warm registry between the write and the read — the exact
+// failure that shipped: a handle minted on one instance was unreadable on
+// every other ("Unknown or expired" / a 404 artifact_url).
+
+import {
+  getArtifactAsync,
+  getArtifactFileAsync,
+  resolveArtifactRefAsync,
+  flushArtifacts,
+  artifactStoreInfo,
+} from "../tools/artifact-store.js";
+import { setSessionFetch } from "../session-store.js";
+
+interface FakeRow {
+  artifact_id: string;
+  bytes: number;
+  manifest: unknown;
+  files: unknown;
+  expires_at: string;
+}
+
+function fakeSupabase(rows: Map<string, FakeRow>): {
+  fetch: typeof fetch;
+  calls: string[];
+} {
+  const calls: string[] = [];
+  const reply = (status: number, body: unknown = {}) =>
+    ({
+      ok: status >= 200 && status < 300,
+      status,
+      json: async () => body,
+      text: async () => JSON.stringify(body),
+    }) as unknown as Response;
+
+  const fetchImpl = (async (input: unknown, init?: RequestInit) => {
+    const url = new URL(String(input));
+    const method = init?.method ?? "GET";
+    calls.push(`${method} ${url.pathname}${url.search}`);
+    if (!url.pathname.endsWith("/rest/v1/mcp_artifacts")) return reply(404);
+    const idFilter = url.searchParams.get("artifact_id"); // "eq.<id>"
+    const id = idFilter?.startsWith("eq.") ? idFilter.slice(3) : null;
+    if (method === "POST") {
+      const body = JSON.parse(String(init?.body ?? "[]")) as FakeRow[];
+      for (const row of body) rows.set(row.artifact_id, row);
+      return reply(201);
+    }
+    if (method === "GET") {
+      const row = id ? rows.get(id) : undefined;
+      return row ? reply(200, row) : reply(406, {});
+    }
+    if (method === "DELETE") {
+      if (id) rows.delete(id);
+      return reply(204);
+    }
+    return reply(405);
+  }) as typeof fetch;
+
+  return { fetch: fetchImpl, calls };
+}
+
+describe("durable artifact store (mcp_artifacts)", () => {
+  const rows = new Map<string, FakeRow>();
+  let calls: string[] = [];
+
+  beforeEach(() => {
+    rows.clear();
+    process.env.SUPABASE_URL = "https://fake.supabase.co";
+    process.env.SUPABASE_SERVICE_ROLE_KEY = "service-role-test-key";
+    const fake = fakeSupabase(rows);
+    calls = fake.calls;
+    setSessionFetch(fake.fetch);
+  });
+
+  afterEach(() => {
+    delete process.env.SUPABASE_URL;
+    delete process.env.SUPABASE_SERVICE_ROLE_KEY;
+    setSessionFetch((...args) => fetch(...args));
+  });
+
+  it("reports durability from the shared Supabase env", () => {
+    expect(artifactStoreInfo()).toEqual({ artifact_store: "supabase" });
+    delete process.env.SUPABASE_URL;
+    expect(artifactStoreInfo()).toEqual({ artifact_store: "in-memory" });
+  });
+
+  it("persists on store and hydrates on a cold instance (the shipped bug)", async () => {
+    const handle = storeArtifact([
+      { name: "F_Cu.gbr", content: "G04 fcu*" },
+      { name: "drill.drl", content: "M48" },
+    ]);
+    await flushArtifacts();
+    expect(rows.has(handle.artifact_id)).toBe(true);
+
+    // Cold start: the warm registry is gone; only the durable row survives.
+    clearArtifacts();
+    expect(getArtifact(handle.artifact_id)).toBeNull(); // sync path misses
+
+    const a = await getArtifactAsync(handle.artifact_id);
+    expect(a).not.toBeNull();
+    expect(a!.manifest).toEqual(handle.manifest);
+    const f = await getArtifactFileAsync(handle.artifact_id, "F_Cu.gbr");
+    expect(f!.buf.toString("utf8")).toBe("G04 fcu*");
+    expect(f!.contentType).toBe("application/vnd.gerber");
+
+    // The hydrate warmed the cache — the next read is sync, no extra fetch.
+    const fetches = calls.length;
+    expect(getArtifact(handle.artifact_id)).not.toBeNull();
+    expect(calls.length).toBe(fetches);
+  });
+
+  it("binds a cross-instance handle for quote/order (resolveArtifactRefAsync)", async () => {
+    const handle = storeArtifact([{ name: "board.zip", content: "PK" }]);
+    await flushArtifacts();
+    clearArtifacts();
+
+    const ref = await resolveArtifactRefAsync(handle.artifact_url);
+    expect(ref).not.toBeNull();
+    expect(ref!.artifact_id).toBe(handle.artifact_id);
+    expect(ref!.manifest).toEqual(handle.manifest);
+    expect(await resolveArtifactRefAsync("art_nope")).toBeNull();
+  });
+
+  it("serves a cold-instance read over the /artifacts route", async () => {
+    const handle = storeArtifact([{ name: "Edge_Cuts.gbr", content: "G04 edge*" }]);
+    await flushArtifacts();
+    clearArtifacts();
+
+    const idx = res();
+    expect(
+      await handleArtifactRequest(makeReq("GET", `/artifacts/${handle.artifact_id}`), idx),
+    ).toBe(true);
+    expect(idx.statusCode).toBe(200);
+    expect(JSON.parse(idx.body).files).toHaveLength(1);
+
+    const file = res();
+    expect(
+      await handleArtifactRequest(
+        makeReq("GET", `/artifacts/${handle.artifact_id}/Edge_Cuts.gbr`),
+        file,
+      ),
+    ).toBe(true);
+    expect(file.statusCode).toBe(200);
+    expect(file.bodyBuf?.toString("utf8")).toBe("G04 edge*");
+  });
+
+  it("treats an expired durable row as absent and deletes it", async () => {
+    const handle = storeArtifact([{ name: "x.gbr", content: "hi" }]);
+    await flushArtifacts();
+    clearArtifacts();
+    const row = rows.get(handle.artifact_id)!;
+    row.expires_at = new Date(Date.now() - 1000).toISOString();
+
+    expect(await getArtifactAsync(handle.artifact_id)).toBeNull();
+    // Lazy sweep: the expired row was deleted (fire-and-forget).
+    await new Promise((r) => setTimeout(r, 0));
+    expect(rows.has(handle.artifact_id)).toBe(false);
+  });
+
+  it("degrades to warm-cache-only when the durable write fails", async () => {
+    setSessionFetch((async () =>
+      ({ ok: false, status: 500, json: async () => ({}), text: async () => "boom" })
+    ) as unknown as typeof fetch);
+    const handle = storeArtifact([{ name: "y.gbr", content: "yo" }]);
+    await flushArtifacts();
+    // Same-instance read still works off the warm cache.
+    expect((await getArtifactAsync(handle.artifact_id))?.id).toBe(handle.artifact_id);
+  });
+});

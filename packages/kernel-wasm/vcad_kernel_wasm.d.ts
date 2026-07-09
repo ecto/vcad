@@ -75,6 +75,13 @@ export class PhysicsSim {
      */
     actionDim(): number;
     /**
+     * Joint ids in observation order (document `joints` order).
+     *
+     * `joint_positions[i]` / `joint_velocities[i]` in every observation
+     * correspond to `jointIds()[i]`, as do action vector entries.
+     */
+    jointIds(): string[];
+    /**
      * Create a new physics simulation from a vcad document JSON.
      *
      * # Arguments
@@ -2594,6 +2601,7 @@ export interface InitOutput {
     readonly parseVCode: (a: number, b: number) => [number, number, number, number];
     readonly parseVcadFile: (a: number, b: number) => [number, number, number];
     readonly physicssim_actionDim: (a: number) => number;
+    readonly physicssim_jointIds: (a: number) => [number, number];
     readonly physicssim_new: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
     readonly physicssim_observationDim: (a: number) => number;
     readonly physicssim_observe: (a: number) => any;
@@ -2798,6 +2806,37 @@ export interface InitOutput {
     readonly isCamAvailable: () => number;
     readonly wasmcamsettings_fromJson: (a: number, b: number) => [number, number, number];
     readonly wasmcamsettings_new: () => number;
+    readonly __wbg_wasmsketchsession_free: (a: number, b: number) => void;
+    readonly sketchCircleSegments: (a: number, b: number, c: number, d: number) => [number, number, number, number];
+    readonly sketchHitTest: (a: number, b: number, c: number, d: number, e: number) => [number, number, number];
+    readonly sketchPlaneBasis: (a: number, b: number) => [number, number, number, number];
+    readonly sketchPlaneIntersectRay: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
+    readonly sketchRectangleSegments: (a: number, b: number, c: number, d: number) => [number, number, number, number];
+    readonly sketchSnap: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
+    readonly sketchToWorld: (a: number, b: number, c: number, d: number) => [number, number, number, number];
+    readonly sketchWorldToSketch: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
+    readonly solveSketchSegments: (a: number, b: number, c: number, d: number) => [number, number, number, number];
+    readonly wasmsketchsession_addCircle: (a: number, b: number, c: number, d: number) => void;
+    readonly wasmsketchsession_addConstraint: (a: number, b: number, c: number) => [number, number];
+    readonly wasmsketchsession_addLine: (a: number, b: number, c: number, d: number, e: number) => void;
+    readonly wasmsketchsession_addRectangle: (a: number, b: number, c: number, d: number, e: number) => void;
+    readonly wasmsketchsession_cancelPending: (a: number) => void;
+    readonly wasmsketchsession_clear: (a: number) => void;
+    readonly wasmsketchsession_clearSelection: (a: number) => void;
+    readonly wasmsketchsession_new: (a: number, b: number) => [number, number, number];
+    readonly wasmsketchsession_onClick: (a: number) => [number, number];
+    readonly wasmsketchsession_onCursorLeave: (a: number) => void;
+    readonly wasmsketchsession_onCursorRay: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
+    readonly wasmsketchsession_onCursorSketch: (a: number, b: number, c: number) => void;
+    readonly wasmsketchsession_onDoubleClick: (a: number) => void;
+    readonly wasmsketchsession_redo: (a: number) => number;
+    readonly wasmsketchsession_removeConstraint: (a: number, b: number) => void;
+    readonly wasmsketchsession_setSnap: (a: number, b: number, c: number, d: number, e: number) => void;
+    readonly wasmsketchsession_setTool: (a: number, b: number, c: number) => void;
+    readonly wasmsketchsession_snapshot: (a: number) => [number, number, number, number];
+    readonly wasmsketchsession_solve: (a: number) => number;
+    readonly wasmsketchsession_toggleSelection: (a: number, b: number) => void;
+    readonly wasmsketchsession_undo: (a: number) => number;
     readonly __wbg_circuitsim_free: (a: number, b: number) => void;
     readonly circuitsim_dt: (a: number) => number;
     readonly circuitsim_new: (a: number, b: number) => [number, number, number];
@@ -2845,37 +2884,6 @@ export interface InitOutput {
     readonly exportKicadSch: (a: number, b: number) => [number, number, number, number];
     readonly isEcadAvailable: () => number;
     readonly parseKicadPcb: (a: number, b: number) => [number, number, number];
-    readonly __wbg_wasmsketchsession_free: (a: number, b: number) => void;
-    readonly sketchCircleSegments: (a: number, b: number, c: number, d: number) => [number, number, number, number];
-    readonly sketchHitTest: (a: number, b: number, c: number, d: number, e: number) => [number, number, number];
-    readonly sketchPlaneBasis: (a: number, b: number) => [number, number, number, number];
-    readonly sketchPlaneIntersectRay: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
-    readonly sketchRectangleSegments: (a: number, b: number, c: number, d: number) => [number, number, number, number];
-    readonly sketchSnap: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
-    readonly sketchToWorld: (a: number, b: number, c: number, d: number) => [number, number, number, number];
-    readonly sketchWorldToSketch: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
-    readonly solveSketchSegments: (a: number, b: number, c: number, d: number) => [number, number, number, number];
-    readonly wasmsketchsession_addCircle: (a: number, b: number, c: number, d: number) => void;
-    readonly wasmsketchsession_addConstraint: (a: number, b: number, c: number) => [number, number];
-    readonly wasmsketchsession_addLine: (a: number, b: number, c: number, d: number, e: number) => void;
-    readonly wasmsketchsession_addRectangle: (a: number, b: number, c: number, d: number, e: number) => void;
-    readonly wasmsketchsession_cancelPending: (a: number) => void;
-    readonly wasmsketchsession_clear: (a: number) => void;
-    readonly wasmsketchsession_clearSelection: (a: number) => void;
-    readonly wasmsketchsession_new: (a: number, b: number) => [number, number, number];
-    readonly wasmsketchsession_onClick: (a: number) => [number, number];
-    readonly wasmsketchsession_onCursorLeave: (a: number) => void;
-    readonly wasmsketchsession_onCursorRay: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
-    readonly wasmsketchsession_onCursorSketch: (a: number, b: number, c: number) => void;
-    readonly wasmsketchsession_onDoubleClick: (a: number) => void;
-    readonly wasmsketchsession_redo: (a: number) => number;
-    readonly wasmsketchsession_removeConstraint: (a: number, b: number) => void;
-    readonly wasmsketchsession_setSnap: (a: number, b: number, c: number, d: number, e: number) => void;
-    readonly wasmsketchsession_setTool: (a: number, b: number, c: number) => void;
-    readonly wasmsketchsession_snapshot: (a: number) => [number, number, number, number];
-    readonly wasmsketchsession_solve: (a: number) => number;
-    readonly wasmsketchsession_toggleSelection: (a: number, b: number) => void;
-    readonly wasmsketchsession_undo: (a: number) => number;
     readonly __wbg_wasmkeybindings_free: (a: number, b: number) => void;
     readonly digitizeSketch: (a: number, b: number, c: number, d: number) => [number, number, number, number];
     readonly digitizeText: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
@@ -2917,6 +2925,7 @@ export interface InitOutput {
     readonly __wbindgen_externrefs: WebAssembly.Table;
     readonly __wbindgen_free: (a: number, b: number, c: number) => void;
     readonly __externref_table_dealloc: (a: number) => void;
+    readonly __externref_drop_slice: (a: number, b: number) => void;
     readonly __wbindgen_start: () => void;
 }
 

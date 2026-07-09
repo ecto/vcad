@@ -50,7 +50,13 @@ describe("viewer _meta split (one canvas, not one iframe per call)", () => {
     const by = (n: string) => tools.find((t) => t.name === n);
 
     // Mount tools: carry the UI template in both dialects.
-    for (const name of ["open_document", "place_components", "build_receipt"]) {
+    for (const name of [
+      "open_document",
+      "place_components",
+      "build_receipt",
+      "create_robot_env",
+      "quote_manufacturing",
+    ]) {
       const m = by(name)?._meta;
       expect(m?.ui?.resourceUri, `${name} ui.resourceUri`).toBe(VIEWER_URI);
       expect(m?.["openai/outputTemplate"], `${name} outputTemplate`).toBeTruthy();
@@ -71,7 +77,13 @@ describe("viewer _meta split (one canvas, not one iframe per call)", () => {
     const { tools } = (await client.listTools()) as { tools: ToolDesc[] };
     const by = (n: string) => tools.find((t) => t.name === n);
 
-    for (const name of ["get_preview_glb", "get_preview_version"]) {
+    for (const name of [
+      "get_preview_glb",
+      "get_preview_version",
+      "get_sim_replay",
+      "get_sim_version",
+      "get_order_feed",
+    ]) {
       const m = by(name)?._meta;
       expect(by(name), `${name} exists`).toBeDefined();
       expect(m?.ui?.visibility, `${name} app-only`).toEqual(["app"]);
@@ -83,6 +95,29 @@ describe("viewer _meta split (one canvas, not one iframe per call)", () => {
     const getDoc = by("get_document")?._meta;
     expect(getDoc?.["openai/widgetAccessible"]).toBe(true);
     expect(hasTemplate(getDoc)).toBe(false);
+
+    await client.close();
+    await server.close();
+  });
+
+  it("money tools are never widget-callable (the iframe is read-only for money)", async () => {
+    documents.clear();
+    const { client, server } = await connect(engine);
+    const { tools } = (await client.listTools()) as { tools: ToolDesc[] };
+    const by = (n: string) => tools.find((t) => t.name === n);
+
+    // The asymmetric seam: the agent proposes, the human approves out-of-band,
+    // the agent places. The widget must not be able to call either money tool —
+    // no template, no openai/widgetAccessible.
+    for (const name of ["authorize_spend", "place_order"]) {
+      const m = by(name)?._meta;
+      expect(by(name), `${name} exists`).toBeDefined();
+      expect(hasTemplate(m), `${name} must not mount`).toBe(false);
+      expect(
+        m?.["openai/widgetAccessible"],
+        `${name} must not be widget-callable`,
+      ).not.toBe(true);
+    }
 
     await client.close();
     await server.close();

@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-08-instant-viewer-first-paint",
+  "version": "0.9.4",
+  "date": "2026-07-08",
+  "category": "perf",
+  "title": "MCP viewer paints geometry instantly on mount",
+  "summary": "Mount results now carry a ready-to-render GLB in host-only _meta and previews are cached by content hash, removing the fetch round trip and repeat re-tessellation behind 'fetching geometry…'.",
+  "features": ["mcp-apps", "viewer", "performance"],
+  "mcpTools": ["create_cad_loon", "get_preview_glb"]
+}

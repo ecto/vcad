@@ -46,6 +46,11 @@ pub struct PhysicsWorld {
     instance_to_body: HashMap<String, usize>,
     joint_to_index: HashMap<String, usize>,
 
+    // Joint ids in document order — the canonical ordering for observation
+    // vectors and positional q arguments. Never iterate joint_to_index for
+    // ordering: HashMap iteration order permutes run-to-run.
+    joint_order: Vec<String>,
+
     // Original joint definitions for unit conversion
     joint_kinds: HashMap<String, JointKind>,
 
@@ -233,6 +238,15 @@ impl PhysicsWorld {
             }
         }
 
+        // Canonical joint ordering: document order, restricted to joints the
+        // BFS actually realized (a joint whose child is unreachable from
+        // ground, or already claimed by an earlier joint, is skipped above).
+        let joint_order: Vec<String> = joints
+            .iter()
+            .filter(|j| joint_to_index.contains_key(&j.id))
+            .map(|j| j.id.clone())
+            .collect();
+
         // 3. Add remaining instances as free-floating bodies
         for inst in instances {
             if visited.contains(&inst.id) {
@@ -277,6 +291,7 @@ impl PhysicsWorld {
             motors: HashMap::new(),
             instance_to_body,
             joint_to_index,
+            joint_order,
             joint_kinds,
             joint_q_offsets,
             joint_v_offsets,
@@ -603,8 +618,14 @@ impl PhysicsWorld {
     }
 
     /// Get list of all joint IDs.
+    ///
+    /// Order is deterministic: document order (`doc.joints`), restricted to
+    /// joints realized in the physics model. Observation vectors
+    /// ([`crate::Observation`]) and the positional `q` arguments of
+    /// [`Self::forward_kinematics_at`] / [`Self::gravity_torques_at`] all
+    /// index against this order.
     pub fn joint_ids(&self) -> Vec<String> {
-        self.joint_to_index.keys().cloned().collect()
+        self.joint_order.clone()
     }
 
     /// Get list of all instance IDs.

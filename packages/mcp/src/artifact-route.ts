@@ -15,7 +15,11 @@
  */
 
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { getArtifact, getArtifactFile, artifactFileUrl } from "./tools/artifact-store.js";
+import {
+  getArtifactAsync,
+  getArtifactFileAsync,
+  artifactFileUrl,
+} from "./tools/artifact-store.js";
 
 const text = (res: ServerResponse, status: number, body: string): void => {
   res.writeHead(status, { "Content-Type": "text/plain" });
@@ -55,7 +59,7 @@ export async function handleArtifactRequest(
     return true;
   }
 
-  const artifact = getArtifact(id);
+  const artifact = await getArtifactAsync(id);
   if (!artifact) {
     text(res, 404, "Not Found");
     return true;
@@ -78,7 +82,7 @@ export async function handleArtifactRequest(
     return true;
   }
 
-  const file = getArtifactFile(id, fileName);
+  const file = await getArtifactFileAsync(id, fileName);
   if (!file) {
     text(res, 404, "Not Found");
     return true;

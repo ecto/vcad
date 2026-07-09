@@ -1,0 +1,9 @@
+{
+  "id": "2026-07-08-app-euler-order-zyx",
+  "version": "0.9.4",
+  "date": "2026-07-08",
+  "category": "fix",
+  "title": "App renders multi-axis rotations with kernel euler order",
+  "summary": "The viewport now composes instance and board rotations as extrinsic X→Y→Z (ZYX) to match the kernel, so multi-axis rotations render identically in app, tessellation, and raytrace.",
+  "features": ["assembly", "viewport", "pcb"]
+}

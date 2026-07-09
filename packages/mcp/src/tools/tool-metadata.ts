@@ -95,6 +95,7 @@ export const TOOL_METADATA: Record<string, ToolMetadata> = {
     title: "Place Order",
     annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: true },
   },
+  get_order_feed: { title: "Get Order Feed", annotations: RO_NET },
 
   // ── Project BOM ────────────────────────────────────────────────────────
   bom_create: { title: "Create BOM", annotations: RW },
@@ -122,6 +123,8 @@ export const TOOL_METADATA: Record<string, ToolMetadata> = {
   // ── MCP Apps: app-only preview fetchers ────────────────────────────────
   get_preview_glb: { title: "Get Preview GLB", annotations: RO },
   get_preview_version: { title: "Get Preview Version", annotations: RO },
+  get_sim_replay: { title: "Get Sim Replay", annotations: RO },
+  get_sim_version: { title: "Get Sim Version", annotations: RO },
 
   // ── Atomic multi-op editing ────────────────────────────────────────────
   apply_edits: { title: "Apply Edits", annotations: RW },
@@ -174,6 +177,7 @@ export const TOOL_METADATA: Record<string, ToolMetadata> = {
   sheet_metal_suggest_fix: { title: "Sheet Metal Suggest Fix", annotations: RO },
   sheet_metal_sequence: { title: "Sheet Metal Bend Sequence", annotations: RO },
   sheet_metal_nest: { title: "Sheet Metal Nest", annotations: RO },
+  simulate_strike: { title: "Simulate Strike", annotations: RW },
 
   // ── Import + share ─────────────────────────────────────────────────────
   import_step: { title: "Import STEP", annotations: RW },

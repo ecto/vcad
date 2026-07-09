@@ -19,6 +19,8 @@ import {
   flushTelemetry,
   handleLiveRequest,
   handleArtifactRequest,
+  flushArtifacts,
+  artifactStoreInfo,
 } from "@vcad/mcp/server";
 import {
   getOAuthConfig,
@@ -131,6 +133,7 @@ export default async function handler(
         // prod deploy → open sessions are in-memory only and a redeploy drops
         // them. Verifiable with `curl https://mcp.vcad.io/health`.
         ...sessionStoreInfo(),
+        ...artifactStoreInfo(),
         engine: !!engine,
         timestamp: new Date().toISOString(),
       });
@@ -181,7 +184,10 @@ export default async function handler(
   // MCP endpoint — parse body for POST, then delegate to transport
   try {
     const engine = await getEngine();
-    const server = await createServer(engine, { user });
+    // assumeUiClient: stateless per-request Server — the UI-extension
+    // capability from `initialize` never reaches tools/call, so attach the
+    // inline `_meta` preview unconditionally (see ServerContext in @vcad/mcp).
+    const server = await createServer(engine, { user, assumeUiClient: true });
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: undefined, // stateless
       enableJsonResponse: true, // return JSON instead of SSE — Vercel buffers responses and adds Content-Length which breaks SSE streaming
@@ -192,9 +198,11 @@ export default async function handler(
     try {
       await transport.handleRequest(req, res);
     } finally {
-      // Drain PostHog captures before the serverless instance can freeze —
-      // an in-flight fetch is killed the instant the function returns.
-      await flushTelemetry();
+      // Drain PostHog captures AND pending durable artifact writes before
+      // the serverless instance can freeze — an in-flight fetch is killed
+      // the instant the function returns, and an unflushed artifact would
+      // reintroduce the 404-from-another-instance bug.
+      await Promise.all([flushTelemetry(), flushArtifacts()]);
       await transport.close();
       await server.close();
     }

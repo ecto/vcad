@@ -105,7 +105,10 @@ async function handleMcpRequest(
 ): Promise<void> {
   const eng = await getEngine();
   const user = verifyAccessToken(req);
-  const server = await createServer(eng, { user });
+  // assumeUiClient: this stateless path builds a fresh Server per request,
+  // so the UI-extension capability from `initialize` is never visible here —
+  // attach the inline `_meta` preview unconditionally (see ServerContext).
+  const server = await createServer(eng, { user, assumeUiClient: true });
 
   const transport = new StreamableHTTPServerTransport({
     // Stateless: no session tracking

@@ -5,7 +5,7 @@
  */
 
 import type { EvaluatedScene, TriangleMesh } from "@vcad/engine";
-import type { Document } from "@vcad/ir";
+import type { Document, Vec3 } from "@vcad/ir";
 
 /**
  * Build `"<part_id>:<name>"` labels for every visible root, index-aligned
@@ -30,6 +30,17 @@ export const DEFAULT_MATERIAL = {
   metallic: 0.1,
   roughness: 0.5,
 };
+
+/**
+ * A glTF node transform for {@link GlbMesh}: translation in mm, rotation as a
+ * glTF quaternion `[x, y, z, w]` (see {@link eulerXyzDegToQuat}), per-axis
+ * scale. Geometry stays part-local; the viewer applies the node TRS.
+ */
+export interface GlbNodeTransform {
+  translation: [number, number, number];
+  rotationQuat: [number, number, number, number];
+  scale: [number, number, number];
+}
 
 /**
  * One renderable mesh for {@link buildGlb}: geometry plus an explicit PBR
@@ -57,6 +68,14 @@ export interface GlbMesh {
   /** Base-color alpha 0..1; below 1 the material is alpha-BLENDed
    *  (translucent soldermask shell). Defaults to opaque. */
   alpha?: number;
+  /** Node TRS applied to part-local geometry (assembly instances). Identity
+   *  components are omitted from the emitted node, so an identity transform
+   *  produces byte-identical output to no transform. */
+  transform?: GlbNodeTransform;
+  /** Geometry-dedup key (e.g. a partDefId): inputs sharing a `meshKey` emit
+   *  ONE glTF mesh referenced by multiple nodes. The first input carrying a
+   *  key supplies the geometry and material for all of them. */
+  meshKey?: string;
 }
 
 /** A PBR material resolved from a {@link GlbMesh}, deduped across meshes. */
@@ -77,6 +96,41 @@ const isEmissive = (e: [number, number, number]): boolean =>
 
 const f32 = (a: Float32Array | number[]): Float32Array =>
   a instanceof Float32Array ? a : new Float32Array(a);
+
+/**
+ * Convert a `Transform3D` Euler rotation in degrees (`rotation: Vec3`, Euler
+ * XYZ deg) to the glTF node quaternion `[x, y, z, w]`.
+ *
+ * Composition AUTHORITY: the kernel applies Transform3D rotations as
+ * `R = Rz·Ry·Rx` on column vectors — rotate about world X first, then world
+ * Y, then world Z (extrinsic XYZ). See crates/vcad-eval/src/kinematics.rs
+ * `euler_to_matrix` ("// Rz * Ry * Rx"), the identical matrix in
+ * packages/engine/src/evaluate.ts `transformMesh`, and evaluate.rs's
+ * `rx.then(ry).then(rz)`. In three.js Euler-order terms this is "ZYX"
+ * (three's "XYZ" is the intrinsic Rx·Ry·Rz — the OPPOSITE order), so the
+ * quaternion below is q = qz ⊗ qy ⊗ qx.
+ */
+export function eulerXyzDegToQuat(
+  rotation: Vec3,
+): [number, number, number, number] {
+  const rad = Math.PI / 180;
+  const hx = (rotation.x * rad) / 2;
+  const hy = (rotation.y * rad) / 2;
+  const hz = (rotation.z * rad) / 2;
+  const c1 = Math.cos(hx);
+  const s1 = Math.sin(hx);
+  const c2 = Math.cos(hy);
+  const s2 = Math.sin(hy);
+  const c3 = Math.cos(hz);
+  const s3 = Math.sin(hz);
+  // q = qz ⊗ qy ⊗ qx (X applied first) — the "ZYX" quaternion.
+  return [
+    s1 * c2 * c3 - c1 * s2 * s3,
+    c1 * s2 * c3 + s1 * c2 * s3,
+    c1 * c2 * s3 - s1 * s2 * c3,
+    c1 * c2 * c3 + s1 * s2 * s3,
+  ];
+}
 
 /** Build binary GLB bytes from an explicit list of meshes + PBR materials.
  *
@@ -133,8 +187,20 @@ export function buildGlb(inputMeshes: GlbMesh[], name: string): Uint8Array {
 
   let bufferOffset = 0;
 
-  for (let meshIdx = 0; meshIdx < inputMeshes.length; meshIdx++) {
-    const input = inputMeshes[meshIdx];
+  // Geometry dedup: inputs sharing a `meshKey` (assembly instances of one
+  // partDef) emit one glTF mesh, referenced by one node per input.
+  const meshKeyToIdx = new Map<string, number>();
+
+  for (let inputIdx = 0; inputIdx < inputMeshes.length; inputIdx++) {
+    const input = inputMeshes[inputIdx];
+
+    const dedupIdx =
+      input.meshKey !== undefined ? meshKeyToIdx.get(input.meshKey) : undefined;
+    if (dedupIdx !== undefined) {
+      nodes.push(makeNode(input, dedupIdx));
+      continue;
+    }
+
     const positions = f32(input.positions);
     const normals =
       input.normals && input.normals.length === positions.length
@@ -261,6 +327,7 @@ export function buildGlb(inputMeshes: GlbMesh[], name: string): Uint8Array {
     }
 
     // Mesh
+    const meshIdx = meshes.length;
     meshes.push({
       name: `mesh_${meshIdx}`,
       primitives: [
@@ -271,12 +338,10 @@ export function buildGlb(inputMeshes: GlbMesh[], name: string): Uint8Array {
         },
       ],
     });
+    if (input.meshKey !== undefined) meshKeyToIdx.set(input.meshKey, meshIdx);
 
     // Node — named with part identity when the caller provides it.
-    nodes.push({
-      mesh: meshIdx,
-      name: input.name,
-    });
+    nodes.push(makeNode(input, meshIdx));
   }
 
   // Build JSON. Materials may carry KHR extensions (clearcoat for glossy
@@ -383,6 +448,24 @@ export function buildGlb(inputMeshes: GlbMesh[], name: string): Uint8Array {
   return glb;
 }
 
+/**
+ * Build a glTF node for one input mesh: `{mesh, name}` plus TRS fields when a
+ * transform is present. Identity components are omitted (glTF defaults), so
+ * an identity transform emits byte-identical JSON to no transform at all.
+ */
+function makeNode(input: GlbMesh, meshIdx: number): GltfNode {
+  const node: GltfNode = { mesh: meshIdx, name: input.name };
+  const t = input.transform;
+  if (!t) return node;
+  const [tx, ty, tz] = t.translation;
+  if (tx !== 0 || ty !== 0 || tz !== 0) node.translation = t.translation;
+  const [qx, qy, qz, qw] = t.rotationQuat;
+  if (qx !== 0 || qy !== 0 || qz !== 0 || qw !== 1) node.rotation = t.rotationQuat;
+  const [sx, sy, sz] = t.scale;
+  if (sx !== 1 || sy !== 1 || sz !== 1) node.scale = t.scale;
+  return node;
+}
+
 /** Convert an evaluated scene to binary GLB bytes.
  *
  * `partLabels` (index-aligned with `scene.parts`) become glTF node names —
@@ -450,4 +533,10 @@ interface Mesh {
 interface GltfNode {
   mesh: number;
   name: string;
+  /** Node translation (mm), omitted at identity. */
+  translation?: [number, number, number];
+  /** Node rotation quaternion [x, y, z, w], omitted at identity. */
+  rotation?: [number, number, number, number];
+  /** Node per-axis scale, omitted at identity. */
+  scale?: [number, number, number];
 }
