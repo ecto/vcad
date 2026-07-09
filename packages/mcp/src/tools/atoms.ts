@@ -511,7 +511,7 @@ export async function renderMolecule(input: unknown): Promise<ImageToolResult> {
         height: W,
         alt: `${representation.replace(/_/g, " ")} molecule render with ${mol.positions.length} atoms`,
       });
-      return withRenderAssets({
+      return withRenderAssets<ImageToolResult>({
         content: [
           { type: "image", data: raster.png.toString("base64"), mimeType: "image/png" },
           {

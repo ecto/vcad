@@ -251,7 +251,7 @@ export async function renderView(
       width: widthPx,
       alt: `vcad ${viewLabel} render`,
     });
-    return withRenderAssets({
+    return withRenderAssets<RenderViewResult>({
       content: [
         {
           type: "image",
@@ -474,7 +474,7 @@ export async function renderPcb(
       width: widthPx,
       alt: `PCB render of ${layers.join(", ")}`,
     });
-    return withRenderAssets({
+    return withRenderAssets<RenderViewResult>({
       content: [
         { type: "image", data: raster.png.toString("base64"), mimeType: "image/png" },
         {
@@ -705,7 +705,7 @@ export async function renderRatsnest(
       width: widthPx,
       alt: `PCB ratsnest render with ${lines.length} airwires`,
     });
-    return withRenderAssets({
+    return withRenderAssets<RenderViewResult>({
       content: [
         { type: "image", data: raster.png.toString("base64"), mimeType: "image/png" },
         {
@@ -899,7 +899,7 @@ export async function renderStackup(
       suggested_final_markdown: assets.map((a) => a.markdown),
     }),
   });
-  return withRenderAssets({ content }, assets);
+  return withRenderAssets<RenderViewResult>({ content }, assets);
 }
 
 export const toolDefs: ToolDef[] = [

@@ -63,10 +63,14 @@ export function makePngRenderAsset(
   };
 }
 
-export function withRenderAssets<T extends { structuredContent?: Record<string, unknown> }>(
-  result: T,
+type RenderAssetCarrier<T extends object> = T & {
+  structuredContent?: Record<string, unknown>;
+};
+
+export function withRenderAssets<T extends object>(
+  result: RenderAssetCarrier<T>,
   assets: RenderAsset[],
-): T {
+): RenderAssetCarrier<T> {
   if (assets.length === 0) return result;
   const existing = result.structuredContent ?? {};
   const prevAssets = Array.isArray(existing.assets) ? existing.assets : [];
