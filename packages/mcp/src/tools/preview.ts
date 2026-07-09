@@ -56,7 +56,16 @@ function glbCachePut(key: string, glb: string): void {
   }
 }
 
-/** A ready-to-render preview envelope: base64 GLB + change token (+ mode). */
+/**
+ * A ready-to-render preview envelope: base64 GLB + change token (+ mode).
+ *
+ * `mode` is the authoritative statement of what the GLB contains: it is
+ * `"instances"` ONLY when the GLB carries one node per assembly instance.
+ * Requesting `instances = true` on a document without instances falls back
+ * to the merged parts preview and returns `mode: undefined` — callers that
+ * need instance nodes (FK replay) must check `mode`, not the flag they
+ * passed.
+ */
 export interface PreviewGlb {
   glb: string;
   version: string;

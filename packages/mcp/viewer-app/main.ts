@@ -1060,12 +1060,17 @@ function renderGlbForDoc(
   docId: string | null,
   changed: PartsChanged | null,
   simInstancesGlb = false,
+  versionToken: string | null = null,
 ): void {
   const preserveCamera = docId != null && docId === renderedDocId;
   const keepPartId = preserveCamera ? selected?.partId ?? null : null;
   loadGlb(glb, {
     preserveCamera,
     afterLoad: () => {
+      // Advance the change token only once the GLB actually parsed and
+      // mounted — a failed render must leave the token behind so the next
+      // result (or poll tick) re-fetches instead of skipping past it.
+      if (versionToken != null) lastPreviewVersion = versionToken;
       if (docId != null) renderedDocId = docId;
       if (keepPartId != null) reselectById(keepPartId);
       if (changed) flashChanged(changed);
@@ -2294,9 +2299,24 @@ async function handleToolResult(result: ToolResultLike): Promise<void> {
   const metaPreview = findMetaPreview(result);
   const wantSimInstances = simEnvId != null && docId === simDocId && simUseInstances;
   if (metaPreview && !wantSimInstances && metaPreview.mode !== "instances") {
-    if (metaPreview.version) lastPreviewVersion = metaPreview.version;
-    renderGlbForDoc(metaPreview.glb!, docId, changed);
-    return;
+    try {
+      // The version token advances inside afterLoad — only after a
+      // successful parse+mount — so a corrupt inline GLB can't strand
+      // lastPreviewVersion on a version that never rendered (fast path 2
+      // would then skip the fetch that recovers it).
+      renderGlbForDoc(
+        metaPreview.glb!,
+        docId,
+        changed,
+        false,
+        metaPreview.version ?? null,
+      );
+      return;
+    } catch (e) {
+      // Corrupt inline payload (e.g. bad base64) — fall through to the
+      // fetch path, which rebuilds the GLB server-side.
+      console.warn("[vcad-viewer] inline preview render failed:", e);
+    }
   }
 
   // Fast path 2: the result's change token matches what is already on
