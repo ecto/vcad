@@ -8,6 +8,7 @@
     { "source": "/~(.*)", "destination": "/" },
     { "source": "/d/(.*)", "destination": "/" },
     { "source": "/view/(.*)", "destination": "/" },
+    { "source": "/authorize/(.*)", "destination": "/" },
     { "source": "/@:path*", "destination": "/" },
     { "source": "/(privacy|terms|security)", "destination": "/" }
   ],

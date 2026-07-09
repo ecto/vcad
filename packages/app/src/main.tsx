@@ -24,6 +24,8 @@ import {
 } from "@vcad/auth";
 import { App } from "./App";
 import { CliAuth } from "./components/CliAuth";
+import { AuthorizePage } from "./components/AuthorizePage";
+import { getAuthorizeRouteId } from "./lib/authorize-route";
 import "./index.css";
 import {
   getAllDocuments,
@@ -124,10 +126,21 @@ function onSignInGated(): void {
 // normal load path since App never runs in this branch.
 const isCliAuth = window.location.pathname === "/cli-auth";
 
+// Route: `/authorize/<id>` is the spend-authorization approval page the MCP
+// `authorize_spend` elicitation deep-links to. Same standalone pattern as
+// /cli-auth — App never runs in this branch.
+const authorizeId = getAuthorizeRouteId();
+
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <AuthProvider onSignIn={onSignInGated}>
-      {isCliAuth ? <CliAuth /> : <App />}
+      {isCliAuth ? (
+        <CliAuth />
+      ) : authorizeId ? (
+        <AuthorizePage authorizationId={authorizeId} />
+      ) : (
+        <App />
+      )}
     </AuthProvider>
   </StrictMode>,
 );
