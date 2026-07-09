@@ -7695,7 +7695,7 @@ function __wbg_get_imports() {
                     const a = state0.a;
                     state0.a = 0;
                     try {
-                        return wasm_bindgen__convert__closures_____invoke__ha5c982f531a96375(a, state0.b, arg0, arg1);
+                        return wasm_bindgen_6dc29d3b0fc4fccd___convert__closures_____invoke___wasm_bindgen_6dc29d3b0fc4fccd___JsValue__wasm_bindgen_6dc29d3b0fc4fccd___JsValue_____(a, state0.b, arg0, arg1);
                     } finally {
                         state0.a = a;
                     }
@@ -8280,13 +8280,13 @@ function __wbg_get_imports() {
             arg0.writeTexture(arg1, arg2, arg3, arg4);
         },
         __wbindgen_cast_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 3155, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 3156, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-            const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h937dc6f65bde8529, wasm_bindgen__convert__closures_____invoke__he77dbe0899982831);
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 2658, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 2659, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen_6dc29d3b0fc4fccd___closure__destroy___dyn_core_7d5f0a2ba6a62c33___ops__function__FnMut__wgpu_c488dbbed5add906___backend__webgpu__webgpu_sys__gen_GpuUncapturedErrorEvent__GpuUncapturedErrorEvent____Output_______, wasm_bindgen_6dc29d3b0fc4fccd___convert__closures_____invoke___wgpu_c488dbbed5add906___backend__webgpu__webgpu_sys__gen_GpuUncapturedErrorEvent__GpuUncapturedErrorEvent_____);
             return ret;
         },
         __wbindgen_cast_0000000000000002: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 3367, function: Function { arguments: [Externref], shim_idx: 3368, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
-            const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen__closure__destroy__h191db0eea4d7d68c, wasm_bindgen__convert__closures_____invoke__h852de6502a19f22f);
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 3355, function: Function { arguments: [Externref], shim_idx: 3356, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen_6dc29d3b0fc4fccd___closure__destroy___dyn_core_7d5f0a2ba6a62c33___ops__function__FnMut__wasm_bindgen_6dc29d3b0fc4fccd___JsValue____Output_______, wasm_bindgen_6dc29d3b0fc4fccd___convert__closures_____invoke___wasm_bindgen_6dc29d3b0fc4fccd___JsValue_____);
             return ret;
         },
         __wbindgen_cast_0000000000000003: function(arg0) {
@@ -8374,16 +8374,16 @@ function __wbg_get_imports() {
     };
 }
 
-function wasm_bindgen__convert__closures_____invoke__he77dbe0899982831(arg0, arg1, arg2) {
-    wasm.wasm_bindgen__convert__closures_____invoke__he77dbe0899982831(arg0, arg1, arg2);
+function wasm_bindgen_6dc29d3b0fc4fccd___convert__closures_____invoke___wgpu_c488dbbed5add906___backend__webgpu__webgpu_sys__gen_GpuUncapturedErrorEvent__GpuUncapturedErrorEvent_____(arg0, arg1, arg2) {
+    wasm.wasm_bindgen_6dc29d3b0fc4fccd___convert__closures_____invoke___wgpu_c488dbbed5add906___backend__webgpu__webgpu_sys__gen_GpuUncapturedErrorEvent__GpuUncapturedErrorEvent_____(arg0, arg1, arg2);
 }
 
-function wasm_bindgen__convert__closures_____invoke__h852de6502a19f22f(arg0, arg1, arg2) {
-    wasm.wasm_bindgen__convert__closures_____invoke__h852de6502a19f22f(arg0, arg1, arg2);
+function wasm_bindgen_6dc29d3b0fc4fccd___convert__closures_____invoke___wasm_bindgen_6dc29d3b0fc4fccd___JsValue_____(arg0, arg1, arg2) {
+    wasm.wasm_bindgen_6dc29d3b0fc4fccd___convert__closures_____invoke___wasm_bindgen_6dc29d3b0fc4fccd___JsValue_____(arg0, arg1, arg2);
 }
 
-function wasm_bindgen__convert__closures_____invoke__ha5c982f531a96375(arg0, arg1, arg2, arg3) {
-    wasm.wasm_bindgen__convert__closures_____invoke__ha5c982f531a96375(arg0, arg1, arg2, arg3);
+function wasm_bindgen_6dc29d3b0fc4fccd___convert__closures_____invoke___wasm_bindgen_6dc29d3b0fc4fccd___JsValue__wasm_bindgen_6dc29d3b0fc4fccd___JsValue_____(arg0, arg1, arg2, arg3) {
+    wasm.wasm_bindgen_6dc29d3b0fc4fccd___convert__closures_____invoke___wasm_bindgen_6dc29d3b0fc4fccd___JsValue__wasm_bindgen_6dc29d3b0fc4fccd___JsValue_____(arg0, arg1, arg2, arg3);
 }
 
 
