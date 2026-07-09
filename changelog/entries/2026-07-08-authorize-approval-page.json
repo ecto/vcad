@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-08-authorize-approval-page",
+  "version": "0.9.4",
+  "date": "2026-07-08",
+  "category": "feat",
+  "title": "Spend authorization approval page",
+  "summary": "vcad.io/authorize/<id> now lets you approve or decline an agent's proposed fabrication spend — the human side of authorize_spend, with cap, fab allowlist, and expiry shown before you decide.",
+  "features": ["fabricate", "orders"],
+  "mcpTools": ["authorize_spend", "place_order"]
+}
