@@ -624,6 +624,7 @@ function childrenOf(op: import("@vcad/ir").CsgOp): number[] {
     case "Shell":
     case "Fillet":
     case "Chamfer":
+    case "EdgeBlendLoft":
       return [op.child];
     case "Extrude":
     case "Revolve":

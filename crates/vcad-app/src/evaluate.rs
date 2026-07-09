@@ -186,6 +186,25 @@ fn evaluate_node(doc: &Document, node_id: NodeId) -> Result<Option<Solid>> {
             let c = evaluate_node(doc, *child)?;
             c.map(|s| s.chamfer(*distance))
         }
+        CsgOp::EdgeBlendLoft {
+            child,
+            near,
+            start_size,
+            start_shape,
+            end_size,
+            end_shape,
+        } => {
+            let c = evaluate_node(doc, *child)?;
+            c.map(|s| {
+                s.edge_blend_loft(
+                    [near.x, near.y, near.z],
+                    *start_size,
+                    *start_shape,
+                    *end_size,
+                    *end_shape,
+                )
+            })
+        }
         CsgOp::StepImport { path } => Solid::from_step(path).ok(),
         // STL meshes feed the physics path directly; the editor doesn't yet
         // build a BRep from a triangle soup.

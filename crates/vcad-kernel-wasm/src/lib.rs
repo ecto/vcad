@@ -1185,6 +1185,33 @@ impl Solid {
         }
     }
 
+    /// Variable edge blend: loft a chamfer into a fillet along the single
+    /// plane-plane edge whose nearest endpoint is closest to `(nx, ny, nz)`
+    /// (that endpoint becomes the start of the loft). Size is the chamfer
+    /// leg / fillet radius; shape is 0 = chamfer, 1 = fillet.
+    #[wasm_bindgen(js_name = edgeBlendLoft)]
+    #[allow(clippy::too_many_arguments)]
+    pub fn edge_blend_loft(
+        &self,
+        nx: f64,
+        ny: f64,
+        nz: f64,
+        start_size: f64,
+        start_shape: f64,
+        end_size: f64,
+        end_shape: f64,
+    ) -> Solid {
+        Solid {
+            inner: self.inner.edge_blend_loft(
+                [nx, ny, nz],
+                start_size,
+                start_shape,
+                end_size,
+                end_shape,
+            ),
+        }
+    }
+
     /// Fillet all edges of the solid with the given radius.
     #[wasm_bindgen(js_name = fillet)]
     pub fn fillet(&self, radius: f64) -> Solid {
@@ -3882,6 +3909,26 @@ fn evaluate_node(doc: &vcad_ir::Document, node_id: vcad_ir::NodeId) -> Result<So
         vcad_ir::CsgOp::Chamfer { child, distance } => {
             let c = evaluate_node(doc, *child)?;
             Ok(c.chamfer(*distance))
+        }
+
+        vcad_ir::CsgOp::EdgeBlendLoft {
+            child,
+            near,
+            start_size,
+            start_shape,
+            end_size,
+            end_shape,
+        } => {
+            let c = evaluate_node(doc, *child)?;
+            Ok(c.edge_blend_loft(
+                near.x,
+                near.y,
+                near.z,
+                *start_size,
+                *start_shape,
+                *end_size,
+                *end_shape,
+            ))
         }
 
         vcad_ir::CsgOp::Sketch2D { .. } => {

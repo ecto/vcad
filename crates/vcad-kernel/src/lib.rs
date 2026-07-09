@@ -448,6 +448,65 @@ impl Solid {
         }
     }
 
+    /// Variable edge blend: loft a chamfer into a fillet along one edge.
+    ///
+    /// Selects the plane-plane edge whose nearest endpoint is closest to
+    /// `near`; that endpoint becomes the *start* of the loft. The blend's
+    /// size (chamfer leg / fillet radius) and shape (`0` = chamfer, `1` =
+    /// fillet) interpolate linearly from start to end, so a chamfer can
+    /// morph into a fillet — or a fillet taper down — along the edge.
+    ///
+    /// Returns the solid unchanged when no suitable edge exists or the
+    /// blend fails (mirroring `fillet`'s fail-soft behavior).
+    pub fn edge_blend_loft(
+        &self,
+        near: [f64; 3],
+        start_size: f64,
+        start_shape: f64,
+        end_size: f64,
+        end_shape: f64,
+    ) -> Solid {
+        match &self.repr {
+            SolidRepr::BRep(brep) => {
+                let near = vcad_kernel_math::Point3::new(near[0], near[1], near[2]);
+                let Some((edge_id, flip)) = vcad_kernel_fillet::find_edge_near(brep, near) else {
+                    return self.clone();
+                };
+                let (start, end) = if flip {
+                    (
+                        vcad_kernel_fillet::BlendSection {
+                            size: end_size,
+                            shape: end_shape,
+                        },
+                        vcad_kernel_fillet::BlendSection {
+                            size: start_size,
+                            shape: start_shape,
+                        },
+                    )
+                } else {
+                    (
+                        vcad_kernel_fillet::BlendSection {
+                            size: start_size,
+                            shape: start_shape,
+                        },
+                        vcad_kernel_fillet::BlendSection {
+                            size: end_size,
+                            shape: end_shape,
+                        },
+                    )
+                };
+                match vcad_kernel_fillet::loft_blend_edge(brep, edge_id, start, end) {
+                    Ok(blended) => Solid {
+                        repr: SolidRepr::BRep(Box::new(blended)),
+                        segments: self.segments,
+                    },
+                    Err(_) => self.clone(),
+                }
+            }
+            _ => self.clone(),
+        }
+    }
+
     /// Shell (hollow) the solid by offsetting all faces inward.
     ///
     /// Creates a hollow shell with walls of the specified thickness.

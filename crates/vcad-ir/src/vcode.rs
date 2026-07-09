@@ -2028,6 +2028,27 @@ where
             })
         }
 
+        "EBL" => {
+            if parts.len() != 9 {
+                return Err(VCodeParseError {
+                    line: line_num,
+                    message: format!("EBL requires 8 args, got {}", parts.len() - 1),
+                });
+            }
+            Ok(CsgOp::EdgeBlendLoft {
+                child: parse_u64(parts[1], line_num)?,
+                near: Vec3::new(
+                    parse_f64(parts[2], line_num)?,
+                    parse_f64(parts[3], line_num)?,
+                    parse_f64(parts[4], line_num)?,
+                ),
+                start_size: parse_f64(parts[5], line_num)?,
+                start_shape: parse_f64(parts[6], line_num)?,
+                end_size: parse_f64(parts[7], line_num)?,
+                end_shape: parse_f64(parts[8], line_num)?,
+            })
+        }
+
         "CH" => {
             if parts.len() != 3 {
                 return Err(VCodeParseError {
@@ -2490,6 +2511,24 @@ fn format_op(
                 message: format!("unknown node {}", child),
             })?;
             Ok(format!("CH {} {}{}", c, distance, name_suffix))
+        }
+
+        CsgOp::EdgeBlendLoft {
+            child,
+            near,
+            start_size,
+            start_shape,
+            end_size,
+            end_shape,
+        } => {
+            let c = id_map.get(child).ok_or_else(|| VCodeParseError {
+                line: 0,
+                message: format!("unknown node {}", child),
+            })?;
+            Ok(format!(
+                "EBL {} {} {} {} {} {} {} {}{}",
+                c, near.x, near.y, near.z, start_size, start_shape, end_size, end_shape, name_suffix
+            ))
         }
 
         CsgOp::Sketch2D {

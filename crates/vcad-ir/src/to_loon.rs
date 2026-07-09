@@ -311,6 +311,11 @@ fn op_to_loon(op: &CsgOp, doc: &Document) -> OpResult {
             node_ref(*child, doc)
         )),
 
+        CsgOp::EdgeBlendLoft { .. } => OpResult::Unsupported(
+            "EdgeBlendLoft".to_string(),
+            "variable edge blend has no loon syntax yet".to_string(),
+        ),
+
         CsgOp::Shell { child, thickness } => OpResult::Ok(format!(
             "[shell {} {}]",
             fmt_f64(*thickness),

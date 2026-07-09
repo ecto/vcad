@@ -9,6 +9,7 @@
 //! Supports edges between planar faces, plane-cylinder, coaxial cylinders,
 //! and general curved surfaces via NURBS rolling ball blend.
 
+mod blend_loft;
 mod chamfer;
 mod closest_point;
 mod fillet_curved;
@@ -18,6 +19,7 @@ mod rolling_ball;
 mod topology;
 mod trim;
 
+pub use blend_loft::{find_edge_near, loft_blend_edge, BlendSection};
 pub use chamfer::chamfer_all_edges;
 pub use closest_point::closest_point_uv;
 pub use fillet_curved::{

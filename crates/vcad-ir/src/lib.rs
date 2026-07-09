@@ -858,6 +858,33 @@ pub enum CsgOp {
         /// Chamfer distance.
         distance: f64,
     },
+    #[tool(
+        category = "modifier",
+        ai_hint = "Variable edge blend on ONE edge: morph a chamfer into a fillet (or taper a blend) along the edge. `near` picks the plane-plane edge whose endpoint is closest; that endpoint is the start. shape 0 = chamfer, 1 = fillet; size = chamfer leg / fillet radius in mm."
+    )]
+    /// Edge blend loft — a chamfer↔fillet transition along a single edge.
+    ///
+    /// The blend cross-section morphs linearly from the start section to
+    /// the end section along the edge: both the size (tangent setback =
+    /// chamfer leg = fillet radius) and the shape (`0` = flat chamfer,
+    /// `1` = round fillet) interpolate.
+    EdgeBlendLoft {
+        /// Child node to blend.
+        #[cfg_attr(feature = "ts-rs", ts(type = "number"))]
+        child: NodeId,
+        /// Point near the target edge's start endpoint; the closest
+        /// plane-plane edge endpoint selects both the edge and which end
+        /// the start section applies to.
+        near: Vec3,
+        /// Blend size at the start endpoint (mm).
+        start_size: f64,
+        /// Profile shape at the start endpoint (0 = chamfer, 1 = fillet).
+        start_shape: f64,
+        /// Blend size at the end endpoint (mm).
+        end_size: f64,
+        /// Profile shape at the end endpoint (0 = chamfer, 1 = fillet).
+        end_shape: f64,
+    },
     #[tool(category = "sketch_op")]
     /// 2D text that can be extruded into 3D geometry.
     ///

@@ -524,7 +524,33 @@ child: number,
 /**
  * Chamfer distance.
  */
-distance: number, } | { "type": "Text2D", 
+distance: number, } | { "type": "EdgeBlendLoft", 
+/**
+ * Child node to blend.
+ */
+child: number, 
+/**
+ * Point near the target edge's start endpoint; the closest
+ * plane-plane edge endpoint selects both the edge and which end
+ * the start section applies to.
+ */
+near: Vec3, 
+/**
+ * Blend size at the start endpoint (mm).
+ */
+start_size: number, 
+/**
+ * Profile shape at the start endpoint (0 = chamfer, 1 = fillet).
+ */
+start_shape: number, 
+/**
+ * Blend size at the end endpoint (mm).
+ */
+end_size: number, 
+/**
+ * Profile shape at the end endpoint (0 = chamfer, 1 = fillet).
+ */
+end_shape: number, } | { "type": "Text2D", 
 /**
  * Origin point of the text plane in 3D.
  */

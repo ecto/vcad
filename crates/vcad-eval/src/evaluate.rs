@@ -562,6 +562,26 @@ fn evaluate_op_timed(
             Ok(c.map(|s| s.chamfer(*distance)))
         }
 
+        CsgOp::EdgeBlendLoft {
+            child,
+            near,
+            start_size,
+            start_shape,
+            end_size,
+            end_shape,
+        } => {
+            let c = eval_child(*child, cache)?;
+            Ok(c.map(|s| {
+                s.edge_blend_loft(
+                    [near.x, near.y, near.z],
+                    *start_size,
+                    *start_shape,
+                    *end_size,
+                    *end_shape,
+                )
+            }))
+        }
+
         CsgOp::Sketch2D { .. } => {
             // Sketch nodes don't produce geometry directly.
             // They are consumed by Extrude/Revolve/Sweep/Loft.
@@ -1400,6 +1420,7 @@ fn op_name(op: &CsgOp) -> String {
         CsgOp::Shell { .. } => "Shell",
         CsgOp::Fillet { .. } => "Fillet",
         CsgOp::Chamfer { .. } => "Chamfer",
+        CsgOp::EdgeBlendLoft { .. } => "EdgeBlendLoft",
         CsgOp::Sketch2D { .. } => "Sketch2D",
         CsgOp::Text2D { .. } => "Text2D",
         CsgOp::Extrude { .. } => "Extrude",
