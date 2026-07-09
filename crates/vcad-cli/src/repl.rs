@@ -574,7 +574,7 @@ fn op_type_name(op: &CsgOp) -> &'static str {
         CsgOp::Mirror { .. } => "mirror",
         CsgOp::Fillet { .. } => "fillet",
         CsgOp::Chamfer { .. } => "chamfer",
-        CsgOp::EdgeBlendLoft { .. } => "edge blend loft",
+        CsgOp::EdgeBlend { .. } => "edge blend",
         CsgOp::Shell { .. } => "shell",
         CsgOp::LinearPattern { .. } => "linear pattern",
         CsgOp::CircularPattern { .. } => "circular pattern",

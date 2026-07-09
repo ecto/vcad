@@ -1185,31 +1185,24 @@ impl Solid {
         }
     }
 
-    /// Variable edge blend: loft a chamfer into a fillet along the single
-    /// plane-plane edge whose nearest endpoint is closest to `(nx, ny, nz)`
-    /// (that endpoint becomes the start of the loft). Size is the chamfer
-    /// leg / fillet radius; shape is 0 = chamfer, 1 = fillet.
-    #[wasm_bindgen(js_name = edgeBlendLoft)]
-    #[allow(clippy::too_many_arguments)]
-    pub fn edge_blend_loft(
-        &self,
-        nx: f64,
-        ny: f64,
-        nz: f64,
-        start_size: f64,
-        start_shape: f64,
-        end_size: f64,
-        end_shape: f64,
-    ) -> Solid {
-        Solid {
-            inner: self.inner.edge_blend_loft(
-                [nx, ny, nz],
-                start_size,
-                start_shape,
-                end_size,
-                end_shape,
-            ),
+    /// Per-edge blend on query-selected edges with a keyed profile.
+    ///
+    /// `spec_json` is a JSON object `{ "edges": EdgeQuery, "profile":
+    /// BlendProfile }` using the IR types (serde-tagged with `type`).
+    /// shape 0 = chamfer, 1 = fillet; size = chamfer leg / fillet radius.
+    #[wasm_bindgen(js_name = edgeBlend)]
+    pub fn edge_blend(&self, spec_json: &str) -> Result<Solid, JsError> {
+        #[derive(serde::Deserialize)]
+        struct Spec {
+            edges: vcad_ir::EdgeQuery,
+            profile: vcad_ir::BlendProfile,
         }
+        let spec: Spec = serde_json::from_str(spec_json)
+            .map_err(|e| JsError::new(&format!("invalid edge blend spec: {e}")))?;
+        let (query, keys) = kernel_blend_args(&spec.edges, &spec.profile);
+        Ok(Solid {
+            inner: self.inner.edge_blend(&query, &keys),
+        })
     }
 
     /// Fillet all edges of the solid with the given radius.
@@ -3911,24 +3904,16 @@ fn evaluate_node(doc: &vcad_ir::Document, node_id: vcad_ir::NodeId) -> Result<So
             Ok(c.chamfer(*distance))
         }
 
-        vcad_ir::CsgOp::EdgeBlendLoft {
+        vcad_ir::CsgOp::EdgeBlend {
             child,
-            near,
-            start_size,
-            start_shape,
-            end_size,
-            end_shape,
+            edges,
+            profile,
         } => {
             let c = evaluate_node(doc, *child)?;
-            Ok(c.edge_blend_loft(
-                near.x,
-                near.y,
-                near.z,
-                *start_size,
-                *start_shape,
-                *end_size,
-                *end_shape,
-            ))
+            let (query, keys) = kernel_blend_args(edges, profile);
+            Ok(Solid {
+                inner: c.inner.edge_blend(&query, &keys),
+            })
         }
 
         vcad_ir::CsgOp::Sketch2D { .. } => {
@@ -6935,4 +6920,45 @@ mod ts_tests {
         GpuGeometryResult::export_all().expect("GpuGeometryResult export failed");
         TextBoundsResult::export_all().expect("TextBoundsResult export failed");
     }
+}
+
+/// Convert IR edge-blend arguments to their kernel equivalents.
+fn kernel_blend_args(
+    edges: &vcad_ir::EdgeQuery,
+    profile: &vcad_ir::BlendProfile,
+) -> (
+    vcad_kernel::vcad_kernel_fillet::EdgeQuery,
+    Vec<vcad_kernel::vcad_kernel_fillet::BlendKey>,
+) {
+    use vcad_kernel::vcad_kernel_fillet as kf;
+    let q = match edges {
+        vcad_ir::EdgeQuery::All => kf::EdgeQuery::All,
+        vcad_ir::EdgeQuery::Near { point } => kf::EdgeQuery::Near {
+            point: vcad_kernel_math::Point3::new(point.x, point.y, point.z),
+        },
+        vcad_ir::EdgeQuery::Direction { axis, tol_deg } => kf::EdgeQuery::Direction {
+            axis: vcad_kernel_math::Vec3::new(axis.x, axis.y, axis.z),
+            tol_deg: *tol_deg,
+        },
+    };
+    let keys = match profile {
+        vcad_ir::BlendProfile::Constant { size, shape } => vec![kf::BlendKey {
+            t: 0.0,
+            section: kf::BlendSection {
+                size: *size,
+                shape: *shape,
+            },
+        }],
+        vcad_ir::BlendProfile::Keyed { keys } => keys
+            .iter()
+            .map(|k| kf::BlendKey {
+                t: k.t,
+                section: kf::BlendSection {
+                    size: k.size,
+                    shape: k.shape,
+                },
+            })
+            .collect(),
+    };
+    (q, keys)
 }

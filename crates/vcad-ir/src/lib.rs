@@ -360,6 +360,67 @@ pub enum TextAlignment {
     Right,
 }
 
+/// A declarative edge selector, resolved against the current topology at
+/// evaluation time. Queries express intent ("the edge near this corner",
+/// "all vertical edges") instead of fragile indices, so selections survive
+/// regeneration after upstream parameter changes.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type")]
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "bindings/"))]
+pub enum EdgeQuery {
+    /// Every plane-plane manifold edge of the solid.
+    All,
+    /// The single edge whose nearest endpoint is closest to `point`; that
+    /// endpoint becomes the start of a keyed profile.
+    Near {
+        /// Selection point in model space.
+        point: Vec3,
+    },
+    /// Edges whose direction lies within `tol_deg` degrees of `axis`
+    /// (sign ignored) — e.g. `axis = +Z` selects vertical edges.
+    Direction {
+        /// Reference direction.
+        axis: Vec3,
+        /// Angular tolerance in degrees.
+        tol_deg: f64,
+    },
+}
+
+/// A blend-profile keyframe along an edge.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "bindings/"))]
+pub struct BlendKey {
+    /// Position along the edge (0 = start endpoint, 1 = end endpoint).
+    pub t: f64,
+    /// Tangent setback at this key (chamfer leg = fillet radius), mm.
+    pub size: f64,
+    /// Profile shape at this key: 0 = flat chamfer, 1 = round fillet.
+    pub shape: f64,
+}
+
+/// Cross-section profile of an edge blend.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type")]
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "bindings/"))]
+pub enum BlendProfile {
+    /// The same section along the whole edge.
+    Constant {
+        /// Tangent setback (chamfer leg = fillet radius), mm.
+        size: f64,
+        /// Profile shape: 0 = flat chamfer, 1 = round fillet.
+        shape: f64,
+    },
+    /// Keyframed sections; the profile interpolates piecewise-linearly
+    /// between keys along each edge.
+    Keyed {
+        /// Profile keyframes (any order; clamped to `[0, 1]`).
+        keys: Vec<BlendKey>,
+    },
+}
+
 /// A segment of a 2D sketch profile.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type")]
@@ -860,30 +921,25 @@ pub enum CsgOp {
     },
     #[tool(
         category = "modifier",
-        ai_hint = "Variable edge blend on ONE edge: morph a chamfer into a fillet (or taper a blend) along the edge. `near` picks the plane-plane edge whose endpoint is closest; that endpoint is the start. shape 0 = chamfer, 1 = fillet; size = chamfer leg / fillet radius in mm."
+        ai_hint = "Per-edge blend with a declarative selector: pick edges by query (Near a point / Direction / All plane-plane edges), then apply a Constant or Keyed profile. shape 0 = chamfer, 1 = fillet; size = chamfer leg / fillet radius in mm. Keyed profiles morph along the edge — e.g. chamfer lofting into a fillet."
     )]
-    /// Edge blend loft — a chamfer↔fillet transition along a single edge.
+    /// Edge blend — chamfer/fillet/variable blend on query-selected edges.
     ///
-    /// The blend cross-section morphs linearly from the start section to
-    /// the end section along the edge: both the size (tangent setback =
-    /// chamfer leg = fillet radius) and the shape (`0` = flat chamfer,
-    /// `1` = round fillet) interpolate.
-    EdgeBlendLoft {
+    /// `edges` resolves against the child's topology at evaluation time,
+    /// so selections survive upstream parameter changes. The profile is
+    /// either constant or keyed along each edge: `shape` interpolates a
+    /// flat chamfer (`0`) into a round fillet (`1`), and `size` is the
+    /// tangent setback (chamfer leg = fillet radius). Edges sharing a
+    /// vertex with an already-blended edge are skipped (miter corners are
+    /// a planned follow-up).
+    EdgeBlend {
         /// Child node to blend.
         #[cfg_attr(feature = "ts-rs", ts(type = "number"))]
         child: NodeId,
-        /// Point near the target edge's start endpoint; the closest
-        /// plane-plane edge endpoint selects both the edge and which end
-        /// the start section applies to.
-        near: Vec3,
-        /// Blend size at the start endpoint (mm).
-        start_size: f64,
-        /// Profile shape at the start endpoint (0 = chamfer, 1 = fillet).
-        start_shape: f64,
-        /// Blend size at the end endpoint (mm).
-        end_size: f64,
-        /// Profile shape at the end endpoint (0 = chamfer, 1 = fillet).
-        end_shape: f64,
+        /// Which edges to blend.
+        edges: EdgeQuery,
+        /// Cross-section profile along each selected edge.
+        profile: BlendProfile,
     },
     #[tool(category = "sketch_op")]
     /// 2D text that can be extruded into 3D geometry.

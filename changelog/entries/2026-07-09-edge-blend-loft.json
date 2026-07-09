@@ -3,7 +3,7 @@
   "version": "0.9.4",
   "date": "2026-07-09",
   "category": "feat",
-  "title": "Edge blend loft: chamfer into fillet",
-  "summary": "New EdgeBlendLoft operation morphs a chamfer into a fillet (or tapers a blend) along a single edge — variable size and shape, watertight by construction.",
-  "features": ["kernel", "fillet", "chamfer", "modeling"]
+  "title": "Edge blends: queries + chamfer-into-fillet lofts",
+  "summary": "New EdgeBlend op: select edges declaratively (near a point, by direction, all) and apply constant or keyframed profiles that morph a chamfer into a fillet along each edge.",
+  "features": ["kernel", "fillet", "chamfer", "modeling", "edge-queries"]
 }

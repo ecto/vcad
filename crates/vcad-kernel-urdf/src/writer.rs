@@ -392,7 +392,7 @@ impl<'a> UrdfWriter<'a> {
             | CsgOp::Shell { child, .. }
             | CsgOp::Fillet { child, .. }
             | CsgOp::Chamfer { child, .. }
-            | CsgOp::EdgeBlendLoft { child, .. } => {
+            | CsgOp::EdgeBlend { child, .. } => {
                 // For patterns/shell/fillet/chamfer, export base geometry
                 self.node_to_geometry(*child)
             }

@@ -448,62 +448,51 @@ impl Solid {
         }
     }
 
-    /// Variable edge blend: loft a chamfer into a fillet along one edge.
+    /// Per-edge blend on query-selected edges with a keyed profile.
     ///
-    /// Selects the plane-plane edge whose nearest endpoint is closest to
-    /// `near`; that endpoint becomes the *start* of the loft. The blend's
-    /// size (chamfer leg / fillet radius) and shape (`0` = chamfer, `1` =
-    /// fillet) interpolate linearly from start to end, so a chamfer can
-    /// morph into a fillet — or a fillet taper down — along the edge.
+    /// `query` picks plane-plane edges declaratively (all / nearest to a
+    /// point / by direction); `keys` describes the cross-section along
+    /// each edge — `shape` interpolates a flat chamfer (`0`) into a round
+    /// fillet (`1`), `size` is the tangent setback (chamfer leg = fillet
+    /// radius). A single key is a constant profile; multiple keys loft
+    /// between sections (e.g. a chamfer morphing into a fillet).
     ///
-    /// Returns the solid unchanged when no suitable edge exists or the
-    /// blend fails (mirroring `fillet`'s fail-soft behavior).
-    pub fn edge_blend_loft(
+    /// `EdgeQuery::All` with a constant pure-fillet or pure-chamfer
+    /// profile routes to the analytic all-edge pipelines (cylindrical /
+    /// planar blend surfaces with corner patches). Everything else uses
+    /// the per-edge loft builder; edges that share a vertex with an
+    /// already-blended edge are skipped (miter corners are a follow-up).
+    /// Returns the solid unchanged for mesh-only or empty solids
+    /// (fail-soft, mirroring `fillet`).
+    pub fn edge_blend(
         &self,
-        near: [f64; 3],
-        start_size: f64,
-        start_shape: f64,
-        end_size: f64,
-        end_shape: f64,
+        query: &vcad_kernel_fillet::EdgeQuery,
+        keys: &[vcad_kernel_fillet::BlendKey],
     ) -> Solid {
-        match &self.repr {
-            SolidRepr::BRep(brep) => {
-                let near = vcad_kernel_math::Point3::new(near[0], near[1], near[2]);
-                let Some((edge_id, flip)) = vcad_kernel_fillet::find_edge_near(brep, near) else {
-                    return self.clone();
-                };
-                let (start, end) = if flip {
-                    (
-                        vcad_kernel_fillet::BlendSection {
-                            size: end_size,
-                            shape: end_shape,
-                        },
-                        vcad_kernel_fillet::BlendSection {
-                            size: start_size,
-                            shape: start_shape,
-                        },
-                    )
-                } else {
-                    (
-                        vcad_kernel_fillet::BlendSection {
-                            size: start_size,
-                            shape: start_shape,
-                        },
-                        vcad_kernel_fillet::BlendSection {
-                            size: end_size,
-                            shape: end_shape,
-                        },
-                    )
-                };
-                match vcad_kernel_fillet::loft_blend_edge(brep, edge_id, start, end) {
-                    Ok(blended) => Solid {
-                        repr: SolidRepr::BRep(Box::new(blended)),
-                        segments: self.segments,
-                    },
-                    Err(_) => self.clone(),
-                }
+        let SolidRepr::BRep(brep) = &self.repr else {
+            return self.clone();
+        };
+        if keys.is_empty() {
+            return self.clone();
+        }
+
+        // Fast path: whole-solid constant fillet/chamfer already have
+        // dedicated pipelines with analytic blend surfaces and corner
+        // patches — use them.
+        if matches!(query, vcad_kernel_fillet::EdgeQuery::All) && keys.len() == 1 {
+            let s = keys[0].section;
+            if s.shape >= 1.0 - 1e-12 {
+                return self.fillet(s.size);
             }
-            _ => self.clone(),
+            if s.shape <= 1e-12 {
+                return self.chamfer(s.size);
+            }
+        }
+
+        let (blended, _outcome) = vcad_kernel_fillet::apply_edge_blend(brep, query, keys);
+        Solid {
+            repr: SolidRepr::BRep(Box::new(blended)),
+            segments: self.segments,
         }
     }
 

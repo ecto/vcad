@@ -63,7 +63,7 @@ function opChildren(op: CsgOp): NodeId[] {
     case "Shell":
     case "Fillet":
     case "Chamfer":
-    case "EdgeBlendLoft":
+    case "EdgeBlend":
       return [op.child];
     case "Extrude":
     case "Revolve":

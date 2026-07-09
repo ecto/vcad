@@ -2028,24 +2028,29 @@ where
             })
         }
 
-        "EBL" => {
-            if parts.len() != 9 {
+        "EB" => {
+            // EB <child> <edges-json> <profile-json> — each JSON payload
+            // travels as one quoted, escaped string token.
+            if parts.len() != 4 {
                 return Err(VCodeParseError {
                     line: line_num,
-                    message: format!("EBL requires 8 args, got {}", parts.len() - 1),
+                    message: format!("EB requires 3 args, got {}", parts.len() - 1),
                 });
             }
-            Ok(CsgOp::EdgeBlendLoft {
+            let edges: crate::EdgeQuery = serde_json::from_str(&parse_string_arg(parts[2]))
+                .map_err(|e| VCodeParseError {
+                    line: line_num,
+                    message: format!("EB edges: {e}"),
+                })?;
+            let profile: crate::BlendProfile = serde_json::from_str(&parse_string_arg(parts[3]))
+                .map_err(|e| VCodeParseError {
+                    line: line_num,
+                    message: format!("EB profile: {e}"),
+                })?;
+            Ok(CsgOp::EdgeBlend {
                 child: parse_u64(parts[1], line_num)?,
-                near: Vec3::new(
-                    parse_f64(parts[2], line_num)?,
-                    parse_f64(parts[3], line_num)?,
-                    parse_f64(parts[4], line_num)?,
-                ),
-                start_size: parse_f64(parts[5], line_num)?,
-                start_shape: parse_f64(parts[6], line_num)?,
-                end_size: parse_f64(parts[7], line_num)?,
-                end_shape: parse_f64(parts[8], line_num)?,
+                edges,
+                profile,
             })
         }
 
@@ -2513,21 +2518,31 @@ fn format_op(
             Ok(format!("CH {} {}{}", c, distance, name_suffix))
         }
 
-        CsgOp::EdgeBlendLoft {
+        CsgOp::EdgeBlend {
             child,
-            near,
-            start_size,
-            start_shape,
-            end_size,
-            end_shape,
+            edges,
+            profile,
         } => {
             let c = id_map.get(child).ok_or_else(|| VCodeParseError {
                 line: 0,
                 message: format!("unknown node {}", child),
             })?;
+            // Each payload is compact JSON wrapped as a quoted vcode
+            // string token (JSON string escaping matches the tokenizer's
+            // \" / \\ conventions).
+            let quote = |v: &str| -> String { serde_json::to_string(v).unwrap_or_default() };
+            let edges_json = serde_json::to_string(edges).map_err(|e| VCodeParseError {
+                line: 0,
+                message: format!("EB edges: {e}"),
+            })?;
+            let profile_json = serde_json::to_string(profile).map_err(|e| VCodeParseError {
+                line: 0,
+                message: format!("EB profile: {e}"),
+            })?;
             Ok(format!(
-                "EBL {} {} {} {} {} {} {} {}{}",
-                c, near.x, near.y, near.z, start_size, start_shape, end_size, end_shape, name_suffix
+                "EB {c} {} {}{name_suffix}",
+                quote(&edges_json),
+                quote(&profile_json)
             ))
         }
 
@@ -2821,6 +2836,100 @@ mod tests {
                 assert_eq!(size.z, 30.0);
             }
             _ => panic!("expected Cube"),
+        }
+    }
+
+    #[test]
+    fn test_roundtrip_edge_blend() {
+        // EB encodes its query/profile as compact-JSON tokens; make sure
+        // both enum shapes survive the round trip.
+        let mut doc = Document::new();
+        doc.nodes.insert(
+            0,
+            Node {
+                id: 0,
+                name: None,
+                op: CsgOp::Cube {
+                    size: Vec3::new(10.0, 10.0, 10.0),
+                },
+            },
+        );
+        doc.nodes.insert(
+            1,
+            Node {
+                id: 1,
+                name: Some("blend".to_string()),
+                op: CsgOp::EdgeBlend {
+                    child: 0,
+                    edges: crate::EdgeQuery::Direction {
+                        axis: Vec3::new(0.0, 0.0, 1.0),
+                        tol_deg: 5.0,
+                    },
+                    profile: crate::BlendProfile::Keyed {
+                        keys: vec![
+                            crate::BlendKey {
+                                t: 0.0,
+                                size: 2.0,
+                                shape: 0.0,
+                            },
+                            crate::BlendKey {
+                                t: 1.0,
+                                size: 2.0,
+                                shape: 1.0,
+                            },
+                        ],
+                    },
+                },
+            },
+        );
+        doc.roots.push(SceneEntry {
+            root: 1,
+            material: "default".to_string(),
+            visible: None,
+        });
+
+        let compact = to_vcode(&doc).unwrap();
+        assert!(compact.contains("EB "), "vcode: {compact}");
+        let restored = from_vcode(&compact).unwrap();
+        match &restored.nodes[&1].op {
+            CsgOp::EdgeBlend {
+                child,
+                edges,
+                profile,
+            } => {
+                assert_eq!(*child, 0);
+                assert!(matches!(edges, crate::EdgeQuery::Direction { .. }));
+                match profile {
+                    crate::BlendProfile::Keyed { keys } => {
+                        assert_eq!(keys.len(), 2);
+                        assert_eq!(keys[1].shape, 1.0);
+                    }
+                    _ => panic!("expected Keyed profile"),
+                }
+            }
+            other => panic!("expected EdgeBlend, got {other:?}"),
+        }
+
+        // Constant profile + Near query too.
+        doc.nodes.get_mut(&1).unwrap().op = CsgOp::EdgeBlend {
+            child: 0,
+            edges: crate::EdgeQuery::Near {
+                point: Vec3::new(0.0, 0.0, 10.0),
+            },
+            profile: crate::BlendProfile::Constant {
+                size: 1.5,
+                shape: 0.5,
+            },
+        };
+        let restored = from_vcode(&to_vcode(&doc).unwrap()).unwrap();
+        match &restored.nodes[&1].op {
+            CsgOp::EdgeBlend { edges, profile, .. } => {
+                assert!(matches!(edges, crate::EdgeQuery::Near { .. }));
+                assert!(
+                    matches!(profile, crate::BlendProfile::Constant { size, shape } if *size == 1.5 && *shape == 0.5)
+                );
+            }
+            other => panic!("expected EdgeBlend, got {other:?}"),
         }
     }
 

@@ -562,24 +562,14 @@ fn evaluate_op_timed(
             Ok(c.map(|s| s.chamfer(*distance)))
         }
 
-        CsgOp::EdgeBlendLoft {
+        CsgOp::EdgeBlend {
             child,
-            near,
-            start_size,
-            start_shape,
-            end_size,
-            end_shape,
+            edges,
+            profile,
         } => {
             let c = eval_child(*child, cache)?;
-            Ok(c.map(|s| {
-                s.edge_blend_loft(
-                    [near.x, near.y, near.z],
-                    *start_size,
-                    *start_shape,
-                    *end_size,
-                    *end_shape,
-                )
-            }))
+            let (query, keys) = kernel_blend_args(edges, profile);
+            Ok(c.map(|s| s.edge_blend(&query, &keys)))
         }
 
         CsgOp::Sketch2D { .. } => {
@@ -1397,6 +1387,47 @@ fn transform_imported_mesh(data: &ImportedMeshData) -> EvaluatedMesh {
     }
 }
 
+/// Convert IR edge-blend arguments to their kernel equivalents.
+fn kernel_blend_args(
+    edges: &vcad_ir::EdgeQuery,
+    profile: &vcad_ir::BlendProfile,
+) -> (
+    vcad_kernel::vcad_kernel_fillet::EdgeQuery,
+    Vec<vcad_kernel::vcad_kernel_fillet::BlendKey>,
+) {
+    use vcad_kernel::vcad_kernel_fillet as kf;
+    let q = match edges {
+        vcad_ir::EdgeQuery::All => kf::EdgeQuery::All,
+        vcad_ir::EdgeQuery::Near { point } => kf::EdgeQuery::Near {
+            point: vcad_kernel_math::Point3::new(point.x, point.y, point.z),
+        },
+        vcad_ir::EdgeQuery::Direction { axis, tol_deg } => kf::EdgeQuery::Direction {
+            axis: vcad_kernel_math::Vec3::new(axis.x, axis.y, axis.z),
+            tol_deg: *tol_deg,
+        },
+    };
+    let keys = match profile {
+        vcad_ir::BlendProfile::Constant { size, shape } => vec![kf::BlendKey {
+            t: 0.0,
+            section: kf::BlendSection {
+                size: *size,
+                shape: *shape,
+            },
+        }],
+        vcad_ir::BlendProfile::Keyed { keys } => keys
+            .iter()
+            .map(|k| kf::BlendKey {
+                t: k.t,
+                section: kf::BlendSection {
+                    size: k.size,
+                    shape: k.shape,
+                },
+            })
+            .collect(),
+    };
+    (q, keys)
+}
+
 /// Get a short human-readable name for a CsgOp variant.
 fn op_name(op: &CsgOp) -> String {
     match op {
@@ -1420,7 +1451,7 @@ fn op_name(op: &CsgOp) -> String {
         CsgOp::Shell { .. } => "Shell",
         CsgOp::Fillet { .. } => "Fillet",
         CsgOp::Chamfer { .. } => "Chamfer",
-        CsgOp::EdgeBlendLoft { .. } => "EdgeBlendLoft",
+        CsgOp::EdgeBlend { .. } => "EdgeBlend",
         CsgOp::Sketch2D { .. } => "Sketch2D",
         CsgOp::Text2D { .. } => "Text2D",
         CsgOp::Extrude { .. } => "Extrude",
@@ -2076,6 +2107,64 @@ mod tests {
             model_3d: None,
             properties: Default::default(),
         }
+    }
+
+    /// End-to-end: an EdgeBlend node evaluates through the IR pipeline
+    /// and actually removes material — keyed chamfer→fillet lands between
+    /// the pure-chamfer and pure-fillet volumes for the same size.
+    #[test]
+    fn edge_blend_evaluates_through_ir() {
+        let mut nodes: HashMap<NodeId, vcad_ir::Node> = HashMap::new();
+        nodes.insert(
+            0,
+            vcad_ir::Node {
+                id: 0,
+                name: None,
+                op: CsgOp::Cube {
+                    size: vcad_ir::Vec3::new(10.0, 10.0, 10.0),
+                },
+            },
+        );
+        nodes.insert(
+            1,
+            vcad_ir::Node {
+                id: 1,
+                name: None,
+                op: CsgOp::EdgeBlend {
+                    child: 0,
+                    edges: vcad_ir::EdgeQuery::Near {
+                        point: vcad_ir::Vec3::new(0.0, 0.0, 0.0),
+                    },
+                    profile: vcad_ir::BlendProfile::Keyed {
+                        keys: vec![
+                            vcad_ir::BlendKey {
+                                t: 0.0,
+                                size: 2.0,
+                                shape: 0.0,
+                            },
+                            vcad_ir::BlendKey {
+                                t: 1.0,
+                                size: 2.0,
+                                shape: 1.0,
+                            },
+                        ],
+                    },
+                },
+            },
+        );
+        let mut cache = HashMap::new();
+        let solid = evaluate_node(1, &nodes, &mut cache)
+            .expect("eval ok")
+            .expect("solid produced");
+        let vol = solid.volume();
+        let pi = std::f64::consts::PI;
+        let (s, l) = (2.0, 10.0);
+        let v_chamfer = l * l * l - s * s / 2.0 * l;
+        let v_fillet = l * l * l - (1.0 - pi / 4.0) * s * s * l;
+        assert!(
+            vol > v_chamfer && vol < v_fillet,
+            "loft volume {vol} not in ({v_chamfer}, {v_fillet})"
+        );
     }
 
     #[test]

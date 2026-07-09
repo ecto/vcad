@@ -377,7 +377,7 @@ function getChildIds(op: CsgOp): NodeId[] {
     case "Mirror":
     case "Fillet":
     case "Chamfer":
-    case "EdgeBlendLoft":
+    case "EdgeBlend":
     case "Shell":
     case "LinearPattern":
     case "CircularPattern":
