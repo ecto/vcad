@@ -95,6 +95,10 @@ export { SolidCache, hashCsgOp } from "./solid-cache.js";
 export { MeshCache } from "./mesh-cache.js";
 export { DependencyGraph } from "./dependency-graph.js";
 export type { EvaluateOptions } from "./evaluate.js";
+// The authoritative TS-side Transform3D application (extrinsic X→Y→Z euler,
+// matrix Rz·Ry·Rx) — exported so renderers can regression-test against it.
+export { transformMesh } from "./evaluate.js";
+export type { TransformInfo } from "./transform-walk.js";
 
 // Sheet-metal — thin types that ride on EvaluatedPart.sheetMetal so the
 // UI can render the flat pattern and bend list without re-querying WASM.
