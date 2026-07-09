@@ -157,6 +157,12 @@ function guessContentType(name: string): string {
       return "text/plain";
     case "zip":
       return "application/zip";
+    case "png":
+      return "image/png";
+    case "svg":
+      return "image/svg+xml";
+    case "gif":
+      return "image/gif";
     default:
       return "application/octet-stream";
   }

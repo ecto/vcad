@@ -100,7 +100,20 @@ describe("render_view", () => {
       | { type: "text"; text: string }
       | undefined;
     expect(meta).toBeDefined();
-    expect(JSON.parse(meta!.text).view).toBe("isometric");
+    const parsedMeta = JSON.parse(meta!.text);
+    expect(parsedMeta.view).toBe("isometric");
+    expect(parsedMeta.asset.url).toMatch(/\/artifacts\/art_[^/]+\/.+\.png$/);
+    expect(parsedMeta.suggested_final_markdown).toBe(parsedMeta.asset.markdown);
+
+    const asset = out.structuredContent?.assets as
+      | Array<{ url?: string; mimeType?: string; markdown?: string; promoteToTranscript?: boolean }>
+      | undefined;
+    expect(asset?.[0]?.url).toMatch(/\/artifacts\/art_[^/]+\/.+\.png$/);
+    expect(asset?.[0]?.mimeType).toBe("image/png");
+    expect(asset?.[0]?.promoteToTranscript).toBe(true);
+    expect(out.structuredContent?.suggestedFinalMarkdown).toEqual([
+      asset![0]!.markdown,
+    ]);
   });
 
   it("renders an inline document with no resident session", async () => {

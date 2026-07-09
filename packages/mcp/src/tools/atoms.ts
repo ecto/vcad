@@ -20,6 +20,11 @@ import {
   type MdConfig,
 } from "@vcad/engine";
 import { rasterize } from "./render.js";
+import {
+  makePngRenderAsset,
+  renderAssetSummary,
+  withRenderAssets,
+} from "./render-assets.js";
 import { behavior, type ToolDef } from "./tool-def.js";
 import { okPretty as ok, toolResult, type ToolResult } from "./tool-result.js";
 
@@ -31,6 +36,7 @@ type ImageToolResult = {
     | { type: "image"; data: string; mimeType: string }
   >;
   isError?: boolean;
+  structuredContent?: Record<string, unknown>;
 };
 
 function fail(e: unknown): ToolResult {
@@ -497,20 +503,30 @@ export async function renderMolecule(input: unknown): Promise<ImageToolResult> {
     // render_view); degrade to raw SVG text when @resvg/resvg-js is absent.
     const raster = await rasterize(svg, W, "#0d1117");
     if (raster.png) {
-      return {
+      const representation = spaceFilling ? "space_filling" : "ball_and_stick";
+      const asset = makePngRenderAsset(raster.png, {
+        tool: "render_molecule",
+        filename: `molecule-${representation}-${mol.positions.length}-atoms-${W}.png`,
+        width: W,
+        height: W,
+        alt: `${representation.replace(/_/g, " ")} molecule render with ${mol.positions.length} atoms`,
+      });
+      return withRenderAssets<ImageToolResult>({
         content: [
           { type: "image", data: raster.png.toString("base64"), mimeType: "image/png" },
           {
             type: "text",
             text: JSON.stringify({
               width_px: W,
-              representation: spaceFilling ? "space_filling" : "ball_and_stick",
+              representation,
               atoms: mol.positions.length,
               format: "png",
+              asset: renderAssetSummary(asset),
+              suggested_final_markdown: asset.markdown,
             }),
           },
         ],
-      };
+      }, [asset]);
     }
     const note =
       raster.reason === "module-missing"

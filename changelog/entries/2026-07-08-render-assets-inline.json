@@ -1,0 +1,16 @@
+{
+  "id": "2026-07-08-render-assets-inline",
+  "version": "0.9.4",
+  "date": "2026-07-08",
+  "category": "feat",
+  "title": "Render tools return transcript-ready image artifacts",
+  "summary": "PNG render tools now keep their MCP image blocks, store renders as artifacts, and return asset metadata plus suggested Markdown for inline final-answer galleries.",
+  "features": ["mcp", "artifacts", "rendering", "atoms", "ecad"],
+  "mcpTools": [
+    "render_view",
+    "render_molecule",
+    "render_pcb",
+    "render_ratsnest",
+    "render_stackup"
+  ]
+}
