@@ -1807,6 +1807,10 @@ pub struct Document {
     /// `check_clearance` and receipt verification whenever geometry changes.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub clearance_specs: Vec<ClearanceSpec>,
+    /// Named static-physics assertions (loads, supports, limits), re-solved by
+    /// `predict_physics` and receipt verification whenever geometry changes.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub physics_specs: Vec<PhysicsSpec>,
 }
 
 /// A named minimum-clearance assertion between two groups of parts.
@@ -1829,6 +1833,104 @@ pub struct ClearanceSpec {
     pub min_mm: f64,
 }
 
+/// Axis-aligned box region (mm, world frame, Z-up) selecting FEA grid nodes.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "bindings/"))]
+pub struct PhysicsRegion {
+    /// Minimum corner `[x, y, z]` in mm.
+    pub min: [f64; 3],
+    /// Maximum corner `[x, y, z]` in mm.
+    pub max: [f64; 3],
+}
+
+/// A load for static analysis: total force spread over a box region.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "bindings/"))]
+pub struct PhysicsLoad {
+    /// Region the force is distributed over.
+    pub region: PhysicsRegion,
+    /// Total force vector `[fx, fy, fz]` in N.
+    pub force: [f64; 3],
+}
+
+/// A fixed (anchored) region for static analysis.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "bindings/"))]
+pub struct PhysicsSupport {
+    /// Region whose grid nodes are anchored.
+    pub region: PhysicsRegion,
+    /// Which translations are fixed `[x, y, z]`; absent means all fixed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-rs", ts(optional))]
+    pub fix: Option<[bool; 3]>,
+}
+
+/// Solve tier for a persisted physics spec: which resolution the assertion is
+/// re-verified at, and which claim basis the resulting claims carry
+/// (`predict` → predicted/provisional, `verify` → verified).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "bindings/"))]
+pub enum PhysicsFidelity {
+    /// Coarse fast solve; claims stamped `basis: predicted`.
+    Predict,
+    /// Fine solve, same oracle; claims stamped `basis: verified`.
+    Verify,
+}
+
+/// A named static-structural assertion (voxel FEA) persisted on the document.
+///
+/// Stores everything needed to re-run the solve — loads, supports, material
+/// properties, limits, and fidelity — so `build_receipt` re-emits it as
+/// `physics.static.<label>.*` claims and `verify_receipt` re-solves and
+/// classifies it Holds / Stale / Violated as geometry changes.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "bindings/"))]
+pub struct PhysicsSpec {
+    /// Unique human-readable name, e.g. "bracket-load".
+    pub label: String,
+    /// Part id (stringified root node id) whose evaluated volume is analyzed.
+    /// Mutually exclusive with `domain_box`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-rs", ts(optional))]
+    pub part: Option<String>,
+    /// Analyze a solid box instead of a part. Mutually exclusive with `part`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-rs", ts(optional))]
+    pub domain_box: Option<PhysicsRegion>,
+    /// Applied loads.
+    pub loads: Vec<PhysicsLoad>,
+    /// Fixed supports.
+    pub supports: Vec<PhysicsSupport>,
+    /// Young's modulus in MPa; absent means the kernel default (6061 Al).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-rs", ts(optional))]
+    pub youngs_modulus_mpa: Option<f64>,
+    /// Poisson's ratio; absent means the kernel default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-rs", ts(optional))]
+    pub poisson: Option<f64>,
+    /// Voxels along the longest axis; absent means the fidelity-tier default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-rs", ts(optional))]
+    pub resolution: Option<u32>,
+    /// Solve tier the assertion is (re-)verified at.
+    pub fidelity: PhysicsFidelity,
+    /// Optional limit: max displacement ≤ this, in mm.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-rs", ts(optional))]
+    pub max_displacement_mm: Option<f64>,
+    /// Optional limit: max von Mises stress ≤ this, in MPa.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-rs", ts(optional))]
+    pub max_von_mises_mpa: Option<f64>,
+}
+
 impl Default for Document {
     fn default() -> Self {
         Self {
@@ -1848,6 +1950,7 @@ impl Default for Document {
             parameters: HashMap::new(),
             bindings: Bindings::new(),
             clearance_specs: Vec::new(),
+            physics_specs: Vec::new(),
         }
     }
 }

@@ -1035,7 +1035,12 @@ bindings?: Bindings,
  * Named clearance/clash assertions between part groups, re-measured by
  * `check_clearance` and receipt verification whenever geometry changes.
  */
-clearance_specs?: Array<ClearanceSpec>, };
+clearance_specs?: Array<ClearanceSpec>, 
+/**
+ * Named static-physics assertions (loads, supports, limits), re-solved by
+ * `predict_physics` and receipt verification whenever geometry changes.
+ */
+physics_specs?: Array<PhysicsSpec>, };
 
 /**
  * A canonicalized DRC summary: total, per-rule counts (sorted), and the
@@ -2212,6 +2217,107 @@ netTies?: Array<NetTie>, };
  * safety net for data already on disk.
  */
 export type PcbLayer = "FCu" | "BCu" | "In1Cu" | "In2Cu" | "In3Cu" | "In4Cu" | "In5Cu" | "In6Cu" | "FSilkS" | "BSilkS" | "FMask" | "BMask" | "FPaste" | "BPaste" | "FFab" | "BFab" | "FCrtYd" | "BCrtYd" | "EdgeCuts" | "UserDrawings" | "UserComments";
+
+/**
+ * Solve tier for a persisted physics spec: which resolution the assertion is
+ * re-verified at, and which claim basis the resulting claims carry
+ * (`predict` → predicted/provisional, `verify` → verified).
+ */
+export type PhysicsFidelity = "predict" | "verify";
+
+/**
+ * A load for static analysis: total force spread over a box region.
+ */
+export type PhysicsLoad = { 
+/**
+ * Region the force is distributed over.
+ */
+region: PhysicsRegion, 
+/**
+ * Total force vector `[fx, fy, fz]` in N.
+ */
+force: [number, number, number], };
+
+/**
+ * Axis-aligned box region (mm, world frame, Z-up) selecting FEA grid nodes.
+ */
+export type PhysicsRegion = { 
+/**
+ * Minimum corner `[x, y, z]` in mm.
+ */
+min: [number, number, number], 
+/**
+ * Maximum corner `[x, y, z]` in mm.
+ */
+max: [number, number, number], };
+
+/**
+ * A named static-structural assertion (voxel FEA) persisted on the document.
+ *
+ * Stores everything needed to re-run the solve — loads, supports, material
+ * properties, limits, and fidelity — so `build_receipt` re-emits it as
+ * `physics.static.<label>.*` claims and `verify_receipt` re-solves and
+ * classifies it Holds / Stale / Violated as geometry changes.
+ */
+export type PhysicsSpec = { 
+/**
+ * Unique human-readable name, e.g. "bracket-load".
+ */
+label: string, 
+/**
+ * Part id (stringified root node id) whose evaluated volume is analyzed.
+ * Mutually exclusive with `domain_box`.
+ */
+part?: string, 
+/**
+ * Analyze a solid box instead of a part. Mutually exclusive with `part`.
+ */
+domain_box?: PhysicsRegion, 
+/**
+ * Applied loads.
+ */
+loads: Array<PhysicsLoad>, 
+/**
+ * Fixed supports.
+ */
+supports: Array<PhysicsSupport>, 
+/**
+ * Young's modulus in MPa; absent means the kernel default (6061 Al).
+ */
+youngs_modulus_mpa?: number, 
+/**
+ * Poisson's ratio; absent means the kernel default.
+ */
+poisson?: number, 
+/**
+ * Voxels along the longest axis; absent means the fidelity-tier default.
+ */
+resolution?: number, 
+/**
+ * Solve tier the assertion is (re-)verified at.
+ */
+fidelity: PhysicsFidelity, 
+/**
+ * Optional limit: max displacement ≤ this, in mm.
+ */
+max_displacement_mm?: number, 
+/**
+ * Optional limit: max von Mises stress ≤ this, in MPa.
+ */
+max_von_mises_mpa?: number, };
+
+/**
+ * A fixed (anchored) region for static analysis.
+ */
+export type PhysicsSupport = { 
+/**
+ * Region whose grid nodes are anchored.
+ */
+region: PhysicsRegion, 
+/**
+ * Which translations are fixed `[x, y, z]`; absent means all fixed.
+ */
+fix?: [boolean, boolean, boolean], };
 
 /**
  * A single pin's identity within a package.
