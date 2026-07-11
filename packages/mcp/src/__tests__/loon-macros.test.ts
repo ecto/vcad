@@ -111,6 +111,44 @@ describe("composition via use_loons", () => {
     expect(doc.roots?.length).toBeGreaterThan(0);
   });
 
+  it("STATELESS: inline `loons` work with an empty registry (cold start)", () => {
+    // No define_loon — simulates a fresh serverless instance. The macro
+    // record travels by value, as returned by define_loon.
+    const result = createCadLoon(
+      {
+        source: "[root [test-flange 40 8 5] \"aluminum\"]",
+        loons: [{ name: FLANGE.name, source: FLANGE.source }],
+        format: "json",
+      },
+      engine,
+    );
+    const doc = JSON.parse(result.content[0].text);
+    expect(doc.roots?.length).toBeGreaterThan(0);
+  });
+
+  it("STATELESS: call_loon with an inline macro, params optional", () => {
+    const out = parse(
+      callLoonTool(
+        {
+          name: "test-flange",
+          args: [60, 10, 6],
+          macro: { name: FLANGE.name, source: FLANGE.source },
+        },
+        engine,
+      ),
+    );
+    expect(out.document_id).toBeTruthy();
+  });
+
+  it("define_loon returns the portable macro record", () => {
+    const out = parse(defineLoonTool(FLANGE, engine));
+    expect(out.macro).toEqual({
+      name: FLANGE.name,
+      source: FLANGE.source,
+      params: FLANGE.params,
+    });
+  });
+
   it("missing macro in use_loons errors clearly", () => {
     expect(() =>
       createCadLoon({ source: "[root [cube 1 1 1] \"default\"]", use_loons: ["ghost"] }, engine),

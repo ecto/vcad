@@ -5,7 +5,7 @@
 import type { Engine } from "@vcad/engine";
 import { toVCode } from "@vcad/ir";
 import { appendIntegrity, computeIntegrity } from "./integrity.js";
-import { macroPrelude } from "./loon-macros.js";
+import { macroPrelude, type InlineLoon } from "./loon-macros.js";
 import { behavior, type ToolDef } from "./tool-def.js";
 import type { ToolResult } from "./tool-result.js";
 
@@ -26,6 +26,23 @@ export const createCadLoonSchema = {
         "`source`, exactly like the stdlib. List dependencies before " +
         "dependents.",
     },
+    loons: {
+      type: "array" as const,
+      description:
+        "STATELESS macro library: macros passed by value (the `macro` " +
+        "records define_loon returns: {name, source}). Prepended like " +
+        "use_loons but with no server-side registry dependency — immune " +
+        "to serverless cold starts. Names here also satisfy use_loons.",
+      items: {
+        type: "object" as const,
+        required: ["name", "source"],
+        properties: {
+          name: { type: "string" as const },
+          source: { type: "string" as const },
+          params: { type: "array" as const },
+        },
+      },
+    },
     format: {
       type: "string" as const,
       enum: ["vcode", "json"],
@@ -38,14 +55,21 @@ export const createCadLoonSchema = {
 interface CreateLoonInput {
   source: string;
   use_loons?: string[];
+  loons?: InlineLoon[];
   format?: "vcode" | "json";
 }
 
-/** Compose the effective program: stored-macro prelude + user source. */
+/** Compose the effective program: macro prelude (inline `loons` win over
+ *  the registry) + user source. Inline macros not named in use_loons are
+ *  prepended too — passing `loons` alone is sufficient. */
 export function composeLoonProgram(input: unknown): string {
-  const { source, use_loons } = input as CreateLoonInput;
-  if (!use_loons?.length) return source;
-  return `${macroPrelude(use_loons)}\n\n${source}`;
+  const { source, use_loons, loons } = input as CreateLoonInput;
+  const names = [
+    ...(use_loons ?? []),
+    ...(loons ?? []).map((m) => m.name).filter((n) => !use_loons?.includes(n)),
+  ];
+  if (!names.length) return source;
+  return `${macroPrelude(names, loons)}\n\n${source}`;
 }
 
 /** Evaluate loon source and return a CAD document. */

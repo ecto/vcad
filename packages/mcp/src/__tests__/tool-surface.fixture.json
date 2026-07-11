@@ -1298,6 +1298,28 @@
           },
           "description": "Stored macro names (see list_loons) to prepend as a library — their [let <name> [fn ...]] definitions become callable from `source`, exactly like the stdlib. List dependencies before dependents."
         },
+        "loons": {
+          "type": "array",
+          "description": "STATELESS macro library: macros passed by value (the `macro` records define_loon returns: {name, source}). Prepended like use_loons but with no server-side registry dependency — immune to serverless cold starts. Names here also satisfy use_loons.",
+          "items": {
+            "type": "object",
+            "required": [
+              "name",
+              "source"
+            ],
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "source": {
+                "type": "string"
+              },
+              "params": {
+                "type": "array"
+              }
+            }
+          }
+        },
         "format": {
           "type": "string",
           "enum": [
@@ -1403,6 +1425,25 @@
         "material": {
           "type": "string",
           "description": "Material for the instantiated part. Default \"default\"."
+        },
+        "macro": {
+          "type": "object",
+          "description": "STATELESS alternative: the macro passed by value (the `macro` record define_loon returned: {name, source, params}). Wins over the server-side registry; immune to serverless cold starts.",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "source": {
+              "type": "string"
+            },
+            "params": {
+              "type": "array"
+            }
+          },
+          "required": [
+            "name",
+            "source"
+          ]
         },
         "format": {
           "type": "string",

@@ -100,14 +100,35 @@ function persistToDisk(m: LoonMacro): void {
   }
 }
 
-/** Look up stored macros by name (exported for create_cad_loon's use_loons). */
-export function getMacros(names: string[]): LoonMacro[] {
+/** An inline (pass-by-value) macro: the stateless alternative to the warm
+ *  registry. `define_loon` returns this exact shape so agents can carry
+ *  macros across instances/sessions without any server state. */
+export interface InlineLoon {
+  name: string;
+  source: string;
+  params?: LoonMacro["params"];
+}
+
+/** Look up macros: inline definitions win, then the warm registry. */
+export function getMacros(
+  names: string[],
+  inline?: InlineLoon[],
+): LoonMacro[] {
   hydrateFromDisk();
+  const byValue = new Map(
+    (inline ?? []).map((m) => [
+      m.name,
+      { description: "", params: m.params ?? [], version: 0, ...m } as LoonMacro,
+    ]),
+  );
   return names.map((n) => {
-    const m = registry.get(n);
+    const m = byValue.get(n) ?? registry.get(n);
     if (!m) {
       const known = [...registry.keys()].sort().join(", ") || "(none defined)";
-      throw new Error(`unknown loon macro "${n}" — defined macros: ${known}`);
+      throw new Error(
+        `unknown loon macro "${n}" — defined macros: ${known}. ` +
+          `Stateless alternative: pass the macro by value via \`loons\`.`,
+      );
     }
     return m;
   });
@@ -115,8 +136,8 @@ export function getMacros(names: string[]): LoonMacro[] {
 
 /** Concatenated source of the given macros, dependency-blind (macros may
  *  reference each other; callers list dependencies first). */
-export function macroPrelude(names: string[]): string {
-  return getMacros(names)
+export function macroPrelude(names: string[], inline?: InlineLoon[]): string {
+  return getMacros(names, inline)
     .map((m) => `; macro ${m.name} v${m.version}\n${m.source}`)
     .join("\n\n");
 }
@@ -252,6 +273,13 @@ export function defineLoonTool(
             usage:
               `call_loon {name: "${candidate.name}", args: [...]} or ` +
               `create_cad_loon with use_loons: ["${candidate.name}"]`,
+            // Pass-by-value record: carry this across sessions/instances and
+            // replay via `loons` — no server state required.
+            macro: {
+              name: candidate.name,
+              source: candidate.source,
+              params: candidate.params,
+            },
           },
           null,
           2,
@@ -277,6 +305,19 @@ export const callLoonSchema = {
       type: "string" as const,
       description: "Material for the instantiated part. Default \"default\".",
     },
+    macro: {
+      type: "object" as const,
+      description:
+        "STATELESS alternative: the macro passed by value (the `macro` " +
+        "record define_loon returned: {name, source, params}). Wins over " +
+        "the server-side registry; immune to serverless cold starts.",
+      properties: {
+        name: { type: "string" as const },
+        source: { type: "string" as const },
+        params: { type: "array" as const },
+      },
+      required: ["name", "source"],
+    },
     format: {
       type: "string" as const,
       enum: ["vcode", "json"],
@@ -289,6 +330,7 @@ interface CallArgs {
   name: string;
   args: number[];
   material?: string;
+  macro?: InlineLoon;
   format?: "vcode" | "json";
 }
 
@@ -297,11 +339,15 @@ export function callLoonTool(
   engine: Engine,
 ): { content: Array<{ type: "text"; text: string }> } {
   const a = args as unknown as CallArgs;
-  const [m] = getMacros([String(a.name)]);
-  if (!Array.isArray(a.args) || a.args.length !== m.params.length) {
+  const [m] = getMacros([String(a.name)], a.macro ? [a.macro] : undefined);
+  if (!Array.isArray(a.args)) throw new Error("call_loon: `args` must be an array");
+  // Arity is only checkable when the macro declares params (an inline macro
+  // may omit them — loon itself then reports any mismatch).
+  const declaredArity = a.macro && !a.macro.params ? undefined : m.params.length;
+  if (declaredArity !== undefined && a.args.length !== declaredArity) {
     throw new Error(
-      `call_loon: ${m.name} takes ${m.params.length} args ` +
-        `(${m.params.map((p) => p.name).join(", ")}), got ${a.args?.length ?? 0}`,
+      `call_loon: ${m.name} takes ${declaredArity} args ` +
+        `(${m.params.map((p) => p.name).join(", ")}), got ${a.args.length}`,
     );
   }
   const source = `${m.source}\n\n${callSite(m, a.args, a.material ?? "default")}`;
