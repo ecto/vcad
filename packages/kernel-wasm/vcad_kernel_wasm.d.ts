@@ -1147,6 +1147,20 @@ export class WasmSketchSession {
 export function analyzeForPrinting(solid: Solid): any;
 
 /**
+ * Static structural analysis of a box solid.
+ *
+ * `spec_json` is a serialized `vcad_kernel_topopt::AnalysisSpec` (loads,
+ * supports, resolution, youngs_modulus_mpa, poisson).
+ */
+export function analyzeStaticsBox(spec_json: string, min_x: number, min_y: number, min_z: number, max_x: number, max_y: number, max_z: number): any;
+
+/**
+ * Static structural analysis of an existing (closed) evaluated mesh: the
+ * mesh interior is voxelized and solved under the given loads/supports.
+ */
+export function analyzeStaticsMesh(spec_json: string, positions: Float32Array, indices: Uint32Array): any;
+
+/**
  * Build a reproducibility receipt JSON for a completed run.
  */
 export function atoms_build_receipt(molecule_json: string, force_field: string, run: string, params_json: string, outputs_json: string): string;
@@ -2586,6 +2600,8 @@ export interface InitOutput {
     readonly __wbg_raytracer_free: (a: number, b: number) => void;
     readonly __wbg_solid_free: (a: number, b: number) => void;
     readonly __wbg_wasmannotationlayer_free: (a: number, b: number) => void;
+    readonly analyzeStaticsBox: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number];
+    readonly analyzeStaticsMesh: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
     readonly buildPart: (a: number, b: number, c: number, d: number) => [number, number, number, number];
     readonly build_chat_system_prompt: (a: number, b: number, c: number, d: number) => [number, number];
     readonly computeCreasedNormalsGpu: (a: number, b: number, c: number, d: number, e: number) => any;
@@ -2901,16 +2917,6 @@ export interface InitOutput {
     readonly wasmsketchsession_solve: (a: number) => number;
     readonly wasmsketchsession_toggleSelection: (a: number, b: number) => void;
     readonly wasmsketchsession_undo: (a: number) => number;
-    readonly checkSheetMetal: (a: number, b: number, c: number, d: number) => [number, number];
-    readonly costSheetMetal: (a: number, b: number, c: number, d: number, e: number) => [number, number];
-    readonly evaluateSheetMetalChain: (a: number, b: number) => [number, number];
-    readonly getSheetMetalBendTable: () => [number, number];
-    readonly getSheetMetalMaterials: () => [number, number];
-    readonly getSheetMetalShopCatalog: (a: number, b: number) => [number, number];
-    readonly nestSheetMetalParts: (a: number, b: number, c: number, d: number) => [number, number];
-    readonly nestedSheetMetalDxf: (a: number, b: number) => [number, number];
-    readonly sheetMetalFoldedStep: (a: number, b: number) => [number, number];
-    readonly sheetMetalSequence: (a: number, b: number) => [number, number];
     readonly __wbg_wasmkeybindings_free: (a: number, b: number) => void;
     readonly digitizeSketch: (a: number, b: number, c: number, d: number) => [number, number, number, number];
     readonly digitizeText: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
@@ -2928,6 +2934,16 @@ export interface InitOutput {
     readonly wasmkeybindings_setBinding: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly writeEmbroideryDst: (a: number, b: number) => [number, number, number, number];
     readonly writeEmbroideryPes: (a: number, b: number) => [number, number, number, number];
+    readonly checkSheetMetal: (a: number, b: number, c: number, d: number) => [number, number];
+    readonly costSheetMetal: (a: number, b: number, c: number, d: number, e: number) => [number, number];
+    readonly evaluateSheetMetalChain: (a: number, b: number) => [number, number];
+    readonly getSheetMetalBendTable: () => [number, number];
+    readonly getSheetMetalMaterials: () => [number, number];
+    readonly getSheetMetalShopCatalog: (a: number, b: number) => [number, number];
+    readonly nestSheetMetalParts: (a: number, b: number, c: number, d: number) => [number, number];
+    readonly nestedSheetMetalDxf: (a: number, b: number) => [number, number];
+    readonly sheetMetalFoldedStep: (a: number, b: number) => [number, number];
+    readonly sheetMetalSequence: (a: number, b: number) => [number, number];
     readonly __wbg_mdsim_free: (a: number, b: number) => void;
     readonly atoms_build_receipt: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => [number, number, number, number];
     readonly atoms_homogenize: (a: number, b: number, c: number, d: number) => [number, number, number, number];
