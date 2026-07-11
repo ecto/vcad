@@ -48,6 +48,31 @@ pub enum ClaimVerdict {
     Unverifiable,
 }
 
+/// How a claim's verdict was produced — the evidentiary weight behind it.
+///
+/// A surrogate model and a real solver can check the same claim; the verdict
+/// alone does not say which one did. `Predicted` marks fast-path estimates
+/// (neural surrogates, analytic approximations) that have not been confirmed
+/// by the trusted oracle. A receipt whose passing claims rest on predictions
+/// rolls up as [`ReceiptVerdict::Provisional`], never `Pass`.
+///
+/// Absent on the wire means [`ClaimBasis::Verified`] — every claim written
+/// before this field existed came from a real oracle run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "bindings/"))]
+pub enum ClaimBasis {
+    /// A fast estimate (surrogate model, analytic approximation) that the
+    /// trusted oracle has not confirmed. Good enough to steer, not to ship.
+    Predicted,
+    /// The trusted oracle (solver, DRC engine, rule pack) ran for real.
+    Verified,
+    /// Confirmed against the physical world (calipers, scale, spectrum
+    /// analyzer) — e.g. via `record_measurement`. The strongest basis.
+    Measured,
+}
+
 /// The oracle that checked a claim.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
@@ -157,6 +182,11 @@ pub struct ReceiptClaim {
     pub oracle: OracleRef,
     /// The verdict.
     pub verdict: ClaimVerdict,
+    /// How the verdict was produced. Absent means [`ClaimBasis::Verified`]
+    /// (see [`ClaimBasis`] for the back-compat rationale).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-rs", ts(optional))]
+    pub basis: Option<ClaimBasis>,
     /// The claimed/required value — what the design must meet (a spec bound,
     /// a rule limit, a declared target).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -188,6 +218,7 @@ impl ReceiptClaim {
             subject: None,
             oracle,
             verdict,
+            basis: None,
             predicted: None,
             measured: None,
             details: None,
@@ -226,6 +257,17 @@ impl ReceiptClaim {
         let mut c = Self::new(id, domain, description, oracle, ClaimVerdict::Unverifiable);
         c.details = Some(reason.into());
         c
+    }
+
+    /// Mark how this verdict was produced.
+    pub fn with_basis(mut self, basis: ClaimBasis) -> Self {
+        self.basis = Some(basis);
+        self
+    }
+
+    /// The basis, resolving the wire default: absent means `Verified`.
+    pub fn effective_basis(&self) -> ClaimBasis {
+        self.basis.unwrap_or(ClaimBasis::Verified)
     }
 
     /// Attach the claimed/required value.
@@ -271,6 +313,35 @@ pub struct ReceiptSignature {
     pub signature: String,
 }
 
+/// Basis-aware fail-closed rollup verdict for a whole receipt.
+///
+/// Extends [`ClaimVerdict`] with `Provisional`: the receipt *would* pass,
+/// but at least one passing claim rests on a [`ClaimBasis::Predicted`]
+/// estimate the trusted oracle has not confirmed. Provisional is never a
+/// pass — it is a promissory note, redeemed by re-running the slow oracle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "bindings/"))]
+pub enum ReceiptVerdict {
+    /// Every claim passed on verified or measured basis.
+    Pass,
+    /// Every claim passed, but at least one only on predicted basis.
+    Provisional,
+    /// At least one claim failed (on any basis — a predicted fail is still
+    /// a fail: the fast path saying "no" is actionable).
+    Fail,
+    /// No evidence, or at least one claim could not be checked.
+    Unverifiable,
+}
+
+impl Default for ReceiptVerdict {
+    /// Fail-closed: absence of a computed verdict reads as unverifiable.
+    fn default() -> Self {
+        ReceiptVerdict::Unverifiable
+    }
+}
+
 /// Aggregate view of a receipt's claims.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
@@ -284,9 +355,17 @@ pub struct ReceiptSummary {
     pub failed: u32,
     /// Claims that could not be verified.
     pub unverifiable: u32,
+    /// Claims whose verdict rests on a predicted (surrogate) basis.
+    #[serde(default)]
+    pub predicted_basis: u32,
     /// Fail-closed rollup: `Fail` if anything failed, else `Unverifiable`
     /// if anything (or everything — zero claims) is unverified, else `Pass`.
+    /// Basis-blind; see [`ReceiptSummary::verdict`] for the basis-aware view.
     pub overall: ClaimVerdict,
+    /// Basis-aware rollup ([`DesignReceipt::verdict`]): like `overall`, but
+    /// an all-pass receipt leaning on predicted claims reads `Provisional`.
+    #[serde(default)]
+    pub verdict: ReceiptVerdict,
 }
 
 /// The unified, versioned verification receipt for a design.
@@ -366,16 +445,45 @@ impl DesignReceipt {
         ClaimVerdict::Pass
     }
 
+    /// Basis-aware fail-closed rollup.
+    ///
+    /// Same lattice as [`DesignReceipt::overall`], with one refinement: a
+    /// receipt that would pass but has any claim on
+    /// [`ClaimBasis::Predicted`] rolls up as
+    /// [`ReceiptVerdict::Provisional`]. Predictions can steer a design; only
+    /// verified or measured evidence can certify one.
+    pub fn verdict(&self) -> ReceiptVerdict {
+        match self.overall() {
+            ClaimVerdict::Fail => ReceiptVerdict::Fail,
+            ClaimVerdict::Unverifiable => ReceiptVerdict::Unverifiable,
+            ClaimVerdict::Pass => {
+                if self
+                    .claims
+                    .iter()
+                    .any(|c| c.effective_basis() == ClaimBasis::Predicted)
+                {
+                    ReceiptVerdict::Provisional
+                } else {
+                    ReceiptVerdict::Pass
+                }
+            }
+        }
+    }
+
     /// Count claims by verdict and compute the rollup.
     pub fn summary(&self) -> ReceiptSummary {
         let mut passed = 0u32;
         let mut failed = 0u32;
         let mut unverifiable = 0u32;
+        let mut predicted_basis = 0u32;
         for c in &self.claims {
             match c.verdict {
                 ClaimVerdict::Pass => passed += 1,
                 ClaimVerdict::Fail => failed += 1,
                 ClaimVerdict::Unverifiable => unverifiable += 1,
+            }
+            if c.effective_basis() == ClaimBasis::Predicted {
+                predicted_basis += 1;
             }
         }
         ReceiptSummary {
@@ -383,7 +491,9 @@ impl DesignReceipt {
             passed,
             failed,
             unverifiable,
+            predicted_basis,
             overall: self.overall(),
+            verdict: self.verdict(),
         }
     }
 }
@@ -439,6 +549,69 @@ mod tests {
         let c = ReceiptClaim::unverifiable("x", "pcb", "drc clean", oracle(), "engine down");
         assert_eq!(c.verdict, ClaimVerdict::Unverifiable);
         assert_eq!(c.details.as_deref(), Some("engine down"));
+    }
+
+    #[test]
+    fn predicted_basis_pass_is_provisional_never_pass() {
+        let r = DesignReceipt::with_claims(vec![
+            ReceiptClaim::pass("a", "mechanical", "stiffness ok", oracle()),
+            ReceiptClaim::pass("b", "mechanical", "first mode ok", oracle())
+                .with_basis(ClaimBasis::Predicted),
+        ]);
+        // Basis-blind rollup still reads pass; basis-aware one does not.
+        assert_eq!(r.overall(), ClaimVerdict::Pass);
+        assert_eq!(r.verdict(), ReceiptVerdict::Provisional);
+        let s = r.summary();
+        assert_eq!(s.predicted_basis, 1);
+        assert_eq!(s.verdict, ReceiptVerdict::Provisional);
+        assert_eq!(s.overall, ClaimVerdict::Pass);
+    }
+
+    #[test]
+    fn verified_and_measured_basis_pass_cleanly() {
+        let r = DesignReceipt::with_claims(vec![
+            ReceiptClaim::pass("a", "mechanical", "a", oracle()).with_basis(ClaimBasis::Verified),
+            ReceiptClaim::pass("b", "mechanical", "b", oracle()).with_basis(ClaimBasis::Measured),
+            // absent basis defaults to verified
+            ReceiptClaim::pass("c", "pcb", "c", oracle()),
+        ]);
+        assert_eq!(r.verdict(), ReceiptVerdict::Pass);
+        assert_eq!(r.summary().predicted_basis, 0);
+    }
+
+    #[test]
+    fn predicted_fail_and_unverifiable_dominate_provisional() {
+        let fail =
+            DesignReceipt::with_claims(vec![ReceiptClaim::fail("a", "mechanical", "a", oracle())
+                .with_basis(ClaimBasis::Predicted)]);
+        assert_eq!(fail.verdict(), ReceiptVerdict::Fail);
+
+        let unv = DesignReceipt::with_claims(vec![
+            ReceiptClaim::pass("a", "mechanical", "a", oracle()).with_basis(ClaimBasis::Predicted),
+            ReceiptClaim::unverifiable("b", "pcb", "b", oracle(), "engine down"),
+        ]);
+        assert_eq!(unv.verdict(), ReceiptVerdict::Unverifiable);
+
+        // Empty stays fail-closed on both axes.
+        assert_eq!(DesignReceipt::new().verdict(), ReceiptVerdict::Unverifiable);
+        assert_eq!(ReceiptVerdict::default(), ReceiptVerdict::Unverifiable);
+    }
+
+    #[test]
+    fn basis_wire_form_and_back_compat() {
+        let c =
+            ReceiptClaim::pass("a", "mechanical", "a", oracle()).with_basis(ClaimBasis::Predicted);
+        let json = serde_json::to_value(&c).unwrap();
+        assert_eq!(json["basis"], "predicted");
+
+        // Pre-basis wire shape (no field) parses and reads as verified.
+        let legacy: ReceiptClaim = serde_json::from_value(serde_json::json!({
+            "id": "a", "domain": "pcb", "description": "d",
+            "oracle": {"id": "o", "version": "1"}, "verdict": "pass"
+        }))
+        .unwrap();
+        assert_eq!(legacy.basis, None);
+        assert_eq!(legacy.effective_basis(), ClaimBasis::Verified);
     }
 
     #[test]
@@ -514,6 +687,8 @@ mod ts_tests {
         DesignReceipt::export_all().expect("DesignReceipt export failed");
         ReceiptClaim::export_all().expect("ReceiptClaim export failed");
         ClaimVerdict::export_all().expect("ClaimVerdict export failed");
+        ClaimBasis::export_all().expect("ClaimBasis export failed");
+        ReceiptVerdict::export_all().expect("ReceiptVerdict export failed");
         ClaimQuantity::export_all().expect("ClaimQuantity export failed");
         ClaimValue::export_all().expect("ClaimValue export failed");
         OracleRef::export_all().expect("OracleRef export failed");

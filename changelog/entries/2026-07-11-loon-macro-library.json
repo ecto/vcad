@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-11-loon-macro-library",
+  "version": "0.9.4",
+  "date": "2026-07-11",
+  "category": "feat",
+  "title": "Agent macro library: define_loon / call_loon / use_loons",
+  "summary": "Agents can define reusable parametric loon macros (smoke-tested at definition time), instantiate them with call_loon, and compose them inside any create_cad_loon program.",
+  "features": ["loon", "macros", "agents"],
+  "mcpTools": ["define_loon", "call_loon", "list_loons", "create_cad_loon"]
+}

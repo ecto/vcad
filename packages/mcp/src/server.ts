@@ -92,6 +92,7 @@ import {
   OPENAI_WIDGET_CSP,
 } from "./viewer.js";
 import { fireToolAlert } from "./notify.js";
+import { checkCommerceBoundary } from "./trust-boundary.js";
 import { configureTelemetry, flushTelemetry } from "./telemetry.js";
 import { artifactStoreInfo as artifactStoreInfoLocal } from "./tools/artifact-store.js";
 
@@ -128,6 +129,8 @@ import { toolDefs as verifyToolDefs } from "./tools/verify.js";
 import { toolDefs as verifySpecToolDefs } from "./tools/verify-spec.js";
 import { toolDefs as clearanceToolDefs } from "./tools/clearance.js";
 import { toolDefs as topoptToolDefs } from "./tools/topopt.js";
+import { toolDefs as physicsToolDefs } from "./tools/physics.js";
+import { toolDefs as loonMacroToolDefs } from "./tools/loon-macros.js";
 import { toolDefs as dfmToolDefs } from "./tools/dfm.js";
 import { toolDefs as sheetMetalToolDefs } from "./tools/sheet-metal.js";
 import { toolDefs as acousticsToolDefs } from "./tools/acoustics.js";
@@ -303,6 +306,8 @@ const STATIC_TOOL_DEFS: readonly ToolDef[] = [
   ...verifySpecToolDefs,
   ...clearanceToolDefs,
   ...topoptToolDefs,
+  ...physicsToolDefs,
+  ...loonMacroToolDefs,
   ...dfmToolDefs,
   ...sheetMetalToolDefs,
   ...acousticsToolDefs,
@@ -367,6 +372,10 @@ const LIST_TOOL_ORDER: readonly string[] = [
   "apply_edits",
   // ── Loon DSL one-shot + core see/measure/export ────────────
   "create_cad_loon",
+  // ── Agent macro library (define once, instantiate anywhere) ──
+  "define_loon",
+  "call_loon",
+  "list_loons",
   "export_cad",
   "inspect_cad",
   "measure",
@@ -376,6 +385,8 @@ const LIST_TOOL_ORDER: readonly string[] = [
   "parameter_gradient",
   // ── Topology optimization ──────────────────────────────────
   "topology_optimize",
+  // ── Two-tier static physics (predict fast, verify to certify) ──
+  "predict_physics",
   // ── Print-then-measure calibration loop (3DP) ──────────────
   "predict_print",
   "record_measurement",
@@ -1314,6 +1325,21 @@ export async function createServer(
         };
         fireToolAlert(name, args, unknownResult);
         return unknownResult;
+      }
+
+      // ── Trust boundary (commerce plane) ────────────────────────────
+      // Mechanical pre-dispatch guard: money-plane tools take opaque ids
+      // and store-scoped artifact refs only, so content read from imported
+      // files or part listings can never steer an order. Fail-closed,
+      // before the handler ever sees the arguments (docs/trust-boundary.md).
+      const boundary = checkCommerceBoundary(name, args);
+      if (!boundary.ok) {
+        const refusal: ToolResult = {
+          content: [{ type: "text", text: boundary.reason ?? "TRUST_BOUNDARY: refused" }],
+          isError: true,
+        };
+        fireToolAlert(name, args, refusal);
+        return refusal;
       }
 
       const result = await def.handler(args, ctx);

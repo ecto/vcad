@@ -48,12 +48,14 @@
 //! assert!(result.compliance_history.len() >= 2);
 //! ```
 
+mod analyze;
 mod domain;
 mod extract;
 mod fea;
 mod simp;
 mod spec;
 
+pub use analyze::{analyze, analyze_box, analyze_mesh, AnalysisSpec, AnalyzeError, StaticAnalysis};
 pub use domain::Domain;
 pub use fea::FeError;
 pub use spec::{Load, RegionBox, Support, TopoOptSpec};

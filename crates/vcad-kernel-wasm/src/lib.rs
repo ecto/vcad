@@ -451,6 +451,101 @@ pub fn topology_optimize_mesh(
     topopt_response(result)
 }
 
+/// Result of a static structural analysis solve (see
+/// `vcad_kernel_topopt::analyze`). Two-tier contract: at coarse resolution
+/// this is the fast `predicted` path; the same solver at fine resolution is
+/// the `verified` path.
+#[derive(Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-rs", derive(TS))]
+#[cfg_attr(feature = "ts-rs", ts(export, export_to = "generated/"))]
+pub struct WasmStaticAnalysis {
+    /// Compliance `fᵀu` in N·mm (lower = stiffer under these loads).
+    pub compliance: f64,
+    /// Maximum nodal displacement magnitude in mm.
+    #[serde(rename = "maxDisplacementMm")]
+    pub max_displacement_mm: f64,
+    /// World position of the most-displaced node, mm.
+    #[serde(rename = "maxDisplacementAt")]
+    pub max_displacement_at: [f64; 3],
+    /// Maximum element-centroid von Mises stress in MPa (voxel estimate).
+    #[serde(rename = "maxVonMisesMpa")]
+    pub max_von_mises_mpa: f64,
+    /// World position of the most-stressed element centroid, mm.
+    #[serde(rename = "maxStressAt")]
+    pub max_stress_at: [f64; 3],
+    /// Voxel grid dimensions `[nx, ny, nz]`.
+    pub grid: [u32; 3],
+    /// Voxel edge length in mm.
+    #[serde(rename = "voxelSizeMm")]
+    pub voxel_size_mm: f64,
+    /// Relative residual the PCG solve reached.
+    #[serde(rename = "relativeResidual")]
+    pub relative_residual: f64,
+    /// Whether the solve converged.
+    pub converged: bool,
+}
+
+fn analysis_response(
+    a: vcad_kernel::vcad_kernel_topopt::StaticAnalysis,
+) -> Result<JsValue, JsError> {
+    let out = WasmStaticAnalysis {
+        compliance: a.compliance_n_mm,
+        max_displacement_mm: a.max_displacement_mm,
+        max_displacement_at: a.max_displacement_at,
+        max_von_mises_mpa: a.max_von_mises_mpa,
+        max_stress_at: a.max_stress_at,
+        grid: [a.grid[0] as u32, a.grid[1] as u32, a.grid[2] as u32],
+        voxel_size_mm: a.voxel_size_mm,
+        relative_residual: a.relative_residual,
+        converged: a.converged,
+    };
+    serde_wasm_bindgen::to_value(&out).map_err(|e| JsError::new(&e.to_string()))
+}
+
+/// Static structural analysis of a box solid.
+///
+/// `spec_json` is a serialized `vcad_kernel_topopt::AnalysisSpec` (loads,
+/// supports, resolution, youngs_modulus_mpa, poisson).
+#[wasm_bindgen(js_name = analyzeStaticsBox)]
+#[allow(clippy::too_many_arguments)]
+pub fn analyze_statics_box(
+    spec_json: &str,
+    min_x: f64,
+    min_y: f64,
+    min_z: f64,
+    max_x: f64,
+    max_y: f64,
+    max_z: f64,
+) -> Result<JsValue, JsError> {
+    let spec: vcad_kernel::vcad_kernel_topopt::AnalysisSpec =
+        serde_json::from_str(spec_json).map_err(|e| JsError::new(&format!("bad spec: {e}")))?;
+    let a = vcad_kernel::vcad_kernel_topopt::analyze_box(
+        [min_x, min_y, min_z],
+        [max_x, max_y, max_z],
+        &spec,
+    )
+    .map_err(|e| JsError::new(&e.to_string()))?;
+    analysis_response(a)
+}
+
+/// Static structural analysis of an existing (closed) evaluated mesh: the
+/// mesh interior is voxelized and solved under the given loads/supports.
+#[wasm_bindgen(js_name = analyzeStaticsMesh)]
+pub fn analyze_statics_mesh(
+    spec_json: &str,
+    positions: &[f32],
+    indices: &[u32],
+) -> Result<JsValue, JsError> {
+    let spec: vcad_kernel::vcad_kernel_topopt::AnalysisSpec =
+        serde_json::from_str(spec_json).map_err(|e| JsError::new(&format!("bad spec: {e}")))?;
+    let mut mesh = vcad_kernel_tessellate::TriangleMesh::new();
+    mesh.vertices = positions.to_vec();
+    mesh.indices = indices.to_vec();
+    let a = vcad_kernel::vcad_kernel_topopt::analyze_mesh(&mesh, &spec)
+        .map_err(|e| JsError::new(&e.to_string()))?;
+    analysis_response(a)
+}
+
 /// A 2D sketch segment (line or arc) for WASM input.
 #[derive(Serialize, Deserialize)]
 #[serde(tag = "type")]

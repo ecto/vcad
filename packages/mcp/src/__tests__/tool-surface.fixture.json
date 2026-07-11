@@ -1291,6 +1291,35 @@
           "type": "string",
           "description": "Loon source code defining CAD geometry"
         },
+        "use_loons": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Stored macro names (see list_loons) to prepend as a library — their [let <name> [fn ...]] definitions become callable from `source`, exactly like the stdlib. List dependencies before dependents."
+        },
+        "loons": {
+          "type": "array",
+          "description": "STATELESS macro library: macros passed by value (the `macro` records define_loon returns: {name, source}). Prepended like use_loons but with no server-side registry dependency — immune to serverless cold starts. Names here also satisfy use_loons.",
+          "items": {
+            "type": "object",
+            "required": [
+              "name",
+              "source"
+            ],
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "source": {
+                "type": "string"
+              },
+              "params": {
+                "type": "array"
+              }
+            }
+          }
+        },
         "format": {
           "type": "string",
           "enum": [
@@ -1315,6 +1344,144 @@
       "openai/outputTemplate": "ui://vcad/viewer-openai.html",
       "openai/toolInvocation/invoking": "Modeling geometry…",
       "openai/toolInvocation/invoked": "Model updated"
+    }
+  },
+  {
+    "name": "define_loon",
+    "title": "Define Loon Macro",
+    "description": "Add a reusable parametric macro to the loon library. Provide loon source defining [let <name> [fn [params...] <Solid-expr>]] plus parameter docs with example values. The macro is smoke-tested at definition time (must compile and the example call must yield geometry) — only known-good macros enter the library. Once defined, instantiate with call_loon or compose inside any create_cad_loon program via use_loons. Redefining a name bumps its version. Prefer macros over re-writing the same geometry each session.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "kebab-case macro name (2–64 chars). The source must define a loon function of this exact name via [let <name> [fn [...] ...]]."
+        },
+        "description": {
+          "type": "string",
+          "description": "One sentence: what the macro builds."
+        },
+        "params": {
+          "type": "array",
+          "description": "Ordered parameter docs matching the fn's parameter list. `example` values are used for the definition-time smoke call.",
+          "items": {
+            "type": "object",
+            "required": [
+              "name",
+              "example"
+            ],
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              },
+              "example": {
+                "type": "number",
+                "description": "A representative value; the smoke call uses it."
+              },
+              "unit": {
+                "type": "string",
+                "description": "e.g. mm, deg"
+              }
+            }
+          }
+        },
+        "source": {
+          "type": "string",
+          "description": "Loon source defining [let <name> [fn [<params...>] <Solid-expr>]]. May include helper lets/types; the whole block is prepended to calling programs, exactly like the stdlib."
+        }
+      },
+      "required": [
+        "name",
+        "description",
+        "params",
+        "source"
+      ]
+    },
+    "annotations": {
+      "readOnlyHint": false
+    }
+  },
+  {
+    "name": "call_loon",
+    "title": "Call Loon Macro",
+    "description": "Instantiate a stored loon macro into a new document: positional numeric args in the macro's declared order (see list_loons). Returns the document and a document_id session.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Macro to instantiate."
+        },
+        "args": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "description": "Positional arguments, in the macro's declared order."
+        },
+        "material": {
+          "type": "string",
+          "description": "Material for the instantiated part. Default \"default\"."
+        },
+        "macro": {
+          "type": "object",
+          "description": "STATELESS alternative: the macro passed by value (the `macro` record define_loon returned: {name, source, params}). Wins over the server-side registry; immune to serverless cold starts.",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "source": {
+              "type": "string"
+            },
+            "params": {
+              "type": "array"
+            }
+          },
+          "required": [
+            "name",
+            "source"
+          ]
+        },
+        "format": {
+          "type": "string",
+          "enum": [
+            "vcode",
+            "json"
+          ],
+          "description": "Document output format (default vcode)."
+        }
+      },
+      "required": [
+        "name",
+        "args"
+      ]
+    },
+    "annotations": {
+      "readOnlyHint": false
+    },
+    "_meta": {
+      "ui": {
+        "resourceUri": "ui://vcad/viewer"
+      },
+      "ui/resourceUri": "ui://vcad/viewer",
+      "openai/outputTemplate": "ui://vcad/viewer-openai.html",
+      "openai/toolInvocation/invoking": "Modeling geometry…",
+      "openai/toolInvocation/invoked": "Model updated"
+    }
+  },
+  {
+    "name": "list_loons",
+    "title": "List Loon Macros",
+    "description": "List the stored loon macro library: names, versions, parameter docs with units and example values. Use before call_loon or create_cad_loon with use_loons.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": true
     }
   },
   {
@@ -1689,6 +1856,186 @@
       "openai/outputTemplate": "ui://vcad/viewer-openai.html",
       "openai/toolInvocation/invoking": "Modeling geometry…",
       "openai/toolInvocation/invoked": "Model updated"
+    }
+  },
+  {
+    "name": "predict_physics",
+    "title": "Predict Physics",
+    "description": "Fast static structural analysis (voxel FEA): max displacement, max von Mises stress, and compliance for a part or box under world-frame loads (N) and supports, in ~100 ms at fidelity=predict. Pass max_displacement_mm / max_von_mises_mpa limits to get receipt claims: predict-tier claims carry basis=predicted and roll up as a PROVISIONAL receipt — use them to iterate on a design cheaply. When the design settles, re-run with fidelity=verify (same solver, fine grid) to upgrade the claims to basis=verified and a certifiable pass. Loads/supports are box regions (mm, Z-up); zero-thickness boxes select a face. Voxel FEA smears stress concentrations — treat stress as an estimate near fillets.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "document_id": {
+          "type": "string",
+          "description": "Session document. Required with `part`."
+        },
+        "part": {
+          "type": "string",
+          "description": "Part id or name to analyze (its evaluated volume is voxelized). Mutually exclusive with `domain_box`."
+        },
+        "domain_box": {
+          "type": "object",
+          "required": [
+            "min",
+            "max"
+          ],
+          "properties": {
+            "min": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3,
+              "description": "Minimum corner [x, y, z] in mm."
+            },
+            "max": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3,
+              "description": "Maximum corner [x, y, z] in mm."
+            }
+          },
+          "description": "Analyze a solid axis-aligned box (mm, world frame, Z-up) instead of a part. Mutually exclusive with `part`."
+        },
+        "loads": {
+          "type": "array",
+          "minItems": 1,
+          "description": "Loads: total force vectors (N) distributed over the grid nodes in each world-frame box region. A zero-thickness box selects the nearest plane of nodes.",
+          "items": {
+            "type": "object",
+            "required": [
+              "region",
+              "force"
+            ],
+            "properties": {
+              "region": {
+                "type": "object",
+                "required": [
+                  "min",
+                  "max"
+                ],
+                "properties": {
+                  "min": {
+                    "type": "array",
+                    "items": {
+                      "type": "number"
+                    },
+                    "minItems": 3,
+                    "maxItems": 3,
+                    "description": "Minimum corner [x, y, z] in mm."
+                  },
+                  "max": {
+                    "type": "array",
+                    "items": {
+                      "type": "number"
+                    },
+                    "minItems": 3,
+                    "maxItems": 3,
+                    "description": "Maximum corner [x, y, z] in mm."
+                  }
+                }
+              },
+              "force": {
+                "type": "array",
+                "items": {
+                  "type": "number"
+                },
+                "minItems": 3,
+                "maxItems": 3,
+                "description": "Total force [fx, fy, fz] in N."
+              }
+            }
+          }
+        },
+        "supports": {
+          "type": "array",
+          "minItems": 1,
+          "description": "Fixed (anchored) regions.",
+          "items": {
+            "type": "object",
+            "required": [
+              "region"
+            ],
+            "properties": {
+              "region": {
+                "type": "object",
+                "required": [
+                  "min",
+                  "max"
+                ],
+                "properties": {
+                  "min": {
+                    "type": "array",
+                    "items": {
+                      "type": "number"
+                    },
+                    "minItems": 3,
+                    "maxItems": 3,
+                    "description": "Minimum corner [x, y, z] in mm."
+                  },
+                  "max": {
+                    "type": "array",
+                    "items": {
+                      "type": "number"
+                    },
+                    "minItems": 3,
+                    "maxItems": 3,
+                    "description": "Maximum corner [x, y, z] in mm."
+                  }
+                }
+              },
+              "fix": {
+                "type": "array",
+                "items": {
+                  "type": "boolean"
+                },
+                "minItems": 3,
+                "maxItems": 3,
+                "description": "Which translations are fixed [x, y, z]; default all true."
+              }
+            }
+          }
+        },
+        "fidelity": {
+          "type": "string",
+          "enum": [
+            "predict",
+            "verify"
+          ],
+          "description": "`predict` (default): coarse fast solve, claims stamped basis=predicted — good enough to steer a design. `verify`: fine solve with the same oracle, claims stamped basis=verified — good enough to certify. A receipt passing only on predicted claims reads `provisional`, never `pass`."
+        },
+        "resolution": {
+          "type": "number",
+          "description": "Override voxels along the longest axis (predict=32, verify=72 by default). Below ~4 elements through the thinnest section, bending results are unreliable."
+        },
+        "youngs_modulus_mpa": {
+          "type": "number",
+          "description": "Young's modulus in MPa. Default 69000 (6061 aluminum)."
+        },
+        "poisson": {
+          "type": "number",
+          "description": "Poisson's ratio. Default 0.33."
+        },
+        "max_displacement_mm": {
+          "type": "number",
+          "description": "Optional limit: assert max displacement ≤ this (claim physics.static.displacement)."
+        },
+        "max_von_mises_mpa": {
+          "type": "number",
+          "description": "Optional limit: assert max von Mises stress ≤ this (claim physics.static.stress). E.g. yield/safety-factor."
+        }
+      },
+      "required": [
+        "loads",
+        "supports"
+      ]
+    },
+    "annotations": {
+      "readOnlyHint": true
     }
   },
   {
