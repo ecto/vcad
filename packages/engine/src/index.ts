@@ -430,6 +430,60 @@ export interface KernelModule {
     positions: Float32Array,
     indices: Uint32Array,
   ) => unknown;
+  /** Static structural analysis of a box solid. */
+  analyzeStaticsBox?: (
+    specJson: string,
+    minX: number,
+    minY: number,
+    minZ: number,
+    maxX: number,
+    maxY: number,
+    maxZ: number,
+  ) => unknown;
+  /** Static structural analysis inside a closed evaluated mesh. */
+  analyzeStaticsMesh?: (
+    specJson: string,
+    positions: Float32Array,
+    indices: Uint32Array,
+  ) => unknown;
+}
+
+/**
+ * Static analysis parameters (mirrors `vcad_kernel_topopt::AnalysisSpec`;
+ * unset fields take the kernel defaults). Resolution is the fidelity dial:
+ * 32 is the fast predict tier, 64–96 the verify tier.
+ */
+export interface StaticAnalysisSpec {
+  loads: TopoOptLoad[];
+  supports: TopoOptSupport[];
+  /** Voxels along the longest domain axis. Default 32. */
+  resolution?: number;
+  /** Young's modulus in MPa (N/mm²). Default 69 000 (6061 aluminum). */
+  youngs_modulus_mpa?: number;
+  /** Poisson's ratio. Default 0.33. */
+  poisson?: number;
+}
+
+/** Result of a static analysis solve (mirrors `WasmStaticAnalysis`). */
+export interface StaticAnalysisResult {
+  /** Compliance `fᵀu` in N·mm (lower = stiffer under these loads). */
+  compliance: number;
+  /** Maximum nodal displacement magnitude in mm. */
+  maxDisplacementMm: number;
+  /** World position of the most-displaced node, mm. */
+  maxDisplacementAt: [number, number, number];
+  /** Max element-centroid von Mises stress in MPa (voxel estimate). */
+  maxVonMisesMpa: number;
+  /** World position of the most-stressed element centroid, mm. */
+  maxStressAt: [number, number, number];
+  /** Voxel grid dimensions `[nx, ny, nz]`. */
+  grid: [number, number, number];
+  /** Voxel edge length in mm. */
+  voxelSizeMm: number;
+  /** Relative residual the PCG solve reached. */
+  relativeResidual: number;
+  /** Whether the solve converged. */
+  converged: boolean;
 }
 
 /** Axis-aligned box region (mm) selecting grid nodes for loads/supports. */
@@ -749,6 +803,8 @@ export class Engine {
       mesh_clearance: (wasmModule as Record<string, unknown>).mesh_clearance as KernelModule["mesh_clearance"],
       topologyOptimizeBox: (wasmModule as Record<string, unknown>).topologyOptimizeBox as KernelModule["topologyOptimizeBox"],
       topologyOptimizeMesh: (wasmModule as Record<string, unknown>).topologyOptimizeMesh as KernelModule["topologyOptimizeMesh"],
+      analyzeStaticsBox: (wasmModule as Record<string, unknown>).analyzeStaticsBox as KernelModule["analyzeStaticsBox"],
+      analyzeStaticsMesh: (wasmModule as Record<string, unknown>).analyzeStaticsMesh as KernelModule["analyzeStaticsMesh"],
     }, compiledWasmModule);
   }
 
@@ -1027,6 +1083,55 @@ export class Engine {
       );
     }
     return fn(JSON.stringify(spec), mesh.positions, mesh.indices) as TopoOptResult;
+  }
+
+  /**
+   * Static structural analysis of a solid box under the spec's loads and
+   * supports. Resolution is the fidelity dial: ~32 answers fast (the
+   * `predicted` tier), 64–96 is the trusted `verified` tier — same solver,
+   * finer grid.
+   */
+  analyzeStaticsBox(
+    min: [number, number, number],
+    max: [number, number, number],
+    spec: StaticAnalysisSpec,
+  ): StaticAnalysisResult {
+    const fn = this.kernel.analyzeStaticsBox;
+    if (typeof fn !== "function") {
+      throw new Error(
+        "analyzeStaticsBox is not exported by this kernel WASM build — rebuild packages/kernel-wasm",
+      );
+    }
+    return fn(
+      JSON.stringify(spec),
+      min[0],
+      min[1],
+      min[2],
+      max[0],
+      max[1],
+      max[2],
+    ) as StaticAnalysisResult;
+  }
+
+  /**
+   * Static structural analysis inside a closed evaluated mesh: the mesh
+   * interior is voxelized and solved under the given loads/supports.
+   */
+  analyzeStaticsMesh(
+    mesh: TriangleMesh,
+    spec: StaticAnalysisSpec,
+  ): StaticAnalysisResult {
+    const fn = this.kernel.analyzeStaticsMesh;
+    if (typeof fn !== "function") {
+      throw new Error(
+        "analyzeStaticsMesh is not exported by this kernel WASM build — rebuild packages/kernel-wasm",
+      );
+    }
+    return fn(
+      JSON.stringify(spec),
+      mesh.positions,
+      mesh.indices,
+    ) as StaticAnalysisResult;
   }
 
   /** Import solids from a STEP file buffer.

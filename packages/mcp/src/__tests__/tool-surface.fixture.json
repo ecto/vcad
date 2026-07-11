@@ -1692,6 +1692,186 @@
     }
   },
   {
+    "name": "predict_physics",
+    "title": "Predict Physics",
+    "description": "Fast static structural analysis (voxel FEA): max displacement, max von Mises stress, and compliance for a part or box under world-frame loads (N) and supports, in ~100 ms at fidelity=predict. Pass max_displacement_mm / max_von_mises_mpa limits to get receipt claims: predict-tier claims carry basis=predicted and roll up as a PROVISIONAL receipt — use them to iterate on a design cheaply. When the design settles, re-run with fidelity=verify (same solver, fine grid) to upgrade the claims to basis=verified and a certifiable pass. Loads/supports are box regions (mm, Z-up); zero-thickness boxes select a face. Voxel FEA smears stress concentrations — treat stress as an estimate near fillets.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "document_id": {
+          "type": "string",
+          "description": "Session document. Required with `part`."
+        },
+        "part": {
+          "type": "string",
+          "description": "Part id or name to analyze (its evaluated volume is voxelized). Mutually exclusive with `domain_box`."
+        },
+        "domain_box": {
+          "type": "object",
+          "required": [
+            "min",
+            "max"
+          ],
+          "properties": {
+            "min": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3,
+              "description": "Minimum corner [x, y, z] in mm."
+            },
+            "max": {
+              "type": "array",
+              "items": {
+                "type": "number"
+              },
+              "minItems": 3,
+              "maxItems": 3,
+              "description": "Maximum corner [x, y, z] in mm."
+            }
+          },
+          "description": "Analyze a solid axis-aligned box (mm, world frame, Z-up) instead of a part. Mutually exclusive with `part`."
+        },
+        "loads": {
+          "type": "array",
+          "minItems": 1,
+          "description": "Loads: total force vectors (N) distributed over the grid nodes in each world-frame box region. A zero-thickness box selects the nearest plane of nodes.",
+          "items": {
+            "type": "object",
+            "required": [
+              "region",
+              "force"
+            ],
+            "properties": {
+              "region": {
+                "type": "object",
+                "required": [
+                  "min",
+                  "max"
+                ],
+                "properties": {
+                  "min": {
+                    "type": "array",
+                    "items": {
+                      "type": "number"
+                    },
+                    "minItems": 3,
+                    "maxItems": 3,
+                    "description": "Minimum corner [x, y, z] in mm."
+                  },
+                  "max": {
+                    "type": "array",
+                    "items": {
+                      "type": "number"
+                    },
+                    "minItems": 3,
+                    "maxItems": 3,
+                    "description": "Maximum corner [x, y, z] in mm."
+                  }
+                }
+              },
+              "force": {
+                "type": "array",
+                "items": {
+                  "type": "number"
+                },
+                "minItems": 3,
+                "maxItems": 3,
+                "description": "Total force [fx, fy, fz] in N."
+              }
+            }
+          }
+        },
+        "supports": {
+          "type": "array",
+          "minItems": 1,
+          "description": "Fixed (anchored) regions.",
+          "items": {
+            "type": "object",
+            "required": [
+              "region"
+            ],
+            "properties": {
+              "region": {
+                "type": "object",
+                "required": [
+                  "min",
+                  "max"
+                ],
+                "properties": {
+                  "min": {
+                    "type": "array",
+                    "items": {
+                      "type": "number"
+                    },
+                    "minItems": 3,
+                    "maxItems": 3,
+                    "description": "Minimum corner [x, y, z] in mm."
+                  },
+                  "max": {
+                    "type": "array",
+                    "items": {
+                      "type": "number"
+                    },
+                    "minItems": 3,
+                    "maxItems": 3,
+                    "description": "Maximum corner [x, y, z] in mm."
+                  }
+                }
+              },
+              "fix": {
+                "type": "array",
+                "items": {
+                  "type": "boolean"
+                },
+                "minItems": 3,
+                "maxItems": 3,
+                "description": "Which translations are fixed [x, y, z]; default all true."
+              }
+            }
+          }
+        },
+        "fidelity": {
+          "type": "string",
+          "enum": [
+            "predict",
+            "verify"
+          ],
+          "description": "`predict` (default): coarse fast solve, claims stamped basis=predicted — good enough to steer a design. `verify`: fine solve with the same oracle, claims stamped basis=verified — good enough to certify. A receipt passing only on predicted claims reads `provisional`, never `pass`."
+        },
+        "resolution": {
+          "type": "number",
+          "description": "Override voxels along the longest axis (predict=32, verify=72 by default). Below ~4 elements through the thinnest section, bending results are unreliable."
+        },
+        "youngs_modulus_mpa": {
+          "type": "number",
+          "description": "Young's modulus in MPa. Default 69000 (6061 aluminum)."
+        },
+        "poisson": {
+          "type": "number",
+          "description": "Poisson's ratio. Default 0.33."
+        },
+        "max_displacement_mm": {
+          "type": "number",
+          "description": "Optional limit: assert max displacement ≤ this (claim physics.static.displacement)."
+        },
+        "max_von_mises_mpa": {
+          "type": "number",
+          "description": "Optional limit: assert max von Mises stress ≤ this (claim physics.static.stress). E.g. yield/safety-factor."
+        }
+      },
+      "required": [
+        "loads",
+        "supports"
+      ]
+    },
+    "annotations": {
+      "readOnlyHint": true
+    }
+  },
+  {
     "name": "predict_print",
     "title": "Predict Print",
     "description": "Snapshot the design's predicted measurables BEFORE 3D-printing it: kernel-evaluated bbox and mass (at a filament density), plus caller-declared feature dimensions (step heights, hole diameters, wall thicknesses) with design-intent values. Returns a PrintPrediction — save it; after printing, record_measurement joins caliper/scale readings against it. The prediction doubles as the guided measurement worksheet (each measurable carries a human instruction label).",

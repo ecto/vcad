@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-11-predict-physics",
+  "version": "0.9.4",
+  "date": "2026-07-11",
+  "category": "feat",
+  "title": "predict_physics: two-tier static FEA with honest receipts",
+  "summary": "Fast voxel FEA (displacement, von Mises stress, compliance) in ~100ms; predict-tier claims are basis=predicted and roll up provisional, verify-tier certifies with the same solver.",
+  "features": ["physics", "verification", "receipt"],
+  "mcpTools": ["predict_physics"]
+}

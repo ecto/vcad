@@ -240,6 +240,7 @@ export const TOOL_METADATA: Record<string, ToolMetadata> = {
     }),
   },
   topology_optimize: { title: "Topology Optimize", annotations: RW },
+  predict_physics: { title: "Predict Physics", annotations: RO },
   list_footprints: { title: "List Footprints", annotations: RO },
   search_footprints: { title: "Search Footprints", annotations: RO },
   get_pad_positions: { title: "Get Pad Positions", annotations: RO },

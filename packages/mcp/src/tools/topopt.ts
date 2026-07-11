@@ -164,7 +164,7 @@ interface TopoArgs {
 }
 
 /** Resolve a part (by root id or name) to its evaluated, placed mesh. */
-function resolvePartMesh(
+export function resolvePartMesh(
   doc: Document,
   engine: Engine,
   wanted: string,

@@ -129,6 +129,7 @@ import { toolDefs as verifyToolDefs } from "./tools/verify.js";
 import { toolDefs as verifySpecToolDefs } from "./tools/verify-spec.js";
 import { toolDefs as clearanceToolDefs } from "./tools/clearance.js";
 import { toolDefs as topoptToolDefs } from "./tools/topopt.js";
+import { toolDefs as physicsToolDefs } from "./tools/physics.js";
 import { toolDefs as dfmToolDefs } from "./tools/dfm.js";
 import { toolDefs as sheetMetalToolDefs } from "./tools/sheet-metal.js";
 import { toolDefs as acousticsToolDefs } from "./tools/acoustics.js";
@@ -304,6 +305,7 @@ const STATIC_TOOL_DEFS: readonly ToolDef[] = [
   ...verifySpecToolDefs,
   ...clearanceToolDefs,
   ...topoptToolDefs,
+  ...physicsToolDefs,
   ...dfmToolDefs,
   ...sheetMetalToolDefs,
   ...acousticsToolDefs,
@@ -377,6 +379,8 @@ const LIST_TOOL_ORDER: readonly string[] = [
   "parameter_gradient",
   // ── Topology optimization ──────────────────────────────────
   "topology_optimize",
+  // ── Two-tier static physics (predict fast, verify to certify) ──
+  "predict_physics",
   // ── Print-then-measure calibration loop (3DP) ──────────────
   "predict_print",
   "record_measurement",
