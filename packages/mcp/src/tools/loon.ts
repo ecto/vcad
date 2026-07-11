@@ -5,7 +5,7 @@
 import type { Engine } from "@vcad/engine";
 import { toVCode } from "@vcad/ir";
 import { appendIntegrity, computeIntegrity } from "./integrity.js";
-import { macroPrelude, type InlineLoon } from "./loon-macros.js";
+import { hydrateMacros, macroPrelude, type InlineLoon } from "./loon-macros.js";
 import { behavior, type ToolDef } from "./tool-def.js";
 import type { ToolResult } from "./tool-result.js";
 
@@ -112,7 +112,15 @@ export const toolDefs: ToolDef[] = [
       "Let bindings: [let body [cube 50 30 5]]\n" +
       "Scene: [root solid \"material-name\"]",
     inputSchema: createCadLoonSchema,
-    handler: (args, ctx) => {
+    handler: async (args, ctx) => {
+      // Hydrate any by-name macros from the durable per-user store before
+      // composing (cold serverless instances start with an empty registry).
+      const useLoons = Array.isArray(args.use_loons)
+        ? (args.use_loons as string[])
+        : undefined;
+      if (useLoons?.length) {
+        await hydrateMacros(ctx.user, useLoons).catch(() => {});
+      }
       const result = createCadLoon(args, ctx.engine) as ToolResult;
       // Attach the integrity certificate to the largest mutation of all:
       // authoring a whole document. The loon evaluation is cheap relative to

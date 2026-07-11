@@ -26,6 +26,8 @@ import { toVCode } from "@vcad/ir";
 import { registerSession } from "./session.js";
 import { resolveWithinRoot } from "./safe-path.js";
 import { behavior, type ToolDef } from "./tool-def.js";
+import { createMacroStore, type MacroStore } from "../macro-store.js";
+import type { AuthUser } from "../oauth.js";
 
 /** One stored macro. */
 export interface LoonMacro {
@@ -65,6 +67,7 @@ const RESERVED = new Set([
 const registry = new Map<string, LoonMacro>();
 let hydrated = false;
 let diskEnabled = true;
+let storeFactory: (user: AuthUser | null) => MacroStore | null = createMacroStore;
 
 function macroDir(): string {
   return join(process.env.VCAD_MCP_STATE_DIR ?? process.cwd(), "loon-macros");
@@ -97,6 +100,33 @@ function persistToDisk(m: LoonMacro): void {
     writeFileSync(path, JSON.stringify(m, null, 2));
   } catch {
     // Warm registry still holds it; disk persistence is best-effort.
+  }
+}
+
+/**
+ * Hydrate-on-miss from the durable per-user store (artifact-store pattern):
+ * requested names absent from the warm registry are fetched and cached;
+ * with no names given, the user's whole cloud library is merged in (higher
+ * version wins). Fail-soft: no store or fetch error just means warm-only.
+ */
+export async function hydrateMacros(
+  user: AuthUser | null,
+  names?: string[],
+): Promise<void> {
+  const store = storeFactory(user);
+  if (!store) return;
+  hydrateFromDisk();
+  if (names) {
+    const misses = names.filter((n) => !registry.has(n));
+    for (const n of misses) {
+      const m = await store.load(n);
+      if (m) registry.set(m.name, m);
+    }
+    return;
+  }
+  for (const m of await store.list()) {
+    const warm = registry.get(m.name);
+    if (!warm || m.version >= warm.version) registry.set(m.name, m);
   }
 }
 
@@ -203,12 +233,16 @@ interface DefineArgs {
   source: string;
 }
 
-export function defineLoonTool(
+export async function defineLoonTool(
   args: Record<string, unknown>,
   engine: Engine,
-): { content: Array<{ type: "text"; text: string }> } {
+  user: AuthUser | null = null,
+): Promise<{ content: Array<{ type: "text"; text: string }> }> {
   hydrateFromDisk();
   const a = args as unknown as DefineArgs;
+  // Pull any cloud copy first so redefinition on a cold instance continues
+  // the version sequence instead of restarting it.
+  await hydrateMacros(user, [a.name]).catch(() => {});
   if (!MACRO_NAME.test(a.name)) {
     throw new Error(
       `define_loon: name must be kebab-case ([a-z][a-z0-9-]{1,63}), got "${a.name}"`,
@@ -260,6 +294,9 @@ export function defineLoonTool(
 
   registry.set(candidate.name, candidate);
   persistToDisk(candidate);
+  // Durable per-user copy (hosted). Best-effort: a store failure reduces
+  // durability, never breaks the define.
+  await storeFactory(user)?.save(candidate).catch(() => {});
   return {
     content: [
       {
@@ -334,11 +371,13 @@ interface CallArgs {
   format?: "vcode" | "json";
 }
 
-export function callLoonTool(
+export async function callLoonTool(
   args: Record<string, unknown>,
   engine: Engine,
-): { content: Array<{ type: "text"; text: string }> } {
+  user: AuthUser | null = null,
+): Promise<{ content: Array<{ type: "text"; text: string }> }> {
   const a = args as unknown as CallArgs;
+  if (!a.macro) await hydrateMacros(user, [String(a.name)]).catch(() => {});
   const [m] = getMacros([String(a.name)], a.macro ? [a.macro] : undefined);
   if (!Array.isArray(a.args)) throw new Error("call_loon: `args` must be an array");
   // Arity is only checkable when the macro declares params (an inline macro
@@ -378,8 +417,11 @@ export function callLoonTool(
 
 // ── list_loons ─────────────────────────────────────────────────────────
 
-export function listLoonsTool(): { content: Array<{ type: "text"; text: string }> } {
+export async function listLoonsTool(
+  user: AuthUser | null = null,
+): Promise<{ content: Array<{ type: "text"; text: string }> }> {
   hydrateFromDisk();
+  await hydrateMacros(user).catch(() => {});
   const macros = [...registry.values()]
     .sort((x, y) => x.name.localeCompare(y.name))
     .map((m) => ({
@@ -407,6 +449,13 @@ export function clearMacrosForTest(): void {
   diskEnabled = false;
 }
 
+/** Test seam: swap the durable-store factory (null = no cloud). */
+export function setMacroStoreFactoryForTest(
+  f: (user: AuthUser | null) => MacroStore | null,
+): void {
+  storeFactory = f;
+}
+
 export const toolDefs: ToolDef[] = [
   {
     name: "define_loon",
@@ -419,7 +468,7 @@ export const toolDefs: ToolDef[] = [
       "with call_loon or compose inside any create_cad_loon program via use_loons. Redefining " +
       "a name bumps its version. Prefer macros over re-writing the same geometry each session.",
     inputSchema: defineLoonSchema,
-    handler: (args, ctx) => defineLoonTool(args, ctx.engine),
+    handler: (args, ctx) => defineLoonTool(args, ctx.engine, ctx.user),
     behavior: behavior({}),
   },
   {
@@ -429,7 +478,7 @@ export const toolDefs: ToolDef[] = [
       "Instantiate a stored loon macro into a new document: positional numeric args in the " +
       "macro's declared order (see list_loons). Returns the document and a document_id session.",
     inputSchema: callLoonSchema,
-    handler: (args, ctx) => callLoonTool(args, ctx.engine),
+    handler: (args, ctx) => callLoonTool(args, ctx.engine, ctx.user),
     behavior: behavior({ writesDoc: true, geometry: true, mount: true }),
   },
   {
@@ -439,7 +488,7 @@ export const toolDefs: ToolDef[] = [
       "List the stored loon macro library: names, versions, parameter docs with units and " +
       "example values. Use before call_loon or create_cad_loon with use_loons.",
     inputSchema: { type: "object" as const, properties: {} },
-    handler: () => listLoonsTool(),
+    handler: (_args, ctx) => listLoonsTool(ctx.user),
     behavior: behavior({}),
   },
 ];
