@@ -212,6 +212,20 @@ c: [number, number, number],
 periodic?: [boolean, boolean, boolean], };
 
 /**
+ * How a claim's verdict was produced — the evidentiary weight behind it.
+ *
+ * A surrogate model and a real solver can check the same claim; the verdict
+ * alone does not say which one did. `Predicted` marks fast-path estimates
+ * (neural surrogates, analytic approximations) that have not been confirmed
+ * by the trusted oracle. A receipt whose passing claims rest on predictions
+ * rolls up as [`ReceiptVerdict::Provisional`], never `Pass`.
+ *
+ * Absent on the wire means [`ClaimBasis::Verified`] — every claim written
+ * before this field existed came from a real oracle run.
+ */
+export type ClaimBasis = "predicted" | "verified" | "measured";
+
+/**
  * A value with an explicit unit.
  */
 export type ClaimQuantity = { 
@@ -2386,6 +2400,11 @@ oracle: OracleRef,
  */
 verdict: ClaimVerdict, 
 /**
+ * How the verdict was produced. Absent means [`ClaimBasis::Verified`]
+ * (see [`ClaimBasis`] for the back-compat rationale).
+ */
+basis?: ClaimBasis, 
+/**
  * The claimed/required value — what the design must meet (a spec bound,
  * a rule limit, a declared target).
  */
@@ -2446,10 +2465,30 @@ failed: number,
  */
 unverifiable: number, 
 /**
+ * Claims whose verdict rests on a predicted (surrogate) basis.
+ */
+predicted_basis: number, 
+/**
  * Fail-closed rollup: `Fail` if anything failed, else `Unverifiable`
  * if anything (or everything — zero claims) is unverified, else `Pass`.
+ * Basis-blind; see [`ReceiptSummary::verdict`] for the basis-aware view.
  */
-overall: ClaimVerdict, };
+overall: ClaimVerdict, 
+/**
+ * Basis-aware rollup ([`DesignReceipt::verdict`]): like `overall`, but
+ * an all-pass receipt leaning on predicted claims reads `Provisional`.
+ */
+verdict: ReceiptVerdict, };
+
+/**
+ * Basis-aware fail-closed rollup verdict for a whole receipt.
+ *
+ * Extends [`ClaimVerdict`] with `Provisional`: the receipt *would* pass,
+ * but at least one passing claim rests on a [`ClaimBasis::Predicted`]
+ * estimate the trusted oracle has not confirmed. Provisional is never a
+ * pass — it is a promissory note, redeemed by re-running the slow oracle.
+ */
+export type ReceiptVerdict = "pass" | "provisional" | "fail" | "unverifiable";
 
 /**
  * Count of violations of one rule.

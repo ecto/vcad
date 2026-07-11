@@ -92,6 +92,7 @@ import {
   OPENAI_WIDGET_CSP,
 } from "./viewer.js";
 import { fireToolAlert } from "./notify.js";
+import { checkCommerceBoundary } from "./trust-boundary.js";
 import { configureTelemetry, flushTelemetry } from "./telemetry.js";
 import { artifactStoreInfo as artifactStoreInfoLocal } from "./tools/artifact-store.js";
 
@@ -1314,6 +1315,21 @@ export async function createServer(
         };
         fireToolAlert(name, args, unknownResult);
         return unknownResult;
+      }
+
+      // ── Trust boundary (commerce plane) ────────────────────────────
+      // Mechanical pre-dispatch guard: money-plane tools take opaque ids
+      // and store-scoped artifact refs only, so content read from imported
+      // files or part listings can never steer an order. Fail-closed,
+      // before the handler ever sees the arguments (docs/trust-boundary.md).
+      const boundary = checkCommerceBoundary(name, args);
+      if (!boundary.ok) {
+        const refusal: ToolResult = {
+          content: [{ type: "text", text: boundary.reason ?? "TRUST_BOUNDARY: refused" }],
+          isError: true,
+        };
+        fireToolAlert(name, args, refusal);
+        return refusal;
       }
 
       const result = await def.handler(args, ctx);

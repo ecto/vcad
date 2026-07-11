@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-11-commerce-trust-boundary",
+  "version": "0.9.4",
+  "date": "2026-07-11",
+  "category": "feat",
+  "title": "Injection-confined ordering: commerce trust boundary",
+  "summary": "Ordering tools now mechanically refuse free-text ids, external artifact URLs, and URL-bearing ship-to fields, so untrusted content can never steer an order.",
+  "features": ["fabricate", "security"],
+  "mcpTools": ["quote_manufacturing", "authorize_spend", "place_order"]
+}

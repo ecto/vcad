@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-11-receipt-claim-basis",
+  "version": "0.9.4",
+  "date": "2026-07-11",
+  "category": "feat",
+  "title": "Receipts distinguish predicted, verified, and measured claims",
+  "summary": "Claims now carry a basis (predicted/verified/measured); receipts passing only on surrogate predictions roll up as provisional, never pass.",
+  "features": ["receipt", "verification"],
+  "mcpTools": ["build_receipt", "verify_receipt", "verify_spec"]
+}

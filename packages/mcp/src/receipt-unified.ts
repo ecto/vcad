@@ -12,6 +12,7 @@
  */
 
 import type {
+  ClaimBasis,
   ClaimQuantity,
   ClaimVerdict,
   DesignReceipt,
@@ -19,6 +20,7 @@ import type {
   Receipt,
   ReceiptClaim,
   ReceiptSummary,
+  ReceiptVerdict,
 } from "@vcad/ir";
 import type { EnclosureFitReport } from "@vcad/engine";
 
@@ -66,6 +68,28 @@ export function overallVerdict(claims: readonly ReceiptClaim[]): ClaimVerdict {
   return "pass";
 }
 
+/** The claim's basis, resolving the wire default: absent means verified. */
+export function effectiveBasis(c: ReceiptClaim): ClaimBasis {
+  return c.basis ?? "verified";
+}
+
+/**
+ * Basis-aware fail-closed rollup, mirroring `DesignReceipt::verdict` in
+ * Rust: like {@link overallVerdict}, except an all-pass receipt with any
+ * claim resting on a `predicted` (surrogate) basis reads `provisional` —
+ * predictions can steer a design; only verified or measured evidence can
+ * certify one.
+ */
+export function receiptVerdict(
+  claims: readonly ReceiptClaim[],
+): ReceiptVerdict {
+  const overall = overallVerdict(claims);
+  if (overall !== "pass") return overall;
+  return claims.some((c) => effectiveBasis(c) === "predicted")
+    ? "provisional"
+    : "pass";
+}
+
 /** Counts by verdict plus the rollup, mirroring `DesignReceipt::summary`. */
 export function summarize(receipt: DesignReceipt): ReceiptSummary {
   const count = (v: ClaimVerdict) =>
@@ -75,7 +99,11 @@ export function summarize(receipt: DesignReceipt): ReceiptSummary {
     passed: count("pass"),
     failed: count("fail"),
     unverifiable: count("unverifiable"),
+    predicted_basis: receipt.claims.filter(
+      (c) => effectiveBasis(c) === "predicted",
+    ).length,
     overall: overallVerdict(receipt.claims),
+    verdict: receiptVerdict(receipt.claims),
   };
 }
 
