@@ -1,0 +1,104 @@
+{
+  "version": "0.1",
+  "materials": {
+    "alu": {
+      "name": "alu",
+      "color": [0.75, 0.77, 0.8],
+      "metallic": 0.9,
+      "roughness": 0.35
+    }
+  },
+  "part_materials": {},
+  "nodes": {
+    "1": {
+      "id": 1,
+      "name": "Plate",
+      "op": {
+        "type": "Cube",
+        "size": { "x": 80.0, "y": 50.0, "z": 6.0 }
+      }
+    },
+    "2": {
+      "id": 2,
+      "name": "Bore",
+      "op": {
+        "type": "Cylinder",
+        "radius": 8.0,
+        "height": 20.0,
+        "segments": 64
+      }
+    },
+    "3": {
+      "id": 3,
+      "name": "Center Bore",
+      "op": {
+        "type": "Translate",
+        "child": 2,
+        "offset": { "x": 40.0, "y": 25.0, "z": -7.0 }
+      }
+    },
+    "4": {
+      "id": 4,
+      "name": "Bored Plate",
+      "op": {
+        "type": "Difference",
+        "left": 1,
+        "right": 3
+      }
+    },
+    "5": {
+      "id": 5,
+      "name": "Rounded Plate",
+      "op": {
+        "type": "Fillet",
+        "child": 4,
+        "radius": 1.5
+      }
+    }
+  },
+  "roots": [{ "root": 5, "material": "alu" }],
+  "parameters": {
+    "width": {
+      "value": 80.0,
+      "unit": "mm",
+      "min": 30.0,
+      "max": 160.0,
+      "description": "Plate width along X"
+    },
+    "depth": {
+      "value": 50.0,
+      "unit": "mm",
+      "min": 30.0,
+      "max": 120.0,
+      "description": "Plate depth along Y"
+    },
+    "thickness": {
+      "value": 6.0,
+      "unit": "mm",
+      "min": 2.0,
+      "max": 20.0,
+      "description": "Plate thickness along Z"
+    },
+    "bore_d": {
+      "value": 16.0,
+      "unit": "mm",
+      "min": 4.0,
+      "max": 28.0,
+      "description": "Center bore diameter"
+    },
+    "bore_r": {
+      "value": "bore_d / 2",
+      "unit": "mm",
+      "description": "Derived bore radius"
+    }
+  },
+  "bindings": {
+    "1:size.x": "width",
+    "1:size.y": "depth",
+    "1:size.z": "thickness",
+    "2:radius": "bore_r",
+    "2:height": "thickness + 14",
+    "3:offset.x": "width / 2",
+    "3:offset.y": "depth / 2"
+  }
+}

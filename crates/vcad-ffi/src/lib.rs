@@ -2035,6 +2035,56 @@ mod tests {
         vcad_solid_free(cube);
     }
 
+    /// The native inspector's document-parameter scrub writes
+    /// `parameters.<name>.value` (untagged number) into the doc JSON and
+    /// re-evaluates through `vcad_scene_from_json`; bindings fan the value out
+    /// to node fields. Lock that wire shape down end-to-end.
+    #[test]
+    fn scene_from_json_resolves_parameters_and_bindings() {
+        fn doc_json(width: f64) -> String {
+            format!(
+                r#"{{
+                    "version": "0.1",
+                    "materials": {{}},
+                    "part_materials": {{}},
+                    "nodes": {{
+                        "1": {{ "id": 1, "op": {{ "type": "Cube", "size": {{ "x": 1.0, "y": 10.0, "z": 10.0 }} }} }}
+                    }},
+                    "roots": [ {{ "root": 1, "material": "default" }} ],
+                    "parameters": {{
+                        "width": {{ "value": {width}, "min": 5.0, "max": 80.0, "unit": "mm" }}
+                    }},
+                    "bindings": {{ "1:size.x": "width" }}
+                }}"#
+            )
+        }
+        fn max_x(json: &str) -> f32 {
+            let scene = vcad_scene_from_json(json.as_ptr(), json.len());
+            assert!(!scene.is_null(), "parametric doc should evaluate");
+            let view = vcad_scene_part_mesh(scene, 0);
+            let verts = unsafe { std::slice::from_raw_parts(view.vertices, view.vertices_len) };
+            let mx = verts.chunks(3).map(|v| v[0]).fold(f32::MIN, f32::max);
+            vcad_scene_free(scene);
+            mx
+        }
+        assert!((max_x(&doc_json(20.0)) - 20.0).abs() < 1e-4);
+        assert!((max_x(&doc_json(50.0)) - 50.0).abs() < 1e-4);
+    }
+
+    /// Guard the shipped parametric example: it must keep evaluating (the
+    /// native app's demo doc for the document-parameter scrub), including its
+    /// derived formula parameter and cross-parameter bindings.
+    #[test]
+    fn parametric_plate_example_evaluates() {
+        let json = include_str!("../../../examples/parametric-plate.vcad");
+        let scene = vcad_scene_from_json(json.as_ptr(), json.len());
+        assert!(!scene.is_null(), "example should parse and evaluate");
+        assert_eq!(vcad_scene_part_count(scene), 1);
+        let view = vcad_scene_part_mesh(scene, 0);
+        assert!(view.vertices_len > 0 && view.indices_len > 0);
+        vcad_scene_free(scene);
+    }
+
     #[test]
     fn null_inputs_are_safe() {
         assert!(vcad_solid_to_mesh(ptr::null(), 8).is_null());

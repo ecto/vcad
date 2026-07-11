@@ -970,6 +970,22 @@ final class EditorModel {
         documentJSON.flatMap { DocEdit.op($0, nodeId: nodeId) }
     }
 
+    /// Document-level named parameters of the loaded doc (empty for sandbox).
+    var docParameters: [DocParameter] { documentGraph?.parameters ?? [] }
+
+    /// Scrub a document-level parameter: clamp to its declared range, write it
+    /// into the live JSON, and re-evaluate in place — bindings fan the value
+    /// out to every bound node field inside the kernel.
+    func editParameter(_ name: String, value: Double, snapshot: Bool) {
+        guard let p = docParameters.first(where: { $0.name == name }), p.isLiteral else { return }
+        var v = value
+        if let lo = p.min { v = Swift.max(lo, v) }
+        if let hi = p.max { v = Swift.min(hi, v) }
+        applyEdit(snapshot: snapshot, reeval: .inPlace) {
+            DocEdit.setParameter(&$0, name: name, value: v)
+        }
+    }
+
     func editScalar(nodeId: Int, key: String, value: Double, snapshot: Bool) {
         applyEdit(snapshot: snapshot, reeval: .inPlace) {
             DocEdit.setScalar(&$0, nodeId: nodeId, key: key, value: value)

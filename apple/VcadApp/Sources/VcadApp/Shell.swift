@@ -790,6 +790,25 @@ struct InspectorView: View {
                     }
                 }
             }
+            if model.usesDocumentTree, !model.docParameters.isEmpty {
+                // Document-level named parameters — the parametric scrub,
+                // generalized: any .vcad that declares `parameters` gets live
+                // handles here, bindings re-solving every driven node together.
+                section("Document Parameters") {
+                    ForEach(model.docParameters) { p in
+                        if let v = p.value {
+                            ScrubField(label: p.name, value: v, unit: p.unit ?? "mm",
+                                       sensitivity: Self.paramSensitivity(p),
+                                       minValue: p.min ?? -.greatestFiniteMagnitude) { v, s in
+                                model.editParameter(p.name, value: v, snapshot: s)
+                            }
+                            .help(p.description ?? p.name)
+                        } else if let f = p.formula {
+                            row(p.name, "= \(f)").help(p.description ?? p.name)
+                        }
+                    }
+                }
+            }
             section("Measurements") {
                 row("Triangles", model.triangleCount.formatted())
                 row("Bounds", boundsText)
@@ -859,6 +878,13 @@ struct InspectorView: View {
     private var boundsText: String {
         let s = model.sizeMM
         return String(format: "%.1f × %.1f × %.1f mm", abs(s.x), abs(s.y), abs(s.z))
+    }
+
+    /// Scrub sensitivity for a document parameter: span-derived when the doc
+    /// declares a range (≈200 ticks across it), else the default 0.1 mm/pt.
+    static func paramSensitivity(_ p: DocParameter) -> Double {
+        if let lo = p.min, let hi = p.max, hi > lo { return (hi - lo) / 200 }
+        return 0.1
     }
 
     /// Op types that expose live-editable parameters in the inspector.

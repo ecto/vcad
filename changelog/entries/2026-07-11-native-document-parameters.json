@@ -1,0 +1,9 @@
+{
+  "id": "2026-07-11-native-document-parameters",
+  "version": "0.9.4",
+  "date": "2026-07-11",
+  "category": "feat",
+  "title": "Native app: live document-parameter scrubbing",
+  "summary": "The Mac app's inspector now lists any .vcad's named parameters as scrub fields — dragging one re-solves every bound node live, generalizing the parametric scrub beyond the gripper demo.",
+  "features": ["native-app", "parameters", "inspector"]
+}
