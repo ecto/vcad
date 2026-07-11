@@ -5,6 +5,7 @@ import { documents, getSession, openDocument } from "../tools/session.js";
 import { quoteManufacturing } from "../tools/order.js";
 import { authorizeSpend, placeOrder } from "../tools/ordering.js";
 import { checkClearance } from "../tools/clearance.js";
+import { predictPhysicsTool } from "../tools/physics.js";
 import { InMemoryFabricateStore } from "../fabricate/store.js";
 import type { AuthUser } from "../oauth.js";
 import type {
@@ -281,6 +282,79 @@ describe("place_order money gates (doc-hash + receipt, fail-closed)", () => {
     // The placement event carries the verdict for the feed.
     const placed = es.events.find((e) => e.type === "order_placed");
     expect((placed!.payload as { receipt_status?: string }).receipt_status).toBe("holds");
+  });
+
+  it("refuses receipt_violated: a failing physics claim blocks the debit", async () => {
+    const user: AuthUser = { sub: "u-gate-phys", email: "x@y.z" };
+    const store = new InMemoryFabricateStore();
+    const es = new RecordingEventStore();
+    const docId = out(openDocument({ initial: rotorStatorDocument(5.0) })).document_id;
+    // Persist a physics spec whose displacement limit cannot hold: the rotor
+    // (radius 5, z 1..9) under a 100 N lateral tip load vs a 1e-6 mm limit.
+    // Persisted BEFORE quoting so gate 1 (doc hash) holds and the refusal is
+    // attributable to gate 2 alone.
+    predictPhysicsTool(
+      {
+        document_id: docId,
+        part: "rotor",
+        loads: [{ region: { min: [-5, -5, 9], max: [5, 5, 9] }, force: [100, 0, 0] }],
+        supports: [{ region: { min: [-5, -5, 1], max: [5, 5, 1] } }],
+        label: "overload",
+        max_displacement_mm: 1e-6,
+      },
+      engine,
+    );
+
+    const { orderId, authorizationId } = await quotedAndApproved(docId, store, es, user);
+    const res = await placeOrder(
+      { order_id: orderId, authorization_id: authorizationId },
+      store,
+      es,
+      user,
+      engine,
+    );
+    expect(res.isError).toBe(true);
+    expect(text(res)).toContain("receipt violated");
+    expect(text(res)).toContain("physics.static.overload.displacement");
+    const after = await store.getOrder(orderId, user.sub);
+    expect(after?.state).toBe("QUOTED");
+    expect(after?.receipt_status).toBe("violated");
+    const blocked = es.events.find((e) => e.type === "order_blocked");
+    expect((blocked!.payload as { reason?: string }).reason).toBe("receipt_violated");
+  });
+
+  it("a passing physics spec alone (no clearance specs) re-verifies to 'holds'", async () => {
+    const user: AuthUser = { sub: "u-gate-phys-holds", email: "x@y.z" };
+    const store = new InMemoryFabricateStore();
+    const es = new RecordingEventStore();
+    const docId = out(openDocument({ initial: rotorStatorDocument(5.0) })).document_id;
+    predictPhysicsTool(
+      {
+        document_id: docId,
+        part: "rotor",
+        loads: [{ region: { min: [-5, -5, 9], max: [5, 5, 9] }, force: [100, 0, 0] }],
+        supports: [{ region: { min: [-5, -5, 1], max: [5, 5, 1] } }],
+        label: "tip-load",
+        max_displacement_mm: 10,
+      },
+      engine,
+    );
+
+    const { orderId, authorizationId } = await quotedAndApproved(docId, store, es, user);
+    const res = await placeOrder(
+      { order_id: orderId, authorization_id: authorizationId },
+      store,
+      es,
+      user,
+      engine,
+    );
+    expect(res.isError).toBeFalsy();
+    const body = out(res);
+    expect(body.state).toBe("PAID");
+    // The specs-presence check counts physics specs: this must NOT degrade to
+    // "unverified" just because there are no clearance specs.
+    expect(body.receipt.status).toBe("holds");
+    expect((await store.getOrder(orderId, user.sub))?.receipt_status).toBe("holds");
   });
 
   it("consumed-authz replay skips the gates: a committed debit finalizes even after drift", async () => {
