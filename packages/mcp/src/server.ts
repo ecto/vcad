@@ -130,6 +130,7 @@ import { toolDefs as verifySpecToolDefs } from "./tools/verify-spec.js";
 import { toolDefs as clearanceToolDefs } from "./tools/clearance.js";
 import { toolDefs as topoptToolDefs } from "./tools/topopt.js";
 import { toolDefs as physicsToolDefs } from "./tools/physics.js";
+import { toolDefs as loonMacroToolDefs } from "./tools/loon-macros.js";
 import { toolDefs as dfmToolDefs } from "./tools/dfm.js";
 import { toolDefs as sheetMetalToolDefs } from "./tools/sheet-metal.js";
 import { toolDefs as acousticsToolDefs } from "./tools/acoustics.js";
@@ -306,6 +307,7 @@ const STATIC_TOOL_DEFS: readonly ToolDef[] = [
   ...clearanceToolDefs,
   ...topoptToolDefs,
   ...physicsToolDefs,
+  ...loonMacroToolDefs,
   ...dfmToolDefs,
   ...sheetMetalToolDefs,
   ...acousticsToolDefs,
@@ -370,6 +372,10 @@ const LIST_TOOL_ORDER: readonly string[] = [
   "apply_edits",
   // ── Loon DSL one-shot + core see/measure/export ────────────
   "create_cad_loon",
+  // ── Agent macro library (define once, instantiate anywhere) ──
+  "define_loon",
+  "call_loon",
+  "list_loons",
   "export_cad",
   "inspect_cad",
   "measure",

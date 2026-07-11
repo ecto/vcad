@@ -1291,6 +1291,13 @@
           "type": "string",
           "description": "Loon source code defining CAD geometry"
         },
+        "use_loons": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Stored macro names (see list_loons) to prepend as a library — their [let <name> [fn ...]] definitions become callable from `source`, exactly like the stdlib. List dependencies before dependents."
+        },
         "format": {
           "type": "string",
           "enum": [
@@ -1315,6 +1322,125 @@
       "openai/outputTemplate": "ui://vcad/viewer-openai.html",
       "openai/toolInvocation/invoking": "Modeling geometry…",
       "openai/toolInvocation/invoked": "Model updated"
+    }
+  },
+  {
+    "name": "define_loon",
+    "title": "Define Loon Macro",
+    "description": "Add a reusable parametric macro to the loon library. Provide loon source defining [let <name> [fn [params...] <Solid-expr>]] plus parameter docs with example values. The macro is smoke-tested at definition time (must compile and the example call must yield geometry) — only known-good macros enter the library. Once defined, instantiate with call_loon or compose inside any create_cad_loon program via use_loons. Redefining a name bumps its version. Prefer macros over re-writing the same geometry each session.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "kebab-case macro name (2–64 chars). The source must define a loon function of this exact name via [let <name> [fn [...] ...]]."
+        },
+        "description": {
+          "type": "string",
+          "description": "One sentence: what the macro builds."
+        },
+        "params": {
+          "type": "array",
+          "description": "Ordered parameter docs matching the fn's parameter list. `example` values are used for the definition-time smoke call.",
+          "items": {
+            "type": "object",
+            "required": [
+              "name",
+              "example"
+            ],
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "description": {
+                "type": "string"
+              },
+              "example": {
+                "type": "number",
+                "description": "A representative value; the smoke call uses it."
+              },
+              "unit": {
+                "type": "string",
+                "description": "e.g. mm, deg"
+              }
+            }
+          }
+        },
+        "source": {
+          "type": "string",
+          "description": "Loon source defining [let <name> [fn [<params...>] <Solid-expr>]]. May include helper lets/types; the whole block is prepended to calling programs, exactly like the stdlib."
+        }
+      },
+      "required": [
+        "name",
+        "description",
+        "params",
+        "source"
+      ]
+    },
+    "annotations": {
+      "readOnlyHint": false
+    }
+  },
+  {
+    "name": "call_loon",
+    "title": "Call Loon Macro",
+    "description": "Instantiate a stored loon macro into a new document: positional numeric args in the macro's declared order (see list_loons). Returns the document and a document_id session.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Macro to instantiate."
+        },
+        "args": {
+          "type": "array",
+          "items": {
+            "type": "number"
+          },
+          "description": "Positional arguments, in the macro's declared order."
+        },
+        "material": {
+          "type": "string",
+          "description": "Material for the instantiated part. Default \"default\"."
+        },
+        "format": {
+          "type": "string",
+          "enum": [
+            "vcode",
+            "json"
+          ],
+          "description": "Document output format (default vcode)."
+        }
+      },
+      "required": [
+        "name",
+        "args"
+      ]
+    },
+    "annotations": {
+      "readOnlyHint": false
+    },
+    "_meta": {
+      "ui": {
+        "resourceUri": "ui://vcad/viewer"
+      },
+      "ui/resourceUri": "ui://vcad/viewer",
+      "openai/outputTemplate": "ui://vcad/viewer-openai.html",
+      "openai/toolInvocation/invoking": "Modeling geometry…",
+      "openai/toolInvocation/invoked": "Model updated"
+    }
+  },
+  {
+    "name": "list_loons",
+    "title": "List Loon Macros",
+    "description": "List the stored loon macro library: names, versions, parameter docs with units and example values. Use before call_loon or create_cad_loon with use_loons.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "annotations": {
+      "readOnlyHint": true
     }
   },
   {

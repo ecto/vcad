@@ -5,6 +5,7 @@
 import type { Engine } from "@vcad/engine";
 import { toVCode } from "@vcad/ir";
 import { appendIntegrity, computeIntegrity } from "./integrity.js";
+import { macroPrelude } from "./loon-macros.js";
 import { behavior, type ToolDef } from "./tool-def.js";
 import type { ToolResult } from "./tool-result.js";
 
@@ -15,6 +16,15 @@ export const createCadLoonSchema = {
     source: {
       type: "string" as const,
       description: "Loon source code defining CAD geometry",
+    },
+    use_loons: {
+      type: "array" as const,
+      items: { type: "string" as const },
+      description:
+        "Stored macro names (see list_loons) to prepend as a library — " +
+        "their [let <name> [fn ...]] definitions become callable from " +
+        "`source`, exactly like the stdlib. List dependencies before " +
+        "dependents.",
     },
     format: {
       type: "string" as const,
@@ -27,7 +37,15 @@ export const createCadLoonSchema = {
 
 interface CreateLoonInput {
   source: string;
+  use_loons?: string[];
   format?: "vcode" | "json";
+}
+
+/** Compose the effective program: stored-macro prelude + user source. */
+export function composeLoonProgram(input: unknown): string {
+  const { source, use_loons } = input as CreateLoonInput;
+  if (!use_loons?.length) return source;
+  return `${macroPrelude(use_loons)}\n\n${source}`;
 }
 
 /** Evaluate loon source and return a CAD document. */
@@ -35,7 +53,8 @@ export function createCadLoon(
   input: unknown,
   engine: Engine,
 ): { content: Array<{ type: "text"; text: string }> } {
-  const { source, format = "vcode" } = input as CreateLoonInput;
+  const { format = "vcode" } = input as CreateLoonInput;
+  const source = composeLoonProgram(input);
 
   const doc = engine.evalVcadSource(source);
   if (!doc) {
@@ -75,7 +94,7 @@ export const toolDefs: ToolDef[] = [
       // authoring a whole document. The loon evaluation is cheap relative to
       // the mesh evaluation computeIntegrity runs anyway.
       try {
-        const doc = ctx.engine.evalVcadSource(String(args.source ?? ""));
+        const doc = ctx.engine.evalVcadSource(composeLoonProgram(args));
         if (doc) {
           const integrity = computeIntegrity(doc, ctx.engine);
           if (integrity) appendIntegrity(result, integrity);
