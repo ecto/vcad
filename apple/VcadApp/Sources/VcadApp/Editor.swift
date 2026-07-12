@@ -537,6 +537,9 @@ final class EditorModel {
 
     func documentBaseColor(_ i: Int) -> NSColor { Self.partColors[i % Self.partColors.count] }
     static let brandPink = NSColor(srgbRed: 0.976, green: 0.149, blue: 0.447, alpha: 1.0)
+    /// Viewport selection accent — brand orange (action color). Selection must
+    /// never repaint a part's material; it only adds a subtle emissive lift.
+    static let brandOrange = NSColor(srgbRed: 1.0, green: 0.45, blue: 0.10, alpha: 1.0)
 
     /// Ray-pick a document part by its actual triangles (kernel coords) — the
     /// nearest surface hit wins. An AABB test culls parts the ray misses, and

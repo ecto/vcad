@@ -2033,8 +2033,10 @@ struct ViewportView: View {
         }
     }
 
-    /// Tint the selected part's emissive brand-pink so the tree selection reads
-    /// in the viewport. Non-selected parts are restored to their base material.
+    /// Give the selected part a subtle brand-orange emissive lift so the tree
+    /// selection reads in the viewport without masking the document material
+    /// (the plate must still look like alu, not the accent color). Non-selected
+    /// parts are restored exactly to their base material.
     private func applySelectionHighlight(_ content: RealityViewCameraContent) {
         guard model.usesDocumentTree,
               let root = content.entities.first(where: { $0.name == "geomRoot" }),
@@ -2045,11 +2047,11 @@ struct ViewportView: View {
             guard let e = centering.findEntity(named: "part\(i)") as? ModelEntity else { continue }
             var m = pbrMaterial(model.resolvedMaterial(forPart: i))
             if sel.contains(i) {
-                m.emissiveColor = .init(color: EditorModel.brandPink)
-                m.emissiveIntensity = 0.5
+                m.emissiveColor = .init(color: EditorModel.brandOrange)
+                m.emissiveIntensity = 0.18     // subtle — base color stays legible
             } else if i == hov {
-                m.emissiveColor = .init(color: EditorModel.brandPink)
-                m.emissiveIntensity = 0.16     // subtle hover glow
+                m.emissiveColor = .init(color: EditorModel.brandOrange)
+                m.emissiveIntensity = 0.06     // faint hover glow
             }
             e.model?.materials = [m]
         }
