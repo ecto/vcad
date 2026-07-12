@@ -284,7 +284,7 @@ describe("place_order money gates (doc-hash + receipt, fail-closed)", () => {
     expect((placed!.payload as { receipt_status?: string }).receipt_status).toBe("holds");
   });
 
-  it("refuses receipt_violated: a failing physics claim blocks the debit", async () => {
+  it("refuses receipt_violated: a failing physics claim blocks the debit", { timeout: 30_000 }, async () => {
     const user: AuthUser = { sub: "u-gate-phys", email: "x@y.z" };
     const store = new InMemoryFabricateStore();
     const es = new RecordingEventStore();
@@ -301,6 +301,9 @@ describe("place_order money gates (doc-hash + receipt, fail-closed)", () => {
         supports: [{ region: { min: [-5, -5, 1], max: [5, 5, 1] } }],
         label: "overload",
         max_displacement_mm: 1e-6,
+        // Coarse grid: the gate semantics under test don't need FEA accuracy,
+        // and CI runners hit the 5 s default timeout at predict resolution.
+        resolution: 12,
       },
       engine,
     );
@@ -323,7 +326,7 @@ describe("place_order money gates (doc-hash + receipt, fail-closed)", () => {
     expect((blocked!.payload as { reason?: string }).reason).toBe("receipt_violated");
   });
 
-  it("a passing physics spec alone (no clearance specs) re-verifies to 'holds'", async () => {
+  it("a passing physics spec alone (no clearance specs) re-verifies to 'holds'", { timeout: 30_000 }, async () => {
     const user: AuthUser = { sub: "u-gate-phys-holds", email: "x@y.z" };
     const store = new InMemoryFabricateStore();
     const es = new RecordingEventStore();
@@ -336,6 +339,7 @@ describe("place_order money gates (doc-hash + receipt, fail-closed)", () => {
         supports: [{ region: { min: [-5, -5, 1], max: [5, 5, 1] } }],
         label: "tip-load",
         max_displacement_mm: 10,
+        resolution: 12,
       },
       engine,
     );

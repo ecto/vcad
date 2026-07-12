@@ -40,10 +40,12 @@ export const PHYSICS_CLAIM_PREFIX = "physics.static.";
 /** Resolution per fidelity tier. Same solver; the grid is the only dial. */
 const TIER_RESOLUTION = { predict: 32, verify: 72 } as const;
 
-/** The voxel FEA is deterministic for identical inputs, so a re-solve on
- *  unchanged geometry reproduces the stored value exactly; any relative
- *  difference beyond float noise means the geometry (or grid) changed. */
-const STALE_REL_EPS = 1e-9;
+/** Re-solved values within this relative tolerance of the stored value are
+ *  "same geometry"; beyond it (but still under the limit) the receipt reads
+ *  Stale. The PCG solve converges to a tolerance, not to bit-identical
+ *  results, so this sits above iterative-solver noise while staying far
+ *  below any engineering-meaningful change. */
+const STALE_REL_EPS = 1e-6;
 
 const regionSchema = {
   type: "object" as const,
