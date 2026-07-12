@@ -8,7 +8,7 @@
  * all three reuse the tessellation-bound mesh math exported from here.
  */
 
-import type { Engine, TriangleMesh } from "@vcad/engine";
+import { transformMesh, type Engine, type TriangleMesh } from "@vcad/engine";
 import type { Document } from "@vcad/ir";
 import { isoperimetricViolation } from "./integrity.js";
 import { resolveDocInput } from "./session.js";
@@ -223,7 +223,22 @@ export function computeInspection(ir: Document, engine: Engine): InspectResult {
   // Evaluate the document
   const scene = engine.evaluate(ir);
 
-  if (scene.parts.length === 0) {
+  // Assembly instances carry part-local meshes plus a world transform;
+  // fold them in as world-placed units so assembly-only documents (no
+  // scene roots) inspect instead of erroring.
+  const instanceUnits = (scene.instances ?? []).map((inst) => ({
+    mesh: inst.transform
+      ? transformMesh(inst.mesh, {
+          translate: inst.transform.translation,
+          rotate: inst.transform.rotation,
+          scale: inst.transform.scale,
+        })
+      : inst.mesh,
+    material: inst.material,
+    name: inst.name ?? inst.instanceId,
+  }));
+
+  if (scene.parts.length === 0 && instanceUnits.length === 0) {
     throw new Error("Document has no parts to inspect");
   }
 
@@ -254,8 +269,22 @@ export function computeInspection(ir: Document, engine: Engine): InspectResult {
     }
   }
 
-  for (let i = 0; i < scene.parts.length; i++) {
-    const part = scene.parts[i];
+  const units = [
+    ...scene.parts.map((part, i) => {
+      const rootEntry = ir.roots[i];
+      return {
+        mesh: part.mesh,
+        material: part.material ?? "default",
+        name: rootEntry
+          ? rootNameMap.get(rootEntry.root) ?? `part_${i + 1}`
+          : `part_${i + 1}`,
+      };
+    }),
+    ...instanceUnits,
+  ];
+
+  for (let i = 0; i < units.length; i++) {
+    const part = units[i];
     const props = computeMeshProperties(part.mesh);
 
     totalVolume += props.volume;
@@ -276,13 +305,11 @@ export function computeInspection(ir: Document, engine: Engine): InspectResult {
     bbox.max.z = Math.max(bbox.max.z, props.bbox.max.z);
 
     // Compute mass if material has density
-    const materialKey = part.material ?? "default";
+    const materialKey = part.material;
     const material = ir.materials?.[materialKey];
     const density = material?.density;
 
-    // Get part name from root or use index
-    const rootEntry = ir.roots[i];
-    const partName = rootEntry ? rootNameMap.get(rootEntry.root) ?? `part_${i + 1}` : `part_${i + 1}`;
+    const partName = part.name;
 
     // Isoperimetric impossibility: A³ ≥ 36πV² for any real solid, so a
     // violating (volume, area) pair means the volume integral is corrupt
@@ -349,7 +376,7 @@ export function computeInspection(ir: Document, engine: Engine): InspectResult {
       z: Math.round(com.z * 1000) / 1000,
     },
     triangles: totalTriangles,
-    parts: scene.parts.length,
+    parts: units.length,
   };
 
   // Add mass data if any materials have density
