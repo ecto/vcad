@@ -22,7 +22,9 @@ no-builtin-font = ["vcad-kernel/no-builtin-font"]
 vcad-kernel = { workspace = true }
 vcad-kernel-tessellate = { workspace = true }
 vcad-kernel-math = { workspace = true }
-vcad-kernel-raytrace = { workspace = true }
+vcad-kernel-raytrace = { workspace = true, features = ["gpu"] }
+vcad-kernel-gpu = { workspace = true }
+pollster = { workspace = true }
 vcad-eval = { workspace = true }
 vcad-ir = { workspace = true }
 vcad-loon = { workspace = true }

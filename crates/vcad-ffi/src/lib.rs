@@ -515,6 +515,121 @@ pub extern "C" fn vcad_scene_raytrace(
     .unwrap_or(ptr::null_mut())
 }
 
+/// Ray-trace the scene on the GPU (wgpu → Metal on macOS) with the full
+/// web-parity pipeline: progressive-quality frame with analytic edges,
+/// SSAO, sky + ground environment. Unlike [`vcad_scene_raytrace`] the
+/// frame is opaque (the shader draws its own backdrop) and is meant to
+/// fill the viewport. `metallic`/`roughness` ride per-part after `colors`
+/// (3 f32 per part); parts beyond the array get a neutral metal.
+///
+/// Returns null when no GPU adapter is available (caller falls back to
+/// the CPU path), when the scene has no BRep parts, or on panic. The
+/// device + pipeline initialize once and are reused across calls.
+#[no_mangle]
+#[allow(clippy::too_many_arguments)]
+pub extern "C" fn vcad_scene_raytrace_gpu(
+    scene: *const VcadScene,
+    cam: *const f64,
+    target: *const f64,
+    fov_deg: f64,
+    width: u32,
+    height: u32,
+    colors: *const f32,
+    colors_len: usize,
+) -> *mut VcadImage {
+    if scene.is_null() || cam.is_null() || target.is_null() || width == 0 || height == 0 {
+        return ptr::null_mut();
+    }
+    catch_unwind(AssertUnwindSafe(|| {
+        use vcad_kernel_raytrace::gpu::{GpuCamera, GpuRenderState, GpuScene, RayTracePipeline};
+
+        // One-time device + pipeline init; None is remembered so a machine
+        // without a GPU only pays the probe once.
+        static PIPELINE: std::sync::OnceLock<Option<RayTracePipeline>> = std::sync::OnceLock::new();
+        let Some(pipeline) = PIPELINE
+            .get_or_init(|| {
+                let ctx = vcad_kernel_gpu::GpuContext::init_blocking().ok()?;
+                RayTracePipeline::new(ctx).ok()
+            })
+            .as_ref()
+        else {
+            return ptr::null_mut();
+        };
+        let Some(ctx) = vcad_kernel_gpu::GpuContext::get() else {
+            return ptr::null_mut();
+        };
+
+        let s: &VcadScene = unsafe { &*scene };
+        let cam = unsafe { std::slice::from_raw_parts(cam, 3) };
+        let target = unsafe { std::slice::from_raw_parts(target, 3) };
+        let color_slice: &[f32] = if colors.is_null() || colors_len == 0 {
+            &[]
+        } else {
+            unsafe { std::slice::from_raw_parts(colors, colors_len) }
+        };
+
+        // Upload every BRep part, coloring each before the merge so the
+        // per-scene material index survives the offset arithmetic.
+        let mut merged: Option<GpuScene> = None;
+        for (i, part) in s.inner.parts.iter().enumerate() {
+            let Some(brep) = part.solid.as_ref().and_then(|sol| sol.as_brep()) else {
+                continue;
+            };
+            let Ok(mut gs) = GpuScene::from_brep(brep) else {
+                continue;
+            };
+            let c = if color_slice.len() >= (i + 1) * 3 {
+                [
+                    color_slice[i * 3],
+                    color_slice[i * 3 + 1],
+                    color_slice[i * 3 + 2],
+                ]
+            } else {
+                [0.62, 0.66, 0.70]
+            };
+            gs.set_material(c[0], c[1], c[2], 0.85, 0.35);
+            merged = Some(match merged {
+                Some(acc) => acc.merge(gs),
+                None => gs,
+            });
+        }
+        let Some(gpu_scene) = merged else {
+            return ptr::null_mut();
+        };
+
+        let camera = GpuCamera::new(
+            [cam[0] as f32, cam[1] as f32, cam[2] as f32],
+            [target[0] as f32, target[1] as f32, target[2] as f32],
+            [0.0, 0.0, 1.0],
+            fov_deg.to_radians() as f32,
+            width,
+            height,
+        );
+
+        let result = pollster::block_on(pipeline.render_with_render_state(
+            ctx,
+            &gpu_scene,
+            &camera,
+            width,
+            height,
+            None,
+            None,
+            GpuRenderState::new(1),
+        ));
+        match result {
+            Ok((pixels, _accum, _ao)) if pixels.len() == (width * height * 4) as usize => {
+                Box::into_raw(Box::new(VcadImage {
+                    pixels,
+                    width,
+                    height,
+                }))
+            }
+            _ => ptr::null_mut(),
+        }
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
 /// Borrow an image's pixel buffer. On null input, returns an empty view.
 #[no_mangle]
 pub extern "C" fn vcad_image_view(image: *const VcadImage) -> VcadImageView {
@@ -2335,6 +2450,41 @@ mod tests {
         // Out of range index → null, not a crash.
         assert!(vcad_scene_part_edges(scene, 99, 25.0).is_null());
         vcad_edges_free(edges);
+        vcad_scene_free(scene);
+    }
+
+    /// Needs a real GPU adapter — run manually / on GPU hosts:
+    /// `cargo test -p vcad-ffi gpu_raytrace -- --ignored`
+    #[test]
+    #[ignore = "requires a GPU adapter (Metal/Vulkan)"]
+    fn gpu_raytrace_renders_the_example_plate() {
+        let json = include_str!("../../../examples/parametric-plate.vcad");
+        let scene = vcad_scene_from_json(json.as_ptr(), json.len());
+        assert!(!scene.is_null());
+        let cam = [40.0, -80.0, 90.0];
+        let target = [40.0, 25.0, 3.0];
+        let colors = [0.7f32, 0.7, 0.75];
+        let img = vcad_scene_raytrace_gpu(
+            scene,
+            cam.as_ptr(),
+            target.as_ptr(),
+            35.0,
+            320,
+            240,
+            colors.as_ptr(),
+            colors.len(),
+        );
+        assert!(!img.is_null(), "GPU raytrace should produce a frame");
+        let view = vcad_image_view(img);
+        assert_eq!(view.pixels_len, 320 * 240 * 4);
+        // The frame must not be uniform (sky + plate + ground all present).
+        let px = unsafe { std::slice::from_raw_parts(view.pixels, view.pixels_len) };
+        let first = &px[0..3];
+        assert!(
+            px.chunks(4).any(|p| &p[0..3] != first),
+            "GPU frame is uniform — pipeline produced nothing"
+        );
+        vcad_image_free(img);
         vcad_scene_free(scene);
     }
 

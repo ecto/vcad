@@ -6973,10 +6973,12 @@ dependencies = [
 name = "vcad-ffi"
 version = "0.9.4"
 dependencies = [
+ "pollster",
  "vcad-ecad-pcb",
  "vcad-eval",
  "vcad-ir",
  "vcad-kernel",
+ "vcad-kernel-gpu",
  "vcad-kernel-math",
  "vcad-kernel-raytrace",
  "vcad-kernel-tessellate",

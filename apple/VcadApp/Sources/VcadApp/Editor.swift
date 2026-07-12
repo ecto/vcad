@@ -365,9 +365,17 @@ final class EditorModel {
         var targetArr = [target.x, target.y, target.z]
         // RealityKit's PerspectiveCameraComponent defaults to a 60° vertical
         // field of view — match it so the still lands exactly on the raster.
-        let img: OpaquePointer? = vcad_scene_raytrace(
+        // GPU first (wgpu → Metal: full-frame with SSAO, analytic edges, and
+        // its own sky/ground environment); CPU studio tracer as the
+        // composited fallback when no adapter is available.
+        var img: OpaquePointer? = vcad_scene_raytrace_gpu(
             scene, &camArr, &targetArr, 60.0,
             UInt32(width), UInt32(height), colors, colors.count)
+        if img == nil {
+            img = vcad_scene_raytrace(
+                scene, &camArr, &targetArr, 60.0,
+                UInt32(width), UInt32(height), colors, colors.count)
+        }
         guard let img else { return nil }
         defer { vcad_image_free(img) }
         let view = vcad_image_view(img)

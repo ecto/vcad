@@ -86,6 +86,10 @@ VcadImage *vcad_scene_raytrace(const VcadScene *scene, const double *cam,
                                const double *target, double fov_deg,
                                uint32_t width, uint32_t height,
                                const float *colors, size_t colors_len);
+VcadImage *vcad_scene_raytrace_gpu(const VcadScene *scene, const double *cam,
+                                   const double *target, double fov_deg,
+                                   uint32_t width, uint32_t height,
+                                   const float *colors, size_t colors_len);
 VcadImageView vcad_image_view(const VcadImage *image);
 void vcad_image_free(VcadImage *image);
 
