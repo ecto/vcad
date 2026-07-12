@@ -1861,13 +1861,13 @@
   {
     "name": "predict_physics",
     "title": "Predict Physics",
-    "description": "Fast static structural analysis (voxel FEA): max displacement, max von Mises stress, and compliance for a part or box under world-frame loads (N) and supports, in ~100 ms at fidelity=predict. Pass max_displacement_mm / max_von_mises_mpa limits to get receipt claims: predict-tier claims carry basis=predicted and roll up as a PROVISIONAL receipt — use them to iterate on a design cheaply. When the design settles, re-run with fidelity=verify (same solver, fine grid) to upgrade the claims to basis=verified and a certifiable pass. Loads/supports are box regions (mm, Z-up); zero-thickness boxes select a face. Voxel FEA smears stress concentrations — treat stress as an estimate near fillets.",
+    "description": "Fast static structural analysis (voxel FEA): max displacement, max von Mises stress, and compliance for a part or box under world-frame loads (N) and supports, in ~100 ms at fidelity=predict. Pass max_displacement_mm / max_von_mises_mpa limits to get receipt claims: predict-tier claims carry basis=predicted and roll up as a PROVISIONAL receipt — use them to iterate on a design cheaply. When the design settles, re-run with fidelity=verify (same solver, fine grid) to upgrade the claims to basis=verified and a certifiable pass. Give it a `label` to persist the assertion on the document: build_receipt then re-solves it as physics.static claims and verify_receipt re-verifies it as Holds / Stale / Violated when geometry changes. Loads/supports are box regions (mm, Z-up); zero-thickness boxes select a face. Voxel FEA smears stress concentrations — treat stress as an estimate near fillets.",
     "inputSchema": {
       "type": "object",
       "properties": {
         "document_id": {
           "type": "string",
-          "description": "Session document. Required with `part`."
+          "description": "Session document. Required with `part` or `label`."
         },
         "part": {
           "type": "string",
@@ -2027,6 +2027,10 @@
         "max_von_mises_mpa": {
           "type": "number",
           "description": "Optional limit: assert max von Mises stress ≤ this (claim physics.static.stress). E.g. yield/safety-factor."
+        },
+        "label": {
+          "type": "string",
+          "description": "Optional assertion name (e.g. 'bracket-load'). When given (with at least one limit and a document_id), the spec — loads, supports, material, limits, fidelity — is persisted on the document and re-solved by build_receipt / verify_receipt whenever geometry changes."
         }
       },
       "required": [
@@ -6117,7 +6121,7 @@
   {
     "name": "build_receipt",
     "title": "Build Receipt",
-    "description": "Build a re-runnable verification Receipt for the session PCB: a content hash, the DRC backend, a canonicalized DRC summary, and per-part provenance — a durable proof that round-trips and re-verifies later as Holds / Stale / Violated. Persisted clearance specs (check_clearance with a label) join the unified ledger as mech.clearance claims — a CAD-only session with specs gets a mechanical receipt, no PCB needed. Renders as an audit ledger in the inline viewer.",
+    "description": "Build a re-runnable verification Receipt for the session PCB: a content hash, the DRC backend, a canonicalized DRC summary, and per-part provenance — a durable proof that round-trips and re-verifies later as Holds / Stale / Violated. Persisted clearance specs (check_clearance with a label) join the unified ledger as mech.clearance claims, and persisted physics specs (predict_physics with a label) as physics.static claims re-solved at their stored fidelity — a CAD-only session with specs gets a mechanical receipt, no PCB needed. Renders as an audit ledger in the inline viewer.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -6165,7 +6169,7 @@
   {
     "name": "verify_receipt",
     "title": "Verify Receipt",
-    "description": "Re-run a prior receipt (from build_receipt) against the session's current document and return the verdict — Holds (unchanged, clean), Stale (changed but claims still hold), or Violated. Covers the PCB Receipt (board hash + DRC diff) and mech.clearance claims (re-measured against current geometry); worst verdict wins. Powers the ledger's Re-run button.",
+    "description": "Re-run a prior receipt (from build_receipt) against the session's current document and return the verdict — Holds (unchanged, clean), Stale (changed but claims still hold), or Violated. Covers the PCB Receipt (board hash + DRC diff), mech.clearance claims (re-measured against current geometry), and physics.static claims (re-solved at their stored fidelity); worst verdict wins. Powers the ledger's Re-run button.",
     "inputSchema": {
       "type": "object",
       "properties": {

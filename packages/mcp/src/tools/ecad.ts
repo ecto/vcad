@@ -43,6 +43,11 @@ import {
   hasClearanceClaims,
   verifyClearanceClaims,
 } from "./clearance.js";
+import {
+  hasPhysicsClaims,
+  physicsReceiptClaims,
+  verifyPhysicsClaims,
+} from "./physics.js";
 import { getNodePcb, getPcbNodeIds, buildEntry, agentView, diffViolations } from "@vcad/core";
 import {
   computeRatsnest,
@@ -11986,23 +11991,28 @@ export async function buildReceipt(args: Record<string, unknown>, engine?: Engin
   const ctx = resolveDocInput(args);
   const pcb = getDocPcb(ctx.doc);
   const clearanceSpecs = ctx.doc.clearance_specs ?? [];
+  const physicsSpecs = ctx.doc.physics_specs ?? [];
   if (!pcb) {
-    if (clearanceSpecs.length === 0) {
+    if (clearanceSpecs.length === 0 && physicsSpecs.length === 0) {
       return {
         content: [
           {
             type: "text" as const,
-            text: "Error: Document has no PCB and no clearance specs — nothing to certify. (Persist mechanical assertions with check_clearance + label first.)",
+            text: "Error: Document has no PCB and no clearance or physics specs — nothing to certify. (Persist mechanical assertions with check_clearance + label, or predict_physics + label, first.)",
           },
         ],
         isError: true,
       };
     }
-    // Mechanical-only receipt: re-measure every persisted clearance spec.
+    // Mechanical-only receipt: re-measure every persisted clearance spec and
+    // re-solve every persisted physics spec.
     const unified: DesignReceipt = {
       schema: RECEIPT_SCHEMA,
       ...(ctx.documentId ? { document_id: ctx.documentId } : {}),
-      claims: clearanceReceiptClaims(ctx.doc, engine),
+      claims: [
+        ...clearanceReceiptClaims(ctx.doc, engine),
+        ...physicsReceiptClaims(ctx.doc, engine),
+      ],
     };
     return {
       content: [
@@ -12074,6 +12084,9 @@ export async function buildReceipt(args: Record<string, unknown>, engine?: Engin
   if (clearanceSpecs.length > 0) {
     unified.claims.push(...clearanceReceiptClaims(ctx.doc, engine));
   }
+  if (physicsSpecs.length > 0) {
+    unified.claims.push(...physicsReceiptClaims(ctx.doc, engine));
+  }
 
   // The receipt rides in structuredContent so the inline viewer renders it
   // as an audit ledger (the only carrier ChatGPT's widget bridge exposes);
@@ -12133,7 +12146,8 @@ function worstStatus(statuses: ReceiptStatus[]): ReceiptStatus {
  *  verdict: Holds (unchanged, clean), Stale (document changed but claims still
  *  hold), or Violated. Handles the re-runnable PCB Receipt (board hash + DRC
  *  diff), the unified DesignReceipt's mech.clearance claims (re-measured
- *  against current geometry), or both at once — worst verdict wins. */
+ *  against current geometry) and physics.static claims (re-solved at their
+ *  stored fidelity), or all at once — worst verdict wins. */
 export async function verifyReceipt(args: Record<string, unknown>, engine?: Engine) {
   const ctx = resolveDocInput(args);
   const raw = args.receipt as Record<string, unknown> | undefined;
@@ -12172,13 +12186,14 @@ export async function verifyReceipt(args: Record<string, unknown>, engine?: Engi
     }
   }
   const clearanceReceipt = unified && hasClearanceClaims(unified) ? unified : undefined;
+  const physicsReceipt = unified && hasPhysicsClaims(unified) ? unified : undefined;
 
-  if (!legacy && !clearanceReceipt) {
+  if (!legacy && !clearanceReceipt && !physicsReceipt) {
     return {
       content: [
         {
           type: "text" as const,
-          text: "Error: `receipt` carries nothing re-verifiable — pass a PCB Receipt (board_hash) or a unified DesignReceipt with mech.clearance claims, as produced by build_receipt.",
+          text: "Error: `receipt` carries nothing re-verifiable — pass a PCB Receipt (board_hash) or a unified DesignReceipt with mech.clearance or physics.static claims, as produced by build_receipt.",
         },
       ],
       isError: true,
@@ -12228,10 +12243,28 @@ export async function verifyReceipt(args: Record<string, unknown>, engine?: Engi
     statuses.push(clearance.status);
   }
 
+  let physics: ReturnType<typeof verifyPhysicsClaims> | undefined;
+  if (physicsReceipt) {
+    if (!engine) {
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: "Error: physics re-verification needs the kernel engine; unavailable in this context",
+          },
+        ],
+        isError: true,
+      };
+    }
+    physics = verifyPhysicsClaims(ctx.doc, engine, physicsReceipt);
+    statuses.push(physics.status);
+  }
+
   const payload = {
     status: worstStatus(statuses),
     ...(boardHash ? { board_hash: boardHash } : {}),
     ...(clearance ? { clearance } : {}),
+    ...(physics ? { physics } : {}),
   };
   return {
     content: [{ type: "text" as const, text: JSON.stringify(payload) }],
@@ -12739,7 +12772,7 @@ export const toolDefs: ToolDef[] = [
     name: "build_receipt",
     pack: "ecad",
     description:
-      "Build a re-runnable verification Receipt for the session PCB: a content hash, the DRC backend, a canonicalized DRC summary, and per-part provenance \u2014 a durable proof that round-trips and re-verifies later as Holds / Stale / Violated. Persisted clearance specs (check_clearance with a label) join the unified ledger as mech.clearance claims \u2014 a CAD-only session with specs gets a mechanical receipt, no PCB needed. Renders as an audit ledger in the inline viewer.",
+      "Build a re-runnable verification Receipt for the session PCB: a content hash, the DRC backend, a canonicalized DRC summary, and per-part provenance \u2014 a durable proof that round-trips and re-verifies later as Holds / Stale / Violated. Persisted clearance specs (check_clearance with a label) join the unified ledger as mech.clearance claims, and persisted physics specs (predict_physics with a label) as physics.static claims re-solved at their stored fidelity \u2014 a CAD-only session with specs gets a mechanical receipt, no PCB needed. Renders as an audit ledger in the inline viewer.",
     inputSchema: buildReceiptSchema,
     handler: (a, c) =>
       buildReceipt(a, c.engine) as ToolResult | Promise<ToolResult>,
@@ -12749,9 +12782,9 @@ export const toolDefs: ToolDef[] = [
     name: "verify_receipt",
     pack: "ecad",
     description:
-      "Re-run a prior receipt (from build_receipt) against the session's current document and return the verdict \u2014 Holds (unchanged, clean), Stale (changed but claims still hold), or Violated. Covers the PCB Receipt (board hash + DRC diff) and mech.clearance claims (re-measured against current geometry); worst verdict wins. Powers the ledger's Re-run button.",
+      "Re-run a prior receipt (from build_receipt) against the session's current document and return the verdict \u2014 Holds (unchanged, clean), Stale (changed but claims still hold), or Violated. Covers the PCB Receipt (board hash + DRC diff), mech.clearance claims (re-measured against current geometry), and physics.static claims (re-solved at their stored fidelity); worst verdict wins. Powers the ledger's Re-run button.",
     inputSchema: verifyReceiptSchema,
-    handler: (a) => verifyReceipt(a) as ToolResult | Promise<ToolResult>,
+    handler: (a, c) => verifyReceipt(a, c.engine) as ToolResult | Promise<ToolResult>,
     behavior: behavior({ widgetCallable: true }),
   },
   {

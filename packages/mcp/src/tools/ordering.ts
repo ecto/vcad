@@ -36,6 +36,7 @@ import { resolveArtifactRefAsync } from "./artifact-store.js";
 import { getSession, hydrateSession } from "./session.js";
 import { docHash } from "./order.js";
 import { clearanceReceiptClaims } from "./clearance.js";
+import { physicsReceiptClaims } from "./physics.js";
 import type { SessionEventStore, SessionStore } from "../session-store.js";
 import type {
   FabArtifactRef,
@@ -400,7 +401,8 @@ export async function placeOrder(
   }
 
   // ── M4 gate 2: the design receipt must hold ──────────────────────────────
-  // Re-verify every persisted clearance spec at place time. Any failing claim
+  // Re-verify every persisted clearance spec (re-measured) and physics spec
+  // (re-solved at its stored fidelity) at place time. Any failing claim
   // refuses; any unverifiable claim refuses too (fail-closed — a claim that
   // can't verify never passes). A document with no claims proceeds flagged
   // "unverified" in the feed; an unavailable document likewise (noted).
@@ -412,10 +414,14 @@ export async function placeOrder(
       "consumed-authz idempotent replay — gates skipped (debit already committed); finalizing the paid order";
   } else if (!sessionDoc) {
     receiptNote = `receipt not re-verified (${docUnavailable ?? "document unavailable"}) — proceeding as unverified`;
-  } else if (!sessionDoc.clearance_specs?.length) {
-    receiptNote = "document carries no clearance specs — receipt status: unverified";
+  } else if (!sessionDoc.clearance_specs?.length && !sessionDoc.physics_specs?.length) {
+    receiptNote =
+      "document carries no clearance or physics specs — receipt status: unverified";
   } else {
-    const claims = clearanceReceiptClaims(sessionDoc, engine);
+    const claims = [
+      ...clearanceReceiptClaims(sessionDoc, engine),
+      ...physicsReceiptClaims(sessionDoc, engine),
+    ];
     const failing = claims.filter((c) => c.verdict === "fail").map((c) => c.id);
     const unverifiable = claims
       .filter((c) => c.verdict === "unverifiable")
@@ -438,7 +444,7 @@ export async function placeOrder(
         claims: failing,
       });
       return err(
-        `receipt violated — clearance claims fail at place time: ${failing.join(", ")}. Fix the design (or re-quote) before money moves.`,
+        `receipt violated — claims fail at place time: ${failing.join(", ")}. Fix the design (or re-quote) before money moves.`,
       );
     }
     if (unverifiable.length > 0) {
@@ -449,11 +455,11 @@ export async function placeOrder(
         claims: unverifiable,
       });
       return err(
-        `receipt unverifiable — clearance claims could not be re-checked: ${unverifiable.join(", ")}. Fail-closed: an unverifiable claim never passes; re-verify with check_clearance / verify_receipt before placing.`,
+        `receipt unverifiable — claims could not be re-checked: ${unverifiable.join(", ")}. Fail-closed: an unverifiable claim never passes; re-verify with check_clearance / predict_physics / verify_receipt before placing.`,
       );
     }
     receiptStatus = "holds";
-    receiptNote = `receipt holds — ${claims.length} clearance claim(s) re-verified at place time`;
+    receiptNote = `receipt holds — ${claims.length} claim(s) re-verified at place time`;
   }
 
   // Bind the fab bundle by reference (provided handle, else whatever the quote

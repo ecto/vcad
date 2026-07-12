@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-11-physics-spec-persistence",
+  "version": "0.9.4",
+  "date": "2026-07-11",
+  "category": "feat",
+  "title": "Persisted physics assertions re-verify via receipts",
+  "summary": "predict_physics gains a label arg: the spec persists on the document, build_receipt re-solves it as physics.static claims, and verify_receipt classifies Holds/Stale/Violated.",
+  "features": ["physics", "receipt", "verification"],
+  "mcpTools": ["predict_physics", "build_receipt", "verify_receipt"]
+}
