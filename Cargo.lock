@@ -7227,6 +7227,7 @@ dependencies = [
  "bytemuck",
  "js-sys",
  "pollster",
+ "rayon",
  "tang",
  "thiserror 2.0.18",
  "vcad-kernel-booleans",
