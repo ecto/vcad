@@ -302,7 +302,10 @@ impl TriangleMesh {
             }
         };
 
-        // Undirected welded edge → adjacent triangle list (capped at 2).
+        // Undirected welded edge → adjacent triangle list. Capped at 3
+        // entries: two is the manifold case, a third only marks the edge
+        // non-manifold below — further pushes would be unbounded memory on
+        // degenerate input for no extra information.
         let mut adj: std::collections::HashMap<(u32, u32), Vec<u32>> =
             std::collections::HashMap::new();
         for t in 0..tri_count {
@@ -317,7 +320,10 @@ impl TriangleMesh {
                     continue; // degenerate sliver edge
                 }
                 let key = if a < b { (a, b) } else { (b, a) };
-                adj.entry(key).or_default().push(t as u32);
+                let tris = adj.entry(key).or_default();
+                if tris.len() < 3 {
+                    tris.push(t as u32);
+                }
             }
         }
 
@@ -332,7 +338,7 @@ impl TriangleMesh {
                     let dot = n0[0] * n1[0] + n0[1] * n1[1] + n0[2] * n1[2];
                     dot < cos_thresh
                 }
-                _ => true, // non-manifold: surface something is wrong
+                _ => true, // non-manifold (3+ adjacent tris): surface it
             };
             if feature {
                 let (ia, ib) = (*a as usize * 3, *b as usize * 3);
