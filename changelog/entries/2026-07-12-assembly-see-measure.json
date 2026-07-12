@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-12-assembly-see-measure",
+  "version": "0.9.4",
+  "date": "2026-07-12",
+  "category": "fix",
+  "title": "Assemblies render, preview, and inspect",
+  "summary": "Assembly-only documents (partDefs + instances) now work across render_view, the inline 3D preview, and inspect_cad instead of reporting no geometry.",
+  "features": ["assembly", "render", "mcp"],
+  "mcpTools": ["render_view", "inspect_cad", "create_cad_loon"]
+}

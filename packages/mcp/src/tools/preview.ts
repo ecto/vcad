@@ -13,7 +13,7 @@
  */
 
 import type { Document } from "@vcad/ir";
-import { pcbPreviewMeshes, type Engine } from "@vcad/engine";
+import { pcbPreviewMeshes, transformMesh, type Engine } from "@vcad/engine";
 import { getNodePcb } from "@vcad/core";
 import {
   buildGlb,
@@ -172,6 +172,28 @@ export async function generateGlbPreview(
         positions: part.mesh.positions,
         indices: part.mesh.indices,
         normals: part.mesh.normals,
+        color: DEFAULT_MATERIAL.color,
+        metallic: DEFAULT_MATERIAL.metallic,
+        roughness: DEFAULT_MATERIAL.roughness,
+      });
+    }
+
+    // Assembly instances (part-local mesh + world transform). Bake the
+    // transform into the vertices so an assembly-only document previews
+    // instead of showing an empty grid.
+    for (const inst of scene?.instances ?? []) {
+      const mesh = inst.transform
+        ? transformMesh(inst.mesh, {
+            translate: inst.transform.translation,
+            rotate: inst.transform.rotation,
+            scale: inst.transform.scale,
+          })
+        : inst.mesh;
+      meshes.push({
+        name: `${inst.instanceId}:${inst.name ?? ""}`,
+        positions: mesh.positions,
+        indices: mesh.indices,
+        normals: mesh.normals,
         color: DEFAULT_MATERIAL.color,
         metallic: DEFAULT_MATERIAL.metallic,
         roughness: DEFAULT_MATERIAL.roughness,

@@ -45,6 +45,7 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 
 use vcad_eval::{evaluate_document, EvalOptions};
 use vcad_ir::file_io::parse_vcad_file;
+use vcad_kernel::vcad_kernel_math::Transform;
 use vcad_kernel::Solid;
 
 // ─── tunable knobs ────────────────────────────────────────────────────────
@@ -247,7 +248,7 @@ fn evaluate_vcad(raw_vcad: &str) -> Result<Vec<TintedSolid>, String> {
     .map_err(|e| format!("eval: {}", e))?;
 
     let materials = &parsed.document.materials;
-    let solids: Vec<TintedSolid> = scene
+    let mut solids: Vec<TintedSolid> = scene
         .parts
         .iter()
         .filter_map(|p| {
@@ -257,7 +258,82 @@ fn evaluate_vcad(raw_vcad: &str) -> Result<Vec<TintedSolid>, String> {
             })
         })
         .collect();
+
+    // Assembly instances: `evaluate_document` only carries meshes for
+    // instances, not BRep solids, so re-evaluate each referenced part
+    // definition once and place a transformed copy per instance. Without
+    // this, an assembly-only document (no scene roots) rendered as
+    // "no solids produced" despite being perfectly valid.
+    solids.extend(evaluate_assembly_instances(&parsed.document)?);
     Ok(solids)
+}
+
+/// Evaluate the document's assembly instances (if any) into world-placed
+/// tinted solids. Part-definition solids are evaluated once and shared;
+/// per-instance world poses come from forward kinematics, falling back to
+/// the instance's static transform.
+fn evaluate_assembly_instances(doc: &vcad_ir::Document) -> Result<Vec<TintedSolid>, String> {
+    let (Some(part_defs), Some(instances)) = (&doc.part_defs, &doc.instances) else {
+        return Ok(Vec::new());
+    };
+    if part_defs.is_empty() || instances.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let world = catch_unwind(AssertUnwindSafe(|| {
+        vcad_eval::solve_forward_kinematics(doc)
+    }))
+    .map_err(|_| "fk panicked".to_string())?;
+
+    let mut cache: HashMap<vcad_ir::NodeId, Option<Solid>> = HashMap::new();
+    let mut def_solids: HashMap<&str, Option<Solid>> = HashMap::new();
+    let mut out = Vec::new();
+
+    for inst in instances {
+        let Some(def) = part_defs.get(&inst.part_def_id) else {
+            continue;
+        };
+        let solid = def_solids
+            .entry(inst.part_def_id.as_str())
+            .or_insert_with(|| {
+                catch_unwind(AssertUnwindSafe(|| {
+                    vcad_eval::evaluate_node(def.root, &doc.nodes, &mut cache)
+                        .ok()
+                        .flatten()
+                }))
+                .unwrap_or(None)
+            })
+            .clone();
+        let Some(solid) = solid else { continue };
+
+        let placed = match world.get(&inst.id).cloned().or(inst.transform) {
+            Some(t) => solid.apply_transform(&transform3d_to_kernel(&t)),
+            None => solid,
+        };
+
+        let material = inst
+            .material
+            .clone()
+            .or_else(|| def.default_material.clone())
+            .unwrap_or_else(|| "default".to_string());
+        let color = doc.materials.get(&material).map(|m| m.color);
+        out.push((placed, color));
+    }
+    Ok(out)
+}
+
+/// IR `Transform3D` → kernel `Transform`, matching the evaluator's
+/// convention: scale, then Rx·Ry·Rz (applied x-first), then translation.
+fn transform3d_to_kernel(t: &vcad_ir::Transform3D) -> Transform {
+    Transform::scale(t.scale.x, t.scale.y, t.scale.z)
+        .then(&Transform::rotation_x(t.rotation.x.to_radians()))
+        .then(&Transform::rotation_y(t.rotation.y.to_radians()))
+        .then(&Transform::rotation_z(t.rotation.z.to_radians()))
+        .then(&Transform::translation(
+            t.translation.x,
+            t.translation.y,
+            t.translation.z,
+        ))
 }
 
 // ─── canonicalized per-solid mesh ─────────────────────────────────────────
@@ -1789,6 +1865,37 @@ mod tests {
   "roots": [{{ "root": 1, "material": "aluminum" }}]
 }}"#
         )
+    }
+
+    /// Regression: an assembly-only document (partDefs + instances, no
+    /// scene roots) must render its placed instances rather than failing
+    /// with "no solids produced".
+    #[test]
+    fn assembly_instances_render() {
+        let vcad = r#"{
+  "version": "0.1",
+  "nodes": {
+    "1": { "id": 1, "name": "base", "op": { "type": "Cube", "size": { "x": 40.0, "y": 40.0, "z": 5.0 } } },
+    "2": { "id": 2, "name": "post", "op": { "type": "Cylinder", "radius": 5.0, "height": 30.0, "segments": 0 } }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [],
+  "partDefs": {
+    "base": { "id": "base", "name": "base", "root": 1 },
+    "post": { "id": "post", "name": "post", "root": 2 }
+  },
+  "instances": [
+    { "id": "base1", "partDefId": "base", "transform": { "translation": { "x": 0.0, "y": 0.0, "z": 0.0 }, "rotation": { "x": 0.0, "y": 0.0, "z": 0.0 }, "scale": { "x": 1.0, "y": 1.0, "z": 1.0 } } },
+    { "id": "post1", "partDefId": "post", "transform": { "translation": { "x": 20.0, "y": 20.0, "z": 5.0 }, "rotation": { "x": 0.0, "y": 0.0, "z": 0.0 }, "scale": { "x": 1.0, "y": 1.0, "z": 1.0 } } }
+  ],
+  "groundInstanceId": "base1"
+}"#;
+        let svg = render_svg_str(vcad, 2.0).expect("assembly should render");
+        assert!(
+            svg.matches("<polygon").count() > 6,
+            "expected filled polygons for both instances"
+        );
     }
 
     /// Regression: the cone's lateral facets wind inward, so winding-only
