@@ -28,6 +28,26 @@ struct DocRoot {
     let visible: Bool
 }
 
+/// A named document-level parameter (`parameters` in the .vcad JSON). Literal
+/// parameters scrub live in the inspector; formula parameters (derived from
+/// other parameters) display read-only. Bindings fan a parameter out to node
+/// fields inside the kernel's `evaluate_document`, so writing one value here
+/// re-solves every bound field together.
+struct DocParameter: Identifiable {
+    let name: String
+    /// Literal value, when `value` is a bare number. nil for formulas.
+    let value: Double?
+    /// Formula source, when `value` is an expression string. nil for literals.
+    let formula: String?
+    let unit: String?
+    let min: Double?
+    let max: Double?
+    let description: String?
+
+    var id: String { name }
+    var isLiteral: Bool { value != nil }
+}
+
 /// A material definition embedded in the document (color + PBR scalars).
 struct DocMaterial {
     let color: (Double, Double, Double)
@@ -42,6 +62,8 @@ struct DocumentGraph {
     let nodes: [Int: DocNode]
     let roots: [DocRoot]
     let materials: [String: DocMaterial]
+    /// Document-level named parameters, sorted by name for a stable inspector.
+    let parameters: [DocParameter]
 
     /// Visible roots in order — index-aligned with the kernel scene's parts.
     var visibleRoots: [DocRoot] { roots.filter { $0.visible } }
@@ -95,8 +117,30 @@ struct DocumentGraph {
             }
         }
 
+        var parameters: [DocParameter] = []
+        if let raw = obj["parameters"] as? [String: Any] {
+            for (name, v) in raw {
+                guard let p = v as? [String: Any] else { continue }
+                // `value` is serde-untagged: a bare number (literal) or a
+                // string (formula). Anything else is a malformed entry — skip.
+                let literal = (p["value"] as? NSNumber)?.doubleValue
+                let formula = p["value"] as? String
+                guard literal != nil || formula != nil else { continue }
+                parameters.append(DocParameter(
+                    name: name,
+                    value: literal,
+                    formula: formula,
+                    unit: p["unit"] as? String,
+                    min: (p["min"] as? NSNumber)?.doubleValue,
+                    max: (p["max"] as? NSNumber)?.doubleValue,
+                    description: p["description"] as? String))
+            }
+            parameters.sort { $0.name < $1.name }
+        }
+
         guard !nodes.isEmpty, !roots.isEmpty else { return nil }
-        return DocumentGraph(nodes: nodes, roots: roots, materials: materials)
+        return DocumentGraph(nodes: nodes, roots: roots, materials: materials,
+                             parameters: parameters)
     }
 
     // MARK: feature tree
@@ -513,6 +557,18 @@ enum DocEdit {
 
     static func setScalar(_ json: inout [String: Any], nodeId: Int, key: String, value: Double) {
         mutateOp(&json, nodeId: nodeId) { $0[key] = value }
+    }
+
+    /// Overwrite a document-level parameter's literal value. Formula parameters
+    /// and unknown names are left untouched (the inspector only scrubs
+    /// literals). Sidecar fields (unit/min/max/description) are preserved.
+    static func setParameter(_ json: inout [String: Any], name: String, value: Double) {
+        guard var params = json["parameters"] as? [String: Any],
+              var p = params[name] as? [String: Any],
+              p["value"] is NSNumber else { return }
+        p["value"] = value
+        params[name] = p
+        json["parameters"] = params
     }
 
     static func setInt(_ json: inout [String: Any], nodeId: Int, key: String, value: Int) {

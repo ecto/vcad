@@ -82,6 +82,30 @@ impl VcadMeshView {
     }
 }
 
+/// Owned feature-edge segment buffer for wireframe overlays. Flat layout:
+/// 6 `f32`s per segment (ax, ay, az, bx, by, bz).
+pub struct VcadEdges {
+    inner: Vec<f32>,
+}
+
+/// A borrowed view into a [`VcadEdges`] buffer. `floats_len` is the number of
+/// `f32`s (a multiple of 6); pointers are valid until the owning handle is
+/// freed.
+#[repr(C)]
+pub struct VcadEdgesView {
+    pub floats: *const f32,
+    pub floats_len: usize,
+}
+
+impl VcadEdgesView {
+    fn empty() -> Self {
+        Self {
+            floats: ptr::null(),
+            floats_len: 0,
+        }
+    }
+}
+
 /// ABI version, bumped on any breaking change to these signatures. Lets the
 /// Swift side assert it linked a compatible static lib.
 #[no_mangle]
@@ -314,6 +338,319 @@ pub extern "C" fn vcad_scene_part_mesh(scene: *const VcadScene, index: usize) ->
         return VcadMeshView::empty();
     };
     eval_mesh_view(&part.mesh)
+}
+
+/// Extract the `index`-th part's feature edges (boundary + creases sharper
+/// than `angle_deg`) for a wireframe/edge overlay. Returns an owned handle;
+/// read it with [`vcad_edges_view`] and release it with [`vcad_edges_free`].
+/// Returns null on null scene, out-of-range index, or panic.
+#[no_mangle]
+pub extern "C" fn vcad_scene_part_edges(
+    scene: *const VcadScene,
+    index: usize,
+    angle_deg: f32,
+) -> *mut VcadEdges {
+    if scene.is_null() {
+        return ptr::null_mut();
+    }
+    catch_unwind(AssertUnwindSafe(|| {
+        let s: &VcadScene = unsafe { &*scene };
+        let Some(part) = s.inner.parts.get(index) else {
+            return ptr::null_mut();
+        };
+        // EvaluatedMesh is positions/indices only — rewrap as a kernel
+        // TriangleMesh for the feature-edge extractor.
+        let mut mesh = TriangleMesh::new();
+        mesh.vertices = part.mesh.positions.clone();
+        mesh.indices = part.mesh.indices.clone();
+        let segs = mesh.feature_edge_segments(angle_deg);
+        let mut flat = Vec::with_capacity(segs.len() * 6);
+        for s in segs {
+            flat.extend_from_slice(&s);
+        }
+        Box::into_raw(Box::new(VcadEdges { inner: flat }))
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
+/// Extract feature edges from a standalone mesh (same semantics as
+/// [`vcad_scene_part_edges`]). Returns null on null input or panic.
+#[no_mangle]
+pub extern "C" fn vcad_mesh_edges(mesh: *const VcadMesh, angle_deg: f32) -> *mut VcadEdges {
+    if mesh.is_null() {
+        return ptr::null_mut();
+    }
+    catch_unwind(AssertUnwindSafe(|| {
+        let m: &VcadMesh = unsafe { &*mesh };
+        let segs = m.inner.feature_edge_segments(angle_deg);
+        let mut flat = Vec::with_capacity(segs.len() * 6);
+        for s in segs {
+            flat.extend_from_slice(&s);
+        }
+        Box::into_raw(Box::new(VcadEdges { inner: flat }))
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
+/// Borrow the buffer of an edge handle. On null input, returns an empty view.
+#[no_mangle]
+pub extern "C" fn vcad_edges_view(edges: *const VcadEdges) -> VcadEdgesView {
+    if edges.is_null() {
+        return VcadEdgesView::empty();
+    }
+    let e: &VcadEdges = unsafe { &*edges };
+    VcadEdgesView {
+        floats: e.inner.as_ptr(),
+        floats_len: e.inner.len(),
+    }
+}
+
+/// Free an edge handle. No-op on null.
+#[no_mangle]
+pub extern "C" fn vcad_edges_free(edges: *mut VcadEdges) {
+    if !edges.is_null() {
+        drop(unsafe { Box::from_raw(edges) });
+    }
+}
+
+// =========================================================================
+// Direct BRep ray tracing — the pixel-perfect render mode. Rays intersect
+// the analytic surfaces (no tessellation), so silhouettes and bores are
+// exact at any zoom. CPU path today; the signature is renderer-agnostic so
+// the wgpu/Metal compute pipeline can swap in behind it.
+// =========================================================================
+
+/// Owned RGBA8 frame from [`vcad_scene_raytrace`].
+pub struct VcadImage {
+    pixels: Vec<u8>,
+    width: u32,
+    height: u32,
+}
+
+/// Borrowed view of a [`VcadImage`]: tightly packed RGBA8, row-major,
+/// `pixels_len == width * height * 4`.
+#[repr(C)]
+pub struct VcadImageView {
+    pub pixels: *const u8,
+    pub pixels_len: usize,
+    pub width: u32,
+    pub height: u32,
+}
+
+impl VcadImageView {
+    fn empty() -> Self {
+        Self {
+            pixels: ptr::null(),
+            pixels_len: 0,
+            width: 0,
+            height: 0,
+        }
+    }
+}
+
+/// Ray-trace every BRep part of an evaluated scene from a pinhole camera.
+/// All positions are kernel coordinates (Z-up, mm). `colors` is 3 `f32`s
+/// per part (linear RGB); parts beyond `colors_len / 3` fall back to a
+/// neutral tone. Parts without a retained BRep solid (pure mesh imports)
+/// are skipped. Returns null on null/empty input or panic.
+#[no_mangle]
+#[allow(clippy::too_many_arguments)]
+pub extern "C" fn vcad_scene_raytrace(
+    scene: *const VcadScene,
+    cam: *const f64,    // [x, y, z]
+    target: *const f64, // [x, y, z]
+    fov_deg: f64,
+    width: u32,
+    height: u32,
+    colors: *const f32,
+    colors_len: usize,
+) -> *mut VcadImage {
+    if scene.is_null() || cam.is_null() || target.is_null() || width == 0 || height == 0 {
+        return ptr::null_mut();
+    }
+    catch_unwind(AssertUnwindSafe(|| {
+        let s: &VcadScene = unsafe { &*scene };
+        let cam = unsafe { std::slice::from_raw_parts(cam, 3) };
+        let target = unsafe { std::slice::from_raw_parts(target, 3) };
+        let color_slice: &[f32] = if colors.is_null() || colors_len == 0 {
+            &[]
+        } else {
+            unsafe { std::slice::from_raw_parts(colors, colors_len) }
+        };
+
+        let mut solids = Vec::new();
+        let mut part_colors = Vec::new();
+        for (i, part) in s.inner.parts.iter().enumerate() {
+            let Some(brep) = part.solid.as_ref().and_then(|sol| sol.as_brep()) else {
+                continue;
+            };
+            solids.push(std::sync::Arc::new(brep.clone()));
+            if color_slice.len() >= (i + 1) * 3 {
+                part_colors.extend_from_slice(&color_slice[i * 3..i * 3 + 3]);
+            } else {
+                part_colors.extend_from_slice(&[0.62, 0.66, 0.70]);
+            }
+        }
+        if solids.is_empty() {
+            return ptr::null_mut();
+        }
+
+        let pixels = vcad_kernel_raytrace::cpu::render_scene_transparent(
+            &solids,
+            &[], // identity transforms — parts are already in scene coords
+            &part_colors,
+            Point3::new(cam[0], cam[1], cam[2]),
+            Point3::new(target[0], target[1], target[2]),
+            vcad_kernel_math::Dir3::new_normalize(Vec3::new(0.0, 0.0, 1.0)), // Z-up
+            width,
+            height,
+            fov_deg,
+        );
+        Box::into_raw(Box::new(VcadImage {
+            pixels,
+            width,
+            height,
+        }))
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
+/// Ray-trace the scene on the GPU (wgpu → Metal on macOS) with the full
+/// web-parity pipeline: progressive-quality frame with analytic edges,
+/// SSAO, sky + ground environment. Unlike [`vcad_scene_raytrace`] the
+/// frame is opaque (the shader draws its own backdrop) and is meant to
+/// fill the viewport. `metallic`/`roughness` ride per-part after `colors`
+/// (3 f32 per part); parts beyond the array get a neutral metal.
+///
+/// Returns null when no GPU adapter is available (caller falls back to
+/// the CPU path), when the scene has no BRep parts, or on panic. The
+/// device + pipeline initialize once and are reused across calls.
+#[no_mangle]
+#[allow(clippy::too_many_arguments)]
+pub extern "C" fn vcad_scene_raytrace_gpu(
+    scene: *const VcadScene,
+    cam: *const f64,
+    target: *const f64,
+    fov_deg: f64,
+    width: u32,
+    height: u32,
+    colors: *const f32,
+    colors_len: usize,
+) -> *mut VcadImage {
+    if scene.is_null() || cam.is_null() || target.is_null() || width == 0 || height == 0 {
+        return ptr::null_mut();
+    }
+    catch_unwind(AssertUnwindSafe(|| {
+        use vcad_kernel_raytrace::gpu::{GpuCamera, GpuRenderState, GpuScene, RayTracePipeline};
+
+        // One-time device + pipeline init; None is remembered so a machine
+        // without a GPU only pays the probe once.
+        static PIPELINE: std::sync::OnceLock<Option<RayTracePipeline>> = std::sync::OnceLock::new();
+        let Some(pipeline) = PIPELINE
+            .get_or_init(|| {
+                let ctx = vcad_kernel_gpu::GpuContext::init_blocking().ok()?;
+                RayTracePipeline::new(ctx).ok()
+            })
+            .as_ref()
+        else {
+            return ptr::null_mut();
+        };
+        let Some(ctx) = vcad_kernel_gpu::GpuContext::get() else {
+            return ptr::null_mut();
+        };
+
+        let s: &VcadScene = unsafe { &*scene };
+        let cam = unsafe { std::slice::from_raw_parts(cam, 3) };
+        let target = unsafe { std::slice::from_raw_parts(target, 3) };
+        let color_slice: &[f32] = if colors.is_null() || colors_len == 0 {
+            &[]
+        } else {
+            unsafe { std::slice::from_raw_parts(colors, colors_len) }
+        };
+
+        // Upload every BRep part, coloring each before the merge so the
+        // per-scene material index survives the offset arithmetic.
+        let mut merged: Option<GpuScene> = None;
+        for (i, part) in s.inner.parts.iter().enumerate() {
+            let Some(brep) = part.solid.as_ref().and_then(|sol| sol.as_brep()) else {
+                continue;
+            };
+            let Ok(mut gs) = GpuScene::from_brep(brep) else {
+                continue;
+            };
+            let c = if color_slice.len() >= (i + 1) * 3 {
+                [
+                    color_slice[i * 3],
+                    color_slice[i * 3 + 1],
+                    color_slice[i * 3 + 2],
+                ]
+            } else {
+                [0.62, 0.66, 0.70]
+            };
+            gs.set_material(c[0], c[1], c[2], 0.85, 0.35);
+            merged = Some(match merged {
+                Some(acc) => acc.merge(gs),
+                None => gs,
+            });
+        }
+        let Some(gpu_scene) = merged else {
+            return ptr::null_mut();
+        };
+
+        let camera = GpuCamera::new(
+            [cam[0] as f32, cam[1] as f32, cam[2] as f32],
+            [target[0] as f32, target[1] as f32, target[2] as f32],
+            [0.0, 0.0, 1.0],
+            fov_deg.to_radians() as f32,
+            width,
+            height,
+        );
+
+        let result = pollster::block_on(pipeline.render_with_render_state(
+            ctx,
+            &gpu_scene,
+            &camera,
+            width,
+            height,
+            None,
+            None,
+            GpuRenderState::new(1),
+        ));
+        match result {
+            Ok((pixels, _accum, _ao)) if pixels.len() == (width * height * 4) as usize => {
+                Box::into_raw(Box::new(VcadImage {
+                    pixels,
+                    width,
+                    height,
+                }))
+            }
+            _ => ptr::null_mut(),
+        }
+    }))
+    .unwrap_or(ptr::null_mut())
+}
+
+/// Borrow an image's pixel buffer. On null input, returns an empty view.
+#[no_mangle]
+pub extern "C" fn vcad_image_view(image: *const VcadImage) -> VcadImageView {
+    if image.is_null() {
+        return VcadImageView::empty();
+    }
+    let img: &VcadImage = unsafe { &*image };
+    VcadImageView {
+        pixels: img.pixels.as_ptr(),
+        pixels_len: img.pixels.len(),
+        width: img.width,
+        height: img.height,
+    }
+}
+
+/// Free an image handle. No-op on null.
+#[no_mangle]
+pub extern "C" fn vcad_image_free(image: *mut VcadImage) {
+    if !image.is_null() {
+        drop(unsafe { Box::from_raw(image) });
+    }
 }
 
 /// Free a scene handle. No-op on null.
@@ -2035,6 +2372,56 @@ mod tests {
         vcad_solid_free(cube);
     }
 
+    /// The native inspector's document-parameter scrub writes
+    /// `parameters.<name>.value` (untagged number) into the doc JSON and
+    /// re-evaluates through `vcad_scene_from_json`; bindings fan the value out
+    /// to node fields. Lock that wire shape down end-to-end.
+    #[test]
+    fn scene_from_json_resolves_parameters_and_bindings() {
+        fn doc_json(width: f64) -> String {
+            format!(
+                r#"{{
+                    "version": "0.1",
+                    "materials": {{}},
+                    "part_materials": {{}},
+                    "nodes": {{
+                        "1": {{ "id": 1, "op": {{ "type": "Cube", "size": {{ "x": 1.0, "y": 10.0, "z": 10.0 }} }} }}
+                    }},
+                    "roots": [ {{ "root": 1, "material": "default" }} ],
+                    "parameters": {{
+                        "width": {{ "value": {width}, "min": 5.0, "max": 80.0, "unit": "mm" }}
+                    }},
+                    "bindings": {{ "1:size.x": "width" }}
+                }}"#
+            )
+        }
+        fn max_x(json: &str) -> f32 {
+            let scene = vcad_scene_from_json(json.as_ptr(), json.len());
+            assert!(!scene.is_null(), "parametric doc should evaluate");
+            let view = vcad_scene_part_mesh(scene, 0);
+            let verts = unsafe { std::slice::from_raw_parts(view.vertices, view.vertices_len) };
+            let mx = verts.chunks(3).map(|v| v[0]).fold(f32::MIN, f32::max);
+            vcad_scene_free(scene);
+            mx
+        }
+        assert!((max_x(&doc_json(20.0)) - 20.0).abs() < 1e-4);
+        assert!((max_x(&doc_json(50.0)) - 50.0).abs() < 1e-4);
+    }
+
+    /// Guard the shipped parametric example: it must keep evaluating (the
+    /// native app's demo doc for the document-parameter scrub), including its
+    /// derived formula parameter and cross-parameter bindings.
+    #[test]
+    fn parametric_plate_example_evaluates() {
+        let json = include_str!("../../../examples/parametric-plate.vcad");
+        let scene = vcad_scene_from_json(json.as_ptr(), json.len());
+        assert!(!scene.is_null(), "example should parse and evaluate");
+        assert_eq!(vcad_scene_part_count(scene), 1);
+        let view = vcad_scene_part_mesh(scene, 0);
+        assert!(view.vertices_len > 0 && view.indices_len > 0);
+        vcad_scene_free(scene);
+    }
+
     #[test]
     fn null_inputs_are_safe() {
         assert!(vcad_solid_to_mesh(ptr::null(), 8).is_null());
@@ -2042,5 +2429,110 @@ mod tests {
         assert_eq!(view.vertices_len, 0);
         vcad_mesh_free(ptr::null_mut());
         vcad_solid_free(ptr::null_mut());
+        assert!(vcad_scene_part_edges(ptr::null(), 0, 25.0).is_null());
+        assert_eq!(vcad_edges_view(ptr::null()).floats_len, 0);
+        vcad_edges_free(ptr::null_mut());
+    }
+
+    #[test]
+    fn scene_part_edges_returns_segments_for_the_example() {
+        let json = include_str!("../../../examples/parametric-plate.vcad");
+        let scene = vcad_scene_from_json(json.as_ptr(), json.len());
+        assert!(!scene.is_null());
+        let edges = vcad_scene_part_edges(scene, 0, 25.0);
+        assert!(!edges.is_null());
+        let view = vcad_edges_view(edges);
+        assert!(
+            view.floats_len > 0 && view.floats_len % 6 == 0,
+            "edges must be 6 floats per segment, got {}",
+            view.floats_len
+        );
+        // Out of range index → null, not a crash.
+        assert!(vcad_scene_part_edges(scene, 99, 25.0).is_null());
+        vcad_edges_free(edges);
+        vcad_scene_free(scene);
+    }
+
+    /// Needs a real GPU adapter — run manually / on GPU hosts:
+    /// `cargo test -p vcad-ffi gpu_raytrace -- --ignored`
+    #[test]
+    #[ignore = "requires a GPU adapter (Metal/Vulkan)"]
+    fn gpu_raytrace_renders_the_example_plate() {
+        let json = include_str!("../../../examples/parametric-plate.vcad");
+        let scene = vcad_scene_from_json(json.as_ptr(), json.len());
+        assert!(!scene.is_null());
+        let cam = [40.0, -80.0, 90.0];
+        let target = [40.0, 25.0, 3.0];
+        let colors = [0.7f32, 0.7, 0.75];
+        let img = vcad_scene_raytrace_gpu(
+            scene,
+            cam.as_ptr(),
+            target.as_ptr(),
+            35.0,
+            320,
+            240,
+            colors.as_ptr(),
+            colors.len(),
+        );
+        assert!(!img.is_null(), "GPU raytrace should produce a frame");
+        let view = vcad_image_view(img);
+        assert_eq!(view.pixels_len, 320 * 240 * 4);
+        // The frame must not be uniform (sky + plate + ground all present).
+        let px = unsafe { std::slice::from_raw_parts(view.pixels, view.pixels_len) };
+        let first = &px[0..3];
+        assert!(
+            px.chunks(4).any(|p| &p[0..3] != first),
+            "GPU frame is uniform — pipeline produced nothing"
+        );
+        vcad_image_free(img);
+        vcad_scene_free(scene);
+    }
+
+    #[test]
+    fn scene_raytrace_renders_the_example_plate() {
+        let json = include_str!("../../../examples/parametric-plate.vcad");
+        let scene = vcad_scene_from_json(json.as_ptr(), json.len());
+        assert!(!scene.is_null());
+        // Camera above and in front of the 80×50×6 plate, looking at its center.
+        let cam = [40.0, -80.0, 90.0];
+        let target = [40.0, 25.0, 3.0];
+        let colors = [0.7f32, 0.7, 0.75];
+        let img = vcad_scene_raytrace(
+            scene,
+            cam.as_ptr(),
+            target.as_ptr(),
+            35.0,
+            160,
+            120,
+            colors.as_ptr(),
+            colors.len(),
+        );
+        assert!(!img.is_null(), "raytrace should produce a frame");
+        let view = vcad_image_view(img);
+        assert_eq!(view.pixels_len, 160 * 120 * 4);
+        // The plate must actually appear (alpha 255), over a transparent
+        // background (alpha 0) so the app can composite the still.
+        let px = unsafe { std::slice::from_raw_parts(view.pixels, view.pixels_len) };
+        let lit = px.chunks(4).filter(|p| p[3] == 255).count();
+        let clear = px.chunks(4).filter(|p| p[3] == 0).count();
+        assert!(lit > 500, "expected the plate to cover pixels, lit={lit}");
+        assert!(
+            clear > 500,
+            "expected transparent background, clear={clear}"
+        );
+        vcad_image_free(img);
+        // Null / degenerate inputs fail closed.
+        assert!(vcad_scene_raytrace(
+            scene,
+            ptr::null(),
+            target.as_ptr(),
+            35.0,
+            8,
+            8,
+            ptr::null(),
+            0
+        )
+        .is_null());
+        vcad_scene_free(scene);
     }
 }

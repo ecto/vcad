@@ -59,6 +59,40 @@ size_t vcad_scene_part_count(const VcadScene *scene);
 VcadMeshView vcad_scene_part_mesh(const VcadScene *scene, size_t index);
 void vcad_scene_free(VcadScene *scene);
 
+/* Feature edges (boundary + creases sharper than angle_deg) for the
+ * wireframe/edge overlay. 6 floats per segment: ax ay az bx by bz. */
+typedef struct VcadEdges VcadEdges;
+typedef struct VcadEdgesView {
+  const float *floats;
+  size_t floats_len;
+} VcadEdgesView;
+VcadEdges *vcad_scene_part_edges(const VcadScene *scene, size_t index, float angle_deg);
+VcadEdges *vcad_mesh_edges(const VcadMesh *mesh, float angle_deg);
+VcadEdgesView vcad_edges_view(const VcadEdges *edges);
+void vcad_edges_free(VcadEdges *edges);
+
+/* Direct BRep ray tracing (pixel-perfect mode): rays hit analytic surfaces,
+ * no tessellation. Kernel coords (Z-up, mm); colors = 3 f32 per part
+ * (linear RGB); RGBA8 row-major output. CPU renderer today, signature is
+ * renderer-agnostic (Metal/wgpu can swap in behind it). */
+typedef struct VcadImage VcadImage;
+typedef struct VcadImageView {
+  const uint8_t *pixels;
+  size_t pixels_len;
+  uint32_t width;
+  uint32_t height;
+} VcadImageView;
+VcadImage *vcad_scene_raytrace(const VcadScene *scene, const double *cam,
+                               const double *target, double fov_deg,
+                               uint32_t width, uint32_t height,
+                               const float *colors, size_t colors_len);
+VcadImage *vcad_scene_raytrace_gpu(const VcadScene *scene, const double *cam,
+                                   const double *target, double fov_deg,
+                                   uint32_t width, uint32_t height,
+                                   const float *colors, size_t colors_len);
+VcadImageView vcad_image_view(const VcadImage *image);
+void vcad_image_free(VcadImage *image);
+
 /* Resident parametric document — set one parameter, re-solve every bound domain.
  * vcad_doc_gripper_slice1 builds the cross-domain worked example (one connector_x
  * drives an enclosure cutout + a board connector). */

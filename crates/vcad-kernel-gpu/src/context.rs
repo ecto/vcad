@@ -70,8 +70,11 @@ pub struct GpuContext {
 impl GpuContext {
     /// Create a new GPU context from device and queue.
     async fn create() -> Result<Self, GpuError> {
+        // PRIMARY = Vulkan | Metal | DX12 | BrowserWebGPU — the same web
+        // backends as before, plus native GPUs (Metal on macOS) so the
+        // desktop app gets the compute pipelines too. GL stays as fallback.
         let instance = Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::BROWSER_WEBGPU | wgpu::Backends::GL,
+            backends: wgpu::Backends::PRIMARY | wgpu::Backends::GL,
             ..Default::default()
         });
 

@@ -152,12 +152,77 @@ final class StreamingMesh {
 
 /// A renderable, auto-fit scene: meshes + their colors, plus the combined
 /// bounds so the viewport can center and scale arbitrary part sizes.
+/// `edges[i]` (when present) holds part i's feature-edge segments as flat
+/// endpoint pairs, for the CAD edge overlay.
 struct RenderScene {
     var meshes: [(mesh: MeshResource, color: NSColor)]
     var center: SIMD3<Float>
     var size: Float
     var triangleCount: Int
     var partCount: Int
+    var edges: [[SIMD3<Float>]] = []
 
     static let empty = RenderScene(meshes: [], center: .zero, size: 1, triangleCount: 0, partCount: 0)
+}
+
+/// Feature-edge overlay support: converts a kernel `VcadEdgesView` into
+/// segment endpoints and builds a renderable ribbon mesh (RealityKit has no
+/// line primitive, so each segment becomes two crossed quads — reads as a
+/// crisp line from every direction at CAD zoom levels).
+enum EdgeOverlay {
+    /// Flat endpoint pairs [a0, b0, a1, b1, ...] from the FFI view.
+    static func segments(fromView v: VcadEdgesView) -> [SIMD3<Float>] {
+        guard let p = v.floats, v.floats_len >= 6 else { return [] }
+        let segCount = v.floats_len / 6
+        var out = [SIMD3<Float>]()
+        out.reserveCapacity(segCount * 2)
+        for s in 0..<segCount {
+            let o = s * 6
+            out.append(SIMD3<Float>(p[o], p[o + 1], p[o + 2]))
+            out.append(SIMD3<Float>(p[o + 3], p[o + 4], p[o + 5]))
+        }
+        return out
+    }
+
+    /// Build one mesh holding every segment as two crossed quads of the given
+    /// world-space width. Returns nil for empty input.
+    static func ribbonResource(segments: [SIMD3<Float>], width: Float, name: String) -> MeshResource? {
+        let segCount = segments.count / 2
+        guard segCount > 0, width > 0 else { return nil }
+        var positions = [SIMD3<Float>]()
+        var indices = [UInt32]()
+        positions.reserveCapacity(segCount * 8)
+        indices.reserveCapacity(segCount * 24)
+        let h = width / 2
+        for s in 0..<segCount {
+            let a = segments[s * 2], b = segments[s * 2 + 1]
+            let d = b - a
+            let len = length(d)
+            guard len > 1e-6 else { continue }
+            let dir = d / len
+            // Two perpendicular in-plane axes for the crossed quads.
+            let ref: SIMD3<Float> = abs(dir.z) < 0.9 ? [0, 0, 1] : [1, 0, 0]
+            let u = normalize(cross(dir, ref))
+            let v = normalize(cross(dir, u))
+            let base = UInt32(positions.count)
+            positions.append(contentsOf: [
+                a - u * h, a + u * h, b + u * h, b - u * h,
+                a - v * h, a + v * h, b + v * h, b - v * h,
+            ])
+            for q in 0..<2 {
+                let o = base + UInt32(q * 4)
+                // Both windings so the quad is visible from either side
+                // without needing a double-sided material.
+                indices.append(contentsOf: [o, o + 1, o + 2, o, o + 2, o + 3])
+                indices.append(contentsOf: [o, o + 2, o + 1, o, o + 3, o + 2])
+            }
+        }
+        guard !positions.isEmpty else { return nil }
+        var d = MeshDescriptor(name: name)
+        d.positions = MeshBuffers.Positions(positions)
+        // Unlit material ignores shading, but the generator wants normals.
+        d.normals = MeshBuffers.Normals([SIMD3<Float>](repeating: [0, 0, 1], count: positions.count))
+        d.primitives = .triangles(indices)
+        return try? MeshResource.generate(from: [d])
+    }
 }

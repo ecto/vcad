@@ -22,7 +22,8 @@ let package = Package(
             dependencies: ["CVcadFFI"],
             path: "Sources/VcadApp",
             linkerSettings: [
-                .unsafeFlags(["-L", ffiLibDir])
+                .unsafeFlags(["-L", ffiLibDir]),
+                .linkedLibrary("c++"),
             ]
         ),
     ]

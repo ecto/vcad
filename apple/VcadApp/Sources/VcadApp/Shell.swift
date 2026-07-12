@@ -259,6 +259,17 @@ struct StatusStrip: View {
             Text(String(format: "%.0f×%.0f×%.0f", abs(model.sizeMM.x), abs(model.sizeMM.y), abs(model.sizeMM.z)))
             bar
             Text(String(format: "%.0f ms", model.solveMillis))
+            bar
+            // Pixel-perfect mode: settle-triggered direct-BRep ray trace.
+            Button {
+                model.raytraceEnabled.toggle()
+                if !model.raytraceEnabled { model.raytraceImage = nil }
+            } label: {
+                Text("RT")
+                    .foregroundStyle(model.raytraceEnabled ? Color.green : Color.secondary)
+            }
+            .buttonStyle(.plain)
+            .help("Ray-traced still when the camera settles — rays vs the exact BRep, no tessellation")
         }
         .font(.system(size: 11, design: .monospaced))
         .foregroundStyle(.secondary)
@@ -790,6 +801,25 @@ struct InspectorView: View {
                     }
                 }
             }
+            if model.usesDocumentTree, !model.docParameters.isEmpty {
+                // Document-level named parameters — the parametric scrub,
+                // generalized: any .vcad that declares `parameters` gets live
+                // handles here, bindings re-solving every driven node together.
+                section("Document Parameters") {
+                    ForEach(model.docParameters) { p in
+                        if let v = p.value {
+                            ScrubField(label: p.name, value: v, unit: p.unit ?? "mm",
+                                       sensitivity: Self.paramSensitivity(p),
+                                       minValue: p.min ?? -.greatestFiniteMagnitude) { v, s in
+                                model.editParameter(p.name, value: v, snapshot: s)
+                            }
+                            .help(p.description ?? p.name)
+                        } else if let f = p.formula {
+                            row(p.name, "= \(f)").help(p.description ?? p.name)
+                        }
+                    }
+                }
+            }
             section("Measurements") {
                 row("Triangles", model.triangleCount.formatted())
                 row("Bounds", boundsText)
@@ -859,6 +889,13 @@ struct InspectorView: View {
     private var boundsText: String {
         let s = model.sizeMM
         return String(format: "%.1f × %.1f × %.1f mm", abs(s.x), abs(s.y), abs(s.z))
+    }
+
+    /// Scrub sensitivity for a document parameter: span-derived when the doc
+    /// declares a range (≈200 ticks across it), else the default 0.1 mm/pt.
+    static func paramSensitivity(_ p: DocParameter) -> Double {
+        if let lo = p.min, let hi = p.max, hi > lo { return (hi - lo) / 200 }
+        return 0.1
     }
 
     /// Op types that expose live-editable parameters in the inspector.
@@ -1157,6 +1194,12 @@ struct ViewportView: View {
                 camera.position = model.cameraPosition
                 camera.look(at: model.panOffset, from: model.cameraPosition, relativeTo: nil)
             }
+            // Constant on-screen gizmo size: rescale with camera distance, the
+            // way every desktop CAD tool does (zooming never balloons it).
+            if let root = content.entities.first(where: { $0.name == "geomRoot" }),
+               let gizmo = root.findEntity(named: "gizmoRoot") {
+                gizmo.scale = SIMD3<Float>(repeating: gizmoScreenScale())
+            }
             if model.geometryDirty {
                 rebuildGeometry(content)
                 model.geometryDirty = false
@@ -1221,10 +1264,19 @@ struct ViewportView: View {
                    let centering = root.findEntity(named: "centering") {
                     for (i, m) in meshes.enumerated() {
                         (centering.findEntity(named: "part\(i)") as? ModelEntity)?.model?.mesh = m
+                        if i < model.docPartEdges.count,
+                           let ribbon = EdgeOverlay.ribbonResource(
+                               segments: model.docPartEdges[i],
+                               width: max(model.displayedSceneSize * 0.0016, 0.02),
+                               name: "edges\(i)") {
+                            (centering.findEntity(named: "edges\(i)") as? ModelEntity)?.model?.mesh = ribbon
+                        }
                     }
                     // Slide the gizmo with the part (don't rebuild — that would
                     // destroy the arm the drag is holding).
-                    centering.findEntity(named: "gizmoRoot")?.position = model.gizmoLiveOffset
+                    if let c = model.gizmoCenterKernel() {
+                        centering.findEntity(named: "gizmoRoot")?.position = c + model.gizmoLiveOffset
+                    }
                 }
                 model.docParamDirty = false
             }
@@ -1304,7 +1356,53 @@ struct ViewportView: View {
               hover(phase, viewSize: geo.size)
           }
           .onAppear { model.installScrollZoom(); model.installKeyMonitor() }
+          // Ray-traced still overlay: fades in over the rasterized view once
+          // the camera settles; any camera/edit motion drops it instantly.
+          .overlay {
+              if model.raytraceEnabled, let img = model.raytraceImage {
+                  Image(nsImage: img)
+                      .resizable()
+                      .interpolation(.high)
+                      .transition(.opacity.animation(.easeIn(duration: 0.25)))
+                      .allowsHitTesting(false)
+              }
+          }
+          .overlay(alignment: .bottomTrailing) {
+              if model.raytraceEnabled {
+                  Text(model.raytraceImage == nil ? "RT …" : "RT")
+                      .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                      .foregroundStyle(model.raytraceImage == nil ? .secondary : Color.green)
+                      .padding(.horizontal, 8).padding(.vertical, 4)
+                      .background(.regularMaterial, in: Capsule(style: .continuous))
+                      .padding(10)
+                      .allowsHitTesting(false)
+              }
+          }
+          .task(id: raytraceKey(size: geo.size)) {
+              guard model.raytraceEnabled, model.usesDocumentTree else { return }
+              model.raytraceImage = nil
+              model.raytraceToken += 1
+              let token = model.raytraceToken
+              // Settle debounce: skip while the camera is still moving.
+              try? await Task.sleep(nanoseconds: 350_000_000)
+              guard !Task.isCancelled, token == model.raytraceToken else { return }
+              // 1x-point resolution: the parallel tracer holds this in the
+              // sub-second range, and analytic edges upscale cleanly.
+              let w = max(64, Int(geo.size.width))
+              let h = max(64, Int(geo.size.height))
+              let image = await model.raytraceStillAsync(width: w, height: h)
+              guard !Task.isCancelled, token == model.raytraceToken else { return }
+              model.raytraceImage = image
+          }
         }
+    }
+
+    /// Anything that should invalidate the ray-traced still: camera orbit,
+    /// pan, zoom, parameter edits, geometry, selection tint, and view size.
+    private func raytraceKey(size: CGSize) -> String {
+        guard model.raytraceEnabled else { return "off" }
+        let c = model.cameraPosition, p = model.panOffset
+        return "\(c.x),\(c.y),\(c.z)|\(p.x),\(p.y),\(p.z)|\(model.solveMillis)|\(Int(size.width))x\(Int(size.height))"
     }
 
     // MARK: scene
@@ -1319,20 +1417,20 @@ struct ViewportView: View {
 
         // Key light with a soft grounding shadow.
         let key = DirectionalLight()
-        key.light.intensity = 5500
+        key.light.intensity = 2300
         key.shadow = DirectionalLightComponent.Shadow(maximumDistance: 4, depthBias: 2)
         key.look(at: .zero, from: [0.7, 1.1, 0.85], relativeTo: nil)
         content.add(key)
 
         // Cool rim for silhouette separation.
         let rim = DirectionalLight()
-        rim.light.intensity = 2600
+        rim.light.intensity = 1900
         rim.look(at: .zero, from: [-0.9, 0.35, -1.0], relativeTo: nil)
         content.add(rim)
 
         // Soft front-low fill to lift shadow detail without flattening.
         let fill = DirectionalLight()
-        fill.light.intensity = 1400
+        fill.light.intensity = 900
         fill.look(at: .zero, from: [-0.2, 0.5, 1.2], relativeTo: nil)
         content.add(fill)
     }
@@ -1374,11 +1472,72 @@ struct ViewportView: View {
             ctx.drawRadialGradient(g, startCenter: CGPoint(x: cx, y: cy), startRadius: 0,
                                    endCenter: CGPoint(x: cx, y: cy), endRadius: rad, options: [])
         }
-        softbox(fw * 0.20, fh * 0.80, fh * 0.42, CGColor(red: 0.52, green: 0.58, blue: 0.68, alpha: 1)) // cool key
-        softbox(fw * 0.56, fh * 0.86, fh * 0.30, CGColor(red: 0.55, green: 0.50, blue: 0.42, alpha: 1)) // warm
-        softbox(fw * 0.83, fh * 0.74, fh * 0.32, CGColor(red: 0.38, green: 0.44, blue: 0.54, alpha: 1)) // cool fill
+        softbox(fw * 0.20, fh * 0.95, fh * 0.30, CGColor(red: 0.20, green: 0.23, blue: 0.28, alpha: 1)) // cool key
+        softbox(fw * 0.56, fh * 0.97, fh * 0.22, CGColor(red: 0.22, green: 0.20, blue: 0.17, alpha: 1)) // warm
+        softbox(fw * 0.83, fh * 0.93, fh * 0.24, CGColor(red: 0.15, green: 0.18, blue: 0.22, alpha: 1)) // cool fill
         guard let img = ctx.makeImage() else { return nil }
         return try? EnvironmentResource(equirectangular: img)
+    }
+
+    /// Pick a round millimeter grid step (1/2/5 decade) so ~10–25 minor
+    /// cells span the part regardless of its size.
+    static func gridStepMM(forPartSize size: Float) -> Float {
+        guard size.isFinite, size > 0 else { return 10 }
+        let target = size / 12
+        let decade = pow(10, floor(log10(target)))
+        for m in [1 as Float, 2, 5, 10] where m * decade >= target {
+            return m * decade
+        }
+        return 10 * decade
+    }
+
+    /// One minor grid cell, tiling: hairline right/top borders with a radial
+    /// fade handled by the plane's texture as a whole. Major lines every 10
+    /// cells come from a brighter line baked at the tile edge — the texture is
+    /// a full 48×48-cell atlas so major/minor hierarchy and the radial fade
+    /// are exact (no shader needed).
+    static let gridTexture: TextureResource? = makeGridTexture()
+    private static func makeGridTexture() -> TextureResource? {
+        let cells = 48, px = 32                  // 1536×1536: crisp hairlines
+        let sz = cells * px
+        let cs = CGColorSpaceCreateDeviceRGB()
+        guard let ctx = CGContext(data: nil, width: sz, height: sz, bitsPerComponent: 8,
+                                  bytesPerRow: 0, space: cs,
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        let center = CGFloat(sz) / 2
+        let maxR = center * 0.98
+        func lineAlpha(_ x: CGFloat, _ y: CGFloat, major: Bool) -> CGFloat {
+            let d = hypot(x - center, y - center)
+            let fade = max(0, 1 - d / maxR)
+            return (major ? 0.72 : 0.34) * fade * fade
+        }
+        ctx.setLineWidth(1)
+        for i in 0...cells {
+            let major = i % 10 == 0 || i == cells
+            let v = CGFloat(i * px)
+            // Sample fade at several points along each line for a cheap
+            // radial falloff without per-pixel work.
+            let steps = 24
+            for sIdx in 0..<steps {
+                let t0 = CGFloat(sIdx) / CGFloat(steps) * CGFloat(sz)
+                let t1 = CGFloat(sIdx + 1) / CGFloat(steps) * CGFloat(sz)
+                let mid = (t0 + t1) / 2
+                let aV = lineAlpha(v, mid, major: major)
+                if aV > 0.003 {
+                    ctx.setStrokeColor(CGColor(gray: 1.0, alpha: aV))
+                    ctx.move(to: CGPoint(x: v, y: t0)); ctx.addLine(to: CGPoint(x: v, y: t1))
+                    ctx.strokePath()
+                }
+                let aH = lineAlpha(mid, v, major: major)
+                if aH > 0.003 {
+                    ctx.setStrokeColor(CGColor(gray: 1.0, alpha: aH))
+                    ctx.move(to: CGPoint(x: t0, y: v)); ctx.addLine(to: CGPoint(x: t1, y: v))
+                    ctx.strokePath()
+                }
+            }
+        }
+        guard let img = ctx.makeImage() else { return nil }
+        return try? TextureResource(image: img, options: .init(semantic: .color))
     }
 
     /// A soft radial alpha disc (dark center → clear edge) for the pooled contact
@@ -1422,6 +1581,18 @@ struct ViewportView: View {
             let entity = ModelEntity(mesh: item.mesh, materials: [mat])
             entity.name = "part\(i)"
             centering.addChild(entity)
+            // CAD edge overlay: crisp feature edges over the shading. Width is
+            // proportional to the scene so it stays visually constant across
+            // part sizes.
+            if i < scene.edges.count,
+               let ribbon = EdgeOverlay.ribbonResource(
+                   segments: scene.edges[i],
+                   width: max(scene.size * 0.0016, 0.02),
+                   name: "edges\(i)") {
+                let edgeEntity = ModelEntity(mesh: ribbon, materials: [Self.edgeMaterial])
+                edgeEntity.name = "edges\(i)"
+                centering.addChild(edgeEntity)
+            }
         }
         if model.showsHandle {
             centering.addChild(makeHandle(radius: model.modifierValue))
@@ -1468,6 +1639,31 @@ struct ViewportView: View {
         floor.name = "floor"
         floor.position = [0, floorY, 0]
         content.add(floor)
+
+        // Adaptive reference grid: minor cells snap to a 1/2/5-decade of the
+        // part size so the spacing always reads as round millimeters, with a
+        // radial fade so it grounds the part without stretching to the horizon.
+        let cellMM = Self.gridStepMM(forPartSize: model.displayedSceneSize)
+        let cellWorld = cellMM * sceneScale
+        if cellWorld > 1e-5, let gridTex = Self.gridTexture {
+            var gm = UnlitMaterial()
+            gm.color = .init(tint: NSColor(white: 1.0, alpha: 0.85), texture: .init(gridTex))
+            gm.blending = .transparent(opacity: .init(floatLiteral: 1.0))
+            let cells = 48                        // 48×48 minor cells around origin
+            let sizeW = cellWorld * Float(cells)
+            var gd = MeshDescriptor(name: "grid")
+            let h = sizeW / 2
+            gd.positions = MeshBuffers.Positions([[-h, 0, -h], [h, 0, -h], [h, 0, h], [-h, 0, h]])
+            gd.normals = MeshBuffers.Normals([[0, 1, 0], [0, 1, 0], [0, 1, 0], [0, 1, 0]])
+            gd.textureCoordinates = MeshBuffers.TextureCoordinates([[0, 0], [1, 0], [1, 1], [0, 1]])
+            gd.primitives = .triangles([0, 2, 1, 0, 3, 2, 0, 1, 2, 0, 2, 3])
+            if let gmesh = try? MeshResource.generate(from: [gd]) {
+                let grid = ModelEntity(mesh: gmesh, materials: [gm])
+                grid.name = "grid"
+                grid.position = [0, floorY + 0.0008, 0]
+                content.add(grid)
+            }
+        }
 
         // Soft AO blob right under the part (footprint: kernel XY → world XZ).
         if let tex = Self.contactTexture {
@@ -1688,6 +1884,12 @@ struct ViewportView: View {
 
     // MARK: transform gizmo overlay
 
+    /// Near-black unlit material for the feature-edge overlay — reads as ink
+    /// lines over the shaded surfaces, the classic CAD look.
+    private static let edgeMaterial: UnlitMaterial = {
+        UnlitMaterial(color: NSColor(white: 0.09, alpha: 1.0))
+    }()
+
     private static let gizmoX = NSColor(srgbRed: 0.95, green: 0.30, blue: 0.34, alpha: 1)
     private static let gizmoY = NSColor(srgbRed: 0.42, green: 0.80, blue: 0.44, alpha: 1)
     private static let gizmoZ = NSColor(srgbRed: 0.32, green: 0.58, blue: 0.98, alpha: 1)
@@ -1699,16 +1901,30 @@ struct ViewportView: View {
                        blue: min(1, s.blueComponent * 1.2 + 0.18), alpha: 1)
     }
 
+    /// Scale factor that keeps the gizmo a constant fraction of the view
+    /// height: target world arm length is proportional to orbit distance, so
+    /// zooming in/out never changes its apparent size.
+    private func gizmoScreenScale() -> Float {
+        let armKernel = model.gizmoArmLength()
+        let armWorld = armKernel * model.displayScale
+        guard armWorld > 1e-6 else { return 1 }
+        return (0.14 * model.distance) / armWorld
+    }
+
     /// A refined translate gizmo: cylinder shafts + cone arrowheads (axis drag),
     /// corner squares (plane drag), a pearl hub, and invisible full-length grab
     /// proxies. The hovered handle brightens + thickens. X red / Y green / Z blue.
     private func buildGizmo() -> Entity {
         let root = Entity(); root.name = "gizmoRoot"
         guard let c = model.gizmoCenterKernel() else { return root }
+        // Children live in gizmo-local coords; the root carries the center so
+        // the whole gizmo can be scaled per-frame for constant screen size.
+        root.position = c
+        root.scale = SIMD3<Float>(repeating: gizmoScreenScale())
         let len = model.gizmoArmLength()
-        let shaftR = max(0.3, len * 0.016)
+        let shaftR = max(0.3, len * 0.013)
         let headLen = len * 0.2
-        let headR = shaftR * 2.8
+        let headR = shaftR * 2.6
         let shaftLen = len - headLen
         let hov = model.hoveredGizmoHandle
 
@@ -1724,14 +1940,14 @@ struct ViewportView: View {
             let k: Float = on ? 1.3 : 1.0
 
             let shaft = ModelEntity(mesh: .generateCylinder(height: shaftLen, radius: shaftR * k), materials: [mat])
-            shaft.orientation = rot; shaft.position = c + a.dir * (shaftLen / 2)
+            shaft.orientation = rot; shaft.position = a.dir * (shaftLen / 2)
             root.addChild(shaft)
             let head = ModelEntity(mesh: .generateCone(height: headLen, radius: headR * k), materials: [mat])
-            head.orientation = rot; head.position = c + a.dir * (shaftLen + headLen / 2)
+            head.orientation = rot; head.position = a.dir * (shaftLen + headLen / 2)
             root.addChild(head)
 
             let hit = ModelEntity()
-            hit.name = a.name; hit.orientation = rot; hit.position = c + a.dir * (len / 2)
+            hit.name = a.name; hit.orientation = rot; hit.position = a.dir * (len / 2)
             hit.components.set(CollisionComponent(shapes: [.generateBox(size: SIMD3(headR * 2.6, len, headR * 2.6))]))
             hit.components.set(InputTargetComponent())
             root.addChild(hit)
@@ -1748,7 +1964,7 @@ struct ViewportView: View {
             let on = hov == p.name
             let n = simd_normalize(simd_cross(p.a, p.b))
             let rot = simd_quatf(from: SIMD3(0, 0, 1), to: n)
-            let center = c + (p.a + p.b) * pOff
+            let center = (p.a + p.b) * pOff
             let mat = UnlitMaterial(color: (on ? brighten(p.color) : p.color).withAlphaComponent(on ? 0.7 : 0.4))
             let sq = ModelEntity(mesh: .generateBox(size: SIMD3(pSize, pSize, max(0.2, pSize * 0.05))), materials: [mat])
             sq.orientation = rot; sq.position = center
@@ -1774,10 +1990,10 @@ struct ViewportView: View {
             let mat = UnlitMaterial(color: (on ? brighten(r.color) : r.color).withAlphaComponent(on ? 1 : 0.85))
             let (u1, u2) = EditorModel.ringBasis(r.axis)
             let k: Float = on ? 1.5 : 1.0
-            var prev = c + u1 * ringR
+            var prev = u1 * ringR
             for i in 1...segN {
                 let ang = 2 * Float.pi * Float(i) / Float(segN)
-                let pt = c + (u1 * cos(ang) + u2 * sin(ang)) * ringR
+                let pt = (u1 * cos(ang) + u2 * sin(ang)) * ringR
                 let mid = (prev + pt) / 2
                 let seg = pt - prev
                 let l = simd_length(seg)
@@ -1795,7 +2011,6 @@ struct ViewportView: View {
 
         let hub = ModelEntity(mesh: .generateSphere(radius: shaftR * 2.4),
                               materials: [UnlitMaterial(color: NSColor(white: 0.95, alpha: 1))])
-        hub.position = c
         root.addChild(hub)
         return root
     }
@@ -1818,8 +2033,10 @@ struct ViewportView: View {
         }
     }
 
-    /// Tint the selected part's emissive brand-pink so the tree selection reads
-    /// in the viewport. Non-selected parts are restored to their base material.
+    /// Give the selected part a subtle brand-orange emissive lift so the tree
+    /// selection reads in the viewport without masking the document material
+    /// (the plate must still look like alu, not the accent color). Non-selected
+    /// parts are restored exactly to their base material.
     private func applySelectionHighlight(_ content: RealityViewCameraContent) {
         guard model.usesDocumentTree,
               let root = content.entities.first(where: { $0.name == "geomRoot" }),
@@ -1830,11 +2047,11 @@ struct ViewportView: View {
             guard let e = centering.findEntity(named: "part\(i)") as? ModelEntity else { continue }
             var m = pbrMaterial(model.resolvedMaterial(forPart: i))
             if sel.contains(i) {
-                m.emissiveColor = .init(color: EditorModel.brandPink)
-                m.emissiveIntensity = 0.5
+                m.emissiveColor = .init(color: EditorModel.brandOrange)
+                m.emissiveIntensity = 0.18     // subtle — base color stays legible
             } else if i == hov {
-                m.emissiveColor = .init(color: EditorModel.brandPink)
-                m.emissiveIntensity = 0.16     // subtle hover glow
+                m.emissiveColor = .init(color: EditorModel.brandOrange)
+                m.emissiveIntensity = 0.06     // faint hover glow
             }
             e.model?.materials = [m]
         }

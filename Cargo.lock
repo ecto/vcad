@@ -3911,7 +3911,7 @@ dependencies = [
 
 [[package]]
 name = "phyz"
-version = "0.3.1"
+version = "0.3.0"
 dependencies = [
  "tang",
 ]
@@ -6973,10 +6973,12 @@ dependencies = [
 name = "vcad-ffi"
 version = "0.9.4"
 dependencies = [
+ "pollster",
  "vcad-ecad-pcb",
  "vcad-eval",
  "vcad-ir",
  "vcad-kernel",
+ "vcad-kernel-gpu",
  "vcad-kernel-math",
  "vcad-kernel-raytrace",
  "vcad-kernel-tessellate",
@@ -7227,6 +7229,7 @@ dependencies = [
  "bytemuck",
  "js-sys",
  "pollster",
+ "rayon",
  "tang",
  "thiserror 2.0.18",
  "vcad-kernel-booleans",

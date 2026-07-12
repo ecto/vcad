@@ -290,6 +290,108 @@ final class EditorModel {
         var hi: SIMD3<Float>
     }
     @ObservationIgnored var docPartMeshes: [PickMesh] = []
+    /// Feature-edge segments per part (index-aligned with docPartMeshes),
+    /// refreshed on every evaluate/re-evaluate for the CAD edge overlay.
+    @ObservationIgnored var docPartEdges: [[SIMD3<Float>]] = []
+    /// Crease threshold for the edge overlay: creases sharper than this many
+    /// degrees draw; cylinder facets (~6°) stay invisible.
+    static let edgeAngleDeg: Float = 25.0
+    /// Largest scene dimension currently displayed (mm) — sizes the edge
+    /// overlay ribbon width during in-place scrub swaps.
+    var displayedSceneSize: Float { max(sizeMM.x, max(sizeMM.y, sizeMM.z)) }
+
+    // MARK: ray-traced still mode (pixel-perfect: rays vs analytic BRep)
+
+    /// Whether the ray-traced refinement pass is enabled (toolbar toggle).
+    var raytraceEnabled = false
+    /// The latest completed ray-traced frame, shown as an overlay once the
+    /// camera settles. Cleared by any camera/geometry/parameter change.
+    var raytraceImage: NSImage?
+    /// Monotonic token so a stale in-flight render can't overwrite a newer one.
+    @ObservationIgnored var raytraceToken = 0
+
+    /// Convert the display-space orbit camera into kernel coordinates
+    /// (Z-up, mm). Display world = zUpRot(kernel − displayCenter) · displayScale,
+    /// so kernel = zUpRotInv(world / displayScale) + displayCenter, where
+    /// zUpRotInv maps (x, y, z)world → (x, −z, y)kernel.
+    private func kernelCamera() -> (cam: SIMD3<Double>, target: SIMD3<Double>)? {
+        guard displayScale > 1e-9 else { return nil }
+        func toKernel(_ w: SIMD3<Float>) -> SIMD3<Double> {
+            let u = w / displayScale
+            let k = SIMD3<Float>(u.x, -u.z, u.y) + displayCenter
+            return SIMD3<Double>(Double(k.x), Double(k.y), Double(k.z))
+        }
+        return (toKernel(cameraPosition), toKernel(panOffset))
+    }
+
+    /// Async ray-traced still: gathers the doc bytes, camera, and part colors
+    /// on the main actor, then runs the blocking tracer on a background
+    /// thread. Returns nil when there is no evaluable document.
+    func raytraceStillAsync(width: Int, height: Int) async -> NSImage? {
+        guard usesDocumentTree, let (cam, target) = kernelCamera() else { return nil }
+        let data: Data?
+        if let json = documentJSON { data = DocEdit.serialize(json) }
+        else if case let .document(path, _) = source { data = try? Data(contentsOf: URL(fileURLWithPath: path)) }
+        else if case let .generated(loon, _) = source { data = Data(loon.utf8) }
+        else { data = nil }
+        guard let data else { return nil }
+        let isLoon = { if case .generated = source { return true } else { return false } }()
+        var colors: [Float] = []
+        for i in 0..<partCount {
+            let c = resolvedMaterial(forPart: i).color.usingColorSpace(.sRGB) ?? .gray
+            colors.append(contentsOf: [Float(c.redComponent), Float(c.greenComponent), Float(c.blueComponent)])
+        }
+        return await Task.detached(priority: .userInitiated) {
+            Self.renderRaytraceFrame(data: data, isLoon: isLoon, cam: cam, target: target,
+                                     colors: colors, width: width, height: height)
+        }.value
+    }
+
+    /// Blocking direct-BRep render — everything it touches is passed in, so
+    /// it is safe off the main actor.
+    nonisolated private static func renderRaytraceFrame(
+        data: Data, isLoon: Bool,
+        cam: SIMD3<Double>, target: SIMD3<Double>,
+        colors: [Float], width: Int, height: Int
+    ) -> NSImage? {
+        let scene: OpaquePointer? = data.withUnsafeBytes { raw in
+            let base = raw.bindMemory(to: UInt8.self).baseAddress
+            return isLoon ? vcad_scene_from_loon(base, data.count) : vcad_scene_from_json(base, data.count)
+        }
+        guard let scene else { return nil }
+        defer { vcad_scene_free(scene) }
+
+        var camArr = [cam.x, cam.y, cam.z]
+        var targetArr = [target.x, target.y, target.z]
+        // RealityKit's PerspectiveCameraComponent defaults to a 60° vertical
+        // field of view — match it so the still lands exactly on the raster.
+        // GPU first (wgpu → Metal: full-frame with SSAO, analytic edges, and
+        // its own sky/ground environment); CPU studio tracer as the
+        // composited fallback when no adapter is available.
+        var img: OpaquePointer? = vcad_scene_raytrace_gpu(
+            scene, &camArr, &targetArr, 60.0,
+            UInt32(width), UInt32(height), colors, colors.count)
+        if img == nil {
+            img = vcad_scene_raytrace(
+                scene, &camArr, &targetArr, 60.0,
+                UInt32(width), UInt32(height), colors, colors.count)
+        }
+        guard let img else { return nil }
+        defer { vcad_image_free(img) }
+        let view = vcad_image_view(img)
+        guard let px = view.pixels, view.pixels_len == Int(view.width * view.height * 4) else { return nil }
+
+        let w = Int(view.width), h = Int(view.height)
+        guard let rep = NSBitmapImageRep(
+            bitmapDataPlanes: nil, pixelsWide: w, pixelsHigh: h, bitsPerSample: 8,
+            samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+            colorSpaceName: .deviceRGB, bytesPerRow: w * 4, bitsPerPixel: 32),
+            let dst = rep.bitmapData else { return nil }
+        dst.update(from: px, count: view.pixels_len)
+        let image = NSImage(size: NSSize(width: w, height: h))
+        image.addRepresentation(rep)
+        return image
+    }
 
     var usesDocumentTree: Bool { documentGraph != nil && !featureNodes.isEmpty }
 
@@ -443,6 +545,9 @@ final class EditorModel {
 
     func documentBaseColor(_ i: Int) -> NSColor { Self.partColors[i % Self.partColors.count] }
     static let brandPink = NSColor(srgbRed: 0.976, green: 0.149, blue: 0.447, alpha: 1.0)
+    /// Viewport selection accent — brand orange (action color). Selection must
+    /// never repaint a part's material; it only adds a subtle emissive lift.
+    static let brandOrange = NSColor(srgbRed: 1.0, green: 0.45, blue: 0.10, alpha: 1.0)
 
     /// Ray-pick a document part by its actual triangles (kernel coords) — the
     /// nearest surface hit wins. An AABB test culls parts the ray misses, and
@@ -970,6 +1075,22 @@ final class EditorModel {
         documentJSON.flatMap { DocEdit.op($0, nodeId: nodeId) }
     }
 
+    /// Document-level named parameters of the loaded doc (empty for sandbox).
+    var docParameters: [DocParameter] { documentGraph?.parameters ?? [] }
+
+    /// Scrub a document-level parameter: clamp to its declared range, write it
+    /// into the live JSON, and re-evaluate in place — bindings fan the value
+    /// out to every bound node field inside the kernel.
+    func editParameter(_ name: String, value: Double, snapshot: Bool) {
+        guard let p = docParameters.first(where: { $0.name == name }), p.isLiteral else { return }
+        var v = value
+        if let lo = p.min { v = Swift.max(lo, v) }
+        if let hi = p.max { v = Swift.min(hi, v) }
+        applyEdit(snapshot: snapshot, reeval: .inPlace) {
+            DocEdit.setParameter(&$0, name: name, value: v)
+        }
+    }
+
     func editScalar(nodeId: Int, key: String, value: Double, snapshot: Bool) {
         applyEdit(snapshot: snapshot, reeval: .inPlace) {
             DocEdit.setScalar(&$0, nodeId: nodeId, key: key, value: value)
@@ -1036,6 +1157,7 @@ final class EditorModel {
         let count = vcad_scene_part_count(scene)
         var meshes: [MeshResource] = []
         var picks: [PickMesh] = []
+        var edges: [[SIMD3<Float>]] = []
         var lo = SIMD3<Float>(repeating: .greatestFiniteMagnitude)
         var hi = SIMD3<Float>(repeating: -.greatestFiniteMagnitude)
         var tris = 0
@@ -1047,9 +1169,16 @@ final class EditorModel {
             meshes.append(km.resource(name: "part\(i)"))
             picks.append(PickMesh(positions: km.positions, indices: km.indices,
                                   lo: km.minBound, hi: km.maxBound))
+            if let eh = vcad_scene_part_edges(scene, i, Self.edgeAngleDeg) {
+                edges.append(EdgeOverlay.segments(fromView: vcad_edges_view(eh)))
+                vcad_edges_free(eh)
+            } else {
+                edges.append([])
+            }
         }
         guard !meshes.isEmpty else { return nil }
         docPartMeshes = picks
+        docPartEdges = edges
         solveMillis = Date().timeIntervalSince(start) * 1000
         triangleCount = tris
         partCount = meshes.count
@@ -1217,6 +1346,14 @@ final class EditorModel {
                     } else if self.usesDocumentTree, self.renamingFeatureID == nil, self.hasSelection {
                         self.deselectAll()
                     }
+                }
+                // R (no modifiers, not typing) toggles the ray-traced still.
+                if event.charactersIgnoringModifiers == "r",
+                   event.modifierFlags.intersection([.command, .option, .control]).isEmpty,
+                   self.renamingFeatureID == nil, !self.sketching,
+                   !(NSApp.keyWindow?.firstResponder is NSTextView) {
+                    self.raytraceEnabled.toggle()
+                    if !self.raytraceEnabled { self.raytraceImage = nil }
                 }
             }
             return event
@@ -1673,6 +1810,12 @@ final class EditorModel {
         guard let mesh = vcad_solid_to_mesh(target, 64) else { return nil }
         defer { vcad_mesh_free(mesh) }
         let km = KernelMesh.fromView(vcad_mesh_view(mesh))
+        if let eh = vcad_mesh_edges(mesh, Self.edgeAngleDeg) {
+            docPartEdges = [EdgeOverlay.segments(fromView: vcad_edges_view(eh))]
+            vcad_edges_free(eh)
+        } else {
+            docPartEdges = []
+        }
         solveMillis = Date().timeIntervalSince(start) * 1000
         triangleCount = km.triangleCount
         partCount = 1
@@ -1689,7 +1832,7 @@ final class EditorModel {
         displayCenter = center
         displayScale = 0.6 / max(size, 0.0001)
         return RenderScene(meshes: [(res, Self.heroColor)], center: center, size: size,
-                           triangleCount: km.triangleCount, partCount: 1)
+                           triangleCount: km.triangleCount, partCount: 1, edges: docPartEdges)
     }
 
     /// Hot path: re-solve the sandbox and stream into the GPU buffers in place.
@@ -1762,6 +1905,7 @@ final class EditorModel {
         let count = vcad_scene_part_count(scene)
         var meshes: [(MeshResource, NSColor)] = []
         var picks: [PickMesh] = []
+        var edges: [[SIMD3<Float>]] = []
         var lo = SIMD3<Float>(repeating: .greatestFiniteMagnitude)
         var hi = SIMD3<Float>(repeating: -.greatestFiniteMagnitude)
         var tris = 0
@@ -1775,9 +1919,17 @@ final class EditorModel {
             // so a viewport ray maps back to the right feature-tree row.
             picks.append(PickMesh(positions: km.positions, indices: km.indices,
                                   lo: km.minBound, hi: km.maxBound))
+            // Feature edges for the CAD edge overlay (same index alignment).
+            if let eh = vcad_scene_part_edges(scene, i, Self.edgeAngleDeg) {
+                edges.append(EdgeOverlay.segments(fromView: vcad_edges_view(eh)))
+                vcad_edges_free(eh)
+            } else {
+                edges.append([])
+            }
         }
         guard !meshes.isEmpty else { return .empty }
         docPartMeshes = picks
+        docPartEdges = edges
 
         solveMillis = Date().timeIntervalSince(start) * 1000
         triangleCount = tris
@@ -1788,7 +1940,7 @@ final class EditorModel {
         displayCenter = center
         displayScale = 0.6 / max(size, 0.0001)
         return RenderScene(meshes: meshes, center: center, size: size,
-                           triangleCount: tris, partCount: meshes.count)
+                           triangleCount: tris, partCount: meshes.count, edges: edges)
     }
 
     static func extent(_ lo: SIMD3<Float>, _ hi: SIMD3<Float>) -> Float {

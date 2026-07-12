@@ -230,6 +230,131 @@ impl TriangleMesh {
             .collect()
     }
 
+    /// Extract view-independent feature edges for wireframe/edge-overlay
+    /// display: every edge that is either a boundary (one adjacent
+    /// triangle) or a crease whose adjacent triangles' normals differ by
+    /// more than `angle_deg` degrees.
+    ///
+    /// Vertices are welded positionally (1e-5 quantization) before
+    /// adjacency is computed, so meshes tessellated per-face with
+    /// duplicated seam vertices don't report every face border as a
+    /// boundary. With the default tessellation a cylinder facet spans a
+    /// few degrees, well under a 25–30° threshold — so hole rims,
+    /// chamfer breaks, and box edges draw while curvature facet seams
+    /// stay invisible.
+    ///
+    /// Returns flat segment endpoints `[ax, ay, az, bx, by, bz]` per edge.
+    pub fn feature_edge_segments(&self, angle_deg: f32) -> Vec<[f32; 6]> {
+        let tri_count = self.indices.len() / 3;
+        if tri_count == 0 {
+            return Vec::new();
+        }
+        // Weld by quantized position.
+        let quant = |i: u32| -> [i64; 3] {
+            let p = i as usize * 3;
+            [
+                (self.vertices[p] as f64 * 1e5).round() as i64,
+                (self.vertices[p + 1] as f64 * 1e5).round() as i64,
+                (self.vertices[p + 2] as f64 * 1e5).round() as i64,
+            ]
+        };
+        let mut weld: std::collections::HashMap<[i64; 3], u32> = std::collections::HashMap::new();
+        let mut canon = vec![0u32; self.num_vertices()];
+        for i in 0..self.num_vertices() as u32 {
+            let key = quant(i);
+            canon[i as usize] = *weld.entry(key).or_insert(i);
+        }
+
+        // Face normal per triangle.
+        let normal = |t: usize| -> [f32; 3] {
+            let i = [
+                self.indices[3 * t] as usize * 3,
+                self.indices[3 * t + 1] as usize * 3,
+                self.indices[3 * t + 2] as usize * 3,
+            ];
+            let a = [
+                self.vertices[i[0]],
+                self.vertices[i[0] + 1],
+                self.vertices[i[0] + 2],
+            ];
+            let b = [
+                self.vertices[i[1]],
+                self.vertices[i[1] + 1],
+                self.vertices[i[1] + 2],
+            ];
+            let c = [
+                self.vertices[i[2]],
+                self.vertices[i[2] + 1],
+                self.vertices[i[2] + 2],
+            ];
+            let u = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+            let v = [c[0] - a[0], c[1] - a[1], c[2] - a[2]];
+            let n = [
+                u[1] * v[2] - u[2] * v[1],
+                u[2] * v[0] - u[0] * v[2],
+                u[0] * v[1] - u[1] * v[0],
+            ];
+            let len = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();
+            if len < 1e-20 {
+                [0.0, 0.0, 0.0]
+            } else {
+                [n[0] / len, n[1] / len, n[2] / len]
+            }
+        };
+
+        // Undirected welded edge → adjacent triangle list. Capped at 3
+        // entries: two is the manifold case, a third only marks the edge
+        // non-manifold below — further pushes would be unbounded memory on
+        // degenerate input for no extra information.
+        let mut adj: std::collections::HashMap<(u32, u32), Vec<u32>> =
+            std::collections::HashMap::new();
+        for t in 0..tri_count {
+            let tri = [
+                canon[self.indices[3 * t] as usize],
+                canon[self.indices[3 * t + 1] as usize],
+                canon[self.indices[3 * t + 2] as usize],
+            ];
+            for i in 0..3 {
+                let (a, b) = (tri[i], tri[(i + 1) % 3]);
+                if a == b {
+                    continue; // degenerate sliver edge
+                }
+                let key = if a < b { (a, b) } else { (b, a) };
+                let tris = adj.entry(key).or_default();
+                if tris.len() < 3 {
+                    tris.push(t as u32);
+                }
+            }
+        }
+
+        let cos_thresh = (angle_deg.to_radians()).cos();
+        let mut out = Vec::new();
+        for ((a, b), tris) in &adj {
+            let feature = match tris.as_slice() {
+                [_] => true, // boundary
+                [t0, t1] => {
+                    let n0 = normal(*t0 as usize);
+                    let n1 = normal(*t1 as usize);
+                    let dot = n0[0] * n1[0] + n0[1] * n1[1] + n0[2] * n1[2];
+                    dot < cos_thresh
+                }
+                _ => true, // non-manifold (3+ adjacent tris): surface it
+            };
+            if feature {
+                let (ia, ib) = (*a as usize * 3, *b as usize * 3);
+                out.push([
+                    self.vertices[ia],
+                    self.vertices[ia + 1],
+                    self.vertices[ia + 2],
+                    self.vertices[ib],
+                    self.vertices[ib + 1],
+                    self.vertices[ib + 2],
+                ]);
+            }
+        }
+        out
+    }
+
     /// Find non-manifold edges: edges adjacent to 3 or more triangles.
     /// A closed manifold mesh has none; any entry indicates a topology
     /// bug (overlapping faces, welded seams crossing themselves, etc.).
@@ -5218,5 +5343,60 @@ mod tests {
             "signed areas sum to the frame area, got {}",
             total / 2.0
         );
+    }
+
+    #[test]
+    fn feature_edges_of_unit_cube_are_the_twelve_edges() {
+        // A cube has 12 sharp edges and no curvature: every extracted
+        // segment must lie on one of them, and their total length must be
+        // 12 (deduped), regardless of how the faces are triangulated or
+        // whether seam vertices are duplicated.
+        let mut mesh = TriangleMesh::new();
+        // 8 corners, 12 triangles, welded indices.
+        let corners: [[f32; 3]; 8] = [
+            [0., 0., 0.],
+            [1., 0., 0.],
+            [1., 1., 0.],
+            [0., 1., 0.],
+            [0., 0., 1.],
+            [1., 0., 1.],
+            [1., 1., 1.],
+            [0., 1., 1.],
+        ];
+        for c in corners {
+            mesh.vertices.extend_from_slice(&c);
+        }
+        let quads: [[u32; 4]; 6] = [
+            [0, 3, 2, 1], // bottom (z=0), outward -Z
+            [4, 5, 6, 7], // top
+            [0, 1, 5, 4], // front
+            [2, 3, 7, 6], // back
+            [1, 2, 6, 5], // right
+            [3, 0, 4, 7], // left
+        ];
+        for q in quads {
+            mesh.indices
+                .extend_from_slice(&[q[0], q[1], q[2], q[0], q[2], q[3]]);
+        }
+
+        let segs = mesh.feature_edge_segments(25.0);
+        let mut total = 0.0f64;
+        for s in &segs {
+            let d = [
+                (s[3] - s[0]) as f64,
+                (s[4] - s[1]) as f64,
+                (s[5] - s[2]) as f64,
+            ];
+            let len = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt();
+            // Every feature segment of a cube is axis-aligned with unit
+            // length (face diagonals are interior smooth edges).
+            assert!(
+                (len - 1.0).abs() < 1e-6,
+                "unexpected feature segment of length {len}"
+            );
+            total += len;
+        }
+        assert_eq!(segs.len(), 12, "cube must yield exactly its 12 edges");
+        assert!((total - 12.0).abs() < 1e-6);
     }
 }

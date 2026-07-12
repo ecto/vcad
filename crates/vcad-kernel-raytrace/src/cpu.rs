@@ -253,25 +253,9 @@ impl CpuRenderer {
     }
 }
 
-/// Render multiple solids with individual transforms and colors.
-///
-/// This is a convenience function for rendering scenes with multiple parts.
-///
-/// # Arguments
-///
-/// * `solids` - Slice of BRep solids to render
-/// * `transforms` - Flattened 4x4 row-major transform matrices (16 f64 values per solid)
-/// * `colors` - RGB colors (3 f32 values per solid, each 0.0-1.0)
-/// * `camera` - Camera position
-/// * `target` - Camera target
-/// * `up` - Up direction
-/// * `width` - Image width
-/// * `height` - Image height
-/// * `fov` - Field of view in degrees
-///
-/// # Returns
-///
-/// RGBA pixel buffer.
+/// Render multiple solids with individual transforms and colors into an
+/// opaque RGBA frame (fixed dark background). Scanlines render in parallel
+/// (rayon); each solid's BVH is built once up front.
 #[allow(clippy::too_many_arguments)]
 pub fn render_scene(
     solids: &[Arc<BRepSolid>],
@@ -284,21 +268,106 @@ pub fn render_scene(
     height: u32,
     fov: f64,
 ) -> Vec<u8> {
-    // For now, render each solid separately and composite using depth buffer
-    // This is simpler than building a combined BVH
+    render_scene_impl(
+        solids,
+        transforms,
+        colors,
+        camera,
+        target,
+        up,
+        width,
+        height,
+        fov,
+        [30, 32, 40, 255],
+        Shading::Headlight,
+    )
+}
 
-    let mut pixels = vec![0u8; (width * height * 4) as usize];
-    let mut depth = vec![f64::INFINITY; (width * height) as usize];
+/// Like [`render_scene`], but misses stay fully transparent (RGBA 0) so the
+/// frame can composite over a live viewport backdrop.
+#[allow(clippy::too_many_arguments)]
+pub fn render_scene_transparent(
+    solids: &[Arc<BRepSolid>],
+    transforms: &[f64],
+    colors: &[f32],
+    camera: Point3,
+    target: Point3,
+    up: Dir3,
+    width: u32,
+    height: u32,
+    fov: f64,
+) -> Vec<u8> {
+    render_scene_impl(
+        solids,
+        transforms,
+        colors,
+        camera,
+        target,
+        up,
+        width,
+        height,
+        fov,
+        [0, 0, 0, 0],
+        Shading::Studio,
+    )
+}
 
-    // Background color
-    for i in 0..(width * height) as usize {
-        pixels[i * 4] = 30;
-        pixels[i * 4 + 1] = 32;
-        pixels[i * 4 + 2] = 40;
-        pixels[i * 4 + 3] = 255;
-    }
+/// Shading model for the CPU tracer.
+#[derive(Clone, Copy, PartialEq)]
+enum Shading {
+    /// Original camera-headlight lambert — byte-stable for CLI/termview.
+    Headlight,
+    /// Studio rig for the app's pixel-perfect mode: key/fill/rim lights,
+    /// a hard key-light shadow ray, hemispherical ambient, Blinn specular,
+    /// and gamma 2.2 output.
+    Studio,
+}
 
-    // Compute camera basis vectors
+#[allow(clippy::too_many_arguments)]
+fn render_scene_impl(
+    solids: &[Arc<BRepSolid>],
+    transforms: &[f64],
+    colors: &[f32],
+    camera: Point3,
+    target: Point3,
+    up: Dir3,
+    width: u32,
+    height: u32,
+    fov: f64,
+    background: [u8; 4],
+    shading: Shading,
+) -> Vec<u8> {
+    use rayon::prelude::*;
+
+    // Build every BVH once, up front (this used to happen per solid inside
+    // the pixel loop's enclosing loop; the rays dominate, but rebuilds are
+    // pure waste when parallelizing).
+    let prepared: Vec<(Bvh, [f32; 3])> = solids
+        .iter()
+        .enumerate()
+        .map(|(solid_idx, solid)| {
+            let transformed = if transforms.len() >= (solid_idx + 1) * 16 {
+                transform_brep(
+                    solid.as_ref(),
+                    &transforms[solid_idx * 16..(solid_idx + 1) * 16],
+                )
+            } else {
+                solid.as_ref().clone()
+            };
+            let color = if colors.len() >= (solid_idx + 1) * 3 {
+                [
+                    colors[solid_idx * 3],
+                    colors[solid_idx * 3 + 1],
+                    colors[solid_idx * 3 + 2],
+                ]
+            } else {
+                [0.6, 0.7, 0.8]
+            };
+            (Bvh::build(&transformed), color)
+        })
+        .collect();
+
+    // Camera basis.
     let forward_vec = target - camera;
     let forward = Dir3::new_normalize(Vec3::new(forward_vec.x, forward_vec.y, forward_vec.z));
     let right = Dir3::new_normalize(forward.cross(up));
@@ -308,40 +377,16 @@ pub fn render_scene(
     let half_height = (fov_rad / 2.0).tan();
     let half_width = half_height * (width as f64 / height as f64);
 
-    for (solid_idx, solid) in solids.iter().enumerate() {
-        // Get transform for this solid (identity if not provided)
-        let transform = if transforms.len() >= (solid_idx + 1) * 16 {
-            Some(&transforms[solid_idx * 16..(solid_idx + 1) * 16])
-        } else {
-            None
-        };
+    let mut pixels = vec![0u8; (width * height * 4) as usize];
 
-        // Get color for this solid
-        let color = if colors.len() >= (solid_idx + 1) * 3 {
-            [
-                colors[solid_idx * 3],
-                colors[solid_idx * 3 + 1],
-                colors[solid_idx * 3 + 2],
-            ]
-        } else {
-            [0.6, 0.7, 0.8]
-        };
-
-        // Apply transform to solid if provided
-        let transformed_solid = if let Some(t) = transform {
-            transform_brep(solid.as_ref(), t)
-        } else {
-            solid.as_ref().clone()
-        };
-
-        let bvh = Bvh::build(&transformed_solid);
-
-        // Render each pixel
-        for py in 0..height {
-            for px in 0..width {
+    // Each scanline is independent: trace every solid, keep the nearest hit.
+    pixels
+        .par_chunks_mut(width as usize * 4)
+        .enumerate()
+        .for_each(|(py, row)| {
+            for px in 0..width as usize {
                 let ndc_x = (px as f64 + 0.5) / width as f64;
                 let ndc_y = (py as f64 + 0.5) / height as f64;
-
                 let screen_x = (2.0 * ndc_x - 1.0) * half_width;
                 let screen_y = (1.0 - 2.0 * ndc_y) * half_height;
 
@@ -350,33 +395,94 @@ pub fn render_scene(
                     forward.y + screen_x * right.y + screen_y * cam_up.y,
                     forward.z + screen_x * right.z + screen_y * cam_up.z,
                 );
-
                 let ray = Ray::new(camera, ray_dir);
 
-                if let Some(hit) = bvh.trace_closest(&ray) {
-                    let pixel_idx = (py * width + px) as usize;
-
-                    // Depth test
-                    if hit.t < depth[pixel_idx] {
-                        depth[pixel_idx] = hit.t;
-
-                        // Shade
-                        let light_dir = Dir3::new_normalize(-ray.direction.into_inner());
-                        let ndotl = hit.normal.dot(light_dir).abs();
-                        let intensity = (0.2 + 0.8 * ndotl).min(1.0) as f32;
-
-                        let idx = pixel_idx * 4;
-                        pixels[idx] = (color[0] * intensity * 255.0) as u8;
-                        pixels[idx + 1] = (color[1] * intensity * 255.0) as u8;
-                        pixels[idx + 2] = (color[2] * intensity * 255.0) as u8;
-                        pixels[idx + 3] = 255;
+                let mut best: Option<(f64, crate::RayHit, [f32; 3])> = None;
+                for (bvh, color) in &prepared {
+                    if let Some(hit) = bvh.trace_closest(&ray) {
+                        if best.as_ref().is_none_or(|(t, _, _)| hit.t < *t) {
+                            best = Some((hit.t, hit, *color));
+                        }
                     }
                 }
+                let out = match best {
+                    None => background,
+                    Some((_, hit, color)) => match shading {
+                        Shading::Headlight => {
+                            let light_dir = Dir3::new_normalize(-ray.direction.into_inner());
+                            let ndotl = hit.normal.dot(light_dir).abs();
+                            let intensity = (0.2 + 0.8 * ndotl).min(1.0) as f32;
+                            [
+                                (color[0] * intensity * 255.0) as u8,
+                                (color[1] * intensity * 255.0) as u8,
+                                (color[2] * intensity * 255.0) as u8,
+                                255,
+                            ]
+                        }
+                        Shading::Studio => shade_studio(&prepared, &ray, &hit, color),
+                    },
+                };
+                row[px * 4..px * 4 + 4].copy_from_slice(&out);
             }
-        }
-    }
+        });
 
     pixels
+}
+
+/// Studio shading for the app's ray-traced still: a fixed Z-up light rig
+/// (key with a hard shadow ray, cool fill, back rim), hemispherical
+/// ambient so downward faces fall off naturally, Blinn specular for
+/// machined sheen, and gamma-2.2 output.
+fn shade_studio(
+    prepared: &[(Bvh, [f32; 3])],
+    ray: &Ray,
+    hit: &crate::RayHit,
+    color: [f32; 3],
+) -> [u8; 4] {
+    // Face-forward normal so interior faces (bore walls) shade correctly.
+    let mut n = hit.normal.into_inner();
+    if n.dot(ray.direction.into_inner()) > 0.0 {
+        n = -n;
+    }
+
+    let key = Vec3::new(0.45, -0.35, 0.82).normalize();
+    let fill = Vec3::new(-0.62, -0.25, 0.35).normalize();
+    let rim = Vec3::new(0.15, 0.85, -0.25).normalize();
+
+    // Hard shadow from the key light only: offset along the normal to dodge
+    // self-intersection, any hit in any solid blocks it.
+    let shadow_origin = hit.point + n * 1e-4;
+    let shadow_ray = Ray::new(shadow_origin, key);
+    let key_shadowed = prepared
+        .iter()
+        .any(|(bvh, _)| bvh.trace_closest(&shadow_ray).is_some());
+
+    let key_l = if key_shadowed {
+        0.0
+    } else {
+        n.dot(key).max(0.0)
+    };
+    let fill_l = n.dot(fill).max(0.0);
+    let rim_l = n.dot(rim).max(0.0);
+    // Hemispherical ambient: up-facing surfaces get a touch more sky.
+    let ambient = 0.16 + 0.08 * (0.5 + 0.5 * n.z);
+
+    let diffuse = (ambient + 0.68 * key_l + 0.22 * fill_l + 0.12 * rim_l).min(1.25);
+
+    // Blinn specular on the key (skipped in shadow).
+    let view = -ray.direction.into_inner();
+    let half = (view + key).normalize();
+    let spec = if key_shadowed {
+        0.0
+    } else {
+        n.dot(half).max(0.0).powi(48) * 0.35
+    };
+
+    let shade = |c: f32| -> u8 {
+        let linear = (c * diffuse as f32 + spec as f32).clamp(0.0, 1.0);
+        (linear.powf(1.0 / 2.2) * 255.0) as u8
+    };
+    [shade(color[0]), shade(color[1]), shade(color[2]), 255]
 }
 
 /// Render multiple solids with individual transforms and colors, using stratified
