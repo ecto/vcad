@@ -392,12 +392,18 @@ impl Solid {
     /// prisms). Returns the solid unchanged for mesh-only or empty solids.
     pub fn chamfer(&self, distance: f64) -> Solid {
         match &self.repr {
-            SolidRepr::BRep(brep) => Solid {
-                repr: SolidRepr::BRep(Box::new(vcad_kernel_fillet::chamfer_all_edges(
-                    brep, distance,
-                ))),
-                segments: self.segments,
-            },
+            SolidRepr::BRep(brep) => {
+                // Same inner-loop hazard as `fillet` — see brep_has_inner_loops.
+                if brep_has_inner_loops(brep) {
+                    return self.clone();
+                }
+                Solid {
+                    repr: SolidRepr::BRep(Box::new(vcad_kernel_fillet::chamfer_all_edges(
+                        brep, distance,
+                    ))),
+                    segments: self.segments,
+                }
+            }
             _ => self.clone(),
         }
     }
@@ -424,6 +430,11 @@ impl Solid {
     pub fn fillet(&self, radius: f64) -> Solid {
         match &self.repr {
             SolidRepr::BRep(brep) => {
+                // Faces with inner loops (holes from booleans) can't survive
+                // the rebuild — fail soft rather than fill the holes in.
+                if brep_has_inner_loops(brep) {
+                    return self.clone();
+                }
                 let filleted = if brep_is_all_planar(brep) {
                     vcad_kernel_fillet::fillet_all_edges(brep, radius)
                 } else {
@@ -473,6 +484,10 @@ impl Solid {
             return self.clone();
         };
         if keys.is_empty() {
+            return self.clone();
+        }
+        // Same inner-loop hazard as `fillet` — see brep_has_inner_loops.
+        if brep_has_inner_loops(brep) {
             return self.clone();
         }
 
@@ -1237,6 +1252,19 @@ impl std::ops::BitAnd for &Solid {
 // =============================================================================
 // Mesh computation helpers (same algorithms as vcad lib.rs)
 // =============================================================================
+
+/// True when any face of the solid carries inner boundary loops (holes),
+/// e.g. a bore left by a boolean Difference. The fillet/chamfer rebuild
+/// pipelines reconstruct faces from their outer loops only, so running
+/// them on such a body silently fills the holes back in. Callers use this
+/// to fail soft (return the input unchanged) instead of corrupting the
+/// model.
+fn brep_has_inner_loops(brep: &BRepSolid) -> bool {
+    brep.topology
+        .faces
+        .iter()
+        .any(|(_, f)| !f.inner_loops.is_empty())
+}
 
 /// Guard against runaway fillet output. Both the topology vertices AND
 /// the tessellated mesh vertices of `filleted` must fit inside `input`'s
@@ -3135,6 +3163,41 @@ mod tests {
             assert!(
                 x.abs() < 100.0 && y.abs() < 100.0 && (-10.0..40.0).contains(&z),
                 "filleted kidney has outlier vertex at ({x:.1}, {y:.1}, {z:.1})"
+            );
+        }
+    }
+
+    /// Fillet after a boolean Difference must not fill the cut back in.
+    ///
+    /// The bored plate's top/bottom faces carry the bore as inner loops;
+    /// the fillet rebuild only understands outer loops, so before the
+    /// inner-loop guard it emitted a filleted *solid* plate (hole gone).
+    /// The guard fails soft: the input comes back unchanged — sharp
+    /// edges, but the bore intact.
+    #[test]
+    fn fillet_after_difference_preserves_the_cut() {
+        let plate = Solid::cube(80.0, 50.0, 6.0);
+        let bore = Solid::cylinder(8.0, 20.0, 64).translate(40.0, 25.0, -7.0);
+        let bored = plate.difference(&bore);
+
+        let bored_vol = bored.volume();
+        let solid_vol = 80.0 * 50.0 * 6.0;
+        // Sanity: the difference itself removed the bore (~π·8²·6 ≈ 1206).
+        assert!(
+            bored_vol < solid_vol - 1000.0,
+            "difference lost the bore: vol={bored_vol:.1}"
+        );
+
+        for (name, result) in [
+            ("fillet", bored.fillet(1.5)),
+            ("chamfer", bored.chamfer(1.5)),
+        ] {
+            let vol = result.volume();
+            // The buggy path produced ~23736 (a filleted solid plate).
+            // Correct output must stay at or below the bored volume.
+            assert!(
+                vol <= bored_vol + 1.0,
+                "{name} after difference regrew material: vol={vol:.1} > bored={bored_vol:.1}"
             );
         }
     }

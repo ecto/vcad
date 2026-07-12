@@ -3,7 +3,11 @@
   "materials": {
     "alu": {
       "name": "alu",
-      "color": [0.75, 0.77, 0.8],
+      "color": [
+        0.75,
+        0.77,
+        0.8
+      ],
       "metallic": 0.9,
       "roughness": 0.35
     }
@@ -15,7 +19,11 @@
       "name": "Plate",
       "op": {
         "type": "Cube",
-        "size": { "x": 80.0, "y": 50.0, "z": 6.0 }
+        "size": {
+          "x": 80.0,
+          "y": 50.0,
+          "z": 6.0
+        }
       }
     },
     "2": {
@@ -34,29 +42,38 @@
       "op": {
         "type": "Translate",
         "child": 2,
-        "offset": { "x": 40.0, "y": 25.0, "z": -7.0 }
+        "offset": {
+          "x": 40.0,
+          "y": 25.0,
+          "z": -7.0
+        }
       }
     },
     "4": {
       "id": 4,
-      "name": "Bored Plate",
+      "name": "Rounded Plate",
       "op": {
-        "type": "Difference",
-        "left": 1,
-        "right": 3
+        "child": 1,
+        "radius": 1.5,
+        "type": "Fillet"
       }
     },
     "5": {
       "id": 5,
-      "name": "Rounded Plate",
+      "name": "Bored Plate",
       "op": {
-        "type": "Fillet",
-        "child": 4,
-        "radius": 1.5
+        "left": 4,
+        "right": 3,
+        "type": "Difference"
       }
     }
   },
-  "roots": [{ "root": 5, "material": "alu" }],
+  "roots": [
+    {
+      "material": "alu",
+      "root": 5
+    }
+  ],
   "parameters": {
     "width": {
       "value": 80.0,
