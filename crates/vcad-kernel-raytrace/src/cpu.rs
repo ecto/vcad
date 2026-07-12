@@ -279,6 +279,7 @@ pub fn render_scene(
         height,
         fov,
         [30, 32, 40, 255],
+        Shading::Headlight,
     )
 }
 
@@ -307,7 +308,19 @@ pub fn render_scene_transparent(
         height,
         fov,
         [0, 0, 0, 0],
+        Shading::Studio,
     )
+}
+
+/// Shading model for the CPU tracer.
+#[derive(Clone, Copy, PartialEq)]
+enum Shading {
+    /// Original camera-headlight lambert — byte-stable for CLI/termview.
+    Headlight,
+    /// Studio rig for the app's pixel-perfect mode: key/fill/rim lights,
+    /// a hard key-light shadow ray, hemispherical ambient, Blinn specular,
+    /// and gamma 2.2 output.
+    Studio,
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -322,6 +335,7 @@ fn render_scene_impl(
     height: u32,
     fov: f64,
     background: [u8; 4],
+    shading: Shading,
 ) -> Vec<u8> {
     use rayon::prelude::*;
 
@@ -383,30 +397,92 @@ fn render_scene_impl(
                 );
                 let ray = Ray::new(camera, ray_dir);
 
-                let mut best_t = f64::INFINITY;
-                let mut shaded: Option<[u8; 4]> = None;
+                let mut best: Option<(f64, crate::RayHit, [f32; 3])> = None;
                 for (bvh, color) in &prepared {
                     if let Some(hit) = bvh.trace_closest(&ray) {
-                        if hit.t < best_t {
-                            best_t = hit.t;
+                        if best.as_ref().is_none_or(|(t, _, _)| hit.t < *t) {
+                            best = Some((hit.t, hit, *color));
+                        }
+                    }
+                }
+                let out = match best {
+                    None => background,
+                    Some((_, hit, color)) => match shading {
+                        Shading::Headlight => {
                             let light_dir = Dir3::new_normalize(-ray.direction.into_inner());
                             let ndotl = hit.normal.dot(light_dir).abs();
                             let intensity = (0.2 + 0.8 * ndotl).min(1.0) as f32;
-                            shaded = Some([
+                            [
                                 (color[0] * intensity * 255.0) as u8,
                                 (color[1] * intensity * 255.0) as u8,
                                 (color[2] * intensity * 255.0) as u8,
                                 255,
-                            ]);
+                            ]
                         }
-                    }
-                }
-                let out = shaded.unwrap_or(background);
+                        Shading::Studio => shade_studio(&prepared, &ray, &hit, color),
+                    },
+                };
                 row[px * 4..px * 4 + 4].copy_from_slice(&out);
             }
         });
 
     pixels
+}
+
+/// Studio shading for the app's ray-traced still: a fixed Z-up light rig
+/// (key with a hard shadow ray, cool fill, back rim), hemispherical
+/// ambient so downward faces fall off naturally, Blinn specular for
+/// machined sheen, and gamma-2.2 output.
+fn shade_studio(
+    prepared: &[(Bvh, [f32; 3])],
+    ray: &Ray,
+    hit: &crate::RayHit,
+    color: [f32; 3],
+) -> [u8; 4] {
+    // Face-forward normal so interior faces (bore walls) shade correctly.
+    let mut n = hit.normal.into_inner();
+    if n.dot(ray.direction.into_inner()) > 0.0 {
+        n = -n;
+    }
+
+    let key = Vec3::new(0.45, -0.35, 0.82).normalize();
+    let fill = Vec3::new(-0.62, -0.25, 0.35).normalize();
+    let rim = Vec3::new(0.15, 0.85, -0.25).normalize();
+
+    // Hard shadow from the key light only: offset along the normal to dodge
+    // self-intersection, any hit in any solid blocks it.
+    let shadow_origin = hit.point + n * 1e-4;
+    let shadow_ray = Ray::new(shadow_origin, key);
+    let key_shadowed = prepared
+        .iter()
+        .any(|(bvh, _)| bvh.trace_closest(&shadow_ray).is_some());
+
+    let key_l = if key_shadowed {
+        0.0
+    } else {
+        n.dot(key).max(0.0)
+    };
+    let fill_l = n.dot(fill).max(0.0);
+    let rim_l = n.dot(rim).max(0.0);
+    // Hemispherical ambient: up-facing surfaces get a touch more sky.
+    let ambient = 0.16 + 0.08 * (0.5 + 0.5 * n.z);
+
+    let diffuse = (ambient + 0.68 * key_l + 0.22 * fill_l + 0.12 * rim_l).min(1.25);
+
+    // Blinn specular on the key (skipped in shadow).
+    let view = -ray.direction.into_inner();
+    let half = (view + key).normalize();
+    let spec = if key_shadowed {
+        0.0
+    } else {
+        n.dot(half).max(0.0).powi(48) * 0.35
+    };
+
+    let shade = |c: f32| -> u8 {
+        let linear = (c * diffuse as f32 + spec as f32).clamp(0.0, 1.0);
+        (linear.powf(1.0 / 2.2) * 255.0) as u8
+    };
+    [shade(color[0]), shade(color[1]), shade(color[2]), 255]
 }
 
 /// Render multiple solids with individual transforms and colors, using stratified
