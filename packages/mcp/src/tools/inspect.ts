@@ -234,7 +234,7 @@ export function computeInspection(ir: Document, engine: Engine): InspectResult {
           scale: inst.transform.scale,
         })
       : inst.mesh,
-    material: inst.material,
+    material: inst.material ?? "default",
     name: inst.name ?? inst.instanceId,
   }));
 

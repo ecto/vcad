@@ -20,7 +20,12 @@ fn assembly_with_let_bindings_produces_parts() {
     let doc = vcad_loon::eval_vcad(SRC, None).expect("eval failed");
     let parts = doc.part_defs.as_ref().map(|p| p.len()).unwrap_or(0);
     let insts = doc.instances.as_ref().map(|i| i.len()).unwrap_or(0);
-    assert_eq!(parts, 3, "expected 3 part defs, doc: roots={}", doc.roots.len());
+    assert_eq!(
+        parts,
+        3,
+        "expected 3 part defs, doc: roots={}",
+        doc.roots.len()
+    );
     assert_eq!(insts, 3);
     assert_eq!(doc.ground_instance_id.as_deref(), Some("base1"));
 }
