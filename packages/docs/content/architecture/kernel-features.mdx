@@ -1,0 +1,186 @@
+---
+title: "Kernel Features"
+description: "A catalog of everything the vcad BRep kernel can do, with rendered examples"
+order: 2
+---
+
+The vcad kernel is a purpose-built BRep (boundary representation) modeling kernel written in Rust — roughly 35K lines across focused crates, each owning one capability. This page catalogs every feature area, with examples authored in [loon](/reference/format) and rendered by the kernel's own pipeline: loon source → IR → BRep evaluation → tessellation → `vcad-render`. Every image below is the kernel's actual output.
+
+## Modeling Core
+
+### Analytic Primitives
+
+`vcad-kernel-primitives` constructs boxes, cylinders, spheres, and cones as exact BRep solids — a cylinder is a real `CylinderSurface` with analytic caps, not a polygon approximation. Downstream operations (booleans, fillets, ray tracing) work against the true surface.
+
+```lisp
+[let box [translate -70 0 0 [cube 40 40 30]]]
+[let cyl [cylinder 20 40]]
+[let sph [translate 70 0 20 [sphere 20]]]
+[let cn  [translate 120 -20 0 [cone 20 8 40]]]
+[root [union box [union cyl [union sph cn]]] "aluminum"]
+```
+
+![Box, cylinder, sphere, and cone primitives](/assets/kernel/primitives.jpg)
+
+### Half-Edge Topology
+
+`vcad-kernel-topo` stores vertices, edges, loops, faces, shells, and solids in `slotmap` arenas with O(1) stable handles. Euler operators and non-allocating adjacency iterators make topology surgery — face splitting, edge merging, shell repair — fast and safe. See [BRep Kernel](/architecture/kernel) for the full data-structure walkthrough.
+
+### Surfaces and Curves
+
+`vcad-kernel-geom` implements the `Surface` trait for planes, cylinders, cones, spheres, tori, and bilinear patches, plus 3D/2D curve types for edges and trim loops. `vcad-kernel-nurbs` extends this with full B-spline curves and surfaces (knot vectors, weights, control grids) for freeform geometry.
+
+### Exact Predicates
+
+`vcad-kernel-math` provides linear algebra, transforms, and Shewchuk's adaptive-precision predicates (`orient2d`, `orient3d`, `incircle`, `insphere`) via the `robust` crate. Geometric decisions — is this point above that plane? — are exact, not floating-point guesses, which is what keeps booleans from producing holes and inverted faces on near-degenerate input.
+
+## Operations
+
+### Boolean Operations
+
+`vcad-kernel-booleans` implements union, difference, and intersection through a four-stage pipeline: AABB broadphase filtering, analytic surface-surface intersection (with a sampled fallback), exact-predicate face classification via ray casting and winding numbers, and a sewing stage that trims, splits, and merges faces with topology repair. The part below is one union and two differences:
+
+```lisp
+[let plate  [cube 80 50 12]]
+[let boss   [translate 40 25 12 [cylinder 14 10]]]
+[let bore   [translate 40 25 -1 [cylinder 8 25]]]
+[let corner [translate 68 -4 -1 [cube 16 16 14]]]
+[root [difference corner [difference bore [union boss plate]]] "steel"]
+```
+
+![Boolean union and difference: a plate with a bossed bore and a notched corner](/assets/kernel/booleans.jpg)
+
+### Fillets and Chamfers
+
+`vcad-kernel-fillet` rounds or bevels edges directly on the BRep — inserting true cylindrical and spherical blend faces rather than faceting the mesh. Left: `[fillet 6 ...]`; right: `[chamfer 6 ...]`.
+
+```lisp
+[let a [fillet 6 [cube 40 40 40]]]
+[let b [translate 60 0 0 [chamfer 6 [cube 40 40 40]]]]
+[root [union a b] "aluminum"]
+```
+
+![A filleted cube next to a chamfered cube](/assets/kernel/fillet-chamfer.jpg)
+
+### Shell and Patterns
+
+`vcad-kernel-shell` hollows a solid by offsetting its surfaces inward — each `Surface` knows how to offset itself analytically (a cylinder shrinks its radius, a plane translates). It also provides linear and circular patterns. Below, a box shelled to a 3 mm wall, with a cutaway to show the interior:
+
+```lisp
+[let hollow  [shell 3 [cube 60 40 30]]]
+[let cutaway [translate 30 20 10 [cube 40 30 30]]]
+[root [difference cutaway hollow] "abs"]
+```
+
+![Shelled box with a corner cut away revealing the 3mm wall](/assets/kernel/shell.jpg)
+
+A circular pattern turns one hole into a bolt circle in a single operation:
+
+```lisp
+[let disc  [cylinder 40 10]]
+[let hub   [translate 0 0 10 [cylinder 12 15]]]
+[let hole  [translate 28 0 -1 [cylinder 4 12]]]
+[let holes [circular-pattern 0 0 0 0 0 1 6 360 hole]]
+[root [difference holes [union hub disc]] "steel"]
+```
+
+![Flange with a six-hole bolt circle](/assets/kernel/patterns.jpg)
+
+### Sketches and Constraints
+
+`vcad-kernel-sketch` models 2D profiles (lines, arcs) on arbitrary planes, and `vcad-kernel-constraints` solves geometric constraints — coincident, horizontal/vertical, parallel, perpendicular, tangent, distance, length, radius, angle, equal-length, fixed — with a Levenberg-Marquardt solver using adaptive damping. Sketches feed every profile-based operation below.
+
+### Extrude, Revolve, Sweep, Loft
+
+`vcad-kernel-sweep` turns closed sketch profiles into solids. Revolve spins a profile around an axis:
+
+```lisp
+[let profile [sketch 0 0 0 1 0 0 0 0 1 #[
+  [line 8 0 20 0] [line 20 0 20 6] [line 20 6 12 10]
+  [line 12 10 12 30] [line 12 30 18 36] [line 18 36 18 42]
+  [line 18 42 8 42] [line 8 42 8 0]
+]]]
+[root [revolve 0 0 0 0 0 1 360 profile] "brass"]
+```
+
+![Revolved spool-shaped part](/assets/kernel/revolve.jpg)
+
+Helical sweep carries a circular profile along a helix — a compression spring in four lines:
+
+```lisp
+[let profile [sketch 0 0 0 1 0 0 0 0 1 #[
+  [arc 3 0 -3 0 0 0 true]
+  [arc -3 0 3 0 0 0 true]
+]]]
+[root [sweep-helix 15 12 60 5 profile] "steel"]
+```
+
+![Helical sweep: a five-turn compression spring](/assets/kernel/sweep.jpg)
+
+Loft interpolates a solid through a sequence of cross-sections:
+
+```lisp
+[let base [sketch 0 0 0  1 0 0 0 1 0 #[ ... 60x60 square ... ]]]
+[let mid  [sketch 0 0 30 1 0 0 0 1 0 #[ ... 24x44 rectangle ... ]]]
+[let top  [sketch 0 0 60 1 0 0 0 1 0 #[ ... 36x20 rectangle ... ]]]
+[root [loft #[base mid top]] "aluminum"]
+```
+
+![Lofted transition through three rectangular sections](/assets/kernel/loft.jpg)
+
+### Text and Sheet Metal
+
+`vcad-kernel-text` converts text to sketch geometry for embossing and engraving. `vcad-kernel-sheet` models sheet-metal parts — flanges, bends — with lossless unfolding to a flat pattern.
+
+## Tessellation and Rendering
+
+### Tessellation
+
+`vcad-kernel-tessellate` converts BReps to watertight triangle meshes with curvature-adaptive sampling and trim-loop-aware triangulation. This feeds the viewport, STL/GLB export, physics collision shapes, and the images on this page.
+
+### Direct BRep Ray Tracing
+
+`vcad-kernel-raytrace` renders BReps pixel-perfectly *without* tessellation: analytic ray intersection against every surface type, SAH-built BVH acceleration, and trimmed-surface handling, running as a WebGPU compute pipeline in the app's ray-traced view mode.
+
+### GPU Compute
+
+`vcad-kernel-gpu` offloads mesh work — normal computation, decimation — to wgpu compute shaders.
+
+## Interoperability
+
+- **STEP** — `vcad-kernel-step` reads and writes STEP AP214, the lingua franca of mechanical CAD. Drag a `.step` file into the app and it becomes an editable BRep.
+- **URDF** — `vcad-kernel-urdf` imports robot descriptions (links, joints, inertials) as vcad assemblies ready for simulation.
+- **Drafting** — `vcad-kernel-drafting` generates 2D drawings: orthographic projections with hidden-line removal, dimensions, GD&T annotations, and DXF export.
+
+## Simulation and Analysis
+
+### Physics
+
+`vcad-kernel-physics` converts BRep assemblies into articulated rigid-body simulations (phyz): revolute, prismatic, cylindrical, ball, and fixed joints, with a gym-style `reset()` / `step(action)` / `observe()` interface for reinforcement learning — actions as torques, position targets, or velocity targets.
+
+### Differentiable Geometry
+
+`vcad-kernel-diff` is a differentiable seam through the kernel: it computes exact parameter sensitivities (dx/dθ) of tessellations, mass-property gradients, differentiable fillet radii, and reverse-mode adjoints — so you can ask "how does mass change per millimeter of this parameter?" and optimize designs with L-BFGS, including gradients through physics rollouts with contact.
+
+### Topology Optimization
+
+`vcad-kernel-topopt` runs SIMP topology optimization — voxel FEA finding the stiffest material layout for given loads and supports, extracted back to a mesh via surface nets.
+
+### Molecular Simulation
+
+`vcad-kernel-atoms` extends the kernel below the continuum: atomic and molecular design with molecular dynamics, energy minimization, ML potentials, and inverse material design.
+
+## Manufacturing
+
+- **CAM** — `vcad-kernel-cam` generates 2.5D machining toolpaths with a G-code post-processor.
+- **Stock simulation** — `vcad-kernel-stocksim` verifies toolpaths against an octree-SDF stock model, acting as a fail-closed oracle for CAM output.
+- **DFM** — `vcad-kernel-dfm` checks designs against manufacturability rule packs (minimum wall thickness, drill standards, etc.) and suggests fixes.
+- **Cost** — `vcad-kernel-cost` estimates manufacturing cost with a shared model used by quoting tools.
+
+## One Kernel, Every Surface
+
+Everything above compiles to a single unified API in `vcad-kernel`, which is consumed three ways: natively by the CLI and MCP server, via `vcad-kernel-wasm` in the browser (the same kernel runs client-side at [vcad.io](https://vcad.io)), and through the [IR format](/architecture/ir) that makes every model a reproducible, parametric program.
+
+<Callout type="tip" title="Reproduce these renders">
+Every figure on this page was generated headlessly: loon source evaluated by `vcad-loon`, rendered with `cargo run -p vcad-render -- part.vcad --jpeg out.jpg`. No screenshots, no external renderer — the kernel drew its own documentation.
+</Callout>

@@ -253,6 +253,14 @@ export function getMdxComponents() {
     td: (props: React.HTMLAttributes<HTMLTableCellElement>) => (
       <td className="py-3 px-4 border-b border-border/50 text-text-body" {...props} />
     ),
+    img: (props: React.ImgHTMLAttributes<HTMLImageElement>) => (
+      // eslint-disable-next-line @next/next/no-img-element
+      <img
+        className="my-6 mx-auto rounded-lg border border-border max-w-full"
+        alt={props.alt ?? ""}
+        {...props}
+      />
+    ),
     a: (props: React.AnchorHTMLAttributes<HTMLAnchorElement>) => (
       <a
         className="text-accent hover:text-accent-hover underline underline-offset-2"

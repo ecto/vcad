@@ -8,6 +8,7 @@ import {
   Cpu,
   GridFour,
   Cube,
+  Sparkle,
   Eye,
   Atom,
   GitBranch,
@@ -35,6 +36,13 @@ const topics = [
     description: "Half-edge topology, slotmap arenas, surface types, exact predicates.",
     icon: Cube,
     readTime: "15 min",
+  },
+  {
+    id: "kernel-features",
+    title: "Kernel Features",
+    description: "Everything the kernel can do, with rendered examples.",
+    icon: Sparkle,
+    readTime: "12 min",
   },
   {
     id: "booleans",
