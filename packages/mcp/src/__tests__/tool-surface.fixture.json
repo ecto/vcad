@@ -6234,6 +6234,61 @@
     }
   },
   {
+    "name": "length_match_traces",
+    "title": "Length Match Traces",
+    "description": "Length-match a group of routed nets (a DDR lane, clock tree, SPI bus): measures each net's copper and grows the shorter ones with clearance-checked trombone/sawtooth meanders until all reach the longest net (or target_length) within tolerance. Nets it can't tune (branching, multi-layer, arcs, no room) are reported with a reason, never guessed at. check_only:true measures and verdicts without touching copper. Mutating runs carry drc_delta.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "document_id": {
+          "type": "string",
+          "description": "Session id from create_schematic or open_document. Preferred — the tool mutates the server-side session, so the full document never crosses the wire."
+        },
+        "document": {
+          "type": "object",
+          "description": "Inline vcad IR Document (legacy stateless flow). Prefer document_id."
+        },
+        "nets": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "The match group: routed nets whose copper lengths must agree (a DDR byte lane, a clock pair, a SPI bus). Shorter nets grow meanders; the longest net (or target_length) sets the target."
+        },
+        "target_length": {
+          "type": "number",
+          "description": "Explicit target routed length in mm. Omit to match everything to the longest net in the group."
+        },
+        "tolerance": {
+          "type": "number",
+          "description": "A net counts as matched within this of the target, mm (default 0.1)."
+        },
+        "max_amplitude": {
+          "type": "number",
+          "description": "Maximum meander amplitude, mm (default 2.0)."
+        },
+        "spacing": {
+          "type": "number",
+          "description": "Meander period spacing along the trace, mm (default 1.0)."
+        },
+        "style": {
+          "type": "string",
+          "description": "Meander pattern: 'trombone' (U-bends, default) or 'sawtooth' (zigzag)."
+        },
+        "check_only": {
+          "type": "boolean",
+          "description": "Measure and verdict only — report each net's routed length and deviation from the target without generating meanders or touching copper."
+        }
+      },
+      "required": [
+        "nets"
+      ]
+    },
+    "annotations": {
+      "readOnlyHint": false
+    }
+  },
+  {
     "name": "critique_route",
     "title": "Critique Route",
     "description": "Audit one net's routing without changing anything: total length, via/layer-change count, the closest approach to other-net copper, and any clearance/short/unconnected DRC issues it's in. Inspect a route before trusting it.",

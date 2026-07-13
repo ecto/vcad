@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-13-length-match-traces",
+  "version": "0.9.4",
+  "date": "2026-07-13",
+  "category": "feat",
+  "title": "Length matching for PCB traces",
+  "summary": "New length_match_traces tool grows shorter nets in a match group with clearance-checked trombone/sawtooth meanders until they match the longest net (or a target) within tolerance.",
+  "features": ["ecad", "routing", "length-matching"],
+  "mcpTools": ["length_match_traces"]
+}

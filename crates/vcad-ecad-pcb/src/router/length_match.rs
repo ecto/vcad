@@ -1,0 +1,589 @@
+//! Group length matching for routed nets — `length_match_traces`.
+//!
+//! Takes a group of timing-critical nets (a DDR byte lane, a clock tree, a
+//! SPI bus), measures each net's routed copper, and grows the shorter nets
+//! with clearance-checked meanders (via [`length_tune`](super::length_tune))
+//! until every net in the group reaches the target length within tolerance.
+//! The target defaults to the longest net in the group.
+//!
+//! The matcher is conservative by design: it only tunes nets whose copper
+//! forms a single unbranched polyline on one layer, and reports every other
+//! net as skipped with a reason instead of guessing. Replacement traces are
+//! returned as data — the caller decides whether to commit them.
+
+use std::collections::HashMap;
+
+use vcad_ir::ecad::{Pcb, Trace};
+use vcad_ir::Vec2;
+
+use super::length_tune::{generate_meanders_checked, LengthTuneParams, MeanderStyle};
+use crate::session::RouteSession;
+
+/// Endpoint-matching tolerance when chaining trace segments into a polyline.
+const CHAIN_EPS: f64 = 1e-6;
+
+/// Options for [`match_lengths`].
+#[derive(Debug, Clone)]
+pub struct LengthMatchOptions {
+    /// Target routed length in mm. Defaults to the longest net in the group.
+    pub target_length: Option<f64>,
+    /// A net counts as matched when within this of the target (mm).
+    pub tolerance: f64,
+    /// Maximum meander amplitude in mm.
+    pub max_amplitude: f64,
+    /// Meander period spacing in mm.
+    pub spacing: f64,
+    /// Meander pattern style.
+    pub style: MeanderStyle,
+}
+
+impl Default for LengthMatchOptions {
+    fn default() -> Self {
+        Self {
+            target_length: None,
+            tolerance: 0.1,
+            max_amplitude: 2.0,
+            spacing: 1.0,
+            style: MeanderStyle::Trombone,
+        }
+    }
+}
+
+/// Per-net outcome of a length-matching pass.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct NetLengthReport {
+    /// Net name.
+    pub net: String,
+    /// Routed length before tuning (mm).
+    pub length_before: f64,
+    /// Routed length after tuning (mm) — equals `length_before` when untouched.
+    pub length_after: f64,
+    /// Whether `length_after` is within tolerance of the target.
+    pub matched: bool,
+    /// Whether meanders were generated for this net.
+    pub tuned: bool,
+    /// Why the net could not be tuned, when it needed tuning but wasn't.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub skip_reason: Option<String>,
+    /// Replacement traces for this net (present only when `tuned`). These
+    /// replace ALL of the net's existing straight traces.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub new_traces: Vec<Trace>,
+}
+
+/// Result of [`match_lengths`] over a net group.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct LengthMatchResult {
+    /// The length every net was tuned toward (mm).
+    pub target_length: f64,
+    /// Match tolerance used (mm).
+    pub tolerance: f64,
+    /// Whether every net in the group ended within tolerance of the target.
+    pub all_matched: bool,
+    /// Per-net reports, in input order.
+    pub nets: Vec<NetLengthReport>,
+}
+
+/// Total routed straight-trace length of a net (mm).
+pub fn net_routed_length(pcb: &Pcb, net: &str) -> f64 {
+    pcb.traces
+        .iter()
+        .filter(|t| t.net == net)
+        .map(|t| (t.end - t.start).length())
+        .sum()
+}
+
+/// Chain a net's traces into one ordered polyline, or explain why we can't.
+///
+/// Requirements: at least one straight trace, all on one layer, no arcs on the
+/// net, every endpoint shared by at most two segments (no branches), and the
+/// segments form a single connected open chain.
+fn net_polyline(pcb: &Pcb, net: &str) -> Result<(Vec<Vec2>, usize), String> {
+    let segs: Vec<&Trace> = pcb.traces.iter().filter(|t| t.net == net).collect();
+    if segs.is_empty() {
+        return Err("net has no routed traces".into());
+    }
+    if pcb.trace_arcs.iter().any(|a| a.net == net) {
+        return Err("net has arc traces (arc tuning unsupported)".into());
+    }
+    let layer = segs[0].layer;
+    if segs.iter().any(|t| t.layer != layer) {
+        return Err("net spans multiple copper layers".into());
+    }
+
+    // Quantized-endpoint adjacency map.
+    let key = |p: Vec2| -> (i64, i64) {
+        (
+            (p.x / CHAIN_EPS).round() as i64,
+            (p.y / CHAIN_EPS).round() as i64,
+        )
+    };
+    let mut adj: HashMap<(i64, i64), Vec<usize>> = HashMap::new();
+    for (i, t) in segs.iter().enumerate() {
+        adj.entry(key(t.start)).or_default().push(i);
+        adj.entry(key(t.end)).or_default().push(i);
+    }
+    if adj.values().any(|v| v.len() > 2) {
+        return Err("net routing branches (T-junction)".into());
+    }
+    let endpoints: Vec<_> = adj.iter().filter(|(_, v)| v.len() == 1).collect();
+    if endpoints.len() != 2 {
+        return Err("net traces do not form a single open chain".into());
+    }
+
+    // Walk from one endpoint to the other.
+    let start_key = *endpoints[0].0;
+    let mut points = Vec::with_capacity(segs.len() + 1);
+    let mut current = start_key;
+    let mut prev_seg: Option<usize> = None;
+    loop {
+        let Some(next_seg) = adj[&current].iter().copied().find(|s| Some(*s) != prev_seg) else {
+            break;
+        };
+        let t = segs[next_seg];
+        let (from, to) = if key(t.start) == current {
+            (t.start, t.end)
+        } else {
+            (t.end, t.start)
+        };
+        points.push(from);
+        current = key(to);
+        prev_seg = Some(next_seg);
+        if adj[&current].len() == 1 {
+            points.push(to);
+            break;
+        }
+    }
+    if points.len() != segs.len() + 1 {
+        return Err("net traces do not form a single connected chain".into());
+    }
+    Ok((points, segs.len()))
+}
+
+/// Centerline segments of every trace NOT on `net`, for clearance checking.
+fn other_net_obstacles(pcb: &Pcb, net: &str) -> Vec<(Vec2, Vec2)> {
+    pcb.traces
+        .iter()
+        .filter(|t| t.net != net)
+        .map(|t| (t.start, t.end))
+        .collect()
+}
+
+/// Splice meander waypoints into the base polyline and emit replacement traces.
+fn polyline_to_traces(
+    points: &[Vec2],
+    meanders: &[super::length_tune::MeanderSegment],
+    template: &Trace,
+) -> Vec<Trace> {
+    // Meander points replace segment `segment_index`; other segments pass through.
+    let by_index: HashMap<usize, &super::length_tune::MeanderSegment> =
+        meanders.iter().map(|m| (m.segment_index, m)).collect();
+
+    let mut out: Vec<Vec2> = vec![points[0]];
+    for i in 0..points.len() - 1 {
+        if let Some(m) = by_index.get(&i) {
+            // Meander points include the segment endpoints; skip the first to
+            // avoid duplicating the previous point.
+            out.extend(m.points.iter().skip(1).copied());
+        } else {
+            out.push(points[i + 1]);
+        }
+    }
+
+    out.windows(2)
+        .filter(|w| (w[1] - w[0]).length() > CHAIN_EPS)
+        .map(|w| Trace {
+            start: w[0],
+            end: w[1],
+            width: template.width,
+            layer: template.layer,
+            net: template.net.clone(),
+            source: template.source,
+        })
+        .collect()
+}
+
+/// Length-match a group of nets by meandering the shorter ones.
+///
+/// Pure: returns replacement traces as data and mutates nothing. For each net
+/// that needs lengthening, meanders are generated clearance-checked against
+/// every other net's copper centerlines (the required clearance plus both
+/// half-widths, conservatively using the tuned net's width for both).
+pub fn match_lengths(pcb: &Pcb, nets: &[String], opts: &LengthMatchOptions) -> LengthMatchResult {
+    let lengths: Vec<f64> = nets.iter().map(|n| net_routed_length(pcb, n)).collect();
+    let longest = lengths.iter().cloned().fold(0.0_f64, f64::max);
+    let target = opts.target_length.unwrap_or(longest);
+
+    let session = RouteSession::from_pcb(pcb);
+
+    let mut reports = Vec::with_capacity(nets.len());
+    for (net, &before) in nets.iter().zip(&lengths) {
+        let deficit = target - before;
+        if deficit <= opts.tolerance {
+            reports.push(NetLengthReport {
+                net: net.clone(),
+                length_before: before,
+                length_after: before,
+                matched: deficit >= -opts.tolerance,
+                tuned: false,
+                skip_reason: if deficit < -opts.tolerance {
+                    Some("net is longer than the target (shortening unsupported)".into())
+                } else {
+                    None
+                },
+                new_traces: vec![],
+            });
+            continue;
+        }
+
+        let (points, _) = match net_polyline(pcb, net) {
+            Ok(p) => p,
+            Err(reason) => {
+                reports.push(NetLengthReport {
+                    net: net.clone(),
+                    length_before: before,
+                    length_after: before,
+                    matched: false,
+                    tuned: false,
+                    skip_reason: Some(reason),
+                    new_traces: vec![],
+                });
+                continue;
+            }
+        };
+
+        let template = pcb
+            .traces
+            .iter()
+            .find(|t| t.net == *net)
+            .expect("net_polyline guarantees at least one trace")
+            .clone();
+        let params = LengthTuneParams {
+            target_length: target,
+            max_amplitude: opts.max_amplitude,
+            spacing: opts.spacing,
+            style: opts.style,
+        };
+        // Waypoints are trace centerline points; hold the required copper
+        // clearance plus both half-widths from other-net centerlines.
+        let min_clearance = session.clearance_for(net) + template.width;
+        let obstacles = other_net_obstacles(pcb, net);
+
+        match generate_meanders_checked(&points, &params, min_clearance, &obstacles) {
+            Some(meanders) if !meanders.is_empty() => {
+                let new_traces = polyline_to_traces(&points, &meanders, &template);
+                let after: f64 = new_traces.iter().map(|t| (t.end - t.start).length()).sum();
+                reports.push(NetLengthReport {
+                    net: net.clone(),
+                    length_before: before,
+                    length_after: after,
+                    matched: (target - after).abs() <= opts.tolerance,
+                    tuned: true,
+                    skip_reason: None,
+                    new_traces,
+                });
+            }
+            Some(_) => {
+                // Already at/over target (shouldn't happen given deficit check).
+                reports.push(NetLengthReport {
+                    net: net.clone(),
+                    length_before: before,
+                    length_after: before,
+                    matched: true,
+                    tuned: false,
+                    skip_reason: None,
+                    new_traces: vec![],
+                });
+            }
+            None => {
+                reports.push(NetLengthReport {
+                    net: net.clone(),
+                    length_before: before,
+                    length_after: before,
+                    matched: false,
+                    tuned: false,
+                    skip_reason: Some(
+                        "meanders do not fit: amplitude/clearance constraints or segments \
+                         shorter than the meander spacing"
+                            .into(),
+                    ),
+                    new_traces: vec![],
+                });
+            }
+        }
+    }
+
+    let all_matched = reports.iter().all(|r| r.matched);
+    LengthMatchResult {
+        target_length: target,
+        tolerance: opts.tolerance,
+        all_matched,
+        nets: reports,
+    }
+}
+
+/// Verify a length-match constraint without changing anything: per-net routed
+/// lengths, the group target (longest or explicit), and each net's deviation.
+pub fn check_length_match(
+    pcb: &Pcb,
+    nets: &[String],
+    target_length: Option<f64>,
+    tolerance: f64,
+) -> LengthMatchResult {
+    let lengths: Vec<f64> = nets.iter().map(|n| net_routed_length(pcb, n)).collect();
+    let longest = lengths.iter().cloned().fold(0.0_f64, f64::max);
+    let target = target_length.unwrap_or(longest);
+    let reports: Vec<NetLengthReport> = nets
+        .iter()
+        .zip(&lengths)
+        .map(|(net, &len)| NetLengthReport {
+            net: net.clone(),
+            length_before: len,
+            length_after: len,
+            matched: (target - len).abs() <= tolerance,
+            tuned: false,
+            skip_reason: None,
+            new_traces: vec![],
+        })
+        .collect();
+    LengthMatchResult {
+        target_length: target,
+        tolerance,
+        all_matched: reports.iter().all(|r| r.matched),
+        nets: reports,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use vcad_ir::ecad::*;
+
+    fn board(traces: Vec<Trace>) -> Pcb {
+        Pcb {
+            outline: BoardOutline {
+                vertices: vec![
+                    Vec2::new(0.0, 0.0),
+                    Vec2::new(60.0, 0.0),
+                    Vec2::new(60.0, 60.0),
+                    Vec2::new(0.0, 60.0),
+                ],
+                cutouts: vec![],
+                thickness: 1.6,
+            },
+            stackup: LayerStackup {
+                layers: vec![StackupLayer {
+                    layer: PcbLayer::FCu,
+                    copper_thickness: Some(0.035),
+                    dielectric_thickness: None,
+                    dielectric_er: None,
+                    material: None,
+                }],
+            },
+            nets: vec![],
+            rules: DesignRules {
+                default_rules: NetClassRules {
+                    name: "Default".into(),
+                    trace_width: 0.25,
+                    clearance: 0.2,
+                    via_diameter: 0.8,
+                    via_drill: 0.4,
+                    diff_pair_gap: None,
+                    diff_pair_width: None,
+                },
+                class_rules: vec![],
+                net_class_assignments: Default::default(),
+                edge_clearance: 0.5,
+                hole_to_hole: 0.5,
+                min_annular_ring: 0.15,
+                min_drill: 0.2,
+            },
+            footprints: vec![],
+            traces,
+            trace_arcs: vec![],
+            vias: vec![],
+            zones: vec![],
+            keepouts: vec![],
+            net_ties: vec![],
+        }
+    }
+
+    fn trace(net: &str, a: (f64, f64), b: (f64, f64)) -> Trace {
+        Trace {
+            start: Vec2::new(a.0, a.1),
+            end: Vec2::new(b.0, b.1),
+            width: 0.25,
+            layer: PcbLayer::FCu,
+            net: net.into(),
+            source: None,
+        }
+    }
+
+    #[test]
+    fn matches_short_net_to_longest() {
+        // LONG is 50mm, SHORT is 30mm — SHORT gains ~20mm of meander.
+        let pcb = board(vec![
+            trace("LONG", (5.0, 10.0), (55.0, 10.0)),
+            trace("SHORT", (5.0, 30.0), (35.0, 30.0)),
+        ]);
+        let r = match_lengths(
+            &pcb,
+            &["LONG".into(), "SHORT".into()],
+            &LengthMatchOptions {
+                max_amplitude: 3.0,
+                spacing: 2.0,
+                tolerance: 0.5,
+                ..Default::default()
+            },
+        );
+        assert!((r.target_length - 50.0).abs() < 1e-9);
+        assert!(r.all_matched, "reports: {:?}", r.nets);
+        let short = &r.nets[1];
+        assert!(short.tuned);
+        assert!((short.length_after - 50.0).abs() <= 0.5);
+        assert!(!short.new_traces.is_empty());
+        // Endpoints preserved (the chain may be walked in either direction).
+        let first = short.new_traces.first().unwrap().start;
+        let last = short.new_traces.last().unwrap().end;
+        let mut ends = [(first.x, first.y), (last.x, last.y)];
+        ends.sort_by(|a, b| a.0.total_cmp(&b.0));
+        assert!((ends[0].0 - 5.0).abs() < 1e-9 && (ends[0].1 - 30.0).abs() < 1e-9);
+        assert!((ends[1].0 - 35.0).abs() < 1e-9 && (ends[1].1 - 30.0).abs() < 1e-9);
+        // Replacement copper carries the net's width/layer.
+        assert!(short.new_traces.iter().all(|t| t.width == 0.25));
+    }
+
+    #[test]
+    fn explicit_target_overrides_longest() {
+        let pcb = board(vec![trace("A", (5.0, 10.0), (45.0, 10.0))]);
+        let r = match_lengths(
+            &pcb,
+            &["A".into()],
+            &LengthMatchOptions {
+                target_length: Some(60.0),
+                max_amplitude: 4.0,
+                spacing: 2.0,
+                tolerance: 0.5,
+                ..Default::default()
+            },
+        );
+        assert!((r.target_length - 60.0).abs() < 1e-9);
+        assert!(r.all_matched, "reports: {:?}", r.nets);
+        assert!((r.nets[0].length_after - 60.0).abs() <= 0.5);
+    }
+
+    #[test]
+    fn multi_segment_chain_is_tuned() {
+        // L-shaped SHORT (out of order in the trace list) still chains.
+        let pcb = board(vec![
+            trace("LONG", (5.0, 5.0), (55.0, 5.0)),
+            trace("SHORT", (25.0, 30.0), (25.0, 45.0)),
+            trace("SHORT", (5.0, 30.0), (25.0, 30.0)),
+        ]);
+        let r = match_lengths(
+            &pcb,
+            &["LONG".into(), "SHORT".into()],
+            &LengthMatchOptions {
+                max_amplitude: 3.0,
+                spacing: 2.0,
+                tolerance: 0.5,
+                ..Default::default()
+            },
+        );
+        assert!(r.all_matched, "reports: {:?}", r.nets);
+        assert!(r.nets[1].tuned);
+    }
+
+    #[test]
+    fn branching_net_is_skipped_with_reason() {
+        let pcb = board(vec![
+            trace("LONG", (5.0, 5.0), (55.0, 5.0)),
+            trace("T", (5.0, 30.0), (15.0, 30.0)),
+            trace("T", (15.0, 30.0), (25.0, 30.0)),
+            trace("T", (15.0, 30.0), (15.0, 40.0)),
+        ]);
+        let r = match_lengths(&pcb, &["LONG".into(), "T".into()], &Default::default());
+        assert!(!r.all_matched);
+        let t = &r.nets[1];
+        assert!(!t.tuned);
+        assert!(t.skip_reason.as_deref().unwrap().contains("branches"));
+    }
+
+    #[test]
+    fn unrouted_net_is_skipped() {
+        let pcb = board(vec![trace("LONG", (5.0, 5.0), (55.0, 5.0))]);
+        let r = match_lengths(&pcb, &["LONG".into(), "NOPE".into()], &Default::default());
+        assert!(!r.all_matched);
+        assert!(r.nets[1]
+            .skip_reason
+            .as_deref()
+            .unwrap()
+            .contains("no routed traces"));
+    }
+
+    #[test]
+    fn longer_than_target_reports_unmatchable() {
+        let pcb = board(vec![trace("A", (5.0, 5.0), (55.0, 5.0))]);
+        let r = match_lengths(
+            &pcb,
+            &["A".into()],
+            &LengthMatchOptions {
+                target_length: Some(30.0),
+                ..Default::default()
+            },
+        );
+        assert!(!r.all_matched);
+        assert!(r.nets[0]
+            .skip_reason
+            .as_deref()
+            .unwrap()
+            .contains("longer than the target"));
+    }
+
+    #[test]
+    fn nearby_copper_reduces_amplitude() {
+        // A GND rail 1.5mm above the SHORT trace caps meander amplitude.
+        let pcb = board(vec![
+            trace("LONG", (5.0, 50.0), (55.0, 50.0)),
+            trace("SHORT", (5.0, 30.0), (45.0, 30.0)),
+            trace("GND", (0.0, 31.5), (60.0, 31.5)),
+        ]);
+        let r = match_lengths(
+            &pcb,
+            &["LONG".into(), "SHORT".into()],
+            &LengthMatchOptions {
+                max_amplitude: 3.0,
+                spacing: 1.0,
+                tolerance: 0.5,
+                ..Default::default()
+            },
+        );
+        let short = &r.nets[1];
+        if short.tuned {
+            // Whatever amplitude was used must clear the GND rail.
+            let max_y = short
+                .new_traces
+                .iter()
+                .flat_map(|t| [t.start.y, t.end.y])
+                .fold(f64::MIN, f64::max);
+            assert!(
+                max_y < 31.5 - (0.2 + 0.25) + 1e-9,
+                "meanders must hold clearance to GND, max_y={max_y}"
+            );
+        }
+    }
+
+    #[test]
+    fn check_length_match_reports_deviation() {
+        let pcb = board(vec![
+            trace("A", (5.0, 10.0), (55.0, 10.0)),
+            trace("B", (5.0, 30.0), (35.0, 30.0)),
+        ]);
+        let r = check_length_match(&pcb, &["A".into(), "B".into()], None, 0.1);
+        assert!((r.target_length - 50.0).abs() < 1e-9);
+        assert!(!r.all_matched);
+        assert!(r.nets[0].matched);
+        assert!(!r.nets[1].matched);
+        assert!((r.nets[1].length_before - 30.0).abs() < 1e-9);
+    }
+}

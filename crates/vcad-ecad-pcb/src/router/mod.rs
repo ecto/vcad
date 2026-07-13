@@ -7,12 +7,14 @@
 //! - [`push_shove`] -- Interactive push-and-shove router with visibility-graph pathfinding
 //! - [`diff_pair`] -- Differential pair router with phase matching
 //! - [`length_tune`] -- Length tuning meander generator with DRC-aware clearance checking
+//! - [`length_match`] -- Group length matching: meander shorter nets to the longest/target
 //! - [`congestion`] -- PathFinder-style negotiated-congestion history-cost field
 
 pub mod auto;
 pub mod congestion;
 pub mod diff_pair;
 pub mod grid;
+pub mod length_match;
 pub mod length_tune;
 pub mod maze;
 pub mod push_shove;
@@ -23,6 +25,9 @@ pub use auto::{
 };
 pub use congestion::Congestion;
 pub use diff_pair::route_diff_pair;
+pub use length_match::{
+    check_length_match, match_lengths, LengthMatchOptions, LengthMatchResult, NetLengthReport,
+};
 pub use maze::route_net_maze;
 
 use vcad_ir::ecad::{Pcb, PcbLayer};

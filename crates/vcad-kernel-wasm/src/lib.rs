@@ -5717,6 +5717,60 @@ mod ecad_wasm {
         serde_wasm_bindgen::to_value(&out).map_err(|e| JsError::new(&e.to_string()))
     }
 
+    /// Length-match a group of nets by meandering the shorter ones.
+    ///
+    /// `nets_json` is a JSON array of net names; `opts_json` is
+    /// `{ target_length?, tolerance?, max_amplitude?, spacing?, style?, check_only? }`
+    /// (style: "trombone" | "sawtooth"). Pure — returns per-net reports with
+    /// replacement traces AS DATA (`{ target_length, tolerance, all_matched,
+    /// nets: [{ net, length_before, length_after, matched, tuned, skip_reason?,
+    /// new_traces }] }`); the caller commits them. With `check_only:true` it
+    /// only measures and verdicts, generating no meanders.
+    #[wasm_bindgen(js_name = ecadLengthMatch)]
+    pub fn ecad_length_match(
+        pcb_json: &str,
+        nets_json: &str,
+        opts_json: &str,
+    ) -> Result<JsValue, JsError> {
+        #[derive(serde::Deserialize, Default)]
+        #[serde(default)]
+        struct Opts {
+            target_length: Option<f64>,
+            tolerance: Option<f64>,
+            max_amplitude: Option<f64>,
+            spacing: Option<f64>,
+            style: Option<String>,
+            check_only: bool,
+        }
+        let pcb: Pcb = serde_json::from_str(pcb_json).map_err(|e| JsError::new(&e.to_string()))?;
+        let nets: Vec<String> =
+            serde_json::from_str(nets_json).map_err(|e| JsError::new(&e.to_string()))?;
+        let o: Opts = serde_json::from_str(opts_json).unwrap_or_default();
+
+        let defaults = vcad_ecad_pcb::router::LengthMatchOptions::default();
+        let opts = vcad_ecad_pcb::router::LengthMatchOptions {
+            target_length: o.target_length,
+            tolerance: o.tolerance.unwrap_or(defaults.tolerance),
+            max_amplitude: o.max_amplitude.unwrap_or(defaults.max_amplitude),
+            spacing: o.spacing.unwrap_or(defaults.spacing),
+            style: match o.style.as_deref() {
+                Some("sawtooth") => vcad_ecad_pcb::router::length_tune::MeanderStyle::Sawtooth,
+                _ => vcad_ecad_pcb::router::length_tune::MeanderStyle::Trombone,
+            },
+        };
+        let result = if o.check_only {
+            vcad_ecad_pcb::router::check_length_match(
+                &pcb,
+                &nets,
+                opts.target_length,
+                opts.tolerance,
+            )
+        } else {
+            vcad_ecad_pcb::router::match_lengths(&pcb, &nets, &opts)
+        };
+        serde_wasm_bindgen::to_value(&result).map_err(|e| JsError::new(&e.to_string()))
+    }
+
     /// Fill copper pour zones on the PCB.
     ///
     /// # Arguments

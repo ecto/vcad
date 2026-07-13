@@ -294,6 +294,7 @@ export const TOOL_METADATA: Record<string, ToolMetadata> = {
     }),
   },
   route_diff_pair: { title: "Route Differential Pair", annotations: RW },
+  length_match_traces: { title: "Length Match Traces", annotations: RW },
   critique_route: { title: "Critique Route", annotations: RO },
   run_erc: { title: "Run ERC", annotations: RO },
   export_gerber: { title: "Export Gerber", annotations: RW },
