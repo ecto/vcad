@@ -136,10 +136,7 @@ fn net_polyline(pcb: &Pcb, net: &str) -> Result<(Vec<Vec2>, usize), String> {
     let mut points = Vec::with_capacity(segs.len() + 1);
     let mut current = start_key;
     let mut prev_seg: Option<usize> = None;
-    loop {
-        let Some(next_seg) = adj[&current].iter().copied().find(|s| Some(*s) != prev_seg) else {
-            break;
-        };
+    while let Some(next_seg) = adj[&current].iter().copied().find(|s| Some(*s) != prev_seg) {
         let t = segs[next_seg];
         let (from, to) = if key(t.start) == current {
             (t.start, t.end)
