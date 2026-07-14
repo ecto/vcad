@@ -4288,6 +4288,35 @@ export function ecadLayerZ(layer, thickness, explosion) {
 }
 
 /**
+ * Length-match a group of nets by meandering the shorter ones.
+ *
+ * `nets_json` is a JSON array of net names; `opts_json` is
+ * `{ target_length?, tolerance?, max_amplitude?, spacing?, style?, check_only? }`
+ * (style: "trombone" | "sawtooth"). Pure — returns per-net reports with
+ * replacement traces AS DATA (`{ target_length, tolerance, all_matched,
+ * nets: [{ net, length_before, length_after, matched, tuned, skip_reason?,
+ * new_traces }] }`); the caller commits them. With `check_only:true` it
+ * only measures and verdicts, generating no meanders.
+ * @param {string} pcb_json
+ * @param {string} nets_json
+ * @param {string} opts_json
+ * @returns {any}
+ */
+export function ecadLengthMatch(pcb_json, nets_json, opts_json) {
+    const ptr0 = passStringToWasm0(pcb_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len0 = WASM_VECTOR_LEN;
+    const ptr1 = passStringToWasm0(nets_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len1 = WASM_VECTOR_LEN;
+    const ptr2 = passStringToWasm0(opts_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    const len2 = WASM_VECTOR_LEN;
+    const ret = wasm.ecadLengthMatch(ptr0, len0, ptr1, len1, ptr2, len2);
+    if (ret[2]) {
+        throw takeFromExternrefTable0(ret[1]);
+    }
+    return takeFromExternrefTable0(ret[0]);
+}
+
+/**
  * Galvanic-continuity analysis for one net's *realized* copper: island
  * count, pad coverage, stitching vias, and the worst stranded island. The
  * realized-geometry check that gates power/PDN and impedance verdicts — a
@@ -8392,12 +8421,12 @@ function __wbg_get_imports() {
             arg0.writeTexture(arg1, arg2, arg3, arg4);
         },
         __wbindgen_cast_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 2727, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 2728, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 2728, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 2729, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen_6dc29d3b0fc4fccd___closure__destroy___dyn_core_7d5f0a2ba6a62c33___ops__function__FnMut__wgpu_c488dbbed5add906___backend__webgpu__webgpu_sys__gen_GpuUncapturedErrorEvent__GpuUncapturedErrorEvent____Output_______, wasm_bindgen_6dc29d3b0fc4fccd___convert__closures_____invoke___wgpu_c488dbbed5add906___backend__webgpu__webgpu_sys__gen_GpuUncapturedErrorEvent__GpuUncapturedErrorEvent_____);
             return ret;
         },
         __wbindgen_cast_0000000000000002: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 3424, function: Function { arguments: [Externref], shim_idx: 3425, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 3425, function: Function { arguments: [Externref], shim_idx: 3426, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen_6dc29d3b0fc4fccd___closure__destroy___dyn_core_7d5f0a2ba6a62c33___ops__function__FnMut__wasm_bindgen_6dc29d3b0fc4fccd___JsValue____Output_______, wasm_bindgen_6dc29d3b0fc4fccd___convert__closures_____invoke___wasm_bindgen_6dc29d3b0fc4fccd___JsValue_____);
             return ret;
         },
