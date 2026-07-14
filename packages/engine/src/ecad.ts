@@ -786,7 +786,9 @@ export interface LengthMatchResult {
 /**
  * Length-match a group of nets by generating clearance-checked meanders on the
  * shorter ones. Pure: replacement traces come back as data for the caller to
- * commit. Returns null when the ECAD kernel WASM is unavailable.
+ * commit. Returns null when the ECAD kernel WASM is unavailable, or when the
+ * kernel rejects the request (e.g. an unrecognized `style` — the binding
+ * refuses a typo rather than silently defaulting to Trombone).
  */
 export async function matchTraceLengths(
   pcb: Pcb,

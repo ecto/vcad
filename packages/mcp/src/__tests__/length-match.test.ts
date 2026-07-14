@@ -219,4 +219,16 @@ describe.skipIf(!kernelHasLengthMatch)("length_match_traces", () => {
     // Pure: the input board is untouched.
     expect(JSON.stringify(pcb)).toBe(before);
   });
+
+  it("engine wrapper rejects an unrecognized style instead of defaulting", async () => {
+    const id = await boardWithTwoNets();
+    const pcb = docPcb(id);
+    // A direct engine caller bypasses the MCP-layer style validation; the WASM
+    // binding itself must refuse a typo rather than silently pick Trombone.
+    const result = await matchTraceLengths(pcb, ["LONG", "SHORT"], {
+      // @ts-expect-error deliberately invalid style
+      style: "sawTooth",
+    });
+    expect(result).toBeNull();
+  });
 });

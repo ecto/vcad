@@ -5755,7 +5755,14 @@ mod ecad_wasm {
             spacing: o.spacing.unwrap_or(defaults.spacing),
             style: match o.style.as_deref() {
                 Some("sawtooth") => vcad_ecad_pcb::router::length_tune::MeanderStyle::Sawtooth,
-                _ => vcad_ecad_pcb::router::length_tune::MeanderStyle::Trombone,
+                None | Some("trombone") => {
+                    vcad_ecad_pcb::router::length_tune::MeanderStyle::Trombone
+                }
+                Some(other) => {
+                    return Err(JsError::new(&format!(
+                        "unknown meander style '{other}': expected 'trombone' or 'sawtooth'"
+                    )));
+                }
             },
         };
         let result = if o.check_only {
