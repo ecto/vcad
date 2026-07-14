@@ -59,6 +59,7 @@ import {
   isEcadAvailable,
   routeAll,
   routeDiffPair as kernelRouteDiffPair,
+  matchTraceLengths as kernelMatchTraceLengths,
   critiqueRoute as kernelCritiqueRoute,
   runDrc as kernelRunDrc,
   runDrcInRegion as kernelRunDrcInRegion,
@@ -1009,6 +1010,51 @@ export const routeDiffPairSchema = {
     net_n: { type: "string" as const, description: "Negative-polarity net of the pair." },
   },
   required: ["net_p", "net_n"],
+};
+
+/** JSON Schema for length_match_traces tool. */
+export const lengthMatchTracesSchema = {
+  type: "object" as const,
+  properties: {
+    ...docInputProperties,
+    nets: {
+      type: "array" as const,
+      items: { type: "string" as const },
+      description:
+        "The match group: routed nets whose copper lengths must agree (a DDR " +
+        "byte lane, a clock pair, a SPI bus). Shorter nets grow meanders; the " +
+        "longest net (or target_length) sets the target.",
+    },
+    target_length: {
+      type: "number" as const,
+      description:
+        "Explicit target routed length in mm. Omit to match everything to the " +
+        "longest net in the group.",
+    },
+    tolerance: {
+      type: "number" as const,
+      description: "A net counts as matched within this of the target, mm (default 0.1).",
+    },
+    max_amplitude: {
+      type: "number" as const,
+      description: "Maximum meander amplitude, mm (default 2.0).",
+    },
+    spacing: {
+      type: "number" as const,
+      description: "Meander period spacing along the trace, mm (default 1.0).",
+    },
+    style: {
+      type: "string" as const,
+      description: "Meander pattern: 'trombone' (U-bends, default) or 'sawtooth' (zigzag).",
+    },
+    check_only: {
+      type: "boolean" as const,
+      description:
+        "Measure and verdict only — report each net's routed length and " +
+        "deviation from the target without generating meanders or touching copper.",
+    },
+  },
+  required: ["nets"],
 };
 
 /** JSON Schema for export_gerber tool. */
@@ -3643,6 +3689,102 @@ export async function routeDiffPair(args: Record<string, unknown>) {
       {
         type: "text" as const,
         text: JSON.stringify({ success: true, traces_added: added, ...docResultPayload(ctx) }),
+      },
+    ],
+  };
+}
+
+/** Length-match a group of nets by meandering the shorter ones, committing the copper. */
+export async function lengthMatchTraces(args: Record<string, unknown>) {
+  const ctx = resolveDocInput(args);
+  const pcb = getDocPcb(ctx.doc);
+  const fail = ecadError;
+  if (!pcb) {
+    return fail(
+      "Document has no PCB — run place_components first (or open a document that has a board)",
+    );
+  }
+  const nets = Array.isArray(args.nets) ? (args.nets as unknown[]).map(String) : [];
+  if (nets.length === 0) return fail("'nets' must be a non-empty array of net names");
+  const checkOnly = args.check_only === true;
+  const style = args.style === undefined ? undefined : String(args.style);
+  if (style !== undefined && style !== "trombone" && style !== "sawtooth") {
+    return fail("style must be 'trombone' or 'sawtooth'");
+  }
+
+  const result = await kernelMatchTraceLengths(pcb, nets, {
+    target_length: args.target_length as number | undefined,
+    tolerance: args.tolerance as number | undefined,
+    max_amplitude: args.max_amplitude as number | undefined,
+    spacing: args.spacing as number | undefined,
+    style: style as "trombone" | "sawtooth" | undefined,
+    check_only: checkOnly,
+  });
+  if (!result) {
+    return fail("length matching unavailable — the ECAD kernel WASM is not loaded");
+  }
+
+  const round = (v: number) => Math.round(v * 1000) / 1000;
+  const report = result.nets.map((n) => ({
+    net: n.net,
+    length_before_mm: round(n.length_before),
+    length_after_mm: round(n.length_after),
+    deviation_mm: round(n.length_after - result.target_length),
+    matched: n.matched,
+    tuned: n.tuned,
+    ...(n.skip_reason ? { skip_reason: n.skip_reason } : {}),
+    ...(n.tuned ? { traces_replaced: n.new_traces?.length ?? 0 } : {}),
+  }));
+
+  if (checkOnly) {
+    return {
+      content: [
+        {
+          type: "text" as const,
+          text: JSON.stringify({
+            success: true,
+            check_only: true,
+            target_length_mm: round(result.target_length),
+            tolerance_mm: result.tolerance,
+            all_matched: result.all_matched,
+            nets: report,
+          }),
+        },
+      ],
+    };
+  }
+
+  // Commit: each tuned net's replacement copper supplants ALL of its straight
+  // traces (the meanders re-emit the untouched spans too).
+  const tuned = result.nets.filter((n) => n.tuned && n.new_traces && n.new_traces.length > 0);
+  const touched = new Set(tuned.map((n) => n.net));
+  const newPoints: Vec2[] = tuned.flatMap((n) =>
+    (n.new_traces ?? []).flatMap((t) => [t.start, t.end]),
+  );
+  const drcCap = await beginDrcDelta(
+    pcb,
+    touched.size > 0 ? boundsOfPoints(newPoints, 3) : null,
+  );
+
+  if (touched.size > 0) {
+    pcb.traces = pcb.traces.filter((t) => !touched.has(t.net));
+    for (const n of tuned) pcb.traces.push(...(n.new_traces ?? []));
+  }
+
+  return {
+    content: [
+      {
+        type: "text" as const,
+        text: JSON.stringify({
+          success: true,
+          target_length_mm: round(result.target_length),
+          tolerance_mm: result.tolerance,
+          all_matched: result.all_matched,
+          nets_tuned: tuned.length,
+          nets: report,
+          drc_delta: await drcCap.finish(),
+          ...docResultPayload(ctx),
+        }),
       },
     ],
   };
@@ -12763,6 +12905,21 @@ export const toolDefs: ToolDef[] = [
       "clear channel); verify with run_drc / critique_route afterwards.",
     inputSchema: routeDiffPairSchema,
     handler: (a) => routeDiffPair(a) as ToolResult | Promise<ToolResult>,
+    behavior: behavior({ writesDoc: true }),
+  },
+  {
+    name: "length_match_traces",
+    pack: null,
+    description:
+      "Length-match a group of routed nets (a DDR lane, clock tree, SPI bus): " +
+      "measures each net's copper and grows the shorter ones with clearance-" +
+      "checked trombone/sawtooth meanders until all reach the longest net (or " +
+      "target_length) within tolerance. Nets it can't tune (branching, multi-" +
+      "layer, arcs, no room) are reported with a reason, never guessed at. " +
+      "check_only:true measures and verdicts without touching copper. Mutating " +
+      "runs carry drc_delta.",
+    inputSchema: lengthMatchTracesSchema,
+    handler: (a) => lengthMatchTraces(a) as ToolResult | Promise<ToolResult>,
     behavior: behavior({ writesDoc: true }),
   },
   {

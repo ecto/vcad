@@ -481,6 +481,7 @@ const LIST_TOOL_ORDER: readonly string[] = [
   "build_receipt",
   "verify_receipt",
   "route_diff_pair",
+  "length_match_traces",
   "critique_route",
   "run_erc",
   "export_gerber",

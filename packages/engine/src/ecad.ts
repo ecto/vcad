@@ -8,6 +8,7 @@
 import type {
   SchematicSheet,
   Pcb,
+  Trace,
   Vec2,
   PcbLayer,
   DerivedPart,
@@ -743,6 +744,69 @@ export async function routeDiffPair(
   } catch (e) {
     console.warn("[ECAD] Diff-pair routing failed:", e);
     return { success: false };
+  }
+}
+
+/** Options for {@link matchTraceLengths}. */
+export interface LengthMatchOptions {
+  /** Target routed length in mm; defaults to the longest net in the group. */
+  target_length?: number;
+  /** A net counts as matched within this of the target (mm, default 0.1). */
+  tolerance?: number;
+  /** Maximum meander amplitude in mm (default 2.0). */
+  max_amplitude?: number;
+  /** Meander period spacing in mm (default 1.0). */
+  spacing?: number;
+  /** Meander pattern style (default "trombone"). */
+  style?: "trombone" | "sawtooth";
+  /** Measure + verdict only; generate no meanders. */
+  check_only?: boolean;
+}
+
+/** Per-net outcome of {@link matchTraceLengths}. */
+export interface NetLengthReport {
+  net: string;
+  length_before: number;
+  length_after: number;
+  matched: boolean;
+  tuned: boolean;
+  skip_reason?: string;
+  /** Replacement traces for the net (only when `tuned`). */
+  new_traces?: Trace[];
+}
+
+/** Result of {@link matchTraceLengths}. */
+export interface LengthMatchResult {
+  target_length: number;
+  tolerance: number;
+  all_matched: boolean;
+  nets: NetLengthReport[];
+}
+
+/**
+ * Length-match a group of nets by generating clearance-checked meanders on the
+ * shorter ones. Pure: replacement traces come back as data for the caller to
+ * commit. Returns null when the ECAD kernel WASM is unavailable, or when the
+ * kernel rejects the request (e.g. an unrecognized `style` — the binding
+ * refuses a typo rather than silently defaulting to Trombone).
+ */
+export async function matchTraceLengths(
+  pcb: Pcb,
+  nets: string[],
+  opts: LengthMatchOptions = {},
+): Promise<LengthMatchResult | null> {
+  const wasm = await loadEcadWasm();
+  // Guard on the export: a stale checked-in WASM build predates this binding.
+  if (!wasm || typeof wasm.ecadLengthMatch !== "function") return null;
+  try {
+    return wasm.ecadLengthMatch(
+      JSON.stringify(pcb),
+      JSON.stringify(nets),
+      JSON.stringify(opts),
+    ) as LengthMatchResult;
+  } catch (e) {
+    console.warn("[ECAD] Length matching failed:", e);
+    return null;
   }
 }
 
