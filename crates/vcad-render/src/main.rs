@@ -3,9 +3,11 @@
 //! Usage:
 //!   vcad-render <path.vcad> [--view iso|front|side|top|hero] [--scale <px-per-mm>] [--transparent]
 //!   vcad-render <path.vcad> --jpeg <out.jpg> [--view ...] [--size <px>] [--fill <frac>] [--quality <1-100>]
+//!   vcad-render <path.vcad> --png <out.png> [--view ...] [--size <px>] [--fill <frac>]
 //!
-//! Without `--jpeg`: a single self-contained `<svg>` on stdout.
+//! Without `--jpeg`/`--png`: a single self-contained `<svg>` on stdout.
 //! With `--jpeg`: a z-buffered raster render written to the given path.
+//! With `--png`: the same render as RGBA with a transparent background.
 //! All rendering logic lives in the `vcad-render` library (see `lib.rs`);
 //! this binary only handles argument parsing and file IO.
 
@@ -20,7 +22,8 @@ struct Args {
     scale: f64,
     view: View,
     jpeg: Option<PathBuf>,
-    size: u32,
+    png: Option<PathBuf>,
+    size: Option<u32>,
     fill: f64,
     quality: u8,
     transparent: bool,
@@ -30,14 +33,15 @@ fn parse_args() -> Result<Args, String> {
     let mut args = std::env::args().skip(1);
     let path = args.next().ok_or(
         "usage: vcad-render <path.vcad> [--view iso|front|side|top|hero] [--scale N] [--transparent] \
-         [--jpeg out.jpg [--size N] [--fill F] [--quality Q]]",
+         [--jpeg out.jpg | --png out.png] [--size N] [--fill F] [--quality Q]",
     )?;
     let mut out = Args {
         path: PathBuf::from(path),
         scale: DEFAULT_SCALE,
         view: View::Isometric,
         jpeg: None,
-        size: 1024,
+        png: None,
+        size: None,
         fill: 0.6,
         quality: 92,
         transparent: false,
@@ -56,10 +60,15 @@ fn parse_args() -> Result<Args, String> {
             "--jpeg" => {
                 out.jpeg = Some(PathBuf::from(value("--jpeg")?));
             }
+            "--png" => {
+                out.png = Some(PathBuf::from(value("--png")?));
+            }
             "--size" => {
-                out.size = value("--size")?
-                    .parse()
-                    .map_err(|e: std::num::ParseIntError| e.to_string())?;
+                out.size = Some(
+                    value("--size")?
+                        .parse()
+                        .map_err(|e: std::num::ParseIntError| e.to_string())?,
+                );
             }
             "--fill" => {
                 out.fill = value("--fill")?
@@ -81,19 +90,30 @@ fn parse_args() -> Result<Args, String> {
 }
 
 #[cfg(feature = "raster")]
-fn run_jpeg(raw: &str, args: &Args, out_path: &std::path::Path) -> Result<(), String> {
+fn run_raster(raw: &str, args: &Args, out_path: &std::path::Path, png: bool) -> Result<(), String> {
+    // PNG (transparent, lossless) defaults to a much larger canvas than
+    // JPEG, whose 1024px default follows the mecheval capture rules.
     let opts = vcad_render::RasterOptions {
         view: args.view,
-        size_px: args.size,
+        size_px: args.size.unwrap_or(if png { 4096 } else { 1024 }),
         fill_frac: args.fill,
         quality: args.quality,
     };
-    let bytes = vcad_render::render_jpeg_str(raw, &opts)?;
+    let bytes = if png {
+        vcad_render::render_png_str(raw, &opts)?
+    } else {
+        vcad_render::render_jpeg_str(raw, &opts)?
+    };
     std::fs::write(out_path, bytes).map_err(|e| format!("write {}: {}", out_path.display(), e))
 }
 
 #[cfg(not(feature = "raster"))]
-fn run_jpeg(_raw: &str, _args: &Args, _out_path: &std::path::Path) -> Result<(), String> {
+fn run_raster(
+    _raw: &str,
+    _args: &Args,
+    _out_path: &std::path::Path,
+    _png: bool,
+) -> Result<(), String> {
     Err("this build of vcad-render lacks the `raster` feature".to_string())
 }
 
@@ -114,9 +134,11 @@ fn main() -> ExitCode {
         }
     };
 
-    let result = match &args.jpeg {
-        Some(out_path) => run_jpeg(&raw, &args, out_path),
-        None => render_svg_str_view_opts(&raw, args.scale, args.view, args.transparent)
+    let result = match (&args.jpeg, &args.png) {
+        (Some(_), Some(_)) => Err("--jpeg and --png are mutually exclusive".to_string()),
+        (Some(out_path), None) => run_raster(&raw, &args, out_path, false),
+        (None, Some(out_path)) => run_raster(&raw, &args, out_path, true),
+        (None, None) => render_svg_str_view_opts(&raw, args.scale, args.view, args.transparent)
             .map(|svg| println!("{}", svg)),
     };
 

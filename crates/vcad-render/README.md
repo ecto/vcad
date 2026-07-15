@@ -35,11 +35,23 @@ mecheval leaderboard defaults to `target/debug/vcad-render`.
 ```bash
 vcad-render path/to/part.vcad > out.svg
 vcad-render part.vcad --scale 4.0 > big.svg
+vcad-render part.vcad --jpeg out.jpg --size 1024 --quality 92
+vcad-render part.vcad --png out.png               # transparent, 4096px
 ```
 
 | Flag | Default | Meaning |
 |---|---|---|
 | `--scale <N>` | `2.0` | Pixels per millimetre. Bigger = larger SVG. |
+| `--view <v>` | `iso` | Camera: `iso`, `front`, `side`, `top`, `hero`. |
+| `--transparent` | off | SVG only: omit the vellum background rect. |
+| `--jpeg <out.jpg>` | — | Z-buffered raster render instead of SVG. |
+| `--png <out.png>` | — | Same raster render as RGBA PNG with a fully transparent background (mutually exclusive with `--jpeg`). |
+| `--size <N>` | `1024` (JPEG), `4096` (PNG) | Raster canvas size in pixels (square). Edge stroke weight and curve tessellation scale with it. |
+| `--fill <F>` | `0.6` | Fraction of the canvas the part's long axis fills. |
+| `--quality <Q>` | `92` | JPEG quality 1–100 (ignored for PNG). |
+
+Raster output lives behind the crate's default `raster` feature; the WASM
+build disables it and keeps SVG only.
 
 Exit codes: `0` on success, `2` on parse/eval/render failure (with a
 human-readable message on stderr).
