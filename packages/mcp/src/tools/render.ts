@@ -50,6 +50,11 @@ export const renderViewSchema = {
       description:
         "Target raster width in pixels (default 800, clamped to 64–2048). Ignored when falling back to SVG output.",
     },
+    section: {
+      type: "string" as const,
+      description:
+        "Optional section (cutaway) plane: 'x=N', 'y=N', or 'z=N' (mm). The half of the model on the camera's side of the plane is removed and exposed cut faces are cross-hatched — use it to see inside cavities, bores, and wall thicknesses. Composes with `view`.",
+    },
   },
 };
 
@@ -183,9 +188,32 @@ export async function renderView(
   // "isometric" (stable contract); orthographic views report their own name.
   const viewLabel = view === "iso" ? "isometric" : view;
 
+  // Optional section (cutaway) plane: "x=N" | "y=N" | "z=N".
+  const sectionRaw = typeof args.section === "string" ? args.section.trim() : "";
+  if (sectionRaw && !/^[xyz]\s*=\s*-?\d+(\.\d+)?$/i.test(sectionRaw)) {
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify({
+            error: `invalid section '${sectionRaw}' — expected 'x=N', 'y=N', or 'z=N' (mm)`,
+            document_id: documentId,
+          }),
+        },
+      ],
+      isError: true,
+    };
+  }
+
   const wasm = (await getKernelWasm()) as unknown as {
     render_svg: (vcadJson: string, scale: number) => string;
     render_svg_view?: (vcadJson: string, scale: number, view: string) => string;
+    render_svg_view_section?: (
+      vcadJson: string,
+      scale: number,
+      view: string,
+      section: string,
+    ) => string;
   };
   if (typeof wasm.render_svg !== "function") {
     return {
@@ -199,10 +227,23 @@ export async function renderView(
     };
   }
 
+  if (sectionRaw && typeof wasm.render_svg_view_section !== "function") {
+    return {
+      content: [
+        {
+          type: "text",
+          text: "section views unavailable: kernel WASM build predates render_svg_view_section — rebuild @vcad/kernel-wasm.",
+        },
+      ],
+      isError: true,
+    };
+  }
+
   let svg: string;
   try {
-    svg =
-      view !== "iso" && typeof wasm.render_svg_view === "function"
+    svg = sectionRaw
+      ? wasm.render_svg_view_section!(JSON.stringify(doc), SVG_SCALE, view, sectionRaw)
+      : view !== "iso" && typeof wasm.render_svg_view === "function"
         ? wasm.render_svg_view(JSON.stringify(doc), SVG_SCALE, view)
         : wasm.render_svg(JSON.stringify(doc), SVG_SCALE);
   } catch (e) {
@@ -247,9 +288,9 @@ export async function renderView(
   if (raster.png) {
     const asset = makePngRenderAsset(raster.png, {
       tool: "render_view",
-      filename: `${documentId || "inline"}-${viewLabel}-${widthPx}.png`,
+      filename: `${documentId || "inline"}-${viewLabel}${sectionRaw ? `-section-${sectionRaw.replace(/[^a-z0-9.-]/gi, "")}` : ""}-${widthPx}.png`,
       width: widthPx,
-      alt: `vcad ${viewLabel} render`,
+      alt: `vcad ${viewLabel}${sectionRaw ? " section" : ""} render`,
     });
     return withRenderAssets<RenderViewResult>({
       content: [
@@ -263,6 +304,7 @@ export async function renderView(
           text: JSON.stringify({
             document_id: documentId,
             view: viewLabel,
+            ...(sectionRaw ? { section: sectionRaw } : {}),
             width_px: widthPx,
             format: "png",
             asset: renderAssetSummary(asset),
