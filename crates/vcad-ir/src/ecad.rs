@@ -310,6 +310,12 @@ pub enum PcbLayer {
     /// Inner copper layer 6.
     #[serde(alias = "In6.Cu")]
     In6Cu,
+    /// Inner copper layer 7.
+    #[serde(alias = "In7.Cu")]
+    In7Cu,
+    /// Inner copper layer 8.
+    #[serde(alias = "In8.Cu")]
+    In8Cu,
 
     // Mask/paste layers
     /// Front solder mask.
@@ -370,7 +376,42 @@ impl PcbLayer {
                 | PcbLayer::In4Cu
                 | PcbLayer::In5Cu
                 | PcbLayer::In6Cu
+                | PcbLayer::In7Cu
+                | PcbLayer::In8Cu
         )
+    }
+
+    /// Position of a copper layer in the physical stack, for span ordering:
+    /// front copper is 0, inner layers are 1..=8, back copper is always the
+    /// deepest regardless of how many inner layers the board actually has.
+    /// Returns `None` for non-copper layers.
+    pub fn copper_position(&self) -> Option<u8> {
+        match self {
+            PcbLayer::FCu => Some(0),
+            PcbLayer::In1Cu => Some(1),
+            PcbLayer::In2Cu => Some(2),
+            PcbLayer::In3Cu => Some(3),
+            PcbLayer::In4Cu => Some(4),
+            PcbLayer::In5Cu => Some(5),
+            PcbLayer::In6Cu => Some(6),
+            PcbLayer::In7Cu => Some(7),
+            PcbLayer::In8Cu => Some(8),
+            PcbLayer::BCu => Some(u8::MAX),
+            _ => None,
+        }
+    }
+
+    /// Whether a via spanning `start..=end` (in either order) lands on this
+    /// copper layer. Non-copper layers are never spanned.
+    pub fn spanned_by(&self, start: PcbLayer, end: PcbLayer) -> bool {
+        let (Some(pos), Some(a), Some(b)) = (
+            self.copper_position(),
+            start.copper_position(),
+            end.copper_position(),
+        ) else {
+            return false;
+        };
+        pos >= a.min(b) && pos <= a.max(b)
     }
 }
 
@@ -1209,6 +1250,24 @@ mod tests {
         assert!(PcbLayer::In1Cu.is_copper());
         assert!(!PcbLayer::FSilkS.is_copper());
         assert!(!PcbLayer::EdgeCuts.is_copper());
+        assert!(PcbLayer::In7Cu.is_copper());
+        assert!(PcbLayer::In8Cu.is_copper());
+    }
+
+    #[test]
+    fn pcb_layer_via_span() {
+        // Through via spans everything.
+        assert!(PcbLayer::In3Cu.spanned_by(PcbLayer::FCu, PcbLayer::BCu));
+        assert!(PcbLayer::In8Cu.spanned_by(PcbLayer::FCu, PcbLayer::BCu));
+        // Blind via FCu..In2 does not reach In3 or BCu.
+        assert!(PcbLayer::In1Cu.spanned_by(PcbLayer::FCu, PcbLayer::In2Cu));
+        assert!(!PcbLayer::In3Cu.spanned_by(PcbLayer::FCu, PcbLayer::In2Cu));
+        assert!(!PcbLayer::BCu.spanned_by(PcbLayer::FCu, PcbLayer::In2Cu));
+        // Buried via, order-insensitive.
+        assert!(PcbLayer::In2Cu.spanned_by(PcbLayer::In3Cu, PcbLayer::In1Cu));
+        assert!(!PcbLayer::FCu.spanned_by(PcbLayer::In1Cu, PcbLayer::In3Cu));
+        // Non-copper is never spanned.
+        assert!(!PcbLayer::FMask.spanned_by(PcbLayer::FCu, PcbLayer::BCu));
     }
 
     #[test]

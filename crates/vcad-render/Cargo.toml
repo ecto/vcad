@@ -28,3 +28,4 @@ path = "src/main.rs"
 
 [dev-dependencies]
 vcad-loon = { workspace = true }
+vcad-ecad-symbols = { workspace = true }

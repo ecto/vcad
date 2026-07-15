@@ -4027,6 +4027,10 @@
         "receipt": {
           "type": "boolean",
           "description": "When true, wrap the route in a before/after DRC and return a `receipt` verdict (what it fixed, what it introduced incl. shorts, with each violation attributed to footprint vs routing) — instead of just a document_id. Re-routing rips up the prior autorouted copper first (idempotent by construction); the receipt proves it, surfacing any re-route that would short the board."
+        },
+        "effort": {
+          "type": "number",
+          "description": "Effort multiplier ≥ 0.1 (default 1): scales the router's iteration budgets (negotiation and rip-up rounds). Raise to 2–10 on a congested board that leaves nets unrouted; lower below 1 for a fast draft. Legality is unaffected — effort buys more attempts, not looser rules."
         }
       },
       "required": []
