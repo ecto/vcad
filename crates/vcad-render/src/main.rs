@@ -116,9 +116,7 @@ fn expand_inputs(inputs: &[PathBuf]) -> Result<Vec<PathBuf>, String> {
             let mut found: Vec<PathBuf> = std::fs::read_dir(input)
                 .map_err(|e| format!("read dir {}: {}", input.display(), e))?
                 .filter_map(|entry| entry.ok().map(|e| e.path()))
-                .filter(|p| {
-                    p.is_file() && p.extension().and_then(|e| e.to_str()) == Some("vcad")
-                })
+                .filter(|p| p.is_file() && p.extension().and_then(|e| e.to_str()) == Some("vcad"))
                 .collect();
             if found.is_empty() {
                 return Err(format!("no .vcad files in {}", input.display()));
@@ -150,8 +148,8 @@ fn render_jpeg(_raw: &str, _cli: &Cli) -> Result<Vec<u8>, String> {
 
 /// Render one input to `dest` (`None` = SVG on stdout) in `format`.
 fn render_one(input: &Path, dest: Option<&Path>, format: Format, cli: &Cli) -> Result<(), String> {
-    let raw = std::fs::read_to_string(input)
-        .map_err(|e| format!("read {}: {}", input.display(), e))?;
+    let raw =
+        std::fs::read_to_string(input).map_err(|e| format!("read {}: {}", input.display(), e))?;
     let bytes = match format {
         Format::Svg => {
             let svg = render_svg_str_view_opts(&raw, cli.scale, cli.view, cli.transparent)?;
@@ -170,12 +168,17 @@ fn render_one(input: &Path, dest: Option<&Path>, format: Format, cli: &Cli) -> R
 }
 
 /// Batch destination for `input`: `<stem>.<ext>` in `out_dir` or next to
-/// the input.
-fn batch_dest(input: &Path, out_dir: Option<&Path>, format: Format) -> PathBuf {
+/// the input. Fails on a path with no file name (e.g. one ending in `..`).
+fn batch_dest(input: &Path, out_dir: Option<&Path>, format: Format) -> Result<PathBuf, String> {
     let name = input.with_extension(format.extension());
     match out_dir {
-        Some(dir) => dir.join(name.file_name().expect("input paths have file names")),
-        None => name,
+        Some(dir) => {
+            let file = name
+                .file_name()
+                .ok_or_else(|| format!("input {} has no file name", input.display()))?;
+            Ok(dir.join(file))
+        }
+        None => Ok(name),
     }
 }
 
@@ -185,17 +188,19 @@ fn run(cli: &Cli) -> Result<(), String> {
 
     if batch {
         if cli.output.is_some() || cli.jpeg.is_some() {
-            return Err("-o/--jpeg take a single output path; use --out-dir with multiple inputs".into());
+            return Err(
+                "-o/--jpeg take a single output path; use --out-dir with multiple inputs".into(),
+            );
         }
         if let Some(dir) = &cli.out_dir {
-            std::fs::create_dir_all(dir)
-                .map_err(|e| format!("create {}: {}", dir.display(), e))?;
+            std::fs::create_dir_all(dir).map_err(|e| format!("create {}: {}", dir.display(), e))?;
         }
         let mut failures = 0usize;
         for input in &inputs {
-            let dest = batch_dest(input, cli.out_dir.as_deref(), cli.format);
-            match render_one(input, Some(&dest), cli.format, cli) {
-                Ok(()) => eprintln!("{} -> {}", input.display(), dest.display()),
+            let result = batch_dest(input, cli.out_dir.as_deref(), cli.format)
+                .and_then(|dest| render_one(input, Some(&dest), cli.format, cli).map(|()| dest));
+            match result {
+                Ok(dest) => eprintln!("{} -> {}", input.display(), dest.display()),
                 Err(e) => {
                     failures += 1;
                     eprintln!("{}: {}", input.display(), e);
