@@ -1618,7 +1618,9 @@ fn render_svg_impl(
 // ─── public API: raster JPEG ──────────────────────────────────────────────
 
 #[cfg(feature = "raster")]
-pub use raster::{render_jpeg_solids, render_jpeg_str, RasterOptions};
+pub use raster::{
+    render_jpeg_solids, render_jpeg_str, render_png_solids, render_png_str, RasterOptions,
+};
 
 #[cfg(feature = "raster")]
 mod raster {
@@ -1627,6 +1629,16 @@ mod raster {
     /// Curved primitives get a finer tessellation than the SVG path —
     /// faceted silhouettes are much more visible at 1024px.
     const RASTER_SEGMENTS: u32 = 64;
+
+    /// Above this canvas size, curved primitives tessellate at
+    /// [`RASTER_SEGMENTS_HIRES`] instead — 64 facets read as a polygon at
+    /// 4096px. Keeping 1024px renders on the original segment count
+    /// preserves mecheval reference images byte-for-byte.
+    const HIRES_THRESHOLD_PX: u32 = 2048;
+    /// Segment count for canvases at or above [`HIRES_THRESHOLD_PX`].
+    /// Adjacent facets differ by 2.8°, still well under the ~10° coplanar
+    /// tolerance, so no facet stripes appear.
+    const RASTER_SEGMENTS_HIRES: u32 = 128;
 
     /// Looser coplanar tolerance than the SVG path: at 64 segments,
     /// adjacent cylinder facets differ by 5.6°, which the SVG's ~4.5°
@@ -1682,7 +1694,7 @@ mod raster {
             .as_deref()
             .map(|f| focus_mask(&scene, f))
             .transpose()?;
-        render_jpeg_impl(&solids, &tints, opts, mask.as_deref())
+        encode_jpeg(rasterize(&solids, &tints, opts, mask.as_deref())?, opts)
     }
 
     /// Render pre-evaluated solids to JPEG bytes, monochrome (no material
@@ -1690,18 +1702,84 @@ mod raster {
     /// [`render_jpeg_str`], which honours document material colours.
     pub fn render_jpeg_solids(solids: &[Solid], opts: &RasterOptions) -> Result<Vec<u8>, String> {
         let no_tints: Vec<Option<[f64; 3]>> = vec![None; solids.len()];
-        render_jpeg_impl(solids, &no_tints, opts, None)
+        encode_jpeg(rasterize(solids, &no_tints, opts, None)?, opts)
+    }
+
+    /// Render raw `.vcad` document JSON to RGBA PNG bytes with a fully
+    /// transparent background (alpha 0 wherever no geometry or edge stroke
+    /// was drawn). Same projection and shading as [`render_jpeg_str`];
+    /// `opts.quality` is ignored (PNG is lossless).
+    pub fn render_png_str(raw_vcad: &str, opts: &RasterOptions) -> Result<Vec<u8>, String> {
+        let scene = evaluate_vcad_named(raw_vcad)?;
+        let solids: Vec<Solid> = scene.iter().map(|s| s.solid.clone()).collect();
+        let tints: Vec<Option<[f64; 3]>> = scene.iter().map(|s| s.tint).collect();
+        let mask = opts
+            .focus
+            .as_deref()
+            .map(|f| focus_mask(&scene, f))
+            .transpose()?;
+        encode_png(rasterize(&solids, &tints, opts, mask.as_deref())?, opts)
+    }
+
+    /// Render pre-evaluated solids to RGBA PNG bytes with a transparent
+    /// background, monochrome (no material tints). See [`render_png_str`].
+    pub fn render_png_solids(solids: &[Solid], opts: &RasterOptions) -> Result<Vec<u8>, String> {
+        let no_tints: Vec<Option<[f64; 3]>> = vec![None; solids.len()];
+        encode_png(rasterize(solids, &no_tints, opts, None)?, opts)
+    }
+
+    /// JPEG-encode a rasterized frame (coverage mask ignored — JPEG keeps
+    /// the opaque vellum background).
+    fn encode_jpeg(frame: (Vec<u8>, Vec<u8>), opts: &RasterOptions) -> Result<Vec<u8>, String> {
+        let (rgb, _mask) = frame;
+        let mut out = Vec::new();
+        let mut enc = image::codecs::jpeg::JpegEncoder::new_with_quality(
+            &mut out,
+            opts.quality.clamp(1, 100),
+        );
+        enc.encode(
+            &rgb,
+            opts.size_px,
+            opts.size_px,
+            image::ExtendedColorType::Rgb8,
+        )
+        .map_err(|e| format!("jpeg encode: {}", e))?;
+        Ok(out)
+    }
+
+    /// PNG-encode a rasterized frame as RGBA: covered pixels are opaque,
+    /// background pixels get alpha 0.
+    fn encode_png(frame: (Vec<u8>, Vec<u8>), opts: &RasterOptions) -> Result<Vec<u8>, String> {
+        let (rgb, mask) = frame;
+        let mut rgba = Vec::with_capacity(mask.len() * 4);
+        for (i, &a) in mask.iter().enumerate() {
+            rgba.extend_from_slice(&rgb[i * 3..i * 3 + 3]);
+            rgba.push(a);
+        }
+        let mut out = Vec::new();
+        let enc = image::codecs::png::PngEncoder::new(&mut out);
+        image::ImageEncoder::write_image(
+            enc,
+            &rgba,
+            opts.size_px,
+            opts.size_px,
+            image::ExtendedColorType::Rgba8,
+        )
+        .map_err(|e| format!("png encode: {}", e))?;
+        Ok(out)
     }
 
     /// Shared raster implementation; `tints[i]`, when present, tints solid
     /// `i`'s shading ramp exactly as the SVG path does. Untinted solids keep
-    /// the original two-stop monochrome shading, byte-for-byte.
-    fn render_jpeg_impl(
+    /// the original two-stop monochrome shading, byte-for-byte. Returns the
+    /// RGB frame plus a per-pixel coverage mask (255 where geometry or an
+    /// edge stroke was drawn, 0 over untouched background).
+    fn rasterize(
         solids: &[Solid],
         tints: &[Option<[f64; 3]>],
         opts: &RasterOptions,
         focus: Option<&[bool]>,
-    ) -> Result<Vec<u8>, String> {
+    ) -> Result<(Vec<u8>, Vec<u8>), String> {
         if solids.is_empty() {
             return Err("no solids produced".to_string());
         }
@@ -1717,11 +1795,16 @@ mod raster {
         let down = normalize(opts.view.down());
         let light = normalize(LIGHT);
 
+        let segments = if opts.size_px >= HIRES_THRESHOLD_PX {
+            RASTER_SEGMENTS_HIRES
+        } else {
+            RASTER_SEGMENTS
+        };
         let arts = build_artifacts(
             solids,
             tints,
             cam,
-            RASTER_SEGMENTS,
+            segments,
             &EdgeRules {
                 coplanar_dot_tol: RASTER_COPLANAR_DOT_TOL,
                 mark_silhouette: true,
@@ -1785,6 +1868,7 @@ mod raster {
             .take(size * size * 3)
             .collect();
         let mut zbuf: Vec<f64> = vec![f64::NEG_INFINITY; size * size];
+        let mut mask: Vec<u8> = vec![0; size * size];
 
         // Depth range for depth cueing (below).
         let mut dmin = f64::INFINITY;
@@ -1823,6 +1907,7 @@ mod raster {
                 fill_triangle(
                     &mut rgb,
                     &mut zbuf,
+                    &mut mask,
                     size,
                     [proj[t[0]], proj[t[1]], proj[t[2]]],
                     shade,
@@ -1837,27 +1922,19 @@ mod raster {
         // (where silhouette edges live) have steep depth gradients, so the
         // local neighbour depth delta is added to a small base tolerance.
         let bias_base = 0.5 + 0.005 * diag;
+        // Stroke width scales with the canvas so lines keep the same
+        // apparent weight at high resolution (2px at ≤1024, 8px at 4096).
+        let stroke_px = (size / 512).max(2);
         for art in &arts {
             let proj: Vec<(f64, f64, f64)> = art.verts.iter().map(|v| to_px(*v)).collect();
             for &(a, b, _kind) in &art.edges {
-                draw_edge(&mut rgb, &zbuf, size, proj[a], proj[b], bias_base);
+                draw_edge(
+                    &mut rgb, &zbuf, &mut mask, size, proj[a], proj[b], bias_base, stroke_px,
+                );
             }
         }
 
-        // Encode.
-        let mut out = Vec::new();
-        let mut enc = image::codecs::jpeg::JpegEncoder::new_with_quality(
-            &mut out,
-            opts.quality.clamp(1, 100),
-        );
-        enc.encode(
-            &rgb,
-            opts.size_px,
-            opts.size_px,
-            image::ExtendedColorType::Rgb8,
-        )
-        .map_err(|e| format!("jpeg encode: {}", e))?;
-        Ok(out)
+        Ok((rgb, mask))
     }
 
     fn edge_fn(a: (f64, f64, f64), b: (f64, f64, f64), px: f64, py: f64) -> f64 {
@@ -1867,6 +1944,7 @@ mod raster {
     fn fill_triangle(
         rgb: &mut [u8],
         zbuf: &mut [f64],
+        mask: &mut [u8],
         size: usize,
         p: [(f64, f64, f64); 3],
         shade: [u8; 3],
@@ -1920,6 +1998,7 @@ mod raster {
                 let idx = py * size + px;
                 if depth > zbuf[idx] {
                     zbuf[idx] = depth;
+                    mask[idx] = 255;
                     rgb[idx * 3] = shade[0];
                     rgb[idx * 3 + 1] = shade[1];
                     rgb[idx * 3 + 2] = shade[2];
@@ -1928,13 +2007,16 @@ mod raster {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn draw_edge(
         rgb: &mut [u8],
         zbuf: &[f64],
+        mask: &mut [u8],
         size: usize,
         a: (f64, f64, f64),
         b: (f64, f64, f64),
         bias_base: f64,
+        stroke_px: usize,
     ) {
         let stroke = FILL_DARK;
         let len = ((b.0 - a.0).powi(2) + (b.1 - a.1).powi(2)).sqrt();
@@ -1980,16 +2062,21 @@ mod raster {
             if !visible {
                 continue;
             }
-            // ~2px stroke: paint the pixel and its right/down neighbours.
-            for (dx, dy) in [(0i64, 0i64), (1, 0), (0, 1), (1, 1)] {
-                let (qx, qy) = (ix + dx, iy + dy);
-                if qx < 0 || qy < 0 || qx >= size as i64 || qy >= size as i64 {
-                    continue;
+            // Paint a stroke_px × stroke_px block anchored at the sample
+            // (right/down, matching the original 2px behaviour).
+            for dy in 0..stroke_px as i64 {
+                for dx in 0..stroke_px as i64 {
+                    let (qx, qy) = (ix + dx, iy + dy);
+                    if qx < 0 || qy < 0 || qx >= size as i64 || qy >= size as i64 {
+                        continue;
+                    }
+                    let pi = qy as usize * size + qx as usize;
+                    mask[pi] = 255;
+                    let qi = pi * 3;
+                    rgb[qi] = stroke[0];
+                    rgb[qi + 1] = stroke[1];
+                    rgb[qi + 2] = stroke[2];
                 }
-                let qi = (qy as usize * size + qx as usize) * 3;
-                rgb[qi] = stroke[0];
-                rgb[qi + 1] = stroke[1];
-                rgb[qi + 2] = stroke[2];
             }
         }
     }
@@ -2378,6 +2465,38 @@ mod tests {
                 }
             )
             .is_err());
+        }
+
+        #[test]
+        fn png_has_transparent_corners_and_opaque_center() {
+            let png = render_png_str(
+                &cube_vcad(20.0, 30.0, 10.0),
+                &RasterOptions {
+                    size_px: 128,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            assert_eq!(&png[..8], b"\x89PNG\r\n\x1a\n");
+            let img = image::load_from_memory(&png).unwrap().to_rgba8();
+            assert_eq!((img.width(), img.height()), (128, 128));
+            // Part fills ~60% of the canvas from the center; corners stay
+            // background and must be fully transparent.
+            for (x, y) in [(0, 0), (127, 0), (0, 127), (127, 127)] {
+                assert_eq!(
+                    img.get_pixel(x, y)[3],
+                    0,
+                    "corner ({x},{y}) not transparent"
+                );
+            }
+            // The part is centered and fills ~60% of the canvas, so the
+            // central region is solidly covered. Assert on a small window
+            // rather than a single pixel so a future projection/fill tweak
+            // that nudges the centroid can't silently break the invariant.
+            let opaque = (56..72)
+                .flat_map(|y| (56..72).map(move |x| (x, y)))
+                .any(|(x, y)| img.get_pixel(x, y)[3] == 255);
+            assert!(opaque, "central region should contain an opaque pixel");
         }
     }
 
