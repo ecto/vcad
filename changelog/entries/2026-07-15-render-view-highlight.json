@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-15-render-view-highlight",
+  "version": "0.9.4",
+  "date": "2026-07-15",
+  "category": "feat",
+  "title": "Changed-part highlighting in render_view",
+  "summary": "render_view can spotlight parts: highlight_changed renders the parts touched by the last edit with full color and a brand-orange accent outline while unchanged parts are ghosted; explicit ids via highlight.",
+  "features": ["rendering", "agent-loop", "highlight"],
+  "mcpTools": ["render_view"]
+}

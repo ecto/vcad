@@ -23,7 +23,7 @@
  */
 
 import type { Document } from "@vcad/ir";
-import { documents, getSession } from "./session.js";
+import { documents, getSession, recordLastChanged } from "./session.js";
 import {
   runMutation,
   snapshotParts,
@@ -299,6 +299,10 @@ export function applyEdits(
   const changed = diffParts(before, snapshotParts(working));
   if (changed) {
     appendChanged(result, changed);
+    recordLastChanged(documentId, [
+      ...changed.added.map((p) => p.part_id),
+      ...changed.modified.map((p) => p.part_id),
+    ]);
     if (engine) {
       const integrity = computeIntegrity(working, engine);
       if (integrity) appendIntegrity(result, integrity);

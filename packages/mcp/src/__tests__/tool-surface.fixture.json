@@ -2205,6 +2205,17 @@
         "width_px": {
           "type": "number",
           "description": "Target raster width in pixels (default 800, clamped to 64–2048). Ignored when falling back to SVG output."
+        },
+        "highlight": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Part ids (from a mutation's `changed` diff) or part names to spotlight: they keep full material color plus a brand-orange accent outline while every other part is ghosted. Errors if nothing matches."
+        },
+        "highlight_changed": {
+          "type": "boolean",
+          "description": "Highlight the parts touched by this session's most recent mutation (the last `changed` diff) — the one-flag way to see what your last edit did. Ignored when `highlight` is passed explicitly."
         }
       }
     },

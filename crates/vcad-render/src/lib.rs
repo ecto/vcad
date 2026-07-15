@@ -65,6 +65,9 @@ const STROKE_OUTLINE_PX: f64 = 1.2;
 /// convention that lets a single isometric reveal bores and pockets behind
 /// the front faces.
 const STROKE_HIDDEN_PX: f64 = 0.45;
+/// Accent outline stroke width for highlighted (just-changed) parts —
+/// heavier than the standard outline so the change reads at a glance.
+const STROKE_ACCENT_PX: f64 = 1.8;
 
 /// Curved primitives in the SVG path get a fine tessellation: at 64
 /// segments a cylinder facet spans ~5.6°, well under the crease threshold,
@@ -107,6 +110,21 @@ const INK: &str = "#0b2742";
 /// Warm off-white "vellum" the drafting plate sits on (matches the raster
 /// path's matte background). The signature ground behind every render.
 const PAPER: &str = "#f4f3f1";
+/// [`PAPER`] as RGB — ghosted (non-highlighted) parts fade toward this.
+const PAPER_RGB: [u8; 3] = [244, 243, 241];
+
+/// Brand orange — "interaction / attention" per docs/brand-spec.md. Used
+/// only as the accent outline on highlighted (just-changed) parts, never
+/// as a material colour.
+const ACCENT: &str = "#f25c1f";
+
+/// How far a ghosted part's shading ramp is pushed toward [`PAPER`] when a
+/// highlight set is active — high enough that unchanged parts read as
+/// context, low enough that their silhouettes stay legible.
+const GHOST_MIX: f64 = 0.7;
+
+/// Line opacity for ghosted parts' visible edges.
+const GHOST_LINE_OPACITY: f64 = 0.35;
 
 /// The vcad-Blue tonal ramp: deep-shadow → core navy → mid → ice highlight.
 /// Sampled by the shading term so curved surfaces read as a graded wash
@@ -220,11 +238,20 @@ impl std::str::FromStr for View {
 
 // ─── .vcad → solids ───────────────────────────────────────────────────────
 
-/// A solid plus its material colour (linear RGB in `[0,1]`), if the
-/// document assigned one — used to tint the shading ramp.
-type TintedSolid = (Solid, Option<[f64; 3]>);
+/// An evaluated scene part with the identity needed for highlighting:
+/// the root node id (scene roots) or instance id (assemblies), plus the
+/// node/instance name when one is set.
+struct ScenePart {
+    solid: Solid,
+    tint: Option<[f64; 3]>,
+    /// Root node id (as a string) for scene roots; instance id for
+    /// assembly instances. Matches the `part_id` the MCP mutation diff
+    /// reports.
+    id: String,
+    name: Option<String>,
+}
 
-fn evaluate_vcad(raw_vcad: &str) -> Result<Vec<TintedSolid>, String> {
+fn evaluate_vcad(raw_vcad: &str) -> Result<Vec<ScenePart>, String> {
     let parsed = parse_vcad_file(raw_vcad).map_err(|e| format!("parse: {}", e))?;
     // NOTE: catch_unwind only works on native targets. On
     // wasm32-unknown-unknown a panic compiles to an `unreachable` trap —
@@ -248,13 +275,30 @@ fn evaluate_vcad(raw_vcad: &str) -> Result<Vec<TintedSolid>, String> {
     .map_err(|e| format!("eval: {}", e))?;
 
     let materials = &parsed.document.materials;
-    let mut solids: Vec<TintedSolid> = scene
-        .parts
+    // `evaluate_document` pushes exactly one part per *visible* root (a
+    // failed root still yields a solid-less placeholder), so zipping the
+    // visible-root list against `scene.parts` recovers each part's root
+    // node id — the same `part_id` the MCP mutation diff reports.
+    let visible_roots = parsed
+        .document
+        .roots
         .iter()
-        .filter_map(|p| {
+        .filter(|e| e.visible != Some(false));
+    let mut solids: Vec<ScenePart> = visible_roots
+        .zip(scene.parts.iter())
+        .filter_map(|(entry, p)| {
             p.solid.clone().map(|s| {
                 let color = materials.get(&p.material).map(|m| m.color);
-                (s, color)
+                ScenePart {
+                    solid: s,
+                    tint: color,
+                    id: entry.root.to_string(),
+                    name: parsed
+                        .document
+                        .nodes
+                        .get(&entry.root)
+                        .and_then(|n| n.name.clone()),
+                }
             })
         })
         .collect();
@@ -272,7 +316,7 @@ fn evaluate_vcad(raw_vcad: &str) -> Result<Vec<TintedSolid>, String> {
 /// tinted solids. Part-definition solids are evaluated once and shared;
 /// per-instance world poses come from forward kinematics, falling back to
 /// the instance's static transform.
-fn evaluate_assembly_instances(doc: &vcad_ir::Document) -> Result<Vec<TintedSolid>, String> {
+fn evaluate_assembly_instances(doc: &vcad_ir::Document) -> Result<Vec<ScenePart>, String> {
     let (Some(part_defs), Some(instances)) = (&doc.part_defs, &doc.instances) else {
         return Ok(Vec::new());
     };
@@ -317,7 +361,12 @@ fn evaluate_assembly_instances(doc: &vcad_ir::Document) -> Result<Vec<TintedSoli
             .or_else(|| def.default_material.clone())
             .unwrap_or_else(|| "default".to_string());
         let color = doc.materials.get(&material).map(|m| m.color);
-        out.push((placed, color));
+        out.push(ScenePart {
+            solid: placed,
+            tint: color,
+            id: inst.id.clone(),
+            name: inst.name.clone(),
+        });
     }
     Ok(out)
 }
@@ -476,6 +525,29 @@ struct SolidArtifacts {
     /// Kept edges (boundary, crease, or silhouette, with ≥1 visible
     /// adjacent triangle) as canonical-vertex index pairs plus their kind.
     edges: Vec<(usize, usize, EdgeKind)>,
+    /// How this solid participates in a highlight pass (Normal when no
+    /// highlight set is active).
+    emphasis: Emphasis,
+}
+
+/// A solid's role when a highlight set is active: `Accent` parts keep
+/// their material colour and gain the brand-orange outline, `Ghost` parts
+/// fade toward the paper, `Normal` means no highlight pass at all.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Emphasis {
+    Normal,
+    Accent,
+    Ghost,
+}
+
+/// Fade `ramp` toward [`PAPER_RGB`] by [`GHOST_MIX`] — the ghosted look
+/// for parts outside the highlight set.
+fn ghost_ramp(ramp: [[u8; 3]; 4]) -> [[u8; 3]; 4] {
+    let mut out = ramp;
+    for stop in out.iter_mut() {
+        *stop = mix_rgb(*stop, PAPER_RGB, GHOST_MIX);
+    }
+    out
 }
 
 /// Per-triangle, per-corner smoothed normals. A corner's normal is the
@@ -558,18 +630,30 @@ impl EdgeRules {
 fn build_artifacts(
     solids: &[Solid],
     tints: &[Option<[f64; 3]>],
+    accents: &[bool],
     cam: [f64; 3],
     segments: u32,
     rules: &EdgeRules,
 ) -> Vec<SolidArtifacts> {
+    let highlighting = accents.iter().any(|&a| a);
     let mut out = Vec::new();
     for (si, solid) in solids.iter().enumerate() {
-        let ramp = tints
+        let emphasis = if !highlighting {
+            Emphasis::Normal
+        } else if accents.get(si).copied().unwrap_or(false) {
+            Emphasis::Accent
+        } else {
+            Emphasis::Ghost
+        };
+        let mut ramp = tints
             .get(si)
             .copied()
             .flatten()
             .map(tint_ramp)
             .unwrap_or(RAMP);
+        if emphasis == Emphasis::Ghost {
+            ramp = ghost_ramp(ramp);
+        }
         let mesh = catch_unwind(AssertUnwindSafe(|| solid.to_mesh(segments)));
         let Ok(mesh) = mesh else { continue };
         if mesh.indices.is_empty() {
@@ -654,6 +738,7 @@ fn build_artifacts(
             ramp,
             visible,
             edges,
+            emphasis,
         });
     }
     out
@@ -860,6 +945,7 @@ struct ProjEdge {
     b: (f64, f64),
     db: f64,
     kind: EdgeKind,
+    emphasis: Emphasis,
 }
 
 // ─── off-screen depth buffer (vector hidden-line removal) ──────────────────
@@ -1122,7 +1208,7 @@ pub fn render_svg_str(raw_vcad: &str, scale: f64) -> Result<String, String> {
 /// Unlike [`render_svg_solids_view`], this path knows each part's material
 /// and tints the shading ramp accordingly.
 pub fn render_svg_str_view(raw_vcad: &str, scale: f64, view: View) -> Result<String, String> {
-    render_svg_str_view_opts(raw_vcad, scale, view, false)
+    render_svg_str_view_opts(raw_vcad, scale, view, false, &[])
 }
 
 /// Render raw `.vcad` document JSON to a self-contained SVG from `view`,
@@ -1131,16 +1217,47 @@ pub fn render_svg_str_view(raw_vcad: &str, scale: f64, view: View) -> Result<Str
 /// When `transparent` is true the vellum ground rect is skipped, so the
 /// SVG composites cleanly over any background; the soft contact shadow is
 /// still emitted (it is already semi-transparent).
+///
+/// `highlight` selects parts by root node id (the `part_id` a mutation
+/// diff reports), node name, or assembly instance id/name. When non-empty,
+/// highlighted parts keep their full material colour and gain a brand-
+/// orange accent outline, while every other part is ghosted toward the
+/// paper colour — the "what did my edit just touch" view. A non-empty
+/// `highlight` that matches no part is an error (never a silently
+/// unhighlighted render).
 pub fn render_svg_str_view_opts(
     raw_vcad: &str,
     scale: f64,
     view: View,
     transparent: bool,
+    highlight: &[String],
 ) -> Result<String, String> {
-    let tinted = evaluate_vcad(raw_vcad)?;
-    let solids: Vec<Solid> = tinted.iter().map(|(s, _)| s.clone()).collect();
-    let tints: Vec<Option<[f64; 3]>> = tinted.iter().map(|(_, t)| *t).collect();
-    render_svg_impl(&solids, &tints, scale, view, transparent)
+    let parts = evaluate_vcad(raw_vcad)?;
+    let accents: Vec<bool> = parts
+        .iter()
+        .map(|p| {
+            highlight
+                .iter()
+                .any(|h| *h == p.id || p.name.as_deref() == Some(h.as_str()))
+        })
+        .collect();
+    if !highlight.is_empty() && !accents.iter().any(|&a| a) {
+        let known: Vec<String> = parts
+            .iter()
+            .map(|p| match &p.name {
+                Some(n) => format!("{} ({n})", p.id),
+                None => p.id.clone(),
+            })
+            .collect();
+        return Err(format!(
+            "highlight matched no parts: wanted [{}], document has [{}]",
+            highlight.join(", "),
+            known.join(", "),
+        ));
+    }
+    let solids: Vec<Solid> = parts.iter().map(|p| p.solid.clone()).collect();
+    let tints: Vec<Option<[f64; 3]>> = parts.iter().map(|p| p.tint).collect();
+    render_svg_impl(&solids, &tints, &accents, scale, view, transparent)
 }
 
 /// Render pre-evaluated solids to a self-contained isometric SVG.
@@ -1163,14 +1280,18 @@ pub fn render_svg_solids(solids: &[Solid], scale: f64) -> Result<String, String>
 /// base navy ramp; use [`render_svg_str_view`] to honour document materials.
 pub fn render_svg_solids_view(solids: &[Solid], scale: f64, view: View) -> Result<String, String> {
     let tints = vec![None; solids.len()];
-    render_svg_impl(solids, &tints, scale, view, false)
+    let accents = vec![false; solids.len()];
+    render_svg_impl(solids, &tints, &accents, scale, view, false)
 }
 
 /// Shared SVG renderer; `tints[i]` optionally tints solid `i`'s ramp.
+/// When any `accents[i]` is set, solid `i` keeps its full ramp and gains
+/// an [`ACCENT`] outline while the rest are ghosted toward [`PAPER`].
 /// When `transparent`, the opaque paper background rect is omitted.
 fn render_svg_impl(
     solids: &[Solid],
     tints: &[Option<[f64; 3]>],
+    accents: &[bool],
     scale: f64,
     view: View,
     transparent: bool,
@@ -1185,7 +1306,14 @@ fn render_svg_impl(
     let light = normalize(LIGHT);
     let project = |p: [f64; 3]| -> (f64, f64) { (dot(p, right) * scale, dot(p, down) * scale) };
 
-    let arts = build_artifacts(solids, tints, cam, TESSELLATION_SEGMENTS, &EdgeRules::svg());
+    let arts = build_artifacts(
+        solids,
+        tints,
+        accents,
+        cam,
+        TESSELLATION_SEGMENTS,
+        &EdgeRules::svg(),
+    );
 
     // First pass: screen-space bbox + 3D bbox (for the depth-cue bias),
     // over every projected vertex of every kept artifact.
@@ -1318,6 +1446,7 @@ fn render_svg_impl(
                 b: fin(proj[b]),
                 db: dot(art.verts[b], cam),
                 kind,
+                emphasis: art.emphasis,
             });
         }
     }
@@ -1346,11 +1475,22 @@ fn render_svg_impl(
     let mut crease_lines: Vec<Seg> = Vec::new();
     let mut outline_lines: Vec<Seg> = Vec::new();
     let mut hidden_lines: Vec<Seg> = Vec::new();
+    // Highlight-pass buckets: ghosted parts' visible linework fades with
+    // their fills; accented parts' outlines are re-stroked in brand orange
+    // on top of everything else.
+    let mut ghost_crease_lines: Vec<Seg> = Vec::new();
+    let mut ghost_outline_lines: Vec<Seg> = Vec::new();
+    let mut accent_outline_lines: Vec<Seg> = Vec::new();
     for e in &edges {
         let clip = zbuf.clip_edge(e.a, e.da, e.b, e.db, bias);
-        let dst = match e.kind {
-            EdgeKind::Crease => &mut crease_lines,
-            EdgeKind::Outline | EdgeKind::Smooth => &mut outline_lines,
+        let dst = match (e.kind, e.emphasis) {
+            (EdgeKind::Crease, Emphasis::Ghost) => &mut ghost_crease_lines,
+            (EdgeKind::Crease, _) => &mut crease_lines,
+            (EdgeKind::Outline | EdgeKind::Smooth, Emphasis::Ghost) => &mut ghost_outline_lines,
+            (EdgeKind::Outline | EdgeKind::Smooth, Emphasis::Accent) => {
+                &mut accent_outline_lines
+            }
+            (EdgeKind::Outline | EdgeKind::Smooth, Emphasis::Normal) => &mut outline_lines,
         };
         for span in &clip.visible {
             let keep = match e.kind {
@@ -1366,7 +1506,12 @@ fn render_svg_impl(
         // dashed lines (so a bore or pocket reads from a single view).
         // Smooth curved-surface silhouettes are never dashed — their
         // occluded fragments are tangent-point noise, not real edges.
-        if matches!(e.kind, EdgeKind::Outline | EdgeKind::Crease) {
+        // Ghosted parts drop their dashed hidden lines entirely — they are
+        // context, not the subject, and the dashes would read louder than
+        // their faded fills.
+        if matches!(e.kind, EdgeKind::Outline | EdgeKind::Crease)
+            && e.emphasis != Emphasis::Ghost
+        {
             for span in &clip.hidden {
                 if span.len_cells >= HIDDEN_MIN_CELLS {
                     hidden_lines.push((span.a, span.b));
@@ -1420,6 +1565,7 @@ fn render_svg_impl(
     let dash = (blur * 0.6).clamp(2.0, 6.0);
     let emit_lines = |out: &mut String,
                       lines: &[Seg],
+                      stroke: &str,
                       width: f64,
                       opacity: f64,
                       dasharray: Option<f64>| {
@@ -1431,7 +1577,7 @@ fn render_svg_impl(
             None => String::new(),
         };
         out.push_str(&format!(
-                r#"<g stroke="{INK}" stroke-width="{width}" stroke-linecap="round" fill="none" opacity="{opacity}"{dash_attr}>"#
+                r#"<g stroke="{stroke}" stroke-width="{width}" stroke-linecap="round" fill="none" opacity="{opacity}"{dash_attr}>"#
             ));
         for &(a, b) in lines {
             out.push_str(&format!(
@@ -1441,9 +1587,35 @@ fn render_svg_impl(
         }
         out.push_str("</g>");
     };
-    emit_lines(&mut out, &hidden_lines, STROKE_HIDDEN_PX, 0.5, Some(dash));
-    emit_lines(&mut out, &crease_lines, STROKE_CREASE_PX, 1.0, None);
-    emit_lines(&mut out, &outline_lines, STROKE_OUTLINE_PX, 1.0, None);
+    emit_lines(&mut out, &hidden_lines, INK, STROKE_HIDDEN_PX, 0.5, Some(dash));
+    emit_lines(
+        &mut out,
+        &ghost_crease_lines,
+        INK,
+        STROKE_CREASE_PX,
+        GHOST_LINE_OPACITY,
+        None,
+    );
+    emit_lines(
+        &mut out,
+        &ghost_outline_lines,
+        INK,
+        STROKE_OUTLINE_PX,
+        GHOST_LINE_OPACITY,
+        None,
+    );
+    emit_lines(&mut out, &crease_lines, INK, STROKE_CREASE_PX, 1.0, None);
+    emit_lines(&mut out, &outline_lines, INK, STROKE_OUTLINE_PX, 1.0, None);
+    // Accent outlines last — the brand-orange "this is what changed" stroke
+    // sits on top of every other line.
+    emit_lines(
+        &mut out,
+        &accent_outline_lines,
+        ACCENT,
+        STROKE_ACCENT_PX,
+        1.0,
+        None,
+    );
 
     out.push_str("</svg>");
     Ok(out)
@@ -1503,9 +1675,9 @@ mod raster {
     /// with the same edge classification as the SVG path drawn on top
     /// (hidden lines removed). Errors are human-readable strings.
     pub fn render_jpeg_str(raw_vcad: &str, opts: &RasterOptions) -> Result<Vec<u8>, String> {
-        let tinted = evaluate_vcad(raw_vcad)?;
-        let solids: Vec<Solid> = tinted.iter().map(|(s, _)| s.clone()).collect();
-        let tints: Vec<Option<[f64; 3]>> = tinted.iter().map(|(_, t)| *t).collect();
+        let parts = evaluate_vcad(raw_vcad)?;
+        let solids: Vec<Solid> = parts.iter().map(|p| p.solid.clone()).collect();
+        let tints: Vec<Option<[f64; 3]>> = parts.iter().map(|p| p.tint).collect();
         render_jpeg_impl(&solids, &tints, opts)
     }
 
@@ -1540,9 +1712,11 @@ mod raster {
         let down = normalize(opts.view.down());
         let light = normalize(LIGHT);
 
+        let no_accents = vec![false; solids.len()];
         let arts = build_artifacts(
             solids,
             tints,
+            &no_accents,
             cam,
             RASTER_SEGMENTS,
             &EdgeRules {
@@ -2124,5 +2298,101 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// Two disjoint copper cubes: root node 1 ("base") at the origin and
+    /// root node 3 ("lid") translated clear of it — the minimal highlight
+    /// fixture.
+    fn two_cube_vcad() -> String {
+        r#"{
+  "version": "0.1",
+  "nodes": {
+    "1": { "id": 1, "name": "base", "op": { "type": "Cube", "size": { "x": 20, "y": 20, "z": 10 } } },
+    "2": { "id": 2, "name": null, "op": { "type": "Cube", "size": { "x": 20, "y": 20, "z": 10 } } },
+    "3": { "id": 3, "name": "lid", "op": { "type": "Translate", "child": 2, "offset": { "x": 40, "y": 0, "z": 0 } } }
+  },
+  "materials": {
+    "copper": {
+      "name": "copper",
+      "color": [0.72, 0.45, 0.2],
+      "metallic": 1.0,
+      "roughness": 0.4,
+      "density": 8960.0,
+      "friction": 0.6
+    }
+  },
+  "part_materials": {},
+  "roots": [
+    { "root": 1, "material": "copper" },
+    { "root": 3, "material": "copper" }
+  ]
+}"#
+        .to_string()
+    }
+
+    #[test]
+    fn highlight_strokes_accent_and_ghosts_the_rest() {
+        let vcad = two_cube_vcad();
+        let plain = render_svg_str_view_opts(&vcad, DEFAULT_SCALE, View::Isometric, false, &[])
+            .expect("plain render");
+        assert!(
+            !plain.contains(ACCENT),
+            "no accent stroke without a highlight set"
+        );
+
+        // Highlight by root node id — the `part_id` a mutation diff reports.
+        let hl = render_svg_str_view_opts(
+            &vcad,
+            DEFAULT_SCALE,
+            View::Isometric,
+            false,
+            &["3".to_string()],
+        )
+        .expect("highlighted render");
+        assert!(
+            hl.contains(&format!(r#"stroke="{ACCENT}" stroke-width="{STROKE_ACCENT_PX}""#)),
+            "highlighted part must carry the brand-orange accent outline"
+        );
+        // The non-highlighted part is ghosted: its fills fade toward paper
+        // (colours the plain render never emits) and its visible linework
+        // drops to the ghost opacity.
+        assert!(
+            hl.contains(&format!(r#"opacity="{GHOST_LINE_OPACITY}""#)),
+            "ghosted part's linework must fade"
+        );
+        let ghosted_fill = hex(ghost_ramp(tint_ramp([0.72, 0.45, 0.2]))[1]);
+        assert!(
+            hl.contains(&ghosted_fill) && !plain.contains(&ghosted_fill),
+            "ghosted fills must fade toward paper (expected {ghosted_fill})"
+        );
+    }
+
+    #[test]
+    fn highlight_matches_by_node_name() {
+        let hl = render_svg_str_view_opts(
+            &two_cube_vcad(),
+            DEFAULT_SCALE,
+            View::Isometric,
+            false,
+            &["lid".to_string()],
+        )
+        .expect("name-matched highlight render");
+        assert!(hl.contains(ACCENT));
+    }
+
+    #[test]
+    fn highlight_with_no_match_is_an_error() {
+        let err = render_svg_str_view_opts(
+            &two_cube_vcad(),
+            DEFAULT_SCALE,
+            View::Isometric,
+            false,
+            &["no-such-part".to_string()],
+        )
+        .unwrap_err();
+        assert!(
+            err.contains("highlight matched no parts") && err.contains("base"),
+            "error must list the document's parts, got: {err}"
+        );
     }
 }

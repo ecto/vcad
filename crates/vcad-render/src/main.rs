@@ -116,7 +116,7 @@ fn main() -> ExitCode {
 
     let result = match &args.jpeg {
         Some(out_path) => run_jpeg(&raw, &args, out_path),
-        None => render_svg_str_view_opts(&raw, args.scale, args.view, args.transparent)
+        None => render_svg_str_view_opts(&raw, args.scale, args.view, args.transparent, &[])
             .map(|svg| println!("{}", svg)),
     };
 
