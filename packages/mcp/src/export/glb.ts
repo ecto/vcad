@@ -78,6 +78,34 @@ export interface GlbMesh {
   meshKey?: string;
 }
 
+/**
+ * One animation channel for {@link buildGlb}: keyframed TRS on a named node.
+ */
+export interface GlbAnimationChannel {
+  /** Target node name — must match a {@link GlbMesh} node name (or the
+   *  animation's `rootNodeName`) exactly. Unknown names are skipped with a
+   *  console.warn. */
+  nodeName: string;
+  path: "translation" | "rotation" | "scale";
+  /** Keyframe times in seconds, ascending. */
+  times: number[];
+  /** Flat keyframe values: VEC3 per key for translation/scale, VEC4
+   *  quaternion `[x, y, z, w]` per key for rotation. */
+  values: number[];
+  /** Sampler interpolation; defaults to LINEAR. */
+  interpolation?: "LINEAR" | "STEP";
+}
+
+/** Animation options for {@link buildGlb}. */
+export interface GlbAnimationOptions {
+  /** Animation name; defaults to `"timeline"`. */
+  name?: string;
+  channels: GlbAnimationChannel[];
+  /** If set, a new parent node with this name wraps ALL scene nodes and
+   *  becomes the sole scene root; channels may target it (turntable). */
+  rootNodeName?: string;
+}
+
 /** A PBR material resolved from a {@link GlbMesh}, deduped across meshes. */
 interface GlbMaterial {
   name: string;
@@ -137,7 +165,11 @@ export function eulerXyzDegToQuat(
  * Writes POSITION, NORMAL (when present), and u32 indices per mesh, and
  * de-dupes materials by `(color, metallic, roughness)` so a layered board
  * (board / copper / components / silk) stays at a handful of materials. */
-export function buildGlb(inputMeshes: GlbMesh[], name: string): Uint8Array {
+export function buildGlb(
+  inputMeshes: GlbMesh[],
+  name: string,
+  animation?: GlbAnimationOptions,
+): Uint8Array {
   // Collect unique materials keyed by their full PBR values.
   const materialMap = new Map<string, number>();
   const materials: GlbMaterial[] = [];
@@ -344,6 +376,116 @@ export function buildGlb(inputMeshes: GlbMesh[], name: string): Uint8Array {
     nodes.push(makeNode(input, meshIdx));
   }
 
+  // Scene roots: default = every mesh node; with an animation rootNodeName,
+  // a new parent node wraps them all and becomes the sole scene root.
+  let sceneNodeIndices = nodes.map((_, i) => i);
+  if (animation?.rootNodeName !== undefined) {
+    const rootIdx = nodes.length;
+    nodes.push({
+      name: animation.rootNodeName,
+      children: sceneNodeIndices,
+    });
+    sceneNodeIndices = [rootIdx];
+  }
+
+  // Animations: write sampler input/output data into the same BIN chunk.
+  // Animation bufferViews must NOT carry a `target` (not vertex attributes).
+  let animationsJson:
+    | Array<{
+        name: string;
+        samplers: Array<{
+          input: number;
+          output: number;
+          interpolation: string;
+        }>;
+        channels: Array<{
+          sampler: number;
+          target: { node: number; path: string };
+        }>;
+      }>
+    | undefined;
+  if (animation && animation.channels.length > 0) {
+    const nodeIndexByName = new Map<string, number>();
+    for (let i = 0; i < nodes.length; i++) {
+      nodeIndexByName.set(nodes[i].name, i);
+    }
+
+    const writeF32Accessor = (
+      data: number[],
+      type: "SCALAR" | "VEC3" | "VEC4",
+      withMinMax: boolean,
+    ): number => {
+      const arr = new Float32Array(data);
+      const bytes = new Uint8Array(arr.buffer.slice(0));
+      const padded = padTo4(bytes);
+      bufferChunks.push(padded);
+      const bvIdx = bufferViews.length;
+      bufferViews.push({
+        buffer: 0,
+        byteOffset: bufferOffset,
+        byteLength: bytes.length,
+      });
+      bufferOffset += padded.length;
+      const components = type === "SCALAR" ? 1 : type === "VEC3" ? 3 : 4;
+      const accIdx = accessors.length;
+      const acc: Accessor = {
+        bufferView: bvIdx,
+        componentType: 5126, // FLOAT
+        count: data.length / components,
+        type,
+      };
+      if (withMinMax) {
+        // Spec requires min/max on animation sampler input accessors.
+        acc.min = [Math.min(...data)];
+        acc.max = [Math.max(...data)];
+      }
+      accessors.push(acc);
+      return accIdx;
+    };
+
+    const samplers: Array<{
+      input: number;
+      output: number;
+      interpolation: string;
+    }> = [];
+    const channels: Array<{
+      sampler: number;
+      target: { node: number; path: string };
+    }> = [];
+
+    for (const ch of animation.channels) {
+      const nodeIdx = nodeIndexByName.get(ch.nodeName);
+      if (nodeIdx === undefined) {
+        console.warn(
+          `buildGlb: animation channel targets unknown node "${ch.nodeName}" — skipped`,
+        );
+        continue;
+      }
+      const inputAcc = writeF32Accessor(ch.times, "SCALAR", true);
+      const outputAcc = writeF32Accessor(
+        ch.values,
+        ch.path === "rotation" ? "VEC4" : "VEC3",
+        false,
+      );
+      const samplerIdx = samplers.length;
+      samplers.push({
+        input: inputAcc,
+        output: outputAcc,
+        interpolation: ch.interpolation ?? "LINEAR",
+      });
+      channels.push({
+        sampler: samplerIdx,
+        target: { node: nodeIdx, path: ch.path },
+      });
+    }
+
+    if (channels.length > 0) {
+      animationsJson = [
+        { name: animation.name ?? "timeline", samplers, channels },
+      ];
+    }
+  }
+
   // Build JSON. Materials may carry KHR extensions (clearcoat for glossy
   // soldermask, emissive_strength for LEDs that glow past white). GLTFLoader
   // applies both automatically onto a MeshPhysicalMaterial.
@@ -393,7 +535,7 @@ export function buildGlb(inputMeshes: GlbMesh[], name: string): Uint8Array {
   const json: Record<string, unknown> = {
     asset: { version: "2.0", generator: "vcad-mcp" },
     scene: 0,
-    scenes: [{ name, nodes: nodes.map((_, i) => i) }],
+    scenes: [{ name, nodes: sceneNodeIndices }],
     nodes,
     meshes,
     materials: materialJson,
@@ -402,6 +544,7 @@ export function buildGlb(inputMeshes: GlbMesh[], name: string): Uint8Array {
     buffers: [{ byteLength: bufferOffset }],
   };
   if (extensionsUsed.length > 0) json.extensionsUsed = extensionsUsed;
+  if (animationsJson) json.animations = animationsJson;
 
   const jsonStr = JSON.stringify(json);
   const jsonBytes = new TextEncoder().encode(jsonStr);
@@ -509,7 +652,8 @@ interface BufferView {
   buffer: number;
   byteOffset: number;
   byteLength: number;
-  target: number;
+  /** GL target — set for vertex/index views only; animation data views omit it. */
+  target?: number;
 }
 
 interface Accessor {
@@ -531,8 +675,11 @@ interface Mesh {
 }
 
 interface GltfNode {
-  mesh: number;
+  /** Mesh index — absent on the synthetic animation root node. */
+  mesh?: number;
   name: string;
+  /** Child node indices — present only on the synthetic animation root. */
+  children?: number[];
   /** Node translation (mm), omitted at identity. */
   translation?: [number, number, number];
   /** Node rotation quaternion [x, y, z, w], omitted at identity. */

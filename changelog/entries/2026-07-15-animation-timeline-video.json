@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-15-animation-timeline-video",
+  "version": "0.9.4",
+  "date": "2026-07-15",
+  "category": "feat",
+  "title": "Animation timeline + verified video rendering",
+  "summary": "Documents carry a keyframed timeline (params, joints, visibility, explode, camera shots); new animate/render_sequence/export_video tools emit animated GLB and GIF/MP4 with per-frame clearance verification.",
+  "features": ["animation", "timeline", "video", "verification", "assembly"],
+  "mcpTools": ["animate", "render_sequence", "export_video"]
+}

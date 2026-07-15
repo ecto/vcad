@@ -145,6 +145,7 @@ import { toolDefs as ecadToolDefs } from "./tools/ecad.js";
 import { toolDefs as enclosureToolDefs } from "./tools/enclosure.js";
 import { toolDefs as simReplayToolDefs } from "./tools/sim-replay.js";
 import { toolDefs as orderFeedToolDefs } from "./tools/order-feed.js";
+import { toolDefs as animateToolDefs } from "./tools/animate.js";
 
 // Re-exported so the Vercel transport entry can drain in-flight PostHog
 // captures before a serverless instance freezes (see services/mcp/entry.ts).
@@ -322,6 +323,7 @@ const STATIC_TOOL_DEFS: readonly ToolDef[] = [
   ...enclosureToolDefs,
   ...simReplayToolDefs,
   ...orderFeedToolDefs,
+  ...animateToolDefs,
 ];
 
 /**
@@ -392,6 +394,10 @@ const LIST_TOOL_ORDER: readonly string[] = [
   "record_measurement",
   // ── Verify-and-iterate loop ────────────────────────────────
   "render_view",
+  // ── Animation / video ─────────────────────────────────────
+  "animate",
+  "render_sequence",
+  "export_video",
   "verify_part",
   "list_eval_tasks",
   "verify_spec",
