@@ -33,28 +33,36 @@ mecheval leaderboard defaults to `target/debug/vcad-render`.
 ## Usage
 
 ```bash
-vcad-render path/to/part.vcad > out.svg
+vcad-render path/to/part.vcad > out.svg          # SVG on stdout
 vcad-render part.vcad --scale 4.0 > big.svg
-vcad-render part.vcad --jpeg out.jpg --size 1024 --quality 92
-vcad-render part.vcad --png out.png               # transparent, 4096px
+vcad-render part.vcad -o out.jpg                 # format from extension
+vcad-render part.vcad -o out.png                 # transparent RGBA, 4096px
+vcad-render parts/ --out-dir renders/ --format png    # batch a directory
 ```
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `--scale <N>` | `2.0` | Pixels per millimetre. Bigger = larger SVG. |
-| `--view <v>` | `iso` | Camera: `iso`, `front`, `side`, `top`, `hero`. |
-| `--transparent` | off | SVG only: omit the vellum background rect. |
-| `--jpeg <out.jpg>` | — | Z-buffered raster render instead of SVG. |
-| `--png <out.png>` | — | Same raster render as RGBA PNG with a fully transparent background (mutually exclusive with `--jpeg`). |
-| `--size <N>` | `1024` (JPEG), `4096` (PNG) | Raster canvas size in pixels (square). Edge stroke weight and curve tessellation scale with it. |
-| `--fill <F>` | `0.6` | Fraction of the canvas the part's long axis fills. |
-| `--quality <Q>` | `92` | JPEG quality 1–100 (ignored for PNG). |
+| `--view <V>` | `iso` | Camera: `iso`/`front`/`side`/`top`/`hero`. |
+| `--scale <N>` | `2.0` | Pixels per millimetre (SVG). Bigger = larger SVG. |
+| `--transparent` | off | Transparent SVG background. |
+| `-o, --output <PATH>` | stdout | Output path; format inferred from `.svg`/`.jpg`/`.jpeg`/`.png`. `-o -` = SVG on stdout. Single input only. |
+| `--jpeg <PATH>` | — | Legacy alias for `-o <path.jpg>`. |
+| `--out-dir <DIR>` | sibling | Directory for batch outputs. |
+| `--format <F>` | `svg` | Batch output format: `svg`, `jpeg`, or `png`. |
+| `--size <N>` | `1024` (JPEG), `4096` (PNG) | Raster canvas size in pixels. Edge stroke weight and curve tessellation scale with it. |
+| `--fill <F>` | `0.6` | Fraction of canvas the part's long axis fills (raster). |
+| `--quality <Q>` | `92` | JPEG quality, 1–100 (ignored for PNG). |
 
-Raster output lives behind the crate's default `raster` feature; the WASM
-build disables it and keeps SVG only.
+PNG output is RGBA with a fully transparent background (alpha 0 wherever no
+geometry or edge stroke was drawn) — the raster analogue of `--transparent`.
+
+Multiple inputs (or a directory, which expands to its `*.vcad` files)
+render in batch, each to `<stem>.<ext>` next to the input or in
+`--out-dir`. A per-file failure is reported on stderr but doesn't abort
+the batch.
 
 Exit codes: `0` on success, `2` on parse/eval/render failure (with a
-human-readable message on stderr).
+human-readable message on stderr). A batch exits `2` if any file failed.
 
 ## Tunable constants
 
