@@ -2078,7 +2078,9 @@ mod raster {
         // coverage mask so gizmo/dimension linework over the background
         // stays opaque in the transparent PNG output.
         if opts.annotations.any() {
-            draw_annotations(&mut rgb, &mut mask, size, &arts, names, opts, &to_px, lo3, hi3);
+            draw_annotations(
+                &mut rgb, &mut mask, size, &arts, names, opts, &to_px, lo3, hi3,
+            );
         }
 
         Ok((rgb, mask))
@@ -2197,7 +2199,15 @@ mod raster {
                 let a1 = (ax + n.0 * off, ay + n.1 * off);
                 let a2 = (bx + n.0 * off, by + n.1 * off);
                 for (p, e) in [((ax, ay), a1), ((bx, by), a2)] {
-                    draw_line_col(rgb, mask, size, p, (e.0 + n.0 * 4.0, e.1 + n.1 * 4.0), INK_RGB, 1);
+                    draw_line_col(
+                        rgb,
+                        mask,
+                        size,
+                        p,
+                        (e.0 + n.0 * 4.0, e.1 + n.1 * 4.0),
+                        INK_RGB,
+                        1,
+                    );
                 }
                 draw_line_col(rgb, mask, size, a1, a2, INK_RGB, 1);
                 let (ux, uy) = (dx / len, dy / len);
@@ -2458,7 +2468,14 @@ mod raster {
     ) {
         let w = text_width_px(text) as f64;
         let h = (7 * FONT_SCALE) as f64;
-        draw_text(rgb, mask, size, (pos.0 - w / 2.0, pos.1 - h / 2.0), text, color);
+        draw_text(
+            rgb,
+            mask,
+            size,
+            (pos.0 - w / 2.0, pos.1 - h / 2.0),
+            text,
+            color,
+        );
     }
 
     #[allow(clippy::too_many_arguments)]
