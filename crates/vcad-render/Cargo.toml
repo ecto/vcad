@@ -6,9 +6,11 @@ publish = false
 description = "Project a .vcad document to static line art: isometric/orthographic SVG or raster JPEG."
 
 [features]
-default = ["raster"]
+default = ["raster", "cli"]
 # Raster (JPEG) output. Off for the WASM build, which only needs SVG.
 raster = ["dep:image"]
+# The vcad-render binary. Off for the WASM build, which only needs the lib.
+cli = ["dep:clap"]
 
 [dependencies]
 vcad-eval = { workspace = true }
@@ -16,6 +18,7 @@ vcad-ir = { workspace = true }
 vcad-kernel = { workspace = true }
 vcad-ecad-pcb = { workspace = true }
 serde_json = { workspace = true }
+clap = { version = "4", features = ["derive"], optional = true }
 image = { version = "0.25", default-features = false, features = ["jpeg"], optional = true }
 
 [lib]
@@ -25,6 +28,7 @@ path = "src/lib.rs"
 [[bin]]
 name = "vcad-render"
 path = "src/main.rs"
+required-features = ["cli"]
 
 [dev-dependencies]
 vcad-loon = { workspace = true }

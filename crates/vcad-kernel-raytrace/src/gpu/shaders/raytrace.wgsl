@@ -667,6 +667,23 @@ fn winding_number_polygon(uv: vec2<f32>, start: u32, count: u32) -> i32 {
     return winding;
 }
 
+// Twice the signed shoelace area of a polygon in UV space.
+// Used to detect degenerate (near-zero-area) trim loops.
+fn polygon_signed_area(start: u32, count: u32) -> f32 {
+    if count < 3u {
+        return 0.0;
+    }
+
+    var area: f32 = 0.0;
+    for (var i = 0u; i < count; i++) {
+        let p1 = trim_verts[start + i];
+        let p2 = trim_verts[start + ((i + 1u) % count)];
+        area += p1.x * p2.y - p2.x * p1.y;
+    }
+
+    return area;
+}
+
 // Simple AABB check for outer loop (for debugging)
 fn uv_in_trim_bounds(uv: vec2<f32>, start: u32, count: u32) -> bool {
     if count == 0u {
@@ -709,15 +726,22 @@ fn point_in_face(uv: vec2<f32>, face_idx: u32) -> bool {
         return false;
     }
 
-    // Quick AABB rejection before expensive winding number test
-    if !uv_in_trim_bounds(uv, face.trim_start, face.trim_count) {
-        return false;
-    }
+    // A primitive sphere (or full torus) face is bounded only by its seam,
+    // which projects to a zero-area UV polygon. Treat such a degenerate outer
+    // loop as untrimmed so every ray hit isn't spuriously rejected — inner
+    // loops (holes) are still honored below.
+    let outer_area = polygon_signed_area(face.trim_start, face.trim_count);
+    if abs(outer_area) >= 1e-9 {
+        // Quick AABB rejection before expensive winding number test
+        if !uv_in_trim_bounds(uv, face.trim_start, face.trim_count) {
+            return false;
+        }
 
-    // Winding number test for proper polygon boundary
-    let outer_winding = winding_number_polygon(uv, face.trim_start, face.trim_count);
-    if outer_winding == 0 {
-        return false; // Outside outer boundary
+        // Winding number test for proper polygon boundary
+        let outer_winding = winding_number_polygon(uv, face.trim_start, face.trim_count);
+        if outer_winding == 0 {
+            return false; // Outside outer boundary
+        }
     }
 
     // Check inner loops (holes) - point must be outside all holes

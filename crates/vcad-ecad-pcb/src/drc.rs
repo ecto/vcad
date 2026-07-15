@@ -1180,7 +1180,74 @@ enum NodeGeom {
     /// is in the pour by the even-odd rule over the rings, so the plane connects
     /// to same-net copper it floods over and not to the cleared other-net copper
     /// sitting in its voids.
-    Pour(Vec<Vec<Vec2>>),
+    Pour(PourRings),
+}
+
+/// A pour's filled rings with cached per-ring bounding boxes, so the even-odd
+/// and distance narrowphases can skip the thousands of small void rings a
+/// dense plane carries instead of scanning every vertex per query.
+struct PourRings {
+    rings: Vec<Vec<Vec2>>,
+    /// Per-ring axis-aligned bbox `(min, max)`.
+    bboxes: Vec<(Vec2, Vec2)>,
+}
+
+impl PourRings {
+    fn new(rings: Vec<Vec<Vec2>>) -> Self {
+        let bboxes = rings
+            .iter()
+            .map(|r| {
+                let mut min = Vec2::new(f64::MAX, f64::MAX);
+                let mut max = Vec2::new(f64::MIN, f64::MIN);
+                for p in r {
+                    min.x = min.x.min(p.x);
+                    min.y = min.y.min(p.y);
+                    max.x = max.x.max(p.x);
+                    max.y = max.y.max(p.y);
+                }
+                (min, max)
+            })
+            .collect();
+        Self { rings, bboxes }
+    }
+
+    /// Distance from a point to a ring's bbox (0 inside).
+    fn bbox_dist_point(bb: &(Vec2, Vec2), p: Vec2) -> f64 {
+        let dx = (bb.0.x - p.x).max(0.0).max(p.x - bb.1.x);
+        let dy = (bb.0.y - p.y).max(0.0).max(p.y - bb.1.y);
+        (dx * dx + dy * dy).sqrt()
+    }
+
+    /// Distance from a segment's bbox to a ring's bbox (0 on overlap).
+    fn bbox_dist_segment(bb: &(Vec2, Vec2), a: Vec2, b: Vec2) -> f64 {
+        let dx = (bb.0.x - a.x.max(b.x)).max(0.0).max(a.x.min(b.x) - bb.1.x);
+        let dy = (bb.0.y - a.y.max(b.y)).max(0.0).max(a.y.min(b.y) - bb.1.y);
+        (dx * dx + dy * dy).sqrt()
+    }
+}
+
+/// Axis-aligned bounding box of a connectivity node's geometry (mm).
+fn node_bounds(geom: &NodeGeom) -> ([f64; 2], [f64; 2]) {
+    match geom {
+        NodeGeom::Copper(g) => g.bounds(),
+        NodeGeom::Pour(pour) => {
+            let mut min = [f64::MAX, f64::MAX];
+            let mut max = [f64::MIN, f64::MIN];
+            for ring in &pour.rings {
+                for p in ring {
+                    min[0] = min[0].min(p.x);
+                    min[1] = min[1].min(p.y);
+                    max[0] = max[0].max(p.x);
+                    max[1] = max[1].max(p.y);
+                }
+            }
+            if min[0] > max[0] {
+                (min, min)
+            } else {
+                (min, max)
+            }
+        }
+    }
 }
 
 /// A piece of copper participating in connectivity analysis.
@@ -1235,17 +1302,37 @@ fn node_geoms_touch(a: &NodeGeom, b: &NodeGeom) -> bool {
     }
 }
 
-/// Even-odd point-in-pour test over the filled rings.
-fn point_in_pour(rings: &[Vec<Vec2>], p: Vec2) -> bool {
-    rings.iter().filter(|r| point_in_polygon(p, r)).count() % 2 == 1
+/// Even-odd point-in-pour test over the filled rings. Rings whose bbox
+/// excludes the point contribute an even (zero) crossing count, so they are
+/// skipped outright.
+fn point_in_pour(pour: &PourRings, p: Vec2) -> bool {
+    pour.rings
+        .iter()
+        .zip(&pour.bboxes)
+        .filter(|(r, bb)| {
+            p.x >= bb.0.x
+                && p.x <= bb.1.x
+                && p.y >= bb.0.y
+                && p.y <= bb.1.y
+                && point_in_polygon(p, r)
+        })
+        .count()
+        % 2
+        == 1
 }
 
-/// Minimum distance from a point to the nearest edge of any ring.
-fn min_dist_point_to_pour(p: Vec2, rings: &[Vec<Vec2>]) -> f64 {
-    rings
-        .iter()
-        .map(|r| min_distance_to_polygon(&p, r))
-        .fold(f64::MAX, f64::min)
+/// Minimum distance from a point to the nearest ring edge, ignoring rings
+/// whose bbox is already farther than `cutoff` (the caller's touch
+/// threshold) — the result is only ever compared against `cutoff`.
+fn min_dist_point_to_pour(p: Vec2, pour: &PourRings, cutoff: f64) -> f64 {
+    let mut best = f64::MAX;
+    for (r, bb) in pour.rings.iter().zip(&pour.bboxes) {
+        if PourRings::bbox_dist_point(bb, p) > cutoff.min(best) {
+            continue;
+        }
+        best = best.min(min_distance_to_polygon(&p, r));
+    }
+    best
 }
 
 /// True if a copper geom touches/overlaps a filled pour (even-odd over rings).
@@ -1254,34 +1341,39 @@ fn min_dist_point_to_pour(p: Vec2, rings: &[Vec<Vec2>]) -> f64 {
 /// sitting in a clearance void reads as outside (its hole adds an even count),
 /// and is also a full `clearance` from the nearest void edge, so the proximity
 /// check never false-connects it.
-fn copper_touches_pour(g: &CopperGeom, rings: &[Vec<Vec2>]) -> bool {
+fn copper_touches_pour(g: &CopperGeom, pour: &PourRings) -> bool {
     match g {
         CopperGeom::Disc { center, r } => {
-            point_in_pour(rings, *center)
-                || min_dist_point_to_pour(*center, rings) <= *r + TOUCH_EPS
+            point_in_pour(pour, *center)
+                || min_dist_point_to_pour(*center, pour, *r + TOUCH_EPS) <= *r + TOUCH_EPS
         }
         CopperGeom::Segment { a, b, half_w } => {
             let mid = Vec2::new((a.x + b.x) / 2.0, (a.y + b.y) / 2.0);
-            if point_in_pour(rings, *a) || point_in_pour(rings, *b) || point_in_pour(rings, mid) {
+            if point_in_pour(pour, *a) || point_in_pour(pour, *b) || point_in_pour(pour, mid) {
                 return true;
             }
-            min_dist_segment_to_pour(*a, *b, rings) <= *half_w + TOUCH_EPS
+            min_dist_segment_to_pour(*a, *b, pour, *half_w + TOUCH_EPS) <= *half_w + TOUCH_EPS
         }
         CopperGeom::Rect { center, .. } => {
-            if point_in_pour(rings, *center) {
+            if point_in_pour(pour, *center) {
                 return true;
             }
-            rect_corners(g).iter().any(|c| point_in_pour(rings, *c))
+            rect_corners(g).iter().any(|c| point_in_pour(pour, *c))
         }
     }
 }
 
-/// Minimum distance from a segment to the nearest edge of any ring.
-fn min_dist_segment_to_pour(a: Vec2, b: Vec2, rings: &[Vec<Vec2>]) -> f64 {
-    rings
-        .iter()
-        .map(|r| min_dist_segment_to_polygon_edges(a, b, r))
-        .fold(f64::MAX, f64::min)
+/// Minimum distance from a segment to the nearest ring edge, ignoring rings
+/// whose bbox is already farther than `cutoff`.
+fn min_dist_segment_to_pour(a: Vec2, b: Vec2, pour: &PourRings, cutoff: f64) -> f64 {
+    let mut best = f64::MAX;
+    for (r, bb) in pour.rings.iter().zip(&pour.bboxes) {
+        if PourRings::bbox_dist_segment(bb, a, b) > cutoff.min(best) {
+            continue;
+        }
+        best = best.min(min_dist_segment_to_polygon_edges(a, b, r));
+    }
+    best
 }
 
 /// Corners of a [`CopperGeom::Rect`] (empty otherwise).
@@ -1333,17 +1425,20 @@ fn min_dist_segment_to_polygon_edges(a: Vec2, b: Vec2, poly: &[Vec2]) -> f64 {
 }
 
 /// True if two filled pours touch/overlap (even-odd over each ring set).
-fn pours_touch(a: &[Vec<Vec2>], b: &[Vec<Vec2>]) -> bool {
-    if a.iter().flatten().any(|p| point_in_pour(b, *p))
-        || b.iter().flatten().any(|p| point_in_pour(a, *p))
+fn pours_touch(a: &PourRings, b: &PourRings) -> bool {
+    if a.rings.iter().flatten().any(|p| point_in_pour(b, *p))
+        || b.rings.iter().flatten().any(|p| point_in_pour(a, *p))
     {
         return true;
     }
-    // Any ring edge of one crossing a ring of the other.
-    for ra in a {
+    // Any ring edge of one crossing a ring of the other (bbox-pruned).
+    for ra in &a.rings {
         for i in 0..ra.len() {
             let (s, e) = (ra[i], ra[(i + 1) % ra.len()]);
-            if b.iter().any(|rb| segment_polygon_intersects(s, e, rb)) {
+            if b.rings.iter().zip(&b.bboxes).any(|(rb, bb)| {
+                PourRings::bbox_dist_segment(bb, s, e) <= 0.0
+                    && segment_polygon_intersects(s, e, rb)
+            }) {
                 return true;
             }
         }
@@ -1454,7 +1549,7 @@ fn build_conn_nodes(pcb: &Pcb) -> Vec<ConnNode> {
                 .map(|outer| polygon_centroid(outer))
                 .unwrap_or_else(|| polygon_centroid(&zone.outline));
             nodes.push(ConnNode {
-                geom: NodeGeom::Pour(island),
+                geom: NodeGeom::Pour(PourRings::new(island)),
                 layers: layer,
                 net: zone.net.clone(),
                 pad: None,
@@ -2235,15 +2330,80 @@ fn build_connectivity_with_contacts(pcb: &Pcb) -> (Vec<ConnNode>, Dsu, Vec<NodeC
     let nodes = build_conn_nodes(pcb);
     let mut dsu = Dsu::new(nodes.len());
     let mut contacts = Vec::new();
-    for i in 0..nodes.len() {
-        for j in (i + 1)..nodes.len() {
-            if nodes[i].touches(&nodes[j]) {
-                dsu.union(i, j);
-                contacts.push(NodeContact {
-                    i,
-                    j,
-                    at: contact_point(&nodes[i].geom, &nodes[j].geom),
-                });
+
+    // Broadphase: two nodes whose (slightly inflated) bounding boxes are
+    // disjoint can't touch, so bucket nodes into a uniform grid and only run
+    // the narrowphase on pairs sharing a cell. On a dense imported board
+    // (~12k copper nodes, pours with 10k-vertex rings) the old all-pairs loop
+    // was ~80M narrowphase calls — most against pour polygons.
+    let bboxes: Vec<([f64; 2], [f64; 2])> = nodes
+        .iter()
+        .map(|n| {
+            let (mut min, mut max) = node_bounds(&n.geom);
+            min[0] -= TOUCH_EPS;
+            min[1] -= TOUCH_EPS;
+            max[0] += TOUCH_EPS;
+            max[1] += TOUCH_EPS;
+            (min, max)
+        })
+        .collect();
+    let mut gmin = [f64::MAX, f64::MAX];
+    let mut gmax = [f64::MIN, f64::MIN];
+    for (min, max) in &bboxes {
+        gmin[0] = gmin[0].min(min[0]);
+        gmin[1] = gmin[1].min(min[1]);
+        gmax[0] = gmax[0].max(max[0]);
+        gmax[1] = gmax[1].max(max[1]);
+    }
+    if nodes.is_empty() {
+        return (nodes, dsu, contacts);
+    }
+    const GRID_RES: f64 = 128.0;
+    let cell = ((gmax[0] - gmin[0]).max(gmax[1] - gmin[1]) / GRID_RES).max(1e-3);
+    let cols = (((gmax[0] - gmin[0]) / cell) as usize).max(1) + 1;
+    let rows = (((gmax[1] - gmin[1]) / cell) as usize).max(1) + 1;
+    let cell_of = |x: f64, y: f64| -> (usize, usize) {
+        (
+            (((x - gmin[0]) / cell) as usize).min(cols - 1),
+            (((y - gmin[1]) / cell) as usize).min(rows - 1),
+        )
+    };
+    let mut buckets: Vec<Vec<u32>> = vec![Vec::new(); cols * rows];
+    for (i, (min, max)) in bboxes.iter().enumerate() {
+        let (c0, r0) = cell_of(min[0], min[1]);
+        let (c1, r1) = cell_of(max[0], max[1]);
+        for r in r0..=r1 {
+            for c in c0..=c1 {
+                buckets[r * cols + c].push(i as u32);
+            }
+        }
+    }
+    let mut seen = vec![u32::MAX; nodes.len()];
+    for (i, (min, max)) in bboxes.iter().enumerate() {
+        let (c0, r0) = cell_of(min[0], min[1]);
+        let (c1, r1) = cell_of(max[0], max[1]);
+        for r in r0..=r1 {
+            for c in c0..=c1 {
+                for &j32 in &buckets[r * cols + c] {
+                    let j = j32 as usize;
+                    if j <= i || seen[j] == i as u32 {
+                        continue;
+                    }
+                    seen[j] = i as u32;
+                    let (jmin, jmax) = &bboxes[j];
+                    if min[0] > jmax[0] || jmin[0] > max[0] || min[1] > jmax[1] || jmin[1] > max[1]
+                    {
+                        continue;
+                    }
+                    if nodes[i].touches(&nodes[j]) {
+                        dsu.union(i, j);
+                        contacts.push(NodeContact {
+                            i,
+                            j,
+                            at: contact_point(&nodes[i].geom, &nodes[j].geom),
+                        });
+                    }
+                }
             }
         }
     }
@@ -2327,10 +2487,12 @@ fn contact_point(a: &NodeGeom, b: &NodeGeom) -> Vec2 {
         }
         (NodeGeom::Pour(ra), NodeGeom::Pour(rb)) => {
             let p = ra
+                .rings
                 .first()
                 .map(|r| polygon_centroid(r))
                 .unwrap_or(Vec2::new(0.0, 0.0));
             let q = rb
+                .rings
                 .first()
                 .map(|r| polygon_centroid(r))
                 .unwrap_or(Vec2::new(0.0, 0.0));

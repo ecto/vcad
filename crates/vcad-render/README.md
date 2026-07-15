@@ -33,19 +33,32 @@ mecheval leaderboard defaults to `target/debug/vcad-render`.
 ## Usage
 
 ```bash
-vcad-render path/to/part.vcad > out.svg
+vcad-render path/to/part.vcad > out.svg          # SVG on stdout
 vcad-render part.vcad --scale 4.0 > big.svg
-vcad-render part.vcad --sheet > sheet.svg                 # multi-view drawing sheet
-vcad-render part.vcad --sheet --size 1600 --jpeg sheet.jpg
+vcad-render part.vcad -o out.jpg                 # format from extension
+vcad-render part.vcad --sheet > sheet.svg        # multi-view drawing sheet
+vcad-render part.vcad --sheet --size 1600 -o sheet.jpg
+vcad-render parts/ --out-dir renders/ --format jpeg   # batch a directory
 ```
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `--scale <N>` | `2.0` | Pixels per millimetre. Bigger = larger SVG. (Single-view only; the sheet computes its own shared scale.) |
-| `--view <v>` | `iso` | `iso`/`hero`, `front`, `side`, or `top`. |
+| `--view <V>` | `iso` | Camera: `iso`/`front`/`side`/`top`/`hero`. |
+| `--scale <N>` | `2.0` | Pixels per millimetre (SVG). Bigger = larger SVG. |
+| `--transparent` | off | Transparent SVG background. |
 | `--sheet` | off | Multi-view drawing sheet instead of a single view (see below). |
-| `--jpeg <path>` | off | Raster output written to `path` instead of SVG on stdout. |
-| `--size <N>` | `1024` | Raster canvas size; with `--sheet`, the overall sheet width. |
+| `-o, --output <PATH>` | stdout | Output path; format inferred from `.svg`/`.jpg`/`.jpeg`. `-o -` = SVG on stdout. Single input only. |
+| `--jpeg <PATH>` | — | Legacy alias for `-o <path.jpg>`. |
+| `--out-dir <DIR>` | sibling | Directory for batch outputs. |
+| `--format <F>` | `svg` | Batch output format: `svg` or `jpeg`. |
+| `--size <N>` | `1024` | Raster canvas size in pixels (JPEG); with `--sheet`, the overall sheet width. |
+| `--fill <F>` | `0.6` | Fraction of canvas the part's long axis fills (JPEG). |
+| `--quality <Q>` | `92` | JPEG quality, 1–100. |
+
+Multiple inputs (or a directory, which expands to its `*.vcad` files)
+render in batch, each to `<stem>.<ext>` next to the input or in
+`--out-dir`. A per-file failure is reported on stderr but doesn't abort
+the batch.
 
 ### Drawing-sheet mode (`--sheet`)
 
@@ -55,12 +68,12 @@ front, side view to the right, iso in the remaining corner). All four views
 share one scale so they are dimensionally consistent, each carries a caption
 (FRONT/TOP/SIDE/ISO), and a title block in the bottom-right corner shows the
 document name, overall bounding-box dimensions in mm, the shared scale, and a
-date placeholder. Works for both SVG (default, stdout) and `--jpeg` raster
-output; `--size` sets the overall sheet width (height is derived, A-series
-landscape).
+date placeholder. Works for both SVG (default, stdout) and JPEG (`-o
+sheet.jpg`) output; `--size` sets the overall sheet width (height is derived,
+A-series landscape).
 
 Exit codes: `0` on success, `2` on parse/eval/render failure (with a
-human-readable message on stderr).
+human-readable message on stderr). A batch exits `2` if any file failed.
 
 ## Tunable constants
 
