@@ -1487,9 +1487,7 @@ fn render_svg_impl(
             (EdgeKind::Crease, Emphasis::Ghost) => &mut ghost_crease_lines,
             (EdgeKind::Crease, _) => &mut crease_lines,
             (EdgeKind::Outline | EdgeKind::Smooth, Emphasis::Ghost) => &mut ghost_outline_lines,
-            (EdgeKind::Outline | EdgeKind::Smooth, Emphasis::Accent) => {
-                &mut accent_outline_lines
-            }
+            (EdgeKind::Outline | EdgeKind::Smooth, Emphasis::Accent) => &mut accent_outline_lines,
             (EdgeKind::Outline | EdgeKind::Smooth, Emphasis::Normal) => &mut outline_lines,
         };
         for span in &clip.visible {
@@ -1509,9 +1507,7 @@ fn render_svg_impl(
         // Ghosted parts drop their dashed hidden lines entirely — they are
         // context, not the subject, and the dashes would read louder than
         // their faded fills.
-        if matches!(e.kind, EdgeKind::Outline | EdgeKind::Crease)
-            && e.emphasis != Emphasis::Ghost
-        {
+        if matches!(e.kind, EdgeKind::Outline | EdgeKind::Crease) && e.emphasis != Emphasis::Ghost {
             for span in &clip.hidden {
                 if span.len_cells >= HIDDEN_MIN_CELLS {
                     hidden_lines.push((span.a, span.b));
@@ -1587,7 +1583,14 @@ fn render_svg_impl(
         }
         out.push_str("</g>");
     };
-    emit_lines(&mut out, &hidden_lines, INK, STROKE_HIDDEN_PX, 0.5, Some(dash));
+    emit_lines(
+        &mut out,
+        &hidden_lines,
+        INK,
+        STROKE_HIDDEN_PX,
+        0.5,
+        Some(dash),
+    );
     emit_lines(
         &mut out,
         &ghost_crease_lines,
@@ -2350,7 +2353,9 @@ mod tests {
         )
         .expect("highlighted render");
         assert!(
-            hl.contains(&format!(r#"stroke="{ACCENT}" stroke-width="{STROKE_ACCENT_PX}""#)),
+            hl.contains(&format!(
+                r#"stroke="{ACCENT}" stroke-width="{STROKE_ACCENT_PX}""#
+            )),
             "highlighted part must carry the brand-orange accent outline"
         );
         // The non-highlighted part is ghosted: its fills fade toward paper
