@@ -37,7 +37,8 @@ vcad-render path/to/part.vcad > out.svg          # SVG on stdout
 vcad-render part.vcad --scale 4.0 > big.svg
 vcad-render part.vcad --section z=10 > cutaway.svg    # cutaway view
 vcad-render part.vcad -o out.jpg                 # format from extension
-vcad-render parts/ --out-dir renders/ --format jpeg   # batch a directory
+vcad-render part.vcad -o out.png                 # transparent RGBA, 4096px
+vcad-render parts/ --out-dir renders/ --format png    # batch a directory
 ```
 
 | Flag | Default | Meaning |
@@ -46,13 +47,16 @@ vcad-render parts/ --out-dir renders/ --format jpeg   # batch a directory
 | `--scale <N>` | `2.0` | Pixels per millimetre (SVG). Bigger = larger SVG. |
 | `--transparent` | off | Transparent SVG background. |
 | `--section x=N\|y=N\|z=N` | off | Section (cutaway) view: the half of the model on the camera's side of the plane is boolean-subtracted before rendering (you always look into the cut), and the exposed cut faces are drawn with a 45° drafting hatch. Composes with `--view` and raster output. A solid whose section boolean fails is rendered uncut (noted on stderr) — the render never fails outright. |
-| `-o, --output <PATH>` | stdout | Output path; format inferred from `.svg`/`.jpg`/`.jpeg`. `-o -` = SVG on stdout. Single input only. |
+| `-o, --output <PATH>` | stdout | Output path; format inferred from `.svg`/`.jpg`/`.jpeg`/`.png`. `-o -` = SVG on stdout. Single input only. |
 | `--jpeg <PATH>` | — | Legacy alias for `-o <path.jpg>`. |
 | `--out-dir <DIR>` | sibling | Directory for batch outputs. |
-| `--format <F>` | `svg` | Batch output format: `svg` or `jpeg`. |
-| `--size <N>` | `1024` | Raster canvas size in pixels (JPEG). |
-| `--fill <F>` | `0.6` | Fraction of canvas the part's long axis fills (JPEG). |
-| `--quality <Q>` | `92` | JPEG quality, 1–100. |
+| `--format <F>` | `svg` | Batch output format: `svg`, `jpeg`, or `png`. |
+| `--size <N>` | `1024` (JPEG), `4096` (PNG) | Raster canvas size in pixels. Edge stroke weight and curve tessellation scale with it. |
+| `--fill <F>` | `0.6` | Fraction of canvas the part's long axis fills (raster). |
+| `--quality <Q>` | `92` | JPEG quality, 1–100 (ignored for PNG). |
+
+PNG output is RGBA with a fully transparent background (alpha 0 wherever no
+geometry or edge stroke was drawn) — the raster analogue of `--transparent`.
 
 Multiple inputs (or a directory, which expands to its `*.vcad` files)
 render in batch, each to `<stem>.<ext>` next to the input or in

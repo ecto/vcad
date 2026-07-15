@@ -1,0 +1,9 @@
+{
+  "id": "2026-07-15-render-png-alpha",
+  "version": "0.9.4",
+  "date": "2026-07-15",
+  "category": "feat",
+  "title": "PNG output with transparent background in vcad-render",
+  "summary": "vcad-render can now emit RGBA PNGs with a fully transparent background (-o out.png or --format png), defaulting to 4096px with resolution-scaled line weight and finer curve tessellation.",
+  "features": ["render", "png", "cli"]
+}
