@@ -2179,7 +2179,7 @@
   {
     "name": "render_view",
     "title": "Render View",
-    "description": "Render an open session document to an isometric PNG image so you can SEE the current geometry — silhouettes, holes, creases — not just numbers. Drafting-style line art, Z-up, same renderer as the vcad CLI. Call after mutations to visually confirm the part matches intent before declaring done.",
+    "description": "Render an open session document to an isometric PNG image so you can SEE the current geometry — silhouettes, holes, creases — not just numbers. Drafting-style line art, Z-up, same renderer as the vcad CLI. Opt-in overlays add engineering context: `axes` (X/Y/Z origin gizmo), `labels` (part names), `dims` (overall W×D×H in mm). Call after mutations to visually confirm the part matches intent before declaring done.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -2205,6 +2205,18 @@
         "width_px": {
           "type": "number",
           "description": "Target raster width in pixels (default 800, clamped to 64–2048). Ignored when falling back to SVG output."
+        },
+        "axes": {
+          "type": "boolean",
+          "description": "Overlay an X/Y/Z origin gizmo (kernel is Z-up) so the render carries its own orientation. Off by default."
+        },
+        "labels": {
+          "type": "boolean",
+          "description": "Label each top-level part with its name (leader line to its projected center). Off by default."
+        },
+        "dims": {
+          "type": "boolean",
+          "description": "Overlay overall W×D×H bounding-box dimensions in mm, drafting-style. Off by default."
         }
       }
     },
