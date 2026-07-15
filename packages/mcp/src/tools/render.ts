@@ -43,7 +43,22 @@ export const renderViewSchema = {
       type: "string" as const,
       enum: ["iso", "isometric", "top", "front", "side"],
       description:
-        "Camera view: 'iso' (default, 3/4 isometric), or an orthographic 'top' / 'front' / 'side' elevation. Use 'top' to read a part flat from above.",
+        "Camera view: 'iso' (default, 3/4 isometric), or an orthographic 'top' / 'front' / 'side' elevation. Use 'top' to read a part flat from above. Ignored when azimuth/elevation are given.",
+    },
+    azimuth: {
+      type: "number" as const,
+      description:
+        "Orbit camera azimuth in degrees, CCW from +X in the XY plane (Z-up). Providing azimuth and/or elevation selects an arbitrary orthographic orbit view (missing angle defaults to 0) and overrides `view`.",
+    },
+    elevation: {
+      type: "number" as const,
+      description:
+        "Orbit camera elevation in degrees above the XY plane, clamped to [-90, 90]. See `azimuth`.",
+    },
+    focus: {
+      type: "string" as const,
+      description:
+        "Frame the render on this part instead of the whole document — matched case-insensitively against root part names, assembly instance ids/names, and part-definition ids. Geometry outside the focused part's bounds is cropped.",
     },
     width_px: {
       type: "number" as const,
@@ -179,13 +194,38 @@ export async function renderView(
         ? viewRaw
         : "iso"
   ) as "iso" | "top" | "front" | "side";
+
+  // Arbitrary orbit camera: azimuth/elevation (degrees, Z-up) override the
+  // named view. A missing angle defaults to 0.
+  const azRaw = args.azimuth === undefined ? undefined : Number(args.azimuth);
+  const elRaw = args.elevation === undefined ? undefined : Number(args.elevation);
+  const hasOrbit =
+    (azRaw !== undefined && Number.isFinite(azRaw)) ||
+    (elRaw !== undefined && Number.isFinite(elRaw));
+  const azimuth = azRaw !== undefined && Number.isFinite(azRaw) ? azRaw : 0;
+  const elevation = elRaw !== undefined && Number.isFinite(elRaw) ? elRaw : 0;
+  const viewStr = hasOrbit ? `orbit:${azimuth},${elevation}` : view;
+
+  const focusRaw = typeof args.focus === "string" ? args.focus.trim() : "";
+  const focus = focusRaw.length > 0 ? focusRaw : undefined;
+
   // Canonical label for the result payload — the default view is reported as
   // "isometric" (stable contract); orthographic views report their own name.
-  const viewLabel = view === "iso" ? "isometric" : view;
+  const viewLabel = hasOrbit
+    ? `orbit(azimuth=${azimuth}, elevation=${elevation})`
+    : view === "iso"
+      ? "isometric"
+      : view;
 
   const wasm = (await getKernelWasm()) as unknown as {
     render_svg: (vcadJson: string, scale: number) => string;
     render_svg_view?: (vcadJson: string, scale: number, view: string) => string;
+    render_svg_camera?: (
+      vcadJson: string,
+      scale: number,
+      view: string,
+      focus?: string | null,
+    ) => string;
   };
   if (typeof wasm.render_svg !== "function") {
     return {
@@ -199,10 +239,30 @@ export async function renderView(
     };
   }
 
+  // Orbit and focus need the camera-aware binding; refuse loudly (rather
+  // than silently rendering the wrong thing) when the WASM build predates it.
+  const needsCamera = hasOrbit || focus !== undefined;
+  if (needsCamera && typeof wasm.render_svg_camera !== "function") {
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify({
+            error:
+              "azimuth/elevation/focus unavailable: kernel WASM build predates render_svg_camera — rebuild @vcad/kernel-wasm.",
+            document_id: documentId,
+          }),
+        },
+      ],
+      isError: true,
+    };
+  }
+
   let svg: string;
   try {
-    svg =
-      view !== "iso" && typeof wasm.render_svg_view === "function"
+    svg = needsCamera
+      ? wasm.render_svg_camera!(JSON.stringify(doc), SVG_SCALE, viewStr, focus ?? null)
+      : view !== "iso" && typeof wasm.render_svg_view === "function"
         ? wasm.render_svg_view(JSON.stringify(doc), SVG_SCALE, view)
         : wasm.render_svg(JSON.stringify(doc), SVG_SCALE);
   } catch (e) {
@@ -245,9 +305,10 @@ export async function renderView(
 
   const raster = await rasterize(svg, widthPx);
   if (raster.png) {
+    const viewSlug = hasOrbit ? `orbit-${azimuth}-${elevation}` : viewLabel;
     const asset = makePngRenderAsset(raster.png, {
       tool: "render_view",
-      filename: `${documentId || "inline"}-${viewLabel}-${widthPx}.png`,
+      filename: `${documentId || "inline"}-${viewSlug}-${widthPx}.png`,
       width: widthPx,
       alt: `vcad ${viewLabel} render`,
     });
@@ -263,6 +324,7 @@ export async function renderView(
           text: JSON.stringify({
             document_id: documentId,
             view: viewLabel,
+            ...(focus ? { focus } : {}),
             width_px: widthPx,
             format: "png",
             asset: renderAssetSummary(asset),
@@ -287,6 +349,7 @@ export async function renderView(
         text: JSON.stringify({
           document_id: documentId,
           view: viewLabel,
+          ...(focus ? { focus } : {}),
           format: "svg",
           note,
           ...(svgBytes <= MAX_INLINE_SVG_BYTES
@@ -907,7 +970,7 @@ export const toolDefs: ToolDef[] = [
     name: "render_view",
     pack: null,
     description:
-      "Render an open session document to an isometric PNG image so you can SEE the current geometry — silhouettes, holes, creases — not just numbers. Drafting-style line art, Z-up, same renderer as the vcad CLI. Call after mutations to visually confirm the part matches intent before declaring done.",
+      "Render an open session document to a PNG image so you can SEE the current geometry — silhouettes, holes, creases — not just numbers. Drafting-style line art, Z-up, same renderer as the vcad CLI. Defaults to isometric; pass azimuth/elevation for an arbitrary orbit view, and focus to frame a single part. Call after mutations to visually confirm the part matches intent before declaring done.",
     inputSchema: renderViewSchema,
     handler: async (a) => (await renderView(a)) as unknown as ToolResult,
     behavior: behavior({}),

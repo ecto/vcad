@@ -1,8 +1,14 @@
 //! `vcad-render` CLI — project a `.vcad` to static line art.
 //!
 //! Usage:
-//!   vcad-render <path.vcad> [--view iso|front|side|top|hero] [--scale <px-per-mm>] [--transparent]
+//!   vcad-render <path.vcad> [--view iso|front|side|top|hero|orbit:AZ,EL] [--scale <px-per-mm>] [--transparent]
+//!   vcad-render <path.vcad> [--azimuth <deg>] [--elevation <deg>] [--focus <part-name>]
 //!   vcad-render <path.vcad> --jpeg <out.jpg> [--view ...] [--size <px>] [--fill <frac>] [--quality <1-100>]
+//!
+//! `--azimuth`/`--elevation` select an arbitrary orthographic orbit camera
+//! (degrees, Z-up: azimuth CCW from +X, elevation above the XY plane) and
+//! override `--view`. `--focus` frames the render on the named part's
+//! bounding box instead of the whole document.
 //!
 //! Without `--jpeg`: a single self-contained `<svg>` on stdout.
 //! With `--jpeg`: a z-buffered raster render written to the given path.
@@ -13,12 +19,15 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 use std::str::FromStr;
 
-use vcad_render::{render_svg_str_view_opts, View, DEFAULT_SCALE};
+use vcad_render::{render_svg_str_camera, CameraOptions, View, DEFAULT_SCALE};
 
 struct Args {
     path: PathBuf,
     scale: f64,
     view: View,
+    azimuth: Option<f64>,
+    elevation: Option<f64>,
+    focus: Option<String>,
     jpeg: Option<PathBuf>,
     size: u32,
     fill: f64,
@@ -26,16 +35,36 @@ struct Args {
     transparent: bool,
 }
 
+impl Args {
+    /// The effective view: explicit `--azimuth`/`--elevation` compose into
+    /// an orbit camera (unspecified angle defaults to 0°) and override
+    /// `--view`.
+    fn effective_view(&self) -> View {
+        if self.azimuth.is_some() || self.elevation.is_some() {
+            View::Orbit {
+                azimuth: self.azimuth.unwrap_or(0.0),
+                elevation: self.elevation.unwrap_or(0.0),
+            }
+        } else {
+            self.view
+        }
+    }
+}
+
 fn parse_args() -> Result<Args, String> {
     let mut args = std::env::args().skip(1);
     let path = args.next().ok_or(
-        "usage: vcad-render <path.vcad> [--view iso|front|side|top|hero] [--scale N] [--transparent] \
+        "usage: vcad-render <path.vcad> [--view iso|front|side|top|hero|orbit:AZ,EL] [--scale N] \
+         [--azimuth DEG] [--elevation DEG] [--focus part] [--transparent] \
          [--jpeg out.jpg [--size N] [--fill F] [--quality Q]]",
     )?;
     let mut out = Args {
         path: PathBuf::from(path),
         scale: DEFAULT_SCALE,
         view: View::Isometric,
+        azimuth: None,
+        elevation: None,
+        focus: None,
         jpeg: None,
         size: 1024,
         fill: 0.6,
@@ -52,6 +81,23 @@ fn parse_args() -> Result<Args, String> {
             }
             "--view" => {
                 out.view = View::from_str(&value("--view")?)?;
+            }
+            "--azimuth" => {
+                out.azimuth = Some(
+                    value("--azimuth")?
+                        .parse()
+                        .map_err(|e: std::num::ParseFloatError| e.to_string())?,
+                );
+            }
+            "--elevation" => {
+                out.elevation = Some(
+                    value("--elevation")?
+                        .parse()
+                        .map_err(|e: std::num::ParseFloatError| e.to_string())?,
+                );
+            }
+            "--focus" => {
+                out.focus = Some(value("--focus")?);
             }
             "--jpeg" => {
                 out.jpeg = Some(PathBuf::from(value("--jpeg")?));
@@ -83,10 +129,11 @@ fn parse_args() -> Result<Args, String> {
 #[cfg(feature = "raster")]
 fn run_jpeg(raw: &str, args: &Args, out_path: &std::path::Path) -> Result<(), String> {
     let opts = vcad_render::RasterOptions {
-        view: args.view,
+        view: args.effective_view(),
         size_px: args.size,
         fill_frac: args.fill,
         quality: args.quality,
+        focus: args.focus.clone(),
     };
     let bytes = vcad_render::render_jpeg_str(raw, &opts)?;
     std::fs::write(out_path, bytes).map_err(|e| format!("write {}: {}", out_path.display(), e))
@@ -116,8 +163,16 @@ fn main() -> ExitCode {
 
     let result = match &args.jpeg {
         Some(out_path) => run_jpeg(&raw, &args, out_path),
-        None => render_svg_str_view_opts(&raw, args.scale, args.view, args.transparent)
-            .map(|svg| println!("{}", svg)),
+        None => render_svg_str_camera(
+            &raw,
+            args.scale,
+            &CameraOptions {
+                view: args.effective_view(),
+                transparent: args.transparent,
+                focus: args.focus.clone(),
+            },
+        )
+        .map(|svg| println!("{}", svg)),
     };
 
     match result {

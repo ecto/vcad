@@ -142,16 +142,44 @@ pub fn render_svg(vcad_json: &str, scale: f64) -> Result<String, JsError> {
 
 /// Render raw `.vcad` document JSON to an SVG from a named orthographic view.
 ///
-/// `view` accepts `"iso"`/`"isometric"`/`"hero"`, `"top"`, `"front"`, or
-/// `"side"` (case-insensitive); anything unrecognized falls back to isometric.
-/// Gives agents a flat top-down or elevation look at a part, not just the
-/// default 3/4 isometric.
+/// `view` accepts `"iso"`/`"isometric"`/`"hero"`, `"top"`, `"front"`,
+/// `"side"`, or an arbitrary orbit camera as `"orbit:<azimuth>,<elevation>"`
+/// (degrees, Z-up — e.g. `"orbit:35,25"`); anything unrecognized falls back
+/// to isometric. Gives agents a flat top-down or elevation look at a part,
+/// not just the default 3/4 isometric.
 #[wasm_bindgen]
 pub fn render_svg_view(vcad_json: &str, scale: f64, view: &str) -> Result<String, JsError> {
     let v = view
         .parse::<vcad_render::View>()
         .unwrap_or(vcad_render::View::Isometric);
     vcad_render::render_svg_str_view(vcad_json, scale, v).map_err(|e| JsError::new(&e))
+}
+
+/// Render raw `.vcad` document JSON to an SVG with full camera control.
+///
+/// `view` accepts everything [`render_svg_view`] does, including
+/// `"orbit:<azimuth>,<elevation>"` (degrees, Z-up); an unparseable view
+/// string is an error here rather than a silent isometric fallback.
+/// `focus`, when non-empty, frames the render on that part's bounding box
+/// instead of the whole document — matched case-insensitively against root
+/// node names, assembly instance ids/names, and part-definition ids
+/// (unknown names error with the available labels).
+#[wasm_bindgen]
+pub fn render_svg_camera(
+    vcad_json: &str,
+    scale: f64,
+    view: &str,
+    focus: Option<String>,
+) -> Result<String, JsError> {
+    let v = view
+        .parse::<vcad_render::View>()
+        .map_err(|e| JsError::new(&e))?;
+    let opts = vcad_render::CameraOptions {
+        view: v,
+        transparent: false,
+        focus: focus.filter(|f| !f.trim().is_empty()),
+    };
+    vcad_render::render_svg_str_camera(vcad_json, scale, &opts).map_err(|e| JsError::new(&e))
 }
 
 /// Render a PCB to a flat, top-down, per-layer 2D SVG (the "agent eyes" for

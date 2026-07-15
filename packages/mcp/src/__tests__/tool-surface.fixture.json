@@ -2179,7 +2179,7 @@
   {
     "name": "render_view",
     "title": "Render View",
-    "description": "Render an open session document to an isometric PNG image so you can SEE the current geometry — silhouettes, holes, creases — not just numbers. Drafting-style line art, Z-up, same renderer as the vcad CLI. Call after mutations to visually confirm the part matches intent before declaring done.",
+    "description": "Render an open session document to a PNG image so you can SEE the current geometry — silhouettes, holes, creases — not just numbers. Drafting-style line art, Z-up, same renderer as the vcad CLI. Defaults to isometric; pass azimuth/elevation for an arbitrary orbit view, and focus to frame a single part. Call after mutations to visually confirm the part matches intent before declaring done.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -2200,7 +2200,19 @@
             "front",
             "side"
           ],
-          "description": "Camera view: 'iso' (default, 3/4 isometric), or an orthographic 'top' / 'front' / 'side' elevation. Use 'top' to read a part flat from above."
+          "description": "Camera view: 'iso' (default, 3/4 isometric), or an orthographic 'top' / 'front' / 'side' elevation. Use 'top' to read a part flat from above. Ignored when azimuth/elevation are given."
+        },
+        "azimuth": {
+          "type": "number",
+          "description": "Orbit camera azimuth in degrees, CCW from +X in the XY plane (Z-up). Providing azimuth and/or elevation selects an arbitrary orthographic orbit view (missing angle defaults to 0) and overrides `view`."
+        },
+        "elevation": {
+          "type": "number",
+          "description": "Orbit camera elevation in degrees above the XY plane, clamped to [-90, 90]. See `azimuth`."
+        },
+        "focus": {
+          "type": "string",
+          "description": "Frame the render on this part instead of the whole document — matched case-insensitively against root part names, assembly instance ids/names, and part-definition ids. Geometry outside the focused part's bounds is cropped."
         },
         "width_px": {
           "type": "number",
