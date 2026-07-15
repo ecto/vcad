@@ -7464,6 +7464,7 @@ dependencies = [
 name = "vcad-render"
 version = "0.9.3"
 dependencies = [
+ "clap",
  "image",
  "serde_json",
  "vcad-ecad-pcb",
