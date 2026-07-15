@@ -2238,6 +2238,43 @@
     }
   },
   {
+    "name": "timeline_from_simulation",
+    "title": "Timeline From Simulation",
+    "description": "Compile a recorded physics rollout (gym_step trajectory) into the document's animation timeline — one joint track per observed joint at the simulation timestep, optional turntable. The rollout then previews via render_sequence and ships via export_video with clearance verification.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "env_id": {
+          "type": "string",
+          "description": "Environment id from create_robot_env (must have recorded steps)."
+        },
+        "document_id": {
+          "type": "string",
+          "description": "Session document id from open_document. Must describe the same assembly the env was created from (same joint ids)."
+        },
+        "max_keys": {
+          "type": "number",
+          "description": "Max keyframes per joint track; longer trajectories are thinned evenly (2-600, default 120)."
+        },
+        "camera": {
+          "type": "string",
+          "enum": [
+            "turntable",
+            "static"
+          ],
+          "description": "Camera shot to attach: a full turntable over the rollout, or static (default)."
+        }
+      },
+      "required": [
+        "env_id",
+        "document_id"
+      ]
+    },
+    "annotations": {
+      "readOnlyHint": false
+    }
+  },
+  {
     "name": "render_sequence",
     "title": "Render Sequence",
     "description": "Compile the document's timeline into an animated GLB (glTF animation channels) — the cheap preview loop for motion. Joint/visibility/explode tracks animate instance nodes; parameter tracks re-evaluate geometry at sampled times. When the document has clearance_specs, they are re-measured across frames and reported (the sequence as evidence).",
@@ -2263,6 +2300,15 @@
     },
     "annotations": {
       "readOnlyHint": true
+    },
+    "_meta": {
+      "ui": {
+        "resourceUri": "ui://vcad/viewer"
+      },
+      "ui/resourceUri": "ui://vcad/viewer",
+      "openai/outputTemplate": "ui://vcad/viewer-openai.html",
+      "openai/toolInvocation/invoking": "Modeling geometry…",
+      "openai/toolInvocation/invoked": "Model updated"
     }
   },
   {

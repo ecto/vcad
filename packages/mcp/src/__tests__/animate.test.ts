@@ -14,6 +14,7 @@ import {
   validateTimeline,
   verifySequenceClearance,
   injectHud,
+  compileRolloutTimeline,
 } from "../tools/animate.js";
 import { documents, openDocument } from "../tools/session.js";
 import { sampleSequence } from "@vcad/engine";
@@ -284,6 +285,90 @@ describe("export_video", () => {
     } else {
       expect(text.artifact).toBeTruthy();
     }
+  });
+});
+
+describe("compileRolloutTimeline", () => {
+  const joints = armDocument().joints!;
+
+  it("compiles a trajectory into linear joint tracks at the sim timestep", () => {
+    const trajectory = Array.from({ length: 50 }, (_, s) => [s * 2]);
+    const res = compileRolloutTimeline(
+      { trajectory, jointIds: ["shoulder"], dt: 1 / 100, substeps: 2 },
+      joints,
+      { turntable: true },
+    );
+    if ("error" in res) throw new Error(res.error);
+    const tl = res.timeline;
+    expect(tl.durationS).toBeCloseTo(50 * 0.02, 9);
+    expect(tl.tracks).toHaveLength(1);
+    const keys = tl.tracks[0]!.keys;
+    expect(keys[0]).toMatchObject({ t: 0, value: 0 });
+    expect(keys[keys.length - 1]!.value).toBe(98);
+    expect(keys[keys.length - 1]!.t).toBeCloseTo(49 * 0.02, 9);
+    expect(tl.camera).toHaveLength(1);
+    expect(tl.camera[0]!.kind.type).toBe("Turntable");
+  });
+
+  it("thins long trajectories to maxKeys and keeps the final sample", () => {
+    const trajectory = Array.from({ length: 600 }, (_, s) => [s]);
+    const res = compileRolloutTimeline(
+      { trajectory, jointIds: ["shoulder"], dt: 1 / 240, substeps: 1 },
+      joints,
+      { maxKeys: 10 },
+    );
+    if ("error" in res) throw new Error(res.error);
+    const keys = res.timeline.tracks[0]!.keys;
+    expect(keys.length).toBeLessThanOrEqual(11);
+    expect(keys[keys.length - 1]!.value).toBe(599);
+  });
+
+  it("rejects trajectories shorter than 2 steps", () => {
+    const res = compileRolloutTimeline(
+      { trajectory: [[0]], jointIds: ["shoulder"], dt: 0.01, substeps: 1 },
+      joints,
+    );
+    expect("error" in res).toBe(true);
+  });
+});
+
+describe("camera channels", () => {
+  it("encodes elevation and dolly on the __camera carrier", async () => {
+    const docId = openArm();
+    const tl: Timeline = {
+      durationS: 1,
+      fps: 8,
+      tracks: [
+        {
+          target: { type: "Joint", jointId: "shoulder" },
+          keys: [
+            { t: 0, value: 0, ease: "linear" },
+            { t: 1, value: 10, ease: "linear" },
+          ],
+        },
+      ],
+      camera: [
+        { startS: 0, endS: 0.5, kind: { type: "Orbit", from: [0, 10], to: [90, 60] } },
+        { startS: 0.5, endS: 1, kind: { type: "Focus", target: "arm_inst", dolly: 0.5 } },
+      ],
+    } as unknown as Timeline;
+    await animate({ document_id: docId, timeline: tl });
+    const res = await renderSequence({ document_id: docId }, { engine } as never);
+    const body = out(res);
+    if (res.isError) throw new Error(body.error);
+    const bytes = Uint8Array.from(Buffer.from(body.glb_base64, "base64"));
+    const json = glbJson(bytes);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const camIdx = json.nodes.findIndex((n: any) => n.name === "__camera");
+    expect(camIdx).toBeGreaterThanOrEqual(0);
+    const paths = json.animations[0].channels
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      .filter((c: any) => c.target.node === camIdx)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      .map((c: any) => c.target.path)
+      .sort();
+    // Orbit (yaw+pitch) → rotation; Focus dolly 1→0.5 → scale.
+    expect(paths).toEqual(["rotation", "scale"]);
   });
 });
 

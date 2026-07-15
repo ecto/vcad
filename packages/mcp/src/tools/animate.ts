@@ -31,6 +31,8 @@ import {
 import type { Document, Timeline, AnimTrack, Vec3 } from "@vcad/ir";
 import { spawn } from "node:child_process";
 import { getSession, resolveDocInput } from "./session.js";
+import { getEnvRecord } from "./gym.js";
+import { resolveObservationJoints } from "./joint-order.js";
 import { behavior, type ToolDef, type ToolContext } from "./tool-def.js";
 import { ok, err, type ToolResult } from "./tool-result.js";
 import { rasterize, loadGifenc } from "./record.js";
@@ -293,21 +295,44 @@ function paramTrackNames(timeline: Timeline): string[] {
  *  itself never rotates. Generic glTF players simply ignore the empty node. */
 export const CAMERA_NODE = "__camera";
 
-/** Turntable/orbit camera → yaw channel on the invisible `__camera` node.
- *  Positive azimuth, rotation about Z (Z-up model space). */
-function cameraYawChannel(frames: SequenceFrame[]): GlbAnimationChannel | null {
-  const moving = frames.some(
-    (f) => Math.abs(f.camera.azimuthDeg - frames[0]!.camera.azimuthDeg) > 1e-9,
+/** Turntable/orbit/focus camera → channels on the invisible `__camera`
+ *  node. Rotation encodes yaw (about Z, Z-up model space) composed with
+ *  pitch (about X): q = Rz(azimuth) ⊗ Rx(elevation) — the viewer reads it
+ *  back as a ZXY euler. Dolly rides on the scale channel. */
+function cameraChannels(frames: SequenceFrame[]): GlbAnimationChannel[] {
+  const f0 = frames[0]!.camera;
+  const rotating = frames.some(
+    (f) =>
+      Math.abs(f.camera.azimuthDeg - f0.azimuthDeg) > 1e-9 ||
+      Math.abs(f.camera.elevationDeg - f0.elevationDeg) > 1e-9,
   );
-  if (!moving) return null;
-  const times: number[] = [];
-  const values: number[] = [];
-  for (const f of frames) {
-    times.push(f.t);
-    const half = (f.camera.azimuthDeg * Math.PI) / 360;
-    values.push(0, 0, Math.sin(half), Math.cos(half));
+  const dollying = frames.some((f) => Math.abs(f.camera.dolly - f0.dolly) > 1e-9);
+  const channels: GlbAnimationChannel[] = [];
+  if (rotating) {
+    const times: number[] = [];
+    const values: number[] = [];
+    for (const f of frames) {
+      times.push(f.t);
+      const az = (f.camera.azimuthDeg * Math.PI) / 360;
+      const el = (f.camera.elevationDeg * Math.PI) / 360;
+      const s1 = Math.sin(az), c1 = Math.cos(az);
+      const s2 = Math.sin(el), c2 = Math.cos(el);
+      // qz(az) ⊗ qx(el), Hamilton product, [x, y, z, w].
+      values.push(c1 * s2, s1 * s2, s1 * c2, c1 * c2);
+    }
+    channels.push({ nodeName: CAMERA_NODE, path: "rotation", times, values });
   }
-  return { nodeName: CAMERA_NODE, path: "rotation", times, values };
+  if (dollying) {
+    const times: number[] = [];
+    const values: number[] = [];
+    for (const f of frames) {
+      times.push(f.t);
+      const d = Math.max(0.05, f.camera.dolly);
+      values.push(d, d, d);
+    }
+    channels.push({ nodeName: CAMERA_NODE, path: "scale", times, values });
+  }
+  return channels;
 }
 
 /** Explode directions: per instance, outward from the centroid of instance
@@ -525,13 +550,13 @@ export function buildSequenceGlb(
 
   if (meshes.length === 0) return null;
 
-  const camChannel = cameraYawChannel(frames);
-  if (camChannel) channels.push(camChannel);
+  const camChannels = cameraChannels(frames);
+  channels.push(...camChannels);
 
   const animation: GlbAnimationOptions = {
     name: "timeline",
     channels,
-    extraNodes: camChannel ? [CAMERA_NODE] : undefined,
+    extraNodes: camChannels.length > 0 ? [CAMERA_NODE] : undefined,
   };
   const glb = buildGlb(meshes, "sequence", animation);
   return {
@@ -957,6 +982,159 @@ export async function exportVideo(
 }
 
 /* ------------------------------------------------------------------ */
+/* timeline_from_simulation — physics rollout → timeline               */
+/* ------------------------------------------------------------------ */
+
+export const timelineFromSimulationSchema = {
+  type: "object" as const,
+  properties: {
+    env_id: {
+      type: "string" as const,
+      description: "Environment id from create_robot_env (must have recorded steps).",
+    },
+    document_id: {
+      type: "string" as const,
+      description:
+        "Session document id from open_document. Must describe the same assembly the env was created from (same joint ids).",
+    },
+    max_keys: {
+      type: "number" as const,
+      description:
+        "Max keyframes per joint track; longer trajectories are thinned evenly (2-600, default 120).",
+    },
+    camera: {
+      type: "string" as const,
+      enum: ["turntable", "static"],
+      description: "Camera shot to attach: a full turntable over the rollout, or static (default).",
+    },
+  },
+  required: ["env_id", "document_id"],
+};
+
+/**
+ * Pure rollout→timeline compiler (exported for tests): one linear joint
+ * track per observed trajectory column, keyed at the simulation timestep
+ * and thinned to `maxKeys`. Physics becomes a first-class motion source.
+ */
+export function compileRolloutTimeline(
+  env: {
+    trajectory: number[][];
+    jointIds: string[] | null;
+    dt: number;
+    substeps: number;
+  },
+  joints: NonNullable<Document["joints"]>,
+  opts: { maxKeys?: number; turntable?: boolean } = {},
+): { timeline: Timeline } | { error: string } {
+  const obsJoints = resolveObservationJoints(joints, env.jointIds);
+  if ("error" in obsJoints) return { error: obsJoints.error };
+
+  const stepTime = env.dt * Math.max(1, env.substeps);
+  const steps = env.trajectory.length;
+  if (steps < 2) return { error: `trajectory has ${steps} step(s); need at least 2` };
+  const durationS = steps * stepTime;
+  const maxKeys = Math.min(600, Math.max(2, opts.maxKeys ?? 120));
+  const stride = Math.max(1, Math.ceil(steps / maxKeys));
+
+  const tracks: AnimTrack[] = obsJoints.joints.map((joint, col) => {
+    const keys: { t: number; value: number; ease: "linear" }[] = [];
+    for (let s = 0; s < steps; s += stride) {
+      const v = env.trajectory[s]?.[col];
+      if (typeof v === "number") {
+        keys.push({ t: s * stepTime, value: v, ease: "linear" });
+      }
+    }
+    const lastT = (steps - 1) * stepTime;
+    const lastV = env.trajectory[steps - 1]?.[col];
+    if (typeof lastV === "number" && keys[keys.length - 1]?.t !== lastT) {
+      keys.push({ t: lastT, value: lastV, ease: "linear" });
+    }
+    return {
+      target: { type: "Joint", jointId: joint.id },
+      keys,
+    } as unknown as AnimTrack;
+  });
+
+  // Playback fps: dense enough to be smooth, bounded by the frame cap.
+  const fps = Math.min(30, Math.max(4, Math.floor((MAX_FRAMES - 1) / durationS)));
+
+  return {
+    timeline: {
+      durationS,
+      fps,
+      tracks,
+      camera: opts.turntable
+        ? [
+            {
+              startS: 0,
+              endS: durationS,
+              kind: { type: "Turntable", degrees: 360, elevationDeg: 30 },
+            },
+          ]
+        : [],
+    } as unknown as Timeline,
+  };
+}
+
+/**
+ * Compile a recorded physics rollout (the gym trajectory ring buffer) into
+ * the document's timeline via {@link compileRolloutTimeline} — the rollout
+ * then replays through render_sequence / export_video with the same
+ * clearance verification as authored motion.
+ */
+export async function timelineFromSimulation(
+  args: Record<string, unknown>,
+): Promise<ToolResult> {
+  const doc = getSession(String(args.document_id));
+  const env = getEnvRecord(String(args.env_id));
+  if (!env) {
+    return err(`No environment "${String(args.env_id)}" — create_robot_env first.`);
+  }
+  if (env.trajectory.length < 2) {
+    return err(
+      `Environment has ${env.trajectory.length} recorded step(s); run gym_step at least twice first.`,
+    );
+  }
+  const joints = doc.joints ?? [];
+  if (joints.length === 0) {
+    return err("Document has no joints to animate.");
+  }
+  const compiled = compileRolloutTimeline(
+    {
+      trajectory: env.trajectory,
+      jointIds: env.jointIds,
+      dt: env.dt,
+      substeps: env.substeps,
+    },
+    joints,
+    {
+      maxKeys: Number(args.max_keys) || undefined,
+      turntable: args.camera === "turntable",
+    },
+  );
+  if ("error" in compiled) {
+    return err(`timeline_from_simulation refused: ${compiled.error}`);
+  }
+  const timeline = compiled.timeline;
+
+  const issues = validateTimeline(doc, timeline);
+  if (issues.length > 0) {
+    return err(
+      `rollout produced an invalid timeline:\n${issues.map((i) => i.problem).join("\n")}`,
+    );
+  }
+  doc.timeline = timeline;
+  return ok({
+    duration_s: Math.round(timeline.durationS * 1000) / 1000,
+    fps: timeline.fps,
+    steps_compiled: env.trajectory.length,
+    keys_per_track: timeline.tracks[0]?.keys.length ?? 0,
+    tracks: timeline.tracks.length,
+    note: "Rollout compiled to the document timeline. Preview with render_sequence, ship with export_video.",
+  });
+}
+
+/* ------------------------------------------------------------------ */
 /* Tool defs                                                           */
 /* ------------------------------------------------------------------ */
 
@@ -977,7 +1155,18 @@ export const toolDefs: ToolDef[] = [
       "Compile the document's timeline into an animated GLB (glTF animation channels) — the cheap preview loop for motion. Joint/visibility/explode tracks animate instance nodes; parameter tracks re-evaluate geometry at sampled times. When the document has clearance_specs, they are re-measured across frames and reported (the sequence as evidence).",
     inputSchema: renderSequenceSchema,
     handler: async (a, ctx) => renderSequence(a, ctx),
-    behavior: behavior({}),
+    // Mounts the viewer: the animated GLB rides in _meta and autoplays —
+    // the agent (and the human next to it) watch the dailies inline.
+    behavior: behavior({ mount: true }),
+  },
+  {
+    name: "timeline_from_simulation",
+    pack: null,
+    description:
+      "Compile a recorded physics rollout (gym_step trajectory) into the document's animation timeline — one joint track per observed joint at the simulation timestep, optional turntable. The rollout then previews via render_sequence and ships via export_video with clearance verification.",
+    inputSchema: timelineFromSimulationSchema,
+    handler: async (a) => timelineFromSimulation(a),
+    behavior: behavior({ writesDoc: true }),
   },
   {
     name: "export_video",

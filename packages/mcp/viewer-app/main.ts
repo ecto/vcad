@@ -342,7 +342,7 @@ let glbMixer: THREE.AnimationMixer | null = null;
 // encodes the shot's azimuth. We orbit OUR camera from it each frame
 // instead of rendering it, so the model stays put while the view sweeps.
 let glbCameraNode: THREE.Object3D | null = null;
-let glbCameraLastYaw: number | null = null;
+let glbCameraLast: { yaw: number; pitch: number; dolly: number } | null = null;
 let lastFrameMs = performance.now();
 
 function animate(): void {
@@ -354,25 +354,36 @@ function animate(): void {
   if (glbMixer) {
     glbMixer.update(deltaSeconds);
     if (glbCameraNode) {
-      // Model-space yaw about Z from the carrier's quaternion.
-      const q = glbCameraNode.quaternion;
-      const yaw = 2 * Math.atan2(q.z, q.w);
-      if (glbCameraLastYaw !== null) {
-        // Apply the delta as an orbit around the target about display up
-        // (Y) — composes with user drag instead of fighting it.
-        const delta = yaw - glbCameraLastYaw;
-        if (delta !== 0) {
-          const spin = new THREE.Quaternion().setFromAxisAngle(
-            new THREE.Vector3(0, 1, 0),
-            delta,
+      // The carrier encodes q = Rz(yaw) ⊗ Rx(pitch) (model Z-up space) —
+      // recover both via a ZXY euler — and dolly on the scale channel.
+      const euler = new THREE.Euler().setFromQuaternion(
+        glbCameraNode.quaternion,
+        "ZXY",
+      );
+      const yaw = euler.z;
+      const pitch = euler.x;
+      const dolly = glbCameraNode.scale.x || 1;
+      if (glbCameraLast !== null) {
+        // Apply DELTAS as a spherical orbit around the target — composes
+        // with user drag instead of fighting it.
+        const dYaw = yaw - glbCameraLast.yaw;
+        const dPitch = pitch - glbCameraLast.pitch;
+        const dollyRatio = dolly / (glbCameraLast.dolly || 1);
+        if (dYaw !== 0 || dPitch !== 0 || dollyRatio !== 1) {
+          const offset = camera.position.clone().sub(controls.target);
+          const sph = new THREE.Spherical().setFromVector3(offset);
+          sph.theta += dYaw;
+          sph.phi = Math.min(
+            Math.PI - 0.05,
+            Math.max(0.05, sph.phi - dPitch),
           );
+          sph.radius = Math.max(0.01, sph.radius * dollyRatio);
           camera.position
-            .sub(controls.target)
-            .applyQuaternion(spin)
-            .add(controls.target);
+            .copy(controls.target)
+            .add(new THREE.Vector3().setFromSpherical(sph));
         }
       }
-      glbCameraLastYaw = yaw;
+      glbCameraLast = { yaw, pitch, dolly };
     }
   }
   controls.update();
@@ -415,7 +426,7 @@ function clearModel(): void {
     glbMixer = null;
   }
   glbCameraNode = null;
-  glbCameraLastYaw = null;
+  glbCameraLast = null;
   if (!currentModel) return;
   // Restore selection highlights before disposal so we never dispose a
   // clone while the original is detached.
@@ -493,7 +504,7 @@ function loadGlb(base64Data: string, opts?: LoadOpts): void {
         }
         // Camera-orbit carrier node (see the animate-loop hook above).
         glbCameraNode = gltf.scene.getObjectByName("__camera") ?? null;
-        glbCameraLastYaw = null;
+        glbCameraLast = null;
         if (glbCameraNode) glbCameraNode.visible = false;
       }
       updateAxesVisibility();

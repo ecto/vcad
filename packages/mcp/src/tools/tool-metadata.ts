@@ -208,6 +208,7 @@ export const TOOL_METADATA: Record<string, ToolMetadata> = {
 
   // ── Animation / video ────────────────────────────────────────────────
   animate: { title: "Animate", annotations: RW },
+  timeline_from_simulation: { title: "Timeline From Simulation", annotations: RW },
   render_sequence: { title: "Render Sequence", annotations: RO },
   export_video: { title: "Export Video", annotations: RO },
 

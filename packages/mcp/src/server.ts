@@ -396,6 +396,7 @@ const LIST_TOOL_ORDER: readonly string[] = [
   "render_view",
   // ── Animation / video ─────────────────────────────────────
   "animate",
+  "timeline_from_simulation",
   "render_sequence",
   "export_video",
   "verify_part",
