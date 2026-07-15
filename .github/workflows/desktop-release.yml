@@ -45,7 +45,7 @@ jobs:
           # subjects as flavor for the humanized summary.
           fetch-depth: 100
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -94,7 +94,7 @@ jobs:
           git clone --depth 1 https://github.com/ecto/phyz.git ../phyz
           git clone --depth 1 https://github.com/ecto/loon.git ../loon
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -155,7 +155,7 @@ jobs:
           git clone --depth 1 https://github.com/ecto/phyz.git ../phyz
           git clone --depth 1 https://github.com/ecto/loon.git ../loon
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm

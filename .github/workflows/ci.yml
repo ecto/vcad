@@ -56,7 +56,7 @@ jobs:
       # pinned via Cargo.lock, so its output is byte-stable across platforms.
       # `npm run ir:check` only needs cargo + node (no node_modules), so it
       # runs here on stable rather than in the TS job (which has no Rust).
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         if: matrix.toolchain == 'stable'
         with:
           node-version: 22
@@ -183,7 +183,7 @@ jobs:
     needs: wasm
     steps:
       - uses: actions/checkout@v6
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -263,7 +263,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
       - name: npm audit (advisory)
