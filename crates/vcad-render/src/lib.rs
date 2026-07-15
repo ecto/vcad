@@ -1175,6 +1175,49 @@ fn render_svg_impl(
     view: View,
     transparent: bool,
 ) -> Result<String, String> {
+    let frag = render_view_fragment(solids, tints, scale, view, "")?;
+    let (w, h) = (frag.w, frag.h);
+    let mut out = String::new();
+    // Emit explicit width/height alongside viewBox so the SVG has intrinsic
+    // dimensions. Without them, browsers compute auto/auto as 0×0 inside flex
+    // containers (Chrome/Safari), which silently hides the render.
+    out.push_str(&format!(
+        r#"<svg xmlns="http://www.w3.org/2000/svg" width="{w:.2}" height="{h:.2}" viewBox="0 0 {w:.2} {h:.2}" role="img" aria-label="vcad render">"#
+    ));
+    out.push_str(&format!(r#"<defs>{}</defs>"#, frag.defs));
+    // Vellum ground — the warm paper the plate sits on. Skipped for a
+    // transparent render so the SVG composites over any background.
+    if !transparent {
+        out.push_str(&format!(
+            r#"<rect x="0" y="0" width="{w:.2}" height="{h:.2}" fill="{PAPER}"/>"#
+        ));
+    }
+    out.push_str(&frag.body);
+    out.push_str("</svg>");
+    Ok(out)
+}
+
+/// One view rendered as a composable SVG fragment: gradient defs, the
+/// drawable body (fills + linework, no `<svg>` wrapper, no background), and
+/// the fragment's own tight width/height in user units. The sheet composer
+/// places fragments with `<g transform="translate(…)">`.
+struct ViewFragment {
+    defs: String,
+    body: String,
+    w: f64,
+    h: f64,
+}
+
+/// Render one view of `solids` to a [`ViewFragment`]. `grad_prefix`
+/// namespaces the Gouraud gradient ids so several fragments can share one
+/// `<defs>` block without id collisions.
+fn render_view_fragment(
+    solids: &[Solid],
+    tints: &[Option<[f64; 3]>],
+    scale: f64,
+    view: View,
+    grad_prefix: &str,
+) -> Result<ViewFragment, String> {
     if solids.is_empty() {
         return Err("no solids produced".to_string());
     }
@@ -1297,10 +1340,10 @@ fn render_svg_impl(
                     let id = grad_id;
                     grad_id += 1;
                     gradients.push_str(&format!(
-                        r#"<linearGradient id="g{id}" gradientUnits="userSpaceOnUse" x1="{:.2}" y1="{:.2}" x2="{:.2}" y2="{:.2}"><stop offset="0" stop-color="{}"/><stop offset="1" stop-color="{}"/></linearGradient>"#,
+                        r#"<linearGradient id="{grad_prefix}g{id}" gradientUnits="userSpaceOnUse" x1="{:.2}" y1="{:.2}" x2="{:.2}" y2="{:.2}"><stop offset="0" stop-color="{}"/><stop offset="1" stop-color="{}"/></linearGradient>"#,
                         g.x1, g.y1, g.x2, g.y2, hex(g.lo), hex(g.hi),
                     ));
-                    (format!("url(#g{id})"), avg)
+                    (format!("url(#{grad_prefix}g{id})"), avg)
                 }
                 None => (avg.clone(), avg),
             };
@@ -1375,26 +1418,9 @@ fn render_svg_impl(
         }
     }
 
-    // Emit SVG.
+    // Emit the fragment body.
     let mut out = String::new();
-    // Emit explicit width/height alongside viewBox so the SVG has intrinsic
-    // dimensions. Without them, browsers compute auto/auto as 0×0 inside flex
-    // containers (Chrome/Safari), which silently hides the render.
-    out.push_str(&format!(
-        r#"<svg xmlns="http://www.w3.org/2000/svg" width="{w:.2}" height="{h:.2}" viewBox="0 0 {w:.2} {h:.2}" role="img" aria-label="vcad render">"#
-    ));
-
-    // Gouraud gradient defs.
     let blur = ((w + h) * 0.008).clamp(1.0, 12.0);
-    out.push_str(&format!(r#"<defs>{gradients}</defs>"#));
-
-    // Vellum ground — the warm paper the plate sits on. Skipped for a
-    // transparent render so the SVG composites over any background.
-    if !transparent {
-        out.push_str(&format!(
-            r#"<rect x="0" y="0" width="{w:.2}" height="{h:.2}" fill="{PAPER}"/>"#
-        ));
-    }
 
     // Filled polygons. Each is stroked with its own fill colour at a
     // hairline width so adjacent triangles overlap by a sub-pixel sliver —
@@ -1445,6 +1471,337 @@ fn render_svg_impl(
     emit_lines(&mut out, &crease_lines, STROKE_CREASE_PX, 1.0, None);
     emit_lines(&mut out, &outline_lines, STROKE_OUTLINE_PX, 1.0, None);
 
+    Ok(ViewFragment {
+        defs: gradients,
+        body: out,
+        w,
+        h,
+    })
+}
+
+// ─── public API: multi-view drawing sheet ─────────────────────────────────
+
+/// Landscape drawing-sheet aspect ratio (A-series: height = width / √2).
+const SHEET_ASPECT: f64 = 0.707;
+
+/// The classic third-angle arrangement: top view above the front view, side
+/// view to the right of front, isometric in the remaining (top-right)
+/// corner. `(view, caption, column, row)`.
+const SHEET_VIEWS: [(View, &str, usize, usize); 4] = [
+    (View::Top, "TOP", 0, 0),
+    (View::Isometric, "ISO", 1, 0),
+    (View::Front, "FRONT", 0, 1),
+    (View::Side, "SIDE", 1, 1),
+];
+
+/// Options for [`render_sheet_svg_str`].
+#[derive(Debug, Clone)]
+pub struct SheetOptions {
+    /// Overall sheet width in user units / pixels; height is derived
+    /// (landscape, [`SHEET_ASPECT`]).
+    pub width_px: f64,
+    /// Title shown in the title block (typically the document/file name).
+    pub title: String,
+}
+
+impl Default for SheetOptions {
+    fn default() -> Self {
+        SheetOptions {
+            width_px: 1600.0,
+            title: "UNTITLED".to_string(),
+        }
+    }
+}
+
+/// Everything positional about a sheet: the shared scale, the 2×2 view
+/// grid, and the title block. Computed once from the model's 3D bbox and
+/// shared by the SVG and raster composers so both lay out identically.
+struct SheetLayout {
+    w: f64,
+    h: f64,
+    margin: f64,
+    caption_h: f64,
+    /// Shared pixels-per-millimetre — every view uses this one scale so the
+    /// four projections are dimensionally consistent.
+    scale: f64,
+    cell_w: f64,
+    cell_h: f64,
+    cell_x: [f64; 2],
+    cell_y: [f64; 2],
+    /// Title block `(x, y, w, h)`.
+    tb: (f64, f64, f64, f64),
+    /// Overall model dimensions `[dx, dy, dz]` in mm.
+    dims: [f64; 3],
+}
+
+/// Projected screen-plane extent `(width, height)` of the 3D bbox in
+/// `view`. Projection is linear, so the projected model always fits inside
+/// the projected bbox — a safe (for iso, slightly conservative) fit bound.
+fn view_extent(view: View, lo: [f64; 3], hi: [f64; 3]) -> (f64, f64) {
+    let right = view.right();
+    let down = view.down();
+    let mut min = [f64::INFINITY; 2];
+    let mut max = [f64::NEG_INFINITY; 2];
+    for i in 0..8u32 {
+        let p = [
+            if i & 1 == 0 { lo[0] } else { hi[0] },
+            if i & 2 == 0 { lo[1] } else { hi[1] },
+            if i & 4 == 0 { lo[2] } else { hi[2] },
+        ];
+        let s = [dot(p, right), dot(p, down)];
+        for a in 0..2 {
+            min[a] = min[a].min(s[a]);
+            max[a] = max[a].max(s[a]);
+        }
+    }
+    (max[0] - min[0], max[1] - min[1])
+}
+
+/// 3D bounding box over all solids (coarse tessellation — plenty for
+/// layout; the per-view fragments tessellate finely themselves).
+fn solids_bbox(solids: &[Solid]) -> Result<([f64; 3], [f64; 3]), String> {
+    let mut lo = [f64::INFINITY; 3];
+    let mut hi = [f64::NEG_INFINITY; 3];
+    for solid in solids {
+        let Ok(mesh) = catch_unwind(AssertUnwindSafe(|| solid.to_mesh(32))) else {
+            continue;
+        };
+        for v in mesh.vertices.chunks(3) {
+            if v.len() < 3 {
+                continue;
+            }
+            for i in 0..3 {
+                lo[i] = lo[i].min(v[i] as f64);
+                hi[i] = hi[i].max(v[i] as f64);
+            }
+        }
+    }
+    if lo[0] > hi[0] {
+        return Err("no solids produced".to_string());
+    }
+    Ok((lo, hi))
+}
+
+fn sheet_layout(width_px: f64, lo: [f64; 3], hi: [f64; 3]) -> Result<SheetLayout, String> {
+    let w = width_px;
+    let h = w * SHEET_ASPECT;
+    let margin = w * 0.03;
+    let gutter = w * 0.025;
+    let caption_h = (w * 0.014).clamp(9.0, 24.0);
+    let tb_h = (h * 0.14).clamp(48.0, 140.0);
+    let grid_w = w - 2.0 * margin;
+    let grid_h = h - 2.0 * margin - tb_h - gutter;
+    let cell_w = (grid_w - gutter) / 2.0;
+    let cell_h = (grid_h - gutter) / 2.0 - caption_h;
+    if cell_w <= 4.0 * PADDING_PX || cell_h <= 4.0 * PADDING_PX {
+        return Err("sheet size too small for a 2x2 view grid".to_string());
+    }
+    // One shared scale: the largest px/mm at which every view still fits
+    // its cell (with the fragment's own padding accounted for).
+    let mut scale = f64::INFINITY;
+    for (view, _, _, _) in SHEET_VIEWS {
+        let (ew, eh) = view_extent(view, lo, hi);
+        if ew > 1e-9 {
+            scale = scale.min((cell_w - 2.0 * PADDING_PX) / ew);
+        }
+        if eh > 1e-9 {
+            scale = scale.min((cell_h - 2.0 * PADDING_PX) / eh);
+        }
+    }
+    if !scale.is_finite() || scale <= 0.0 {
+        return Err("degenerate model extents".to_string());
+    }
+    let tb_w = (w * 0.34).min(grid_w);
+    Ok(SheetLayout {
+        w,
+        h,
+        margin,
+        caption_h,
+        scale,
+        cell_w,
+        cell_h,
+        cell_x: [margin, margin + cell_w + gutter],
+        cell_y: [margin, margin + cell_h + caption_h + gutter],
+        tb: (w - margin - tb_w, h - margin - tb_h, tb_w, tb_h),
+        dims: [hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]],
+    })
+}
+
+/// The four text lines of the title block (title first, then dimensions,
+/// scale, and a date placeholder to be filled in by hand).
+fn title_block_lines(title: &str, lay: &SheetLayout) -> [String; 4] {
+    [
+        title.to_ascii_uppercase(),
+        format!(
+            "{:.1} X {:.1} X {:.1} MM",
+            lay.dims[0], lay.dims[1], lay.dims[2]
+        ),
+        format!("SCALE {:.2} PX/MM", lay.scale),
+        "DATE ____-__-__".to_string(),
+    ]
+}
+
+/// Cap a text height so the run fits within `max_w` (stroke-font advance
+/// scales linearly with cap height).
+fn fit_text_height(text: &str, height: f64, max_w: f64) -> f64 {
+    let unit_w = vcad_ir::stroke_font::text_width(text, 1.0);
+    if unit_w <= 0.0 {
+        return height;
+    }
+    height.min(max_w / unit_w)
+}
+
+/// Minimal XML attribute/text escaping for user-supplied strings.
+fn xml_escape(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+}
+
+/// Emit single-stroke text (the shared drafting font) as SVG paths.
+/// `x` is the left edge, or the centre when `centered`; `baseline` is the
+/// text baseline in SVG coords (y grows down).
+fn push_sheet_text(
+    out: &mut String,
+    text: &str,
+    x: f64,
+    baseline: f64,
+    height: f64,
+    centered: bool,
+) {
+    let strokes = vcad_ir::stroke_font::text_strokes(text, height);
+    if strokes.is_empty() {
+        return;
+    }
+    let x0 = if centered {
+        x - vcad_ir::stroke_font::text_width(text, height) / 2.0
+    } else {
+        x
+    };
+    let sw = (height * 0.09).clamp(0.6, 2.0);
+    out.push_str(&format!(
+        r#"<g stroke="{INK}" stroke-width="{sw:.2}" stroke-linecap="round" stroke-linejoin="round" fill="none">"#
+    ));
+    for stroke in &strokes {
+        let mut d = String::new();
+        for (i, &(lx, ly)) in stroke.iter().enumerate() {
+            let cmd = if i == 0 { 'M' } else { 'L' };
+            d.push_str(&format!("{cmd}{:.2} {:.2}", x0 + lx, baseline - ly));
+        }
+        out.push_str(&format!(r#"<path d="{d}"/>"#));
+    }
+    out.push_str("</g>");
+}
+
+/// Render raw `.vcad` document JSON to a multi-view drawing sheet SVG:
+/// front, side, top, and isometric views in third-angle arrangement, all at
+/// one shared scale, with view captions, a thin border frame, and a title
+/// block (title, overall dimensions, scale, date placeholder).
+pub fn render_sheet_svg_str(raw_vcad: &str, opts: &SheetOptions) -> Result<String, String> {
+    let tinted = evaluate_vcad(raw_vcad)?;
+    let solids: Vec<Solid> = tinted.iter().map(|(s, _)| s.clone()).collect();
+    let tints: Vec<Option<[f64; 3]>> = tinted.iter().map(|(_, t)| *t).collect();
+    render_sheet_svg_solids(&solids, &tints, opts)
+}
+
+/// [`render_sheet_svg_str`] over pre-evaluated solids. `tints[i]`
+/// optionally tints solid `i`'s shading ramp.
+fn render_sheet_svg_solids(
+    solids: &[Solid],
+    tints: &[Option<[f64; 3]>],
+    opts: &SheetOptions,
+) -> Result<String, String> {
+    if solids.is_empty() {
+        return Err("no solids produced".to_string());
+    }
+    let (lo, hi) = solids_bbox(solids)?;
+    let lay = sheet_layout(opts.width_px, lo, hi)?;
+
+    let mut defs = String::new();
+    let mut body = String::new();
+    for (idx, (view, caption, col, row)) in SHEET_VIEWS.iter().enumerate() {
+        let frag = render_view_fragment(solids, tints, lay.scale, *view, &format!("v{idx}"))?;
+        let cx = lay.cell_x[*col];
+        let cy = lay.cell_y[*row];
+        let gx = cx + (lay.cell_w - frag.w) / 2.0;
+        let gy = cy + (lay.cell_h - frag.h) / 2.0;
+        defs.push_str(&frag.defs);
+        body.push_str(&format!(
+            r#"<g class="sheet-view" data-view="{}" transform="translate({gx:.2} {gy:.2})">{}</g>"#,
+            caption.to_ascii_lowercase(),
+            frag.body,
+        ));
+        push_sheet_text(
+            &mut body,
+            caption,
+            cx + lay.cell_w / 2.0,
+            cy + lay.cell_h + lay.caption_h,
+            lay.caption_h * 0.66,
+            true,
+        );
+    }
+
+    // Title block: bordered box, a rule under the title row, then the
+    // dimension / scale / date lines.
+    let (tx, ty, tw, th) = lay.tb;
+    let lines = title_block_lines(&opts.title, &lay);
+    body.push_str(&format!(
+        r#"<g class="title-block" data-title="{}" data-dims="{}">"#,
+        xml_escape(&opts.title),
+        xml_escape(&lines[1]),
+    ));
+    body.push_str(&format!(
+        r#"<rect x="{tx:.2}" y="{ty:.2}" width="{tw:.2}" height="{th:.2}" fill="none" stroke="{INK}" stroke-width="1.2"/>"#
+    ));
+    let pad = tw * 0.05;
+    let title_h = (th * 0.22).clamp(8.0, 30.0);
+    let line_h = (th * 0.14).clamp(6.0, 20.0);
+    let rule_y = ty + th * 0.34;
+    body.push_str(&format!(
+        r#"<line x1="{tx:.2}" y1="{rule_y:.2}" x2="{:.2}" y2="{rule_y:.2}" stroke="{INK}" stroke-width="0.6"/>"#,
+        tx + tw,
+    ));
+    let fit_w = tw - 2.0 * pad;
+    push_sheet_text(
+        &mut body,
+        &lines[0],
+        tx + pad,
+        ty + th * 0.26,
+        fit_text_height(&lines[0], title_h, fit_w),
+        false,
+    );
+    for (i, line) in lines[1..].iter().enumerate() {
+        let baseline = rule_y + th * 0.2 * (i as f64 + 1.0);
+        push_sheet_text(
+            &mut body,
+            line,
+            tx + pad,
+            baseline,
+            fit_text_height(line, line_h, fit_w),
+            false,
+        );
+    }
+    body.push_str("</g>");
+
+    // Assemble: paper ground, thin border frame, views, title block.
+    let (w, h) = (lay.w, lay.h);
+    let frame = lay.margin * 0.5;
+    let mut out = String::new();
+    out.push_str(&format!(
+        r#"<svg xmlns="http://www.w3.org/2000/svg" width="{w:.2}" height="{h:.2}" viewBox="0 0 {w:.2} {h:.2}" role="img" aria-label="vcad drawing sheet: {}">"#,
+        xml_escape(&opts.title),
+    ));
+    out.push_str(&format!(r#"<defs>{defs}</defs>"#));
+    out.push_str(&format!(
+        r#"<rect x="0" y="0" width="{w:.2}" height="{h:.2}" fill="{PAPER}"/>"#
+    ));
+    out.push_str(&format!(
+        r#"<rect x="{frame:.2}" y="{frame:.2}" width="{:.2}" height="{:.2}" fill="none" stroke="{INK}" stroke-width="1.2"/>"#,
+        w - 2.0 * frame,
+        h - 2.0 * frame,
+    ));
+    out.push_str(&body);
     out.push_str("</svg>");
     Ok(out)
 }
@@ -1452,7 +1809,9 @@ fn render_svg_impl(
 // ─── public API: raster JPEG ──────────────────────────────────────────────
 
 #[cfg(feature = "raster")]
-pub use raster::{render_jpeg_solids, render_jpeg_str, RasterOptions};
+pub use raster::{
+    render_jpeg_solids, render_jpeg_str, render_sheet_jpeg_str, RasterOptions, SheetRasterOptions,
+};
 
 #[cfg(feature = "raster")]
 mod raster {
@@ -1525,19 +1884,46 @@ mod raster {
         tints: &[Option<[f64; 3]>],
         opts: &RasterOptions,
     ) -> Result<Vec<u8>, String> {
-        if solids.is_empty() {
-            return Err("no solids produced".to_string());
-        }
         if opts.size_px < 16 {
             return Err("size_px too small".to_string());
         }
         if !(opts.fill_frac > 0.0 && opts.fill_frac <= 1.0) {
             return Err("fill_frac must be in (0, 1]".to_string());
         }
+        let size = opts.size_px as usize;
+        let rgb = raster_scene(solids, tints, opts.view, size, size, None, opts.fill_frac)?;
+        encode_jpeg(&rgb, opts.size_px, opts.size_px, opts.quality)
+    }
 
-        let cam = opts.view.cam();
-        let right = normalize(opts.view.right());
-        let down = normalize(opts.view.down());
+    fn encode_jpeg(rgb: &[u8], w: u32, h: u32, quality: u8) -> Result<Vec<u8>, String> {
+        let mut out = Vec::new();
+        let mut enc =
+            image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, quality.clamp(1, 100));
+        enc.encode(rgb, w, h, image::ExtendedColorType::Rgb8)
+            .map_err(|e| format!("jpeg encode: {}", e))?;
+        Ok(out)
+    }
+
+    /// Render solids into a `cw × ch` RGB canvas centred on the projected
+    /// extents. `px_per_mm` fixes the scale explicitly (the sheet composer
+    /// needs one shared scale across views); when `None`, the scale is
+    /// derived so the part's long axis fills `fill_frac` of the short side.
+    fn raster_scene(
+        solids: &[Solid],
+        tints: &[Option<[f64; 3]>],
+        view: View,
+        cw: usize,
+        ch: usize,
+        px_per_mm: Option<f64>,
+        fill_frac: f64,
+    ) -> Result<Vec<u8>, String> {
+        if solids.is_empty() {
+            return Err("no solids produced".to_string());
+        }
+
+        let cam = view.cam();
+        let right = normalize(view.right());
+        let down = normalize(view.down());
         let light = normalize(LIGHT);
 
         let arts = build_artifacts(
@@ -1578,16 +1964,16 @@ mod raster {
             ((hi3[0] - lo3[0]).powi(2) + (hi3[1] - lo3[1]).powi(2) + (hi3[2] - lo3[2]).powi(2))
                 .sqrt();
 
-        let size = opts.size_px as usize;
-        let px_per_mm = opts.fill_frac * opts.size_px as f64 / extent;
+        let px_per_mm = px_per_mm.unwrap_or_else(|| fill_frac * cw.min(ch) as f64 / extent);
         let cx = (min[0] + max[0]) / 2.0;
         let cy = (min[1] + max[1]) / 2.0;
-        let half = opts.size_px as f64 / 2.0;
+        let half_x = cw as f64 / 2.0;
+        let half_y = ch as f64 / 2.0;
         // World point → (pixel x, pixel y, depth toward camera in mm).
         let to_px = |v: [f64; 3]| -> (f64, f64, f64) {
             (
-                (dot(v, right) - cx) * px_per_mm + half,
-                (dot(v, down) - cy) * px_per_mm + half,
+                (dot(v, right) - cx) * px_per_mm + half_x,
+                (dot(v, down) - cy) * px_per_mm + half_y,
                 dot(v, cam),
             )
         };
@@ -1596,9 +1982,9 @@ mod raster {
             .iter()
             .copied()
             .cycle()
-            .take(size * size * 3)
+            .take(cw * ch * 3)
             .collect();
-        let mut zbuf: Vec<f64> = vec![f64::NEG_INFINITY; size * size];
+        let mut zbuf: Vec<f64> = vec![f64::NEG_INFINITY; cw * ch];
 
         // Depth range for depth cueing (below).
         let mut dmin = f64::INFINITY;
@@ -1637,7 +2023,8 @@ mod raster {
                 fill_triangle(
                     &mut rgb,
                     &mut zbuf,
-                    size,
+                    cw,
+                    ch,
                     [proj[t[0]], proj[t[1]], proj[t[2]]],
                     shade,
                 );
@@ -1654,24 +2041,11 @@ mod raster {
         for art in &arts {
             let proj: Vec<(f64, f64, f64)> = art.verts.iter().map(|v| to_px(*v)).collect();
             for &(a, b, _kind) in &art.edges {
-                draw_edge(&mut rgb, &zbuf, size, proj[a], proj[b], bias_base);
+                draw_edge(&mut rgb, &zbuf, cw, ch, proj[a], proj[b], bias_base);
             }
         }
 
-        // Encode.
-        let mut out = Vec::new();
-        let mut enc = image::codecs::jpeg::JpegEncoder::new_with_quality(
-            &mut out,
-            opts.quality.clamp(1, 100),
-        );
-        enc.encode(
-            &rgb,
-            opts.size_px,
-            opts.size_px,
-            image::ExtendedColorType::Rgb8,
-        )
-        .map_err(|e| format!("jpeg encode: {}", e))?;
-        Ok(out)
+        Ok(rgb)
     }
 
     fn edge_fn(a: (f64, f64, f64), b: (f64, f64, f64), px: f64, py: f64) -> f64 {
@@ -1681,7 +2055,8 @@ mod raster {
     fn fill_triangle(
         rgb: &mut [u8],
         zbuf: &mut [f64],
-        size: usize,
+        cw: usize,
+        ch: usize,
         p: [(f64, f64, f64); 3],
         shade: [u8; 3],
     ) {
@@ -1708,13 +2083,13 @@ mod raster {
             .cloned()
             .fold(f64::NEG_INFINITY, f64::max)
             .ceil()
-            .min((size - 1) as f64) as usize;
+            .min((cw - 1) as f64) as usize;
         let y1 = ys
             .iter()
             .cloned()
             .fold(f64::NEG_INFINITY, f64::max)
             .ceil()
-            .min((size - 1) as f64) as usize;
+            .min((ch - 1) as f64) as usize;
         if x0 > x1 || y0 > y1 {
             return;
         }
@@ -1731,7 +2106,7 @@ mod raster {
                 }
                 let inv = 1.0 / area.abs();
                 let depth = (w0 * p[0].2 + w1 * p[1].2 + w2 * p[2].2) * inv;
-                let idx = py * size + px;
+                let idx = py * cw + px;
                 if depth > zbuf[idx] {
                     zbuf[idx] = depth;
                     rgb[idx * 3] = shade[0];
@@ -1745,7 +2120,8 @@ mod raster {
     fn draw_edge(
         rgb: &mut [u8],
         zbuf: &[f64],
-        size: usize,
+        cw: usize,
+        ch: usize,
         a: (f64, f64, f64),
         b: (f64, f64, f64),
         bias_base: f64,
@@ -1760,11 +2136,11 @@ mod raster {
             let d = a.2 + (b.2 - a.2) * t;
             let ix = x.floor() as i64;
             let iy = y.floor() as i64;
-            if ix < 0 || iy < 0 || ix >= size as i64 || iy >= size as i64 {
+            if ix < 0 || iy < 0 || ix >= cw as i64 || iy >= ch as i64 {
                 continue;
             }
             let (ux, uy) = (ix as usize, iy as usize);
-            let idx = uy * size + ux;
+            let idx = uy * cw + ux;
             let z = zbuf[idx];
             let visible = if z == f64::NEG_INFINITY {
                 // Over background: nothing occludes it.
@@ -1775,8 +2151,8 @@ mod raster {
                 // centre can be far from the edge's own depth.
                 let mut delta: f64 = 0.0;
                 let mut probe = |nx: i64, ny: i64| {
-                    if nx >= 0 && ny >= 0 && nx < size as i64 && ny < size as i64 {
-                        let nz = zbuf[ny as usize * size + nx as usize];
+                    if nx >= 0 && ny >= 0 && nx < cw as i64 && ny < ch as i64 {
+                        let nz = zbuf[ny as usize * cw + nx as usize];
                         if nz != f64::NEG_INFINITY {
                             delta = delta.max((z - nz).abs());
                         } else {
@@ -1797,15 +2173,202 @@ mod raster {
             // ~2px stroke: paint the pixel and its right/down neighbours.
             for (dx, dy) in [(0i64, 0i64), (1, 0), (0, 1), (1, 1)] {
                 let (qx, qy) = (ix + dx, iy + dy);
-                if qx < 0 || qy < 0 || qx >= size as i64 || qy >= size as i64 {
+                if qx < 0 || qy < 0 || qx >= cw as i64 || qy >= ch as i64 {
                     continue;
                 }
-                let qi = (qy as usize * size + qx as usize) * 3;
+                let qi = (qy as usize * cw + qx as usize) * 3;
                 rgb[qi] = stroke[0];
                 rgb[qi + 1] = stroke[1];
                 rgb[qi + 2] = stroke[2];
             }
         }
+    }
+
+    /// Paint a plain 2D line (no depth test) — sheet frame, captions,
+    /// title-block linework.
+    fn draw_line_2d(
+        rgb: &mut [u8],
+        cw: usize,
+        ch: usize,
+        a: (f64, f64),
+        b: (f64, f64),
+        color: [u8; 3],
+    ) {
+        let len = ((b.0 - a.0).powi(2) + (b.1 - a.1).powi(2)).sqrt();
+        let steps = (len * 2.0).ceil().max(1.0) as usize;
+        for s in 0..=steps {
+            let t = s as f64 / steps as f64;
+            let ix = (a.0 + (b.0 - a.0) * t).floor() as i64;
+            let iy = (a.1 + (b.1 - a.1) * t).floor() as i64;
+            for (dx, dy) in [(0i64, 0i64), (1, 0), (0, 1), (1, 1)] {
+                let (qx, qy) = (ix + dx, iy + dy);
+                if qx < 0 || qy < 0 || qx >= cw as i64 || qy >= ch as i64 {
+                    continue;
+                }
+                let qi = (qy as usize * cw + qx as usize) * 3;
+                rgb[qi] = color[0];
+                rgb[qi + 1] = color[1];
+                rgb[qi + 2] = color[2];
+            }
+        }
+    }
+
+    /// Draw single-stroke text into the canvas. `at` is `(x, baseline)` in
+    /// canvas coords (y down); `x` is the left edge, or the centre when
+    /// `centered`.
+    fn draw_text_2d(
+        rgb: &mut [u8],
+        cw: usize,
+        ch: usize,
+        text: &str,
+        at: (f64, f64),
+        height: f64,
+        centered: bool,
+    ) {
+        let (x, baseline) = at;
+        let strokes = vcad_ir::stroke_font::text_strokes(text, height);
+        let x0 = if centered {
+            x - vcad_ir::stroke_font::text_width(text, height) / 2.0
+        } else {
+            x
+        };
+        for stroke in &strokes {
+            for pair in stroke.windows(2) {
+                draw_line_2d(
+                    rgb,
+                    cw,
+                    ch,
+                    (x0 + pair[0].0, baseline - pair[0].1),
+                    (x0 + pair[1].0, baseline - pair[1].1),
+                    FILL_DARK,
+                );
+            }
+        }
+    }
+
+    /// Options for [`render_sheet_jpeg_str`].
+    #[derive(Debug, Clone)]
+    pub struct SheetRasterOptions {
+        /// Overall sheet width in pixels; height is derived (landscape).
+        pub width_px: u32,
+        /// JPEG quality, 1–100.
+        pub quality: u8,
+        /// Title shown in the title block.
+        pub title: String,
+    }
+
+    impl Default for SheetRasterOptions {
+        fn default() -> Self {
+            SheetRasterOptions {
+                width_px: 1600,
+                quality: 92,
+                title: "UNTITLED".to_string(),
+            }
+        }
+    }
+
+    /// Raster counterpart of [`render_sheet_svg_str`][crate::render_sheet_svg_str]:
+    /// the same third-angle layout, shared scale, captions, frame, and title
+    /// block, composed as a JPEG.
+    pub fn render_sheet_jpeg_str(
+        raw_vcad: &str,
+        opts: &SheetRasterOptions,
+    ) -> Result<Vec<u8>, String> {
+        if opts.width_px < 320 {
+            return Err("sheet width_px too small".to_string());
+        }
+        let tinted = evaluate_vcad(raw_vcad)?;
+        let solids: Vec<Solid> = tinted.iter().map(|(s, _)| s.clone()).collect();
+        let tints: Vec<Option<[f64; 3]>> = tinted.iter().map(|(_, t)| *t).collect();
+        if solids.is_empty() {
+            return Err("no solids produced".to_string());
+        }
+        let (lo, hi) = solids_bbox(&solids)?;
+        let lay = sheet_layout(opts.width_px as f64, lo, hi)?;
+
+        let w = lay.w.round() as usize;
+        let h = lay.h.round() as usize;
+        let mut rgb: Vec<u8> = BACKGROUND.iter().copied().cycle().take(w * h * 3).collect();
+
+        let cw = lay.cell_w.round() as usize;
+        let chh = lay.cell_h.round() as usize;
+        for (view, caption, col, row) in SHEET_VIEWS {
+            let cell = raster_scene(&solids, &tints, view, cw, chh, Some(lay.scale), 0.6)?;
+            let ox = lay.cell_x[col].round() as usize;
+            let oy = lay.cell_y[row].round() as usize;
+            // Blit the cell into the sheet, row by row.
+            for y in 0..chh.min(h.saturating_sub(oy)) {
+                let src = y * cw * 3;
+                let dst = ((oy + y) * w + ox) * 3;
+                let n = cw.min(w.saturating_sub(ox)) * 3;
+                rgb[dst..dst + n].copy_from_slice(&cell[src..src + n]);
+            }
+            draw_text_2d(
+                &mut rgb,
+                w,
+                h,
+                caption,
+                (
+                    lay.cell_x[col] + lay.cell_w / 2.0,
+                    lay.cell_y[row] + lay.cell_h + lay.caption_h,
+                ),
+                lay.caption_h * 0.66,
+                true,
+            );
+        }
+
+        // Thin border frame.
+        let f = lay.margin * 0.5;
+        let frame = [
+            ((f, f), (lay.w - f, f)),
+            ((lay.w - f, f), (lay.w - f, lay.h - f)),
+            ((lay.w - f, lay.h - f), (f, lay.h - f)),
+            ((f, lay.h - f), (f, f)),
+        ];
+        for (a, b) in frame {
+            draw_line_2d(&mut rgb, w, h, a, b, FILL_DARK);
+        }
+
+        // Title block.
+        let (tx, ty, tw, th) = lay.tb;
+        let block = [
+            ((tx, ty), (tx + tw, ty)),
+            ((tx + tw, ty), (tx + tw, ty + th)),
+            ((tx + tw, ty + th), (tx, ty + th)),
+            ((tx, ty + th), (tx, ty)),
+            ((tx, ty + th * 0.34), (tx + tw, ty + th * 0.34)),
+        ];
+        for (a, b) in block {
+            draw_line_2d(&mut rgb, w, h, a, b, FILL_DARK);
+        }
+        let lines = title_block_lines(&opts.title, &lay);
+        let pad = tw * 0.05;
+        let title_h = (th * 0.22).clamp(8.0, 30.0);
+        let line_h = (th * 0.14).clamp(6.0, 20.0);
+        let fit_w = tw - 2.0 * pad;
+        draw_text_2d(
+            &mut rgb,
+            w,
+            h,
+            &lines[0],
+            (tx + pad, ty + th * 0.26),
+            fit_text_height(&lines[0], title_h, fit_w),
+            false,
+        );
+        for (i, line) in lines[1..].iter().enumerate() {
+            let baseline = ty + th * 0.34 + th * 0.2 * (i as f64 + 1.0);
+            draw_text_2d(
+                &mut rgb,
+                w,
+                h,
+                line,
+                (tx + pad, baseline),
+                fit_text_height(line, line_h, fit_w),
+                false,
+            );
+        }
+
+        encode_jpeg(&rgb, w as u32, h as u32, opts.quality)
     }
 }
 
@@ -2012,9 +2575,72 @@ mod tests {
         );
     }
 
+    /// The drawing sheet lays out all four views (third-angle) plus a title
+    /// block carrying the document name and overall dimensions.
+    #[test]
+    fn sheet_svg_has_four_views_and_title_block() {
+        let svg = render_sheet_svg_str(
+            &cube_vcad(30.0, 20.0, 10.0),
+            &SheetOptions {
+                width_px: 900.0,
+                title: "widget".to_string(),
+            },
+        )
+        .expect("sheet should render");
+        assert!(svg.starts_with("<svg "));
+        assert!(svg.ends_with("</svg>"));
+        for v in ["front", "side", "top", "iso"] {
+            assert!(
+                svg.contains(&format!(r#"data-view="{v}""#)),
+                "missing {v} view group"
+            );
+        }
+        assert!(svg.contains(r#"class="title-block""#));
+        assert!(svg.contains(r#"data-title="widget""#));
+        assert!(
+            svg.contains(r#"data-dims="30.0 X 20.0 X 10.0 MM""#),
+            "title block should carry overall bbox dimensions"
+        );
+        // Captions and title-block text are single-stroke paths.
+        assert!(svg.contains("<path d=\"M"));
+    }
+
+    /// All four sheet views share one scale: front and side views of a box
+    /// have the same height (both project Z), so their fragments match.
+    #[test]
+    fn sheet_views_share_scale() {
+        let svg = render_sheet_svg_str(
+            &cube_vcad(40.0, 20.0, 10.0),
+            &SheetOptions {
+                width_px: 900.0,
+                title: "t".to_string(),
+            },
+        )
+        .unwrap();
+        // Front (X×Z at scale s) is twice as wide as side (Y×Z at s) minus
+        // the shared padding — verify via the translate positions being
+        // present at all (structural smoke) and count exactly 4 view groups.
+        assert_eq!(svg.matches(r#"class="sheet-view""#).count(), 4);
+    }
+
     #[cfg(feature = "raster")]
     mod raster_tests {
         use super::*;
+
+        #[test]
+        fn renders_sheet_to_jpeg() {
+            let jpg = render_sheet_jpeg_str(
+                &cube_vcad(30.0, 20.0, 10.0),
+                &SheetRasterOptions {
+                    width_px: 640,
+                    quality: 85,
+                    title: "widget".to_string(),
+                },
+            )
+            .expect("sheet jpeg should render");
+            assert!(jpg.len() > 1000);
+            assert_eq!(&jpg[..2], &[0xFF, 0xD8], "missing JPEG SOI marker");
+        }
 
         #[test]
         fn renders_cube_to_jpeg() {

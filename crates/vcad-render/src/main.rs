@@ -3,9 +3,12 @@
 //! Usage:
 //!   vcad-render <path.vcad> [--view iso|front|side|top|hero] [--scale <px-per-mm>] [--transparent]
 //!   vcad-render <path.vcad> --jpeg <out.jpg> [--view ...] [--size <px>] [--fill <frac>] [--quality <1-100>]
+//!   vcad-render <path.vcad> --sheet [--size <sheet-width-px>] [--jpeg <out.jpg>]
 //!
 //! Without `--jpeg`: a single self-contained `<svg>` on stdout.
 //! With `--jpeg`: a z-buffered raster render written to the given path.
+//! With `--sheet`: a multi-view drawing sheet (front/side/top/iso in
+//! third-angle arrangement, shared scale, title block) instead of one view.
 //! All rendering logic lives in the `vcad-render` library (see `lib.rs`);
 //! this binary only handles argument parsing and file IO.
 
@@ -24,13 +27,14 @@ struct Args {
     fill: f64,
     quality: u8,
     transparent: bool,
+    sheet: bool,
 }
 
 fn parse_args() -> Result<Args, String> {
     let mut args = std::env::args().skip(1);
     let path = args.next().ok_or(
         "usage: vcad-render <path.vcad> [--view iso|front|side|top|hero] [--scale N] [--transparent] \
-         [--jpeg out.jpg [--size N] [--fill F] [--quality Q]]",
+         [--sheet] [--jpeg out.jpg [--size N] [--fill F] [--quality Q]]",
     )?;
     let mut out = Args {
         path: PathBuf::from(path),
@@ -41,6 +45,7 @@ fn parse_args() -> Result<Args, String> {
         fill: 0.6,
         quality: 92,
         transparent: false,
+        sheet: false,
     };
     while let Some(flag) = args.next() {
         let mut value = |name: &str| args.next().ok_or(format!("{name} needs a value"));
@@ -74,21 +79,40 @@ fn parse_args() -> Result<Args, String> {
             "--transparent" => {
                 out.transparent = true;
             }
+            "--sheet" => {
+                out.sheet = true;
+            }
             other => return Err(format!("unknown flag: {}", other)),
         }
     }
     Ok(out)
 }
 
+fn sheet_title(args: &Args) -> String {
+    args.path
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "untitled".to_string())
+}
+
 #[cfg(feature = "raster")]
 fn run_jpeg(raw: &str, args: &Args, out_path: &std::path::Path) -> Result<(), String> {
-    let opts = vcad_render::RasterOptions {
-        view: args.view,
-        size_px: args.size,
-        fill_frac: args.fill,
-        quality: args.quality,
+    let bytes = if args.sheet {
+        let opts = vcad_render::SheetRasterOptions {
+            width_px: args.size,
+            quality: args.quality,
+            title: sheet_title(args),
+        };
+        vcad_render::render_sheet_jpeg_str(raw, &opts)?
+    } else {
+        let opts = vcad_render::RasterOptions {
+            view: args.view,
+            size_px: args.size,
+            fill_frac: args.fill,
+            quality: args.quality,
+        };
+        vcad_render::render_jpeg_str(raw, &opts)?
     };
-    let bytes = vcad_render::render_jpeg_str(raw, &opts)?;
     std::fs::write(out_path, bytes).map_err(|e| format!("write {}: {}", out_path.display(), e))
 }
 
@@ -116,6 +140,13 @@ fn main() -> ExitCode {
 
     let result = match &args.jpeg {
         Some(out_path) => run_jpeg(&raw, &args, out_path),
+        None if args.sheet => {
+            let opts = vcad_render::SheetOptions {
+                width_px: args.size as f64,
+                title: sheet_title(&args),
+            };
+            vcad_render::render_sheet_svg_str(&raw, &opts).map(|svg| println!("{}", svg))
+        }
         None => render_svg_str_view_opts(&raw, args.scale, args.view, args.transparent)
             .map(|svg| println!("{}", svg)),
     };
