@@ -4,20 +4,21 @@
 //! Usage:
 //!   vcad-render <path.vcad> [--view iso|front|side|top|hero] [--scale <px-per-mm>] [--transparent]
 //!   vcad-render <path.vcad> -o out.jpg [--view ...] [--size <px>] [--fill <frac>] [--quality <1-100>]
-//!   vcad-render <path.vcad> -o out.png [--raytrace] [--view ...] [--size <px>] [--fill <frac>]
+//!   vcad-render <path.vcad> -o out.png [--raytrace]   # RGBA raster, transparent background
 //!   vcad-render <dir-or-paths...> [--out-dir <dir>] [--format svg|jpeg|png]
 //!
 //! With a single input and no output flag, a self-contained `<svg>` goes to
 //! stdout. `-o <path>` picks the format from the extension (`.svg`, `.jpg`,
 //! `.jpeg`, `.png`); `-o -` writes SVG to stdout. `--jpeg <path>` is the
-//! legacy spelling of `-o <path.jpg>`. `--raytrace` swaps the tessellated
-//! raster path for a pixel-perfect direct-BRep ray trace (exact curved
-//! silhouettes, no tessellation); it needs a raster output (`.png`/`.jpg`).
-//! Multiple inputs (or a directory, which expands to its `*.vcad` files)
-//! render in batch, each to a sibling output file or into `--out-dir`; a
-//! per-file failure is reported but does not abort the batch. All rendering
-//! logic lives in the `vcad-render` library (see `lib.rs`); this binary only
-//! handles argument parsing and file IO.
+//! legacy spelling of `-o <path.jpg>`. PNG output is RGBA with a transparent
+//! background. `--raytrace` swaps the tessellated raster path for a
+//! pixel-perfect direct-BRep ray trace (exact curved silhouettes, no
+//! tessellation); it needs a raster output (`.png`/`.jpg`). Multiple inputs
+//! (or a directory, which expands to its `*.vcad` files) render in batch,
+//! each to a sibling output file or into `--out-dir`; a per-file failure is
+//! reported but does not abort the batch. All rendering logic lives in the
+//! `vcad-render` library (see `lib.rs`); this binary only handles argument
+//! parsing and file IO.
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -34,7 +35,7 @@ enum Format {
     Svg,
     /// Z-buffered raster JPEG.
     Jpeg,
-    /// Z-buffered raster PNG (lossless).
+    /// Z-buffered raster PNG with a transparent background.
     Png,
 }
 
@@ -108,15 +109,16 @@ struct Cli {
     #[arg(long, value_enum, default_value_t = Format::Svg)]
     format: Format,
 
-    /// Raster canvas size in pixels (JPEG/PNG only).
-    #[arg(long, default_value_t = 1024)]
-    size: u32,
+    /// Raster canvas size in pixels (JPEG/PNG). Defaults to 1024 for JPEG
+    /// and 4096 for PNG when unset.
+    #[arg(long)]
+    size: Option<u32>,
 
     /// Fraction of the canvas the part's long axis fills (JPEG/PNG only).
     #[arg(long, default_value_t = 0.6)]
     fill: f64,
 
-    /// JPEG quality, 1-100 (JPEG only).
+    /// JPEG quality, 1-100 (ignored for PNG).
     #[arg(long, default_value_t = 92)]
     quality: u8,
 
@@ -150,22 +152,32 @@ fn expand_inputs(inputs: &[PathBuf]) -> Result<Vec<PathBuf>, String> {
     Ok(out)
 }
 
+/// Raster options for `cli`, defaulting the canvas size per format when the
+/// user left `--size` unset: JPEG follows the mecheval 1024px capture rule,
+/// PNG (transparent, lossless) targets a much larger 4096px.
+#[cfg(feature = "raster")]
+fn raster_opts(cli: &Cli, png: bool) -> vcad_render::RasterOptions {
+    vcad_render::RasterOptions {
+        view: cli.view,
+        size_px: cli.size.unwrap_or(if png { 4096 } else { 1024 }),
+        fill_frac: cli.fill,
+        quality: cli.quality,
+    }
+}
+
 /// Render raw `.vcad` to raster bytes in `format` (JPEG or PNG), via the
 /// tessellated path or — when `cli.raytrace` — direct BRep ray tracing.
 #[cfg(feature = "raster")]
 fn render_raster(raw: &str, cli: &Cli, format: Format) -> Result<Vec<u8>, String> {
-    let opts = vcad_render::RasterOptions {
-        view: cli.view,
-        size_px: cli.size,
-        fill_frac: cli.fill,
-        quality: cli.quality,
-    };
+    let png = format == Format::Png;
+    let opts = raster_opts(cli, png);
     if cli.raytrace {
         #[cfg(feature = "raytrace")]
         {
-            return match format {
-                Format::Png => vcad_render::render_raytrace_png_str(raw, &opts),
-                _ => vcad_render::render_raytrace_jpeg_str(raw, &opts),
+            return if png {
+                vcad_render::render_raytrace_png_str(raw, &opts)
+            } else {
+                vcad_render::render_raytrace_jpeg_str(raw, &opts)
             };
         }
         #[cfg(not(feature = "raytrace"))]
@@ -173,9 +185,10 @@ fn render_raster(raw: &str, cli: &Cli, format: Format) -> Result<Vec<u8>, String
             return Err("this build of vcad-render lacks the `raytrace` feature".to_string());
         }
     }
-    match format {
-        Format::Png => vcad_render::render_png_str(raw, &opts),
-        _ => vcad_render::render_jpeg_str(raw, &opts),
+    if png {
+        vcad_render::render_png_str(raw, &opts)
+    } else {
+        vcad_render::render_jpeg_str(raw, &opts)
     }
 }
 

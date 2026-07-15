@@ -36,8 +36,8 @@ mecheval leaderboard defaults to `target/debug/vcad-render`.
 vcad-render path/to/part.vcad > out.svg          # SVG on stdout
 vcad-render part.vcad --scale 4.0 > big.svg
 vcad-render part.vcad -o out.jpg                 # format from extension (.svg/.jpg/.png)
-vcad-render part.vcad -o out.png                 # z-buffered raster PNG
-vcad-render parts/ --out-dir renders/ --format jpeg   # batch a directory
+vcad-render part.vcad -o out.png                 # transparent RGBA, 4096px
+vcad-render parts/ --out-dir renders/ --format png    # batch a directory
 
 # Ray-traced output (direct BRep ray tracing, no tessellation):
 vcad-render part.vcad --raytrace -o out.png
@@ -54,9 +54,14 @@ vcad-render part.vcad --raytrace -o out.jpg --view hero --size 1440 --quality 95
 | `--raytrace` | off | Render the raster output via direct BRep ray tracing (needs `.png`/`.jpg`). |
 | `--out-dir <DIR>` | sibling | Directory for batch outputs. |
 | `--format <F>` | `svg` | Batch output format: `svg`, `jpeg`, or `png`. |
-| `--size <N>` | `1024` | Raster canvas size in pixels (JPEG/PNG). |
-| `--fill <F>` | `0.6` | Fraction of canvas the part's long axis fills (JPEG/PNG). |
-| `--quality <Q>` | `92` | JPEG quality, 1–100. |
+| `--size <N>` | `1024` (JPEG), `4096` (PNG) | Raster canvas size in pixels. Edge stroke weight and curve tessellation scale with it. |
+| `--fill <F>` | `0.6` | Fraction of canvas the part's long axis fills (raster). |
+| `--quality <Q>` | `92` | JPEG quality, 1–100 (ignored for PNG). |
+
+PNG output is RGBA with a fully transparent background (alpha 0 wherever no
+geometry or edge stroke was drawn) — the raster analogue of `--transparent`.
+The `--raytrace` PNG path is transparent too, with fractional alpha
+antialiasing its exact curved silhouettes.
 
 Multiple inputs (or a directory, which expands to its `*.vcad` files)
 render in batch, each to `<stem>.<ext>` next to the input or in
