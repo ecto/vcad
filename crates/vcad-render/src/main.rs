@@ -3,16 +3,17 @@
 //! Usage:
 //!   vcad-render <path.vcad> [--view iso|front|side|top|hero] [--scale <px-per-mm>] [--transparent]
 //!   vcad-render <path.vcad> -o out.jpg [--view ...] [--size <px>] [--fill <frac>] [--quality <1-100>]
+//!   vcad-render <path.vcad> -o out.png   # RGBA raster with a transparent background
 //!   vcad-render <path.vcad> --sheet [--size <sheet-width-px>] [-o out.svg|out.jpg]
-//!   vcad-render <dir-or-paths...> [--out-dir <dir>] [--format svg|jpeg]
+//!   vcad-render <dir-or-paths...> [--out-dir <dir>] [--format svg|jpeg|png]
 //!
 //! With a single input and no output flag, a self-contained `<svg>` goes to
 //! stdout. `-o <path>` picks the format from the extension (`.svg`, `.jpg`,
-//! `.jpeg`); `-o -` writes SVG to stdout. `--jpeg <path>` is the legacy
-//! spelling of `-o <path.jpg>`. `--sheet` emits a multi-view drawing sheet
-//! (front/side/top/iso in third-angle arrangement, one shared scale, title
-//! block) instead of a single view. Multiple inputs (or a directory, which
-//! expands to its `*.vcad` files) render in batch, each to a sibling output
+//! `.jpeg`, `.png`); `-o -` writes SVG to stdout. `--jpeg <path>` is the
+//! legacy spelling of `-o <path.jpg>`. `--sheet` emits a multi-view drawing
+//! sheet (front/side/top/iso in third-angle arrangement, one shared scale,
+//! title block) instead of a single view. Multiple inputs (or a directory,
+//! which expands to its `*.vcad` files) render in batch, each to a sibling output
 //! file or into `--out-dir`; a per-file failure is reported but does not
 //! abort the batch. All rendering logic lives in the `vcad-render` library
 //! (see `lib.rs`); this binary only handles argument parsing and file IO.
@@ -32,6 +33,8 @@ enum Format {
     Svg,
     /// Z-buffered raster JPEG.
     Jpeg,
+    /// Z-buffered raster PNG with a transparent background.
+    Png,
 }
 
 impl Format {
@@ -39,6 +42,7 @@ impl Format {
         match self {
             Format::Svg => "svg",
             Format::Jpeg => "jpg",
+            Format::Png => "png",
         }
     }
 
@@ -51,8 +55,9 @@ impl Format {
         {
             Some("svg") => Ok(Format::Svg),
             Some("jpg") | Some("jpeg") => Ok(Format::Jpeg),
+            Some("png") => Ok(Format::Png),
             _ => Err(format!(
-                "cannot infer format from '{}' (expected .svg, .jpg, or .jpeg)",
+                "cannot infer format from '{}' (expected .svg, .jpg, .jpeg, or .png)",
                 path.display()
             )),
         }
@@ -60,7 +65,7 @@ impl Format {
 }
 
 /// Project `.vcad` documents to static line art: isometric/orthographic
-/// SVG or raster JPEG.
+/// SVG or raster JPEG/PNG.
 #[derive(Parser)]
 #[command(name = "vcad-render", version)]
 struct Cli {
@@ -85,7 +90,7 @@ struct Cli {
     #[arg(long)]
     sheet: bool,
 
-    /// Output path; format inferred from extension (.svg/.jpg/.jpeg).
+    /// Output path; format inferred from extension (.svg/.jpg/.jpeg/.png).
     /// Use `-o -` for SVG on stdout. Single input only.
     #[arg(short, long, conflicts_with = "jpeg")]
     output: Option<PathBuf>,
@@ -102,15 +107,17 @@ struct Cli {
     #[arg(long, value_enum, default_value_t = Format::Svg)]
     format: Format,
 
-    /// Raster canvas size in pixels (JPEG); with `--sheet`, the sheet width.
-    #[arg(long, default_value_t = 1024)]
-    size: u32,
+    /// Raster canvas size in pixels (JPEG/PNG). Defaults to 1024 for JPEG
+    /// and 4096 for PNG when unset; with `--sheet`, the overall sheet width
+    /// (default 1600).
+    #[arg(long)]
+    size: Option<u32>,
 
-    /// Fraction of the canvas the part's long axis fills (JPEG only).
+    /// Fraction of the canvas the part's long axis fills (JPEG/PNG only).
     #[arg(long, default_value_t = 0.6)]
     fill: f64,
 
-    /// JPEG quality, 1-100.
+    /// JPEG quality, 1-100 (ignored for PNG).
     #[arg(long, default_value_t = 92)]
     quality: u8,
 }
@@ -146,15 +153,22 @@ fn expand_inputs(inputs: &[PathBuf]) -> Result<Vec<PathBuf>, String> {
     Ok(out)
 }
 
+/// Raster options for `cli`, defaulting the canvas size per format when the
+/// user left `--size` unset: JPEG follows the mecheval 1024px capture rule,
+/// PNG (transparent, lossless) targets a much larger 4096px.
 #[cfg(feature = "raster")]
-fn render_jpeg(raw: &str, cli: &Cli) -> Result<Vec<u8>, String> {
-    let opts = vcad_render::RasterOptions {
+fn raster_opts(cli: &Cli, png: bool) -> vcad_render::RasterOptions {
+    vcad_render::RasterOptions {
         view: cli.view,
-        size_px: cli.size,
+        size_px: cli.size.unwrap_or(if png { 4096 } else { 1024 }),
         fill_frac: cli.fill,
         quality: cli.quality,
-    };
-    vcad_render::render_jpeg_str(raw, &opts)
+    }
+}
+
+#[cfg(feature = "raster")]
+fn render_jpeg(raw: &str, cli: &Cli) -> Result<Vec<u8>, String> {
+    vcad_render::render_jpeg_str(raw, &raster_opts(cli, false))
 }
 
 #[cfg(not(feature = "raster"))]
@@ -163,9 +177,19 @@ fn render_jpeg(_raw: &str, _cli: &Cli) -> Result<Vec<u8>, String> {
 }
 
 #[cfg(feature = "raster")]
+fn render_png(raw: &str, cli: &Cli) -> Result<Vec<u8>, String> {
+    vcad_render::render_png_str(raw, &raster_opts(cli, true))
+}
+
+#[cfg(not(feature = "raster"))]
+fn render_png(_raw: &str, _cli: &Cli) -> Result<Vec<u8>, String> {
+    Err("this build of vcad-render lacks the `raster` feature".to_string())
+}
+
+#[cfg(feature = "raster")]
 fn render_sheet_jpeg(raw: &str, input: &Path, cli: &Cli) -> Result<Vec<u8>, String> {
     let opts = vcad_render::SheetRasterOptions {
-        width_px: cli.size,
+        width_px: cli.size.unwrap_or(1600),
         quality: cli.quality,
         title: sheet_title(input),
     };
@@ -179,7 +203,7 @@ fn render_sheet_jpeg(_raw: &str, _input: &Path, _cli: &Cli) -> Result<Vec<u8>, S
 
 /// Render one input to `dest` (`None` = SVG on stdout) in `format`. When
 /// `cli.sheet` is set, the multi-view drawing sheet is produced instead of a
-/// single view (respecting the same SVG/JPEG format selection).
+/// single view (SVG and JPEG only).
 fn render_one(input: &Path, dest: Option<&Path>, format: Format, cli: &Cli) -> Result<(), String> {
     let raw =
         std::fs::read_to_string(input).map_err(|e| format!("read {}: {}", input.display(), e))?;
@@ -196,7 +220,7 @@ fn render_one(input: &Path, dest: Option<&Path>, format: Format, cli: &Cli) -> R
         }
         (Format::Svg, true) => {
             let opts = vcad_render::SheetOptions {
-                width_px: cli.size as f64,
+                width_px: cli.size.unwrap_or(1600) as f64,
                 title: sheet_title(input),
             };
             let svg = vcad_render::render_sheet_svg_str(&raw, &opts)?;
@@ -210,6 +234,10 @@ fn render_one(input: &Path, dest: Option<&Path>, format: Format, cli: &Cli) -> R
         }
         (Format::Jpeg, false) => render_jpeg(&raw, cli)?,
         (Format::Jpeg, true) => render_sheet_jpeg(&raw, input, cli)?,
+        (Format::Png, false) => render_png(&raw, cli)?,
+        (Format::Png, true) => {
+            return Err("--sheet supports SVG and JPEG output only, not PNG".into())
+        }
     };
     let dest = dest.expect("raster output always has a destination path");
     std::fs::write(dest, bytes).map_err(|e| format!("write {}: {}", dest.display(), e))
