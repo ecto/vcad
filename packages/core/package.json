@@ -21,7 +21,7 @@
   "dependencies": {
     "@vcad/engine": "*",
     "@vcad/ir": "*",
-    "zustand": "^5.0.0"
+    "zustand": "^5.0.14"
   },
   "devDependencies": {
     "typescript": "^5.7",
