@@ -300,7 +300,7 @@ describe("compileRolloutTimeline", () => {
     );
     if ("error" in res) throw new Error(res.error);
     const tl = res.timeline;
-    expect(tl.durationS).toBeCloseTo(50 * 0.02, 9);
+    expect(tl.durationS).toBeCloseTo(49 * 0.02, 9);
     expect(tl.tracks).toHaveLength(1);
     const keys = tl.tracks[0]!.keys;
     expect(keys[0]).toMatchObject({ t: 0, value: 0 });

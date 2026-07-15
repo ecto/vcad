@@ -864,16 +864,25 @@ export async function exportVideo(
   const verification = wantVerify
     ? verifySequenceClearance(doc, frames, ctx.engine)
     : null;
-  const hudClearance =
+  // HUD shows the WORST spec as a coherent unit — a failing spec always
+  // wins over a holding one, then the smallest margin (observed - required)
+  // — so the label, distance, and verdict all describe the same assertion.
+  const worstSpec =
     verification && verification.specs.length > 0
-      ? {
-          label: verification.specs[0]!.label,
-          holds: verification.all_hold,
-          observed_min_mm: Math.min(
-            ...verification.specs.map((s) => s.observed_min_mm),
-          ),
-        }
+      ? [...verification.specs].sort(
+          (a, b) =>
+            Number(a.holds) - Number(b.holds) ||
+            a.observed_min_mm - a.required_min_mm -
+              (b.observed_min_mm - b.required_min_mm),
+        )[0]!
       : null;
+  const hudClearance = worstSpec
+    ? {
+        label: worstSpec.label,
+        holds: worstSpec.holds,
+        observed_min_mm: worstSpec.observed_min_mm,
+      }
+    : null;
 
   const gifLoad = format === "gif" ? await loadGifenc() : { mod: null };
   if (format === "gif" && !("mod" in gifLoad && gifLoad.mod)) {
@@ -1032,7 +1041,9 @@ export function compileRolloutTimeline(
   const stepTime = env.dt * Math.max(1, env.substeps);
   const steps = env.trajectory.length;
   if (steps < 2) return { error: `trajectory has ${steps} step(s); need at least 2` };
-  const durationS = steps * stepTime;
+  // N samples span (N-1) intervals — using N*stepTime would freeze the
+  // final pose for one extra timestep at the tail.
+  const durationS = (steps - 1) * stepTime;
   const maxKeys = Math.min(600, Math.max(2, opts.maxKeys ?? 120));
   const stride = Math.max(1, Math.ceil(steps / maxKeys));
 

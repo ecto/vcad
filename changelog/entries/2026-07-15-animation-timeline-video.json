@@ -4,7 +4,7 @@
   "date": "2026-07-15",
   "category": "feat",
   "title": "Animation timeline + verified video rendering",
-  "summary": "Documents carry a keyframed timeline (params, joints, visibility, explode, camera shots); new animate/render_sequence/export_video tools emit animated GLB and GIF/MP4 with per-frame clearance verification.",
+  "summary": "Documents carry a keyframed timeline (params, joints, visibility, camera shots); animate/render_sequence/export_video emit animated GLB and GIF/MP4 with per-frame clearance verification.",
   "features": ["animation", "timeline", "video", "verification", "assembly"],
   "mcpTools": ["animate", "timeline_from_simulation", "render_sequence", "export_video"]
 }
