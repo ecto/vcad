@@ -335,6 +335,9 @@ resize();
 // Declared here (before animate's first synchronous call) so the rAF
 // loop can guard-call it without a TDZ trap.
 let simTick: ((deltaSeconds: number) => void) | null = null;
+// GLB animation playback — set by loadGlb when the parsed model carries
+// glTF animation tracks (render_sequence timelines). Loops all clips.
+let glbMixer: THREE.AnimationMixer | null = null;
 let lastFrameMs = performance.now();
 
 function animate(): void {
@@ -343,6 +346,7 @@ function animate(): void {
   const deltaSeconds = (now - lastFrameMs) / 1000;
   lastFrameMs = now;
   if (simTick) simTick(deltaSeconds);
+  if (glbMixer) glbMixer.update(deltaSeconds);
   controls.update();
   renderer.render(scene, camera);
 }
@@ -378,6 +382,10 @@ function updateStats(model: THREE.Object3D, size: THREE.Vector3): void {
 }
 
 function clearModel(): void {
+  if (glbMixer) {
+    glbMixer.stopAllAction();
+    glbMixer = null;
+  }
   if (!currentModel) return;
   // Restore selection highlights before disposal so we never dispose a
   // clone while the original is detached.
@@ -446,6 +454,14 @@ function loadGlb(base64Data: string, opts?: LoadOpts): void {
       tameMaterials(currentModel);
       modelGroup.add(currentModel);
       hasModel = true;
+      // Autoplay embedded glTF animation tracks (render_sequence output):
+      // the agent's dailies loop plays inline with no extra round-trips.
+      if (gltf.animations.length > 0) {
+        glbMixer = new THREE.AnimationMixer(gltf.scene);
+        for (const clip of gltf.animations) {
+          glbMixer.clipAction(clip).setLoop(THREE.LoopRepeat, Infinity).play();
+        }
+      }
       updateAxesVisibility();
 
       // setFromObject resolves world (Y-up) coordinates — the model sits
@@ -2524,6 +2540,26 @@ if (location.hash.startsWith("#dev")) {
       bbox: [-60, -40, 60, 40],
     });
     docLabelEl.textContent = "dev-flat";
+  } else if (location.hash === "#dev-glb") {
+    // Load a GLB placed next to the page (dev.glb) through the real
+    // loadGlb path — exercises animated GLBs (render_sequence output,
+    // glTF animation tracks autoplay via glbMixer) without an MCP host.
+    docLabelEl.textContent = "dev-glb";
+    void fetch("./dev.glb")
+      .then((r) => {
+        if (!r.ok) throw new Error(`dev.glb: HTTP ${r.status}`);
+        return r.arrayBuffer();
+      })
+      .then((buf) => {
+        let bin = "";
+        const bytes = new Uint8Array(buf);
+        for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]!);
+        loadGlb(btoa(bin));
+      })
+      .catch((e) => {
+        console.error("dev-glb load failed:", e);
+        setStatus("dev-glb load failed", "error");
+      });
   } else if (location.hash === "#dev-sim") {
     // Articulated pendulum with instance-named nodes ("<instanceId>:<name>")
     // and a synthesized replay so the transport bar can be exercised
