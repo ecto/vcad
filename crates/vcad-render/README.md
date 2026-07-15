@@ -40,17 +40,39 @@ vcad-render part.vcad --scale 4.0 > big.svg
 | Flag | Default | Meaning |
 |---|---|---|
 | `--scale <N>` | `2.0` | Pixels per millimetre. Bigger = larger SVG. |
+| `--exact-edges` | off | Emit BRep-exact linework where available (see below). |
+
+### `--exact-edges`: BRep-exact curves
+
+By default every curved edge is a tessellated polyline, which facets
+visibly at high `--scale`. With `--exact-edges` the renderer walks the
+evaluated BRep and replaces recognisable curved linework with
+mathematically exact SVG elliptical-arc paths:
+
+- circular model edges (cylinder/cone rims — a bore's mouth, a boss's cap
+  edge — including ones produced by booleans), projected to exact ellipse
+  arcs;
+- sphere view outlines (the silhouette great circle for the current
+  orthographic view).
+
+Fills, shading, and hidden-line removal still run on the tessellation;
+exact curves replace only the linework, and anything the extractor doesn't
+recognise (tori, NURBS, boolean intersection seams) falls back to
+polylines. Cylinder/cone silhouette rulings are straight lines and stay as
+`<line>`s. Arc extents are matched against the mesh linework that would
+otherwise be drawn, so trimmed rims keep exactly the coverage of the
+polyline render.
 
 Exit codes: `0` on success, `2` on parse/eval/render failure (with a
 human-readable message on stderr).
 
 ## Tunable constants
 
-Edit at the top of `src/main.rs` if you need a different look:
+Edit at the top of `src/lib.rs` if you need a different look:
 
 | Constant | Default | Effect |
 |---|---|---|
-| `TESSELLATION_SEGMENTS` | `28` | Segments per cylinder/cone/sphere. Bumping this smooths curves at the cost of file size. |
+| `TESSELLATION_SEGMENTS` | `64` | Segments per cylinder/cone/sphere. Bumping this smooths curves at the cost of file size (`--exact-edges` sidesteps this for linework entirely). |
 | `COPLANAR_DOT_TOL` | `0.997` (~4.5°) | Tighter values reveal more crease lines; looser values hide more. |
 | `BACKFACE_DOT_MIN` | `-0.04` | How aggressively to cull back-facing triangles. Slightly negative so silhouette edges survive. |
 | `LIGHT` | `[-0.6, -0.7, 0.8]` | Light direction in kernel space (Z-up). |
@@ -64,8 +86,10 @@ depend on it without pulling in the eval grader.
 
 ## Future: raytrace mode
 
-A future `--raytrace` flag could swap out the tessellation pipeline for
+For vector output, `--exact-edges` already delivers resolution-independent
+linework straight from the BRep. What remains raster-bound is *shading*: a
+future `--raytrace` flag could swap the tessellated fill pipeline for
 direct BRep ray tracing via [`vcad-kernel-raytrace`](../vcad-kernel-raytrace),
-producing pixel-perfect PNG output instead of vector SVG. That makes
-sense for marketing screenshots and high-fidelity previews; SVG remains
-the right pick for the leaderboard's drafting aesthetic.
+producing pixel-perfect PNG output. That makes sense for marketing
+screenshots and high-fidelity previews; SVG remains the right pick for the
+leaderboard's drafting aesthetic.

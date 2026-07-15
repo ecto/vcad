@@ -38,6 +38,7 @@
 
 #![warn(missing_docs)]
 
+mod exact;
 pub mod pcb;
 
 use std::collections::HashMap;
@@ -461,6 +462,10 @@ enum EdgeKind {
 }
 
 struct SolidArtifacts {
+    /// Index into the caller's `solids` slice this artifact came from
+    /// (`build_artifacts` skips solids that fail to mesh, so positions in
+    /// its output don't line up with the input).
+    src: usize,
     verts: Vec<[f64; 3]>,
     tris: Vec<[usize; 3]>,
     normals: Vec<[f64; 3]>,
@@ -647,6 +652,7 @@ fn build_artifacts(
         }
 
         out.push(SolidArtifacts {
+            src: si,
             verts: cm.verts,
             tris: cm.tris,
             normals,
@@ -660,6 +666,59 @@ fn build_artifacts(
 }
 
 // ─── geometry helpers ─────────────────────────────────────────────────────
+
+/// Build an SVG path `d` string tracing the exact projected ellipse arc
+/// from parameter `t0` to `t1` (radians on the source circle).
+///
+/// `a2`/`b2` are the ellipse's screen-space conjugate radius vectors — the
+/// projections of the circle's `radius·u` and `radius·v` — so a point at
+/// parameter θ is `p_screen(θ) = center' + a2·cosθ + b2·sinθ`. The SVG arc
+/// command needs canonical semi-axes: they come from the eigen-decomposition
+/// of `M·Mᵀ` with `M = [a2 b2]`, which is exact. The arc is split into
+/// ≤90° chunks so the large-arc flag is never needed, and the sweep flag is
+/// read off the actual turn direction of each chunk's sampled midpoint.
+fn arc_path_d(
+    a2: (f64, f64),
+    b2: (f64, f64),
+    p_screen: &dyn Fn(f64) -> (f64, f64),
+    t0: f64,
+    t1: f64,
+) -> String {
+    // M·Mᵀ of the 2×2 linear map [a2 b2].
+    let m00 = a2.0 * a2.0 + b2.0 * b2.0;
+    let m01 = a2.0 * a2.1 + b2.0 * b2.1;
+    let m11 = a2.1 * a2.1 + b2.1 * b2.1;
+    // Diagonalizing rotation; the radius along direction φ is √λ_φ.
+    let phi = 0.5 * (2.0 * m01).atan2(m00 - m11);
+    let (cp, sp) = (phi.cos(), phi.sin());
+    let l1 = (m00 * cp * cp + 2.0 * m01 * sp * cp + m11 * sp * sp).max(0.0);
+    let l2 = (m00 + m11 - l1).max(0.0);
+    let rx = l1.sqrt();
+    let ry = l2.sqrt();
+    let rot_deg = phi.to_degrees();
+
+    let chunks = (((t1 - t0) / (std::f64::consts::FRAC_PI_2 * 0.99)).ceil() as usize).max(1);
+    let start = p_screen(t0);
+    let mut d = format!("M {:.3} {:.3}", start.0, start.1);
+    let mut prev = start;
+    let mut prev_t = t0;
+    for k in 1..=chunks {
+        let t = t0 + (t1 - t0) * k as f64 / chunks as f64;
+        let end = p_screen(t);
+        let mid = p_screen((prev_t + t) / 2.0);
+        // Turn direction across the chunk: positive cross in SVG's y-down
+        // frame is the "positive angle" (sweep = 1) direction.
+        let c = (mid.0 - prev.0) * (end.1 - mid.1) - (mid.1 - prev.1) * (end.0 - mid.0);
+        let sweep = if c > 0.0 { 1 } else { 0 };
+        d.push_str(&format!(
+            " A {rx:.3} {ry:.3} {rot_deg:.3} 0 {sweep} {:.3} {:.3}",
+            end.0, end.1
+        ));
+        prev = end;
+        prev_t = t;
+    }
+    d
+}
 
 fn face_normal(v: [[f64; 3]; 3]) -> [f64; 3] {
     let e1 = sub(v[1], v[0]);
@@ -991,6 +1050,34 @@ impl DepthBuffer {
         }
     }
 
+    /// Per-sample visibility test at a final-SVG point with camera depth
+    /// `d`: visible when its depth is within a (gradient-adaptive) bias of
+    /// the buffer, or it runs over open background. Returns
+    /// `(visible, over_bg)`. Shared by the segment walk ([`Self::clip_edge`])
+    /// and the exact-arc walk.
+    fn sample_visible(&self, p: (f64, f64), d: f64, bias: f64) -> (bool, bool) {
+        let bxp = p.0 * self.scale;
+        let byp = p.1 * self.scale;
+        let ix = bxp.floor() as i64;
+        let iy = byp.floor() as i64;
+        let z = self.at(ix, iy);
+        if z == f64::NEG_INFINITY {
+            return (true, true); // over background — nothing occludes it
+        }
+        let mut over_bg = false;
+        let mut delta = 0.0f64;
+        for (nx, ny) in [(ix - 1, iy), (ix + 1, iy), (ix, iy - 1), (ix, iy + 1)] {
+            let nz = self.at(nx, ny);
+            if nz == f64::NEG_INFINITY {
+                delta = f64::INFINITY; // silhouette pixel — always show
+                over_bg = true;
+            } else {
+                delta = delta.max((z - nz).abs());
+            }
+        }
+        (d >= z - (bias + delta), over_bg)
+    }
+
     /// Walk an edge (final SVG coords + endpoint depths) and split it into
     /// its visible and hidden (occluded) sub-segments. Each [`VisSpan`]
     /// carries its length in buffer cells and whether any of it ran over
@@ -1033,26 +1120,8 @@ impl DepthBuffer {
             let bxp = ax + (bx - ax) * t;
             let byp = ay + (by - ay) * t;
             let d = da + (db - da) * t;
-            let ix = bxp.floor() as i64;
-            let iy = byp.floor() as i64;
-            let z = self.at(ix, iy);
-            let mut over_bg = false;
-            let visible = if z == f64::NEG_INFINITY {
-                over_bg = true; // over background — nothing occludes it
-                true
-            } else {
-                let mut delta = 0.0f64;
-                for (nx, ny) in [(ix - 1, iy), (ix + 1, iy), (ix, iy - 1), (ix, iy + 1)] {
-                    let nz = self.at(nx, ny);
-                    if nz == f64::NEG_INFINITY {
-                        delta = f64::INFINITY; // silhouette pixel — always show
-                        over_bg = true;
-                    } else {
-                        delta = delta.max((z - nz).abs());
-                    }
-                }
-                d >= z - (bias + delta)
-            };
+            let (visible, over_bg) =
+                self.sample_visible((bxp / self.scale, byp / self.scale), d, bias);
             let pt = (bxp, byp);
             match state {
                 Some(prev) if prev == visible => {
@@ -1137,10 +1206,45 @@ pub fn render_svg_str_view_opts(
     view: View,
     transparent: bool,
 ) -> Result<String, String> {
+    render_svg_str_opts(
+        raw_vcad,
+        scale,
+        &SvgOptions {
+            view,
+            transparent,
+            ..Default::default()
+        },
+    )
+}
+
+/// Options for the SVG render path ([`render_svg_str_opts`]).
+#[derive(Debug, Clone, Default)]
+pub struct SvgOptions {
+    /// Camera orientation.
+    pub view: View,
+    /// Omit the opaque paper background rect.
+    pub transparent: bool,
+    /// Emit BRep-exact linework where available: circular model edges
+    /// (cylinder/cone rims) and sphere view outlines become mathematically
+    /// exact SVG elliptical arcs instead of tessellated polylines, so they
+    /// stay smooth at any zoom. Curves the extractor doesn't recognise
+    /// (tori, NURBS, boolean intersection seams) fall back to polylines;
+    /// fills and hidden-line removal still use the tessellation.
+    pub exact_edges: bool,
+}
+
+/// Render raw `.vcad` document JSON to a self-contained SVG with full
+/// [`SvgOptions`] control. The other `render_svg_str*` entry points are
+/// thin wrappers over this.
+pub fn render_svg_str_opts(
+    raw_vcad: &str,
+    scale: f64,
+    opts: &SvgOptions,
+) -> Result<String, String> {
     let tinted = evaluate_vcad(raw_vcad)?;
     let solids: Vec<Solid> = tinted.iter().map(|(s, _)| s.clone()).collect();
     let tints: Vec<Option<[f64; 3]>> = tinted.iter().map(|(_, t)| *t).collect();
-    render_svg_impl(&solids, &tints, scale, view, transparent)
+    render_svg_impl(&solids, &tints, scale, opts)
 }
 
 /// Render pre-evaluated solids to a self-contained isometric SVG.
@@ -1163,21 +1267,29 @@ pub fn render_svg_solids(solids: &[Solid], scale: f64) -> Result<String, String>
 /// base navy ramp; use [`render_svg_str_view`] to honour document materials.
 pub fn render_svg_solids_view(solids: &[Solid], scale: f64, view: View) -> Result<String, String> {
     let tints = vec![None; solids.len()];
-    render_svg_impl(solids, &tints, scale, view, false)
+    render_svg_impl(
+        solids,
+        &tints,
+        scale,
+        &SvgOptions {
+            view,
+            ..Default::default()
+        },
+    )
 }
 
 /// Shared SVG renderer; `tints[i]` optionally tints solid `i`'s ramp.
-/// When `transparent`, the opaque paper background rect is omitted.
 fn render_svg_impl(
     solids: &[Solid],
     tints: &[Option<[f64; 3]>],
     scale: f64,
-    view: View,
-    transparent: bool,
+    opts: &SvgOptions,
 ) -> Result<String, String> {
     if solids.is_empty() {
         return Err("no solids produced".to_string());
     }
+    let view = opts.view;
+    let transparent = opts.transparent;
 
     let cam = view.cam();
     let right = view.right();
@@ -1254,6 +1366,25 @@ fn render_svg_impl(
     let ao_bias = (0.02 * diag).max(bias);
     let ao_range = (0.22 * diag).max(ao_bias * 3.0);
 
+    // BRep-exact linework (opt-in): analytic circles recovered from each
+    // solid's BRep, plus the mask of mesh edges they replace. Extraction
+    // failures are impossible by construction (no BRep → no candidates →
+    // empty mask), so unrecognised geometry silently keeps its polylines.
+    let exact_curves: Vec<Option<exact::ExactCurves>> = arts
+        .iter()
+        .map(|art| {
+            opts.exact_edges.then(|| {
+                exact::extract(
+                    &solids[art.src],
+                    &art.verts,
+                    &art.edges,
+                    cam,
+                    TESSELLATION_SEGMENTS,
+                )
+            })
+        })
+        .collect();
+
     let mut polys: Vec<ProjPoly> = Vec::new();
     let mut edges: Vec<ProjEdge> = Vec::new();
     // Gradient defs for Gouraud-shaded (curved) facets, accumulated as we go.
@@ -1311,7 +1442,13 @@ fn render_svg_impl(
                 depth: (vd[0] + vd[1] + vd[2]) / 3.0,
             });
         }
-        for &(a, b, kind) in &art.edges {
+        for (ei, &(a, b, kind)) in art.edges.iter().enumerate() {
+            // Skip polylines an exact arc replaces.
+            if let Some(Some(ex)) = exact_curves.get(ai).map(|e| e.as_ref()) {
+                if ex.suppressed[ei] {
+                    continue;
+                }
+            }
             edges.push(ProjEdge {
                 a: fin(proj[a]),
                 da: dot(art.verts[a], cam),
@@ -1375,6 +1512,91 @@ fn render_svg_impl(
         }
     }
 
+    // BRep-exact arcs: walk each analytic arc against the same depth
+    // buffer and emit the surviving parameter runs as exact SVG
+    // elliptical-arc paths, styled identically to the lines they replace.
+    let mut outline_arcs: Vec<String> = Vec::new();
+    let mut crease_arcs: Vec<String> = Vec::new();
+    let mut hidden_arcs: Vec<String> = Vec::new();
+    for ex in exact_curves.iter().flatten() {
+        for span in &ex.arcs {
+            let c = &ex.circles[span.circle];
+            // Screen-space conjugate radius vectors of the projected
+            // ellipse (an orthographic projection maps the circle's
+            // parametric form to `P(center) + A·cosθ + B·sinθ`).
+            let a2 = (
+                dot(c.u, right) * scale * c.radius,
+                dot(c.u, down) * scale * c.radius,
+            );
+            let b2 = (
+                dot(c.v, right) * scale * c.radius,
+                dot(c.v, down) * scale * c.radius,
+            );
+            let p_screen = |th: f64| fin(project(c.point(th)));
+            let conj = ((a2.0 * a2.0 + a2.1 * a2.1) + (b2.0 * b2.0 + b2.1 * b2.1)).sqrt();
+            // ~1 depth-buffer cell per visibility sample along the arc.
+            let steps =
+                (((span.end - span.start) * conj * zbuf.scale).ceil() as usize).clamp(16, 4096);
+            // Walk visibility runs over the parameter interval.
+            let mut run_start = span.start;
+            let mut run_cells = 0.0f64;
+            let mut run_bg = false;
+            let mut state: Option<bool> = None;
+            let mut prev_pt = p_screen(span.start);
+            let mut flush = |vis: bool, t0: f64, t1: f64, cells: f64, over_bg: bool| {
+                if t1 <= t0 {
+                    return;
+                }
+                if vis {
+                    let keep = match span.kind {
+                        EdgeKind::Smooth => over_bg || cells >= SMOOTH_INTERIOR_MIN_CELLS,
+                        EdgeKind::Outline | EdgeKind::Crease => true,
+                    };
+                    if keep {
+                        let d = arc_path_d(a2, b2, &p_screen, t0, t1);
+                        match span.kind {
+                            EdgeKind::Crease => crease_arcs.push(d),
+                            _ => outline_arcs.push(d),
+                        }
+                    }
+                } else if matches!(span.kind, EdgeKind::Outline | EdgeKind::Crease)
+                    && cells >= HIDDEN_MIN_CELLS
+                {
+                    hidden_arcs.push(arc_path_d(a2, b2, &p_screen, t0, t1));
+                }
+            };
+            for i in 0..=steps {
+                let t = span.start + (span.end - span.start) * i as f64 / steps as f64;
+                let p3 = c.point(t);
+                let spt = p_screen(t);
+                let (vis, over_bg) = zbuf.sample_visible(spt, dot(p3, cam), bias);
+                let step_cells =
+                    ((spt.0 - prev_pt.0).powi(2) + (spt.1 - prev_pt.1).powi(2)).sqrt() * zbuf.scale;
+                prev_pt = spt;
+                match state {
+                    Some(prev) if prev == vis => {
+                        run_cells += step_cells;
+                        run_bg |= over_bg;
+                    }
+                    Some(prev) => {
+                        flush(prev, run_start, t, run_cells, run_bg);
+                        run_start = t;
+                        run_cells = 0.0;
+                        run_bg = over_bg;
+                        state = Some(vis);
+                    }
+                    None => {
+                        run_bg = over_bg;
+                        state = Some(vis);
+                    }
+                }
+            }
+            if let Some(vis) = state {
+                flush(vis, run_start, span.end, run_cells, run_bg);
+            }
+        }
+    }
+
     // Emit SVG.
     let mut out = String::new();
     // Emit explicit width/height alongside viewBox so the SVG has intrinsic
@@ -1420,10 +1642,11 @@ fn render_svg_impl(
     let dash = (blur * 0.6).clamp(2.0, 6.0);
     let emit_lines = |out: &mut String,
                       lines: &[Seg],
+                      arcs: &[String],
                       width: f64,
                       opacity: f64,
                       dasharray: Option<f64>| {
-        if lines.is_empty() {
+        if lines.is_empty() && arcs.is_empty() {
             return;
         }
         let dash_attr = match dasharray {
@@ -1439,11 +1662,35 @@ fn render_svg_impl(
                 a.0, a.1, b.0, b.1,
             ));
         }
+        for d in arcs {
+            out.push_str(&format!(r#"<path d="{d}"/>"#));
+        }
         out.push_str("</g>");
     };
-    emit_lines(&mut out, &hidden_lines, STROKE_HIDDEN_PX, 0.5, Some(dash));
-    emit_lines(&mut out, &crease_lines, STROKE_CREASE_PX, 1.0, None);
-    emit_lines(&mut out, &outline_lines, STROKE_OUTLINE_PX, 1.0, None);
+    emit_lines(
+        &mut out,
+        &hidden_lines,
+        &hidden_arcs,
+        STROKE_HIDDEN_PX,
+        0.5,
+        Some(dash),
+    );
+    emit_lines(
+        &mut out,
+        &crease_lines,
+        &crease_arcs,
+        STROKE_CREASE_PX,
+        1.0,
+        None,
+    );
+    emit_lines(
+        &mut out,
+        &outline_lines,
+        &outline_arcs,
+        STROKE_OUTLINE_PX,
+        1.0,
+        None,
+    );
 
     out.push_str("</svg>");
     Ok(out)
@@ -1938,7 +2185,7 @@ mod tests {
         assert!(svg.starts_with("<svg "));
         assert!(svg.ends_with("</svg>"));
         assert!(svg.contains("<polygon"));
-        assert!(svg.contains("<line"));
+        assert!(svg.contains("<line "));
     }
 
     #[test]
@@ -2066,6 +2313,128 @@ mod tests {
             )
             .is_err());
         }
+    }
+
+    fn cylinder_vcad(radius: f64, height: f64) -> String {
+        format!(
+            r#"{{
+  "version": "0.1",
+  "nodes": {{
+    "1": {{
+      "id": 1,
+      "name": "Cyl",
+      "op": {{ "type": "Cylinder", "radius": {radius}, "height": {height}, "segments": 0 }}
+    }}
+  }},
+  "materials": {{}},
+  "part_materials": {{}},
+  "roots": [{{ "root": 1, "material": "default" }}]
+}}"#
+        )
+    }
+
+    fn sphere_vcad(radius: f64) -> String {
+        format!(
+            r#"{{
+  "version": "0.1",
+  "nodes": {{
+    "1": {{
+      "id": 1,
+      "name": "Sph",
+      "op": {{ "type": "Sphere", "radius": {radius}, "segments": 0 }}
+    }}
+  }},
+  "materials": {{}},
+  "part_materials": {{}},
+  "roots": [{{ "root": 1, "material": "default" }}]
+}}"#
+        )
+    }
+
+    fn render_exact(vcad: &str) -> String {
+        render_svg_str_opts(
+            vcad,
+            8.0,
+            &SvgOptions {
+                exact_edges: true,
+                ..Default::default()
+            },
+        )
+        .expect("exact-edges render should succeed")
+    }
+
+    /// With `exact_edges`, a cylinder's rims are emitted as exact SVG
+    /// elliptical-arc paths and the corresponding rim polylines vanish —
+    /// only the two straight silhouette rulings remain as `<line>`s.
+    #[test]
+    fn exact_edges_replace_cylinder_rims_with_arcs() {
+        let svg = render_exact(&cylinder_vcad(10.0, 24.0));
+        assert!(
+            svg.contains(r#"<path d="M"#) && svg.contains(" A "),
+            "expected exact elliptical-arc paths in the linework"
+        );
+        let lines = svg.matches("<line ").count();
+        assert!(
+            lines <= 8,
+            "rim polylines should be replaced by arcs, found {lines} <line>s"
+        );
+    }
+
+    /// With `exact_edges`, a sphere's view outline is a single exact
+    /// ellipse path (no polyline silhouette at all).
+    #[test]
+    fn exact_edges_replace_sphere_outline_with_arcs() {
+        let svg = render_exact(&sphere_vcad(12.0));
+        assert!(svg.contains(" A "), "expected an exact outline arc path");
+        assert_eq!(
+            svg.matches("<line ").count(),
+            0,
+            "sphere silhouette polylines should be fully replaced"
+        );
+    }
+
+    /// A cube has no circular edges — exact mode must not invent arcs, and
+    /// its output must keep the plain polyline linework.
+    #[test]
+    fn exact_edges_leave_cube_linework_alone() {
+        let svg = render_exact(&cube_vcad(20.0, 20.0, 20.0));
+        assert_eq!(
+            svg.matches("<path").count(),
+            0,
+            "no arcs expected for a cube"
+        );
+        assert!(svg.contains("<line "));
+    }
+
+    /// Default (non-exact) output stays polyline-only — the flag is opt-in.
+    #[test]
+    fn exact_edges_off_by_default() {
+        let svg = render_svg_str(&cylinder_vcad(10.0, 24.0), 8.0).unwrap();
+        assert_eq!(svg.matches("<path").count(), 0);
+    }
+
+    /// A boolean-drilled hole keeps exact rims: the boolean pipeline
+    /// preserves the cylindrical surface, so the bore's mouth must come out
+    /// as arcs, not a 64-gon.
+    #[test]
+    fn exact_edges_survive_booleans() {
+        let vcad = r#"{
+  "version": "0.1",
+  "nodes": {
+    "1": { "id": 1, "name": "Plate", "op": { "type": "Cube", "size": { "x": 50.0, "y": 40.0, "z": 8.0 } } },
+    "2": { "id": 2, "name": "Hole", "op": { "type": "Cylinder", "radius": 6.0, "height": 20.0, "segments": 0 } },
+    "3": { "id": 3, "name": "HoleT", "op": { "type": "Translate", "child": 2, "offset": { "x": 25.0, "y": 20.0, "z": -5.0 } } },
+    "4": { "id": 4, "name": "Drilled", "op": { "type": "Difference", "left": 1, "right": 3 } }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [{ "root": 4, "material": "default" }]
+}"#;
+        let svg = render_exact(vcad);
+        assert!(
+            svg.contains(" A "),
+            "drilled hole rim should render as exact arcs"
+        );
     }
 
     /// `tint_ramp` was previously capped at k ≤ 0.2 — even fully-saturated

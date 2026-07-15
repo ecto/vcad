@@ -13,7 +13,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 use std::str::FromStr;
 
-use vcad_render::{render_svg_str_view_opts, View, DEFAULT_SCALE};
+use vcad_render::{render_svg_str_opts, SvgOptions, View, DEFAULT_SCALE};
 
 struct Args {
     path: PathBuf,
@@ -24,13 +24,14 @@ struct Args {
     fill: f64,
     quality: u8,
     transparent: bool,
+    exact_edges: bool,
 }
 
 fn parse_args() -> Result<Args, String> {
     let mut args = std::env::args().skip(1);
     let path = args.next().ok_or(
         "usage: vcad-render <path.vcad> [--view iso|front|side|top|hero] [--scale N] [--transparent] \
-         [--jpeg out.jpg [--size N] [--fill F] [--quality Q]]",
+         [--exact-edges] [--jpeg out.jpg [--size N] [--fill F] [--quality Q]]",
     )?;
     let mut out = Args {
         path: PathBuf::from(path),
@@ -41,6 +42,7 @@ fn parse_args() -> Result<Args, String> {
         fill: 0.6,
         quality: 92,
         transparent: false,
+        exact_edges: false,
     };
     while let Some(flag) = args.next() {
         let mut value = |name: &str| args.next().ok_or(format!("{name} needs a value"));
@@ -73,6 +75,9 @@ fn parse_args() -> Result<Args, String> {
             }
             "--transparent" => {
                 out.transparent = true;
+            }
+            "--exact-edges" => {
+                out.exact_edges = true;
             }
             other => return Err(format!("unknown flag: {}", other)),
         }
@@ -116,8 +121,16 @@ fn main() -> ExitCode {
 
     let result = match &args.jpeg {
         Some(out_path) => run_jpeg(&raw, &args, out_path),
-        None => render_svg_str_view_opts(&raw, args.scale, args.view, args.transparent)
-            .map(|svg| println!("{}", svg)),
+        None => render_svg_str_opts(
+            &raw,
+            args.scale,
+            &SvgOptions {
+                view: args.view,
+                transparent: args.transparent,
+                exact_edges: args.exact_edges,
+            },
+        )
+        .map(|svg| println!("{}", svg)),
     };
 
     match result {
