@@ -33,14 +33,30 @@ mecheval leaderboard defaults to `target/debug/vcad-render`.
 ## Usage
 
 ```bash
-vcad-render path/to/part.vcad > out.svg
+vcad-render path/to/part.vcad > out.svg          # SVG on stdout
 vcad-render part.vcad --scale 4.0 > big.svg
+vcad-render part.vcad -o out.jpg                 # format from extension
+vcad-render parts/ --out-dir renders/ --format jpeg   # batch a directory
 ```
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `--scale <N>` | `2.0` | Pixels per millimetre. Bigger = larger SVG. |
-| `--exact-edges` | off | Emit BRep-exact linework where available (see below). |
+| `--view <V>` | `iso` | Camera: `iso`/`front`/`side`/`top`/`hero`. |
+| `--scale <N>` | `2.0` | Pixels per millimetre (SVG). Bigger = larger SVG. |
+| `--transparent` | off | Transparent SVG background. |
+| `--exact-edges` | off | Emit BRep-exact linework where available (SVG; see below). |
+| `-o, --output <PATH>` | stdout | Output path; format inferred from `.svg`/`.jpg`/`.jpeg`. `-o -` = SVG on stdout. Single input only. |
+| `--jpeg <PATH>` | — | Legacy alias for `-o <path.jpg>`. |
+| `--out-dir <DIR>` | sibling | Directory for batch outputs. |
+| `--format <F>` | `svg` | Batch output format: `svg` or `jpeg`. |
+| `--size <N>` | `1024` | Raster canvas size in pixels (JPEG). |
+| `--fill <F>` | `0.6` | Fraction of canvas the part's long axis fills (JPEG). |
+| `--quality <Q>` | `92` | JPEG quality, 1–100. |
+
+Multiple inputs (or a directory, which expands to its `*.vcad` files)
+render in batch, each to `<stem>.<ext>` next to the input or in
+`--out-dir`. A per-file failure is reported on stderr but doesn't abort
+the batch.
 
 ### `--exact-edges`: BRep-exact curves
 
@@ -64,7 +80,7 @@ otherwise be drawn, so trimmed rims keep exactly the coverage of the
 polyline render.
 
 Exit codes: `0` on success, `2` on parse/eval/render failure (with a
-human-readable message on stderr).
+human-readable message on stderr). A batch exits `2` if any file failed.
 
 ## Tunable constants
 
