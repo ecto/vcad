@@ -1771,7 +1771,9 @@ fn emit_svg_axes(out: &mut String, view: View, h: f64) {
 // ─── public API: raster JPEG ──────────────────────────────────────────────
 
 #[cfg(feature = "raster")]
-pub use raster::{render_jpeg_solids, render_jpeg_str, RasterOptions};
+pub use raster::{
+    render_jpeg_solids, render_jpeg_str, render_png_solids, render_png_str, RasterOptions,
+};
 
 #[cfg(feature = "raster")]
 mod raster {
@@ -1780,6 +1782,16 @@ mod raster {
     /// Curved primitives get a finer tessellation than the SVG path —
     /// faceted silhouettes are much more visible at 1024px.
     const RASTER_SEGMENTS: u32 = 64;
+
+    /// Above this canvas size, curved primitives tessellate at
+    /// [`RASTER_SEGMENTS_HIRES`] instead — 64 facets read as a polygon at
+    /// 4096px. Keeping 1024px renders on the original segment count
+    /// preserves mecheval reference images byte-for-byte.
+    const HIRES_THRESHOLD_PX: u32 = 2048;
+    /// Segment count for canvases at or above [`HIRES_THRESHOLD_PX`].
+    /// Adjacent facets differ by 2.8°, still well under the ~10° coplanar
+    /// tolerance, so no facet stripes appear.
+    const RASTER_SEGMENTS_HIRES: u32 = 128;
 
     /// Looser coplanar tolerance than the SVG path: at 64 segments,
     /// adjacent cylinder facets differ by 5.6°, which the SVG's ~4.5°
@@ -1831,7 +1843,7 @@ mod raster {
         let solids: Vec<Solid> = scene.iter().map(|s| s.solid.clone()).collect();
         let tints: Vec<Option<[f64; 3]>> = scene.iter().map(|s| s.tint).collect();
         let names: Vec<Option<String>> = scene.iter().map(|s| s.name.clone()).collect();
-        render_jpeg_impl(&solids, &tints, &names, opts)
+        encode_jpeg(rasterize(&solids, &tints, &names, opts)?, opts)
     }
 
     /// Render pre-evaluated solids to JPEG bytes, monochrome (no material
@@ -1840,19 +1852,82 @@ mod raster {
     pub fn render_jpeg_solids(solids: &[Solid], opts: &RasterOptions) -> Result<Vec<u8>, String> {
         let no_tints: Vec<Option<[f64; 3]>> = vec![None; solids.len()];
         let no_names: Vec<Option<String>> = vec![None; solids.len()];
-        render_jpeg_impl(solids, &no_tints, &no_names, opts)
+        encode_jpeg(rasterize(solids, &no_tints, &no_names, opts)?, opts)
+    }
+
+    /// Render raw `.vcad` document JSON to RGBA PNG bytes with a fully
+    /// transparent background (alpha 0 wherever no geometry or edge stroke
+    /// was drawn). Same projection and shading as [`render_jpeg_str`];
+    /// `opts.quality` is ignored (PNG is lossless).
+    pub fn render_png_str(raw_vcad: &str, opts: &RasterOptions) -> Result<Vec<u8>, String> {
+        let scene = evaluate_vcad(raw_vcad)?;
+        let solids: Vec<Solid> = scene.iter().map(|s| s.solid.clone()).collect();
+        let tints: Vec<Option<[f64; 3]>> = scene.iter().map(|s| s.tint).collect();
+        let names: Vec<Option<String>> = scene.iter().map(|s| s.name.clone()).collect();
+        encode_png(rasterize(&solids, &tints, &names, opts)?, opts)
+    }
+
+    /// Render pre-evaluated solids to RGBA PNG bytes with a transparent
+    /// background, monochrome (no material tints). See [`render_png_str`].
+    pub fn render_png_solids(solids: &[Solid], opts: &RasterOptions) -> Result<Vec<u8>, String> {
+        let no_tints: Vec<Option<[f64; 3]>> = vec![None; solids.len()];
+        let no_names: Vec<Option<String>> = vec![None; solids.len()];
+        encode_png(rasterize(solids, &no_tints, &no_names, opts)?, opts)
+    }
+
+    /// JPEG-encode a rasterized frame (coverage mask ignored — JPEG keeps
+    /// the opaque vellum background).
+    fn encode_jpeg(frame: (Vec<u8>, Vec<u8>), opts: &RasterOptions) -> Result<Vec<u8>, String> {
+        let (rgb, _mask) = frame;
+        let mut out = Vec::new();
+        let mut enc = image::codecs::jpeg::JpegEncoder::new_with_quality(
+            &mut out,
+            opts.quality.clamp(1, 100),
+        );
+        enc.encode(
+            &rgb,
+            opts.size_px,
+            opts.size_px,
+            image::ExtendedColorType::Rgb8,
+        )
+        .map_err(|e| format!("jpeg encode: {}", e))?;
+        Ok(out)
+    }
+
+    /// PNG-encode a rasterized frame as RGBA: covered pixels are opaque,
+    /// background pixels get alpha 0.
+    fn encode_png(frame: (Vec<u8>, Vec<u8>), opts: &RasterOptions) -> Result<Vec<u8>, String> {
+        let (rgb, mask) = frame;
+        let mut rgba = Vec::with_capacity(mask.len() * 4);
+        for (i, &a) in mask.iter().enumerate() {
+            rgba.extend_from_slice(&rgb[i * 3..i * 3 + 3]);
+            rgba.push(a);
+        }
+        let mut out = Vec::new();
+        let enc = image::codecs::png::PngEncoder::new(&mut out);
+        image::ImageEncoder::write_image(
+            enc,
+            &rgba,
+            opts.size_px,
+            opts.size_px,
+            image::ExtendedColorType::Rgba8,
+        )
+        .map_err(|e| format!("png encode: {}", e))?;
+        Ok(out)
     }
 
     /// Shared raster implementation; `tints[i]`, when present, tints solid
     /// `i`'s shading ramp exactly as the SVG path does. Untinted solids keep
     /// the original two-stop monochrome shading, byte-for-byte. `names[i]`
-    /// labels solid `i` when the `labels` annotation is on.
-    fn render_jpeg_impl(
+    /// labels solid `i` when the `labels` annotation is on. Returns the RGB
+    /// frame plus a per-pixel coverage mask (255 where geometry, an edge
+    /// stroke, or an annotation was drawn, 0 over untouched background).
+    fn rasterize(
         solids: &[Solid],
         tints: &[Option<[f64; 3]>],
         names: &[Option<String>],
         opts: &RasterOptions,
-    ) -> Result<Vec<u8>, String> {
+    ) -> Result<(Vec<u8>, Vec<u8>), String> {
         if solids.is_empty() {
             return Err("no solids produced".to_string());
         }
@@ -1868,11 +1943,16 @@ mod raster {
         let down = normalize(opts.view.down());
         let light = normalize(LIGHT);
 
+        let segments = if opts.size_px >= HIRES_THRESHOLD_PX {
+            RASTER_SEGMENTS_HIRES
+        } else {
+            RASTER_SEGMENTS
+        };
         let arts = build_artifacts(
             solids,
             tints,
             cam,
-            RASTER_SEGMENTS,
+            segments,
             &EdgeRules {
                 coplanar_dot_tol: RASTER_COPLANAR_DOT_TOL,
                 mark_silhouette: true,
@@ -1927,6 +2007,7 @@ mod raster {
             .take(size * size * 3)
             .collect();
         let mut zbuf: Vec<f64> = vec![f64::NEG_INFINITY; size * size];
+        let mut mask: Vec<u8> = vec![0; size * size];
 
         // Depth range for depth cueing (below).
         let mut dmin = f64::INFINITY;
@@ -1965,6 +2046,7 @@ mod raster {
                 fill_triangle(
                     &mut rgb,
                     &mut zbuf,
+                    &mut mask,
                     size,
                     [proj[t[0]], proj[t[1]], proj[t[2]]],
                     shade,
@@ -1979,33 +2061,27 @@ mod raster {
         // (where silhouette edges live) have steep depth gradients, so the
         // local neighbour depth delta is added to a small base tolerance.
         let bias_base = 0.5 + 0.005 * diag;
+        // Stroke width scales with the canvas so lines keep the same
+        // apparent weight at high resolution (2px at ≤1024, 8px at 4096).
+        let stroke_px = (size / 512).max(2);
         for art in &arts {
             let proj: Vec<(f64, f64, f64)> = art.verts.iter().map(|v| to_px(*v)).collect();
             for &(a, b, _kind) in &art.edges {
-                draw_edge(&mut rgb, &zbuf, size, proj[a], proj[b], bias_base);
+                draw_edge(
+                    &mut rgb, &zbuf, &mut mask, size, proj[a], proj[b], bias_base, stroke_px,
+                );
             }
         }
 
         // Pass 3 (opt-in): engineering-context overlays, drawn over the
-        // finished render in pixel space.
+        // finished render in pixel space. Overlay pixels also mark the
+        // coverage mask so gizmo/dimension linework over the background
+        // stays opaque in the transparent PNG output.
         if opts.annotations.any() {
-            draw_annotations(&mut rgb, size, &arts, names, opts, &to_px, lo3, hi3);
+            draw_annotations(&mut rgb, &mut mask, size, &arts, names, opts, &to_px, lo3, hi3);
         }
 
-        // Encode.
-        let mut out = Vec::new();
-        let mut enc = image::codecs::jpeg::JpegEncoder::new_with_quality(
-            &mut out,
-            opts.quality.clamp(1, 100),
-        );
-        enc.encode(
-            &rgb,
-            opts.size_px,
-            opts.size_px,
-            image::ExtendedColorType::Rgb8,
-        )
-        .map_err(|e| format!("jpeg encode: {}", e))?;
-        Ok(out)
+        Ok((rgb, mask))
     }
 
     fn edge_fn(a: (f64, f64, f64), b: (f64, f64, f64), px: f64, py: f64) -> f64 {
@@ -2015,6 +2091,7 @@ mod raster {
     fn fill_triangle(
         rgb: &mut [u8],
         zbuf: &mut [f64],
+        mask: &mut [u8],
         size: usize,
         p: [(f64, f64, f64); 3],
         shade: [u8; 3],
@@ -2068,6 +2145,7 @@ mod raster {
                 let idx = py * size + px;
                 if depth > zbuf[idx] {
                     zbuf[idx] = depth;
+                    mask[idx] = 255;
                     rgb[idx * 3] = shade[0];
                     rgb[idx * 3 + 1] = shade[1];
                     rgb[idx * 3 + 2] = shade[2];
@@ -2090,6 +2168,7 @@ mod raster {
     #[allow(clippy::too_many_arguments)]
     fn draw_annotations(
         rgb: &mut [u8],
+        mask: &mut [u8],
         size: usize,
         arts: &[SolidArtifacts],
         names: &[Option<String>],
@@ -2118,14 +2197,15 @@ mod raster {
                 let a1 = (ax + n.0 * off, ay + n.1 * off);
                 let a2 = (bx + n.0 * off, by + n.1 * off);
                 for (p, e) in [((ax, ay), a1), ((bx, by), a2)] {
-                    draw_line_col(rgb, size, p, (e.0 + n.0 * 4.0, e.1 + n.1 * 4.0), INK_RGB, 1);
+                    draw_line_col(rgb, mask, size, p, (e.0 + n.0 * 4.0, e.1 + n.1 * 4.0), INK_RGB, 1);
                 }
-                draw_line_col(rgb, size, a1, a2, INK_RGB, 1);
+                draw_line_col(rgb, mask, size, a1, a2, INK_RGB, 1);
                 let (ux, uy) = (dx / len, dy / len);
                 for p in [a1, a2] {
                     let t = ((ux - n.0) * 4.0, (uy - n.1) * 4.0);
                     draw_line_col(
                         rgb,
+                        mask,
                         size,
                         (p.0 - t.0, p.1 - t.1),
                         (p.0 + t.0, p.1 + t.1),
@@ -2134,7 +2214,7 @@ mod raster {
                     );
                 }
                 let text = (mid.0 + n.0 * (off + 14.0), mid.1 + n.1 * (off + 14.0));
-                draw_text_centered(rgb, size, text, &dim.label, INK_RGB);
+                draw_text_centered(rgb, mask, size, text, &dim.label, INK_RGB);
             }
         }
         if annos.labels {
@@ -2159,10 +2239,11 @@ mod raster {
                     1.0
                 };
                 let elbow = (anchor.0 + 22.0 * dir, anchor.1 - 22.0);
-                draw_line_col(rgb, size, anchor, elbow, INK_RGB, 1);
+                draw_line_col(rgb, mask, size, anchor, elbow, INK_RGB, 1);
                 // Anchor dot.
                 draw_line_col(
                     rgb,
+                    mask,
                     size,
                     (anchor.0 - 1.0, anchor.1),
                     (anchor.0 + 1.0, anchor.1),
@@ -2175,7 +2256,7 @@ mod raster {
                 } else {
                     elbow.0 - 4.0 - tw as f64
                 };
-                draw_text(rgb, size, (tx, elbow.1 - 7.0), name, INK_RGB);
+                draw_text(rgb, mask, size, (tx, elbow.1 - 7.0), name, INK_RGB);
             }
         }
         if annos.axes {
@@ -2194,11 +2275,12 @@ mod raster {
                 let l = 26.0;
                 let tip = (origin.0 + ux * l, origin.1 + uy * l);
                 let color = AXIS_RGB[i];
-                draw_line_col(rgb, size, origin, tip, color, 2);
+                draw_line_col(rgb, mask, size, origin, tip, color, 2);
                 for s in [0.45f64, -0.45] {
                     let (bx, by) = (-ux * s.cos() - uy * s.sin(), ux * s.sin() - uy * s.cos());
                     draw_line_col(
                         rgb,
+                        mask,
                         size,
                         tip,
                         (tip.0 + bx * 6.0, tip.1 + by * 6.0),
@@ -2208,6 +2290,7 @@ mod raster {
                 }
                 draw_text_centered(
                     rgb,
+                    mask,
                     size,
                     (tip.0 + ux * 10.0, tip.1 + uy * 10.0),
                     AXIS_NAMES[i],
@@ -2221,6 +2304,7 @@ mod raster {
     /// `thick` paints an n×n block per sample.
     fn draw_line_col(
         rgb: &mut [u8],
+        mask: &mut [u8],
         size: usize,
         a: (f64, f64),
         b: (f64, f64),
@@ -2239,10 +2323,12 @@ mod raster {
                     if qx < 0 || qy < 0 || qx >= size as i64 || qy >= size as i64 {
                         continue;
                     }
-                    let qi = (qy as usize * size + qx as usize) * 3;
+                    let cell = qy as usize * size + qx as usize;
+                    let qi = cell * 3;
                     rgb[qi] = color[0];
                     rgb[qi + 1] = color[1];
                     rgb[qi + 2] = color[2];
+                    mask[cell] = 255;
                 }
             }
         }
@@ -2306,21 +2392,31 @@ mod raster {
 
     /// Draw `text` with its top-left at `pos`, over a paper-coloured pad so
     /// it stays legible on part fills.
-    fn draw_text(rgb: &mut [u8], size: usize, pos: (f64, f64), text: &str, color: [u8; 3]) {
+    fn draw_text(
+        rgb: &mut [u8],
+        mask: &mut [u8],
+        size: usize,
+        pos: (f64, f64),
+        text: &str,
+        color: [u8; 3],
+    ) {
         let x0 = pos.0.round() as i64;
         let y0 = pos.1.round() as i64;
         let w = text_width_px(text) as i64;
         let h = (7 * FONT_SCALE) as i64;
-        // Halo pad.
+        // Halo pad — opaque so the label stays legible over the transparent
+        // PNG background as well as over part fills.
         for py in (y0 - 2)..(y0 + h + 2) {
             for px in (x0 - 2)..(x0 + w + 2) {
                 if px < 0 || py < 0 || px >= size as i64 || py >= size as i64 {
                     continue;
                 }
-                let qi = (py as usize * size + px as usize) * 3;
+                let cell = py as usize * size + px as usize;
+                let qi = cell * 3;
                 rgb[qi] = BACKGROUND[0];
                 rgb[qi + 1] = BACKGROUND[1];
                 rgb[qi + 2] = BACKGROUND[2];
+                mask[cell] = 255;
             }
         }
         for (ci, c) in text.chars().enumerate() {
@@ -2338,10 +2434,12 @@ mod raster {
                             if px < 0 || py < 0 || px >= size as i64 || py >= size as i64 {
                                 continue;
                             }
-                            let qi = (py as usize * size + px as usize) * 3;
+                            let cell = py as usize * size + px as usize;
+                            let qi = cell * 3;
                             rgb[qi] = color[0];
                             rgb[qi + 1] = color[1];
                             rgb[qi + 2] = color[2];
+                            mask[cell] = 255;
                         }
                     }
                 }
@@ -2352,6 +2450,7 @@ mod raster {
     /// Draw `text` centred on `pos`.
     fn draw_text_centered(
         rgb: &mut [u8],
+        mask: &mut [u8],
         size: usize,
         pos: (f64, f64),
         text: &str,
@@ -2359,16 +2458,19 @@ mod raster {
     ) {
         let w = text_width_px(text) as f64;
         let h = (7 * FONT_SCALE) as f64;
-        draw_text(rgb, size, (pos.0 - w / 2.0, pos.1 - h / 2.0), text, color);
+        draw_text(rgb, mask, size, (pos.0 - w / 2.0, pos.1 - h / 2.0), text, color);
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn draw_edge(
         rgb: &mut [u8],
         zbuf: &[f64],
+        mask: &mut [u8],
         size: usize,
         a: (f64, f64, f64),
         b: (f64, f64, f64),
         bias_base: f64,
+        stroke_px: usize,
     ) {
         let stroke = FILL_DARK;
         let len = ((b.0 - a.0).powi(2) + (b.1 - a.1).powi(2)).sqrt();
@@ -2414,16 +2516,21 @@ mod raster {
             if !visible {
                 continue;
             }
-            // ~2px stroke: paint the pixel and its right/down neighbours.
-            for (dx, dy) in [(0i64, 0i64), (1, 0), (0, 1), (1, 1)] {
-                let (qx, qy) = (ix + dx, iy + dy);
-                if qx < 0 || qy < 0 || qx >= size as i64 || qy >= size as i64 {
-                    continue;
+            // Paint a stroke_px × stroke_px block anchored at the sample
+            // (right/down, matching the original 2px behaviour).
+            for dy in 0..stroke_px as i64 {
+                for dx in 0..stroke_px as i64 {
+                    let (qx, qy) = (ix + dx, iy + dy);
+                    if qx < 0 || qy < 0 || qx >= size as i64 || qy >= size as i64 {
+                        continue;
+                    }
+                    let pi = qy as usize * size + qx as usize;
+                    mask[pi] = 255;
+                    let qi = pi * 3;
+                    rgb[qi] = stroke[0];
+                    rgb[qi + 1] = stroke[1];
+                    rgb[qi + 2] = stroke[2];
                 }
-                let qi = (qy as usize * size + qx as usize) * 3;
-                rgb[qi] = stroke[0];
-                rgb[qi + 1] = stroke[1];
-                rgb[qi + 2] = stroke[2];
             }
         }
     }
@@ -2832,6 +2939,77 @@ mod tests {
                 }
             )
             .is_err());
+        }
+
+        #[test]
+        fn png_has_transparent_corners_and_opaque_center() {
+            let png = render_png_str(
+                &cube_vcad(20.0, 30.0, 10.0),
+                &RasterOptions {
+                    size_px: 128,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            assert_eq!(&png[..8], b"\x89PNG\r\n\x1a\n");
+            let img = image::load_from_memory(&png).unwrap().to_rgba8();
+            assert_eq!((img.width(), img.height()), (128, 128));
+            // Part fills ~60% of the canvas from the center; corners stay
+            // background and must be fully transparent.
+            for (x, y) in [(0, 0), (127, 0), (0, 127), (127, 127)] {
+                assert_eq!(
+                    img.get_pixel(x, y)[3],
+                    0,
+                    "corner ({x},{y}) not transparent"
+                );
+            }
+            // The part is centered and fills ~60% of the canvas, so the
+            // central region is solidly covered. Assert on a small window
+            // rather than a single pixel so a future projection/fill tweak
+            // that nudges the centroid can't silently break the invariant.
+            let opaque = (56..72)
+                .flat_map(|y| (56..72).map(move |x| (x, y)))
+                .any(|(x, y)| img.get_pixel(x, y)[3] == 255);
+            assert!(opaque, "central region should contain an opaque pixel");
+        }
+
+        /// The axes gizmo sits in the lower-left corner over the background;
+        /// its linework must mark the coverage mask so it stays opaque in the
+        /// transparent PNG (regression: annotations that only wrote RGB would
+        /// vanish under alpha 0).
+        #[test]
+        fn png_annotations_are_opaque_over_background() {
+            let opts = |annotations| RasterOptions {
+                size_px: 256,
+                annotations,
+                ..Default::default()
+            };
+            let load = |o: &RasterOptions| {
+                image::load_from_memory(&render_png_str(&cube_vcad(20.0, 20.0, 20.0), o).unwrap())
+                    .unwrap()
+                    .to_rgba8()
+            };
+            let plain = load(&opts(RenderAnnotations::default()));
+            let annotated = load(&opts(RenderAnnotations {
+                axes: true,
+                ..Default::default()
+            }));
+            // The gizmo lives near (48, size-48); scan that lower-left region.
+            let opaque_in_region = |img: &image::RgbaImage| {
+                (200..245)
+                    .flat_map(|y| (20..80).map(move |x| (x, y)))
+                    .filter(|&(x, y)| img.get_pixel(x, y)[3] == 255)
+                    .count()
+            };
+            assert_eq!(
+                opaque_in_region(&plain),
+                0,
+                "no geometry in the lower-left corner without the gizmo"
+            );
+            assert!(
+                opaque_in_region(&annotated) > 0,
+                "axes gizmo must be opaque over the transparent background"
+            );
         }
     }
 
