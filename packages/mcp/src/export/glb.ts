@@ -104,6 +104,10 @@ export interface GlbAnimationOptions {
   /** If set, a new parent node with this name wraps ALL scene nodes and
    *  becomes the sole scene root; channels may target it (turntable). */
   rootNodeName?: string;
+  /** Extra empty (meshless) nodes added as scene roots; channels may
+   *  target them. Used for out-of-band motion carriers like the
+   *  `__camera` orbit node the viewer reads instead of rendering. */
+  extraNodes?: string[];
 }
 
 /** A PBR material resolved from a {@link GlbMesh}, deduped across meshes. */
@@ -386,6 +390,11 @@ export function buildGlb(
       children: sceneNodeIndices,
     });
     sceneNodeIndices = [rootIdx];
+  }
+  for (const extra of animation?.extraNodes ?? []) {
+    const idx = nodes.length;
+    nodes.push({ name: extra });
+    sceneNodeIndices = [...sceneNodeIndices, idx];
   }
 
   // Animations: write sampler input/output data into the same BIN chunk.

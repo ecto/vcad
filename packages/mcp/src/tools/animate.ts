@@ -288,12 +288,14 @@ function paramTrackNames(timeline: Timeline): string[] {
     .map((t) => (t.target as { name: string }).name);
 }
 
-/** Turntable/orbit camera → yaw channel on the scene root (the viewer trick:
- *  rotating the model root is camera-agnostic and works in every player). */
-function cameraYawChannel(
-  frames: SequenceFrame[],
-  rootName: string,
-): GlbAnimationChannel | null {
+/** Name of the meshless carrier node whose rotation encodes the camera
+ *  azimuth. The viewer reads it and orbits its own camera — the model
+ *  itself never rotates. Generic glTF players simply ignore the empty node. */
+export const CAMERA_NODE = "__camera";
+
+/** Turntable/orbit camera → yaw channel on the invisible `__camera` node.
+ *  Positive azimuth, rotation about Z (Z-up model space). */
+function cameraYawChannel(frames: SequenceFrame[]): GlbAnimationChannel | null {
   const moving = frames.some(
     (f) => Math.abs(f.camera.azimuthDeg - frames[0]!.camera.azimuthDeg) > 1e-9,
   );
@@ -302,11 +304,10 @@ function cameraYawChannel(
   const values: number[] = [];
   for (const f of frames) {
     times.push(f.t);
-    // Rotate the scene opposite the camera azimuth about Z (Z-up).
-    const half = (-f.camera.azimuthDeg * Math.PI) / 360;
+    const half = (f.camera.azimuthDeg * Math.PI) / 360;
     values.push(0, 0, Math.sin(half), Math.cos(half));
   }
-  return { nodeName: rootName, path: "rotation", times, values };
+  return { nodeName: CAMERA_NODE, path: "rotation", times, values };
 }
 
 /** Explode directions: per instance, outward from the centroid of instance
@@ -362,7 +363,6 @@ export function buildSequenceGlb(
 ): { glb: Uint8Array; stats: Record<string, unknown> } | null {
   const channels: GlbAnimationChannel[] = [];
   const meshes: GlbMesh[] = [];
-  const ROOT = "__scene";
 
   const paramFrames = frames.filter((f) => f.geometryDirty);
   const usesParams = hasParamTracks(timeline) && paramFrames.length > 0;
@@ -525,13 +525,13 @@ export function buildSequenceGlb(
 
   if (meshes.length === 0) return null;
 
-  const camChannel = cameraYawChannel(frames, ROOT);
+  const camChannel = cameraYawChannel(frames);
   if (camChannel) channels.push(camChannel);
 
   const animation: GlbAnimationOptions = {
     name: "timeline",
     channels,
-    rootNodeName: camChannel ? ROOT : undefined,
+    extraNodes: camChannel ? [CAMERA_NODE] : undefined,
   };
   const glb = buildGlb(meshes, "sequence", animation);
   return {

@@ -338,6 +338,11 @@ let simTick: ((deltaSeconds: number) => void) | null = null;
 // GLB animation playback — set by loadGlb when the parsed model carries
 // glTF animation tracks (render_sequence timelines). Loops all clips.
 let glbMixer: THREE.AnimationMixer | null = null;
+// Camera-orbit carrier: an empty node named "__camera" whose animated yaw
+// encodes the shot's azimuth. We orbit OUR camera from it each frame
+// instead of rendering it, so the model stays put while the view sweeps.
+let glbCameraNode: THREE.Object3D | null = null;
+let glbCameraLastYaw: number | null = null;
 let lastFrameMs = performance.now();
 
 function animate(): void {
@@ -346,7 +351,30 @@ function animate(): void {
   const deltaSeconds = (now - lastFrameMs) / 1000;
   lastFrameMs = now;
   if (simTick) simTick(deltaSeconds);
-  if (glbMixer) glbMixer.update(deltaSeconds);
+  if (glbMixer) {
+    glbMixer.update(deltaSeconds);
+    if (glbCameraNode) {
+      // Model-space yaw about Z from the carrier's quaternion.
+      const q = glbCameraNode.quaternion;
+      const yaw = 2 * Math.atan2(q.z, q.w);
+      if (glbCameraLastYaw !== null) {
+        // Apply the delta as an orbit around the target about display up
+        // (Y) — composes with user drag instead of fighting it.
+        const delta = yaw - glbCameraLastYaw;
+        if (delta !== 0) {
+          const spin = new THREE.Quaternion().setFromAxisAngle(
+            new THREE.Vector3(0, 1, 0),
+            delta,
+          );
+          camera.position
+            .sub(controls.target)
+            .applyQuaternion(spin)
+            .add(controls.target);
+        }
+      }
+      glbCameraLastYaw = yaw;
+    }
+  }
   controls.update();
   renderer.render(scene, camera);
 }
@@ -386,6 +414,8 @@ function clearModel(): void {
     glbMixer.stopAllAction();
     glbMixer = null;
   }
+  glbCameraNode = null;
+  glbCameraLastYaw = null;
   if (!currentModel) return;
   // Restore selection highlights before disposal so we never dispose a
   // clone while the original is detached.
@@ -461,6 +491,10 @@ function loadGlb(base64Data: string, opts?: LoadOpts): void {
         for (const clip of gltf.animations) {
           glbMixer.clipAction(clip).setLoop(THREE.LoopRepeat, Infinity).play();
         }
+        // Camera-orbit carrier node (see the animate-loop hook above).
+        glbCameraNode = gltf.scene.getObjectByName("__camera") ?? null;
+        glbCameraLastYaw = null;
+        if (glbCameraNode) glbCameraNode.visible = false;
       }
       updateAxesVisibility();
 

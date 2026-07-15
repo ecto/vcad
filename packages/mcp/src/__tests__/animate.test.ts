@@ -196,16 +196,22 @@ describe("render_sequence", () => {
       expect(json.animations).toHaveLength(1);
       const anim = json.animations[0];
       expect(anim.name).toBe("timeline");
-      // Scene root wraps the instances for the turntable yaw.
-      const rootIdx = json.scenes[0].nodes[0];
-      expect(json.nodes[rootIdx].name).toBe("__scene");
-      expect(json.nodes[rootIdx].children).toHaveLength(2);
-      const rootChannels = anim.channels.filter(
+      // The turntable rides on an empty __camera carrier node the viewer
+      // reads to orbit its own camera — the model nodes must NOT be
+      // wrapped in a rotating root (that would spin the whole scene).
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const camIdx = json.nodes.findIndex((n: any) => n.name === "__camera");
+      expect(camIdx).toBeGreaterThanOrEqual(0);
+      expect(json.nodes[camIdx].mesh).toBeUndefined();
+      expect(json.scenes[0].nodes).toContain(camIdx);
+      // Instance nodes remain scene roots (no rotating wrapper).
+      expect(json.scenes[0].nodes.length).toBe(3);
+      const camChannels = anim.channels.filter(
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        (c: any) => c.target.node === rootIdx,
+        (c: any) => c.target.node === camIdx,
       );
-      expect(rootChannels).toHaveLength(1);
-      expect(rootChannels[0].target.path).toBe("rotation");
+      expect(camChannels).toHaveLength(1);
+      expect(camChannels[0].target.path).toBe("rotation");
     }
 
     // Verification rode along: the spec sweep across frames.

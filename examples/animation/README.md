@@ -37,8 +37,11 @@ across all sampled frames.
   the per-instance nodes (geometry evaluated once per partDef).
 - Parameter tracks re-evaluate geometry at up to 24 sampled times and switch
   between the samples with STEP visibility channels.
-- Turntable/orbit camera compiles to a yaw channel on a `__scene` root node
-  (rotating the model root plays in any viewer); `export_video` currently
-  renders the fixed kernel views (`iso`/`front`/`side`/`top`).
+- Turntable/orbit camera compiles to a yaw channel on an invisible
+  `__camera` carrier node; the MCP viewer reads it and orbits its own
+  camera, so the model stays put while the view sweeps (generic glTF
+  players ignore the empty node and just play the model motion).
+  `export_video` currently renders the fixed kernel views
+  (`iso`/`front`/`side`/`top`).
 - Determinism: same document + timeline → same frames. Frame count =
   `round(durationS × fps) + 1`, inclusive of t = 0.
