@@ -33,30 +33,38 @@ mecheval leaderboard defaults to `target/debug/vcad-render`.
 ## Usage
 
 ```bash
-vcad-render path/to/part.vcad > out.svg
+vcad-render path/to/part.vcad > out.svg          # SVG on stdout
 vcad-render part.vcad --scale 4.0 > big.svg
-
-# Raster output (z-buffered render of the same tessellation pipeline):
-vcad-render part.vcad --jpeg out.jpg --view front --size 512
-vcad-render part.vcad --png out.png
+vcad-render part.vcad -o out.jpg                 # format from extension (.svg/.jpg/.png)
+vcad-render part.vcad -o out.png                 # z-buffered raster PNG
+vcad-render parts/ --out-dir renders/ --format jpeg   # batch a directory
 
 # Ray-traced output (direct BRep ray tracing, no tessellation):
-vcad-render part.vcad --raytrace --png out.png
-vcad-render part.vcad --raytrace --jpeg out.jpg --view hero --size 1440 --quality 95
+vcad-render part.vcad --raytrace -o out.png
+vcad-render part.vcad --raytrace -o out.jpg --view hero --size 1440 --quality 95
 ```
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `--scale <N>` | `2.0` | Pixels per millimetre (SVG only). Bigger = larger SVG. |
-| `--view <v>` | `iso` | Camera: `iso`/`hero`, `front`, `side`, `top`. |
-| `--jpeg <path>` / `--png <path>` | — | Raster output instead of SVG (pick one). |
-| `--raytrace` | off | Render the raster via direct BRep ray tracing. |
-| `--size <px>` | `1024` | Raster canvas is `size` × `size`. |
-| `--fill <frac>` | `0.6` | Fraction of the canvas the part's long axis fills. |
-| `--quality <1-100>` | `92` | JPEG encoder quality. |
+| `--view <V>` | `iso` | Camera: `iso`/`front`/`side`/`top`/`hero`. |
+| `--scale <N>` | `2.0` | Pixels per millimetre (SVG). Bigger = larger SVG. |
+| `--transparent` | off | Transparent SVG background. |
+| `-o, --output <PATH>` | stdout | Output path; format inferred from `.svg`/`.jpg`/`.jpeg`/`.png`. `-o -` = SVG on stdout. Single input only. |
+| `--jpeg <PATH>` | — | Legacy alias for `-o <path.jpg>`. |
+| `--raytrace` | off | Render the raster output via direct BRep ray tracing (needs `.png`/`.jpg`). |
+| `--out-dir <DIR>` | sibling | Directory for batch outputs. |
+| `--format <F>` | `svg` | Batch output format: `svg`, `jpeg`, or `png`. |
+| `--size <N>` | `1024` | Raster canvas size in pixels (JPEG/PNG). |
+| `--fill <F>` | `0.6` | Fraction of canvas the part's long axis fills (JPEG/PNG). |
+| `--quality <Q>` | `92` | JPEG quality, 1–100. |
+
+Multiple inputs (or a directory, which expands to its `*.vcad` files)
+render in batch, each to `<stem>.<ext>` next to the input or in
+`--out-dir`. A per-file failure is reported on stderr but doesn't abort
+the batch.
 
 Exit codes: `0` on success, `2` on parse/eval/render failure (with a
-human-readable message on stderr).
+human-readable message on stderr). A batch exits `2` if any file failed.
 
 ## Tunable constants
 
