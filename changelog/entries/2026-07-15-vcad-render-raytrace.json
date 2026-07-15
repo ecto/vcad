@@ -1,0 +1,9 @@
+{
+  "id": "2026-07-15-vcad-render-raytrace",
+  "version": "0.9.4",
+  "date": "2026-07-15",
+  "category": "feat",
+  "title": "Ray-traced renders in vcad-render",
+  "summary": "vcad-render gains --raytrace (plus --png output): pixel-perfect direct BRep ray tracing with exact curved silhouettes, in the same views and vcad-Blue style as the tessellated path.",
+  "features": ["render", "raytrace", "cli"]
+}

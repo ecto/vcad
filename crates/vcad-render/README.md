@@ -35,11 +35,25 @@ mecheval leaderboard defaults to `target/debug/vcad-render`.
 ```bash
 vcad-render path/to/part.vcad > out.svg
 vcad-render part.vcad --scale 4.0 > big.svg
+
+# Raster output (z-buffered render of the same tessellation pipeline):
+vcad-render part.vcad --jpeg out.jpg --view front --size 512
+vcad-render part.vcad --png out.png
+
+# Ray-traced output (direct BRep ray tracing, no tessellation):
+vcad-render part.vcad --raytrace --png out.png
+vcad-render part.vcad --raytrace --jpeg out.jpg --view hero --size 1440 --quality 95
 ```
 
 | Flag | Default | Meaning |
 |---|---|---|
-| `--scale <N>` | `2.0` | Pixels per millimetre. Bigger = larger SVG. |
+| `--scale <N>` | `2.0` | Pixels per millimetre (SVG only). Bigger = larger SVG. |
+| `--view <v>` | `iso` | Camera: `iso`/`hero`, `front`, `side`, `top`. |
+| `--jpeg <path>` / `--png <path>` | — | Raster output instead of SVG (pick one). |
+| `--raytrace` | off | Render the raster via direct BRep ray tracing. |
+| `--size <px>` | `1024` | Raster canvas is `size` × `size`. |
+| `--fill <frac>` | `0.6` | Fraction of the canvas the part's long axis fills. |
+| `--quality <1-100>` | `92` | JPEG encoder quality. |
 
 Exit codes: `0` on success, `2` on parse/eval/render failure (with a
 human-readable message on stderr).
@@ -62,10 +76,23 @@ Originally `mecheval-render` inside `mecheval/graders/`. Promoted to a
 standalone crate so other consumers (docs, marketing, CAD previews) can
 depend on it without pulling in the eval grader.
 
-## Future: raytrace mode
+## Raytrace mode
 
-A future `--raytrace` flag could swap out the tessellation pipeline for
-direct BRep ray tracing via [`vcad-kernel-raytrace`](../vcad-kernel-raytrace),
-producing pixel-perfect PNG output instead of vector SVG. That makes
-sense for marketing screenshots and high-fidelity previews; SVG remains
-the right pick for the leaderboard's drafting aesthetic.
+`--raytrace` swaps out the tessellation pipeline for direct BRep ray
+tracing via [`vcad-kernel-raytrace`](../vcad-kernel-raytrace): every pixel
+is an analytic ray–surface intersection (plane, cylinder, sphere, cone,
+torus, NURBS) through a SAH BVH with trimmed-face tests, so curved
+silhouettes are exact at any resolution — no facet banding, no segment
+count to tune. The camera is the same orthographic `View` basis and
+framing math as the tessellated raster path, and shading samples the same
+vcad-Blue tonal ramp (tinted by document material colours), so the two
+paths are drop-in alternatives. Assemblies render the same way as the
+tessellation path (instances are world-placed before tracing); mesh-only
+parts (e.g. frozen topology-optimization results) have no analytic
+surfaces and are skipped.
+
+It runs on the CPU (no GPU required) and lives behind the crate's
+`raytrace` cargo feature — default-on for the binary, off for the WASM
+build so it doesn't grow. Use it for marketing screenshots and
+high-fidelity previews; SVG remains the right pick for the leaderboard's
+drafting aesthetic.

@@ -7470,6 +7470,7 @@ dependencies = [
  "vcad-eval",
  "vcad-ir",
  "vcad-kernel",
+ "vcad-kernel-raytrace",
  "vcad-loon",
 ]
 
