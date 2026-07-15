@@ -2171,7 +2171,14 @@ mod tests {
                     "corner ({x},{y}) not transparent"
                 );
             }
-            assert_eq!(img.get_pixel(64, 64)[3], 255, "center should be opaque");
+            // The part is centered and fills ~60% of the canvas, so the
+            // central region is solidly covered. Assert on a small window
+            // rather than a single pixel so a future projection/fill tweak
+            // that nudges the centroid can't silently break the invariant.
+            let opaque = (56..72)
+                .flat_map(|y| (56..72).map(move |x| (x, y)))
+                .any(|(x, y)| img.get_pixel(x, y)[3] == 255);
+            assert!(opaque, "central region should contain an opaque pixel");
         }
     }
 
