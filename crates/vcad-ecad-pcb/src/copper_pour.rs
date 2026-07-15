@@ -105,12 +105,38 @@ fn collect_clearance_regions(pcb: &Pcb, zone: &Zone) -> Vec<Poly> {
     let clearance = zone.clearance;
     let mut clips: Vec<Poly> = Vec::new();
 
+    // A clip whose bounding box is disjoint from the zone outline's bbox can't
+    // change the difference — skip it up front so a partial pour on a dense
+    // board doesn't pay for every far-away element's capsule in the boolean.
+    let mut zmin = Vec2::new(f64::MAX, f64::MAX);
+    let mut zmax = Vec2::new(f64::MIN, f64::MIN);
+    for v in &zone.outline {
+        zmin.x = zmin.x.min(v.x);
+        zmin.y = zmin.y.min(v.y);
+        zmax.x = zmax.x.max(v.x);
+        zmax.y = zmax.y.max(v.y);
+    }
+    let hits_zone = |min: Vec2, max: Vec2| -> bool {
+        max.x >= zmin.x && min.x <= zmax.x && max.y >= zmin.y && min.y <= zmax.y
+    };
+
     // Other-net traces on this layer: capsule (thick segment) clearance.
     for trace in &pcb.traces {
         if trace.net == zone.net || trace.layer != zone.layer {
             continue;
         }
         let r = trace.width / 2.0 + clearance;
+        let min = Vec2::new(
+            trace.start.x.min(trace.end.x) - r,
+            trace.start.y.min(trace.end.y) - r,
+        );
+        let max = Vec2::new(
+            trace.start.x.max(trace.end.x) + r,
+            trace.start.y.max(trace.end.y) + r,
+        );
+        if !hits_zone(min, max) {
+            continue;
+        }
         clips.push(capsule_poly(trace.start, trace.end, r));
     }
 
@@ -119,7 +145,13 @@ fn collect_clearance_regions(pcb: &Pcb, zone: &Zone) -> Vec<Poly> {
         if via.net == zone.net {
             continue;
         }
-        clips.push(circle_poly(via.position, via.diameter / 2.0 + clearance));
+        let r = via.diameter / 2.0 + clearance;
+        let min = Vec2::new(via.position.x - r, via.position.y - r);
+        let max = Vec2::new(via.position.x + r, via.position.y + r);
+        if !hits_zone(min, max) {
+            continue;
+        }
+        clips.push(circle_poly(via.position, r));
     }
 
     // Pads: other-net pads get a full clearance void; same-net pads get
@@ -136,6 +168,15 @@ fn collect_clearance_regions(pcb: &Pcb, zone: &Zone) -> Vec<Poly> {
             let ang = fr + pad.rotation.to_radians();
             let (hw, hh) = pad_half_extents(pad);
             let same_net = pad.net.as_deref() == Some(zone.net.as_str());
+            // Covers the worst case: thermal-relief spokes reach
+            // (max_half_extent + gap) * 2 from the pad center.
+            let reach = (hw.max(hh) + clearance.max(gap)) * 2.0;
+            if !hits_zone(
+                Vec2::new(world.x - reach, world.y - reach),
+                Vec2::new(world.x + reach, world.y + reach),
+            ) {
+                continue;
+            }
 
             if !same_net {
                 clips.push(oriented_rect_poly(
