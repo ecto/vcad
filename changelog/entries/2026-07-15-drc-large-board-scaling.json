@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-15-drc-large-board-scaling",
+  "version": "0.9.4",
+  "date": "2026-07-15",
+  "category": "fix",
+  "title": "DRC and describe_pcb scale to large imported boards",
+  "summary": "run_drc/describe_pcb on dense imported KiCad boards (10 layers, 100+ zones) now finish in seconds instead of crashing the MCP server after ~17 minutes.",
+  "features": ["pcb", "drc", "import"],
+  "mcpTools": ["run_drc", "describe_pcb", "import_kicad", "export_gerber"]
+}

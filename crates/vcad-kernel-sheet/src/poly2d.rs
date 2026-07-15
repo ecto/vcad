@@ -175,6 +175,20 @@ fn snap_ring(ring: &[Point2]) -> Option<Vec<IPt>> {
 /// predicate can apply the outer-minus-holes rule per polygon.
 struct SnappedPoly {
     rings: Vec<Vec<IPt>>, // rings[0] = outer, rest = holes
+    /// Per-ring bounding box (min, max), for cheap point-probe rejection.
+    bboxes: Vec<(IPt, IPt)>,
+}
+
+fn ring_bbox(ring: &[IPt]) -> (IPt, IPt) {
+    let mut min = (i64::MAX, i64::MAX);
+    let mut max = (i64::MIN, i64::MIN);
+    for &(x, y) in ring {
+        min.0 = min.0.min(x);
+        min.1 = min.1.min(y);
+        max.0 = max.0.max(x);
+        max.1 = max.1.max(y);
+    }
+    (min, max)
 }
 
 fn snap_poly(p: &Poly) -> Option<SnappedPoly> {
@@ -185,7 +199,8 @@ fn snap_poly(p: &Poly) -> Option<SnappedPoly> {
             rings.push(r);
         }
     }
-    Some(SnappedPoly { rings })
+    let bboxes = rings.iter().map(|r| ring_bbox(r)).collect();
+    Some(SnappedPoly { rings, bboxes })
 }
 
 /// Even-odd point-in-ring test in grid space (f64 probe vs integer ring).
@@ -207,13 +222,22 @@ fn point_in_ring(ring: &[IPt], px: f64, py: f64) -> bool {
     inside
 }
 
+/// Probe point strictly outside a ring's bbox (with 1-cell slack for the
+/// f64 probe offset) can't be inside the ring.
+fn probe_outside_bbox(bbox: &(IPt, IPt), px: f64, py: f64) -> bool {
+    px < (bbox.0 .0 - 1) as f64
+        || px > (bbox.1 .0 + 1) as f64
+        || py < (bbox.0 .1 - 1) as f64
+        || py > (bbox.1 .1 + 1) as f64
+}
+
 /// Point inside polygon = inside outer and not inside any hole.
 fn point_in_poly(p: &SnappedPoly, px: f64, py: f64) -> bool {
-    if !point_in_ring(&p.rings[0], px, py) {
+    if probe_outside_bbox(&p.bboxes[0], px, py) || !point_in_ring(&p.rings[0], px, py) {
         return false;
     }
-    for h in &p.rings[1..] {
-        if point_in_ring(h, px, py) {
+    for (h, bb) in p.rings[1..].iter().zip(&p.bboxes[1..]) {
+        if !probe_outside_bbox(bb, px, py) && point_in_ring(h, px, py) {
             return false;
         }
     }
@@ -307,6 +331,103 @@ fn dedup_sorted_along(a: IPt, b: IPt, pts: &mut Vec<IPt>) {
     pts.dedup();
 }
 
+/// Uniform-grid broadphase over segment bounding boxes: `candidates(a, b)`
+/// returns every segment index whose bbox shares a cell with `[a, b]`'s bbox.
+/// A superset of all segments that can interact with `[a, b]` (any split
+/// point lies on both segments, hence inside both bboxes).
+struct SegGrid {
+    cell: i64,
+    min: IPt,
+    cols: i64,
+    rows: i64,
+    /// cell index → segment indices whose bbox covers that cell.
+    buckets: Vec<Vec<u32>>,
+    /// Scratch stamp per segment to dedupe candidates across cells.
+    stamp: std::cell::RefCell<(u64, Vec<u64>)>,
+}
+
+impl SegGrid {
+    /// Target grid resolution per axis. 128×128 keeps bucket fan-out small
+    /// while a board-length segment still only touches 128 cells.
+    const RES: i64 = 128;
+
+    fn new(segs: &[(IPt, IPt)]) -> Self {
+        let mut min = (i64::MAX, i64::MAX);
+        let mut max = (i64::MIN, i64::MIN);
+        for &(a, b) in segs {
+            min.0 = min.0.min(a.0).min(b.0);
+            min.1 = min.1.min(a.1).min(b.1);
+            max.0 = max.0.max(a.0).max(b.0);
+            max.1 = max.1.max(a.1).max(b.1);
+        }
+        if segs.is_empty() {
+            min = (0, 0);
+            max = (0, 0);
+        }
+        let extent = (max.0 - min.0).max(max.1 - min.1).max(1);
+        let cell = (extent / Self::RES).max(1);
+        let cols = (max.0 - min.0) / cell + 1;
+        let rows = (max.1 - min.1) / cell + 1;
+        let mut buckets = vec![Vec::new(); (cols * rows) as usize];
+        for (idx, &(a, b)) in segs.iter().enumerate() {
+            let (c0, c1, r0, r1) = Self::cell_range(min, cell, cols, rows, a, b);
+            for r in r0..=r1 {
+                for c in c0..=c1 {
+                    buckets[(r * cols + c) as usize].push(idx as u32);
+                }
+            }
+        }
+        Self {
+            cell,
+            min,
+            cols,
+            rows,
+            buckets,
+            stamp: std::cell::RefCell::new((0, vec![0; segs.len()])),
+        }
+    }
+
+    #[allow(clippy::type_complexity)]
+    fn cell_range(
+        min: IPt,
+        cell: i64,
+        cols: i64,
+        rows: i64,
+        a: IPt,
+        b: IPt,
+    ) -> (i64, i64, i64, i64) {
+        let clamp = |v: i64, hi: i64| v.clamp(0, hi - 1);
+        (
+            clamp((a.0.min(b.0) - min.0) / cell, cols),
+            clamp((a.0.max(b.0) - min.0) / cell, cols),
+            clamp((a.1.min(b.1) - min.1) / cell, rows),
+            clamp((a.1.max(b.1) - min.1) / cell, rows),
+        )
+    }
+
+    /// Collect (deduplicated) indices of segments whose grid cells overlap
+    /// the query segment's bbox cells.
+    fn candidates(&self, a: IPt, b: IPt, out: &mut Vec<usize>) {
+        out.clear();
+        let mut guard = self.stamp.borrow_mut();
+        let (ref mut tick, ref mut seen) = *guard;
+        *tick += 1;
+        let t = *tick;
+        let (c0, c1, r0, r1) = Self::cell_range(self.min, self.cell, self.cols, self.rows, a, b);
+        for r in r0..=r1 {
+            for c in c0..=c1 {
+                for &j in &self.buckets[(r * self.cols + c) as usize] {
+                    let j = j as usize;
+                    if seen[j] != t {
+                        seen[j] = t;
+                        out.push(j);
+                    }
+                }
+            }
+        }
+    }
+}
+
 fn boolean(subject: &[Poly], clip: &[Poly], op: BoolOp) -> Vec<Poly> {
     let subj: Vec<SnappedPoly> = subject.iter().filter_map(snap_poly).collect();
     let clp: Vec<SnappedPoly> = clip.iter().filter_map(snap_poly).collect();
@@ -330,11 +451,30 @@ fn boolean(subject: &[Poly], clip: &[Poly], op: BoolOp) -> Vec<Poly> {
     }
 
     // Split every segment at every interaction with every other segment.
+    //
+    // Broadphase: a split point always lies on both segments, so a pair whose
+    // bounding boxes are disjoint contributes nothing — bucket segments into a
+    // uniform grid and only test pairs sharing a cell. Exact same splits as
+    // the all-pairs loop, without the O(S²) pair sweep that made dense PCB
+    // pours (thousands of clearance capsules) take minutes.
+    let seg_grid = SegGrid::new(&segs);
+    let mut candidates: Vec<usize> = Vec::new();
     let mut sub_edges: std::collections::BTreeSet<(IPt, IPt)> = std::collections::BTreeSet::new();
     for (i, &(a, b)) in segs.iter().enumerate() {
         let mut cuts: Vec<IPt> = vec![a, b];
-        for (j, &(c, d)) in segs.iter().enumerate() {
+        seg_grid.candidates(a, b, &mut candidates);
+        for &j in &candidates {
             if i == j {
+                continue;
+            }
+            let (c, d) = segs[j];
+            // Cheap exact bbox rejection (candidates from shared cells can
+            // still be disjoint within the cell).
+            if a.0.max(b.0) < c.0.min(d.0)
+                || c.0.max(d.0) < a.0.min(b.0)
+                || a.1.max(b.1) < c.1.min(d.1)
+                || c.1.max(d.1) < a.1.min(b.1)
+            {
                 continue;
             }
             splits_from(a, b, c, d, &mut cuts);
@@ -370,12 +510,15 @@ fn boolean(subject: &[Poly], clip: &[Poly], op: BoolOp) -> Vec<Poly> {
         directed.push((p, q));
         directed.push((q, p));
     }
-    let mut twin: std::collections::BTreeMap<(IPt, IPt), usize> = std::collections::BTreeMap::new();
+    // Lookup-only (never iterated): HashMap, not BTreeMap — the arrangement's
+    // determinism comes from `sub_edges`/`boundary` ordering, not these maps.
+    let mut twin: std::collections::HashMap<(IPt, IPt), usize> =
+        std::collections::HashMap::with_capacity(directed.len());
     for (idx, &(u, v)) in directed.iter().enumerate() {
         twin.insert((u, v), idx);
     }
-    let mut out_edges: std::collections::BTreeMap<IPt, Vec<usize>> =
-        std::collections::BTreeMap::new();
+    let mut out_edges: std::collections::HashMap<IPt, Vec<usize>> =
+        std::collections::HashMap::with_capacity(directed.len());
     for (idx, &(u, _)) in directed.iter().enumerate() {
         out_edges.entry(u).or_default().push(idx);
     }
@@ -491,7 +634,8 @@ fn boolean(subject: &[Poly], clip: &[Poly], op: BoolOp) -> Vec<Poly> {
     // ── Walk boundary loops ──────────────────────────────────────────────
     // The boundary of a union of faces is vertex-balanced, so loops always
     // close under the same next-edge rule.
-    let mut bout: std::collections::BTreeMap<IPt, Vec<usize>> = std::collections::BTreeMap::new();
+    let mut bout: std::collections::HashMap<IPt, Vec<usize>> =
+        std::collections::HashMap::with_capacity(boundary.len());
     for (idx, &(u, _)) in boundary.iter().enumerate() {
         bout.entry(u).or_default().push(idx);
     }

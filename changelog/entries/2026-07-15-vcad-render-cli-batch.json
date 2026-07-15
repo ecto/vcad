@@ -1,0 +1,9 @@
+{
+  "id": "2026-07-15-vcad-render-cli-batch",
+  "version": "0.9.4",
+  "date": "2026-07-15",
+  "category": "feat",
+  "title": "vcad-render CLI: -o output, batch mode, --help",
+  "summary": "The vcad-render CLI gains -o with extension-driven format, batch rendering of multiple files or a directory with --out-dir/--format, and proper --help.",
+  "features": ["render", "cli"]
+}

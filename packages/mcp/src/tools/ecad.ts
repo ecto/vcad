@@ -3824,6 +3824,30 @@ export async function drcPcb(
   // Kernel DRC: copper clearance (trace↔copper and pad↔pad shorts), trace
   // width, drill, annular ring, edge clearance, hole-to-hole. Falls back to
   // basic scalar checks when the kernel WASM is unavailable.
+  //
+  // Size guard: a board past this budget risks exhausting the shared WASM
+  // instance's linear memory, and a wasm OOM can take down the whole server
+  // (killing every session) rather than just this call. Fail closed with a
+  // structured error the agent can branch on. The CM5 reverse-engineering
+  // board (10 layers, ~6.5k traces, ~3k vias, ~3k pads, 107 zones ≈ 13k
+  // elements) checks in seconds, so the default cap leaves ample headroom.
+  const elementCount =
+    pcb.traces.length +
+    pcb.vias.length +
+    pcb.zones.length +
+    pcb.footprints.reduce((n, fp) => n + fp.pads.length, 0);
+  const maxElements = Number(process.env.VCAD_DRC_MAX_ELEMENTS ?? 200_000);
+  if (elementCount > maxElements) {
+    return {
+      success: false,
+      status: "errored",
+      reason:
+        `Board too large for DRC: ${elementCount} copper elements ` +
+        `(traces + vias + pads + zones) exceeds the ${maxElements} budget. ` +
+        `Run DRC on a region (verify-on-write covers edits), or raise ` +
+        `VCAD_DRC_MAX_ELEMENTS if this host has the memory for it.`,
+    };
+  }
   let violations: DrcViol[];
   if (await isEcadAvailable()) {
     // The kernel can refuse a board it can't deserialize (e.g. a malformed
