@@ -1213,7 +1213,7 @@ fn to_component(
 ) -> Vec<(CopperGeom, [f64; 2], [f64; 2], PcbLayer)> {
     let mut elems: Vec<(CopperGeom, [f64; 2], [f64; 2], PcbLayer)> = Vec::new();
     session.for_each_of_net(net, |g, lo, hi, layer| {
-        elems.push((g.clone(), lo, hi, layer));
+        elems.push((*g, lo, hi, layer));
     });
     if elems.is_empty() {
         return Vec::new();
@@ -1267,7 +1267,7 @@ fn to_component(
     };
     (0..n)
         .filter(|&i| find(&mut parent, i) == root)
-        .map(|i| elems[i].clone())
+        .map(|i| elems[i])
         .collect()
 }
 
