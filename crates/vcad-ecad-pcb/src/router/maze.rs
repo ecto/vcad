@@ -438,8 +438,32 @@ pub fn route_net_maze3d(
     let mut run: Vec<Vec2> = vec![start];
     let mut run_layer = nodes[0] / plane;
 
+    // Taut pull: greedy line-of-sight shortcutting over a run's points. A
+    // grid path staircases; every removed kink both shortens the copper and
+    // frees channel space the next net needs. Each shortcut is probed, so
+    // legality is preserved by construction.
+    let pull_taut = |pts: &[Vec2], layer: PcbLayer| -> Vec<Vec2> {
+        if pts.len() <= 2 {
+            return pts.to_vec();
+        }
+        let mut out = vec![pts[0]];
+        let mut i = 0;
+        while i + 1 < pts.len() {
+            // Furthest j with a clear legal segment i→j.
+            let mut j = i + 1;
+            for k in ((i + 2)..pts.len()).rev() {
+                if legal_step(pts[i], pts[k], layer) {
+                    j = k;
+                    break;
+                }
+            }
+            out.push(pts[j]);
+            i = j;
+        }
+        out
+    };
     let flush_run = |run: &mut Vec<Vec2>, layer: PcbLayer, segs: &mut Vec<_>| {
-        let pts = simplify(run);
+        let pts = pull_taut(&simplify(run), layer);
         segs.extend(
             pts.windows(2)
                 .filter(|w| dist(w[0], w[1]) > 1e-9)
