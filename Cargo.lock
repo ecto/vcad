@@ -6860,6 +6860,7 @@ dependencies = [
 name = "vcad-ecad-pcb"
 version = "0.9.4"
 dependencies = [
+ "rayon",
  "rstar",
  "serde",
  "serde_json",

@@ -303,6 +303,7 @@ pub fn route_all_with_opts(
             use_push_shove,
             opts.effective_ripup_rounds(),
             opts.effective_expansions(),
+            round + 1 == rounds,
         );
 
         let last_round = round + 1 == rounds;
@@ -600,6 +601,7 @@ fn route_pass(
     use_push_shove: bool,
     ripup_rounds: usize,
     max_expansions: usize,
+    fine_retry: bool,
 ) -> Pass {
     let mut session = RouteSession::from_pcb(pcb);
     let mut placed: Vec<Placed> = Vec::new();
@@ -635,6 +637,7 @@ fn route_pass(
                     cong,
                     use_push_shove,
                     max_expansions,
+                    fine_retry,
                 )
             })
             .collect();
@@ -720,6 +723,7 @@ fn try_route(
         cong,
         use_push_shove,
         max_expansions,
+        true,
     )?;
     validate_and_commit(session, pcb, cand, placed)
 }
@@ -750,6 +754,7 @@ fn search_route(
     cong: &Congestion,
     use_push_shove: bool,
     max_expansions: usize,
+    fine_retry: bool,
 ) -> Option<Candidate> {
     // Net-class width if the net has one (wider power/ground), else the caller's
     // default. The same width drives the maze search, the committed copper, and
@@ -782,11 +787,14 @@ fn search_route(
         )
     };
     let mut r3 = maze(1.0);
-    if !r3.success {
+    if !r3.success && fine_retry {
         // Fine-grid retry: on an HDI board the clear channel between BGA pads
         // can be narrower than the default `width + clearance` pitch, so the
         // coarse grid has no node inside a perfectly routable gap. Only
-        // failures pay for the finer (4x larger) search.
+        // failures pay for the finer (4x larger) search — and only where the
+        // result can stick (the last negotiation round and rip-up): an early
+        // round's routes are torn up anyway, so 4x searches there are pure
+        // waste.
         r3 = maze(0.5);
     }
     let (segments, route_vias) = if r3.success && !r3.segments.is_empty() {
