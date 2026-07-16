@@ -4,17 +4,21 @@
 //! the human layout — completion, via count, and total copper length.
 //!
 //! ```bash
-//! cargo run --release -p vcad-ecad-pcb --example cm5_bench -- CM5RevEng.kicad_pcb [effort] [max_nets]
+//! cargo run --release -p vcad-ecad-pcb --example cm5_bench -- \
+//!     CM5RevEng.kicad_pcb [effort] [max_nets] [out.pcb.json]
 //! ```
 //!
-//! `max_nets` (default all) routes only the N largest-airwire nets — handy for
-//! a quick smoke run on the full board.
+//! `max_nets` (default all) routes only the N highest-pad-count nets — handy
+//! for a quick smoke run on the full board. `out.pcb.json` saves the board
+//! with the routed copper applied, so rendering (vcad-render's `cm5_render`)
+//! and styling iteration never pay for another routing run.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::time::Instant;
 
 use vcad_ecad_pcb::router::{route_all_with_opts, RouteOptions};
 use vcad_ecad_symbols::parse_kicad_pcb;
+use vcad_ir::ecad::{Trace, Via};
 
 fn seg_len(a: vcad_ir::Vec2, b: vcad_ir::Vec2) -> f64 {
     ((b.x - a.x).powi(2) + (b.y - a.y).powi(2)).sqrt()
@@ -31,6 +35,7 @@ fn main() {
         .next()
         .and_then(|s| s.parse().ok())
         .unwrap_or(usize::MAX);
+    let out_json = args.next();
 
     let text = std::fs::read_to_string(&path).expect("read kicad_pcb");
     let mut pcb = parse_kicad_pcb(&text).expect("parse kicad_pcb");
@@ -65,25 +70,27 @@ fn main() {
     pcb.vias.clear();
 
     // Optional subset: the N nets with the most pads (the hard ones first).
+    // Keyed by the pad net strings — the exact names the router's pad-derived
+    // netlist and ratsnest match on (`pcb.nets` ids can differ from pad net
+    // names on imported boards, which made the filter silently select nothing).
     let filter: Vec<String> = if max_nets == usize::MAX {
         Vec::new()
     } else {
-        let mut counts: Vec<(String, usize)> = pcb
-            .nets
-            .iter()
-            .map(|n| {
-                let pads = pcb
-                    .footprints
-                    .iter()
-                    .flat_map(|f| f.pads.iter())
-                    .filter(|p| p.net.as_deref() == Some(n.id.as_str()))
-                    .count();
-                (n.id.clone(), pads)
-            })
-            .filter(|(_, c)| *c >= 2)
-            .collect();
-        counts.sort_by(|a, b| b.1.cmp(&a.1));
-        counts.into_iter().take(max_nets).map(|(n, _)| n).collect()
+        let mut counts: BTreeMap<&str, usize> = BTreeMap::new();
+        for p in pcb.footprints.iter().flat_map(|f| f.pads.iter()) {
+            if let Some(net) = p.net.as_deref() {
+                if !net.is_empty() {
+                    *counts.entry(net).or_default() += 1;
+                }
+            }
+        }
+        let mut counts: Vec<(&str, usize)> = counts.into_iter().filter(|(_, c)| *c >= 2).collect();
+        counts.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(b.0)));
+        counts
+            .into_iter()
+            .take(max_nets)
+            .map(|(n, _)| n.to_string())
+            .collect()
     };
 
     let width = pcb.rules.default_rules.trace_width;
@@ -126,5 +133,42 @@ fn main() {
     );
     for d in r.diagnostics.iter().take(10) {
         eprintln!("unrouted {}: {}", d.net, d.reason);
+    }
+
+    // Save the routed board for rendering / inspection without re-routing.
+    if let Some(out) = out_json {
+        for t in &r.traces {
+            pcb.traces.push(Trace {
+                start: t.start,
+                end: t.end,
+                width: t.width,
+                layer: t.layer,
+                net: t.net.clone(),
+                source: None,
+            });
+        }
+        let copper: Vec<_> = pcb
+            .stackup
+            .layers
+            .iter()
+            .map(|l| l.layer)
+            .filter(|l| l.is_copper())
+            .collect();
+        let start_layer = *copper.first().expect("board has copper");
+        let end_layer = *copper.last().expect("board has copper");
+        for v in &r.vias {
+            pcb.vias.push(Via {
+                position: v.position,
+                diameter: pcb.rules.default_rules.via_diameter,
+                drill: pcb.rules.default_rules.via_drill,
+                start_layer,
+                end_layer,
+                net: v.net.clone(),
+                source: None,
+            });
+        }
+        std::fs::write(&out, serde_json::to_string(&pcb).expect("serialize board"))
+            .expect("write routed board json");
+        eprintln!("wrote {out}");
     }
 }
