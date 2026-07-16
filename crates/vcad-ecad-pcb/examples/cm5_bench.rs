@@ -25,6 +25,11 @@ fn seg_len(a: vcad_ir::Vec2, b: vcad_ir::Vec2) -> f64 {
 }
 
 fn main() {
+    // RUST_LOG=info for round/batch progress, debug for per-batch and rip-up
+    // detail, trace for every search. Timestamped to correlate with `top`.
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
+        .format_timestamp_millis()
+        .init();
     let mut args = std::env::args().skip(1);
     let path = args.next().unwrap_or_else(|| {
         eprintln!("usage: cm5_bench <board.kicad_pcb> [effort] [max_nets]");

@@ -28,7 +28,7 @@ use crate::session::RouteSession;
 use crate::spatial::{point_in_polygon, CopperGeom};
 
 use super::congestion::Congestion;
-use super::RouteResult;
+use super::{RouteResult, Stopwatch};
 
 /// Largest grid dimension along either axis; pitch is coarsened to fit.
 const MAX_DIM: usize = 400;
@@ -299,7 +299,10 @@ pub fn route_net_maze3d(
     let mut via_cache: Vec<i8> = vec![-1; plane * nl * nl];
     // Occupancy raster: O(1) cell passability, and WIDE↔WIDE edges are legal
     // without touching the oracle at all.
+    let sw_raster = Stopwatch::start();
     let raster = Raster::build(session, &grid, outline, layers, net, half_w);
+    let raster_ms = sw_raster.ms();
+    let sw_search = Stopwatch::start();
     let mut heap = BinaryHeap::new();
 
     let goal_cell = grid.index(ex, ey);
@@ -415,6 +418,22 @@ pub fn route_net_maze3d(
         }
     }
 
+    let search_ms = sw_search.ms();
+    if search_ms + raster_ms > 200.0 {
+        log::debug!(
+            "maze3d slow: net={net} {}x{}x{nl} pitch={:.3} scale={pitch_scale:.2} \
+             pops={pops}/{max_expansions} raster={raster_ms:.0}ms search={search_ms:.0}ms found={}",
+            grid.nx,
+            grid.ny,
+            grid.pitch,
+            found.is_some(),
+        );
+    } else {
+        log::trace!(
+            "maze3d: net={net} pops={pops} raster={raster_ms:.0}ms search={search_ms:.0}ms found={}",
+            found.is_some(),
+        );
+    }
     let Some(goal_node) = found else {
         return RouteResult3d::fail(net);
     };

@@ -25,6 +25,7 @@ use super::congestion::Congestion;
 use super::maze::route_net_maze3d;
 use super::push_shove::{Obstacle, PushShoveRouter};
 use super::route_net_maze;
+use super::Stopwatch;
 
 /// A trace produced by the auto-router.
 #[derive(Debug, Clone, serde::Serialize)]
@@ -352,6 +353,12 @@ pub fn route_all_with_opts(
             )
         };
 
+        log::info!(
+            "negotiation round {}/{rounds}: placed={} pending={} (push_shove={use_push_shove})",
+            round + 1,
+            placed.len(),
+            pending.len(),
+        );
         let last_round = round + 1 == rounds;
         if !last_round && !pending.is_empty() {
             // Raise each still-unrouted net's priority for next round.
@@ -683,6 +690,7 @@ fn route_pass(
             break;
         }
         let placed_before = placed.len();
+        let sw_rip = Stopwatch::start();
         pending = ripup_pass(
             &mut session,
             pcb,
@@ -693,6 +701,13 @@ fn route_pass(
             use_push_shove,
             max_expansions,
             &mut fail_cache,
+        );
+        log::info!(
+            "ripup round: placed {} -> {} pending={} in {:.1}s",
+            placed_before,
+            placed.len(),
+            pending.len(),
+            sw_rip.ms() / 1000.0,
         );
         if placed.len() <= placed_before {
             break;
@@ -749,9 +764,12 @@ fn incremental_round(
         let fb = fail_count.get(&b.0).copied().unwrap_or(0);
         fb.cmp(&fa)
     });
+    let n_stuck = stuck.len();
+    let n_victims = victims.len();
     let mut conns = stuck;
     conns.extend(victims);
 
+    let sw = Stopwatch::start();
     let mut fail_cache = FailCache::new();
     let pending = route_batch(
         &mut session,
@@ -764,6 +782,12 @@ fn incremental_round(
         max_expansions,
         fine_retry,
         &mut fail_cache,
+    );
+    log::info!(
+        "incremental round: stuck={n_stuck} victims_ripped={n_victims} -> placed={} pending={} in {:.1}s",
+        placed.len(),
+        pending.len(),
+        sw.ms() / 1000.0,
     );
 
     (session, placed, pending)
@@ -792,6 +816,8 @@ fn route_batch(
     fail_cache: &mut FailCache,
 ) -> Vec<Conn> {
     const MAX_COMMIT_RETRIES: usize = 3;
+    let sw = Stopwatch::start();
+    let total = conns.len();
     let mut unrouted: Vec<Conn> = Vec::new();
     let mut queue: Vec<(Conn, usize)> = Vec::new();
     // Failure cache: a connection that already failed against a board that
@@ -808,9 +834,16 @@ fn route_batch(
         }
         queue.push(((net, from, to), 0usize));
     }
+    let cache_skips = unrouted.len();
+    let mut batches = 0usize;
+    let mut committed = 0usize;
+    let mut conflicts = 0usize;
     let batch_size = rayon::current_num_threads().max(1) * 2;
     while !queue.is_empty() {
+        batches += 1;
+        let sw_batch = Stopwatch::start();
         let batch: Vec<(Conn, usize)> = queue.drain(..batch_size.min(queue.len())).collect();
+        let batch_len = batch.len();
         let candidates: Vec<Option<Candidate>> = batch
             .par_iter()
             .map(|((net, from, to), _)| {
@@ -836,12 +869,14 @@ fn route_batch(
                 }
                 Some(c) => match validate_and_commit(session, pcb, c, placed) {
                     Some(p) => {
+                        committed += 1;
                         fail_cache.remove(&conn_key(&p.net, p.from, p.to));
                         placed.push(p);
                     }
                     // Conflicted with an earlier commit in this batch: search
                     // again against the grown session.
                     None if attempts < MAX_COMMIT_RETRIES => {
+                        conflicts += 1;
                         queue.push(((net, from, to), attempts + 1));
                     }
                     // Retries exhausted on speculative conflicts: one fresh
@@ -869,6 +904,18 @@ fn route_batch(
                 },
             }
         }
+        log::debug!(
+            "batch {batches}: {batch_len} searched in {:.0}ms (committed {committed}, conflicts {conflicts}, queued {})",
+            sw_batch.ms(),
+            queue.len(),
+        );
+    }
+    if total > 0 {
+        log::info!(
+            "route_batch: {total} conns -> committed={committed} unrouted={} (cache_skips={cache_skips}, conflicts={conflicts}, batches={batches}) in {:.1}s",
+            unrouted.len(),
+            sw.ms() / 1000.0,
+        );
     }
     unrouted
 }
@@ -1735,6 +1782,10 @@ fn ripup_pass(
             continue;
         }
 
+        log::debug!(
+            "ripup: {net} blocked, ripping {} victim route(s)",
+            victim_set.len()
+        );
         // Rip the victims out of `placed` and the session.
         let mut victims = Vec::new();
         let mut kept = Vec::new();
