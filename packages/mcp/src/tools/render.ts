@@ -50,6 +50,21 @@ export const renderViewSchema = {
       description:
         "Target raster width in pixels (default 800, clamped to 64–2048). Ignored when falling back to SVG output.",
     },
+    axes: {
+      type: "boolean" as const,
+      description:
+        "Overlay an X/Y/Z origin gizmo (kernel is Z-up) so the render carries its own orientation. Off by default.",
+    },
+    labels: {
+      type: "boolean" as const,
+      description:
+        "Label each top-level part with its name (leader line to its projected center). Off by default.",
+    },
+    dims: {
+      type: "boolean" as const,
+      description:
+        "Overlay overall W×D×H bounding-box dimensions in mm, drafting-style. Off by default.",
+    },
   },
 };
 
@@ -183,9 +198,25 @@ export async function renderView(
   // "isometric" (stable contract); orthographic views report their own name.
   const viewLabel = view === "iso" ? "isometric" : view;
 
+  const annotations = {
+    axes: args.axes === true,
+    labels: args.labels === true,
+    dims: args.dims === true,
+  };
+  const wantAnnotations =
+    annotations.axes || annotations.labels || annotations.dims;
+
   const wasm = (await getKernelWasm()) as unknown as {
     render_svg: (vcadJson: string, scale: number) => string;
     render_svg_view?: (vcadJson: string, scale: number, view: string) => string;
+    render_svg_annotated?: (
+      vcadJson: string,
+      scale: number,
+      view: string,
+      axes: boolean,
+      labels: boolean,
+      dims: boolean,
+    ) => string;
   };
   if (typeof wasm.render_svg !== "function") {
     return {
@@ -202,9 +233,18 @@ export async function renderView(
   let svg: string;
   try {
     svg =
-      view !== "iso" && typeof wasm.render_svg_view === "function"
-        ? wasm.render_svg_view(JSON.stringify(doc), SVG_SCALE, view)
-        : wasm.render_svg(JSON.stringify(doc), SVG_SCALE);
+      wantAnnotations && typeof wasm.render_svg_annotated === "function"
+        ? wasm.render_svg_annotated(
+            JSON.stringify(doc),
+            SVG_SCALE,
+            view,
+            annotations.axes,
+            annotations.labels,
+            annotations.dims,
+          )
+        : view !== "iso" && typeof wasm.render_svg_view === "function"
+          ? wasm.render_svg_view(JSON.stringify(doc), SVG_SCALE, view)
+          : wasm.render_svg(JSON.stringify(doc), SVG_SCALE);
   } catch (e) {
     // A WebAssembly trap means a kernel panic that did NOT unwind —
     // wasm32 compiles panics to `unreachable`, so the kernel's own
@@ -907,7 +947,7 @@ export const toolDefs: ToolDef[] = [
     name: "render_view",
     pack: null,
     description:
-      "Render an open session document to an isometric PNG image so you can SEE the current geometry — silhouettes, holes, creases — not just numbers. Drafting-style line art, Z-up, same renderer as the vcad CLI. Call after mutations to visually confirm the part matches intent before declaring done.",
+      "Render an open session document to an isometric PNG image so you can SEE the current geometry — silhouettes, holes, creases — not just numbers. Drafting-style line art, Z-up, same renderer as the vcad CLI. Opt-in overlays add engineering context: `axes` (X/Y/Z origin gizmo), `labels` (part names), `dims` (overall W×D×H in mm). Call after mutations to visually confirm the part matches intent before declaring done.",
     inputSchema: renderViewSchema,
     handler: async (a) => (await renderView(a)) as unknown as ToolResult,
     behavior: behavior({}),

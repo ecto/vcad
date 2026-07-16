@@ -48,6 +48,9 @@ vcad-render parts/ --out-dir renders/ --format png    # batch a directory
 | `--scale <N>` | `2.0` | Pixels per millimetre (SVG). Bigger = larger SVG. |
 | `--transparent` | off | Transparent SVG background. |
 | `--sheet` | off | Multi-view drawing sheet instead of a single view (see below). |
+| `--axes` | off | Overlay an X/Y/Z origin gizmo (kernel is Z-up). |
+| `--labels` | off | Label each top-level part with its name. |
+| `--dims` | off | Overlay overall W×D×H bounding-box dimensions in mm. |
 | `-o, --output <PATH>` | stdout | Output path; format inferred from `.svg`/`.jpg`/`.jpeg`/`.png`. `-o -` = SVG on stdout. Single input only. |
 | `--jpeg <PATH>` | — | Legacy alias for `-o <path.jpg>`. |
 | `--out-dir <DIR>` | sibling | Directory for batch outputs. |
