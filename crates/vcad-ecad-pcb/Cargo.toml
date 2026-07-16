@@ -17,6 +17,7 @@ serde_json = { workspace = true }
 toml = { workspace = true }
 thiserror = { workspace = true }
 rstar = { workspace = true }
+rayon = "1.10"
 
 [dev-dependencies]
 vcad-ecad-symbols = { workspace = true }

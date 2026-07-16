@@ -12,6 +12,8 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 
+use rayon::prelude::*;
+
 use vcad_ir::ecad::{Pcb, PcbLayer};
 use vcad_ir::Vec2;
 
@@ -603,25 +605,52 @@ fn route_pass(
     let mut placed: Vec<Placed> = Vec::new();
     let mut unrouted_conns: Vec<Conn> = Vec::new();
 
-    // Greedy pass: route each connection against the growing session.
-    for line in rats {
-        if !nets_filter.is_empty() && !nets_filter.iter().any(|n| n == &line.net) {
-            continue;
-        }
-        match try_route(
-            &mut session,
-            pcb,
-            width,
-            &line.net,
-            line.from,
-            line.to,
-            &placed,
-            cong,
-            use_push_shove,
-            max_expansions,
-        ) {
-            Some(p) => placed.push(p),
-            None => unrouted_conns.push((line.net.clone(), line.from, line.to)),
+    // Greedy pass, speculatively parallel: search a batch of connections
+    // concurrently against a frozen session snapshot (searches only read the
+    // session), then commit sequentially in batch order, re-validating each
+    // candidate against the session as it actually grows. A candidate whose
+    // copper conflicts with an earlier commit in the same batch is requeued
+    // and re-searched against the updated board — the DRC-clean invariant is
+    // untouched because nothing uncommitted is ever trusted. Bounded retries
+    // keep a pathological cluster from ping-ponging.
+    const MAX_COMMIT_RETRIES: usize = 3;
+    let mut queue: Vec<(Conn, usize)> = rats
+        .iter()
+        .filter(|l| nets_filter.is_empty() || nets_filter.iter().any(|n| n == &l.net))
+        .map(|l| ((l.net.clone(), l.from, l.to), 0usize))
+        .collect();
+    let batch_size = rayon::current_num_threads().max(1) * 2;
+    while !queue.is_empty() {
+        let batch: Vec<(Conn, usize)> = queue.drain(..batch_size.min(queue.len())).collect();
+        let candidates: Vec<Option<Candidate>> = batch
+            .par_iter()
+            .map(|((net, from, to), _)| {
+                search_route(
+                    &session,
+                    pcb,
+                    width,
+                    net,
+                    *from,
+                    *to,
+                    cong,
+                    use_push_shove,
+                    max_expansions,
+                )
+            })
+            .collect();
+        for (((net, from, to), attempts), cand) in batch.into_iter().zip(candidates) {
+            match cand {
+                None => unrouted_conns.push((net, from, to)),
+                Some(c) => match validate_and_commit(&mut session, pcb, c, &placed) {
+                    Some(p) => placed.push(p),
+                    // Conflicted with an earlier commit in this batch: search
+                    // again against the grown session.
+                    None if attempts < MAX_COMMIT_RETRIES => {
+                        queue.push(((net, from, to), attempts + 1));
+                    }
+                    None => unrouted_conns.push((net, from, to)),
+                },
+            }
         }
     }
 
@@ -681,14 +710,52 @@ fn try_route(
     use_push_shove: bool,
     max_expansions: usize,
 ) -> Option<Placed> {
+    let cand = search_route(
+        session,
+        pcb,
+        width,
+        net,
+        from,
+        to,
+        cong,
+        use_push_shove,
+        max_expansions,
+    )?;
+    validate_and_commit(session, pcb, cand, placed)
+}
+
+/// A route found by [`search_route`] but not yet committed: the copper it
+/// wants to place, valid against the session it was searched on. Committing
+/// re-validates against the *current* session, so candidates can be searched
+/// in parallel against a frozen snapshot and committed sequentially.
+struct Candidate {
+    net: String,
+    from: Vec2,
+    to: Vec2,
+    width: f64,
+    segments: Vec<(Vec2, Vec2, PcbLayer)>,
+    vias: Vec<(Vec2, PcbLayer, PcbLayer)>,
+}
+
+/// The pure-search half of [`try_route`]: find a clearance-legal route
+/// against `session` without mutating anything.
+#[allow(clippy::too_many_arguments)]
+fn search_route(
+    session: &RouteSession,
+    pcb: &Pcb,
+    width: f64,
+    net: &str,
+    from: Vec2,
+    to: Vec2,
+    cong: &Congestion,
+    use_push_shove: bool,
+    max_expansions: usize,
+) -> Option<Candidate> {
     // Net-class width if the net has one (wider power/ground), else the caller's
     // default. The same width drives the maze search, the committed copper, and
     // the reported trace.
     let w = session.width_for(net, width);
-    let hw = w / 2.0;
     let via_d = pcb.rules.default_rules.via_diameter;
-    let via_r = via_d / 2.0;
-    let clearance = session.clearance_for(net);
     let copper = copper_layers(pcb);
 
     let from_layers = pad_anchor_layers(pcb, from, &copper);
@@ -752,6 +819,46 @@ fn try_route(
         return None;
     };
 
+    Some(Candidate {
+        net: net.to_string(),
+        from,
+        to,
+        width: w,
+        segments,
+        vias: route_vias,
+    })
+}
+
+/// The commit half of [`try_route`]: re-validate a [`Candidate`] against the
+/// *current* session (which may have grown since the search) and commit it.
+/// Returns `None` — mutating nothing — if any of its copper is no longer
+/// legal; the caller re-searches or reports the connection unrouted.
+fn validate_and_commit(
+    session: &mut RouteSession,
+    pcb: &Pcb,
+    cand: Candidate,
+    placed: &[Placed],
+) -> Option<Placed> {
+    let net = cand.net.as_str();
+    let w = cand.width;
+    let hw = w / 2.0;
+    let via_r = pcb.rules.default_rules.via_diameter / 2.0;
+    let clearance = session.clearance_for(net);
+    let copper = copper_layers(pcb);
+    let (segments, route_vias) = (cand.segments, cand.vias);
+
+    // Every segment must still be legal on its own layer.
+    for (a, b, l) in &segments {
+        let seg = CopperGeom::Segment {
+            a: *a,
+            b: *b,
+            half_w: hw,
+        };
+        if !session.probe(&seg, *l, net, clearance).legal {
+            return None;
+        }
+    }
+
     // Probe every via on the copper layers it spans before committing; reuse
     // a same-net via already dropped at the same spot whose span covers the
     // needed one rather than stacking a coincident drill. (The maze probed
@@ -801,8 +908,8 @@ fn try_route(
     }
     Some(Placed {
         net: net.to_string(),
-        from,
-        to,
+        from: cand.from,
+        to: cand.to,
         width: w,
         segments,
         stubs: Vec::new(),
