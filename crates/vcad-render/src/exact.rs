@@ -315,12 +315,7 @@ pub(crate) fn extract(
     let circles = candidate_circles(solid, cam, segments);
     let mut suppressed = vec![false; edges.len()];
     // Per (circle, kind) angular intervals contributed by matched edges.
-    let mut buckets: HashMap<(usize, u8), Vec<(f64, f64)>> = HashMap::new();
-    let kind_tag = |k: EdgeKind| match k {
-        EdgeKind::Outline => 0u8,
-        EdgeKind::Smooth => 1u8,
-        EdgeKind::Crease => 2u8,
-    };
+    let mut buckets: HashMap<(usize, EdgeKind), Vec<(f64, f64)>> = HashMap::new();
 
     for (ei, &(a, b, kind)) in edges.iter().enumerate() {
         let (pa, pb) = (verts[a], verts[b]);
@@ -343,7 +338,7 @@ pub(crate) fn extract(
             }
             start = start.rem_euclid(TAU);
             buckets
-                .entry((ci, kind_tag(kind)))
+                .entry((ci, kind))
                 .or_default()
                 .push((start, start + d));
             suppressed[ei] = true;
@@ -352,12 +347,7 @@ pub(crate) fn extract(
     }
 
     let mut arcs = Vec::new();
-    for ((ci, tag), ivals) in buckets {
-        let kind = match tag {
-            0 => EdgeKind::Outline,
-            1 => EdgeKind::Smooth,
-            _ => EdgeKind::Crease,
-        };
+    for ((ci, kind), ivals) in buckets {
         for (start, end) in merge_intervals(ivals, circles[ci].gap) {
             arcs.push(ArcSpan {
                 circle: ci,

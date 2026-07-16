@@ -561,7 +561,7 @@ fn orient_normals(cm: &CanonMesh, normals: &mut [[f64; 3]]) {
 // ─── per-solid render artifacts (shared by SVG + raster paths) ────────────
 
 /// How a kept edge reads, and how hidden-line removal treats it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum EdgeKind {
     /// A hard model outline: a boundary (open) edge, or a silhouette
     /// between two clearly non-coplanar faces (a box edge, a bore rim at
@@ -802,6 +802,13 @@ fn arc_path_d(
     t0: f64,
     t1: f64,
 ) -> String {
+    // A zero-extent interval (the caller's `d <= 0.0` guard should already
+    // exclude these) would emit an arc with start == end, which renderers
+    // treat inconsistently (no-op vs full ellipse). Emit a bare moveto.
+    if (t1 - t0).abs() < 1e-9 {
+        let (x, y) = p_screen(t0);
+        return format!("M {x:.3} {y:.3}");
+    }
     // M·Mᵀ of the 2×2 linear map [a2 b2].
     let m00 = a2.0 * a2.0 + b2.0 * b2.0;
     let m01 = a2.0 * a2.1 + b2.0 * b2.1;
