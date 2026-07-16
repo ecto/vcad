@@ -705,13 +705,26 @@ async function hasFfmpeg(): Promise<boolean> {
   return ffmpegAvailable;
 }
 
-/** Encode raw RGBA frames to MP4 via ffmpeg stdin pipe. */
-async function encodeMp4(
-  framesRgba: Uint8Array[],
+/**
+ * Streaming MP4 encoder: spawns ffmpeg once and pipes frames to its stdin
+ * as they rasterize, so a full sequence never sits in memory (600 frames
+ * at 1280px is ~4GB of raw RGBA). Exported for tests.
+ */
+export interface Mp4Encoder {
+  /** Write one raw RGBA frame; resolves after backpressure drains. */
+  writeFrame(rgba: Uint8Array): Promise<void>;
+  /** End stdin and resolve with the encoded MP4. */
+  finish(): Promise<Buffer>;
+  /** Kill ffmpeg when the render loop bails early. */
+  abort(): void;
+}
+
+/** Spawn ffmpeg for a rawvideo→mp4 pipe at the given frame geometry. */
+export function startMp4Encoder(
   width: number,
   height: number,
   fps: number,
-): Promise<Buffer> {
+): Mp4Encoder {
   const args = [
     "-y",
     "-f", "rawvideo",
@@ -725,25 +738,64 @@ async function encodeMp4(
     "-f", "mp4",
     "-",
   ];
-  return new Promise<Buffer>((resolve, reject) => {
-    const p = spawn("ffmpeg", args, { stdio: ["pipe", "pipe", "pipe"] });
-    const out: Buffer[] = [];
-    const errChunks: Buffer[] = [];
-    p.stdout.on("data", (c: Buffer) => out.push(c));
-    p.stderr.on("data", (c: Buffer) => errChunks.push(c));
-    p.on("error", reject);
+  const p = spawn("ffmpeg", args, { stdio: ["pipe", "pipe", "pipe"] });
+  const out: Buffer[] = [];
+  const errChunks: Buffer[] = [];
+  let failure: Error | null = null;
+  p.stdout.on("data", (c: Buffer) => out.push(c));
+  p.stderr.on("data", (c: Buffer) => errChunks.push(c));
+  // ffmpeg dying mid-stream EPIPEs stdin; the exit error surfaces instead.
+  p.stdin.on("error", () => {});
+  const exitError = (code: number | null) =>
+    new Error(
+      `ffmpeg exited ${code}: ${Buffer.concat(errChunks).toString().slice(-400)}`,
+    );
+  const done = new Promise<Buffer>((resolve, reject) => {
+    p.on("error", (e) => {
+      failure = e;
+      reject(e);
+    });
     p.on("close", (code) => {
       if (code === 0) resolve(Buffer.concat(out));
-      else
-        reject(
-          new Error(
-            `ffmpeg exited ${code}: ${Buffer.concat(errChunks).toString().slice(-400)}`,
-          ),
-        );
+      else {
+        failure ??= exitError(code);
+        reject(failure);
+      }
     });
-    for (const f of framesRgba) p.stdin.write(f);
-    p.stdin.end();
   });
+  // Callers may abort before awaiting finish(); don't leak a rejection.
+  done.catch(() => {});
+
+  return {
+    writeFrame(rgba: Uint8Array): Promise<void> {
+      return new Promise((resolve, reject) => {
+        if (failure) return reject(failure);
+        if (p.exitCode !== null || p.stdin.destroyed) {
+          return reject(failure ?? exitError(p.exitCode));
+        }
+        if (p.stdin.write(rgba)) return resolve();
+        // Backpressure: wait for drain, but bail if ffmpeg exits first
+        // (drain would never fire and the loop would hang).
+        const onDrain = () => {
+          p.removeListener("close", onClose);
+          resolve();
+        };
+        const onClose = () => {
+          p.stdin.removeListener("drain", onDrain);
+          reject(failure ?? exitError(p.exitCode));
+        };
+        p.once("close", onClose);
+        p.stdin.once("drain", onDrain);
+      });
+    },
+    finish(): Promise<Buffer> {
+      p.stdin.end();
+      return done;
+    },
+    abort(): void {
+      p.kill("SIGKILL");
+    },
+  };
 }
 
 /** Center-pad/crop an RGBA frame to the target dimensions (white fill). */
@@ -895,9 +947,13 @@ export async function exportVideo(
   const gifMod = "mod" in gifLoad ? gifLoad.mod : null;
   if (format === "gif" && gifMod) encoder = gifMod.GIFEncoder();
 
-  const rawFrames: Uint8Array[] = [];
+  let mp4: Mp4Encoder | null = null;
   let size: { width: number; height: number } | null = null;
   const delayMs = Math.max(1, Math.round(1000 / fps));
+  const bail = (message: string): ToolResult => {
+    mp4?.abort();
+    return err(message);
+  };
 
   for (let i = 0; i < frames.length; i++) {
     const frame = frames[i]!;
@@ -911,9 +967,9 @@ export async function exportVideo(
     } catch (e) {
       if (e instanceof WebAssembly.RuntimeError) {
         resetKernelWasm(`render_svg trapped during export_video: ${e.message}`);
-        return err(`kernel trap at frame ${i + 1}/${frames.length}: ${e.message}`);
+        return bail(`kernel trap at frame ${i + 1}/${frames.length}: ${e.message}`);
       }
-      return err(
+      return bail(
         `render failed at frame ${i + 1}/${frames.length}: ${e instanceof Error ? e.message : String(e)}`,
       );
     }
@@ -922,7 +978,7 @@ export async function exportVideo(
     }
     const raster = await rasterize(svg, widthPx);
     if (!raster.rgba) {
-      return err(
+      return bail(
         `rasterization failed at frame ${i + 1}: ${"reason" in raster ? raster.reason : "unknown"}`,
       );
     }
@@ -942,7 +998,17 @@ export async function exportVideo(
         delay: delayMs,
       });
     } else {
-      rawFrames.push(rgba.slice());
+      // Stream each frame straight into ffmpeg — no buffering of the
+      // full sequence in memory. Spawned lazily off the first frame's
+      // dimensions; writeFrame awaits stdin drain (backpressure).
+      mp4 ??= startMp4Encoder(size.width, size.height, fps);
+      try {
+        await mp4.writeFrame(rgba);
+      } catch (e) {
+        return bail(
+          `mp4 encode failed at frame ${i + 1}/${frames.length}: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      }
     }
   }
   if (!size) return err("no frames rendered.");
@@ -956,7 +1022,13 @@ export async function exportVideo(
     mime = "image/gif";
     filename = "sequence.gif";
   } else {
-    bytes = await encodeMp4(rawFrames, size.width, size.height, fps);
+    try {
+      bytes = await mp4!.finish();
+    } catch (e) {
+      return bail(
+        `mp4 encode failed: ${e instanceof Error ? e.message : String(e)}`,
+      );
+    }
     mime = "video/mp4";
     filename = "sequence.mp4";
   }
