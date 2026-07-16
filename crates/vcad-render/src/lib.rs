@@ -2434,25 +2434,25 @@ mod raster {
         // Parallel solid/tint/name columns, kept aligned across a section cut.
         type Columns = (Vec<Solid>, Vec<Option<[f64; 3]>>, Vec<Option<String>>);
         let (solids, tints, names): Columns = match opts.section {
-                Some(plane) => {
-                    let scene: Vec<SceneSolid> = solids
-                        .iter()
-                        .enumerate()
-                        .map(|(i, s)| SceneSolid {
-                            solid: s.clone(),
-                            tint: tints.get(i).copied().flatten(),
-                            name: names.get(i).cloned().flatten(),
-                        })
-                        .collect();
-                    let cut = apply_section(scene, plane, opts.view);
-                    (
-                        cut.iter().map(|s| s.solid.clone()).collect(),
-                        cut.iter().map(|s| s.tint).collect(),
-                        cut.iter().map(|s| s.name.clone()).collect(),
-                    )
-                }
-                None => (solids.to_vec(), tints.to_vec(), names.to_vec()),
-            };
+            Some(plane) => {
+                let scene: Vec<SceneSolid> = solids
+                    .iter()
+                    .enumerate()
+                    .map(|(i, s)| SceneSolid {
+                        solid: s.clone(),
+                        tint: tints.get(i).copied().flatten(),
+                        name: names.get(i).cloned().flatten(),
+                    })
+                    .collect();
+                let cut = apply_section(scene, plane, opts.view);
+                (
+                    cut.iter().map(|s| s.solid.clone()).collect(),
+                    cut.iter().map(|s| s.tint).collect(),
+                    cut.iter().map(|s| s.name.clone()).collect(),
+                )
+            }
+            None => (solids.to_vec(), tints.to_vec(), names.to_vec()),
+        };
         if solids.is_empty() {
             return Err("no solids survive the section plane".to_string());
         }
@@ -3731,9 +3731,15 @@ mod tests {
             axis: Axis::Z,
             coord: 15.0,
         };
-        let svg =
-            render_svg_str_section(hollow_box_vcad(), 4.0, View::Isometric, false, Some(plane), &RenderAnnotations::default())
-                .expect("sectioned hollow box should render");
+        let svg = render_svg_str_section(
+            hollow_box_vcad(),
+            4.0,
+            View::Isometric,
+            false,
+            Some(plane),
+            &RenderAnnotations::default(),
+        )
+        .expect("sectioned hollow box should render");
         assert!(
             svg.contains(r#"<pattern id="section-hatch""#),
             "expected the section hatch pattern def"
@@ -3758,9 +3764,15 @@ mod tests {
             axis: Axis::Z,
             coord: 100.0,
         };
-        let svg =
-            render_svg_str_section(hollow_box_vcad(), 2.0, View::Isometric, false, Some(above), &RenderAnnotations::default())
-                .expect("plane above the part should render it uncut");
+        let svg = render_svg_str_section(
+            hollow_box_vcad(),
+            2.0,
+            View::Isometric,
+            false,
+            Some(above),
+            &RenderAnnotations::default(),
+        )
+        .expect("plane above the part should render it uncut");
         assert!(!svg.contains(r#"fill="url(#section-hatch)""#));
 
         let below = SectionPlane {
@@ -3768,8 +3780,15 @@ mod tests {
             coord: -100.0,
         };
         assert!(
-            render_svg_str_section(hollow_box_vcad(), 2.0, View::Isometric, false, Some(below), &RenderAnnotations::default())
-                .is_err(),
+            render_svg_str_section(
+                hollow_box_vcad(),
+                2.0,
+                View::Isometric,
+                false,
+                Some(below),
+                &RenderAnnotations::default()
+            )
+            .is_err(),
             "plane below the part removes all material"
         );
     }
