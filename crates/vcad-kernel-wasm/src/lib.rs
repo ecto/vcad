@@ -154,6 +154,38 @@ pub fn render_svg_view(vcad_json: &str, scale: f64, view: &str) -> Result<String
     vcad_render::render_svg_str_view(vcad_json, scale, v).map_err(|e| JsError::new(&e))
 }
 
+/// Render a section (cutaway) view: the document cut by an axis-aligned
+/// plane, with exposed cut faces cross-hatched drafting-style.
+///
+/// `section` is `"x=N"`, `"y=N"`, or `"z=N"` (mm) — the half of the
+/// model on the camera's side of the plane is removed. `view` accepts the same names as
+/// [`render_svg_view`]; unrecognized values fall back to isometric. A
+/// solid whose section boolean fails renders uncut rather than failing
+/// the whole render.
+#[wasm_bindgen]
+pub fn render_svg_view_section(
+    vcad_json: &str,
+    scale: f64,
+    view: &str,
+    section: &str,
+) -> Result<String, JsError> {
+    let v = view
+        .parse::<vcad_render::View>()
+        .unwrap_or(vcad_render::View::Isometric);
+    let plane = section
+        .parse::<vcad_render::SectionPlane>()
+        .map_err(|e| JsError::new(&e))?;
+    vcad_render::render_svg_str_section(
+        vcad_json,
+        scale,
+        v,
+        false,
+        Some(plane),
+        &vcad_render::RenderAnnotations::default(),
+    )
+    .map_err(|e| JsError::new(&e))
+}
+
 /// Render raw `.vcad` document JSON to an SVG with opt-in engineering
 /// annotations: an X/Y/Z origin gizmo (`axes`), part-name labels with
 /// leader lines (`labels`), and overall W×D×H bounding-box dimensions in mm

@@ -2206,6 +2206,10 @@
           "type": "number",
           "description": "Target raster width in pixels (default 800, clamped to 64–2048). Ignored when falling back to SVG output."
         },
+        "section": {
+          "type": "string",
+          "description": "Optional section (cutaway) plane: 'x=N', 'y=N', or 'z=N' (mm). The half of the model on the camera's side of the plane is removed and exposed cut faces are cross-hatched — use it to see inside cavities, bores, and wall thicknesses. Composes with `view`."
+        },
         "axes": {
           "type": "boolean",
           "description": "Overlay an X/Y/Z origin gizmo (kernel is Z-up) so the render carries its own orientation. Off by default."

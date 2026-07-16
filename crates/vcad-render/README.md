@@ -35,6 +35,7 @@ mecheval leaderboard defaults to `target/debug/vcad-render`.
 ```bash
 vcad-render path/to/part.vcad > out.svg          # SVG on stdout
 vcad-render part.vcad --scale 4.0 > big.svg
+vcad-render part.vcad --section z=10 > cutaway.svg    # cutaway view
 vcad-render part.vcad -o out.jpg                 # format from extension
 vcad-render part.vcad -o out.png                 # transparent RGBA, 4096px
 vcad-render parts/ --out-dir renders/ --format png    # batch a directory
@@ -45,6 +46,7 @@ vcad-render parts/ --out-dir renders/ --format png    # batch a directory
 | `--view <V>` | `iso` | Camera: `iso`/`front`/`side`/`top`/`hero`. |
 | `--scale <N>` | `2.0` | Pixels per millimetre (SVG). Bigger = larger SVG. |
 | `--transparent` | off | Transparent SVG background. |
+| `--section x=N\|y=N\|z=N` | off | Section (cutaway) view: the half of the model on the camera's side of the plane is boolean-subtracted before rendering (you always look into the cut), and the exposed cut faces are drawn with a 45° drafting hatch. Composes with `--view` and raster output. A solid whose section boolean fails is rendered uncut (noted on stderr) — the render never fails outright. |
 | `--axes` | off | Overlay an X/Y/Z origin gizmo (kernel is Z-up). |
 | `--labels` | off | Label each top-level part with its name. |
 | `--dims` | off | Overlay overall W×D×H bounding-box dimensions in mm. |
