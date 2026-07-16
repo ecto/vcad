@@ -3,12 +3,14 @@
 //! This crate provides WebGPU-based compute shaders for geometry processing:
 //! - Creased normal computation
 //! - Mesh decimation for LOD generation
+//! - Wavefront maze-routing distance fields (autorouter spike)
 
 #![warn(missing_docs)]
 
 mod context;
 mod decimate;
 mod normals;
+pub mod wavefront;
 
 pub use context::{GpuContext, GpuError};
 pub use decimate::{decimate_mesh, DecimationResult};
