@@ -238,6 +238,7 @@ pub fn route_net_maze3d(
     congestion: Option<&Congestion>,
     max_expansions: usize,
     pitch_scale: f64,
+    window: Option<(Vec2, Vec2)>,
 ) -> RouteResult3d {
     let nl = layers.len();
     if nl == 0 {
@@ -247,7 +248,7 @@ pub fn route_net_maze3d(
     let half_w = width / 2.0;
     let via_r = via_diameter / 2.0;
 
-    let grid = Grid::new_scaled(outline, start, end, width, clearance, pitch_scale);
+    let grid = Grid::new_scaled(outline, start, end, width, clearance, pitch_scale, window);
     let plane = grid.nx * grid.ny;
     let (sx, sy) = grid.snap(start);
     let (ex, ey) = grid.snap(end);
@@ -628,12 +629,15 @@ struct Grid {
 
 impl Grid {
     fn new(outline: &[Vec2], start: Vec2, end: Vec2, width: f64, clearance: f64) -> Self {
-        Self::new_scaled(outline, start, end, width, clearance, 1.0)
+        Self::new_scaled(outline, start, end, width, clearance, 1.0, None)
     }
 
     /// [`Grid::new`] with the pitch scaled by `pitch_scale` (and the
     /// grid-size cap scaled inversely, so a finer grid may actually resolve
     /// more cells rather than just re-coarsening back).
+    /// `window`, when given, clips the search area to a corridor instead of
+    /// the whole board — the board outline still bounds legality (cells
+    /// outside it stay blocked), the window only shrinks the grid.
     fn new_scaled(
         outline: &[Vec2],
         start: Vec2,
@@ -641,8 +645,20 @@ impl Grid {
         width: f64,
         clearance: f64,
         pitch_scale: f64,
+        window: Option<(Vec2, Vec2)>,
     ) -> Self {
-        let (mut min, mut max) = if outline.len() >= 3 {
+        let (mut min, mut max) = if let Some((wlo, whi)) = window {
+            // Clip to the board bbox so a generous corridor never exceeds it.
+            if outline.len() >= 3 {
+                let (blo, bhi) = bbox(outline);
+                (
+                    Vec2::new(wlo.x.max(blo.x), wlo.y.max(blo.y)),
+                    Vec2::new(whi.x.min(bhi.x), whi.y.min(bhi.y)),
+                )
+            } else {
+                (wlo, whi)
+            }
+        } else if outline.len() >= 3 {
             bbox(outline)
         } else {
             // Fall back to the start/end span with a margin.
@@ -1050,6 +1066,7 @@ mod tests {
             None,
             0,
             1.0,
+            None,
         );
         assert!(r.success);
         assert!(r.vias.is_empty(), "no reason to leave the start layer");
@@ -1081,6 +1098,7 @@ mod tests {
             None,
             0,
             1.0,
+            None,
         );
         assert!(r.success, "3D search must cross under the wall");
         assert!(
@@ -1139,6 +1157,7 @@ mod tests {
             None,
             0,
             1.0,
+            None,
         );
         assert!(r.success);
         assert!(!r.vias.is_empty());
@@ -1171,6 +1190,7 @@ mod tests {
             None,
             0,
             1.0,
+            None,
         );
         assert!(r.success);
         assert!(!r.vias.is_empty(), "front→back must place a via");

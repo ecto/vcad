@@ -10,7 +10,7 @@
 //! rather than shipping copper that shorts — there is no path here that emits
 //! an un-probed segment or via.
 
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use rayon::prelude::*;
 
@@ -186,12 +186,42 @@ const CONTEST_HALF_WIDTH: f64 = 1.0;
 /// One connection to (re)route: `(net, from, to)`.
 type Conn = (String, Vec2, Vec2);
 
+/// Hashable identity of a connection, for the failure cache.
+type ConnKey = (String, u64, u64, u64, u64);
+
+fn conn_key(net: &str, from: Vec2, to: Vec2) -> ConnKey {
+    (
+        net.to_string(),
+        from.x.to_bits(),
+        from.y.to_bits(),
+        to.x.to_bits(),
+        to.y.to_bits(),
+    )
+}
+
+/// The region a connection's route plausibly threads: its endpoint bbox
+/// inflated by half its span plus a fixed margin. Used with
+/// [`RouteSession::region_epoch`] to decide whether re-searching a previously
+/// failed connection could possibly turn out differently.
+fn conn_region(from: Vec2, to: Vec2) -> ([f64; 2], [f64; 2]) {
+    let margin = 15.0f64.max(dist(from, to) * 0.5);
+    (
+        [from.x.min(to.x) - margin, from.y.min(to.y) - margin],
+        [from.x.max(to.x) + margin, from.y.max(to.y) + margin],
+    )
+}
+
+/// Failed connections and the session epoch their region was at when the
+/// search failed: skip re-searching until copper actually changes nearby.
+type FailCache = HashMap<ConnKey, u64>;
+
 /// The product of one routing pass: the grown session, the placed connections,
 /// and the connections still unrouted after rip-up.
 type Pass = (RouteSession, Vec<Placed>, Vec<Conn>);
 
 /// A connection that has been routed, plus the session spans it occupies —
 /// enough to rip it back out and re-route it.
+#[derive(Clone)]
 struct Placed {
     net: String,
     from: Vec2,
@@ -278,33 +308,49 @@ pub fn route_all_with_opts(
     let mut fail_count: BTreeMap<String, usize> = BTreeMap::new();
 
     for round in 0..rounds {
-        // Order: most-failed nets first (round 0 has none, so it stays
-        // longest-first), breaking ties by length so long runs still lead.
-        let mut ordered = rats.clone();
-        ordered.sort_by(|a, b| {
-            let fa = fail_count.get(&a.net).copied().unwrap_or(0);
-            let fb = fail_count.get(&b.net).copied().unwrap_or(0);
-            fb.cmp(&fa).then_with(|| {
-                dist(b.from, b.to)
-                    .partial_cmp(&dist(a.from, a.to))
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            })
-        });
-
         // Round 0 is the pure baseline (no push-shove); the fallback and the
         // history field are enhancement layers applied from round 1 onward.
         let use_push_shove = opts.use_push_shove && round > 0;
-        let (session, placed, pending) = route_pass(
-            pcb,
-            width,
-            nets_filter,
-            &ordered,
-            &cong,
-            use_push_shove,
-            opts.effective_ripup_rounds(),
-            opts.effective_expansions(),
-            round + 1 == rounds,
-        );
+        let last_round_flag = round + 1 == rounds;
+        let (session, placed, pending) = if round == 0 {
+            // Full pass, longest connections first: the historical baseline.
+            let mut ordered = rats.clone();
+            ordered.sort_by(|a, b| {
+                dist(b.from, b.to)
+                    .partial_cmp(&dist(a.from, a.to))
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            });
+            route_pass(
+                pcb,
+                width,
+                nets_filter,
+                &ordered,
+                &cong,
+                use_push_shove,
+                opts.effective_ripup_rounds(),
+                opts.effective_expansions(),
+                last_round_flag,
+            )
+        } else {
+            // Incremental negotiation: instead of re-routing the whole board
+            // from scratch, take the best pass so far and renegotiate only
+            // what the history field implicates — rip the placed routes that
+            // run through contested corridors, then route the stuck
+            // connections FIRST (PathFinder priority) and the ripped victims
+            // after, all against the otherwise-intact board. A fraction of
+            // the work of a full pass with the same negotiation semantics;
+            // keep-best below still guarantees no regression.
+            incremental_round(
+                best.as_ref().expect("round 0 always seeds best"),
+                pcb,
+                width,
+                &cong,
+                use_push_shove,
+                opts.effective_expansions(),
+                last_round_flag,
+                &fail_count,
+            )
+        };
 
         let last_round = round + 1 == rounds;
         if !last_round && !pending.is_empty() {
@@ -605,6 +651,7 @@ fn route_pass(
 ) -> Pass {
     let mut session = RouteSession::from_pcb(pcb);
     let mut placed: Vec<Placed> = Vec::new();
+    let mut fail_cache: FailCache = FailCache::new();
 
     // Greedy pass, speculatively parallel (see [`route_batch`]).
     let conns: Vec<Conn> = rats
@@ -622,6 +669,7 @@ fn route_pass(
         use_push_shove,
         max_expansions,
         fine_retry,
+        &mut fail_cache,
     );
 
     // Rip-up passes: iterate to convergence (bounded). One pass rips the copper
@@ -644,11 +692,79 @@ fn route_pass(
             cong,
             use_push_shove,
             max_expansions,
+            &mut fail_cache,
         );
         if placed.len() <= placed_before {
             break;
         }
     }
+
+    (session, placed, pending)
+}
+
+/// One incremental negotiation round: clone the best pass, rip the placed
+/// routes running through contested corridors (where the history field has
+/// accumulated cost), then route the stuck connections first — they get first
+/// pick of the freed space, PathFinder's priority rule — and the ripped
+/// victims after. Everything else on the board stays put, so a round costs a
+/// fraction of a whole-board re-route with the same negotiation semantics.
+#[allow(clippy::too_many_arguments)]
+fn incremental_round(
+    base: &Pass,
+    pcb: &Pcb,
+    width: f64,
+    cong: &Congestion,
+    use_push_shove: bool,
+    max_expansions: usize,
+    fine_retry: bool,
+    fail_count: &BTreeMap<String, usize>,
+) -> Pass {
+    let (mut session, placed_base, pending_base) = base.clone();
+
+    // Victims: placed routes with copper inside a contested band.
+    let contested = |p: &Placed| {
+        p.segments.iter().any(|(a, b, _)| {
+            cong.cost_at(*a) > 0.0
+                || cong.cost_at(*b) > 0.0
+                || cong.cost_at(Vec2::new((a.x + b.x) / 2.0, (a.y + b.y) / 2.0)) > 0.0
+        })
+    };
+    let mut placed: Vec<Placed> = Vec::new();
+    let mut victims: Vec<Conn> = Vec::new();
+    for p in placed_base {
+        if contested(&p) {
+            for &s in &p.spans {
+                session.remove(s);
+            }
+            victims.push((p.net, p.from, p.to));
+        } else {
+            placed.push(p);
+        }
+    }
+
+    // Stuck connections first (most-failed leading), victims after.
+    let mut stuck = pending_base;
+    stuck.sort_by(|a, b| {
+        let fa = fail_count.get(&a.0).copied().unwrap_or(0);
+        let fb = fail_count.get(&b.0).copied().unwrap_or(0);
+        fb.cmp(&fa)
+    });
+    let mut conns = stuck;
+    conns.extend(victims);
+
+    let mut fail_cache = FailCache::new();
+    let pending = route_batch(
+        &mut session,
+        pcb,
+        width,
+        conns,
+        &mut placed,
+        cong,
+        use_push_shove,
+        max_expansions,
+        fine_retry,
+        &mut fail_cache,
+    );
 
     (session, placed, pending)
 }
@@ -673,10 +789,25 @@ fn route_batch(
     use_push_shove: bool,
     max_expansions: usize,
     fine_retry: bool,
+    fail_cache: &mut FailCache,
 ) -> Vec<Conn> {
     const MAX_COMMIT_RETRIES: usize = 3;
     let mut unrouted: Vec<Conn> = Vec::new();
-    let mut queue: Vec<(Conn, usize)> = conns.into_iter().map(|c| (c, 0usize)).collect();
+    let mut queue: Vec<(Conn, usize)> = Vec::new();
+    // Failure cache: a connection that already failed against a board that
+    // hasn't changed inside its corridor since would fail identically —
+    // skip the (expensive, often fine-grid) re-search entirely.
+    for (net, from, to) in conns {
+        let key = conn_key(&net, from, to);
+        if let Some(&at) = fail_cache.get(&key) {
+            let (lo, hi) = conn_region(from, to);
+            if session.region_epoch(lo, hi) <= at {
+                unrouted.push((net, from, to));
+                continue;
+            }
+        }
+        queue.push(((net, from, to), 0usize));
+    }
     let batch_size = rayon::current_num_threads().max(1) * 2;
     while !queue.is_empty() {
         let batch: Vec<(Conn, usize)> = queue.drain(..batch_size.min(queue.len())).collect();
@@ -699,9 +830,15 @@ fn route_batch(
             .collect();
         for (((net, from, to), attempts), cand) in batch.into_iter().zip(candidates) {
             match cand {
-                None => unrouted.push((net, from, to)),
+                None => {
+                    fail_cache.insert(conn_key(&net, from, to), session.epoch());
+                    unrouted.push((net, from, to));
+                }
                 Some(c) => match validate_and_commit(session, pcb, c, placed) {
-                    Some(p) => placed.push(p),
+                    Some(p) => {
+                        fail_cache.remove(&conn_key(&p.net, p.from, p.to));
+                        placed.push(p);
+                    }
                     // Conflicted with an earlier commit in this batch: search
                     // again against the grown session.
                     None if attempts < MAX_COMMIT_RETRIES => {
@@ -724,7 +861,10 @@ fn route_batch(
                         max_expansions,
                     ) {
                         Some(p) => placed.push(p),
-                        None => unrouted.push((net, from, to)),
+                        None => {
+                            fail_cache.insert(conn_key(&net, from, to), session.epoch());
+                            unrouted.push((net, from, to));
+                        }
                     },
                 },
             }
@@ -816,7 +956,7 @@ fn search_route(
     // Layer-aware maze A* first, biased away from contested regions by the
     // history field. The search prices vias (VIA_COST) so it stays on one
     // layer when it can and dives only when a detour would cost more.
-    let maze = |pitch_scale: f64| {
+    let maze = |pitch_scale: f64, window: Option<(Vec2, Vec2)>| {
         route_net_maze3d(
             session,
             &pcb.outline.vertices,
@@ -831,18 +971,24 @@ fn search_route(
             Some(cong),
             max_expansions,
             pitch_scale,
+            window,
         )
     };
-    let mut r3 = maze(1.0);
+    let mut r3 = maze(1.0, None);
     if !r3.success && fine_retry {
         // Fine-grid retry: on an HDI board the clear channel between BGA pads
         // can be narrower than the default `width + clearance` pitch, so the
         // coarse grid has no node inside a perfectly routable gap. Only
-        // failures pay for the finer (4x larger) search — and only where the
-        // result can stick (the last negotiation round and rip-up): an early
-        // round's routes are torn up anyway, so 4x searches there are pure
-        // waste.
-        r3 = maze(0.5);
+        // failures pay for the finer search — and only where the result can
+        // stick (the last negotiation round and rip-up): an early round's
+        // routes are torn up anyway. The retry is corridor-bounded (endpoint
+        // bbox + half the span + margin) instead of board-wide, so its finer
+        // pitch buys resolution where the route lives, not area.
+        let (lo, hi) = conn_region(from, to);
+        r3 = maze(
+            0.5,
+            Some((Vec2::new(lo[0], lo[1]), Vec2::new(hi[0], hi[1]))),
+        );
     }
     let (segments, route_vias) = if r3.success && !r3.segments.is_empty() {
         (r3.segments, r3.vias)
@@ -1550,6 +1696,7 @@ fn ripup_pass(
     cong: &Congestion,
     use_push_shove: bool,
     max_expansions: usize,
+    fail_cache: &mut FailCache,
 ) -> Vec<Conn> {
     let hw = width / 2.0;
     let copper = copper_layers(pcb);
@@ -1637,6 +1784,7 @@ fn ripup_pass(
             use_push_shove,
             max_expansions,
             true,
+            fail_cache,
         ));
     }
 
