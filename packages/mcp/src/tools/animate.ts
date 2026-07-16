@@ -776,12 +776,16 @@ export function startMp4Encoder(
         if (p.stdin.write(rgba)) return resolve();
         // Backpressure: wait for drain, but bail if ffmpeg exits first
         // (drain would never fire and the loop would hang).
-        const onClose = () => reject(failure ?? exitError(p.exitCode));
-        p.once("close", onClose);
-        p.stdin.once("drain", () => {
+        const onDrain = () => {
           p.removeListener("close", onClose);
           resolve();
-        });
+        };
+        const onClose = () => {
+          p.stdin.removeListener("drain", onDrain);
+          reject(failure ?? exitError(p.exitCode));
+        };
+        p.once("close", onClose);
+        p.stdin.once("drain", onDrain);
       });
     },
     finish(): Promise<Buffer> {
@@ -1021,7 +1025,7 @@ export async function exportVideo(
     try {
       bytes = await mp4!.finish();
     } catch (e) {
-      return err(
+      return bail(
         `mp4 encode failed: ${e instanceof Error ? e.message : String(e)}`,
       );
     }
