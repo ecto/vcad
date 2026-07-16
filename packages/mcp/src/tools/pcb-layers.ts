@@ -14,6 +14,7 @@ import type { PcbLayer } from "@vcad/ir";
 /** Every legal PCB layer name, in board order. */
 export const PCB_LAYERS: readonly PcbLayer[] = [
   "FCu", "BCu", "In1Cu", "In2Cu", "In3Cu", "In4Cu", "In5Cu", "In6Cu",
+  "In7Cu", "In8Cu",
   "FSilkS", "BSilkS", "FMask", "BMask", "FPaste", "BPaste",
   "FFab", "BFab", "FCrtYd", "BCrtYd",
   "EdgeCuts", "UserDrawings", "UserComments",

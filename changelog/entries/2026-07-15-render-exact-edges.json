@@ -1,0 +1,9 @@
+{
+  "id": "2026-07-15-render-exact-edges",
+  "version": "0.9.4",
+  "date": "2026-07-15",
+  "category": "feat",
+  "title": "BRep-exact SVG linework in vcad-render",
+  "summary": "New --exact-edges flag renders circular edges (cylinder/cone rims, drilled holes) and sphere outlines as mathematically exact SVG elliptical arcs instead of tessellated polylines — no faceting at any zoom.",
+  "features": ["render", "svg", "brep", "exact-edges"]
+}

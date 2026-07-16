@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-15-render-orbit-camera",
+  "version": "0.9.4",
+  "date": "2026-07-15",
+  "category": "feat",
+  "title": "Arbitrary orbit camera and part focus for renders",
+  "summary": "render_view (and the vcad-render CLI) now accept azimuth/elevation angles for any orthographic orbit view, plus a focus parameter that frames the render on a named part's bounding box.",
+  "features": ["rendering", "agent-eyes", "camera"],
+  "mcpTools": ["render_view"]
+}

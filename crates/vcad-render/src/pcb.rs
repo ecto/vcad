@@ -309,6 +309,8 @@ fn layer_color(layer: PcbLayer, p: &Palette) -> &'static str {
         PcbLayer::In4Cu => p.inner_cu[3],
         PcbLayer::In5Cu => p.inner_cu[4],
         PcbLayer::In6Cu => p.inner_cu[5],
+        PcbLayer::In7Cu => p.inner_cu[0],
+        PcbLayer::In8Cu => p.inner_cu[1],
         PcbLayer::FSilkS => p.f_silk,
         PcbLayer::BSilkS => p.b_silk,
         PcbLayer::FMask => p.f_mask,

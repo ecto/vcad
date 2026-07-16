@@ -15,7 +15,7 @@ import {
   applyToolOutcome,
   listPartsFromDocument,
 } from "@vcad/core";
-import { getSession } from "./session.js";
+import { getSession, recordLastChanged } from "./session.js";
 import { appendIntegrity, computeIntegrity } from "./integrity.js";
 import {
   describeSceneResult,
@@ -410,6 +410,12 @@ export function dispatchRegistryTool(
   const changed = diffParts(before, snapshotParts(doc));
   if (changed) {
     appendChanged(result, changed);
+    // Remember what this mutation touched so `render_view
+    // {highlight_changed: true}` can spotlight it.
+    recordLastChanged(documentId, [
+      ...changed.added.map((p) => p.part_id),
+      ...changed.modified.map((p) => p.part_id),
+    ]);
     // Every mutation carries its own integrity certificate (volume, bbox,
     // CoM, watertightness, CoM-vs-pattern-axis): silently corrupt geometry
     // must be visible in the mutation response, not only via an

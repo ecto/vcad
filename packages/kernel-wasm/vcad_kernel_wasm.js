@@ -4493,14 +4493,15 @@ export function ecadResolvePartDef(name, footprint) {
  * @param {string} pcb_json
  * @param {number} width
  * @param {string} nets_filter_json
+ * @param {number | null} [effort]
  * @returns {any}
  */
-export function ecadRouteAll(pcb_json, width, nets_filter_json) {
+export function ecadRouteAll(pcb_json, width, nets_filter_json, effort) {
     const ptr0 = passStringToWasm0(pcb_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len0 = WASM_VECTOR_LEN;
     const ptr1 = passStringToWasm0(nets_filter_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len1 = WASM_VECTOR_LEN;
-    const ret = wasm.ecadRouteAll(ptr0, len0, width, ptr1, len1);
+    const ret = wasm.ecadRouteAll(ptr0, len0, width, ptr1, len1, !isLikeNone(effort), isLikeNone(effort) ? 0 : effort);
     if (ret[2]) {
         throw takeFromExternrefTable0(ret[1]);
     }
@@ -6010,12 +6011,107 @@ export function render_svg(vcad_json, scale) {
 }
 
 /**
+ * Render raw `.vcad` document JSON to an SVG with opt-in engineering
+ * annotations: an X/Y/Z origin gizmo (`axes`), part-name labels with
+ * leader lines (`labels`), and overall W×D×H bounding-box dimensions in mm
+ * (`dims`). With all three flags false the output matches
+ * [`render_svg_view`] exactly. `view` parses as in [`render_svg_view`].
+ * @param {string} vcad_json
+ * @param {number} scale
+ * @param {string} view
+ * @param {boolean} axes
+ * @param {boolean} labels
+ * @param {boolean} dims
+ * @returns {string}
+ */
+export function render_svg_annotated(vcad_json, scale, view, axes, labels, dims) {
+    let deferred4_0;
+    let deferred4_1;
+    try {
+        const ptr0 = passStringToWasm0(vcad_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(view, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.render_svg_annotated(ptr0, len0, scale, ptr1, len1, axes, labels, dims);
+        var ptr3 = ret[0];
+        var len3 = ret[1];
+        if (ret[3]) {
+            ptr3 = 0; len3 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred4_0 = ptr3;
+        deferred4_1 = len3;
+        return getStringFromWasm0(ptr3, len3);
+    } finally {
+        wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
+    }
+}
+
+/**
+ * Render raw `.vcad` document JSON to an SVG with the full [`SvgOptions`]
+ * surface in one call: arbitrary camera, part focus, section cutaway,
+ * changed-part highlight, and engineering annotations. This is the superset
+ * the MCP `render_view` "agent eyes" path drives; the narrower
+ * `render_svg_view*` / `render_svg_annotated` bindings remain for older
+ * callers.
+ *
+ * `view` accepts everything [`render_svg_view`] does, including
+ * `"orbit:<azimuth>,<elevation>"` (degrees, Z-up); an unparseable view
+ * string is an error here rather than a silent isometric fallback.
+ * `focus`, when non-empty, frames the render on that part's bounding box
+ * (matched case-insensitively against root node names, assembly instance
+ * ids/names, and part-definition ids). `section`, when non-empty, is
+ * `"x=N"`/`"y=N"`/`"z=N"` (mm) for a cutaway. `highlight_json` is a JSON
+ * string array of part ids/names to spotlight (empty array = none).
+ * `axes`/`labels`/`dims` overlay the engineering annotations.
+ * @param {string} vcad_json
+ * @param {number} scale
+ * @param {string} view
+ * @param {string | null | undefined} focus
+ * @param {boolean} axes
+ * @param {boolean} labels
+ * @param {boolean} dims
+ * @param {string | null} [section]
+ * @param {string | null} [highlight_json]
+ * @returns {string}
+ */
+export function render_svg_camera(vcad_json, scale, view, focus, axes, labels, dims, section, highlight_json) {
+    let deferred7_0;
+    let deferred7_1;
+    try {
+        const ptr0 = passStringToWasm0(vcad_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(view, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        var ptr2 = isLikeNone(focus) ? 0 : passStringToWasm0(focus, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len2 = WASM_VECTOR_LEN;
+        var ptr3 = isLikeNone(section) ? 0 : passStringToWasm0(section, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len3 = WASM_VECTOR_LEN;
+        var ptr4 = isLikeNone(highlight_json) ? 0 : passStringToWasm0(highlight_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        var len4 = WASM_VECTOR_LEN;
+        const ret = wasm.render_svg_camera(ptr0, len0, scale, ptr1, len1, ptr2, len2, axes, labels, dims, ptr3, len3, ptr4, len4);
+        var ptr6 = ret[0];
+        var len6 = ret[1];
+        if (ret[3]) {
+            ptr6 = 0; len6 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred7_0 = ptr6;
+        deferred7_1 = len6;
+        return getStringFromWasm0(ptr6, len6);
+    } finally {
+        wasm.__wbindgen_free(deferred7_0, deferred7_1, 1);
+    }
+}
+
+/**
  * Render raw `.vcad` document JSON to an SVG from a named orthographic view.
  *
- * `view` accepts `"iso"`/`"isometric"`/`"hero"`, `"top"`, `"front"`, or
- * `"side"` (case-insensitive); anything unrecognized falls back to isometric.
- * Gives agents a flat top-down or elevation look at a part, not just the
- * default 3/4 isometric.
+ * `view` accepts `"iso"`/`"isometric"`/`"hero"`, `"top"`, `"front"`,
+ * `"side"`, or an arbitrary orbit camera as `"orbit:<azimuth>,<elevation>"`
+ * (degrees, Z-up — e.g. `"orbit:35,25"`); anything unrecognized falls back
+ * to isometric. Gives agents a flat top-down or elevation look at a part,
+ * not just the default 3/4 isometric.
  * @param {string} vcad_json
  * @param {number} scale
  * @param {string} view
@@ -6041,6 +6137,87 @@ export function render_svg_view(vcad_json, scale, view) {
         return getStringFromWasm0(ptr3, len3);
     } finally {
         wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
+    }
+}
+
+/**
+ * Render raw `.vcad` document JSON to an SVG with a highlight set — the
+ * "what did my edit just touch" render.
+ *
+ * `highlight_json` is a JSON array of part identifiers (root node ids as
+ * reported in a mutation's `changed` diff, node names, or assembly
+ * instance ids/names). Highlighted parts keep their full material colour
+ * and gain a brand-orange accent outline; every other part is ghosted
+ * toward the paper. An empty array renders normally; a non-empty set that
+ * matches no part is an error listing the document's parts.
+ * @param {string} vcad_json
+ * @param {number} scale
+ * @param {string} view
+ * @param {string} highlight_json
+ * @returns {string}
+ */
+export function render_svg_view_highlight(vcad_json, scale, view, highlight_json) {
+    let deferred5_0;
+    let deferred5_1;
+    try {
+        const ptr0 = passStringToWasm0(vcad_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(view, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passStringToWasm0(highlight_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len2 = WASM_VECTOR_LEN;
+        const ret = wasm.render_svg_view_highlight(ptr0, len0, scale, ptr1, len1, ptr2, len2);
+        var ptr4 = ret[0];
+        var len4 = ret[1];
+        if (ret[3]) {
+            ptr4 = 0; len4 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred5_0 = ptr4;
+        deferred5_1 = len4;
+        return getStringFromWasm0(ptr4, len4);
+    } finally {
+        wasm.__wbindgen_free(deferred5_0, deferred5_1, 1);
+    }
+}
+
+/**
+ * Render a section (cutaway) view: the document cut by an axis-aligned
+ * plane, with exposed cut faces cross-hatched drafting-style.
+ *
+ * `section` is `"x=N"`, `"y=N"`, or `"z=N"` (mm) — the half of the
+ * model on the camera's side of the plane is removed. `view` accepts the same names as
+ * [`render_svg_view`]; unrecognized values fall back to isometric. A
+ * solid whose section boolean fails renders uncut rather than failing
+ * the whole render.
+ * @param {string} vcad_json
+ * @param {number} scale
+ * @param {string} view
+ * @param {string} section
+ * @returns {string}
+ */
+export function render_svg_view_section(vcad_json, scale, view, section) {
+    let deferred5_0;
+    let deferred5_1;
+    try {
+        const ptr0 = passStringToWasm0(vcad_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(view, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passStringToWasm0(section, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len2 = WASM_VECTOR_LEN;
+        const ret = wasm.render_svg_view_section(ptr0, len0, scale, ptr1, len1, ptr2, len2);
+        var ptr4 = ret[0];
+        var len4 = ret[1];
+        if (ret[3]) {
+            ptr4 = 0; len4 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred5_0 = ptr4;
+        deferred5_1 = len4;
+        return getStringFromWasm0(ptr4, len4);
+    } finally {
+        wasm.__wbindgen_free(deferred5_0, deferred5_1, 1);
     }
 }
 
@@ -8421,12 +8598,12 @@ function __wbg_get_imports() {
             arg0.writeTexture(arg1, arg2, arg3, arg4);
         },
         __wbindgen_cast_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 2729, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 2730, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 2757, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 2758, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen_6dc29d3b0fc4fccd___closure__destroy___dyn_core_7d5f0a2ba6a62c33___ops__function__FnMut__wgpu_c488dbbed5add906___backend__webgpu__webgpu_sys__gen_GpuUncapturedErrorEvent__GpuUncapturedErrorEvent____Output_______, wasm_bindgen_6dc29d3b0fc4fccd___convert__closures_____invoke___wgpu_c488dbbed5add906___backend__webgpu__webgpu_sys__gen_GpuUncapturedErrorEvent__GpuUncapturedErrorEvent_____);
             return ret;
         },
         __wbindgen_cast_0000000000000002: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 3426, function: Function { arguments: [Externref], shim_idx: 3427, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 3454, function: Function { arguments: [Externref], shim_idx: 3455, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen_6dc29d3b0fc4fccd___closure__destroy___dyn_core_7d5f0a2ba6a62c33___ops__function__FnMut__wasm_bindgen_6dc29d3b0fc4fccd___JsValue____Output_______, wasm_bindgen_6dc29d3b0fc4fccd___convert__closures_____invoke___wasm_bindgen_6dc29d3b0fc4fccd___JsValue_____);
             return ret;
         },

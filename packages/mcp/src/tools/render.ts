@@ -16,7 +16,7 @@ import { getKernelWasm, resetKernelWasm, computeRatsnest } from "@vcad/engine";
 import type { NetlistResult } from "@vcad/engine";
 import { getNodePcb, getPcbNodeIds } from "@vcad/core";
 import type { Document, Pcb } from "@vcad/ir";
-import { getSession, resolveDocInput } from "./session.js";
+import { getSession, resolveDocInput, getLastChanged } from "./session.js";
 import { validatePcb, pcbValidationError } from "./pcb-validate.js";
 import { behavior, type ToolDef } from "./tool-def.js";
 import type { ToolResult } from "./tool-result.js";
@@ -43,12 +43,32 @@ export const renderViewSchema = {
       type: "string" as const,
       enum: ["iso", "isometric", "top", "front", "side"],
       description:
-        "Camera view: 'iso' (default, 3/4 isometric), or an orthographic 'top' / 'front' / 'side' elevation. Use 'top' to read a part flat from above.",
+        "Camera view: 'iso' (default, 3/4 isometric), or an orthographic 'top' / 'front' / 'side' elevation. Use 'top' to read a part flat from above. Ignored when azimuth/elevation are given.",
+    },
+    azimuth: {
+      type: "number" as const,
+      description:
+        "Orbit camera azimuth in degrees, CCW from +X in the XY plane (Z-up). Providing azimuth and/or elevation selects an arbitrary orthographic orbit view (missing angle defaults to 0) and overrides `view`.",
+    },
+    elevation: {
+      type: "number" as const,
+      description:
+        "Orbit camera elevation in degrees above the XY plane, clamped to [-90, 90]. See `azimuth`.",
+    },
+    focus: {
+      type: "string" as const,
+      description:
+        "Frame the render on this part instead of the whole document — matched case-insensitively against root part names, assembly instance ids/names, and part-definition ids. Geometry outside the focused part's bounds is cropped.",
     },
     width_px: {
       type: "number" as const,
       description:
         "Target raster width in pixels (default 800, clamped to 64–2048). Ignored when falling back to SVG output.",
+    },
+    section: {
+      type: "string" as const,
+      description:
+        "Optional section (cutaway) plane: 'x=N', 'y=N', or 'z=N' (mm). The half of the model on the camera's side of the plane is removed and exposed cut faces are cross-hatched — use it to see inside cavities, bores, and wall thicknesses. Composes with `view`.",
     },
     axes: {
       type: "boolean" as const,
@@ -64,6 +84,17 @@ export const renderViewSchema = {
       type: "boolean" as const,
       description:
         "Overlay overall W×D×H bounding-box dimensions in mm, drafting-style. Off by default.",
+    },
+    highlight: {
+      type: "array" as const,
+      items: { type: "string" as const },
+      description:
+        "Part ids (from a mutation's `changed` diff) or part names to spotlight: they keep full material color plus a brand-orange accent outline while every other part is ghosted. Errors if nothing matches.",
+    },
+    highlight_changed: {
+      type: "boolean" as const,
+      description:
+        "Highlight the parts touched by this session's most recent mutation (the last `changed` diff) — the one-flag way to see what your last edit did. Ignored when `highlight` is passed explicitly.",
     },
   },
 };
@@ -194,9 +225,45 @@ export async function renderView(
         ? viewRaw
         : "iso"
   ) as "iso" | "top" | "front" | "side";
+
+  // Arbitrary orbit camera: azimuth/elevation (degrees, Z-up) override the
+  // named view. A missing angle defaults to 0.
+  const azRaw = args.azimuth === undefined ? undefined : Number(args.azimuth);
+  const elRaw = args.elevation === undefined ? undefined : Number(args.elevation);
+  const hasOrbit =
+    (azRaw !== undefined && Number.isFinite(azRaw)) ||
+    (elRaw !== undefined && Number.isFinite(elRaw));
+  const azimuth = azRaw !== undefined && Number.isFinite(azRaw) ? azRaw : 0;
+  const elevation = elRaw !== undefined && Number.isFinite(elRaw) ? elRaw : 0;
+  const viewStr = hasOrbit ? `orbit:${azimuth},${elevation}` : view;
+
+  const focusRaw = typeof args.focus === "string" ? args.focus.trim() : "";
+  const focus = focusRaw.length > 0 ? focusRaw : undefined;
+
   // Canonical label for the result payload — the default view is reported as
   // "isometric" (stable contract); orthographic views report their own name.
-  const viewLabel = view === "iso" ? "isometric" : view;
+  const viewLabel = hasOrbit
+    ? `orbit(azimuth=${azimuth}, elevation=${elevation})`
+    : view === "iso"
+      ? "isometric"
+      : view;
+
+  // Optional section (cutaway) plane: "x=N" | "y=N" | "z=N".
+  const sectionRaw = typeof args.section === "string" ? args.section.trim() : "";
+  if (sectionRaw && !/^[xyz]\s*=\s*-?\d+(\.\d+)?$/i.test(sectionRaw)) {
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify({
+            error: `invalid section '${sectionRaw}' — expected 'x=N', 'y=N', or 'z=N' (mm)`,
+            document_id: documentId,
+          }),
+        },
+      ],
+      isError: true,
+    };
+  }
 
   const annotations = {
     axes: args.axes === true,
@@ -206,9 +273,50 @@ export async function renderView(
   const wantAnnotations =
     annotations.axes || annotations.labels || annotations.dims;
 
+  // Resolve the highlight set: an explicit `highlight` list wins; otherwise
+  // `highlight_changed` pulls the part ids from the session's most recent
+  // mutation diff. A requested-but-unresolvable highlight is a loud error,
+  // never a silently unhighlighted render.
+  let highlight: string[] = Array.isArray(args.highlight)
+    ? (args.highlight as unknown[]).map(String)
+    : [];
+  if (highlight.length === 0 && args.highlight_changed === true) {
+    const last = documentId ? getLastChanged(documentId) : null;
+    if (!last || last.length === 0) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({
+              error:
+                "highlight_changed requested but this session has no recorded mutation diff" +
+                (documentId ? "" : " (inline documents have no session history)"),
+              document_id: documentId,
+              hint: "Make an edit first, or pass explicit part ids via `highlight`.",
+            }),
+          },
+        ],
+        isError: true,
+      };
+    }
+    highlight = last;
+  }
+
   const wasm = (await getKernelWasm()) as unknown as {
     render_svg: (vcadJson: string, scale: number) => string;
     render_svg_view?: (vcadJson: string, scale: number, view: string) => string;
+    render_svg_view_highlight?: (
+      vcadJson: string,
+      scale: number,
+      view: string,
+      highlightJson: string,
+    ) => string;
+    render_svg_view_section?: (
+      vcadJson: string,
+      scale: number,
+      view: string,
+      section: string,
+    ) => string;
     render_svg_annotated?: (
       vcadJson: string,
       scale: number,
@@ -216,6 +324,17 @@ export async function renderView(
       axes: boolean,
       labels: boolean,
       dims: boolean,
+    ) => string;
+    render_svg_camera?: (
+      vcadJson: string,
+      scale: number,
+      view: string,
+      focus: string | null,
+      axes: boolean,
+      labels: boolean,
+      dims: boolean,
+      section: string | null,
+      highlightJson: string | null,
     ) => string;
   };
   if (typeof wasm.render_svg !== "function") {
@@ -230,21 +349,104 @@ export async function renderView(
     };
   }
 
+  // render_svg_camera is the full superset (orbit + focus + annotations +
+  // section + highlight). Prefer it for everything; the narrower bindings are
+  // only fallbacks for a single feature on an older WASM build.
+  const hasCamera = typeof wasm.render_svg_camera === "function";
+  // Orbit and focus have no legacy binding — they require the superset.
+  if ((hasOrbit || focus !== undefined) && !hasCamera) {
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify({
+            error:
+              "azimuth/elevation/focus unavailable: kernel WASM build predates render_svg_camera — rebuild @vcad/kernel-wasm.",
+            document_id: documentId,
+          }),
+        },
+      ],
+      isError: true,
+    };
+  }
+  if (
+    sectionRaw &&
+    !hasCamera &&
+    typeof wasm.render_svg_view_section !== "function"
+  ) {
+    return {
+      content: [
+        {
+          type: "text",
+          text: "section views unavailable: kernel WASM build predates render_svg_view_section — rebuild @vcad/kernel-wasm.",
+        },
+      ],
+      isError: true,
+    };
+  }
+  if (
+    highlight.length > 0 &&
+    !hasCamera &&
+    typeof wasm.render_svg_view_highlight !== "function"
+  ) {
+    return {
+      content: [
+        {
+          type: "text",
+          text: "render_view highlight unavailable: kernel WASM build predates render_svg_view_highlight — rebuild vcad-kernel-wasm.",
+        },
+      ],
+      isError: true,
+    };
+  }
+
+  const needsCamera =
+    hasOrbit ||
+    focus !== undefined ||
+    wantAnnotations ||
+    sectionRaw !== "" ||
+    highlight.length > 0;
+
   let svg: string;
   try {
+    // Prefer the superset binding when any feature is requested; otherwise
+    // fall back to the narrowest binding that serves the single requested
+    // feature (section → highlight → annotations → named view → plain).
     svg =
-      wantAnnotations && typeof wasm.render_svg_annotated === "function"
-        ? wasm.render_svg_annotated(
+      needsCamera && hasCamera
+        ? wasm.render_svg_camera!(
             JSON.stringify(doc),
             SVG_SCALE,
-            view,
+            viewStr,
+            focus ?? null,
             annotations.axes,
             annotations.labels,
             annotations.dims,
+            sectionRaw || null,
+            highlight.length > 0 ? JSON.stringify(highlight) : null,
           )
-        : view !== "iso" && typeof wasm.render_svg_view === "function"
-          ? wasm.render_svg_view(JSON.stringify(doc), SVG_SCALE, view)
-          : wasm.render_svg(JSON.stringify(doc), SVG_SCALE);
+        : sectionRaw && typeof wasm.render_svg_view_section === "function"
+          ? wasm.render_svg_view_section(JSON.stringify(doc), SVG_SCALE, view, sectionRaw)
+          : highlight.length > 0 &&
+              typeof wasm.render_svg_view_highlight === "function"
+            ? wasm.render_svg_view_highlight(
+                JSON.stringify(doc),
+                SVG_SCALE,
+                view,
+                JSON.stringify(highlight),
+              )
+            : wantAnnotations && typeof wasm.render_svg_annotated === "function"
+              ? wasm.render_svg_annotated(
+                  JSON.stringify(doc),
+                  SVG_SCALE,
+                  view,
+                  annotations.axes,
+                  annotations.labels,
+                  annotations.dims,
+                )
+              : view !== "iso" && typeof wasm.render_svg_view === "function"
+                ? wasm.render_svg_view(JSON.stringify(doc), SVG_SCALE, view)
+                : wasm.render_svg(JSON.stringify(doc), SVG_SCALE);
   } catch (e) {
     // A WebAssembly trap means a kernel panic that did NOT unwind —
     // wasm32 compiles panics to `unreachable`, so the kernel's own
@@ -285,11 +487,15 @@ export async function renderView(
 
   const raster = await rasterize(svg, widthPx);
   if (raster.png) {
+    const viewSlug = hasOrbit ? `orbit-${azimuth}-${elevation}` : viewLabel;
+    const sectionSlug = sectionRaw
+      ? `-section-${sectionRaw.replace(/[^a-z0-9.-]/gi, "")}`
+      : "";
     const asset = makePngRenderAsset(raster.png, {
       tool: "render_view",
-      filename: `${documentId || "inline"}-${viewLabel}-${widthPx}.png`,
+      filename: `${documentId || "inline"}-${viewSlug}${sectionSlug}-${widthPx}.png`,
       width: widthPx,
-      alt: `vcad ${viewLabel} render`,
+      alt: `vcad ${viewLabel}${sectionRaw ? " section" : ""} render`,
     });
     return withRenderAssets<RenderViewResult>({
       content: [
@@ -303,8 +509,11 @@ export async function renderView(
           text: JSON.stringify({
             document_id: documentId,
             view: viewLabel,
+            ...(focus ? { focus } : {}),
+            ...(sectionRaw ? { section: sectionRaw } : {}),
             width_px: widthPx,
             format: "png",
+            ...(highlight.length > 0 ? { highlight } : {}),
             asset: renderAssetSummary(asset),
             suggested_final_markdown: asset.markdown,
           }),
@@ -327,7 +536,10 @@ export async function renderView(
         text: JSON.stringify({
           document_id: documentId,
           view: viewLabel,
+          ...(focus ? { focus } : {}),
+          ...(sectionRaw ? { section: sectionRaw } : {}),
           format: "svg",
+          ...(highlight.length > 0 ? { highlight } : {}),
           note,
           ...(svgBytes <= MAX_INLINE_SVG_BYTES
             ? { svg }
@@ -947,7 +1159,7 @@ export const toolDefs: ToolDef[] = [
     name: "render_view",
     pack: null,
     description:
-      "Render an open session document to an isometric PNG image so you can SEE the current geometry — silhouettes, holes, creases — not just numbers. Drafting-style line art, Z-up, same renderer as the vcad CLI. Opt-in overlays add engineering context: `axes` (X/Y/Z origin gizmo), `labels` (part names), `dims` (overall W×D×H in mm). Call after mutations to visually confirm the part matches intent before declaring done.",
+      "Render an open session document to a PNG image so you can SEE the current geometry — silhouettes, holes, creases — not just numbers. Drafting-style line art, Z-up, same renderer as the vcad CLI. Defaults to isometric; pass azimuth/elevation for an arbitrary orbit view, and focus to frame a single part. Opt-in overlays add engineering context: `axes` (X/Y/Z origin gizmo), `labels` (part names), `dims` (overall W×D×H in mm). Call after mutations to visually confirm the part matches intent before declaring done.",
     inputSchema: renderViewSchema,
     handler: async (a) => (await renderView(a)) as unknown as ToolResult,
     behavior: behavior({}),

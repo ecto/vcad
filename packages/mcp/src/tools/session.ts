@@ -226,6 +226,31 @@ export function undoLastSnapshot(documentId: string): Document | null {
 /** Drop a session's undo history (on close/drop) so it can't outlive the doc. */
 export function clearHistory(documentId: string): void {
   sessionHistory.delete(documentId);
+  lastChangedParts.delete(documentId);
+}
+
+// ─── Last mutation diff (per session) ─────────────────────────────────────────
+//
+// Every mutation result carries a `changed` diff of the parts it touched; this
+// map remembers the most recent one so `render_view {highlight_changed: true}`
+// can spotlight exactly those parts without the agent re-plumbing ids. Process-
+// local, like the undo stack: after an instance flip there is no "last
+// mutation", and render_view reports that instead of guessing.
+
+/** document_id → part ids from the most recent mutation's `changed` diff
+ *  (added + modified; removed parts no longer exist to highlight). */
+const lastChangedParts = new Map<string, string[]>();
+
+/** Record the part ids a mutation just touched (added + modified). */
+export function recordLastChanged(documentId: string, partIds: string[]): void {
+  if (!documentId) return;
+  lastChangedParts.set(documentId, partIds);
+}
+
+/** Part ids from the session's most recent mutation diff, or null when no
+ *  mutation has been recorded on this instance. */
+export function getLastChanged(documentId: string): string[] | null {
+  return lastChangedParts.get(documentId) ?? null;
 }
 
 // ─── Durable cache ⇄ store bridge ─────────────────────────────────────────────

@@ -140,7 +140,7 @@ Loft interpolates a solid through a sequence of cross-sections:
 
 ### Direct BRep Ray Tracing
 
-`vcad-kernel-raytrace` renders BReps pixel-perfectly *without* tessellation: analytic ray intersection against every surface type, SAH-built BVH acceleration, and trimmed-surface handling, running as a WebGPU compute pipeline in the app's ray-traced view mode.
+`vcad-kernel-raytrace` renders BReps pixel-perfectly *without* tessellation: analytic ray intersection against every surface type, SAH-built BVH acceleration, and trimmed-surface handling, running as a WebGPU compute pipeline in the app's ray-traced view mode. The same engine runs on the CPU for headless output: `vcad-render part.vcad --raytrace --png out.png` produces an exact-silhouette raster in any of the standard views.
 
 ### GPU Compute
 
