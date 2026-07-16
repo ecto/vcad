@@ -1221,7 +1221,7 @@ fn to_component(
     // Union-find by geometric contact (same layer, touching or overlapping).
     let n = elems.len();
     let mut parent: Vec<usize> = (0..n).collect();
-    fn find(p: &mut Vec<usize>, i: usize) -> usize {
+    fn find(p: &mut [usize], i: usize) -> usize {
         let mut r = i;
         while p[r] != r {
             p[r] = p[p[r]];
