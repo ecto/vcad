@@ -335,6 +335,14 @@ resize();
 // Declared here (before animate's first synchronous call) so the rAF
 // loop can guard-call it without a TDZ trap.
 let simTick: ((deltaSeconds: number) => void) | null = null;
+// GLB animation playback — set by loadGlb when the parsed model carries
+// glTF animation tracks (render_sequence timelines). Loops all clips.
+let glbMixer: THREE.AnimationMixer | null = null;
+// Camera-orbit carrier: an empty node named "__camera" whose animated yaw
+// encodes the shot's azimuth. We orbit OUR camera from it each frame
+// instead of rendering it, so the model stays put while the view sweeps.
+let glbCameraNode: THREE.Object3D | null = null;
+let glbCameraLast: { yaw: number; pitch: number; dolly: number } | null = null;
 let lastFrameMs = performance.now();
 
 function animate(): void {
@@ -343,6 +351,41 @@ function animate(): void {
   const deltaSeconds = (now - lastFrameMs) / 1000;
   lastFrameMs = now;
   if (simTick) simTick(deltaSeconds);
+  if (glbMixer) {
+    glbMixer.update(deltaSeconds);
+    if (glbCameraNode) {
+      // The carrier encodes q = Rz(yaw) ⊗ Rx(pitch) (model Z-up space) —
+      // recover both via a ZXY euler — and dolly on the scale channel.
+      const euler = new THREE.Euler().setFromQuaternion(
+        glbCameraNode.quaternion,
+        "ZXY",
+      );
+      const yaw = euler.z;
+      const pitch = euler.x;
+      const dolly = glbCameraNode.scale.x || 1;
+      if (glbCameraLast !== null) {
+        // Apply DELTAS as a spherical orbit around the target — composes
+        // with user drag instead of fighting it.
+        const dYaw = yaw - glbCameraLast.yaw;
+        const dPitch = pitch - glbCameraLast.pitch;
+        const dollyRatio = dolly / (glbCameraLast.dolly || 1);
+        if (dYaw !== 0 || dPitch !== 0 || dollyRatio !== 1) {
+          const offset = camera.position.clone().sub(controls.target);
+          const sph = new THREE.Spherical().setFromVector3(offset);
+          sph.theta += dYaw;
+          sph.phi = Math.min(
+            Math.PI - 0.05,
+            Math.max(0.05, sph.phi - dPitch),
+          );
+          sph.radius = Math.max(0.01, sph.radius * dollyRatio);
+          camera.position
+            .copy(controls.target)
+            .add(new THREE.Vector3().setFromSpherical(sph));
+        }
+      }
+      glbCameraLast = { yaw, pitch, dolly };
+    }
+  }
   controls.update();
   renderer.render(scene, camera);
 }
@@ -378,6 +421,12 @@ function updateStats(model: THREE.Object3D, size: THREE.Vector3): void {
 }
 
 function clearModel(): void {
+  if (glbMixer) {
+    glbMixer.stopAllAction();
+    glbMixer = null;
+  }
+  glbCameraNode = null;
+  glbCameraLast = null;
   if (!currentModel) return;
   // Restore selection highlights before disposal so we never dispose a
   // clone while the original is detached.
@@ -446,6 +495,18 @@ function loadGlb(base64Data: string, opts?: LoadOpts): void {
       tameMaterials(currentModel);
       modelGroup.add(currentModel);
       hasModel = true;
+      // Autoplay embedded glTF animation tracks (render_sequence output):
+      // the agent's dailies loop plays inline with no extra round-trips.
+      if (gltf.animations.length > 0) {
+        glbMixer = new THREE.AnimationMixer(gltf.scene);
+        for (const clip of gltf.animations) {
+          glbMixer.clipAction(clip).setLoop(THREE.LoopRepeat, Infinity).play();
+        }
+        // Camera-orbit carrier node (see the animate-loop hook above).
+        glbCameraNode = gltf.scene.getObjectByName("__camera") ?? null;
+        glbCameraLast = null;
+        if (glbCameraNode) glbCameraNode.visible = false;
+      }
       updateAxesVisibility();
 
       // setFromObject resolves world (Y-up) coordinates — the model sits
@@ -2524,6 +2585,26 @@ if (location.hash.startsWith("#dev")) {
       bbox: [-60, -40, 60, 40],
     });
     docLabelEl.textContent = "dev-flat";
+  } else if (location.hash === "#dev-glb") {
+    // Load a GLB placed next to the page (dev.glb) through the real
+    // loadGlb path — exercises animated GLBs (render_sequence output,
+    // glTF animation tracks autoplay via glbMixer) without an MCP host.
+    docLabelEl.textContent = "dev-glb";
+    void fetch("./dev.glb")
+      .then((r) => {
+        if (!r.ok) throw new Error(`dev.glb: HTTP ${r.status}`);
+        return r.arrayBuffer();
+      })
+      .then((buf) => {
+        let bin = "";
+        const bytes = new Uint8Array(buf);
+        for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]!);
+        loadGlb(btoa(bin));
+      })
+      .catch((e) => {
+        console.error("dev-glb load failed:", e);
+        setStatus("dev-glb load failed", "error");
+      });
   } else if (location.hash === "#dev-sim") {
     // Articulated pendulum with instance-named nodes ("<instanceId>:<name>")
     // and a synthesized replay so the transport bar can be exercised

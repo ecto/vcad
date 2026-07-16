@@ -1,0 +1,63 @@
+---
+title: "Animation & Verified Video"
+description: "Timeline IR, animate/render_sequence/export_video tools, per-frame clearance receipts"
+order: 6
+---
+
+vcad documents carry an optional **timeline** — a keyframed time axis over the same parametric model everything else uses. Instead of hand-animating meshes, you keyframe the *design*: named parameters, joint states, instance visibility, a global explode factor. Camera moves are declarative shot intents. The kernel computes the motion; the video is evidence, not illustration.
+
+## The timeline
+
+Set it with the `animate` tool (or author it directly in the document):
+
+```json
+{
+  "durationS": 3,
+  "fps": 16,
+  "tracks": [
+    { "target": { "type": "Joint", "jointId": "drive_axis" },
+      "keys": [ { "t": 0, "value": 0 }, { "t": 3, "value": 360, "ease": "ease-in-out" } ] },
+    { "target": { "type": "Parameter", "name": "wall_thickness" },
+      "keys": [ { "t": 0, "value": 1 }, { "t": 3, "value": 4 } ] }
+  ],
+  "camera": [
+    { "startS": 0, "endS": 3, "kind": { "type": "Turntable", "degrees": 360, "elevationDeg": 30 } }
+  ]
+}
+```
+
+Track targets: `Parameter` (re-evaluates geometry per sample), `Joint` (degrees for revolute, mm for slider), `Visibility` (instance shown when value > 0.5), `Explode` (0 = assembled, 1 = exploded outward from the assembly centroid). Easing per key: `linear`, `step`, `ease-in-out`. Camera shots: `Turntable`, `Orbit` (azimuth/elevation from→to), `Focus` (frame a part, optional dolly), `Static`.
+
+Timelines are validated against the document — unknown parameters, joints, or instances are rejected with the declared names listed.
+
+## The tools
+
+| tool | role |
+|---|---|
+| `animate` | set (or clear) the document timeline, validated |
+| `timeline_from_simulation` | compile a recorded physics rollout (`gym_step` trajectory) into joint tracks — simulated motion becomes an animation source |
+| `render_sequence` | compile the timeline to an **animated GLB** (real glTF animation channels); plays inline in the viewer — the cheap iteration loop |
+| `export_video` | render every frame through the kernel and encode GIF (always) or MP4 (when ffmpeg is present); large outputs offload to an artifact URL |
+
+Joint, visibility, and explode motion become glTF channels on the per-instance nodes (geometry is evaluated once per part definition). Parameter tracks re-evaluate geometry at up to 24 sampled times, switched with step-visibility. Camera intents ride on an invisible `__camera` carrier node: the vcad viewer orbits its own camera from it (yaw, elevation, and dolly), while generic glTF players simply ignore it and play the model motion.
+
+## The receipt
+
+A sequence is a claim about motion, so it verifies like everything else in vcad. When the document carries `clearance_specs`, both render tools re-measure **every spec across the sampled frames** and report:
+
+```json
+{
+  "frames_checked": 25,
+  "specs": [ { "label": "gear-air-gap", "required_min_mm": 0.25,
+               "observed_min_mm": 0.5, "worst_frame_t": 0, "holds": true } ],
+  "all_hold": true
+}
+```
+
+This catches mid-motion violations that endpoint checks miss — a linkage that clears at both ends of travel but collides in the middle fails the sweep, with the worst frame's timestamp. `export_video` burns the status into every frame as a HUD bar: time and animated values on the left, the clearance readout on the right — green when it holds, red when it doesn't. The proof ships inside the film.
+
+## Determinism
+
+Same document + timeline → same frames. Frame count is `round(durationS × fps) + 1`, inclusive of t = 0, capped at 600 frames per sequence. Interpolation semantics are defined once in the kernel IR (`vcad-ir::animation`) and mirrored exactly in the TypeScript sequencer.
+
+See `examples/animation/` in the repository for a runnable gear-train demo.
