@@ -175,7 +175,36 @@ pub fn render_svg_view_highlight(
         .unwrap_or(vcad_render::View::Isometric);
     let highlight: Vec<String> = serde_json::from_str(highlight_json)
         .map_err(|e| JsError::new(&format!("highlight must be a JSON string array: {e}")))?;
-    vcad_render::render_svg_str_view_opts(vcad_json, scale, v, false, &highlight)
+    vcad_render::render_svg_str_view_opts(
+        vcad_json,
+        scale,
+        v,
+        false,
+        &vcad_render::RenderAnnotations::default(),
+        &highlight,
+    )
+    .map_err(|e| JsError::new(&e))
+}
+
+/// Render raw `.vcad` document JSON to an SVG with opt-in engineering
+/// annotations: an X/Y/Z origin gizmo (`axes`), part-name labels with
+/// leader lines (`labels`), and overall W×D×H bounding-box dimensions in mm
+/// (`dims`). With all three flags false the output matches
+/// [`render_svg_view`] exactly. `view` parses as in [`render_svg_view`].
+#[wasm_bindgen]
+pub fn render_svg_annotated(
+    vcad_json: &str,
+    scale: f64,
+    view: &str,
+    axes: bool,
+    labels: bool,
+    dims: bool,
+) -> Result<String, JsError> {
+    let v = view
+        .parse::<vcad_render::View>()
+        .unwrap_or(vcad_render::View::Isometric);
+    let annotations = vcad_render::RenderAnnotations { axes, labels, dims };
+    vcad_render::render_svg_str_view_opts(vcad_json, scale, v, false, &annotations, &[])
         .map_err(|e| JsError::new(&e))
 }
 

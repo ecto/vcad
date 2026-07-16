@@ -24,6 +24,54 @@ intensity?: number,
 radius?: number, };
 
 /**
+ * A single keyframe: value at time `t` (seconds), eased from the previous key.
+ */
+export type AnimKey = { 
+/**
+ * Time in seconds from the start of the timeline.
+ */
+t: number, 
+/**
+ * Target value at this key (units depend on the track target:
+ * parameter units, joint degrees/mm, visibility 0..1, explode factor).
+ */
+value: number, 
+/**
+ * Easing applied when interpolating from the previous key to this one.
+ */
+ease: Ease, };
+
+/**
+ * What a track animates.
+ */
+export type AnimTarget = { "type": "Parameter", 
+/**
+ * Parameter name as declared in `Document::parameters`.
+ */
+name: string, } | { "type": "Joint", 
+/**
+ * Joint id in `Document::joints`.
+ */
+jointId: string, } | { "type": "Visibility", 
+/**
+ * Instance id in `Document::instances`.
+ */
+instanceId: string, } | { "type": "Explode" };
+
+/**
+ * One animated channel: a target plus its keyframes (sorted by `t`).
+ */
+export type AnimTrack = { 
+/**
+ * What this track animates.
+ */
+target: AnimTarget, 
+/**
+ * Keyframes, ascending in time.
+ */
+keys: Array<AnimKey>, };
+
+/**
  * Background configuration.
  */
 export type Background = { "type": "Environment" } | { "type": "Solid", 
@@ -189,6 +237,56 @@ target: Vec3,
  * Field of view in degrees.
  */
 fov?: number, };
+
+/**
+ * A camera shot intent spanning a time range on the timeline.
+ */
+export type CameraShot = { 
+/**
+ * Shot start time in seconds.
+ */
+startS: number, 
+/**
+ * Shot end time in seconds.
+ */
+endS: number, 
+/**
+ * The shot intent.
+ */
+kind: CameraShotKind, };
+
+/**
+ * Declarative camera moves compiled to per-frame poses by the sequencer.
+ */
+export type CameraShotKind = { "type": "Turntable", 
+/**
+ * Total sweep in degrees over the shot (360 = one revolution).
+ */
+degrees: number, 
+/**
+ * Camera elevation above the horizon in degrees.
+ */
+elevationDeg: number, } | { "type": "Orbit", 
+/**
+ * Start [azimuth, elevation] in degrees.
+ */
+from: [number, number], 
+/**
+ * End [azimuth, elevation] in degrees.
+ */
+to: [number, number], } | { "type": "Focus", 
+/**
+ * Part or instance id to frame.
+ */
+target: string, 
+/**
+ * Optional dolly factor over the shot (1 = none, 0.5 = halve distance).
+ */
+dolly: number, } | { "type": "Static", 
+/**
+ * Optional explicit eye direction; defaults to the standard isometric.
+ */
+direction?: Vec3, };
 
 /**
  * A periodic simulation cell defined by three lattice vectors (Å).
@@ -1035,7 +1133,12 @@ bindings?: Bindings,
  * Named clearance/clash assertions between part groups, re-measured by
  * `check_clearance` and receipt verification whenever geometry changes.
  */
-clearance_specs?: Array<ClearanceSpec>, };
+clearance_specs?: Array<ClearanceSpec>, 
+/**
+ * Animation timeline: keyframed parameters/joints/visibility plus
+ * camera shots. Absent for static models.
+ */
+timeline?: Timeline, };
 
 /**
  * A canonicalized DRC summary: total, per-rule counts (sorted), and the
@@ -1071,6 +1174,11 @@ oval?: boolean,
  * Secondary diameter for oval drill.
  */
 ovalHeight?: number, };
+
+/**
+ * Interpolation easing between two keyframes.
+ */
+export type Ease = "linear" | "step" | "ease-in-out";
 
 /**
  * A declarative edge selector, resolved against the current topology at
@@ -2939,6 +3047,28 @@ width: number, };
  * Thermal relief style for zone connections.
  */
 export type ThermalReliefStyle = "Direct" | "Relief" | "None";
+
+/**
+ * The document's time axis: duration, sampling rate, animated tracks, and
+ * camera shots. Optional on the document; absence means a static model.
+ */
+export type Timeline = { 
+/**
+ * Total duration in seconds.
+ */
+durationS: number, 
+/**
+ * Sampling rate in frames per second (default 24).
+ */
+fps: number, 
+/**
+ * Animated tracks.
+ */
+tracks: Array<AnimTrack>, 
+/**
+ * Camera shots covering the timeline (gaps fall back to `Static`).
+ */
+camera: Array<CameraShot>, };
 
 /**
  * Tone mapping algorithm.
