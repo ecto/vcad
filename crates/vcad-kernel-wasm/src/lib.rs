@@ -175,7 +175,36 @@ pub fn render_svg_view_section(
     let plane = section
         .parse::<vcad_render::SectionPlane>()
         .map_err(|e| JsError::new(&e))?;
-    vcad_render::render_svg_str_section(vcad_json, scale, v, false, Some(plane))
+    vcad_render::render_svg_str_section(
+        vcad_json,
+        scale,
+        v,
+        false,
+        Some(plane),
+        &vcad_render::RenderAnnotations::default(),
+    )
+    .map_err(|e| JsError::new(&e))
+}
+
+/// Render raw `.vcad` document JSON to an SVG with opt-in engineering
+/// annotations: an X/Y/Z origin gizmo (`axes`), part-name labels with
+/// leader lines (`labels`), and overall W×D×H bounding-box dimensions in mm
+/// (`dims`). With all three flags false the output matches
+/// [`render_svg_view`] exactly. `view` parses as in [`render_svg_view`].
+#[wasm_bindgen]
+pub fn render_svg_annotated(
+    vcad_json: &str,
+    scale: f64,
+    view: &str,
+    axes: bool,
+    labels: bool,
+    dims: bool,
+) -> Result<String, JsError> {
+    let v = view
+        .parse::<vcad_render::View>()
+        .unwrap_or(vcad_render::View::Isometric);
+    let annotations = vcad_render::RenderAnnotations { axes, labels, dims };
+    vcad_render::render_svg_str_view_opts(vcad_json, scale, v, false, &annotations)
         .map_err(|e| JsError::new(&e))
 }
 

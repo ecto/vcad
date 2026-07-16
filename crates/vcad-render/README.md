@@ -47,6 +47,9 @@ vcad-render parts/ --out-dir renders/ --format png    # batch a directory
 | `--scale <N>` | `2.0` | Pixels per millimetre (SVG). Bigger = larger SVG. |
 | `--transparent` | off | Transparent SVG background. |
 | `--section x=N\|y=N\|z=N` | off | Section (cutaway) view: the half of the model on the camera's side of the plane is boolean-subtracted before rendering (you always look into the cut), and the exposed cut faces are drawn with a 45° drafting hatch. Composes with `--view` and raster output. A solid whose section boolean fails is rendered uncut (noted on stderr) — the render never fails outright. |
+| `--axes` | off | Overlay an X/Y/Z origin gizmo (kernel is Z-up). |
+| `--labels` | off | Label each top-level part with its name. |
+| `--dims` | off | Overlay overall W×D×H bounding-box dimensions in mm. |
 | `-o, --output <PATH>` | stdout | Output path; format inferred from `.svg`/`.jpg`/`.jpeg`/`.png`. `-o -` = SVG on stdout. Single input only. |
 | `--jpeg <PATH>` | — | Legacy alias for `-o <path.jpg>`. |
 | `--out-dir <DIR>` | sibling | Directory for batch outputs. |

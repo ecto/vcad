@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-15-render-annotations",
+  "version": "0.9.4",
+  "date": "2026-07-15",
+  "category": "feat",
+  "title": "Annotated renders: axes, part labels, dimensions",
+  "summary": "render_view and the vcad-render CLI can overlay an X/Y/Z origin gizmo, part-name labels, and overall W×D×H mm dimensions on SVG and JPEG renders.",
+  "features": ["render", "annotations", "agent-eyes"],
+  "mcpTools": ["render_view"]
+}

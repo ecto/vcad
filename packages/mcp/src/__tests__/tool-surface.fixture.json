@@ -2179,7 +2179,7 @@
   {
     "name": "render_view",
     "title": "Render View",
-    "description": "Render an open session document to an isometric PNG image so you can SEE the current geometry — silhouettes, holes, creases — not just numbers. Drafting-style line art, Z-up, same renderer as the vcad CLI. Call after mutations to visually confirm the part matches intent before declaring done.",
+    "description": "Render an open session document to an isometric PNG image so you can SEE the current geometry — silhouettes, holes, creases — not just numbers. Drafting-style line art, Z-up, same renderer as the vcad CLI. Opt-in overlays add engineering context: `axes` (X/Y/Z origin gizmo), `labels` (part names), `dims` (overall W×D×H in mm). Call after mutations to visually confirm the part matches intent before declaring done.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -2209,8 +2209,175 @@
         "section": {
           "type": "string",
           "description": "Optional section (cutaway) plane: 'x=N', 'y=N', or 'z=N' (mm). The half of the model on the camera's side of the plane is removed and exposed cut faces are cross-hatched — use it to see inside cavities, bores, and wall thicknesses. Composes with `view`."
+        },
+        "axes": {
+          "type": "boolean",
+          "description": "Overlay an X/Y/Z origin gizmo (kernel is Z-up) so the render carries its own orientation. Off by default."
+        },
+        "labels": {
+          "type": "boolean",
+          "description": "Label each top-level part with its name (leader line to its projected center). Off by default."
+        },
+        "dims": {
+          "type": "boolean",
+          "description": "Overlay overall W×D×H bounding-box dimensions in mm, drafting-style. Off by default."
         }
       }
+    },
+    "annotations": {
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "animate",
+    "title": "Animate",
+    "description": "Set (or clear) the document's animation timeline: keyframe named parameters, joint states, instance visibility, or a global explode factor, plus declarative camera shots (turntable/orbit/focus). Preview with render_sequence; ship with export_video.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "document_id": {
+          "type": "string",
+          "description": "Session document id from open_document."
+        },
+        "timeline": {
+          "type": "object",
+          "description": "Full timeline to set on the document: {durationS, fps?, tracks?, camera?}. Tracks keyframe targets: {target:{type:\"Parameter\",name}|{type:\"Joint\",jointId}|{type:\"Visibility\",instanceId}|{type:\"Explode\"}, keys:[{t,value,ease?:\"linear\"|\"step\"|\"ease-in-out\"}]}. Camera shots: {startS,endS,kind:{type:\"Turntable\",degrees,elevationDeg?}|{type:\"Orbit\",from:[az,el],to:[az,el]}|{type:\"Focus\",target,dolly?}|{type:\"Static\"}}. Pass null to clear the timeline."
+        }
+      },
+      "required": [
+        "document_id",
+        "timeline"
+      ]
+    },
+    "annotations": {
+      "readOnlyHint": false
+    }
+  },
+  {
+    "name": "timeline_from_simulation",
+    "title": "Timeline From Simulation",
+    "description": "Compile a recorded physics rollout (gym_step trajectory) into the document's animation timeline — one joint track per observed joint at the simulation timestep, optional turntable. The rollout then previews via render_sequence and ships via export_video with clearance verification.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "env_id": {
+          "type": "string",
+          "description": "Environment id from create_robot_env (must have recorded steps)."
+        },
+        "document_id": {
+          "type": "string",
+          "description": "Session document id from open_document. Must describe the same assembly the env was created from (same joint ids)."
+        },
+        "max_keys": {
+          "type": "number",
+          "description": "Max keyframes per joint track; longer trajectories are thinned evenly (2-600, default 120)."
+        },
+        "camera": {
+          "type": "string",
+          "enum": [
+            "turntable",
+            "static"
+          ],
+          "description": "Camera shot to attach: a full turntable over the rollout, or static (default)."
+        }
+      },
+      "required": [
+        "env_id",
+        "document_id"
+      ]
+    },
+    "annotations": {
+      "readOnlyHint": false
+    }
+  },
+  {
+    "name": "render_sequence",
+    "title": "Render Sequence",
+    "description": "Compile the document's timeline into an animated GLB (glTF animation channels) — the cheap preview loop for motion. Joint/visibility/explode tracks animate instance nodes; parameter tracks re-evaluate geometry at sampled times. When the document has clearance_specs, they are re-measured across frames and reported (the sequence as evidence).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "document_id": {
+          "type": "string",
+          "description": "Session document id from open_document."
+        },
+        "timeline": {
+          "type": "object",
+          "description": "Optional one-shot timeline override (same shape as `animate`). When omitted, the document's stored timeline is used."
+        },
+        "verify": {
+          "type": "boolean",
+          "description": "Sweep the document's clearance_specs across the sequence and attach the per-spec report (default true when specs exist)."
+        }
+      },
+      "required": [
+        "document_id"
+      ]
+    },
+    "annotations": {
+      "readOnlyHint": true
+    },
+    "_meta": {
+      "ui": {
+        "resourceUri": "ui://vcad/viewer"
+      },
+      "ui/resourceUri": "ui://vcad/viewer",
+      "openai/outputTemplate": "ui://vcad/viewer-openai.html",
+      "openai/toolInvocation/invoking": "Modeling geometry…",
+      "openai/toolInvocation/invoked": "Model updated"
+    }
+  },
+  {
+    "name": "export_video",
+    "title": "Export Video",
+    "description": "Render the timeline to an animated GIF or MP4 through the kernel renderer, with the verification HUD (time, animated values, clearance status) burned into every frame. MP4 requires ffmpeg on the server; GIF always works. Large outputs offload to an artifact URL.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "document_id": {
+          "type": "string",
+          "description": "Session document id from open_document."
+        },
+        "timeline": {
+          "type": "object",
+          "description": "Optional one-shot timeline override (same shape as `animate`)."
+        },
+        "format": {
+          "type": "string",
+          "enum": [
+            "gif",
+            "mp4",
+            "auto"
+          ],
+          "description": "Output container. 'auto' (default) prefers mp4 when ffmpeg is available, else gif."
+        },
+        "view": {
+          "type": "string",
+          "enum": [
+            "iso",
+            "isometric",
+            "top",
+            "front",
+            "side"
+          ],
+          "description": "Camera view for the kernel renderer; defaults to 'iso'."
+        },
+        "width_px": {
+          "type": "number",
+          "description": "Raster width per frame (64-1280, default 480)."
+        },
+        "hud": {
+          "type": "boolean",
+          "description": "Burn the verification HUD (time, animated values, clearance status) into every frame (default true)."
+        },
+        "verify": {
+          "type": "boolean",
+          "description": "Sweep clearance_specs across frames and attach the report + HUD status (default true when specs exist)."
+        }
+      },
+      "required": [
+        "document_id"
+      ]
     },
     "annotations": {
       "readOnlyHint": true

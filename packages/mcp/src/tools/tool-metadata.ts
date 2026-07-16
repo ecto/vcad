@@ -206,6 +206,12 @@ export const TOOL_METADATA: Record<string, ToolMetadata> = {
   batch_reset: { title: "Batch Reset", annotations: RW },
   get_changelog: { title: "Get Changelog", annotations: RO },
 
+  // ── Animation / video ────────────────────────────────────────────────
+  animate: { title: "Animate", annotations: RW },
+  timeline_from_simulation: { title: "Timeline From Simulation", annotations: RW },
+  render_sequence: { title: "Render Sequence", annotations: RO },
+  export_video: { title: "Export Video", annotations: RO },
+
   // ── ECAD (PCB) ─────────────────────────────────────────────────────────
   create_schematic: { title: "Create Schematic", annotations: RW },
   place_components: { title: "Place Components", annotations: RW },
