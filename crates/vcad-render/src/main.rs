@@ -3,6 +3,7 @@
 //!
 //! Usage:
 //!   vcad-render <path.vcad> [--view iso|front|side|top|hero] [--scale <px-per-mm>] [--transparent]
+//!               [--section x=N|y=N|z=N] [--axes] [--labels] [--dims]
 //!   vcad-render <path.vcad> -o out.jpg [--view ...] [--size <px>] [--fill <frac>] [--quality <1-100>]
 //!   vcad-render <path.vcad> -o out.png [--raytrace]   # RGBA raster, transparent background
 //!   vcad-render <dir-or-paths...> [--out-dir <dir>] [--format svg|jpeg|png]
@@ -19,13 +20,16 @@
 //! reported but does not abort the batch. All rendering logic lives in the
 //! `vcad-render` library (see `lib.rs`); this binary only handles argument
 //! parsing and file IO.
+//!
+//! `--section` renders a cutaway: the half of the model on the camera's side
+//! of the plane is removed and the exposed cut faces are cross-hatched.
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::str::FromStr;
 
 use clap::{Parser, ValueEnum};
-use vcad_render::{render_svg_str_view_opts, View, DEFAULT_SCALE};
+use vcad_render::{render_svg_str_section, RenderAnnotations, SectionPlane, View, DEFAULT_SCALE};
 
 /// Output format for a render. Single-file `-o` infers this from the output
 /// extension; batch mode takes it from `--format`.
@@ -92,6 +96,24 @@ struct Cli {
     #[arg(long)]
     transparent: bool,
 
+    /// Section (cutaway) plane: `x=N`, `y=N`, or `z=N` (mm). The half of the
+    /// model on the camera's side of the plane is removed and exposed cut
+    /// faces are cross-hatched. Composes with `--view` and raster output.
+    #[arg(long, value_parser = SectionPlane::from_str)]
+    section: Option<SectionPlane>,
+
+    /// Overlay an X/Y/Z origin gizmo (kernel is Z-up).
+    #[arg(long)]
+    axes: bool,
+
+    /// Label each top-level part with its name.
+    #[arg(long)]
+    labels: bool,
+
+    /// Overlay overall W×D×H bounding-box dimensions in mm.
+    #[arg(long)]
+    dims: bool,
+
     /// Output path; format inferred from extension (.svg/.jpg/.jpeg/.png).
     /// Use `-o -` for SVG on stdout. Single input only.
     #[arg(short, long, conflicts_with = "jpeg")]
@@ -152,6 +174,17 @@ fn expand_inputs(inputs: &[PathBuf]) -> Result<Vec<PathBuf>, String> {
     Ok(out)
 }
 
+impl Cli {
+    /// The opt-in annotation overlays selected on the command line.
+    fn annotations(&self) -> RenderAnnotations {
+        RenderAnnotations {
+            axes: self.axes,
+            labels: self.labels,
+            dims: self.dims,
+        }
+    }
+}
+
 /// Raster options for `cli`, defaulting the canvas size per format when the
 /// user left `--size` unset: JPEG follows the mecheval 1024px capture rule,
 /// PNG (transparent, lossless) targets a much larger 4096px.
@@ -162,6 +195,8 @@ fn raster_opts(cli: &Cli, png: bool) -> vcad_render::RasterOptions {
         size_px: cli.size.unwrap_or(if png { 4096 } else { 1024 }),
         fill_frac: cli.fill,
         quality: cli.quality,
+        section: cli.section,
+        annotations: cli.annotations(),
     }
 }
 
@@ -172,6 +207,17 @@ fn render_raster(raw: &str, cli: &Cli, format: Format) -> Result<Vec<u8>, String
     let png = format == Format::Png;
     let opts = raster_opts(cli, png);
     if cli.raytrace {
+        // The ray tracer works on analytic BRep surfaces; sectioning
+        // boolean-subtracts (yielding mesh-backed solids it can't trace) and
+        // the annotation overlays are drawn by the projected 2D path. Reject
+        // the combination rather than silently ignoring those flags.
+        if cli.section.is_some() || cli.annotations().any() {
+            return Err(
+                "--raytrace does not compose with --section/--axes/--labels/--dims; \
+                 use the tessellated raster path (drop --raytrace) for those"
+                    .to_string(),
+            );
+        }
         #[cfg(feature = "raytrace")]
         {
             return if png {
@@ -209,7 +255,14 @@ fn render_one(input: &Path, dest: Option<&Path>, format: Format, cli: &Cli) -> R
         std::fs::read_to_string(input).map_err(|e| format!("read {}: {}", input.display(), e))?;
     let bytes = match format {
         Format::Svg => {
-            let svg = render_svg_str_view_opts(&raw, cli.scale, cli.view, cli.transparent)?;
+            let svg = render_svg_str_section(
+                &raw,
+                cli.scale,
+                cli.view,
+                cli.transparent,
+                cli.section,
+                &cli.annotations(),
+            )?;
             match dest {
                 None => {
                     println!("{}", svg);

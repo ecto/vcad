@@ -9,6 +9,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+pub mod animation;
 pub mod ecad;
 pub mod expr_parser;
 pub mod file_io;
@@ -1807,6 +1808,13 @@ pub struct Document {
     /// `check_clearance` and receipt verification whenever geometry changes.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub clearance_specs: Vec<ClearanceSpec>,
+
+    // Animation (optional, zero-cost when absent)
+    /// Animation timeline: keyframed parameters/joints/visibility plus
+    /// camera shots. Absent for static models.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(feature = "ts-rs", ts(optional))]
+    pub timeline: Option<animation::Timeline>,
 }
 
 /// A named minimum-clearance assertion between two groups of parts.
@@ -1848,6 +1856,7 @@ impl Default for Document {
             parameters: HashMap::new(),
             bindings: Bindings::new(),
             clearance_specs: Vec::new(),
+            timeline: None,
         }
     }
 }

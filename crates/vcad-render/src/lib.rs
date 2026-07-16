@@ -108,6 +108,15 @@ const INK: &str = "#0b2742";
 /// path's matte background). The signature ground behind every render.
 const PAPER: &str = "#f4f3f1";
 
+/// Background of a section-cut face, under the 45° hatch lines. A pale
+/// ice tint from the ramp family, so cut faces read as freshly exposed
+/// material rather than another shaded surface.
+const HATCH_BG: &str = "#dce8f2";
+/// Hatch line spacing in SVG user units.
+const HATCH_SPACING_PX: f64 = 6.0;
+/// Hatch line stroke width in SVG user units.
+const HATCH_STROKE_PX: f64 = 0.8;
+
 /// The vcad-Blue tonal ramp: deep-shadow → core navy → mid → ice highlight.
 /// Sampled by the shading term so curved surfaces read as a graded wash
 /// instead of a two-colour lerp. The house colour system — one ramp, many
@@ -218,13 +227,256 @@ impl std::str::FromStr for View {
     }
 }
 
+// ─── section (cutaway) planes ─────────────────────────────────────────────
+
+/// A principal axis, naming the normal of a [`SectionPlane`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Axis {
+    /// Plane normal to X (`--section x=N`).
+    X,
+    /// Plane normal to Y (`--section y=N`).
+    Y,
+    /// Plane normal to Z (`--section z=N`).
+    Z,
+}
+
+impl Axis {
+    fn index(self) -> usize {
+        match self {
+            Axis::X => 0,
+            Axis::Y => 1,
+            Axis::Z => 2,
+        }
+    }
+}
+
+/// A section (cutaway) plane normal to a principal axis. Material on the
+/// camera's side of the plane is removed before rendering — so the viewer
+/// always looks into the cut — and the exposed cut faces are drawn with a
+/// 45° drafting hatch instead of the usual shading.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SectionPlane {
+    /// The axis the plane is normal to.
+    pub axis: Axis,
+    /// The axis coordinate (mm) the plane sits at.
+    pub coord: f64,
+}
+
+impl std::str::FromStr for SectionPlane {
+    type Err = String;
+
+    /// Parses `x=N`, `y=N`, or `z=N` (case-insensitive), e.g. `z=10`.
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let (axis, val) = s
+            .split_once('=')
+            .ok_or_else(|| format!("bad section '{s}' (expected x=N|y=N|z=N)"))?;
+        let axis = match axis.trim().to_ascii_lowercase().as_str() {
+            "x" => Axis::X,
+            "y" => Axis::Y,
+            "z" => Axis::Z,
+            other => return Err(format!("bad section axis '{other}' (expected x|y|z)")),
+        };
+        let coord: f64 = val
+            .trim()
+            .parse()
+            .map_err(|e: std::num::ParseFloatError| format!("bad section coordinate: {e}"))?;
+        Ok(SectionPlane { axis, coord })
+    }
+}
+
+impl SectionPlane {
+    /// Tolerance (mm) within which a vertex counts as lying on the plane.
+    /// Tessellated vertices round-trip through `f32`, so the tolerance
+    /// scales with the plane coordinate's own magnitude.
+    fn on_plane_tol(self) -> f64 {
+        (self.coord.abs() * 1e-5).max(1e-2)
+    }
+}
+
+/// Which side of the section plane gets cut away: always the side the
+/// camera sits on, so the viewer looks *into* the section. For a view
+/// whose camera is edge-on to the plane's axis (a Front view with an
+/// `x=` section) the positive side is removed by convention.
+fn section_removes_positive_side(plane: SectionPlane, view: View) -> bool {
+    view.cam()[plane.axis.index()] >= 0.0
+}
+
+/// Cut one solid by `plane`, removing material on one side via a boolean
+/// difference against a generous half-space box. `remove_positive` picks
+/// the removed side (`axis > coord` when true, `axis < coord` when false).
+///
+/// `Ok(None)` means the solid was cut away entirely (it lies wholly on the
+/// removed side); `Err` surfaces a boolean failure or kernel panic so the
+/// caller can fall back to the uncut solid.
+fn section_solid(
+    solid: &Solid,
+    plane: SectionPlane,
+    remove_positive: bool,
+) -> Result<Option<Solid>, String> {
+    let (lo, hi) = solid.bounding_box();
+    let ax = plane.axis.index();
+    if !lo[ax].is_finite() || !hi[ax].is_finite() {
+        return Err("degenerate bounding box".to_string());
+    }
+    let (kept_extent, removed_extent) = if remove_positive {
+        (plane.coord - lo[ax], hi[ax] - plane.coord)
+    } else {
+        (hi[ax] - plane.coord, plane.coord - lo[ax])
+    };
+    if removed_extent <= 0.0 {
+        return Ok(Some(solid.clone())); // plane clear of the solid — nothing removed
+    }
+    if kept_extent <= 0.0 {
+        return Ok(None); // wholly on the removed side
+    }
+    // Cutter: a box overhanging the solid's bbox on every open side, with
+    // one face on the section axis sitting exactly at the plane — so the
+    // cut faces the boolean leaves behind are planar at `coord`.
+    let margin = 0.1 * ((hi[0] - lo[0]).max(hi[1] - lo[1]).max(hi[2] - lo[2])).max(1.0) + 1.0;
+    let mut size = [
+        hi[0] - lo[0] + 2.0 * margin,
+        hi[1] - lo[1] + 2.0 * margin,
+        hi[2] - lo[2] + 2.0 * margin,
+    ];
+    let mut corner = [lo[0] - margin, lo[1] - margin, lo[2] - margin];
+    size[ax] = removed_extent + margin;
+    if remove_positive {
+        corner[ax] = plane.coord;
+    } else {
+        corner[ax] = plane.coord - size[ax];
+    }
+    let cutter = Solid::cube(size[0], size[1], size[2])
+        .apply_transform(&Transform::translation(corner[0], corner[1], corner[2]));
+    let cut = catch_unwind(AssertUnwindSafe(|| solid.try_difference(&cutter)))
+        .map_err(|_| "boolean panicked".to_string())?
+        .map_err(|e| format!("boolean failed: {e:?}"))?;
+    Ok(Some(cut))
+}
+
+/// Apply a section plane to every scene solid, removing the half of each
+/// on the camera's side of the plane (see [`section_removes_positive_side`]).
+/// A solid whose boolean fails is kept uncut (never fail the whole render),
+/// with a note on stderr; solids wholly on the removed side are dropped.
+fn apply_section(scene: Vec<SceneSolid>, plane: SectionPlane, view: View) -> Vec<SceneSolid> {
+    let remove_positive = section_removes_positive_side(plane, view);
+    let mut out = Vec::with_capacity(scene.len());
+    for (i, mut s) in scene.into_iter().enumerate() {
+        match section_solid(&s.solid, plane, remove_positive) {
+            Ok(Some(cut)) => {
+                s.solid = cut;
+                out.push(s);
+            }
+            Ok(None) => {}
+            Err(e) => {
+                eprintln!("vcad-render: section: solid {i} left uncut ({e})");
+                out.push(s);
+            }
+        }
+    }
+    out
+}
+
+// ─── annotations ──────────────────────────────────────────────────────────
+
+/// Opt-in engineering-context overlays. Everything defaults to off, and the
+/// default render is byte-identical to an annotation-free build — the
+/// overlays exist primarily so the MCP `render_view` "agent eyes" path can
+/// carry orientation, identity, and scale in the image itself.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct RenderAnnotations {
+    /// Draw an X/Y/Z origin gizmo (kernel is Z-up) projected in the current
+    /// view, in the lower-left corner of the canvas.
+    pub axes: bool,
+    /// Label each top-level part with its name, anchored at its projected
+    /// bounding-box centre with a leader line.
+    pub labels: bool,
+    /// Draw overall W×D×H bounding-box dimensions with mm values, using
+    /// drafting-style extension lines.
+    pub dims: bool,
+}
+
+impl RenderAnnotations {
+    /// True when any overlay is enabled.
+    pub fn any(&self) -> bool {
+        self.axes || self.labels || self.dims
+    }
+}
+
+/// Extra canvas margin (SVG user units / raster px at SVG scale) reserved
+/// when any annotation is on, so dimension lines, axis arrows, and labels
+/// land outside the model's silhouette instead of over it.
+const ANNOT_MARGIN_PX: f64 = 46.0;
+/// Dimension-line offset from the model bbox, and the further text offset.
+const DIM_OFFSET_PX: f64 = 16.0;
+/// Axis gizmo arrow length.
+const AXIS_LEN_PX: f64 = 24.0;
+/// Axis gizmo colours (X, Y, Z) — the conventional RGB triad, muted to sit
+/// on the vellum ground.
+const AXIS_COLORS: [&str; 3] = ["#c0392b", "#1e8e3e", "#2b6cb0"];
+const AXIS_NAMES: [&str; 3] = ["X", "Y", "Z"];
+
+/// One overall bounding-box dimension: a world-space baseline (two bbox
+/// corners along one axis) plus its drafting label.
+struct DimSpec {
+    a: [f64; 3],
+    b: [f64; 3],
+    label: String,
+}
+
+/// Format a millimetre value for a dimension label: integers stay bare
+/// ("20"), fractional extents keep one decimal ("12.5").
+fn format_mm(v: f64) -> String {
+    if (v - v.round()).abs() < 0.05 {
+        format!("{}", v.round() as i64)
+    } else {
+        format!("{v:.1}")
+    }
+}
+
+/// Overall W (X) / D (Y) / H (Z) dimensions along the lower-right silhouette
+/// edges of the world bbox — the classic drafting placement for an
+/// isometric, and still sensible corners in the axis views.
+fn bbox_dim_specs(lo3: [f64; 3], hi3: [f64; 3]) -> Vec<DimSpec> {
+    let (lo, hi) = (lo3, hi3);
+    vec![
+        DimSpec {
+            a: [lo[0], lo[1], lo[2]],
+            b: [hi[0], lo[1], lo[2]],
+            label: format!("W {} mm", format_mm(hi[0] - lo[0])),
+        },
+        DimSpec {
+            a: [hi[0], lo[1], lo[2]],
+            b: [hi[0], hi[1], lo[2]],
+            label: format!("D {} mm", format_mm(hi[1] - lo[1])),
+        },
+        DimSpec {
+            a: [hi[0], hi[1], lo[2]],
+            b: [hi[0], hi[1], hi[2]],
+            label: format!("H {} mm", format_mm(hi[2] - lo[2])),
+        },
+    ]
+}
+
+/// Escape a part name for embedding in SVG text content / attributes.
+fn xml_escape(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+}
+
 // ─── .vcad → solids ───────────────────────────────────────────────────────
 
-/// A solid plus its material colour (linear RGB in `[0,1]`), if the
-/// document assigned one — used to tint the shading ramp.
-type TintedSolid = (Solid, Option<[f64; 3]>);
+/// A solid plus its material colour (linear RGB in `[0,1]`) and its
+/// human-readable name, when the document provides them. The colour tints
+/// the shading ramp; the name feeds the optional part-label annotation.
+struct SceneSolid {
+    solid: Solid,
+    tint: Option<[f64; 3]>,
+    name: Option<String>,
+}
 
-fn evaluate_vcad(raw_vcad: &str) -> Result<Vec<TintedSolid>, String> {
+fn evaluate_vcad(raw_vcad: &str) -> Result<Vec<SceneSolid>, String> {
     let parsed = parse_vcad_file(raw_vcad).map_err(|e| format!("parse: {}", e))?;
     // NOTE: catch_unwind only works on native targets. On
     // wasm32-unknown-unknown a panic compiles to an `unreachable` trap —
@@ -248,13 +500,27 @@ fn evaluate_vcad(raw_vcad: &str) -> Result<Vec<TintedSolid>, String> {
     .map_err(|e| format!("eval: {}", e))?;
 
     let materials = &parsed.document.materials;
-    let mut solids: Vec<TintedSolid> = scene
+    // `scene.parts` is 1:1 with the document's *visible* roots, in order —
+    // failed roots still push an (empty) part — so zipping recovers each
+    // part's root node and thence its authored name.
+    let visible_roots: Vec<&vcad_ir::SceneEntry> = parsed
+        .document
+        .roots
+        .iter()
+        .filter(|r| r.visible != Some(false))
+        .collect();
+    let mut solids: Vec<SceneSolid> = scene
         .parts
         .iter()
-        .filter_map(|p| {
-            p.solid.clone().map(|s| {
-                let color = materials.get(&p.material).map(|m| m.color);
-                (s, color)
+        .enumerate()
+        .filter_map(|(i, p)| {
+            p.solid.clone().map(|s| SceneSolid {
+                solid: s,
+                tint: materials.get(&p.material).map(|m| m.color),
+                name: visible_roots
+                    .get(i)
+                    .and_then(|r| parsed.document.nodes.get(&r.root))
+                    .and_then(|n| n.name.clone()),
             })
         })
         .collect();
@@ -272,7 +538,7 @@ fn evaluate_vcad(raw_vcad: &str) -> Result<Vec<TintedSolid>, String> {
 /// tinted solids. Part-definition solids are evaluated once and shared;
 /// per-instance world poses come from forward kinematics, falling back to
 /// the instance's static transform.
-fn evaluate_assembly_instances(doc: &vcad_ir::Document) -> Result<Vec<TintedSolid>, String> {
+fn evaluate_assembly_instances(doc: &vcad_ir::Document) -> Result<Vec<SceneSolid>, String> {
     let (Some(part_defs), Some(instances)) = (&doc.part_defs, &doc.instances) else {
         return Ok(Vec::new());
     };
@@ -317,7 +583,16 @@ fn evaluate_assembly_instances(doc: &vcad_ir::Document) -> Result<Vec<TintedSoli
             .or_else(|| def.default_material.clone())
             .unwrap_or_else(|| "default".to_string());
         let color = doc.materials.get(&material).map(|m| m.color);
-        out.push((placed, color));
+        let name = inst
+            .name
+            .clone()
+            .or_else(|| def.name.clone())
+            .or_else(|| Some(inst.id.clone()));
+        out.push(SceneSolid {
+            solid: placed,
+            tint: color,
+            name,
+        });
     }
     Ok(out)
 }
@@ -461,6 +736,10 @@ enum EdgeKind {
 }
 
 struct SolidArtifacts {
+    /// Index of the source solid in the caller's `solids` slice — solids
+    /// that fail to tessellate are skipped, so artifact index alone can't
+    /// recover per-solid metadata (names, for the label annotation).
+    src: usize,
     verts: Vec<[f64; 3]>,
     tris: Vec<[usize; 3]>,
     normals: Vec<[f64; 3]>,
@@ -473,6 +752,9 @@ struct SolidArtifacts {
     /// the part's material colour when one is known.
     ramp: [[u8; 3]; 4],
     visible: Vec<bool>,
+    /// Per-triangle: true when the triangle is an exposed section-cut face
+    /// (planar on the section plane) — rendered cross-hatched.
+    cut: Vec<bool>,
     /// Kept edges (boundary, crease, or silhouette, with ≥1 visible
     /// adjacent triangle) as canonical-vertex index pairs plus their kind.
     edges: Vec<(usize, usize, EdgeKind)>,
@@ -561,6 +843,7 @@ fn build_artifacts(
     cam: [f64; 3],
     segments: u32,
     rules: &EdgeRules,
+    section: Option<SectionPlane>,
 ) -> Vec<SolidArtifacts> {
     let mut out = Vec::new();
     for (si, solid) in solids.iter().enumerate() {
@@ -594,6 +877,25 @@ fn build_artifacts(
             .iter()
             .map(|n| dot(*n, cam) >= BACKFACE_DOT_MIN)
             .collect();
+
+        // Exposed cut faces: every vertex on the section plane (within
+        // tolerance) and the face normal parallel to the plane's axis.
+        let cut: Vec<bool> = match section {
+            Some(plane) => {
+                let ax = plane.axis.index();
+                let tol = plane.on_plane_tol();
+                cm.tris
+                    .iter()
+                    .enumerate()
+                    .map(|(ti, t)| {
+                        normals[ti][ax].abs() > 0.99
+                            && t.iter()
+                                .all(|&v| (cm.verts[v][ax] - plane.coord).abs() <= tol)
+                    })
+                    .collect()
+            }
+            None => vec![false; cm.tris.len()],
+        };
 
         // Build undirected-edge → adjacent-triangle-indices map.
         let mut edge_to_tris: HashMap<(usize, usize), Vec<usize>> = HashMap::new();
@@ -647,12 +949,14 @@ fn build_artifacts(
         }
 
         out.push(SolidArtifacts {
+            src: si,
             verts: cm.verts,
             tris: cm.tris,
             normals,
             corner_normals,
             ramp,
             visible,
+            cut,
             edges,
         });
     }
@@ -1122,25 +1426,59 @@ pub fn render_svg_str(raw_vcad: &str, scale: f64) -> Result<String, String> {
 /// Unlike [`render_svg_solids_view`], this path knows each part's material
 /// and tints the shading ramp accordingly.
 pub fn render_svg_str_view(raw_vcad: &str, scale: f64, view: View) -> Result<String, String> {
-    render_svg_str_view_opts(raw_vcad, scale, view, false)
+    render_svg_str_view_opts(raw_vcad, scale, view, false, &RenderAnnotations::default())
 }
 
 /// Render raw `.vcad` document JSON to a self-contained SVG from `view`,
-/// optionally omitting the opaque paper background for a transparent render.
+/// optionally omitting the opaque paper background for a transparent render
+/// and/or overlaying engineering annotations.
 ///
 /// When `transparent` is true the vellum ground rect is skipped, so the
 /// SVG composites cleanly over any background; the soft contact shadow is
-/// still emitted (it is already semi-transparent).
+/// still emitted (it is already semi-transparent). With
+/// [`RenderAnnotations::default()`] the output is byte-identical to an
+/// annotation-free render.
 pub fn render_svg_str_view_opts(
     raw_vcad: &str,
     scale: f64,
     view: View,
     transparent: bool,
+    annotations: &RenderAnnotations,
 ) -> Result<String, String> {
-    let tinted = evaluate_vcad(raw_vcad)?;
-    let solids: Vec<Solid> = tinted.iter().map(|(s, _)| s.clone()).collect();
-    let tints: Vec<Option<[f64; 3]>> = tinted.iter().map(|(_, t)| *t).collect();
-    render_svg_impl(&solids, &tints, scale, view, transparent)
+    render_svg_str_section(raw_vcad, scale, view, transparent, None, annotations)
+}
+
+/// Render raw `.vcad` document JSON to an SVG from `view`, optionally
+/// sectioned (cutaway) by `section` and/or overlaid with `annotations`.
+/// Material on the camera's side of the plane is boolean-subtracted before
+/// tessellation; exposed cut faces are drawn with a 45° drafting hatch. A
+/// solid whose boolean fails is rendered uncut (noted on stderr) rather than
+/// failing the render.
+pub fn render_svg_str_section(
+    raw_vcad: &str,
+    scale: f64,
+    view: View,
+    transparent: bool,
+    section: Option<SectionPlane>,
+    annotations: &RenderAnnotations,
+) -> Result<String, String> {
+    let mut scene = evaluate_vcad(raw_vcad)?;
+    if let Some(plane) = section {
+        scene = apply_section(scene, plane, view);
+    }
+    let solids: Vec<Solid> = scene.iter().map(|s| s.solid.clone()).collect();
+    let tints: Vec<Option<[f64; 3]>> = scene.iter().map(|s| s.tint).collect();
+    let names: Vec<Option<String>> = scene.iter().map(|s| s.name.clone()).collect();
+    render_svg_impl(
+        &solids,
+        &tints,
+        &names,
+        scale,
+        view,
+        transparent,
+        section,
+        annotations,
+    )
 }
 
 /// Render pre-evaluated solids to a self-contained isometric SVG.
@@ -1163,17 +1501,34 @@ pub fn render_svg_solids(solids: &[Solid], scale: f64) -> Result<String, String>
 /// base navy ramp; use [`render_svg_str_view`] to honour document materials.
 pub fn render_svg_solids_view(solids: &[Solid], scale: f64, view: View) -> Result<String, String> {
     let tints = vec![None; solids.len()];
-    render_svg_impl(solids, &tints, scale, view, false)
+    let names = vec![None; solids.len()];
+    render_svg_impl(
+        solids,
+        &tints,
+        &names,
+        scale,
+        view,
+        false,
+        None,
+        &RenderAnnotations::default(),
+    )
 }
 
-/// Shared SVG renderer; `tints[i]` optionally tints solid `i`'s ramp.
-/// When `transparent`, the opaque paper background rect is omitted.
+/// Shared SVG renderer; `tints[i]` optionally tints solid `i`'s ramp and
+/// `names[i]` labels it when the `labels` annotation is on. When
+/// `transparent`, the opaque paper background rect is omitted. `section`
+/// (already applied to the solids by the caller) only drives cut-face
+/// detection here, so exposed section faces get the hatch fill.
+#[allow(clippy::too_many_arguments)]
 fn render_svg_impl(
     solids: &[Solid],
     tints: &[Option<[f64; 3]>],
+    names: &[Option<String>],
     scale: f64,
     view: View,
     transparent: bool,
+    section: Option<SectionPlane>,
+    annos: &RenderAnnotations,
 ) -> Result<String, String> {
     if solids.is_empty() {
         return Err("no solids produced".to_string());
@@ -1185,7 +1540,14 @@ fn render_svg_impl(
     let light = normalize(LIGHT);
     let project = |p: [f64; 3]| -> (f64, f64) { (dot(p, right) * scale, dot(p, down) * scale) };
 
-    let arts = build_artifacts(solids, tints, cam, TESSELLATION_SEGMENTS, &EdgeRules::svg());
+    let arts = build_artifacts(
+        solids,
+        tints,
+        cam,
+        TESSELLATION_SEGMENTS,
+        &EdgeRules::svg(),
+        section,
+    );
 
     // First pass: screen-space bbox + 3D bbox (for the depth-cue bias),
     // over every projected vertex of every kept artifact.
@@ -1219,11 +1581,14 @@ fn render_svg_impl(
     if !min_x.is_finite() || !max_x.is_finite() {
         return Err("no visible polygons after culling".to_string());
     }
-    let w = (max_x - min_x) + 2.0 * PADDING_PX;
-    let h = (max_y - min_y) + 2.0 * PADDING_PX;
+    // Annotations live outside the model silhouette; reserve margin for
+    // them. With no annotations `pad == PADDING_PX` and the output is
+    // byte-identical to the historical render.
+    let pad = PADDING_PX + if annos.any() { ANNOT_MARGIN_PX } else { 0.0 };
+    let w = (max_x - min_x) + 2.0 * pad;
+    let h = (max_y - min_y) + 2.0 * pad;
     // Final SVG coordinate from a projected screen point.
-    let fin =
-        |(x, y): (f64, f64)| -> (f64, f64) { (x - min_x + PADDING_PX, y - min_y + PADDING_PX) };
+    let fin = |(x, y): (f64, f64)| -> (f64, f64) { (x - min_x + pad, y - min_y + pad) };
 
     // Depth buffer, built up front from every visible triangle. It serves
     // two passes: ambient-occlusion sampling (below) and hidden-line removal
@@ -1292,6 +1657,17 @@ fn render_svg_impl(
                 shade(cn[2], cam, light) * (1.0 - AO_STRENGTH * ao(ps[2], vd[2])),
             ];
             let avg = hex(ramp_sample(&art.ramp, (sh[0] + sh[1] + sh[2]) / 3.0));
+            if art.cut[ti] {
+                // Exposed section-cut face: drafting convention says
+                // cross-hatch, not shade. Pattern defined once in <defs>.
+                polys.push(ProjPoly {
+                    s: ps,
+                    fill: "url(#section-hatch)".to_string(),
+                    stroke: HATCH_BG.to_string(),
+                    depth: (vd[0] + vd[1] + vd[2]) / 3.0,
+                });
+                continue;
+            }
             let (fill, stroke) = match gouraud_gradient(ps, sh, &art.ramp) {
                 Some(g) => {
                     let id = grad_id;
@@ -1386,7 +1762,17 @@ fn render_svg_impl(
 
     // Gouraud gradient defs.
     let blur = ((w + h) * 0.008).clamp(1.0, 12.0);
-    out.push_str(&format!(r#"<defs>{gradients}</defs>"#));
+    // 45° cross-hatch pattern for exposed section-cut faces (drafting
+    // convention). Only emitted when a section plane is active.
+    let hatch_def = if section.is_some() {
+        format!(
+            r#"<pattern id="section-hatch" patternUnits="userSpaceOnUse" width="{sp:.2}" height="{sp:.2}" patternTransform="rotate(45)"><rect width="{sp:.2}" height="{sp:.2}" fill="{HATCH_BG}"/><line x1="0" y1="0" x2="0" y2="{sp:.2}" stroke="{INK}" stroke-width="{HATCH_STROKE_PX}"/></pattern>"#,
+            sp = HATCH_SPACING_PX,
+        )
+    } else {
+        String::new()
+    };
+    out.push_str(&format!(r#"<defs>{hatch_def}{gradients}</defs>"#));
 
     // Vellum ground — the warm paper the plate sits on. Skipped for a
     // transparent render so the SVG composites over any background.
@@ -1445,8 +1831,176 @@ fn render_svg_impl(
     emit_lines(&mut out, &crease_lines, STROKE_CREASE_PX, 1.0, None);
     emit_lines(&mut out, &outline_lines, STROKE_OUTLINE_PX, 1.0, None);
 
+    // Opt-in engineering overlays, drawn over the linework.
+    if annos.any() {
+        let world_to_fin = |p: [f64; 3]| fin(project(p));
+        if annos.dims {
+            emit_svg_dims(&mut out, lo3, hi3, w, h, &world_to_fin);
+        }
+        if annos.labels {
+            for (ai, art) in arts.iter().enumerate() {
+                let Some(name) = names.get(art.src).and_then(|n| n.as_deref()) else {
+                    continue;
+                };
+                let mut lo = (f64::INFINITY, f64::INFINITY);
+                let mut hi = (f64::NEG_INFINITY, f64::NEG_INFINITY);
+                for &(x, y) in &projected[ai] {
+                    lo = (lo.0.min(x), lo.1.min(y));
+                    hi = (hi.0.max(x), hi.1.max(y));
+                }
+                if !lo.0.is_finite() {
+                    continue;
+                }
+                let anchor = fin(((lo.0 + hi.0) / 2.0, (lo.1 + hi.1) / 2.0));
+                emit_svg_label(&mut out, name, anchor, w);
+            }
+        }
+        if annos.axes {
+            emit_svg_axes(&mut out, view, h);
+        }
+    }
+
     out.push_str("</svg>");
     Ok(out)
+}
+
+/// Emit the part-label annotation: an anchor dot at the part's projected
+/// bbox centre, a leader line, and the name with a paper-coloured halo so
+/// it stays legible over fills.
+fn emit_svg_label(out: &mut String, name: &str, anchor: (f64, f64), w: f64) {
+    // Lead up-right by default; flip left when close to the right edge.
+    let dir = if anchor.0 + 70.0 > w { -1.0 } else { 1.0 };
+    let elbow = (anchor.0 + 18.0 * dir, anchor.1 - 18.0);
+    let (ta, tx) = if dir > 0.0 {
+        ("start", elbow.0 + 3.0)
+    } else {
+        ("end", elbow.0 - 3.0)
+    };
+    out.push_str(&format!(
+        r#"<g class="annot-label"><circle cx="{:.2}" cy="{:.2}" r="1.6" fill="{INK}"/><line x1="{:.2}" y1="{:.2}" x2="{:.2}" y2="{:.2}" stroke="{INK}" stroke-width="0.6"/><text x="{tx:.2}" y="{:.2}" font-family="JetBrains Mono, Menlo, monospace" font-size="10" fill="{INK}" text-anchor="{ta}" paint-order="stroke" stroke="{PAPER}" stroke-width="3">{}</text></g>"#,
+        anchor.0,
+        anchor.1,
+        anchor.0,
+        anchor.1,
+        elbow.0,
+        elbow.1,
+        elbow.1 + 3.0,
+        xml_escape(name),
+    ));
+}
+
+/// Emit drafting-style overall bounding-box dimensions: extension lines
+/// from the bbox corners, a dimension line offset outside the silhouette,
+/// and the mm value at its midpoint.
+fn emit_svg_dims(
+    out: &mut String,
+    lo3: [f64; 3],
+    hi3: [f64; 3],
+    w: f64,
+    h: f64,
+    world_to_fin: &dyn Fn([f64; 3]) -> (f64, f64),
+) {
+    out.push_str(r#"<g class="annot-dims">"#);
+    for dim in bbox_dim_specs(lo3, hi3) {
+        let pa = world_to_fin(dim.a);
+        let pb = world_to_fin(dim.b);
+        let (dx, dy) = (pb.0 - pa.0, pb.1 - pa.1);
+        let len = (dx * dx + dy * dy).sqrt();
+        if len < 6.0 {
+            continue; // axis is parallel to the camera in this view
+        }
+        // Perpendicular, pointing away from the canvas centre.
+        let mut n = (-dy / len, dx / len);
+        let mid = ((pa.0 + pb.0) / 2.0, (pa.1 + pb.1) / 2.0);
+        if n.0 * (mid.0 - w / 2.0) + n.1 * (mid.1 - h / 2.0) < 0.0 {
+            n = (-n.0, -n.1);
+        }
+        let off = DIM_OFFSET_PX;
+        let (a1, a2) = (
+            (pa.0 + n.0 * off, pa.1 + n.1 * off),
+            (pb.0 + n.0 * off, pb.1 + n.1 * off),
+        );
+        // Extension lines (slightly past the dimension line).
+        for (p, e) in [(pa, a1), (pb, a2)] {
+            out.push_str(&format!(
+                r#"<line x1="{:.2}" y1="{:.2}" x2="{:.2}" y2="{:.2}" stroke="{INK}" stroke-width="0.45" opacity="0.75"/>"#,
+                p.0,
+                p.1,
+                e.0 + n.0 * 4.0,
+                e.1 + n.1 * 4.0,
+            ));
+        }
+        // Dimension line with drafting tick marks at both ends.
+        out.push_str(&format!(
+            r#"<line x1="{:.2}" y1="{:.2}" x2="{:.2}" y2="{:.2}" stroke="{INK}" stroke-width="0.6"/>"#,
+            a1.0, a1.1, a2.0, a2.1,
+        ));
+        let (ux, uy) = (dx / len, dy / len);
+        for p in [a1, a2] {
+            let t = ((ux - n.0) * 3.0, (uy - n.1) * 3.0);
+            out.push_str(&format!(
+                r#"<line x1="{:.2}" y1="{:.2}" x2="{:.2}" y2="{:.2}" stroke="{INK}" stroke-width="0.8"/>"#,
+                p.0 - t.0,
+                p.1 - t.1,
+                p.0 + t.0,
+                p.1 + t.1,
+            ));
+        }
+        let text = (mid.0 + n.0 * (off + 10.0), mid.1 + n.1 * (off + 10.0));
+        out.push_str(&format!(
+            r#"<text x="{:.2}" y="{:.2}" font-family="JetBrains Mono, Menlo, monospace" font-size="9" fill="{INK}" text-anchor="middle" dominant-baseline="middle" paint-order="stroke" stroke="{PAPER}" stroke-width="3">{}</text>"#,
+            text.0,
+            text.1,
+            xml_escape(&dim.label),
+        ));
+    }
+    out.push_str("</g>");
+}
+
+/// Emit the origin/axes gizmo in the lower-left corner: world X/Y/Z arrows
+/// projected through the current view (kernel is Z-up). An axis parallel to
+/// the camera projects to nothing and is skipped.
+fn emit_svg_axes(out: &mut String, view: View, h: f64) {
+    let right = view.right();
+    let down = view.down();
+    // Inset far enough that an arrow pointing toward the corner (plus its
+    // label) stays on canvas.
+    let origin = (AXIS_LEN_PX + 14.0, h - AXIS_LEN_PX - 14.0);
+    out.push_str(r#"<g class="annot-axes">"#);
+    for i in 0..3 {
+        let mut e = [0.0; 3];
+        e[i] = 1.0;
+        let d = (dot(e, right), dot(e, down));
+        let m = (d.0 * d.0 + d.1 * d.1).sqrt();
+        if m < 1e-6 {
+            continue;
+        }
+        let (ux, uy) = (d.0 / m, d.1 / m);
+        let tip = (origin.0 + ux * AXIS_LEN_PX, origin.1 + uy * AXIS_LEN_PX);
+        let color = AXIS_COLORS[i];
+        out.push_str(&format!(
+            r#"<line x1="{:.2}" y1="{:.2}" x2="{:.2}" y2="{:.2}" stroke="{color}" stroke-width="1.4" stroke-linecap="round"/>"#,
+            origin.0, origin.1, tip.0, tip.1,
+        ));
+        // Arrowhead: two barbs swept back from the tip.
+        for s in [0.45f64, -0.45] {
+            let (bx, by) = (-ux * s.cos() - uy * s.sin(), ux * s.sin() - uy * s.cos());
+            out.push_str(&format!(
+                r#"<line x1="{:.2}" y1="{:.2}" x2="{:.2}" y2="{:.2}" stroke="{color}" stroke-width="1.4" stroke-linecap="round"/>"#,
+                tip.0,
+                tip.1,
+                tip.0 + bx * 5.0,
+                tip.1 + by * 5.0,
+            ));
+        }
+        out.push_str(&format!(
+            r#"<text x="{:.2}" y="{:.2}" font-family="JetBrains Mono, Menlo, monospace" font-size="9" fill="{color}" text-anchor="middle" dominant-baseline="middle" paint-order="stroke" stroke="{PAPER}" stroke-width="2.5">{}</text>"#,
+            tip.0 + ux * 8.0,
+            tip.1 + uy * 8.0,
+            AXIS_NAMES[i],
+        ));
+    }
+    out.push_str("</g>");
 }
 
 // ─── public API: raster JPEG ──────────────────────────────────────────────
@@ -1496,6 +2050,13 @@ mod raster {
         pub fill_frac: f64,
         /// JPEG quality, 1–100 (capture rules say ≥ 90).
         pub quality: u8,
+        /// Optional section (cutaway) plane: material on the camera's
+        /// side of the plane is removed and exposed cut faces are hatched.
+        pub section: Option<SectionPlane>,
+        /// Opt-in engineering overlays (axes gizmo, part labels, bbox
+        /// dimensions). All-off by default; the default render is
+        /// byte-identical to an annotation-free build.
+        pub annotations: RenderAnnotations,
     }
 
     impl Default for RasterOptions {
@@ -1505,6 +2066,8 @@ mod raster {
                 size_px: 1024,
                 fill_frac: 0.6,
                 quality: 92,
+                section: None,
+                annotations: RenderAnnotations::default(),
             }
         }
     }
@@ -1515,10 +2078,11 @@ mod raster {
     /// with the same edge classification as the SVG path drawn on top
     /// (hidden lines removed). Errors are human-readable strings.
     pub fn render_jpeg_str(raw_vcad: &str, opts: &RasterOptions) -> Result<Vec<u8>, String> {
-        let tinted = evaluate_vcad(raw_vcad)?;
-        let solids: Vec<Solid> = tinted.iter().map(|(s, _)| s.clone()).collect();
-        let tints: Vec<Option<[f64; 3]>> = tinted.iter().map(|(_, t)| *t).collect();
-        encode_jpeg(rasterize(&solids, &tints, opts)?, opts)
+        let scene = evaluate_vcad(raw_vcad)?;
+        let solids: Vec<Solid> = scene.iter().map(|s| s.solid.clone()).collect();
+        let tints: Vec<Option<[f64; 3]>> = scene.iter().map(|s| s.tint).collect();
+        let names: Vec<Option<String>> = scene.iter().map(|s| s.name.clone()).collect();
+        encode_jpeg(rasterize(&solids, &tints, &names, opts)?, opts)
     }
 
     /// Render pre-evaluated solids to JPEG bytes, monochrome (no material
@@ -1526,7 +2090,8 @@ mod raster {
     /// [`render_jpeg_str`], which honours document material colours.
     pub fn render_jpeg_solids(solids: &[Solid], opts: &RasterOptions) -> Result<Vec<u8>, String> {
         let no_tints: Vec<Option<[f64; 3]>> = vec![None; solids.len()];
-        encode_jpeg(rasterize(solids, &no_tints, opts)?, opts)
+        let no_names: Vec<Option<String>> = vec![None; solids.len()];
+        encode_jpeg(rasterize(solids, &no_tints, &no_names, opts)?, opts)
     }
 
     /// Render raw `.vcad` document JSON to RGBA PNG bytes with a fully
@@ -1534,17 +2099,19 @@ mod raster {
     /// was drawn). Same projection and shading as [`render_jpeg_str`];
     /// `opts.quality` is ignored (PNG is lossless).
     pub fn render_png_str(raw_vcad: &str, opts: &RasterOptions) -> Result<Vec<u8>, String> {
-        let tinted = evaluate_vcad(raw_vcad)?;
-        let solids: Vec<Solid> = tinted.iter().map(|(s, _)| s.clone()).collect();
-        let tints: Vec<Option<[f64; 3]>> = tinted.iter().map(|(_, t)| *t).collect();
-        encode_png(rasterize(&solids, &tints, opts)?, opts)
+        let scene = evaluate_vcad(raw_vcad)?;
+        let solids: Vec<Solid> = scene.iter().map(|s| s.solid.clone()).collect();
+        let tints: Vec<Option<[f64; 3]>> = scene.iter().map(|s| s.tint).collect();
+        let names: Vec<Option<String>> = scene.iter().map(|s| s.name.clone()).collect();
+        encode_png(rasterize(&solids, &tints, &names, opts)?, opts)
     }
 
     /// Render pre-evaluated solids to RGBA PNG bytes with a transparent
     /// background, monochrome (no material tints). See [`render_png_str`].
     pub fn render_png_solids(solids: &[Solid], opts: &RasterOptions) -> Result<Vec<u8>, String> {
         let no_tints: Vec<Option<[f64; 3]>> = vec![None; solids.len()];
-        encode_png(rasterize(solids, &no_tints, opts)?, opts)
+        let no_names: Vec<Option<String>> = vec![None; solids.len()];
+        encode_png(rasterize(solids, &no_tints, &no_names, opts)?, opts)
     }
 
     /// JPEG-encode a rasterized frame (coverage mask ignored — JPEG keeps
@@ -1596,12 +2163,14 @@ mod raster {
 
     /// Shared raster implementation; `tints[i]`, when present, tints solid
     /// `i`'s shading ramp exactly as the SVG path does. Untinted solids keep
-    /// the original two-stop monochrome shading, byte-for-byte. Returns the
-    /// RGB frame plus a per-pixel coverage mask (255 where geometry or an
-    /// edge stroke was drawn, 0 over untouched background).
+    /// the original two-stop monochrome shading, byte-for-byte. `names[i]`
+    /// labels solid `i` when the `labels` annotation is on. Returns the RGB
+    /// frame plus a per-pixel coverage mask (255 where geometry, an edge
+    /// stroke, or an annotation was drawn, 0 over untouched background).
     fn rasterize(
         solids: &[Solid],
         tints: &[Option<[f64; 3]>],
+        names: &[Option<String>],
         opts: &RasterOptions,
     ) -> Result<(Vec<u8>, Vec<u8>), String> {
         if solids.is_empty() {
@@ -1613,6 +2182,37 @@ mod raster {
         if !(opts.fill_frac > 0.0 && opts.fill_frac <= 1.0) {
             return Err("fill_frac must be in (0, 1]".to_string());
         }
+
+        // Apply the section cut (if any) before tessellation. A solid whose
+        // boolean fails is rendered uncut; one wholly on the removed side is
+        // dropped. Rebuild SceneSolids so tints and names stay aligned with
+        // the (possibly shorter) cut solid list.
+        // Parallel solid/tint/name columns, kept aligned across a section cut.
+        type Columns = (Vec<Solid>, Vec<Option<[f64; 3]>>, Vec<Option<String>>);
+        let (solids, tints, names): Columns = match opts.section {
+            Some(plane) => {
+                let scene: Vec<SceneSolid> = solids
+                    .iter()
+                    .enumerate()
+                    .map(|(i, s)| SceneSolid {
+                        solid: s.clone(),
+                        tint: tints.get(i).copied().flatten(),
+                        name: names.get(i).cloned().flatten(),
+                    })
+                    .collect();
+                let cut = apply_section(scene, plane, opts.view);
+                (
+                    cut.iter().map(|s| s.solid.clone()).collect(),
+                    cut.iter().map(|s| s.tint).collect(),
+                    cut.iter().map(|s| s.name.clone()).collect(),
+                )
+            }
+            None => (solids.to_vec(), tints.to_vec(), names.to_vec()),
+        };
+        if solids.is_empty() {
+            return Err("no solids survive the section plane".to_string());
+        }
+        let (solids, tints, names) = (&solids[..], &tints[..], &names[..]);
 
         let cam = opts.view.cam();
         let right = normalize(opts.view.right());
@@ -1634,6 +2234,7 @@ mod raster {
                 mark_silhouette: true,
                 keep_occluded: false,
             },
+            opts.section,
         );
 
         // Screen-plane (mm) and 3D bounding boxes over all vertices.
@@ -1726,6 +2327,7 @@ mod raster {
                     size,
                     [proj[t[0]], proj[t[1]], proj[t[2]]],
                     shade,
+                    art.cut[ti],
                 );
             }
         }
@@ -1749,12 +2351,30 @@ mod raster {
             }
         }
 
+        // Pass 3 (opt-in): engineering-context overlays, drawn over the
+        // finished render in pixel space. Overlay pixels also mark the
+        // coverage mask so gizmo/dimension linework over the background
+        // stays opaque in the transparent PNG output.
+        if opts.annotations.any() {
+            draw_annotations(
+                &mut rgb, &mut mask, size, &arts, names, opts, &to_px, lo3, hi3,
+            );
+        }
+
         Ok((rgb, mask))
     }
 
     fn edge_fn(a: (f64, f64, f64), b: (f64, f64, f64), px: f64, py: f64) -> f64 {
         (b.0 - a.0) * (py - a.1) - (b.1 - a.1) * (px - a.0)
     }
+
+    /// Hatch period (px) for section-cut faces in the raster path; lines
+    /// run at 45° because `x + y` is constant along each anti-diagonal.
+    const HATCH_PERIOD_PX: usize = 9;
+    /// Hatch line thickness (px) within each period.
+    const HATCH_LINE_PX: usize = 2;
+    /// Cut-face background — a pale ice tint (matches the SVG `HATCH_BG`).
+    const HATCH_BG_RGB: [u8; 3] = [220, 232, 242];
 
     fn fill_triangle(
         rgb: &mut [u8],
@@ -1763,6 +2383,7 @@ mod raster {
         size: usize,
         p: [(f64, f64, f64); 3],
         shade: [u8; 3],
+        hatch: bool,
     ) {
         let area = edge_fn(p[0], p[1], p[2].0, p[2].1);
         if area.abs() < 1e-12 {
@@ -1814,12 +2435,344 @@ mod raster {
                 if depth > zbuf[idx] {
                     zbuf[idx] = depth;
                     mask[idx] = 255;
-                    rgb[idx * 3] = shade[0];
-                    rgb[idx * 3 + 1] = shade[1];
-                    rgb[idx * 3 + 2] = shade[2];
+                    let c = if hatch {
+                        // 45° drafting hatch: ink line over pale ice.
+                        if (px + py) % HATCH_PERIOD_PX < HATCH_LINE_PX {
+                            FILL_DARK
+                        } else {
+                            HATCH_BG_RGB
+                        }
+                    } else {
+                        shade
+                    };
+                    rgb[idx * 3] = c[0];
+                    rgb[idx * 3 + 1] = c[1];
+                    rgb[idx * 3 + 2] = c[2];
                 }
             }
         }
+    }
+
+    // ── raster annotation overlay ─────────────────────────────────────────
+
+    /// Visible linework ink as RGB (the raster twin of [`INK`]).
+    const INK_RGB: [u8; 3] = [11, 39, 66];
+    /// Axis gizmo colours (X, Y, Z), matching [`AXIS_COLORS`].
+    const AXIS_RGB: [[u8; 3]; 3] = [[192, 57, 43], [30, 142, 62], [43, 108, 176]];
+    /// Text glyph pixel scale (5×7 font → 10×14 px per glyph).
+    const FONT_SCALE: usize = 2;
+
+    /// Draw the opt-in overlays (axes gizmo, part labels, bbox dimensions)
+    /// over a finished raster render, in pixel space.
+    #[allow(clippy::too_many_arguments)]
+    fn draw_annotations(
+        rgb: &mut [u8],
+        mask: &mut [u8],
+        size: usize,
+        arts: &[SolidArtifacts],
+        names: &[Option<String>],
+        opts: &RasterOptions,
+        to_px: &dyn Fn([f64; 3]) -> (f64, f64, f64),
+        lo3: [f64; 3],
+        hi3: [f64; 3],
+    ) {
+        let annos = &opts.annotations;
+        if annos.dims {
+            for dim in bbox_dim_specs(lo3, hi3) {
+                let (ax, ay, _) = to_px(dim.a);
+                let (bx, by, _) = to_px(dim.b);
+                let (dx, dy) = (bx - ax, by - ay);
+                let len = (dx * dx + dy * dy).sqrt();
+                if len < 6.0 {
+                    continue; // axis parallel to the camera in this view
+                }
+                let mut n = (-dy / len, dx / len);
+                let mid = ((ax + bx) / 2.0, (ay + by) / 2.0);
+                let half = size as f64 / 2.0;
+                if n.0 * (mid.0 - half) + n.1 * (mid.1 - half) < 0.0 {
+                    n = (-n.0, -n.1);
+                }
+                let off = 18.0;
+                let a1 = (ax + n.0 * off, ay + n.1 * off);
+                let a2 = (bx + n.0 * off, by + n.1 * off);
+                for (p, e) in [((ax, ay), a1), ((bx, by), a2)] {
+                    draw_line_col(
+                        rgb,
+                        mask,
+                        size,
+                        p,
+                        (e.0 + n.0 * 4.0, e.1 + n.1 * 4.0),
+                        INK_RGB,
+                        1,
+                    );
+                }
+                draw_line_col(rgb, mask, size, a1, a2, INK_RGB, 1);
+                let (ux, uy) = (dx / len, dy / len);
+                for p in [a1, a2] {
+                    let t = ((ux - n.0) * 4.0, (uy - n.1) * 4.0);
+                    draw_line_col(
+                        rgb,
+                        mask,
+                        size,
+                        (p.0 - t.0, p.1 - t.1),
+                        (p.0 + t.0, p.1 + t.1),
+                        INK_RGB,
+                        1,
+                    );
+                }
+                let text = (mid.0 + n.0 * (off + 14.0), mid.1 + n.1 * (off + 14.0));
+                draw_text_centered(rgb, mask, size, text, &dim.label, INK_RGB);
+            }
+        }
+        if annos.labels {
+            for art in arts {
+                let Some(name) = names.get(art.src).and_then(|n| n.as_deref()) else {
+                    continue;
+                };
+                let mut lo = (f64::INFINITY, f64::INFINITY);
+                let mut hi = (f64::NEG_INFINITY, f64::NEG_INFINITY);
+                for v in &art.verts {
+                    let (x, y, _) = to_px(*v);
+                    lo = (lo.0.min(x), lo.1.min(y));
+                    hi = (hi.0.max(x), hi.1.max(y));
+                }
+                if !lo.0.is_finite() {
+                    continue;
+                }
+                let anchor = ((lo.0 + hi.0) / 2.0, (lo.1 + hi.1) / 2.0);
+                let dir = if anchor.0 + 120.0 > size as f64 {
+                    -1.0
+                } else {
+                    1.0
+                };
+                let elbow = (anchor.0 + 22.0 * dir, anchor.1 - 22.0);
+                draw_line_col(rgb, mask, size, anchor, elbow, INK_RGB, 1);
+                // Anchor dot.
+                draw_line_col(
+                    rgb,
+                    mask,
+                    size,
+                    (anchor.0 - 1.0, anchor.1),
+                    (anchor.0 + 1.0, anchor.1),
+                    INK_RGB,
+                    2,
+                );
+                let tw = text_width_px(name);
+                let tx = if dir > 0.0 {
+                    elbow.0 + 4.0
+                } else {
+                    elbow.0 - 4.0 - tw as f64
+                };
+                draw_text(rgb, mask, size, (tx, elbow.1 - 7.0), name, INK_RGB);
+            }
+        }
+        if annos.axes {
+            let origin = (48.0, size as f64 - 48.0);
+            let right = normalize(opts.view.right());
+            let down = normalize(opts.view.down());
+            for i in 0..3 {
+                let mut e = [0.0; 3];
+                e[i] = 1.0;
+                let d = (dot(e, right), dot(e, down));
+                let m = (d.0 * d.0 + d.1 * d.1).sqrt();
+                if m < 1e-6 {
+                    continue;
+                }
+                let (ux, uy) = (d.0 / m, d.1 / m);
+                let l = 26.0;
+                let tip = (origin.0 + ux * l, origin.1 + uy * l);
+                let color = AXIS_RGB[i];
+                draw_line_col(rgb, mask, size, origin, tip, color, 2);
+                for s in [0.45f64, -0.45] {
+                    let (bx, by) = (-ux * s.cos() - uy * s.sin(), ux * s.sin() - uy * s.cos());
+                    draw_line_col(
+                        rgb,
+                        mask,
+                        size,
+                        tip,
+                        (tip.0 + bx * 6.0, tip.1 + by * 6.0),
+                        color,
+                        2,
+                    );
+                }
+                draw_text_centered(
+                    rgb,
+                    mask,
+                    size,
+                    (tip.0 + ux * 10.0, tip.1 + uy * 10.0),
+                    AXIS_NAMES[i],
+                    color,
+                );
+            }
+        }
+    }
+
+    /// Unconditional coloured line (no z-test) for annotation overlays.
+    /// `thick` paints an n×n block per sample.
+    fn draw_line_col(
+        rgb: &mut [u8],
+        mask: &mut [u8],
+        size: usize,
+        a: (f64, f64),
+        b: (f64, f64),
+        color: [u8; 3],
+        thick: i64,
+    ) {
+        let len = ((b.0 - a.0).powi(2) + (b.1 - a.1).powi(2)).sqrt();
+        let steps = (len * 2.0).ceil().max(1.0) as usize;
+        for s in 0..=steps {
+            let t = s as f64 / steps as f64;
+            let x = (a.0 + (b.0 - a.0) * t).floor() as i64;
+            let y = (a.1 + (b.1 - a.1) * t).floor() as i64;
+            for dy in 0..thick {
+                for dx in 0..thick {
+                    let (qx, qy) = (x + dx, y + dy);
+                    if qx < 0 || qy < 0 || qx >= size as i64 || qy >= size as i64 {
+                        continue;
+                    }
+                    let cell = qy as usize * size + qx as usize;
+                    let qi = cell * 3;
+                    rgb[qi] = color[0];
+                    rgb[qi + 1] = color[1];
+                    rgb[qi + 2] = color[2];
+                    mask[cell] = 255;
+                }
+            }
+        }
+    }
+
+    /// Classic 5×7 pixel font, column-major, LSB = top row. Covers digits,
+    /// uppercase letters (input is uppercase-folded), and the punctuation a
+    /// dimension label or part name plausibly needs; anything else renders
+    /// as a hollow box.
+    fn glyph5x7(c: char) -> [u8; 5] {
+        match c.to_ascii_uppercase() {
+            ' ' => [0x00, 0x00, 0x00, 0x00, 0x00],
+            '-' => [0x08, 0x08, 0x08, 0x08, 0x08],
+            '_' => [0x40, 0x40, 0x40, 0x40, 0x40],
+            '.' => [0x00, 0x60, 0x60, 0x00, 0x00],
+            '/' => [0x20, 0x10, 0x08, 0x04, 0x02],
+            '0' => [0x3E, 0x51, 0x49, 0x45, 0x3E],
+            '1' => [0x00, 0x42, 0x7F, 0x40, 0x00],
+            '2' => [0x42, 0x61, 0x51, 0x49, 0x46],
+            '3' => [0x21, 0x41, 0x45, 0x4B, 0x31],
+            '4' => [0x18, 0x14, 0x12, 0x7F, 0x10],
+            '5' => [0x27, 0x45, 0x45, 0x45, 0x39],
+            '6' => [0x3C, 0x4A, 0x49, 0x49, 0x30],
+            '7' => [0x01, 0x71, 0x09, 0x05, 0x03],
+            '8' => [0x36, 0x49, 0x49, 0x49, 0x36],
+            '9' => [0x06, 0x49, 0x49, 0x29, 0x1E],
+            'A' => [0x7E, 0x11, 0x11, 0x11, 0x7E],
+            'B' => [0x7F, 0x49, 0x49, 0x49, 0x36],
+            'C' => [0x3E, 0x41, 0x41, 0x41, 0x22],
+            'D' => [0x7F, 0x41, 0x41, 0x22, 0x1C],
+            'E' => [0x7F, 0x49, 0x49, 0x49, 0x41],
+            'F' => [0x7F, 0x09, 0x09, 0x09, 0x01],
+            'G' => [0x3E, 0x41, 0x49, 0x49, 0x7A],
+            'H' => [0x7F, 0x08, 0x08, 0x08, 0x7F],
+            'I' => [0x00, 0x41, 0x7F, 0x41, 0x00],
+            'J' => [0x20, 0x40, 0x41, 0x3F, 0x01],
+            'K' => [0x7F, 0x08, 0x14, 0x22, 0x41],
+            'L' => [0x7F, 0x40, 0x40, 0x40, 0x40],
+            'M' => [0x7F, 0x02, 0x0C, 0x02, 0x7F],
+            'N' => [0x7F, 0x04, 0x08, 0x10, 0x7F],
+            'O' => [0x3E, 0x41, 0x41, 0x41, 0x3E],
+            'P' => [0x7F, 0x09, 0x09, 0x09, 0x06],
+            'Q' => [0x3E, 0x41, 0x51, 0x21, 0x5E],
+            'R' => [0x7F, 0x09, 0x19, 0x29, 0x46],
+            'S' => [0x46, 0x49, 0x49, 0x49, 0x31],
+            'T' => [0x01, 0x01, 0x7F, 0x01, 0x01],
+            'U' => [0x3F, 0x40, 0x40, 0x40, 0x3F],
+            'V' => [0x1F, 0x20, 0x40, 0x20, 0x1F],
+            'W' => [0x3F, 0x40, 0x38, 0x40, 0x3F],
+            'X' => [0x63, 0x14, 0x08, 0x14, 0x63],
+            'Y' => [0x07, 0x08, 0x70, 0x08, 0x07],
+            'Z' => [0x61, 0x51, 0x49, 0x45, 0x43],
+            _ => [0x7F, 0x41, 0x41, 0x41, 0x7F],
+        }
+    }
+
+    /// Rendered width of `text` in pixels at [`FONT_SCALE`].
+    fn text_width_px(text: &str) -> usize {
+        text.chars().count() * 6 * FONT_SCALE
+    }
+
+    /// Draw `text` with its top-left at `pos`, over a paper-coloured pad so
+    /// it stays legible on part fills.
+    fn draw_text(
+        rgb: &mut [u8],
+        mask: &mut [u8],
+        size: usize,
+        pos: (f64, f64),
+        text: &str,
+        color: [u8; 3],
+    ) {
+        let x0 = pos.0.round() as i64;
+        let y0 = pos.1.round() as i64;
+        let w = text_width_px(text) as i64;
+        let h = (7 * FONT_SCALE) as i64;
+        // Halo pad — opaque so the label stays legible over the transparent
+        // PNG background as well as over part fills.
+        for py in (y0 - 2)..(y0 + h + 2) {
+            for px in (x0 - 2)..(x0 + w + 2) {
+                if px < 0 || py < 0 || px >= size as i64 || py >= size as i64 {
+                    continue;
+                }
+                let cell = py as usize * size + px as usize;
+                let qi = cell * 3;
+                rgb[qi] = BACKGROUND[0];
+                rgb[qi + 1] = BACKGROUND[1];
+                rgb[qi + 2] = BACKGROUND[2];
+                mask[cell] = 255;
+            }
+        }
+        for (ci, c) in text.chars().enumerate() {
+            let cols = glyph5x7(c);
+            let gx = x0 + (ci * 6 * FONT_SCALE) as i64;
+            for (col, bits) in cols.iter().enumerate() {
+                for row in 0..7 {
+                    if bits & (1 << row) == 0 {
+                        continue;
+                    }
+                    for sy in 0..FONT_SCALE {
+                        for sx in 0..FONT_SCALE {
+                            let px = gx + (col * FONT_SCALE + sx) as i64;
+                            let py = y0 + (row * FONT_SCALE + sy) as i64;
+                            if px < 0 || py < 0 || px >= size as i64 || py >= size as i64 {
+                                continue;
+                            }
+                            let cell = py as usize * size + px as usize;
+                            let qi = cell * 3;
+                            rgb[qi] = color[0];
+                            rgb[qi + 1] = color[1];
+                            rgb[qi + 2] = color[2];
+                            mask[cell] = 255;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Draw `text` centred on `pos`.
+    fn draw_text_centered(
+        rgb: &mut [u8],
+        mask: &mut [u8],
+        size: usize,
+        pos: (f64, f64),
+        text: &str,
+        color: [u8; 3],
+    ) {
+        let w = text_width_px(text) as f64;
+        let h = (7 * FONT_SCALE) as f64;
+        draw_text(
+            rgb,
+            mask,
+            size,
+            (pos.0 - w / 2.0, pos.1 - h / 2.0),
+            text,
+            color,
+        );
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1981,15 +2934,15 @@ mod raytrace {
         // optimization results, imported meshes) have no analytic surfaces
         // to trace and are skipped.
         let mut scene: Vec<(Bvh, Option<[[u8; 3]; 4]>)> = Vec::new();
-        for (solid, tint) in &tinted {
-            let Some(brep) = solid.as_brep() else {
+        for s in &tinted {
+            let Some(brep) = s.solid.as_brep() else {
                 continue;
             };
             let bvh = Bvh::build(brep);
             if bvh.root().is_none() {
                 continue;
             }
-            scene.push((bvh, tint.map(tint_ramp)));
+            scene.push((bvh, s.tint.map(tint_ramp)));
         }
         if scene.is_empty() {
             return Err("raytrace: document produced no BRep-backed solids \
@@ -2256,6 +3209,119 @@ mod tests {
         );
     }
 
+    /// Two named parts: a 20×30×10 bracket plus a small pin inside its
+    /// footprint (so the overall bbox is exactly the bracket's).
+    fn two_part_vcad() -> &'static str {
+        r#"{
+  "version": "0.1",
+  "nodes": {
+    "1": { "id": 1, "name": "Bracket", "op": { "type": "Cube", "size": { "x": 20.0, "y": 30.0, "z": 10.0 } } },
+    "2": { "id": 2, "name": "Pin", "op": { "type": "Cube", "size": { "x": 5.0, "y": 5.0, "z": 5.0 } } }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [ { "root": 1, "material": "default" }, { "root": 2, "material": "default" } ]
+}"#
+    }
+
+    /// Default (all-off) annotations must not change the output at all.
+    /// Edge emission order comes from a HashMap and is not run-stable, so
+    /// compare the canonicalized element set rather than raw bytes.
+    #[test]
+    fn default_annotations_are_a_no_op() {
+        let canon = |svg: &str| {
+            let mut elems: Vec<&str> = svg.split('<').collect();
+            elems.sort_unstable();
+            elems.join("<")
+        };
+        let plain = render_svg_str_view(two_part_vcad(), 2.0, View::Isometric).unwrap();
+        let opts = render_svg_str_view_opts(
+            two_part_vcad(),
+            2.0,
+            View::Isometric,
+            false,
+            &RenderAnnotations::default(),
+        )
+        .unwrap();
+        assert_eq!(canon(&plain), canon(&opts));
+        assert!(!opts.contains("annot-"), "no annotation groups by default");
+        assert!(!opts.contains("<text"), "no text elements by default");
+    }
+
+    /// Labels + dims on a two-part doc: the SVG must carry both part names
+    /// and the correct overall W×D×H mm values.
+    #[test]
+    fn labels_and_dims_annotate_two_part_doc() {
+        let svg = render_svg_str_view_opts(
+            two_part_vcad(),
+            2.0,
+            View::Isometric,
+            false,
+            &RenderAnnotations {
+                labels: true,
+                dims: true,
+                axes: false,
+            },
+        )
+        .unwrap();
+        for name in ["Bracket", "Pin"] {
+            assert!(
+                svg.contains(&format!(">{name}</text>")),
+                "missing label {name}"
+            );
+        }
+        for dim in ["W 20 mm", "D 30 mm", "H 10 mm"] {
+            assert!(svg.contains(&format!(">{dim}</text>")), "missing dim {dim}");
+        }
+        // Annotation margin: the canvas grows beyond the plain render.
+        let plain = render_svg_str_view(two_part_vcad(), 2.0, View::Isometric).unwrap();
+        assert!(svg.len() > plain.len());
+    }
+
+    /// The axes gizmo emits all three axis arrows in an isometric view, and
+    /// drops the view-parallel axis in an orthographic one (front looks
+    /// down +Y, so Y projects to nothing).
+    #[test]
+    fn axes_gizmo_projects_per_view() {
+        let annos = RenderAnnotations {
+            axes: true,
+            ..Default::default()
+        };
+        let iso =
+            render_svg_str_view_opts(two_part_vcad(), 2.0, View::Isometric, false, &annos).unwrap();
+        for a in [">X</text>", ">Y</text>", ">Z</text>"] {
+            assert!(iso.contains(a), "iso gizmo missing {a}");
+        }
+        let front =
+            render_svg_str_view_opts(two_part_vcad(), 2.0, View::Front, false, &annos).unwrap();
+        assert!(front.contains(">X</text>") && front.contains(">Z</text>"));
+        assert!(
+            !front.contains(">Y</text>"),
+            "front view must drop the view-parallel Y axis"
+        );
+    }
+
+    /// Fractional extents keep one decimal in the dim label.
+    #[test]
+    fn dim_labels_format_fractional_mm() {
+        assert_eq!(format_mm(20.0), "20");
+        assert_eq!(format_mm(12.5), "12.5");
+        let svg = render_svg_str_view_opts(
+            &cube_vcad(12.5, 8.0, 3.0),
+            2.0,
+            View::Isometric,
+            false,
+            &RenderAnnotations {
+                dims: true,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(svg.contains(">W 12.5 mm</text>"));
+        assert!(svg.contains(">D 8 mm</text>"));
+        assert!(svg.contains(">H 3 mm</text>"));
+    }
+
     #[test]
     fn renders_cube_to_svg() {
         let svg = render_svg_str(&cube_vcad(20.0, 30.0, 10.0), DEFAULT_SCALE)
@@ -2371,6 +3437,40 @@ mod tests {
             assert_ne!(front, top);
         }
 
+        /// Annotated raster output differs from plain, and default
+        /// (all-off) annotations leave it byte-identical.
+        #[test]
+        fn raster_annotations_change_output_only_when_enabled() {
+            let doc = two_part_vcad();
+            let render = |annotations: RenderAnnotations| {
+                render_jpeg_str(
+                    doc,
+                    &RasterOptions {
+                        size_px: 256,
+                        annotations,
+                        ..Default::default()
+                    },
+                )
+                .unwrap()
+            };
+            let plain = render(RenderAnnotations::default());
+            let legacy = render_jpeg_str(
+                doc,
+                &RasterOptions {
+                    size_px: 256,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+            assert_eq!(plain, legacy, "default annotations must be a no-op");
+            let annotated = render(RenderAnnotations {
+                axes: true,
+                labels: true,
+                dims: true,
+            });
+            assert_ne!(plain, annotated, "overlays must actually draw");
+        }
+
         #[test]
         fn rejects_bad_options() {
             let doc = cube_vcad(10.0, 10.0, 10.0);
@@ -2423,6 +3523,161 @@ mod tests {
                 .any(|(x, y)| img.get_pixel(x, y)[3] == 255);
             assert!(opaque, "central region should contain an opaque pixel");
         }
+
+        /// The axes gizmo sits in the lower-left corner over the background;
+        /// its linework must mark the coverage mask so it stays opaque in the
+        /// transparent PNG (regression: annotations that only wrote RGB would
+        /// vanish under alpha 0).
+        #[test]
+        fn png_annotations_are_opaque_over_background() {
+            let opts = |annotations| RasterOptions {
+                size_px: 256,
+                annotations,
+                ..Default::default()
+            };
+            let load = |o: &RasterOptions| {
+                image::load_from_memory(&render_png_str(&cube_vcad(20.0, 20.0, 20.0), o).unwrap())
+                    .unwrap()
+                    .to_rgba8()
+            };
+            let plain = load(&opts(RenderAnnotations::default()));
+            let annotated = load(&opts(RenderAnnotations {
+                axes: true,
+                ..Default::default()
+            }));
+            // The gizmo lives near (48, size-48); scan that lower-left region.
+            let opaque_in_region = |img: &image::RgbaImage| {
+                (200..245)
+                    .flat_map(|y| (20..80).map(move |x| (x, y)))
+                    .filter(|&(x, y)| img.get_pixel(x, y)[3] == 255)
+                    .count()
+            };
+            assert_eq!(
+                opaque_in_region(&plain),
+                0,
+                "no geometry in the lower-left corner without the gizmo"
+            );
+            assert!(
+                opaque_in_region(&annotated) > 0,
+                "axes gizmo must be opaque over the transparent background"
+            );
+        }
+    }
+
+    /// A hollow box (cube minus an inset cube) whose cavity never reaches
+    /// the outside — a solid shell with walls all around.
+    fn hollow_box_vcad() -> &'static str {
+        r#"{
+  "version": "0.1",
+  "nodes": {
+    "1": { "id": 1, "name": "outer", "op": { "type": "Cube", "size": { "x": 30.0, "y": 30.0, "z": 30.0 } } },
+    "2": { "id": 2, "name": "inner", "op": { "type": "Cube", "size": { "x": 20.0, "y": 20.0, "z": 20.0 } } },
+    "3": { "id": 3, "name": "inner_placed", "op": { "type": "Translate", "child": 2, "offset": { "x": 5.0, "y": 5.0, "z": 5.0 } } },
+    "4": { "id": 4, "name": "shell", "op": { "type": "Difference", "left": 1, "right": 3 } }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [{ "root": 4, "material": "default" }]
+}"#
+    }
+
+    #[test]
+    fn parses_section_planes() {
+        use std::str::FromStr;
+        let s = SectionPlane::from_str("z=10").unwrap();
+        assert_eq!(s.axis, Axis::Z);
+        assert!((s.coord - 10.0).abs() < 1e-12);
+        assert_eq!(SectionPlane::from_str("X=-2.5").unwrap().axis, Axis::X);
+        assert!(SectionPlane::from_str("w=1").is_err());
+        assert!(SectionPlane::from_str("z").is_err());
+        assert!(SectionPlane::from_str("z=abc").is_err());
+    }
+
+    /// Sectioning a hollow box at mid-height must expose the cavity: the
+    /// SVG gains cross-hatched cut faces (the hatch pattern def plus
+    /// polygons filled with it) that an unsectioned render lacks.
+    #[test]
+    fn section_of_hollow_box_emits_hatched_cut_faces() {
+        let plane = SectionPlane {
+            axis: Axis::Z,
+            coord: 15.0,
+        };
+        let svg = render_svg_str_section(
+            hollow_box_vcad(),
+            4.0,
+            View::Isometric,
+            false,
+            Some(plane),
+            &RenderAnnotations::default(),
+        )
+        .expect("sectioned hollow box should render");
+        assert!(
+            svg.contains(r#"<pattern id="section-hatch""#),
+            "expected the section hatch pattern def"
+        );
+        assert!(
+            svg.contains(r#"fill="url(#section-hatch)""#),
+            "expected polygons filled with the section hatch"
+        );
+
+        let plain = render_svg_str_view(hollow_box_vcad(), 4.0, View::Isometric).unwrap();
+        assert!(
+            !plain.contains("section-hatch"),
+            "unsectioned render must not carry hatch markup"
+        );
+    }
+
+    /// A section plane entirely above the part removes nothing and adds no
+    /// hatched faces; one entirely below removes everything.
+    #[test]
+    fn section_plane_outside_part_bounds() {
+        let above = SectionPlane {
+            axis: Axis::Z,
+            coord: 100.0,
+        };
+        let svg = render_svg_str_section(
+            hollow_box_vcad(),
+            2.0,
+            View::Isometric,
+            false,
+            Some(above),
+            &RenderAnnotations::default(),
+        )
+        .expect("plane above the part should render it uncut");
+        assert!(!svg.contains(r#"fill="url(#section-hatch)""#));
+
+        let below = SectionPlane {
+            axis: Axis::Z,
+            coord: -100.0,
+        };
+        assert!(
+            render_svg_str_section(
+                hollow_box_vcad(),
+                2.0,
+                View::Isometric,
+                false,
+                Some(below),
+                &RenderAnnotations::default()
+            )
+            .is_err(),
+            "plane below the part removes all material"
+        );
+    }
+
+    #[cfg(feature = "raster")]
+    #[test]
+    fn section_composes_with_jpeg_and_view() {
+        let opts = RasterOptions {
+            view: View::Front,
+            size_px: 256,
+            section: Some(SectionPlane {
+                axis: Axis::Y,
+                coord: 15.0,
+            }),
+            ..Default::default()
+        };
+        let jpg = render_jpeg_str(hollow_box_vcad(), &opts).unwrap();
+        assert_eq!(&jpg[..2], &[0xFF, 0xD8]);
     }
 
     /// `tint_ramp` was previously capped at k ≤ 0.2 — even fully-saturated

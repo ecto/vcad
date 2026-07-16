@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-15-section-views",
+  "version": "0.9.4",
+  "date": "2026-07-15",
+  "category": "feat",
+  "title": "Section (cutaway) views in vcad-render",
+  "summary": "vcad-render --section x=N|y=N|z=N cuts the document by an axis-aligned plane and cross-hatches the exposed faces drafting-style; also available via render_view's new section param.",
+  "features": ["rendering", "section-views", "drafting"],
+  "mcpTools": ["render_view"]
+}

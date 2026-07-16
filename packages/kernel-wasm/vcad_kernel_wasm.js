@@ -4493,14 +4493,15 @@ export function ecadResolvePartDef(name, footprint) {
  * @param {string} pcb_json
  * @param {number} width
  * @param {string} nets_filter_json
+ * @param {number | null} [effort]
  * @returns {any}
  */
-export function ecadRouteAll(pcb_json, width, nets_filter_json) {
+export function ecadRouteAll(pcb_json, width, nets_filter_json, effort) {
     const ptr0 = passStringToWasm0(pcb_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len0 = WASM_VECTOR_LEN;
     const ptr1 = passStringToWasm0(nets_filter_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
     const len1 = WASM_VECTOR_LEN;
-    const ret = wasm.ecadRouteAll(ptr0, len0, width, ptr1, len1);
+    const ret = wasm.ecadRouteAll(ptr0, len0, width, ptr1, len1, !isLikeNone(effort), isLikeNone(effort) ? 0 : effort);
     if (ret[2]) {
         throw takeFromExternrefTable0(ret[1]);
     }
@@ -6006,6 +6007,43 @@ export function render_svg(vcad_json, scale) {
         return getStringFromWasm0(ptr2, len2);
     } finally {
         wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+    }
+}
+
+/**
+ * Render raw `.vcad` document JSON to an SVG with opt-in engineering
+ * annotations: an X/Y/Z origin gizmo (`axes`), part-name labels with
+ * leader lines (`labels`), and overall W×D×H bounding-box dimensions in mm
+ * (`dims`). With all three flags false the output matches
+ * [`render_svg_view`] exactly. `view` parses as in [`render_svg_view`].
+ * @param {string} vcad_json
+ * @param {number} scale
+ * @param {string} view
+ * @param {boolean} axes
+ * @param {boolean} labels
+ * @param {boolean} dims
+ * @returns {string}
+ */
+export function render_svg_annotated(vcad_json, scale, view, axes, labels, dims) {
+    let deferred4_0;
+    let deferred4_1;
+    try {
+        const ptr0 = passStringToWasm0(vcad_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(view, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.render_svg_annotated(ptr0, len0, scale, ptr1, len1, axes, labels, dims);
+        var ptr3 = ret[0];
+        var len3 = ret[1];
+        if (ret[3]) {
+            ptr3 = 0; len3 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred4_0 = ptr3;
+        deferred4_1 = len3;
+        return getStringFromWasm0(ptr3, len3);
+    } finally {
+        wasm.__wbindgen_free(deferred4_0, deferred4_1, 1);
     }
 }
 
@@ -8421,12 +8459,12 @@ function __wbg_get_imports() {
             arg0.writeTexture(arg1, arg2, arg3, arg4);
         },
         __wbindgen_cast_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 2729, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 2730, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 2752, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 2753, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen_6dc29d3b0fc4fccd___closure__destroy___dyn_core_7d5f0a2ba6a62c33___ops__function__FnMut__wgpu_c488dbbed5add906___backend__webgpu__webgpu_sys__gen_GpuUncapturedErrorEvent__GpuUncapturedErrorEvent____Output_______, wasm_bindgen_6dc29d3b0fc4fccd___convert__closures_____invoke___wgpu_c488dbbed5add906___backend__webgpu__webgpu_sys__gen_GpuUncapturedErrorEvent__GpuUncapturedErrorEvent_____);
             return ret;
         },
         __wbindgen_cast_0000000000000002: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 3426, function: Function { arguments: [Externref], shim_idx: 3427, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 3449, function: Function { arguments: [Externref], shim_idx: 3450, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen_6dc29d3b0fc4fccd___closure__destroy___dyn_core_7d5f0a2ba6a62c33___ops__function__FnMut__wasm_bindgen_6dc29d3b0fc4fccd___JsValue____Output_______, wasm_bindgen_6dc29d3b0fc4fccd___convert__closures_____invoke___wasm_bindgen_6dc29d3b0fc4fccd___JsValue_____);
             return ret;
         },

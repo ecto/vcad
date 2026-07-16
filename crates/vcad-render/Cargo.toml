@@ -36,3 +36,4 @@ required-features = ["cli"]
 
 [dev-dependencies]
 vcad-loon = { workspace = true }
+vcad-ecad-symbols = { workspace = true }

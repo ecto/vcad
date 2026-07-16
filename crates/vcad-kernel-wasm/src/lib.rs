@@ -154,6 +154,60 @@ pub fn render_svg_view(vcad_json: &str, scale: f64, view: &str) -> Result<String
     vcad_render::render_svg_str_view(vcad_json, scale, v).map_err(|e| JsError::new(&e))
 }
 
+/// Render a section (cutaway) view: the document cut by an axis-aligned
+/// plane, with exposed cut faces cross-hatched drafting-style.
+///
+/// `section` is `"x=N"`, `"y=N"`, or `"z=N"` (mm) — the half of the
+/// model on the camera's side of the plane is removed. `view` accepts the same names as
+/// [`render_svg_view`]; unrecognized values fall back to isometric. A
+/// solid whose section boolean fails renders uncut rather than failing
+/// the whole render.
+#[wasm_bindgen]
+pub fn render_svg_view_section(
+    vcad_json: &str,
+    scale: f64,
+    view: &str,
+    section: &str,
+) -> Result<String, JsError> {
+    let v = view
+        .parse::<vcad_render::View>()
+        .unwrap_or(vcad_render::View::Isometric);
+    let plane = section
+        .parse::<vcad_render::SectionPlane>()
+        .map_err(|e| JsError::new(&e))?;
+    vcad_render::render_svg_str_section(
+        vcad_json,
+        scale,
+        v,
+        false,
+        Some(plane),
+        &vcad_render::RenderAnnotations::default(),
+    )
+    .map_err(|e| JsError::new(&e))
+}
+
+/// Render raw `.vcad` document JSON to an SVG with opt-in engineering
+/// annotations: an X/Y/Z origin gizmo (`axes`), part-name labels with
+/// leader lines (`labels`), and overall W×D×H bounding-box dimensions in mm
+/// (`dims`). With all three flags false the output matches
+/// [`render_svg_view`] exactly. `view` parses as in [`render_svg_view`].
+#[wasm_bindgen]
+pub fn render_svg_annotated(
+    vcad_json: &str,
+    scale: f64,
+    view: &str,
+    axes: bool,
+    labels: bool,
+    dims: bool,
+) -> Result<String, JsError> {
+    let v = view
+        .parse::<vcad_render::View>()
+        .unwrap_or(vcad_render::View::Isometric);
+    let annotations = vcad_render::RenderAnnotations { axes, labels, dims };
+    vcad_render::render_svg_str_view_opts(vcad_json, scale, v, false, &annotations)
+        .map_err(|e| JsError::new(&e))
+}
+
 /// Render a PCB to a flat, top-down, per-layer 2D SVG (the "agent eyes" for
 /// boards — copper, silk, drills, outline).
 ///
@@ -5671,10 +5725,15 @@ mod ecad_wasm {
         pcb_json: &str,
         width: f64,
         nets_filter_json: &str,
+        effort: Option<f64>,
     ) -> Result<JsValue, JsError> {
         let pcb: Pcb = serde_json::from_str(pcb_json).map_err(|e| JsError::new(&e.to_string()))?;
         let filter: Vec<String> = serde_json::from_str(nets_filter_json).unwrap_or_default();
-        let result = vcad_ecad_pcb::router::route_all(&pcb, width, &filter);
+        let opts = vcad_ecad_pcb::router::RouteOptions {
+            effort: effort.unwrap_or(1.0).clamp(0.1, 100.0),
+            ..Default::default()
+        };
+        let result = vcad_ecad_pcb::router::route_all_with_opts(&pcb, width, &filter, &opts);
         serde_wasm_bindgen::to_value(&result).map_err(|e| JsError::new(&e.to_string()))
     }
 

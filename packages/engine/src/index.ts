@@ -100,6 +100,14 @@ export type { EvaluateOptions } from "./evaluate.js";
 export { transformMesh } from "./evaluate.js";
 export type { TransformInfo } from "./transform-walk.js";
 
+// Animation sequencer — samples a document Timeline into per-frame state.
+export {
+  sampleSequence,
+  poseDocument,
+  sampleTrackValue,
+} from "./sequence.js";
+export type { CameraPose, SequenceFrame } from "./sequence.js";
+
 // Sheet-metal — thin types that ride on EvaluatedPart.sheetMetal so the
 // UI can render the flat pattern and bend list without re-querying WASM.
 // All actual geometry lives in the Rust kernel.

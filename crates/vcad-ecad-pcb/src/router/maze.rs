@@ -8,8 +8,15 @@
 //! pass uses. So a route it returns avoids *all* copper on the layer (traces,
 //! pads, vias), and every emitted segment is clearance-legal by construction.
 //!
-//! It is deliberately not the topological engine (no rip-up, no layer changes):
+//! It is deliberately not the topological engine (no rip-up):
 //! it is the first router in vcad that *avoids* instead of *drawing-then-flagging*.
+//!
+//! Two searches live here: the single-layer [`route_net_maze`] and the
+//! layer-aware [`route_net_maze3d`], whose A* runs over `(x, y, layer)` with
+//! via transitions as costed edges — the search *chooses* where to change
+//! layers instead of being handed a layer by the caller. Via legality is
+//! probed on every copper layer the (through) via spans, so a 3D route is as
+//! DRC-clean as a 2D one.
 
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
@@ -29,6 +36,12 @@ const MAX_DIM: usize = 400;
 /// Cost added each time the route changes direction, in pitch units. Keeps
 /// routes straight (fewer, longer segments) rather than staircasing.
 const BEND_PENALTY: f64 = 0.6;
+
+/// Cost (mm-equivalent) of placing a via, i.e. taking a layer-transition edge
+/// in the 3D search. A through via consumes routing space on *every* copper
+/// layer, so it must cost noticeably more than a modest same-layer detour —
+/// but not so much that the search never escapes a genuinely walled-off layer.
+pub const VIA_COST: f64 = 4.0;
 
 /// Route a single net from `start` to `end` on `layer`, avoiding all other-net
 /// copper currently in `session`.
@@ -155,6 +168,282 @@ pub fn route_net_maze_cong(
         net: net.to_string(),
         segments,
         vias: Vec::new(),
+        success: true,
+    }
+}
+
+/// Result of a layer-aware maze route: segments each carrying their copper
+/// layer, plus the (through) via positions where the route transitions.
+#[derive(Debug, Clone)]
+pub struct RouteResult3d {
+    /// Net name that was routed.
+    pub net: String,
+    /// Routed segments as `(start, end, layer)`.
+    pub segments: Vec<(Vec2, Vec2, PcbLayer)>,
+    /// Via positions where the route changes layer (through vias).
+    pub vias: Vec<Vec2>,
+    /// Whether routing succeeded.
+    pub success: bool,
+}
+
+impl RouteResult3d {
+    fn fail(net: &str) -> Self {
+        Self {
+            net: net.to_string(),
+            segments: Vec::new(),
+            vias: Vec::new(),
+            success: false,
+        }
+    }
+}
+
+/// Layer-aware A* over `(x, y, layer)`: routes `net` from `start` to `end`
+/// across `layers` (the board's copper stack, front → back), choosing via
+/// positions as part of the search.
+///
+/// `start_layers` / `end_layers` are the copper layers the endpoints' pads
+/// actually live on (a front SMD pad is `[FCu]`, a through-hole pad is every
+/// copper layer); the route must begin and end on one of them — transitioning
+/// away from an endpoint drops a via *at* the pad exactly like the historical
+/// two-layer router. Via legality is probed on every layer in `layers` (all
+/// vias are through vias for now), and every emitted segment is re-probed on
+/// its own layer before the result is trusted.
+#[allow(clippy::too_many_arguments)]
+pub fn route_net_maze3d(
+    session: &RouteSession,
+    outline: &[Vec2],
+    layers: &[PcbLayer],
+    net: &str,
+    start: Vec2,
+    start_layers: &[PcbLayer],
+    end: Vec2,
+    end_layers: &[PcbLayer],
+    width: f64,
+    via_diameter: f64,
+    congestion: Option<&Congestion>,
+) -> RouteResult3d {
+    let nl = layers.len();
+    if nl == 0 {
+        return RouteResult3d::fail(net);
+    }
+    let clearance = session.clearance_for(net);
+    let half_w = width / 2.0;
+    let via_r = via_diameter / 2.0;
+
+    let grid = Grid::new(outline, start, end, width, clearance);
+    let plane = grid.nx * grid.ny;
+    let (sx, sy) = grid.snap(start);
+    let (ex, ey) = grid.snap(end);
+
+    let layer_idx = |l: PcbLayer| layers.iter().position(|&x| x == l);
+    let start_lis: Vec<usize> = start_layers.iter().filter_map(|&l| layer_idx(l)).collect();
+    let end_lis: Vec<usize> = end_layers.iter().filter_map(|&l| layer_idx(l)).collect();
+    if start_lis.is_empty() || end_lis.is_empty() {
+        return RouteResult3d::fail(net);
+    }
+
+    let legal_step = |a: Vec2, b: Vec2, layer: PcbLayer| -> bool {
+        session
+            .probe(&CopperGeom::Segment { a, b, half_w }, layer, net, clearance)
+            .legal
+    };
+    // A (through) via at `p` must clear other-net copper on every layer.
+    let via_ok = |p: Vec2| -> bool {
+        let disc = CopperGeom::Disc {
+            center: p,
+            r: via_r,
+        };
+        layers
+            .iter()
+            .all(|&l| session.probe(&disc, l, net, clearance).legal)
+    };
+    let cell_ok = |ix: usize, iy: usize, li: usize| -> bool {
+        let p = grid.world(ix, iy);
+        if grid.bounded && !point_in_polygon(p, outline) {
+            return false;
+        }
+        legal_step(p, p, layers[li])
+    };
+    let cong = congestion.filter(|c| !c.is_flat());
+    let node_cost =
+        |cell: usize| -> f64 { cong.map(|c| c.cost_at(grid.world_of(cell))).unwrap_or(0.0) };
+
+    // --- A* over (cell, layer) -------------------------------------------
+    let n = plane * nl;
+    let heuristic = |node: usize| -> f64 {
+        let cell = node % plane;
+        let (ix, iy) = grid.coords(cell);
+        let dx = ix as f64 - ex as f64;
+        let dy = iy as f64 - ey as f64;
+        (dx * dx + dy * dy).sqrt() * grid.pitch
+    };
+
+    let mut g = vec![f64::INFINITY; n];
+    let mut came: Vec<usize> = vec![usize::MAX; n];
+    let mut closed = vec![false; n];
+    // Memoized via legality per cell (probing all layers is the expensive test).
+    let mut via_cache: Vec<i8> = vec![-1; plane];
+    let mut heap = BinaryHeap::new();
+
+    let goal_cell = grid.index(ex, ey);
+    let is_goal = |node: usize| node % plane == goal_cell && end_lis.contains(&(node / plane));
+
+    for &li in &start_lis {
+        let node = li * plane + grid.index(sx, sy);
+        g[node] = 0.0;
+        heap.push(State {
+            f: heuristic(node),
+            node,
+        });
+    }
+
+    let mut found: Option<usize> = None;
+    while let Some(State { node, .. }) = heap.pop() {
+        if is_goal(node) {
+            found = Some(node);
+            break;
+        }
+        if closed[node] {
+            continue;
+        }
+        closed[node] = true;
+        let (li, cell) = (node / plane, node % plane);
+        let (ix, iy) = grid.coords(cell);
+        // Incoming direction for the bend penalty; a via resets it.
+        let in_dir = if came[node] == usize::MAX || came[node] % plane == cell {
+            (0i64, 0i64)
+        } else {
+            let (px, py) = grid.coords(came[node] % plane);
+            (ix as i64 - px as i64, iy as i64 - py as i64)
+        };
+
+        // In-plane moves.
+        for (dx, dy) in NEIGHBORS {
+            let nx = ix as i64 + dx;
+            let ny = iy as i64 + dy;
+            if nx < 0 || ny < 0 || nx >= grid.nx as i64 || ny >= grid.ny as i64 {
+                continue;
+            }
+            let (nix, niy) = (nx as usize, ny as usize);
+            let nb = li * plane + grid.index(nix, niy);
+            if closed[nb]
+                || !cell_ok(nix, niy, li)
+                || !legal_step(grid.world(ix, iy), grid.world(nix, niy), layers[li])
+            {
+                continue;
+            }
+            let step = if dx == 0 || dy == 0 {
+                grid.pitch
+            } else {
+                grid.pitch * std::f64::consts::SQRT_2
+            };
+            let bend = if in_dir != (0, 0) && in_dir != (dx, dy) {
+                BEND_PENALTY * grid.pitch
+            } else {
+                0.0
+            };
+            let tentative = g[node] + step + bend + node_cost(nb % plane);
+            if tentative < g[nb] {
+                g[nb] = tentative;
+                came[nb] = node;
+                heap.push(State {
+                    f: tentative + heuristic(nb),
+                    node: nb,
+                });
+            }
+        }
+
+        // Via transitions: same cell, any other layer, if a through via here
+        // clears every copper layer.
+        if nl > 1 {
+            if via_cache[cell] < 0 {
+                via_cache[cell] = i8::from(via_ok(grid.world(ix, iy)));
+            }
+            if via_cache[cell] == 1 {
+                for lj in 0..nl {
+                    if lj == li {
+                        continue;
+                    }
+                    let nb = lj * plane + cell;
+                    if closed[nb] || !cell_ok(ix, iy, lj) {
+                        continue;
+                    }
+                    let tentative = g[node] + VIA_COST;
+                    if tentative < g[nb] {
+                        g[nb] = tentative;
+                        came[nb] = node;
+                        heap.push(State {
+                            f: tentative + heuristic(nb),
+                            node: nb,
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    let Some(goal_node) = found else {
+        return RouteResult3d::fail(net);
+    };
+
+    // --- Reconstruct: per-layer polylines + vias at transitions -----------
+    let mut nodes = vec![goal_node];
+    let mut cur = goal_node;
+    while came[cur] != usize::MAX {
+        cur = came[cur];
+        nodes.push(cur);
+    }
+    nodes.reverse();
+
+    let mut segments: Vec<(Vec2, Vec2, PcbLayer)> = Vec::new();
+    let mut vias: Vec<Vec2> = Vec::new();
+    let mut run: Vec<Vec2> = vec![start];
+    let mut run_layer = nodes[0] / plane;
+
+    let flush_run = |run: &mut Vec<Vec2>, layer: PcbLayer, segs: &mut Vec<_>| {
+        let pts = simplify(run);
+        segs.extend(
+            pts.windows(2)
+                .filter(|w| dist(w[0], w[1]) > 1e-9)
+                .map(|w| (w[0], w[1], layer)),
+        );
+        run.clear();
+    };
+
+    for &node in &nodes {
+        let (li, cell) = (node / plane, node % plane);
+        let w = grid.world_of(cell);
+        if li != run_layer {
+            // Layer change: the via sits at the last point of the finished run.
+            let at = *run.last().expect("run always starts non-empty");
+            flush_run(&mut run, layers[run_layer], &mut segments);
+            if vias.last().map(|&v| dist(v, at) > 1e-9).unwrap_or(true) {
+                vias.push(at);
+            }
+            run.push(at);
+            run_layer = li;
+        }
+        if run.last().map(|p| dist(*p, w) > 1e-9).unwrap_or(true) {
+            run.push(w);
+        }
+    }
+    if run.last().map(|p| dist(*p, end) > 1e-9).unwrap_or(true) {
+        run.push(end);
+    }
+    flush_run(&mut run, layers[run_layer], &mut segments);
+
+    // Final guarantee: re-probe every emitted segment on its own layer and
+    // every via on every layer (endpoint connectors are off-grid; see the
+    // 2D router). Fail honestly rather than ship a short.
+    if !segments.iter().all(|(a, b, l)| legal_step(*a, *b, *l)) || !vias.iter().all(|&v| via_ok(v))
+    {
+        return RouteResult3d::fail(net);
+    }
+
+    RouteResult3d {
+        net: net.to_string(),
+        segments,
+        vias,
         success: true,
     }
 }
@@ -538,6 +827,126 @@ mod tests {
             all_segments_legal(&session, &r, "SIG", 0.25),
             "every routed segment must clear the GND wall"
         );
+    }
+
+    /// Multi-layer board: the same fixture with FCu/In1Cu/BCu copper.
+    fn board3(traces: Vec<Trace>) -> Pcb {
+        let mut pcb = board(traces);
+        pcb.stackup.layers = [PcbLayer::FCu, PcbLayer::In1Cu, PcbLayer::BCu]
+            .into_iter()
+            .map(|layer| StackupLayer {
+                layer,
+                copper_thickness: Some(0.035),
+                dielectric_thickness: Some(0.5),
+                dielectric_er: Some(4.5),
+                material: Some("FR4".into()),
+            })
+            .collect();
+        pcb
+    }
+
+    const STACK3: [PcbLayer; 3] = [PcbLayer::FCu, PcbLayer::In1Cu, PcbLayer::BCu];
+
+    #[test]
+    fn maze3d_routes_flat_on_empty_board_without_vias() {
+        let pcb = board3(vec![]);
+        let session = RouteSession::from_pcb(&pcb);
+        let r = route_net_maze3d(
+            &session,
+            &pcb.outline.vertices,
+            &STACK3,
+            "SIG",
+            Vec2::new(5.0, 20.0),
+            &[PcbLayer::FCu],
+            Vec2::new(35.0, 20.0),
+            &[PcbLayer::FCu],
+            0.25,
+            0.8,
+            None,
+        );
+        assert!(r.success);
+        assert!(r.vias.is_empty(), "no reason to leave the start layer");
+        assert!(r.segments.iter().all(|(_, _, l)| *l == PcbLayer::FCu));
+    }
+
+    #[test]
+    fn maze3d_dives_through_via_past_a_full_wall() {
+        // A GND wall spans the whole board on FCu: the 2D router fails here
+        // (see fails_when_fully_walled_off), but the 3D search must drop a via,
+        // cross on another layer, and come back to the FCu endpoint.
+        let pcb = board3(vec![trace(
+            "GND",
+            Vec2::new(20.0, 0.0),
+            Vec2::new(20.0, 40.0),
+        )]);
+        let session = RouteSession::from_pcb(&pcb);
+        let r = route_net_maze3d(
+            &session,
+            &pcb.outline.vertices,
+            &STACK3,
+            "SIG",
+            Vec2::new(5.0, 20.0),
+            &[PcbLayer::FCu],
+            Vec2::new(35.0, 20.0),
+            &[PcbLayer::FCu],
+            0.25,
+            0.8,
+            None,
+        );
+        assert!(r.success, "3D search must cross under the wall");
+        assert!(
+            r.vias.len() >= 2,
+            "must dive and resurface (got {} vias)",
+            r.vias.len()
+        );
+        // Every segment legal on its own layer.
+        let clr = session.clearance_for("SIG");
+        for (a, b, l) in &r.segments {
+            assert!(
+                session
+                    .probe(
+                        &CopperGeom::Segment {
+                            a: *a,
+                            b: *b,
+                            half_w: 0.125,
+                        },
+                        *l,
+                        "SIG",
+                        clr,
+                    )
+                    .legal,
+                "segment on {l:?} must clear the wall"
+            );
+        }
+        // The crossing itself must not happen on FCu.
+        assert!(
+            r.segments.iter().any(|(_, _, l)| *l != PcbLayer::FCu),
+            "some copper must run on another layer"
+        );
+    }
+
+    #[test]
+    fn maze3d_respects_endpoint_layers() {
+        // End pad lives on BCu only: the route must finish there, via'ing
+        // somewhere along the way.
+        let pcb = board3(vec![]);
+        let session = RouteSession::from_pcb(&pcb);
+        let r = route_net_maze3d(
+            &session,
+            &pcb.outline.vertices,
+            &STACK3,
+            "SIG",
+            Vec2::new(5.0, 20.0),
+            &[PcbLayer::FCu],
+            Vec2::new(35.0, 20.0),
+            &[PcbLayer::BCu],
+            0.25,
+            0.8,
+            None,
+        );
+        assert!(r.success);
+        assert!(!r.vias.is_empty(), "front→back must place a via");
+        assert!(r.segments.iter().any(|(_, _, l)| *l == PcbLayer::BCu));
     }
 
     #[test]

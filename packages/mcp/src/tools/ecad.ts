@@ -952,6 +952,14 @@ export const routeNetsSchema = {
       description:
         "When true, wrap the route in a before/after DRC and return a `receipt` verdict (what it fixed, what it introduced incl. shorts, with each violation attributed to footprint vs routing) — instead of just a document_id. Re-routing rips up the prior autorouted copper first (idempotent by construction); the receipt proves it, surfacing any re-route that would short the board.",
     },
+    effort: {
+      type: "number" as const,
+      description:
+        "Effort multiplier ≥ 0.1 (default 1): scales the router's iteration " +
+        "budgets (negotiation and rip-up rounds). Raise to 2–10 on a congested " +
+        "board that leaves nets unrouted; lower below 1 for a fast draft. " +
+        "Legality is unaffected — effort buys more attempts, not looser rules.",
+    },
   },
   required: [],
 };
@@ -3007,6 +3015,7 @@ export async function routeNets(args: Record<string, unknown>) {
   const lockedNets = new Set<string>(
     ((args.locked_nets as string[]) || []).map(String),
   );
+  const effort = Math.min(100, Math.max(0.1, Number(args.effort) || 1));
 
   const pcb = getDocPcb(doc);
   if (!pcb) {
@@ -3199,7 +3208,7 @@ export async function routeNets(args: Record<string, unknown>) {
 
   let routedSomething = false;
   if (strategy === "auto") {
-    const result = await routeAll(pcb, width, routeFilter);
+    const result = await routeAll(pcb, width, routeFilter, effort);
     routedSomething =
       result.traces.length > 0 || result.vias.length > 0 || result.unrouted_nets.length > 0;
     if (routedSomething) applyRoute(result);
@@ -3213,7 +3222,7 @@ export async function routeNets(args: Record<string, unknown>) {
     for (const tier of tiers) {
       const nets = universe.filter((n) => tierOf(n) === tier);
       if (nets.length === 0) continue;
-      const result = await routeAll(pcb, width, nets);
+      const result = await routeAll(pcb, width, nets, effort);
       if (
         result.traces.length > 0 ||
         result.vias.length > 0 ||
