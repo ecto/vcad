@@ -208,6 +208,12 @@ impl RouteResult3d {
 /// two-layer router. Via legality is probed on every layer in `layers` (all
 /// vias are through vias for now), and every emitted segment is re-probed on
 /// its own layer before the result is trusted.
+///
+/// `max_expansions` bounds the number of A* node pops (0 = unbounded): an
+/// unroutable connection otherwise floods the entire `(x, y, layer)` space —
+/// millions of oracle probes — before failing. The budget converts "prove
+/// impossibility exhaustively" into "give up after a fair search", which is
+/// what rip-up and negotiation want anyway.
 #[allow(clippy::too_many_arguments)]
 pub fn route_net_maze3d(
     session: &RouteSession,
@@ -221,6 +227,7 @@ pub fn route_net_maze3d(
     width: f64,
     via_diameter: f64,
     congestion: Option<&Congestion>,
+    max_expansions: usize,
 ) -> RouteResult3d {
     let nl = layers.len();
     if nl == 0 {
@@ -257,13 +264,6 @@ pub fn route_net_maze3d(
             .iter()
             .all(|&l| session.probe(&disc, l, net, clearance).legal)
     };
-    let cell_ok = |ix: usize, iy: usize, li: usize| -> bool {
-        let p = grid.world(ix, iy);
-        if grid.bounded && !point_in_polygon(p, outline) {
-            return false;
-        }
-        legal_step(p, p, layers[li])
-    };
     let cong = congestion.filter(|c| !c.is_flat());
     let node_cost =
         |cell: usize| -> f64 { cong.map(|c| c.cost_at(grid.world_of(cell))).unwrap_or(0.0) };
@@ -283,6 +283,19 @@ pub fn route_net_maze3d(
     let mut closed = vec![false; n];
     // Memoized via legality per cell (probing all layers is the expensive test).
     let mut via_cache: Vec<i8> = vec![-1; plane];
+    // Memoized cell passability per (cell, layer): each cell is otherwise
+    // probed once per incoming edge — up to 8× the oracle work for nothing.
+    let mut cell_cache: Vec<i8> = vec![-1; n];
+    let cell_ok = |ix: usize, iy: usize, li: usize, cache: &mut Vec<i8>| -> bool {
+        let node = li * plane + grid.index(ix, iy);
+        if cache[node] < 0 {
+            let p = grid.world(ix, iy);
+            let ok =
+                (!grid.bounded || point_in_polygon(p, outline)) && legal_step(p, p, layers[li]);
+            cache[node] = i8::from(ok);
+        }
+        cache[node] == 1
+    };
     let mut heap = BinaryHeap::new();
 
     let goal_cell = grid.index(ex, ey);
@@ -298,6 +311,7 @@ pub fn route_net_maze3d(
     }
 
     let mut found: Option<usize> = None;
+    let mut pops: usize = 0;
     while let Some(State { node, .. }) = heap.pop() {
         if is_goal(node) {
             found = Some(node);
@@ -305,6 +319,10 @@ pub fn route_net_maze3d(
         }
         if closed[node] {
             continue;
+        }
+        pops += 1;
+        if max_expansions > 0 && pops > max_expansions {
+            break;
         }
         closed[node] = true;
         let (li, cell) = (node / plane, node % plane);
@@ -327,7 +345,7 @@ pub fn route_net_maze3d(
             let (nix, niy) = (nx as usize, ny as usize);
             let nb = li * plane + grid.index(nix, niy);
             if closed[nb]
-                || !cell_ok(nix, niy, li)
+                || !cell_ok(nix, niy, li, &mut cell_cache)
                 || !legal_step(grid.world(ix, iy), grid.world(nix, niy), layers[li])
             {
                 continue;
@@ -365,7 +383,7 @@ pub fn route_net_maze3d(
                         continue;
                     }
                     let nb = lj * plane + cell;
-                    if closed[nb] || !cell_ok(ix, iy, lj) {
+                    if closed[nb] || !cell_ok(ix, iy, lj, &mut cell_cache) {
                         continue;
                     }
                     let tentative = g[node] + VIA_COST;
@@ -863,6 +881,7 @@ mod tests {
             0.25,
             0.8,
             None,
+            0,
         );
         assert!(r.success);
         assert!(r.vias.is_empty(), "no reason to leave the start layer");
@@ -892,6 +911,7 @@ mod tests {
             0.25,
             0.8,
             None,
+            0,
         );
         assert!(r.success, "3D search must cross under the wall");
         assert!(
@@ -943,6 +963,7 @@ mod tests {
             0.25,
             0.8,
             None,
+            0,
         );
         assert!(r.success);
         assert!(!r.vias.is_empty(), "front→back must place a via");
