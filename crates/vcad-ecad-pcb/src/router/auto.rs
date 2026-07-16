@@ -39,13 +39,18 @@ pub struct RoutedTrace {
     pub net: String,
 }
 
-/// A through via produced by the auto-router.
+/// A via produced by the auto-router. Outer-layer span = through via;
+/// anything else is a blind/buried (micro)via chosen by the 3D search.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct RoutedVia {
     /// Via center (mm).
     pub position: Vec2,
     /// Net.
     pub net: String,
+    /// Top of the via's copper span.
+    pub start_layer: PcbLayer,
+    /// Bottom of the via's copper span.
+    pub end_layer: PcbLayer,
 }
 
 /// Why a connection could not be routed, and where — so an agent or human can
@@ -196,7 +201,7 @@ struct Placed {
     /// Fan-out / dog-bone stubs that escape a fine-pitch pad to its via, each on
     /// its own copper layer (the pad's layer). Emitted as traces, not on `layer`.
     stubs: Vec<(Vec2, Vec2, PcbLayer)>,
-    via_pts: Vec<Vec2>,
+    via_pts: Vec<(Vec2, PcbLayer, PcbLayer)>,
     spans: Vec<SpanId>,
 }
 
@@ -368,10 +373,12 @@ pub fn route_all_with_opts(
                 net: p.net.clone(),
             });
         }
-        for &pt in &p.via_pts {
+        for &(pt, la, lb) in &p.via_pts {
             vias.push(RoutedVia {
                 position: pt,
                 net: p.net.clone(),
+                start_layer: la,
+                end_layer: lb,
             });
         }
     }
@@ -386,10 +393,17 @@ pub fn route_all_with_opts(
             net: net.clone(),
         });
     }
+    let copper_all = copper_layers(pcb);
+    let (through_top, through_bot) = (
+        *copper_all.first().unwrap_or(&PcbLayer::FCu),
+        *copper_all.last().unwrap_or(&PcbLayer::BCu),
+    );
     for (pt, net) in &stitch.vias {
         vias.push(RoutedVia {
             position: *pt,
             net: net.clone(),
+            start_layer: through_top,
+            end_layer: through_bot,
         });
     }
     for n in &stitch.nets {
@@ -683,20 +697,31 @@ fn try_route(
     // Layer-aware maze A* first, biased away from contested regions by the
     // history field. The search prices vias (VIA_COST) so it stays on one
     // layer when it can and dives only when a detour would cost more.
-    let r3 = route_net_maze3d(
-        session,
-        &pcb.outline.vertices,
-        &copper,
-        net,
-        from,
-        &from_layers,
-        to,
-        &to_layers,
-        w,
-        via_d,
-        Some(cong),
-        max_expansions,
-    );
+    let maze = |pitch_scale: f64| {
+        route_net_maze3d(
+            session,
+            &pcb.outline.vertices,
+            &copper,
+            net,
+            from,
+            &from_layers,
+            to,
+            &to_layers,
+            w,
+            via_d,
+            Some(cong),
+            max_expansions,
+            pitch_scale,
+        )
+    };
+    let mut r3 = maze(1.0);
+    if !r3.success {
+        // Fine-grid retry: on an HDI board the clear channel between BGA pads
+        // can be narrower than the default `width + clearance` pitch, so the
+        // coarse grid has no node inside a perfectly routable gap. Only
+        // failures pay for the finer (4x larger) search.
+        r3 = maze(0.5);
+    }
     let (segments, route_vias) = if r3.success && !r3.segments.is_empty() {
         (r3.segments, r3.vias)
     } else if use_push_shove {
@@ -709,7 +734,15 @@ fn try_route(
         let mut found = None;
         for (li, &layer) in copper.iter().enumerate() {
             if let Some(segs) = try_push_shove(session, pcb, layer, net, from, to, w) {
-                let vias = if li > 0 { vec![from, to] } else { Vec::new() };
+                let through = (
+                    *copper.first().unwrap_or(&PcbLayer::FCu),
+                    *copper.last().unwrap_or(&PcbLayer::BCu),
+                );
+                let vias = if li > 0 {
+                    vec![(from, through.0, through.1), (to, through.0, through.1)]
+                } else {
+                    Vec::new()
+                };
                 found = Some((segs.into_iter().map(|(a, b)| (a, b, layer)).collect(), vias));
                 break;
             }
@@ -719,39 +752,52 @@ fn try_route(
         return None;
     };
 
-    // Probe every via on every copper layer it spans before committing; reuse
-    // a same-net via already dropped at the same spot rather than stacking a
-    // coincident drill. (The maze probed its own vias in-search, but the
-    // session may have grown since and push-shove vias are unprobed.)
-    let mut new_vias: Vec<Vec2> = Vec::new();
-    for &p in &route_vias {
+    // Probe every via on the copper layers it spans before committing; reuse
+    // a same-net via already dropped at the same spot whose span covers the
+    // needed one rather than stacking a coincident drill. (The maze probed
+    // its own vias in-search, but the session may have grown since and
+    // push-shove vias are unprobed.)
+    let span_slice = |la: PcbLayer, lb: PcbLayer| -> &[PcbLayer] {
+        let a = copper.iter().position(|&l| l == la).unwrap_or(0);
+        let b = copper
+            .iter()
+            .position(|&l| l == lb)
+            .unwrap_or(copper.len().saturating_sub(1));
+        &copper[a.min(b)..=a.max(b)]
+    };
+    let covers = |outer: (PcbLayer, PcbLayer), inner: (PcbLayer, PcbLayer)| -> bool {
+        inner.0.spanned_by(outer.0, outer.1) && inner.1.spanned_by(outer.0, outer.1)
+    };
+    let mut new_vias: Vec<(Vec2, PcbLayer, PcbLayer)> = Vec::new();
+    for &(p, la, lb) in &route_vias {
         let reused = placed
             .iter()
             .filter(|pl| pl.net == net)
             .flat_map(|pl| pl.via_pts.iter())
-            .any(|&vp| dist(vp, p) < 0.05);
-        if reused || new_vias.iter().any(|&q| dist(q, p) < 0.05) {
+            .chain(new_vias.iter())
+            .any(|&(vp, va, vb)| dist(vp, p) < 0.05 && covers((va, vb), (la, lb)));
+        if reused {
             continue;
         }
         let disc = CopperGeom::Disc {
             center: p,
             r: via_r,
         };
-        let legal = copper
+        let legal = span_slice(la, lb)
             .iter()
             .all(|&l| session.probe(&disc, l, net, clearance).legal);
         if !legal {
             return None;
         }
-        new_vias.push(p);
+        new_vias.push((p, la, lb));
     }
 
     let mut spans = Vec::new();
     for (a, b, l) in &segments {
         spans.push(commit_seg(session, net, *a, *b, hw, *l));
     }
-    for &p in &new_vias {
-        commit_via(session, net, p, via_r, &copper, &mut spans);
+    for &(p, la, lb) in &new_vias {
+        commit_via(session, net, p, via_r, span_slice(la, lb), &mut spans);
     }
     Some(Placed {
         net: net.to_string(),
@@ -964,6 +1010,7 @@ fn try_route_fanout(
     for (a, b) in &rb.segments {
         spans.push(commit_seg(session, net, *a, *b, hw, back));
     }
+    let front = *copper.first().unwrap_or(&PcbLayer::FCu);
     Some(Placed {
         net: net.to_string(),
         from,
@@ -971,7 +1018,7 @@ fn try_route_fanout(
         width: w,
         segments: rb.segments.into_iter().map(|(a, b)| (a, b, back)).collect(),
         stubs,
-        via_pts,
+        via_pts: via_pts.into_iter().map(|v| (v, front, back)).collect(),
         spans,
     })
 }
@@ -1039,9 +1086,9 @@ fn escape_endpoint(
         placed
             .iter()
             .filter(|pl| pl.net == net)
-            .flat_map(|pl| pl.via_pts.iter())
-            .chain(extra_vias.iter())
-            .any(|&vp| dist(vp, p) < 0.05)
+            .flat_map(|pl| pl.via_pts.iter().map(|&(vp, _, _)| vp))
+            .chain(extra_vias.iter().copied())
+            .any(|vp| dist(vp, p) < 0.05)
     };
 
     // 1) Via straight on the pad — unless the caller forces a fan-out because
@@ -1575,8 +1622,8 @@ mod tests {
                 position: v.position,
                 diameter: 0.8,
                 drill: 0.4,
-                start_layer: PcbLayer::FCu,
-                end_layer: PcbLayer::BCu,
+                start_layer: v.start_layer,
+                end_layer: v.end_layer,
                 net: v.net.clone(),
                 source: None,
             });
