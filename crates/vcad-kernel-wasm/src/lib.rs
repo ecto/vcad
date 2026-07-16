@@ -142,10 +142,11 @@ pub fn render_svg(vcad_json: &str, scale: f64) -> Result<String, JsError> {
 
 /// Render raw `.vcad` document JSON to an SVG from a named orthographic view.
 ///
-/// `view` accepts `"iso"`/`"isometric"`/`"hero"`, `"top"`, `"front"`, or
-/// `"side"` (case-insensitive); anything unrecognized falls back to isometric.
-/// Gives agents a flat top-down or elevation look at a part, not just the
-/// default 3/4 isometric.
+/// `view` accepts `"iso"`/`"isometric"`/`"hero"`, `"top"`, `"front"`,
+/// `"side"`, or an arbitrary orbit camera as `"orbit:<azimuth>,<elevation>"`
+/// (degrees, Z-up — e.g. `"orbit:35,25"`); anything unrecognized falls back
+/// to isometric. Gives agents a flat top-down or elevation look at a part,
+/// not just the default 3/4 isometric.
 #[wasm_bindgen]
 pub fn render_svg_view(vcad_json: &str, scale: f64, view: &str) -> Result<String, JsError> {
     let v = view
@@ -239,6 +240,62 @@ pub fn render_svg_annotated(
     let annotations = vcad_render::RenderAnnotations { axes, labels, dims };
     vcad_render::render_svg_str_view_opts(vcad_json, scale, v, false, &annotations)
         .map_err(|e| JsError::new(&e))
+}
+
+/// Render raw `.vcad` document JSON to an SVG with the full [`SvgOptions`]
+/// surface in one call: arbitrary camera, part focus, section cutaway,
+/// changed-part highlight, and engineering annotations. This is the superset
+/// the MCP `render_view` "agent eyes" path drives; the narrower
+/// `render_svg_view*` / `render_svg_annotated` bindings remain for older
+/// callers.
+///
+/// `view` accepts everything [`render_svg_view`] does, including
+/// `"orbit:<azimuth>,<elevation>"` (degrees, Z-up); an unparseable view
+/// string is an error here rather than a silent isometric fallback.
+/// `focus`, when non-empty, frames the render on that part's bounding box
+/// (matched case-insensitively against root node names, assembly instance
+/// ids/names, and part-definition ids). `section`, when non-empty, is
+/// `"x=N"`/`"y=N"`/`"z=N"` (mm) for a cutaway. `highlight_json` is a JSON
+/// string array of part ids/names to spotlight (empty array = none).
+/// `axes`/`labels`/`dims` overlay the engineering annotations.
+#[wasm_bindgen]
+#[allow(clippy::too_many_arguments)]
+pub fn render_svg_camera(
+    vcad_json: &str,
+    scale: f64,
+    view: &str,
+    focus: Option<String>,
+    axes: bool,
+    labels: bool,
+    dims: bool,
+    section: Option<String>,
+    highlight_json: Option<String>,
+) -> Result<String, JsError> {
+    let v = view
+        .parse::<vcad_render::View>()
+        .map_err(|e| JsError::new(&e))?;
+    let plane = match section.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        Some(s) => Some(
+            s.parse::<vcad_render::SectionPlane>()
+                .map_err(|e| JsError::new(&e))?,
+        ),
+        None => None,
+    };
+    let highlight: Vec<String> = match highlight_json.as_deref().filter(|s| !s.trim().is_empty()) {
+        Some(j) => serde_json::from_str(j)
+            .map_err(|e| JsError::new(&format!("highlight must be a JSON string array: {e}")))?,
+        None => Vec::new(),
+    };
+    let opts = vcad_render::SvgOptions {
+        view: v,
+        transparent: false,
+        focus: focus.filter(|f| !f.trim().is_empty()),
+        section: plane,
+        highlight,
+        annotations: vcad_render::RenderAnnotations { axes, labels, dims },
+        ..Default::default()
+    };
+    vcad_render::render_svg_str_opts(vcad_json, scale, &opts).map_err(|e| JsError::new(&e))
 }
 
 /// Render a PCB to a flat, top-down, per-layer 2D SVG (the "agent eyes" for

@@ -2,8 +2,9 @@
 //! raster render.
 //!
 //! Usage:
-//!   vcad-render <path.vcad> [--view iso|front|side|top|hero] [--scale <px-per-mm>] [--transparent]
+//!   vcad-render <path.vcad> [--view iso|front|side|top|hero|orbit:AZ,EL] [--scale <px-per-mm>] [--transparent]
 //!               [--section x=N|y=N|z=N] [--axes] [--labels] [--dims]
+//!   vcad-render <path.vcad> [--azimuth <deg>] [--elevation <deg>] [--focus <part-name>]
 //!   vcad-render <path.vcad> -o out.jpg [--view ...] [--size <px>] [--fill <frac>] [--quality <1-100>]
 //!   vcad-render <path.vcad> -o out.png [--raytrace]   # RGBA raster, transparent background
 //!   vcad-render <dir-or-paths...> [--out-dir <dir>] [--format svg|jpeg|png]
@@ -21,8 +22,12 @@
 //! `vcad-render` library (see `lib.rs`); this binary only handles argument
 //! parsing and file IO.
 //!
-//! `--section` renders a cutaway: the half of the model on the camera's side
-//! of the plane is removed and the exposed cut faces are cross-hatched.
+//! `--azimuth`/`--elevation` select an arbitrary orthographic orbit camera
+//! (degrees, Z-up: azimuth CCW from +X, elevation above the XY plane) and
+//! override `--view`. `--focus` frames the render on the named part's
+//! bounding box instead of the whole document. `--section` renders a cutaway:
+//! the half of the model on the camera's side of the plane is removed and the
+//! exposed cut faces are cross-hatched.
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -86,9 +91,26 @@ struct Cli {
     #[arg(required = true)]
     inputs: Vec<PathBuf>,
 
-    /// Camera view: iso|front|side|top|hero.
+    /// Camera view: iso|front|side|top|hero|orbit:AZ,EL. Overridden by
+    /// `--azimuth`/`--elevation`.
     #[arg(long, default_value = "iso", value_parser = View::from_str)]
     view: View,
+
+    /// Orbit camera azimuth in degrees (CCW from +X, Z-up). Selects an
+    /// orbit view and overrides `--view`.
+    #[arg(long)]
+    azimuth: Option<f64>,
+
+    /// Orbit camera elevation in degrees (above the XY plane, clamped
+    /// ±90). Selects an orbit view and overrides `--view`.
+    #[arg(long)]
+    elevation: Option<f64>,
+
+    /// Frame the render on this part's bounding box (matched against root
+    /// node names, assembly instance ids/names, and part-def ids) instead
+    /// of the whole document.
+    #[arg(long)]
+    focus: Option<String>,
 
     /// Pixels per millimetre (SVG only).
     #[arg(long, default_value_t = DEFAULT_SCALE)]
@@ -159,6 +181,22 @@ struct Cli {
     raytrace: bool,
 }
 
+impl Cli {
+    /// The effective view: explicit `--azimuth`/`--elevation` compose into
+    /// an orbit camera (unspecified angle defaults to 0°) and override
+    /// `--view`.
+    fn effective_view(&self) -> View {
+        if self.azimuth.is_some() || self.elevation.is_some() {
+            View::Orbit {
+                azimuth: self.azimuth.unwrap_or(0.0),
+                elevation: self.elevation.unwrap_or(0.0),
+            }
+        } else {
+            self.view
+        }
+    }
+}
+
 /// Expand directory inputs to their `*.vcad` files (sorted); pass files
 /// through untouched.
 fn expand_inputs(inputs: &[PathBuf]) -> Result<Vec<PathBuf>, String> {
@@ -199,10 +237,11 @@ impl Cli {
 #[cfg(feature = "raster")]
 fn raster_opts(cli: &Cli, png: bool) -> vcad_render::RasterOptions {
     vcad_render::RasterOptions {
-        view: cli.view,
+        view: cli.effective_view(),
         size_px: cli.size.unwrap_or(if png { 4096 } else { 1024 }),
         fill_frac: cli.fill,
         quality: cli.quality,
+        focus: cli.focus.clone(),
         section: cli.section,
         annotations: cli.annotations(),
     }
@@ -267,10 +306,11 @@ fn render_one(input: &Path, dest: Option<&Path>, format: Format, cli: &Cli) -> R
                 &raw,
                 cli.scale,
                 &SvgOptions {
-                    view: cli.view,
+                    view: cli.effective_view(),
                     transparent: cli.transparent,
                     exact_edges: cli.exact_edges,
                     section: cli.section,
+                    focus: cli.focus.clone(),
                     annotations: cli.annotations(),
                     ..Default::default()
                 },

@@ -158,6 +158,45 @@ describe("render_view", () => {
       /Unknown document_id/,
     );
   });
+
+  it("renders an orbit camera view and labels it in the metadata", async () => {
+    const documentId = openWith(makeCubeDoc());
+    const out = await renderView({
+      document_id: documentId,
+      azimuth: 60,
+      elevation: 20,
+    });
+    expect(out.isError).toBeFalsy();
+    const image = out.content.find((c) => c.type === "image") as
+      | { type: "image"; data: string; mimeType: string }
+      | undefined;
+    expect(image, "expected an image block (is @resvg/resvg-js installed?)").toBeDefined();
+    const meta = out.content.find((c) => c.type === "text") as {
+      type: "text";
+      text: string;
+    };
+    expect(JSON.parse(meta.text).view).toBe("orbit(azimuth=60, elevation=20)");
+  });
+
+  it("frames the render on a focused part and echoes the focus", async () => {
+    const documentId = openWith(makeCubeDoc());
+    const out = await renderView({ document_id: documentId, focus: "test_cube" });
+    expect(out.isError).toBeFalsy();
+    const meta = out.content.find((c) => c.type === "text") as {
+      type: "text";
+      text: string;
+    };
+    expect(JSON.parse(meta.text).focus).toBe("test_cube");
+  });
+
+  it("errors loudly on an unknown focus part", async () => {
+    const documentId = openWith(makeCubeDoc());
+    const out = await renderView({ document_id: documentId, focus: "nope" });
+    expect(out.isError).toBe(true);
+    const text = (out.content[0] as { text: string }).text;
+    expect(text).toContain("not found");
+    expect(text).toContain("test_cube");
+  });
 });
 
 describe("list_eval_tasks", () => {

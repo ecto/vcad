@@ -180,7 +180,14 @@ const SIN30: f64 = 0.5;
 ///
 /// [`View::Isometric`] is the historical 3/4 view from the (+X, +Y, +Z)
 /// octant, also used for "hero" shots.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+///
+/// [`View::Orbit`] is an arbitrary orthographic orbit camera: `azimuth`
+/// degrees counter-clockwise from +X in the XY plane, `elevation` degrees
+/// above the XY plane (Z-up kernel frame). The camera sits on the unit
+/// direction `(cos el·cos az, cos el·sin az, sin el)` looking at the scene
+/// with +Z as the up reference, so e.g. `azimuth: 45, elevation: 35` is a
+/// 3/4 view close to the classic isometric.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum View {
     /// 3/4 view from the (+1, +1, +1) direction (the historical default).
     #[default]
@@ -191,6 +198,13 @@ pub enum View {
     Side,
     /// Orthographic, looking down −Z. Screen: +X right, +Y up.
     Top,
+    /// Arbitrary orthographic orbit camera (angles in degrees, Z-up).
+    Orbit {
+        /// Degrees counter-clockwise from +X in the XY plane.
+        azimuth: f64,
+        /// Degrees above the XY plane, clamped to `[-90, 90]`.
+        elevation: f64,
+    },
 }
 
 impl View {
@@ -202,6 +216,11 @@ impl View {
             View::Front => [0.0, -1.0, 0.0],
             View::Side => [-1.0, 0.0, 0.0],
             View::Top => [0.0, 0.0, 1.0],
+            View::Orbit { azimuth, elevation } => {
+                let az = azimuth.to_radians();
+                let el = elevation.clamp(-90.0, 90.0).to_radians();
+                [el.cos() * az.cos(), el.cos() * az.sin(), el.sin()]
+            }
         }
     }
 
@@ -214,6 +233,12 @@ impl View {
             View::Front => [1.0, 0.0, 0.0],
             View::Side => [0.0, -1.0, 0.0],
             View::Top => [1.0, 0.0, 0.0],
+            // Horizontal screen-right for a Z-up orbit camera. Depends on
+            // azimuth only, so it stays well-defined at elevation ±90.
+            View::Orbit { azimuth, .. } => {
+                let az = azimuth.to_radians();
+                [-az.sin(), az.cos(), 0.0]
+            }
         }
     }
 
@@ -224,6 +249,12 @@ impl View {
             View::Front => [0.0, 0.0, -1.0],
             View::Side => [0.0, 0.0, -1.0],
             View::Top => [0.0, -1.0, 0.0],
+            // down = (−cam) × right, completing a non-mirrored screen basis
+            // (right × down points into the screen) like the axis views.
+            View::Orbit { .. } => {
+                let cam = self.cam();
+                cross([-cam[0], -cam[1], -cam[2]], self.right())
+            }
         }
     }
 }
@@ -232,15 +263,31 @@ impl std::str::FromStr for View {
     type Err = String;
 
     /// Accepts `iso`/`isometric` (and `hero`, which renders as the same
-    /// 3/4 view), `front`, `side`, `top`.
+    /// 3/4 view), `front`, `side`, `top`, or `orbit:<azimuth>,<elevation>`
+    /// with angles in degrees (e.g. `orbit:35,25`).
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_ascii_lowercase().as_str() {
+        let lower = s.to_ascii_lowercase();
+        if let Some(angles) = lower.strip_prefix("orbit:") {
+            let parse_orbit = || -> Option<View> {
+                let (az, el) = angles.split_once(',')?;
+                let azimuth: f64 = az.trim().parse().ok()?;
+                let elevation: f64 = el.trim().parse().ok()?;
+                if !(azimuth.is_finite() && elevation.is_finite()) {
+                    return None;
+                }
+                Some(View::Orbit { azimuth, elevation })
+            };
+            return parse_orbit().ok_or_else(|| {
+                format!("bad orbit view '{s}' (expected orbit:<azimuth>,<elevation> in degrees)")
+            });
+        }
+        match lower.as_str() {
             "iso" | "isometric" | "hero" => Ok(View::Isometric),
             "front" => Ok(View::Front),
             "side" => Ok(View::Side),
             "top" => Ok(View::Top),
             other => Err(format!(
-                "unknown view '{other}' (expected iso|front|side|top|hero)"
+                "unknown view '{other}' (expected iso|front|side|top|hero|orbit:<az>,<el>)"
             )),
         }
     }
@@ -486,13 +533,18 @@ fn xml_escape(s: &str) -> String {
 
 // ─── .vcad → solids ───────────────────────────────────────────────────────
 
-/// A solid plus its material colour (linear RGB in `[0,1]`) and its
-/// human-readable name, when the document provides them. The colour tints
-/// the shading ramp; the name feeds the optional part-label annotation.
+/// A solid plus its material colour (linear RGB in `[0,1]`), its
+/// human-readable name, and the labels a focus query can match against.
+/// The colour tints the shading ramp; `name` feeds the optional part-label
+/// annotation; `labels` (node name, instance id/name, part-def id) drive
+/// `--focus`.
 struct SceneSolid {
     solid: Solid,
     tint: Option<[f64; 3]>,
     name: Option<String>,
+    /// Focus-match labels (node name, instance id/name, part-def id) for
+    /// `--focus` / `CameraOptions::focus`.
+    labels: Vec<String>,
     /// Root node id (as a string) for scene roots; instance id for
     /// assembly instances. Matches the `part_id` the MCP mutation diff
     /// reports, so a highlight set can select by it.
@@ -537,17 +589,21 @@ fn evaluate_vcad(raw_vcad: &str) -> Result<Vec<SceneSolid>, String> {
         .iter()
         .enumerate()
         .filter_map(|(i, p)| {
-            p.solid.clone().map(|s| SceneSolid {
-                solid: s,
-                tint: materials.get(&p.material).map(|m| m.color),
-                name: visible_roots
+            p.solid.clone().map(|s| {
+                let name = visible_roots
                     .get(i)
                     .and_then(|r| parsed.document.nodes.get(&r.root))
-                    .and_then(|n| n.name.clone()),
-                id: visible_roots
-                    .get(i)
-                    .map(|r| r.root.to_string())
-                    .unwrap_or_default(),
+                    .and_then(|n| n.name.clone());
+                SceneSolid {
+                    solid: s,
+                    tint: materials.get(&p.material).map(|m| m.color),
+                    labels: name.clone().into_iter().collect(),
+                    name,
+                    id: visible_roots
+                        .get(i)
+                        .map(|r| r.root.to_string())
+                        .unwrap_or_default(),
+                }
             })
         })
         .collect();
@@ -615,14 +671,47 @@ fn evaluate_assembly_instances(doc: &vcad_ir::Document) -> Result<Vec<SceneSolid
             .clone()
             .or_else(|| def.name.clone())
             .or_else(|| Some(inst.id.clone()));
+        let mut labels = vec![inst.id.clone(), inst.part_def_id.clone()];
+        if let Some(n) = &inst.name {
+            labels.push(n.clone());
+        }
         out.push(SceneSolid {
             solid: placed,
             tint: color,
             name,
+            labels,
             id: inst.id.clone(),
         });
     }
     Ok(out)
+}
+
+/// Resolve a `focus` query to a per-solid mask (case-insensitive match
+/// against each solid's labels: root node name, instance id/name, part-def
+/// id). Errors with the available labels when nothing matches.
+fn focus_mask(scene: &[SceneSolid], focus: &str) -> Result<Vec<bool>, String> {
+    let want = focus.trim().to_ascii_lowercase();
+    let mask: Vec<bool> = scene
+        .iter()
+        .map(|s| s.labels.iter().any(|l| l.to_ascii_lowercase() == want))
+        .collect();
+    if mask.iter().any(|&m| m) {
+        return Ok(mask);
+    }
+    let mut available: Vec<&str> = scene
+        .iter()
+        .flat_map(|s| s.labels.iter().map(String::as_str))
+        .collect();
+    available.sort_unstable();
+    available.dedup();
+    Err(format!(
+        "focus part '{focus}' not found (available: {})",
+        if available.is_empty() {
+            "no named parts".to_string()
+        } else {
+            available.join(", ")
+        }
+    ))
 }
 
 /// IR `Transform3D` → kernel `Transform`, matching the evaluator's
@@ -766,8 +855,8 @@ enum EdgeKind {
 struct SolidArtifacts {
     /// Index of the source solid in the caller's `solids` slice. Solids
     /// that fail to tessellate are skipped, so artifact index alone doesn't
-    /// line up with the input — needed both to re-derive exact BRep edges
-    /// and to recover per-solid metadata (names, for the label annotation).
+    /// line up with the input — needed to re-derive exact BRep edges, to
+    /// recover per-solid metadata (names for labels), and for focus lookup.
     src: usize,
     verts: Vec<[f64; 3]>,
     tris: Vec<[usize; 3]>,
@@ -1641,6 +1730,12 @@ pub struct SvgOptions {
     /// Opt-in engineering annotation overlays (axes gizmo, part labels,
     /// bounding-box dimensions). [`RenderAnnotations::default()`] draws none.
     pub annotations: RenderAnnotations,
+    /// Frame the render on this part instead of the whole document. Matched
+    /// case-insensitively against root-part node names, assembly instance
+    /// ids/names, and part-definition ids. Geometry outside the focused
+    /// part's projected bounds is cropped by the viewport. `None` frames the
+    /// whole document.
+    pub focus: Option<String>,
     /// Changed-part highlight set. Selects parts by root node id (the
     /// `part_id` a mutation diff reports), node name, or assembly instance
     /// id/name. When non-empty, matched parts keep their full material
@@ -1685,10 +1780,64 @@ pub fn render_svg_str_opts(
             known.join(", "),
         ));
     }
+    // Focus mask (per-solid) frames the viewport on the matched part(s).
+    let focus_sel = opts
+        .focus
+        .as_deref()
+        .map(|f| focus_mask(&scene, f))
+        .transpose()?;
     let solids: Vec<Solid> = scene.iter().map(|s| s.solid.clone()).collect();
     let tints: Vec<Option<[f64; 3]>> = scene.iter().map(|s| s.tint).collect();
     let names: Vec<Option<String>> = scene.iter().map(|s| s.name.clone()).collect();
-    render_svg_impl(&solids, &tints, &names, &accents, scale, opts)
+    render_svg_impl(
+        &solids,
+        &tints,
+        &names,
+        &accents,
+        focus_sel.as_deref(),
+        scale,
+        opts,
+    )
+}
+
+/// Camera options for [`render_svg_str_camera`]: an arbitrary [`View`]
+/// (including [`View::Orbit`]), transparency, an optional part focus, and
+/// engineering annotation overlays. A thin convenience over [`SvgOptions`]
+/// for the WASM/CLI "agent eyes" path.
+#[derive(Debug, Clone, Default)]
+pub struct CameraOptions {
+    /// Camera orientation.
+    pub view: View,
+    /// Omit the opaque paper background.
+    pub transparent: bool,
+    /// Frame the render on this part instead of the whole document.
+    /// Matched case-insensitively against root-part node names, assembly
+    /// instance ids/names, and part-definition ids. Geometry outside the
+    /// focused part's projected bounds is cropped by the viewport.
+    pub focus: Option<String>,
+    /// Opt-in annotation overlays (axes gizmo, part labels, dimensions).
+    pub annotations: RenderAnnotations,
+}
+
+/// Render raw `.vcad` document JSON to a self-contained SVG with full
+/// camera control — arbitrary orbit views, part-focused framing, and
+/// annotation overlays. Delegates to [`render_svg_str_opts`].
+pub fn render_svg_str_camera(
+    raw_vcad: &str,
+    scale: f64,
+    opts: &CameraOptions,
+) -> Result<String, String> {
+    render_svg_str_opts(
+        raw_vcad,
+        scale,
+        &SvgOptions {
+            view: opts.view,
+            transparent: opts.transparent,
+            focus: opts.focus.clone(),
+            annotations: opts.annotations,
+            ..Default::default()
+        },
+    )
 }
 
 /// Render pre-evaluated solids to a self-contained isometric SVG.
@@ -1718,6 +1867,7 @@ pub fn render_svg_solids_view(solids: &[Solid], scale: f64, view: View) -> Resul
         &tints,
         &names,
         &accents,
+        None,
         scale,
         &SvgOptions {
             view,
@@ -1732,11 +1882,16 @@ pub fn render_svg_solids_view(solids: &[Solid], scale: f64, view: View) -> Resul
 /// [`ACCENT`] outline while the rest are ghosted toward [`PAPER`].
 /// `opts.section` (already applied to the solids by the caller) only drives
 /// cut-face detection here, so exposed section faces get the hatch fill.
+/// When `focus` is given (a per-solid mask), the viewport is framed on the
+/// focused solids' projected bounds; everything else is still drawn but
+/// cropped to that frame.
+#[allow(clippy::too_many_arguments)]
 fn render_svg_impl(
     solids: &[Solid],
     tints: &[Option<[f64; 3]>],
     names: &[Option<String>],
     accents: &[bool],
+    focus: Option<&[bool]>,
     scale: f64,
     opts: &SvgOptions,
 ) -> Result<String, String> {
@@ -1772,29 +1927,35 @@ fn render_svg_impl(
     let mut max_y = f64::NEG_INFINITY;
     let mut lo3 = [f64::INFINITY; 3];
     let mut hi3 = [f64::NEG_INFINITY; 3];
-    let projected: Vec<Vec<(f64, f64)>> = arts
-        .iter()
-        .map(|art| {
-            art.verts
-                .iter()
-                .map(|v| {
-                    let (x, y) = project(*v);
-                    min_x = min_x.min(x);
-                    min_y = min_y.min(y);
-                    max_x = max_x.max(x);
-                    max_y = max_y.max(y);
-                    for i in 0..3 {
-                        lo3[i] = lo3[i].min(v[i]);
-                        hi3[i] = hi3[i].max(v[i]);
-                    }
-                    (x, y)
-                })
-                .collect()
-        })
-        .collect();
+    let mut projected: Vec<Vec<(f64, f64)>> = Vec::with_capacity(arts.len());
+    for art in &arts {
+        // With a focus mask, only the focused solids' vertices drive the
+        // screen frame; everything still projects (and later crops).
+        let framed = focus.is_none_or(|m| m.get(art.src).copied().unwrap_or(false));
+        let mut pv = Vec::with_capacity(art.verts.len());
+        for v in &art.verts {
+            let (x, y) = project(*v);
+            if framed {
+                min_x = min_x.min(x);
+                min_y = min_y.min(y);
+                max_x = max_x.max(x);
+                max_y = max_y.max(y);
+            }
+            for i in 0..3 {
+                lo3[i] = lo3[i].min(v[i]);
+                hi3[i] = hi3[i].max(v[i]);
+            }
+            pv.push((x, y));
+        }
+        projected.push(pv);
+    }
 
     if !min_x.is_finite() || !max_x.is_finite() {
-        return Err("no visible polygons after culling".to_string());
+        return Err(if focus.is_some() {
+            "focused part produced no geometry".to_string()
+        } else {
+            "no visible polygons after culling".to_string()
+        });
     }
     // Annotations live outside the model silhouette; reserve margin for
     // them. With no annotations `pad == PADDING_PX` and the output is
@@ -2447,6 +2608,11 @@ mod raster {
         pub fill_frac: f64,
         /// JPEG quality, 1–100 (capture rules say ≥ 90).
         pub quality: u8,
+        /// Frame the render on this part instead of the whole document
+        /// (same matching rules as [`CameraOptions::focus`]). Only honoured
+        /// by [`render_jpeg_str`] / [`render_png_str`]; the solids path has
+        /// no part names.
+        pub focus: Option<String>,
         /// Optional section (cutaway) plane: material on the camera's
         /// side of the plane is removed and exposed cut faces are hatched.
         pub section: Option<SectionPlane>,
@@ -2463,6 +2629,7 @@ mod raster {
                 size_px: 1024,
                 fill_frac: 0.6,
                 quality: 92,
+                focus: None,
                 section: None,
                 annotations: RenderAnnotations::default(),
             }
@@ -2479,7 +2646,19 @@ mod raster {
         let solids: Vec<Solid> = scene.iter().map(|s| s.solid.clone()).collect();
         let tints: Vec<Option<[f64; 3]>> = scene.iter().map(|s| s.tint).collect();
         let names: Vec<Option<String>> = scene.iter().map(|s| s.name.clone()).collect();
-        encode_jpeg(rasterize(&solids, &tints, &names, opts)?, opts)
+        // Focus framing and section cutting don't currently compose in the
+        // raster path: `rasterize` applies the section (which can drop
+        // solids) after this mask is built. Callers combine them via the SVG
+        // path (`render_svg_str_opts`), which sections before masking.
+        let mask = opts
+            .focus
+            .as_deref()
+            .map(|f| focus_mask(&scene, f))
+            .transpose()?;
+        encode_jpeg(
+            rasterize(&solids, &tints, &names, opts, mask.as_deref())?,
+            opts,
+        )
     }
 
     /// Render pre-evaluated solids to JPEG bytes, monochrome (no material
@@ -2488,7 +2667,7 @@ mod raster {
     pub fn render_jpeg_solids(solids: &[Solid], opts: &RasterOptions) -> Result<Vec<u8>, String> {
         let no_tints: Vec<Option<[f64; 3]>> = vec![None; solids.len()];
         let no_names: Vec<Option<String>> = vec![None; solids.len()];
-        encode_jpeg(rasterize(solids, &no_tints, &no_names, opts)?, opts)
+        encode_jpeg(rasterize(solids, &no_tints, &no_names, opts, None)?, opts)
     }
 
     /// Render raw `.vcad` document JSON to RGBA PNG bytes with a fully
@@ -2500,7 +2679,15 @@ mod raster {
         let solids: Vec<Solid> = scene.iter().map(|s| s.solid.clone()).collect();
         let tints: Vec<Option<[f64; 3]>> = scene.iter().map(|s| s.tint).collect();
         let names: Vec<Option<String>> = scene.iter().map(|s| s.name.clone()).collect();
-        encode_png(rasterize(&solids, &tints, &names, opts)?, opts)
+        let mask = opts
+            .focus
+            .as_deref()
+            .map(|f| focus_mask(&scene, f))
+            .transpose()?;
+        encode_png(
+            rasterize(&solids, &tints, &names, opts, mask.as_deref())?,
+            opts,
+        )
     }
 
     /// Render pre-evaluated solids to RGBA PNG bytes with a transparent
@@ -2508,7 +2695,7 @@ mod raster {
     pub fn render_png_solids(solids: &[Solid], opts: &RasterOptions) -> Result<Vec<u8>, String> {
         let no_tints: Vec<Option<[f64; 3]>> = vec![None; solids.len()];
         let no_names: Vec<Option<String>> = vec![None; solids.len()];
-        encode_png(rasterize(solids, &no_tints, &no_names, opts)?, opts)
+        encode_png(rasterize(solids, &no_tints, &no_names, opts, None)?, opts)
     }
 
     /// JPEG-encode a rasterized frame (coverage mask ignored — JPEG keeps
@@ -2569,6 +2756,7 @@ mod raster {
         tints: &[Option<[f64; 3]>],
         names: &[Option<String>],
         opts: &RasterOptions,
+        focus: Option<&[bool]>,
     ) -> Result<(Vec<u8>, Vec<u8>), String> {
         if solids.is_empty() {
             return Err("no solids produced".to_string());
@@ -2595,7 +2783,9 @@ mod raster {
                         solid: s.clone(),
                         tint: tints.get(i).copied().flatten(),
                         name: names.get(i).cloned().flatten(),
-                        // Raster path does no highlighting; id is unused here.
+                        // Raster path does no highlighting or focus lookup
+                        // here; id and labels are unused.
+                        labels: Vec::new(),
                         id: String::new(),
                     })
                     .collect();
@@ -2644,11 +2834,16 @@ mod raster {
         let mut lo3 = [f64::INFINITY; 3];
         let mut hi3 = [f64::NEG_INFINITY; 3];
         for art in &arts {
+            // With a focus mask, only the focused solids' vertices drive
+            // the screen frame; everything still rasterizes (and crops).
+            let framed = focus.is_none_or(|m| m.get(art.src).copied().unwrap_or(false));
             for v in &art.verts {
                 let s = [dot(*v, right), dot(*v, down)];
-                for i in 0..2 {
-                    min[i] = min[i].min(s[i]);
-                    max[i] = max[i].max(s[i]);
+                if framed {
+                    for i in 0..2 {
+                        min[i] = min[i].min(s[i]);
+                        max[i] = max[i].max(s[i]);
+                    }
                 }
                 for i in 0..3 {
                     lo3[i] = lo3[i].min(v[i]);
@@ -2658,7 +2853,11 @@ mod raster {
         }
         let extent = (max[0] - min[0]).max(max[1] - min[1]);
         if !extent.is_finite() || extent < 1e-9 {
-            return Err("degenerate projection (no extent)".to_string());
+            return Err(if focus.is_some() {
+                "focused part produced no geometry".to_string()
+            } else {
+                "degenerate projection (no extent)".to_string()
+            });
         }
         let diag =
             ((hi3[0] - lo3[0]).powi(2) + (hi3[1] - lo3[1]).powi(2) + (hi3[2] - lo3[2]).powi(2))
@@ -3850,6 +4049,133 @@ mod tests {
             render_svg_solids(&[], DEFAULT_SCALE).unwrap_err(),
             "no solids produced"
         );
+    }
+
+    /// Two named cubes far apart; used by the focus tests.
+    fn two_named_cube_vcad() -> String {
+        r#"{
+  "version": "0.1",
+  "nodes": {
+    "1": { "id": 1, "name": "left_cube", "op": { "type": "Cube", "size": { "x": 10.0, "y": 10.0, "z": 10.0 } } },
+    "2": { "id": 2, "name": "right_cube", "op": { "type": "Translate", "child": 3, "offset": { "x": 200.0, "y": 0.0, "z": 0.0 } } },
+    "3": { "id": 3, "name": "right_cube_base", "op": { "type": "Cube", "size": { "x": 10.0, "y": 10.0, "z": 10.0 } } }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [
+    { "root": 1, "material": "default" },
+    { "root": 2, "material": "default" }
+  ]
+}"#
+        .to_string()
+    }
+
+    #[test]
+    fn parses_orbit_views() {
+        use std::str::FromStr;
+        assert_eq!(
+            View::from_str("orbit:35,25").unwrap(),
+            View::Orbit {
+                azimuth: 35.0,
+                elevation: 25.0
+            }
+        );
+        assert_eq!(
+            View::from_str("ORBIT: -120 , 45.5 ").unwrap(),
+            View::Orbit {
+                azimuth: -120.0,
+                elevation: 45.5
+            }
+        );
+        assert!(View::from_str("orbit:35").is_err());
+        assert!(View::from_str("orbit:a,b").is_err());
+    }
+
+    /// The orbit basis must be orthonormal and non-mirrored (right × down
+    /// points into the screen, i.e. −cam) at arbitrary angles, including
+    /// the elevation ±90 poles.
+    #[test]
+    fn orbit_basis_is_orthonormal() {
+        for (az, el) in [(35.0, 25.0), (-120.0, 45.5), (0.0, 90.0), (10.0, -90.0)] {
+            let v = View::Orbit {
+                azimuth: az,
+                elevation: el,
+            };
+            let (cam, right, down) = (v.cam(), v.right(), v.down());
+            for (a, b) in [(cam, right), (cam, down), (right, down)] {
+                assert!(
+                    dot(a, b).abs() < 1e-9,
+                    "orbit({az},{el}) basis not orthogonal"
+                );
+            }
+            let into = cross(right, down);
+            for i in 0..3 {
+                assert!(
+                    (into[i] + cam[i]).abs() < 1e-9,
+                    "orbit({az},{el}) basis is mirrored"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn orbit_view_renders_and_differs() {
+        let doc = cube_vcad(20.0, 30.0, 10.0);
+        let orbit = render_svg_str_view(
+            &doc,
+            2.0,
+            View::Orbit {
+                azimuth: 60.0,
+                elevation: 20.0,
+            },
+        )
+        .expect("orbit view should render");
+        assert!(orbit.starts_with("<svg "));
+        let front = render_svg_str_view(&doc, 2.0, View::Front).unwrap();
+        assert_ne!(orbit, front);
+    }
+
+    #[test]
+    fn focus_frames_named_part() {
+        let attr = |svg: &str, name: &str| -> f64 {
+            let pat = format!("{name}=\"");
+            let start = svg.find(&pat).unwrap() + pat.len();
+            let end = svg[start..].find('"').unwrap() + start;
+            svg[start..end].parse().unwrap()
+        };
+        let full = render_svg_str(&two_named_cube_vcad(), 2.0).unwrap();
+        let focused = render_svg_str_camera(
+            &two_named_cube_vcad(),
+            2.0,
+            &CameraOptions {
+                focus: Some("LEFT_CUBE".to_string()), // case-insensitive
+                ..Default::default()
+            },
+        )
+        .expect("focused render should succeed");
+        // The two cubes are 200mm apart; framing on one must shrink the
+        // canvas to roughly a single 10mm cube's projection.
+        assert!(
+            attr(&focused, "width") < attr(&full, "width") / 4.0,
+            "focused width {} should be far below full width {}",
+            attr(&focused, "width"),
+            attr(&full, "width"),
+        );
+    }
+
+    #[test]
+    fn focus_unknown_part_errors_with_labels() {
+        let err = render_svg_str_camera(
+            &two_named_cube_vcad(),
+            2.0,
+            &CameraOptions {
+                focus: Some("nope".to_string()),
+                ..Default::default()
+            },
+        )
+        .unwrap_err();
+        assert!(err.contains("not found"), "err: {err}");
+        assert!(err.contains("left_cube"), "err should list labels: {err}");
     }
 
     #[test]
