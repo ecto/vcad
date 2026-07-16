@@ -131,7 +131,19 @@ impl RouteOptions {
     fn effective_ripup_rounds(&self) -> usize {
         ((MAX_RIPUP_ROUNDS as f64 * self.effort).ceil() as usize).max(1)
     }
+
+    /// A* expansion budget per connection after effort scaling. Bounds how
+    /// much of the (x, y, layer) space a single connection may flood before
+    /// failing honestly — the dominant cost of unroutable connections.
+    fn effective_expansions(&self) -> usize {
+        ((MAZE_EXPANSION_BUDGET as f64 * self.effort).ceil() as usize).max(10_000)
+    }
 }
+
+/// Base A* node-expansion budget per connection at effort 1.0. Successful
+/// routes typically expand a few thousand nodes; a doomed connection on a
+/// 10-layer board otherwise floods millions.
+const MAZE_EXPANSION_BUDGET: usize = 200_000;
 
 /// Default PathFinder negotiation rounds for [`route_all`]. Round 0 is the
 /// baseline; the win typically lands within a couple of negotiation rounds, and
@@ -283,6 +295,7 @@ pub fn route_all_with_opts(
             &cong,
             use_push_shove,
             opts.effective_ripup_rounds(),
+            opts.effective_expansions(),
         );
 
         let last_round = round + 1 == rounds;
@@ -570,6 +583,7 @@ fn route_pass(
     cong: &Congestion,
     use_push_shove: bool,
     ripup_rounds: usize,
+    max_expansions: usize,
 ) -> Pass {
     let mut session = RouteSession::from_pcb(pcb);
     let mut placed: Vec<Placed> = Vec::new();
@@ -590,6 +604,7 @@ fn route_pass(
             &placed,
             cong,
             use_push_shove,
+            max_expansions,
         ) {
             Some(p) => placed.push(p),
             None => unrouted_conns.push((line.net.clone(), line.from, line.to)),
@@ -615,6 +630,7 @@ fn route_pass(
             pending,
             cong,
             use_push_shove,
+            max_expansions,
         );
         if placed.len() <= placed_before {
             break;
@@ -649,6 +665,7 @@ fn try_route(
     placed: &[Placed],
     cong: &Congestion,
     use_push_shove: bool,
+    max_expansions: usize,
 ) -> Option<Placed> {
     // Net-class width if the net has one (wider power/ground), else the caller's
     // default. The same width drives the maze search, the committed copper, and
@@ -678,6 +695,7 @@ fn try_route(
         w,
         via_d,
         Some(cong),
+        max_expansions,
     );
     let (segments, route_vias) = if r3.success && !r3.segments.is_empty() {
         (r3.segments, r3.vias)
@@ -1322,6 +1340,7 @@ fn ripup_pass(
     unrouted: Vec<Conn>,
     cong: &Congestion,
     use_push_shove: bool,
+    max_expansions: usize,
 ) -> Vec<Conn> {
     let hw = width / 2.0;
     let copper = copper_layers(pcb);
@@ -1388,6 +1407,7 @@ fn ripup_pass(
             placed,
             cong,
             use_push_shove,
+            max_expansions,
         );
         if let Some(p) = routed_target {
             placed.push(p);
@@ -1407,6 +1427,7 @@ fn ripup_pass(
                 placed,
                 cong,
                 use_push_shove,
+                max_expansions,
             ) {
                 Some(p) => placed.push(p),
                 None => still.push((v.net, v.from, v.to)),

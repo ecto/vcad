@@ -834,3 +834,24 @@ mod tests {
         assert!(bg_count < 32 * 32, "Should render the cube");
     }
 }
+
+#[cfg(test)]
+mod closed_surface_trace {
+    use super::*;
+    use vcad_kernel_primitives::make_sphere;
+
+    /// Regression: a full primitive sphere is one face whose outer loop is
+    /// only the seam — a zero-area polygon in UV. The trim test used to
+    /// reject every hit on it, so spheres never ray traced at all. A
+    /// degenerate outer loop must read as "untrimmed".
+    #[test]
+    fn full_sphere_traces() {
+        let s = make_sphere(10.0, 0);
+        let bvh = Bvh::build(&s);
+        let ray = Ray::new(Point3::new(0.0, -50.0, 0.0), Vec3::new(0.0, 1.0, 0.0));
+        let hits = bvh.trace(&ray);
+        assert_eq!(hits.len(), 2, "ray through center must enter and exit");
+        let t = bvh.trace_closest(&ray).expect("must hit").t;
+        assert!((t - 40.0).abs() < 1e-6, "front of sphere at t=40, got {t}");
+    }
+}
