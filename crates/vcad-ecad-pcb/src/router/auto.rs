@@ -369,13 +369,20 @@ pub fn route_all_with_opts(
             deposit_congestion(&mut cong, &session, &pending, width, HISTORY_STEP);
         }
 
-        // Keep the pass that placed the most connections.
+        // Keep the pass that placed the most connections; a round that fails
+        // to improve on the best means negotiation has converged — stop
+        // rather than burn further rounds re-proving it (the CM5 logs showed
+        // rounds oscillating below the best pass, never above, once the
+        // greedy + rip-up baseline had settled).
         let is_better = best
             .as_ref()
             .map(|(_, bp, _)| placed.len() > bp.len())
             .unwrap_or(true);
         if is_better {
             best = Some((session, placed, pending));
+        } else if round > 0 {
+            log::info!("negotiation converged after round {} — stopping", round + 1);
+            break;
         }
 
         let fully_routed = best.as_ref().map(|(_, _, p)| p.is_empty()).unwrap_or(false);
