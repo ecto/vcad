@@ -734,30 +734,15 @@ fn incremental_round(
     fine_retry: bool,
     fail_count: &BTreeMap<String, usize>,
 ) -> Pass {
-    let (mut session, placed_base, pending_base) = base.clone();
+    let (mut session, mut placed, pending_base) = base.clone();
 
-    // Victims: placed routes with copper inside a contested band.
-    let contested = |p: &Placed| {
-        p.segments.iter().any(|(a, b, _)| {
-            cong.cost_at(*a) > 0.0
-                || cong.cost_at(*b) > 0.0
-                || cong.cost_at(Vec2::new((a.x + b.x) / 2.0, (a.y + b.y) / 2.0)) > 0.0
-        })
-    };
-    let mut placed: Vec<Placed> = Vec::new();
-    let mut victims: Vec<Conn> = Vec::new();
-    for p in placed_base {
-        if contested(&p) {
-            for &s in &p.spans {
-                session.remove(s);
-            }
-            victims.push((p.net, p.from, p.to));
-        } else {
-            placed.push(p);
-        }
-    }
-
-    // Stuck connections first (most-failed leading), victims after.
+    // Stuck connections, most-failed first: they get first pick of any
+    // corridor rip-up frees. The heavy lifting is ripup_pass — it rips only
+    // the ACTUAL corridor blockers of each stuck connection (not everything
+    // the ever-accumulating history field has touched: an earlier version
+    // blanket-ripped contested bands and the round-over-round logs showed it
+    // destroying more routes than it recovered), re-routes the stuck net
+    // with the history bias, then re-routes or restores the victims.
     let mut stuck = pending_base;
     stuck.sort_by(|a, b| {
         let fa = fail_count.get(&a.0).copied().unwrap_or(0);
@@ -765,26 +750,23 @@ fn incremental_round(
         fb.cmp(&fa)
     });
     let n_stuck = stuck.len();
-    let n_victims = victims.len();
-    let mut conns = stuck;
-    conns.extend(victims);
 
     let sw = Stopwatch::start();
     let mut fail_cache = FailCache::new();
-    let pending = route_batch(
+    let pending = ripup_pass(
         &mut session,
         pcb,
         width,
-        conns,
         &mut placed,
+        stuck,
         cong,
         use_push_shove,
         max_expansions,
-        fine_retry,
         &mut fail_cache,
     );
+    let _ = fine_retry;
     log::info!(
-        "incremental round: stuck={n_stuck} victims_ripped={n_victims} -> placed={} pending={} in {:.1}s",
+        "incremental round: stuck={n_stuck} -> placed={} pending={} in {:.1}s",
         placed.len(),
         pending.len(),
         sw.ms() / 1000.0,
@@ -1823,9 +1805,17 @@ fn ripup_pass(
         }
 
         // Re-route every victim — speculatively parallel, like the greedy
-        // pass; one that can't be placed becomes unrouted.
+        // pass. A victim that can't find a NEW route gets its ORIGINAL copper
+        // restored when that copper is still legal (the stuck net may not
+        // have taken its space after all) — rip-up is then non-destructive
+        // by construction; only a victim whose exact old path was genuinely
+        // claimed becomes unrouted.
+        let mut originals: HashMap<ConnKey, Placed> = victims
+            .iter()
+            .map(|v| (conn_key(&v.net, v.from, v.to), v.clone()))
+            .collect();
         let victim_conns: Vec<Conn> = victims.into_iter().map(|v| (v.net, v.from, v.to)).collect();
-        still.extend(route_batch(
+        for (net, from, to) in route_batch(
             session,
             pcb,
             width,
@@ -1836,7 +1826,36 @@ fn ripup_pass(
             max_expansions,
             true,
             fail_cache,
-        ));
+        ) {
+            let restored = originals
+                .remove(&conn_key(&net, from, to))
+                // A fan-out victim's dog-bone stubs can't ride a Candidate;
+                // restoring without them would report a broken route as
+                // placed. Those (rare) victims stay unrouted instead.
+                .filter(|orig| orig.stubs.is_empty())
+                .and_then(|orig| {
+                    validate_and_commit(
+                        session,
+                        pcb,
+                        Candidate {
+                            net: orig.net.clone(),
+                            from: orig.from,
+                            to: orig.to,
+                            width: orig.width,
+                            segments: orig.segments.clone(),
+                            vias: orig.via_pts.clone(),
+                        },
+                        placed,
+                    )
+                });
+            match restored {
+                Some(p) => {
+                    log::debug!("ripup: restored original route for {}", p.net);
+                    placed.push(p);
+                }
+                None => still.push((net, from, to)),
+            }
+        }
     }
 
     still
