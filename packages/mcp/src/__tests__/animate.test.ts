@@ -7,6 +7,7 @@
 import { describe, it, expect, beforeAll, beforeEach } from "vitest";
 import { Engine } from "@vcad/engine";
 import type { Document, Timeline } from "@vcad/ir";
+import { spawn } from "node:child_process";
 import {
   animate,
   renderSequence,
@@ -15,6 +16,7 @@ import {
   verifySequenceClearance,
   injectHud,
   compileRolloutTimeline,
+  startMp4Encoder,
 } from "../tools/animate.js";
 import { documents, openDocument } from "../tools/session.js";
 import { sampleSequence } from "@vcad/engine";
@@ -286,6 +288,79 @@ describe("export_video", () => {
       expect(text.artifact).toBeTruthy();
     }
   });
+});
+
+/** Probe once whether ffmpeg is spawnable, to gate the mp4 tests. */
+async function ffmpegPresent(): Promise<boolean> {
+  return new Promise((resolve) => {
+    try {
+      const p = spawn("ffmpeg", ["-version"], { stdio: "ignore" });
+      p.on("error", () => resolve(false));
+      p.on("exit", (code) => resolve(code === 0));
+    } catch {
+      resolve(false);
+    }
+  });
+}
+
+const hasFfmpeg = await ffmpegPresent();
+
+describe("export_video mp4 (streaming ffmpeg pipe)", () => {
+  it.skipIf(!hasFfmpeg)(
+    "streams frames to ffmpeg and produces a playable mp4",
+    async () => {
+      const docId = openArm();
+      await animate({ document_id: docId, timeline: spinTimeline });
+      const res = await exportVideo(
+        { document_id: docId, format: "mp4", width_px: 160 },
+        { engine } as never,
+      );
+      if (res.isError)
+        throw new Error(`export_video failed: ${res.content[0]!.text}`);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const blocks = res.content as Array<any>;
+      const text = JSON.parse(blocks.find((b) => b.type === "text")!.text);
+      expect(text.format).toBe("mp4");
+      expect(text.frames).toBe(13);
+      expect(text.bytes).toBeGreaterThan(0);
+      // mp4 always offloads to an artifact.
+      expect(text.artifact).toBeTruthy();
+    },
+    60_000,
+  );
+
+  it.skipIf(!hasFfmpeg)(
+    "startMp4Encoder handles backpressure across many frames",
+    async () => {
+      const w = 320;
+      const h = 240;
+      const enc = startMp4Encoder(w, h, 24);
+      const frame = new Uint8Array(w * h * 4).fill(200);
+      for (let i = 0; i < 120; i++) await enc.writeFrame(frame);
+      const bytes = await enc.finish();
+      expect(bytes.byteLength).toBeGreaterThan(0);
+      // ftyp box near the start of a fragmented mp4.
+      expect(bytes.subarray(4, 8).toString("ascii")).toBe("ftyp");
+    },
+    30_000,
+  );
+
+  it.skipIf(!hasFfmpeg)(
+    "surfaces ffmpeg early-exit as a write/finish error",
+    async () => {
+      // Invalid frame geometry makes ffmpeg reject its args and exit
+      // immediately; the failure must surface instead of hanging.
+      const enc = startMp4Encoder(0, 0, 24);
+      await expect(
+        (async () => {
+          const frame = new Uint8Array(64 * 64 * 4);
+          for (let i = 0; i < 100; i++) await enc.writeFrame(frame);
+          return enc.finish();
+        })(),
+      ).rejects.toThrow(/ffmpeg/);
+    },
+    30_000,
+  );
 });
 
 describe("compileRolloutTimeline", () => {

@@ -2425,6 +2425,18 @@ export function render_svg_annotated(vcad_json: string, scale: number, view: str
 export function render_svg_view(vcad_json: string, scale: number, view: string): string;
 
 /**
+ * Render a section (cutaway) view: the document cut by an axis-aligned
+ * plane, with exposed cut faces cross-hatched drafting-style.
+ *
+ * `section` is `"x=N"`, `"y=N"`, or `"z=N"` (mm) — the half of the
+ * model on the camera's side of the plane is removed. `view` accepts the same names as
+ * [`render_svg_view`]; unrecognized values fall back to isometric. A
+ * solid whose section boolean fails renders uncut rather than failing
+ * the whole render.
+ */
+export function render_svg_view_section(vcad_json: string, scale: number, view: string, section: string): string;
+
+/**
  * Generate a section view from a triangle mesh.
  *
  * # Arguments
@@ -2701,6 +2713,7 @@ export interface InitOutput {
     readonly render_svg: (a: number, b: number, c: number) => [number, number, number, number];
     readonly render_svg_annotated: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
     readonly render_svg_view: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
+    readonly render_svg_view_section: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number, number, number];
     readonly sectionMesh: (a: any, b: number, c: number, d: number, e: number) => any;
     readonly solid_boundaryEdges: (a: number, b: number) => [number, number];
     readonly solid_boundingBox: (a: number) => [number, number];

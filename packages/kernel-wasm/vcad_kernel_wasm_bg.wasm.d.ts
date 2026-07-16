@@ -84,6 +84,7 @@ export const render_pcb_svg_opts: (a: number, b: number, c: number, d: number, e
 export const render_svg: (a: number, b: number, c: number) => [number, number, number, number];
 export const render_svg_annotated: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
 export const render_svg_view: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
+export const render_svg_view_section: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number, number, number];
 export const sectionMesh: (a: any, b: number, c: number, d: number, e: number) => any;
 export const solid_boundaryEdges: (a: number, b: number) => [number, number];
 export const solid_boundingBox: (a: number) => [number, number];

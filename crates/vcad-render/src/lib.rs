@@ -38,6 +38,7 @@
 
 #![warn(missing_docs)]
 
+mod exact;
 pub mod pcb;
 
 use std::collections::HashMap;
@@ -485,10 +486,9 @@ fn xml_escape(s: &str) -> String {
 
 // ─── .vcad → solids ───────────────────────────────────────────────────────
 
-/// A solid plus its material colour (linear RGB in `[0,1]`), its
-/// human-readable name, and its identity, when the document provides them.
-/// The colour tints the shading ramp; the name feeds the optional
-/// part-label annotation; the id drives changed-part highlighting.
+/// A solid plus its material colour (linear RGB in `[0,1]`) and its
+/// human-readable name, when the document provides them. The colour tints
+/// the shading ramp; the name feeds the optional part-label annotation.
 struct SceneSolid {
     solid: Solid,
     tint: Option<[f64; 3]>,
@@ -525,8 +525,7 @@ fn evaluate_vcad(raw_vcad: &str) -> Result<Vec<SceneSolid>, String> {
     let materials = &parsed.document.materials;
     // `scene.parts` is 1:1 with the document's *visible* roots, in order —
     // failed roots still push an (empty) part — so zipping recovers each
-    // part's root node, thence its authored name and its id (the `part_id`
-    // the MCP mutation diff reports).
+    // part's root node and thence its authored name.
     let visible_roots: Vec<&vcad_ir::SceneEntry> = parsed
         .document
         .roots
@@ -747,7 +746,7 @@ fn orient_normals(cm: &CanonMesh, normals: &mut [[f64; 3]]) {
 // ─── per-solid render artifacts (shared by SVG + raster paths) ────────────
 
 /// How a kept edge reads, and how hidden-line removal treats it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum EdgeKind {
     /// A hard model outline: a boundary (open) edge, or a silhouette
     /// between two clearly non-coplanar faces (a box edge, a bore rim at
@@ -765,9 +764,10 @@ enum EdgeKind {
 }
 
 struct SolidArtifacts {
-    /// Index of the source solid in the caller's `solids` slice — solids
-    /// that fail to tessellate are skipped, so artifact index alone can't
-    /// recover per-solid metadata (names, for the label annotation).
+    /// Index of the source solid in the caller's `solids` slice. Solids
+    /// that fail to tessellate are skipped, so artifact index alone doesn't
+    /// line up with the input — needed both to re-derive exact BRep edges
+    /// and to recover per-solid metadata (names, for the label annotation).
     src: usize,
     verts: Vec<[f64; 3]>,
     tris: Vec<[usize; 3]>,
@@ -1029,6 +1029,66 @@ fn build_artifacts(
 }
 
 // ─── geometry helpers ─────────────────────────────────────────────────────
+
+/// Build an SVG path `d` string tracing the exact projected ellipse arc
+/// from parameter `t0` to `t1` (radians on the source circle).
+///
+/// `a2`/`b2` are the ellipse's screen-space conjugate radius vectors — the
+/// projections of the circle's `radius·u` and `radius·v` — so a point at
+/// parameter θ is `p_screen(θ) = center' + a2·cosθ + b2·sinθ`. The SVG arc
+/// command needs canonical semi-axes: they come from the eigen-decomposition
+/// of `M·Mᵀ` with `M = [a2 b2]`, which is exact. The arc is split into
+/// ≤90° chunks so the large-arc flag is never needed, and the sweep flag is
+/// read off the actual turn direction of each chunk's sampled midpoint.
+fn arc_path_d(
+    a2: (f64, f64),
+    b2: (f64, f64),
+    p_screen: &dyn Fn(f64) -> (f64, f64),
+    t0: f64,
+    t1: f64,
+) -> String {
+    // A zero-extent interval (the caller's `d <= 0.0` guard should already
+    // exclude these) would emit an arc with start == end, which renderers
+    // treat inconsistently (no-op vs full ellipse). Emit a bare moveto.
+    if (t1 - t0).abs() < 1e-9 {
+        let (x, y) = p_screen(t0);
+        return format!("M {x:.3} {y:.3}");
+    }
+    // M·Mᵀ of the 2×2 linear map [a2 b2].
+    let m00 = a2.0 * a2.0 + b2.0 * b2.0;
+    let m01 = a2.0 * a2.1 + b2.0 * b2.1;
+    let m11 = a2.1 * a2.1 + b2.1 * b2.1;
+    // Diagonalizing rotation; the radius along direction φ is √λ_φ.
+    let phi = 0.5 * (2.0 * m01).atan2(m00 - m11);
+    let (cp, sp) = (phi.cos(), phi.sin());
+    let l1 = (m00 * cp * cp + 2.0 * m01 * sp * cp + m11 * sp * sp).max(0.0);
+    let l2 = (m00 + m11 - l1).max(0.0);
+    let rx = l1.sqrt();
+    let ry = l2.sqrt();
+    let rot_deg = phi.to_degrees();
+
+    let chunks = (((t1 - t0) / (std::f64::consts::FRAC_PI_2 * 0.99)).ceil() as usize).max(1);
+    let start = p_screen(t0);
+    let mut d = format!("M {:.3} {:.3}", start.0, start.1);
+    let mut prev = start;
+    let mut prev_t = t0;
+    for k in 1..=chunks {
+        let t = t0 + (t1 - t0) * k as f64 / chunks as f64;
+        let end = p_screen(t);
+        let mid = p_screen((prev_t + t) / 2.0);
+        // Turn direction across the chunk: positive cross in SVG's y-down
+        // frame is the "positive angle" (sweep = 1) direction.
+        let c = (mid.0 - prev.0) * (end.1 - mid.1) - (mid.1 - prev.1) * (end.0 - mid.0);
+        let sweep = if c > 0.0 { 1 } else { 0 };
+        d.push_str(&format!(
+            " A {rx:.3} {ry:.3} {rot_deg:.3} 0 {sweep} {:.3} {:.3}",
+            end.0, end.1
+        ));
+        prev = end;
+        prev_t = t;
+    }
+    d
+}
 
 fn face_normal(v: [[f64; 3]; 3]) -> [f64; 3] {
     let e1 = sub(v[1], v[0]);
@@ -1361,6 +1421,34 @@ impl DepthBuffer {
         }
     }
 
+    /// Per-sample visibility test at a final-SVG point with camera depth
+    /// `d`: visible when its depth is within a (gradient-adaptive) bias of
+    /// the buffer, or it runs over open background. Returns
+    /// `(visible, over_bg)`. Shared by the segment walk ([`Self::clip_edge`])
+    /// and the exact-arc walk.
+    fn sample_visible(&self, p: (f64, f64), d: f64, bias: f64) -> (bool, bool) {
+        let bxp = p.0 * self.scale;
+        let byp = p.1 * self.scale;
+        let ix = bxp.floor() as i64;
+        let iy = byp.floor() as i64;
+        let z = self.at(ix, iy);
+        if z == f64::NEG_INFINITY {
+            return (true, true); // over background — nothing occludes it
+        }
+        let mut over_bg = false;
+        let mut delta = 0.0f64;
+        for (nx, ny) in [(ix - 1, iy), (ix + 1, iy), (ix, iy - 1), (ix, iy + 1)] {
+            let nz = self.at(nx, ny);
+            if nz == f64::NEG_INFINITY {
+                delta = f64::INFINITY; // silhouette pixel — always show
+                over_bg = true;
+            } else {
+                delta = delta.max((z - nz).abs());
+            }
+        }
+        (d >= z - (bias + delta), over_bg)
+    }
+
     /// Walk an edge (final SVG coords + endpoint depths) and split it into
     /// its visible and hidden (occluded) sub-segments. Each [`VisSpan`]
     /// carries its length in buffer cells and whether any of it ran over
@@ -1403,26 +1491,8 @@ impl DepthBuffer {
             let bxp = ax + (bx - ax) * t;
             let byp = ay + (by - ay) * t;
             let d = da + (db - da) * t;
-            let ix = bxp.floor() as i64;
-            let iy = byp.floor() as i64;
-            let z = self.at(ix, iy);
-            let mut over_bg = false;
-            let visible = if z == f64::NEG_INFINITY {
-                over_bg = true; // over background — nothing occludes it
-                true
-            } else {
-                let mut delta = 0.0f64;
-                for (nx, ny) in [(ix - 1, iy), (ix + 1, iy), (ix, iy - 1), (ix, iy + 1)] {
-                    let nz = self.at(nx, ny);
-                    if nz == f64::NEG_INFINITY {
-                        delta = f64::INFINITY; // silhouette pixel — always show
-                        over_bg = true;
-                    } else {
-                        delta = delta.max((z - nz).abs());
-                    }
-                }
-                d >= z - (bias + delta)
-            };
+            let (visible, over_bg) =
+                self.sample_visible((bxp / self.scale, byp / self.scale), d, bias);
             let pt = (bxp, byp);
             match state {
                 Some(prev) if prev == visible => {
@@ -1492,66 +1562,43 @@ pub fn render_svg_str(raw_vcad: &str, scale: f64) -> Result<String, String> {
 /// Unlike [`render_svg_solids_view`], this path knows each part's material
 /// and tints the shading ramp accordingly.
 pub fn render_svg_str_view(raw_vcad: &str, scale: f64, view: View) -> Result<String, String> {
-    render_svg_str_view_opts(
-        raw_vcad,
-        scale,
-        view,
-        false,
-        &RenderAnnotations::default(),
-        &[],
-    )
+    render_svg_str_view_opts(raw_vcad, scale, view, false, &RenderAnnotations::default())
 }
 
 /// Render raw `.vcad` document JSON to a self-contained SVG from `view`,
 /// optionally omitting the opaque paper background for a transparent render
 /// and/or overlaying engineering annotations.
 ///
+/// When `transparent` is true the vellum ground rect is skipped, so the
+/// SVG composites cleanly over any background; the soft contact shadow is
 /// still emitted (it is already semi-transparent). With
 /// [`RenderAnnotations::default()`] the output is byte-identical to an
 /// annotation-free render.
-///
-/// `highlight` selects parts by root node id (the `part_id` a mutation
-/// diff reports), node name, or assembly instance id/name. When non-empty,
-/// highlighted parts keep their full material colour and gain a brand-
-/// orange accent outline, while every other part is ghosted toward the
-/// paper colour — the "what did my edit just touch" view. A non-empty
-/// `highlight` that matches no part is an error (never a silently
-/// unhighlighted render).
-#[allow(clippy::too_many_arguments)]
 pub fn render_svg_str_view_opts(
     raw_vcad: &str,
     scale: f64,
     view: View,
     transparent: bool,
     annotations: &RenderAnnotations,
-    highlight: &[String],
 ) -> Result<String, String> {
-    render_svg_str_section(
+    render_svg_str_opts(
         raw_vcad,
         scale,
-        view,
-        transparent,
-        None,
-        annotations,
-        highlight,
+        &SvgOptions {
+            view,
+            transparent,
+            annotations: *annotations,
+            ..Default::default()
+        },
     )
 }
 
 /// Render raw `.vcad` document JSON to an SVG from `view`, optionally
-/// sectioned (cutaway) by `section`, overlaid with `annotations`, and/or
-/// with a `highlight` set. Material on the camera's side of the plane is
-/// boolean-subtracted before tessellation; exposed cut faces are drawn with
-/// a 45° drafting hatch. A solid whose boolean fails is rendered uncut
-/// (noted on stderr) rather than failing the render.
-///
-/// `highlight` selects parts by root node id (the `part_id` a mutation
-/// diff reports), node name, or assembly instance id/name. When non-empty,
-/// highlighted parts keep their full material colour and gain a brand-
-/// orange accent outline, while every other part is ghosted toward the
-/// paper colour — the "what did my edit just touch" view. A non-empty
-/// `highlight` that matches no part is an error (never a silently
-/// unhighlighted render).
-#[allow(clippy::too_many_arguments)]
+/// sectioned (cutaway) by `section` and/or overlaid with `annotations`.
+/// Material on the camera's side of the plane is boolean-subtracted before
+/// tessellation; exposed cut faces are drawn with a 45° drafting hatch. A
+/// solid whose boolean fails is rendered uncut (noted on stderr) rather than
+/// failing the render.
 pub fn render_svg_str_section(
     raw_vcad: &str,
     scale: f64,
@@ -1559,21 +1606,72 @@ pub fn render_svg_str_section(
     transparent: bool,
     section: Option<SectionPlane>,
     annotations: &RenderAnnotations,
-    highlight: &[String],
+) -> Result<String, String> {
+    render_svg_str_opts(
+        raw_vcad,
+        scale,
+        &SvgOptions {
+            view,
+            transparent,
+            section,
+            annotations: *annotations,
+            ..Default::default()
+        },
+    )
+}
+
+/// Options for the SVG render path ([`render_svg_str_opts`]).
+#[derive(Debug, Clone, Default)]
+pub struct SvgOptions {
+    /// Camera orientation.
+    pub view: View,
+    /// Omit the opaque paper background rect.
+    pub transparent: bool,
+    /// Emit BRep-exact linework where available: circular model edges
+    /// (cylinder/cone rims) and sphere view outlines become mathematically
+    /// exact SVG elliptical arcs instead of tessellated polylines, so they
+    /// stay smooth at any zoom. Curves the extractor doesn't recognise
+    /// (tori, NURBS, boolean intersection seams) fall back to polylines;
+    /// fills and hidden-line removal still use the tessellation.
+    pub exact_edges: bool,
+    /// Section (cutaway) plane. Material on the camera's side is
+    /// boolean-subtracted before tessellation and exposed cut faces get a
+    /// 45° drafting hatch. `None` renders the whole model.
+    pub section: Option<SectionPlane>,
+    /// Opt-in engineering annotation overlays (axes gizmo, part labels,
+    /// bounding-box dimensions). [`RenderAnnotations::default()`] draws none.
+    pub annotations: RenderAnnotations,
+    /// Changed-part highlight set. Selects parts by root node id (the
+    /// `part_id` a mutation diff reports), node name, or assembly instance
+    /// id/name. When non-empty, matched parts keep their full material
+    /// colour and gain a brand-orange accent outline while every other part
+    /// is ghosted toward the paper — the "what did my edit just touch"
+    /// view. Empty renders normally; a non-empty set matching no part is an
+    /// error (never a silently unhighlighted render).
+    pub highlight: Vec<String>,
+}
+
+/// Render raw `.vcad` document JSON to a self-contained SVG with full
+/// [`SvgOptions`] control. The other `render_svg_str*` entry points are
+/// thin wrappers over this.
+pub fn render_svg_str_opts(
+    raw_vcad: &str,
+    scale: f64,
+    opts: &SvgOptions,
 ) -> Result<String, String> {
     let mut scene = evaluate_vcad(raw_vcad)?;
-    if let Some(plane) = section {
-        scene = apply_section(scene, plane, view);
+    if let Some(plane) = opts.section {
+        scene = apply_section(scene, plane, opts.view);
     }
     let accents: Vec<bool> = scene
         .iter()
         .map(|s| {
-            highlight
+            opts.highlight
                 .iter()
                 .any(|h| *h == s.id || s.name.as_deref() == Some(h.as_str()))
         })
         .collect();
-    if !highlight.is_empty() && !accents.iter().any(|&a| a) {
+    if !opts.highlight.is_empty() && !accents.iter().any(|&a| a) {
         let known: Vec<String> = scene
             .iter()
             .map(|s| match &s.name {
@@ -1583,24 +1681,14 @@ pub fn render_svg_str_section(
             .collect();
         return Err(format!(
             "highlight matched no parts: wanted [{}], document has [{}]",
-            highlight.join(", "),
+            opts.highlight.join(", "),
             known.join(", "),
         ));
     }
     let solids: Vec<Solid> = scene.iter().map(|s| s.solid.clone()).collect();
     let tints: Vec<Option<[f64; 3]>> = scene.iter().map(|s| s.tint).collect();
     let names: Vec<Option<String>> = scene.iter().map(|s| s.name.clone()).collect();
-    render_svg_impl(
-        &solids,
-        &tints,
-        &names,
-        &accents,
-        scale,
-        view,
-        transparent,
-        section,
-        annotations,
-    )
+    render_svg_impl(&solids, &tints, &names, &accents, scale, opts)
 }
 
 /// Render pre-evaluated solids to a self-contained isometric SVG.
@@ -1631,35 +1719,34 @@ pub fn render_svg_solids_view(solids: &[Solid], scale: f64, view: View) -> Resul
         &names,
         &accents,
         scale,
-        view,
-        false,
-        None,
-        &RenderAnnotations::default(),
+        &SvgOptions {
+            view,
+            ..Default::default()
+        },
     )
 }
 
 /// Shared SVG renderer; `tints[i]` optionally tints solid `i`'s ramp and
 /// `names[i]` labels it when the `labels` annotation is on. When any
 /// `accents[i]` is set, solid `i` keeps its full ramp and gains an
-/// [`ACCENT`] outline while the rest are ghosted toward [`PAPER`]. When
-/// `transparent`, the opaque paper background rect is omitted. `section`
-/// (already applied to the solids by the caller) only drives cut-face
-/// detection here, so exposed section faces get the hatch fill.
-#[allow(clippy::too_many_arguments)]
+/// [`ACCENT`] outline while the rest are ghosted toward [`PAPER`].
+/// `opts.section` (already applied to the solids by the caller) only drives
+/// cut-face detection here, so exposed section faces get the hatch fill.
 fn render_svg_impl(
     solids: &[Solid],
     tints: &[Option<[f64; 3]>],
     names: &[Option<String>],
     accents: &[bool],
     scale: f64,
-    view: View,
-    transparent: bool,
-    section: Option<SectionPlane>,
-    annos: &RenderAnnotations,
+    opts: &SvgOptions,
 ) -> Result<String, String> {
     if solids.is_empty() {
         return Err("no solids produced".to_string());
     }
+    let view = opts.view;
+    let transparent = opts.transparent;
+    let section = opts.section;
+    let annos = &opts.annotations;
 
     let cam = view.cam();
     let right = view.right();
@@ -1747,6 +1834,25 @@ fn render_svg_impl(
     let ao_bias = (0.02 * diag).max(bias);
     let ao_range = (0.22 * diag).max(ao_bias * 3.0);
 
+    // BRep-exact linework (opt-in): analytic circles recovered from each
+    // solid's BRep, plus the mask of mesh edges they replace. Extraction
+    // failures are impossible by construction (no BRep → no candidates →
+    // empty mask), so unrecognised geometry silently keeps its polylines.
+    let exact_curves: Vec<Option<exact::ExactCurves>> = arts
+        .iter()
+        .map(|art| {
+            opts.exact_edges.then(|| {
+                exact::extract(
+                    &solids[art.src],
+                    &art.verts,
+                    &art.edges,
+                    cam,
+                    TESSELLATION_SEGMENTS,
+                )
+            })
+        })
+        .collect();
+
     let mut polys: Vec<ProjPoly> = Vec::new();
     let mut edges: Vec<ProjEdge> = Vec::new();
     // Gradient defs for Gouraud-shaded (curved) facets, accumulated as we go.
@@ -1815,7 +1921,13 @@ fn render_svg_impl(
                 depth: (vd[0] + vd[1] + vd[2]) / 3.0,
             });
         }
-        for &(a, b, kind) in &art.edges {
+        for (ei, &(a, b, kind)) in art.edges.iter().enumerate() {
+            // Skip polylines an exact arc replaces.
+            if let Some(Some(ex)) = exact_curves.get(ai).map(|e| e.as_ref()) {
+                if ex.suppressed[ei] {
+                    continue;
+                }
+            }
             edges.push(ProjEdge {
                 a: fin(proj[a]),
                 da: dot(art.verts[a], cam),
@@ -1881,13 +1993,97 @@ fn render_svg_impl(
         // Smooth curved-surface silhouettes are never dashed — their
         // occluded fragments are tangent-point noise, not real edges.
         // Ghosted parts drop their dashed hidden lines entirely — they are
-        // context, not the subject, and the dashes would read louder than
-        // their faded fills.
+        // context, not the subject.
         if matches!(e.kind, EdgeKind::Outline | EdgeKind::Crease) && e.emphasis != Emphasis::Ghost {
             for span in &clip.hidden {
                 if span.len_cells >= HIDDEN_MIN_CELLS {
                     hidden_lines.push((span.a, span.b));
                 }
+            }
+        }
+    }
+
+    // BRep-exact arcs: walk each analytic arc against the same depth
+    // buffer and emit the surviving parameter runs as exact SVG
+    // elliptical-arc paths, styled identically to the lines they replace.
+    let mut outline_arcs: Vec<String> = Vec::new();
+    let mut crease_arcs: Vec<String> = Vec::new();
+    let mut hidden_arcs: Vec<String> = Vec::new();
+    for ex in exact_curves.iter().flatten() {
+        for span in &ex.arcs {
+            let c = &ex.circles[span.circle];
+            // Screen-space conjugate radius vectors of the projected
+            // ellipse (an orthographic projection maps the circle's
+            // parametric form to `P(center) + A·cosθ + B·sinθ`).
+            let a2 = (
+                dot(c.u, right) * scale * c.radius,
+                dot(c.u, down) * scale * c.radius,
+            );
+            let b2 = (
+                dot(c.v, right) * scale * c.radius,
+                dot(c.v, down) * scale * c.radius,
+            );
+            let p_screen = |th: f64| fin(project(c.point(th)));
+            let conj = ((a2.0 * a2.0 + a2.1 * a2.1) + (b2.0 * b2.0 + b2.1 * b2.1)).sqrt();
+            // ~1 depth-buffer cell per visibility sample along the arc.
+            let steps =
+                (((span.end - span.start) * conj * zbuf.scale).ceil() as usize).clamp(16, 4096);
+            // Walk visibility runs over the parameter interval.
+            let mut run_start = span.start;
+            let mut run_cells = 0.0f64;
+            let mut run_bg = false;
+            let mut state: Option<bool> = None;
+            let mut prev_pt = p_screen(span.start);
+            let mut flush = |vis: bool, t0: f64, t1: f64, cells: f64, over_bg: bool| {
+                if t1 <= t0 {
+                    return;
+                }
+                if vis {
+                    let keep = match span.kind {
+                        EdgeKind::Smooth => over_bg || cells >= SMOOTH_INTERIOR_MIN_CELLS,
+                        EdgeKind::Outline | EdgeKind::Crease => true,
+                    };
+                    if keep {
+                        let d = arc_path_d(a2, b2, &p_screen, t0, t1);
+                        match span.kind {
+                            EdgeKind::Crease => crease_arcs.push(d),
+                            _ => outline_arcs.push(d),
+                        }
+                    }
+                } else if matches!(span.kind, EdgeKind::Outline | EdgeKind::Crease)
+                    && cells >= HIDDEN_MIN_CELLS
+                {
+                    hidden_arcs.push(arc_path_d(a2, b2, &p_screen, t0, t1));
+                }
+            };
+            for i in 0..=steps {
+                let t = span.start + (span.end - span.start) * i as f64 / steps as f64;
+                let p3 = c.point(t);
+                let spt = p_screen(t);
+                let (vis, over_bg) = zbuf.sample_visible(spt, dot(p3, cam), bias);
+                let step_cells =
+                    ((spt.0 - prev_pt.0).powi(2) + (spt.1 - prev_pt.1).powi(2)).sqrt() * zbuf.scale;
+                prev_pt = spt;
+                match state {
+                    Some(prev) if prev == vis => {
+                        run_cells += step_cells;
+                        run_bg |= over_bg;
+                    }
+                    Some(prev) => {
+                        flush(prev, run_start, t, run_cells, run_bg);
+                        run_start = t;
+                        run_cells = 0.0;
+                        run_bg = over_bg;
+                        state = Some(vis);
+                    }
+                    None => {
+                        run_bg = over_bg;
+                        state = Some(vis);
+                    }
+                }
+            }
+            if let Some(vis) = state {
+                flush(vis, run_start, span.end, run_cells, run_bg);
             }
         }
     }
@@ -1947,11 +2143,12 @@ fn render_svg_impl(
     let dash = (blur * 0.6).clamp(2.0, 6.0);
     let emit_lines = |out: &mut String,
                       lines: &[Seg],
+                      arcs: &[String],
                       stroke: &str,
                       width: f64,
                       opacity: f64,
                       dasharray: Option<f64>| {
-        if lines.is_empty() {
+        if lines.is_empty() && arcs.is_empty() {
             return;
         }
         let dash_attr = match dasharray {
@@ -1967,19 +2164,26 @@ fn render_svg_impl(
                 a.0, a.1, b.0, b.1,
             ));
         }
+        for d in arcs {
+            out.push_str(&format!(r#"<path d="{d}"/>"#));
+        }
         out.push_str("</g>");
     };
+    let no_arcs: [String; 0] = [];
     emit_lines(
         &mut out,
         &hidden_lines,
+        &hidden_arcs,
         INK,
         STROKE_HIDDEN_PX,
         0.5,
         Some(dash),
     );
+    // Ghosted parts' faded linework, under the normal creases/outlines.
     emit_lines(
         &mut out,
         &ghost_crease_lines,
+        &no_arcs,
         INK,
         STROKE_CREASE_PX,
         GHOST_LINE_OPACITY,
@@ -1988,18 +2192,36 @@ fn render_svg_impl(
     emit_lines(
         &mut out,
         &ghost_outline_lines,
+        &no_arcs,
         INK,
         STROKE_OUTLINE_PX,
         GHOST_LINE_OPACITY,
         None,
     );
-    emit_lines(&mut out, &crease_lines, INK, STROKE_CREASE_PX, 1.0, None);
-    emit_lines(&mut out, &outline_lines, INK, STROKE_OUTLINE_PX, 1.0, None);
+    emit_lines(
+        &mut out,
+        &crease_lines,
+        &crease_arcs,
+        INK,
+        STROKE_CREASE_PX,
+        1.0,
+        None,
+    );
+    emit_lines(
+        &mut out,
+        &outline_lines,
+        &outline_arcs,
+        INK,
+        STROKE_OUTLINE_PX,
+        1.0,
+        None,
+    );
     // Accent outlines last — the brand-orange "this is what changed" stroke
     // sits on top of every other line.
     emit_lines(
         &mut out,
         &accent_outline_lines,
+        &no_arcs,
         ACCENT,
         STROKE_ACCENT_PX,
         1.0,
@@ -2390,12 +2612,12 @@ mod raster {
         let down = normalize(opts.view.down());
         let light = normalize(LIGHT);
 
-        let no_accents = vec![false; solids.len()];
         let segments = if opts.size_px >= HIRES_THRESHOLD_PX {
             RASTER_SEGMENTS_HIRES
         } else {
             RASTER_SEGMENTS
         };
+        let no_accents = vec![false; solids.len()];
         let arts = build_artifacts(
             solids,
             tints,
@@ -3054,6 +3276,98 @@ mod tests {
         )
     }
 
+    /// Two disjoint copper cubes: root node 1 ("base") at the origin and
+    /// root node 3 ("lid") translated clear of it — the minimal highlight
+    /// fixture.
+    fn two_cube_vcad() -> String {
+        r#"{
+  "version": "0.1",
+  "nodes": {
+    "1": { "id": 1, "name": "base", "op": { "type": "Cube", "size": { "x": 20, "y": 20, "z": 10 } } },
+    "2": { "id": 2, "name": null, "op": { "type": "Cube", "size": { "x": 20, "y": 20, "z": 10 } } },
+    "3": { "id": 3, "name": "lid", "op": { "type": "Translate", "child": 2, "offset": { "x": 40, "y": 0, "z": 0 } } }
+  },
+  "materials": {
+    "copper": {
+      "name": "copper",
+      "color": [0.72, 0.45, 0.2],
+      "metallic": 1.0,
+      "roughness": 0.4,
+      "density": 8960.0,
+      "friction": 0.6
+    }
+  },
+  "part_materials": {},
+  "roots": [
+    { "root": 1, "material": "copper" },
+    { "root": 3, "material": "copper" }
+  ]
+}"#
+        .to_string()
+    }
+
+    /// [`SvgOptions`] selecting the given highlight ids on the isometric view.
+    fn highlight_opts(ids: &[&str]) -> SvgOptions {
+        SvgOptions {
+            view: View::Isometric,
+            highlight: ids.iter().map(|s| s.to_string()).collect(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn highlight_strokes_accent_and_ghosts_the_rest() {
+        let vcad = two_cube_vcad();
+        let plain = render_svg_str_opts(&vcad, DEFAULT_SCALE, &highlight_opts(&[])).unwrap();
+        assert!(
+            !plain.contains(ACCENT),
+            "no accent stroke without a highlight set"
+        );
+
+        // Highlight by root node id — the `part_id` a mutation diff reports.
+        let hl = render_svg_str_opts(&vcad, DEFAULT_SCALE, &highlight_opts(&["3"]))
+            .expect("highlighted render");
+        assert!(
+            hl.contains(&format!(
+                r#"stroke="{ACCENT}" stroke-width="{STROKE_ACCENT_PX}""#
+            )),
+            "highlighted part must carry the brand-orange accent outline"
+        );
+        // The non-highlighted part is ghosted: its fills fade toward paper
+        // (colours the plain render never emits) and its visible linework
+        // drops to the ghost opacity.
+        assert!(
+            hl.contains(&format!(r#"opacity="{GHOST_LINE_OPACITY}""#)),
+            "ghosted part's linework must fade"
+        );
+        let ghosted_fill = hex(ghost_ramp(tint_ramp([0.72, 0.45, 0.2]))[1]);
+        assert!(
+            hl.contains(&ghosted_fill) && !plain.contains(&ghosted_fill),
+            "ghosted fills must fade toward paper (expected {ghosted_fill})"
+        );
+    }
+
+    #[test]
+    fn highlight_matches_by_node_name() {
+        let hl = render_svg_str_opts(&two_cube_vcad(), DEFAULT_SCALE, &highlight_opts(&["lid"]))
+            .expect("name-matched highlight render");
+        assert!(hl.contains(ACCENT));
+    }
+
+    #[test]
+    fn highlight_with_no_match_is_an_error() {
+        let err = render_svg_str_opts(
+            &two_cube_vcad(),
+            DEFAULT_SCALE,
+            &highlight_opts(&["no-such-part"]),
+        )
+        .unwrap_err();
+        assert!(
+            err.contains("highlight matched no parts") && err.contains("base"),
+            "error must list the document's parts, got: {err}"
+        );
+    }
+
     fn cone_vcad(radius_bottom: f64, radius_top: f64, height: f64) -> String {
         format!(
             r#"{{
@@ -3177,7 +3491,6 @@ mod tests {
             View::Isometric,
             false,
             &RenderAnnotations::default(),
-            &[],
         )
         .unwrap();
         assert_eq!(canon(&plain), canon(&opts));
@@ -3199,7 +3512,6 @@ mod tests {
                 dims: true,
                 axes: false,
             },
-            &[],
         )
         .unwrap();
         for name in ["Bracket", "Pin"] {
@@ -3226,13 +3538,12 @@ mod tests {
             ..Default::default()
         };
         let iso =
-            render_svg_str_view_opts(two_part_vcad(), 2.0, View::Isometric, false, &annos, &[])
-                .unwrap();
+            render_svg_str_view_opts(two_part_vcad(), 2.0, View::Isometric, false, &annos).unwrap();
         for a in [">X</text>", ">Y</text>", ">Z</text>"] {
             assert!(iso.contains(a), "iso gizmo missing {a}");
         }
-        let front = render_svg_str_view_opts(two_part_vcad(), 2.0, View::Front, false, &annos, &[])
-            .unwrap();
+        let front =
+            render_svg_str_view_opts(two_part_vcad(), 2.0, View::Front, false, &annos).unwrap();
         assert!(front.contains(">X</text>") && front.contains(">Z</text>"));
         assert!(
             !front.contains(">Y</text>"),
@@ -3254,7 +3565,6 @@ mod tests {
                 dims: true,
                 ..Default::default()
             },
-            &[],
         )
         .unwrap();
         assert!(svg.contains(">W 12.5 mm</text>"));
@@ -3269,7 +3579,7 @@ mod tests {
         assert!(svg.starts_with("<svg "));
         assert!(svg.ends_with("</svg>"));
         assert!(svg.contains("<polygon"));
-        assert!(svg.contains("<line"));
+        assert!(svg.contains("<line "));
     }
 
     #[test]
@@ -3504,6 +3814,128 @@ mod tests {
         }
     }
 
+    fn cylinder_vcad(radius: f64, height: f64) -> String {
+        format!(
+            r#"{{
+  "version": "0.1",
+  "nodes": {{
+    "1": {{
+      "id": 1,
+      "name": "Cyl",
+      "op": {{ "type": "Cylinder", "radius": {radius}, "height": {height}, "segments": 0 }}
+    }}
+  }},
+  "materials": {{}},
+  "part_materials": {{}},
+  "roots": [{{ "root": 1, "material": "default" }}]
+}}"#
+        )
+    }
+
+    fn sphere_vcad(radius: f64) -> String {
+        format!(
+            r#"{{
+  "version": "0.1",
+  "nodes": {{
+    "1": {{
+      "id": 1,
+      "name": "Sph",
+      "op": {{ "type": "Sphere", "radius": {radius}, "segments": 0 }}
+    }}
+  }},
+  "materials": {{}},
+  "part_materials": {{}},
+  "roots": [{{ "root": 1, "material": "default" }}]
+}}"#
+        )
+    }
+
+    fn render_exact(vcad: &str) -> String {
+        render_svg_str_opts(
+            vcad,
+            8.0,
+            &SvgOptions {
+                exact_edges: true,
+                ..Default::default()
+            },
+        )
+        .expect("exact-edges render should succeed")
+    }
+
+    /// With `exact_edges`, a cylinder's rims are emitted as exact SVG
+    /// elliptical-arc paths and the corresponding rim polylines vanish —
+    /// only the two straight silhouette rulings remain as `<line>`s.
+    #[test]
+    fn exact_edges_replace_cylinder_rims_with_arcs() {
+        let svg = render_exact(&cylinder_vcad(10.0, 24.0));
+        assert!(
+            svg.contains(r#"<path d="M"#) && svg.contains(" A "),
+            "expected exact elliptical-arc paths in the linework"
+        );
+        let lines = svg.matches("<line ").count();
+        assert!(
+            lines <= 8,
+            "rim polylines should be replaced by arcs, found {lines} <line>s"
+        );
+    }
+
+    /// With `exact_edges`, a sphere's view outline is a single exact
+    /// ellipse path (no polyline silhouette at all).
+    #[test]
+    fn exact_edges_replace_sphere_outline_with_arcs() {
+        let svg = render_exact(&sphere_vcad(12.0));
+        assert!(svg.contains(" A "), "expected an exact outline arc path");
+        assert_eq!(
+            svg.matches("<line ").count(),
+            0,
+            "sphere silhouette polylines should be fully replaced"
+        );
+    }
+
+    /// A cube has no circular edges — exact mode must not invent arcs, and
+    /// its output must keep the plain polyline linework.
+    #[test]
+    fn exact_edges_leave_cube_linework_alone() {
+        let svg = render_exact(&cube_vcad(20.0, 20.0, 20.0));
+        assert_eq!(
+            svg.matches("<path").count(),
+            0,
+            "no arcs expected for a cube"
+        );
+        assert!(svg.contains("<line "));
+    }
+
+    /// Default (non-exact) output stays polyline-only — the flag is opt-in.
+    #[test]
+    fn exact_edges_off_by_default() {
+        let svg = render_svg_str(&cylinder_vcad(10.0, 24.0), 8.0).unwrap();
+        assert_eq!(svg.matches("<path").count(), 0);
+    }
+
+    /// A boolean-drilled hole keeps exact rims: the boolean pipeline
+    /// preserves the cylindrical surface, so the bore's mouth must come out
+    /// as arcs, not a 64-gon.
+    #[test]
+    fn exact_edges_survive_booleans() {
+        let vcad = r#"{
+  "version": "0.1",
+  "nodes": {
+    "1": { "id": 1, "name": "Plate", "op": { "type": "Cube", "size": { "x": 50.0, "y": 40.0, "z": 8.0 } } },
+    "2": { "id": 2, "name": "Hole", "op": { "type": "Cylinder", "radius": 6.0, "height": 20.0, "segments": 0 } },
+    "3": { "id": 3, "name": "HoleT", "op": { "type": "Translate", "child": 2, "offset": { "x": 25.0, "y": 20.0, "z": -5.0 } } },
+    "4": { "id": 4, "name": "Drilled", "op": { "type": "Difference", "left": 1, "right": 3 } }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [{ "root": 4, "material": "default" }]
+}"#;
+        let svg = render_exact(vcad);
+        assert!(
+            svg.contains(" A "),
+            "drilled hole rim should render as exact arcs"
+        );
+    }
+
     /// A hollow box (cube minus an inset cube) whose cavity never reaches
     /// the outside — a solid shell with walls all around.
     fn hollow_box_vcad() -> &'static str {
@@ -3549,7 +3981,6 @@ mod tests {
             false,
             Some(plane),
             &RenderAnnotations::default(),
-            &[],
         )
         .expect("sectioned hollow box should render");
         assert!(
@@ -3583,7 +4014,6 @@ mod tests {
             false,
             Some(above),
             &RenderAnnotations::default(),
-            &[],
         )
         .expect("plane above the part should render it uncut");
         assert!(!svg.contains(r#"fill="url(#section-hatch)""#));
@@ -3599,8 +4029,7 @@ mod tests {
                 View::Isometric,
                 false,
                 Some(below),
-                &RenderAnnotations::default(),
-                &[],
+                &RenderAnnotations::default()
             )
             .is_err(),
             "plane below the part removes all material"
@@ -3679,113 +4108,5 @@ mod tests {
                 );
             }
         }
-    }
-
-    /// Two disjoint copper cubes: root node 1 ("base") at the origin and
-    /// root node 3 ("lid") translated clear of it — the minimal highlight
-    /// fixture.
-    fn two_cube_vcad() -> String {
-        r#"{
-  "version": "0.1",
-  "nodes": {
-    "1": { "id": 1, "name": "base", "op": { "type": "Cube", "size": { "x": 20, "y": 20, "z": 10 } } },
-    "2": { "id": 2, "name": null, "op": { "type": "Cube", "size": { "x": 20, "y": 20, "z": 10 } } },
-    "3": { "id": 3, "name": "lid", "op": { "type": "Translate", "child": 2, "offset": { "x": 40, "y": 0, "z": 0 } } }
-  },
-  "materials": {
-    "copper": {
-      "name": "copper",
-      "color": [0.72, 0.45, 0.2],
-      "metallic": 1.0,
-      "roughness": 0.4,
-      "density": 8960.0,
-      "friction": 0.6
-    }
-  },
-  "part_materials": {},
-  "roots": [
-    { "root": 1, "material": "copper" },
-    { "root": 3, "material": "copper" }
-  ]
-}"#
-        .to_string()
-    }
-
-    #[test]
-    fn highlight_strokes_accent_and_ghosts_the_rest() {
-        let vcad = two_cube_vcad();
-        let plain = render_svg_str_view_opts(
-            &vcad,
-            DEFAULT_SCALE,
-            View::Isometric,
-            false,
-            &RenderAnnotations::default(),
-            &[],
-        )
-        .expect("plain render");
-        assert!(
-            !plain.contains(ACCENT),
-            "no accent stroke without a highlight set"
-        );
-
-        // Highlight by root node id — the `part_id` a mutation diff reports.
-        let hl = render_svg_str_view_opts(
-            &vcad,
-            DEFAULT_SCALE,
-            View::Isometric,
-            false,
-            &RenderAnnotations::default(),
-            &["3".to_string()],
-        )
-        .expect("highlighted render");
-        assert!(
-            hl.contains(&format!(
-                r#"stroke="{ACCENT}" stroke-width="{STROKE_ACCENT_PX}""#
-            )),
-            "highlighted part must carry the brand-orange accent outline"
-        );
-        // The non-highlighted part is ghosted: its fills fade toward paper
-        // (colours the plain render never emits) and its visible linework
-        // drops to the ghost opacity.
-        assert!(
-            hl.contains(&format!(r#"opacity="{GHOST_LINE_OPACITY}""#)),
-            "ghosted part's linework must fade"
-        );
-        let ghosted_fill = hex(ghost_ramp(tint_ramp([0.72, 0.45, 0.2]))[1]);
-        assert!(
-            hl.contains(&ghosted_fill) && !plain.contains(&ghosted_fill),
-            "ghosted fills must fade toward paper (expected {ghosted_fill})"
-        );
-    }
-
-    #[test]
-    fn highlight_matches_by_node_name() {
-        let hl = render_svg_str_view_opts(
-            &two_cube_vcad(),
-            DEFAULT_SCALE,
-            View::Isometric,
-            false,
-            &RenderAnnotations::default(),
-            &["lid".to_string()],
-        )
-        .expect("name-matched highlight render");
-        assert!(hl.contains(ACCENT));
-    }
-
-    #[test]
-    fn highlight_with_no_match_is_an_error() {
-        let err = render_svg_str_view_opts(
-            &two_cube_vcad(),
-            DEFAULT_SCALE,
-            View::Isometric,
-            false,
-            &RenderAnnotations::default(),
-            &["no-such-part".to_string()],
-        )
-        .unwrap_err();
-        assert!(
-            err.contains("highlight matched no parts") && err.contains("base"),
-            "error must list the document's parts, got: {err}"
-        );
     }
 }

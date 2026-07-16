@@ -175,13 +175,14 @@ pub fn render_svg_view_highlight(
         .unwrap_or(vcad_render::View::Isometric);
     let highlight: Vec<String> = serde_json::from_str(highlight_json)
         .map_err(|e| JsError::new(&format!("highlight must be a JSON string array: {e}")))?;
-    vcad_render::render_svg_str_view_opts(
+    vcad_render::render_svg_str_opts(
         vcad_json,
         scale,
-        v,
-        false,
-        &vcad_render::RenderAnnotations::default(),
-        &highlight,
+        &vcad_render::SvgOptions {
+            view: v,
+            highlight,
+            ..Default::default()
+        },
     )
     .map_err(|e| JsError::new(&e))
 }
@@ -214,7 +215,6 @@ pub fn render_svg_view_section(
         false,
         Some(plane),
         &vcad_render::RenderAnnotations::default(),
-        &[],
     )
     .map_err(|e| JsError::new(&e))
 }
@@ -237,7 +237,7 @@ pub fn render_svg_annotated(
         .parse::<vcad_render::View>()
         .unwrap_or(vcad_render::View::Isometric);
     let annotations = vcad_render::RenderAnnotations { axes, labels, dims };
-    vcad_render::render_svg_str_view_opts(vcad_json, scale, v, false, &annotations, &[])
+    vcad_render::render_svg_str_view_opts(vcad_json, scale, v, false, &annotations)
         .map_err(|e| JsError::new(&e))
 }
 
