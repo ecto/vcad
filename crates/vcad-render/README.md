@@ -50,6 +50,7 @@ vcad-render part.vcad --raytrace -o out.jpg --view hero --size 1440 --quality 95
 | `--view <V>` | `iso` | Camera: `iso`/`front`/`side`/`top`/`hero`. |
 | `--scale <N>` | `2.0` | Pixels per millimetre (SVG). Bigger = larger SVG. |
 | `--transparent` | off | Transparent SVG background. |
+| `--exact-edges` | off | Emit BRep-exact linework where available (SVG; see below). |
 | `--section x=N\|y=N\|z=N` | off | Section (cutaway) view: the half of the model on the camera's side of the plane is boolean-subtracted before rendering (you always look into the cut), and the exposed cut faces are drawn with a 45° drafting hatch. Composes with `--view` and raster output. A solid whose section boolean fails is rendered uncut (noted on stderr) — the render never fails outright. |
 | `--axes` | off | Overlay an X/Y/Z origin gizmo (kernel is Z-up). |
 | `--labels` | off | Label each top-level part with its name. |
@@ -73,16 +74,37 @@ render in batch, each to `<stem>.<ext>` next to the input or in
 `--out-dir`. A per-file failure is reported on stderr but doesn't abort
 the batch.
 
+### `--exact-edges`: BRep-exact curves
+
+By default every curved edge is a tessellated polyline, which facets
+visibly at high `--scale`. With `--exact-edges` the renderer walks the
+evaluated BRep and replaces recognisable curved linework with
+mathematically exact SVG elliptical-arc paths:
+
+- circular model edges (cylinder/cone rims — a bore's mouth, a boss's cap
+  edge — including ones produced by booleans), projected to exact ellipse
+  arcs;
+- sphere view outlines (the silhouette great circle for the current
+  orthographic view).
+
+Fills, shading, and hidden-line removal still run on the tessellation;
+exact curves replace only the linework, and anything the extractor doesn't
+recognise (tori, NURBS, boolean intersection seams) falls back to
+polylines. Cylinder/cone silhouette rulings are straight lines and stay as
+`<line>`s. Arc extents are matched against the mesh linework that would
+otherwise be drawn, so trimmed rims keep exactly the coverage of the
+polyline render.
+
 Exit codes: `0` on success, `2` on parse/eval/render failure (with a
 human-readable message on stderr). A batch exits `2` if any file failed.
 
 ## Tunable constants
 
-Edit at the top of `src/main.rs` if you need a different look:
+Edit at the top of `src/lib.rs` if you need a different look:
 
 | Constant | Default | Effect |
 |---|---|---|
-| `TESSELLATION_SEGMENTS` | `28` | Segments per cylinder/cone/sphere. Bumping this smooths curves at the cost of file size. |
+| `TESSELLATION_SEGMENTS` | `64` | Segments per cylinder/cone/sphere. Bumping this smooths curves at the cost of file size (`--exact-edges` sidesteps this for linework entirely). |
 | `COPLANAR_DOT_TOL` | `0.997` (~4.5°) | Tighter values reveal more crease lines; looser values hide more. |
 | `BACKFACE_DOT_MIN` | `-0.04` | How aggressively to cull back-facing triangles. Slightly negative so silhouette edges survive. |
 | `LIGHT` | `[-0.6, -0.7, 0.8]` | Light direction in kernel space (Z-up). |
@@ -112,5 +134,6 @@ surfaces and are skipped.
 It runs on the CPU (no GPU required) and lives behind the crate's
 `raytrace` cargo feature — default-on for the binary, off for the WASM
 build so it doesn't grow. Use it for marketing screenshots and
-high-fidelity previews; SVG remains the right pick for the leaderboard's
-drafting aesthetic.
+high-fidelity previews. For vector output, `--exact-edges` delivers
+resolution-independent linework straight from the BRep; and SVG remains the
+right pick for the leaderboard's drafting aesthetic.

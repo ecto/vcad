@@ -29,7 +29,9 @@ use std::process::ExitCode;
 use std::str::FromStr;
 
 use clap::{Parser, ValueEnum};
-use vcad_render::{render_svg_str_section, RenderAnnotations, SectionPlane, View, DEFAULT_SCALE};
+use vcad_render::{
+    render_svg_str_opts, RenderAnnotations, SectionPlane, SvgOptions, View, DEFAULT_SCALE,
+};
 
 /// Output format for a render. Single-file `-o` infers this from the output
 /// extension; batch mode takes it from `--format`.
@@ -95,6 +97,12 @@ struct Cli {
     /// Transparent SVG background.
     #[arg(long)]
     transparent: bool,
+
+    /// Emit BRep-exact linework where available: circular model edges
+    /// (cylinder/cone rims) and sphere view outlines become exact SVG
+    /// elliptical arcs instead of tessellated polylines (SVG only).
+    #[arg(long)]
+    exact_edges: bool,
 
     /// Section (cutaway) plane: `x=N`, `y=N`, or `z=N` (mm). The half of the
     /// model on the camera's side of the plane is removed and exposed cut
@@ -255,13 +263,16 @@ fn render_one(input: &Path, dest: Option<&Path>, format: Format, cli: &Cli) -> R
         std::fs::read_to_string(input).map_err(|e| format!("read {}: {}", input.display(), e))?;
     let bytes = match format {
         Format::Svg => {
-            let svg = render_svg_str_section(
+            let svg = render_svg_str_opts(
                 &raw,
                 cli.scale,
-                cli.view,
-                cli.transparent,
-                cli.section,
-                &cli.annotations(),
+                &SvgOptions {
+                    view: cli.view,
+                    transparent: cli.transparent,
+                    exact_edges: cli.exact_edges,
+                    section: cli.section,
+                    annotations: cli.annotations(),
+                },
             )?;
             match dest {
                 None => {
