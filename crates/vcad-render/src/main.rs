@@ -272,6 +272,7 @@ fn render_one(input: &Path, dest: Option<&Path>, format: Format, cli: &Cli) -> R
                     exact_edges: cli.exact_edges,
                     section: cli.section,
                     annotations: cli.annotations(),
+                    ..Default::default()
                 },
             )?;
             match dest {

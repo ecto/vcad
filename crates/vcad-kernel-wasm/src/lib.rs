@@ -154,6 +154,39 @@ pub fn render_svg_view(vcad_json: &str, scale: f64, view: &str) -> Result<String
     vcad_render::render_svg_str_view(vcad_json, scale, v).map_err(|e| JsError::new(&e))
 }
 
+/// Render raw `.vcad` document JSON to an SVG with a highlight set — the
+/// "what did my edit just touch" render.
+///
+/// `highlight_json` is a JSON array of part identifiers (root node ids as
+/// reported in a mutation's `changed` diff, node names, or assembly
+/// instance ids/names). Highlighted parts keep their full material colour
+/// and gain a brand-orange accent outline; every other part is ghosted
+/// toward the paper. An empty array renders normally; a non-empty set that
+/// matches no part is an error listing the document's parts.
+#[wasm_bindgen]
+pub fn render_svg_view_highlight(
+    vcad_json: &str,
+    scale: f64,
+    view: &str,
+    highlight_json: &str,
+) -> Result<String, JsError> {
+    let v = view
+        .parse::<vcad_render::View>()
+        .unwrap_or(vcad_render::View::Isometric);
+    let highlight: Vec<String> = serde_json::from_str(highlight_json)
+        .map_err(|e| JsError::new(&format!("highlight must be a JSON string array: {e}")))?;
+    vcad_render::render_svg_str_opts(
+        vcad_json,
+        scale,
+        &vcad_render::SvgOptions {
+            view: v,
+            highlight,
+            ..Default::default()
+        },
+    )
+    .map_err(|e| JsError::new(&e))
+}
+
 /// Render a section (cutaway) view: the document cut by an axis-aligned
 /// plane, with exposed cut faces cross-hatched drafting-style.
 ///

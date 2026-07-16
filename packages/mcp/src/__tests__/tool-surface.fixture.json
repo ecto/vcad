@@ -2221,6 +2221,17 @@
         "dims": {
           "type": "boolean",
           "description": "Overlay overall W×D×H bounding-box dimensions in mm, drafting-style. Off by default."
+        },
+        "highlight": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Part ids (from a mutation's `changed` diff) or part names to spotlight: they keep full material color plus a brand-orange accent outline while every other part is ghosted. Errors if nothing matches."
+        },
+        "highlight_changed": {
+          "type": "boolean",
+          "description": "Highlight the parts touched by this session's most recent mutation (the last `changed` diff) — the one-flag way to see what your last edit did. Ignored when `highlight` is passed explicitly."
         }
       }
     },

@@ -66,6 +66,9 @@ const STROKE_OUTLINE_PX: f64 = 1.2;
 /// convention that lets a single isometric reveal bores and pockets behind
 /// the front faces.
 const STROKE_HIDDEN_PX: f64 = 0.45;
+/// Accent outline stroke width for highlighted (just-changed) parts —
+/// heavier than the standard outline so the change reads at a glance.
+const STROKE_ACCENT_PX: f64 = 1.8;
 
 /// Curved primitives in the SVG path get a fine tessellation: at 64
 /// segments a cylinder facet spans ~5.6°, well under the crease threshold,
@@ -108,6 +111,21 @@ const INK: &str = "#0b2742";
 /// Warm off-white "vellum" the drafting plate sits on (matches the raster
 /// path's matte background). The signature ground behind every render.
 const PAPER: &str = "#f4f3f1";
+/// [`PAPER`] as RGB — ghosted (non-highlighted) parts fade toward this.
+const PAPER_RGB: [u8; 3] = [244, 243, 241];
+
+/// Brand orange — "interaction / attention" per docs/brand-spec.md. Used
+/// only as the accent outline on highlighted (just-changed) parts, never
+/// as a material colour.
+const ACCENT: &str = "#f25c1f";
+
+/// How far a ghosted part's shading ramp is pushed toward [`PAPER`] when a
+/// highlight set is active — high enough that unchanged parts read as
+/// context, low enough that their silhouettes stay legible.
+const GHOST_MIX: f64 = 0.7;
+
+/// Line opacity for ghosted parts' visible edges.
+const GHOST_LINE_OPACITY: f64 = 0.35;
 
 /// Background of a section-cut face, under the 45° hatch lines. A pale
 /// ice tint from the ramp family, so cut faces read as freshly exposed
@@ -475,6 +493,10 @@ struct SceneSolid {
     solid: Solid,
     tint: Option<[f64; 3]>,
     name: Option<String>,
+    /// Root node id (as a string) for scene roots; instance id for
+    /// assembly instances. Matches the `part_id` the MCP mutation diff
+    /// reports, so a highlight set can select by it.
+    id: String,
 }
 
 fn evaluate_vcad(raw_vcad: &str) -> Result<Vec<SceneSolid>, String> {
@@ -522,6 +544,10 @@ fn evaluate_vcad(raw_vcad: &str) -> Result<Vec<SceneSolid>, String> {
                     .get(i)
                     .and_then(|r| parsed.document.nodes.get(&r.root))
                     .and_then(|n| n.name.clone()),
+                id: visible_roots
+                    .get(i)
+                    .map(|r| r.root.to_string())
+                    .unwrap_or_default(),
             })
         })
         .collect();
@@ -593,6 +619,7 @@ fn evaluate_assembly_instances(doc: &vcad_ir::Document) -> Result<Vec<SceneSolid
             solid: placed,
             tint: color,
             name,
+            id: inst.id.clone(),
         });
     }
     Ok(out)
@@ -760,6 +787,29 @@ struct SolidArtifacts {
     /// Kept edges (boundary, crease, or silhouette, with ≥1 visible
     /// adjacent triangle) as canonical-vertex index pairs plus their kind.
     edges: Vec<(usize, usize, EdgeKind)>,
+    /// How this solid participates in a highlight pass (Normal when no
+    /// highlight set is active).
+    emphasis: Emphasis,
+}
+
+/// A solid's role when a highlight set is active: `Accent` parts keep
+/// their material colour and gain the brand-orange outline, `Ghost` parts
+/// fade toward the paper, `Normal` means no highlight pass at all.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Emphasis {
+    Normal,
+    Accent,
+    Ghost,
+}
+
+/// Fade `ramp` toward [`PAPER_RGB`] by [`GHOST_MIX`] — the ghosted look
+/// for parts outside the highlight set.
+fn ghost_ramp(ramp: [[u8; 3]; 4]) -> [[u8; 3]; 4] {
+    let mut out = ramp;
+    for stop in out.iter_mut() {
+        *stop = mix_rgb(*stop, PAPER_RGB, GHOST_MIX);
+    }
+    out
 }
 
 /// Per-triangle, per-corner smoothed normals. A corner's normal is the
@@ -842,19 +892,31 @@ impl EdgeRules {
 fn build_artifacts(
     solids: &[Solid],
     tints: &[Option<[f64; 3]>],
+    accents: &[bool],
     cam: [f64; 3],
     segments: u32,
     rules: &EdgeRules,
     section: Option<SectionPlane>,
 ) -> Vec<SolidArtifacts> {
+    let highlighting = accents.iter().any(|&a| a);
     let mut out = Vec::new();
     for (si, solid) in solids.iter().enumerate() {
-        let ramp = tints
+        let emphasis = if !highlighting {
+            Emphasis::Normal
+        } else if accents.get(si).copied().unwrap_or(false) {
+            Emphasis::Accent
+        } else {
+            Emphasis::Ghost
+        };
+        let mut ramp = tints
             .get(si)
             .copied()
             .flatten()
             .map(tint_ramp)
             .unwrap_or(RAMP);
+        if emphasis == Emphasis::Ghost {
+            ramp = ghost_ramp(ramp);
+        }
         let mesh = catch_unwind(AssertUnwindSafe(|| solid.to_mesh(segments)));
         let Ok(mesh) = mesh else { continue };
         if mesh.indices.is_empty() {
@@ -960,6 +1022,7 @@ fn build_artifacts(
             visible,
             cut,
             edges,
+            emphasis,
         });
     }
     out
@@ -1226,6 +1289,7 @@ struct ProjEdge {
     b: (f64, f64),
     db: f64,
     kind: EdgeKind,
+    emphasis: Emphasis,
 }
 
 // ─── off-screen depth buffer (vector hidden-line removal) ──────────────────
@@ -1577,6 +1641,14 @@ pub struct SvgOptions {
     /// Opt-in engineering annotation overlays (axes gizmo, part labels,
     /// bounding-box dimensions). [`RenderAnnotations::default()`] draws none.
     pub annotations: RenderAnnotations,
+    /// Changed-part highlight set. Selects parts by root node id (the
+    /// `part_id` a mutation diff reports), node name, or assembly instance
+    /// id/name. When non-empty, matched parts keep their full material
+    /// colour and gain a brand-orange accent outline while every other part
+    /// is ghosted toward the paper — the "what did my edit just touch"
+    /// view. Empty renders normally; a non-empty set matching no part is an
+    /// error (never a silently unhighlighted render).
+    pub highlight: Vec<String>,
 }
 
 /// Render raw `.vcad` document JSON to a self-contained SVG with full
@@ -1591,10 +1663,32 @@ pub fn render_svg_str_opts(
     if let Some(plane) = opts.section {
         scene = apply_section(scene, plane, opts.view);
     }
+    let accents: Vec<bool> = scene
+        .iter()
+        .map(|s| {
+            opts.highlight
+                .iter()
+                .any(|h| *h == s.id || s.name.as_deref() == Some(h.as_str()))
+        })
+        .collect();
+    if !opts.highlight.is_empty() && !accents.iter().any(|&a| a) {
+        let known: Vec<String> = scene
+            .iter()
+            .map(|s| match &s.name {
+                Some(n) => format!("{} ({n})", s.id),
+                None => s.id.clone(),
+            })
+            .collect();
+        return Err(format!(
+            "highlight matched no parts: wanted [{}], document has [{}]",
+            opts.highlight.join(", "),
+            known.join(", "),
+        ));
+    }
     let solids: Vec<Solid> = scene.iter().map(|s| s.solid.clone()).collect();
     let tints: Vec<Option<[f64; 3]>> = scene.iter().map(|s| s.tint).collect();
     let names: Vec<Option<String>> = scene.iter().map(|s| s.name.clone()).collect();
-    render_svg_impl(&solids, &tints, &names, scale, opts)
+    render_svg_impl(&solids, &tints, &names, &accents, scale, opts)
 }
 
 /// Render pre-evaluated solids to a self-contained isometric SVG.
@@ -1618,10 +1712,12 @@ pub fn render_svg_solids(solids: &[Solid], scale: f64) -> Result<String, String>
 pub fn render_svg_solids_view(solids: &[Solid], scale: f64, view: View) -> Result<String, String> {
     let tints = vec![None; solids.len()];
     let names = vec![None; solids.len()];
+    let accents = vec![false; solids.len()];
     render_svg_impl(
         solids,
         &tints,
         &names,
+        &accents,
         scale,
         &SvgOptions {
             view,
@@ -1631,13 +1727,16 @@ pub fn render_svg_solids_view(solids: &[Solid], scale: f64, view: View) -> Resul
 }
 
 /// Shared SVG renderer; `tints[i]` optionally tints solid `i`'s ramp and
-/// `names[i]` labels it when the `labels` annotation is on. `opts.section`
-/// (already applied to the solids by the caller) only drives cut-face
-/// detection here, so exposed section faces get the hatch fill.
+/// `names[i]` labels it when the `labels` annotation is on. When any
+/// `accents[i]` is set, solid `i` keeps its full ramp and gains an
+/// [`ACCENT`] outline while the rest are ghosted toward [`PAPER`].
+/// `opts.section` (already applied to the solids by the caller) only drives
+/// cut-face detection here, so exposed section faces get the hatch fill.
 fn render_svg_impl(
     solids: &[Solid],
     tints: &[Option<[f64; 3]>],
     names: &[Option<String>],
+    accents: &[bool],
     scale: f64,
     opts: &SvgOptions,
 ) -> Result<String, String> {
@@ -1658,6 +1757,7 @@ fn render_svg_impl(
     let arts = build_artifacts(
         solids,
         tints,
+        accents,
         cam,
         TESSELLATION_SEGMENTS,
         &EdgeRules::svg(),
@@ -1834,6 +1934,7 @@ fn render_svg_impl(
                 b: fin(proj[b]),
                 db: dot(art.verts[b], cam),
                 kind,
+                emphasis: art.emphasis,
             });
         }
     }
@@ -1862,11 +1963,20 @@ fn render_svg_impl(
     let mut crease_lines: Vec<Seg> = Vec::new();
     let mut outline_lines: Vec<Seg> = Vec::new();
     let mut hidden_lines: Vec<Seg> = Vec::new();
+    // Highlight-pass buckets: ghosted parts' visible linework fades with
+    // their fills; accented parts' outlines are re-stroked in brand orange
+    // on top of everything else.
+    let mut ghost_crease_lines: Vec<Seg> = Vec::new();
+    let mut ghost_outline_lines: Vec<Seg> = Vec::new();
+    let mut accent_outline_lines: Vec<Seg> = Vec::new();
     for e in &edges {
         let clip = zbuf.clip_edge(e.a, e.da, e.b, e.db, bias);
-        let dst = match e.kind {
-            EdgeKind::Crease => &mut crease_lines,
-            EdgeKind::Outline | EdgeKind::Smooth => &mut outline_lines,
+        let dst = match (e.kind, e.emphasis) {
+            (EdgeKind::Crease, Emphasis::Ghost) => &mut ghost_crease_lines,
+            (EdgeKind::Crease, _) => &mut crease_lines,
+            (EdgeKind::Outline | EdgeKind::Smooth, Emphasis::Ghost) => &mut ghost_outline_lines,
+            (EdgeKind::Outline | EdgeKind::Smooth, Emphasis::Accent) => &mut accent_outline_lines,
+            (EdgeKind::Outline | EdgeKind::Smooth, Emphasis::Normal) => &mut outline_lines,
         };
         for span in &clip.visible {
             let keep = match e.kind {
@@ -1882,7 +1992,9 @@ fn render_svg_impl(
         // dashed lines (so a bore or pocket reads from a single view).
         // Smooth curved-surface silhouettes are never dashed — their
         // occluded fragments are tangent-point noise, not real edges.
-        if matches!(e.kind, EdgeKind::Outline | EdgeKind::Crease) {
+        // Ghosted parts drop their dashed hidden lines entirely — they are
+        // context, not the subject.
+        if matches!(e.kind, EdgeKind::Outline | EdgeKind::Crease) && e.emphasis != Emphasis::Ghost {
             for span in &clip.hidden {
                 if span.len_cells >= HIDDEN_MIN_CELLS {
                     hidden_lines.push((span.a, span.b));
@@ -2032,6 +2144,7 @@ fn render_svg_impl(
     let emit_lines = |out: &mut String,
                       lines: &[Seg],
                       arcs: &[String],
+                      stroke: &str,
                       width: f64,
                       opacity: f64,
                       dasharray: Option<f64>| {
@@ -2043,7 +2156,7 @@ fn render_svg_impl(
             None => String::new(),
         };
         out.push_str(&format!(
-                r#"<g stroke="{INK}" stroke-width="{width}" stroke-linecap="round" fill="none" opacity="{opacity}"{dash_attr}>"#
+                r#"<g stroke="{stroke}" stroke-width="{width}" stroke-linecap="round" fill="none" opacity="{opacity}"{dash_attr}>"#
             ));
         for &(a, b) in lines {
             out.push_str(&format!(
@@ -2056,18 +2169,40 @@ fn render_svg_impl(
         }
         out.push_str("</g>");
     };
+    let no_arcs: [String; 0] = [];
     emit_lines(
         &mut out,
         &hidden_lines,
         &hidden_arcs,
+        INK,
         STROKE_HIDDEN_PX,
         0.5,
         Some(dash),
+    );
+    // Ghosted parts' faded linework, under the normal creases/outlines.
+    emit_lines(
+        &mut out,
+        &ghost_crease_lines,
+        &no_arcs,
+        INK,
+        STROKE_CREASE_PX,
+        GHOST_LINE_OPACITY,
+        None,
+    );
+    emit_lines(
+        &mut out,
+        &ghost_outline_lines,
+        &no_arcs,
+        INK,
+        STROKE_OUTLINE_PX,
+        GHOST_LINE_OPACITY,
+        None,
     );
     emit_lines(
         &mut out,
         &crease_lines,
         &crease_arcs,
+        INK,
         STROKE_CREASE_PX,
         1.0,
         None,
@@ -2076,7 +2211,19 @@ fn render_svg_impl(
         &mut out,
         &outline_lines,
         &outline_arcs,
+        INK,
         STROKE_OUTLINE_PX,
+        1.0,
+        None,
+    );
+    // Accent outlines last — the brand-orange "this is what changed" stroke
+    // sits on top of every other line.
+    emit_lines(
+        &mut out,
+        &accent_outline_lines,
+        &no_arcs,
+        ACCENT,
+        STROKE_ACCENT_PX,
         1.0,
         None,
     );
@@ -2448,6 +2595,8 @@ mod raster {
                         solid: s.clone(),
                         tint: tints.get(i).copied().flatten(),
                         name: names.get(i).cloned().flatten(),
+                        // Raster path does no highlighting; id is unused here.
+                        id: String::new(),
                     })
                     .collect();
                 let cut = apply_section(scene, plane, opts.view);
@@ -2474,9 +2623,11 @@ mod raster {
         } else {
             RASTER_SEGMENTS
         };
+        let no_accents = vec![false; solids.len()];
         let arts = build_artifacts(
             solids,
             tints,
+            &no_accents,
             cam,
             segments,
             &EdgeRules {
@@ -3366,6 +3517,98 @@ mod tests {
   "roots": [{{ "root": 1, "material": "aluminum" }}]
 }}"#
         )
+    }
+
+    /// Two disjoint copper cubes: root node 1 ("base") at the origin and
+    /// root node 3 ("lid") translated clear of it — the minimal highlight
+    /// fixture.
+    fn two_cube_vcad() -> String {
+        r#"{
+  "version": "0.1",
+  "nodes": {
+    "1": { "id": 1, "name": "base", "op": { "type": "Cube", "size": { "x": 20, "y": 20, "z": 10 } } },
+    "2": { "id": 2, "name": null, "op": { "type": "Cube", "size": { "x": 20, "y": 20, "z": 10 } } },
+    "3": { "id": 3, "name": "lid", "op": { "type": "Translate", "child": 2, "offset": { "x": 40, "y": 0, "z": 0 } } }
+  },
+  "materials": {
+    "copper": {
+      "name": "copper",
+      "color": [0.72, 0.45, 0.2],
+      "metallic": 1.0,
+      "roughness": 0.4,
+      "density": 8960.0,
+      "friction": 0.6
+    }
+  },
+  "part_materials": {},
+  "roots": [
+    { "root": 1, "material": "copper" },
+    { "root": 3, "material": "copper" }
+  ]
+}"#
+        .to_string()
+    }
+
+    /// [`SvgOptions`] selecting the given highlight ids on the isometric view.
+    fn highlight_opts(ids: &[&str]) -> SvgOptions {
+        SvgOptions {
+            view: View::Isometric,
+            highlight: ids.iter().map(|s| s.to_string()).collect(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn highlight_strokes_accent_and_ghosts_the_rest() {
+        let vcad = two_cube_vcad();
+        let plain = render_svg_str_opts(&vcad, DEFAULT_SCALE, &highlight_opts(&[])).unwrap();
+        assert!(
+            !plain.contains(ACCENT),
+            "no accent stroke without a highlight set"
+        );
+
+        // Highlight by root node id — the `part_id` a mutation diff reports.
+        let hl = render_svg_str_opts(&vcad, DEFAULT_SCALE, &highlight_opts(&["3"]))
+            .expect("highlighted render");
+        assert!(
+            hl.contains(&format!(
+                r#"stroke="{ACCENT}" stroke-width="{STROKE_ACCENT_PX}""#
+            )),
+            "highlighted part must carry the brand-orange accent outline"
+        );
+        // The non-highlighted part is ghosted: its fills fade toward paper
+        // (colours the plain render never emits) and its visible linework
+        // drops to the ghost opacity.
+        assert!(
+            hl.contains(&format!(r#"opacity="{GHOST_LINE_OPACITY}""#)),
+            "ghosted part's linework must fade"
+        );
+        let ghosted_fill = hex(ghost_ramp(tint_ramp([0.72, 0.45, 0.2]))[1]);
+        assert!(
+            hl.contains(&ghosted_fill) && !plain.contains(&ghosted_fill),
+            "ghosted fills must fade toward paper (expected {ghosted_fill})"
+        );
+    }
+
+    #[test]
+    fn highlight_matches_by_node_name() {
+        let hl = render_svg_str_opts(&two_cube_vcad(), DEFAULT_SCALE, &highlight_opts(&["lid"]))
+            .expect("name-matched highlight render");
+        assert!(hl.contains(ACCENT));
+    }
+
+    #[test]
+    fn highlight_with_no_match_is_an_error() {
+        let err = render_svg_str_opts(
+            &two_cube_vcad(),
+            DEFAULT_SCALE,
+            &highlight_opts(&["no-such-part"]),
+        )
+        .unwrap_err();
+        assert!(
+            err.contains("highlight matched no parts") && err.contains("base"),
+            "error must list the document's parts, got: {err}"
+        );
     }
 
     fn cone_vcad(radius_bottom: f64, radius_top: f64, height: f64) -> String {

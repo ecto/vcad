@@ -16,7 +16,7 @@ import { getKernelWasm, resetKernelWasm, computeRatsnest } from "@vcad/engine";
 import type { NetlistResult } from "@vcad/engine";
 import { getNodePcb, getPcbNodeIds } from "@vcad/core";
 import type { Document, Pcb } from "@vcad/ir";
-import { getSession, resolveDocInput } from "./session.js";
+import { getSession, resolveDocInput, getLastChanged } from "./session.js";
 import { validatePcb, pcbValidationError } from "./pcb-validate.js";
 import { behavior, type ToolDef } from "./tool-def.js";
 import type { ToolResult } from "./tool-result.js";
@@ -69,6 +69,17 @@ export const renderViewSchema = {
       type: "boolean" as const,
       description:
         "Overlay overall W×D×H bounding-box dimensions in mm, drafting-style. Off by default.",
+    },
+    highlight: {
+      type: "array" as const,
+      items: { type: "string" as const },
+      description:
+        "Part ids (from a mutation's `changed` diff) or part names to spotlight: they keep full material color plus a brand-orange accent outline while every other part is ghosted. Errors if nothing matches.",
+    },
+    highlight_changed: {
+      type: "boolean" as const,
+      description:
+        "Highlight the parts touched by this session's most recent mutation (the last `changed` diff) — the one-flag way to see what your last edit did. Ignored when `highlight` is passed explicitly.",
     },
   },
 };
@@ -228,9 +239,44 @@ export async function renderView(
   const wantAnnotations =
     annotations.axes || annotations.labels || annotations.dims;
 
+  // Resolve the highlight set: an explicit `highlight` list wins; otherwise
+  // `highlight_changed` pulls the part ids from the session's most recent
+  // mutation diff. A requested-but-unresolvable highlight is a loud error,
+  // never a silently unhighlighted render.
+  let highlight: string[] = Array.isArray(args.highlight)
+    ? (args.highlight as unknown[]).map(String)
+    : [];
+  if (highlight.length === 0 && args.highlight_changed === true) {
+    const last = documentId ? getLastChanged(documentId) : null;
+    if (!last || last.length === 0) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({
+              error:
+                "highlight_changed requested but this session has no recorded mutation diff" +
+                (documentId ? "" : " (inline documents have no session history)"),
+              document_id: documentId,
+              hint: "Make an edit first, or pass explicit part ids via `highlight`.",
+            }),
+          },
+        ],
+        isError: true,
+      };
+    }
+    highlight = last;
+  }
+
   const wasm = (await getKernelWasm()) as unknown as {
     render_svg: (vcadJson: string, scale: number) => string;
     render_svg_view?: (vcadJson: string, scale: number, view: string) => string;
+    render_svg_view_highlight?: (
+      vcadJson: string,
+      scale: number,
+      view: string,
+      highlightJson: string,
+    ) => string;
     render_svg_view_section?: (
       vcadJson: string,
       scale: number,
@@ -270,22 +316,41 @@ export async function renderView(
     };
   }
 
+  if (highlight.length > 0 && typeof wasm.render_svg_view_highlight !== "function") {
+    return {
+      content: [
+        {
+          type: "text",
+          text: "render_view highlight unavailable: kernel WASM build predates render_svg_view_highlight — rebuild vcad-kernel-wasm.",
+        },
+      ],
+      isError: true,
+    };
+  }
+
   let svg: string;
   try {
     svg = sectionRaw
       ? wasm.render_svg_view_section!(JSON.stringify(doc), SVG_SCALE, view, sectionRaw)
-      : wantAnnotations && typeof wasm.render_svg_annotated === "function"
-        ? wasm.render_svg_annotated(
+      : highlight.length > 0
+        ? wasm.render_svg_view_highlight!(
             JSON.stringify(doc),
             SVG_SCALE,
             view,
-            annotations.axes,
-            annotations.labels,
-            annotations.dims,
+            JSON.stringify(highlight),
           )
-        : view !== "iso" && typeof wasm.render_svg_view === "function"
-          ? wasm.render_svg_view(JSON.stringify(doc), SVG_SCALE, view)
-          : wasm.render_svg(JSON.stringify(doc), SVG_SCALE);
+        : wantAnnotations && typeof wasm.render_svg_annotated === "function"
+          ? wasm.render_svg_annotated(
+              JSON.stringify(doc),
+              SVG_SCALE,
+              view,
+              annotations.axes,
+              annotations.labels,
+              annotations.dims,
+            )
+          : view !== "iso" && typeof wasm.render_svg_view === "function"
+            ? wasm.render_svg_view(JSON.stringify(doc), SVG_SCALE, view)
+            : wasm.render_svg(JSON.stringify(doc), SVG_SCALE);
   } catch (e) {
     // A WebAssembly trap means a kernel panic that did NOT unwind —
     // wasm32 compiles panics to `unreachable`, so the kernel's own
@@ -347,6 +412,7 @@ export async function renderView(
             ...(sectionRaw ? { section: sectionRaw } : {}),
             width_px: widthPx,
             format: "png",
+            ...(highlight.length > 0 ? { highlight } : {}),
             asset: renderAssetSummary(asset),
             suggested_final_markdown: asset.markdown,
           }),
@@ -370,6 +436,7 @@ export async function renderView(
           document_id: documentId,
           view: viewLabel,
           format: "svg",
+          ...(highlight.length > 0 ? { highlight } : {}),
           note,
           ...(svgBytes <= MAX_INLINE_SVG_BYTES
             ? { svg }
