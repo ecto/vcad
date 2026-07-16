@@ -296,19 +296,9 @@ pub fn route_net_maze3d(
     // Memoized via legality per (cell, span pair) — spans are (lo, hi)
     // layer-index pairs, lo < hi.
     let mut via_cache: Vec<i8> = vec![-1; plane * nl * nl];
-    // Memoized cell passability per (cell, layer): each cell is otherwise
-    // probed once per incoming edge — up to 8× the oracle work for nothing.
-    let mut cell_cache: Vec<i8> = vec![-1; n];
-    let cell_ok = |ix: usize, iy: usize, li: usize, cache: &mut Vec<i8>| -> bool {
-        let node = li * plane + grid.index(ix, iy);
-        if cache[node] < 0 {
-            let p = grid.world(ix, iy);
-            let ok =
-                (!grid.bounded || point_in_polygon(p, outline)) && legal_step(p, p, layers[li]);
-            cache[node] = i8::from(ok);
-        }
-        cache[node] == 1
-    };
+    // Occupancy raster: O(1) cell passability, and WIDE↔WIDE edges are legal
+    // without touching the oracle at all.
+    let raster = Raster::build(session, &grid, outline, layers, net, half_w);
     let mut heap = BinaryHeap::new();
 
     let goal_cell = grid.index(ex, ey);
@@ -356,11 +346,15 @@ pub fn route_net_maze3d(
                 continue;
             }
             let (nix, niy) = (nx as usize, ny as usize);
-            let nb = li * plane + grid.index(nix, niy);
-            if closed[nb]
-                || !cell_ok(nix, niy, li, &mut cell_cache)
-                || !legal_step(grid.world(ix, iy), grid.world(nix, niy), layers[li])
-            {
+            let ncell = grid.index(nix, niy);
+            let nb = li * plane + ncell;
+            if closed[nb] || raster.state(ncell, li) == CELL_BLOCKED {
+                continue;
+            }
+            // WIDE↔WIDE edges are clearance-legal by construction; anything
+            // touching a TIGHT cell still pays for an exact oracle probe.
+            let tight = raster.state(cell, li) != CELL_WIDE || raster.state(ncell, li) != CELL_WIDE;
+            if tight && !legal_step(grid.world(ix, iy), grid.world(nix, niy), layers[li]) {
                 continue;
             }
             let step = if dx == 0 || dy == 0 {
@@ -395,7 +389,7 @@ pub fn route_net_maze3d(
                     continue;
                 }
                 let nb = lj * plane + cell;
-                if closed[nb] || !cell_ok(ix, iy, lj, &mut cell_cache) {
+                if closed[nb] || raster.state(cell, lj) == CELL_BLOCKED {
                     continue;
                 }
                 let (lo, hi) = (li.min(lj), li.max(lj));
@@ -517,6 +511,109 @@ pub fn route_net_maze3d(
         segments,
         vias,
         success: true,
+    }
+}
+
+/// Per-cell occupancy state in a [`Raster`].
+const CELL_BLOCKED: u8 = 0;
+/// Free, but with little slack — edges into this cell need an exact probe.
+const CELL_TIGHT: u8 = 1;
+/// Free with ≥ `pitch·√2/2` of extra slack: any edge between two WIDE cells
+/// is clearance-legal without probing (the capsule between adjacent centers
+/// never strays farther than that from a center).
+const CELL_WIDE: u8 = 2;
+
+/// Occupancy raster for one connection: for every (cell, layer), whether
+/// other-net copper blocks a trace centre there, and whether there is enough
+/// slack that edges between adjacent free cells are legal by construction.
+///
+/// Built once per search by sweeping the session's copper (exact
+/// `distance_to` per nearby cell — the raster is *not* an approximation for
+/// cells, and deliberately conservative for edges: WIDE↔WIDE edges skip the
+/// oracle entirely, anything involving a TIGHT cell still probes). Replaces
+/// millions of per-step R-tree probes with O(1) byte tests.
+struct Raster {
+    states: Vec<u8>,
+    plane: usize,
+}
+
+impl Raster {
+    fn build(
+        session: &RouteSession,
+        grid: &Grid,
+        outline: &[Vec2],
+        layers: &[PcbLayer],
+        net: &str,
+        half_w: f64,
+    ) -> Self {
+        let plane = grid.nx * grid.ny;
+        let nl = layers.len();
+        let mut states = vec![CELL_WIDE; plane * nl];
+
+        // Cells outside the board outline are blocked on every layer.
+        if grid.bounded {
+            for iy in 0..grid.ny {
+                for ix in 0..grid.nx {
+                    if !point_in_polygon(grid.world(ix, iy), outline) {
+                        let cell = grid.index(ix, iy);
+                        for li in 0..nl {
+                            states[li * plane + cell] = CELL_BLOCKED;
+                        }
+                    }
+                }
+            }
+        }
+
+        let wide_margin = grid.pitch * std::f64::consts::FRAC_1_SQRT_2;
+        let win_lo = [grid.origin.x, grid.origin.y];
+        let win_hi = [
+            grid.origin.x + (grid.nx.saturating_sub(1)) as f64 * grid.pitch,
+            grid.origin.y + (grid.ny.saturating_sub(1)) as f64 * grid.pitch,
+        ];
+
+        for (li, &layer) in layers.iter().enumerate() {
+            let base = li * plane;
+            session.for_each_blocking(layer, net, win_lo, win_hi, |geom, emin, emax, req| {
+                // Same math as the probe: a trace centre at the cell is legal
+                // iff point-to-edge distance ≥ half_w + required clearance.
+                let reach_block = half_w + req;
+                let reach = reach_block + wide_margin;
+                let ix0 =
+                    (((emin[0] - reach - grid.origin.x) / grid.pitch).floor()).max(0.0) as usize;
+                let iy0 =
+                    (((emin[1] - reach - grid.origin.y) / grid.pitch).floor()).max(0.0) as usize;
+                let ix1 = ((((emax[0] + reach - grid.origin.x) / grid.pitch).ceil()) as usize)
+                    .min(grid.nx.saturating_sub(1));
+                let iy1 = ((((emax[1] + reach - grid.origin.y) / grid.pitch).ceil()) as usize)
+                    .min(grid.ny.saturating_sub(1));
+                for iy in iy0..=iy1 {
+                    for ix in ix0..=ix1 {
+                        let cell = grid.index(ix, iy);
+                        let s = &mut states[base + cell];
+                        if *s == CELL_BLOCKED {
+                            continue;
+                        }
+                        let probe_pt = CopperGeom::Disc {
+                            center: grid.world(ix, iy),
+                            r: 0.0,
+                        };
+                        let d = geom.distance_to(&probe_pt);
+                        if d < reach_block {
+                            *s = CELL_BLOCKED;
+                        } else if d < reach && *s == CELL_WIDE {
+                            *s = CELL_TIGHT;
+                        }
+                    }
+                }
+            });
+        }
+
+        Self { states, plane }
+    }
+
+    #[inline]
+    fn state(&self, cell: usize, li: usize) -> u8 {
+        self.states[li * self.plane + cell]
     }
 }
 

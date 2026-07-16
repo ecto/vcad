@@ -210,6 +210,44 @@ impl RouteSession {
     /// Mutates nothing. Same-net and net-tied copper is never a blocker — the
     /// exact rule the DRC clearance pass applies, so a span that probes legal
     /// here is legal in [`crate::check_drc`].
+    /// Visit every live copper element on `layer` that `net` must clear,
+    /// within the window `lo..hi` (mm): the element's geometry, its AABB, and
+    /// the clearance required between it and `net` (the larger of the two
+    /// nets' rules, matching [`RouteSession::probe`]).
+    ///
+    /// Net-tie exemptions are deliberately NOT applied — tied nets are
+    /// visited as blockers. This visitor exists to build conservative
+    /// occupancy rasters for the maze search: a region-scoped tie exemption
+    /// has no single per-element answer, and over-blocking is safe (the
+    /// exact probe remains the commit gate) while under-blocking never is.
+    pub fn for_each_blocking(
+        &self,
+        layer: PcbLayer,
+        net: &str,
+        lo: [f64; 2],
+        hi: [f64; 2],
+        mut f: impl FnMut(&CopperGeom, [f64; 2], [f64; 2], f64),
+    ) {
+        for se in self
+            .tree
+            .locate_in_envelope_intersecting(&AABB::from_corners(lo, hi))
+        {
+            if !self.live[se.id] {
+                continue;
+            }
+            let e = &se.elem;
+            if e.layer != layer || e.net == net {
+                continue;
+            }
+            let required = self.clearance_for(net).max(self.clearance_for(&e.net));
+            f(&e.geom, e.min, e.max, required);
+        }
+    }
+
+    /// Probe a candidate geometry against every live other-net element on
+    /// `layer`: legal iff nothing sits closer than the required clearance
+    /// (the larger of the candidate's and each blocker's rule), with
+    /// region-scoped net-tie exemptions honored.
     pub fn probe(
         &self,
         geom: &CopperGeom,
