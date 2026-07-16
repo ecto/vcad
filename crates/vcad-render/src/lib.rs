@@ -2286,7 +2286,7 @@ mod raster {
     const RASTER_COPLANAR_DOT_TOL: f64 = 0.985; // cos(~10°)
 
     /// Matte, neutral background per the mecheval capture rules.
-    const BACKGROUND: [u8; 3] = [244, 243, 241];
+    pub(crate) const BACKGROUND: [u8; 3] = [244, 243, 241];
 
     /// Options for [`render_jpeg_str`] / [`render_jpeg_solids`].
     #[derive(Debug, Clone)]
@@ -2366,7 +2366,10 @@ mod raster {
 
     /// JPEG-encode a rasterized frame (coverage mask ignored — JPEG keeps
     /// the opaque vellum background).
-    fn encode_jpeg(frame: (Vec<u8>, Vec<u8>), opts: &RasterOptions) -> Result<Vec<u8>, String> {
+    pub(crate) fn encode_jpeg(
+        frame: (Vec<u8>, Vec<u8>),
+        opts: &RasterOptions,
+    ) -> Result<Vec<u8>, String> {
         let (rgb, _mask) = frame;
         let mut out = Vec::new();
         let mut enc = image::codecs::jpeg::JpegEncoder::new_with_quality(
@@ -2385,7 +2388,10 @@ mod raster {
 
     /// PNG-encode a rasterized frame as RGBA: covered pixels are opaque,
     /// background pixels get alpha 0.
-    fn encode_png(frame: (Vec<u8>, Vec<u8>), opts: &RasterOptions) -> Result<Vec<u8>, String> {
+    pub(crate) fn encode_png(
+        frame: (Vec<u8>, Vec<u8>),
+        opts: &RasterOptions,
+    ) -> Result<Vec<u8>, String> {
         let (rgb, mask) = frame;
         let mut rgba = Vec::with_capacity(mask.len() * 4);
         for (i, &a) in mask.iter().enumerate() {
@@ -3090,6 +3096,243 @@ mod raster {
                     rgb[qi + 2] = stroke[2];
                 }
             }
+        }
+    }
+}
+
+// ─── raytrace path (feature-gated) ────────────────────────────────────────
+
+#[cfg(feature = "raytrace")]
+pub use raytrace::{render_raytrace_jpeg_str, render_raytrace_png_str};
+
+/// Direct BRep ray tracing (`--raytrace`): pixel-perfect raster output with
+/// no tessellation anywhere in the pipeline. Analytic ray–surface
+/// intersection (via `vcad-kernel-raytrace`'s SAH BVH and trimmed-face
+/// tests) means curved silhouettes are exact at any resolution — no facet
+/// banding, no segment count to tune.
+///
+/// The camera is the same orthographic [`View`] basis and framing math as
+/// the tessellated raster path, and shading samples the same vcad-Blue
+/// tonal ramp ([`RAMP`], tinted by document material colours), so the two
+/// paths are drop-in alternatives that read as the same house style.
+#[cfg(feature = "raytrace")]
+mod raytrace {
+    use super::raster::{encode_jpeg, encode_png, BACKGROUND};
+    use super::*;
+    use vcad_kernel::vcad_kernel_math::{Point3, Vec3};
+    use vcad_kernel_raytrace::{bvh::BvhNode, Bvh, Ray};
+
+    /// Stratified supersampling grid per pixel (N × N rays). Analytic
+    /// intersection makes interior shading perfectly smooth already; the
+    /// samples exist to anti-alias silhouettes.
+    const SS_GRID: u32 = 2;
+
+    /// Render raw `.vcad` document JSON to a ray-traced JPEG.
+    ///
+    /// Same options, framing, and tonal ramp as
+    /// [`render_jpeg_str`](super::render_jpeg_str), but every pixel is an
+    /// analytic ray–BRep intersection instead of a tessellated triangle.
+    pub fn render_raytrace_jpeg_str(
+        raw_vcad: &str,
+        opts: &RasterOptions,
+    ) -> Result<Vec<u8>, String> {
+        encode_jpeg(rasterize_rt(raw_vcad, opts, false)?, opts)
+    }
+
+    /// Render raw `.vcad` document JSON to a ray-traced RGBA PNG with a fully
+    /// transparent background (alpha 0 where no surface was hit) — the raster
+    /// analogue of the tessellated [`render_png_str`](super::render_png_str).
+    /// See [`render_raytrace_jpeg_str`].
+    pub fn render_raytrace_png_str(
+        raw_vcad: &str,
+        opts: &RasterOptions,
+    ) -> Result<Vec<u8>, String> {
+        encode_png(rasterize_rt(raw_vcad, opts, true)?, opts)
+    }
+
+    fn node_aabb(node: &BvhNode) -> &vcad_kernel::vcad_kernel_booleans::bbox::Aabb3 {
+        match node {
+            BvhNode::Leaf { aabb, .. } | BvhNode::Internal { aabb, .. } => aabb,
+        }
+    }
+
+    /// Trace the scene to an RGB frame plus a per-pixel coverage mask (255
+    /// where a surface was hit, fractional at supersampled silhouette edges,
+    /// 0 over background). The `png` flavour keeps hit pixels at their pure
+    /// geometry colour (straight-alpha transparency); the JPEG flavour
+    /// composites coverage over the opaque vellum background. Both share the
+    /// tessellated path's `encode_jpeg` / `encode_png`.
+    fn rasterize_rt(
+        raw_vcad: &str,
+        opts: &RasterOptions,
+        png: bool,
+    ) -> Result<(Vec<u8>, Vec<u8>), String> {
+        let tinted = evaluate_vcad(raw_vcad)?;
+        if tinted.is_empty() {
+            return Err("no solids produced".to_string());
+        }
+        if opts.size_px < 16 {
+            return Err("size_px too small".to_string());
+        }
+        if !(opts.fill_frac > 0.0 && opts.fill_frac <= 1.0) {
+            return Err("fill_frac must be in (0, 1]".to_string());
+        }
+
+        // One BVH per BRep-backed solid; assembly instances arrive from
+        // `evaluate_vcad` already world-placed, so no per-instance
+        // transforms are needed here. Mesh-only solids (frozen topology-
+        // optimization results, imported meshes) have no analytic surfaces
+        // to trace and are skipped.
+        let mut scene: Vec<(Bvh, Option<[[u8; 3]; 4]>)> = Vec::new();
+        for s in &tinted {
+            let Some(brep) = s.solid.as_brep() else {
+                continue;
+            };
+            let bvh = Bvh::build(brep);
+            if bvh.root().is_none() {
+                continue;
+            }
+            scene.push((bvh, s.tint.map(tint_ramp)));
+        }
+        if scene.is_empty() {
+            return Err("raytrace: document produced no BRep-backed solids \
+                 (mesh-only parts render via the tessellated path)"
+                .to_string());
+        }
+
+        // Framing: project the union of the BVH root AABBs onto the view
+        // basis — same fill/centre math as the tessellated raster path.
+        let cam = opts.view.cam();
+        let right = normalize(opts.view.right());
+        let down = normalize(opts.view.down());
+        let light = normalize(LIGHT);
+
+        let mut min = [f64::INFINITY; 2];
+        let mut max = [f64::NEG_INFINITY; 2];
+        let mut dmin = f64::INFINITY;
+        let mut dmax = f64::NEG_INFINITY;
+        for (bvh, _) in &scene {
+            let aabb = node_aabb(bvh.root().expect("empty BVHs were filtered"));
+            for i in 0..8 {
+                let c = [
+                    if i & 1 == 0 { aabb.min.x } else { aabb.max.x },
+                    if i & 2 == 0 { aabb.min.y } else { aabb.max.y },
+                    if i & 4 == 0 { aabb.min.z } else { aabb.max.z },
+                ];
+                let s = [dot(c, right), dot(c, down)];
+                for k in 0..2 {
+                    min[k] = min[k].min(s[k]);
+                    max[k] = max[k].max(s[k]);
+                }
+                let d = dot(c, cam);
+                dmin = dmin.min(d);
+                dmax = dmax.max(d);
+            }
+        }
+        let extent = (max[0] - min[0]).max(max[1] - min[1]);
+        if !extent.is_finite() || extent < 1e-9 {
+            return Err("degenerate projection (no extent)".to_string());
+        }
+        let dspan = (dmax - dmin).max(1e-9);
+
+        let size = opts.size_px as usize;
+        let px_per_mm = opts.fill_frac * opts.size_px as f64 / extent;
+        let cx = (min[0] + max[0]) / 2.0;
+        let cy = (min[1] + max[1]) / 2.0;
+        let half = opts.size_px as f64 / 2.0;
+
+        // Orthographic rays: start on a plane just past the scene along
+        // the camera direction, fire straight down it.
+        let d0 = dmax + dspan + 1.0;
+        let dir = Vec3::new(-cam[0], -cam[1], -cam[2]);
+
+        let mut rgb: Vec<u8> = BACKGROUND
+            .iter()
+            .copied()
+            .cycle()
+            .take(size * size * 3)
+            .collect();
+        let mut mask: Vec<u8> = vec![0u8; size * size];
+
+        let n = (SS_GRID * SS_GRID) as f64;
+        for py in 0..size {
+            for px in 0..size {
+                // Sum only the sub-samples that hit a surface, and count
+                // them: `hits/n` is the pixel's coverage.
+                let mut acc = [0.0f64; 3];
+                let mut hits = 0u32;
+                for sy in 0..SS_GRID {
+                    for sx in 0..SS_GRID {
+                        let fx = px as f64 + (sx as f64 + 0.5) / SS_GRID as f64;
+                        let fy = py as f64 + (sy as f64 + 0.5) / SS_GRID as f64;
+                        let sx_mm = (fx - half) / px_per_mm + cx;
+                        let sy_mm = (fy - half) / px_per_mm + cy;
+                        let origin = Point3::new(
+                            right[0] * sx_mm + down[0] * sy_mm + cam[0] * d0,
+                            right[1] * sx_mm + down[1] * sy_mm + cam[1] * d0,
+                            right[2] * sx_mm + down[2] * sy_mm + cam[2] * d0,
+                        );
+                        let ray = Ray::new(origin, dir);
+
+                        let mut best: Option<(f64, [u8; 3])> = None;
+                        for (bvh, ramp) in &scene {
+                            if let Some(hit) = bvh.trace_closest(&ray) {
+                                if best.as_ref().is_none_or(|(t, _)| hit.t < *t) {
+                                    let shade = shade_hit(&hit, ramp, cam, light, dmin, dspan);
+                                    best = Some((hit.t, shade));
+                                }
+                            }
+                        }
+                        if let Some((_, c)) = best {
+                            for k in 0..3 {
+                                acc[k] += c[k] as f64;
+                            }
+                            hits += 1;
+                        }
+                    }
+                }
+                let pi = py * size + px;
+                let idx = pi * 3;
+                if hits == 0 {
+                    continue; // leave background rgb, mask 0 (transparent)
+                }
+                mask[pi] = ((hits as f64 / n) * 255.0).round() as u8;
+                for k in 0..3 {
+                    rgb[idx + k] = if png {
+                        // Straight-alpha: pure geometry colour, coverage in α.
+                        (acc[k] / hits as f64).round() as u8
+                    } else {
+                        // Composite coverage over the opaque vellum ground.
+                        ((acc[k] + (n - hits as f64) * BACKGROUND[k] as f64) / n).round() as u8
+                    };
+                }
+            }
+        }
+
+        Ok((rgb, mask))
+    }
+
+    /// Shade an analytic hit with the same terms as the tessellated raster
+    /// path: face-forward normal, Lambertian key light, mild depth cue,
+    /// tonal-ramp (tinted) or two-stop monochrome (untinted) colour.
+    fn shade_hit(
+        hit: &vcad_kernel_raytrace::RayHit,
+        ramp: &Option<[[u8; 3]; 4]>,
+        cam: [f64; 3],
+        light: [f64; 3],
+        dmin: f64,
+        dspan: f64,
+    ) -> [u8; 3] {
+        let mut n = [hit.normal.x, hit.normal.y, hit.normal.z];
+        if dot(n, cam) < 0.0 {
+            n = [-n[0], -n[1], -n[2]];
+        }
+        let p = [hit.point.x, hit.point.y, hit.point.z];
+        let cue = 0.78 + 0.22 * ((dot(p, cam) - dmin) / dspan).clamp(0.0, 1.0);
+        let lit = (lambertian(n, light) * cue).clamp(0.0, 1.0);
+        match ramp {
+            Some(r) => ramp_sample(r, lit),
+            None => mix_rgb(FILL_DARK, FILL_LIGHT, lit),
         }
     }
 }
@@ -3864,6 +4107,140 @@ mod tests {
                     "achromatic material must not shift the navy ramp"
                 );
             }
+        }
+    }
+
+    #[cfg(feature = "raytrace")]
+    mod raytrace {
+        use super::*;
+
+        fn sphere_vcad(radius: f64) -> String {
+            format!(
+                r#"{{
+  "version": "0.1",
+  "nodes": {{
+    "1": {{
+      "id": 1,
+      "name": "Sphere",
+      "op": {{ "type": "Sphere", "radius": {radius}, "segments": 0 }}
+    }}
+  }},
+  "materials": {{}},
+  "part_materials": {{}},
+  "roots": [{{ "root": 1, "material": "default" }}]
+}}"#
+            )
+        }
+
+        /// Luminance of the center row's interior (non-background) pixels.
+        fn center_row_luma(png: &[u8], size: u32) -> Vec<f64> {
+            let img = image::load_from_memory(png).expect("valid PNG").to_rgb8();
+            assert_eq!(img.width(), size);
+            assert_eq!(img.height(), size);
+            let y = size / 2;
+            let bg = super::super::raster::BACKGROUND;
+            (0..size)
+                .map(|x| *img.get_pixel(x, y))
+                .filter(|p| p.0 != bg)
+                .map(|p| luma([p.0[0] as f64, p.0[1] as f64, p.0[2] as f64]))
+                .collect()
+        }
+
+        /// Largest luma jump between adjacent pixels, ignoring a margin at
+        /// each end (grazing-angle silhouette pixels legitimately change
+        /// fast in both paths).
+        fn max_adjacent_delta(row: &[f64], margin: usize) -> f64 {
+            let inner = &row[margin.min(row.len())..row.len().saturating_sub(margin)];
+            inner
+                .windows(2)
+                .map(|w| (w[1] - w[0]).abs())
+                .fold(0.0, f64::max)
+        }
+
+        /// The point of the raytrace path: analytic intersection means a
+        /// sphere shades as a continuous gradient, while the tessellated
+        /// path flat-shades facets that band. The ray-traced center row
+        /// must be strictly smoother than the tessellated one, and smooth
+        /// in absolute terms.
+        #[test]
+        fn raytraced_sphere_is_smooth_vs_tessellated() {
+            let doc = sphere_vcad(10.0);
+            let opts = RasterOptions {
+                view: View::Front,
+                size_px: 128,
+                ..Default::default()
+            };
+            let rt = render_raytrace_png_str(&doc, &opts).unwrap();
+            let tess = render_png_str(&doc, &opts).unwrap();
+
+            let rt_row = center_row_luma(&rt, 128);
+            let tess_row = center_row_luma(&tess, 128);
+            assert!(
+                rt_row.len() > 40,
+                "sphere should span a good chunk of the 128px canvas, got {} interior pixels",
+                rt_row.len()
+            );
+
+            let rt_max = max_adjacent_delta(&rt_row, 4);
+            let tess_max = max_adjacent_delta(&tess_row, 4);
+            assert!(
+                rt_max < 10.0,
+                "ray-traced sphere row should shade smoothly, max adjacent luma jump {rt_max:.1}"
+            );
+            assert!(
+                rt_max < tess_max,
+                "ray-traced row (max jump {rt_max:.1}) should be smoother than the \
+                 tessellated row (max jump {tess_max:.1})"
+            );
+        }
+
+        #[test]
+        fn raytrace_jpeg_has_soi_marker() {
+            let opts = RasterOptions {
+                size_px: 64,
+                ..Default::default()
+            };
+            let jpg = render_raytrace_jpeg_str(&sphere_vcad(5.0), &opts).unwrap();
+            assert_eq!(&jpg[..2], &[0xFF, 0xD8], "missing JPEG SOI marker");
+        }
+
+        /// Assembly-only documents (partDefs + instances, no scene roots)
+        /// must ray trace their world-placed instances, same as the
+        /// tessellated path.
+        #[test]
+        fn raytrace_renders_assembly_instances() {
+            let vcad = r#"{
+  "version": "0.1",
+  "nodes": {
+    "1": { "id": 1, "name": "base", "op": { "type": "Cube", "size": { "x": 40.0, "y": 40.0, "z": 5.0 } } },
+    "2": { "id": 2, "name": "post", "op": { "type": "Cylinder", "radius": 5.0, "height": 30.0, "segments": 0 } }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [],
+  "partDefs": {
+    "base": { "id": "base", "name": "base", "root": 1 },
+    "post": { "id": "post", "name": "post", "root": 2 }
+  },
+  "instances": [
+    { "id": "base1", "partDefId": "base", "transform": { "translation": { "x": 0.0, "y": 0.0, "z": 0.0 }, "rotation": { "x": 0.0, "y": 0.0, "z": 0.0 }, "scale": { "x": 1.0, "y": 1.0, "z": 1.0 } } },
+    { "id": "post1", "partDefId": "post", "transform": { "translation": { "x": 20.0, "y": 20.0, "z": 5.0 }, "rotation": { "x": 0.0, "y": 0.0, "z": 0.0 }, "scale": { "x": 1.0, "y": 1.0, "z": 1.0 } } }
+  ],
+  "groundInstanceId": "base1"
+}"#;
+            let opts = RasterOptions {
+                size_px: 96,
+                ..Default::default()
+            };
+            let png = render_raytrace_png_str(vcad, &opts).unwrap();
+            let img = image::load_from_memory(&png).unwrap().to_rgb8();
+            assert_eq!(img.width(), 96);
+            let bg = super::super::raster::BACKGROUND;
+            let non_bg = img.pixels().filter(|p| p.0 != bg).count();
+            assert!(
+                non_bg > 500,
+                "expected both placed instances to cover pixels, got {non_bg} non-background"
+            );
         }
     }
 }

@@ -1,20 +1,25 @@
-//! `vcad-render` CLI — project `.vcad` documents to static line art.
+//! `vcad-render` CLI — project `.vcad` documents to static line art or a
+//! raster render.
 //!
 //! Usage:
 //!   vcad-render <path.vcad> [--view iso|front|side|top|hero] [--scale <px-per-mm>] [--transparent]
 //!               [--section x=N|y=N|z=N] [--axes] [--labels] [--dims]
 //!   vcad-render <path.vcad> -o out.jpg [--view ...] [--size <px>] [--fill <frac>] [--quality <1-100>]
-//!   vcad-render <path.vcad> -o out.png   # RGBA raster with a transparent background
+//!   vcad-render <path.vcad> -o out.png [--raytrace]   # RGBA raster, transparent background
 //!   vcad-render <dir-or-paths...> [--out-dir <dir>] [--format svg|jpeg|png]
 //!
 //! With a single input and no output flag, a self-contained `<svg>` goes to
 //! stdout. `-o <path>` picks the format from the extension (`.svg`, `.jpg`,
 //! `.jpeg`, `.png`); `-o -` writes SVG to stdout. `--jpeg <path>` is the
-//! legacy spelling of `-o <path.jpg>`. Multiple inputs (or a directory, which
-//! expands to its `*.vcad` files) render in batch, each to a sibling output
-//! file or into `--out-dir`; a per-file failure is reported but does not
-//! abort the batch. All rendering logic lives in the `vcad-render` library
-//! (see `lib.rs`); this binary only handles argument parsing and file IO.
+//! legacy spelling of `-o <path.jpg>`. PNG output is RGBA with a transparent
+//! background. `--raytrace` swaps the tessellated raster path for a
+//! pixel-perfect direct-BRep ray trace (exact curved silhouettes, no
+//! tessellation); it needs a raster output (`.png`/`.jpg`). Multiple inputs
+//! (or a directory, which expands to its `*.vcad` files) render in batch,
+//! each to a sibling output file or into `--out-dir`; a per-file failure is
+//! reported but does not abort the batch. All rendering logic lives in the
+//! `vcad-render` library (see `lib.rs`); this binary only handles argument
+//! parsing and file IO.
 //!
 //! `--section` renders a cutaway: the half of the model on the camera's side
 //! of the plane is removed and the exposed cut faces are cross-hatched.
@@ -28,8 +33,8 @@ use vcad_render::{
     render_svg_str_opts, RenderAnnotations, SectionPlane, SvgOptions, View, DEFAULT_SCALE,
 };
 
-/// Raster/vector format for batch outputs (single-file `-o` infers the
-/// format from the extension instead).
+/// Output format for a render. Single-file `-o` infers this from the output
+/// extension; batch mode takes it from `--format`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 enum Format {
     /// Drafting-style vector SVG.
@@ -47,6 +52,11 @@ impl Format {
             Format::Jpeg => "jpg",
             Format::Png => "png",
         }
+    }
+
+    /// True for the raster (raytrace-capable) formats.
+    fn is_raster(self) -> bool {
+        matches!(self, Format::Jpeg | Format::Png)
     }
 
     fn from_extension(path: &Path) -> Result<Self, String> {
@@ -141,6 +151,12 @@ struct Cli {
     /// JPEG quality, 1-100 (ignored for PNG).
     #[arg(long, default_value_t = 92)]
     quality: u8,
+
+    /// Render raster output via direct BRep ray tracing instead of
+    /// tessellation: pixel-perfect curved silhouettes. Needs a raster
+    /// output (`.png`/`.jpg`).
+    #[arg(long)]
+    raytrace: bool,
 }
 
 /// Expand directory inputs to their `*.vcad` files (sorted); pass files
@@ -192,28 +208,57 @@ fn raster_opts(cli: &Cli, png: bool) -> vcad_render::RasterOptions {
     }
 }
 
+/// Render raw `.vcad` to raster bytes in `format` (JPEG or PNG), via the
+/// tessellated path or — when `cli.raytrace` — direct BRep ray tracing.
 #[cfg(feature = "raster")]
-fn render_jpeg(raw: &str, cli: &Cli) -> Result<Vec<u8>, String> {
-    vcad_render::render_jpeg_str(raw, &raster_opts(cli, false))
+fn render_raster(raw: &str, cli: &Cli, format: Format) -> Result<Vec<u8>, String> {
+    let png = format == Format::Png;
+    let opts = raster_opts(cli, png);
+    if cli.raytrace {
+        // The ray tracer works on analytic BRep surfaces; sectioning
+        // boolean-subtracts (yielding mesh-backed solids it can't trace) and
+        // the annotation overlays are drawn by the projected 2D path. Reject
+        // the combination rather than silently ignoring those flags.
+        if cli.section.is_some() || cli.annotations().any() {
+            return Err(
+                "--raytrace does not compose with --section/--axes/--labels/--dims; \
+                 use the tessellated raster path (drop --raytrace) for those"
+                    .to_string(),
+            );
+        }
+        #[cfg(feature = "raytrace")]
+        {
+            return if png {
+                vcad_render::render_raytrace_png_str(raw, &opts)
+            } else {
+                vcad_render::render_raytrace_jpeg_str(raw, &opts)
+            };
+        }
+        #[cfg(not(feature = "raytrace"))]
+        {
+            return Err("this build of vcad-render lacks the `raytrace` feature".to_string());
+        }
+    }
+    if png {
+        vcad_render::render_png_str(raw, &opts)
+    } else {
+        vcad_render::render_jpeg_str(raw, &opts)
+    }
 }
 
 #[cfg(not(feature = "raster"))]
-fn render_jpeg(_raw: &str, _cli: &Cli) -> Result<Vec<u8>, String> {
-    Err("this build of vcad-render lacks the `raster` feature".to_string())
-}
-
-#[cfg(feature = "raster")]
-fn render_png(raw: &str, cli: &Cli) -> Result<Vec<u8>, String> {
-    vcad_render::render_png_str(raw, &raster_opts(cli, true))
-}
-
-#[cfg(not(feature = "raster"))]
-fn render_png(_raw: &str, _cli: &Cli) -> Result<Vec<u8>, String> {
+fn render_raster(_raw: &str, _cli: &Cli, _format: Format) -> Result<Vec<u8>, String> {
     Err("this build of vcad-render lacks the `raster` feature".to_string())
 }
 
 /// Render one input to `dest` (`None` = SVG on stdout) in `format`.
 fn render_one(input: &Path, dest: Option<&Path>, format: Format, cli: &Cli) -> Result<(), String> {
+    if cli.raytrace && !format.is_raster() {
+        return Err(
+            "--raytrace needs a raster output: use -o <out.png> / <out.jpg> or --format png/jpeg"
+                .to_string(),
+        );
+    }
     let raw =
         std::fs::read_to_string(input).map_err(|e| format!("read {}: {}", input.display(), e))?;
     let bytes = match format {
@@ -237,8 +282,7 @@ fn render_one(input: &Path, dest: Option<&Path>, format: Format, cli: &Cli) -> R
                 Some(_) => svg.into_bytes(),
             }
         }
-        Format::Jpeg => render_jpeg(&raw, cli)?,
-        Format::Png => render_png(&raw, cli)?,
+        Format::Jpeg | Format::Png => render_raster(&raw, cli, format)?,
     };
     let dest = dest.expect("raster output always has a destination path");
     std::fs::write(dest, bytes).map_err(|e| format!("write {}: {}", dest.display(), e))
