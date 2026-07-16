@@ -281,7 +281,7 @@ pub struct SymbolDef {
 /// MCP write boundaries reject the dotted spellings outright (see
 /// `validateLayer` in `packages/mcp/src/tools/ecad.ts`); the aliases are only a
 /// safety net for data already on disk.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts-rs", derive(ts_rs::TS))]
 #[cfg_attr(feature = "ts-rs", ts(export, export_to = "bindings/"))]
 pub enum PcbLayer {
