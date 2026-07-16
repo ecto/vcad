@@ -5693,10 +5693,15 @@ mod ecad_wasm {
         pcb_json: &str,
         width: f64,
         nets_filter_json: &str,
+        effort: Option<f64>,
     ) -> Result<JsValue, JsError> {
         let pcb: Pcb = serde_json::from_str(pcb_json).map_err(|e| JsError::new(&e.to_string()))?;
         let filter: Vec<String> = serde_json::from_str(nets_filter_json).unwrap_or_default();
-        let result = vcad_ecad_pcb::router::route_all(&pcb, width, &filter);
+        let opts = vcad_ecad_pcb::router::RouteOptions {
+            effort: effort.unwrap_or(1.0).clamp(0.1, 100.0),
+            ..Default::default()
+        };
+        let result = vcad_ecad_pcb::router::route_all_with_opts(&pcb, width, &filter, &opts);
         serde_wasm_bindgen::to_value(&result).map_err(|e| JsError::new(&e.to_string()))
     }
 
