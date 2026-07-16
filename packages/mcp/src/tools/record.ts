@@ -103,7 +103,7 @@ type RasterOutcome =
   | { rgba: null; reason: "module-missing" | string };
 
 /** Rasterize one SVG frame to RGBA pixels via the optional resvg dep. */
-async function rasterize(
+export async function rasterize(
   svg: string,
   widthPx: number,
 ): Promise<RasterOutcome> {
@@ -148,11 +148,19 @@ type GifencModule = typeof import("gifenc");
 
 /** Lazy-load the optional `gifenc` encoder. Returns null with a reason
  *  when the module is missing or import-time fails. */
-async function loadGifenc(): Promise<
+export async function loadGifenc(): Promise<
   { mod: GifencModule } | { mod: null; reason: string }
 > {
   try {
-    const mod = (await import("gifenc")) as unknown as GifencModule;
+    // Normalize CJS/ESM interop: under plain node the CJS module lands on
+    // `.default`; under vitest/bundlers it's the namespace itself.
+    const raw = (await import("gifenc")) as unknown as GifencModule & {
+      default?: GifencModule;
+    };
+    const mod = typeof raw.GIFEncoder === "function" ? raw : raw.default;
+    if (!mod || typeof mod.GIFEncoder !== "function") {
+      return { mod: null, reason: "gifenc loaded without GIFEncoder export" };
+    }
     return { mod };
   } catch (e) {
     const code = (e as NodeJS.ErrnoException)?.code;
