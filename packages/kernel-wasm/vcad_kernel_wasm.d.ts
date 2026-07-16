@@ -2415,12 +2415,33 @@ export function render_svg(vcad_json: string, scale: number): string;
 export function render_svg_annotated(vcad_json: string, scale: number, view: string, axes: boolean, labels: boolean, dims: boolean): string;
 
 /**
+ * Render raw `.vcad` document JSON to an SVG with the full [`SvgOptions`]
+ * surface in one call: arbitrary camera, part focus, section cutaway,
+ * changed-part highlight, and engineering annotations. This is the superset
+ * the MCP `render_view` "agent eyes" path drives; the narrower
+ * `render_svg_view*` / `render_svg_annotated` bindings remain for older
+ * callers.
+ *
+ * `view` accepts everything [`render_svg_view`] does, including
+ * `"orbit:<azimuth>,<elevation>"` (degrees, Z-up); an unparseable view
+ * string is an error here rather than a silent isometric fallback.
+ * `focus`, when non-empty, frames the render on that part's bounding box
+ * (matched case-insensitively against root node names, assembly instance
+ * ids/names, and part-definition ids). `section`, when non-empty, is
+ * `"x=N"`/`"y=N"`/`"z=N"` (mm) for a cutaway. `highlight_json` is a JSON
+ * string array of part ids/names to spotlight (empty array = none).
+ * `axes`/`labels`/`dims` overlay the engineering annotations.
+ */
+export function render_svg_camera(vcad_json: string, scale: number, view: string, focus: string | null | undefined, axes: boolean, labels: boolean, dims: boolean, section?: string | null, highlight_json?: string | null): string;
+
+/**
  * Render raw `.vcad` document JSON to an SVG from a named orthographic view.
  *
- * `view` accepts `"iso"`/`"isometric"`/`"hero"`, `"top"`, `"front"`, or
- * `"side"` (case-insensitive); anything unrecognized falls back to isometric.
- * Gives agents a flat top-down or elevation look at a part, not just the
- * default 3/4 isometric.
+ * `view` accepts `"iso"`/`"isometric"`/`"hero"`, `"top"`, `"front"`,
+ * `"side"`, or an arbitrary orbit camera as `"orbit:<azimuth>,<elevation>"`
+ * (degrees, Z-up — e.g. `"orbit:35,25"`); anything unrecognized falls back
+ * to isometric. Gives agents a flat top-down or elevation look at a part,
+ * not just the default 3/4 isometric.
  */
 export function render_svg_view(vcad_json: string, scale: number, view: string): string;
 
@@ -2725,6 +2746,7 @@ export interface InitOutput {
     readonly render_pcb_svg_opts: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number, number, number];
     readonly render_svg: (a: number, b: number, c: number) => [number, number, number, number];
     readonly render_svg_annotated: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
+    readonly render_svg_camera: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number) => [number, number, number, number];
     readonly render_svg_view: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
     readonly render_svg_view_highlight: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number, number, number];
     readonly render_svg_view_section: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number, number, number];

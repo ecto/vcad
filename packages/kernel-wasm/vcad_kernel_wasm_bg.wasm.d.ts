@@ -83,6 +83,7 @@ export const render_pcb_svg: (a: number, b: number, c: number, d: number, e: num
 export const render_pcb_svg_opts: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number, number, number];
 export const render_svg: (a: number, b: number, c: number) => [number, number, number, number];
 export const render_svg_annotated: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
+export const render_svg_camera: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number, m: number, n: number) => [number, number, number, number];
 export const render_svg_view: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
 export const render_svg_view_highlight: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number, number, number];
 export const render_svg_view_section: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number, number, number];
