@@ -24,6 +24,7 @@ import type {
   ReceiptStatus,
 } from "@vcad/ir";
 import type { ClearanceResult, Engine, TriangleMesh } from "@vcad/engine";
+import { transformMesh } from "@vcad/engine";
 import { unverifiableClaim } from "../receipt-unified.js";
 import { getSession } from "./session.js";
 
@@ -93,6 +94,24 @@ function partCandidates(doc: Document, engine: Engine): ResolvedPart[] {
     const mesh = scene.parts[i].mesh;
     if (!mesh || mesh.positions.length === 0) continue;
     out.push({ id: String(rootId), name: node?.name ?? undefined, mesh });
+  }
+  // Assembly instances: bake the FK world transform into the part-local mesh
+  // so clearances measure poses, not part-local geometry. Without this,
+  // assembly-only documents had no clearance candidates at all.
+  for (const inst of scene.instances ?? []) {
+    const mesh = inst.transform
+      ? transformMesh(inst.mesh, {
+          translate: inst.transform.translation,
+          rotate: inst.transform.rotation,
+          scale: inst.transform.scale,
+        })
+      : inst.mesh;
+    if (!mesh || mesh.positions.length === 0) continue;
+    out.push({
+      id: inst.instanceId,
+      name: inst.name ?? undefined,
+      mesh,
+    });
   }
   return out;
 }

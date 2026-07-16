@@ -155,7 +155,30 @@ pub fn render_svg_view(vcad_json: &str, scale: f64, view: &str) -> Result<String
     vcad_render::render_svg_str_view(vcad_json, scale, v).map_err(|e| JsError::new(&e))
 }
 
-/// Render raw `.vcad` document JSON to an SVG with full camera control.
+/// Render raw `.vcad` document JSON to an SVG with opt-in engineering
+/// annotations: an X/Y/Z origin gizmo (`axes`), part-name labels with
+/// leader lines (`labels`), and overall W×D×H bounding-box dimensions in mm
+/// (`dims`). With all three flags false the output matches
+/// [`render_svg_view`] exactly. `view` parses as in [`render_svg_view`].
+#[wasm_bindgen]
+pub fn render_svg_annotated(
+    vcad_json: &str,
+    scale: f64,
+    view: &str,
+    axes: bool,
+    labels: bool,
+    dims: bool,
+) -> Result<String, JsError> {
+    let v = view
+        .parse::<vcad_render::View>()
+        .unwrap_or(vcad_render::View::Isometric);
+    let annotations = vcad_render::RenderAnnotations { axes, labels, dims };
+    vcad_render::render_svg_str_view_opts(vcad_json, scale, v, false, &annotations)
+        .map_err(|e| JsError::new(&e))
+}
+
+/// Render raw `.vcad` document JSON to an SVG with full camera control plus
+/// the same opt-in annotations as [`render_svg_annotated`].
 ///
 /// `view` accepts everything [`render_svg_view`] does, including
 /// `"orbit:<azimuth>,<elevation>"` (degrees, Z-up); an unparseable view
@@ -163,13 +186,18 @@ pub fn render_svg_view(vcad_json: &str, scale: f64, view: &str) -> Result<String
 /// `focus`, when non-empty, frames the render on that part's bounding box
 /// instead of the whole document — matched case-insensitively against root
 /// node names, assembly instance ids/names, and part-definition ids
-/// (unknown names error with the available labels).
+/// (unknown names error with the available labels). `axes`/`labels`/`dims`
+/// overlay the engineering annotations.
 #[wasm_bindgen]
+#[allow(clippy::too_many_arguments)]
 pub fn render_svg_camera(
     vcad_json: &str,
     scale: f64,
     view: &str,
     focus: Option<String>,
+    axes: bool,
+    labels: bool,
+    dims: bool,
 ) -> Result<String, JsError> {
     let v = view
         .parse::<vcad_render::View>()
@@ -178,6 +206,7 @@ pub fn render_svg_camera(
         view: v,
         transparent: false,
         focus: focus.filter(|f| !f.trim().is_empty()),
+        annotations: vcad_render::RenderAnnotations { axes, labels, dims },
     };
     vcad_render::render_svg_str_camera(vcad_json, scale, &opts).map_err(|e| JsError::new(&e))
 }

@@ -2,6 +2,7 @@
 //!
 //! Usage:
 //!   vcad-render <path.vcad> [--view iso|front|side|top|hero|orbit:AZ,EL] [--scale <px-per-mm>] [--transparent]
+//!               [--axes] [--labels] [--dims]
 //!   vcad-render <path.vcad> [--azimuth <deg>] [--elevation <deg>] [--focus <part-name>]
 //!   vcad-render <path.vcad> -o out.jpg [--view ...] [--size <px>] [--fill <frac>] [--quality <1-100>]
 //!   vcad-render <path.vcad> -o out.png   # RGBA raster with a transparent background
@@ -28,7 +29,7 @@ use std::process::ExitCode;
 use std::str::FromStr;
 
 use clap::{Parser, ValueEnum};
-use vcad_render::{render_svg_str_camera, CameraOptions, View, DEFAULT_SCALE};
+use vcad_render::{render_svg_str_camera, CameraOptions, RenderAnnotations, View, DEFAULT_SCALE};
 
 /// Raster/vector format for batch outputs (single-file `-o` infers the
 /// format from the extension instead).
@@ -107,6 +108,18 @@ struct Cli {
     #[arg(long)]
     transparent: bool,
 
+    /// Overlay an X/Y/Z origin gizmo (kernel is Z-up).
+    #[arg(long)]
+    axes: bool,
+
+    /// Label each top-level part with its name.
+    #[arg(long)]
+    labels: bool,
+
+    /// Overlay overall W×D×H bounding-box dimensions in mm.
+    #[arg(long)]
+    dims: bool,
+
     /// Output path; format inferred from extension (.svg/.jpg/.jpeg/.png).
     /// Use `-o -` for SVG on stdout. Single input only.
     #[arg(short, long, conflicts_with = "jpeg")]
@@ -177,6 +190,17 @@ fn expand_inputs(inputs: &[PathBuf]) -> Result<Vec<PathBuf>, String> {
     Ok(out)
 }
 
+impl Cli {
+    /// The opt-in annotation overlays selected on the command line.
+    fn annotations(&self) -> RenderAnnotations {
+        RenderAnnotations {
+            axes: self.axes,
+            labels: self.labels,
+            dims: self.dims,
+        }
+    }
+}
+
 /// Raster options for `cli`, defaulting the canvas size per format when the
 /// user left `--size` unset: JPEG follows the mecheval 1024px capture rule,
 /// PNG (transparent, lossless) targets a much larger 4096px.
@@ -188,6 +212,7 @@ fn raster_opts(cli: &Cli, png: bool) -> vcad_render::RasterOptions {
         fill_frac: cli.fill,
         quality: cli.quality,
         focus: cli.focus.clone(),
+        annotations: cli.annotations(),
     }
 }
 
@@ -224,6 +249,7 @@ fn render_one(input: &Path, dest: Option<&Path>, format: Format, cli: &Cli) -> R
                     view: cli.effective_view(),
                     transparent: cli.transparent,
                     focus: cli.focus.clone(),
+                    annotations: cli.annotations(),
                 },
             )?;
             match dest {
