@@ -696,6 +696,7 @@ export async function routeAll(
   pcb: Pcb,
   width: number,
   netsFilter: string[] = [],
+  effort = 1,
 ): Promise<RouteAllResult> {
   const empty: RouteAllResult = {
     traces: [],
@@ -712,6 +713,7 @@ export async function routeAll(
       JSON.stringify(pcb),
       width,
       JSON.stringify(netsFilter),
+      effort,
     ) as RouteAllResult;
   } catch (e) {
     console.warn("[ECAD] Auto-route failed:", e);

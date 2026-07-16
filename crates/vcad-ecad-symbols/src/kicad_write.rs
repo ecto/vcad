@@ -98,6 +98,8 @@ fn layer_name(layer: PcbLayer) -> &'static str {
         PcbLayer::In4Cu => "In4.Cu",
         PcbLayer::In5Cu => "In5.Cu",
         PcbLayer::In6Cu => "In6.Cu",
+        PcbLayer::In7Cu => "In7.Cu",
+        PcbLayer::In8Cu => "In8.Cu",
         PcbLayer::FSilkS => "F.SilkS",
         PcbLayer::BSilkS => "B.SilkS",
         PcbLayer::FMask => "F.Mask",
@@ -126,6 +128,8 @@ fn copper_layer_id(layer: PcbLayer) -> u32 {
         PcbLayer::In4Cu => 10,
         PcbLayer::In5Cu => 12,
         PcbLayer::In6Cu => 14,
+        PcbLayer::In7Cu => 16,
+        PcbLayer::In8Cu => 18,
         _ => 0,
     }
 }

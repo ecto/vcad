@@ -23,6 +23,7 @@ pub mod ratsnest;
 pub mod router;
 pub mod session;
 pub mod spatial;
+pub mod srj;
 pub mod teardrop;
 
 pub use copper_pour::{fill_zones, FilledZone};

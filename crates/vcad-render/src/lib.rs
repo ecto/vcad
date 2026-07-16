@@ -109,6 +109,15 @@ const INK: &str = "#0b2742";
 /// path's matte background). The signature ground behind every render.
 const PAPER: &str = "#f4f3f1";
 
+/// Background of a section-cut face, under the 45° hatch lines. A pale
+/// ice tint from the ramp family, so cut faces read as freshly exposed
+/// material rather than another shaded surface.
+const HATCH_BG: &str = "#dce8f2";
+/// Hatch line spacing in SVG user units.
+const HATCH_SPACING_PX: f64 = 6.0;
+/// Hatch line stroke width in SVG user units.
+const HATCH_STROKE_PX: f64 = 0.8;
+
 /// The vcad-Blue tonal ramp: deep-shadow → core navy → mid → ice highlight.
 /// Sampled by the shading term so curved surfaces read as a graded wash
 /// instead of a two-colour lerp. The house colour system — one ramp, many
@@ -217,6 +226,155 @@ impl std::str::FromStr for View {
             )),
         }
     }
+}
+
+// ─── section (cutaway) planes ─────────────────────────────────────────────
+
+/// A principal axis, naming the normal of a [`SectionPlane`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Axis {
+    /// Plane normal to X (`--section x=N`).
+    X,
+    /// Plane normal to Y (`--section y=N`).
+    Y,
+    /// Plane normal to Z (`--section z=N`).
+    Z,
+}
+
+impl Axis {
+    fn index(self) -> usize {
+        match self {
+            Axis::X => 0,
+            Axis::Y => 1,
+            Axis::Z => 2,
+        }
+    }
+}
+
+/// A section (cutaway) plane normal to a principal axis. Material on the
+/// camera's side of the plane is removed before rendering — so the viewer
+/// always looks into the cut — and the exposed cut faces are drawn with a
+/// 45° drafting hatch instead of the usual shading.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SectionPlane {
+    /// The axis the plane is normal to.
+    pub axis: Axis,
+    /// The axis coordinate (mm) the plane sits at.
+    pub coord: f64,
+}
+
+impl std::str::FromStr for SectionPlane {
+    type Err = String;
+
+    /// Parses `x=N`, `y=N`, or `z=N` (case-insensitive), e.g. `z=10`.
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let (axis, val) = s
+            .split_once('=')
+            .ok_or_else(|| format!("bad section '{s}' (expected x=N|y=N|z=N)"))?;
+        let axis = match axis.trim().to_ascii_lowercase().as_str() {
+            "x" => Axis::X,
+            "y" => Axis::Y,
+            "z" => Axis::Z,
+            other => return Err(format!("bad section axis '{other}' (expected x|y|z)")),
+        };
+        let coord: f64 = val
+            .trim()
+            .parse()
+            .map_err(|e: std::num::ParseFloatError| format!("bad section coordinate: {e}"))?;
+        Ok(SectionPlane { axis, coord })
+    }
+}
+
+impl SectionPlane {
+    /// Tolerance (mm) within which a vertex counts as lying on the plane.
+    /// Tessellated vertices round-trip through `f32`, so the tolerance
+    /// scales with the plane coordinate's own magnitude.
+    fn on_plane_tol(self) -> f64 {
+        (self.coord.abs() * 1e-5).max(1e-2)
+    }
+}
+
+/// Which side of the section plane gets cut away: always the side the
+/// camera sits on, so the viewer looks *into* the section. For a view
+/// whose camera is edge-on to the plane's axis (a Front view with an
+/// `x=` section) the positive side is removed by convention.
+fn section_removes_positive_side(plane: SectionPlane, view: View) -> bool {
+    view.cam()[plane.axis.index()] >= 0.0
+}
+
+/// Cut one solid by `plane`, removing material on one side via a boolean
+/// difference against a generous half-space box. `remove_positive` picks
+/// the removed side (`axis > coord` when true, `axis < coord` when false).
+///
+/// `Ok(None)` means the solid was cut away entirely (it lies wholly on the
+/// removed side); `Err` surfaces a boolean failure or kernel panic so the
+/// caller can fall back to the uncut solid.
+fn section_solid(
+    solid: &Solid,
+    plane: SectionPlane,
+    remove_positive: bool,
+) -> Result<Option<Solid>, String> {
+    let (lo, hi) = solid.bounding_box();
+    let ax = plane.axis.index();
+    if !lo[ax].is_finite() || !hi[ax].is_finite() {
+        return Err("degenerate bounding box".to_string());
+    }
+    let (kept_extent, removed_extent) = if remove_positive {
+        (plane.coord - lo[ax], hi[ax] - plane.coord)
+    } else {
+        (hi[ax] - plane.coord, plane.coord - lo[ax])
+    };
+    if removed_extent <= 0.0 {
+        return Ok(Some(solid.clone())); // plane clear of the solid — nothing removed
+    }
+    if kept_extent <= 0.0 {
+        return Ok(None); // wholly on the removed side
+    }
+    // Cutter: a box overhanging the solid's bbox on every open side, with
+    // one face on the section axis sitting exactly at the plane — so the
+    // cut faces the boolean leaves behind are planar at `coord`.
+    let margin = 0.1 * ((hi[0] - lo[0]).max(hi[1] - lo[1]).max(hi[2] - lo[2])).max(1.0) + 1.0;
+    let mut size = [
+        hi[0] - lo[0] + 2.0 * margin,
+        hi[1] - lo[1] + 2.0 * margin,
+        hi[2] - lo[2] + 2.0 * margin,
+    ];
+    let mut corner = [lo[0] - margin, lo[1] - margin, lo[2] - margin];
+    size[ax] = removed_extent + margin;
+    if remove_positive {
+        corner[ax] = plane.coord;
+    } else {
+        corner[ax] = plane.coord - size[ax];
+    }
+    let cutter = Solid::cube(size[0], size[1], size[2])
+        .apply_transform(&Transform::translation(corner[0], corner[1], corner[2]));
+    let cut = catch_unwind(AssertUnwindSafe(|| solid.try_difference(&cutter)))
+        .map_err(|_| "boolean panicked".to_string())?
+        .map_err(|e| format!("boolean failed: {e:?}"))?;
+    Ok(Some(cut))
+}
+
+/// Apply a section plane to every scene solid, removing the half of each
+/// on the camera's side of the plane (see [`section_removes_positive_side`]).
+/// A solid whose boolean fails is kept uncut (never fail the whole render),
+/// with a note on stderr; solids wholly on the removed side are dropped.
+fn apply_section(scene: Vec<SceneSolid>, plane: SectionPlane, view: View) -> Vec<SceneSolid> {
+    let remove_positive = section_removes_positive_side(plane, view);
+    let mut out = Vec::with_capacity(scene.len());
+    for (i, mut s) in scene.into_iter().enumerate() {
+        match section_solid(&s.solid, plane, remove_positive) {
+            Ok(Some(cut)) => {
+                s.solid = cut;
+                out.push(s);
+            }
+            Ok(None) => {}
+            Err(e) => {
+                eprintln!("vcad-render: section: solid {i} left uncut ({e})");
+                out.push(s);
+            }
+        }
+    }
+    out
 }
 
 // ─── annotations ──────────────────────────────────────────────────────────
@@ -596,6 +754,9 @@ struct SolidArtifacts {
     /// the part's material colour when one is known.
     ramp: [[u8; 3]; 4],
     visible: Vec<bool>,
+    /// Per-triangle: true when the triangle is an exposed section-cut face
+    /// (planar on the section plane) — rendered cross-hatched.
+    cut: Vec<bool>,
     /// Kept edges (boundary, crease, or silhouette, with ≥1 visible
     /// adjacent triangle) as canonical-vertex index pairs plus their kind.
     edges: Vec<(usize, usize, EdgeKind)>,
@@ -684,6 +845,7 @@ fn build_artifacts(
     cam: [f64; 3],
     segments: u32,
     rules: &EdgeRules,
+    section: Option<SectionPlane>,
 ) -> Vec<SolidArtifacts> {
     let mut out = Vec::new();
     for (si, solid) in solids.iter().enumerate() {
@@ -717,6 +879,25 @@ fn build_artifacts(
             .iter()
             .map(|n| dot(*n, cam) >= BACKFACE_DOT_MIN)
             .collect();
+
+        // Exposed cut faces: every vertex on the section plane (within
+        // tolerance) and the face normal parallel to the plane's axis.
+        let cut: Vec<bool> = match section {
+            Some(plane) => {
+                let ax = plane.axis.index();
+                let tol = plane.on_plane_tol();
+                cm.tris
+                    .iter()
+                    .enumerate()
+                    .map(|(ti, t)| {
+                        normals[ti][ax].abs() > 0.99
+                            && t.iter()
+                                .all(|&v| (cm.verts[v][ax] - plane.coord).abs() <= tol)
+                    })
+                    .collect()
+            }
+            None => vec![false; cm.tris.len()],
+        };
 
         // Build undirected-edge → adjacent-triangle-indices map.
         let mut edge_to_tris: HashMap<(usize, usize), Vec<usize>> = HashMap::new();
@@ -777,6 +958,7 @@ fn build_artifacts(
             corner_normals,
             ramp,
             visible,
+            cut,
             edges,
         });
     }
@@ -1347,6 +1529,33 @@ pub fn render_svg_str_view_opts(
     )
 }
 
+/// Render raw `.vcad` document JSON to an SVG from `view`, optionally
+/// sectioned (cutaway) by `section` and/or overlaid with `annotations`.
+/// Material on the camera's side of the plane is boolean-subtracted before
+/// tessellation; exposed cut faces are drawn with a 45° drafting hatch. A
+/// solid whose boolean fails is rendered uncut (noted on stderr) rather than
+/// failing the render.
+pub fn render_svg_str_section(
+    raw_vcad: &str,
+    scale: f64,
+    view: View,
+    transparent: bool,
+    section: Option<SectionPlane>,
+    annotations: &RenderAnnotations,
+) -> Result<String, String> {
+    render_svg_str_opts(
+        raw_vcad,
+        scale,
+        &SvgOptions {
+            view,
+            transparent,
+            section,
+            annotations: *annotations,
+            ..Default::default()
+        },
+    )
+}
+
 /// Options for the SVG render path ([`render_svg_str_opts`]).
 #[derive(Debug, Clone, Default)]
 pub struct SvgOptions {
@@ -1361,6 +1570,10 @@ pub struct SvgOptions {
     /// (tori, NURBS, boolean intersection seams) fall back to polylines;
     /// fills and hidden-line removal still use the tessellation.
     pub exact_edges: bool,
+    /// Section (cutaway) plane. Material on the camera's side is
+    /// boolean-subtracted before tessellation and exposed cut faces get a
+    /// 45° drafting hatch. `None` renders the whole model.
+    pub section: Option<SectionPlane>,
     /// Opt-in engineering annotation overlays (axes gizmo, part labels,
     /// bounding-box dimensions). [`RenderAnnotations::default()`] draws none.
     pub annotations: RenderAnnotations,
@@ -1374,7 +1587,10 @@ pub fn render_svg_str_opts(
     scale: f64,
     opts: &SvgOptions,
 ) -> Result<String, String> {
-    let scene = evaluate_vcad(raw_vcad)?;
+    let mut scene = evaluate_vcad(raw_vcad)?;
+    if let Some(plane) = opts.section {
+        scene = apply_section(scene, plane, opts.view);
+    }
     let solids: Vec<Solid> = scene.iter().map(|s| s.solid.clone()).collect();
     let tints: Vec<Option<[f64; 3]>> = scene.iter().map(|s| s.tint).collect();
     let names: Vec<Option<String>> = scene.iter().map(|s| s.name.clone()).collect();
@@ -1415,7 +1631,9 @@ pub fn render_svg_solids_view(solids: &[Solid], scale: f64, view: View) -> Resul
 }
 
 /// Shared SVG renderer; `tints[i]` optionally tints solid `i`'s ramp and
-/// `names[i]` labels it when the `labels` annotation is on.
+/// `names[i]` labels it when the `labels` annotation is on. `opts.section`
+/// (already applied to the solids by the caller) only drives cut-face
+/// detection here, so exposed section faces get the hatch fill.
 fn render_svg_impl(
     solids: &[Solid],
     tints: &[Option<[f64; 3]>],
@@ -1428,6 +1646,7 @@ fn render_svg_impl(
     }
     let view = opts.view;
     let transparent = opts.transparent;
+    let section = opts.section;
     let annos = &opts.annotations;
 
     let cam = view.cam();
@@ -1436,7 +1655,14 @@ fn render_svg_impl(
     let light = normalize(LIGHT);
     let project = |p: [f64; 3]| -> (f64, f64) { (dot(p, right) * scale, dot(p, down) * scale) };
 
-    let arts = build_artifacts(solids, tints, cam, TESSELLATION_SEGMENTS, &EdgeRules::svg());
+    let arts = build_artifacts(
+        solids,
+        tints,
+        cam,
+        TESSELLATION_SEGMENTS,
+        &EdgeRules::svg(),
+        section,
+    );
 
     // First pass: screen-space bbox + 3D bbox (for the depth-cue bias),
     // over every projected vertex of every kept artifact.
@@ -1565,6 +1791,17 @@ fn render_svg_impl(
                 shade(cn[2], cam, light) * (1.0 - AO_STRENGTH * ao(ps[2], vd[2])),
             ];
             let avg = hex(ramp_sample(&art.ramp, (sh[0] + sh[1] + sh[2]) / 3.0));
+            if art.cut[ti] {
+                // Exposed section-cut face: drafting convention says
+                // cross-hatch, not shade. Pattern defined once in <defs>.
+                polys.push(ProjPoly {
+                    s: ps,
+                    fill: "url(#section-hatch)".to_string(),
+                    stroke: HATCH_BG.to_string(),
+                    depth: (vd[0] + vd[1] + vd[2]) / 3.0,
+                });
+                continue;
+            }
             let (fill, stroke) = match gouraud_gradient(ps, sh, &art.ramp) {
                 Some(g) => {
                     let id = grad_id;
@@ -1750,7 +1987,17 @@ fn render_svg_impl(
 
     // Gouraud gradient defs.
     let blur = ((w + h) * 0.008).clamp(1.0, 12.0);
-    out.push_str(&format!(r#"<defs>{gradients}</defs>"#));
+    // 45° cross-hatch pattern for exposed section-cut faces (drafting
+    // convention). Only emitted when a section plane is active.
+    let hatch_def = if section.is_some() {
+        format!(
+            r#"<pattern id="section-hatch" patternUnits="userSpaceOnUse" width="{sp:.2}" height="{sp:.2}" patternTransform="rotate(45)"><rect width="{sp:.2}" height="{sp:.2}" fill="{HATCH_BG}"/><line x1="0" y1="0" x2="0" y2="{sp:.2}" stroke="{INK}" stroke-width="{HATCH_STROKE_PX}"/></pattern>"#,
+            sp = HATCH_SPACING_PX,
+        )
+    } else {
+        String::new()
+    };
+    out.push_str(&format!(r#"<defs>{hatch_def}{gradients}</defs>"#));
 
     // Vellum ground — the warm paper the plate sits on. Skipped for a
     // transparent render so the SVG composites over any background.
@@ -2053,6 +2300,9 @@ mod raster {
         pub fill_frac: f64,
         /// JPEG quality, 1–100 (capture rules say ≥ 90).
         pub quality: u8,
+        /// Optional section (cutaway) plane: material on the camera's
+        /// side of the plane is removed and exposed cut faces are hatched.
+        pub section: Option<SectionPlane>,
         /// Opt-in engineering overlays (axes gizmo, part labels, bbox
         /// dimensions). All-off by default; the default render is
         /// byte-identical to an annotation-free build.
@@ -2066,6 +2316,7 @@ mod raster {
                 size_px: 1024,
                 fill_frac: 0.6,
                 quality: 92,
+                section: None,
                 annotations: RenderAnnotations::default(),
             }
         }
@@ -2176,6 +2427,37 @@ mod raster {
             return Err("fill_frac must be in (0, 1]".to_string());
         }
 
+        // Apply the section cut (if any) before tessellation. A solid whose
+        // boolean fails is rendered uncut; one wholly on the removed side is
+        // dropped. Rebuild SceneSolids so tints and names stay aligned with
+        // the (possibly shorter) cut solid list.
+        // Parallel solid/tint/name columns, kept aligned across a section cut.
+        type Columns = (Vec<Solid>, Vec<Option<[f64; 3]>>, Vec<Option<String>>);
+        let (solids, tints, names): Columns = match opts.section {
+                Some(plane) => {
+                    let scene: Vec<SceneSolid> = solids
+                        .iter()
+                        .enumerate()
+                        .map(|(i, s)| SceneSolid {
+                            solid: s.clone(),
+                            tint: tints.get(i).copied().flatten(),
+                            name: names.get(i).cloned().flatten(),
+                        })
+                        .collect();
+                    let cut = apply_section(scene, plane, opts.view);
+                    (
+                        cut.iter().map(|s| s.solid.clone()).collect(),
+                        cut.iter().map(|s| s.tint).collect(),
+                        cut.iter().map(|s| s.name.clone()).collect(),
+                    )
+                }
+                None => (solids.to_vec(), tints.to_vec(), names.to_vec()),
+            };
+        if solids.is_empty() {
+            return Err("no solids survive the section plane".to_string());
+        }
+        let (solids, tints, names) = (&solids[..], &tints[..], &names[..]);
+
         let cam = opts.view.cam();
         let right = normalize(opts.view.right());
         let down = normalize(opts.view.down());
@@ -2196,6 +2478,7 @@ mod raster {
                 mark_silhouette: true,
                 keep_occluded: false,
             },
+            opts.section,
         );
 
         // Screen-plane (mm) and 3D bounding boxes over all vertices.
@@ -2288,6 +2571,7 @@ mod raster {
                     size,
                     [proj[t[0]], proj[t[1]], proj[t[2]]],
                     shade,
+                    art.cut[ti],
                 );
             }
         }
@@ -2328,6 +2612,14 @@ mod raster {
         (b.0 - a.0) * (py - a.1) - (b.1 - a.1) * (px - a.0)
     }
 
+    /// Hatch period (px) for section-cut faces in the raster path; lines
+    /// run at 45° because `x + y` is constant along each anti-diagonal.
+    const HATCH_PERIOD_PX: usize = 9;
+    /// Hatch line thickness (px) within each period.
+    const HATCH_LINE_PX: usize = 2;
+    /// Cut-face background — a pale ice tint (matches the SVG `HATCH_BG`).
+    const HATCH_BG_RGB: [u8; 3] = [220, 232, 242];
+
     fn fill_triangle(
         rgb: &mut [u8],
         zbuf: &mut [f64],
@@ -2335,6 +2627,7 @@ mod raster {
         size: usize,
         p: [(f64, f64, f64); 3],
         shade: [u8; 3],
+        hatch: bool,
     ) {
         let area = edge_fn(p[0], p[1], p[2].0, p[2].1);
         if area.abs() < 1e-12 {
@@ -2386,9 +2679,19 @@ mod raster {
                 if depth > zbuf[idx] {
                     zbuf[idx] = depth;
                     mask[idx] = 255;
-                    rgb[idx * 3] = shade[0];
-                    rgb[idx * 3 + 1] = shade[1];
-                    rgb[idx * 3 + 2] = shade[2];
+                    let c = if hatch {
+                        // 45° drafting hatch: ink line over pale ice.
+                        if (px + py) % HATCH_PERIOD_PX < HATCH_LINE_PX {
+                            FILL_DARK
+                        } else {
+                            HATCH_BG_RGB
+                        }
+                    } else {
+                        shade
+                    };
+                    rgb[idx * 3] = c[0];
+                    rgb[idx * 3 + 1] = c[1];
+                    rgb[idx * 3 + 2] = c[2];
                 }
             }
         }
@@ -3388,6 +3691,103 @@ mod tests {
             svg.contains(" A "),
             "drilled hole rim should render as exact arcs"
         );
+    }
+
+    /// A hollow box (cube minus an inset cube) whose cavity never reaches
+    /// the outside — a solid shell with walls all around.
+    fn hollow_box_vcad() -> &'static str {
+        r#"{
+  "version": "0.1",
+  "nodes": {
+    "1": { "id": 1, "name": "outer", "op": { "type": "Cube", "size": { "x": 30.0, "y": 30.0, "z": 30.0 } } },
+    "2": { "id": 2, "name": "inner", "op": { "type": "Cube", "size": { "x": 20.0, "y": 20.0, "z": 20.0 } } },
+    "3": { "id": 3, "name": "inner_placed", "op": { "type": "Translate", "child": 2, "offset": { "x": 5.0, "y": 5.0, "z": 5.0 } } },
+    "4": { "id": 4, "name": "shell", "op": { "type": "Difference", "left": 1, "right": 3 } }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [{ "root": 4, "material": "default" }]
+}"#
+    }
+
+    #[test]
+    fn parses_section_planes() {
+        use std::str::FromStr;
+        let s = SectionPlane::from_str("z=10").unwrap();
+        assert_eq!(s.axis, Axis::Z);
+        assert!((s.coord - 10.0).abs() < 1e-12);
+        assert_eq!(SectionPlane::from_str("X=-2.5").unwrap().axis, Axis::X);
+        assert!(SectionPlane::from_str("w=1").is_err());
+        assert!(SectionPlane::from_str("z").is_err());
+        assert!(SectionPlane::from_str("z=abc").is_err());
+    }
+
+    /// Sectioning a hollow box at mid-height must expose the cavity: the
+    /// SVG gains cross-hatched cut faces (the hatch pattern def plus
+    /// polygons filled with it) that an unsectioned render lacks.
+    #[test]
+    fn section_of_hollow_box_emits_hatched_cut_faces() {
+        let plane = SectionPlane {
+            axis: Axis::Z,
+            coord: 15.0,
+        };
+        let svg =
+            render_svg_str_section(hollow_box_vcad(), 4.0, View::Isometric, false, Some(plane), &RenderAnnotations::default())
+                .expect("sectioned hollow box should render");
+        assert!(
+            svg.contains(r#"<pattern id="section-hatch""#),
+            "expected the section hatch pattern def"
+        );
+        assert!(
+            svg.contains(r#"fill="url(#section-hatch)""#),
+            "expected polygons filled with the section hatch"
+        );
+
+        let plain = render_svg_str_view(hollow_box_vcad(), 4.0, View::Isometric).unwrap();
+        assert!(
+            !plain.contains("section-hatch"),
+            "unsectioned render must not carry hatch markup"
+        );
+    }
+
+    /// A section plane entirely above the part removes nothing and adds no
+    /// hatched faces; one entirely below removes everything.
+    #[test]
+    fn section_plane_outside_part_bounds() {
+        let above = SectionPlane {
+            axis: Axis::Z,
+            coord: 100.0,
+        };
+        let svg =
+            render_svg_str_section(hollow_box_vcad(), 2.0, View::Isometric, false, Some(above), &RenderAnnotations::default())
+                .expect("plane above the part should render it uncut");
+        assert!(!svg.contains(r#"fill="url(#section-hatch)""#));
+
+        let below = SectionPlane {
+            axis: Axis::Z,
+            coord: -100.0,
+        };
+        assert!(
+            render_svg_str_section(hollow_box_vcad(), 2.0, View::Isometric, false, Some(below), &RenderAnnotations::default())
+                .is_err(),
+            "plane below the part removes all material"
+        );
+    }
+
+    #[cfg(feature = "raster")]
+    #[test]
+    fn section_composes_with_jpeg_and_view() {
+        let opts = RasterOptions {
+            view: View::Front,
+            size_px: 256,
+            section: Some(SectionPlane {
+                axis: Axis::Y,
+                coord: 15.0,
+            }),
+            ..Default::default()
+        };
+        let jpg = render_jpeg_str(hollow_box_vcad(), &opts).unwrap();
+        assert_eq!(&jpg[..2], &[0xFF, 0xD8]);
     }
 
     /// `tint_ramp` was previously capped at k ≤ 0.2 — even fully-saturated
