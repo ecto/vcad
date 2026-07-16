@@ -38,6 +38,8 @@ vcad-render part.vcad --scale 4.0 > big.svg
 vcad-render part.vcad --section z=10 > cutaway.svg    # cutaway view
 vcad-render part.vcad -o out.jpg                 # format from extension (.svg/.jpg/.png)
 vcad-render part.vcad -o out.png                 # transparent RGBA, 4096px
+vcad-render part.vcad --sheet > sheet.svg        # multi-view drawing sheet
+vcad-render part.vcad --sheet --size 1600 -o sheet.jpg
 vcad-render parts/ --out-dir renders/ --format png    # batch a directory
 
 # Ray-traced output (direct BRep ray tracing, no tessellation):
@@ -50,6 +52,7 @@ vcad-render part.vcad --raytrace -o out.jpg --view hero --size 1440 --quality 95
 | `--view <V>` | `iso` | Camera: `iso`/`front`/`side`/`top`/`hero`. |
 | `--scale <N>` | `2.0` | Pixels per millimetre (SVG). Bigger = larger SVG. |
 | `--transparent` | off | Transparent SVG background. |
+| `--sheet` | off | Multi-view drawing sheet instead of a single view (see below). |
 | `--exact-edges` | off | Emit BRep-exact linework where available (SVG; see below). |
 | `--section x=N\|y=N\|z=N` | off | Section (cutaway) view: the half of the model on the camera's side of the plane is boolean-subtracted before rendering (you always look into the cut), and the exposed cut faces are drawn with a 45° drafting hatch. Composes with `--view` and raster output. A solid whose section boolean fails is rendered uncut (noted on stderr) — the render never fails outright. |
 | `--axes` | off | Overlay an X/Y/Z origin gizmo (kernel is Z-up). |
@@ -60,7 +63,7 @@ vcad-render part.vcad --raytrace -o out.jpg --view hero --size 1440 --quality 95
 | `--raytrace` | off | Render the raster output via direct BRep ray tracing (needs `.png`/`.jpg`). |
 | `--out-dir <DIR>` | sibling | Directory for batch outputs. |
 | `--format <F>` | `svg` | Batch output format: `svg`, `jpeg`, or `png`. |
-| `--size <N>` | `1024` (JPEG), `4096` (PNG) | Raster canvas size in pixels. Edge stroke weight and curve tessellation scale with it. |
+| `--size <N>` | `1024` (JPEG), `4096` (PNG) | Raster canvas size in pixels; with `--sheet`, the overall sheet width (default `1600`). Edge stroke weight and curve tessellation scale with it. |
 | `--fill <F>` | `0.6` | Fraction of canvas the part's long axis fills (raster). |
 | `--quality <Q>` | `92` | JPEG quality, 1–100 (ignored for PNG). |
 
@@ -73,6 +76,23 @@ Multiple inputs (or a directory, which expands to its `*.vcad` files)
 render in batch, each to `<stem>.<ext>` next to the input or in
 `--out-dir`. A per-file failure is reported on stderr but doesn't abort
 the batch.
+
+### Drawing-sheet mode (`--sheet`)
+
+`--sheet` emits a single landscape sheet laying out **front, side, top, and
+isometric** views in the classic third-angle arrangement (top view above
+front, side view to the right, iso in the remaining corner). All four views
+share one scale so they are dimensionally consistent, each carries a caption
+(FRONT/TOP/SIDE/ISO), and a title block in the bottom-right corner shows the
+document name, overall bounding-box dimensions in mm, the shared scale, and a
+date placeholder. Works for both SVG (default, stdout) and JPEG (`-o
+sheet.jpg`) output; `--size` sets the overall sheet width (height is derived,
+A-series landscape).
+
+The sheet is a pure composition layer ([`src/sheet.rs`](src/sheet.rs)): each
+view goes through the ordinary `render_svg_str_opts` / `render_png_str` entry
+points and is nested into the sheet, so views are identical to the equivalent
+single-view render and new single-view features need no work here.
 
 ### `--exact-edges`: BRep-exact curves
 

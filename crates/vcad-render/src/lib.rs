@@ -40,6 +40,7 @@
 
 mod exact;
 pub mod pcb;
+pub mod sheet;
 
 use std::collections::HashMap;
 use std::panic::{catch_unwind, AssertUnwindSafe};

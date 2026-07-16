@@ -1,0 +1,9 @@
+{
+  "id": "2026-07-15-render-drawing-sheet",
+  "version": "0.9.4",
+  "date": "2026-07-15",
+  "category": "feat",
+  "title": "Multi-view drawing sheets in vcad-render",
+  "summary": "vcad-render --sheet lays out front, side, top, and isometric views in third-angle arrangement at one shared scale, with captions and a title block, as SVG or JPEG.",
+  "features": ["render", "drafting", "drawing-sheet"]
+}

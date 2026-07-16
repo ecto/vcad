@@ -7,6 +7,7 @@
 //!   vcad-render <path.vcad> [--azimuth <deg>] [--elevation <deg>] [--focus <part-name>]
 //!   vcad-render <path.vcad> -o out.jpg [--view ...] [--size <px>] [--fill <frac>] [--quality <1-100>]
 //!   vcad-render <path.vcad> -o out.png [--raytrace]   # RGBA raster, transparent background
+//!   vcad-render <path.vcad> --sheet [--size <sheet-width-px>] [-o out.svg|out.jpg]
 //!   vcad-render <dir-or-paths...> [--out-dir <dir>] [--format svg|jpeg|png]
 //!
 //! With a single input and no output flag, a self-contained `<svg>` goes to
@@ -15,7 +16,10 @@
 //! legacy spelling of `-o <path.jpg>`. PNG output is RGBA with a transparent
 //! background. `--raytrace` swaps the tessellated raster path for a
 //! pixel-perfect direct-BRep ray trace (exact curved silhouettes, no
-//! tessellation); it needs a raster output (`.png`/`.jpg`). Multiple inputs
+//! tessellation); it needs a raster output (`.png`/`.jpg`). `--sheet` emits
+//! a multi-view drawing sheet (front/side/top/iso in third-angle
+//! arrangement at one shared scale, with a title block) instead of a single
+//! view, as SVG or JPEG. Multiple inputs
 //! (or a directory, which expands to its `*.vcad` files) render in batch,
 //! each to a sibling output file or into `--out-dir`; a per-file failure is
 //! reported but does not abort the batch. All rendering logic lives in the
@@ -37,6 +41,11 @@ use clap::{Parser, ValueEnum};
 use vcad_render::{
     render_svg_str_opts, RenderAnnotations, SectionPlane, SvgOptions, View, DEFAULT_SCALE,
 };
+
+/// Default overall width of a `--sheet` render when `--size` is unset.
+/// Larger than the single-view raster default: a sheet holds four views
+/// plus a title block, so it needs the room.
+const SHEET_DEFAULT_WIDTH_PX: u32 = 1600;
 
 /// Output format for a render. Single-file `-o` infers this from the output
 /// extension; batch mode takes it from `--format`.
@@ -120,6 +129,12 @@ struct Cli {
     #[arg(long)]
     transparent: bool,
 
+    /// Multi-view drawing sheet (front/side/top/iso in third-angle
+    /// arrangement at one shared scale, with a title block) instead of a
+    /// single view. Uses `--size` as the sheet width; SVG and JPEG only.
+    #[arg(long)]
+    sheet: bool,
+
     /// Emit BRep-exact linework where available: circular model edges
     /// (cylinder/cone rims) and sphere view outlines become exact SVG
     /// elliptical arcs instead of tessellated polylines (SVG only).
@@ -162,7 +177,8 @@ struct Cli {
     format: Format,
 
     /// Raster canvas size in pixels (JPEG/PNG). Defaults to 1024 for JPEG
-    /// and 4096 for PNG when unset.
+    /// and 4096 for PNG when unset; with `--sheet`, the overall sheet width
+    /// (default 1600).
     #[arg(long)]
     size: Option<u32>,
 
@@ -290,7 +306,69 @@ fn render_raster(_raw: &str, _cli: &Cli, _format: Format) -> Result<Vec<u8>, Str
     Err("this build of vcad-render lacks the `raster` feature".to_string())
 }
 
-/// Render one input to `dest` (`None` = SVG on stdout) in `format`.
+/// The title-block name for a sheet render: the input file stem.
+fn sheet_title(input: &Path) -> String {
+    input
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "untitled".to_string())
+}
+
+#[cfg(feature = "raster")]
+fn render_sheet_jpeg(raw: &str, input: &Path, cli: &Cli) -> Result<Vec<u8>, String> {
+    vcad_render::sheet::render_sheet_jpeg_str(
+        raw,
+        &vcad_render::sheet::SheetRasterOptions {
+            width_px: cli.size.unwrap_or(SHEET_DEFAULT_WIDTH_PX),
+            quality: cli.quality,
+            title: sheet_title(input),
+        },
+    )
+}
+
+#[cfg(not(feature = "raster"))]
+fn render_sheet_jpeg(_raw: &str, _input: &Path, _cli: &Cli) -> Result<Vec<u8>, String> {
+    Err("this build of vcad-render lacks the `raster` feature".to_string())
+}
+
+/// Render a multi-view drawing sheet for one input. SVG and JPEG only —
+/// the sheet is a drafting deliverable, not a transparent asset.
+fn render_sheet_one(
+    input: &Path,
+    dest: Option<&Path>,
+    format: Format,
+    cli: &Cli,
+    raw: &str,
+) -> Result<(), String> {
+    if cli.raytrace {
+        return Err("--sheet and --raytrace cannot be combined".to_string());
+    }
+    let bytes = match format {
+        Format::Svg => {
+            let svg = vcad_render::sheet::render_sheet_svg_str(
+                raw,
+                &vcad_render::sheet::SheetOptions {
+                    width_px: cli.size.unwrap_or(SHEET_DEFAULT_WIDTH_PX) as f64,
+                    title: sheet_title(input),
+                },
+            )?;
+            match dest {
+                None => {
+                    println!("{}", svg);
+                    return Ok(());
+                }
+                Some(_) => svg.into_bytes(),
+            }
+        }
+        Format::Jpeg => render_sheet_jpeg(raw, input, cli)?,
+        Format::Png => return Err("--sheet supports SVG and JPEG output only, not PNG".to_string()),
+    };
+    let dest = dest.expect("raster output always has a destination path");
+    std::fs::write(dest, bytes).map_err(|e| format!("write {}: {}", dest.display(), e))
+}
+
+/// Render one input to `dest` (`None` = SVG on stdout) in `format`. With
+/// `--sheet`, a multi-view drawing sheet replaces the single view.
 fn render_one(input: &Path, dest: Option<&Path>, format: Format, cli: &Cli) -> Result<(), String> {
     if cli.raytrace && !format.is_raster() {
         return Err(
@@ -300,6 +378,9 @@ fn render_one(input: &Path, dest: Option<&Path>, format: Format, cli: &Cli) -> R
     }
     let raw =
         std::fs::read_to_string(input).map_err(|e| format!("read {}: {}", input.display(), e))?;
+    if cli.sheet {
+        return render_sheet_one(input, dest, format, cli, &raw);
+    }
     let bytes = match format {
         Format::Svg => {
             let svg = render_svg_str_opts(
