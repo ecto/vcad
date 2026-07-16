@@ -605,57 +605,24 @@ fn route_pass(
 ) -> Pass {
     let mut session = RouteSession::from_pcb(pcb);
     let mut placed: Vec<Placed> = Vec::new();
-    let mut unrouted_conns: Vec<Conn> = Vec::new();
 
-    // Greedy pass, speculatively parallel: search a batch of connections
-    // concurrently against a frozen session snapshot (searches only read the
-    // session), then commit sequentially in batch order, re-validating each
-    // candidate against the session as it actually grows. A candidate whose
-    // copper conflicts with an earlier commit in the same batch is requeued
-    // and re-searched against the updated board — the DRC-clean invariant is
-    // untouched because nothing uncommitted is ever trusted. Bounded retries
-    // keep a pathological cluster from ping-ponging.
-    const MAX_COMMIT_RETRIES: usize = 3;
-    let mut queue: Vec<(Conn, usize)> = rats
+    // Greedy pass, speculatively parallel (see [`route_batch`]).
+    let conns: Vec<Conn> = rats
         .iter()
         .filter(|l| nets_filter.is_empty() || nets_filter.iter().any(|n| n == &l.net))
-        .map(|l| ((l.net.clone(), l.from, l.to), 0usize))
+        .map(|l| (l.net.clone(), l.from, l.to))
         .collect();
-    let batch_size = rayon::current_num_threads().max(1) * 2;
-    while !queue.is_empty() {
-        let batch: Vec<(Conn, usize)> = queue.drain(..batch_size.min(queue.len())).collect();
-        let candidates: Vec<Option<Candidate>> = batch
-            .par_iter()
-            .map(|((net, from, to), _)| {
-                search_route(
-                    &session,
-                    pcb,
-                    width,
-                    net,
-                    *from,
-                    *to,
-                    cong,
-                    use_push_shove,
-                    max_expansions,
-                    fine_retry,
-                )
-            })
-            .collect();
-        for (((net, from, to), attempts), cand) in batch.into_iter().zip(candidates) {
-            match cand {
-                None => unrouted_conns.push((net, from, to)),
-                Some(c) => match validate_and_commit(&mut session, pcb, c, &placed) {
-                    Some(p) => placed.push(p),
-                    // Conflicted with an earlier commit in this batch: search
-                    // again against the grown session.
-                    None if attempts < MAX_COMMIT_RETRIES => {
-                        queue.push(((net, from, to), attempts + 1));
-                    }
-                    None => unrouted_conns.push((net, from, to)),
-                },
-            }
-        }
-    }
+    let unrouted_conns = route_batch(
+        &mut session,
+        pcb,
+        width,
+        conns,
+        &mut placed,
+        cong,
+        use_push_shove,
+        max_expansions,
+        fine_retry,
+    );
 
     // Rip-up passes: iterate to convergence (bounded). One pass rips the copper
     // blocking a failed connection, routes it, then re-routes the victims;
@@ -684,6 +651,86 @@ fn route_pass(
     }
 
     (session, placed, pending)
+}
+
+/// Route a set of connections against `session`, speculatively parallel:
+/// search a batch concurrently against a frozen session snapshot (searches
+/// only read the session), then commit sequentially in batch order,
+/// re-validating each candidate against the session as it actually grows. A
+/// candidate whose copper conflicts with an earlier commit in the same batch
+/// is requeued and re-searched against the updated board — the DRC-clean
+/// invariant is untouched because nothing uncommitted is ever trusted.
+/// Bounded retries keep a pathological cluster from ping-ponging. Returns
+/// the connections that could not be routed; successes land in `placed`.
+#[allow(clippy::too_many_arguments)]
+fn route_batch(
+    session: &mut RouteSession,
+    pcb: &Pcb,
+    width: f64,
+    conns: Vec<Conn>,
+    placed: &mut Vec<Placed>,
+    cong: &Congestion,
+    use_push_shove: bool,
+    max_expansions: usize,
+    fine_retry: bool,
+) -> Vec<Conn> {
+    const MAX_COMMIT_RETRIES: usize = 3;
+    let mut unrouted: Vec<Conn> = Vec::new();
+    let mut queue: Vec<(Conn, usize)> = conns.into_iter().map(|c| (c, 0usize)).collect();
+    let batch_size = rayon::current_num_threads().max(1) * 2;
+    while !queue.is_empty() {
+        let batch: Vec<(Conn, usize)> = queue.drain(..batch_size.min(queue.len())).collect();
+        let candidates: Vec<Option<Candidate>> = batch
+            .par_iter()
+            .map(|((net, from, to), _)| {
+                search_route(
+                    session,
+                    pcb,
+                    width,
+                    net,
+                    *from,
+                    *to,
+                    cong,
+                    use_push_shove,
+                    max_expansions,
+                    fine_retry,
+                )
+            })
+            .collect();
+        for (((net, from, to), attempts), cand) in batch.into_iter().zip(candidates) {
+            match cand {
+                None => unrouted.push((net, from, to)),
+                Some(c) => match validate_and_commit(session, pcb, c, placed) {
+                    Some(p) => placed.push(p),
+                    // Conflicted with an earlier commit in this batch: search
+                    // again against the grown session.
+                    None if attempts < MAX_COMMIT_RETRIES => {
+                        queue.push(((net, from, to), attempts + 1));
+                    }
+                    // Retries exhausted on speculative conflicts: one fresh
+                    // sequential search against the live session, so batching
+                    // can never do worse than the one-at-a-time router — a
+                    // connection is unrouted only if routing it *now* fails.
+                    None => match try_route(
+                        session,
+                        pcb,
+                        width,
+                        &net,
+                        from,
+                        to,
+                        placed,
+                        cong,
+                        use_push_shove,
+                        max_expansions,
+                    ) {
+                        Some(p) => placed.push(p),
+                        None => unrouted.push((net, from, to)),
+                    },
+                },
+            }
+        }
+    }
+    unrouted
 }
 
 /// Try to route one connection against `session` with the layer-aware 3D maze
@@ -1577,24 +1624,20 @@ fn ripup_pass(
             still.push((net, from, to));
         }
 
-        // Re-route every victim; one that can't be placed becomes unrouted.
-        for v in victims {
-            match try_route(
-                session,
-                pcb,
-                width,
-                &v.net,
-                v.from,
-                v.to,
-                placed,
-                cong,
-                use_push_shove,
-                max_expansions,
-            ) {
-                Some(p) => placed.push(p),
-                None => still.push((v.net, v.from, v.to)),
-            }
-        }
+        // Re-route every victim — speculatively parallel, like the greedy
+        // pass; one that can't be placed becomes unrouted.
+        let victim_conns: Vec<Conn> = victims.into_iter().map(|v| (v.net, v.from, v.to)).collect();
+        still.extend(route_batch(
+            session,
+            pcb,
+            width,
+            victim_conns,
+            placed,
+            cong,
+            use_push_shove,
+            max_expansions,
+            true,
+        ));
     }
 
     still
