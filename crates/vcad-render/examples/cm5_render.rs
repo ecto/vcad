@@ -13,9 +13,11 @@
 use vcad_ecad_pcb::router::{route_all_with_opts, RouteOptions};
 use vcad_ecad_symbols::parse_kicad_pcb;
 use vcad_ir::ecad::{Pcb, PcbLayer, Trace, Via};
-use vcad_render::pcb::render_pcb_svg;
+use vcad_render::pcb::{render_pcb_svg_opts, PcbRenderOpts};
 
-/// Every copper layer on the board plus outline + front silk, in z-order.
+/// Every copper layer on the board plus the outline, in z-order. No
+/// silkscreen: on a 479-footprint board the refdes/value text is a solid
+/// wall of glyphs that buries the copper — the copper is the story here.
 fn render_layers(pcb: &Pcb) -> Vec<PcbLayer> {
     let mut layers: Vec<PcbLayer> = pcb
         .stackup
@@ -25,8 +27,26 @@ fn render_layers(pcb: &Pcb) -> Vec<PcbLayer> {
         .filter(|l| l.is_copper())
         .collect();
     layers.push(PcbLayer::EdgeCuts);
-    layers.push(PcbLayer::FSilkS);
     layers
+}
+
+/// Copper-first styling: no value labels, no net labels, keep the ratsnest
+/// (open connections are part of the scoreboard's story).
+fn render_opts() -> PcbRenderOpts {
+    PcbRenderOpts {
+        show_values: false,
+        show_net_labels: false,
+        ..Default::default()
+    }
+}
+
+fn write_svg(out_dir: &str, name: &str, pcb: &Pcb) {
+    std::fs::write(
+        format!("{out_dir}/{name}.svg"),
+        render_pcb_svg_opts(pcb, &render_layers(pcb), 12.0, &render_opts()),
+    )
+    .unwrap_or_else(|e| panic!("write {name}.svg: {e}"));
+    eprintln!("wrote {out_dir}/{name}.svg");
 }
 
 fn main() {
@@ -42,8 +62,14 @@ fn main() {
         .unwrap_or(usize::MAX);
     std::fs::create_dir_all(&out_dir).expect("create out_dir");
 
-    let text = std::fs::read_to_string(&path).expect("read kicad_pcb");
-    let mut pcb = parse_kicad_pcb(&text).expect("parse kicad_pcb");
+    let text = std::fs::read_to_string(&path).expect("read board file");
+    // A saved `.pcb.json` (written below after routing) re-renders directly —
+    // iterate on styling without paying for another routing run.
+    let mut pcb = if path.ends_with(".pcb.json") {
+        serde_json::from_str(&text).expect("parse pcb json")
+    } else {
+        parse_kicad_pcb(&text).expect("parse kicad_pcb")
+    };
 
     // Zones are dropped for this visual demo: rendering a pour runs a poly2d
     // boolean per zone (128 here — it dominates the whole run; the DRC-side
@@ -53,12 +79,7 @@ fn main() {
     pcb.zones.clear();
 
     // The human reference, exactly as imported.
-    std::fs::write(
-        format!("{out_dir}/human.svg"),
-        render_pcb_svg(&pcb, &render_layers(&pcb), 12.0),
-    )
-    .expect("write human.svg");
-    eprintln!("wrote {out_dir}/human.svg");
+    write_svg(&out_dir, "human", &pcb);
 
     // `max_nets == 0`: render the imported reference only, skip routing.
     if max_nets == 0 {
@@ -147,10 +168,13 @@ fn main() {
         });
     }
 
+    write_svg(&out_dir, "vcad", &pcb);
+
+    // Save the routed board so styling can be iterated without re-routing
+    // (deserialize and call render_pcb_svg_opts directly).
     std::fs::write(
-        format!("{out_dir}/vcad.svg"),
-        render_pcb_svg(&pcb, &render_layers(&pcb), 12.0),
+        format!("{out_dir}/vcad.pcb.json"),
+        serde_json::to_string(&pcb).expect("serialize routed board"),
     )
-    .expect("write vcad.svg");
-    eprintln!("wrote {out_dir}/vcad.svg");
+    .expect("write vcad.pcb.json");
 }
