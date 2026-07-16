@@ -6083,6 +6083,47 @@ export function render_svg_view(vcad_json, scale, view) {
 }
 
 /**
+ * Render raw `.vcad` document JSON to an SVG with a highlight set — the
+ * "what did my edit just touch" render.
+ *
+ * `highlight_json` is a JSON array of part identifiers (root node ids as
+ * reported in a mutation's `changed` diff, node names, or assembly
+ * instance ids/names). Highlighted parts keep their full material colour
+ * and gain a brand-orange accent outline; every other part is ghosted
+ * toward the paper. An empty array renders normally; a non-empty set that
+ * matches no part is an error listing the document's parts.
+ * @param {string} vcad_json
+ * @param {number} scale
+ * @param {string} view
+ * @param {string} highlight_json
+ * @returns {string}
+ */
+export function render_svg_view_highlight(vcad_json, scale, view, highlight_json) {
+    let deferred5_0;
+    let deferred5_1;
+    try {
+        const ptr0 = passStringToWasm0(vcad_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(view, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passStringToWasm0(highlight_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len2 = WASM_VECTOR_LEN;
+        const ret = wasm.render_svg_view_highlight(ptr0, len0, scale, ptr1, len1, ptr2, len2);
+        var ptr4 = ret[0];
+        var len4 = ret[1];
+        if (ret[3]) {
+            ptr4 = 0; len4 = 0;
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        deferred5_0 = ptr4;
+        deferred5_1 = len4;
+        return getStringFromWasm0(ptr4, len4);
+    } finally {
+        wasm.__wbindgen_free(deferred5_0, deferred5_1, 1);
+    }
+}
+
+/**
  * Render a section (cutaway) view: the document cut by an axis-aligned
  * plane, with exposed cut faces cross-hatched drafting-style.
  *
@@ -8499,12 +8540,12 @@ function __wbg_get_imports() {
             arg0.writeTexture(arg1, arg2, arg3, arg4);
         },
         __wbindgen_cast_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 2756, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 2757, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 2757, function: Function { arguments: [NamedExternref("GPUUncapturedErrorEvent")], shim_idx: 2758, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen_6dc29d3b0fc4fccd___closure__destroy___dyn_core_7d5f0a2ba6a62c33___ops__function__FnMut__wgpu_c488dbbed5add906___backend__webgpu__webgpu_sys__gen_GpuUncapturedErrorEvent__GpuUncapturedErrorEvent____Output_______, wasm_bindgen_6dc29d3b0fc4fccd___convert__closures_____invoke___wgpu_c488dbbed5add906___backend__webgpu__webgpu_sys__gen_GpuUncapturedErrorEvent__GpuUncapturedErrorEvent_____);
             return ret;
         },
         __wbindgen_cast_0000000000000002: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { dtor_idx: 3453, function: Function { arguments: [Externref], shim_idx: 3454, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { dtor_idx: 3454, function: Function { arguments: [Externref], shim_idx: 3455, ret: Unit, inner_ret: Some(Unit) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm.wasm_bindgen_6dc29d3b0fc4fccd___closure__destroy___dyn_core_7d5f0a2ba6a62c33___ops__function__FnMut__wasm_bindgen_6dc29d3b0fc4fccd___JsValue____Output_______, wasm_bindgen_6dc29d3b0fc4fccd___convert__closures_____invoke___wasm_bindgen_6dc29d3b0fc4fccd___JsValue_____);
             return ret;
         },

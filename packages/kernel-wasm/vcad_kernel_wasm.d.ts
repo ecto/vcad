@@ -2425,6 +2425,19 @@ export function render_svg_annotated(vcad_json: string, scale: number, view: str
 export function render_svg_view(vcad_json: string, scale: number, view: string): string;
 
 /**
+ * Render raw `.vcad` document JSON to an SVG with a highlight set — the
+ * "what did my edit just touch" render.
+ *
+ * `highlight_json` is a JSON array of part identifiers (root node ids as
+ * reported in a mutation's `changed` diff, node names, or assembly
+ * instance ids/names). Highlighted parts keep their full material colour
+ * and gain a brand-orange accent outline; every other part is ghosted
+ * toward the paper. An empty array renders normally; a non-empty set that
+ * matches no part is an error listing the document's parts.
+ */
+export function render_svg_view_highlight(vcad_json: string, scale: number, view: string, highlight_json: string): string;
+
+/**
  * Render a section (cutaway) view: the document cut by an axis-aligned
  * plane, with exposed cut faces cross-hatched drafting-style.
  *
@@ -2713,6 +2726,7 @@ export interface InitOutput {
     readonly render_svg: (a: number, b: number, c: number) => [number, number, number, number];
     readonly render_svg_annotated: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
     readonly render_svg_view: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
+    readonly render_svg_view_highlight: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number, number, number];
     readonly render_svg_view_section: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number, number, number];
     readonly sectionMesh: (a: any, b: number, c: number, d: number, e: number) => any;
     readonly solid_boundaryEdges: (a: number, b: number) => [number, number];
