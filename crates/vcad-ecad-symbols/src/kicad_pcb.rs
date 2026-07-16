@@ -83,6 +83,8 @@ fn parse_layer(s: &str) -> Option<PcbLayer> {
         "In4.Cu" => Some(PcbLayer::In4Cu),
         "In5.Cu" => Some(PcbLayer::In5Cu),
         "In6.Cu" => Some(PcbLayer::In6Cu),
+        "In7.Cu" => Some(PcbLayer::In7Cu),
+        "In8.Cu" => Some(PcbLayer::In8Cu),
         "F.SilkS" => Some(PcbLayer::FSilkS),
         "B.SilkS" => Some(PcbLayer::BSilkS),
         "F.Mask" => Some(PcbLayer::FMask),
@@ -356,18 +358,8 @@ fn parse_stackup(root: &SExpr<'_>) -> LayerStackup {
                     // (N "F.Cu" signal)
                     if let Some(name) = cc.get(1).and_then(|v| v.as_str()) {
                         if let Some(layer) = parse_layer(name) {
-                            match layer {
-                                PcbLayer::FCu
-                                | PcbLayer::BCu
-                                | PcbLayer::In1Cu
-                                | PcbLayer::In2Cu
-                                | PcbLayer::In3Cu
-                                | PcbLayer::In4Cu
-                                | PcbLayer::In5Cu
-                                | PcbLayer::In6Cu => {
-                                    copper_layers.push(layer);
-                                }
-                                _ => {}
+                            if layer.is_copper() {
+                                copper_layers.push(layer);
                             }
                         }
                     }
@@ -381,17 +373,7 @@ fn parse_stackup(root: &SExpr<'_>) -> LayerStackup {
     }
 
     // Sort: FCu first, then inner, then BCu
-    copper_layers.sort_by_key(|l| match l {
-        PcbLayer::FCu => 0,
-        PcbLayer::In1Cu => 1,
-        PcbLayer::In2Cu => 2,
-        PcbLayer::In3Cu => 3,
-        PcbLayer::In4Cu => 4,
-        PcbLayer::In5Cu => 5,
-        PcbLayer::In6Cu => 6,
-        PcbLayer::BCu => 7,
-        _ => 8,
-    });
+    copper_layers.sort_by_key(|l| l.copper_position().unwrap_or(u8::MAX));
 
     let thickness = root
         .find("general")

@@ -1810,7 +1810,7 @@ export function ecadResolvePartDef(name: string, footprint?: string | null): any
  * unrouted (with a diagnostic naming the blockers, the congested region, and
  * a suggested layer/via) — the router never emits copper that shorts.
  */
-export function ecadRouteAll(pcb_json: string, width: number, nets_filter_json: string): any;
+export function ecadRouteAll(pcb_json: string, width: number, nets_filter_json: string, effort?: number | null): any;
 
 /**
  * Route a declared differential pair (P/N) coupled and length-matched.
@@ -2406,6 +2406,15 @@ export function render_pcb_svg_opts(pcb_json: string, layers_json: string, scale
 export function render_svg(vcad_json: string, scale: number): string;
 
 /**
+ * Render raw `.vcad` document JSON to an SVG with opt-in engineering
+ * annotations: an X/Y/Z origin gizmo (`axes`), part-name labels with
+ * leader lines (`labels`), and overall W×D×H bounding-box dimensions in mm
+ * (`dims`). With all three flags false the output matches
+ * [`render_svg_view`] exactly. `view` parses as in [`render_svg_view`].
+ */
+export function render_svg_annotated(vcad_json: string, scale: number, view: string, axes: boolean, labels: boolean, dims: boolean): string;
+
+/**
  * Render raw `.vcad` document JSON to an SVG from a named orthographic view.
  *
  * `view` accepts `"iso"`/`"isometric"`/`"hero"`, `"top"`, `"front"`, or
@@ -2690,6 +2699,7 @@ export interface InitOutput {
     readonly render_pcb_svg: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
     readonly render_pcb_svg_opts: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number, number, number];
     readonly render_svg: (a: number, b: number, c: number) => [number, number, number, number];
+    readonly render_svg_annotated: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number) => [number, number, number, number];
     readonly render_svg_view: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
     readonly sectionMesh: (a: any, b: number, c: number, d: number, e: number) => any;
     readonly solid_boundaryEdges: (a: number, b: number) => [number, number];
@@ -2784,16 +2794,6 @@ export interface InitOutput {
     readonly wasmsketchsession_solve: (a: number) => number;
     readonly wasmsketchsession_toggleSelection: (a: number, b: number) => void;
     readonly wasmsketchsession_undo: (a: number) => number;
-    readonly checkSheetMetal: (a: number, b: number, c: number, d: number) => [number, number];
-    readonly costSheetMetal: (a: number, b: number, c: number, d: number, e: number) => [number, number];
-    readonly evaluateSheetMetalChain: (a: number, b: number) => [number, number];
-    readonly getSheetMetalBendTable: () => [number, number];
-    readonly getSheetMetalMaterials: () => [number, number];
-    readonly getSheetMetalShopCatalog: (a: number, b: number) => [number, number];
-    readonly nestSheetMetalParts: (a: number, b: number, c: number, d: number) => [number, number];
-    readonly nestedSheetMetalDxf: (a: number, b: number) => [number, number];
-    readonly sheetMetalFoldedStep: (a: number, b: number) => [number, number];
-    readonly sheetMetalSequence: (a: number, b: number) => [number, number];
     readonly __wbg_get_wasmcamsettings_feed_rate: (a: number) => number;
     readonly __wbg_get_wasmcamsettings_plunge_rate: (a: number) => number;
     readonly __wbg_get_wasmcamsettings_retract_z: (a: number) => number;
@@ -2847,7 +2847,7 @@ export interface InitOutput {
     readonly ecadResolveFootprint: (a: number, b: number, c: number) => [number, number, number];
     readonly ecadResolvePart: (a: number, b: number) => [number, number, number];
     readonly ecadResolvePartDef: (a: number, b: number, c: number, d: number) => [number, number, number];
-    readonly ecadRouteAll: (a: number, b: number, c: number, d: number, e: number) => [number, number, number];
+    readonly ecadRouteAll: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number, number];
     readonly ecadRouteDiffPair: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number];
     readonly ecadRouteNet: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => [number, number, number];
     readonly ecadRouteNetMaze: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number) => [number, number, number];
@@ -2863,23 +2863,6 @@ export interface InitOutput {
     readonly wasmcamsettings_fromJson: (a: number, b: number) => [number, number, number];
     readonly wasmcamsettings_new: () => number;
     readonly isEcadAvailable: () => number;
-    readonly __wbg_wasmkeybindings_free: (a: number, b: number) => void;
-    readonly digitizeSketch: (a: number, b: number, c: number, d: number) => [number, number, number, number];
-    readonly digitizeText: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
-    readonly isEmbroideryAvailable: () => number;
-    readonly readEmbroideryDst: (a: number, b: number) => [number, number, number, number];
-    readonly readEmbroideryPes: (a: number, b: number) => [number, number, number, number];
-    readonly wasmkeybindings_chordFor: (a: number, b: number, c: number) => [number, number];
-    readonly wasmkeybindings_commandsJson: (a: number) => [number, number];
-    readonly wasmkeybindings_conflictsJson: (a: number, b: number, c: number) => [number, number];
-    readonly wasmkeybindings_loadOverrides: (a: number, b: number, c: number) => number;
-    readonly wasmkeybindings_new: () => number;
-    readonly wasmkeybindings_resetAll: (a: number) => void;
-    readonly wasmkeybindings_resolve: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number];
-    readonly wasmkeybindings_saveOverrides: (a: number) => [number, number];
-    readonly wasmkeybindings_setBinding: (a: number, b: number, c: number, d: number, e: number) => void;
-    readonly writeEmbroideryDst: (a: number, b: number) => [number, number, number, number];
-    readonly writeEmbroideryPes: (a: number, b: number) => [number, number, number, number];
     readonly __wbg_get_slicersettings_first_layer_height: (a: number) => number;
     readonly __wbg_get_slicersettings_infill_density: (a: number) => number;
     readonly __wbg_get_slicersettings_infill_pattern: (a: number) => number;
@@ -2958,6 +2941,33 @@ export interface InitOutput {
     readonly circuitsim_reset: (a: number) => void;
     readonly circuitsim_setValue: (a: number, b: number, c: number) => void;
     readonly circuitsim_step: (a: number, b: number) => [number, number, number];
+    readonly __wbg_wasmkeybindings_free: (a: number, b: number) => void;
+    readonly digitizeSketch: (a: number, b: number, c: number, d: number) => [number, number, number, number];
+    readonly digitizeText: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
+    readonly isEmbroideryAvailable: () => number;
+    readonly readEmbroideryDst: (a: number, b: number) => [number, number, number, number];
+    readonly readEmbroideryPes: (a: number, b: number) => [number, number, number, number];
+    readonly wasmkeybindings_chordFor: (a: number, b: number, c: number) => [number, number];
+    readonly wasmkeybindings_commandsJson: (a: number) => [number, number];
+    readonly wasmkeybindings_conflictsJson: (a: number, b: number, c: number) => [number, number];
+    readonly wasmkeybindings_loadOverrides: (a: number, b: number, c: number) => number;
+    readonly wasmkeybindings_new: () => number;
+    readonly wasmkeybindings_resetAll: (a: number) => void;
+    readonly wasmkeybindings_resolve: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number];
+    readonly wasmkeybindings_saveOverrides: (a: number) => [number, number];
+    readonly wasmkeybindings_setBinding: (a: number, b: number, c: number, d: number, e: number) => void;
+    readonly writeEmbroideryDst: (a: number, b: number) => [number, number, number, number];
+    readonly writeEmbroideryPes: (a: number, b: number) => [number, number, number, number];
+    readonly checkSheetMetal: (a: number, b: number, c: number, d: number) => [number, number];
+    readonly costSheetMetal: (a: number, b: number, c: number, d: number, e: number) => [number, number];
+    readonly evaluateSheetMetalChain: (a: number, b: number) => [number, number];
+    readonly getSheetMetalBendTable: () => [number, number];
+    readonly getSheetMetalMaterials: () => [number, number];
+    readonly getSheetMetalShopCatalog: (a: number, b: number) => [number, number];
+    readonly nestSheetMetalParts: (a: number, b: number, c: number, d: number) => [number, number];
+    readonly nestedSheetMetalDxf: (a: number, b: number) => [number, number];
+    readonly sheetMetalFoldedStep: (a: number, b: number) => [number, number];
+    readonly sheetMetalSequence: (a: number, b: number) => [number, number];
     readonly __wbg_mdsim_free: (a: number, b: number) => void;
     readonly atoms_build_receipt: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => [number, number, number, number];
     readonly atoms_homogenize: (a: number, b: number, c: number, d: number) => [number, number, number, number];

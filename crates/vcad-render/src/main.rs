@@ -2,7 +2,7 @@
 //!
 //! Usage:
 //!   vcad-render <path.vcad> [--view iso|front|side|top|hero] [--scale <px-per-mm>] [--transparent]
-//!               [--axes] [--labels] [--dims]
+//!               [--section x=N|y=N|z=N] [--axes] [--labels] [--dims]
 //!   vcad-render <path.vcad> -o out.jpg [--view ...] [--size <px>] [--fill <frac>] [--quality <1-100>]
 //!   vcad-render <path.vcad> -o out.png   # RGBA raster with a transparent background
 //!   vcad-render <dir-or-paths...> [--out-dir <dir>] [--format svg|jpeg|png]
@@ -15,13 +15,16 @@
 //! file or into `--out-dir`; a per-file failure is reported but does not
 //! abort the batch. All rendering logic lives in the `vcad-render` library
 //! (see `lib.rs`); this binary only handles argument parsing and file IO.
+//!
+//! `--section` renders a cutaway: the half of the model on the camera's side
+//! of the plane is removed and the exposed cut faces are cross-hatched.
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::str::FromStr;
 
 use clap::{Parser, ValueEnum};
-use vcad_render::{render_svg_str_view_opts, RenderAnnotations, View, DEFAULT_SCALE};
+use vcad_render::{render_svg_str_section, RenderAnnotations, SectionPlane, View, DEFAULT_SCALE};
 
 /// Raster/vector format for batch outputs (single-file `-o` infers the
 /// format from the extension instead).
@@ -82,6 +85,12 @@ struct Cli {
     /// Transparent SVG background.
     #[arg(long)]
     transparent: bool,
+
+    /// Section (cutaway) plane: `x=N`, `y=N`, or `z=N` (mm). The half of the
+    /// model on the camera's side of the plane is removed and exposed cut
+    /// faces are cross-hatched. Composes with `--view` and raster output.
+    #[arg(long, value_parser = SectionPlane::from_str)]
+    section: Option<SectionPlane>,
 
     /// Overlay an X/Y/Z origin gizmo (kernel is Z-up).
     #[arg(long)]
@@ -170,6 +179,7 @@ fn raster_opts(cli: &Cli, png: bool) -> vcad_render::RasterOptions {
         size_px: cli.size.unwrap_or(if png { 4096 } else { 1024 }),
         fill_frac: cli.fill,
         quality: cli.quality,
+        section: cli.section,
         annotations: cli.annotations(),
     }
 }
@@ -200,11 +210,12 @@ fn render_one(input: &Path, dest: Option<&Path>, format: Format, cli: &Cli) -> R
         std::fs::read_to_string(input).map_err(|e| format!("read {}: {}", input.display(), e))?;
     let bytes = match format {
         Format::Svg => {
-            let svg = render_svg_str_view_opts(
+            let svg = render_svg_str_section(
                 &raw,
                 cli.scale,
                 cli.view,
                 cli.transparent,
+                cli.section,
                 &cli.annotations(),
                 &[],
             )?;

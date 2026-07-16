@@ -2206,6 +2206,10 @@
           "type": "number",
           "description": "Target raster width in pixels (default 800, clamped to 64–2048). Ignored when falling back to SVG output."
         },
+        "section": {
+          "type": "string",
+          "description": "Optional section (cutaway) plane: 'x=N', 'y=N', or 'z=N' (mm). The half of the model on the camera's side of the plane is removed and exposed cut faces are cross-hatched — use it to see inside cavities, bores, and wall thicknesses. Composes with `view`."
+        },
         "axes": {
           "type": "boolean",
           "description": "Overlay an X/Y/Z origin gizmo (kernel is Z-up) so the render carries its own orientation. Off by default."
@@ -4205,6 +4209,10 @@
         "receipt": {
           "type": "boolean",
           "description": "When true, wrap the route in a before/after DRC and return a `receipt` verdict (what it fixed, what it introduced incl. shorts, with each violation attributed to footprint vs routing) — instead of just a document_id. Re-routing rips up the prior autorouted copper first (idempotent by construction); the receipt proves it, surfacing any re-route that would short the board."
+        },
+        "effort": {
+          "type": "number",
+          "description": "Effort multiplier ≥ 0.1 (default 1): scales the router's iteration budgets (negotiation and rip-up rounds). Raise to 2–10 on a congested board that leaves nets unrouted; lower below 1 for a fast draft. Legality is unaffected — effort buys more attempts, not looser rules."
         }
       },
       "required": []
