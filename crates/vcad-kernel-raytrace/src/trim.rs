@@ -20,8 +20,15 @@ pub fn point_in_face(brep: &BRepSolid, face_id: FaceId, uv: Point2) -> bool {
     // Get UV coordinates of the outer loop vertices
     let outer_uvs = loop_uv_coords(brep, face.outer_loop, surface.as_ref());
 
+    // A closed surface covering the whole primitive (a full sphere or
+    // torus) is bounded only by its seam: the outer loop projects to a
+    // zero-area polygon in UV, which would reject every hit. Treat a
+    // degenerate outer loop as "untrimmed" — the face spans the entire
+    // surface — and still honour inner loops (holes) below.
+    let untrimmed = polygon_area(&outer_uvs).abs() < 1e-9;
+
     // Check if point is inside outer loop
-    if !point_in_polygon(&uv, &outer_uvs) {
+    if !untrimmed && !point_in_polygon(&uv, &outer_uvs) {
         return false;
     }
 
@@ -34,6 +41,21 @@ pub fn point_in_face(brep: &BRepSolid, face_id: FaceId, uv: Point2) -> bool {
     }
 
     true
+}
+
+/// Signed area of a UV polygon (shoelace). Near-zero means the loop is
+/// degenerate in parameter space — e.g. a closed surface's seam-only loop.
+fn polygon_area(polygon: &[Point2]) -> f64 {
+    if polygon.len() < 3 {
+        return 0.0;
+    }
+    let mut area = 0.0;
+    for i in 0..polygon.len() {
+        let a = &polygon[i];
+        let b = &polygon[(i + 1) % polygon.len()];
+        area += a.x * b.y - b.x * a.y;
+    }
+    area / 2.0
 }
 
 /// Get the UV coordinates of vertices in a loop by projecting 3D positions onto the surface.

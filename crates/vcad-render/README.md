@@ -35,9 +35,14 @@ mecheval leaderboard defaults to `target/debug/vcad-render`.
 ```bash
 vcad-render path/to/part.vcad > out.svg          # SVG on stdout
 vcad-render part.vcad --scale 4.0 > big.svg
-vcad-render part.vcad -o out.jpg                 # format from extension
+vcad-render part.vcad --section z=10 > cutaway.svg    # cutaway view
+vcad-render part.vcad -o out.jpg                 # format from extension (.svg/.jpg/.png)
 vcad-render part.vcad -o out.png                 # transparent RGBA, 4096px
 vcad-render parts/ --out-dir renders/ --format png    # batch a directory
+
+# Ray-traced output (direct BRep ray tracing, no tessellation):
+vcad-render part.vcad --raytrace -o out.png
+vcad-render part.vcad --raytrace -o out.jpg --view hero --size 1440 --quality 95
 ```
 
 | Flag | Default | Meaning |
@@ -45,11 +50,14 @@ vcad-render parts/ --out-dir renders/ --format png    # batch a directory
 | `--view <V>` | `iso` | Camera: `iso`/`front`/`side`/`top`/`hero`. |
 | `--scale <N>` | `2.0` | Pixels per millimetre (SVG). Bigger = larger SVG. |
 | `--transparent` | off | Transparent SVG background. |
+| `--exact-edges` | off | Emit BRep-exact linework where available (SVG; see below). |
+| `--section x=N\|y=N\|z=N` | off | Section (cutaway) view: the half of the model on the camera's side of the plane is boolean-subtracted before rendering (you always look into the cut), and the exposed cut faces are drawn with a 45° drafting hatch. Composes with `--view` and raster output. A solid whose section boolean fails is rendered uncut (noted on stderr) — the render never fails outright. |
 | `--axes` | off | Overlay an X/Y/Z origin gizmo (kernel is Z-up). |
 | `--labels` | off | Label each top-level part with its name. |
 | `--dims` | off | Overlay overall W×D×H bounding-box dimensions in mm. |
 | `-o, --output <PATH>` | stdout | Output path; format inferred from `.svg`/`.jpg`/`.jpeg`/`.png`. `-o -` = SVG on stdout. Single input only. |
 | `--jpeg <PATH>` | — | Legacy alias for `-o <path.jpg>`. |
+| `--raytrace` | off | Render the raster output via direct BRep ray tracing (needs `.png`/`.jpg`). |
 | `--out-dir <DIR>` | sibling | Directory for batch outputs. |
 | `--format <F>` | `svg` | Batch output format: `svg`, `jpeg`, or `png`. |
 | `--size <N>` | `1024` (JPEG), `4096` (PNG) | Raster canvas size in pixels. Edge stroke weight and curve tessellation scale with it. |
@@ -58,22 +66,45 @@ vcad-render parts/ --out-dir renders/ --format png    # batch a directory
 
 PNG output is RGBA with a fully transparent background (alpha 0 wherever no
 geometry or edge stroke was drawn) — the raster analogue of `--transparent`.
+The `--raytrace` PNG path is transparent too, with fractional alpha
+antialiasing its exact curved silhouettes.
 
 Multiple inputs (or a directory, which expands to its `*.vcad` files)
 render in batch, each to `<stem>.<ext>` next to the input or in
 `--out-dir`. A per-file failure is reported on stderr but doesn't abort
 the batch.
 
+### `--exact-edges`: BRep-exact curves
+
+By default every curved edge is a tessellated polyline, which facets
+visibly at high `--scale`. With `--exact-edges` the renderer walks the
+evaluated BRep and replaces recognisable curved linework with
+mathematically exact SVG elliptical-arc paths:
+
+- circular model edges (cylinder/cone rims — a bore's mouth, a boss's cap
+  edge — including ones produced by booleans), projected to exact ellipse
+  arcs;
+- sphere view outlines (the silhouette great circle for the current
+  orthographic view).
+
+Fills, shading, and hidden-line removal still run on the tessellation;
+exact curves replace only the linework, and anything the extractor doesn't
+recognise (tori, NURBS, boolean intersection seams) falls back to
+polylines. Cylinder/cone silhouette rulings are straight lines and stay as
+`<line>`s. Arc extents are matched against the mesh linework that would
+otherwise be drawn, so trimmed rims keep exactly the coverage of the
+polyline render.
+
 Exit codes: `0` on success, `2` on parse/eval/render failure (with a
 human-readable message on stderr). A batch exits `2` if any file failed.
 
 ## Tunable constants
 
-Edit at the top of `src/main.rs` if you need a different look:
+Edit at the top of `src/lib.rs` if you need a different look:
 
 | Constant | Default | Effect |
 |---|---|---|
-| `TESSELLATION_SEGMENTS` | `28` | Segments per cylinder/cone/sphere. Bumping this smooths curves at the cost of file size. |
+| `TESSELLATION_SEGMENTS` | `64` | Segments per cylinder/cone/sphere. Bumping this smooths curves at the cost of file size (`--exact-edges` sidesteps this for linework entirely). |
 | `COPLANAR_DOT_TOL` | `0.997` (~4.5°) | Tighter values reveal more crease lines; looser values hide more. |
 | `BACKFACE_DOT_MIN` | `-0.04` | How aggressively to cull back-facing triangles. Slightly negative so silhouette edges survive. |
 | `LIGHT` | `[-0.6, -0.7, 0.8]` | Light direction in kernel space (Z-up). |
@@ -85,10 +116,24 @@ Originally `mecheval-render` inside `mecheval/graders/`. Promoted to a
 standalone crate so other consumers (docs, marketing, CAD previews) can
 depend on it without pulling in the eval grader.
 
-## Future: raytrace mode
+## Raytrace mode
 
-A future `--raytrace` flag could swap out the tessellation pipeline for
-direct BRep ray tracing via [`vcad-kernel-raytrace`](../vcad-kernel-raytrace),
-producing pixel-perfect PNG output instead of vector SVG. That makes
-sense for marketing screenshots and high-fidelity previews; SVG remains
-the right pick for the leaderboard's drafting aesthetic.
+`--raytrace` swaps out the tessellation pipeline for direct BRep ray
+tracing via [`vcad-kernel-raytrace`](../vcad-kernel-raytrace): every pixel
+is an analytic ray–surface intersection (plane, cylinder, sphere, cone,
+torus, NURBS) through a SAH BVH with trimmed-face tests, so curved
+silhouettes are exact at any resolution — no facet banding, no segment
+count to tune. The camera is the same orthographic `View` basis and
+framing math as the tessellated raster path, and shading samples the same
+vcad-Blue tonal ramp (tinted by document material colours), so the two
+paths are drop-in alternatives. Assemblies render the same way as the
+tessellation path (instances are world-placed before tracing); mesh-only
+parts (e.g. frozen topology-optimization results) have no analytic
+surfaces and are skipped.
+
+It runs on the CPU (no GPU required) and lives behind the crate's
+`raytrace` cargo feature — default-on for the binary, off for the WASM
+build so it doesn't grow. Use it for marketing screenshots and
+high-fidelity previews. For vector output, `--exact-edges` delivers
+resolution-independent linework straight from the BRep; and SVG remains the
+right pick for the leaderboard's drafting aesthetic.

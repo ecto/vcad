@@ -16,7 +16,7 @@ import { getKernelWasm, resetKernelWasm, computeRatsnest } from "@vcad/engine";
 import type { NetlistResult } from "@vcad/engine";
 import { getNodePcb, getPcbNodeIds } from "@vcad/core";
 import type { Document, Pcb } from "@vcad/ir";
-import { getSession, resolveDocInput } from "./session.js";
+import { getSession, resolveDocInput, getLastChanged } from "./session.js";
 import { validatePcb, pcbValidationError } from "./pcb-validate.js";
 import { behavior, type ToolDef } from "./tool-def.js";
 import type { ToolResult } from "./tool-result.js";
@@ -65,6 +65,11 @@ export const renderViewSchema = {
       description:
         "Target raster width in pixels (default 800, clamped to 64–2048). Ignored when falling back to SVG output.",
     },
+    section: {
+      type: "string" as const,
+      description:
+        "Optional section (cutaway) plane: 'x=N', 'y=N', or 'z=N' (mm). The half of the model on the camera's side of the plane is removed and exposed cut faces are cross-hatched — use it to see inside cavities, bores, and wall thicknesses. Composes with `view`.",
+    },
     axes: {
       type: "boolean" as const,
       description:
@@ -79,6 +84,17 @@ export const renderViewSchema = {
       type: "boolean" as const,
       description:
         "Overlay overall W×D×H bounding-box dimensions in mm, drafting-style. Off by default.",
+    },
+    highlight: {
+      type: "array" as const,
+      items: { type: "string" as const },
+      description:
+        "Part ids (from a mutation's `changed` diff) or part names to spotlight: they keep full material color plus a brand-orange accent outline while every other part is ghosted. Errors if nothing matches.",
+    },
+    highlight_changed: {
+      type: "boolean" as const,
+      description:
+        "Highlight the parts touched by this session's most recent mutation (the last `changed` diff) — the one-flag way to see what your last edit did. Ignored when `highlight` is passed explicitly.",
     },
   },
 };
@@ -232,6 +248,23 @@ export async function renderView(
       ? "isometric"
       : view;
 
+  // Optional section (cutaway) plane: "x=N" | "y=N" | "z=N".
+  const sectionRaw = typeof args.section === "string" ? args.section.trim() : "";
+  if (sectionRaw && !/^[xyz]\s*=\s*-?\d+(\.\d+)?$/i.test(sectionRaw)) {
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify({
+            error: `invalid section '${sectionRaw}' — expected 'x=N', 'y=N', or 'z=N' (mm)`,
+            document_id: documentId,
+          }),
+        },
+      ],
+      isError: true,
+    };
+  }
+
   const annotations = {
     axes: args.axes === true,
     labels: args.labels === true,
@@ -240,9 +273,50 @@ export async function renderView(
   const wantAnnotations =
     annotations.axes || annotations.labels || annotations.dims;
 
+  // Resolve the highlight set: an explicit `highlight` list wins; otherwise
+  // `highlight_changed` pulls the part ids from the session's most recent
+  // mutation diff. A requested-but-unresolvable highlight is a loud error,
+  // never a silently unhighlighted render.
+  let highlight: string[] = Array.isArray(args.highlight)
+    ? (args.highlight as unknown[]).map(String)
+    : [];
+  if (highlight.length === 0 && args.highlight_changed === true) {
+    const last = documentId ? getLastChanged(documentId) : null;
+    if (!last || last.length === 0) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({
+              error:
+                "highlight_changed requested but this session has no recorded mutation diff" +
+                (documentId ? "" : " (inline documents have no session history)"),
+              document_id: documentId,
+              hint: "Make an edit first, or pass explicit part ids via `highlight`.",
+            }),
+          },
+        ],
+        isError: true,
+      };
+    }
+    highlight = last;
+  }
+
   const wasm = (await getKernelWasm()) as unknown as {
     render_svg: (vcadJson: string, scale: number) => string;
     render_svg_view?: (vcadJson: string, scale: number, view: string) => string;
+    render_svg_view_highlight?: (
+      vcadJson: string,
+      scale: number,
+      view: string,
+      highlightJson: string,
+    ) => string;
+    render_svg_view_section?: (
+      vcadJson: string,
+      scale: number,
+      view: string,
+      section: string,
+    ) => string;
     render_svg_annotated?: (
       vcadJson: string,
       scale: number,
@@ -259,6 +333,8 @@ export async function renderView(
       axes: boolean,
       labels: boolean,
       dims: boolean,
+      section: string | null,
+      highlightJson: string | null,
     ) => string;
   };
   if (typeof wasm.render_svg !== "function") {
@@ -273,10 +349,12 @@ export async function renderView(
     };
   }
 
-  // Orbit and focus need the camera-aware binding; refuse loudly (rather
-  // than silently rendering the wrong thing) when the WASM build predates it.
-  const needsCamera = hasOrbit || focus !== undefined;
-  if (needsCamera && typeof wasm.render_svg_camera !== "function") {
+  // render_svg_camera is the full superset (orbit + focus + annotations +
+  // section + highlight). Prefer it for everything; the narrower bindings are
+  // only fallbacks for a single feature on an older WASM build.
+  const hasCamera = typeof wasm.render_svg_camera === "function";
+  // Orbit and focus have no legacy binding — they require the superset.
+  if ((hasOrbit || focus !== undefined) && !hasCamera) {
     return {
       content: [
         {
@@ -291,17 +369,52 @@ export async function renderView(
       isError: true,
     };
   }
+  if (
+    sectionRaw &&
+    !hasCamera &&
+    typeof wasm.render_svg_view_section !== "function"
+  ) {
+    return {
+      content: [
+        {
+          type: "text",
+          text: "section views unavailable: kernel WASM build predates render_svg_view_section — rebuild @vcad/kernel-wasm.",
+        },
+      ],
+      isError: true,
+    };
+  }
+  if (
+    highlight.length > 0 &&
+    !hasCamera &&
+    typeof wasm.render_svg_view_highlight !== "function"
+  ) {
+    return {
+      content: [
+        {
+          type: "text",
+          text: "render_view highlight unavailable: kernel WASM build predates render_svg_view_highlight — rebuild vcad-kernel-wasm.",
+        },
+      ],
+      isError: true,
+    };
+  }
+
+  const needsCamera =
+    hasOrbit ||
+    focus !== undefined ||
+    wantAnnotations ||
+    sectionRaw !== "" ||
+    highlight.length > 0;
 
   let svg: string;
   try {
-    // render_svg_camera is the superset (orbit + focus + annotations). Use
-    // it whenever any of those are requested; fall back to render_svg_annotated
-    // (annotations only), render_svg_view (named view), then plain render_svg
-    // on older WASM builds.
+    // Prefer the superset binding when any feature is requested; otherwise
+    // fall back to the narrowest binding that serves the single requested
+    // feature (section → highlight → annotations → named view → plain).
     svg =
-      (needsCamera || wantAnnotations) &&
-      typeof wasm.render_svg_camera === "function"
-        ? wasm.render_svg_camera(
+      needsCamera && hasCamera
+        ? wasm.render_svg_camera!(
             JSON.stringify(doc),
             SVG_SCALE,
             viewStr,
@@ -309,19 +422,31 @@ export async function renderView(
             annotations.axes,
             annotations.labels,
             annotations.dims,
+            sectionRaw || null,
+            highlight.length > 0 ? JSON.stringify(highlight) : null,
           )
-        : wantAnnotations && typeof wasm.render_svg_annotated === "function"
-          ? wasm.render_svg_annotated(
-              JSON.stringify(doc),
-              SVG_SCALE,
-              view,
-              annotations.axes,
-              annotations.labels,
-              annotations.dims,
-            )
-          : view !== "iso" && typeof wasm.render_svg_view === "function"
-            ? wasm.render_svg_view(JSON.stringify(doc), SVG_SCALE, view)
-            : wasm.render_svg(JSON.stringify(doc), SVG_SCALE);
+        : sectionRaw && typeof wasm.render_svg_view_section === "function"
+          ? wasm.render_svg_view_section(JSON.stringify(doc), SVG_SCALE, view, sectionRaw)
+          : highlight.length > 0 &&
+              typeof wasm.render_svg_view_highlight === "function"
+            ? wasm.render_svg_view_highlight(
+                JSON.stringify(doc),
+                SVG_SCALE,
+                view,
+                JSON.stringify(highlight),
+              )
+            : wantAnnotations && typeof wasm.render_svg_annotated === "function"
+              ? wasm.render_svg_annotated(
+                  JSON.stringify(doc),
+                  SVG_SCALE,
+                  view,
+                  annotations.axes,
+                  annotations.labels,
+                  annotations.dims,
+                )
+              : view !== "iso" && typeof wasm.render_svg_view === "function"
+                ? wasm.render_svg_view(JSON.stringify(doc), SVG_SCALE, view)
+                : wasm.render_svg(JSON.stringify(doc), SVG_SCALE);
   } catch (e) {
     // A WebAssembly trap means a kernel panic that did NOT unwind —
     // wasm32 compiles panics to `unreachable`, so the kernel's own
@@ -363,11 +488,14 @@ export async function renderView(
   const raster = await rasterize(svg, widthPx);
   if (raster.png) {
     const viewSlug = hasOrbit ? `orbit-${azimuth}-${elevation}` : viewLabel;
+    const sectionSlug = sectionRaw
+      ? `-section-${sectionRaw.replace(/[^a-z0-9.-]/gi, "")}`
+      : "";
     const asset = makePngRenderAsset(raster.png, {
       tool: "render_view",
-      filename: `${documentId || "inline"}-${viewSlug}-${widthPx}.png`,
+      filename: `${documentId || "inline"}-${viewSlug}${sectionSlug}-${widthPx}.png`,
       width: widthPx,
-      alt: `vcad ${viewLabel} render`,
+      alt: `vcad ${viewLabel}${sectionRaw ? " section" : ""} render`,
     });
     return withRenderAssets<RenderViewResult>({
       content: [
@@ -382,8 +510,10 @@ export async function renderView(
             document_id: documentId,
             view: viewLabel,
             ...(focus ? { focus } : {}),
+            ...(sectionRaw ? { section: sectionRaw } : {}),
             width_px: widthPx,
             format: "png",
+            ...(highlight.length > 0 ? { highlight } : {}),
             asset: renderAssetSummary(asset),
             suggested_final_markdown: asset.markdown,
           }),
@@ -407,7 +537,9 @@ export async function renderView(
           document_id: documentId,
           view: viewLabel,
           ...(focus ? { focus } : {}),
+          ...(sectionRaw ? { section: sectionRaw } : {}),
           format: "svg",
+          ...(highlight.length > 0 ? { highlight } : {}),
           note,
           ...(svgBytes <= MAX_INLINE_SVG_BYTES
             ? { svg }

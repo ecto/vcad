@@ -155,6 +155,71 @@ pub fn render_svg_view(vcad_json: &str, scale: f64, view: &str) -> Result<String
     vcad_render::render_svg_str_view(vcad_json, scale, v).map_err(|e| JsError::new(&e))
 }
 
+/// Render raw `.vcad` document JSON to an SVG with a highlight set — the
+/// "what did my edit just touch" render.
+///
+/// `highlight_json` is a JSON array of part identifiers (root node ids as
+/// reported in a mutation's `changed` diff, node names, or assembly
+/// instance ids/names). Highlighted parts keep their full material colour
+/// and gain a brand-orange accent outline; every other part is ghosted
+/// toward the paper. An empty array renders normally; a non-empty set that
+/// matches no part is an error listing the document's parts.
+#[wasm_bindgen]
+pub fn render_svg_view_highlight(
+    vcad_json: &str,
+    scale: f64,
+    view: &str,
+    highlight_json: &str,
+) -> Result<String, JsError> {
+    let v = view
+        .parse::<vcad_render::View>()
+        .unwrap_or(vcad_render::View::Isometric);
+    let highlight: Vec<String> = serde_json::from_str(highlight_json)
+        .map_err(|e| JsError::new(&format!("highlight must be a JSON string array: {e}")))?;
+    vcad_render::render_svg_str_opts(
+        vcad_json,
+        scale,
+        &vcad_render::SvgOptions {
+            view: v,
+            highlight,
+            ..Default::default()
+        },
+    )
+    .map_err(|e| JsError::new(&e))
+}
+
+/// Render a section (cutaway) view: the document cut by an axis-aligned
+/// plane, with exposed cut faces cross-hatched drafting-style.
+///
+/// `section` is `"x=N"`, `"y=N"`, or `"z=N"` (mm) — the half of the
+/// model on the camera's side of the plane is removed. `view` accepts the same names as
+/// [`render_svg_view`]; unrecognized values fall back to isometric. A
+/// solid whose section boolean fails renders uncut rather than failing
+/// the whole render.
+#[wasm_bindgen]
+pub fn render_svg_view_section(
+    vcad_json: &str,
+    scale: f64,
+    view: &str,
+    section: &str,
+) -> Result<String, JsError> {
+    let v = view
+        .parse::<vcad_render::View>()
+        .unwrap_or(vcad_render::View::Isometric);
+    let plane = section
+        .parse::<vcad_render::SectionPlane>()
+        .map_err(|e| JsError::new(&e))?;
+    vcad_render::render_svg_str_section(
+        vcad_json,
+        scale,
+        v,
+        false,
+        Some(plane),
+        &vcad_render::RenderAnnotations::default(),
+    )
+    .map_err(|e| JsError::new(&e))
+}
+
 /// Render raw `.vcad` document JSON to an SVG with opt-in engineering
 /// annotations: an X/Y/Z origin gizmo (`axes`), part-name labels with
 /// leader lines (`labels`), and overall W×D×H bounding-box dimensions in mm
@@ -177,17 +242,22 @@ pub fn render_svg_annotated(
         .map_err(|e| JsError::new(&e))
 }
 
-/// Render raw `.vcad` document JSON to an SVG with full camera control plus
-/// the same opt-in annotations as [`render_svg_annotated`].
+/// Render raw `.vcad` document JSON to an SVG with the full [`SvgOptions`]
+/// surface in one call: arbitrary camera, part focus, section cutaway,
+/// changed-part highlight, and engineering annotations. This is the superset
+/// the MCP `render_view` "agent eyes" path drives; the narrower
+/// `render_svg_view*` / `render_svg_annotated` bindings remain for older
+/// callers.
 ///
 /// `view` accepts everything [`render_svg_view`] does, including
 /// `"orbit:<azimuth>,<elevation>"` (degrees, Z-up); an unparseable view
 /// string is an error here rather than a silent isometric fallback.
 /// `focus`, when non-empty, frames the render on that part's bounding box
-/// instead of the whole document — matched case-insensitively against root
-/// node names, assembly instance ids/names, and part-definition ids
-/// (unknown names error with the available labels). `axes`/`labels`/`dims`
-/// overlay the engineering annotations.
+/// (matched case-insensitively against root node names, assembly instance
+/// ids/names, and part-definition ids). `section`, when non-empty, is
+/// `"x=N"`/`"y=N"`/`"z=N"` (mm) for a cutaway. `highlight_json` is a JSON
+/// string array of part ids/names to spotlight (empty array = none).
+/// `axes`/`labels`/`dims` overlay the engineering annotations.
 #[wasm_bindgen]
 #[allow(clippy::too_many_arguments)]
 pub fn render_svg_camera(
@@ -198,17 +268,34 @@ pub fn render_svg_camera(
     axes: bool,
     labels: bool,
     dims: bool,
+    section: Option<String>,
+    highlight_json: Option<String>,
 ) -> Result<String, JsError> {
     let v = view
         .parse::<vcad_render::View>()
         .map_err(|e| JsError::new(&e))?;
-    let opts = vcad_render::CameraOptions {
+    let plane = match section.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        Some(s) => Some(
+            s.parse::<vcad_render::SectionPlane>()
+                .map_err(|e| JsError::new(&e))?,
+        ),
+        None => None,
+    };
+    let highlight: Vec<String> = match highlight_json.as_deref().filter(|s| !s.trim().is_empty()) {
+        Some(j) => serde_json::from_str(j)
+            .map_err(|e| JsError::new(&format!("highlight must be a JSON string array: {e}")))?,
+        None => Vec::new(),
+    };
+    let opts = vcad_render::SvgOptions {
         view: v,
         transparent: false,
         focus: focus.filter(|f| !f.trim().is_empty()),
+        section: plane,
+        highlight,
         annotations: vcad_render::RenderAnnotations { axes, labels, dims },
+        ..Default::default()
     };
-    vcad_render::render_svg_str_camera(vcad_json, scale, &opts).map_err(|e| JsError::new(&e))
+    vcad_render::render_svg_str_opts(vcad_json, scale, &opts).map_err(|e| JsError::new(&e))
 }
 
 /// Render a PCB to a flat, top-down, per-layer 2D SVG (the "agent eyes" for
@@ -5728,10 +5815,15 @@ mod ecad_wasm {
         pcb_json: &str,
         width: f64,
         nets_filter_json: &str,
+        effort: Option<f64>,
     ) -> Result<JsValue, JsError> {
         let pcb: Pcb = serde_json::from_str(pcb_json).map_err(|e| JsError::new(&e.to_string()))?;
         let filter: Vec<String> = serde_json::from_str(nets_filter_json).unwrap_or_default();
-        let result = vcad_ecad_pcb::router::route_all(&pcb, width, &filter);
+        let opts = vcad_ecad_pcb::router::RouteOptions {
+            effort: effort.unwrap_or(1.0).clamp(0.1, 100.0),
+            ..Default::default()
+        };
+        let result = vcad_ecad_pcb::router::route_all_with_opts(&pcb, width, &filter, &opts);
         serde_wasm_bindgen::to_value(&result).map_err(|e| JsError::new(&e.to_string()))
     }
 

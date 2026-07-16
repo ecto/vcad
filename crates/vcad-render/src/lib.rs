@@ -38,6 +38,7 @@
 
 #![warn(missing_docs)]
 
+mod exact;
 pub mod pcb;
 
 use std::collections::HashMap;
@@ -65,6 +66,9 @@ const STROKE_OUTLINE_PX: f64 = 1.2;
 /// convention that lets a single isometric reveal bores and pockets behind
 /// the front faces.
 const STROKE_HIDDEN_PX: f64 = 0.45;
+/// Accent outline stroke width for highlighted (just-changed) parts —
+/// heavier than the standard outline so the change reads at a glance.
+const STROKE_ACCENT_PX: f64 = 1.8;
 
 /// Curved primitives in the SVG path get a fine tessellation: at 64
 /// segments a cylinder facet spans ~5.6°, well under the crease threshold,
@@ -107,6 +111,30 @@ const INK: &str = "#0b2742";
 /// Warm off-white "vellum" the drafting plate sits on (matches the raster
 /// path's matte background). The signature ground behind every render.
 const PAPER: &str = "#f4f3f1";
+/// [`PAPER`] as RGB — ghosted (non-highlighted) parts fade toward this.
+const PAPER_RGB: [u8; 3] = [244, 243, 241];
+
+/// Brand orange — "interaction / attention" per docs/brand-spec.md. Used
+/// only as the accent outline on highlighted (just-changed) parts, never
+/// as a material colour.
+const ACCENT: &str = "#f25c1f";
+
+/// How far a ghosted part's shading ramp is pushed toward [`PAPER`] when a
+/// highlight set is active — high enough that unchanged parts read as
+/// context, low enough that their silhouettes stay legible.
+const GHOST_MIX: f64 = 0.7;
+
+/// Line opacity for ghosted parts' visible edges.
+const GHOST_LINE_OPACITY: f64 = 0.35;
+
+/// Background of a section-cut face, under the 45° hatch lines. A pale
+/// ice tint from the ramp family, so cut faces read as freshly exposed
+/// material rather than another shaded surface.
+const HATCH_BG: &str = "#dce8f2";
+/// Hatch line spacing in SVG user units.
+const HATCH_SPACING_PX: f64 = 6.0;
+/// Hatch line stroke width in SVG user units.
+const HATCH_STROKE_PX: f64 = 0.8;
 
 /// The vcad-Blue tonal ramp: deep-shadow → core navy → mid → ice highlight.
 /// Sampled by the shading term so curved surfaces read as a graded wash
@@ -265,6 +293,155 @@ impl std::str::FromStr for View {
     }
 }
 
+// ─── section (cutaway) planes ─────────────────────────────────────────────
+
+/// A principal axis, naming the normal of a [`SectionPlane`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Axis {
+    /// Plane normal to X (`--section x=N`).
+    X,
+    /// Plane normal to Y (`--section y=N`).
+    Y,
+    /// Plane normal to Z (`--section z=N`).
+    Z,
+}
+
+impl Axis {
+    fn index(self) -> usize {
+        match self {
+            Axis::X => 0,
+            Axis::Y => 1,
+            Axis::Z => 2,
+        }
+    }
+}
+
+/// A section (cutaway) plane normal to a principal axis. Material on the
+/// camera's side of the plane is removed before rendering — so the viewer
+/// always looks into the cut — and the exposed cut faces are drawn with a
+/// 45° drafting hatch instead of the usual shading.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SectionPlane {
+    /// The axis the plane is normal to.
+    pub axis: Axis,
+    /// The axis coordinate (mm) the plane sits at.
+    pub coord: f64,
+}
+
+impl std::str::FromStr for SectionPlane {
+    type Err = String;
+
+    /// Parses `x=N`, `y=N`, or `z=N` (case-insensitive), e.g. `z=10`.
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let (axis, val) = s
+            .split_once('=')
+            .ok_or_else(|| format!("bad section '{s}' (expected x=N|y=N|z=N)"))?;
+        let axis = match axis.trim().to_ascii_lowercase().as_str() {
+            "x" => Axis::X,
+            "y" => Axis::Y,
+            "z" => Axis::Z,
+            other => return Err(format!("bad section axis '{other}' (expected x|y|z)")),
+        };
+        let coord: f64 = val
+            .trim()
+            .parse()
+            .map_err(|e: std::num::ParseFloatError| format!("bad section coordinate: {e}"))?;
+        Ok(SectionPlane { axis, coord })
+    }
+}
+
+impl SectionPlane {
+    /// Tolerance (mm) within which a vertex counts as lying on the plane.
+    /// Tessellated vertices round-trip through `f32`, so the tolerance
+    /// scales with the plane coordinate's own magnitude.
+    fn on_plane_tol(self) -> f64 {
+        (self.coord.abs() * 1e-5).max(1e-2)
+    }
+}
+
+/// Which side of the section plane gets cut away: always the side the
+/// camera sits on, so the viewer looks *into* the section. For a view
+/// whose camera is edge-on to the plane's axis (a Front view with an
+/// `x=` section) the positive side is removed by convention.
+fn section_removes_positive_side(plane: SectionPlane, view: View) -> bool {
+    view.cam()[plane.axis.index()] >= 0.0
+}
+
+/// Cut one solid by `plane`, removing material on one side via a boolean
+/// difference against a generous half-space box. `remove_positive` picks
+/// the removed side (`axis > coord` when true, `axis < coord` when false).
+///
+/// `Ok(None)` means the solid was cut away entirely (it lies wholly on the
+/// removed side); `Err` surfaces a boolean failure or kernel panic so the
+/// caller can fall back to the uncut solid.
+fn section_solid(
+    solid: &Solid,
+    plane: SectionPlane,
+    remove_positive: bool,
+) -> Result<Option<Solid>, String> {
+    let (lo, hi) = solid.bounding_box();
+    let ax = plane.axis.index();
+    if !lo[ax].is_finite() || !hi[ax].is_finite() {
+        return Err("degenerate bounding box".to_string());
+    }
+    let (kept_extent, removed_extent) = if remove_positive {
+        (plane.coord - lo[ax], hi[ax] - plane.coord)
+    } else {
+        (hi[ax] - plane.coord, plane.coord - lo[ax])
+    };
+    if removed_extent <= 0.0 {
+        return Ok(Some(solid.clone())); // plane clear of the solid — nothing removed
+    }
+    if kept_extent <= 0.0 {
+        return Ok(None); // wholly on the removed side
+    }
+    // Cutter: a box overhanging the solid's bbox on every open side, with
+    // one face on the section axis sitting exactly at the plane — so the
+    // cut faces the boolean leaves behind are planar at `coord`.
+    let margin = 0.1 * ((hi[0] - lo[0]).max(hi[1] - lo[1]).max(hi[2] - lo[2])).max(1.0) + 1.0;
+    let mut size = [
+        hi[0] - lo[0] + 2.0 * margin,
+        hi[1] - lo[1] + 2.0 * margin,
+        hi[2] - lo[2] + 2.0 * margin,
+    ];
+    let mut corner = [lo[0] - margin, lo[1] - margin, lo[2] - margin];
+    size[ax] = removed_extent + margin;
+    if remove_positive {
+        corner[ax] = plane.coord;
+    } else {
+        corner[ax] = plane.coord - size[ax];
+    }
+    let cutter = Solid::cube(size[0], size[1], size[2])
+        .apply_transform(&Transform::translation(corner[0], corner[1], corner[2]));
+    let cut = catch_unwind(AssertUnwindSafe(|| solid.try_difference(&cutter)))
+        .map_err(|_| "boolean panicked".to_string())?
+        .map_err(|e| format!("boolean failed: {e:?}"))?;
+    Ok(Some(cut))
+}
+
+/// Apply a section plane to every scene solid, removing the half of each
+/// on the camera's side of the plane (see [`section_removes_positive_side`]).
+/// A solid whose boolean fails is kept uncut (never fail the whole render),
+/// with a note on stderr; solids wholly on the removed side are dropped.
+fn apply_section(scene: Vec<SceneSolid>, plane: SectionPlane, view: View) -> Vec<SceneSolid> {
+    let remove_positive = section_removes_positive_side(plane, view);
+    let mut out = Vec::with_capacity(scene.len());
+    for (i, mut s) in scene.into_iter().enumerate() {
+        match section_solid(&s.solid, plane, remove_positive) {
+            Ok(Some(cut)) => {
+                s.solid = cut;
+                out.push(s);
+            }
+            Ok(None) => {}
+            Err(e) => {
+                eprintln!("vcad-render: section: solid {i} left uncut ({e})");
+                out.push(s);
+            }
+        }
+    }
+    out
+}
+
 // ─── annotations ──────────────────────────────────────────────────────────
 
 /// Opt-in engineering-context overlays. Everything defaults to off, and the
@@ -365,7 +542,13 @@ struct SceneSolid {
     solid: Solid,
     tint: Option<[f64; 3]>,
     name: Option<String>,
+    /// Focus-match labels (node name, instance id/name, part-def id) for
+    /// `--focus` / `CameraOptions::focus`.
     labels: Vec<String>,
+    /// Root node id (as a string) for scene roots; instance id for
+    /// assembly instances. Matches the `part_id` the MCP mutation diff
+    /// reports, so a highlight set can select by it.
+    id: String,
 }
 
 fn evaluate_vcad(raw_vcad: &str) -> Result<Vec<SceneSolid>, String> {
@@ -416,6 +599,10 @@ fn evaluate_vcad(raw_vcad: &str) -> Result<Vec<SceneSolid>, String> {
                     tint: materials.get(&p.material).map(|m| m.color),
                     labels: name.clone().into_iter().collect(),
                     name,
+                    id: visible_roots
+                        .get(i)
+                        .map(|r| r.root.to_string())
+                        .unwrap_or_default(),
                 }
             })
         })
@@ -493,6 +680,7 @@ fn evaluate_assembly_instances(doc: &vcad_ir::Document) -> Result<Vec<SceneSolid
             tint: color,
             name,
             labels,
+            id: inst.id.clone(),
         });
     }
     Ok(out)
@@ -647,7 +835,7 @@ fn orient_normals(cm: &CanonMesh, normals: &mut [[f64; 3]]) {
 // ─── per-solid render artifacts (shared by SVG + raster paths) ────────────
 
 /// How a kept edge reads, and how hidden-line removal treats it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 enum EdgeKind {
     /// A hard model outline: a boundary (open) edge, or a silhouette
     /// between two clearly non-coplanar faces (a box edge, a bore rim at
@@ -665,9 +853,10 @@ enum EdgeKind {
 }
 
 struct SolidArtifacts {
-    /// Index of the source solid in the caller's `solids` slice — solids
-    /// that fail to tessellate are skipped, so artifact index alone can't
-    /// recover per-solid metadata (names for labels, focus mask lookup).
+    /// Index of the source solid in the caller's `solids` slice. Solids
+    /// that fail to tessellate are skipped, so artifact index alone doesn't
+    /// line up with the input — needed to re-derive exact BRep edges, to
+    /// recover per-solid metadata (names for labels), and for focus lookup.
     src: usize,
     verts: Vec<[f64; 3]>,
     tris: Vec<[usize; 3]>,
@@ -681,9 +870,35 @@ struct SolidArtifacts {
     /// the part's material colour when one is known.
     ramp: [[u8; 3]; 4],
     visible: Vec<bool>,
+    /// Per-triangle: true when the triangle is an exposed section-cut face
+    /// (planar on the section plane) — rendered cross-hatched.
+    cut: Vec<bool>,
     /// Kept edges (boundary, crease, or silhouette, with ≥1 visible
     /// adjacent triangle) as canonical-vertex index pairs plus their kind.
     edges: Vec<(usize, usize, EdgeKind)>,
+    /// How this solid participates in a highlight pass (Normal when no
+    /// highlight set is active).
+    emphasis: Emphasis,
+}
+
+/// A solid's role when a highlight set is active: `Accent` parts keep
+/// their material colour and gain the brand-orange outline, `Ghost` parts
+/// fade toward the paper, `Normal` means no highlight pass at all.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Emphasis {
+    Normal,
+    Accent,
+    Ghost,
+}
+
+/// Fade `ramp` toward [`PAPER_RGB`] by [`GHOST_MIX`] — the ghosted look
+/// for parts outside the highlight set.
+fn ghost_ramp(ramp: [[u8; 3]; 4]) -> [[u8; 3]; 4] {
+    let mut out = ramp;
+    for stop in out.iter_mut() {
+        *stop = mix_rgb(*stop, PAPER_RGB, GHOST_MIX);
+    }
+    out
 }
 
 /// Per-triangle, per-corner smoothed normals. A corner's normal is the
@@ -766,18 +981,31 @@ impl EdgeRules {
 fn build_artifacts(
     solids: &[Solid],
     tints: &[Option<[f64; 3]>],
+    accents: &[bool],
     cam: [f64; 3],
     segments: u32,
     rules: &EdgeRules,
+    section: Option<SectionPlane>,
 ) -> Vec<SolidArtifacts> {
+    let highlighting = accents.iter().any(|&a| a);
     let mut out = Vec::new();
     for (si, solid) in solids.iter().enumerate() {
-        let ramp = tints
+        let emphasis = if !highlighting {
+            Emphasis::Normal
+        } else if accents.get(si).copied().unwrap_or(false) {
+            Emphasis::Accent
+        } else {
+            Emphasis::Ghost
+        };
+        let mut ramp = tints
             .get(si)
             .copied()
             .flatten()
             .map(tint_ramp)
             .unwrap_or(RAMP);
+        if emphasis == Emphasis::Ghost {
+            ramp = ghost_ramp(ramp);
+        }
         let mesh = catch_unwind(AssertUnwindSafe(|| solid.to_mesh(segments)));
         let Ok(mesh) = mesh else { continue };
         if mesh.indices.is_empty() {
@@ -802,6 +1030,25 @@ fn build_artifacts(
             .iter()
             .map(|n| dot(*n, cam) >= BACKFACE_DOT_MIN)
             .collect();
+
+        // Exposed cut faces: every vertex on the section plane (within
+        // tolerance) and the face normal parallel to the plane's axis.
+        let cut: Vec<bool> = match section {
+            Some(plane) => {
+                let ax = plane.axis.index();
+                let tol = plane.on_plane_tol();
+                cm.tris
+                    .iter()
+                    .enumerate()
+                    .map(|(ti, t)| {
+                        normals[ti][ax].abs() > 0.99
+                            && t.iter()
+                                .all(|&v| (cm.verts[v][ax] - plane.coord).abs() <= tol)
+                    })
+                    .collect()
+            }
+            None => vec![false; cm.tris.len()],
+        };
 
         // Build undirected-edge → adjacent-triangle-indices map.
         let mut edge_to_tris: HashMap<(usize, usize), Vec<usize>> = HashMap::new();
@@ -862,13 +1109,75 @@ fn build_artifacts(
             corner_normals,
             ramp,
             visible,
+            cut,
             edges,
+            emphasis,
         });
     }
     out
 }
 
 // ─── geometry helpers ─────────────────────────────────────────────────────
+
+/// Build an SVG path `d` string tracing the exact projected ellipse arc
+/// from parameter `t0` to `t1` (radians on the source circle).
+///
+/// `a2`/`b2` are the ellipse's screen-space conjugate radius vectors — the
+/// projections of the circle's `radius·u` and `radius·v` — so a point at
+/// parameter θ is `p_screen(θ) = center' + a2·cosθ + b2·sinθ`. The SVG arc
+/// command needs canonical semi-axes: they come from the eigen-decomposition
+/// of `M·Mᵀ` with `M = [a2 b2]`, which is exact. The arc is split into
+/// ≤90° chunks so the large-arc flag is never needed, and the sweep flag is
+/// read off the actual turn direction of each chunk's sampled midpoint.
+fn arc_path_d(
+    a2: (f64, f64),
+    b2: (f64, f64),
+    p_screen: &dyn Fn(f64) -> (f64, f64),
+    t0: f64,
+    t1: f64,
+) -> String {
+    // A zero-extent interval (the caller's `d <= 0.0` guard should already
+    // exclude these) would emit an arc with start == end, which renderers
+    // treat inconsistently (no-op vs full ellipse). Emit a bare moveto.
+    if (t1 - t0).abs() < 1e-9 {
+        let (x, y) = p_screen(t0);
+        return format!("M {x:.3} {y:.3}");
+    }
+    // M·Mᵀ of the 2×2 linear map [a2 b2].
+    let m00 = a2.0 * a2.0 + b2.0 * b2.0;
+    let m01 = a2.0 * a2.1 + b2.0 * b2.1;
+    let m11 = a2.1 * a2.1 + b2.1 * b2.1;
+    // Diagonalizing rotation; the radius along direction φ is √λ_φ.
+    let phi = 0.5 * (2.0 * m01).atan2(m00 - m11);
+    let (cp, sp) = (phi.cos(), phi.sin());
+    let l1 = (m00 * cp * cp + 2.0 * m01 * sp * cp + m11 * sp * sp).max(0.0);
+    let l2 = (m00 + m11 - l1).max(0.0);
+    let rx = l1.sqrt();
+    let ry = l2.sqrt();
+    let rot_deg = phi.to_degrees();
+
+    let chunks = (((t1 - t0) / (std::f64::consts::FRAC_PI_2 * 0.99)).ceil() as usize).max(1);
+    let start = p_screen(t0);
+    let mut d = format!("M {:.3} {:.3}", start.0, start.1);
+    let mut prev = start;
+    let mut prev_t = t0;
+    for k in 1..=chunks {
+        let t = t0 + (t1 - t0) * k as f64 / chunks as f64;
+        let end = p_screen(t);
+        let mid = p_screen((prev_t + t) / 2.0);
+        // Turn direction across the chunk: positive cross in SVG's y-down
+        // frame is the "positive angle" (sweep = 1) direction.
+        let c = (mid.0 - prev.0) * (end.1 - mid.1) - (mid.1 - prev.1) * (end.0 - mid.0);
+        let sweep = if c > 0.0 { 1 } else { 0 };
+        d.push_str(&format!(
+            " A {rx:.3} {ry:.3} {rot_deg:.3} 0 {sweep} {:.3} {:.3}",
+            end.0, end.1
+        ));
+        prev = end;
+        prev_t = t;
+    }
+    d
+}
 
 fn face_normal(v: [[f64; 3]; 3]) -> [f64; 3] {
     let e1 = sub(v[1], v[0]);
@@ -1069,6 +1378,7 @@ struct ProjEdge {
     b: (f64, f64),
     db: f64,
     kind: EdgeKind,
+    emphasis: Emphasis,
 }
 
 // ─── off-screen depth buffer (vector hidden-line removal) ──────────────────
@@ -1200,6 +1510,34 @@ impl DepthBuffer {
         }
     }
 
+    /// Per-sample visibility test at a final-SVG point with camera depth
+    /// `d`: visible when its depth is within a (gradient-adaptive) bias of
+    /// the buffer, or it runs over open background. Returns
+    /// `(visible, over_bg)`. Shared by the segment walk ([`Self::clip_edge`])
+    /// and the exact-arc walk.
+    fn sample_visible(&self, p: (f64, f64), d: f64, bias: f64) -> (bool, bool) {
+        let bxp = p.0 * self.scale;
+        let byp = p.1 * self.scale;
+        let ix = bxp.floor() as i64;
+        let iy = byp.floor() as i64;
+        let z = self.at(ix, iy);
+        if z == f64::NEG_INFINITY {
+            return (true, true); // over background — nothing occludes it
+        }
+        let mut over_bg = false;
+        let mut delta = 0.0f64;
+        for (nx, ny) in [(ix - 1, iy), (ix + 1, iy), (ix, iy - 1), (ix, iy + 1)] {
+            let nz = self.at(nx, ny);
+            if nz == f64::NEG_INFINITY {
+                delta = f64::INFINITY; // silhouette pixel — always show
+                over_bg = true;
+            } else {
+                delta = delta.max((z - nz).abs());
+            }
+        }
+        (d >= z - (bias + delta), over_bg)
+    }
+
     /// Walk an edge (final SVG coords + endpoint depths) and split it into
     /// its visible and hidden (occluded) sub-segments. Each [`VisSpan`]
     /// carries its length in buffer cells and whether any of it ran over
@@ -1242,26 +1580,8 @@ impl DepthBuffer {
             let bxp = ax + (bx - ax) * t;
             let byp = ay + (by - ay) * t;
             let d = da + (db - da) * t;
-            let ix = bxp.floor() as i64;
-            let iy = byp.floor() as i64;
-            let z = self.at(ix, iy);
-            let mut over_bg = false;
-            let visible = if z == f64::NEG_INFINITY {
-                over_bg = true; // over background — nothing occludes it
-                true
-            } else {
-                let mut delta = 0.0f64;
-                for (nx, ny) in [(ix - 1, iy), (ix + 1, iy), (ix, iy - 1), (ix, iy + 1)] {
-                    let nz = self.at(nx, ny);
-                    if nz == f64::NEG_INFINITY {
-                        delta = f64::INFINITY; // silhouette pixel — always show
-                        over_bg = true;
-                    } else {
-                        delta = delta.max((z - nz).abs());
-                    }
-                }
-                d >= z - (bias + delta)
-            };
+            let (visible, over_bg) =
+                self.sample_visible((bxp / self.scale, byp / self.scale), d, bias);
             let pt = (bxp, byp);
             match state {
                 Some(prev) if prev == visible => {
@@ -1350,21 +1670,140 @@ pub fn render_svg_str_view_opts(
     transparent: bool,
     annotations: &RenderAnnotations,
 ) -> Result<String, String> {
-    render_svg_str_camera(
+    render_svg_str_opts(
         raw_vcad,
         scale,
-        &CameraOptions {
+        &SvgOptions {
             view,
             transparent,
-            focus: None,
             annotations: *annotations,
+            ..Default::default()
         },
+    )
+}
+
+/// Render raw `.vcad` document JSON to an SVG from `view`, optionally
+/// sectioned (cutaway) by `section` and/or overlaid with `annotations`.
+/// Material on the camera's side of the plane is boolean-subtracted before
+/// tessellation; exposed cut faces are drawn with a 45° drafting hatch. A
+/// solid whose boolean fails is rendered uncut (noted on stderr) rather than
+/// failing the render.
+pub fn render_svg_str_section(
+    raw_vcad: &str,
+    scale: f64,
+    view: View,
+    transparent: bool,
+    section: Option<SectionPlane>,
+    annotations: &RenderAnnotations,
+) -> Result<String, String> {
+    render_svg_str_opts(
+        raw_vcad,
+        scale,
+        &SvgOptions {
+            view,
+            transparent,
+            section,
+            annotations: *annotations,
+            ..Default::default()
+        },
+    )
+}
+
+/// Options for the SVG render path ([`render_svg_str_opts`]).
+#[derive(Debug, Clone, Default)]
+pub struct SvgOptions {
+    /// Camera orientation.
+    pub view: View,
+    /// Omit the opaque paper background rect.
+    pub transparent: bool,
+    /// Emit BRep-exact linework where available: circular model edges
+    /// (cylinder/cone rims) and sphere view outlines become mathematically
+    /// exact SVG elliptical arcs instead of tessellated polylines, so they
+    /// stay smooth at any zoom. Curves the extractor doesn't recognise
+    /// (tori, NURBS, boolean intersection seams) fall back to polylines;
+    /// fills and hidden-line removal still use the tessellation.
+    pub exact_edges: bool,
+    /// Section (cutaway) plane. Material on the camera's side is
+    /// boolean-subtracted before tessellation and exposed cut faces get a
+    /// 45° drafting hatch. `None` renders the whole model.
+    pub section: Option<SectionPlane>,
+    /// Opt-in engineering annotation overlays (axes gizmo, part labels,
+    /// bounding-box dimensions). [`RenderAnnotations::default()`] draws none.
+    pub annotations: RenderAnnotations,
+    /// Frame the render on this part instead of the whole document. Matched
+    /// case-insensitively against root-part node names, assembly instance
+    /// ids/names, and part-definition ids. Geometry outside the focused
+    /// part's projected bounds is cropped by the viewport. `None` frames the
+    /// whole document.
+    pub focus: Option<String>,
+    /// Changed-part highlight set. Selects parts by root node id (the
+    /// `part_id` a mutation diff reports), node name, or assembly instance
+    /// id/name. When non-empty, matched parts keep their full material
+    /// colour and gain a brand-orange accent outline while every other part
+    /// is ghosted toward the paper — the "what did my edit just touch"
+    /// view. Empty renders normally; a non-empty set matching no part is an
+    /// error (never a silently unhighlighted render).
+    pub highlight: Vec<String>,
+}
+
+/// Render raw `.vcad` document JSON to a self-contained SVG with full
+/// [`SvgOptions`] control. The other `render_svg_str*` entry points are
+/// thin wrappers over this.
+pub fn render_svg_str_opts(
+    raw_vcad: &str,
+    scale: f64,
+    opts: &SvgOptions,
+) -> Result<String, String> {
+    let mut scene = evaluate_vcad(raw_vcad)?;
+    if let Some(plane) = opts.section {
+        scene = apply_section(scene, plane, opts.view);
+    }
+    let accents: Vec<bool> = scene
+        .iter()
+        .map(|s| {
+            opts.highlight
+                .iter()
+                .any(|h| *h == s.id || s.name.as_deref() == Some(h.as_str()))
+        })
+        .collect();
+    if !opts.highlight.is_empty() && !accents.iter().any(|&a| a) {
+        let known: Vec<String> = scene
+            .iter()
+            .map(|s| match &s.name {
+                Some(n) => format!("{} ({n})", s.id),
+                None => s.id.clone(),
+            })
+            .collect();
+        return Err(format!(
+            "highlight matched no parts: wanted [{}], document has [{}]",
+            opts.highlight.join(", "),
+            known.join(", "),
+        ));
+    }
+    // Focus mask (per-solid) frames the viewport on the matched part(s).
+    let focus_sel = opts
+        .focus
+        .as_deref()
+        .map(|f| focus_mask(&scene, f))
+        .transpose()?;
+    let solids: Vec<Solid> = scene.iter().map(|s| s.solid.clone()).collect();
+    let tints: Vec<Option<[f64; 3]>> = scene.iter().map(|s| s.tint).collect();
+    let names: Vec<Option<String>> = scene.iter().map(|s| s.name.clone()).collect();
+    render_svg_impl(
+        &solids,
+        &tints,
+        &names,
+        &accents,
+        focus_sel.as_deref(),
+        scale,
+        opts,
     )
 }
 
 /// Camera options for [`render_svg_str_camera`]: an arbitrary [`View`]
 /// (including [`View::Orbit`]), transparency, an optional part focus, and
-/// engineering annotation overlays.
+/// engineering annotation overlays. A thin convenience over [`SvgOptions`]
+/// for the WASM/CLI "agent eyes" path.
 #[derive(Debug, Clone, Default)]
 pub struct CameraOptions {
     /// Camera orientation.
@@ -1382,30 +1821,22 @@ pub struct CameraOptions {
 
 /// Render raw `.vcad` document JSON to a self-contained SVG with full
 /// camera control — arbitrary orbit views, part-focused framing, and
-/// annotation overlays.
+/// annotation overlays. Delegates to [`render_svg_str_opts`].
 pub fn render_svg_str_camera(
     raw_vcad: &str,
     scale: f64,
     opts: &CameraOptions,
 ) -> Result<String, String> {
-    let scene = evaluate_vcad(raw_vcad)?;
-    let solids: Vec<Solid> = scene.iter().map(|s| s.solid.clone()).collect();
-    let tints: Vec<Option<[f64; 3]>> = scene.iter().map(|s| s.tint).collect();
-    let names: Vec<Option<String>> = scene.iter().map(|s| s.name.clone()).collect();
-    let mask = opts
-        .focus
-        .as_deref()
-        .map(|f| focus_mask(&scene, f))
-        .transpose()?;
-    render_svg_impl(
-        &solids,
-        &tints,
-        &names,
+    render_svg_str_opts(
+        raw_vcad,
         scale,
-        opts.view,
-        opts.transparent,
-        mask.as_deref(),
-        &opts.annotations,
+        &SvgOptions {
+            view: opts.view,
+            transparent: opts.transparent,
+            focus: opts.focus.clone(),
+            annotations: opts.annotations,
+            ..Default::default()
+        },
     )
 }
 
@@ -1430,38 +1861,47 @@ pub fn render_svg_solids(solids: &[Solid], scale: f64) -> Result<String, String>
 pub fn render_svg_solids_view(solids: &[Solid], scale: f64, view: View) -> Result<String, String> {
     let tints = vec![None; solids.len()];
     let names = vec![None; solids.len()];
+    let accents = vec![false; solids.len()];
     render_svg_impl(
         solids,
         &tints,
         &names,
-        scale,
-        view,
-        false,
+        &accents,
         None,
-        &RenderAnnotations::default(),
+        scale,
+        &SvgOptions {
+            view,
+            ..Default::default()
+        },
     )
 }
 
 /// Shared SVG renderer; `tints[i]` optionally tints solid `i`'s ramp and
-/// `names[i]` labels it when the `labels` annotation is on. When
-/// `transparent`, the opaque paper background rect is omitted. When `focus`
-/// is given (a per-solid mask), the viewport is framed on the focused
-/// solids' projected bounds; everything else is still drawn but cropped to
-/// that frame.
+/// `names[i]` labels it when the `labels` annotation is on. When any
+/// `accents[i]` is set, solid `i` keeps its full ramp and gains an
+/// [`ACCENT`] outline while the rest are ghosted toward [`PAPER`].
+/// `opts.section` (already applied to the solids by the caller) only drives
+/// cut-face detection here, so exposed section faces get the hatch fill.
+/// When `focus` is given (a per-solid mask), the viewport is framed on the
+/// focused solids' projected bounds; everything else is still drawn but
+/// cropped to that frame.
 #[allow(clippy::too_many_arguments)]
 fn render_svg_impl(
     solids: &[Solid],
     tints: &[Option<[f64; 3]>],
     names: &[Option<String>],
-    scale: f64,
-    view: View,
-    transparent: bool,
+    accents: &[bool],
     focus: Option<&[bool]>,
-    annos: &RenderAnnotations,
+    scale: f64,
+    opts: &SvgOptions,
 ) -> Result<String, String> {
     if solids.is_empty() {
         return Err("no solids produced".to_string());
     }
+    let view = opts.view;
+    let transparent = opts.transparent;
+    let section = opts.section;
+    let annos = &opts.annotations;
 
     let cam = view.cam();
     let right = view.right();
@@ -1469,7 +1909,15 @@ fn render_svg_impl(
     let light = normalize(LIGHT);
     let project = |p: [f64; 3]| -> (f64, f64) { (dot(p, right) * scale, dot(p, down) * scale) };
 
-    let arts = build_artifacts(solids, tints, cam, TESSELLATION_SEGMENTS, &EdgeRules::svg());
+    let arts = build_artifacts(
+        solids,
+        tints,
+        accents,
+        cam,
+        TESSELLATION_SEGMENTS,
+        &EdgeRules::svg(),
+        section,
+    );
 
     // First pass: screen-space bbox + 3D bbox (for the depth-cue bias),
     // over every projected vertex of every kept artifact.
@@ -1547,6 +1995,25 @@ fn render_svg_impl(
     let ao_bias = (0.02 * diag).max(bias);
     let ao_range = (0.22 * diag).max(ao_bias * 3.0);
 
+    // BRep-exact linework (opt-in): analytic circles recovered from each
+    // solid's BRep, plus the mask of mesh edges they replace. Extraction
+    // failures are impossible by construction (no BRep → no candidates →
+    // empty mask), so unrecognised geometry silently keeps its polylines.
+    let exact_curves: Vec<Option<exact::ExactCurves>> = arts
+        .iter()
+        .map(|art| {
+            opts.exact_edges.then(|| {
+                exact::extract(
+                    &solids[art.src],
+                    &art.verts,
+                    &art.edges,
+                    cam,
+                    TESSELLATION_SEGMENTS,
+                )
+            })
+        })
+        .collect();
+
     let mut polys: Vec<ProjPoly> = Vec::new();
     let mut edges: Vec<ProjEdge> = Vec::new();
     // Gradient defs for Gouraud-shaded (curved) facets, accumulated as we go.
@@ -1585,6 +2052,17 @@ fn render_svg_impl(
                 shade(cn[2], cam, light) * (1.0 - AO_STRENGTH * ao(ps[2], vd[2])),
             ];
             let avg = hex(ramp_sample(&art.ramp, (sh[0] + sh[1] + sh[2]) / 3.0));
+            if art.cut[ti] {
+                // Exposed section-cut face: drafting convention says
+                // cross-hatch, not shade. Pattern defined once in <defs>.
+                polys.push(ProjPoly {
+                    s: ps,
+                    fill: "url(#section-hatch)".to_string(),
+                    stroke: HATCH_BG.to_string(),
+                    depth: (vd[0] + vd[1] + vd[2]) / 3.0,
+                });
+                continue;
+            }
             let (fill, stroke) = match gouraud_gradient(ps, sh, &art.ramp) {
                 Some(g) => {
                     let id = grad_id;
@@ -1604,13 +2082,20 @@ fn render_svg_impl(
                 depth: (vd[0] + vd[1] + vd[2]) / 3.0,
             });
         }
-        for &(a, b, kind) in &art.edges {
+        for (ei, &(a, b, kind)) in art.edges.iter().enumerate() {
+            // Skip polylines an exact arc replaces.
+            if let Some(Some(ex)) = exact_curves.get(ai).map(|e| e.as_ref()) {
+                if ex.suppressed[ei] {
+                    continue;
+                }
+            }
             edges.push(ProjEdge {
                 a: fin(proj[a]),
                 da: dot(art.verts[a], cam),
                 b: fin(proj[b]),
                 db: dot(art.verts[b], cam),
                 kind,
+                emphasis: art.emphasis,
             });
         }
     }
@@ -1639,11 +2124,20 @@ fn render_svg_impl(
     let mut crease_lines: Vec<Seg> = Vec::new();
     let mut outline_lines: Vec<Seg> = Vec::new();
     let mut hidden_lines: Vec<Seg> = Vec::new();
+    // Highlight-pass buckets: ghosted parts' visible linework fades with
+    // their fills; accented parts' outlines are re-stroked in brand orange
+    // on top of everything else.
+    let mut ghost_crease_lines: Vec<Seg> = Vec::new();
+    let mut ghost_outline_lines: Vec<Seg> = Vec::new();
+    let mut accent_outline_lines: Vec<Seg> = Vec::new();
     for e in &edges {
         let clip = zbuf.clip_edge(e.a, e.da, e.b, e.db, bias);
-        let dst = match e.kind {
-            EdgeKind::Crease => &mut crease_lines,
-            EdgeKind::Outline | EdgeKind::Smooth => &mut outline_lines,
+        let dst = match (e.kind, e.emphasis) {
+            (EdgeKind::Crease, Emphasis::Ghost) => &mut ghost_crease_lines,
+            (EdgeKind::Crease, _) => &mut crease_lines,
+            (EdgeKind::Outline | EdgeKind::Smooth, Emphasis::Ghost) => &mut ghost_outline_lines,
+            (EdgeKind::Outline | EdgeKind::Smooth, Emphasis::Accent) => &mut accent_outline_lines,
+            (EdgeKind::Outline | EdgeKind::Smooth, Emphasis::Normal) => &mut outline_lines,
         };
         for span in &clip.visible {
             let keep = match e.kind {
@@ -1659,11 +2153,98 @@ fn render_svg_impl(
         // dashed lines (so a bore or pocket reads from a single view).
         // Smooth curved-surface silhouettes are never dashed — their
         // occluded fragments are tangent-point noise, not real edges.
-        if matches!(e.kind, EdgeKind::Outline | EdgeKind::Crease) {
+        // Ghosted parts drop their dashed hidden lines entirely — they are
+        // context, not the subject.
+        if matches!(e.kind, EdgeKind::Outline | EdgeKind::Crease) && e.emphasis != Emphasis::Ghost {
             for span in &clip.hidden {
                 if span.len_cells >= HIDDEN_MIN_CELLS {
                     hidden_lines.push((span.a, span.b));
                 }
+            }
+        }
+    }
+
+    // BRep-exact arcs: walk each analytic arc against the same depth
+    // buffer and emit the surviving parameter runs as exact SVG
+    // elliptical-arc paths, styled identically to the lines they replace.
+    let mut outline_arcs: Vec<String> = Vec::new();
+    let mut crease_arcs: Vec<String> = Vec::new();
+    let mut hidden_arcs: Vec<String> = Vec::new();
+    for ex in exact_curves.iter().flatten() {
+        for span in &ex.arcs {
+            let c = &ex.circles[span.circle];
+            // Screen-space conjugate radius vectors of the projected
+            // ellipse (an orthographic projection maps the circle's
+            // parametric form to `P(center) + A·cosθ + B·sinθ`).
+            let a2 = (
+                dot(c.u, right) * scale * c.radius,
+                dot(c.u, down) * scale * c.radius,
+            );
+            let b2 = (
+                dot(c.v, right) * scale * c.radius,
+                dot(c.v, down) * scale * c.radius,
+            );
+            let p_screen = |th: f64| fin(project(c.point(th)));
+            let conj = ((a2.0 * a2.0 + a2.1 * a2.1) + (b2.0 * b2.0 + b2.1 * b2.1)).sqrt();
+            // ~1 depth-buffer cell per visibility sample along the arc.
+            let steps =
+                (((span.end - span.start) * conj * zbuf.scale).ceil() as usize).clamp(16, 4096);
+            // Walk visibility runs over the parameter interval.
+            let mut run_start = span.start;
+            let mut run_cells = 0.0f64;
+            let mut run_bg = false;
+            let mut state: Option<bool> = None;
+            let mut prev_pt = p_screen(span.start);
+            let mut flush = |vis: bool, t0: f64, t1: f64, cells: f64, over_bg: bool| {
+                if t1 <= t0 {
+                    return;
+                }
+                if vis {
+                    let keep = match span.kind {
+                        EdgeKind::Smooth => over_bg || cells >= SMOOTH_INTERIOR_MIN_CELLS,
+                        EdgeKind::Outline | EdgeKind::Crease => true,
+                    };
+                    if keep {
+                        let d = arc_path_d(a2, b2, &p_screen, t0, t1);
+                        match span.kind {
+                            EdgeKind::Crease => crease_arcs.push(d),
+                            _ => outline_arcs.push(d),
+                        }
+                    }
+                } else if matches!(span.kind, EdgeKind::Outline | EdgeKind::Crease)
+                    && cells >= HIDDEN_MIN_CELLS
+                {
+                    hidden_arcs.push(arc_path_d(a2, b2, &p_screen, t0, t1));
+                }
+            };
+            for i in 0..=steps {
+                let t = span.start + (span.end - span.start) * i as f64 / steps as f64;
+                let p3 = c.point(t);
+                let spt = p_screen(t);
+                let (vis, over_bg) = zbuf.sample_visible(spt, dot(p3, cam), bias);
+                let step_cells =
+                    ((spt.0 - prev_pt.0).powi(2) + (spt.1 - prev_pt.1).powi(2)).sqrt() * zbuf.scale;
+                prev_pt = spt;
+                match state {
+                    Some(prev) if prev == vis => {
+                        run_cells += step_cells;
+                        run_bg |= over_bg;
+                    }
+                    Some(prev) => {
+                        flush(prev, run_start, t, run_cells, run_bg);
+                        run_start = t;
+                        run_cells = 0.0;
+                        run_bg = over_bg;
+                        state = Some(vis);
+                    }
+                    None => {
+                        run_bg = over_bg;
+                        state = Some(vis);
+                    }
+                }
+            }
+            if let Some(vis) = state {
+                flush(vis, run_start, span.end, run_cells, run_bg);
             }
         }
     }
@@ -1679,7 +2260,17 @@ fn render_svg_impl(
 
     // Gouraud gradient defs.
     let blur = ((w + h) * 0.008).clamp(1.0, 12.0);
-    out.push_str(&format!(r#"<defs>{gradients}</defs>"#));
+    // 45° cross-hatch pattern for exposed section-cut faces (drafting
+    // convention). Only emitted when a section plane is active.
+    let hatch_def = if section.is_some() {
+        format!(
+            r#"<pattern id="section-hatch" patternUnits="userSpaceOnUse" width="{sp:.2}" height="{sp:.2}" patternTransform="rotate(45)"><rect width="{sp:.2}" height="{sp:.2}" fill="{HATCH_BG}"/><line x1="0" y1="0" x2="0" y2="{sp:.2}" stroke="{INK}" stroke-width="{HATCH_STROKE_PX}"/></pattern>"#,
+            sp = HATCH_SPACING_PX,
+        )
+    } else {
+        String::new()
+    };
+    out.push_str(&format!(r#"<defs>{hatch_def}{gradients}</defs>"#));
 
     // Vellum ground — the warm paper the plate sits on. Skipped for a
     // transparent render so the SVG composites over any background.
@@ -1713,10 +2304,12 @@ fn render_svg_impl(
     let dash = (blur * 0.6).clamp(2.0, 6.0);
     let emit_lines = |out: &mut String,
                       lines: &[Seg],
+                      arcs: &[String],
+                      stroke: &str,
                       width: f64,
                       opacity: f64,
                       dasharray: Option<f64>| {
-        if lines.is_empty() {
+        if lines.is_empty() && arcs.is_empty() {
             return;
         }
         let dash_attr = match dasharray {
@@ -1724,7 +2317,7 @@ fn render_svg_impl(
             None => String::new(),
         };
         out.push_str(&format!(
-                r#"<g stroke="{INK}" stroke-width="{width}" stroke-linecap="round" fill="none" opacity="{opacity}"{dash_attr}>"#
+                r#"<g stroke="{stroke}" stroke-width="{width}" stroke-linecap="round" fill="none" opacity="{opacity}"{dash_attr}>"#
             ));
         for &(a, b) in lines {
             out.push_str(&format!(
@@ -1732,11 +2325,69 @@ fn render_svg_impl(
                 a.0, a.1, b.0, b.1,
             ));
         }
+        for d in arcs {
+            out.push_str(&format!(r#"<path d="{d}"/>"#));
+        }
         out.push_str("</g>");
     };
-    emit_lines(&mut out, &hidden_lines, STROKE_HIDDEN_PX, 0.5, Some(dash));
-    emit_lines(&mut out, &crease_lines, STROKE_CREASE_PX, 1.0, None);
-    emit_lines(&mut out, &outline_lines, STROKE_OUTLINE_PX, 1.0, None);
+    let no_arcs: [String; 0] = [];
+    emit_lines(
+        &mut out,
+        &hidden_lines,
+        &hidden_arcs,
+        INK,
+        STROKE_HIDDEN_PX,
+        0.5,
+        Some(dash),
+    );
+    // Ghosted parts' faded linework, under the normal creases/outlines.
+    emit_lines(
+        &mut out,
+        &ghost_crease_lines,
+        &no_arcs,
+        INK,
+        STROKE_CREASE_PX,
+        GHOST_LINE_OPACITY,
+        None,
+    );
+    emit_lines(
+        &mut out,
+        &ghost_outline_lines,
+        &no_arcs,
+        INK,
+        STROKE_OUTLINE_PX,
+        GHOST_LINE_OPACITY,
+        None,
+    );
+    emit_lines(
+        &mut out,
+        &crease_lines,
+        &crease_arcs,
+        INK,
+        STROKE_CREASE_PX,
+        1.0,
+        None,
+    );
+    emit_lines(
+        &mut out,
+        &outline_lines,
+        &outline_arcs,
+        INK,
+        STROKE_OUTLINE_PX,
+        1.0,
+        None,
+    );
+    // Accent outlines last — the brand-orange "this is what changed" stroke
+    // sits on top of every other line.
+    emit_lines(
+        &mut out,
+        &accent_outline_lines,
+        &no_arcs,
+        ACCENT,
+        STROKE_ACCENT_PX,
+        1.0,
+        None,
+    );
 
     // Opt-in engineering overlays, drawn over the linework.
     if annos.any() {
@@ -1943,7 +2594,7 @@ mod raster {
     const RASTER_COPLANAR_DOT_TOL: f64 = 0.985; // cos(~10°)
 
     /// Matte, neutral background per the mecheval capture rules.
-    const BACKGROUND: [u8; 3] = [244, 243, 241];
+    pub(crate) const BACKGROUND: [u8; 3] = [244, 243, 241];
 
     /// Options for [`render_jpeg_str`] / [`render_jpeg_solids`].
     #[derive(Debug, Clone)]
@@ -1962,6 +2613,9 @@ mod raster {
         /// by [`render_jpeg_str`] / [`render_png_str`]; the solids path has
         /// no part names.
         pub focus: Option<String>,
+        /// Optional section (cutaway) plane: material on the camera's
+        /// side of the plane is removed and exposed cut faces are hatched.
+        pub section: Option<SectionPlane>,
         /// Opt-in engineering overlays (axes gizmo, part labels, bbox
         /// dimensions). All-off by default; the default render is
         /// byte-identical to an annotation-free build.
@@ -1976,6 +2630,7 @@ mod raster {
                 fill_frac: 0.6,
                 quality: 92,
                 focus: None,
+                section: None,
                 annotations: RenderAnnotations::default(),
             }
         }
@@ -1991,6 +2646,10 @@ mod raster {
         let solids: Vec<Solid> = scene.iter().map(|s| s.solid.clone()).collect();
         let tints: Vec<Option<[f64; 3]>> = scene.iter().map(|s| s.tint).collect();
         let names: Vec<Option<String>> = scene.iter().map(|s| s.name.clone()).collect();
+        // Focus framing and section cutting don't currently compose in the
+        // raster path: `rasterize` applies the section (which can drop
+        // solids) after this mask is built. Callers combine them via the SVG
+        // path (`render_svg_str_opts`), which sections before masking.
         let mask = opts
             .focus
             .as_deref()
@@ -2041,7 +2700,10 @@ mod raster {
 
     /// JPEG-encode a rasterized frame (coverage mask ignored — JPEG keeps
     /// the opaque vellum background).
-    fn encode_jpeg(frame: (Vec<u8>, Vec<u8>), opts: &RasterOptions) -> Result<Vec<u8>, String> {
+    pub(crate) fn encode_jpeg(
+        frame: (Vec<u8>, Vec<u8>),
+        opts: &RasterOptions,
+    ) -> Result<Vec<u8>, String> {
         let (rgb, _mask) = frame;
         let mut out = Vec::new();
         let mut enc = image::codecs::jpeg::JpegEncoder::new_with_quality(
@@ -2060,7 +2722,10 @@ mod raster {
 
     /// PNG-encode a rasterized frame as RGBA: covered pixels are opaque,
     /// background pixels get alpha 0.
-    fn encode_png(frame: (Vec<u8>, Vec<u8>), opts: &RasterOptions) -> Result<Vec<u8>, String> {
+    pub(crate) fn encode_png(
+        frame: (Vec<u8>, Vec<u8>),
+        opts: &RasterOptions,
+    ) -> Result<Vec<u8>, String> {
         let (rgb, mask) = frame;
         let mut rgba = Vec::with_capacity(mask.len() * 4);
         for (i, &a) in mask.iter().enumerate() {
@@ -2103,6 +2768,41 @@ mod raster {
             return Err("fill_frac must be in (0, 1]".to_string());
         }
 
+        // Apply the section cut (if any) before tessellation. A solid whose
+        // boolean fails is rendered uncut; one wholly on the removed side is
+        // dropped. Rebuild SceneSolids so tints and names stay aligned with
+        // the (possibly shorter) cut solid list.
+        // Parallel solid/tint/name columns, kept aligned across a section cut.
+        type Columns = (Vec<Solid>, Vec<Option<[f64; 3]>>, Vec<Option<String>>);
+        let (solids, tints, names): Columns = match opts.section {
+            Some(plane) => {
+                let scene: Vec<SceneSolid> = solids
+                    .iter()
+                    .enumerate()
+                    .map(|(i, s)| SceneSolid {
+                        solid: s.clone(),
+                        tint: tints.get(i).copied().flatten(),
+                        name: names.get(i).cloned().flatten(),
+                        // Raster path does no highlighting or focus lookup
+                        // here; id and labels are unused.
+                        labels: Vec::new(),
+                        id: String::new(),
+                    })
+                    .collect();
+                let cut = apply_section(scene, plane, opts.view);
+                (
+                    cut.iter().map(|s| s.solid.clone()).collect(),
+                    cut.iter().map(|s| s.tint).collect(),
+                    cut.iter().map(|s| s.name.clone()).collect(),
+                )
+            }
+            None => (solids.to_vec(), tints.to_vec(), names.to_vec()),
+        };
+        if solids.is_empty() {
+            return Err("no solids survive the section plane".to_string());
+        }
+        let (solids, tints, names) = (&solids[..], &tints[..], &names[..]);
+
         let cam = opts.view.cam();
         let right = normalize(opts.view.right());
         let down = normalize(opts.view.down());
@@ -2113,9 +2813,11 @@ mod raster {
         } else {
             RASTER_SEGMENTS
         };
+        let no_accents = vec![false; solids.len()];
         let arts = build_artifacts(
             solids,
             tints,
+            &no_accents,
             cam,
             segments,
             &EdgeRules {
@@ -2123,6 +2825,7 @@ mod raster {
                 mark_silhouette: true,
                 keep_occluded: false,
             },
+            opts.section,
         );
 
         // Screen-plane (mm) and 3D bounding boxes over all vertices.
@@ -2224,6 +2927,7 @@ mod raster {
                     size,
                     [proj[t[0]], proj[t[1]], proj[t[2]]],
                     shade,
+                    art.cut[ti],
                 );
             }
         }
@@ -2264,6 +2968,14 @@ mod raster {
         (b.0 - a.0) * (py - a.1) - (b.1 - a.1) * (px - a.0)
     }
 
+    /// Hatch period (px) for section-cut faces in the raster path; lines
+    /// run at 45° because `x + y` is constant along each anti-diagonal.
+    const HATCH_PERIOD_PX: usize = 9;
+    /// Hatch line thickness (px) within each period.
+    const HATCH_LINE_PX: usize = 2;
+    /// Cut-face background — a pale ice tint (matches the SVG `HATCH_BG`).
+    const HATCH_BG_RGB: [u8; 3] = [220, 232, 242];
+
     fn fill_triangle(
         rgb: &mut [u8],
         zbuf: &mut [f64],
@@ -2271,6 +2983,7 @@ mod raster {
         size: usize,
         p: [(f64, f64, f64); 3],
         shade: [u8; 3],
+        hatch: bool,
     ) {
         let area = edge_fn(p[0], p[1], p[2].0, p[2].1);
         if area.abs() < 1e-12 {
@@ -2322,9 +3035,19 @@ mod raster {
                 if depth > zbuf[idx] {
                     zbuf[idx] = depth;
                     mask[idx] = 255;
-                    rgb[idx * 3] = shade[0];
-                    rgb[idx * 3 + 1] = shade[1];
-                    rgb[idx * 3 + 2] = shade[2];
+                    let c = if hatch {
+                        // 45° drafting hatch: ink line over pale ice.
+                        if (px + py) % HATCH_PERIOD_PX < HATCH_LINE_PX {
+                            FILL_DARK
+                        } else {
+                            HATCH_BG_RGB
+                        }
+                    } else {
+                        shade
+                    };
+                    rgb[idx * 3] = c[0];
+                    rgb[idx * 3 + 1] = c[1];
+                    rgb[idx * 3 + 2] = c[2];
                 }
             }
         }
@@ -2727,6 +3450,243 @@ mod raster {
     }
 }
 
+// ─── raytrace path (feature-gated) ────────────────────────────────────────
+
+#[cfg(feature = "raytrace")]
+pub use raytrace::{render_raytrace_jpeg_str, render_raytrace_png_str};
+
+/// Direct BRep ray tracing (`--raytrace`): pixel-perfect raster output with
+/// no tessellation anywhere in the pipeline. Analytic ray–surface
+/// intersection (via `vcad-kernel-raytrace`'s SAH BVH and trimmed-face
+/// tests) means curved silhouettes are exact at any resolution — no facet
+/// banding, no segment count to tune.
+///
+/// The camera is the same orthographic [`View`] basis and framing math as
+/// the tessellated raster path, and shading samples the same vcad-Blue
+/// tonal ramp ([`RAMP`], tinted by document material colours), so the two
+/// paths are drop-in alternatives that read as the same house style.
+#[cfg(feature = "raytrace")]
+mod raytrace {
+    use super::raster::{encode_jpeg, encode_png, BACKGROUND};
+    use super::*;
+    use vcad_kernel::vcad_kernel_math::{Point3, Vec3};
+    use vcad_kernel_raytrace::{bvh::BvhNode, Bvh, Ray};
+
+    /// Stratified supersampling grid per pixel (N × N rays). Analytic
+    /// intersection makes interior shading perfectly smooth already; the
+    /// samples exist to anti-alias silhouettes.
+    const SS_GRID: u32 = 2;
+
+    /// Render raw `.vcad` document JSON to a ray-traced JPEG.
+    ///
+    /// Same options, framing, and tonal ramp as
+    /// [`render_jpeg_str`](super::render_jpeg_str), but every pixel is an
+    /// analytic ray–BRep intersection instead of a tessellated triangle.
+    pub fn render_raytrace_jpeg_str(
+        raw_vcad: &str,
+        opts: &RasterOptions,
+    ) -> Result<Vec<u8>, String> {
+        encode_jpeg(rasterize_rt(raw_vcad, opts, false)?, opts)
+    }
+
+    /// Render raw `.vcad` document JSON to a ray-traced RGBA PNG with a fully
+    /// transparent background (alpha 0 where no surface was hit) — the raster
+    /// analogue of the tessellated [`render_png_str`](super::render_png_str).
+    /// See [`render_raytrace_jpeg_str`].
+    pub fn render_raytrace_png_str(
+        raw_vcad: &str,
+        opts: &RasterOptions,
+    ) -> Result<Vec<u8>, String> {
+        encode_png(rasterize_rt(raw_vcad, opts, true)?, opts)
+    }
+
+    fn node_aabb(node: &BvhNode) -> &vcad_kernel::vcad_kernel_booleans::bbox::Aabb3 {
+        match node {
+            BvhNode::Leaf { aabb, .. } | BvhNode::Internal { aabb, .. } => aabb,
+        }
+    }
+
+    /// Trace the scene to an RGB frame plus a per-pixel coverage mask (255
+    /// where a surface was hit, fractional at supersampled silhouette edges,
+    /// 0 over background). The `png` flavour keeps hit pixels at their pure
+    /// geometry colour (straight-alpha transparency); the JPEG flavour
+    /// composites coverage over the opaque vellum background. Both share the
+    /// tessellated path's `encode_jpeg` / `encode_png`.
+    fn rasterize_rt(
+        raw_vcad: &str,
+        opts: &RasterOptions,
+        png: bool,
+    ) -> Result<(Vec<u8>, Vec<u8>), String> {
+        let tinted = evaluate_vcad(raw_vcad)?;
+        if tinted.is_empty() {
+            return Err("no solids produced".to_string());
+        }
+        if opts.size_px < 16 {
+            return Err("size_px too small".to_string());
+        }
+        if !(opts.fill_frac > 0.0 && opts.fill_frac <= 1.0) {
+            return Err("fill_frac must be in (0, 1]".to_string());
+        }
+
+        // One BVH per BRep-backed solid; assembly instances arrive from
+        // `evaluate_vcad` already world-placed, so no per-instance
+        // transforms are needed here. Mesh-only solids (frozen topology-
+        // optimization results, imported meshes) have no analytic surfaces
+        // to trace and are skipped.
+        let mut scene: Vec<(Bvh, Option<[[u8; 3]; 4]>)> = Vec::new();
+        for s in &tinted {
+            let Some(brep) = s.solid.as_brep() else {
+                continue;
+            };
+            let bvh = Bvh::build(brep);
+            if bvh.root().is_none() {
+                continue;
+            }
+            scene.push((bvh, s.tint.map(tint_ramp)));
+        }
+        if scene.is_empty() {
+            return Err("raytrace: document produced no BRep-backed solids \
+                 (mesh-only parts render via the tessellated path)"
+                .to_string());
+        }
+
+        // Framing: project the union of the BVH root AABBs onto the view
+        // basis — same fill/centre math as the tessellated raster path.
+        let cam = opts.view.cam();
+        let right = normalize(opts.view.right());
+        let down = normalize(opts.view.down());
+        let light = normalize(LIGHT);
+
+        let mut min = [f64::INFINITY; 2];
+        let mut max = [f64::NEG_INFINITY; 2];
+        let mut dmin = f64::INFINITY;
+        let mut dmax = f64::NEG_INFINITY;
+        for (bvh, _) in &scene {
+            let aabb = node_aabb(bvh.root().expect("empty BVHs were filtered"));
+            for i in 0..8 {
+                let c = [
+                    if i & 1 == 0 { aabb.min.x } else { aabb.max.x },
+                    if i & 2 == 0 { aabb.min.y } else { aabb.max.y },
+                    if i & 4 == 0 { aabb.min.z } else { aabb.max.z },
+                ];
+                let s = [dot(c, right), dot(c, down)];
+                for k in 0..2 {
+                    min[k] = min[k].min(s[k]);
+                    max[k] = max[k].max(s[k]);
+                }
+                let d = dot(c, cam);
+                dmin = dmin.min(d);
+                dmax = dmax.max(d);
+            }
+        }
+        let extent = (max[0] - min[0]).max(max[1] - min[1]);
+        if !extent.is_finite() || extent < 1e-9 {
+            return Err("degenerate projection (no extent)".to_string());
+        }
+        let dspan = (dmax - dmin).max(1e-9);
+
+        let size = opts.size_px as usize;
+        let px_per_mm = opts.fill_frac * opts.size_px as f64 / extent;
+        let cx = (min[0] + max[0]) / 2.0;
+        let cy = (min[1] + max[1]) / 2.0;
+        let half = opts.size_px as f64 / 2.0;
+
+        // Orthographic rays: start on a plane just past the scene along
+        // the camera direction, fire straight down it.
+        let d0 = dmax + dspan + 1.0;
+        let dir = Vec3::new(-cam[0], -cam[1], -cam[2]);
+
+        let mut rgb: Vec<u8> = BACKGROUND
+            .iter()
+            .copied()
+            .cycle()
+            .take(size * size * 3)
+            .collect();
+        let mut mask: Vec<u8> = vec![0u8; size * size];
+
+        let n = (SS_GRID * SS_GRID) as f64;
+        for py in 0..size {
+            for px in 0..size {
+                // Sum only the sub-samples that hit a surface, and count
+                // them: `hits/n` is the pixel's coverage.
+                let mut acc = [0.0f64; 3];
+                let mut hits = 0u32;
+                for sy in 0..SS_GRID {
+                    for sx in 0..SS_GRID {
+                        let fx = px as f64 + (sx as f64 + 0.5) / SS_GRID as f64;
+                        let fy = py as f64 + (sy as f64 + 0.5) / SS_GRID as f64;
+                        let sx_mm = (fx - half) / px_per_mm + cx;
+                        let sy_mm = (fy - half) / px_per_mm + cy;
+                        let origin = Point3::new(
+                            right[0] * sx_mm + down[0] * sy_mm + cam[0] * d0,
+                            right[1] * sx_mm + down[1] * sy_mm + cam[1] * d0,
+                            right[2] * sx_mm + down[2] * sy_mm + cam[2] * d0,
+                        );
+                        let ray = Ray::new(origin, dir);
+
+                        let mut best: Option<(f64, [u8; 3])> = None;
+                        for (bvh, ramp) in &scene {
+                            if let Some(hit) = bvh.trace_closest(&ray) {
+                                if best.as_ref().is_none_or(|(t, _)| hit.t < *t) {
+                                    let shade = shade_hit(&hit, ramp, cam, light, dmin, dspan);
+                                    best = Some((hit.t, shade));
+                                }
+                            }
+                        }
+                        if let Some((_, c)) = best {
+                            for k in 0..3 {
+                                acc[k] += c[k] as f64;
+                            }
+                            hits += 1;
+                        }
+                    }
+                }
+                let pi = py * size + px;
+                let idx = pi * 3;
+                if hits == 0 {
+                    continue; // leave background rgb, mask 0 (transparent)
+                }
+                mask[pi] = ((hits as f64 / n) * 255.0).round() as u8;
+                for k in 0..3 {
+                    rgb[idx + k] = if png {
+                        // Straight-alpha: pure geometry colour, coverage in α.
+                        (acc[k] / hits as f64).round() as u8
+                    } else {
+                        // Composite coverage over the opaque vellum ground.
+                        ((acc[k] + (n - hits as f64) * BACKGROUND[k] as f64) / n).round() as u8
+                    };
+                }
+            }
+        }
+
+        Ok((rgb, mask))
+    }
+
+    /// Shade an analytic hit with the same terms as the tessellated raster
+    /// path: face-forward normal, Lambertian key light, mild depth cue,
+    /// tonal-ramp (tinted) or two-stop monochrome (untinted) colour.
+    fn shade_hit(
+        hit: &vcad_kernel_raytrace::RayHit,
+        ramp: &Option<[[u8; 3]; 4]>,
+        cam: [f64; 3],
+        light: [f64; 3],
+        dmin: f64,
+        dspan: f64,
+    ) -> [u8; 3] {
+        let mut n = [hit.normal.x, hit.normal.y, hit.normal.z];
+        if dot(n, cam) < 0.0 {
+            n = [-n[0], -n[1], -n[2]];
+        }
+        let p = [hit.point.x, hit.point.y, hit.point.z];
+        let cue = 0.78 + 0.22 * ((dot(p, cam) - dmin) / dspan).clamp(0.0, 1.0);
+        let lit = (lambertian(n, light) * cue).clamp(0.0, 1.0);
+        match ramp {
+            Some(r) => ramp_sample(r, lit),
+            None => mix_rgb(FILL_DARK, FILL_LIGHT, lit),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2756,6 +3716,98 @@ mod tests {
   "roots": [{{ "root": 1, "material": "aluminum" }}]
 }}"#
         )
+    }
+
+    /// Two disjoint copper cubes: root node 1 ("base") at the origin and
+    /// root node 3 ("lid") translated clear of it — the minimal highlight
+    /// fixture.
+    fn two_cube_vcad() -> String {
+        r#"{
+  "version": "0.1",
+  "nodes": {
+    "1": { "id": 1, "name": "base", "op": { "type": "Cube", "size": { "x": 20, "y": 20, "z": 10 } } },
+    "2": { "id": 2, "name": null, "op": { "type": "Cube", "size": { "x": 20, "y": 20, "z": 10 } } },
+    "3": { "id": 3, "name": "lid", "op": { "type": "Translate", "child": 2, "offset": { "x": 40, "y": 0, "z": 0 } } }
+  },
+  "materials": {
+    "copper": {
+      "name": "copper",
+      "color": [0.72, 0.45, 0.2],
+      "metallic": 1.0,
+      "roughness": 0.4,
+      "density": 8960.0,
+      "friction": 0.6
+    }
+  },
+  "part_materials": {},
+  "roots": [
+    { "root": 1, "material": "copper" },
+    { "root": 3, "material": "copper" }
+  ]
+}"#
+        .to_string()
+    }
+
+    /// [`SvgOptions`] selecting the given highlight ids on the isometric view.
+    fn highlight_opts(ids: &[&str]) -> SvgOptions {
+        SvgOptions {
+            view: View::Isometric,
+            highlight: ids.iter().map(|s| s.to_string()).collect(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn highlight_strokes_accent_and_ghosts_the_rest() {
+        let vcad = two_cube_vcad();
+        let plain = render_svg_str_opts(&vcad, DEFAULT_SCALE, &highlight_opts(&[])).unwrap();
+        assert!(
+            !plain.contains(ACCENT),
+            "no accent stroke without a highlight set"
+        );
+
+        // Highlight by root node id — the `part_id` a mutation diff reports.
+        let hl = render_svg_str_opts(&vcad, DEFAULT_SCALE, &highlight_opts(&["3"]))
+            .expect("highlighted render");
+        assert!(
+            hl.contains(&format!(
+                r#"stroke="{ACCENT}" stroke-width="{STROKE_ACCENT_PX}""#
+            )),
+            "highlighted part must carry the brand-orange accent outline"
+        );
+        // The non-highlighted part is ghosted: its fills fade toward paper
+        // (colours the plain render never emits) and its visible linework
+        // drops to the ghost opacity.
+        assert!(
+            hl.contains(&format!(r#"opacity="{GHOST_LINE_OPACITY}""#)),
+            "ghosted part's linework must fade"
+        );
+        let ghosted_fill = hex(ghost_ramp(tint_ramp([0.72, 0.45, 0.2]))[1]);
+        assert!(
+            hl.contains(&ghosted_fill) && !plain.contains(&ghosted_fill),
+            "ghosted fills must fade toward paper (expected {ghosted_fill})"
+        );
+    }
+
+    #[test]
+    fn highlight_matches_by_node_name() {
+        let hl = render_svg_str_opts(&two_cube_vcad(), DEFAULT_SCALE, &highlight_opts(&["lid"]))
+            .expect("name-matched highlight render");
+        assert!(hl.contains(ACCENT));
+    }
+
+    #[test]
+    fn highlight_with_no_match_is_an_error() {
+        let err = render_svg_str_opts(
+            &two_cube_vcad(),
+            DEFAULT_SCALE,
+            &highlight_opts(&["no-such-part"]),
+        )
+        .unwrap_err();
+        assert!(
+            err.contains("highlight matched no parts") && err.contains("base"),
+            "error must list the document's parts, got: {err}"
+        );
     }
 
     fn cone_vcad(radius_bottom: f64, radius_top: f64, height: f64) -> String {
@@ -2969,7 +4021,7 @@ mod tests {
         assert!(svg.starts_with("<svg "));
         assert!(svg.ends_with("</svg>"));
         assert!(svg.contains("<polygon"));
-        assert!(svg.contains("<line"));
+        assert!(svg.contains("<line "));
     }
 
     #[test]
@@ -3000,7 +4052,7 @@ mod tests {
     }
 
     /// Two named cubes far apart; used by the focus tests.
-    fn two_cube_vcad() -> String {
+    fn two_named_cube_vcad() -> String {
         r#"{
   "version": "0.1",
   "nodes": {
@@ -3091,9 +4143,9 @@ mod tests {
             let end = svg[start..].find('"').unwrap() + start;
             svg[start..end].parse().unwrap()
         };
-        let full = render_svg_str(&two_cube_vcad(), 2.0).unwrap();
+        let full = render_svg_str(&two_named_cube_vcad(), 2.0).unwrap();
         let focused = render_svg_str_camera(
-            &two_cube_vcad(),
+            &two_named_cube_vcad(),
             2.0,
             &CameraOptions {
                 focus: Some("LEFT_CUBE".to_string()), // case-insensitive
@@ -3114,7 +4166,7 @@ mod tests {
     #[test]
     fn focus_unknown_part_errors_with_labels() {
         let err = render_svg_str_camera(
-            &two_cube_vcad(),
+            &two_named_cube_vcad(),
             2.0,
             &CameraOptions {
                 focus: Some("nope".to_string()),
@@ -3331,6 +4383,244 @@ mod tests {
         }
     }
 
+    fn cylinder_vcad(radius: f64, height: f64) -> String {
+        format!(
+            r#"{{
+  "version": "0.1",
+  "nodes": {{
+    "1": {{
+      "id": 1,
+      "name": "Cyl",
+      "op": {{ "type": "Cylinder", "radius": {radius}, "height": {height}, "segments": 0 }}
+    }}
+  }},
+  "materials": {{}},
+  "part_materials": {{}},
+  "roots": [{{ "root": 1, "material": "default" }}]
+}}"#
+        )
+    }
+
+    fn sphere_vcad(radius: f64) -> String {
+        format!(
+            r#"{{
+  "version": "0.1",
+  "nodes": {{
+    "1": {{
+      "id": 1,
+      "name": "Sph",
+      "op": {{ "type": "Sphere", "radius": {radius}, "segments": 0 }}
+    }}
+  }},
+  "materials": {{}},
+  "part_materials": {{}},
+  "roots": [{{ "root": 1, "material": "default" }}]
+}}"#
+        )
+    }
+
+    fn render_exact(vcad: &str) -> String {
+        render_svg_str_opts(
+            vcad,
+            8.0,
+            &SvgOptions {
+                exact_edges: true,
+                ..Default::default()
+            },
+        )
+        .expect("exact-edges render should succeed")
+    }
+
+    /// With `exact_edges`, a cylinder's rims are emitted as exact SVG
+    /// elliptical-arc paths and the corresponding rim polylines vanish —
+    /// only the two straight silhouette rulings remain as `<line>`s.
+    #[test]
+    fn exact_edges_replace_cylinder_rims_with_arcs() {
+        let svg = render_exact(&cylinder_vcad(10.0, 24.0));
+        assert!(
+            svg.contains(r#"<path d="M"#) && svg.contains(" A "),
+            "expected exact elliptical-arc paths in the linework"
+        );
+        let lines = svg.matches("<line ").count();
+        assert!(
+            lines <= 8,
+            "rim polylines should be replaced by arcs, found {lines} <line>s"
+        );
+    }
+
+    /// With `exact_edges`, a sphere's view outline is a single exact
+    /// ellipse path (no polyline silhouette at all).
+    #[test]
+    fn exact_edges_replace_sphere_outline_with_arcs() {
+        let svg = render_exact(&sphere_vcad(12.0));
+        assert!(svg.contains(" A "), "expected an exact outline arc path");
+        assert_eq!(
+            svg.matches("<line ").count(),
+            0,
+            "sphere silhouette polylines should be fully replaced"
+        );
+    }
+
+    /// A cube has no circular edges — exact mode must not invent arcs, and
+    /// its output must keep the plain polyline linework.
+    #[test]
+    fn exact_edges_leave_cube_linework_alone() {
+        let svg = render_exact(&cube_vcad(20.0, 20.0, 20.0));
+        assert_eq!(
+            svg.matches("<path").count(),
+            0,
+            "no arcs expected for a cube"
+        );
+        assert!(svg.contains("<line "));
+    }
+
+    /// Default (non-exact) output stays polyline-only — the flag is opt-in.
+    #[test]
+    fn exact_edges_off_by_default() {
+        let svg = render_svg_str(&cylinder_vcad(10.0, 24.0), 8.0).unwrap();
+        assert_eq!(svg.matches("<path").count(), 0);
+    }
+
+    /// A boolean-drilled hole keeps exact rims: the boolean pipeline
+    /// preserves the cylindrical surface, so the bore's mouth must come out
+    /// as arcs, not a 64-gon.
+    #[test]
+    fn exact_edges_survive_booleans() {
+        let vcad = r#"{
+  "version": "0.1",
+  "nodes": {
+    "1": { "id": 1, "name": "Plate", "op": { "type": "Cube", "size": { "x": 50.0, "y": 40.0, "z": 8.0 } } },
+    "2": { "id": 2, "name": "Hole", "op": { "type": "Cylinder", "radius": 6.0, "height": 20.0, "segments": 0 } },
+    "3": { "id": 3, "name": "HoleT", "op": { "type": "Translate", "child": 2, "offset": { "x": 25.0, "y": 20.0, "z": -5.0 } } },
+    "4": { "id": 4, "name": "Drilled", "op": { "type": "Difference", "left": 1, "right": 3 } }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [{ "root": 4, "material": "default" }]
+}"#;
+        let svg = render_exact(vcad);
+        assert!(
+            svg.contains(" A "),
+            "drilled hole rim should render as exact arcs"
+        );
+    }
+
+    /// A hollow box (cube minus an inset cube) whose cavity never reaches
+    /// the outside — a solid shell with walls all around.
+    fn hollow_box_vcad() -> &'static str {
+        r#"{
+  "version": "0.1",
+  "nodes": {
+    "1": { "id": 1, "name": "outer", "op": { "type": "Cube", "size": { "x": 30.0, "y": 30.0, "z": 30.0 } } },
+    "2": { "id": 2, "name": "inner", "op": { "type": "Cube", "size": { "x": 20.0, "y": 20.0, "z": 20.0 } } },
+    "3": { "id": 3, "name": "inner_placed", "op": { "type": "Translate", "child": 2, "offset": { "x": 5.0, "y": 5.0, "z": 5.0 } } },
+    "4": { "id": 4, "name": "shell", "op": { "type": "Difference", "left": 1, "right": 3 } }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [{ "root": 4, "material": "default" }]
+}"#
+    }
+
+    #[test]
+    fn parses_section_planes() {
+        use std::str::FromStr;
+        let s = SectionPlane::from_str("z=10").unwrap();
+        assert_eq!(s.axis, Axis::Z);
+        assert!((s.coord - 10.0).abs() < 1e-12);
+        assert_eq!(SectionPlane::from_str("X=-2.5").unwrap().axis, Axis::X);
+        assert!(SectionPlane::from_str("w=1").is_err());
+        assert!(SectionPlane::from_str("z").is_err());
+        assert!(SectionPlane::from_str("z=abc").is_err());
+    }
+
+    /// Sectioning a hollow box at mid-height must expose the cavity: the
+    /// SVG gains cross-hatched cut faces (the hatch pattern def plus
+    /// polygons filled with it) that an unsectioned render lacks.
+    #[test]
+    fn section_of_hollow_box_emits_hatched_cut_faces() {
+        let plane = SectionPlane {
+            axis: Axis::Z,
+            coord: 15.0,
+        };
+        let svg = render_svg_str_section(
+            hollow_box_vcad(),
+            4.0,
+            View::Isometric,
+            false,
+            Some(plane),
+            &RenderAnnotations::default(),
+        )
+        .expect("sectioned hollow box should render");
+        assert!(
+            svg.contains(r#"<pattern id="section-hatch""#),
+            "expected the section hatch pattern def"
+        );
+        assert!(
+            svg.contains(r#"fill="url(#section-hatch)""#),
+            "expected polygons filled with the section hatch"
+        );
+
+        let plain = render_svg_str_view(hollow_box_vcad(), 4.0, View::Isometric).unwrap();
+        assert!(
+            !plain.contains("section-hatch"),
+            "unsectioned render must not carry hatch markup"
+        );
+    }
+
+    /// A section plane entirely above the part removes nothing and adds no
+    /// hatched faces; one entirely below removes everything.
+    #[test]
+    fn section_plane_outside_part_bounds() {
+        let above = SectionPlane {
+            axis: Axis::Z,
+            coord: 100.0,
+        };
+        let svg = render_svg_str_section(
+            hollow_box_vcad(),
+            2.0,
+            View::Isometric,
+            false,
+            Some(above),
+            &RenderAnnotations::default(),
+        )
+        .expect("plane above the part should render it uncut");
+        assert!(!svg.contains(r#"fill="url(#section-hatch)""#));
+
+        let below = SectionPlane {
+            axis: Axis::Z,
+            coord: -100.0,
+        };
+        assert!(
+            render_svg_str_section(
+                hollow_box_vcad(),
+                2.0,
+                View::Isometric,
+                false,
+                Some(below),
+                &RenderAnnotations::default()
+            )
+            .is_err(),
+            "plane below the part removes all material"
+        );
+    }
+
+    #[cfg(feature = "raster")]
+    #[test]
+    fn section_composes_with_jpeg_and_view() {
+        let opts = RasterOptions {
+            view: View::Front,
+            size_px: 256,
+            section: Some(SectionPlane {
+                axis: Axis::Y,
+                coord: 15.0,
+            }),
+            ..Default::default()
+        };
+        let jpg = render_jpeg_str(hollow_box_vcad(), &opts).unwrap();
+        assert_eq!(&jpg[..2], &[0xFF, 0xD8]);
+    }
+
     /// `tint_ramp` was previously capped at k ≤ 0.2 — even fully-saturated
     /// material colours rendered as the default navy with the faintest hint
     /// of hue. This pins the contract that a saturated material actually
@@ -3386,6 +4676,140 @@ mod tests {
                     "achromatic material must not shift the navy ramp"
                 );
             }
+        }
+    }
+
+    #[cfg(feature = "raytrace")]
+    mod raytrace {
+        use super::*;
+
+        fn sphere_vcad(radius: f64) -> String {
+            format!(
+                r#"{{
+  "version": "0.1",
+  "nodes": {{
+    "1": {{
+      "id": 1,
+      "name": "Sphere",
+      "op": {{ "type": "Sphere", "radius": {radius}, "segments": 0 }}
+    }}
+  }},
+  "materials": {{}},
+  "part_materials": {{}},
+  "roots": [{{ "root": 1, "material": "default" }}]
+}}"#
+            )
+        }
+
+        /// Luminance of the center row's interior (non-background) pixels.
+        fn center_row_luma(png: &[u8], size: u32) -> Vec<f64> {
+            let img = image::load_from_memory(png).expect("valid PNG").to_rgb8();
+            assert_eq!(img.width(), size);
+            assert_eq!(img.height(), size);
+            let y = size / 2;
+            let bg = super::super::raster::BACKGROUND;
+            (0..size)
+                .map(|x| *img.get_pixel(x, y))
+                .filter(|p| p.0 != bg)
+                .map(|p| luma([p.0[0] as f64, p.0[1] as f64, p.0[2] as f64]))
+                .collect()
+        }
+
+        /// Largest luma jump between adjacent pixels, ignoring a margin at
+        /// each end (grazing-angle silhouette pixels legitimately change
+        /// fast in both paths).
+        fn max_adjacent_delta(row: &[f64], margin: usize) -> f64 {
+            let inner = &row[margin.min(row.len())..row.len().saturating_sub(margin)];
+            inner
+                .windows(2)
+                .map(|w| (w[1] - w[0]).abs())
+                .fold(0.0, f64::max)
+        }
+
+        /// The point of the raytrace path: analytic intersection means a
+        /// sphere shades as a continuous gradient, while the tessellated
+        /// path flat-shades facets that band. The ray-traced center row
+        /// must be strictly smoother than the tessellated one, and smooth
+        /// in absolute terms.
+        #[test]
+        fn raytraced_sphere_is_smooth_vs_tessellated() {
+            let doc = sphere_vcad(10.0);
+            let opts = RasterOptions {
+                view: View::Front,
+                size_px: 128,
+                ..Default::default()
+            };
+            let rt = render_raytrace_png_str(&doc, &opts).unwrap();
+            let tess = render_png_str(&doc, &opts).unwrap();
+
+            let rt_row = center_row_luma(&rt, 128);
+            let tess_row = center_row_luma(&tess, 128);
+            assert!(
+                rt_row.len() > 40,
+                "sphere should span a good chunk of the 128px canvas, got {} interior pixels",
+                rt_row.len()
+            );
+
+            let rt_max = max_adjacent_delta(&rt_row, 4);
+            let tess_max = max_adjacent_delta(&tess_row, 4);
+            assert!(
+                rt_max < 10.0,
+                "ray-traced sphere row should shade smoothly, max adjacent luma jump {rt_max:.1}"
+            );
+            assert!(
+                rt_max < tess_max,
+                "ray-traced row (max jump {rt_max:.1}) should be smoother than the \
+                 tessellated row (max jump {tess_max:.1})"
+            );
+        }
+
+        #[test]
+        fn raytrace_jpeg_has_soi_marker() {
+            let opts = RasterOptions {
+                size_px: 64,
+                ..Default::default()
+            };
+            let jpg = render_raytrace_jpeg_str(&sphere_vcad(5.0), &opts).unwrap();
+            assert_eq!(&jpg[..2], &[0xFF, 0xD8], "missing JPEG SOI marker");
+        }
+
+        /// Assembly-only documents (partDefs + instances, no scene roots)
+        /// must ray trace their world-placed instances, same as the
+        /// tessellated path.
+        #[test]
+        fn raytrace_renders_assembly_instances() {
+            let vcad = r#"{
+  "version": "0.1",
+  "nodes": {
+    "1": { "id": 1, "name": "base", "op": { "type": "Cube", "size": { "x": 40.0, "y": 40.0, "z": 5.0 } } },
+    "2": { "id": 2, "name": "post", "op": { "type": "Cylinder", "radius": 5.0, "height": 30.0, "segments": 0 } }
+  },
+  "materials": {},
+  "part_materials": {},
+  "roots": [],
+  "partDefs": {
+    "base": { "id": "base", "name": "base", "root": 1 },
+    "post": { "id": "post", "name": "post", "root": 2 }
+  },
+  "instances": [
+    { "id": "base1", "partDefId": "base", "transform": { "translation": { "x": 0.0, "y": 0.0, "z": 0.0 }, "rotation": { "x": 0.0, "y": 0.0, "z": 0.0 }, "scale": { "x": 1.0, "y": 1.0, "z": 1.0 } } },
+    { "id": "post1", "partDefId": "post", "transform": { "translation": { "x": 20.0, "y": 20.0, "z": 5.0 }, "rotation": { "x": 0.0, "y": 0.0, "z": 0.0 }, "scale": { "x": 1.0, "y": 1.0, "z": 1.0 } } }
+  ],
+  "groundInstanceId": "base1"
+}"#;
+            let opts = RasterOptions {
+                size_px: 96,
+                ..Default::default()
+            };
+            let png = render_raytrace_png_str(vcad, &opts).unwrap();
+            let img = image::load_from_memory(&png).unwrap().to_rgb8();
+            assert_eq!(img.width(), 96);
+            let bg = super::super::raster::BACKGROUND;
+            let non_bg = img.pixels().filter(|p| p.0 != bg).count();
+            assert!(
+                non_bg > 500,
+                "expected both placed instances to cover pixels, got {non_bg} non-background"
+            );
         }
     }
 }

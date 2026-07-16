@@ -6,11 +6,14 @@ publish = false
 description = "Project a .vcad document to static line art: isometric/orthographic SVG or raster JPEG."
 
 [features]
-default = ["raster", "cli"]
+default = ["raster", "cli", "raytrace"]
 # Raster (JPEG/PNG) output. Off for the WASM build, which only needs SVG.
 raster = ["dep:image"]
 # The vcad-render binary. Off for the WASM build, which only needs the lib.
 cli = ["dep:clap"]
+# Direct BRep ray tracing (`--raytrace`): pixel-perfect raster output via
+# vcad-kernel-raytrace. Off for the WASM build so it doesn't grow.
+raytrace = ["raster", "dep:vcad-kernel-raytrace"]
 
 [dependencies]
 vcad-eval = { workspace = true }
@@ -20,6 +23,7 @@ vcad-ecad-pcb = { workspace = true }
 serde_json = { workspace = true }
 clap = { version = "4", features = ["derive"], optional = true }
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"], optional = true }
+vcad-kernel-raytrace = { workspace = true, optional = true }
 
 [lib]
 name = "vcad_render"
@@ -32,3 +36,4 @@ required-features = ["cli"]
 
 [dev-dependencies]
 vcad-loon = { workspace = true }
+vcad-ecad-symbols = { workspace = true }

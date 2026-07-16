@@ -471,10 +471,28 @@ pub(crate) fn copper_elements(pcb: &Pcb) -> Vec<CopperElement> {
         });
     }
 
-    // Vias (on every copper layer they span — endpoints at minimum).
+    // Vias (on every copper layer they span, so inner-layer probes see them —
+    // endpoints at minimum when the stackup lists no other copper).
+    let stackup_copper: Vec<PcbLayer> = pcb
+        .stackup
+        .layers
+        .iter()
+        .map(|l| l.layer)
+        .filter(|l| l.is_copper())
+        .collect();
     for via in &pcb.vias {
         let r = via.diameter / 2.0;
-        for layer in [via.start_layer, via.end_layer] {
+        let mut spanned: Vec<PcbLayer> = stackup_copper
+            .iter()
+            .copied()
+            .filter(|l| l.spanned_by(via.start_layer, via.end_layer))
+            .collect();
+        for endpoint in [via.start_layer, via.end_layer] {
+            if !spanned.contains(&endpoint) {
+                spanned.push(endpoint);
+            }
+        }
+        for layer in spanned {
             elements.push(CopperElement {
                 min: [via.position.x - r, via.position.y - r],
                 max: [via.position.x + r, via.position.y + r],
@@ -802,6 +820,88 @@ mod tests {
         // Query around the resistor area
         let results = index.query_region([22.0, 38.0], [28.0, 42.0]);
         assert!(!results.is_empty());
+    }
+
+    /// A via on a multilayer board must be indexed on every copper layer it
+    /// spans, not just its endpoints — otherwise inner-layer probes route
+    /// straight through it. Regression for copper_elements only stamping
+    /// `[start_layer, end_layer]`.
+    #[test]
+    fn via_indexed_on_all_spanned_layers() {
+        let copper = |layer| StackupLayer {
+            layer,
+            copper_thickness: Some(0.035),
+            dielectric_thickness: None,
+            dielectric_er: None,
+            material: None,
+        };
+        let via = |start_layer, end_layer| Via {
+            position: Vec2::new(50.0, 40.0),
+            diameter: 0.8,
+            drill: 0.4,
+            start_layer,
+            end_layer,
+            net: "1".to_string(),
+            source: None,
+        };
+        let mut pcb = Pcb {
+            outline: BoardOutline {
+                vertices: vec![
+                    Vec2::new(0.0, 0.0),
+                    Vec2::new(100.0, 0.0),
+                    Vec2::new(100.0, 80.0),
+                    Vec2::new(0.0, 80.0),
+                ],
+                cutouts: vec![],
+                thickness: 1.6,
+            },
+            stackup: LayerStackup {
+                layers: vec![
+                    copper(PcbLayer::FCu),
+                    copper(PcbLayer::In1Cu),
+                    copper(PcbLayer::In2Cu),
+                    copper(PcbLayer::BCu),
+                ],
+            },
+            nets: vec![Net {
+                id: "1".to_string(),
+                name: "VCC".to_string(),
+            }],
+            rules: DesignRules {
+                default_rules: NetClassRules {
+                    name: "Default".to_string(),
+                    trace_width: 0.25,
+                    clearance: 0.2,
+                    via_diameter: 0.8,
+                    via_drill: 0.4,
+                    diff_pair_gap: None,
+                    diff_pair_width: None,
+                },
+                class_rules: vec![],
+                net_class_assignments: std::collections::HashMap::new(),
+                edge_clearance: 0.5,
+                hole_to_hole: 0.5,
+                min_annular_ring: 0.15,
+                min_drill: 0.2,
+            },
+            footprints: vec![],
+            traces: vec![],
+            vias: vec![via(PcbLayer::FCu, PcbLayer::BCu)],
+            trace_arcs: vec![],
+            zones: vec![],
+            keepouts: vec![],
+            net_ties: vec![],
+        };
+
+        // Through via: all four copper layers.
+        assert_eq!(SpatialIndex::from_pcb(&pcb).len(), 4);
+
+        // Blind via FCu..In1: exactly those two, not In2/BCu.
+        pcb.vias = vec![via(PcbLayer::FCu, PcbLayer::In1Cu)];
+        let layers: Vec<PcbLayer> = copper_elements(&pcb).iter().map(|e| e.layer).collect();
+        assert_eq!(layers.len(), 2);
+        assert!(layers.contains(&PcbLayer::FCu));
+        assert!(layers.contains(&PcbLayer::In1Cu));
     }
 
     #[test]

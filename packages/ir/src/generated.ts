@@ -2319,7 +2319,7 @@ netTies?: Array<NetTie>, };
  * `validateLayer` in `packages/mcp/src/tools/ecad.ts`); the aliases are only a
  * safety net for data already on disk.
  */
-export type PcbLayer = "FCu" | "BCu" | "In1Cu" | "In2Cu" | "In3Cu" | "In4Cu" | "In5Cu" | "In6Cu" | "FSilkS" | "BSilkS" | "FMask" | "BMask" | "FPaste" | "BPaste" | "FFab" | "BFab" | "FCrtYd" | "BCrtYd" | "EdgeCuts" | "UserDrawings" | "UserComments";
+export type PcbLayer = "FCu" | "BCu" | "In1Cu" | "In2Cu" | "In3Cu" | "In4Cu" | "In5Cu" | "In6Cu" | "In7Cu" | "In8Cu" | "FSilkS" | "BSilkS" | "FMask" | "BMask" | "FPaste" | "BPaste" | "FFab" | "BFab" | "FCrtYd" | "BCrtYd" | "EdgeCuts" | "UserDrawings" | "UserComments";
 
 /**
  * A single pin's identity within a package.

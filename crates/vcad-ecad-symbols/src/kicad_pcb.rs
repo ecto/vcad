@@ -83,6 +83,8 @@ fn parse_layer(s: &str) -> Option<PcbLayer> {
         "In4.Cu" => Some(PcbLayer::In4Cu),
         "In5.Cu" => Some(PcbLayer::In5Cu),
         "In6.Cu" => Some(PcbLayer::In6Cu),
+        "In7.Cu" => Some(PcbLayer::In7Cu),
+        "In8.Cu" => Some(PcbLayer::In8Cu),
         "F.SilkS" => Some(PcbLayer::FSilkS),
         "B.SilkS" => Some(PcbLayer::BSilkS),
         "F.Mask" => Some(PcbLayer::FMask),
@@ -206,6 +208,14 @@ fn convert_pcb(root: &SExpr<'_>) -> Result<Pcb, ParseError> {
         .filter_map(|n| parse_zone(n, &net_map))
         .collect();
 
+    // The .kicad_pcb setup block rarely carries usable rules (net classes
+    // live in the .kicad_pro project file), so a routed board would otherwise
+    // import with the fat 0.25/0.2/0.8 defaults — hopeless on an HDI design
+    // whose own copper is 0.1 mm tracks and 0.2 mm vias. The board's existing
+    // copper is the best available evidence of its fab capability: calibrate
+    // the default rules against it.
+    let rules = calibrate_rules_from_copper(rules, &traces, &vias);
+
     Ok(Pcb {
         outline,
         stackup,
@@ -219,6 +229,53 @@ fn convert_pcb(root: &SExpr<'_>) -> Result<Pcb, ParseError> {
         keepouts: vec![],
         net_ties: vec![],
     })
+}
+
+/// Calibrate imported design rules against the board's existing copper.
+///
+/// Only tightens, never loosens: a routed board whose median track is thinner
+/// than the parsed default width adopts the median (and caps clearance at
+/// that width — a fab that draws 0.1 mm tracks spaces them comparably); a via
+/// population smaller than the parsed default adopts the modal via. A board
+/// with no copper (fresh layout) keeps the parsed/default rules untouched.
+fn calibrate_rules_from_copper(
+    mut rules: DesignRules,
+    traces: &[Trace],
+    vias: &[Via],
+) -> DesignRules {
+    if !traces.is_empty() {
+        let mut widths: Vec<f64> = traces
+            .iter()
+            .map(|t| t.width)
+            .filter(|w| *w > 0.0)
+            .collect();
+        widths.sort_by(f64::total_cmp);
+        if let Some(&median) = widths.get(widths.len() / 2) {
+            if median < rules.default_rules.trace_width {
+                rules.default_rules.trace_width = median;
+            }
+            if median < rules.default_rules.clearance {
+                rules.default_rules.clearance = median;
+            }
+        }
+    }
+    if !vias.is_empty() {
+        // Modal (diameter, drill) pair — the via the design actually uses most.
+        let mut counts: HashMap<(u64, u64), usize> = HashMap::new();
+        for v in vias {
+            *counts
+                .entry((v.diameter.to_bits(), v.drill.to_bits()))
+                .or_default() += 1;
+        }
+        if let Some(((d, dr), _)) = counts.into_iter().max_by_key(|(_, c)| *c) {
+            let (d, dr) = (f64::from_bits(d), f64::from_bits(dr));
+            if d > 0.0 && d < rules.default_rules.via_diameter {
+                rules.default_rules.via_diameter = d;
+                rules.default_rules.via_drill = dr.min(d);
+            }
+        }
+    }
+    rules
 }
 
 // ---------------------------------------------------------------------------
@@ -356,18 +413,8 @@ fn parse_stackup(root: &SExpr<'_>) -> LayerStackup {
                     // (N "F.Cu" signal)
                     if let Some(name) = cc.get(1).and_then(|v| v.as_str()) {
                         if let Some(layer) = parse_layer(name) {
-                            match layer {
-                                PcbLayer::FCu
-                                | PcbLayer::BCu
-                                | PcbLayer::In1Cu
-                                | PcbLayer::In2Cu
-                                | PcbLayer::In3Cu
-                                | PcbLayer::In4Cu
-                                | PcbLayer::In5Cu
-                                | PcbLayer::In6Cu => {
-                                    copper_layers.push(layer);
-                                }
-                                _ => {}
+                            if layer.is_copper() {
+                                copper_layers.push(layer);
                             }
                         }
                     }
@@ -381,17 +428,7 @@ fn parse_stackup(root: &SExpr<'_>) -> LayerStackup {
     }
 
     // Sort: FCu first, then inner, then BCu
-    copper_layers.sort_by_key(|l| match l {
-        PcbLayer::FCu => 0,
-        PcbLayer::In1Cu => 1,
-        PcbLayer::In2Cu => 2,
-        PcbLayer::In3Cu => 3,
-        PcbLayer::In4Cu => 4,
-        PcbLayer::In5Cu => 5,
-        PcbLayer::In6Cu => 6,
-        PcbLayer::BCu => 7,
-        _ => 8,
-    });
+    copper_layers.sort_by_key(|l| l.copper_position().unwrap_or(u8::MAX));
 
     let thickness = root
         .find("general")
@@ -823,5 +860,41 @@ mod tests {
         assert_eq!(pcb.stackup.layers[1].layer, PcbLayer::In1Cu);
         assert_eq!(pcb.stackup.layers[2].layer, PcbLayer::In2Cu);
         assert_eq!(pcb.stackup.layers[3].layer, PcbLayer::BCu);
+    }
+
+    /// A routed board's own copper calibrates the imported rules: an HDI
+    /// design with 0.1 mm tracks and 0.2 mm microvias must not import with
+    /// the 0.25/0.2/0.8 fallback rules (which make it unroutable), and the
+    /// calibration only ever tightens.
+    #[test]
+    fn rules_calibrate_to_existing_copper() {
+        let input = r#"(kicad_pcb (version 20221018)
+  (general (thickness 1.0))
+  (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+  (net 1 "SIG")
+  (segment (start 0 0) (end 5 0) (width 0.1) (layer "F.Cu") (net 1))
+  (segment (start 5 0) (end 9 0) (width 0.1) (layer "F.Cu") (net 1))
+  (segment (start 9 0) (end 9 5) (width 0.3) (layer "F.Cu") (net 1))
+  (via (at 9 5) (size 0.2) (drill 0.1) (layers "F.Cu" "B.Cu") (net 1))
+  (via (at 2 0) (size 0.2) (drill 0.1) (layers "F.Cu" "B.Cu") (net 1))
+  (via (at 4 0) (size 0.4) (drill 0.2) (layers "F.Cu" "B.Cu") (net 1))
+)"#;
+        let pcb = parse_kicad_pcb(input).unwrap();
+        let r = &pcb.rules.default_rules;
+        assert_eq!(r.trace_width, 0.1, "median existing width");
+        assert_eq!(r.clearance, 0.1, "clearance capped at median width");
+        assert_eq!(r.via_diameter, 0.2, "modal via diameter");
+        assert_eq!(r.via_drill, 0.1, "modal via drill");
+
+        // A bare board keeps the defaults — nothing to calibrate against.
+        let bare = parse_kicad_pcb(
+            r#"(kicad_pcb (version 20221018)
+  (general (thickness 1.6))
+  (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+)"#,
+        )
+        .unwrap();
+        assert_eq!(bare.rules.default_rules.trace_width, 0.25);
+        assert_eq!(bare.rules.default_rules.via_diameter, 0.8);
     }
 }
