@@ -240,6 +240,7 @@ pub fn route_net_maze3d(
     pitch_scale: f64,
     window: Option<(Vec2, Vec2)>,
     tree_goals: &[(CopperGeom, [f64; 2], [f64; 2], PcbLayer)],
+    offgrid_vias: bool,
 ) -> RouteResult3d {
     let nl = layers.len();
     if nl == 0 {
@@ -292,9 +293,43 @@ pub fn route_net_maze3d(
         (dx * dx + dy * dy).sqrt() * grid.pitch
     };
 
-    let mut g = vec![f64::INFINITY; n];
-    let mut came: Vec<usize> = vec![usize::MAX; n];
-    let mut closed = vec![false; n];
+    // Per-thread buffer arena: the search working set is ~30MB at full grid
+    // size, and allocating it per connection dominated allocator time. The
+    // guard returns the buffers on every exit path (including early fails).
+    struct ArenaGuard {
+        g: Vec<f64>,
+        came: Vec<usize>,
+        closed: Vec<bool>,
+    }
+    thread_local! {
+        static ARENA: std::cell::RefCell<(Vec<f64>, Vec<usize>, Vec<bool>)> =
+            const { std::cell::RefCell::new((Vec::new(), Vec::new(), Vec::new())) };
+    }
+    impl Drop for ArenaGuard {
+        fn drop(&mut self) {
+            ARENA.with(|a| {
+                let mut a = a.borrow_mut();
+                a.0 = std::mem::take(&mut self.g);
+                a.1 = std::mem::take(&mut self.came);
+                a.2 = std::mem::take(&mut self.closed);
+            });
+        }
+    }
+    let mut arena = ARENA.with(|a| {
+        let mut a = a.borrow_mut();
+        ArenaGuard {
+            g: std::mem::take(&mut a.0),
+            came: std::mem::take(&mut a.1),
+            closed: std::mem::take(&mut a.2),
+        }
+    });
+    arena.g.clear();
+    arena.g.resize(n, f64::INFINITY);
+    arena.came.clear();
+    arena.came.resize(n, usize::MAX);
+    arena.closed.clear();
+    arena.closed.resize(n, false);
+    let ArenaGuard { g, came, closed } = &mut arena;
     // Memoized via legality per (cell, span pair) — spans are (lo, hi)
     // layer-index pairs, lo < hi — and the via POSITION chosen for the cell:
     // the cell centre when it clears, otherwise an off-grid candidate found
@@ -308,6 +343,9 @@ pub fn route_net_maze3d(
     let find_via_site = |center: Vec2, lo: usize, hi: usize| -> Option<Vec2> {
         if via_ok(center, lo, hi) {
             return Some(center);
+        }
+        if !offgrid_vias {
+            return None;
         }
         let r1 = grid.pitch / 3.0;
         let r2 = grid.pitch / 2.0;
@@ -475,7 +513,14 @@ pub fn route_net_maze3d(
                     continue;
                 }
                 let span_frac = (hi - lo) as f64 / (nl - 1).max(1) as f64;
-                let tentative = g[node] + VIA_COST * (0.4 + 0.6 * span_frac);
+                // Long connections amortize their vias: the reference design
+                // runs 30-50mm nets as inner-layer highways with a handful of
+                // vias, while a flat via price makes the dive look expensive
+                // relative to a short net's budget. Scale the price down as
+                // the airwire grows (floor 0.3 at >= ~20mm).
+                let haul = dist(start, end);
+                let haul_scale = (6.0 / haul.max(1.0)).clamp(0.3, 1.0);
+                let tentative = g[node] + VIA_COST * haul_scale * (0.4 + 0.6 * span_frac);
                 if tentative < g[nb] {
                     g[nb] = tentative;
                     came[nb] = node;
@@ -873,9 +918,43 @@ fn astar(
         (dx * dx + dy * dy).sqrt() * grid.pitch
     };
 
-    let mut g = vec![f64::INFINITY; n];
-    let mut came: Vec<usize> = vec![usize::MAX; n];
-    let mut closed = vec![false; n];
+    // Per-thread buffer arena: the search working set is ~30MB at full grid
+    // size, and allocating it per connection dominated allocator time. The
+    // guard returns the buffers on every exit path (including early fails).
+    struct ArenaGuard {
+        g: Vec<f64>,
+        came: Vec<usize>,
+        closed: Vec<bool>,
+    }
+    thread_local! {
+        static ARENA: std::cell::RefCell<(Vec<f64>, Vec<usize>, Vec<bool>)> =
+            const { std::cell::RefCell::new((Vec::new(), Vec::new(), Vec::new())) };
+    }
+    impl Drop for ArenaGuard {
+        fn drop(&mut self) {
+            ARENA.with(|a| {
+                let mut a = a.borrow_mut();
+                a.0 = std::mem::take(&mut self.g);
+                a.1 = std::mem::take(&mut self.came);
+                a.2 = std::mem::take(&mut self.closed);
+            });
+        }
+    }
+    let mut arena = ARENA.with(|a| {
+        let mut a = a.borrow_mut();
+        ArenaGuard {
+            g: std::mem::take(&mut a.0),
+            came: std::mem::take(&mut a.1),
+            closed: std::mem::take(&mut a.2),
+        }
+    });
+    arena.g.clear();
+    arena.g.resize(n, f64::INFINITY);
+    arena.came.clear();
+    arena.came.resize(n, usize::MAX);
+    arena.closed.clear();
+    arena.closed.resize(n, false);
+    let ArenaGuard { g, came, closed } = &mut arena;
     let mut heap = BinaryHeap::new();
     g[start] = 0.0;
     heap.push(State {
@@ -948,7 +1027,7 @@ const NEIGHBORS: [(i64, i64); 8] = [
     (-1, -1),
 ];
 
-fn reconstruct(came: Vec<usize>, start: usize, goal: usize) -> Vec<usize> {
+fn reconstruct(came: &[usize], start: usize, goal: usize) -> Vec<usize> {
     let mut path = vec![goal];
     let mut cur = goal;
     while cur != start {
@@ -1168,6 +1247,7 @@ mod tests {
             1.0,
             None,
             &[],
+            true,
         );
         assert!(r.success);
         assert!(r.vias.is_empty(), "no reason to leave the start layer");
@@ -1201,6 +1281,7 @@ mod tests {
             1.0,
             None,
             &[],
+            true,
         );
         assert!(r.success, "3D search must cross under the wall");
         assert!(
@@ -1261,6 +1342,7 @@ mod tests {
             1.0,
             None,
             &[],
+            true,
         );
         assert!(r.success);
         assert!(!r.vias.is_empty());
@@ -1295,6 +1377,7 @@ mod tests {
             1.0,
             None,
             &[],
+            true,
         );
         assert!(r.success);
         assert!(!r.vias.is_empty(), "front→back must place a via");
