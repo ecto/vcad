@@ -246,6 +246,11 @@ export const TOOL_METADATA: Record<string, ToolMetadata> = {
     }),
   },
   topology_optimize: { title: "Topology Optimize", annotations: RW },
+  simulate_charged_particles: {
+    title: "Simulate Charged Particles",
+    annotations: RO,
+  },
+  optimize_electrodes: { title: "Optimize Electrodes", annotations: RO },
   predict_physics: { title: "Predict Physics", annotations: RO },
   define_loon: { title: "Define Loon Macro", annotations: RW },
   call_loon: { title: "Call Loon Macro", annotations: RW },

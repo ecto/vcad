@@ -7147,6 +7147,7 @@ dependencies = [
  "vcad-kernel-fillet",
  "vcad-kernel-geom",
  "vcad-kernel-math",
+ "vcad-kernel-particle",
  "vcad-kernel-primitives",
  "vcad-kernel-sheet",
  "vcad-kernel-shell",
@@ -7322,6 +7323,7 @@ version = "0.9.4"
 dependencies = [
  "serde",
  "serde_json",
+ "vcad-receipt",
 ]
 
 [[package]]
@@ -7540,6 +7542,7 @@ dependencies = [
  "vcad-kernel-urdf",
  "vcad-loon",
  "vcad-parts",
+ "vcad-receipt",
  "vcad-render",
  "vcad-slicer",
  "vcad-slicer-bambu",

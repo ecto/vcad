@@ -89,7 +89,7 @@ pub struct TraceOutcome {
 /// and keeps fusing until it exits). The CX chain (each event also births
 /// a cold ion that re-accelerates) is not yet modeled, so both channels
 /// are floors.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct CxModel {
     /// Charge-exchange cross section, m².
     pub sigma_cx_m2: f64,

@@ -1859,6 +1859,375 @@
     }
   },
   {
+    "name": "simulate_charged_particles",
+    "title": "Simulate Charged Particles",
+    "description": "Charged-particle optics for axisymmetric electrode devices (fusors, magnetically shielded-grid IEC, ring traps): solve the electrostatic field + ring-coil magnetics, trace a deuteron ensemble (Boris integrator, Bosch-Hale D-D yield weighting), and report interception fraction (the cathode-ammeter observable), recirculation, predicted neutron rate, fusion power, Q, and distance-to-Lawson — as data plus `vcad.particle-claims/1` and unified-receipt claims. Predictions carry basis \"predicted\" and roll up Provisional until bench-measured. Vacuum single-particle optics: no space charge, no CX chain (optional single-generation CX via `options.cx_sigma_m2`); neutron rates are floors. Deterministic. Cost scales with grid × particles × passes — defaults run in seconds.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "spec": {
+          "type": "object",
+          "required": [
+            "chamber_radius_mm",
+            "chamber_half_height_mm",
+            "rings"
+          ],
+          "description": "Axisymmetric device: grounded cylindrical chamber + biased (optionally current-carrying) wire rings, coaxial with Z. Units mm / volts / ampere-turns. Any numeric field may instead be a string naming a parameter supplied in `parameters` (fail-closed: unbound names error).",
+          "properties": {
+            "chamber_radius_mm": {
+              "description": "A number, or the name of a named parameter bound via `parameters`.",
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "string"
+                }
+              ]
+            },
+            "chamber_half_height_mm": {
+              "description": "A number, or the name of a named parameter bound via `parameters`.",
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "string"
+                }
+              ]
+            },
+            "wall_potential_v": {
+              "description": "Chamber wall potential, volts. Default 0 (grounded).",
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "string"
+                }
+              ]
+            },
+            "rings": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "required": [
+                  "ring_radius_mm",
+                  "z_mm",
+                  "wire_radius_mm",
+                  "potential_v"
+                ],
+                "properties": {
+                  "ring_radius_mm": {
+                    "description": "A number, or the name of a named parameter bound via `parameters`.",
+                    "anyOf": [
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "z_mm": {
+                    "description": "A number, or the name of a named parameter bound via `parameters`.",
+                    "anyOf": [
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "wire_radius_mm": {
+                    "description": "A number, or the name of a named parameter bound via `parameters`.",
+                    "anyOf": [
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "potential_v": {
+                    "description": "A number, or the name of a named parameter bound via `parameters`.",
+                    "anyOf": [
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "ampere_turns": {
+                    "description": "Circulating current, ampere-turns (+ = CCW viewed from +Z). Default 0. This is the magnetic grid-shielding knob.",
+                    "anyOf": [
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "string"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "parameters": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "number"
+          },
+          "description": "Bindings for named spec parameters, `{name: value}`."
+        },
+        "options": {
+          "type": "object",
+          "properties": {
+            "nr": {
+              "type": "number",
+              "description": "Radial grid nodes. Default 101."
+            },
+            "nz": {
+              "type": "number",
+              "description": "Axial grid nodes. Default 201."
+            },
+            "particles": {
+              "type": "number",
+              "description": "Deuteron ensemble size. Default 64."
+            },
+            "max_passes": {
+              "type": "number",
+              "description": "Core-pass cap (censoring boundary). Default 25."
+            },
+            "ion_current_a": {
+              "type": "number",
+              "description": "Operating-point ion current, A. Default 0.010."
+            },
+            "d2_pressure_mtorr": {
+              "type": "number",
+              "description": "Operating-point D₂ pressure, mTorr. Default 2.0."
+            },
+            "temperature_k": {
+              "type": "number",
+              "description": "Gas temperature, K. Default 300."
+            },
+            "cx_sigma_m2": {
+              "type": "number",
+              "description": "Enable charge-exchange channels with this constant cross section, m² (order 1e-19 for D⁺ on D₂ in the keV band). Omitted = CX off; the neutron-rate claim then reports the beam-on-background floor."
+            }
+          }
+        }
+      },
+      "required": [
+        "spec"
+      ]
+    },
+    "annotations": {
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "optimize_electrodes",
+    "title": "Optimize Electrodes",
+    "description": "Design electrodes by gradient ascent: optimize named device-spec parameters (e.g. shield ampere-turns, ring spacing) against predicted D-D yield per ion, with multi-start FD search (the yield landscape is multimodal — single starts stall on the recirculation hill at ~3x lower yield). Returns the best parameter set, its yield, per-start results, and the ascent history. Candidate configurations that fail to resolve or converge score 0 rather than aborting. Follow with simulate_charged_particles at the winning parameters for full claims. Cost ≈ evals × one simulation; defaults run in tens of seconds.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "spec": {
+          "type": "object",
+          "required": [
+            "chamber_radius_mm",
+            "chamber_half_height_mm",
+            "rings"
+          ],
+          "description": "Axisymmetric device: grounded cylindrical chamber + biased (optionally current-carrying) wire rings, coaxial with Z. Units mm / volts / ampere-turns. Any numeric field may instead be a string naming a parameter supplied in `parameters` (fail-closed: unbound names error).",
+          "properties": {
+            "chamber_radius_mm": {
+              "description": "A number, or the name of a named parameter bound via `parameters`.",
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "string"
+                }
+              ]
+            },
+            "chamber_half_height_mm": {
+              "description": "A number, or the name of a named parameter bound via `parameters`.",
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "string"
+                }
+              ]
+            },
+            "wall_potential_v": {
+              "description": "Chamber wall potential, volts. Default 0 (grounded).",
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "string"
+                }
+              ]
+            },
+            "rings": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "required": [
+                  "ring_radius_mm",
+                  "z_mm",
+                  "wire_radius_mm",
+                  "potential_v"
+                ],
+                "properties": {
+                  "ring_radius_mm": {
+                    "description": "A number, or the name of a named parameter bound via `parameters`.",
+                    "anyOf": [
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "z_mm": {
+                    "description": "A number, or the name of a named parameter bound via `parameters`.",
+                    "anyOf": [
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "wire_radius_mm": {
+                    "description": "A number, or the name of a named parameter bound via `parameters`.",
+                    "anyOf": [
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "potential_v": {
+                    "description": "A number, or the name of a named parameter bound via `parameters`.",
+                    "anyOf": [
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "ampere_turns": {
+                    "description": "Circulating current, ampere-turns (+ = CCW viewed from +Z). Default 0. This is the magnetic grid-shielding knob.",
+                    "anyOf": [
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "string"
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "parameters": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "number"
+          },
+          "description": "Bindings for named spec parameters, `{name: value}`."
+        },
+        "variables": {
+          "type": "array",
+          "minItems": 1,
+          "description": "Named spec parameters to optimize, with box bounds. The objective is predicted D-D yield per ion (∫σv dt).",
+          "items": {
+            "type": "object",
+            "required": [
+              "name",
+              "lo",
+              "hi"
+            ],
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "lo": {
+                "type": "number"
+              },
+              "hi": {
+                "type": "number"
+              },
+              "start": {
+                "type": "number",
+                "description": "Optional explicit start for the first seed."
+              }
+            }
+          }
+        },
+        "options": {
+          "type": "object",
+          "properties": {
+            "nr": {
+              "type": "number",
+              "description": "Default 81."
+            },
+            "nz": {
+              "type": "number",
+              "description": "Default 161."
+            },
+            "particles": {
+              "type": "number",
+              "description": "Default 48."
+            },
+            "max_passes": {
+              "type": "number",
+              "description": "Default 20."
+            },
+            "max_iters": {
+              "type": "number",
+              "description": "Ascent iterations per start. Default 8."
+            },
+            "multi_start": {
+              "type": "boolean",
+              "description": "Three seeds across the box instead of one (the landscape is multimodal). Default true."
+            }
+          }
+        }
+      },
+      "required": [
+        "spec",
+        "variables"
+      ]
+    },
+    "annotations": {
+      "readOnlyHint": true
+    }
+  },
+  {
     "name": "predict_physics",
     "title": "Predict Physics",
     "description": "Fast static structural analysis (voxel FEA): max displacement, max von Mises stress, and compliance for a part or box under world-frame loads (N) and supports, in ~100 ms at fidelity=predict. Pass max_displacement_mm / max_von_mises_mpa limits to get receipt claims: predict-tier claims carry basis=predicted and roll up as a PROVISIONAL receipt — use them to iterate on a design cheaply. When the design settles, re-run with fidelity=verify (same solver, fine grid) to upgrade the claims to basis=verified and a certifiable pass. Loads/supports are box regions (mm, Z-up); zero-thickness boxes select a face. Voxel FEA smears stress concentrations — treat stress as an estimate near fillets.",
