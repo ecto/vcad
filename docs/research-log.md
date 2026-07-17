@@ -637,3 +637,43 @@ AC, adjoint) plus the WASM `DeviceSpec`. Branch
   the triode/saturation boundary).
 - Next on the M1 ladder: transient adjoint, then the netlist-from-ecad
   seam so schematics simulate without re-entry.
+
+## 2026-07-17 — the Q-lane triple: records 197×, POPS quantified, honest Q (PR #575)
+
+Three lanes built on one branch, following the virtual-cathode arc.
+
+**Lane C — TiD beam-target (records lane).** `beam_target` calibrates
+thick-target D-D yield once to the published Ti drive-in anchor (1.9×10⁸
+n/s at 7.6 mA / 94 keV) and predicts by cross-section ratio. `records_dial`
+result at 100 kV / 30 mA onto TiD-coated rings:
+
+| shield A·t | interception | beam-target n/s | gas n/s | total | vs record |
+|---|---|---|---|---|---|
+| 0 | 1.00 | 8.9×10⁸ | 2.2×10⁷ | 9.2×10⁸ | 183× |
+| 160 k | 0.92 | 8.2×10⁸ | 1.6×10⁸ | **9.8×10⁸** | **197×** |
+| 400 k | 0.70 | 6.2×10⁸ | 2.0×10⁸ | 8.3×10⁸ | 166× |
+| 1.17 M | 0.08 | 7.5×10⁷ | 2.1×10⁸ | 2.8×10⁸ | 57× |
+
+- **The dial has a combined-channel optimum**: total yield peaks at a
+  *middle* shield current (160 kA·t → 197× the amateur record), where
+  residual interception still feeds the solid-density TiD target while the
+  shield boosts gas recirculation. No other machine has this knob.
+- Beam-target Q ≈ 1.6×10⁻⁷ — correctly tiny (stopping-power-capped). This
+  is a record/neutron-source lane, never a gain lane, and the module says
+  so.
+
+**Lane B — POPS harmonic well (physics lane).** `pops` measures the well's
+harmonicity (min/max bounce frequency across launch amplitudes). Baseline
+two-ring well: **harmonicity 0.545, 44% frequency droop** (big-amplitude
+ions bounce 44% slower — strongly anharmonic, so a single drive can't
+phase-lock the population → POPS-blocked). `pops_harmonic_well`: the
+optimizer maximizes harmonicity over electrode geometry (+9% with two
+knobs, 0.545→0.593); large gains need more electrode freedom. The finding:
+harmonicity is measurable, optimizable, and is now the concrete FoM for
+POPS electrode design — the thing only a differentiable field-solver can
+target.
+
+**Lane A — power ledger (honest Q).** `power` prices fusion vs ion beam +
+electron sustain + magnet. Key physics: in steady state electron sustain
+power = I_e · V (the injector replaces every cusp loss). `sustained_q`
+verdict logged next.
