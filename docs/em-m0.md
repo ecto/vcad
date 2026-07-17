@@ -155,11 +155,26 @@ estimate with stated omissions, not a measurement (that's M6's job).
   hysteresis), phasor solve is linear-materials-only (saturation + AC =
   harmonic balance, out of scope), source windings carry no internal
   skin effect.
-- **M2 — discrete adjoint.** The operator is symmetric by construction
-  (shared face conductances), so the adjoint solve reuses the forward
-  SOR with a dJ/du right-hand side; dJ/dG_face = −Δu·Δλ per face rolls up
-  to dJ/dμ per region and dJ/dI per coil. FD-validated with frozen
-  discretization across probes (the particle crate's lesson).
+- **M2 — discrete adjoint. DONE** (`adjoint.rs`). One adjoint solve per
+  quantity of interest on the same symmetric operator (`A·λ = ∂J/∂u`,
+  homogeneous Dirichlet), then every parameter is priced:
+  `dJ/dI_k = λᵀU_k` (+ explicit terms), `dJ/d(Br scale)` per magnet, and
+  `dJ/dG_f = −Δu_f·Δλ_f` rolled to `dJ/dμ_r` per region through **face ←
+  cell incidence weights recorded by the builders themselves** — the
+  adjoint differentiates the exact assembly the solver used (a
+  bit-exact reconstruction test guards drift). QoIs shipped: axisym flux
+  linkage (whose current-gradient must and does reproduce the
+  inductance matrix to 1e−6) and coil force; planar rotor torque about a
+  point (the motor objective) with conductor-current, magnet-strength,
+  and iron-μ gradients. All FD-validated at frozen discretization;
+  linear-in-I gradients agree to solver tolerance. Fail-closed honesty:
+  material gradients of *saturable* regions are refused (the secant ν
+  depends on the field through the Picard fixed point — FD through
+  `solve_nonlinear` is the honest route until the fixed-point adjoint
+  lands); geometry gradients stay FD (deposit masks are discrete), the
+  same role split as the particle crate. A test lesson kept: gradient
+  comparisons must sit on quantities of honest size — a mirror-symmetric
+  test machine had torque ≈ 0 and both routes compared solver dust.
 - **M3 — parameter seam.** Serde `DeviceSpec` with literal-or-named
   values, fail-closed resolution, `parameter_roles()` classifying
   adjoint-capable vs FD parameters.

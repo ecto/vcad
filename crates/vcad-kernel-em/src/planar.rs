@@ -212,6 +212,34 @@ impl PlanarMagnetostatics {
         nu
     }
 
+    /// Which material region (index into `materials`, last wins) owns
+    /// each cell; `None` = vacuum background or a magnet's recoil region
+    /// (recoil μ is the magnet's, not a material parameter).
+    pub(crate) fn material_cell_map(&self, nx: usize, ny: usize) -> Vec<Option<usize>> {
+        let (x_cells, y_cells, dx, dy) = self.cell_geometry(nx, ny);
+        let (x_min, y_min) = (self.x_min_mm * 1e-3, self.y_min_mm * 1e-3);
+        let mut cells = vec![None; x_cells * y_cells];
+        for ci in 0..x_cells {
+            for cj in 0..y_cells {
+                let xc = x_min + (ci as f64 + 0.5) * dx;
+                let yc = y_min + (cj as f64 + 0.5) * dy;
+                let mut hit = None;
+                for (mi, m) in self.materials.iter().enumerate() {
+                    if m.region.contains_m(xc, yc) {
+                        hit = Some(mi);
+                    }
+                }
+                for m in &self.magnets {
+                    if m.region.contains_m(xc, yc) {
+                        hit = None;
+                    }
+                }
+                cells[ci * y_cells + cj] = hit;
+            }
+        }
+        cells
+    }
+
     /// Saturation law per cell (`None` = linear; magnets never saturate
     /// here — recoil is linear).
     fn sat_cells(&self, nx: usize, ny: usize) -> Vec<Option<(f64, Saturation)>> {
@@ -281,18 +309,26 @@ impl PlanarMagnetostatics {
         let x_cells = if self.periodic_x { nx } else { nx - 1 };
         let y_cells = ny - 1;
         let nu_cell = |ci: usize, cj: usize| -> f64 { nu_cells[ci * y_cells + cj] };
+        // Per-cell incidence weights recorded alongside G, so the
+        // adjoint differentiates the same assembly the solver uses.
+        let mut wx = vec![[(crate::grid::NO_CELL, 0.0); 2]; sys.gx.len()];
+        let mut wy = vec![[(crate::grid::NO_CELL, 0.0); 2]; sys.gy.len()];
         for i in 0..x_cells {
             for j in 0..ny {
                 // Flux tube of the x-face at row j: lower half of cell
                 // (i, j−1) ∥ upper half of cell (i, j).
-                let mut nu_ext = 0.0;
+                let coeff = 0.5 * dy / dx;
+                let mut acc = 0.0;
+                let w = &mut wx[g.fx(i, j)];
                 if j > 0 {
-                    nu_ext += nu_cell(i, j - 1) * 0.5 * dy;
+                    acc += nu_cell(i, j - 1) * coeff;
+                    w[0] = (i * y_cells + (j - 1), coeff);
                 }
                 if j < y_cells {
-                    nu_ext += nu_cell(i, j) * 0.5 * dy;
+                    acc += nu_cell(i, j) * coeff;
+                    w[1] = (i * y_cells + j, coeff);
                 }
-                sys.gx[g.fx(i, j)] = nu_ext / dx;
+                sys.gx[g.fx(i, j)] = acc;
             }
         }
         for i in 0..nx {
@@ -300,21 +336,29 @@ impl PlanarMagnetostatics {
                 // Flux tube of the y-face at column i: right half of cell
                 // (i−1, j) ∥ left half of cell (i, j), wrapping when
                 // periodic.
-                let mut nu_ext = 0.0;
+                let coeff = 0.5 * dx / dy;
+                let mut acc = 0.0;
+                let w = &mut wy[g.fy(i, j)];
                 if self.periodic_x {
                     let left = (i + x_cells - 1) % x_cells;
-                    nu_ext += nu_cell(left, j) * 0.5 * dx + nu_cell(i % x_cells, j) * 0.5 * dx;
+                    let right = i % x_cells;
+                    acc += (nu_cell(left, j) + nu_cell(right, j)) * coeff;
+                    w[0] = (left * y_cells + j, coeff);
+                    w[1] = (right * y_cells + j, coeff);
                 } else {
                     if i > 0 {
-                        nu_ext += nu_cell(i - 1, j) * 0.5 * dx;
+                        acc += nu_cell(i - 1, j) * coeff;
+                        w[0] = ((i - 1) * y_cells + j, coeff);
                     }
                     if i < x_cells {
-                        nu_ext += nu_cell(i, j) * 0.5 * dx;
+                        acc += nu_cell(i, j) * coeff;
+                        w[1] = (i * y_cells + j, coeff);
                     }
                 }
-                sys.gy[g.fy(i, j)] = nu_ext / dy;
+                sys.gy[g.fy(i, j)] = acc;
             }
         }
+        sys.face_weights = Some(crate::grid::FaceWeights { x: wx, y: wy });
 
         if !self.periodic_x {
             if self.bc_x_low == Bc::Zero {

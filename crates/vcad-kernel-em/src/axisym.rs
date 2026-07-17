@@ -207,6 +207,29 @@ impl AxisymMagnetostatics {
         nu
     }
 
+    /// Which material region (index into `materials`, last wins) owns
+    /// each cell; `None` = vacuum background.
+    pub(crate) fn material_cell_map(&self, nr: usize, nz: usize) -> Vec<Option<usize>> {
+        let dx = self.r_max_mm * 1e-3 / (nr - 1) as f64;
+        let dy = (self.z_max_mm - self.z_min_mm) * 1e-3 / (nz - 1) as f64;
+        let z_min = self.z_min_mm * 1e-3;
+        let mut cells = vec![None; (nr - 1) * (nz - 1)];
+        for ci in 0..nr - 1 {
+            for cj in 0..nz - 1 {
+                let rc = (ci as f64 + 0.5) * dx;
+                let zc = z_min + (cj as f64 + 0.5) * dy;
+                let mut hit = None;
+                for (mi, m) in self.materials.iter().enumerate() {
+                    if m.region.contains_m(rc, zc) {
+                        hit = Some(mi);
+                    }
+                }
+                cells[ci * (nz - 1) + cj] = hit;
+            }
+        }
+        cells
+    }
+
     /// Saturation law per cell (`None` = linear cell).
     fn sat_cells(&self, nr: usize, nz: usize) -> Vec<Option<(f64, Saturation)>> {
         let dx = self.r_max_mm * 1e-3 / (nr - 1) as f64;
@@ -261,18 +284,28 @@ impl AxisymMagnetostatics {
         // ties are how symmetry quietly breaks). Every face conductance
         // is the parallel sum of its two flanking half-cells.
         let nu_cell = |ci: usize, cj: usize| -> f64 { nu_cells[ci * (nz - 1) + cj] };
-        // Radial faces: G = 2π·ν·(z extent)/(r_face·dx).
+        // Radial faces: G = 2π·ν·(z extent)/(r_face·dx). The per-cell
+        // weights are recorded alongside so the adjoint differentiates
+        // the same assembly it solves.
+        let mut wx = vec![[(crate::grid::NO_CELL, 0.0); 2]; sys.gx.len()];
+        let mut wy = vec![[(crate::grid::NO_CELL, 0.0); 2]; sys.gy.len()];
         for i in 0..nr - 1 {
             let r_f = (i as f64 + 0.5) * dx;
             for j in 0..nz {
-                let mut nu_ext = 0.0;
+                let coeff = two_pi * 0.5 * dy / (r_f * dx);
+                let mut acc = 0.0;
+                let w = &mut wx[g.fx(i, j)];
                 if j > 0 {
-                    nu_ext += nu_cell(i, j - 1) * 0.5 * dy;
+                    let c = i * (nz - 1) + (j - 1);
+                    acc += nu_cell(i, j - 1) * coeff;
+                    w[0] = (c, coeff);
                 }
                 if j < nz - 1 {
-                    nu_ext += nu_cell(i, j) * 0.5 * dy;
+                    let c = i * (nz - 1) + j;
+                    acc += nu_cell(i, j) * coeff;
+                    w[1] = (c, coeff);
                 }
-                sys.gx[g.fx(i, j)] = two_pi * nu_ext / (r_f * dx);
+                sys.gx[g.fx(i, j)] = acc;
             }
         }
         // Axial faces: G = 2π·ν·(∫ dr/r over the column CV)/dy, the log
@@ -289,13 +322,19 @@ impl AxisymMagnetostatics {
                 0.0
             };
             for j in 0..nz - 1 {
-                let mut nu_log = nu_cell(i - 1, j) * log_lo;
+                let w_lo = two_pi * log_lo / dy;
+                let mut acc = nu_cell(i - 1, j) * w_lo;
+                let w = &mut wy[g.fy(i, j)];
+                w[0] = ((i - 1) * (nz - 1) + j, w_lo);
                 if i < nr - 1 {
-                    nu_log += nu_cell(i, j) * log_hi;
+                    let w_hi = two_pi * log_hi / dy;
+                    acc += nu_cell(i, j) * w_hi;
+                    w[1] = (i * (nz - 1) + j, w_hi);
                 }
-                sys.gy[g.fy(i, j)] = two_pi * nu_log / dy;
+                sys.gy[g.fy(i, j)] = acc;
             }
         }
+        sys.face_weights = Some(crate::grid::FaceWeights { x: wx, y: wy });
 
         // Axis is always ψ = 0 (regularity of A_θ).
         for j in 0..nz {

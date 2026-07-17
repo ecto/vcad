@@ -46,6 +46,7 @@
 //! Planar quantities are per meter of depth.
 
 pub mod ac;
+pub mod adjoint;
 pub mod analytic;
 pub mod axisym;
 pub mod electro;

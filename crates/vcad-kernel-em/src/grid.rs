@@ -143,7 +143,7 @@ impl Grid2D {
 
     /// Column to the +x side of column `i` (wrapping when periodic).
     #[inline]
-    fn right(&self, i: usize) -> usize {
+    pub(crate) fn right(&self, i: usize) -> usize {
         if i + 1 == self.nx && self.periodic_x {
             0
         } else {
@@ -270,6 +270,23 @@ pub struct EnergyBalance {
     pub residual: f64,
 }
 
+/// Sentinel for "this face side has no material cell" in
+/// [`FaceWeights`].
+pub const NO_CELL: usize = usize::MAX;
+
+/// How each face conductance decomposes over its two flanking material
+/// cells: `G_f = w_a·ν(cell_a) + w_b·ν(cell_b)`. Populated by the
+/// magnetostatic builders; the discrete adjoint turns
+/// `dJ/dG_f = −Δu_f·Δλ_f` into per-cell material gradients through
+/// these weights without re-deriving the assembly.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FaceWeights {
+    /// Per x-face: `[(cell, weight); 2]`, cell = [`NO_CELL`] when absent.
+    pub x: Vec<[(usize, f64); 2]>,
+    /// Per y-face: same layout.
+    pub y: Vec<[(usize, f64); 2]>,
+}
+
 /// Symmetric 5-point finite-volume system on a [`Grid2D`].
 ///
 /// The discrete equation at every free node is
@@ -291,6 +308,9 @@ pub struct FvSystem {
     pub fixed: Vec<bool>,
     /// Dirichlet values (and the initial guess for free nodes).
     pub u0: Vec<f64>,
+    /// Face ← cell incidence weights (magnetostatic builders fill this;
+    /// `None` for formulations that haven't).
+    pub face_weights: Option<FaceWeights>,
 }
 
 impl FvSystem {
@@ -306,6 +326,7 @@ impl FvSystem {
             source: vec![0.0; n],
             fixed: vec![false; n],
             u0: vec![0.0; n],
+            face_weights: None,
         }
     }
 
