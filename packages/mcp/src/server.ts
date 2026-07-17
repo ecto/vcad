@@ -130,6 +130,12 @@ import { toolDefs as verifySpecToolDefs } from "./tools/verify-spec.js";
 import { toolDefs as clearanceToolDefs } from "./tools/clearance.js";
 import { toolDefs as topoptToolDefs } from "./tools/topopt.js";
 import { toolDefs as particleToolDefs } from "./tools/particle.js";
+import { toolDefs as toleranceToolDefs } from "./tools/tolerance.js";
+import { toolDefs as thermalToolDefs } from "./tools/thermal.js";
+import { toolDefs as emToolDefs } from "./tools/em.js";
+import { toolDefs as antennaToolDefs } from "./tools/antenna.js";
+import { toolDefs as photonicsToolDefs } from "./tools/photonics.js";
+import { toolDefs as neutronicsToolDefs } from "./tools/neutronics.js";
 import { toolDefs as physicsToolDefs } from "./tools/physics.js";
 import { toolDefs as loonMacroToolDefs } from "./tools/loon-macros.js";
 import { toolDefs as dfmToolDefs } from "./tools/dfm.js";
@@ -309,6 +315,12 @@ const STATIC_TOOL_DEFS: readonly ToolDef[] = [
   ...clearanceToolDefs,
   ...topoptToolDefs,
   ...particleToolDefs,
+  ...toleranceToolDefs,
+  ...thermalToolDefs,
+  ...emToolDefs,
+  ...antennaToolDefs,
+  ...photonicsToolDefs,
+  ...neutronicsToolDefs,
   ...physicsToolDefs,
   ...loonMacroToolDefs,
   ...dfmToolDefs,
@@ -392,6 +404,13 @@ const LIST_TOOL_ORDER: readonly string[] = [
   // ── Charged-particle optics (fusor / IEC / trap family) ────
   "simulate_charged_particles",
   "optimize_electrodes",
+  // ── Physics solver wave 2 (predicted claims, Provisional) ──
+  "simulate_em",
+  "simulate_photonics",
+  "analyze_antenna",
+  "solve_thermal",
+  "simulate_neutron_shield",
+  "analyze_tolerance_stackup",
   // ── Two-tier static physics (predict fast, verify to certify) ──
   "predict_physics",
   // ── Print-then-measure calibration loop (3DP) ──────────────

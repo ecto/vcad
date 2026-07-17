@@ -2228,6 +2228,2100 @@
     }
   },
   {
+    "name": "simulate_em",
+    "title": "Simulate EM Fields",
+    "description": "Electromagnetic field solve (finite-volume SOR, the differentiable FEMM replacement): axisymmetric magnetostatics (coil inductance, stored energy, axial force — solenoids, coaxial coil pairs), planar magnetostatics (motor cross-section torque and forces per meter of depth, permanent magnets, optional saturable B-H iron), or electrostatics (two-terminal capacitance) — as data plus `vcad.em-claims/1` sets and unified-receipt claims, each with a two-independent-routes cross-check residual (energy vs linkage, JxB vs Maxwell stress, charge vs energy). Predictions carry basis \"predicted\" and roll up Provisional until measured. Static/2D only: no eddy currents or AC here, no 3D end effects, planar results are per meter of depth. Deterministic. Cost ~O((nx*ny)^1.5) SOR sweeps; the 81x81 default runs in well under a second — raise the grid for tight tolerances.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "spec": {
+          "type": "object",
+          "required": [
+            "problem"
+          ],
+          "description": "Problem-tagged EM spec. `axisym_magnetostatics`: chamber `r_max_mm`/`z_min_mm`/`z_max_mm` + `coils` [{region, turns, current_a}] + `materials` [{region, mu_r, js_t?}] (js_t enables the saturable B-H law; named parameters allowed). `planar_magnetostatics`: `x_min_mm`/`x_max_mm`/`y_min_mm`/`y_max_mm` + `conductors` [{region, total_current_a}] + `magnets` [{region, br_x_t, br_y_t, mu_r}] + `materials` + `periodic_x` (named parameters allowed). `electrostatics`: `geometry` (\"axisymmetric\"|\"planar\") + domain bounds + `electrodes` [{shape, potential_v}] (>= 2) + `dielectrics` [{shape, eps_r}] — literal numbers only for this class.",
+          "properties": {
+            "problem": {
+              "type": "string",
+              "enum": [
+                "axisym_magnetostatics",
+                "planar_magnetostatics",
+                "electrostatics"
+              ]
+            },
+            "r_max_mm": {
+              "description": "A number, or the name of a named parameter bound via `parameters` (magnetostatic classes only).",
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "string"
+                }
+              ]
+            },
+            "z_min_mm": {
+              "description": "A number, or the name of a named parameter bound via `parameters` (magnetostatic classes only).",
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "string"
+                }
+              ]
+            },
+            "z_max_mm": {
+              "description": "A number, or the name of a named parameter bound via `parameters` (magnetostatic classes only).",
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "string"
+                }
+              ]
+            },
+            "coils": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "region"
+                ],
+                "properties": {
+                  "region": {
+                    "type": "object",
+                    "required": [
+                      "x_min_mm",
+                      "x_max_mm",
+                      "y_min_mm",
+                      "y_max_mm"
+                    ],
+                    "description": "Rectangular region (x = radius in the axisym class, y = z there).",
+                    "properties": {
+                      "x_min_mm": {
+                        "description": "A number, or the name of a named parameter bound via `parameters` (magnetostatic classes only).",
+                        "anyOf": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "string"
+                          }
+                        ]
+                      },
+                      "x_max_mm": {
+                        "description": "A number, or the name of a named parameter bound via `parameters` (magnetostatic classes only).",
+                        "anyOf": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "string"
+                          }
+                        ]
+                      },
+                      "y_min_mm": {
+                        "description": "A number, or the name of a named parameter bound via `parameters` (magnetostatic classes only).",
+                        "anyOf": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "string"
+                          }
+                        ]
+                      },
+                      "y_max_mm": {
+                        "description": "A number, or the name of a named parameter bound via `parameters` (magnetostatic classes only).",
+                        "anyOf": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "string"
+                          }
+                        ]
+                      }
+                    }
+                  },
+                  "turns": {
+                    "description": "Winding turns. Default 1.",
+                    "anyOf": [
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "current_a": {
+                    "description": "Coil current, A.",
+                    "anyOf": [
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "string"
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            "x_min_mm": {
+              "description": "A number, or the name of a named parameter bound via `parameters` (magnetostatic classes only).",
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "string"
+                }
+              ]
+            },
+            "x_max_mm": {
+              "description": "A number, or the name of a named parameter bound via `parameters` (magnetostatic classes only).",
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "string"
+                }
+              ]
+            },
+            "y_min_mm": {
+              "description": "A number, or the name of a named parameter bound via `parameters` (magnetostatic classes only).",
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "string"
+                }
+              ]
+            },
+            "y_max_mm": {
+              "description": "A number, or the name of a named parameter bound via `parameters` (magnetostatic classes only).",
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "string"
+                }
+              ]
+            },
+            "conductors": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "region"
+                ],
+                "properties": {
+                  "region": {
+                    "type": "object",
+                    "required": [
+                      "x_min_mm",
+                      "x_max_mm",
+                      "y_min_mm",
+                      "y_max_mm"
+                    ],
+                    "description": "Rectangular region (x = radius in the axisym class, y = z there).",
+                    "properties": {
+                      "x_min_mm": {
+                        "description": "A number, or the name of a named parameter bound via `parameters` (magnetostatic classes only).",
+                        "anyOf": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "string"
+                          }
+                        ]
+                      },
+                      "x_max_mm": {
+                        "description": "A number, or the name of a named parameter bound via `parameters` (magnetostatic classes only).",
+                        "anyOf": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "string"
+                          }
+                        ]
+                      },
+                      "y_min_mm": {
+                        "description": "A number, or the name of a named parameter bound via `parameters` (magnetostatic classes only).",
+                        "anyOf": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "string"
+                          }
+                        ]
+                      },
+                      "y_max_mm": {
+                        "description": "A number, or the name of a named parameter bound via `parameters` (magnetostatic classes only).",
+                        "anyOf": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "string"
+                          }
+                        ]
+                      }
+                    }
+                  },
+                  "total_current_a": {
+                    "description": "A number, or the name of a named parameter bound via `parameters` (magnetostatic classes only).",
+                    "anyOf": [
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "string"
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            "magnets": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "region"
+                ],
+                "properties": {
+                  "region": {
+                    "type": "object",
+                    "required": [
+                      "x_min_mm",
+                      "x_max_mm",
+                      "y_min_mm",
+                      "y_max_mm"
+                    ],
+                    "description": "Rectangular region (x = radius in the axisym class, y = z there).",
+                    "properties": {
+                      "x_min_mm": {
+                        "description": "A number, or the name of a named parameter bound via `parameters` (magnetostatic classes only).",
+                        "anyOf": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "string"
+                          }
+                        ]
+                      },
+                      "x_max_mm": {
+                        "description": "A number, or the name of a named parameter bound via `parameters` (magnetostatic classes only).",
+                        "anyOf": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "string"
+                          }
+                        ]
+                      },
+                      "y_min_mm": {
+                        "description": "A number, or the name of a named parameter bound via `parameters` (magnetostatic classes only).",
+                        "anyOf": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "string"
+                          }
+                        ]
+                      },
+                      "y_max_mm": {
+                        "description": "A number, or the name of a named parameter bound via `parameters` (magnetostatic classes only).",
+                        "anyOf": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "string"
+                          }
+                        ]
+                      }
+                    }
+                  },
+                  "br_x_t": {
+                    "description": "Remanence x, tesla.",
+                    "anyOf": [
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "br_y_t": {
+                    "description": "Remanence y, tesla.",
+                    "anyOf": [
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "mu_r": {
+                    "description": "Recoil mu_r. Default 1.",
+                    "anyOf": [
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "string"
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            "periodic_x": {
+              "type": "boolean"
+            },
+            "materials": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "region",
+                  "mu_r"
+                ],
+                "properties": {
+                  "region": {
+                    "type": "object",
+                    "required": [
+                      "x_min_mm",
+                      "x_max_mm",
+                      "y_min_mm",
+                      "y_max_mm"
+                    ],
+                    "description": "Rectangular region (x = radius in the axisym class, y = z there).",
+                    "properties": {
+                      "x_min_mm": {
+                        "description": "A number, or the name of a named parameter bound via `parameters` (magnetostatic classes only).",
+                        "anyOf": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "string"
+                          }
+                        ]
+                      },
+                      "x_max_mm": {
+                        "description": "A number, or the name of a named parameter bound via `parameters` (magnetostatic classes only).",
+                        "anyOf": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "string"
+                          }
+                        ]
+                      },
+                      "y_min_mm": {
+                        "description": "A number, or the name of a named parameter bound via `parameters` (magnetostatic classes only).",
+                        "anyOf": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "string"
+                          }
+                        ]
+                      },
+                      "y_max_mm": {
+                        "description": "A number, or the name of a named parameter bound via `parameters` (magnetostatic classes only).",
+                        "anyOf": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "string"
+                          }
+                        ]
+                      }
+                    }
+                  },
+                  "mu_r": {
+                    "description": "A number, or the name of a named parameter bound via `parameters` (magnetostatic classes only).",
+                    "anyOf": [
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "js_t": {
+                    "description": "Saturation polarization, tesla — presence switches this region to the nonlinear B-H law (Picard outer loop).",
+                    "anyOf": [
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "string"
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            "bc_r_outer": {
+              "type": "string",
+              "enum": [
+                "zero",
+                "neumann"
+              ],
+              "description": "Outer boundary condition. Default zero (far-field)."
+            },
+            "bc_z_low": {
+              "type": "string",
+              "enum": [
+                "zero",
+                "neumann"
+              ],
+              "description": "Outer boundary condition. Default zero (far-field)."
+            },
+            "bc_z_high": {
+              "type": "string",
+              "enum": [
+                "zero",
+                "neumann"
+              ],
+              "description": "Outer boundary condition. Default zero (far-field)."
+            },
+            "bc_x_low": {
+              "type": "string",
+              "enum": [
+                "zero",
+                "neumann"
+              ],
+              "description": "Outer boundary condition. Default zero (far-field)."
+            },
+            "bc_x_high": {
+              "type": "string",
+              "enum": [
+                "zero",
+                "neumann"
+              ],
+              "description": "Outer boundary condition. Default zero (far-field)."
+            },
+            "bc_y_low": {
+              "type": "string",
+              "enum": [
+                "zero",
+                "neumann"
+              ],
+              "description": "Outer boundary condition. Default zero (far-field)."
+            },
+            "bc_y_high": {
+              "type": "string",
+              "enum": [
+                "zero",
+                "neumann"
+              ],
+              "description": "Outer boundary condition. Default zero (far-field)."
+            },
+            "geometry": {
+              "type": "string",
+              "enum": [
+                "axisymmetric",
+                "planar"
+              ]
+            },
+            "electrodes": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "shape",
+                  "potential_v"
+                ],
+                "properties": {
+                  "shape": {
+                    "type": "object",
+                    "required": [
+                      "type"
+                    ],
+                    "description": "Electrode/dielectric shape: `{\"type\":\"rect\",...}`, `{\"type\":\"circle\",\"cx_mm\",\"cy_mm\",\"radius_mm\"}`, or `{\"type\":\"circle_shell\",\"cx_mm\",\"cy_mm\",\"r_inner_mm\",\"r_outer_mm\"}`. Literal numbers only.",
+                    "properties": {
+                      "type": {
+                        "type": "string",
+                        "enum": [
+                          "rect",
+                          "circle",
+                          "circle_shell"
+                        ]
+                      },
+                      "x_min_mm": {
+                        "type": "number"
+                      },
+                      "x_max_mm": {
+                        "type": "number"
+                      },
+                      "y_min_mm": {
+                        "type": "number"
+                      },
+                      "y_max_mm": {
+                        "type": "number"
+                      },
+                      "cx_mm": {
+                        "type": "number"
+                      },
+                      "cy_mm": {
+                        "type": "number"
+                      },
+                      "radius_mm": {
+                        "type": "number"
+                      },
+                      "r_inner_mm": {
+                        "type": "number"
+                      },
+                      "r_outer_mm": {
+                        "type": "number"
+                      }
+                    }
+                  },
+                  "potential_v": {
+                    "type": "number"
+                  }
+                }
+              }
+            },
+            "dielectrics": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "shape",
+                  "eps_r"
+                ],
+                "properties": {
+                  "shape": {
+                    "type": "object",
+                    "required": [
+                      "type"
+                    ],
+                    "description": "Electrode/dielectric shape: `{\"type\":\"rect\",...}`, `{\"type\":\"circle\",\"cx_mm\",\"cy_mm\",\"radius_mm\"}`, or `{\"type\":\"circle_shell\",\"cx_mm\",\"cy_mm\",\"r_inner_mm\",\"r_outer_mm\"}`. Literal numbers only.",
+                    "properties": {
+                      "type": {
+                        "type": "string",
+                        "enum": [
+                          "rect",
+                          "circle",
+                          "circle_shell"
+                        ]
+                      },
+                      "x_min_mm": {
+                        "type": "number"
+                      },
+                      "x_max_mm": {
+                        "type": "number"
+                      },
+                      "y_min_mm": {
+                        "type": "number"
+                      },
+                      "y_max_mm": {
+                        "type": "number"
+                      },
+                      "cx_mm": {
+                        "type": "number"
+                      },
+                      "cy_mm": {
+                        "type": "number"
+                      },
+                      "radius_mm": {
+                        "type": "number"
+                      },
+                      "r_inner_mm": {
+                        "type": "number"
+                      },
+                      "r_outer_mm": {
+                        "type": "number"
+                      }
+                    }
+                  },
+                  "eps_r": {
+                    "type": "number"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "parameters": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "number"
+          },
+          "description": "Bindings for named spec parameters (magnetostatic classes)."
+        },
+        "options": {
+          "type": "object",
+          "properties": {
+            "nx": {
+              "type": "number",
+              "description": "Grid nodes in x (r for axisym). Default 81."
+            },
+            "ny": {
+              "type": "number",
+              "description": "Grid nodes in y (z for axisym). Default 81."
+            },
+            "tol": {
+              "type": "number",
+              "description": "SOR relative tolerance. Default 1e-8."
+            },
+            "max_sweeps": {
+              "type": "number",
+              "description": "SOR sweep cap. Default 200000."
+            },
+            "drive_coil": {
+              "type": "number",
+              "description": "Axisym: coil index the inductance claim is priced for. Default 0."
+            },
+            "force_coil": {
+              "type": "number",
+              "description": "Axisym: also emit force claims for this coil index."
+            },
+            "stress_probe": {
+              "type": "object",
+              "description": "Axisym force cross-check: Maxwell-stress cylinder {r_mm, z_lo_mm, z_hi_mm, panels?}.",
+              "properties": {
+                "r_mm": {
+                  "type": "number"
+                },
+                "z_lo_mm": {
+                  "type": "number"
+                },
+                "z_hi_mm": {
+                  "type": "number"
+                },
+                "panels": {
+                  "type": "number"
+                }
+              }
+            },
+            "torque": {
+              "type": "object",
+              "description": "Planar (required for that class): torque center + mean airgap radius + stack depth {cx_mm, cy_mm, r_mean_m, depth_m, stress_line_y_mm?}.",
+              "properties": {
+                "cx_mm": {
+                  "type": "number"
+                },
+                "cy_mm": {
+                  "type": "number"
+                },
+                "r_mean_m": {
+                  "type": "number"
+                },
+                "depth_m": {
+                  "type": "number"
+                },
+                "stress_line_y_mm": {
+                  "type": "number"
+                }
+              }
+            },
+            "hot": {
+              "type": "number",
+              "description": "Electrostatics: index of the driven electrode. Default 0."
+            }
+          }
+        }
+      },
+      "required": [
+        "spec"
+      ]
+    },
+    "annotations": {
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "simulate_photonics",
+    "title": "Simulate Photonics",
+    "description": "Forward 2D TM FDTD photonics run (validated Yee grid + CPML, dispersion error ~5e-8 at 40 cells/lambda): rect-composed device, analytically-solved slab-mode line source, input/output flux monitors, transmission spectrum, insertion loss, and splitting ratio — as data plus `vcad.photonics-claims/1` and unified-receipt claims. Predictions carry basis \"predicted\" and roll up Provisional until the chip is measured. 2D TM only: quantitative for the 2D problem, qualitative for a 3D chip (no out-of-plane loss); lossless dielectrics; rect geometry only in this tool. Deterministic. Cost ~grid cells x steps (caps 2M cells / 100k steps); the default 20 cells/lambda x 3000 steps on a 10x5 um domain runs in a few seconds. Raise `resolution` toward 40 for publication-grade numbers.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "spec": {
+          "type": "object",
+          "required": [
+            "wavelength_um",
+            "n_core",
+            "n_clad",
+            "size_um",
+            "core_rects_um",
+            "source",
+            "monitor_in_x_um",
+            "outputs"
+          ],
+          "description": "2D device in the xy plane, 1 unit = 1 um, propagation along +x. Cladding fills the domain; `core_rects_um` are painted at n_core^2 with sub-pixel averaging. Literal numbers only.",
+          "properties": {
+            "wavelength_um": {
+              "type": "number",
+              "description": "Vacuum wavelength, um (e.g. 1.55)."
+            },
+            "n_core": {
+              "type": "number"
+            },
+            "n_clad": {
+              "type": "number"
+            },
+            "size_um": {
+              "type": "array",
+              "minItems": 2,
+              "maxItems": 2,
+              "items": {
+                "type": "number"
+              },
+              "description": "Domain size [lx, ly], um."
+            },
+            "core_rects_um": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "array",
+                "minItems": 4,
+                "maxItems": 4,
+                "items": {
+                  "type": "number"
+                }
+              },
+              "description": "Core rectangles [x0, y0, x1, y1], um."
+            },
+            "source": {
+              "type": "object",
+              "required": [
+                "x_um",
+                "half_width_um"
+              ],
+              "description": "Slab-mode line source: the even TM mode of a guide with this half-width is solved analytically and injected as a line profile.",
+              "properties": {
+                "x_um": {
+                  "type": "number"
+                },
+                "center_y_um": {
+                  "type": "number",
+                  "description": "Mode center. Default domain mid-height."
+                },
+                "half_width_um": {
+                  "type": "number",
+                  "description": "Guide half-width the source mode is solved for."
+                }
+              }
+            },
+            "monitor_in_x_um": {
+              "type": "number",
+              "description": "Input-power monitor x (between source and device; full-height)."
+            },
+            "outputs": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 2,
+              "items": {
+                "type": "object",
+                "required": [
+                  "x_um"
+                ],
+                "properties": {
+                  "x_um": {
+                    "type": "number"
+                  },
+                  "y_lo_um": {
+                    "type": "number",
+                    "description": "Window low edge. Default full interior height."
+                  },
+                  "y_hi_um": {
+                    "type": "number",
+                    "description": "Window high edge. Default full interior height."
+                  }
+                }
+              },
+              "description": "One or two output flux monitors. Two = splitter arms (use y windows to separate them); one = simple transmission (arm B claims read zero)."
+            }
+          }
+        },
+        "options": {
+          "type": "object",
+          "properties": {
+            "resolution": {
+              "type": "number",
+              "description": "Cells per vacuum wavelength (>= 8). Default 20."
+            },
+            "steps": {
+              "type": "number",
+              "description": "FDTD time steps. Default 3000."
+            },
+            "cpml_cells": {
+              "type": "number",
+              "description": "Absorber thickness per side. Default 12."
+            },
+            "courant": {
+              "type": "number",
+              "description": "Courant factor (0, 1]. Default 0.5."
+            },
+            "n_freqs": {
+              "type": "number",
+              "description": "Monitor frequencies (forced odd, center exact). Default 1."
+            },
+            "band_frac": {
+              "type": "number",
+              "description": "Fractional bandwidth spanned when n_freqs > 1. Default 0.2."
+            }
+          }
+        }
+      },
+      "required": [
+        "spec"
+      ]
+    },
+    "annotations": {
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "analyze_antenna",
+    "title": "Analyze Antenna",
+    "description": "Thin-wire method-of-moments antenna analysis over a frequency band: per-frequency Z_in and S11 sweep rows, minimum-S11 point, in-band resonance (Im Z = 0), -10 dB bandwidth, far-field peak gain (37x72 pattern scan), and a radiation-efficiency energy cross-check — as data plus `vcad.antenna-claims/1` and unified-receipt claims. Predictions carry basis \"predicted\" and roll up Provisional until a VNA sweep is bound. Free-space PEC wires (optional infinite ground plane): no dielectric substrate (PCB antennas read a few percent high in frequency), no conductor loss (gain = directivity), thin-wire validity gates enforced fail-closed (segment >= 4a, segment <= lambda/8, ka <= 0.1). Deterministic. Cost ~O(segments^3) per frequency x band points (segment cap 600); a 30-segment dipole over 46 points runs in seconds.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "spec": {
+          "type": "object",
+          "required": [
+            "elements",
+            "feed_mm"
+          ],
+          "description": "Thin-wire antenna: straight wires, polyline paths, and closed loops, with a delta-gap feed at the basis nearest `feed_mm`. Units mm. Any numeric field may instead be a string naming a parameter supplied in `parameters` (fail-closed: unbound names error).",
+          "properties": {
+            "ground_plane": {
+              "type": "boolean",
+              "description": "Infinite PEC ground at z=0 (monopoles). Default false (free space)."
+            },
+            "elements": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "required": [
+                  "type"
+                ],
+                "description": "Element: `{\"type\":\"wire\",\"start_mm\",\"end_mm\",\"radius_mm\",\"segments\"}`, `{\"type\":\"path\",\"points_mm\",\"radius_mm\",\"segments_per_leg\"}` (len = points-1), or `{\"type\":\"loop\",...}` (segments_per_leg len = points, closing leg included).",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "wire",
+                      "path",
+                      "loop"
+                    ]
+                  },
+                  "start_mm": {
+                    "type": "array",
+                    "minItems": 3,
+                    "maxItems": 3,
+                    "items": {
+                      "description": "A number, or the name of a named parameter bound via `parameters`.",
+                      "anyOf": [
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "string"
+                        }
+                      ]
+                    },
+                    "description": "[x, y, z] in mm (Z-up; ground plane, when on, is z=0)."
+                  },
+                  "end_mm": {
+                    "type": "array",
+                    "minItems": 3,
+                    "maxItems": 3,
+                    "items": {
+                      "description": "A number, or the name of a named parameter bound via `parameters`.",
+                      "anyOf": [
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "string"
+                        }
+                      ]
+                    },
+                    "description": "[x, y, z] in mm (Z-up; ground plane, when on, is z=0)."
+                  },
+                  "points_mm": {
+                    "type": "array",
+                    "items": {
+                      "type": "array",
+                      "minItems": 3,
+                      "maxItems": 3,
+                      "items": {
+                        "description": "A number, or the name of a named parameter bound via `parameters`.",
+                        "anyOf": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "string"
+                          }
+                        ]
+                      },
+                      "description": "[x, y, z] in mm (Z-up; ground plane, when on, is z=0)."
+                    }
+                  },
+                  "radius_mm": {
+                    "description": "A number, or the name of a named parameter bound via `parameters`.",
+                    "anyOf": [
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "segments": {
+                    "type": "number"
+                  },
+                  "segments_per_leg": {
+                    "type": "array",
+                    "items": {
+                      "type": "number"
+                    }
+                  }
+                }
+              }
+            },
+            "feed_mm": {
+              "type": "array",
+              "minItems": 3,
+              "maxItems": 3,
+              "items": {
+                "description": "A number, or the name of a named parameter bound via `parameters`.",
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ]
+              },
+              "description": "[x, y, z] in mm (Z-up; ground plane, when on, is z=0)."
+            }
+          }
+        },
+        "parameters": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "number"
+          },
+          "description": "Bindings for named spec parameters, `{name: value}`."
+        },
+        "band": {
+          "type": "object",
+          "required": [
+            "f_lo_hz",
+            "f_hi_hz",
+            "points"
+          ],
+          "description": "Frequency band to sweep and make claims over.",
+          "properties": {
+            "f_lo_hz": {
+              "type": "number"
+            },
+            "f_hi_hz": {
+              "type": "number"
+            },
+            "points": {
+              "type": "number",
+              "description": "Sweep points across the band (2..2000)."
+            }
+          }
+        },
+        "options": {
+          "type": "object",
+          "properties": {
+            "z0": {
+              "type": "number",
+              "description": "S11 reference impedance, ohm. Default 50."
+            },
+            "quad_outer": {
+              "type": "number",
+              "description": "Outer Gauss-Legendre order. Default 6."
+            },
+            "quad_inner": {
+              "type": "number",
+              "description": "Inner Gauss-Legendre order. Default 6."
+            },
+            "sweep": {
+              "type": "boolean",
+              "description": "Return per-frequency sweep rows (Z_in, S11). Default true."
+            }
+          }
+        }
+      },
+      "required": [
+        "spec",
+        "band"
+      ]
+    },
+    "annotations": {
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "solve_thermal",
+    "title": "Solve Thermal",
+    "description": "Steady heat-conduction FEA on a voxel grid: harmonic-mean finite volumes + PCG, returning T_max and its location, per-source theta_ja (K/W, junction-to-ambient), reservoir loads, and an energy-balance audit — as data plus `vcad.thermal-claims/1` and unified-receipt claims. Predictions carry basis \"predicted\" and roll up Provisional until hardware is measured. Conduction only: convection enters as film coefficients you supply (h values are the dominant uncertainty), no radiation, no fluid flow, steady state only. The full temperature field is not returned (summaries + claims are). Cost scales with voxel count (capped at 2M); a 20x20x2 board solves instantly, 100x100x13 in seconds.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "spec": {
+          "type": "object",
+          "required": [
+            "origin_mm",
+            "size_mm",
+            "divisions",
+            "materials"
+          ],
+          "description": "Voxelized conduction domain: an axis-aligned box discretized into `divisions` voxels, with material regions (per-axis k), power sources, optional fixed-temperature regions, and per-face boundary conditions `[-x,+x,-y,+y,-z,+z]`. Units mm / W / degC. Any numeric field (except `divisions`) may instead be a string naming a parameter supplied in `parameters` (fail-closed: unbound names error).",
+          "properties": {
+            "origin_mm": {
+              "type": "array",
+              "minItems": 3,
+              "maxItems": 3,
+              "items": {
+                "description": "A number, or the name of a named parameter bound via `parameters`.",
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ]
+              }
+            },
+            "size_mm": {
+              "type": "array",
+              "minItems": 3,
+              "maxItems": 3,
+              "items": {
+                "description": "A number, or the name of a named parameter bound via `parameters`.",
+                "anyOf": [
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "type": "string"
+                  }
+                ]
+              }
+            },
+            "divisions": {
+              "type": "array",
+              "minItems": 3,
+              "maxItems": 3,
+              "items": {
+                "type": "number"
+              },
+              "description": "Voxel counts per axis (plain integers, the cost knob)."
+            },
+            "materials": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "required": [
+                  "shape",
+                  "k_w_mk"
+                ],
+                "properties": {
+                  "shape": {
+                    "type": "object",
+                    "required": [
+                      "type"
+                    ],
+                    "description": "Region shape: `{\"type\":\"Box\",\"min_mm\":[..],\"size_mm\":[..]}` or `{\"type\":\"Tube\",\"axis\":\"Z\",\"center_mm\":[..2],\"span_mm\":[..2],\"outer_radius_mm\":..,\"inner_radius_mm\":..}`.",
+                    "properties": {
+                      "type": {
+                        "type": "string",
+                        "enum": [
+                          "Box",
+                          "Tube"
+                        ]
+                      },
+                      "min_mm": {
+                        "type": "array",
+                        "minItems": 3,
+                        "maxItems": 3,
+                        "items": {
+                          "description": "A number, or the name of a named parameter bound via `parameters`.",
+                          "anyOf": [
+                            {
+                              "type": "number"
+                            },
+                            {
+                              "type": "string"
+                            }
+                          ]
+                        }
+                      },
+                      "size_mm": {
+                        "type": "array",
+                        "minItems": 3,
+                        "maxItems": 3,
+                        "items": {
+                          "description": "A number, or the name of a named parameter bound via `parameters`.",
+                          "anyOf": [
+                            {
+                              "type": "number"
+                            },
+                            {
+                              "type": "string"
+                            }
+                          ]
+                        }
+                      },
+                      "axis": {
+                        "type": "string",
+                        "enum": [
+                          "X",
+                          "Y",
+                          "Z"
+                        ]
+                      },
+                      "center_mm": {
+                        "type": "array",
+                        "minItems": 2,
+                        "maxItems": 2,
+                        "items": {
+                          "description": "A number, or the name of a named parameter bound via `parameters`.",
+                          "anyOf": [
+                            {
+                              "type": "number"
+                            },
+                            {
+                              "type": "string"
+                            }
+                          ]
+                        }
+                      },
+                      "span_mm": {
+                        "type": "array",
+                        "minItems": 2,
+                        "maxItems": 2,
+                        "items": {
+                          "description": "A number, or the name of a named parameter bound via `parameters`.",
+                          "anyOf": [
+                            {
+                              "type": "number"
+                            },
+                            {
+                              "type": "string"
+                            }
+                          ]
+                        }
+                      },
+                      "outer_radius_mm": {
+                        "description": "A number, or the name of a named parameter bound via `parameters`.",
+                        "anyOf": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "string"
+                          }
+                        ]
+                      },
+                      "inner_radius_mm": {
+                        "description": "A number, or the name of a named parameter bound via `parameters`.",
+                        "anyOf": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "string"
+                          }
+                        ]
+                      }
+                    }
+                  },
+                  "k_w_mk": {
+                    "type": "array",
+                    "minItems": 3,
+                    "maxItems": 3,
+                    "items": {
+                      "description": "A number, or the name of a named parameter bound via `parameters`.",
+                      "anyOf": [
+                        {
+                          "type": "number"
+                        },
+                        {
+                          "type": "string"
+                        }
+                      ]
+                    },
+                    "description": "Per-axis conductivity, W/(m*K)."
+                  }
+                }
+              }
+            },
+            "sources": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "name",
+                  "shape",
+                  "power_w"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "shape": {
+                    "type": "object",
+                    "required": [
+                      "type"
+                    ],
+                    "description": "Region shape: `{\"type\":\"Box\",\"min_mm\":[..],\"size_mm\":[..]}` or `{\"type\":\"Tube\",\"axis\":\"Z\",\"center_mm\":[..2],\"span_mm\":[..2],\"outer_radius_mm\":..,\"inner_radius_mm\":..}`.",
+                    "properties": {
+                      "type": {
+                        "type": "string",
+                        "enum": [
+                          "Box",
+                          "Tube"
+                        ]
+                      },
+                      "min_mm": {
+                        "type": "array",
+                        "minItems": 3,
+                        "maxItems": 3,
+                        "items": {
+                          "description": "A number, or the name of a named parameter bound via `parameters`.",
+                          "anyOf": [
+                            {
+                              "type": "number"
+                            },
+                            {
+                              "type": "string"
+                            }
+                          ]
+                        }
+                      },
+                      "size_mm": {
+                        "type": "array",
+                        "minItems": 3,
+                        "maxItems": 3,
+                        "items": {
+                          "description": "A number, or the name of a named parameter bound via `parameters`.",
+                          "anyOf": [
+                            {
+                              "type": "number"
+                            },
+                            {
+                              "type": "string"
+                            }
+                          ]
+                        }
+                      },
+                      "axis": {
+                        "type": "string",
+                        "enum": [
+                          "X",
+                          "Y",
+                          "Z"
+                        ]
+                      },
+                      "center_mm": {
+                        "type": "array",
+                        "minItems": 2,
+                        "maxItems": 2,
+                        "items": {
+                          "description": "A number, or the name of a named parameter bound via `parameters`.",
+                          "anyOf": [
+                            {
+                              "type": "number"
+                            },
+                            {
+                              "type": "string"
+                            }
+                          ]
+                        }
+                      },
+                      "span_mm": {
+                        "type": "array",
+                        "minItems": 2,
+                        "maxItems": 2,
+                        "items": {
+                          "description": "A number, or the name of a named parameter bound via `parameters`.",
+                          "anyOf": [
+                            {
+                              "type": "number"
+                            },
+                            {
+                              "type": "string"
+                            }
+                          ]
+                        }
+                      },
+                      "outer_radius_mm": {
+                        "description": "A number, or the name of a named parameter bound via `parameters`.",
+                        "anyOf": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "string"
+                          }
+                        ]
+                      },
+                      "inner_radius_mm": {
+                        "description": "A number, or the name of a named parameter bound via `parameters`.",
+                        "anyOf": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "string"
+                          }
+                        ]
+                      }
+                    }
+                  },
+                  "power_w": {
+                    "description": "A number, or the name of a named parameter bound via `parameters`.",
+                    "anyOf": [
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "string"
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            "fixed": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": [
+                  "shape",
+                  "temperature_c"
+                ],
+                "properties": {
+                  "shape": {
+                    "type": "object",
+                    "required": [
+                      "type"
+                    ],
+                    "description": "Region shape: `{\"type\":\"Box\",\"min_mm\":[..],\"size_mm\":[..]}` or `{\"type\":\"Tube\",\"axis\":\"Z\",\"center_mm\":[..2],\"span_mm\":[..2],\"outer_radius_mm\":..,\"inner_radius_mm\":..}`.",
+                    "properties": {
+                      "type": {
+                        "type": "string",
+                        "enum": [
+                          "Box",
+                          "Tube"
+                        ]
+                      },
+                      "min_mm": {
+                        "type": "array",
+                        "minItems": 3,
+                        "maxItems": 3,
+                        "items": {
+                          "description": "A number, or the name of a named parameter bound via `parameters`.",
+                          "anyOf": [
+                            {
+                              "type": "number"
+                            },
+                            {
+                              "type": "string"
+                            }
+                          ]
+                        }
+                      },
+                      "size_mm": {
+                        "type": "array",
+                        "minItems": 3,
+                        "maxItems": 3,
+                        "items": {
+                          "description": "A number, or the name of a named parameter bound via `parameters`.",
+                          "anyOf": [
+                            {
+                              "type": "number"
+                            },
+                            {
+                              "type": "string"
+                            }
+                          ]
+                        }
+                      },
+                      "axis": {
+                        "type": "string",
+                        "enum": [
+                          "X",
+                          "Y",
+                          "Z"
+                        ]
+                      },
+                      "center_mm": {
+                        "type": "array",
+                        "minItems": 2,
+                        "maxItems": 2,
+                        "items": {
+                          "description": "A number, or the name of a named parameter bound via `parameters`.",
+                          "anyOf": [
+                            {
+                              "type": "number"
+                            },
+                            {
+                              "type": "string"
+                            }
+                          ]
+                        }
+                      },
+                      "span_mm": {
+                        "type": "array",
+                        "minItems": 2,
+                        "maxItems": 2,
+                        "items": {
+                          "description": "A number, or the name of a named parameter bound via `parameters`.",
+                          "anyOf": [
+                            {
+                              "type": "number"
+                            },
+                            {
+                              "type": "string"
+                            }
+                          ]
+                        }
+                      },
+                      "outer_radius_mm": {
+                        "description": "A number, or the name of a named parameter bound via `parameters`.",
+                        "anyOf": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "string"
+                          }
+                        ]
+                      },
+                      "inner_radius_mm": {
+                        "description": "A number, or the name of a named parameter bound via `parameters`.",
+                        "anyOf": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "string"
+                          }
+                        ]
+                      }
+                    }
+                  },
+                  "temperature_c": {
+                    "description": "A number, or the name of a named parameter bound via `parameters`.",
+                    "anyOf": [
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "string"
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            "domain_faces": {
+              "type": "array",
+              "minItems": 6,
+              "maxItems": 6,
+              "items": {
+                "type": "object",
+                "required": [
+                  "type"
+                ],
+                "description": "Boundary condition: `{\"type\":\"Adiabatic\"}`, `{\"type\":\"FixedTemperature\",\"temperature_c\":..}`, or `{\"type\":\"Convection\",\"h_w_m2k\":..,\"ambient_c\":..}`.",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "Adiabatic",
+                      "FixedTemperature",
+                      "Convection"
+                    ]
+                  },
+                  "temperature_c": {
+                    "description": "A number, or the name of a named parameter bound via `parameters`.",
+                    "anyOf": [
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "h_w_m2k": {
+                    "description": "A number, or the name of a named parameter bound via `parameters`.",
+                    "anyOf": [
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "ambient_c": {
+                    "description": "A number, or the name of a named parameter bound via `parameters`.",
+                    "anyOf": [
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "string"
+                      }
+                    ]
+                  }
+                }
+              },
+              "description": "Boundary per domain face `[-x,+x,-y,+y,-z,+z]`. Default all adiabatic — ground the system with at least one non-adiabatic face or fixed region."
+            },
+            "exposed": {
+              "type": "object",
+              "required": [
+                "type"
+              ],
+              "description": "Boundary applied to interior void-facing surfaces. Default adiabatic.",
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "enum": [
+                    "Adiabatic",
+                    "FixedTemperature",
+                    "Convection"
+                  ]
+                },
+                "temperature_c": {
+                  "description": "A number, or the name of a named parameter bound via `parameters`.",
+                  "anyOf": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "string"
+                    }
+                  ]
+                },
+                "h_w_m2k": {
+                  "description": "A number, or the name of a named parameter bound via `parameters`.",
+                  "anyOf": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "string"
+                    }
+                  ]
+                },
+                "ambient_c": {
+                  "description": "A number, or the name of a named parameter bound via `parameters`.",
+                  "anyOf": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "string"
+                    }
+                  ]
+                }
+              }
+            },
+            "reference_c": {
+              "description": "Explicit theta reference temperature; usually inferred from the single ambient.",
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "string"
+                }
+              ]
+            }
+          }
+        },
+        "parameters": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "number"
+          },
+          "description": "Bindings for named spec parameters, `{name: value}`."
+        },
+        "options": {
+          "type": "object",
+          "properties": {
+            "tol": {
+              "type": "number",
+              "description": "PCG relative tolerance. Default 1e-8."
+            },
+            "max_iters": {
+              "type": "number",
+              "description": "PCG iteration cap. Default 50000."
+            }
+          }
+        }
+      },
+      "required": [
+        "spec"
+      ]
+    },
+    "annotations": {
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "simulate_neutron_shield",
+    "title": "Simulate Neutron Shield",
+    "description": "Monte Carlo neutron shielding run (analog transport, 5-group multigroup library with exact elastic kinematics): spherical layer stack around a point source (D-D band), H*(10) dose rate at each detector shell WITH 1-sigma batch error bars (rse), attenuation factor vs bare source, thermal flux, and absorbed/leakage balance — as data plus `vcad.neutronics-claims/1` and unified-receipt claims. Fail-closed: truncated histories or a tally that scored nothing refuses claims (raise histories). Predictions carry basis \"predicted\" and roll up Provisional until surveyed. Design-estimate physics: 5-group library (not ENDF continuous-energy), spherical geometry only, no gamma dose, no activation, source energy capped at 3 MeV (no D-T). Deterministic per seed. Cost ~histories (cap 5M); error bars shrink as 1/sqrt(N). The 400k default runs in seconds.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "spec": {
+          "type": "object",
+          "required": [
+            "layers",
+            "source",
+            "detectors"
+          ],
+          "description": "Spherical shield: concentric layers from r=0 outward around a point source, with detector shells that must each sit strictly inside one layer (put them in air gaps). Units mm. Any numeric field may instead be a string naming a parameter supplied in `parameters` (fail-closed: unbound names error).",
+          "properties": {
+            "layers": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "required": [
+                  "material",
+                  "thickness_mm"
+                ],
+                "properties": {
+                  "material": {
+                    "type": "string",
+                    "description": "Built-in library material: hdpe, paraffin, borated-hdpe-5, water, lead, concrete, air, void."
+                  },
+                  "thickness_mm": {
+                    "description": "A number, or the name of a named parameter bound via `parameters`.",
+                    "anyOf": [
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "string"
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            "source": {
+              "type": "object",
+              "required": [
+                "rate_n_per_s",
+                "energy_ev"
+              ],
+              "description": "Isotropic point source at r=0. Energy must lie in the 5-group structure [1e-4, 3e6] eV — D-D 2.45e6 eV is in range; D-T 14.1 MeV is rejected.",
+              "properties": {
+                "rate_n_per_s": {
+                  "description": "A number, or the name of a named parameter bound via `parameters`.",
+                  "anyOf": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "string"
+                    }
+                  ]
+                },
+                "energy_ev": {
+                  "description": "A number, or the name of a named parameter bound via `parameters`.",
+                  "anyOf": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "string"
+                    }
+                  ]
+                }
+              }
+            },
+            "detectors": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "required": [
+                  "label",
+                  "radius_mm"
+                ],
+                "properties": {
+                  "label": {
+                    "type": "string"
+                  },
+                  "radius_mm": {
+                    "description": "A number, or the name of a named parameter bound via `parameters`.",
+                    "anyOf": [
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "half_width_mm": {
+                    "description": "Shell half-thickness. Default 20 mm.",
+                    "anyOf": [
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "string"
+                      }
+                    ]
+                  }
+                }
+              }
+            },
+            "run": {
+              "type": "object",
+              "description": "Monte Carlo controls (deterministic for a given seed).",
+              "properties": {
+                "histories_per_batch": {
+                  "type": "number",
+                  "description": "Default 20000."
+                },
+                "batches": {
+                  "type": "number",
+                  "description": "Error-bar batches (>= 2). Default 20."
+                },
+                "seed": {
+                  "type": "number",
+                  "description": "Default 20260717."
+                }
+              }
+            }
+          }
+        },
+        "parameters": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "number"
+          },
+          "description": "Bindings for named spec parameters, `{name: value}`."
+        }
+      },
+      "required": [
+        "spec"
+      ]
+    },
+    "annotations": {
+      "readOnlyHint": true
+    }
+  },
+  {
+    "name": "analyze_tolerance_stackup",
+    "title": "Analyze Tolerance Stackup",
+    "description": "Dimensional tolerance stackup analysis over a linear assembly chain: worst-case extremes, RSS statistics (yield, Cp/Cpk), seeded Monte Carlo fit probability with batch error bars, and exact per-contributor sensitivities (variance share, d yield/d nominal) — as data plus `vcad.tolerance-claims/1` and unified-receipt claims. Predictions carry basis \"predicted\" and roll up Provisional until parts are measured. Linear 1D chains only: no 3D kinematic loops here (project those to a chain first), distributions are the declared ones (assumed 3-sigma unless stated). Deterministic for a given seed. Cost is O(n samples); the 100k default runs in well under a second.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "spec": {
+          "type": "object",
+          "required": [
+            "name",
+            "contributors",
+            "requirement"
+          ],
+          "description": "Linear tolerance stackup: gap = sum(coeff_i * x_i) over contributor dimensions, graded against a fit requirement. Units mm. Any numeric field may instead be a string naming a parameter supplied in `parameters` (fail-closed: unbound names error).",
+          "properties": {
+            "name": {
+              "type": "string"
+            },
+            "contributors": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "required": [
+                  "name",
+                  "coeff",
+                  "nominal",
+                  "tol_minus",
+                  "tol_plus",
+                  "dist"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "coeff": {
+                    "description": "Direction coefficient (+1 adds to the gap, -1 subtracts).",
+                    "anyOf": [
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "nominal": {
+                    "description": "Nominal dimension, mm.",
+                    "anyOf": [
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "tol_minus": {
+                    "description": "Lower tolerance magnitude, mm (>= 0).",
+                    "anyOf": [
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "tol_plus": {
+                    "description": "Upper tolerance magnitude, mm (>= 0).",
+                    "anyOf": [
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "type": "string"
+                      }
+                    ]
+                  },
+                  "dist": {
+                    "type": "object",
+                    "description": "Contributor distribution. `normal_from_tol` derives sigma from the (symmetric) tolerance band via the convention; `uniform`/`two_point` must lie within the drawing limits.",
+                    "required": [
+                      "type"
+                    ],
+                    "properties": {
+                      "type": {
+                        "type": "string",
+                        "enum": [
+                          "normal",
+                          "normal_from_tol",
+                          "uniform",
+                          "two_point"
+                        ]
+                      },
+                      "mean": {
+                        "description": "normal: mean offset, mm.",
+                        "anyOf": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "string"
+                          }
+                        ]
+                      },
+                      "sigma": {
+                        "description": "normal: one sigma, mm.",
+                        "anyOf": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "string"
+                          }
+                        ]
+                      },
+                      "convention": {
+                        "type": "object",
+                        "description": "normal_from_tol: `{\"type\":\"three_sigma\"}` or `{\"type\":\"k_sigma\",\"k\":4}`.",
+                        "properties": {
+                          "type": {
+                            "type": "string",
+                            "enum": [
+                              "three_sigma",
+                              "k_sigma"
+                            ]
+                          },
+                          "k": {
+                            "type": "number"
+                          }
+                        }
+                      },
+                      "lo": {
+                        "description": "uniform: lower offset, mm.",
+                        "anyOf": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "string"
+                          }
+                        ]
+                      },
+                      "hi": {
+                        "description": "uniform: upper offset, mm.",
+                        "anyOf": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "string"
+                          }
+                        ]
+                      },
+                      "a": {
+                        "description": "two_point: first offset, mm.",
+                        "anyOf": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "string"
+                          }
+                        ]
+                      },
+                      "b": {
+                        "description": "two_point: second offset, mm.",
+                        "anyOf": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "string"
+                          }
+                        ]
+                      },
+                      "p_b": {
+                        "description": "two_point: probability of b.",
+                        "anyOf": [
+                          {
+                            "type": "number"
+                          },
+                          {
+                            "type": "string"
+                          }
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "requirement": {
+              "type": "object",
+              "required": [
+                "name"
+              ],
+              "description": "Fit requirement on the closing gap; at least one bound required.",
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "lower_mm": {
+                  "description": "A number, or the name of a named parameter bound via `parameters`.",
+                  "anyOf": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "string"
+                    }
+                  ]
+                },
+                "upper_mm": {
+                  "description": "A number, or the name of a named parameter bound via `parameters`.",
+                  "anyOf": [
+                    {
+                      "type": "number"
+                    },
+                    {
+                      "type": "string"
+                    }
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "parameters": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "number"
+          },
+          "description": "Bindings for named spec parameters, `{name: value}`."
+        },
+        "options": {
+          "type": "object",
+          "properties": {
+            "n": {
+              "type": "number",
+              "description": "Monte Carlo samples. Default 100000 (min 100)."
+            },
+            "seed": {
+              "type": "number",
+              "description": "MC seed (deterministic). Default 0x5EED7015."
+            },
+            "batches": {
+              "type": "number",
+              "description": "MC error-bar batches. Default 16."
+            }
+          }
+        }
+      },
+      "required": [
+        "spec"
+      ]
+    },
+    "annotations": {
+      "readOnlyHint": true
+    }
+  },
+  {
     "name": "predict_physics",
     "title": "Predict Physics",
     "description": "Fast static structural analysis (voxel FEA): max displacement, max von Mises stress, and compliance for a part or box under world-frame loads (N) and supports, in ~100 ms at fidelity=predict. Pass max_displacement_mm / max_von_mises_mpa limits to get receipt claims: predict-tier claims carry basis=predicted and roll up as a PROVISIONAL receipt — use them to iterate on a design cheaply. When the design settles, re-run with fidelity=verify (same solver, fine grid) to upgrade the claims to basis=verified and a certifiable pass. Loads/supports are box regions (mm, Z-up); zero-thickness boxes select a face. Voxel FEA smears stress concentrations — treat stress as an estimate near fillets.",

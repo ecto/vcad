@@ -1,0 +1,26 @@
+{
+  "id": "2026-07-17-solver-mcp-wave-2",
+  "version": "0.9.4",
+  "date": "2026-07-17",
+  "category": "feat",
+  "title": "Six physics solvers land as MCP tools",
+  "summary": "EM, photonics, antenna, thermal, neutronics, and tolerance-stackup solvers are now callable by AI agents over MCP, each returning predicted claim sets that roll up Provisional on the unified receipt.",
+  "features": [
+    "em",
+    "photonics",
+    "antenna",
+    "thermal",
+    "neutronics",
+    "tolerance",
+    "receipts",
+    "mcp"
+  ],
+  "mcpTools": [
+    "simulate_em",
+    "simulate_photonics",
+    "analyze_antenna",
+    "solve_thermal",
+    "simulate_neutron_shield",
+    "analyze_tolerance_stackup"
+  ]
+}
