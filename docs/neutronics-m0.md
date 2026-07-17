@@ -182,9 +182,20 @@ Checks and findings:
   oracle (void-region flux flattening + diffusion-in-shield bias) —
   the compass steers, the oracle prices. One-group triangle test: MC ↔
   diffusion ↔ e^{−r/L}/4πDr all agree deep in a scattering sphere.
-- **M3 — parameter seam.** Serde `ShieldSpec` with named parameters,
-  fail-closed resolution (unknown material / unbound name / bad
-  thickness = error, never a default).
+- **M3 — parameter seam. DONE** (`spec.rs`). Serde `ShieldSpec`
+  (spherical layer stack, central point source, labeled dose detectors)
+  where every numeric field is a literal **or a named document
+  parameter**. Fail-closed resolution: unbound name, unknown material,
+  source energy outside the group structure, non-positive rate, detector
+  outside/overlapping — each an error, never a default; a spec with no
+  detectors is rejected outright (a shield with nothing to protect is a
+  bookkeeping bug). The resolver *builds* the tally regions by
+  splitting layers around detector radii and returns the label→region
+  map. `parameter_roles()` classifies gradient paths: thicknesses →
+  M2 diffusion adjoint (`d_dose_d_param_via_diffusion`, µSv/h per mm),
+  source rate → exactly linear, source energy → group-discrete.
+  BRep extraction (shield solid → layer stack) lands on the vcad side
+  of the seam, emitting this schema.
 - **M4 — receipt claims.** `vcad.neutronics-claims/1`: dose-rate claims
   with MC uncertainty AND method provenance (histories, batches, groups,
   library version, seed), compare() with Holds / Violated / Unmeasured
