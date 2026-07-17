@@ -454,6 +454,34 @@ export interface KernelModule {
     paramsJson: string,
     optimizeJson: string,
   ) => unknown;
+  /** Tolerance stackup analysis (StackupSpec/params/options JSON). */
+  toleranceAnalyze?: (
+    specJson: string,
+    paramsJson: string,
+    optionsJson: string,
+  ) => unknown;
+  /** Steady heat-conduction solve (ThermalSpec/params/options JSON). */
+  thermalSolve?: (
+    specJson: string,
+    paramsJson: string,
+    optionsJson: string,
+  ) => unknown;
+  /** EM field simulation (problem-tagged spec/params/options JSON). */
+  emSimulate?: (
+    specJson: string,
+    paramsJson: string,
+    optionsJson: string,
+  ) => unknown;
+  /** Thin-wire MoM antenna analysis (AntennaSpec/params/options JSON). */
+  antennaAnalyze?: (
+    specJson: string,
+    paramsJson: string,
+    optionsJson: string,
+  ) => unknown;
+  /** Forward 2D FDTD photonics run (device spec/options JSON). */
+  photonicsSimulate?: (specJson: string, optionsJson: string) => unknown;
+  /** Monte Carlo neutron shielding run (ShieldSpec/params JSON). */
+  neutronicsSimulate?: (specJson: string, paramsJson: string) => unknown;
   /** Static structural analysis of a box solid. */
   analyzeStaticsBox?: (
     specJson: string,
@@ -829,6 +857,12 @@ export class Engine {
       topologyOptimizeMesh: (wasmModule as Record<string, unknown>).topologyOptimizeMesh as KernelModule["topologyOptimizeMesh"],
       particleSimulate: (wasmModule as Record<string, unknown>).particleSimulate as KernelModule["particleSimulate"],
       particleOptimize: (wasmModule as Record<string, unknown>).particleOptimize as KernelModule["particleOptimize"],
+      toleranceAnalyze: (wasmModule as Record<string, unknown>).toleranceAnalyze as KernelModule["toleranceAnalyze"],
+      thermalSolve: (wasmModule as Record<string, unknown>).thermalSolve as KernelModule["thermalSolve"],
+      emSimulate: (wasmModule as Record<string, unknown>).emSimulate as KernelModule["emSimulate"],
+      antennaAnalyze: (wasmModule as Record<string, unknown>).antennaAnalyze as KernelModule["antennaAnalyze"],
+      photonicsSimulate: (wasmModule as Record<string, unknown>).photonicsSimulate as KernelModule["photonicsSimulate"],
+      neutronicsSimulate: (wasmModule as Record<string, unknown>).neutronicsSimulate as KernelModule["neutronicsSimulate"],
       analyzeStaticsBox: (wasmModule as Record<string, unknown>).analyzeStaticsBox as KernelModule["analyzeStaticsBox"],
       analyzeStaticsMesh: (wasmModule as Record<string, unknown>).analyzeStaticsMesh as KernelModule["analyzeStaticsMesh"],
     }, compiledWasmModule);
@@ -1111,6 +1145,117 @@ export class Engine {
       );
     }
     return fn(specJson, paramsJson, optimizeJson);
+  }
+
+  /**
+   * Tolerance stackup analysis: worst-case, RSS, seeded Monte Carlo, and
+   * exact sensitivities over a linear assembly chain, plus predicted
+   * receipt claims. Inputs are JSON strings (StackupSpec, named parameter
+   * bindings, options); see `vcad-kernel-tolerance`.
+   */
+  toleranceAnalyze(
+    specJson: string,
+    paramsJson: string,
+    optionsJson: string,
+  ): unknown {
+    const fn = this.kernel.toleranceAnalyze;
+    if (typeof fn !== "function") {
+      throw new Error(
+        "toleranceAnalyze is not exported by this kernel WASM build — rebuild packages/kernel-wasm",
+      );
+    }
+    return fn(specJson, paramsJson, optionsJson);
+  }
+
+  /**
+   * Steady heat-conduction solve on a voxel grid: T_max, per-source theta
+   * (junction-to-ambient), energy balance, and predicted receipt claims.
+   * Inputs are JSON strings (ThermalSpec, named parameter bindings,
+   * options); see `vcad-kernel-thermal`.
+   */
+  thermalSolve(
+    specJson: string,
+    paramsJson: string,
+    optionsJson: string,
+  ): unknown {
+    const fn = this.kernel.thermalSolve;
+    if (typeof fn !== "function") {
+      throw new Error(
+        "thermalSolve is not exported by this kernel WASM build — rebuild packages/kernel-wasm",
+      );
+    }
+    return fn(specJson, paramsJson, optionsJson);
+  }
+
+  /**
+   * EM field simulation (2D/axisymmetric finite-volume magnetostatics or
+   * electrostatics): inductance, force, torque, capacitance extraction and
+   * predicted receipt claims. The spec JSON carries a `problem` tag; see
+   * `vcad-kernel-em`.
+   */
+  emSimulate(
+    specJson: string,
+    paramsJson: string,
+    optionsJson: string,
+  ): unknown {
+    const fn = this.kernel.emSimulate;
+    if (typeof fn !== "function") {
+      throw new Error(
+        "emSimulate is not exported by this kernel WASM build — rebuild packages/kernel-wasm",
+      );
+    }
+    return fn(specJson, paramsJson, optionsJson);
+  }
+
+  /**
+   * Thin-wire MoM antenna analysis: Z_in/S11 sweep, in-band resonance,
+   * peak gain, and predicted receipt claims. Inputs are JSON strings
+   * (AntennaSpec, named parameter bindings, options with the required
+   * frequency band); see `vcad-kernel-antenna`.
+   */
+  antennaAnalyze(
+    specJson: string,
+    paramsJson: string,
+    optionsJson: string,
+  ): unknown {
+    const fn = this.kernel.antennaAnalyze;
+    if (typeof fn !== "function") {
+      throw new Error(
+        "antennaAnalyze is not exported by this kernel WASM build — rebuild packages/kernel-wasm",
+      );
+    }
+    return fn(specJson, paramsJson, optionsJson);
+  }
+
+  /**
+   * Forward 2D TM FDTD photonics run: rect-composed device, slab-mode
+   * source, transmission spectrum, and predicted receipt claims. Inputs
+   * are JSON strings (device spec, options); see `vcad-kernel-photonics`.
+   */
+  photonicsSimulate(specJson: string, optionsJson: string): unknown {
+    const fn = this.kernel.photonicsSimulate;
+    if (typeof fn !== "function") {
+      throw new Error(
+        "photonicsSimulate is not exported by this kernel WASM build — rebuild packages/kernel-wasm",
+      );
+    }
+    return fn(specJson, optionsJson);
+  }
+
+  /**
+   * Monte Carlo neutron shielding run: dose at detector shells with
+   * statistical error bars and predicted receipt claims. Inputs are JSON
+   * strings (ShieldSpec, named parameter bindings); see
+   * `vcad-kernel-neutronics`.
+   */
+  neutronicsSimulate(specJson: string, paramsJson: string): unknown {
+    const fn = this.kernel.neutronicsSimulate;
+    if (typeof fn !== "function") {
+      throw new Error(
+        "neutronicsSimulate is not exported by this kernel WASM build — rebuild packages/kernel-wasm",
+      );
+    }
+    return fn(specJson, paramsJson);
   }
 
   topologyOptimizeBox(

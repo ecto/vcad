@@ -27,6 +27,12 @@ vcad-kernel-cam = { workspace = true }
 vcad-kernel-stocksim = { workspace = true }
 vcad-kernel-topopt = { workspace = true }
 vcad-kernel-particle = { workspace = true }
+vcad-kernel-antenna = { workspace = true }
+vcad-kernel-em = { workspace = true }
+vcad-kernel-neutronics = { workspace = true }
+vcad-kernel-photonics = { workspace = true }
+vcad-kernel-thermal = { workspace = true }
+vcad-kernel-tolerance = { workspace = true }
 
 [dev-dependencies]
 serde_json = { workspace = true }

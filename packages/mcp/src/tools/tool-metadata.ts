@@ -251,6 +251,18 @@ export const TOOL_METADATA: Record<string, ToolMetadata> = {
     annotations: RO,
   },
   optimize_electrodes: { title: "Optimize Electrodes", annotations: RO },
+  simulate_em: { title: "Simulate EM Fields", annotations: RO },
+  simulate_photonics: { title: "Simulate Photonics", annotations: RO },
+  analyze_antenna: { title: "Analyze Antenna", annotations: RO },
+  solve_thermal: { title: "Solve Thermal", annotations: RO },
+  simulate_neutron_shield: {
+    title: "Simulate Neutron Shield",
+    annotations: RO,
+  },
+  analyze_tolerance_stackup: {
+    title: "Analyze Tolerance Stackup",
+    annotations: RO,
+  },
   predict_physics: { title: "Predict Physics", annotations: RO },
   define_loon: { title: "Define Loon Macro", annotations: RW },
   call_loon: { title: "Call Loon Macro", annotations: RW },

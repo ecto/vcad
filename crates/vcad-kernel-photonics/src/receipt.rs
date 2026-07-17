@@ -278,6 +278,62 @@ pub fn splitter_claims(
     })
 }
 
+/// Domain tag for photonics claims in the unified [`vcad_receipt`] schema.
+pub const RECEIPT_DOMAIN: &str = "photonics";
+
+/// The oracle reference for this crate's 2D FDTD solver.
+pub fn oracle() -> vcad_receipt::OracleRef {
+    vcad_receipt::OracleRef::new("vcad-kernel-photonics/fdtd", env!("CARGO_PKG_VERSION"))
+}
+
+fn receipt_quantity(value: f64, unit: &str) -> vcad_receipt::ClaimQuantity {
+    if unit == "1" {
+        vcad_receipt::ClaimQuantity::bare(value)
+    } else {
+        vcad_receipt::ClaimQuantity::new(value, unit)
+    }
+}
+
+/// Translate a predicted [`ClaimSet`] into unified-receipt claims.
+///
+/// Every claim lands with [`vcad_receipt::ClaimBasis::Predicted`] — the
+/// FDTD run happened for real, but the claims describe a device that has
+/// not been measured, so a receipt built from these **rolls up
+/// Provisional, never Pass** (the same contract as
+/// `predict_physics`/`predict_print`). The computed value rides in
+/// `measured` ("what the oracle computed"); grid, step count, and the
+/// dispersion error ride in `details`.
+pub fn design_claims(set: &ClaimSet) -> Vec<vcad_receipt::ReceiptClaim> {
+    let oracle = oracle();
+    let provenance = format!(
+        "grid {}x{} delta {:.4}, {:.1} cells/lambda ({:.1} in core), courant {}, steps {}, cpml {:?}, pol {}, dispersion k_rel_err {:.2e}",
+        set.provenance.grid[0],
+        set.provenance.grid[1],
+        set.provenance.delta,
+        set.provenance.cells_per_lambda,
+        set.provenance.cells_per_lambda_core,
+        set.provenance.courant,
+        set.provenance.steps,
+        set.provenance.cpml_cells,
+        set.provenance.polarization,
+        set.provenance.dispersion_k_rel_error,
+    );
+    set.claims
+        .iter()
+        .map(|c| {
+            vcad_receipt::ReceiptClaim::pass(
+                format!("photonics.{}", c.name),
+                RECEIPT_DOMAIN,
+                c.note.clone(),
+                oracle.clone(),
+            )
+            .with_basis(vcad_receipt::ClaimBasis::Predicted)
+            .with_measured(receipt_quantity(c.value, &c.unit))
+            .with_details(provenance.clone())
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -296,6 +352,32 @@ mod tests {
             polarization: "TM".into(),
             dispersion_k_rel_error: 3.6e-3,
         }
+    }
+
+    #[test]
+    fn design_claims_ride_the_unified_receipt_as_provisional() {
+        let meas = [SplitterMeasurement {
+            freq: 0.6452,
+            p_in: 2.0,
+            p_arm_a: 1.0,
+            p_arm_b: 1.0,
+        }];
+        let set = splitter_claims(&meas, 0.6452, prov(), None).unwrap();
+        let claims = design_claims(&set);
+        assert_eq!(claims.len(), set.claims.len());
+        for c in &claims {
+            assert!(c.id.starts_with("photonics."));
+            assert_eq!(c.domain, RECEIPT_DOMAIN);
+            assert_eq!(c.basis, Some(vcad_receipt::ClaimBasis::Predicted));
+            assert!(c.measured.is_some());
+            assert!(c.details.as_deref().unwrap_or("").contains("grid 300x200"));
+        }
+        let receipt = vcad_receipt::DesignReceipt::with_claims(claims);
+        assert_eq!(
+            receipt.verdict(),
+            vcad_receipt::ReceiptVerdict::Provisional,
+            "predicted photonics claims must never read as verified"
+        );
     }
 
     #[test]

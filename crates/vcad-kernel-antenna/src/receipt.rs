@@ -435,6 +435,65 @@ pub fn compare(
     })
 }
 
+/// Domain tag for antenna claims in the unified [`vcad_receipt`] schema.
+pub const RECEIPT_DOMAIN: &str = "antenna";
+
+/// The oracle reference for this crate's thin-wire MoM solver.
+pub fn oracle() -> vcad_receipt::OracleRef {
+    vcad_receipt::OracleRef::new("vcad-kernel-antenna/mom", env!("CARGO_PKG_VERSION"))
+}
+
+fn quantity(value: f64, unit: &str) -> vcad_receipt::ClaimQuantity {
+    if unit == "1" {
+        vcad_receipt::ClaimQuantity::bare(value)
+    } else {
+        vcad_receipt::ClaimQuantity::new(value, unit)
+    }
+}
+
+/// Translate a predicted [`ClaimSet`] into unified-receipt claims.
+///
+/// Every claim lands with [`vcad_receipt::ClaimBasis::Predicted`] — the
+/// MoM solve ran for real, but the claims describe an antenna that has
+/// not been measured, so a receipt built from these **rolls up
+/// Provisional, never Pass** (the same contract as
+/// `predict_physics`/`predict_print`). The computed value rides in
+/// `measured` ("what the oracle computed"); mesh, band, and the
+/// thin-wire validity-gate margins ride in `details`.
+pub fn design_claims(set: &ClaimSet) -> Vec<vcad_receipt::ReceiptClaim> {
+    let oracle = oracle();
+    let provenance = format!(
+        "{} segments / {} bases, quad {}x{}, band {:.4e}..{:.4e} Hz x{}, z0 {} ohm, ground_plane {}, gates: seg/4a {:.2} seg/(lambda/8) {:.2} ka {:.3}, env {}",
+        set.provenance.segments,
+        set.provenance.bases,
+        set.provenance.quad_outer,
+        set.provenance.quad_inner,
+        set.provenance.band.f_lo_hz,
+        set.provenance.band.f_hi_hz,
+        set.provenance.band.points,
+        set.reference_ohm,
+        set.provenance.ground_plane,
+        set.provenance.min_seg_len_over_4a,
+        set.provenance.max_seg_len_over_lambda8,
+        set.provenance.max_ka,
+        set.provenance.environment,
+    );
+    set.claims
+        .iter()
+        .map(|c| {
+            vcad_receipt::ReceiptClaim::pass(
+                format!("antenna.{}", c.name),
+                RECEIPT_DOMAIN,
+                c.note.clone(),
+                oracle.clone(),
+            )
+            .with_basis(vcad_receipt::ClaimBasis::Predicted)
+            .with_measured(quantity(c.value, &c.unit))
+            .with_details(provenance.clone())
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -458,6 +517,28 @@ mod tests {
             &SolveOptions::default(),
         )
         .unwrap()
+    }
+
+    #[test]
+    fn design_claims_ride_the_unified_receipt_as_provisional() {
+        let set = dipole_claims();
+        let claims = design_claims(&set);
+        assert_eq!(claims.len(), set.claims.len());
+        for c in &claims {
+            assert!(c.id.starts_with("antenna."));
+            assert_eq!(c.domain, RECEIPT_DOMAIN);
+            assert_eq!(c.basis, Some(vcad_receipt::ClaimBasis::Predicted));
+            assert!(c.measured.is_some());
+            let details = c.details.as_deref().unwrap_or("");
+            assert!(details.contains("30 segments"));
+            assert!(details.contains("z0 50 ohm"));
+        }
+        let receipt = vcad_receipt::DesignReceipt::with_claims(claims);
+        assert_eq!(
+            receipt.verdict(),
+            vcad_receipt::ReceiptVerdict::Provisional,
+            "predicted antenna claims must never read as verified"
+        );
     }
 
     #[test]
