@@ -251,3 +251,34 @@ used:
   circulate peripherally at the rings (trapped but useless)?
 - Caveat: non-relativistic Boris (ratio cancels most of the ~10–15% error
   at these energies); enhancement budget-capped; single particles.
+
+## 2026-07-17 — virtual-cathode verdict: trapping is real, but charge-limited
+
+`virtual_cathode` sweeps the electron launch radius at 30 mA ions + 30 mA
+electrons, 100 kV, reporting the electron contribution to the **on-axis
+core** potential (the well deepening that actually helps fusion, vs
+`net_ratio` which a peripheral pile-up can move):
+
+| e-shell | survivor | core ΔV | ion-yield gain |
+|---|---|---|---|
+| 0.20 | 0.71 | −0.3 kV | 0.93 |
+| 0.40 | 0.94 | −0.3 kV | 0.92 |
+| 0.55 | 0.88 | −0.2 kV | 0.93 |
+| 0.70 | 0.80 | −0.2 kV | 1.00 |
+
+- **Trapping ≠ neutralization.** Electrons trap 71–94% at every launch
+  radius, but the core well deepens only 0.2–0.3 kV — **0.2–0.3% of the
+  100 kV well** — and ion yield doesn't recover (gain ≈ 0.9–1.0, noise
+  around unity). Launch radius is *not* the lever: the core effect is flat
+  across it.
+- **The lever is electron charge.** 30 mA of electrons, however well
+  confined, is ~0.3 kV of central potential (order-of-magnitude check:
+  Q_e = I·τ ≈ 0.03 A × 150 ns ≈ 4.5 nC → φ ~ Q/4πε₀R ≈ 0.8 kV at 5 cm,
+  matching the measured few-tenths kV). A meaningful virtual cathode needs
+  far more electron current — quantified by `virtual_cathode_current`
+  (next entry).
+- Honest program status: the trapped cloud is a *real but shallow* virtual
+  cathode at matched current. The neutralization lane isn't dead, but its
+  cost is electron current (with a real power price), not geometry — the
+  opposite of what the "launch location" reopening suggested. The receipt
+  keeps changing its own mind, on evidence.
