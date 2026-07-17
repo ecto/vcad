@@ -30,6 +30,39 @@ pub const DEUTERON: Species = Species {
     charge_c: crate::constants::ELEMENTARY_CHARGE,
 };
 
+/// Electron.
+pub const ELECTRON: Species = Species {
+    mass_kg: crate::constants::ELECTRON_MASS,
+    charge_c: -crate::constants::ELEMENTARY_CHARGE,
+};
+
+/// Sinusoidal modulation of **all** electrode potentials together:
+/// `V(t) = V₀ · (1 + m·sin(2πft + φ))`.
+///
+/// Because the wall sits at 0 V and Dirichlet problems superpose, scaling
+/// every electrode by the same factor scales the whole field exactly — no
+/// re-solve needed. This is the POPS/RF-drive seam: tune `frequency_hz`
+/// to the ion bounce frequency and the drive pumps the radial
+/// oscillation (energy is deliberately not conserved under drive).
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct Drive {
+    /// Fractional modulation depth m (0 = no drive).
+    pub modulation: f64,
+    /// Drive frequency, Hz.
+    pub frequency_hz: f64,
+    /// Phase at t = 0, radians.
+    pub phase_rad: f64,
+}
+
+impl Drive {
+    /// The field scale factor at time `t`.
+    #[inline]
+    pub fn scale(&self, t_s: f64) -> f64 {
+        1.0 + self.modulation
+            * (2.0 * std::f64::consts::PI * self.frequency_hz * t_s + self.phase_rad).sin()
+    }
+}
+
 /// How a trace ended.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Fate {
@@ -113,6 +146,10 @@ pub struct TraceOptions {
     pub time_budget_factor: f64,
     /// Optional charge-exchange model; `None` leaves the CX channels zero.
     pub cx: Option<CxModel>,
+    /// Optional RF drive on the electrode potentials; `None` = static
+    /// fields. Under drive the energy-drift diagnostic is not
+    /// accumulated (the drive does work by design).
+    pub drive: Option<Drive>,
 }
 
 impl Default for TraceOptions {
@@ -124,6 +161,7 @@ impl Default for TraceOptions {
             launch_cos_max: 0.95,
             time_budget_factor: 12.0,
             cx: None,
+            drive: None,
         }
     }
 }
@@ -141,6 +179,7 @@ struct WireHit {
 pub struct Tracer<'a> {
     fields: &'a FieldMap<'a>,
     wires: Vec<WireHit>,
+    grid: (usize, usize, f64, f64, f64),
     r_wall: f64,
     z_wall: f64,
     core_radius: f64,
@@ -176,6 +215,13 @@ impl<'a> Tracer<'a> {
                 }
             })
             .collect();
+        let grid = (
+            solution.nr,
+            solution.nz,
+            solution.dr,
+            solution.dz,
+            solution.z_half,
+        );
         let r_wall = device.chamber_radius_mm * 1e-3 - 0.6 * solution.dr;
         let z_wall = device.chamber_half_height_mm * 1e-3 - 0.6 * solution.dz;
         let min_dim = (device.chamber_radius_mm.min(device.chamber_half_height_mm)) * 1e-3;
@@ -185,6 +231,7 @@ impl<'a> Tracer<'a> {
         Self {
             fields,
             wires,
+            grid,
             r_wall,
             z_wall,
             core_radius,
@@ -197,6 +244,16 @@ impl<'a> Tracer<'a> {
 
     /// Trace one particle from `pos` (m) with velocity `vel` (m/s).
     pub fn trace_from(&self, species: Species, pos: [f64; 3], vel: [f64; 3]) -> TraceOutcome {
+        self.trace_impl(species, pos, vel, None)
+    }
+
+    fn trace_impl(
+        &self,
+        species: Species,
+        pos: [f64; 3],
+        vel: [f64; 3],
+        mut dwell: Option<&mut [f64]>,
+    ) -> TraceOutcome {
         let mut p = pos;
         let mut v = vel;
         let qm = species.charge_c / species.mass_kg;
@@ -248,7 +305,11 @@ impl<'a> Tracer<'a> {
             let n_sub = ((qm.abs() * bmag * dt / 0.3).ceil() as u64).clamp(1, 64);
             let dth = dt / n_sub as f64;
             for _ in 0..n_sub {
-                let e = self.fields.e_cart(p);
+                let mut e = self.fields.e_cart(p);
+                if let Some(d) = &self.opts.drive {
+                    let sc = d.scale(time);
+                    e = [e[0] * sc, e[1] * sc, e[2] * sc];
+                }
                 let b = self.fields.b_cart(p);
                 let half = 0.5 * qm * dth;
                 let vm = add(v, scale(e, half));
@@ -261,6 +322,15 @@ impl<'a> Tracer<'a> {
                 p = add(p, scale(v, dth));
                 time += dth;
                 steps += 1;
+
+                if let Some(d) = dwell.as_deref_mut() {
+                    let (nr, nz, dr, dz, z_half) = self.grid;
+                    let i = ((p[0] * p[0] + p[1] * p[1]).sqrt() / dr).round() as usize;
+                    let j = (((p[2] + z_half) / dz).round().max(0.0)) as usize;
+                    if i < nr && j < nz {
+                        d[i * nz + j] += dth;
+                    }
+                }
 
                 if deuteron_like {
                     let v2 = dot(v, v);
@@ -315,7 +385,7 @@ impl<'a> Tracer<'a> {
                     }
                 }
                 inside_core = now_inside;
-                if s2 > far2 {
+                if s2 > far2 && self.opts.drive.is_none() {
                     let hnow = 0.5 * species.mass_kg * dot(v, v)
                         + species.charge_c * self.fields.potential(p);
                     let d = (hnow - h0).abs() / dv_scale;
@@ -377,6 +447,29 @@ impl<'a> Tracer<'a> {
             f64::INFINITY
         };
         t_cyl.min(t_cap.max(0.0)).max(0.0)
+    }
+
+    /// [`Self::launch_ensemble`], additionally accumulating per-node dwell
+    /// time (seconds, nearest-node deposit, row-major `i·nz + j`) — the
+    /// input to the space-charge estimator.
+    pub fn launch_ensemble_dwell(
+        &self,
+        species: Species,
+        n: usize,
+    ) -> (Vec<TraceOutcome>, Vec<f64>) {
+        let (nr, nz, _, _, _) = self.grid;
+        let mut dwell = vec![0.0_f64; nr * nz];
+        let n = n.max(2);
+        let outcomes = (0..n)
+            .map(|k| {
+                let c = -self.opts.launch_cos_max
+                    + 2.0 * self.opts.launch_cos_max * k as f64 / (n - 1) as f64;
+                let s = (1.0 - c * c).max(0.0).sqrt();
+                let pos = [self.shell_radius * s, 0.0, self.shell_radius * c];
+                self.trace_impl(species, pos, [0.0, 0.0, 0.0], Some(&mut dwell))
+            })
+            .collect();
+        (outcomes, dwell)
     }
 
     /// Launch `n` particles at rest on the launch shell, on a deterministic
@@ -510,6 +603,82 @@ mod tests {
         assert!(
             ion < 0.8 * raw,
             "survival weighting must suppress the ion channel: ion {ion:.3e} vs raw {raw:.3e}"
+        );
+    }
+
+    #[test]
+    fn electron_physics_has_the_right_sign() {
+        // In a negative-cathode well the electron is repelled outward:
+        // it must reach the wall without ever entering the core.
+        let device = Device::classic_fusor(120.0, 40.0, 5, 1.0, -5_000.0);
+        let sol = solve(&device, 61, 121, &SolveOptions::default()).unwrap();
+        let fields = FieldMap::new(&device, &sol);
+        let tracer = Tracer::new(&device, &fields, &sol, TraceOptions::default());
+        let out = tracer.trace_from(ELECTRON, [0.08, 0.0, 0.03], [0.0, 0.0, 0.0]);
+        assert_eq!(out.fate, Fate::Wall, "electron must be expelled: {out:?}");
+        assert_eq!(out.core_passes, 0);
+        assert_eq!(out.ddn_sigma_v_m3, 0.0, "no D-D yield for electrons");
+    }
+
+    #[test]
+    fn zero_depth_drive_is_exactly_the_static_field() {
+        let device = Device::classic_fusor(120.0, 40.0, 5, 1.0, -5_000.0);
+        let sol = solve(&device, 61, 121, &SolveOptions::default()).unwrap();
+        let fields = FieldMap::new(&device, &sol);
+        let base = TraceOptions {
+            max_passes: 6,
+            ..TraceOptions::default()
+        };
+        let driven = TraceOptions {
+            drive: Some(Drive {
+                modulation: 0.0,
+                frequency_hz: 1.0e6,
+                phase_rad: 0.3,
+            }),
+            ..base
+        };
+        let t0 = Tracer::new(&device, &fields, &sol, base);
+        let t1 = Tracer::new(&device, &fields, &sol, driven);
+        let a = t0.trace_from(DEUTERON, [0.08, 0.0, 0.03], [0.0, 0.0, 0.0]);
+        let b = t1.trace_from(DEUTERON, [0.08, 0.0, 0.03], [0.0, 0.0, 0.0]);
+        assert_eq!(a.fate, b.fate);
+        assert_eq!(a.core_passes, b.core_passes);
+        assert!((a.time_s - b.time_s).abs() < 1e-15);
+    }
+
+    #[test]
+    fn resonant_drive_moves_the_physics() {
+        // Two-ring device: the axial channel is wire-free, so a near-axis
+        // ion is a clean radial oscillator to measure the bounce
+        // frequency on (single fusor trajectories defocus into wires).
+        let device = Device::shielded_two_ring(120.0, 40.0, 22.0, 4.0, -5_000.0, 0.0);
+        let sol = solve(&device, 61, 121, &SolveOptions::default()).unwrap();
+        let fields = FieldMap::new(&device, &sol);
+        let base = TraceOptions {
+            max_passes: 12,
+            ..TraceOptions::default()
+        };
+        let t0 = Tracer::new(&device, &fields, &sol, base);
+        let probe = t0.trace_from(DEUTERON, [0.008, 0.0, 0.09], [0.0, 0.0, 0.0]);
+        assert!(probe.core_passes >= 2, "probe must oscillate: {probe:?}");
+        // Bounce frequency from the probe: two core entries per period.
+        let f_bounce = probe.core_passes as f64 / (2.0 * probe.time_s);
+        let driven = TraceOptions {
+            drive: Some(Drive {
+                modulation: 0.25,
+                frequency_hz: f_bounce,
+                phase_rad: 0.0,
+            }),
+            ..base
+        };
+        let t1 = Tracer::new(&device, &fields, &sol, driven);
+        let a = t0.launch_ensemble(DEUTERON, 8);
+        let b = t1.launch_ensemble(DEUTERON, 8);
+        let sig = |o: &[TraceOutcome]| o.iter().map(|x| x.ddn_sigma_v_m3).sum::<f64>();
+        let (sa, sb) = (sig(&a), sig(&b));
+        assert!(
+            (sa - sb).abs() / sa.max(1e-300) > 0.01,
+            "a 25% drive at the bounce frequency must move the yield: {sa:.3e} vs {sb:.3e}"
         );
     }
 
