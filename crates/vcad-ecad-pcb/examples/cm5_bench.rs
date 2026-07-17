@@ -42,8 +42,16 @@ fn main() {
         .unwrap_or(usize::MAX);
     let out_json = args.next();
 
-    let text = std::fs::read_to_string(&path).expect("read kicad_pcb");
-    let mut pcb = parse_kicad_pcb(&text).expect("parse kicad_pcb");
+    let text = std::fs::read_to_string(&path).expect("read board file");
+    // Resume mode: a .pcb.json saved by a previous run loads with its routed
+    // copper intact — the session seeds from it, the ratsnest re-lists only
+    // the still-unrouted nets, and the run costs minutes instead of hours.
+    let resume = path.ends_with(".json");
+    let mut pcb = if resume {
+        serde_json::from_str(&text).expect("parse pcb json")
+    } else {
+        parse_kicad_pcb(&text).expect("parse kicad_pcb")
+    };
 
     // Ground truth: the human routing we are about to strip.
     let human_traces = pcb.traces.len();
@@ -68,11 +76,14 @@ fn main() {
         human_nets.len()
     );
 
-    // Strip everything the autorouter is expected to produce. Zones stay: a
-    // poured plane is design intent (the router stitches to it, not through it).
-    pcb.traces.clear();
-    pcb.trace_arcs.clear();
-    pcb.vias.clear();
+    // Strip everything the autorouter is expected to produce (fresh runs
+    // only — resume keeps its own previous routing). Zones stay: a poured
+    // plane is design intent (the router stitches to it, not through it).
+    if !resume {
+        pcb.traces.clear();
+        pcb.trace_arcs.clear();
+        pcb.vias.clear();
+    }
 
     // Optional subset: the N nets with the most pads (the hard ones first).
     // Keyed by the pad net strings — the exact names the router's pad-derived
