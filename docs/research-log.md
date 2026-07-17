@@ -282,3 +282,37 @@ core** potential (the well deepening that actually helps fusion, vs
   cost is electron current (with a real power price), not geometry — the
   opposite of what the "launch location" reopening suggested. The receipt
   keeps changing its own mind, on evidence.
+
+## 2026-07-17 — the virtual cathode ignites (with two asterisks)
+
+`virtual_cathode_current`: 30 mA ions at 100 kV, electrons at shell 0.55,
+sweeping electron current:
+
+| e-current | e/i | core ΔV | ion-yield gain | vs record |
+|---|---|---|---|---|
+| 30 mA | 1× | −0.2 kV | 0.99 | 16.3× |
+| 300 mA | 10× | −2.5 kV | 1.06 | 17.4× |
+| 1 A | 33× | −8.2 kV | 1.17 | 19.2× |
+| 3 A | 100× | −24.7 kV | 1.98 | 32.5× |
+| 10 A | 333× | **−82.3 kV** | **8.40** | **138×** |
+
+- **Mechanism demonstrated end-to-end in our geometry**: cusp-trapped
+  electrons form a central virtual cathode that deepens the fusing core's
+  well (−82 kV at 10 A — nearly doubling the effective well) and
+  multiplies ion yield 8.4×. The required e/i ratio (~100–300×) matches
+  polywell practice (electron currents orders above ion currents).
+- **Asterisk 1 — e-e self-repulsion unmodeled**: at 10 A the electron
+  cloud's own charge is ~300× the ion cloud's; the perfect-injection
+  bound ignores its self-force, which is dominant there. The 138× row is
+  a mechanism demonstration, not a design claim. Next module: run the
+  electron cloud through the same PIC self-consistency the ions got.
+- **Asterisk 2 — sustaining power**: the circulating current is not the
+  injector current; steady state replaces only the cusp losses
+  (survivor fractions 80–94% are budget-capped floors). Power = loss
+  rate × injection energy (~|φ(shell)| per electron) — needs the
+  loss-rate measurement before any Q claim.
+- Arc summary: dead end (launch artifact) → trapping real (140×) →
+  trapping ≠ neutralization (charge-limited) → **neutralization real at
+  polywell-scale electron currents**. Four self-corrections, all
+  receipted. This is the Q-lane's road: e-cloud self-consistency, loss
+  accounting, then the neutralized machine priced honestly.
