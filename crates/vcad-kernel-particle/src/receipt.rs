@@ -8,9 +8,14 @@
 //!
 //! These are `basis: "predicted"` claims. Binding them to measurements
 //! (the cathode ammeter, a calibrated neutron counter) is the experiment
-//! pack's job — see `docs/particle-optics-m0.md` M6. Wiring this family
-//! into `crates/vcad-receipt` + the MCP surface is the flagged follow-up
-//! PR (it touches the cross-crate schema and TS codegen).
+//! pack's job — see `docs/particle-optics-m0.md` M6.
+//!
+//! [`design_claims`] and [`comparison_claims`] translate this family into
+//! the unified [`vcad_receipt::DesignReceipt`] schema using the existing
+//! generic claim types (open domain vocabulary — no schema bump, no TS
+//! codegen): predictions ride as `ClaimBasis::Predicted` (a receipt built
+//! from them rolls up Provisional, never Pass) and bench comparisons as
+//! `ClaimBasis::Measured` with Holds→Pass / Violated→Fail.
 
 use serde::{Deserialize, Serialize};
 
@@ -316,6 +321,115 @@ pub fn compare(
     })
 }
 
+/// Domain tag for particle claims in the unified [`vcad_receipt`] schema.
+pub const RECEIPT_DOMAIN: &str = "particle";
+
+/// The oracle reference for this crate's tracer.
+pub fn oracle() -> vcad_receipt::OracleRef {
+    vcad_receipt::OracleRef::new("vcad-kernel-particle/trace", env!("CARGO_PKG_VERSION"))
+}
+
+fn quantity(value: f64, unit: &str) -> vcad_receipt::ClaimQuantity {
+    if unit == "1" {
+        vcad_receipt::ClaimQuantity::bare(value)
+    } else {
+        vcad_receipt::ClaimQuantity::new(value, unit)
+    }
+}
+
+/// Translate a predicted [`ClaimSet`] into unified-receipt claims.
+///
+/// Every claim lands with [`vcad_receipt::ClaimBasis::Predicted`] — the
+/// solver ran for real, but the claim is about a physical device that has
+/// not been measured, so a receipt built from these **rolls up Provisional,
+/// never Pass** (the same contract as `predict_physics`/`predict_print`).
+/// The computed value rides in `measured` ("what the oracle computed");
+/// provenance and caveats ride in `details`.
+pub fn design_claims(set: &ClaimSet) -> Vec<vcad_receipt::ReceiptClaim> {
+    let oracle = oracle();
+    let provenance = format!(
+        "grid {}x{}, ensemble {}, max_passes {}, survivor_fraction {:.3}, channels [{}]; op point {} A / {} mTorr / {} K",
+        set.provenance.grid[0],
+        set.provenance.grid[1],
+        set.provenance.ensemble,
+        set.provenance.max_passes,
+        set.provenance.survivor_fraction,
+        set.provenance.channels.join(", "),
+        set.operating_point.ion_current_a,
+        set.operating_point.d2_pressure_mtorr,
+        set.operating_point.temperature_k,
+    );
+    set.claims
+        .iter()
+        .map(|c| {
+            vcad_receipt::ReceiptClaim::pass(
+                format!("particle.{}", c.name),
+                RECEIPT_DOMAIN,
+                c.note.clone(),
+                oracle.clone(),
+            )
+            .with_basis(vcad_receipt::ClaimBasis::Predicted)
+            .with_measured(quantity(c.value, &c.unit))
+            .with_details(provenance.clone())
+        })
+        .collect()
+}
+
+/// Translate a bench [`ComparisonReport`] into unified-receipt claims.
+///
+/// Only measured rows translate (unmeasured claims stay in the predicted
+/// set): Holds → Pass, Violated → Fail, both with
+/// [`vcad_receipt::ClaimBasis::Measured`], the prediction in `predicted`
+/// and the bench value in `measured`.
+pub fn comparison_claims(
+    report: &ComparisonReport,
+    set: &ClaimSet,
+    measurements: &[Measurement],
+) -> Vec<vcad_receipt::ReceiptClaim> {
+    let oracle = oracle();
+    report
+        .entries
+        .iter()
+        .filter_map(|e| {
+            let measured = e.measured?;
+            let m = measurements.iter().find(|m| m.name == e.name)?;
+            let unit = set
+                .claims
+                .iter()
+                .find(|c| c.name == e.name)
+                .map(|c| c.unit.clone())
+                .unwrap_or_else(|| "1".to_string());
+            let base = match e.verdict {
+                Verdict::Holds => vcad_receipt::ReceiptClaim::pass(
+                    format!("particle.{}", e.name),
+                    RECEIPT_DOMAIN,
+                    format!(
+                        "bench measurement of {} within band {}",
+                        e.name, m.band_factor
+                    ),
+                    oracle.clone(),
+                ),
+                Verdict::Violated => vcad_receipt::ReceiptClaim::fail(
+                    format!("particle.{}", e.name),
+                    RECEIPT_DOMAIN,
+                    format!(
+                        "bench measurement of {} outside band {}",
+                        e.name, m.band_factor
+                    ),
+                    oracle.clone(),
+                ),
+                Verdict::Unmeasured => return None,
+            };
+            Some(
+                base.with_basis(vcad_receipt::ClaimBasis::Measured)
+                    .with_predicted(quantity(e.predicted, &unit))
+                    .with_measured(quantity(measured, &unit))
+                    .with_details(format!("instrument: {}", m.instrument)),
+            )
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -454,6 +568,66 @@ mod tests {
         assert_eq!(verdict("interception_fraction"), Verdict::Holds);
         assert_eq!(verdict("ddn_neutron_rate"), Verdict::Violated);
         assert_eq!(verdict("q_estimate"), Verdict::Unmeasured);
+    }
+
+    #[test]
+    fn design_claims_ride_the_unified_receipt_as_provisional() {
+        let set = build();
+        let claims = design_claims(&set);
+        assert_eq!(claims.len(), set.claims.len());
+        for c in &claims {
+            assert!(c.id.starts_with("particle."));
+            assert_eq!(c.domain, RECEIPT_DOMAIN);
+            assert_eq!(c.basis, Some(vcad_receipt::ClaimBasis::Predicted));
+            assert!(c.measured.is_some());
+            assert!(c.details.as_deref().unwrap_or("").contains("grid 81x161"));
+        }
+        // The fail-closed contract: an all-pass predicted receipt rolls up
+        // Provisional, never Pass.
+        let receipt = vcad_receipt::DesignReceipt::with_claims(claims);
+        assert_eq!(
+            receipt.verdict(),
+            vcad_receipt::ReceiptVerdict::Provisional,
+            "predicted particle claims must never read as verified"
+        );
+    }
+
+    #[test]
+    fn comparison_claims_map_verdicts_with_measured_basis() {
+        let set = build();
+        let predicted_intercept = get(&set, "interception_fraction");
+        let measurements = vec![
+            Measurement {
+                name: "interception_fraction".into(),
+                value: predicted_intercept * 1.05,
+                uncertainty: 0.02,
+                instrument: "cathode ammeter".into(),
+                band_factor: 1.5,
+            },
+            Measurement {
+                name: "ddn_neutron_rate".into(),
+                value: get(&set, "ddn_neutron_rate") * 1e4,
+                uncertainty: 1.0,
+                instrument: "He-3 counter".into(),
+                band_factor: 30.0,
+            },
+        ];
+        let report = compare(&set, &measurements).unwrap();
+        let claims = comparison_claims(&report, &set, &measurements);
+        assert_eq!(claims.len(), 2, "only measured rows translate");
+        let by_id = |id: &str| {
+            claims
+                .iter()
+                .find(|c| c.id == format!("particle.{id}"))
+                .unwrap()
+        };
+        let ok = by_id("interception_fraction");
+        assert_eq!(ok.verdict, vcad_receipt::ClaimVerdict::Pass);
+        assert_eq!(ok.basis, Some(vcad_receipt::ClaimBasis::Measured));
+        assert!(ok.predicted.is_some() && ok.measured.is_some());
+        let bad = by_id("ddn_neutron_rate");
+        assert_eq!(bad.verdict, vcad_receipt::ClaimVerdict::Fail);
+        assert!(bad.details.as_deref().unwrap().contains("He-3"));
     }
 
     #[test]
