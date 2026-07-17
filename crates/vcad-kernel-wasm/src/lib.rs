@@ -8548,7 +8548,7 @@ pub fn photonics_simulate(spec_json: &str, options_json: &str) -> Result<JsValue
         serde_json::from_str(options_json)
             .map_err(|e| JsError::new(&format!("bad options: {e}")))?
     };
-    if !(spec.wavelength_um > 0.0) {
+    if spec.wavelength_um.is_nan() || spec.wavelength_um <= 0.0 {
         return Err(JsError::new("wavelength_um must be positive"));
     }
     if !(spec.n_core > spec.n_clad && spec.n_clad >= 1.0) {
