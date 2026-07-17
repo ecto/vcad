@@ -55,6 +55,7 @@ pub mod dose;
 pub mod geometry;
 pub mod groups;
 pub mod materials;
+pub mod receipt;
 pub mod rng;
 pub mod scatter;
 pub mod spec;

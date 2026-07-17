@@ -196,10 +196,21 @@ Checks and findings:
   source rate → exactly linear, source energy → group-discrete.
   BRep extraction (shield solid → layer stack) lands on the vcad side
   of the seam, emitting this schema.
-- **M4 — receipt claims.** `vcad.neutronics-claims/1`: dose-rate claims
-  with MC uncertainty AND method provenance (histories, batches, groups,
-  library version, seed), compare() with Holds / Violated / Unmeasured
-  verdicts, fail-closed (an unmeasured receipt never passes).
+- **M4 — receipt claims. DONE** (`receipt.rs`).
+  `vcad.neutronics-claims/1`: per-detector dose-rate, attenuation-factor
+  and thermal-flux (NAA feasibility) claims, each carrying its MC
+  relative standard error AND the method provenance (seed, histories,
+  batches, groups, energy model, library version) plus the standard
+  caveat list in the same JSON object — a dose number without its
+  uncertainty and its recipe is a rumor, not a claim. Fail-closed at
+  construction: truncated-history runs refuse to claim; a zero-scored
+  tally refuses by name (statistics floor ≠ measured zero). `compare()`
+  binds survey-meter/foil measurements with Holds / Violated /
+  Unmeasured verdicts; bands widen by both the measurement uncertainty
+  and the claim's own MC σ; an unmeasured receipt never passes and a
+  measurement matching no claim is an error. Registration in
+  `crates/vcad-receipt` + MCP tools = flagged follow-up PR (cross-crate
+  schema + TS codegen), same staging as the particle family.
 - **M5 — benchmarks + convergence + paper draft.** Published-value
   benchmarks (water thermal diffusion length 2.85 cm, Fermi age ≈ 27 cm²,
   hydrogen collisions-to-thermal ≈ 18), one-group MC vs analytic
