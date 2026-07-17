@@ -189,3 +189,34 @@ supersedes the noisy numbers in the previous verdict entry:
   back toward vacuum. Explicitly an upper bound: injector efficiency,
   cusp electron losses, and e-thermalization (the polywell's demons) are
   unmodeled and every claim built on it must say so.
+
+## 2026-07-17 — e-injection sweep: a receipted dead end, and the current sweet spot
+
+`neutralization_sweep` at the ceiling config (100 kV + 584 kA·t, e-current
+= ion current, perfect injection):
+
+| mA | ion ratio | recovery | self-consistent yield |
+|---|---|---|---|
+| 30 | 0.215 | 0.06 | 8.6×10⁷ (**17.1× record**) |
+| 60 | 0.429 | −0.00 | 4.1×10⁷ (8.3×) |
+| 100 | 0.621 | 0.00 | 4.9×10⁶ (**1.0×**) |
+
+- **Negative result, receipted**: naive electron injection neutralizes
+  nothing at any current (neutralization fraction ≈ 0). The −100 kV well
+  that confines ions is a potential *maximum* for electrons — they exit
+  through the grid gaps with ~100 keV of gain in one transit. Electron
+  confinement requires the magnetic architecture (Orbitron crossed-field /
+  polywell cusp trapping); it is a machine design, not a retrofit. The
+  model re-derived in an afternoon what the polywell program learned in
+  hardware.
+- **The current sweet spot**: past ~30 mA the space-charge tax outruns the
+  linear gain — absolute yield *falls* with current (60 mA: −47%; 100 mA:
+  −94%, landing at exactly 1.0× the record). This machine's operating
+  point is ~30 mA.
+- **The sturdy number**: this architecture's honest ceiling has survived
+  four audits: 19× (linear) → 12× (gauge) → 16.7× (settled) → **17.1×**
+  (with the useless cloud). Records lane unaffected; Q-lane requires the
+  architecture pivot, which the kernel can now price (electrons ARE
+  magnetized near the cusp wires — trapping studies are simulatable next).
+- `observably_converged` flag worked as designed: true/true/false across
+  the sweep, honestly marking the 100 mA row unsettled.
