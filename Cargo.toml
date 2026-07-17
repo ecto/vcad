@@ -42,6 +42,7 @@ members = [
     "crates/vcad-kernel-topopt",
     "crates/vcad-kernel-cost",
     "crates/vcad-kernel-dfm",
+    "crates/vcad-kernel-tolerance",
     "crates/vcad-crdt",
     "crates/vcad-app",
     "crates/vcad-chat",
@@ -119,6 +120,7 @@ default-members = [
     "crates/vcad-kernel-topopt",
     "crates/vcad-kernel-cost",
     "crates/vcad-kernel-dfm",
+    "crates/vcad-kernel-tolerance",
     "crates/vcad-crdt",
     "crates/vcad-app",
     "crates/vcad-chat",
@@ -205,6 +207,7 @@ wasmosis-macro = { path = "crates/wasmosis/wasmosis-macro", version = "0.9.4" }
 vcad-slicer = { path = "crates/vcad-slicer", version = "0.9.4" }
 vcad-kernel-cost = { path = "crates/vcad-kernel-cost", version = "0.9.4" }
 vcad-kernel-dfm = { path = "crates/vcad-kernel-dfm", version = "0.9.4" }
+vcad-kernel-tolerance = { path = "crates/vcad-kernel-tolerance", version = "0.9.4" }
 vcad-slicer-gcode = { path = "crates/vcad-slicer-gcode", version = "0.9.4" }
 vcad-slicer-bambu = { path = "crates/vcad-slicer-bambu", version = "0.9.4" }
 vcad-kernel-cam = { path = "crates/vcad-kernel-cam", version = "0.9.4" }

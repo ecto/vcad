@@ -7474,6 +7474,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "vcad-kernel-tolerance"
+version = "0.9.4"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "vcad-kernel-topo"
 version = "0.9.4"
 dependencies = [
