@@ -342,6 +342,60 @@ pub fn compare(
     })
 }
 
+/// Domain tag for tolerance claims in the unified [`vcad_receipt`] schema.
+pub const RECEIPT_DOMAIN: &str = "tolerance";
+
+/// The oracle reference for this crate's analysis pipeline.
+pub fn oracle() -> vcad_receipt::OracleRef {
+    vcad_receipt::OracleRef::new("vcad-kernel-tolerance/analysis", env!("CARGO_PKG_VERSION"))
+}
+
+fn quantity(value: f64, unit: &str) -> vcad_receipt::ClaimQuantity {
+    if unit == "1" {
+        vcad_receipt::ClaimQuantity::bare(value)
+    } else {
+        vcad_receipt::ClaimQuantity::new(value, unit)
+    }
+}
+
+/// Translate a predicted [`ClaimSet`] into unified-receipt claims.
+///
+/// Every claim lands with [`vcad_receipt::ClaimBasis::Predicted`] — the
+/// analyses ran for real, but they describe parts that have not been
+/// measured, so a receipt built from these **rolls up Provisional, never
+/// Pass** (the same contract as `predict_physics`/`predict_print`). The
+/// computed value rides in `measured` ("what the oracle computed");
+/// provenance and per-claim one-sigma uncertainty ride in `details`.
+pub fn design_claims(set: &ClaimSet) -> Vec<vcad_receipt::ReceiptClaim> {
+    let oracle = oracle();
+    let provenance = format!(
+        "analyses [{}]; mc n {} seed {} batches {}; all_normal {}",
+        set.provenance.analyses.join(", "),
+        set.provenance.n_samples,
+        set.provenance.seed,
+        set.provenance.batches,
+        set.provenance.all_normal,
+    );
+    set.claims
+        .iter()
+        .map(|c| {
+            let details = match c.uncertainty {
+                Some(u) => format!("{provenance}; one_sigma {u:.3e}"),
+                None => provenance.clone(),
+            };
+            vcad_receipt::ReceiptClaim::pass(
+                format!("tolerance.{}", c.name),
+                RECEIPT_DOMAIN,
+                c.note.clone(),
+                oracle.clone(),
+            )
+            .with_basis(vcad_receipt::ClaimBasis::Predicted)
+            .with_measured(quantity(c.value, &c.unit))
+            .with_details(details)
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -380,6 +434,38 @@ mod tests {
             .iter()
             .find(|c| c.name == name)
             .unwrap_or_else(|| panic!("missing claim {name}"))
+    }
+
+    #[test]
+    fn design_claims_ride_the_unified_receipt_as_provisional() {
+        let (_, set) = build();
+        let claims = design_claims(&set);
+        assert_eq!(claims.len(), set.claims.len());
+        for c in &claims {
+            assert!(c.id.starts_with("tolerance."));
+            assert_eq!(c.domain, RECEIPT_DOMAIN);
+            assert_eq!(c.basis, Some(vcad_receipt::ClaimBasis::Predicted));
+            assert!(c.measured.is_some());
+            assert!(c
+                .details
+                .as_deref()
+                .unwrap_or("")
+                .contains("monte_carlo"));
+        }
+        // fit_probability carries its MC standard error into details.
+        let fit = claims
+            .iter()
+            .find(|c| c.id == "tolerance.fit_probability")
+            .unwrap();
+        assert!(fit.details.as_deref().unwrap().contains("one_sigma"));
+        // The fail-closed contract: an all-pass predicted receipt rolls up
+        // Provisional, never Pass.
+        let receipt = vcad_receipt::DesignReceipt::with_claims(claims);
+        assert_eq!(
+            receipt.verdict(),
+            vcad_receipt::ReceiptVerdict::Provisional,
+            "predicted tolerance claims must never read as verified"
+        );
     }
 
     #[test]
