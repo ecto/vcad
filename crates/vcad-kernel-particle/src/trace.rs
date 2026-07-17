@@ -64,6 +64,9 @@ pub struct TraceOutcome {
     /// comparability). Multiply by target deuteron density for expected
     /// neutrons per ion; zero for non-deuteron species.
     pub ddn_sigma_v_m3: f64,
+    /// Path integral ∫ σ_DDp(E)·v dt (the proton branch), m³ — with the
+    /// neutron branch this prices total fusion power for the receipt.
+    pub ddp_sigma_v_m3: f64,
     /// Expected D-D neutrons per injected ion from the surviving-ion
     /// channel (CX-survival-weighted). Zero unless a [`CxModel`] is set.
     pub neutrons_ion_channel: f64,
@@ -213,6 +216,7 @@ impl<'a> Tracer<'a> {
         let mut steps = 0_u64;
         let mut drift = 0.0_f64;
         let mut sigv = 0.0_f64;
+        let mut sigv_p = 0.0_f64;
         let mut survival = 1.0_f64;
         let mut n_ion = 0.0_f64;
         let mut n_cx = 0.0_f64;
@@ -263,9 +267,11 @@ impl<'a> Tracer<'a> {
                     let e_lab_kev =
                         0.5 * species.mass_kg * v2 / (crate::constants::ELEMENTARY_CHARGE * 1.0e3);
                     let sig = crate::xsection::dd_n_sigma_m2(0.5 * e_lab_kev);
+                    let sig_p = crate::xsection::dd_p_sigma_m2(0.5 * e_lab_kev);
                     if sig > 0.0 {
                         let speed_now = v2.sqrt();
                         sigv += sig * speed_now * dth;
+                        sigv_p += sig_p * speed_now * dth;
                         if let Some(cxm) = &cx {
                             let n_bg = cxm.background_deuteron_density_m3;
                             n_ion += survival * n_bg * sig * speed_now * dth;
@@ -328,6 +334,7 @@ impl<'a> Tracer<'a> {
             energy_drift_rel: drift,
             launch_cos_theta,
             ddn_sigma_v_m3: sigv,
+            ddp_sigma_v_m3: sigv_p,
             neutrons_ion_channel: n_ion,
             neutrons_cx_channel: n_cx,
         }

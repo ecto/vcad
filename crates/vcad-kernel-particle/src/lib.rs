@@ -41,6 +41,7 @@ pub mod field;
 pub mod fom;
 pub mod optimize;
 pub mod poisson;
+pub mod receipt;
 pub mod spec;
 pub mod trace;
 pub mod xsection;

@@ -33,6 +33,9 @@ pub struct EnsembleStats {
     /// [`crate::trace::TraceOutcome::ddn_sigma_v_m3`]. Multiply by target
     /// deuteron density for expected neutrons per injected ion.
     pub mean_ddn_sigma_v_m3: f64,
+    /// Mean D(d,p)T reaction volume per ion, m³ (proton branch — with the
+    /// neutron branch this prices total fusion power).
+    pub mean_ddp_sigma_v_m3: f64,
     /// Mean expected neutrons per injected ion, surviving-ion channel
     /// (zero unless traced with a [`crate::trace::CxModel`]).
     pub mean_neutrons_ion_channel: f64,
@@ -73,6 +76,7 @@ pub fn stats(outcomes: &[TraceOutcome]) -> EnsembleStats {
             }
         },
         mean_ddn_sigma_v_m3: outcomes.iter().map(|o| o.ddn_sigma_v_m3).sum::<f64>() / n as f64,
+        mean_ddp_sigma_v_m3: outcomes.iter().map(|o| o.ddp_sigma_v_m3).sum::<f64>() / n as f64,
         mean_neutrons_ion_channel: outcomes.iter().map(|o| o.neutrons_ion_channel).sum::<f64>()
             / n as f64,
         mean_neutrons_cx_channel: outcomes.iter().map(|o| o.neutrons_cx_channel).sum::<f64>()
@@ -138,6 +142,7 @@ mod tests {
             energy_drift_rel: 0.01,
             launch_cos_theta: 0.0,
             ddn_sigma_v_m3: 2.0e-31,
+            ddp_sigma_v_m3: 2.4e-31,
             neutrons_ion_channel: 1.0e-12,
             neutrons_cx_channel: 3.0e-12,
         }
@@ -159,6 +164,7 @@ mod tests {
         assert!((s.survivor_fraction - 0.25).abs() < 1e-12);
         assert!((s.effective_transparency - 5.0 / 6.0).abs() < 1e-12);
         assert!((s.mean_ddn_sigma_v_m3 - 2.0e-31).abs() < 1e-40);
+        assert!((s.mean_ddp_sigma_v_m3 - 2.4e-31).abs() < 1e-40);
         // Uncensored mean excludes the surviving 10-pass trace: (3+5+2)/3.
         assert!((s.mean_passes_uncensored - 10.0 / 3.0).abs() < 1e-12);
         assert!((s.mean_energy_drift_rel - 0.01).abs() < 1e-12);

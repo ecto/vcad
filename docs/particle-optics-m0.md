@@ -196,11 +196,21 @@ ensembles on a 101×201 mesh. Findings:
   tests. BRep extraction (revolved sketch sections → `RingSpec`s) lands on
   the vcad side of the seam, emitting this schema — same division of labor
   as `document_parameter_gradient`.
-- **M4 — receipts + MCP.** `simulate_charged_particles` /
-  `optimize_electrodes` tools; claims land in the DesignReceipt as a new
-  claim family (interception fraction, recirculation, transparency, with
-  solver provenance: grid, tolerances, ensemble size, censoring). This is
-  also where `distance_to_lawson` gets its trajectory-level inputs.
+- **M4 — receipt claims. DONE (kernel side)** (`receipt::predicted_claims`).
+  Serializable claim set (`vcad.particle-claims/1`): interception,
+  recirculation, transparency, neutron rate, fusion power (both D-D
+  branches — the trace now integrates D(d,p)T alongside D(d,n)³He), input
+  power, `q_estimate`, and **`distance_to_lawson` = log10(1/Q)** — with
+  full provenance (grid, SOR tolerance + sweeps, ensemble, censoring,
+  physics channels included) and spelled-out caveats on every claim.
+  Fail-closed: a no-fusion device reads 99 orders, never a divide-by-zero
+  or a silent omission. The classic fusor's card: Q = 4.1×10⁻¹⁰, distance
+  9.39 orders — "microwatts, fully audited," now machine-readable.
+  **Follow-up PR (flagged, not started):** register the family in
+  `crates/vcad-receipt` (`ir:gen` exports two crates; names must be
+  unique), and expose `simulate_charged_particles` /
+  `optimize_electrodes` MCP tools — cross-crate schema + TS codegen +
+  fixture regen, deliberately not done from this worktree.
 - **M5 — validation against the incumbent.** SIMION cross-checks on
   published einzel/trap geometries; convergence study; the arXiv writeup:
   *gradient-based electrode shape optimization for electrostatic
