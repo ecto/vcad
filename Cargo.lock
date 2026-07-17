@@ -7335,6 +7335,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "vcad-kernel-photonics"
+version = "0.9.4"
+dependencies = [
+ "serde",
+ "serde_json",
+ "vcad-gdsii",
+]
+
+[[package]]
 name = "vcad-kernel-physics"
 version = "0.9.4"
 dependencies = [
