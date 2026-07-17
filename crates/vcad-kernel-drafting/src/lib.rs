@@ -39,12 +39,14 @@ pub mod detail;
 pub mod dimension;
 pub mod edge_extract;
 pub mod hidden_line;
+pub mod pdf;
 pub mod projection;
 pub mod section;
+pub mod sheet;
 pub mod types;
 
 // Re-export main types and functions for convenience
-pub use detail::create_detail_view;
+pub use detail::{create_detail_view, detail_callout, detail_caption, format_scale};
 pub use dimension::{
     AngleDefinition, AngularDimension, AnnotationLayer, ArrowType, DatumFeatureSymbol, DatumRef,
     DimensionStyle, FeatureControlFrame, GdtSymbol, GeometryRef, LinearDimension,
@@ -56,15 +58,20 @@ pub use edge_extract::{
     DEFAULT_SHARP_ANGLE,
 };
 pub use hidden_line::{project_mesh, project_mesh_with_options};
+pub use pdf::sheet_to_pdf;
 pub use projection::{project_point, project_point_with_depth, ViewMatrix};
 pub use section::{
-    chain_segments, generate_hatch_lines, intersect_mesh_with_plane, project_to_section_plane,
-    section_mesh,
+    chain_segments, generate_hatch_lines, hatch_closed_curves, intersect_mesh_with_plane,
+    offset_section_mesh, project_to_section_plane, section_mesh, SectionCutLine,
+};
+pub use sheet::{
+    BomBalloon, BomRow, BomTable, DrawingSheet, LineClass, RevisionRow, RevisionTable, SheetArc,
+    SheetLine, SheetPolygon, SheetSize, TitleBlock, TitleBlockFields,
 };
 pub use types::{
     BoundingBox2D, DetailView, DetailViewParams, EdgeType, HatchPattern, HatchRegion, MeshEdge,
-    Point2D, ProjectedEdge, ProjectedView, SectionCurve, SectionPlane, SectionView, Triangle3D,
-    ViewDirection, Visibility,
+    OffsetSectionPlane, OffsetSectionStep, Point2D, ProjectedEdge, ProjectedView, SectionCurve,
+    SectionPlane, SectionView, Triangle3D, ViewDirection, Visibility,
 };
 
 #[cfg(test)]

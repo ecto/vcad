@@ -150,7 +150,7 @@ Loft interpolates a solid through a sequence of cross-sections:
 
 - **STEP** — `vcad-kernel-step` reads and writes STEP AP214, the lingua franca of mechanical CAD. Drag a `.step` file into the app and it becomes an editable BRep.
 - **URDF** — `vcad-kernel-urdf` imports robot descriptions (links, joints, inertials) as vcad assemblies ready for simulation.
-- **Drafting** — `vcad-kernel-drafting` generates 2D drawings: orthographic projections with hidden-line removal, dimensions, GD&T annotations, and DXF export.
+- **Drafting** — `vcad-kernel-drafting` generates shop-ready 2D drawings: orthographic projections with hidden-line removal, full and offset (stepped) section views with hatching and cutting-plane callouts, detail views with scale bubbles, dimensions, GD&T annotations, title block / revision table / BOM entities, and deterministic PDF + DXF sheet export with ANSI/ISO line weights.
 
 ## Simulation and Analysis
 

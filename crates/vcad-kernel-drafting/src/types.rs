@@ -449,6 +449,54 @@ impl SectionPlane {
     }
 }
 
+/// One step of an offset (stepped) section.
+///
+/// The cutting plane jogs to `offset` (along the base plane normal) for the
+/// span `u_start..u_end` measured along the base plane's in-plane U axis
+/// (`up × normal`).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct OffsetSectionStep {
+    /// Start of the span along the section U axis (mm, in section-view coords).
+    pub u_start: f64,
+    /// End of the span along the section U axis (mm).
+    pub u_end: f64,
+    /// Signed offset of the cutting plane from the base plane, along the
+    /// base plane normal (mm).
+    pub offset: f64,
+}
+
+impl OffsetSectionStep {
+    /// Create a new offset section step.
+    pub fn new(u_start: f64, u_end: f64, offset: f64) -> Self {
+        Self {
+            u_start,
+            u_end,
+            offset,
+        }
+    }
+}
+
+/// An offset (stepped) section plane: a base plane plus a sequence of
+/// parallel jogs, each covering a span of the section's U axis.
+///
+/// Steps should be contiguous and non-overlapping in `u`; per drafting
+/// convention the jog transitions themselves are not drawn in the section
+/// view — every step is flattened onto the base plane.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OffsetSectionPlane {
+    /// The base cutting plane (defines the projection frame).
+    pub base: SectionPlane,
+    /// The offset steps. An empty list is equivalent to a full section.
+    pub steps: Vec<OffsetSectionStep>,
+}
+
+impl OffsetSectionPlane {
+    /// Create a new offset section plane.
+    pub fn new(base: SectionPlane, steps: Vec<OffsetSectionStep>) -> Self {
+        Self { base, steps }
+    }
+}
+
 /// A continuous polyline in the section (intersection result).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SectionCurve {

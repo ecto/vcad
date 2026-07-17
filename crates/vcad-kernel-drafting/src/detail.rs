@@ -3,9 +3,111 @@
 //! Detail views allow zooming in on a specific area of a technical drawing,
 //! showing fine features that would be too small in the main view.
 
+use crate::dimension::{
+    ArrowType, DimensionStyle, RenderedArc, RenderedArrow, RenderedDimension, RenderedText,
+    TextAlignment,
+};
 use crate::types::{
     BoundingBox2D, DetailView, DetailViewParams, Point2D, ProjectedEdge, ProjectedView,
 };
+
+/// Format a magnification factor as a drawing scale ratio.
+///
+/// `2.0` → `"2:1"`, `0.5` → `"1:2"`, `1.0` → `"1:1"`. Non-integer ratios keep
+/// one decimal place (`2.5` → `"2.5:1"`).
+pub fn format_scale(scale: f64) -> String {
+    let fmt = |v: f64| -> String {
+        if (v - v.round()).abs() < 1e-9 {
+            format!("{}", v.round() as i64)
+        } else {
+            format!("{v:.1}")
+        }
+    };
+    if scale >= 1.0 {
+        format!("{}:1", fmt(scale))
+    } else if scale > 0.0 {
+        format!("1:{}", fmt(1.0 / scale))
+    } else {
+        "1:1".to_string()
+    }
+}
+
+/// Render the circular detail bubble on the **parent** view: a circle around
+/// the captured region with the detail letter and a short leader.
+///
+/// Consumers draw the returned primitives on the parent view; the circle uses
+/// the region's circumscribed radius so the whole capture rect is enclosed.
+pub fn detail_callout(params: &DetailViewParams, style: &DimensionStyle) -> RenderedDimension {
+    let mut rd = RenderedDimension::new();
+    let radius = params.half_width().hypot(params.half_height());
+
+    rd.add_arc(RenderedArc::new(
+        params.center,
+        radius,
+        0.0,
+        std::f64::consts::TAU,
+    ));
+
+    // Leader from the circle at 45° up-right, ending at the letter label.
+    let dir = std::f64::consts::FRAC_PI_4;
+    let start = Point2D::new(
+        params.center.x + radius * dir.cos(),
+        params.center.y + radius * dir.sin(),
+    );
+    let leader_len = style.arrow_size * 3.0;
+    let end = Point2D::new(
+        start.x + leader_len * dir.cos(),
+        start.y + leader_len * dir.sin(),
+    );
+    rd.add_line(start, end);
+    rd.add_arrow(RenderedArrow::new(
+        start,
+        dir + std::f64::consts::PI,
+        ArrowType::Open,
+        style.arrow_size,
+    ));
+    rd.add_text(
+        RenderedText::new(
+            Point2D::new(
+                end.x + style.text_height * 0.9,
+                end.y + style.text_height * 0.9,
+            ),
+            params.label.clone(),
+            style.text_height * 1.4,
+        )
+        .with_alignment(TextAlignment::MiddleCenter),
+    );
+
+    rd
+}
+
+/// Render the caption under a detail view: `DETAIL A (SCALE 2:1)`.
+///
+/// `position` is the caption anchor (typically centered below the detail
+/// view's bounds).
+pub fn detail_caption(
+    view: &DetailView,
+    position: Point2D,
+    style: &DimensionStyle,
+) -> RenderedDimension {
+    let mut rd = RenderedDimension::new();
+    rd.add_text(
+        RenderedText::new(position, view.caption(), style.text_height * 1.2)
+            .with_alignment(TextAlignment::TopCenter),
+    );
+    rd
+}
+
+impl DetailView {
+    /// The caption text for this view, e.g. `DETAIL A (SCALE 2:1)`.
+    pub fn caption(&self) -> String {
+        format!(
+            "DETAIL {} (SCALE {})",
+            self.params.label,
+            format_scale(self.params.scale)
+        )
+    }
+}
 
 /// Create a detail view by clipping and magnifying a region of the parent view.
 ///
@@ -199,6 +301,31 @@ mod tests {
             0.0,
         ));
         view
+    }
+
+    #[test]
+    fn test_format_scale() {
+        assert_eq!(format_scale(2.0), "2:1");
+        assert_eq!(format_scale(0.5), "1:2");
+        assert_eq!(format_scale(1.0), "1:1");
+        assert_eq!(format_scale(2.5), "2.5:1");
+    }
+
+    #[test]
+    fn test_detail_callout_and_caption() {
+        let params = DetailViewParams::new(Point2D::new(10.0, 10.0), 2.0, 6.0, 8.0, "B");
+        let style = DimensionStyle::default();
+        let callout = detail_callout(&params, &style);
+        assert_eq!(callout.arcs.len(), 1, "detail bubble circle");
+        assert!((callout.arcs[0].radius - 5.0).abs() < 1e-9, "hypot(3,4)");
+        assert_eq!(callout.arrows.len(), 1);
+        assert!(callout.texts.iter().any(|t| t.text == "B"));
+
+        let view = create_detail_view(&make_test_view(), &params);
+        assert_eq!(view.caption(), "DETAIL B (SCALE 2:1)");
+        let caption = detail_caption(&view, Point2D::ORIGIN, &style);
+        assert_eq!(caption.texts.len(), 1);
+        assert_eq!(caption.texts[0].text, "DETAIL B (SCALE 2:1)");
     }
 
     #[test]
