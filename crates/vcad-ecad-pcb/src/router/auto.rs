@@ -903,10 +903,31 @@ fn route_batch(
             .collect();
         for (((net, from, to), attempts), cand) in batch.into_iter().zip(candidates) {
             match cand {
-                None => {
-                    fail_cache.insert(conn_key(&net, from, to), session.epoch());
-                    unrouted.push((net, from, to));
-                }
+                // Speculative search failed: give the connection the full
+                // sequential arsenal (including the escape stage, which only
+                // runs inside try_route) before declaring it unrouted.
+                None => match try_route(
+                    session,
+                    pcb,
+                    width,
+                    &net,
+                    from,
+                    to,
+                    placed,
+                    cong,
+                    use_push_shove,
+                    max_expansions,
+                ) {
+                    Some(p) => {
+                        committed += 1;
+                        fail_cache.remove(&conn_key(&net, from, to));
+                        placed.push(p);
+                    }
+                    None => {
+                        fail_cache.insert(conn_key(&net, from, to), session.epoch());
+                        unrouted.push((net, from, to));
+                    }
+                },
                 Some(c) => match validate_and_commit(session, pcb, c, placed) {
                     Some(p) => {
                         committed += 1;
