@@ -1,0 +1,13 @@
+[package]
+name = "vcad-kernel-tolerance"
+description = "Dimensional tolerance stackup analysis: worst-case, RSS, and seeded Monte Carlo over assembly chains, with exact sensitivities, process capability, GD&T bonus tolerance, and cost-based tolerance allocation"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }

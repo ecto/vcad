@@ -22,6 +22,8 @@ members = [
     "crates/vcad-kernel",
     "crates/vcad-kernel-constraints",
     "crates/vcad-kernel-diff",
+    "crates/vcad-kernel-neutronics",
+    "crates/vcad-kernel-particle",
     "crates/vcad-kernel-wasm",
     "crates/vcad-kernel-drafting",
     "crates/vcad-cli",
@@ -42,6 +44,7 @@ members = [
     "crates/vcad-kernel-photonics",
     "crates/vcad-kernel-cost",
     "crates/vcad-kernel-dfm",
+    "crates/vcad-kernel-tolerance",
     "crates/vcad-crdt",
     "crates/vcad-app",
     "crates/vcad-chat",
@@ -99,6 +102,8 @@ default-members = [
     "crates/vcad-kernel",
     "crates/vcad-kernel-constraints",
     "crates/vcad-kernel-diff",
+    "crates/vcad-kernel-neutronics",
+    "crates/vcad-kernel-particle",
     "crates/vcad-kernel-wasm",
     "crates/vcad-kernel-drafting",
     "crates/vcad-cli",
@@ -119,6 +124,7 @@ default-members = [
     "crates/vcad-kernel-photonics",
     "crates/vcad-kernel-cost",
     "crates/vcad-kernel-dfm",
+    "crates/vcad-kernel-tolerance",
     "crates/vcad-crdt",
     "crates/vcad-app",
     "crates/vcad-chat",
@@ -193,6 +199,8 @@ vcad-kernel-sheet = { path = "crates/vcad-kernel-sheet", version = "0.9.4" }
 vcad-kernel-step = { path = "crates/vcad-kernel-step", version = "0.9.4" }
 vcad-kernel-constraints = { path = "crates/vcad-kernel-constraints", version = "0.9.4" }
 vcad-kernel-diff = { path = "crates/vcad-kernel-diff", version = "0.9.4" }
+vcad-kernel-neutronics = { path = "crates/vcad-kernel-neutronics", version = "0.9.4" }
+vcad-kernel-particle = { path = "crates/vcad-kernel-particle", version = "0.9.4" }
 vcad-kernel-drafting = { path = "crates/vcad-kernel-drafting", version = "0.9.4" }
 vcad-kernel-gpu = { path = "crates/vcad-kernel-gpu", version = "0.9.4" }
 vcad-kernel-raytrace = { path = "crates/vcad-kernel-raytrace", version = "0.9.4" }
@@ -204,6 +212,7 @@ wasmosis-macro = { path = "crates/wasmosis/wasmosis-macro", version = "0.9.4" }
 vcad-slicer = { path = "crates/vcad-slicer", version = "0.9.4" }
 vcad-kernel-cost = { path = "crates/vcad-kernel-cost", version = "0.9.4" }
 vcad-kernel-dfm = { path = "crates/vcad-kernel-dfm", version = "0.9.4" }
+vcad-kernel-tolerance = { path = "crates/vcad-kernel-tolerance", version = "0.9.4" }
 vcad-slicer-gcode = { path = "crates/vcad-slicer-gcode", version = "0.9.4" }
 vcad-slicer-bambu = { path = "crates/vcad-slicer-bambu", version = "0.9.4" }
 vcad-kernel-cam = { path = "crates/vcad-kernel-cam", version = "0.9.4" }
