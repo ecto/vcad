@@ -53,15 +53,18 @@
 //! the slab literature's **TE** modes, and vice versa. [`modes`] documents
 //! the cross-map next to the transcendental equations.
 //!
-//! **Scope and honesty (M0):** 2D only (out-of-plane invariance — no
+//! **Scope and honesty (M0–M1):** 2D only (out-of-plane invariance — no
 //! effective-index reduction of 3D structures is performed for you);
 //! linear, isotropic, lossless, non-dispersive ε ≥ 1; μ = 1 everywhere; no
 //! material dispersion fitting (a single ε per material — fine at one
 //! design wavelength, wrong for broadband material physics); scalar
 //! area-weighted sub-pixel averaging (no tensor/anisotropic smoothing);
-//! soft sources radiate bidirectionally (total-field/scattered-field
-//! injection is M1); outer wall is PEC (or PMC per side) behind the CPML.
-//! See `docs/photonics-m0.md` for the milestone ladder.
+//! soft sources radiate bidirectionally, and the M1
+//! total-field/scattered-field mode plane injects +x-only with measured
+//! (finite) backward leakage — see
+//! [`source::SourcePlacement::TfsfVerticalLine`]; outer wall is PEC (or
+//! PMC per side) behind the CPML. See `docs/photonics-m0.md` for the
+//! milestone ladder.
 
 pub mod cpml;
 pub mod dispersion;

@@ -327,6 +327,31 @@ impl Simulation {
                 );
                 assert_eq!(profile.len(), j1 - j0 + 1, "profile length mismatch");
             }
+            SourcePlacement::TfsfVerticalLine {
+                i0,
+                j0,
+                j1,
+                profile,
+                ..
+            } => {
+                assert_eq!(
+                    self.pol,
+                    Polarization::Tm,
+                    "TF/SF mode injection is TM-only at M1"
+                );
+                assert!(
+                    *i0 >= 1 && *i0 + 1 < self.spec.nx,
+                    "TF/SF plane out of range"
+                );
+                // The correction terms skip the CPML κ/ψ machinery, which
+                // is only exact where the coefficients are identity.
+                assert!(
+                    *i0 > self.cpml.x_lo + 1 && *i0 + 1 < self.spec.nx - self.cpml.x_hi,
+                    "TF/SF plane must sit outside the CPML slabs (set CPML first)"
+                );
+                assert!(*j1 <= max_j && j0 <= j1, "source out of range");
+                assert_eq!(profile.len(), j1 - j0 + 1, "profile length mismatch");
+            }
         }
         self.sources.push(source);
     }
@@ -450,6 +475,28 @@ impl Simulation {
                 *self.hy.at_mut(i, j) += dt * (self.cx_h.inv_kappa[i] * dezdx + p);
             }
         }
+        // TF/SF Hy correction: the Hy update at column i0 (scattered
+        // field) consumed Ez[i0+1] which carries the incident mode —
+        // subtract ez_inc evaluated at the E time level just used (n·dt).
+        let t_e_used = self.step_index as f64 * dt;
+        for k in 0..self.sources.len() {
+            if let SourcePlacement::TfsfVerticalLine {
+                i0,
+                j0,
+                j1,
+                profile,
+                ..
+            } = &self.sources[k].placement
+            {
+                let s = self.sources[k].amplitude * self.sources[k].waveform.eval(t_e_used);
+                if s == 0.0 {
+                    continue;
+                }
+                for (kk, j) in (*j0..=*j1).enumerate() {
+                    *self.hy.at_mut(*i0, j) -= dt * inv_d * profile[kk] * s;
+                }
+            }
+        }
         // E update: H^(n+½) → E^(n+1). PMC walls extend the update to
         // boundary samples with mirror stencils (H_tan odd across a PMC).
         let i_lo = if self.boundaries.x_lo == Wall::Pmc {
@@ -499,6 +546,35 @@ impl Simulation {
                     * (self.cx_n.inv_kappa[i] * dhydx + pa - self.cy_n.inv_kappa[j] * dhxdy - pb);
             }
         }
+        // TF/SF Ez correction: the Ez update at column i0+1 (total
+        // field) consumed Hy[i0+½] which lacks the incident mode — add
+        // hy_inc = −n_eff·P·s(t + n_eff·Δ/2) at the H time level just
+        // used ((n+½)·dt). Net sign: Ez += dt/ε·(−hy_inc)/Δ.
+        let t_h_used = (self.step_index as f64 + 0.5) * dt;
+        let delta = self.spec.delta;
+        for k in 0..self.sources.len() {
+            if let SourcePlacement::TfsfVerticalLine {
+                i0,
+                j0,
+                j1,
+                profile,
+                n_eff,
+            } = &self.sources[k].placement
+            {
+                let s = self.sources[k].amplitude
+                    * self.sources[k]
+                        .waveform
+                        .eval(t_h_used + n_eff * delta / 2.0);
+                if s == 0.0 {
+                    continue;
+                }
+                for (kk, j) in (*j0..=*j1).enumerate() {
+                    let i = *i0 + 1;
+                    *self.ez.at_mut(i, j) +=
+                        dt * self.inv_eps_z.at(i, j) * inv_d * n_eff * profile[kk] * s;
+                }
+            }
+        }
         // Soft E sources at t = (n+1)·dt.
         let t_e = (self.step_index as f64 + 1.0) * dt;
         for k in 0..self.sources.len() {
@@ -513,6 +589,7 @@ impl Simulation {
                         *self.ez.at_mut(i, j) += s * profile[kk];
                     }
                 }
+                SourcePlacement::TfsfVerticalLine { .. } => {} // handled above
             }
         }
     }
@@ -550,6 +627,8 @@ impl Simulation {
                         *self.hz.at_mut(i, j) += s * profile[kk];
                     }
                 }
+                // Rejected for TE at add_source.
+                SourcePlacement::TfsfVerticalLine { .. } => unreachable!(),
             }
         }
         // E update: Hz^(n+½) → E^(n+1). Ex is tangential to y-walls (PEC

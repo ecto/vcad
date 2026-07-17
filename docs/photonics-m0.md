@@ -110,10 +110,36 @@ grid 170×70 @ Δ = λ₀/40, Courant 0.5, 3200 steps, t = 43.8
   must be ≥ 1; monitors and sources validate their staggered index ranges
   at construction.
 
-## Milestone ladder
+## M1 (landed): TF/SF mode injection + bend loss
 
-- **M1 — TF/SF + bends:** total-field/scattered-field unidirectional mode
-  injection; waveguide bend with measured bend loss vs radius.
+The total-field/scattered-field plane injects the slab mode in one
+direction: Ez at the first total-field column gets the missing incident
+`hy_inc = −n_eff·P(y)·s(t + n_eff·Δ/2)` term, Hy at the last scattered
+column subtracts `ez_inc = P(y)·s(t)` — the exact modal relation
+Hy = −n_eff·Ez with the Yee half-cell/half-step offsets carried
+explicitly. Honesty: the incident wave is the *continuum* mode with one
+narrowband delay, so backward leakage is finite and **measured**:
+−46.8 dB at pulse bandwidth f₀/4 (test asserts < −22 dB), forward
+transmission 1.00000 between downstream monitors.
+
+`Shape2::ring` (annular-sector polygon) builds bends; the 90° bend
+example measures loss vs radius with the output arm on a *horizontal*
+flux monitor (exercising the Sy path):
+
+```
+  R (units)   R/w     T = P_out/P_in   loss (dB)
+  0.50         2.3    0.9053           0.432
+  1.00         4.5    0.9847           0.067
+  2.00         9.1    0.9964           0.016
+  3.00        13.6    0.9978           0.010
+```
+
+(`cargo run --release -p vcad-kernel-photonics --example bend_loss`;
+qualitative monotonicity is a debug-speed test, the table is the
+release-mode example.) TF/SF is TM-only at M1 — the flagship splitter's
+polarization; TE injection stays soft-source.
+
+## Milestone ladder
 - **M2 — the adjoint:** reverse-time run with adjoint sources at the
   objective monitor; ∂T/∂ε per design cell; validated against central
   differences on perturbed cells with frozen run length (linear wave

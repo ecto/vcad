@@ -504,3 +504,174 @@ fn slab_waveguide_neff_and_transmission_tm() {
         );
     }
 }
+
+/// Rung 6 (M1) — TF/SF mode injection is directional: with the incident
+/// slab mode added only inside the total-field region, the scattered-field
+/// side of the plane must carry only the residual backward leakage
+/// (continuum-vs-discrete mode profile + the single narrowband delay
+/// n_eff(f₀) across a finite pulse band — see the honesty note on
+/// `SourcePlacement::TfsfVerticalLine`). Requirement: backward power at
+/// least 22 dB below forward; the measured number is printed.
+#[test]
+fn tfsf_mode_injection_is_directional() {
+    let lambda0 = 1.55;
+    let f0 = 1.0 / lambda0;
+    let (n_core, n_clad, half_w) = (3.48, 1.44, 0.11);
+    let delta = lambda0 / 40.0;
+    let (nx, ny) = (145, 64);
+    let jc = 32usize;
+    let yc = jc as f64 * delta;
+
+    let mode = solve_slab_mode_even(n_core, n_clad, half_w, lambda0, Polarization::Tm).unwrap();
+
+    let mut sim = Simulation::new(GridSpec::new(nx, ny, delta), Polarization::Tm);
+    sim.set_cpml(CpmlSpec::uniform(12));
+    sim.fill_epsilon(n_clad * n_clad);
+    sim.paint(
+        &Shape2::rect(-1.0, yc - half_w, 1e9, yc + half_w),
+        n_core * n_core,
+    );
+    let (j0, j1) = (12usize, 52usize);
+    let profile: Vec<f64> = (j0..=j1)
+        .map(|j| mode.profile((j as f64 - jc as f64) * delta))
+        .collect();
+    sim.add_source(Source::mode_tfsf(
+        35,
+        j0,
+        profile,
+        mode.n_eff,
+        Waveform::gaussian(f0, f0 / 4.0),
+    ));
+    let freqs = vec![f0];
+    let f_back = sim.add_flux(FluxSpec::Vertical {
+        i: 24,
+        j0,
+        j1,
+        freqs: freqs.clone(),
+    });
+    let f_fwd = sim.add_flux(FluxSpec::Vertical {
+        i: 70,
+        j0,
+        j1,
+        freqs: freqs.clone(),
+    });
+    let f_fwd2 = sim.add_flux(FluxSpec::Vertical {
+        i: 120,
+        j0,
+        j1,
+        freqs: freqs.clone(),
+    });
+    sim.run(2500);
+
+    let p_back = sim.flux_power(f_back)[0].1;
+    let p_fwd = sim.flux_power(f_fwd)[0].1;
+    let p_fwd2 = sim.flux_power(f_fwd2)[0].1;
+    assert!(p_fwd > 0.0, "no forward power");
+    let leak = (p_back.abs() / p_fwd).max(1e-30);
+    let db = 10.0 * leak.log10();
+    println!(
+        "tfsf: forward {p_fwd:.4e}, backward {p_back:.4e} ({db:.1} dB), fwd T {:.5}",
+        p_fwd2 / p_fwd
+    );
+    assert!(
+        db < -22.0,
+        "TF/SF backward leakage {db:.1} dB exceeds −22 dB"
+    );
+    // The injected wave is still the guided mode: transmission between
+    // the two forward monitors stays ≈ 1.
+    let t = p_fwd2 / p_fwd;
+    assert!((t - 1.0).abs() < 0.03, "TF/SF forward transmission {t}");
+}
+
+/// Rung 7 (M1) — 90° waveguide bends: sharper bends lose more. Two bends
+/// (R ≈ 1.8·w and R ≈ 5.5·w) of the same guide, mode injected via TF/SF,
+/// transmission measured on the vertical output arm with a *horizontal*
+/// flux line (which also exercises the Sy monitor path). Qualitative
+/// physics asserted (monotone in R, bounded by unity); the example
+/// `bend_loss` prints the quantitative dB table at higher resolution.
+#[test]
+fn bend_loss_decreases_with_radius() {
+    let lambda0 = 1.55;
+    let f0 = 1.0 / lambda0;
+    let (n_core, n_clad, half_w) = (3.48, 1.44, 0.11);
+    let delta = lambda0 / 24.0;
+    let (nx, ny) = (90, 92);
+    let jc = 30usize;
+    let yc = jc as f64 * delta;
+    let xb = 45.0 * delta; // bend start
+
+    let mode = solve_slab_mode_even(n_core, n_clad, half_w, lambda0, Polarization::Tm).unwrap();
+
+    let run = |radius: f64| -> f64 {
+        let mut sim = Simulation::new(GridSpec::new(nx, ny, delta), Polarization::Tm);
+        sim.set_cpml(CpmlSpec::uniform(12));
+        sim.fill_epsilon(n_clad * n_clad);
+        // Horizontal arm, quarter-ring bend, vertical arm.
+        sim.paint(
+            &Shape2::rect(-1.0, yc - half_w, xb, yc + half_w),
+            n_core * n_core,
+        );
+        sim.paint(
+            &Shape2::ring(
+                xb,
+                yc + radius,
+                radius - half_w,
+                radius + half_w,
+                -std::f64::consts::FRAC_PI_2,
+                0.0,
+                64,
+            ),
+            n_core * n_core,
+        );
+        sim.paint(
+            &Shape2::rect(xb + radius - half_w, yc + radius, xb + radius + half_w, 1e9),
+            n_core * n_core,
+        );
+        let (j0, j1) = (18usize, 42usize);
+        let profile: Vec<f64> = (j0..=j1)
+            .map(|j| mode.profile((j as f64 - jc as f64) * delta))
+            .collect();
+        sim.add_source(Source::mode_tfsf(
+            20,
+            j0,
+            profile,
+            mode.n_eff,
+            Waveform::gaussian(f0, f0 / 4.0),
+        ));
+        let f_in = sim.add_flux(FluxSpec::Vertical {
+            i: 32,
+            j0,
+            j1,
+            freqs: vec![f0],
+        });
+        let ic = (xb + radius) / delta;
+        let ic = ic.round() as usize;
+        let f_out = sim.add_flux(FluxSpec::Horizontal {
+            j: 70,
+            i0: ic - 12,
+            i1: ic + 12,
+            freqs: vec![f0],
+        });
+        sim.run(1600);
+        let p_in = sim.flux_power(f_in)[0].1;
+        let p_out = sim.flux_power(f_out)[0].1;
+        assert!(p_in > 0.0);
+        p_out / p_in
+    };
+
+    let t_sharp = run(0.40);
+    let t_gentle = run(1.20);
+    println!("bend: T(R=0.40) = {t_sharp:.4}, T(R=1.20) = {t_gentle:.4}");
+    assert!(
+        t_gentle > t_sharp + 0.02,
+        "bend loss not monotone in radius: {t_sharp} vs {t_gentle}"
+    );
+    assert!(
+        t_sharp > 0.1 && t_sharp < 1.02,
+        "sharp-bend T out of range: {t_sharp}"
+    );
+    assert!(
+        t_gentle > 0.8 && t_gentle < 1.02,
+        "gentle-bend T out of range: {t_gentle}"
+    );
+}

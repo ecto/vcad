@@ -64,6 +64,36 @@ impl Shape2 {
         Shape2::Polygon { pts }
     }
 
+    /// Annular sector (ring segment) as a sampled polygon: radii
+    /// `r_inner < r_outer` around `(cx, cy)`, angles `a0 → a1` radians
+    /// (counterclockwise), `segments` chords per arc. The workhorse of
+    /// waveguide bends and ring resonators.
+    pub fn ring(
+        cx: f64,
+        cy: f64,
+        r_inner: f64,
+        r_outer: f64,
+        a0: f64,
+        a1: f64,
+        segments: usize,
+    ) -> Self {
+        assert!(
+            r_outer > r_inner && r_inner >= 0.0,
+            "need 0 ≤ r_inner < r_outer"
+        );
+        assert!(a1 > a0 && segments >= 4, "need a1 > a0 and ≥ 4 segments");
+        let mut pts = Vec::with_capacity(2 * (segments + 1));
+        for k in 0..=segments {
+            let a = a0 + (a1 - a0) * k as f64 / segments as f64;
+            pts.push((cx + r_outer * a.cos(), cy + r_outer * a.sin()));
+        }
+        for k in (0..=segments).rev() {
+            let a = a0 + (a1 - a0) * k as f64 / segments as f64;
+            pts.push((cx + r_inner * a.cos(), cy + r_inner * a.sin()));
+        }
+        Shape2::Polygon { pts }
+    }
+
     /// Point-in-shape test.
     pub fn contains(&self, x: f64, y: f64) -> bool {
         match self {
