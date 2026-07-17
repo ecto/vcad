@@ -211,11 +211,18 @@ ensembles on a 101×201 mesh. Findings:
   unique), and expose `simulate_charged_particles` /
   `optimize_electrodes` MCP tools — cross-crate schema + TS codegen +
   fixture regen, deliberately not done from this worktree.
-- **M5 — validation against the incumbent.** SIMION cross-checks on
-  published einzel/trap geometries; convergence study; the arXiv writeup:
-  *gradient-based electrode shape optimization for electrostatic
-  confinement devices*, with the shielded-grid sweep as the flagship
-  result.
+- **M5 — analytic benchmarks + convergence + paper draft. DONE (except
+  the external SIMION runs).** `tests/analytic.rs`: magnetic-mirror loss
+  cone honored end-to-end (with the instructive non-adiabatic failure mode
+  when r_L approaches the field scale), axial oscillation period vs the
+  solved well curvature (±20%, anharmonicity-limited; long traces expose a
+  slow amplitude leak from cell-crossing kicks — measured, commented, and
+  a future symplectic-refinement item). `examples/convergence.rs`: the
+  interception FoM tracks the 0.75·h mask floor until h ≲ wire radius —
+  thin-wire absolute yields are trends until then; 3 mm-wire headline
+  sweeps are inside the converged regime. Paper draft with all current
+  numbers: `docs/particle-optics-paper-draft.md`. SIMION cross-validation
+  needs SIMION — external, flagged.
 - **M6 — experiment pack.** The shielded-grid experiment BOM (chamber,
   feedthrough, pulsed ring supply, cathode ammeter), predicted-vs-measured
   receipt schema: the sim predicts the ammeter curve, the bench measures
