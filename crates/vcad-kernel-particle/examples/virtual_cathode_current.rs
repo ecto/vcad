@@ -33,10 +33,13 @@ fn main() {
         max_passes: 30,
         ..TraceOptions::default()
     };
+    // Lighter self-consistent settings: the core-potential trend vs
+    // electron current is dominated by the electron charge and robust to
+    // ion-loop noise, and the ion loop is identical across the sweep.
     let sc = SelfConsistentOptions {
-        iterations: 5,
-        relax: 0.25,
-        particles: 96,
+        iterations: 3,
+        relax: 0.3,
+        particles: 64,
         ..SelfConsistentOptions::default()
     };
     let i_a = ION_MA * 1e-3;
@@ -62,7 +65,7 @@ fn main() {
         "# virtual-cathode current sweep: {ION_MA:.0} mA ions at 100 kV, electrons at shell {E_SHELL}"
     );
     println!("e_current_ma,e_over_i,core_dV_kv,net_ratio,neutralized_n_per_s,gain,vs_record");
-    for &e_ma in &[30.0, 100.0, 300.0, 1000.0, 3000.0] {
+    for &e_ma in &[30.0, 300.0, 1000.0, 3000.0, 10000.0] {
         let e_a = e_ma * 1e-3;
         let r = space_charge::neutralized(
             &device,
