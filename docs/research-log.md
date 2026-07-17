@@ -220,3 +220,99 @@ supersedes the noisy numbers in the previous verdict entry:
   magnetized near the cusp wires — trapping studies are simulatable next).
 - `observably_converged` flag worked as designed: true/true/false across
   the sweep, honestly marking the 100 mA row unsettled.
+
+## 2026-07-17 — electron trapping is real: the "dead end" was a launch-location artifact
+
+Corrects the e-injection entry above. `orbitron_probe` traces electrons in
+the two-ring device's own cusp field vs the demagnetized copy (same
+electrostatics, currents zeroed), launched at the **mid-shell** (r ≈ 0.5,
+near the rings) rather than the 0.2 inner shell the neutralization sweep
+used:
+
+| shield A·t | enhancement | survivor frac | gyroradius (mm) |
+|---|---|---|---|
+| 0 | 1.0 | 0.00 | ∞ |
+| 80 k | 121× | **0.75** | 0.38 |
+| 200 k | 133× | 0.83 | 0.15 |
+| 400 k–1.2 M | 140× (budget-capped) | **0.875** | 0.08→0.03 |
+
+- **The cusp traps electrons hard**: at ≥80 kA·t, 75–87% never leave (vs
+  100% expelled in 1.2 ns with B off). Enhancement saturates at the flight
+  budget — 140× is a *floor*. Gyroradius collapses to 0.03 mm ≪ device:
+  deeply magnetized.
+- **Why the e-injection sweep read ~0**: it launched electrons at r=0.2,
+  deep on-axis where the opposed coils cancel (B≈0) and E drives them
+  straight out the axial point cusp before they can magnetize. Launch
+  *near the rings* (strong B) and they trap. Injection location is
+  everything — the exact polywell lesson, now measured in our geometry.
+- This reopens the neutralization lane. Open question the
+  `virtual_cathode` probe answers next: do the trapped electrons form a
+  central *virtual cathode* (deepen the on-axis ion well = help fusion) or
+  circulate peripherally at the rings (trapped but useless)?
+- Caveat: non-relativistic Boris (ratio cancels most of the ~10–15% error
+  at these energies); enhancement budget-capped; single particles.
+
+## 2026-07-17 — virtual-cathode verdict: trapping is real, but charge-limited
+
+`virtual_cathode` sweeps the electron launch radius at 30 mA ions + 30 mA
+electrons, 100 kV, reporting the electron contribution to the **on-axis
+core** potential (the well deepening that actually helps fusion, vs
+`net_ratio` which a peripheral pile-up can move):
+
+| e-shell | survivor | core ΔV | ion-yield gain |
+|---|---|---|---|
+| 0.20 | 0.71 | −0.3 kV | 0.93 |
+| 0.40 | 0.94 | −0.3 kV | 0.92 |
+| 0.55 | 0.88 | −0.2 kV | 0.93 |
+| 0.70 | 0.80 | −0.2 kV | 1.00 |
+
+- **Trapping ≠ neutralization.** Electrons trap 71–94% at every launch
+  radius, but the core well deepens only 0.2–0.3 kV — **0.2–0.3% of the
+  100 kV well** — and ion yield doesn't recover (gain ≈ 0.9–1.0, noise
+  around unity). Launch radius is *not* the lever: the core effect is flat
+  across it.
+- **The lever is electron charge.** 30 mA of electrons, however well
+  confined, is ~0.3 kV of central potential (order-of-magnitude check:
+  Q_e = I·τ ≈ 0.03 A × 150 ns ≈ 4.5 nC → φ ~ Q/4πε₀R ≈ 0.8 kV at 5 cm,
+  matching the measured few-tenths kV). A meaningful virtual cathode needs
+  far more electron current — quantified by `virtual_cathode_current`
+  (next entry).
+- Honest program status: the trapped cloud is a *real but shallow* virtual
+  cathode at matched current. The neutralization lane isn't dead, but its
+  cost is electron current (with a real power price), not geometry — the
+  opposite of what the "launch location" reopening suggested. The receipt
+  keeps changing its own mind, on evidence.
+
+## 2026-07-17 — the virtual cathode ignites (with two asterisks)
+
+`virtual_cathode_current`: 30 mA ions at 100 kV, electrons at shell 0.55,
+sweeping electron current:
+
+| e-current | e/i | core ΔV | ion-yield gain | vs record |
+|---|---|---|---|---|
+| 30 mA | 1× | −0.2 kV | 0.99 | 16.3× |
+| 300 mA | 10× | −2.5 kV | 1.06 | 17.4× |
+| 1 A | 33× | −8.2 kV | 1.17 | 19.2× |
+| 3 A | 100× | −24.7 kV | 1.98 | 32.5× |
+| 10 A | 333× | **−82.3 kV** | **8.40** | **138×** |
+
+- **Mechanism demonstrated end-to-end in our geometry**: cusp-trapped
+  electrons form a central virtual cathode that deepens the fusing core's
+  well (−82 kV at 10 A — nearly doubling the effective well) and
+  multiplies ion yield 8.4×. The required e/i ratio (~100–300×) matches
+  polywell practice (electron currents orders above ion currents).
+- **Asterisk 1 — e-e self-repulsion unmodeled**: at 10 A the electron
+  cloud's own charge is ~300× the ion cloud's; the perfect-injection
+  bound ignores its self-force, which is dominant there. The 138× row is
+  a mechanism demonstration, not a design claim. Next module: run the
+  electron cloud through the same PIC self-consistency the ions got.
+- **Asterisk 2 — sustaining power**: the circulating current is not the
+  injector current; steady state replaces only the cusp losses
+  (survivor fractions 80–94% are budget-capped floors). Power = loss
+  rate × injection energy (~|φ(shell)| per electron) — needs the
+  loss-rate measurement before any Q claim.
+- Arc summary: dead end (launch artifact) → trapping real (140×) →
+  trapping ≠ neutralization (charge-limited) → **neutralization real at
+  polywell-scale electron currents**. Four self-corrections, all
+  receipted. This is the Q-lane's road: e-cloud self-consistency, loss
+  accounting, then the neutralized machine priced honestly.

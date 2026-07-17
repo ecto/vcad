@@ -350,6 +350,15 @@ pub struct TwoSpeciesReport {
     pub neutralization_fraction: f64,
     /// Peak |net beam potential| / well after the electron cloud.
     pub net_ratio: f64,
+    /// Electron contribution to the on-axis core potential (r=0, z=0),
+    /// volts. **Negative deepens the ion well** — the virtual-cathode /
+    /// neutralization signal that actually matters for the fusing core, as
+    /// opposed to `net_ratio` which a peripheral electron pile-up can move
+    /// without helping the center.
+    pub core_potential_change_v: f64,
+    /// Fraction of electrons still confined at the flight budget — the
+    /// trapped cloud that does the neutralizing.
+    pub electron_survivor_fraction: f64,
     /// Ion statistics re-traced in the neutralized field — compare with
     /// `ion_only.final_stats()` (taxed) and `ion_only.vacuum_stats`.
     pub recovered_stats: crate::fom::EnsembleStats,
@@ -374,6 +383,7 @@ pub fn neutralized(
     ion_topts: &crate::trace::TraceOptions,
     ion_current_a: f64,
     electron_current_a: f64,
+    electron_shell_fraction: f64,
     opts: &SelfConsistentOptions,
 ) -> Result<TwoSpeciesReport, SolveError> {
     let ion_only = self_consistent(
@@ -396,9 +406,15 @@ pub fn neutralized(
         *t += s;
     }
 
-    // Electrons: born at rest on a small shell inside the cloud.
+    // Electrons: born at rest on the launch shell (in the applied + ion
+    // field, so the positive ion beam pulls them inward). Launch location
+    // is decisive — electrons born deep on-axis escape the point cusp
+    // before magnetizing; electrons born near the rings trap in the strong
+    // cusp field (see `confinement`). A generous budget lets the trapped
+    // ones accumulate real dwell rather than censoring early.
     let e_topts = crate::trace::TraceOptions {
-        launch_shell_fraction: 0.2,
+        launch_shell_fraction: electron_shell_fraction,
+        time_budget_factor: ion_topts.time_budget_factor.max(30.0),
         ..*ion_topts
     };
     let fields = crate::field::FieldMap::new(device, &with_ions);
@@ -406,6 +422,11 @@ pub fn neutralized(
     let (e_outcomes, e_dwell) =
         tracer.launch_ensemble_dwell(crate::trace::ELECTRON, opts.particles);
     let electron_stats = crate::fom::stats(&e_outcomes);
+    let electron_survivor_fraction = e_outcomes
+        .iter()
+        .filter(|o| o.fate == crate::trace::Fate::Survived)
+        .count() as f64
+        / e_outcomes.len().max(1) as f64;
     let (rho_e, q_e) = beam_rho(&base, &e_dwell, opts.particles, electron_current_a);
 
     let q_i: f64 = {
@@ -431,6 +452,11 @@ pub fn neutralized(
         .collect();
     let phi_net = solve_grounded_source(&base, &net_rho, sopts)?;
     let net_ratio = phi_net.iter().fold(0.0_f64, |a, b| a.max(b.abs())) / well;
+    // Electron-only contribution at the on-axis core (node r=0, z=0): the
+    // change to the ion well where fusion happens. Negative = deepened.
+    let phi_e = solve_grounded_source(&base, &rho_e, sopts)?;
+    let core_j = nz / 2;
+    let core_potential_change_v = -phi_e[core_j];
     let mut neutralized_sol = base.clone();
     for (t, s) in neutralized_sol.phi.iter_mut().zip(&phi_net) {
         *t += s;
@@ -445,6 +471,8 @@ pub fn neutralized(
         electron_stats,
         neutralization_fraction: q_e / q_i.max(1e-300),
         net_ratio,
+        core_potential_change_v,
+        electron_survivor_fraction,
         recovered_stats,
     })
 }
@@ -571,6 +599,7 @@ mod tests {
             &topts,
             heavy_ma,
             heavy_ma,
+            0.5,
             &sc_opts,
         )
         .unwrap();
