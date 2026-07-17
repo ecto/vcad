@@ -51,12 +51,7 @@ impl SpaceChargeReport {
     }
 }
 
-/// Estimate the space-charge validity gauge from a dwell map.
-///
-/// `dwell` is the node-indexed dwell-time map from
-/// [`crate::trace::Tracer::launch_ensemble_dwell`] over `n_particles`
-/// simulated ions, and `ion_current_a` the physical injected current the
-/// configuration claims.
+/// Dwell map → steady-state beam charge density (and total charge).
 fn beam_rho(
     solution: &Solution,
     dwell: &[f64],
@@ -96,7 +91,6 @@ pub fn estimate(
     opts: &SolveOptions,
 ) -> Result<SpaceChargeReport, SolveError> {
     assert_eq!(dwell.len(), solution.nr * solution.nz, "dwell map size");
-    let _ = (dr, dz, idx);
 
     // Beam charge density: each simulated ion represents I/(e·N) real
     // ions per second, so a cell's steady population is that rate times
