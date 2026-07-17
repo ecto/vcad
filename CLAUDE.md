@@ -137,13 +137,22 @@ vcad/
 │   #                            # priced through the seam) and vcad-eval::diff
 │   #                            # (document_parameter_gradient — d(mass props)/d(named
 │   #                            # .vcad parameter))
-│   # - vcad-kernel-particle     # Charged-particle optics, M0: axisymmetric
-│   #                            # Poisson (SOR) + exact ring-coil B (elliptic
-│   #                            # integrals) + Boris tracing + electrode FoMs
-│   #                            # (interception/recirculation/transparency) +
-│   #                            # FD optimizer. Fusor & magnetically-shielded-
-│   #                            # grid IEC benchmark; reproduces r_L ∝ √V
-│   #                            # shield scaling (docs/particle-optics-m0.md)
+│   # - vcad-kernel-particle     # Charged-particle optics, M0–M6 COMPLETE:
+│   #                            # axisym Poisson (SOR, conservative patch-E)
+│   #                            # + exact ring-coil B (elliptic, grid-cached)
+│   #                            # + Boris tracing + Bosch-Hale D-D yield +
+│   #                            # charge-exchange channels + discrete adjoint
+│   #                            # (FD-validated 0.1–0.8%, adjoint Poisson via
+│   #                            # radial-weight symmetrization) + DeviceSpec
+│   #                            # param seam + receipt claims (Q, distance-
+│   #                            # to-Lawson, Holds/Violated/Unmeasured
+│   #                            # compare) + analytic benchmarks + paper
+│   #                            # draft + experiment BOM. Reproduces the
+│   #                            # shielded-grid effect (arXiv:1510.01788),
+│   #                            # r_L ∝ √V, multimodal yield landscape.
+│   #                            # (docs/particle-optics-m0.md, -paper-draft,
+│   #                            # shielded-grid-experiment.md). Follow-up:
+│   #                            # vcad-receipt registration + MCP tools.
 ├── packages/                      # TypeScript workspace
 │   ├── app/                       # Web app (React + Three.js + Zustand)
 │   ├── engine/                    # WASM engine wrapper + physics

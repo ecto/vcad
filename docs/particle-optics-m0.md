@@ -223,10 +223,16 @@ ensembles on a 101×201 mesh. Findings:
   sweeps are inside the converged regime. Paper draft with all current
   numbers: `docs/particle-optics-paper-draft.md`. SIMION cross-validation
   needs SIMION — external, flagged.
-- **M6 — experiment pack.** The shielded-grid experiment BOM (chamber,
-  feedthrough, pulsed ring supply, cathode ammeter), predicted-vs-measured
-  receipt schema: the sim predicts the ammeter curve, the bench measures
-  it, the receipt binds them.
+- **M6 — experiment pack. DONE.** `docs/shielded-grid-experiment.md`:
+  full COTS BOM (~$10–25k, Phase A alone $2–5k), the floating-pulser
+  isolation problem named as the hard engineering item, staged
+  commissioning bound to the simulated curves (Phase A: the −3 kV ammeter
+  curve with a kA·t pulser and no neutron gear; Phase B: neutrons at
+  −30…−40 kV), and the safety envelope. `receipt::compare` binds bench
+  measurements to predicted claims with Holds / Violated / Unmeasured
+  verdicts — fail-closed: an unmeasured receipt never passes, a
+  measurement matching no claim is an error, and Violated is treated as a
+  publishable result about the model.
 
 ## Non-goals
 

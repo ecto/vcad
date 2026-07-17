@@ -199,6 +199,123 @@ pub fn predicted_claims(
     }
 }
 
+/// A bench measurement to bind against a predicted claim.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Measurement {
+    /// Claim name this measures (must match a claim).
+    pub name: String,
+    /// Measured value, in the claim's unit.
+    pub value: f64,
+    /// One-sigma absolute uncertainty, same unit.
+    pub uncertainty: f64,
+    /// Instrument provenance ("cathode ammeter s/n …", "He-3 counter …").
+    pub instrument: String,
+    /// Acceptance band as a multiplicative factor: the claim holds when
+    /// measured / predicted ∈ [1/band, band] after widening by the
+    /// measurement uncertainty. Floors (neutron rate) warrant a generous
+    /// band; direct observables (interception fraction) a tight one.
+    pub band_factor: f64,
+}
+
+/// Verdict for one claim, in the repo's receipt vocabulary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Verdict {
+    /// Measurement inside the stated band.
+    Holds,
+    /// Measurement outside the stated band.
+    Violated,
+    /// No measurement bound to this claim (fail-closed: unmeasured is
+    /// never silently passing).
+    Unmeasured,
+}
+
+/// One row of the predicted-vs-measured comparison.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ComparisonEntry {
+    /// Claim name.
+    pub name: String,
+    /// Predicted value.
+    pub predicted: f64,
+    /// Measured value (`None` when unmeasured).
+    pub measured: Option<f64>,
+    /// measured / predicted (`None` when unmeasured or predicted = 0).
+    pub ratio: Option<f64>,
+    /// Verdict.
+    pub verdict: Verdict,
+}
+
+/// The comparison report: every claim gets a row; measurements that match
+/// no claim are an error (a measurement of nothing is a bookkeeping bug).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ComparisonReport {
+    /// Schema tag.
+    pub schema: String,
+    /// Per-claim rows.
+    pub entries: Vec<ComparisonEntry>,
+    /// True only when every claim with a measurement holds AND at least
+    /// one measurement exists — an unmeasured receipt never passes.
+    pub all_hold: bool,
+}
+
+/// Bind measurements to a claim set.
+pub fn compare(
+    claims: &ClaimSet,
+    measurements: &[Measurement],
+) -> Result<ComparisonReport, String> {
+    for m in measurements {
+        if !claims.claims.iter().any(|c| c.name == m.name) {
+            return Err(format!("measurement {:?} matches no claim", m.name));
+        }
+    }
+    let mut entries = Vec::with_capacity(claims.claims.len());
+    let mut measured_any = false;
+    let mut all_hold = true;
+    for c in &claims.claims {
+        let m = measurements.iter().find(|m| m.name == c.name);
+        let entry = match m {
+            None => ComparisonEntry {
+                name: c.name.clone(),
+                predicted: c.value,
+                measured: None,
+                ratio: None,
+                verdict: Verdict::Unmeasured,
+            },
+            Some(m) => {
+                measured_any = true;
+                let ratio = if c.value != 0.0 {
+                    Some(m.value / c.value)
+                } else {
+                    None
+                };
+                // Widen the band by the measurement uncertainty.
+                let lo = c.value / m.band_factor - m.uncertainty;
+                let hi = c.value * m.band_factor + m.uncertainty;
+                let holds = (lo..=hi).contains(&m.value);
+                if !holds {
+                    all_hold = false;
+                }
+                ComparisonEntry {
+                    name: c.name.clone(),
+                    predicted: c.value,
+                    measured: Some(m.value),
+                    ratio,
+                    verdict: if holds {
+                        Verdict::Holds
+                    } else {
+                        Verdict::Violated
+                    },
+                }
+            }
+        };
+        entries.push(entry);
+    }
+    Ok(ComparisonReport {
+        schema: "vcad.particle-compare/1".to_string(),
+        entries,
+        all_hold: all_hold && measured_any,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -284,6 +401,59 @@ mod tests {
         // Provenance is present and truthful.
         assert_eq!(back.provenance.grid, [81, 161]);
         assert_eq!(back.provenance.ensemble, 12);
+    }
+
+    #[test]
+    fn compare_binds_measurements_fail_closed() {
+        let set = build();
+        // Unmeasured receipt never passes.
+        let empty = compare(&set, &[]).unwrap();
+        assert!(!empty.all_hold);
+        assert!(empty
+            .entries
+            .iter()
+            .all(|e| e.verdict == Verdict::Unmeasured));
+
+        // A measurement of nothing is an error.
+        let bogus = Measurement {
+            name: "warp_factor".into(),
+            value: 9.0,
+            uncertainty: 0.1,
+            instrument: "vibes".into(),
+            band_factor: 2.0,
+        };
+        assert!(compare(&set, &[bogus]).is_err());
+
+        // The cathode ammeter agrees within band → Holds; a wildly wrong
+        // neutron count → Violated; everything else stays Unmeasured.
+        let predicted_intercept = get(&set, "interception_fraction");
+        let ok = Measurement {
+            name: "interception_fraction".into(),
+            value: predicted_intercept * 1.1,
+            uncertainty: 0.02,
+            instrument: "cathode ammeter".into(),
+            band_factor: 1.5,
+        };
+        let bad = Measurement {
+            name: "ddn_neutron_rate".into(),
+            value: get(&set, "ddn_neutron_rate") * 1e4,
+            uncertainty: 1.0,
+            instrument: "He-3 counter".into(),
+            band_factor: 30.0,
+        };
+        let report = compare(&set, &[ok, bad]).unwrap();
+        assert!(!report.all_hold);
+        let verdict = |name: &str| {
+            report
+                .entries
+                .iter()
+                .find(|e| e.name == name)
+                .unwrap()
+                .verdict
+        };
+        assert_eq!(verdict("interception_fraction"), Verdict::Holds);
+        assert_eq!(verdict("ddn_neutron_rate"), Verdict::Violated);
+        assert_eq!(verdict("q_estimate"), Verdict::Unmeasured);
     }
 
     #[test]
