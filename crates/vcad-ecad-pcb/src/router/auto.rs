@@ -1103,15 +1103,13 @@ fn search_route(
     if r3.success && r3.segments.is_empty() && r3.vias.is_empty() {
         // The two components already touch (earlier commits joined them):
         // the connection is satisfied with zero new copper.
-        return Some(Placed {
+        return Some(Candidate {
             net: net.to_string(),
             from,
             to,
             width: w,
             segments: Vec::new(),
-            stubs: Vec::new(),
-            via_pts: Vec::new(),
-            spans: Vec::new(),
+            vias: Vec::new(),
         });
     }
     let (segments, route_vias) = if r3.success && !r3.segments.is_empty() {
