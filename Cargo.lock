@@ -7268,6 +7268,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "vcad-kernel-em"
+version = "0.9.4"
+dependencies = [
+ "serde",
+ "serde_json",
+ "vcad-kernel-particle",
+]
+
+[[package]]
 name = "vcad-kernel-fillet"
 version = "0.9.4"
 dependencies = [
