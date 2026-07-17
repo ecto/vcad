@@ -2945,7 +2945,12 @@ function detectStaleNets(pcb: Pcb): Set<string> {
       // anywhere on the pad body is anchored copper (route-to-tree terminates
       // on pad bodies, not only pad centres).
       const sh = pad.shape as { width?: number; height?: number; diameter?: number };
-      const halfExtent = Math.max(sh.width ?? 0, sh.height ?? 0, sh.diameter ?? 0) / 2;
+      // Half-DIAGONAL (bounding circle): a trace overlapping a rect pad's
+      // corner sits up to hypot(w,h)/2 from the centre — half the max
+      // dimension misses it and flags a covered pad as stale.
+      const halfExtent = sh.diameter
+        ? sh.diameter / 2
+        : Math.hypot(sh.width ?? 0, sh.height ?? 0) / 2;
       arr.push({ pos: padWorld(fp, pad), layers: pad.layers, halfExtent });
       padsByNet.set(pad.net, arr);
     }
@@ -2990,18 +2995,27 @@ function detectStaleNets(pcb: Pcb): Set<string> {
       return Math.hypot(p.x - (t.start.x + u * dx), p.y - (t.start.y + u * dy));
     };
     const onSegBody = (p: Vec2, t: Trace): boolean => segDist(p, t) <= t.width / 2 + 0.02;
-    // (1) Any loose trace endpoint?
-    const anchored = (p: Vec2, selfIdx: number): boolean => {
-      if (pads.some((q) => near(p, q.pos) || Math.hypot(p.x - q.pos.x, p.y - q.pos.y) <= q.halfExtent + 0.02)) return true;
-      if (vias.some((q) => near(p, q))) return true;
+    // (1) Any loose trace endpoint? Anchoring is copper-overlap: the
+    // endpoint's own trace disc (its half-width) may touch the anchor's
+    // body — multi-source/tree-terminated routes legally start and end
+    // wherever their copper overlaps the net's existing copper.
+    const anchored = (p: Vec2, selfIdx: number, halfW: number): boolean => {
+      if (
+        pads.some(
+          (q) => Math.hypot(p.x - q.pos.x, p.y - q.pos.y) <= q.halfExtent + halfW + 0.02,
+        )
+      )
+        return true;
+      if (vias.some((q) => Math.hypot(p.x - q.x, p.y - q.y) <= halfW + 0.42)) return true;
       for (let j = 0; j < traces.length; j++) {
         if (j === selfIdx) continue;
-        if (near(p, traces[j].start) || near(p, traces[j].end)) return true;
-        if (onSegBody(p, traces[j])) return true;
+        if (segDist(p, traces[j]) <= traces[j].width / 2 + halfW + 0.02) return true;
       }
       return false;
     };
-    let isStale = traces.some((t, i) => !anchored(t.start, i) || !anchored(t.end, i));
+    let isStale = traces.some(
+      (t, i) => !anchored(t.start, i, t.width / 2) || !anchored(t.end, i, t.width / 2),
+    );
 
     // (2) Any current pad uncovered by copper (and not on a same-net pour)?
     if (!isStale) {

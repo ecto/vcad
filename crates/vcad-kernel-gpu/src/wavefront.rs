@@ -6,10 +6,14 @@
 //! adjacent layers. Ping-pong buffering keeps each sweep deterministic;
 //! a `changed` flag lets the host stop once the field is settled.
 //!
-//! [`distance_field`] runs on the GPU (falling back to an error when no
-//! adapter exists); [`distance_field_cpu`] is the exact-integer Dijkstra
-//! reference used by tests and as a CPU fallback. [`extract_path`] walks
-//! either field downhill from a goal back to a source.
+//! [`distance_field`] runs the full-sweep path on the GPU (falling back
+//! to an error when no adapter exists); [`distance_field_compacted`] is
+//! the frontier-compacted variant, which relaxes only the nodes touched
+//! last iteration (indirect dispatch, no per-iteration readback) and is
+//! the fast path at router scale. [`distance_field_cpu`] is the
+//! exact-integer Dijkstra reference used by tests and as a CPU fallback.
+//! All three produce bit-identical fields. [`extract_path`] walks any of
+//! them downhill from a goal back to a source.
 
 use crate::context::{GpuContext, GpuError};
 use bytemuck::{Pod, Zeroable};
@@ -68,7 +72,7 @@ struct WavefrontParams {
     step_cost: u32,
     diag_cost: u32,
     via_cost: u32,
-    _pad0: u32,
+    parity: u32,
     _pad1: u32,
 }
 
@@ -144,7 +148,7 @@ pub async fn distance_field_async(
         step_cost: costs.step,
         diag_cost: costs.diag,
         via_cost: costs.via,
-        _pad0: 0,
+        parity: 0,
         _pad1: 0,
     };
 
@@ -334,6 +338,300 @@ pub async fn distance_field_async(
     Ok(dist)
 }
 
+/// Frontier length checks per batch of compacted iterations. Each
+/// iteration in a batch is two tiny dispatches (prep + indirect relax),
+/// so batching amortizes the host round-trip.
+const ITERS_PER_READBACK: usize = 64;
+
+/// Frontier-compacted variant of [`distance_field`].
+///
+/// Produces the same field bit-exactly, but each iteration relaxes only
+/// the frontier (the nodes improved last iteration) instead of the whole
+/// grid: a prep kernel converts the frontier counter into indirect
+/// dispatch args, and the relax kernel appends improved neighbors to the
+/// next frontier with epoch-stamped deduplication. The host only reads
+/// back the frontier length every [`ITERS_PER_READBACK`] iterations to
+/// detect termination.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn distance_field_compacted(
+    grid: &WavefrontGrid,
+    sources: &[usize],
+    costs: &WavefrontCosts,
+) -> Result<Vec<u32>, GpuError> {
+    pollster::block_on(distance_field_compacted_async(grid, sources, costs))
+}
+
+/// Async variant of [`distance_field_compacted`].
+pub async fn distance_field_compacted_async(
+    grid: &WavefrontGrid,
+    sources: &[usize],
+    costs: &WavefrontCosts,
+) -> Result<Vec<u32>, GpuError> {
+    let total = grid.len();
+    if total == 0 {
+        return Ok(Vec::new());
+    }
+
+    let ctx = GpuContext::init().await?;
+
+    let occupancy: Vec<u32> = grid.blocked.iter().map(|&b| u32::from(b)).collect();
+    let mut init_dist = vec![UNREACHABLE; total];
+    let mut init_frontier: Vec<u32> = Vec::with_capacity(sources.len());
+    for &s in sources {
+        if init_dist[s] != 0 {
+            init_dist[s] = 0;
+            init_frontier.push(s as u32);
+        }
+    }
+    let source_count = init_frontier.len() as u32;
+    // Frontier buffers hold node indices; dedup bounds each frontier by
+    // the node count, so `total` entries is always enough.
+    init_frontier.resize(total, 0);
+
+    let byte_len = (total * std::mem::size_of::<u32>()) as u64;
+
+    let make_storage = |label: &str, contents: &[u32]| {
+        ctx.device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some(label),
+                contents: bytemuck::cast_slice(contents),
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+            })
+    };
+
+    let occupancy_buffer = make_storage("Wavefront Occupancy Buffer", &occupancy);
+    let dist_buffer = make_storage("Wavefront Atomic Dist Buffer", &init_dist);
+    let stamp_buffer = make_storage("Wavefront Stamp Buffer", &vec![0u32; total]);
+    let frontier_buffers = [
+        make_storage("Wavefront Frontier Buffer A", &init_frontier),
+        make_storage("Wavefront Frontier Buffer B", &vec![0u32; total]),
+    ];
+
+    // meta = [dispatch x, y, z, epoch, count A, count B].
+    let meta_init = [0u32, 1, 1, 0, source_count, 0];
+    let meta_buffer = ctx
+        .device
+        .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Wavefront Meta Buffer"),
+            contents: bytemuck::cast_slice(&meta_init),
+            usage: wgpu::BufferUsages::STORAGE
+                | wgpu::BufferUsages::INDIRECT
+                | wgpu::BufferUsages::COPY_SRC,
+        });
+
+    // Per-parity params (parity selects which frontier/count is input).
+    let params_buffers: [wgpu::Buffer; 2] = std::array::from_fn(|parity| {
+        let params = WavefrontParams {
+            nx: grid.nx as u32,
+            ny: grid.ny as u32,
+            nl: grid.layers as u32,
+            step_cost: costs.step,
+            diag_cost: costs.diag,
+            via_cost: costs.via,
+            parity: parity as u32,
+            _pad1: 0,
+        };
+        ctx.device
+            .create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                label: Some("Wavefront Compacted Params Buffer"),
+                contents: bytemuck::bytes_of(&params),
+                usage: wgpu::BufferUsages::UNIFORM,
+            })
+    });
+
+    let shader = ctx
+        .device
+        .create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Wavefront Shader"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("shaders/wavefront.wgsl").into()),
+        });
+
+    let storage_entry = |binding: u32, read_only: bool| wgpu::BindGroupLayoutEntry {
+        binding,
+        visibility: wgpu::ShaderStages::COMPUTE,
+        ty: wgpu::BindingType::Buffer {
+            ty: wgpu::BufferBindingType::Storage { read_only },
+            has_dynamic_offset: false,
+            min_binding_size: None,
+        },
+        count: None,
+    };
+
+    let bind_group_layout = ctx
+        .device
+        .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Wavefront Compacted Bind Group Layout"),
+            entries: &[
+                storage_entry(0, true),
+                wgpu::BindGroupLayoutEntry {
+                    binding: 4,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                storage_entry(5, false),
+                storage_entry(6, true),
+                storage_entry(7, false),
+                storage_entry(8, false),
+                storage_entry(9, false),
+            ],
+        });
+
+    let make_bind_group = |parity: usize| {
+        ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Wavefront Compacted Bind Group"),
+            layout: &bind_group_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: occupancy_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: params_buffers[parity].as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: dist_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: frontier_buffers[parity].as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 7,
+                    resource: frontier_buffers[1 - parity].as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 8,
+                    resource: stamp_buffer.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 9,
+                    resource: meta_buffer.as_entire_binding(),
+                },
+            ],
+        })
+    };
+    let bind_groups = [make_bind_group(0), make_bind_group(1)];
+
+    let pipeline_layout = ctx
+        .device
+        .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("Wavefront Compacted Pipeline Layout"),
+            bind_group_layouts: &[&bind_group_layout],
+            push_constant_ranges: &[],
+        });
+    let make_pipeline = |entry: &str| {
+        ctx.device
+            .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some(entry),
+                layout: Some(&pipeline_layout),
+                module: &shader,
+                entry_point: Some(entry),
+                compilation_options: Default::default(),
+                cache: None,
+            })
+    };
+    let prep_pipeline = make_pipeline("frontier_prep");
+    let relax_pipeline = make_pipeline("relax_compacted");
+
+    let count_staging = ctx.device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("Wavefront Count Staging"),
+        size: std::mem::size_of::<u32>() as u64,
+        usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+
+    // Each iteration expands the wavefront by at least one hop, so
+    // `total` iterations bounds convergence.
+    let max_iters = total;
+    let mut iters_done = 0usize;
+    while iters_done < max_iters {
+        let batch = ITERS_PER_READBACK.min(max_iters - iters_done);
+
+        let mut encoder = ctx
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Wavefront Compacted Encoder"),
+            });
+        for i in 0..batch {
+            let parity = (iters_done + i) % 2;
+            // Prep and relax in separate passes so the indirect-args
+            // write is ordered before the indirect dispatch consumes it.
+            {
+                let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: Some("Wavefront Frontier Prep Pass"),
+                    timestamp_writes: None,
+                });
+                pass.set_pipeline(&prep_pipeline);
+                pass.set_bind_group(0, &bind_groups[parity], &[]);
+                pass.dispatch_workgroups(1, 1, 1);
+            }
+            {
+                let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: Some("Wavefront Compacted Relax Pass"),
+                    timestamp_writes: None,
+                });
+                pass.set_pipeline(&relax_pipeline);
+                pass.set_bind_group(0, &bind_groups[parity], &[]);
+                pass.dispatch_workgroups_indirect(&meta_buffer, 0);
+            }
+        }
+        iters_done += batch;
+        // The next iteration's input count lives at meta[4 + parity].
+        let next_parity = iters_done % 2;
+        encoder.copy_buffer_to_buffer(
+            &meta_buffer,
+            ((4 + next_parity) * std::mem::size_of::<u32>()) as u64,
+            &count_staging,
+            0,
+            std::mem::size_of::<u32>() as u64,
+        );
+        ctx.queue.submit(std::iter::once(encoder.finish()));
+
+        if read_u32(ctx, &count_staging)? == 0 {
+            break;
+        }
+    }
+
+    // Read back the settled distance field.
+    let dist_staging = ctx.device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("Wavefront Compacted Dist Staging"),
+        size: byte_len,
+        usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    let mut encoder = ctx
+        .device
+        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("Wavefront Compacted Readback Encoder"),
+        });
+    encoder.copy_buffer_to_buffer(&dist_buffer, 0, &dist_staging, 0, byte_len);
+    ctx.queue.submit(std::iter::once(encoder.finish()));
+
+    let buffer_slice = dist_staging.slice(..);
+    let (tx, rx) = std::sync::mpsc::channel();
+    buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
+        tx.send(result).unwrap();
+    });
+    ctx.device.poll(wgpu::Maintain::Wait);
+    rx.recv()
+        .map_err(|_| GpuError::BufferMapping)?
+        .map_err(|_| GpuError::BufferMapping)?;
+
+    let data = buffer_slice.get_mapped_range();
+    let dist: Vec<u32> = bytemuck::cast_slice(&data).to_vec();
+    drop(data);
+    dist_staging.unmap();
+
+    Ok(dist)
+}
+
 fn read_u32(ctx: &GpuContext, staging: &wgpu::Buffer) -> Result<u32, GpuError> {
     let slice = staging.slice(..);
     let (tx, rx) = std::sync::mpsc::channel();
@@ -481,8 +779,8 @@ mod tests {
     fn cpu_empty_grid_straight_line() {
         let g = grid(10, 1, 1);
         let dist = distance_field_cpu(&g, &[0], &COSTS);
-        for x in 0..10 {
-            assert_eq!(dist[x], x as u32 * 1000);
+        for (x, &d) in dist.iter().enumerate() {
+            assert_eq!(d, x as u32 * 1000);
         }
     }
 
@@ -587,10 +885,98 @@ mod tests {
         let gpu = distance_field(&g, &[src], &COSTS).expect("gpu");
         let gpu_time = t0.elapsed();
         let t1 = std::time::Instant::now();
+        let gpu_compact = distance_field_compacted(&g, &[src], &COSTS).expect("gpu compacted");
+        let compact_time = t1.elapsed();
+        let t2 = std::time::Instant::now();
         let cpu = distance_field_cpu(&g, &[src], &COSTS);
-        let cpu_time = t1.elapsed();
+        let cpu_time = t2.elapsed();
         assert_eq!(gpu, cpu);
-        println!("400x400x10: gpu={gpu_time:?} cpu={cpu_time:?}");
+        assert_eq!(gpu_compact, cpu);
+        println!(
+            "400x400x10: gpu-full={gpu_time:?} gpu-compacted={compact_time:?} cpu={cpu_time:?}"
+        );
+    }
+
+    #[test]
+    fn gpu_compacted_matches_cpu_on_walled_grid() {
+        let g = walled_grid();
+        let src = g.index(0, 2, 0);
+        let gpu = match distance_field_compacted(&g, &[src], &COSTS) {
+            Ok(d) => d,
+            Err(GpuError::NoAdapter) => return, // headless CI without a GPU
+            Err(e) => panic!("GPU error: {e}"),
+        };
+        let cpu = distance_field_cpu(&g, &[src], &COSTS);
+        assert_eq!(gpu, cpu);
+    }
+
+    #[test]
+    fn gpu_compacted_matches_cpu_multi_source_random_obstacles() {
+        let mut g = grid(32, 24, 3);
+        let mut state = 0x2545f491u32;
+        let mut rand = move || {
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            state
+        };
+        for b in g.blocked.iter_mut() {
+            *b = rand() % 5 == 0;
+        }
+        let sources: Vec<usize> = [(1, 1, 0), (30, 22, 2)]
+            .iter()
+            .map(|&(x, y, l)| (l * g.ny + y) * g.nx + x)
+            .collect();
+        for &s in &sources {
+            g.blocked[s] = false;
+        }
+
+        let gpu = match distance_field_compacted(&g, &sources, &COSTS) {
+            Ok(d) => d,
+            Err(GpuError::NoAdapter) => return,
+            Err(e) => panic!("GPU error: {e}"),
+        };
+        let cpu = distance_field_cpu(&g, &sources, &COSTS);
+        assert_eq!(gpu, cpu);
+    }
+
+    /// Router-reality-shaped benchmark: CM5-scale board raster, 40%
+    /// blocked, corner-to-corner query. Run manually:
+    /// `cargo test -p vcad-kernel-gpu --release -- --ignored bench_wavefront --nocapture`
+    #[test]
+    #[ignore = "benchmark; run manually with --ignored"]
+    fn bench_wavefront_344x250x10_dense() {
+        let mut g = grid(344, 250, 10);
+        let mut state = 0x1234_5678u32;
+        let mut rand = move || {
+            state ^= state << 13;
+            state ^= state >> 17;
+            state ^= state << 5;
+            state
+        };
+        for b in g.blocked.iter_mut() {
+            *b = rand() % 10 < 4;
+        }
+        let src = g.index(0, 0, 0);
+        let goal = g.index(343, 249, 9);
+        g.blocked[src] = false;
+        g.blocked[goal] = false;
+
+        let t0 = std::time::Instant::now();
+        let gpu_full = distance_field(&g, &[src], &COSTS).expect("gpu full");
+        let full_time = t0.elapsed();
+        let t1 = std::time::Instant::now();
+        let gpu_compact = distance_field_compacted(&g, &[src], &COSTS).expect("gpu compacted");
+        let compact_time = t1.elapsed();
+        let t2 = std::time::Instant::now();
+        let cpu = distance_field_cpu(&g, &[src], &COSTS);
+        let cpu_time = t2.elapsed();
+        assert_eq!(gpu_full, cpu);
+        assert_eq!(gpu_compact, cpu);
+        println!(
+            "344x250x10 (40% blocked): gpu-full={full_time:?} gpu-compacted={compact_time:?} cpu={cpu_time:?} corner_dist={}",
+            cpu[goal]
+        );
     }
 
     #[test]

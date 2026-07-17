@@ -103,4 +103,44 @@ fn main() {
         println!("  {a:?}..{b:?}: {c} vias");
     }
     println!("\ntotal human vias on stuck nets: {total_human_vias}");
+
+    // How tightly did the human actually space copper? Probe every stuck
+    // net's trace segments against the rest of the board with a huge
+    // clearance and report the min air gap observed — the real fab limit,
+    // vs. the clearance our importer calibrated.
+    let session = vcad_ecad_pcb::session::RouteSession::from_pcb(&human);
+    let mut min_gap = f64::INFINITY;
+    let mut gaps: Vec<f64> = Vec::new();
+    for net in &stuck {
+        for t in human.traces.iter().filter(|t| t.net == *net) {
+            let pr = session.probe(
+                &vcad_ecad_pcb::spatial::CopperGeom::Segment {
+                    a: t.start,
+                    b: t.end,
+                    half_w: t.width / 2.0,
+                },
+                t.layer,
+                net,
+                10.0,
+            );
+            if pr.min_clearance.is_finite() {
+                gaps.push(pr.min_clearance);
+                min_gap = min_gap.min(pr.min_clearance);
+            }
+        }
+    }
+    gaps.sort_by(f64::total_cmp);
+    let pct = |q: f64| {
+        gaps.get((gaps.len() as f64 * q) as usize)
+            .copied()
+            .unwrap_or(f64::NAN)
+    };
+    println!(
+        "\nhuman spacing on stuck-net copper: min={:.3}mm p5={:.3} p25={:.3} median={:.3} (our calibrated clearance: {:.3}mm)",
+        min_gap,
+        pct(0.05),
+        pct(0.25),
+        pct(0.5),
+        human.rules.default_rules.clearance,
+    );
 }
