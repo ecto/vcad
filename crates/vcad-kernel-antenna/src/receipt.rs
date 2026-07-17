@@ -513,10 +513,36 @@ mod tests {
 
     #[test]
     fn claim_set_round_trips_through_json() {
+        // Values are compared with an ULP-scale tolerance, not bitwise:
+        // serde_json's default float PARSING is not guaranteed exact to
+        // the last ULP (that is its off-by-default `float_roundtrip`
+        // feature), and the computed claim values themselves differ in
+        // their final ULP across platform libm implementations — bitwise
+        // equality here is flaky by construction (caught on Linux CI vs
+        // a macOS-green run). Everything non-float stays exact.
         let cs = dipole_claims();
         let json = serde_json::to_string(&cs).unwrap();
         let back: ClaimSet = serde_json::from_str(&json).unwrap();
-        assert_eq!(cs, back);
+        assert_eq!(cs.schema, back.schema);
+        assert_eq!(cs.provenance.segments, back.provenance.segments);
+        assert_eq!(cs.provenance.bases, back.provenance.bases);
+        assert_eq!(cs.provenance.environment, back.provenance.environment);
+        assert_eq!(cs.reference_ohm, back.reference_ohm);
+        assert_eq!(cs.claims.len(), back.claims.len());
+        for (a, b) in cs.claims.iter().zip(&back.claims) {
+            assert_eq!(a.name, b.name);
+            assert_eq!(a.unit, b.unit);
+            assert_eq!(a.basis, b.basis);
+            assert_eq!(a.note, b.note);
+            let scale = a.value.abs().max(1.0);
+            assert!(
+                (a.value - b.value).abs() <= 1e-12 * scale,
+                "{}: {} vs {} after JSON",
+                a.name,
+                a.value,
+                b.value
+            );
+        }
     }
 
     #[test]
