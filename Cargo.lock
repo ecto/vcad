@@ -7147,6 +7147,7 @@ dependencies = [
  "vcad-kernel-fillet",
  "vcad-kernel-geom",
  "vcad-kernel-math",
+ "vcad-kernel-particle",
  "vcad-kernel-primitives",
  "vcad-kernel-sheet",
  "vcad-kernel-shell",
@@ -7325,6 +7326,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "vcad-kernel-particle"
+version = "0.9.4"
+dependencies = [
+ "serde",
+ "serde_json",
+ "vcad-receipt",
+]
+
+[[package]]
 name = "vcad-kernel-physics"
 version = "0.9.4"
 dependencies = [
@@ -7472,6 +7482,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "vcad-kernel-tolerance"
+version = "0.9.4"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "vcad-kernel-topo"
 version = "0.9.4"
 dependencies = [
@@ -7540,6 +7558,7 @@ dependencies = [
  "vcad-kernel-urdf",
  "vcad-loon",
  "vcad-parts",
+ "vcad-receipt",
  "vcad-render",
  "vcad-slicer",
  "vcad-slicer-bambu",

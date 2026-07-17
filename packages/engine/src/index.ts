@@ -442,6 +442,18 @@ export interface KernelModule {
     positions: Float32Array,
     indices: Uint32Array,
   ) => unknown;
+  /** Charged-particle optics simulation (DeviceSpec/params/options JSON). */
+  particleSimulate?: (
+    specJson: string,
+    paramsJson: string,
+    optionsJson: string,
+  ) => unknown;
+  /** Charged-particle yield optimization over named spec parameters. */
+  particleOptimize?: (
+    specJson: string,
+    paramsJson: string,
+    optimizeJson: string,
+  ) => unknown;
   /** Static structural analysis of a box solid. */
   analyzeStaticsBox?: (
     specJson: string,
@@ -815,6 +827,8 @@ export class Engine {
       mesh_clearance: (wasmModule as Record<string, unknown>).mesh_clearance as KernelModule["mesh_clearance"],
       topologyOptimizeBox: (wasmModule as Record<string, unknown>).topologyOptimizeBox as KernelModule["topologyOptimizeBox"],
       topologyOptimizeMesh: (wasmModule as Record<string, unknown>).topologyOptimizeMesh as KernelModule["topologyOptimizeMesh"],
+      particleSimulate: (wasmModule as Record<string, unknown>).particleSimulate as KernelModule["particleSimulate"],
+      particleOptimize: (wasmModule as Record<string, unknown>).particleOptimize as KernelModule["particleOptimize"],
       analyzeStaticsBox: (wasmModule as Record<string, unknown>).analyzeStaticsBox as KernelModule["analyzeStaticsBox"],
       analyzeStaticsMesh: (wasmModule as Record<string, unknown>).analyzeStaticsMesh as KernelModule["analyzeStaticsMesh"],
     }, compiledWasmModule);
@@ -1060,6 +1074,45 @@ export class Engine {
    * supports. Returns the optimized structure as a watertight mesh plus run
    * diagnostics.
    */
+  /**
+   * Charged-particle optics simulation: solve an axisymmetric electrode
+   * device, trace a deuteron ensemble, and return figures of merit plus
+   * predicted receipt claims. Inputs are JSON strings (DeviceSpec, named
+   * parameter bindings, options); see `vcad-kernel-particle`.
+   */
+  particleSimulate(
+    specJson: string,
+    paramsJson: string,
+    optionsJson: string,
+  ): unknown {
+    const fn = this.kernel.particleSimulate;
+    if (typeof fn !== "function") {
+      throw new Error(
+        "particleSimulate is not exported by this kernel WASM build — rebuild packages/kernel-wasm",
+      );
+    }
+    return fn(specJson, paramsJson, optionsJson);
+  }
+
+  /**
+   * Multi-start gradient ascent over named device-spec parameters against
+   * predicted D-D yield per ion. Inputs are JSON strings; see
+   * `vcad-kernel-particle::optimize`.
+   */
+  particleOptimize(
+    specJson: string,
+    paramsJson: string,
+    optimizeJson: string,
+  ): unknown {
+    const fn = this.kernel.particleOptimize;
+    if (typeof fn !== "function") {
+      throw new Error(
+        "particleOptimize is not exported by this kernel WASM build — rebuild packages/kernel-wasm",
+      );
+    }
+    return fn(specJson, paramsJson, optimizeJson);
+  }
+
   topologyOptimizeBox(
     min: [number, number, number],
     max: [number, number, number],
