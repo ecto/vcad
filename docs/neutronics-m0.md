@@ -211,10 +211,17 @@ Checks and findings:
   measurement matching no claim is an error. Registration in
   `crates/vcad-receipt` + MCP tools = flagged follow-up PR (cross-crate
   schema + TS codegen), same staging as the particle family.
-- **M5 — benchmarks + convergence + paper draft.** Published-value
-  benchmarks (water thermal diffusion length 2.85 cm, Fermi age ≈ 27 cm²,
-  hydrogen collisions-to-thermal ≈ 18), one-group MC vs analytic
-  diffusion cross-check, convergence study, paper skeleton.
+- **M5 — benchmarks + convergence + paper draft. DONE**
+  (`tests/benchmarks.rs`, `examples/convergence.rs`,
+  `docs/neutronics-paper-draft.md`). Published-value scorecard: water
+  thermal diffusion length **2.14 cm vs 2.85 published** (−25%, band
+  edge — the thermal-group simplifications err toward shorter thermal
+  migration, stated); Fermi age **33.1 cm² vs ≈27** (+23%);
+  collisions-to-thermal **18.3 vs 19.5** predicted by moderation theory
+  *from the same library constants* (−6%). Convergence example:
+  uncollided MC within 0.1–0.5% of exact at 1–5 mfp; RSE·√N flat over
+  64× histories. External cross-validation (OpenMC + evaluated data)
+  flagged as external, like the particle crate's SIMION runs.
 - **M6 — the application.** The shielded-grid experiment's Phase B
   shield: operator at 2 m, 5×10⁶ n/s, stated dose budget — a
   section-ready table for `docs/shielded-grid-experiment.md` with error
