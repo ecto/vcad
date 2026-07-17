@@ -1438,6 +1438,16 @@ impl Solid {
         }
         let spec: Spec = serde_json::from_str(spec_json)
             .map_err(|e| JsError::new(&format!("invalid edge blend spec: {e}")))?;
+        if let vcad_ir::EdgeQuery::Named { face_a, face_b } = &spec.edges {
+            // Fail-closed: an unresolvable named edge is an error, never a
+            // nearest-edge guess.
+            let keys = kernel_blend_keys(&spec.profile);
+            let inner = self
+                .inner
+                .edge_blend_named(face_a, face_b, &keys)
+                .map_err(|e| JsError::new(&format!("named edge ('{face_a}' / '{face_b}'): {e}")))?;
+            return Ok(Solid { inner });
+        }
         let (query, keys) = kernel_blend_args(&spec.edges, &spec.profile);
         Ok(Solid {
             inner: self.inner.edge_blend(&query, &keys),
@@ -3978,6 +3988,14 @@ fn ir_segment_to_wasm(seg: &vcad_ir::SketchSegment2D) -> WasmSketchSegment {
 }
 
 /// Recursively evaluate a node in the IR DAG.
+/// Rewrite a primitive's persistent face-name scope to the document node id
+/// ("cube:top" -> "n3:top") — same convention as the vcad-eval and vcad-app
+/// evaluators, so Named edge queries mean the same thing everywhere.
+fn scope_names(node_id: vcad_ir::NodeId, mut s: Solid) -> Solid {
+    s.inner.set_name_scope(&format!("n{node_id}"));
+    s
+}
+
 fn evaluate_node(doc: &vcad_ir::Document, node_id: vcad_ir::NodeId) -> Result<Solid, JsError> {
     let node = doc
         .nodes
@@ -3985,7 +4003,7 @@ fn evaluate_node(doc: &vcad_ir::Document, node_id: vcad_ir::NodeId) -> Result<So
         .ok_or_else(|| JsError::new(&format!("Node {} not found", node_id)))?;
 
     match &node.op {
-        vcad_ir::CsgOp::Cube { size } => Ok(Solid::cube(size.x, size.y, size.z)),
+        vcad_ir::CsgOp::Cube { size } => Ok(scope_names(node_id, Solid::cube(size.x, size.y, size.z))),
 
         vcad_ir::CsgOp::Cylinder {
             radius,
@@ -3997,7 +4015,7 @@ fn evaluate_node(doc: &vcad_ir::Document, node_id: vcad_ir::NodeId) -> Result<So
             } else {
                 Some(*segments)
             };
-            Ok(Solid::cylinder(*radius, *height, segs))
+            Ok(scope_names(node_id, Solid::cylinder(*radius, *height, segs)))
         }
 
         vcad_ir::CsgOp::Sphere { radius, segments } => {
@@ -4006,7 +4024,7 @@ fn evaluate_node(doc: &vcad_ir::Document, node_id: vcad_ir::NodeId) -> Result<So
             } else {
                 Some(*segments)
             };
-            Ok(Solid::sphere(*radius, segs))
+            Ok(scope_names(node_id, Solid::sphere(*radius, segs)))
         }
 
         vcad_ir::CsgOp::Cone {
@@ -4020,7 +4038,7 @@ fn evaluate_node(doc: &vcad_ir::Document, node_id: vcad_ir::NodeId) -> Result<So
             } else {
                 Some(*segments)
             };
-            Ok(Solid::cone(*radius_bottom, *radius_top, *height, segs))
+            Ok(scope_names(node_id, Solid::cone(*radius_bottom, *radius_top, *height, segs)))
         }
 
         vcad_ir::CsgOp::Torus {
@@ -4033,16 +4051,16 @@ fn evaluate_node(doc: &vcad_ir::Document, node_id: vcad_ir::NodeId) -> Result<So
             } else {
                 Some(*segments)
             };
-            Ok(Solid::torus(*major_radius, *minor_radius, segs))
+            Ok(scope_names(node_id, Solid::torus(*major_radius, *minor_radius, segs)))
         }
 
-        vcad_ir::CsgOp::Wedge { size } => Ok(Solid::wedge(size.x, size.y, size.z)),
+        vcad_ir::CsgOp::Wedge { size } => Ok(scope_names(node_id, Solid::wedge(size.x, size.y, size.z))),
 
         vcad_ir::CsgOp::Prism {
             sides,
             radius,
             height,
-        } => Ok(Solid::prism(*sides, *radius, *height)),
+        } => Ok(scope_names(node_id, Solid::prism(*sides, *radius, *height))),
 
         vcad_ir::CsgOp::Empty => Ok(Solid::empty()),
 
@@ -4149,6 +4167,15 @@ fn evaluate_node(doc: &vcad_ir::Document, node_id: vcad_ir::NodeId) -> Result<So
             profile,
         } => {
             let c = evaluate_node(doc, *child)?;
+            if let vcad_ir::EdgeQuery::Named { face_a, face_b } = edges {
+                // Fail-closed: an unresolvable named edge is an error,
+                // never a nearest-edge guess.
+                let keys = kernel_blend_keys(profile);
+                let inner = c.inner.edge_blend_named(face_a, face_b, &keys).map_err(|e| {
+                    JsError::new(&format!("named edge ('{face_a}' / '{face_b}'): {e}"))
+                })?;
+                return Ok(Solid { inner });
+            }
             let (query, keys) = kernel_blend_args(edges, profile);
             Ok(Solid {
                 inner: c.inner.edge_blend(&query, &keys),
@@ -7245,7 +7272,20 @@ fn kernel_blend_args(
             axis: vcad_kernel_math::Vec3::new(axis.x, axis.y, axis.z),
             tol_deg: *tol_deg,
         },
+        // Named queries resolve against the child solid's name map at the
+        // call sites and never reach this translation.
+        vcad_ir::EdgeQuery::Named { .. } => {
+            unreachable!("Named edge queries are handled before kernel_blend_args")
+        }
     };
+    (q, kernel_blend_keys(profile))
+}
+
+/// Convert an IR blend profile to kernel blend keys.
+fn kernel_blend_keys(
+    profile: &vcad_ir::BlendProfile,
+) -> Vec<vcad_kernel::vcad_kernel_fillet::BlendKey> {
+    use vcad_kernel::vcad_kernel_fillet as kf;
     let keys = match profile {
         vcad_ir::BlendProfile::Constant { size, shape } => vec![kf::BlendKey {
             t: 0.0,
@@ -7265,7 +7305,7 @@ fn kernel_blend_args(
             })
             .collect(),
     };
-    (q, keys)
+    keys
 }
 
 // ---------------------------------------------------------------------------

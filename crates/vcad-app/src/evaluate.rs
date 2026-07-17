@@ -192,8 +192,20 @@ fn evaluate_node(doc: &Document, node_id: NodeId) -> Result<Option<Solid>> {
             profile,
         } => {
             let c = evaluate_node(doc, *child)?;
-            let (query, keys) = kernel_blend_args(edges, profile);
-            c.map(|s| s.edge_blend(&query, &keys))
+            if let vcad_ir::EdgeQuery::Named { face_a, face_b } = edges {
+                let keys = kernel_blend_keys(profile);
+                match c {
+                    // Fail-closed: an unresolvable named edge is an error,
+                    // never a nearest-edge guess.
+                    Some(s) => Some(s.edge_blend_named(face_a, face_b, &keys).map_err(|e| {
+                        anyhow::anyhow!("named edge ('{face_a}' / '{face_b}'): {e}")
+                    })?),
+                    None => None,
+                }
+            } else {
+                let (query, keys) = kernel_blend_args(edges, profile);
+                c.map(|s| s.edge_blend(&query, &keys))
+            }
         }
         CsgOp::StepImport { path } => Solid::from_step(path).ok(),
         // STL meshes feed the physics path directly; the editor doesn't yet
@@ -218,6 +230,26 @@ fn evaluate_node(doc: &Document, node_id: NodeId) -> Result<Option<Solid>> {
         | CsgOp::SheetMetalBendRelief { .. } => None,
     };
 
+    // Primitives seed persistent face names under a kind scope; rewrite it
+    // to the document node id so names are DAG-unique and rebuild-stable
+    // ("cube:top" → "n3:top") — the same convention as vcad-eval.
+    let solid = match (&node.op, solid) {
+        (
+            CsgOp::Cube { .. }
+            | CsgOp::Cylinder { .. }
+            | CsgOp::Sphere { .. }
+            | CsgOp::Cone { .. }
+            | CsgOp::Torus { .. }
+            | CsgOp::Wedge { .. }
+            | CsgOp::Prism { .. },
+            Some(mut s),
+        ) => {
+            s.set_name_scope(&format!("n{node_id}"));
+            Some(s)
+        }
+        (_, solid) => solid,
+    };
+
     Ok(solid)
 }
 
@@ -239,7 +271,20 @@ fn kernel_blend_args(
             axis: vcad_kernel_math::Vec3::new(axis.x, axis.y, axis.z),
             tol_deg: *tol_deg,
         },
+        // Named queries resolve against the child solid's name map in the
+        // EdgeBlend arm and never reach this translation.
+        vcad_ir::EdgeQuery::Named { .. } => {
+            unreachable!("Named edge queries are handled before kernel_blend_args")
+        }
     };
+    (q, kernel_blend_keys(profile))
+}
+
+/// Convert an IR blend profile to kernel blend keys.
+fn kernel_blend_keys(
+    profile: &vcad_ir::BlendProfile,
+) -> Vec<vcad_kernel::vcad_kernel_fillet::BlendKey> {
+    use vcad_kernel::vcad_kernel_fillet as kf;
     let keys = match profile {
         vcad_ir::BlendProfile::Constant { size, shape } => vec![kf::BlendKey {
             t: 0.0,
@@ -259,5 +304,5 @@ fn kernel_blend_args(
             })
             .collect(),
     };
-    (q, keys)
+    keys
 }
