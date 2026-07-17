@@ -778,6 +778,33 @@ impl Simulation {
             .collect()
     }
 
+    /// A flux monitor's accumulated DFT phasors `(E, H)`, freq-major
+    /// (`freqs.len() × n_samples`), for cross-run subtraction.
+    pub fn flux_phasors(&self, id: FluxId) -> (Vec<Cplx>, Vec<Cplx>) {
+        let f = &self.fluxes[id.0];
+        (f.e_acc.clone(), f.h_acc.clone())
+    }
+
+    /// Preload a flux monitor with the **negated** phasors of a reference
+    /// run (before the first step): after this run, the monitor holds
+    /// `fields − reference fields`, so its flux is the flux of the
+    /// scattered field alone — the standard way to measure reflection
+    /// exactly even when scattered and incident light co-propagate
+    /// (Meep's `load_minus_flux`). The reference must come from an
+    /// identically placed monitor with the same frequencies.
+    pub fn subtract_flux_phasors(&mut self, id: FluxId, e: &[Cplx], h: &[Cplx]) {
+        self.assert_configurable();
+        let f = &mut self.fluxes[id.0];
+        assert_eq!(f.e_acc.len(), e.len(), "reference monitor shape mismatch");
+        assert_eq!(f.h_acc.len(), h.len(), "reference monitor shape mismatch");
+        for (a, r) in f.e_acc.iter_mut().zip(e) {
+            *a = *a + r.scale(-1.0);
+        }
+        for (a, r) in f.h_acc.iter_mut().zip(h) {
+            *a = *a + r.scale(-1.0);
+        }
+    }
+
     /// A probe's recorded series (one sample per step).
     pub fn probe_series(&self, id: ProbeId) -> &[f64] {
         &self.probes[id.0].series

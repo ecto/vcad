@@ -102,6 +102,25 @@ impl TopologyParam {
         }
     }
 
+    /// The hard-thresholded twin of this design: densities snapped to
+    /// {0, 1} where the *projected* field crosses ½, with the filter
+    /// disabled so the realized ε is exactly two-phase. This is the
+    /// geometry the GDS export ships ([`crate::gds::design_to_gds`]
+    /// thresholds the same way), so **claims must be made on the
+    /// binarized twin** — gray boundary cells do real optical work
+    /// during optimization, and the difference (the binarization gap)
+    /// is an honesty metric, not noise.
+    pub fn binarized(&self) -> TopologyParam {
+        let mut out = self.clone();
+        out.rho = self
+            .projected()
+            .iter()
+            .map(|&p| if p >= 0.5 { 1.0 } else { 0.0 })
+            .collect();
+        out.filter_radius_cells = 0.0;
+        out
+    }
+
     /// Chain a dJ/dε field (from [`crate::adjoint::objective_and_gradient`],
     /// region-local) back to dJ/dρ over the raw densities.
     pub fn chain_gradient(&self, d_j_d_eps: &Field2) -> Vec<f64> {

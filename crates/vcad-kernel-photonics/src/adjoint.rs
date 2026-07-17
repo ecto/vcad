@@ -153,24 +153,44 @@ pub fn objective_and_gradient(
     obj: &ModeOverlap,
     steps: usize,
 ) -> GradientResult {
-    // ---- Forward pass: record A and the region's Ez time series.
+    objectives_and_gradients(build, region, std::slice::from_ref(obj), steps)
+        .pop()
+        .expect("one objective in, one result out")
+}
+
+/// Multi-objective form: **one shared forward pass** (the expensive
+/// series storage is reused), then one adjoint pass per objective —
+/// exactly what a splitter needs (one gradient per output arm, combined
+/// by the optimizer with whatever weighting its figure of merit implies).
+pub fn objectives_and_gradients(
+    build: &mut dyn FnMut(bool) -> Simulation,
+    region: &DesignRegion,
+    objs: &[ModeOverlap],
+    steps: usize,
+) -> Vec<GradientResult> {
+    assert!(!objs.is_empty());
+    // ---- Forward pass: record every A and the region's Ez time series.
     let mut fwd = build(true);
     assert_eq!(fwd.polarization(), Polarization::Tm);
-    validate_geometry(&fwd, region, obj);
+    for obj in objs {
+        validate_geometry(&fwd, region, obj);
+    }
     let dt = fwd.dt();
-    let omega = 2.0 * std::f64::consts::PI * obj.freq;
     let (rx, ry) = (region.ns_x(), region.ns_y());
     let cells = rx * ry;
     // series[n·cells + c] = Ez at region cell c after forward step n;
     // one extra leading frame of zeros represents Ez^0.
     let mut series = vec![0.0f64; (steps + 1) * cells];
-    let mut a = Cplx::ZERO;
+    let mut amps = vec![Cplx::ZERO; objs.len()];
     for n in 0..steps {
         fwd.step();
         let t = (n as f64 + 1.0) * dt;
-        let ph = Cplx::cis(omega * t).scale(dt);
-        for (m, w) in obj.weights.iter().enumerate() {
-            a = a + ph.scale(w * fwd.ez_at(obj.i, obj.j0 + m));
+        for (k, obj) in objs.iter().enumerate() {
+            let omega = 2.0 * std::f64::consts::PI * obj.freq;
+            let ph = Cplx::cis(omega * t).scale(dt);
+            for (m, w) in obj.weights.iter().enumerate() {
+                amps[k] = amps[k] + ph.scale(w * fwd.ez_at(obj.i, obj.j0 + m));
+            }
         }
         let base = (n + 1) * cells;
         for di in 0..rx {
@@ -180,55 +200,63 @@ pub fn objective_and_gradient(
         }
     }
 
-    // ---- Adjoint pass: same stepper, monitor-line sources, reversed
-    // pairing with the stored forward increments.
-    let mut adj = build(false);
-    assert_eq!(adj.polarization(), Polarization::Tm);
-    assert_eq!(
-        adj.dt(),
-        dt,
-        "adjoint must share the forward discretization"
-    );
-    // 1/ε at the monitor samples (the D⁻¹ in the transformed sources).
-    let inv_eps_mon: Vec<f64> = (0..obj.weights.len())
-        .map(|m| 1.0 / adj.epsilon().0.at(obj.i, obj.j0 + m))
-        .collect();
-    let mut grad = Field2::new(rx, ry);
-    for q in 0..steps {
-        adj.step();
-        // Adjoint source for this step: (2·dt/ε_m)·w_m·Re[conj(A)·e^{iω·t_k}]
-        // with t_k = (N−q)·dt — adjoint step q produces the transformed
-        // λ^{N−q}, whose recursion carries g^{N−q}; the first injection
-        // (q = 0) realizes the terminal condition λ^N = ∂J/∂u^N.
-        let t_k = (steps - q) as f64 * dt;
-        let osc = Cplx::cis(omega * t_k);
-        let re = a.conj() * osc;
-        for (m, w) in obj.weights.iter().enumerate() {
-            let s = 2.0 * dt * inv_eps_mon[m] * w * re.re;
-            if s != 0.0 {
-                adj.inject_ez(obj.i, obj.j0 + m, s);
+    // ---- One adjoint pass per objective: same stepper, monitor-line
+    // sources, reversed pairing with the stored forward increments.
+    objs.iter()
+        .zip(amps.iter())
+        .map(|(obj, &a)| {
+            let mut adj = build(false);
+            assert_eq!(adj.polarization(), Polarization::Tm);
+            assert_eq!(
+                adj.dt(),
+                dt,
+                "adjoint must share the forward discretization"
+            );
+            let omega = 2.0 * std::f64::consts::PI * obj.freq;
+            // 1/ε at the monitor samples (the D⁻¹ in the transformed
+            // sources).
+            let inv_eps_mon: Vec<f64> = (0..obj.weights.len())
+                .map(|m| 1.0 / adj.epsilon().0.at(obj.i, obj.j0 + m))
+                .collect();
+            let mut grad = Field2::new(rx, ry);
+            for q in 0..steps {
+                adj.step();
+                // Adjoint source for this step:
+                // (2·dt/ε_m)·w_m·Re[conj(A)·e^{iω·t_k}] with
+                // t_k = (N−q)·dt — adjoint step q produces the transformed
+                // λ^{N−q}, whose recursion carries g^{N−q}; the first
+                // injection (q = 0) realizes the terminal condition
+                // λ^N = ∂J/∂u^N.
+                let t_k = (steps - q) as f64 * dt;
+                let osc = Cplx::cis(omega * t_k);
+                let re = a.conj() * osc;
+                for (m, w) in obj.weights.iter().enumerate() {
+                    let s = 2.0 * dt * inv_eps_mon[m] * w * re.re;
+                    if s != 0.0 {
+                        adj.inject_ez(obj.i, obj.j0 + m, s);
+                    }
+                }
+                // Pair φ^{N−q} — the POST-step, POST-injection adjoint
+                // field (λ^{n+1} includes its own ∂J/∂u^{n+1} term) —
+                // with the forward increment ΔE^n at n = N−q−1.
+                let n = steps - 1 - q;
+                let (b1, b0) = ((n + 1) * cells, n * cells);
+                for di in 0..rx {
+                    for dj in 0..ry {
+                        let phi = adj.ez_at(region.i0 + di, region.j0 + dj);
+                        let de = series[b1 + di * ry + dj] - series[b0 + di * ry + dj];
+                        *grad.at_mut(di, dj) -= phi * de;
+                    }
+                }
             }
-        }
-        // Pair φ^{N−q} — the POST-step, POST-injection adjoint field
-        // (λ^{n+1} includes its own ∂J/∂u^{n+1} term) — with the forward
-        // increment ΔE^n at n = N−q−1.
-        let n = steps - 1 - q;
-        let (b1, b0) = ((n + 1) * cells, n * cells);
-        for di in 0..rx {
-            for dj in 0..ry {
-                let phi = adj.ez_at(region.i0 + di, region.j0 + dj);
-                let de = series[b1 + di * ry + dj] - series[b0 + di * ry + dj];
-                *grad.at_mut(di, dj) -= phi * de;
+            GradientResult {
+                objective: a.abs2(),
+                amplitude: a,
+                grad,
+                region: *region,
             }
-        }
-    }
-
-    GradientResult {
-        objective: a.abs2(),
-        amplitude: a,
-        grad,
-        region: *region,
-    }
+        })
+        .collect()
 }
 
 /// Region/monitor placement rules the gradient formula depends on.

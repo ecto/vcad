@@ -198,20 +198,129 @@ default; NaN ⇒ error; densities validated against the region, ρ ∉ [0,1]
 rejected). The density vector travels as data; β is schedule state, not
 a document parameter. JSON round-trip tested.
 
-## Milestone ladder
-- **M2 — the adjoint:** reverse-time run with adjoint sources at the
-  objective monitor; ∂T/∂ε per design cell; validated against central
-  differences on perturbed cells with frozen run length (linear wave
-  physics should be kinder than particle chaos was — verify, don't assume).
-- **M3 — topology parameterization:** density field → filter (minimum
-  feature) → projection (binarization schedule) → ε; serde design spec
-  with named parameters, fail-closed resolution.
-- **M4 — claims:** `vcad.photonics-claims/1` — transmission,
-  insertion_loss_db, splitting_ratio, min_feature_nm — with grid,
-  cells/λ, run-time, and monitor-window provenance.
-- **M5 — the flagship:** inverse-designed 1×2 splitter (50/50 target,
-  −3.01 dB per arm), GDS export via `vcad-gdsii`, forward-solver benchmark
-  against a published Meep result, convergence study, paper-draft skeleton.
-- **M6 — tape-out pack:** design-rule notes for e-beam/shuttle runs,
-  min-feature honesty, and a `compare()` measurement schema for when a
-  chip comes back.
+## M4 (landed): `vcad.photonics-claims/1`
+
+`receipt::splitter_claims` — per-arm transmission, insertion loss,
+splitting ratio, arm dB levels, `min_feature_nm` (honestly labeled a
+regularization scale) — fail-closed (empty spectrum, non-positive/NaN
+powers, missing center frequency all refuse), with provenance that
+prices the solver's own dispersion error and the cells/λ **in the core
+material** into every claim set. `basis: "predicted"` throughout.
+(vcad-receipt/MCP wiring is the flagged cross-crate follow-up.)
+
+## M5 (landed): THE flagship — the inverse-designed 1×2 splitter
+
+`cargo run --release -p vcad-kernel-photonics --example splitter_inverse_design`
+
+2×2 design box (2704 density cells) between an input guide and two
+output arms; per-arm adjoint gradients (one forward + two adjoint runs
+per iteration, shared forward pass); Y-taper seed; β schedule 4→128;
+195 FDTD runs. **Hard-thresholded before claiming** — the binarization
+gap came out at **0.02 %** (gray FoM 70.305 → binary 70.291), i.e. the
+design is genuinely two-phase. Claims at λ₀ = 1.55:
+
+| claim | value |
+|---|---|
+| transmission arm A / arm B | 0.4938 / 0.5000 |
+| per-arm level | **3.064 dB / 3.011 dB** (target 3.01 dB) |
+| splitting ratio | 0.4969 |
+| insertion loss | 0.027 dB |
+| reflection (phasor-subtraction) | 2×10⁻⁴ |
+| min feature | 232.5 nm (cone-filter diameter) |
+
+Broadband: total transmission 0.992–0.995 and ratio 0.497–0.498 across
+λ = 1.50–1.60. GDS: 47 rectangles, µm/nm units, exact pixel geometry.
+Convergence of the final binary geometry (pixel shapes re-painted):
+
+```
+  res      T_a      T_b      total
+  λ/40    0.4938   0.5000   0.9938   (native — matches characterization)
+  λ/60    0.4857   0.4878   0.9735
+  λ/80    0.4857   0.4876   0.9733   (converged: IL ≈ 0.12 dB)
+```
+
+The native-grid claim is ~2 % optimistic on total transmission; the
+λ/60→λ/80 drift is 2×10⁻⁴ — the converged-grid insertion loss of the
+shipped geometry is **0.12 dB**, and that is the number to quote against
+hardware. Three optimization-campaign lessons are recorded in the paper
+draft (source back-action vs reference normalization; fixed-window
+resonance exploitation; claim-the-binary-twin).
+
+### Meep benchmark configuration
+
+`examples/meep_bend_benchmark.rs` reproduces Meep's published
+`bend-flux` setup verbatim (ε = 12, w = 1, 16×32 cell, res 10, PML 1,
+fcen 0.15, df 0.1, Ez ≡ our TM), with reflection via our port of
+`load_minus_flux` (identical-run subtraction residual: 10⁻³⁰). The Meep
+docs publish curves, not numbers, so the quantitative A/B is: run the
+matching script below and diff the tables.
+
+```python
+# pip install meep;  python bend_ab.py   — mirrors our example exactly
+import meep as mp
+sx, sy, w, pad, dpml, res = 16, 32, 1, 4, 1.0, 10
+ycen, xcen = -0.5*(sy-w-2*pad), 0.5*(sx-w-2*pad)
+fcen, df, nfreq = 0.15, 0.1, 11
+def run(bend):
+    geom = ([mp.Block(mp.Vector3(sx-pad, w, mp.inf), center=mp.Vector3(-0.5*pad, ycen),
+                      material=mp.Medium(epsilon=12)),
+             mp.Block(mp.Vector3(w, sy-pad, mp.inf), center=mp.Vector3(xcen, 0.5*pad),
+                      material=mp.Medium(epsilon=12))] if bend else
+            [mp.Block(mp.Vector3(mp.inf, w, mp.inf), center=mp.Vector3(0, ycen),
+                      material=mp.Medium(epsilon=12))])
+    sim = mp.Simulation(cell_size=mp.Vector3(sx, sy), resolution=res,
+                        boundary_layers=[mp.PML(dpml)], geometry=geom,
+                        sources=[mp.Source(mp.GaussianSource(fcen, fwidth=df), mp.Ez,
+                                 center=mp.Vector3(-0.5*sx+dpml, ycen), size=mp.Vector3(0, w))])
+    refl = sim.add_flux(fcen, df, nfreq, mp.FluxRegion(
+        center=mp.Vector3(-0.5*sx+dpml+0.5, ycen), size=mp.Vector3(0, 2*w)))
+    tran_region = (mp.FluxRegion(center=mp.Vector3(xcen, 0.5*sy-dpml-0.5), size=mp.Vector3(2*w, 0))
+                   if bend else
+                   mp.FluxRegion(center=mp.Vector3(0.5*sx-dpml, ycen), size=mp.Vector3(0, 2*w)))
+    tran = sim.add_flux(fcen, df, nfreq, tran_region)
+    return sim, refl, tran
+sim, refl, tran = run(False)
+sim.run(until_after_sources=mp.stop_when_fields_decayed(
+    50, mp.Ez, mp.Vector3(0.5*sx-dpml-0.5, ycen), 1e-3))
+straight_refl_data, straight_tran = sim.get_flux_data(refl), mp.get_fluxes(tran)
+sim, refl, tran = run(True)
+sim.load_minus_flux_data(refl, straight_refl_data)
+sim.run(until_after_sources=mp.stop_when_fields_decayed(
+    50, mp.Ez, mp.Vector3(xcen, 0.5*sy-dpml-0.5), 1e-3))
+for f, r, t, p0 in zip(mp.get_flux_freqs(refl), mp.get_fluxes(refl),
+                       mp.get_fluxes(tran), straight_tran):
+    print(f"lambda {1/f:.3f}  R {-r/p0:.5f}  T {t/p0:.5f}  loss {1+r/p0-t/p0:.5f}")
+```
+
+Our table for the same configuration (from the example; loss is the
+closure 1 − R − T, all values positive — energy-sane):
+
+```
+  λ         f       R         T         loss
+  10.000    0.1000  0.22103   0.46703   0.31194
+  8.333     0.1200  0.25224   0.28387   0.46390
+  6.667     0.1500  0.23235   0.12231   0.64535
+  5.556     0.1800  0.24787   0.35451   0.39762
+  5.000     0.2000  0.27747   0.36719   0.35534
+```
+
+(A sharp 90° corner in a λ/w ≈ 5–10 guide reflects and radiates hard —
+the transmission dip near mid-band is the corner anti-resonance.)
+
+## M6 (landed): tape-out pack
+
+`docs/photonics-tapeout.md` — what the GDS is (exact pixel geometry,
+rect decomposition, nm grid), the e-beam shuttle design-rule checklist,
+the 2D→3D honesty clause, and `receipt::compare` — mechanical
+Holds/Violated/Unmeasured verdicts binding lab measurements to claims
+(`Unmeasured` is never assumed to hold; NaN measurements are
+violations).
+
+## Milestone ladder (next)
+
+- Effective-index 3D→2D reduction (prices the 2D→3D gap into claims).
+- TE adjoint + injection; anisotropic sub-pixel smoothing.
+- Broadband multi-frequency objectives (kills window-resonance
+  exploitation at the root).
+- `crates/vcad-receipt` + MCP wiring for the claims family
+  (cross-crate schema + TS codegen — flagged follow-up PR).

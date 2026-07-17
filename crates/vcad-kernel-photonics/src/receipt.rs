@@ -378,3 +378,186 @@ mod tests {
         assert_eq!(back.provenance.monitor_freqs, vec![0.62, 0.6452]);
     }
 }
+
+/// One lab measurement to bind against a predicted claim.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MeasuredValue {
+    /// Claim name this measures (must match [`Claim::name`]).
+    pub name: String,
+    /// Measured value (same unit as the claim).
+    pub value: f64,
+    /// One-sigma measurement uncertainty (same unit). 0 = not stated.
+    pub uncertainty: f64,
+}
+
+/// The verdict on one claim after measurement.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Verdict {
+    /// Measured agrees with predicted within tolerance ∪ 2σ.
+    Holds,
+    /// Measured disagrees beyond tolerance and 2σ.
+    Violated,
+    /// No measurement was supplied for this claim.
+    Unmeasured,
+}
+
+/// One row of the prediction-vs-measurement ledger.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ComparisonRow {
+    /// Claim name.
+    pub name: String,
+    /// Predicted value.
+    pub predicted: f64,
+    /// Measured value and 1σ uncertainty, when supplied.
+    pub measured: Option<(f64, f64)>,
+    /// The verdict.
+    pub verdict: Verdict,
+    /// How the verdict was reached (band widths), spelled out.
+    pub note: String,
+}
+
+/// Bind measurements to a claim set: every claim gets a row and a
+/// verdict — **fail-closed**: a claim nobody measured is `Unmeasured`,
+/// never silently assumed to hold. A claim holds when
+/// `|measured − predicted| ≤ max(tolerance_rel·|predicted|, 2σ)`.
+///
+/// This is the M6 `compare()` seam: the 2D-prediction caveat lives on
+/// the claims' notes; the verdict logic is deliberately mechanical.
+pub fn compare(
+    claims: &ClaimSet,
+    measured: &[MeasuredValue],
+    tolerance_rel: f64,
+) -> Vec<ComparisonRow> {
+    assert!(tolerance_rel >= 0.0);
+    claims
+        .claims
+        .iter()
+        .map(|c| {
+            let m = measured.iter().find(|m| m.name == c.name);
+            match m {
+                None => ComparisonRow {
+                    name: c.name.clone(),
+                    predicted: c.value,
+                    measured: None,
+                    verdict: Verdict::Unmeasured,
+                    note: "no measurement bound to this claim".to_string(),
+                },
+                Some(m) => {
+                    let band = (tolerance_rel * c.value.abs()).max(2.0 * m.uncertainty);
+                    let dev = (m.value - c.value).abs();
+                    let verdict = if m.value.is_nan() {
+                        Verdict::Violated
+                    } else if dev <= band {
+                        Verdict::Holds
+                    } else {
+                        Verdict::Violated
+                    };
+                    ComparisonRow {
+                        name: c.name.clone(),
+                        predicted: c.value,
+                        measured: Some((m.value, m.uncertainty)),
+                        verdict,
+                        note: format!(
+                            "|Δ| = {dev:.4e} vs band {band:.4e} \
+                             (max of {tolerance_rel}·|pred|, 2σ)"
+                        ),
+                    }
+                }
+            }
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod compare_tests {
+    use super::*;
+
+    fn claims() -> ClaimSet {
+        let meas = [SplitterMeasurement {
+            freq: 0.6452,
+            p_in: 1.0,
+            p_arm_a: 0.47,
+            p_arm_b: 0.47,
+        }];
+        splitter_claims(
+            &meas,
+            0.6452,
+            SolverProvenance {
+                grid: [160, 140],
+                delta: 0.03875,
+                cells_per_lambda: 40.0,
+                cells_per_lambda_core: 11.5,
+                courant: 0.5,
+                steps: 12000,
+                run_time: 164.4,
+                cpml_cells: [12, 12, 12, 12],
+                monitor_freqs: vec![0.6452],
+                polarization: "TM".into(),
+                dispersion_k_rel_error: 3.6e-3,
+            },
+            None,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn verdicts_hold_violate_and_fail_closed() {
+        let cs = claims();
+        let measured = vec![
+            MeasuredValue {
+                name: "transmission_arm_a".into(),
+                value: 0.468,
+                uncertainty: 0.01,
+            },
+            MeasuredValue {
+                name: "transmission_arm_b".into(),
+                value: 0.30,
+                uncertainty: 0.01,
+            },
+        ];
+        let rows = compare(&cs, &measured, 0.05);
+        let get = |n: &str| rows.iter().find(|r| r.name == n).unwrap();
+        assert_eq!(get("transmission_arm_a").verdict, Verdict::Holds);
+        assert_eq!(get("transmission_arm_b").verdict, Verdict::Violated);
+        // Everything unmeasured stays Unmeasured — never assumed.
+        assert_eq!(get("insertion_loss_db").verdict, Verdict::Unmeasured);
+        assert_eq!(get("splitting_ratio").verdict, Verdict::Unmeasured);
+        assert_eq!(rows.len(), cs.claims.len());
+    }
+
+    #[test]
+    fn uncertainty_widens_the_band() {
+        let cs = claims();
+        let m = vec![MeasuredValue {
+            name: "transmission_arm_a".into(),
+            value: 0.40,
+            uncertainty: 0.04, // 2σ = 0.08 covers the 0.07 deviation
+        }];
+        let rows = compare(&cs, &m, 0.01);
+        assert_eq!(
+            rows.iter()
+                .find(|r| r.name == "transmission_arm_a")
+                .unwrap()
+                .verdict,
+            Verdict::Holds
+        );
+    }
+
+    #[test]
+    fn nan_measurement_is_violated() {
+        let cs = claims();
+        let m = vec![MeasuredValue {
+            name: "transmission_arm_a".into(),
+            value: f64::NAN,
+            uncertainty: 1.0,
+        }];
+        let rows = compare(&cs, &m, 0.5);
+        assert_eq!(
+            rows.iter()
+                .find(|r| r.name == "transmission_arm_a")
+                .unwrap()
+                .verdict,
+            Verdict::Violated
+        );
+    }
+}

@@ -7322,6 +7322,7 @@ version = "0.9.4"
 dependencies = [
  "serde",
  "serde_json",
+ "vcad-gdsii",
 ]
 
 [[package]]

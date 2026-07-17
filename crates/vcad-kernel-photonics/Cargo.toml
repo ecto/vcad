@@ -8,6 +8,7 @@ repository.workspace = true
 
 [dependencies]
 serde = { workspace = true }
+vcad-gdsii = { workspace = true }
 
 [dev-dependencies]
 serde_json = { workspace = true }

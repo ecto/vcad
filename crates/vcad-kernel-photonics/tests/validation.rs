@@ -931,3 +931,86 @@ fn spec_seam_round_trips_and_fails_closed() {
     assert_eq!(resolved.param.rho, vec![0.25; region.len()]);
     assert!((resolved.param.eps_max - 3.48 * 3.48).abs() < 1e-12);
 }
+
+/// Rung 11 (M5) — the shared-forward multi-objective path must agree
+/// exactly (same arithmetic, same order) with independent single-
+/// objective calls: two arm overlaps computed together vs separately.
+/// No physics tolerance here — any drift means the forward reuse is not
+/// what it claims to be.
+#[test]
+fn multi_objective_adjoint_matches_single_calls() {
+    use vcad_kernel_photonics::objectives_and_gradients;
+
+    let lambda0 = 1.55;
+    let f0 = 1.0 / lambda0;
+    let (n_core, n_clad, half_w) = (3.48, 1.44, 0.11);
+    let delta = lambda0 / 25.0;
+    let (nx, ny) = (80, 36);
+    let jc = 18usize;
+    let yc = jc as f64 * delta;
+    let steps = 700;
+
+    let mode = solve_slab_mode_even(n_core, n_clad, half_w, lambda0, Polarization::Tm).unwrap();
+    let (j0s, j1s) = (10usize, 26usize);
+    let src: Vec<f64> = (j0s..=j1s)
+        .map(|j| mode.profile((j as f64 - jc as f64) * delta))
+        .collect();
+    let mut build = |ws: bool| -> Simulation {
+        let mut sim = Simulation::new(GridSpec::new(nx, ny, delta), Polarization::Tm);
+        sim.set_cpml(CpmlSpec::uniform(8));
+        sim.fill_epsilon(n_clad * n_clad);
+        sim.paint(
+            &Shape2::rect(-1.0, yc - half_w, 1e9, yc + half_w),
+            n_core * n_core,
+        );
+        if ws {
+            sim.add_source(Source::mode_tfsf(
+                12,
+                j0s,
+                src.clone(),
+                mode.n_eff,
+                Waveform::gaussian(f0, f0 / 4.0),
+            ));
+        }
+        sim
+    };
+    let region = DesignRegion {
+        i0: 34,
+        i1: 44,
+        j0: 12,
+        j1: 24,
+    };
+    let obj_a = ModeOverlap {
+        i: 62,
+        j0: 10,
+        weights: src[..9].to_vec(),
+        freq: f0,
+    };
+    let obj_b = ModeOverlap {
+        i: 62,
+        j0: 19,
+        weights: src[9..].to_vec(),
+        freq: f0,
+    };
+    let _ = j1s;
+
+    let both =
+        objectives_and_gradients(&mut build, &region, &[obj_a.clone(), obj_b.clone()], steps);
+    let solo_a = objective_and_gradient(&mut build, &region, &obj_a, steps);
+    let solo_b = objective_and_gradient(&mut build, &region, &obj_b, steps);
+
+    assert_eq!(both.len(), 2);
+    assert!(both[0].objective > 0.0 && both[1].objective > 0.0);
+    assert!((both[0].objective - solo_a.objective).abs() <= 1e-14 * solo_a.objective);
+    assert!((both[1].objective - solo_b.objective).abs() <= 1e-14 * solo_b.objective);
+    for (g1, g2) in [(&both[0].grad, &solo_a.grad), (&both[1].grad, &solo_b.grad)] {
+        let gmax = g2.as_slice().iter().fold(0.0f64, |m, v| m.max(v.abs()));
+        assert!(gmax > 0.0);
+        for (a, b) in g1.as_slice().iter().zip(g2.as_slice()) {
+            assert!(
+                (a - b).abs() <= 1e-13 * gmax,
+                "shared-forward gradient drifted: {a} vs {b}"
+            );
+        }
+    }
+}
