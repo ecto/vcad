@@ -24,6 +24,7 @@ pub use vcad_kernel_constraints;
 pub use vcad_kernel_cost;
 pub use vcad_kernel_dfm;
 pub use vcad_kernel_em;
+pub use vcad_kernel_fea;
 pub use vcad_kernel_fillet;
 pub use vcad_kernel_geom;
 pub use vcad_kernel_math;

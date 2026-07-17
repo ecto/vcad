@@ -1,0 +1,10 @@
+{
+  "id": "2026-07-17-structural-fea",
+  "version": "0.9.4",
+  "date": "2026-07-17",
+  "category": "feat",
+  "title": "Structural FEA with convergence-gated claims",
+  "summary": "analyze_structure runs static FEA on a part's real geometry — max stress, displacement, and safety factor, fail-closed Unverifiable unless the mesh study converges.",
+  "features": ["fea", "simulation", "receipts"],
+  "mcpTools": ["analyze_structure"]
+}

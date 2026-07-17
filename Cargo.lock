@@ -7146,6 +7146,7 @@ dependencies = [
  "vcad-kernel-cost",
  "vcad-kernel-dfm",
  "vcad-kernel-em",
+ "vcad-kernel-fea",
  "vcad-kernel-fillet",
  "vcad-kernel-geom",
  "vcad-kernel-math",
@@ -7289,6 +7290,16 @@ dependencies = [
  "serde",
  "serde_json",
  "vcad-kernel-particle",
+ "vcad-receipt",
+]
+
+[[package]]
+name = "vcad-kernel-fea"
+version = "0.9.4"
+dependencies = [
+ "serde",
+ "serde_json",
+ "vcad-kernel-tessellate",
  "vcad-receipt",
 ]
 
