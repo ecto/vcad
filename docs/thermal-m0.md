@@ -160,13 +160,16 @@ Findings:
   (stopping noise below FD resolution — the particle lesson). Geometry
   parameters move the discrete material mask and stay FD until a
   shape-adjoint milestone — stated, not smoothed over.
-- **M3 — the seam.** Serde `ThermalSpec` with named document parameters,
-  fail-closed resolution (unbound name = error), `parameter_roles()`
-  classifying adjoint vs FD paths; an external voxel-field input so the
-  vcad side can voxelize tessellated parts (point-in-solid sampling) and
-  feed them in without this crate depending on mesh types; MaterialCard
-  hookup documented (`vcad-kernel-atoms::homogenize` conductivity →
-  `MaterialRegion`).
+- **M3 — the seam. DONE** (`docs/thermal-m3.md`, `spec::ThermalSpec`).
+  Named document parameters with fail-closed resolution,
+  `parameter_roles()` classifying adjoint vs FD by what is *implemented*
+  (temperatures are adjoint-capable but unwired, so FD until then —
+  classified by fact, not potential); `VoxelMaterials` override as the
+  tessellated-part input (indices are data; the voxelizer lands on the
+  vcad side, like particle's BRep extraction); MaterialCard hookup
+  documented honestly — today's card has density and elastic constants
+  only, so the k / ρc_p mapping is specified but *not wired to fields
+  that don't exist*.
 - **M4 — receipt claims.** `vcad.thermal-claims/1`: `t_max_c`,
   `theta_ja_c_per_w` per source, `energy_balance_residual`, with full
   provenance (grid, CG tolerance and iterations, BC set, anisotropy state)

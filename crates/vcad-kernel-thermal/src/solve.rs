@@ -369,9 +369,11 @@ pub(crate) fn build(model: &ThermalModel) -> Result<System, SolveError> {
     let area = [d_m[1] * d_m[2], d_m[0] * d_m[2], d_m[0] * d_m[1]];
     let idx = |i: usize, j: usize, k: usize| (k * ny + j) * nx + i;
 
-    // Paint materials (painter's order: later regions win). Conductivity
-    // is a per-axis diagonal tensor; heat capacity rides along for the
-    // transient solver (-1.0 marks "painted with no capacity").
+    // Paint materials. Conductivity is a per-axis diagonal tensor; heat
+    // capacity rides along for the transient solver (-1.0 marks "painted
+    // with no capacity"). Two producers: an external per-voxel index
+    // (the tessellated-part seam — overrides shapes entirely), or region
+    // shapes in painter's order (later regions win).
     let mut kfield = [
         vec![0.0_f64; nvox],
         vec![0.0_f64; nvox],
@@ -379,18 +381,46 @@ pub(crate) fn build(model: &ThermalModel) -> Result<System, SolveError> {
     ];
     let mut rc = vec![-1.0_f64; nvox];
     let mut mat_id = vec![usize::MAX; nvox];
-    for k in 0..nz {
-        for j in 0..ny {
-            for i in 0..nx {
-                let c = model.voxel_center_mm(i, j, k);
-                for (mi, m) in model.materials.iter().enumerate() {
-                    if m.shape.contains(c) {
-                        let p = idx(i, j, k);
-                        for (axis, kf) in kfield.iter_mut().enumerate() {
-                            kf[p] = m.k_w_mk[axis];
+    if let Some(vm) = &model.voxel_materials {
+        if vm.material_index.len() != nvox {
+            return Err(ModelError::VoxelFieldWrongLength {
+                expected: nvox,
+                got: vm.material_index.len(),
+            }
+            .into());
+        }
+        for (p, &raw) in vm.material_index.iter().enumerate() {
+            if raw < 0 {
+                continue;
+            }
+            let mi = raw as usize;
+            let Some(m) = model.materials.get(mi) else {
+                return Err(ModelError::VoxelFieldBadIndex {
+                    index: raw,
+                    materials: model.materials.len(),
+                }
+                .into());
+            };
+            for (axis, kf) in kfield.iter_mut().enumerate() {
+                kf[p] = m.k_w_mk[axis];
+            }
+            rc[p] = m.heat_capacity_j_m3k.unwrap_or(-1.0);
+            mat_id[p] = mi;
+        }
+    } else {
+        for k in 0..nz {
+            for j in 0..ny {
+                for i in 0..nx {
+                    let c = model.voxel_center_mm(i, j, k);
+                    for (mi, m) in model.materials.iter().enumerate() {
+                        if m.shape.contains(c) {
+                            let p = idx(i, j, k);
+                            for (axis, kf) in kfield.iter_mut().enumerate() {
+                                kf[p] = m.k_w_mk[axis];
+                            }
+                            rc[p] = m.heat_capacity_j_m3k.unwrap_or(-1.0);
+                            mat_id[p] = mi;
                         }
-                        rc[p] = m.heat_capacity_j_m3k.unwrap_or(-1.0);
-                        mat_id[p] = mi;
                     }
                 }
             }

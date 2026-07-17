@@ -54,4 +54,5 @@
 pub mod adjoint;
 pub mod model;
 pub mod solve;
+pub mod spec;
 pub mod transient;

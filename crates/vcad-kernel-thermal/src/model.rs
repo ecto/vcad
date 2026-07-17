@@ -195,6 +195,27 @@ pub enum Boundary {
     },
 }
 
+/// Externally-voxelized material assignment — the seam through which the
+/// vcad side feeds *tessellated part geometry* into the solver without
+/// this crate depending on mesh types.
+///
+/// The intended producer samples each voxel center against the part
+/// (point-in-solid on the tessellation — the same generalized-winding
+/// machinery the kernel already uses) and emits one material index per
+/// voxel. When present, this **overrides region painting entirely**: the
+/// `shape` fields of the referenced [`MaterialRegion`]s are not consulted
+/// (fill them with a domain-covering box by convention); their
+/// conductivity and heat capacity are what the index selects. Sources and
+/// reservoirs remain shape-based — they are design intent, not part
+/// geometry.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct VoxelMaterials {
+    /// Per-voxel index into `ThermalModel::materials`, or −1 for void.
+    /// Layout `(k·ny + j)·nx + i`, length = product of `divisions`
+    /// (validated fail-closed).
+    pub material_index: Vec<i32>,
+}
+
 /// A steady conduction problem on a uniform voxel grid.
 ///
 /// The domain box starts at `origin_mm` and extends `size_mm`, divided
@@ -224,6 +245,9 @@ pub struct ThermalModel {
     /// with sources present and no resolvable reference, solving fails
     /// closed rather than guessing.
     pub reference_c: Option<f64>,
+    /// Externally-voxelized materials (tessellated-part seam); `None`
+    /// paints from region shapes.
+    pub voxel_materials: Option<VoxelMaterials>,
 }
 
 impl ThermalModel {
@@ -240,6 +264,7 @@ impl ThermalModel {
             domain_faces: [Boundary::Adiabatic; 6],
             exposed: Boundary::Adiabatic,
             reference_c: None,
+            voxel_materials: None,
         }
     }
 
@@ -299,6 +324,20 @@ pub enum ModelError {
         /// Index of the offending region in `ThermalModel::materials`.
         index: usize,
     },
+    /// `voxel_materials.material_index` does not have one entry per voxel.
+    VoxelFieldWrongLength {
+        /// Product of `divisions`.
+        expected: usize,
+        /// Entries supplied.
+        got: usize,
+    },
+    /// A voxel-material index points outside `materials`.
+    VoxelFieldBadIndex {
+        /// The offending index value.
+        index: i32,
+        /// Number of material entries available.
+        materials: usize,
+    },
 }
 
 impl std::fmt::Display for ModelError {
@@ -332,6 +371,14 @@ impl std::fmt::Display for ModelError {
                 f,
                 "transient solve requires a positive heat capacity on every solid voxel; \
                  material region {index} declared none"
+            ),
+            ModelError::VoxelFieldWrongLength { expected, got } => write!(
+                f,
+                "voxel_materials must supply one index per voxel: expected {expected}, got {got}"
+            ),
+            ModelError::VoxelFieldBadIndex { index, materials } => write!(
+                f,
+                "voxel material index {index} is outside the material table (len {materials})"
             ),
         }
     }
