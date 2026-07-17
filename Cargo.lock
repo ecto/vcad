@@ -7160,6 +7160,7 @@ dependencies = [
  "vcad-kernel-fillet",
  "vcad-kernel-geom",
  "vcad-kernel-math",
+ "vcad-kernel-naming",
  "vcad-kernel-neutronics",
  "vcad-kernel-particle",
  "vcad-kernel-photonics",
@@ -7352,6 +7353,16 @@ version = "0.9.4"
 dependencies = [
  "robust",
  "tang",
+]
+
+[[package]]
+name = "vcad-kernel-naming"
+version = "0.9.4"
+dependencies = [
+ "vcad-kernel-geom",
+ "vcad-kernel-math",
+ "vcad-kernel-primitives",
+ "vcad-kernel-topo",
 ]
 
 [[package]]

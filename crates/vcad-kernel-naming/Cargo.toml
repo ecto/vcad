@@ -1,0 +1,13 @@
+[package]
+name = "vcad-kernel-naming"
+description = "Persistent topological naming for the vcad BRep kernel"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+vcad-kernel-math = { workspace = true }
+vcad-kernel-topo = { workspace = true }
+vcad-kernel-geom = { workspace = true }
+vcad-kernel-primitives = { workspace = true }

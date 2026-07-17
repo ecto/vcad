@@ -34,6 +34,10 @@ The vcad kernel is a purpose-built BRep (boundary representation) modeling kerne
 
 `vcad-kernel-math` provides linear algebra, transforms, and Shewchuk's adaptive-precision predicates (`orient2d`, `orient3d`, `incircle`, `insphere`) via the `robust` crate. Geometric decisions — is this point above that plane? — are exact, not floating-point guesses, which is what keeps booleans from producing holes and inverted faces on near-degenerate input.
 
+### Persistent Topological Naming
+
+`vcad-kernel-naming` gives faces stable names derived from their generating operations (`n3:top`, `n1:side`, with deterministic split ordinals through booleans) instead of ephemeral arena keys, and names edges by their adjacent-face pair. Downstream references — `EdgeQuery::Named` on an edge blend — re-resolve after an upstream parameter change, so a fillet stays on the intended edge when the parent box is resized. Resolution is fail-closed: an ambiguous or lost reference is an explicit error (with a geometric-hint fallback matcher), never a silent rebind to the nearest edge.
+
 ## Operations
 
 ### Boolean Operations

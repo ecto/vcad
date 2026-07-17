@@ -9,6 +9,7 @@ members = [
     "crates/vcad-kernel-topo",
     "crates/vcad-kernel-geom",
     "crates/vcad-kernel-primitives",
+    "crates/vcad-kernel-naming",
     "crates/vcad-kernel-tessellate",
     "crates/vcad-kernel-booleans",
     "crates/vcad-kernel-nurbs",
@@ -94,6 +95,7 @@ default-members = [
     "crates/vcad-kernel-topo",
     "crates/vcad-kernel-geom",
     "crates/vcad-kernel-primitives",
+    "crates/vcad-kernel-naming",
     "crates/vcad-kernel-tessellate",
     "crates/vcad-kernel-booleans",
     "crates/vcad-kernel-nurbs",
@@ -198,6 +200,7 @@ vcad-kernel-math = { path = "crates/vcad-kernel-math", version = "0.9.4" }
 vcad-kernel-topo = { path = "crates/vcad-kernel-topo", version = "0.9.4" }
 vcad-kernel-geom = { path = "crates/vcad-kernel-geom", version = "0.9.4" }
 vcad-kernel-primitives = { path = "crates/vcad-kernel-primitives", version = "0.9.4" }
+vcad-kernel-naming = { path = "crates/vcad-kernel-naming", version = "0.9.4" }
 vcad-kernel-tessellate = { path = "crates/vcad-kernel-tessellate", version = "0.9.4" }
 vcad-kernel-booleans = { path = "crates/vcad-kernel-booleans", version = "0.9.4" }
 vcad-kernel-nurbs = { path = "crates/vcad-kernel-nurbs", version = "0.9.4" }

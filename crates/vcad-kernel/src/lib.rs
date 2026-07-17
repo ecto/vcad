@@ -100,6 +100,39 @@ impl From<StepError> for StepExportError {
     }
 }
 
+/// Why a named-edge reference failed to resolve (fail-closed: the caller
+/// must surface this, never fall back to a guessed edge).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NamedEdgeError {
+    /// The solid carries no name map (mesh-only, imported, or produced by an
+    /// operation without a name-propagation rule).
+    NoNames,
+    /// A face name string was not in canonical `scope:tag[.n]*` form.
+    BadName(String),
+    /// More than one edge matched the reference.
+    Ambiguous {
+        /// Number of candidate edges.
+        count: usize,
+    },
+    /// No edge matched by name or geometric hint.
+    Lost(String),
+}
+
+impl std::fmt::Display for NamedEdgeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NoNames => write!(f, "solid carries no persistent face names"),
+            Self::BadName(s) => write!(f, "invalid face name '{s}' (expected scope:tag[.n]*)"),
+            Self::Ambiguous { count } => {
+                write!(f, "edge reference is ambiguous ({count} candidate edges)")
+            }
+            Self::Lost(reason) => write!(f, "edge reference lost: {reason}"),
+        }
+    }
+}
+
+impl std::error::Error for NamedEdgeError {}
+
 /// The internal representation of a solid.
 #[derive(Debug, Clone)]
 enum SolidRepr {
@@ -120,6 +153,14 @@ pub struct Solid {
     repr: SolidRepr,
     /// Default tessellation segment count.
     segments: u32,
+    /// Persistent face names (topological naming), when this solid's
+    /// provenance supports them. Primitive constructors seed the map,
+    /// booleans propagate it, and rigid transforms carry it (topology keys
+    /// survive `apply_transform`'s clone). Operations that rebuild topology
+    /// without a propagation rule (fillet, shell, sweep, imports) drop it —
+    /// fail-closed: downstream name resolution reports Lost rather than
+    /// guessing.
+    names: Option<vcad_kernel_naming::NameMap>,
 }
 
 /// Fallback circular resolution when a curved primitive is created with
@@ -152,6 +193,7 @@ impl Solid {
     /// Create an empty solid.
     pub fn empty() -> Self {
         Self {
+            names: None,
             repr: SolidRepr::Empty,
             segments: 32,
         }
@@ -170,6 +212,7 @@ impl Solid {
     /// Create a solid from a triangle mesh.
     pub fn from_mesh(mesh: TriangleMesh) -> Self {
         Self {
+            names: None,
             repr: SolidRepr::Mesh(mesh),
             segments: 32,
         }
@@ -180,6 +223,7 @@ impl Solid {
     /// STEP import, custom topology builders, eval grader round-trip.
     pub fn from_brep(brep: BRepSolid) -> Self {
         Self {
+            names: None,
             repr: SolidRepr::BRep(Box::new(brep)),
             segments: 32,
         }
@@ -187,8 +231,10 @@ impl Solid {
 
     /// Create a box (cuboid) with corner at origin and dimensions `(sx, sy, sz)`.
     pub fn cube(sx: f64, sy: f64, sz: f64) -> Self {
+        let brep = vcad_kernel_primitives::make_cube(sx, sy, sz);
         Self {
-            repr: SolidRepr::BRep(Box::new(vcad_kernel_primitives::make_cube(sx, sy, sz))),
+            names: Some(vcad_kernel_naming::seed_names(&brep, "cube")),
+            repr: SolidRepr::BRep(Box::new(brep)),
             segments: 32,
         }
     }
@@ -196,10 +242,10 @@ impl Solid {
     /// Create a cylinder along Z axis with the given radius and height.
     pub fn cylinder(radius: f64, height: f64, segments: u32) -> Self {
         let segments = resolve_segments(segments);
+        let brep = vcad_kernel_primitives::make_cylinder(radius, height, segments);
         Self {
-            repr: SolidRepr::BRep(Box::new(vcad_kernel_primitives::make_cylinder(
-                radius, height, segments,
-            ))),
+            names: Some(vcad_kernel_naming::seed_names(&brep, "cylinder")),
+            repr: SolidRepr::BRep(Box::new(brep)),
             segments,
         }
     }
@@ -207,10 +253,10 @@ impl Solid {
     /// Create a sphere centered at origin with the given radius.
     pub fn sphere(radius: f64, segments: u32) -> Self {
         let segments = resolve_segments(segments);
+        let brep = vcad_kernel_primitives::make_sphere(radius, segments);
         Self {
-            repr: SolidRepr::BRep(Box::new(vcad_kernel_primitives::make_sphere(
-                radius, segments,
-            ))),
+            names: Some(vcad_kernel_naming::seed_names(&brep, "sphere")),
+            repr: SolidRepr::BRep(Box::new(brep)),
             segments,
         }
     }
@@ -218,13 +264,10 @@ impl Solid {
     /// Create a cone/frustum along Z axis.
     pub fn cone(radius_bottom: f64, radius_top: f64, height: f64, segments: u32) -> Self {
         let segments = resolve_segments(segments);
+        let brep = vcad_kernel_primitives::make_cone(radius_bottom, radius_top, height, segments);
         Self {
-            repr: SolidRepr::BRep(Box::new(vcad_kernel_primitives::make_cone(
-                radius_bottom,
-                radius_top,
-                height,
-                segments,
-            ))),
+            names: Some(vcad_kernel_naming::seed_names(&brep, "cone")),
+            repr: SolidRepr::BRep(Box::new(brep)),
             segments,
         }
     }
@@ -234,12 +277,10 @@ impl Solid {
     /// `major_radius` is the distance from the central axis to the tube center;
     /// `minor_radius` is the tube cross-section radius.
     pub fn torus(major_radius: f64, minor_radius: f64, segments: u32) -> Self {
+        let brep = vcad_kernel_primitives::make_torus(major_radius, minor_radius, segments);
         Self {
-            repr: SolidRepr::BRep(Box::new(vcad_kernel_primitives::make_torus(
-                major_radius,
-                minor_radius,
-                segments,
-            ))),
+            names: Some(vcad_kernel_naming::seed_names(&brep, "torus")),
+            repr: SolidRepr::BRep(Box::new(brep)),
             segments,
         }
     }
@@ -247,8 +288,10 @@ impl Solid {
     /// Create a right-triangular-prism wedge. See
     /// [`vcad_kernel_primitives::make_wedge`] for geometry details.
     pub fn wedge(sx: f64, sy: f64, sz: f64) -> Self {
+        let brep = vcad_kernel_primitives::make_wedge(sx, sy, sz);
         Self {
-            repr: SolidRepr::BRep(Box::new(vcad_kernel_primitives::make_wedge(sx, sy, sz))),
+            names: Some(vcad_kernel_naming::seed_names(&brep, "wedge")),
+            repr: SolidRepr::BRep(Box::new(brep)),
             segments: 32,
         }
     }
@@ -258,10 +301,10 @@ impl Solid {
     /// `sides` must be >= 3; the polygon's circumradius is `radius`, and the
     /// prism extrudes `height` along +Z.
     pub fn prism(sides: u32, radius: f64, height: f64) -> Self {
+        let brep = vcad_kernel_primitives::make_prism(sides, radius, height);
         Self {
-            repr: SolidRepr::BRep(Box::new(vcad_kernel_primitives::make_prism(
-                sides, radius, height,
-            ))),
+            names: Some(vcad_kernel_naming::seed_names(&brep, "prism")),
+            repr: SolidRepr::BRep(Box::new(brep)),
             segments: sides,
         }
     }
@@ -336,6 +379,7 @@ impl Solid {
                     let mut combined = self.to_mesh(segments);
                     combined.merge(&other.to_mesh(segments));
                     Solid {
+                        names: None,
                         repr: SolidRepr::Mesh(combined),
                         segments,
                     }
@@ -365,7 +409,18 @@ impl Solid {
                 let segments = resolve_segments(self.segments.max(other.segments));
                 let result = boolean_op(a.as_ref(), b.as_ref(), op, segments)?;
                 let BooleanResult::BRep(brep) = result;
+                let names = match (&self.names, &other.names) {
+                    (Some(na), Some(nb)) => Some(vcad_kernel_naming::propagate_boolean(
+                        a.as_ref(),
+                        na,
+                        b.as_ref(),
+                        nb,
+                        brep.as_ref(),
+                    )),
+                    _ => None,
+                };
                 Ok(Solid {
+                    names,
                     repr: SolidRepr::BRep(brep),
                     segments,
                 })
@@ -380,6 +435,7 @@ impl Solid {
                 let mut combined = mesh_a;
                 combined.merge(&mesh_b);
                 Ok(Solid {
+                    names: None,
                     repr: SolidRepr::Mesh(combined),
                     segments,
                 })
@@ -406,6 +462,7 @@ impl Solid {
                     return self.clone();
                 }
                 Solid {
+                    names: None,
                     repr: SolidRepr::BRep(Box::new(vcad_kernel_fillet::chamfer_all_edges(
                         brep, distance,
                     ))),
@@ -459,6 +516,7 @@ impl Solid {
                     return self.clone();
                 }
                 Solid {
+                    names: None,
                     repr: SolidRepr::BRep(Box::new(filleted)),
                     segments: self.segments,
                 }
@@ -514,9 +572,80 @@ impl Solid {
 
         let (blended, _outcome) = vcad_kernel_fillet::apply_edge_blend(brep, query, keys);
         Solid {
+            names: None,
             repr: SolidRepr::BRep(Box::new(blended)),
             segments: self.segments,
         }
+    }
+
+    // =========================================================================
+    // Persistent topological naming
+    // =========================================================================
+
+    /// The face-name side table, when this solid's provenance supports one
+    /// (primitives seed it, booleans propagate it, transforms carry it).
+    pub fn names(&self) -> Option<&vcad_kernel_naming::NameMap> {
+        self.names.as_ref()
+    }
+
+    /// Rewrite the scope of every face name — DAG evaluators call this with
+    /// the document node id so names stay unique when several primitives
+    /// combine (`cube:top` → `n3:top`).
+    pub fn set_name_scope(&mut self, scope: &str) {
+        if let Some(names) = &mut self.names {
+            names.rescope(scope);
+        }
+    }
+
+    /// Resolve the edge between two named faces to its current endpoint
+    /// positions. Fail-closed: any outcome other than exactly one edge is an
+    /// error describing what happened (no names on this solid, ambiguous
+    /// match, or lost).
+    pub fn resolve_named_edge(
+        &self,
+        face_a: &str,
+        face_b: &str,
+    ) -> Result<(Point3, Point3), NamedEdgeError> {
+        let SolidRepr::BRep(brep) = &self.repr else {
+            return Err(NamedEdgeError::NoNames);
+        };
+        let Some(names) = &self.names else {
+            return Err(NamedEdgeError::NoNames);
+        };
+        let a = vcad_kernel_naming::FaceName::parse(face_a)
+            .ok_or_else(|| NamedEdgeError::BadName(face_a.to_string()))?;
+        let b = vcad_kernel_naming::FaceName::parse(face_b)
+            .ok_or_else(|| NamedEdgeError::BadName(face_b.to_string()))?;
+        let edge_ref = vcad_kernel_naming::EdgeRef::new(a, b);
+        match vcad_kernel_naming::resolve_edge(brep, names, &edge_ref) {
+            vcad_kernel_naming::EdgeResolution::Resolved { endpoints, .. } => Ok(endpoints),
+            vcad_kernel_naming::EdgeResolution::Ambiguous { candidates } => {
+                Err(NamedEdgeError::Ambiguous {
+                    count: candidates.len(),
+                })
+            }
+            vcad_kernel_naming::EdgeResolution::Lost { reason } => {
+                Err(NamedEdgeError::Lost(reason))
+            }
+        }
+    }
+
+    /// Apply a keyed blend to the single edge between two named faces.
+    ///
+    /// The name resolves against the current topology
+    /// ([`Solid::resolve_named_edge`]), then the blend targets exactly that
+    /// edge via [`vcad_kernel_fillet::EdgeQuery::Endpoints`]. Unlike the
+    /// geometric queries this path is fail-closed end to end: an
+    /// unresolvable or ambiguous name is an error, never a
+    /// nearest-edge guess.
+    pub fn edge_blend_named(
+        &self,
+        face_a: &str,
+        face_b: &str,
+        keys: &[vcad_kernel_fillet::BlendKey],
+    ) -> Result<Solid, NamedEdgeError> {
+        let (a, b) = self.resolve_named_edge(face_a, face_b)?;
+        Ok(self.edge_blend(&vcad_kernel_fillet::EdgeQuery::Endpoints { a, b }, keys))
     }
 
     /// Shell (hollow) the solid by offsetting all faces inward.
@@ -537,10 +666,12 @@ impl Solid {
         match &self.repr {
             SolidRepr::Empty => Solid::empty(),
             SolidRepr::BRep(brep) => Solid {
+                names: None,
                 repr: SolidRepr::BRep(Box::new(vcad_kernel_shell::shell_brep(brep, thickness))),
                 segments: self.segments,
             },
             SolidRepr::Mesh(mesh) => Solid {
+                names: None,
                 repr: SolidRepr::Mesh(vcad_kernel_shell::shell_mesh(mesh, thickness)),
                 segments: self.segments,
             },
@@ -650,6 +781,7 @@ impl Solid {
     ) -> Result<Self, vcad_kernel_sketch::SketchError> {
         let brep = vcad_kernel_sketch::extrude(&profile, direction)?;
         Ok(Solid {
+            names: None,
             repr: SolidRepr::BRep(Box::new(brep)),
             segments: 32,
         })
@@ -668,6 +800,7 @@ impl Solid {
     ) -> Result<Self, vcad_kernel_sketch::SketchError> {
         let brep = vcad_kernel_sketch::extrude_with_holes(&profile, holes, direction)?;
         Ok(Solid {
+            names: None,
             repr: SolidRepr::BRep(Box::new(brep)),
             segments: 32,
         })
@@ -698,6 +831,7 @@ impl Solid {
         };
         let brep = vcad_kernel_sketch::extrude_with_options(&profile, direction, options)?;
         Ok(Solid {
+            names: None,
             repr: SolidRepr::BRep(Box::new(brep)),
             segments: 32,
         })
@@ -728,6 +862,7 @@ impl Solid {
         let brep =
             vcad_kernel_sketch::revolve(&profile, axis_origin, axis_dir, angle_deg.to_radians())?;
         Ok(Solid {
+            names: None,
             repr: SolidRepr::BRep(Box::new(brep)),
             segments: 32,
         })
@@ -751,6 +886,7 @@ impl Solid {
     ) -> Result<Self, vcad_kernel_sweep::SweepError> {
         let brep = vcad_kernel_sweep::sweep(&profile, path, options)?;
         Ok(Solid {
+            names: None,
             repr: SolidRepr::BRep(Box::new(brep)),
             segments: 32,
         })
@@ -772,6 +908,7 @@ impl Solid {
     ) -> Result<Self, vcad_kernel_sweep::LoftError> {
         let brep = vcad_kernel_sweep::loft(profiles, options)?;
         Ok(Solid {
+            names: None,
             repr: SolidRepr::BRep(Box::new(brep)),
             segments: 32,
         })
@@ -832,6 +969,7 @@ impl Solid {
                     }
                 }
                 Solid {
+                    names: self.names.clone(),
                     repr: SolidRepr::BRep(Box::new(new_brep)),
                     segments: self.segments,
                 }
@@ -854,6 +992,7 @@ impl Solid {
                     }
                 }
                 Solid {
+                    names: None,
                     repr: SolidRepr::Mesh(new_mesh),
                     segments: self.segments,
                 }
@@ -1057,6 +1196,7 @@ impl Solid {
         let solids = vcad_kernel_step::read_step(path)?;
         let brep = solids.into_iter().next().ok_or(StepError::NoSolids)?;
         Ok(Self {
+            names: None,
             repr: SolidRepr::BRep(Box::new(brep)),
             segments: 32,
         })
@@ -1080,6 +1220,7 @@ impl Solid {
         Ok(solids
             .into_iter()
             .map(|brep| Self {
+                names: None,
                 repr: SolidRepr::BRep(Box::new(brep)),
                 segments: 32,
             })
@@ -1099,6 +1240,7 @@ impl Solid {
         let solids = vcad_kernel_step::read_step_from_buffer(data)?;
         let brep = solids.into_iter().next().ok_or(StepError::NoSolids)?;
         Ok(Self {
+            names: None,
             repr: SolidRepr::BRep(Box::new(brep)),
             segments: 32,
         })
@@ -1122,6 +1264,7 @@ impl Solid {
         Ok(solids
             .into_iter()
             .map(|brep| Self {
+                names: None,
                 repr: SolidRepr::BRep(Box::new(brep)),
                 segments: 32,
             })
