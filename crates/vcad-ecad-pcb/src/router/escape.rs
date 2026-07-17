@@ -132,7 +132,7 @@ pub fn detect_pin_fields(pcb: &Pcb) -> Vec<PinField> {
         }
         // Reject non-lattices: sub-manufacturable "pitch" means the footprint
         // isn't a pin field the flow model can grid.
-        if !pitch.is_finite() || pitch > MAX_FIELD_PITCH || pitch < 0.1 {
+        if !pitch.is_finite() || !(0.1..=MAX_FIELD_PITCH).contains(&pitch) {
             continue;
         }
         let (mut min, mut max) = (pads[0].pos, pads[0].pos);
