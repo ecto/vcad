@@ -1,0 +1,9 @@
+{
+  "id": "2026-07-17-photonics-inverse-design",
+  "version": "0.9.4",
+  "date": "2026-07-17",
+  "category": "feat",
+  "title": "Photonics inverse design: 2D FDTD + adjoint to fab-ready GDS",
+  "summary": "New vcad-kernel-photonics crate: validated 2D FDTD with discrete-adjoint topology optimization; the flagship inverse-designed 1x2 splitter hits 3.01 dB/arm and exports as GDS with receipt claims.",
+  "features": ["photonics", "fdtd", "adjoint", "inverse-design", "gds", "receipts"]
+}

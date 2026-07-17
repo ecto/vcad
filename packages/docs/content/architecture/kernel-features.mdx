@@ -170,6 +170,10 @@ Loft interpolates a solid through a sequence of cross-sections:
 
 `vcad-kernel-atoms` extends the kernel below the continuum: atomic and molecular design with molecular dynamics, energy minimization, ML potentials, and inverse material design.
 
+### Photonics Inverse Design
+
+`vcad-kernel-photonics` is a 2D FDTD electromagnetics solver (Yee grid, TM/TE, CPML absorbing boundaries, slab-eigenmode sources, spectral flux monitors) with a **discrete adjoint**: exact gradients of transmission with respect to every design cell's permittivity at the cost of one extra simulation, validated against finite differences to 5×10⁻⁷. Density-based topology optimization (cone filter, β-scheduled projection) inverse-designs devices end to end — the flagship example produces a 1×2 power splitter hitting 3.06/3.01 dB per arm against the 3.01 dB ideal, exports the exact simulated pixel geometry as fab-ready GDS via `vcad-gdsii`, and emits `vcad.photonics-claims/1` predictions with full solver provenance plus a Holds/Violated/Unmeasured `compare()` for when the chip comes back. The validation ladder tests against the discretization's own closed forms: numerical dispersion to 5×10⁻⁸, the exact discrete Fresnel coefficient to 10⁻⁴, an energy invariant conserved to 10⁻¹¹, and a measured −95.6 dB CPML floor.
+
 ## Manufacturing
 
 - **CAM** — `vcad-kernel-cam` generates 2.5D machining toolpaths with a G-code post-processor.

@@ -129,6 +129,7 @@ import { toolDefs as verifyToolDefs } from "./tools/verify.js";
 import { toolDefs as verifySpecToolDefs } from "./tools/verify-spec.js";
 import { toolDefs as clearanceToolDefs } from "./tools/clearance.js";
 import { toolDefs as topoptToolDefs } from "./tools/topopt.js";
+import { toolDefs as particleToolDefs } from "./tools/particle.js";
 import { toolDefs as physicsToolDefs } from "./tools/physics.js";
 import { toolDefs as loonMacroToolDefs } from "./tools/loon-macros.js";
 import { toolDefs as dfmToolDefs } from "./tools/dfm.js";
@@ -307,6 +308,7 @@ const STATIC_TOOL_DEFS: readonly ToolDef[] = [
   ...verifySpecToolDefs,
   ...clearanceToolDefs,
   ...topoptToolDefs,
+  ...particleToolDefs,
   ...physicsToolDefs,
   ...loonMacroToolDefs,
   ...dfmToolDefs,
@@ -387,6 +389,9 @@ const LIST_TOOL_ORDER: readonly string[] = [
   "parameter_gradient",
   // ── Topology optimization ──────────────────────────────────
   "topology_optimize",
+  // ── Charged-particle optics (fusor / IEC / trap family) ────
+  "simulate_charged_particles",
+  "optimize_electrodes",
   // ── Two-tier static physics (predict fast, verify to certify) ──
   "predict_physics",
   // ── Print-then-measure calibration loop (3DP) ──────────────
