@@ -50,6 +50,7 @@
 //! Units: geometry is **millimeters** (vcad convention); cross sections
 //! are internal cm⁻¹; energies are eV; doses are reported in µSv/h.
 
+pub mod diffusion;
 pub mod dose;
 pub mod geometry;
 pub mod groups;

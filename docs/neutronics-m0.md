@@ -163,11 +163,25 @@ Checks and findings:
   provenance. Stated limits: isotropic-in-CM (MeV p-wave forward
   hardening not modeled), thermal group in-group isotropic with no
   free-gas motion.
-- **M2 — gradients.** Deterministic multigroup adjoint **diffusion**
-  companion: forward + adjoint solves, importance function, d(dose)/d
-  (layer thickness) via interface perturbation theory, FD-validated. MC
-  stays the truth oracle; the diffusion adjoint is the design compass
-  (pairing documented, diffusion bias measured against MC).
+- **M2 — gradients. DONE** (`diffusion.rs`). Deterministic multigroup
+  diffusion companion: cell-centered FV (harmonic face D, Marshak
+  vacuum boundary), downscatter-ordered tridiagonal solves; adjoint =
+  same symmetric per-group operator with the group coupling transposed,
+  solved in reverse — forward/adjoint duality holds to ~1e-15
+  (asserted). `d(dose)/d(layer thickness)` via the interface
+  shape-derivative with growth-into-neighbor semantics (shield grows
+  into its air gap; detector and outer wall fixed — the design-real
+  parameterization). Two bugs the FD validation caught and the tests
+  now pin: (1) at a shield/air interface the naive δD·∇φ·∇φ† surface
+  term is off ×43 — ∇φ is discontinuous there; the correct form is the
+  flux term −[[1/D]]·J·J† with the continuous face current; (2) its
+  sign (Hadamard interface derivative). Final agreement: adjoint vs
+  diffusion-FD to 0.1%, adjoint log-gradient vs **Monte Carlo** FD
+  through 12 cm HDPE within the 25% test band. The pairing, measured:
+  diffusion absolute dose at 1 m through 12 cm HDPE reads ×1.54 the MC
+  oracle (void-region flux flattening + diffusion-in-shield bias) —
+  the compass steers, the oracle prices. One-group triangle test: MC ↔
+  diffusion ↔ e^{−r/L}/4πDr all agree deep in a scattering sphere.
 - **M3 — parameter seam.** Serde `ShieldSpec` with named parameters,
   fail-closed resolution (unknown material / unbound name / bad
   thickness = error, never a default).
