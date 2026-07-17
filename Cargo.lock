@@ -7162,6 +7162,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "vcad-kernel-antenna"
+version = "0.9.4"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "vcad-kernel-atoms"
 version = "0.9.4"
 dependencies = [
