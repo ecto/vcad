@@ -43,6 +43,7 @@ pub mod field;
 pub mod fom;
 pub mod optimize;
 pub mod poisson;
+pub mod pops;
 pub mod power;
 pub mod receipt;
 pub mod space_charge;
