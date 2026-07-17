@@ -220,3 +220,34 @@ supersedes the noisy numbers in the previous verdict entry:
   magnetized near the cusp wires — trapping studies are simulatable next).
 - `observably_converged` flag worked as designed: true/true/false across
   the sweep, honestly marking the 100 mA row unsettled.
+
+## 2026-07-17 — electron trapping is real: the "dead end" was a launch-location artifact
+
+Corrects the e-injection entry above. `orbitron_probe` traces electrons in
+the two-ring device's own cusp field vs the demagnetized copy (same
+electrostatics, currents zeroed), launched at the **mid-shell** (r ≈ 0.5,
+near the rings) rather than the 0.2 inner shell the neutralization sweep
+used:
+
+| shield A·t | enhancement | survivor frac | gyroradius (mm) |
+|---|---|---|---|
+| 0 | 1.0 | 0.00 | ∞ |
+| 80 k | 121× | **0.75** | 0.38 |
+| 200 k | 133× | 0.83 | 0.15 |
+| 400 k–1.2 M | 140× (budget-capped) | **0.875** | 0.08→0.03 |
+
+- **The cusp traps electrons hard**: at ≥80 kA·t, 75–87% never leave (vs
+  100% expelled in 1.2 ns with B off). Enhancement saturates at the flight
+  budget — 140× is a *floor*. Gyroradius collapses to 0.03 mm ≪ device:
+  deeply magnetized.
+- **Why the e-injection sweep read ~0**: it launched electrons at r=0.2,
+  deep on-axis where the opposed coils cancel (B≈0) and E drives them
+  straight out the axial point cusp before they can magnetize. Launch
+  *near the rings* (strong B) and they trap. Injection location is
+  everything — the exact polywell lesson, now measured in our geometry.
+- This reopens the neutralization lane. Open question the
+  `virtual_cathode` probe answers next: do the trapped electrons form a
+  central *virtual cathode* (deepen the on-axis ion well = help fusion) or
+  circulate peripherally at the rings (trapped but useless)?
+- Caveat: non-relativistic Boris (ratio cancels most of the ~10–15% error
+  at these energies); enhancement budget-capped; single particles.
