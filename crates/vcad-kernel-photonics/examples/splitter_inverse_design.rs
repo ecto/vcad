@@ -324,11 +324,7 @@ fn main() {
 
     // ---- Binarize: claims are made on what the fab receives.
     let binary = topo.binarized();
-    let gray_fom = trace
-        .iter()
-        .filter(|t| t.accepted)
-        .next_back()
-        .map(|t| t.fom);
+    let gray_fom = trace.iter().rfind(|t| t.accepted).map(|t| t.fom);
     let bin_eval = eval(&binary);
     println!(
         "\nbinarization: gray FoM {:.5e} → binary FoM {:.5e} (gap = honesty metric)",
