@@ -1299,10 +1299,216 @@ pub fn export_projected_view_to_dxf_buffer(
     Ok(buffer)
 }
 
+/// Export a composed drawing sheet ([`vcad_kernel_drafting::DrawingSheet`])
+/// to a DXF byte buffer.
+///
+/// Every [`vcad_kernel_drafting::LineClass`] maps to its own DXF layer
+/// (VISIBLE, HIDDEN, SECTION, HATCH, DIMENSION, CUTPLANE, CENTER, BORDER)
+/// with the matching linetype, so the title block, revision table, BOM
+/// balloons/tables, cutting-plane callouts, and dimensions all round-trip
+/// into CAD packages. Filled arrowheads become SOLID entities; text becomes
+/// TEXT entities.
+#[cfg(feature = "drafting")]
+pub fn export_drawing_sheet_to_dxf_buffer(
+    sheet: &vcad_kernel_drafting::DrawingSheet,
+) -> std::io::Result<Vec<u8>> {
+    use vcad_kernel_drafting::LineClass;
+
+    let mut w: Vec<u8> = Vec::new();
+
+    // Header.
+    writeln!(w, "0\nSECTION\n2\nHEADER")?;
+    writeln!(w, "9\n$ACADVER\n1\nAC1009")?;
+    writeln!(w, "9\n$INSUNITS\n70\n4")?;
+    writeln!(w, "0\nENDSEC")?;
+
+    // Tables: linetypes then layers.
+    writeln!(w, "0\nSECTION\n2\nTABLES")?;
+    writeln!(w, "0\nTABLE\n2\nLTYPE\n70\n4")?;
+    // (name, description, elements)
+    let ltypes: [(&str, &str, &[f64]); 4] = [
+        ("CONTINUOUS", "Solid line", &[]),
+        ("HIDDEN", "Hidden line", &[6.35, -3.175]),
+        (
+            "PHANTOM",
+            "Phantom line",
+            &[12.7, -3.175, 3.175, -3.175, 3.175, -3.175],
+        ),
+        ("CENTER", "Center line", &[12.7, -3.175, 3.175, -3.175]),
+    ];
+    for (name, desc, elems) in ltypes {
+        writeln!(w, "0\nLTYPE\n2\n{name}\n70\n0\n3\n{desc}\n72\n65")?;
+        writeln!(w, "73\n{}", elems.len())?;
+        let total: f64 = elems.iter().map(|e| e.abs()).sum();
+        writeln!(w, "40\n{total:.4}")?;
+        for e in elems {
+            writeln!(w, "49\n{e:.4}")?;
+        }
+    }
+    writeln!(w, "0\nENDTAB")?;
+
+    let classes = [
+        LineClass::Visible,
+        LineClass::Hidden,
+        LineClass::Section,
+        LineClass::Hatch,
+        LineClass::Dimension,
+        LineClass::CuttingPlane,
+        LineClass::Center,
+        LineClass::Border,
+    ];
+    let ltype_of = |class: LineClass| -> &'static str {
+        match class {
+            LineClass::Hidden => "HIDDEN",
+            LineClass::CuttingPlane => "PHANTOM",
+            LineClass::Center => "CENTER",
+            _ => "CONTINUOUS",
+        }
+    };
+    let color_of = |class: LineClass| -> u8 {
+        match class {
+            LineClass::Visible | LineClass::Section | LineClass::Border => 7,
+            LineClass::Hidden => 8,
+            LineClass::Hatch => 8,
+            LineClass::Dimension => 1,
+            LineClass::CuttingPlane | LineClass::Center => 4,
+        }
+    };
+    writeln!(w, "0\nTABLE\n2\nLAYER\n70\n{}", classes.len())?;
+    for class in classes {
+        writeln!(
+            w,
+            "0\nLAYER\n2\n{}\n70\n0\n62\n{}\n6\n{}",
+            class.dxf_layer(),
+            color_of(class),
+            ltype_of(class)
+        )?;
+    }
+    writeln!(w, "0\nENDTAB")?;
+    writeln!(w, "0\nENDSEC")?;
+
+    // Entities.
+    writeln!(w, "0\nSECTION\n2\nENTITIES")?;
+    for line in &sheet.lines {
+        writeln!(w, "0\nLINE\n8\n{}", line.class.dxf_layer())?;
+        writeln!(w, "6\n{}", ltype_of(line.class))?;
+        writeln!(w, "10\n{:.6}\n20\n{:.6}", line.start.x, line.start.y)?;
+        writeln!(w, "11\n{:.6}\n21\n{:.6}", line.end.x, line.end.y)?;
+    }
+    for arc in &sheet.arcs {
+        let full_circle =
+            (arc.arc.end_angle - arc.arc.start_angle).abs() >= std::f64::consts::TAU - 1e-9;
+        if full_circle {
+            writeln!(w, "0\nCIRCLE\n8\n{}", arc.class.dxf_layer())?;
+            writeln!(
+                w,
+                "10\n{:.6}\n20\n{:.6}",
+                arc.arc.center.x, arc.arc.center.y
+            )?;
+            writeln!(w, "40\n{:.6}", arc.arc.radius)?;
+        } else {
+            writeln!(w, "0\nARC\n8\n{}", arc.class.dxf_layer())?;
+            writeln!(
+                w,
+                "10\n{:.6}\n20\n{:.6}",
+                arc.arc.center.x, arc.arc.center.y
+            )?;
+            writeln!(w, "40\n{:.6}", arc.arc.radius)?;
+            writeln!(w, "50\n{:.6}", arc.arc.start_angle.to_degrees())?;
+            writeln!(w, "51\n{:.6}", arc.arc.end_angle.to_degrees())?;
+        }
+    }
+    for poly in &sheet.polygons {
+        // Filled arrowheads: DXF SOLID takes 3 or 4 corners (13/23 repeats
+        // the third for triangles).
+        if poly.points.len() >= 3 {
+            writeln!(w, "0\nSOLID\n8\n{}", poly.class.dxf_layer())?;
+            let p = &poly.points;
+            writeln!(w, "10\n{:.6}\n20\n{:.6}", p[0].x, p[0].y)?;
+            writeln!(w, "11\n{:.6}\n21\n{:.6}", p[1].x, p[1].y)?;
+            writeln!(w, "12\n{:.6}\n22\n{:.6}", p[2].x, p[2].y)?;
+            let last = if p.len() > 3 { &p[3] } else { &p[2] };
+            writeln!(w, "13\n{:.6}\n23\n{:.6}", last.x, last.y)?;
+        }
+    }
+    for text in &sheet.texts {
+        writeln!(w, "0\nTEXT\n8\nDIMENSION")?;
+        writeln!(w, "10\n{:.6}\n20\n{:.6}", text.position.x, text.position.y)?;
+        writeln!(w, "40\n{:.6}", text.height)?;
+        writeln!(w, "1\n{}", text.text)?;
+        writeln!(w, "50\n{:.6}", text.rotation.to_degrees())?;
+        writeln!(w, "72\n{}", text.alignment.dxf_horizontal())?;
+        writeln!(w, "73\n{}", text.alignment.dxf_vertical())?;
+        // Alignment point (required when 72/73 nonzero).
+        writeln!(w, "11\n{:.6}\n21\n{:.6}", text.position.x, text.position.y)?;
+    }
+    writeln!(w, "0\nENDSEC")?;
+    writeln!(w, "0\nEOF")?;
+
+    Ok(w)
+}
+
+/// Export a composed drawing sheet to a DXF file. See
+/// [`export_drawing_sheet_to_dxf_buffer`].
+#[cfg(feature = "drafting")]
+pub fn export_drawing_sheet_to_dxf(
+    sheet: &vcad_kernel_drafting::DrawingSheet,
+    path: impl AsRef<Path>,
+) -> std::io::Result<()> {
+    let buffer = export_drawing_sheet_to_dxf_buffer(sheet)?;
+    std::fs::write(path, buffer)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::fs;
+
+    #[cfg(feature = "drafting")]
+    #[test]
+    fn test_export_drawing_sheet_dxf() {
+        use vcad_kernel_drafting::{
+            BomBalloon, DimensionStyle, DrawingSheet, LineClass, Point2D, SectionCutLine,
+            SheetSize, TitleBlock, TitleBlockFields,
+        };
+
+        let mut sheet = DrawingSheet::new(SheetSize::A4);
+        sheet.add_title_block(&TitleBlock::new(TitleBlockFields {
+            part_name: "DXF TEST".into(),
+            ..Default::default()
+        }));
+        let cut = SectionCutLine::straight(
+            Point2D::new(50.0, 100.0),
+            Point2D::new(150.0, 100.0),
+            "A",
+            std::f64::consts::FRAC_PI_2,
+        );
+        sheet.add_annotation(
+            &cut.render().unwrap(),
+            LineClass::CuttingPlane,
+            Point2D::ORIGIN,
+        );
+        let balloon = BomBalloon::new(2, Point2D::new(60.0, 120.0), Point2D::new(80.0, 140.0));
+        sheet.add_annotation(
+            &balloon.render(&DimensionStyle::default()),
+            LineClass::Dimension,
+            Point2D::ORIGIN,
+        );
+
+        let dxf = export_drawing_sheet_to_dxf_buffer(&sheet).unwrap();
+        let text = String::from_utf8(dxf).unwrap();
+
+        // Layers and linetypes present.
+        for expected in ["BORDER", "CUTPLANE", "DIMENSION", "PHANTOM", "HIDDEN"] {
+            assert!(text.contains(expected), "missing {expected}");
+        }
+        // Entities: lines, circle (balloon), solid (arrows), text fields.
+        assert!(text.contains("\nLINE\n"));
+        assert!(text.contains("\nCIRCLE\n"));
+        assert!(text.contains("\nSOLID\n"));
+        assert!(text.contains("\nDXF TEST\n"));
+        assert!(text.trim_end().ends_with("EOF"));
+    }
 
     #[test]
     fn test_dxf_section_document() {
