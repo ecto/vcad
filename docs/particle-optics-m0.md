@@ -187,10 +187,15 @@ ensembles on a 101×201 mesh. Findings:
   probes). Shape parameters (ring position/radius) remain FD/hybrid — the
   Dirichlet mask is discrete; smooth shape adjoints are the M3+ seam
   (boundary-value differentiation on a frozen mask).
-- **M3 — geometry seam.** Electrode cross-sections from vcad sketches /
-  revolved BRep sections instead of hand-parameterized rings; parameters
-  become named `.vcad` document parameters (same contract as
-  `document_parameter_gradient`).
+- **M3 — parameter seam. DONE** (`spec::DeviceSpec`). Serde schema in
+  which every numeric field is a literal **or a named document parameter**;
+  fail-closed resolution (unbound name = error, never a default);
+  `parameter_roles()` classifies each name by gradient path (potentials +
+  ampere-turns → adjoint; geometry → FD, since it moves the discrete
+  Dirichlet mask). JSON round-trip, fail-closed, and role-classification
+  tests. BRep extraction (revolved sketch sections → `RingSpec`s) lands on
+  the vcad side of the seam, emitting this schema — same division of labor
+  as `document_parameter_gradient`.
 - **M4 — receipts + MCP.** `simulate_charged_particles` /
   `optimize_electrodes` tools; claims land in the DesignReceipt as a new
   claim family (interception fraction, recirculation, transparency, with
