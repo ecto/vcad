@@ -39,6 +39,11 @@
 use crate::model::{face_index, Boundary, ModelError, ThermalModel};
 use serde::Serialize;
 
+/// BC-slot index used for `ThermalModel::exposed` in convection links and
+/// film-coefficient gradients (slots 0..=5 are the domain faces in
+/// [`face_index`] order).
+pub(crate) const EXPOSED_SLOT: usize = 6;
+
 /// Options for [`solve_steady`].
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SolveOptions {
@@ -84,6 +89,8 @@ pub enum SolveError {
     /// A transient solve was asked for a non-positive time step or zero
     /// steps.
     InvalidTimeStep,
+    /// The smooth-max exponent must be finite and > 1.
+    InvalidSmoothingExponent,
 }
 
 impl std::fmt::Display for SolveError {
@@ -109,6 +116,9 @@ impl std::fmt::Display for SolveError {
             ),
             SolveError::InvalidTimeStep => {
                 write!(f, "transient solve requires dt > 0 and at least one step")
+            }
+            SolveError::InvalidSmoothingExponent => {
+                write!(f, "smooth-max exponent p must be finite and > 1")
             }
         }
     }
@@ -225,19 +235,25 @@ pub struct ReservoirReport {
 }
 
 #[derive(Clone, Copy, PartialEq)]
-enum LinkKind {
+pub(crate) enum LinkKind {
     FixedFace,
-    Convection,
+    /// Convection link; the payload is the BC slot that created it:
+    /// 0..=5 for the domain faces (in `face_index` order), 6 for
+    /// `ThermalModel::exposed`.
+    Convection(usize),
     /// Link into a fixed region; the payload is the region index in
     /// `ThermalModel::fixed` that owns the pinned voxel (painter's order).
     FixedRegion(usize),
 }
 
 pub(crate) struct BcLink {
-    voxel: usize,
-    g: f64,
-    t_ref: f64,
-    kind: LinkKind,
+    pub(crate) voxel: usize,
+    /// Face axis (0, 1, 2) — the conductance's half-cell distance and
+    /// area follow it.
+    pub(crate) axis: usize,
+    pub(crate) g: f64,
+    pub(crate) t_ref: f64,
+    pub(crate) kind: LinkKind,
 }
 
 /// The assembled discrete system (crate-internal; the transient solver
@@ -261,6 +277,13 @@ pub(crate) struct System {
     /// Index into `ThermalModel::materials` that painted each voxel.
     pub(crate) mat_id: Vec<usize>,
     pub(crate) cell_volume_m3: f64,
+    /// Per-axis conductivity per voxel (0 for void) — kept for the
+    /// adjoint's conductance chain rules.
+    pub(crate) kfield: [Vec<f64>; 3],
+    /// Voxel spacing per axis, m.
+    pub(crate) d_m: [f64; 3],
+    /// Face area per axis, m².
+    pub(crate) area: [f64; 3],
 }
 
 impl System {
@@ -473,6 +496,7 @@ pub(crate) fn build(model: &ThermalModel) -> Result<System, SolveError> {
                             grounded[p] = true;
                             links.push(BcLink {
                                 voxel: p,
+                                axis,
                                 g,
                                 t_ref: tfix[q],
                                 kind: LinkKind::FixedRegion(fixed_id[q]),
@@ -484,6 +508,7 @@ pub(crate) fn build(model: &ThermalModel) -> Result<System, SolveError> {
                             grounded[q] = true;
                             links.push(BcLink {
                                 voxel: q,
+                                axis,
                                 g,
                                 t_ref: tfix[p],
                                 kind: LinkKind::FixedRegion(fixed_id[p]),
@@ -513,8 +538,9 @@ pub(crate) fn build(model: &ThermalModel) -> Result<System, SolveError> {
                         } else {
                             coord == 0
                         };
-                        let bc = if at_domain_edge {
-                            model.domain_faces[face_index(axis, positive)]
+                        let (bc, slot) = if at_domain_edge {
+                            let s = face_index(axis, positive);
+                            (model.domain_faces[s], s)
                         } else {
                             let (ii, jj, kk) = match (axis, positive) {
                                 (0, true) => (i + 1, j, k),
@@ -527,7 +553,7 @@ pub(crate) fn build(model: &ThermalModel) -> Result<System, SolveError> {
                             if solid[idx(ii, jj, kk)] {
                                 continue; // internal face, handled above
                             }
-                            model.exposed
+                            (model.exposed, EXPOSED_SLOT)
                         };
                         let half = 0.5 * d_m[axis] / kfield[axis][p];
                         match bc {
@@ -539,6 +565,7 @@ pub(crate) fn build(model: &ThermalModel) -> Result<System, SolveError> {
                                 grounded[p] = true;
                                 links.push(BcLink {
                                     voxel: p,
+                                    axis,
                                     g,
                                     t_ref: temperature_c,
                                     kind: LinkKind::FixedFace,
@@ -551,9 +578,10 @@ pub(crate) fn build(model: &ThermalModel) -> Result<System, SolveError> {
                                 grounded[p] = true;
                                 links.push(BcLink {
                                     voxel: p,
+                                    axis,
                                     g,
                                     t_ref: ambient_c,
-                                    kind: LinkKind::Convection,
+                                    kind: LinkKind::Convection(slot),
                                 });
                             }
                         }
@@ -577,6 +605,9 @@ pub(crate) fn build(model: &ThermalModel) -> Result<System, SolveError> {
         rc,
         mat_id,
         cell_volume_m3: d_m[0] * d_m[1] * d_m[2],
+        kfield,
+        d_m,
+        area,
     };
 
     // Fail closed on floating components: BFS over free voxels through
@@ -745,7 +776,7 @@ pub(crate) fn resolve_reference(
     let mut ambient: Option<f64> = None;
     let mut unique = true;
     for l in &sys.links {
-        if matches!(l.kind, LinkKind::Convection) {
+        if matches!(l.kind, LinkKind::Convection(_)) {
             match ambient {
                 None => ambient = Some(l.t_ref),
                 Some(a) if (a - l.t_ref).abs() > 1e-9 => unique = false,
@@ -867,7 +898,7 @@ pub(crate) fn assemble_solution(
         gross += flow.abs();
         match l.kind {
             LinkKind::FixedFace => fixed_face_out_w += flow,
-            LinkKind::Convection => convection_out_w += flow,
+            LinkKind::Convection(_) => convection_out_w += flow,
             LinkKind::FixedRegion(region) => {
                 fixed_region_out_w += flow;
                 reservoirs[region].heat_absorbed_w += flow;

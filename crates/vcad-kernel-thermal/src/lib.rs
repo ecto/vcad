@@ -51,6 +51,7 @@
 //! are °C throughout. Conduction is linear, so any consistent affine
 //! temperature unit works — the solver never converts.
 
+pub mod adjoint;
 pub mod model;
 pub mod solve;
 pub mod transient;

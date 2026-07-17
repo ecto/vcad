@@ -148,17 +148,18 @@ Findings:
   15.7 → 22.5 K/W with the real in-plane/through-plane split. The M0
   honesty box called that error "modest"; it measurably is not, and the
   box now says so. Don't adjective an error you can compute.
-- **M2 — the adjoint.** The conduction operator is symmetric — literally
-  self-adjoint — so the gradient of any scalar objective costs **one more
-  CG solve with the same operator** (the exact trick the particle crate used
-  for its Poisson adjoint). Objective: a smoothed T_max (a hard max is
-  non-differentiable; a p-norm with documented p and stated bracketing
-  replaces it). Gradients w.r.t. per-region conductivity (harmonic-face
-  chain rule), film coefficients, and source powers. FD-validated with the
-  frozen-discretization lesson: the grid never re-voxelizes across FD
-  probes, and the probes state their h-convergence floor. Geometry
+- **M2 — the adjoint. DONE** (`docs/thermal-m2.md`,
+  `adjoint::smooth_max_gradient`). The conduction operator is symmetric —
+  literally self-adjoint — so the whole gradient costs **one more CG solve
+  with the same operator** (the particle Poisson-adjoint trick; measured:
+  96 forward + 94 adjoint iterations for gradients w.r.t. every parameter
+  at once). Objective: p-norm-smoothed T_max excess (p = 16 default) with
+  the max-bracket reported and checkable. Gradients to per-region
+  per-axis conductivity (harmonic-face chain rule), per-slot film
+  coefficients, and source powers; FD-validated to 2e-9…2e-6 at CG 1e-12
+  (stopping noise below FD resolution — the particle lesson). Geometry
   parameters move the discrete material mask and stay FD until a
-  shape-adjoint milestone — say so, don't smooth over it.
+  shape-adjoint milestone — stated, not smoothed over.
 - **M3 — the seam.** Serde `ThermalSpec` with named document parameters,
   fail-closed resolution (unbound name = error), `parameter_roles()`
   classifying adjoint vs FD paths; an external voxel-field input so the
