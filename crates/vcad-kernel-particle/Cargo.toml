@@ -12,3 +12,7 @@ vcad-receipt = { workspace = true }
 
 [dev-dependencies]
 serde_json = { workspace = true }
+vcad-kernel-em = { workspace = true }
+vcad-kernel-thermal = { workspace = true }
+vcad-kernel-neutronics = { workspace = true }
+vcad-kernel-tolerance = { workspace = true }

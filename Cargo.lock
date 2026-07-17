@@ -7348,6 +7348,10 @@ version = "0.9.4"
 dependencies = [
  "serde",
  "serde_json",
+ "vcad-kernel-em",
+ "vcad-kernel-neutronics",
+ "vcad-kernel-thermal",
+ "vcad-kernel-tolerance",
  "vcad-receipt",
 ]
 
