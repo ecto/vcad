@@ -222,10 +222,20 @@ Checks and findings:
   uncollided MC within 0.1–0.5% of exact at 1–5 mfp; RSE·√N flat over
   64× histories. External cross-validation (OpenMC + evaluated data)
   flagged as external, like the particle crate's SIMION runs.
-- **M6 — the application.** The shielded-grid experiment's Phase B
-  shield: operator at 2 m, 5×10⁶ n/s, stated dose budget — a
-  section-ready table for `docs/shielded-grid-experiment.md` with error
-  bars and library caveats on every number.
+- **M6 — the application. DONE** (`examples/phase_b_shield.rs`,
+  `docs/neutronics-phase-b-dose-plan.md`). The shielded-grid
+  experiment's Phase B dose plan: 5×10⁶ n/s (record-scale, an order
+  above the predicted floor — conservative), operator at 2 m, stated
+  design budget 2.5 µSv/h (≈1 mSv per 400 run-hours; a design choice,
+  not a regulatory determination). **Answer: 15 cm HDPE** — 1.62 ±
+  0.3% µSv/h at the operator, pass = mean + 2σ under budget; compass
+  gradient −0.037 µSv/h/mm at the design point. Whole pipeline
+  dogfooded: ShieldSpec (M3) → MC (M0/M1) → claims JSON (M4) →
+  adjoint gradient (M2). Section-ready insert for
+  `docs/shielded-grid-experiment.md` (that doc lives on the particle
+  branch; fold in when both land). NAA feasibility answered honestly:
+  3.3×10³ n/cm²/s thermal at an in-shield sample — foil calibration
+  yes, trace-element assay no (1.5–3.5 orders short).
 
 ## Non-goals
 
