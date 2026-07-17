@@ -3909,6 +3909,160 @@
     }
   },
   {
+    "name": "analyze_structure",
+    "title": "Analyze Structure",
+    "description": "Static structural FEA on a part's real geometry with fail-closed mesh-convergence gating: linear-tet fill of the tessellated interior at 2+ refinement levels, linear-elastic solve (PCG), returning max von Mises stress, max displacement, discretization-error estimates, and (with yield_strength_mpa) a safety factor — plus `vcad.fea-claims/1` and unified-receipt claims. If QoIs disagree across levels the verdict is Unverifiable and NO stress/displacement claim is emitted (raise resolution, or fillet the singular corner it points at). Claims carry basis \"predicted\" and roll up Provisional until hardware is load-tested. Scope: small-displacement linear elasticity, one isotropic material; no plasticity, buckling, contact, or dynamic loads; boundary is staircase-approximated at the lattice pitch. Use predict_physics for the fast coarse steering loop; use this for the audited answer.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "document_id": {
+          "type": "string",
+          "description": "Session document containing the part."
+        },
+        "part": {
+          "type": "string",
+          "description": "Root part id or exact name; its evaluated mesh is analyzed."
+        },
+        "loads": {
+          "type": "array",
+          "minItems": 1,
+          "description": "Loads: total force (N) split over the mesh nodes inside each world-frame box region. A zero-thickness box on a face selects that face's nodes. Fail-closed: a region that selects no node is an error.",
+          "items": {
+            "type": "object",
+            "required": [
+              "region",
+              "force"
+            ],
+            "properties": {
+              "region": {
+                "type": "object",
+                "required": [
+                  "min",
+                  "max"
+                ],
+                "properties": {
+                  "min": {
+                    "type": "array",
+                    "items": {
+                      "type": "number"
+                    },
+                    "minItems": 3,
+                    "maxItems": 3,
+                    "description": "Minimum corner [x, y, z] in mm (world frame, Z-up)."
+                  },
+                  "max": {
+                    "type": "array",
+                    "items": {
+                      "type": "number"
+                    },
+                    "minItems": 3,
+                    "maxItems": 3,
+                    "description": "Maximum corner [x, y, z] in mm."
+                  }
+                }
+              },
+              "force": {
+                "type": "array",
+                "items": {
+                  "type": "number"
+                },
+                "minItems": 3,
+                "maxItems": 3,
+                "description": "Total force [fx, fy, fz] in N."
+              }
+            }
+          }
+        },
+        "supports": {
+          "type": "array",
+          "minItems": 1,
+          "description": "Fixed (anchored) regions.",
+          "items": {
+            "type": "object",
+            "required": [
+              "region"
+            ],
+            "properties": {
+              "region": {
+                "type": "object",
+                "required": [
+                  "min",
+                  "max"
+                ],
+                "properties": {
+                  "min": {
+                    "type": "array",
+                    "items": {
+                      "type": "number"
+                    },
+                    "minItems": 3,
+                    "maxItems": 3,
+                    "description": "Minimum corner [x, y, z] in mm (world frame, Z-up)."
+                  },
+                  "max": {
+                    "type": "array",
+                    "items": {
+                      "type": "number"
+                    },
+                    "minItems": 3,
+                    "maxItems": 3,
+                    "description": "Maximum corner [x, y, z] in mm."
+                  }
+                }
+              },
+              "fix": {
+                "type": "array",
+                "items": {
+                  "type": "boolean"
+                },
+                "minItems": 3,
+                "maxItems": 3,
+                "description": "Which translations are fixed [x, y, z]; default all true."
+              }
+            }
+          }
+        },
+        "youngs_modulus_mpa": {
+          "type": "number",
+          "description": "Young's modulus, MPa. Default 69000 (6061 aluminum); steel ~200000, PLA ~2300."
+        },
+        "poisson": {
+          "type": "number",
+          "description": "Poisson's ratio in [0, 0.5). Default 0.33."
+        },
+        "yield_strength_mpa": {
+          "type": "number",
+          "description": "Material yield strength, MPa. When given, safety_factor = yield / max von Mises is computed and claimed (converged studies only)."
+        },
+        "resolution": {
+          "type": "number",
+          "description": "Coarse-level lattice cells along the longest bbox axis (default 24). The finest level is resolution * 2^(levels-1), capped at 160 for this tier. Keep >= ~6 cells through the thinnest load-bearing section."
+        },
+        "levels": {
+          "type": "number",
+          "description": "Refinement levels (default 2, each 2x the previous)."
+        },
+        "displacement_tol": {
+          "type": "number",
+          "description": "Convergence gate on max displacement change between the two finest levels (default 0.05 = 5%)."
+        },
+        "stress_tol": {
+          "type": "number",
+          "description": "Convergence gate on max von Mises change (default 0.15 = 15%; pointwise stress converges slower, and diverges at sharp re-entrant corners)."
+        }
+      },
+      "required": [
+        "document_id",
+        "part",
+        "loads",
+        "supports"
+      ]
+    },
+    "annotations": {
+      "readOnlyHint": true
+    }
+  },
+  {
     "name": "simulate_neutron_shield",
     "title": "Simulate Neutron Shield",
     "description": "Monte Carlo neutron shielding run (analog transport, 5-group multigroup library with exact elastic kinematics): spherical layer stack around a point source (D-D band), H*(10) dose rate at each detector shell WITH 1-sigma batch error bars (rse), attenuation factor vs bare source, thermal flux, and absorbed/leakage balance — as data plus `vcad.neutronics-claims/1` and unified-receipt claims. Fail-closed: truncated histories or a tally that scored nothing refuses claims (raise histories). Predictions carry basis \"predicted\" and roll up Provisional until surveyed. Design-estimate physics: 5-group library (not ENDF continuous-energy), spherical geometry only, no gamma dose, no activation, source energy capped at 3 MeV (no D-T). Deterministic per seed. Cost ~histories (cap 5M); error bars shrink as 1/sqrt(N). The 400k default runs in seconds.",

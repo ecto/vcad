@@ -132,6 +132,7 @@ import { toolDefs as topoptToolDefs } from "./tools/topopt.js";
 import { toolDefs as particleToolDefs } from "./tools/particle.js";
 import { toolDefs as toleranceToolDefs } from "./tools/tolerance.js";
 import { toolDefs as thermalToolDefs } from "./tools/thermal.js";
+import { toolDefs as structureToolDefs } from "./tools/structure.js";
 import { toolDefs as emToolDefs } from "./tools/em.js";
 import { toolDefs as antennaToolDefs } from "./tools/antenna.js";
 import { toolDefs as photonicsToolDefs } from "./tools/photonics.js";
@@ -317,6 +318,7 @@ const STATIC_TOOL_DEFS: readonly ToolDef[] = [
   ...particleToolDefs,
   ...toleranceToolDefs,
   ...thermalToolDefs,
+  ...structureToolDefs,
   ...emToolDefs,
   ...antennaToolDefs,
   ...photonicsToolDefs,
@@ -409,6 +411,7 @@ const LIST_TOOL_ORDER: readonly string[] = [
   "simulate_photonics",
   "analyze_antenna",
   "solve_thermal",
+  "analyze_structure",
   "simulate_neutron_shield",
   "analyze_tolerance_stackup",
   // ── Two-tier static physics (predict fast, verify to certify) ──

@@ -1,0 +1,15 @@
+[package]
+name = "vcad-kernel-fea"
+description = "Static structural FEA on BRep geometry: lattice tet fill of the tessellated interior, linear-elastic solve (PCG), von Mises / displacement / safety-factor QoIs with fail-closed mesh-convergence gating"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde = { workspace = true }
+vcad-kernel-tessellate = { workspace = true }
+vcad-receipt = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }
