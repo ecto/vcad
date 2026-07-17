@@ -677,3 +677,37 @@ target.
 electron sustain + magnet. Key physics: in steady state electron sustain
 power = I_e · V (the injector replaces every cusp loss). `sustained_q`
 verdict logged next.
+
+## 2026-07-17 — the honest Q verdict: neutralization is a rate lever, not a Q lever
+
+`sustained_q` at 100 kV / 30 mA ions; electron confinement τ = 0.88 µs
+(enhancement **704×**, 83% survivors — strong cusp trapping confirmed at
+full field). Ledger vs electron current:
+
+| e-current | neutron n/s | vs record | P_fusion | P_e-sustain | Q |
+|---|---|---|---|---|---|
+| 30 mA | 8.4×10⁷ | 17× | 9.8×10⁻⁵ W | 3 kW | **1.6×10⁻⁸** |
+| 1 A | 9.4×10⁷ | 19× | 1.1×10⁻⁴ W | 100 kW | 1.1×10⁻⁹ |
+| 3 A | 1.7×10⁸ | 33× | 2.0×10⁻⁴ W | 300 kW | 6.4×10⁻¹⁰ |
+| 10 A | 7.0×10⁸ | **140×** | 8.2×10⁻⁴ W | 1 MW | 8.2×10⁻¹⁰ |
+
+- **The decisive result**: the virtual cathode raises neutron RATE up to
+  140× the record, but **Q falls ~20× as the cloud grows** — Q is *best*
+  at the smallest electron current. Electron sustain power (I_e · V)
+  dominates the input the moment I_e exceeds the ion current, and it grows
+  faster than fusion power. And the magnet term is still unpriced (MA·turn
+  scale — needs the em+thermal crates), so these Q's are over-estimates.
+- **Strategic redirect**: neutralization belongs to the records and
+  physics lanes (rate, density, the polywell story), **not** the Q lane.
+  The Q lane's real lever is **direct energy recovery on the losses**
+  (venetian-blind, 59–75% demonstrated) — recovering the ion/electron
+  power that currently exits to the walls. The ledger is now built to
+  price exactly that: add a recovery-efficiency term on the loss channels.
+- Cross-check: beam-target Q (~1.6×10⁻⁷) is the *highest* Q of any config
+  we've priced — an order above the best neutralized-gas Q — consistent
+  with "solid density beats everything on yield-per-input."
+
+Arc close: the Q-lane triple priced all three roads honestly. Records:
+197× (dial optimum), 140× (virtual cathode), 179× (bare TiD). Physics:
+harmonicity 0.545, optimizable. Q: no lever here moves it — direct
+recovery is the next module, and the ledger is ready for it.
