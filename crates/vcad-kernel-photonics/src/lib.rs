@@ -68,6 +68,7 @@
 
 pub mod adjoint;
 pub mod cpml;
+pub mod design;
 pub mod dispersion;
 pub mod grid;
 pub mod material;
@@ -75,12 +76,14 @@ pub mod modes;
 pub mod monitor;
 pub mod sim;
 pub mod source;
+pub mod spec;
 pub mod waveform;
 
 pub use adjoint::{
     objective_and_gradient, run_objective, DesignRegion, GradientResult, ModeOverlap,
 };
 pub use cpml::CpmlSpec;
+pub use design::TopologyParam;
 pub use dispersion::{fdtd_phase_velocity, fdtd_wavenumber, fdtd_wavenumber_in_medium};
 pub use grid::{Field2, GridSpec};
 pub use material::Shape2;
@@ -88,4 +91,5 @@ pub use modes::{solve_slab_mode_even, ModeError, SlabMode};
 pub use monitor::{dft_of_series, Cplx, FluxSpec};
 pub use sim::{BoundarySpec, FluxId, Polarization, ProbeId, Simulation, Wall};
 pub use source::{Source, SourcePlacement};
+pub use spec::{ParamValue, ResolvedTopology, SpecError, TopologyProblemSpec, SPEC_SCHEMA};
 pub use waveform::Waveform;

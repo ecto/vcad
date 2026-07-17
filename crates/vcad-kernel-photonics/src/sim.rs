@@ -849,6 +849,16 @@ impl Simulation {
         *self.ez.at_mut(i, j) += dv;
     }
 
+    /// Set the ε_z sample at `(i, j)` absolutely (TM only, before the
+    /// first step) — how [`crate::design::TopologyParam::apply`] stamps a
+    /// realized topology into the grid.
+    pub fn set_epsilon_at(&mut self, i: usize, j: usize, eps: f64) {
+        self.assert_configurable();
+        assert_eq!(self.pol, Polarization::Tm);
+        assert!(eps >= 1.0, "relative permittivity must be ≥ 1");
+        *self.eps_z.at_mut(i, j) = eps;
+    }
+
     /// Perturb the committed-to-be ε_z sample at `(i, j)` by `d_eps`
     /// (TM only, before the first step): the finite-difference probe used
     /// to validate adjoint gradients cell by cell.

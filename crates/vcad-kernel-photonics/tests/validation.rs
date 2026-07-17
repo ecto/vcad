@@ -793,3 +793,141 @@ fn adjoint_gradient_matches_finite_differences() {
         );
     }
 }
+
+/// Rung 9 (M3) — the full topology chain, end to end: dJ/dρ through
+/// density → cone filter → projection → ε interpolation → FDTD → mode
+/// overlap, adjoint + analytic chain rule vs central differences on raw
+/// densities. The chain-rule stages are individually exact (filter
+/// transpose and projection derivative have their own unit tests), so
+/// the tolerance floor here is the M2 adjoint floor itself.
+#[test]
+fn topology_chain_gradient_matches_fd() {
+    use vcad_kernel_photonics::TopologyParam;
+
+    let lambda0 = 1.55;
+    let f0 = 1.0 / lambda0;
+    let (n_core, n_clad, half_w) = (3.48, 1.44, 0.11);
+    let delta = lambda0 / 30.0;
+    let (nx, ny) = (90, 40);
+    let jc = 20usize;
+    let yc = jc as f64 * delta;
+    let steps = 1300;
+
+    let mode = solve_slab_mode_even(n_core, n_clad, half_w, lambda0, Polarization::Tm).unwrap();
+    let (j0s, j1s) = (12usize, 28usize);
+    let src_profile: Vec<f64> = (j0s..=j1s)
+        .map(|j| mode.profile((j as f64 - jc as f64) * delta))
+        .collect();
+
+    let region = DesignRegion {
+        i0: 38,
+        i1: 50,
+        j0: 14,
+        j1: 26,
+    };
+    // A structured (non-uniform) density so every chain stage is active.
+    let mut topo = TopologyParam::uniform(region, 0.5, n_clad * n_clad, n_core * n_core);
+    topo.beta = 4.0;
+    topo.filter_radius_cells = 2.2;
+    for (c, v) in topo.rho.iter_mut().enumerate() {
+        *v = 0.5 + 0.35 * ((c as f64) * 0.7).sin();
+    }
+    let topo_master = topo.clone();
+
+    let build_with = |t: &TopologyParam, with_sources: bool| -> Simulation {
+        let mut sim = Simulation::new(GridSpec::new(nx, ny, delta), Polarization::Tm);
+        sim.set_cpml(CpmlSpec::uniform(10));
+        sim.fill_epsilon(n_clad * n_clad);
+        sim.paint(
+            &Shape2::rect(-1.0, yc - half_w, 1e9, yc + half_w),
+            n_core * n_core,
+        );
+        t.apply(&mut sim);
+        if with_sources {
+            sim.add_source(Source::mode_tfsf(
+                14,
+                j0s,
+                src_profile.clone(),
+                mode.n_eff,
+                Waveform::gaussian(f0, f0 / 4.0),
+            ));
+        }
+        sim
+    };
+
+    let obj = ModeOverlap {
+        i: 76,
+        j0: j0s,
+        weights: src_profile.clone(),
+        freq: f0,
+    };
+    let _ = j1s;
+
+    let mut build = |with_sources: bool| build_with(&topo_master, with_sources);
+    let result = objective_and_gradient(&mut build, &region, &obj, steps);
+    let d_j_d_rho = topo_master.chain_gradient(&result.grad);
+
+    // FD through the whole chain at three density components.
+    let h = 1e-3;
+    let ry = region.ns_y();
+    let cases = [
+        (5 * ry + 6, "core-adjacent"),
+        (7 * ry + 2, "cladding-side"),
+        (10 * ry + 9, "far corner"),
+    ];
+    let gmax = d_j_d_rho.iter().fold(0.0f64, |m, v| m.max(v.abs()));
+    assert!(gmax > 0.0);
+    for (c, name) in cases {
+        let mut tp = topo_master.clone();
+        tp.rho[c] += h;
+        let (jp, _) = run_objective(build_with(&tp, true), &obj, steps);
+        let mut tm = topo_master.clone();
+        tm.rho[c] -= h;
+        let (jm, _) = run_objective(build_with(&tm, true), &obj, steps);
+        let fd = (jp - jm) / (2.0 * h);
+        let adj = d_j_d_rho[c];
+        let rel = ((adj - fd) / fd).abs();
+        println!("topology: {name} c={c}  adj {adj:+.6e}  fd {fd:+.6e}  rel {rel:.2e}");
+        assert!(
+            (adj - fd).abs() <= 2e-4 * fd.abs().max(1e-3 * gmax),
+            "{name}: chained adjoint {adj:e} vs FD {fd:e}"
+        );
+    }
+}
+
+/// Rung 10 (M3) — the spec seam round-trips through JSON and fails
+/// closed: named parameters resolve only when bound; densities are
+/// validated against the region.
+#[test]
+fn spec_seam_round_trips_and_fails_closed() {
+    use std::collections::BTreeMap;
+    use vcad_kernel_photonics::{ParamValue, SpecError, TopologyProblemSpec};
+
+    let region = DesignRegion {
+        i0: 30,
+        i1: 49,
+        j0: 10,
+        j1: 29,
+    };
+    let mut spec = TopologyProblemSpec::new(1.55, 3.48, 1.44, 30, region);
+    spec.wavelength = ParamValue::Named("lambda_design".into());
+    spec.rho = vec![0.25; region.len()];
+
+    let json = serde_json::to_string_pretty(&spec).unwrap();
+    let back: TopologyProblemSpec = serde_json::from_str(&json).unwrap();
+    assert_eq!(back, spec);
+
+    // Named params serialize as bare strings, literals as numbers.
+    assert!(json.contains("\"lambda_design\""));
+
+    // Fail-closed: no binding, no resolve.
+    assert_eq!(
+        back.resolve(&BTreeMap::new(), 8.0).unwrap_err(),
+        SpecError::UnknownParameter("lambda_design".into())
+    );
+    let mut params = BTreeMap::new();
+    params.insert("lambda_design".to_string(), 1.55);
+    let resolved = back.resolve(&params, 8.0).unwrap();
+    assert_eq!(resolved.param.rho, vec![0.25; region.len()]);
+    assert!((resolved.param.eps_max - 3.48 * 3.48).abs() < 1e-12);
+}

@@ -176,6 +176,28 @@ absorber) prices in at the measured reflection floor: ~4×10⁻¹⁰ absolute
 on the gradient in the discrimination experiment — negligible, and now
 stated rather than assumed.
 
+## M3 (landed): topology parameterization + the spec seam
+
+`design::TopologyParam`: density ρ ∈ [0,1] per design cell → **cone
+filter** (radius = minimum feature scale, border-clipped normalization so
+constants survive corners) → **smoothed-Heaviside projection** (β = 0 is
+the identity, β → ∞ binarizes; the optimizer owns the β ramp — the
+binarization schedule) → linear ε interpolation. The chain rule runs
+backward through the **exact filter transpose** (`⟨Fρ,g⟩ = ⟨ρ,Fᵀg⟩`
+unit-tested to 10⁻¹²) and the analytic projection derivative.
+
+End-to-end validation: dJ/dρ through
+density → filter → project → ε → FDTD → mode overlap, adjoint + chain
+rule vs central differences on raw densities:
+**1.3×10⁻⁷ / 5.4×10⁻⁷ / 2.5×10⁻⁷** relative at three probe components.
+
+`spec::TopologyProblemSpec` (`vcad.photonics-spec/1`) is the serde seam:
+every scalar knob is a `ParamValue` (literal or **named** document
+parameter), resolution is fail-closed (unbound name ⇒ error, never a
+default; NaN ⇒ error; densities validated against the region, ρ ∉ [0,1]
+rejected). The density vector travels as data; β is schedule state, not
+a document parameter. JSON round-trip tested.
+
 ## Milestone ladder
 - **M2 — the adjoint:** reverse-time run with adjoint sources at the
   objective monitor; ∂T/∂ε per design cell; validated against central
