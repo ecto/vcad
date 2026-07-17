@@ -1,9 +1,8 @@
 # Phase B neutron dose plan (shielded-grid IEC experiment)
 
-**Section-ready insert for `docs/shielded-grid-experiment.md` → Safety →
-"Neutrons: dose budget and distance plan before Phase B."** That document
-lives on the particle-optics branch; fold this section in when both land
-on main. Every number regenerates from
+**The "dose budget and distance plan before Phase B" required by
+`docs/shielded-grid-experiment.md` → Safety** (whose neutron bullet now
+carries the summary and points here). Every number regenerates from
 `cargo run --release -p vcad-kernel-neutronics --example phase_b_shield`
 (seed 20260717, 10⁶ histories/config).
 
