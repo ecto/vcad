@@ -296,8 +296,35 @@ pub fn route_net_maze3d(
     let mut came: Vec<usize> = vec![usize::MAX; n];
     let mut closed = vec![false; n];
     // Memoized via legality per (cell, span pair) — spans are (lo, hi)
-    // layer-index pairs, lo < hi.
+    // layer-index pairs, lo < hi — and the via POSITION chosen for the cell:
+    // the cell centre when it clears, otherwise an off-grid candidate found
+    // by ring search. Grid-quantized via sites lose exactly the positions a
+    // human uses inside a BGA field (between the balls); the candidates
+    // recover them.
     let mut via_cache: Vec<i8> = vec![-1; plane * nl * nl];
+    let mut via_pos: Vec<Vec2> = vec![Vec2::new(0.0, 0.0); plane * nl * nl];
+    // A candidate must clear its span AND connect legally to the cell centre
+    // on both endpoint layers (the search continues from the cell node).
+    let find_via_site = |center: Vec2, lo: usize, hi: usize| -> Option<Vec2> {
+        if via_ok(center, lo, hi) {
+            return Some(center);
+        }
+        let r1 = grid.pitch / 3.0;
+        let r2 = grid.pitch / 2.0;
+        for r in [r1, r2] {
+            for k in 0..8 {
+                let a = std::f64::consts::TAU * k as f64 / 8.0;
+                let p = Vec2::new(center.x + r * a.cos(), center.y + r * a.sin());
+                if via_ok(p, lo, hi)
+                    && legal_step(center, p, layers[lo])
+                    && legal_step(center, p, layers[hi])
+                {
+                    return Some(p);
+                }
+            }
+        }
+        None
+    };
     // Occupancy raster: O(1) cell passability, and WIDE↔WIDE edges are legal
     // without touching the oracle at all.
     let sw_raster = Stopwatch::start();
@@ -436,7 +463,13 @@ pub fn route_net_maze3d(
                 let (lo, hi) = (li.min(lj), li.max(lj));
                 let key = cell * nl * nl + lo * nl + hi;
                 if via_cache[key] < 0 {
-                    via_cache[key] = i8::from(via_ok(grid.world(ix, iy), lo, hi));
+                    match find_via_site(grid.world(ix, iy), lo, hi) {
+                        Some(p) => {
+                            via_cache[key] = 1;
+                            via_pos[key] = p;
+                        }
+                        None => via_cache[key] = 0,
+                    }
                 }
                 if via_cache[key] != 1 {
                     continue;
@@ -527,11 +560,21 @@ pub fn route_net_maze3d(
         let (li, cell) = (node / plane, node % plane);
         let w = grid.world_of(cell);
         if li != run_layer {
-            // Layer change: the via sits at the last point of the finished
-            // run, spanning exactly the two layers it connects.
-            let at = *run.last().expect("run always starts non-empty");
-            flush_run(&mut run, layers[run_layer], &mut segments);
+            // Layer change: the via sits at the position the search chose for
+            // this (cell, span) — the cell centre, or an off-grid candidate
+            // between obstacles. Route the old-layer run to it and start the
+            // new-layer run from it.
             let (lo, hi) = (run_layer.min(li), run_layer.max(li));
+            let key = cell * nl * nl + lo * nl + hi;
+            let at = if via_cache[key] == 1 {
+                via_pos[key]
+            } else {
+                *run.last().expect("run always starts non-empty")
+            };
+            if run.last().map(|p| dist(*p, at) > 1e-9).unwrap_or(true) {
+                run.push(at);
+            }
+            flush_run(&mut run, layers[run_layer], &mut segments);
             if vias
                 .last()
                 .map(|&(v, _, _)| dist(v, at) > 1e-9)

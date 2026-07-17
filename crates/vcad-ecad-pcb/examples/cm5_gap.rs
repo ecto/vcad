@@ -130,7 +130,11 @@ fn main() {
         }
     }
     gaps.sort_by(f64::total_cmp);
-    let pct = |q: f64| gaps.get((gaps.len() as f64 * q) as usize).copied().unwrap_or(f64::NAN);
+    let pct = |q: f64| {
+        gaps.get((gaps.len() as f64 * q) as usize)
+            .copied()
+            .unwrap_or(f64::NAN)
+    };
     println!(
         "\nhuman spacing on stuck-net copper: min={:.3}mm p5={:.3} p25={:.3} median={:.3} (our calibrated clearance: {:.3}mm)",
         min_gap,
