@@ -35,6 +35,7 @@
 //! reported in electron-volts.
 
 pub mod adjoint;
+pub mod beam_target;
 pub mod confinement;
 pub mod device;
 pub mod elliptic;
@@ -42,6 +43,7 @@ pub mod field;
 pub mod fom;
 pub mod optimize;
 pub mod poisson;
+pub mod power;
 pub mod receipt;
 pub mod space_charge;
 pub mod spec;
