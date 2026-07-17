@@ -194,10 +194,32 @@ estimate with stated omissions, not a measurement (that's M6's job).
   an unmeasured receipt never passes, a measurement matching no claim
   is an error. Registering the family in `crates/vcad-receipt` + MCP
   tools is the flagged cross-crate follow-up PR.
-- **M5 — external benchmark + convergence + paper draft.** A published
-  reference problem, the convergence table as an example, paper skeleton.
-- **M6 — measurement pack.** Kt via back-EMF spin-down on the real 70 mm
-  motor; LCR-meter inductance binding through compare().
+- **M5 — published benchmark + convergence + paper draft. DONE.**
+  Benchmark chosen for stateable-exactly published truth (no
+  from-memory "TEAM numbers"): the permeable cylindrical shell in a
+  uniform transverse field, Jackson 3rd ed. problem 5.14
+  (`H_in/H₀ = 4μb²/((μ+1)²b²−(μ−1)²a²)` = 0.10182 for a = 8 mm,
+  b = 10 mm, μ_r = 100) — a composite of 100× μ jumps, curved
+  staircased interfaces, and a uniform applied field, solved with the
+  new `RingMaterial` planar region. `examples/convergence.rs` prints
+  the two-regime table: the smooth solenoid anchor at measured order
+  2.00/2.00/1.99/1.95, the staircased shell at 32.7% → 5.1% → 1.7%
+  (h = 1 → 0.25 mm, ~O(h)) — and at h = 2 mm the 2 mm shell is one
+  cell thick and the answer is garbage: the thin-feature floor,
+  demonstrated numerically. Regression rung at h = 0.67 mm.
+  `docs/em-paper-draft.md` carries the full ladder and the motor case
+  study with real numbers only.
+- **M6 — measurement pack. DONE.** `examples/motor_receipt.rs` emits
+  the motor's `vcad.em-claims/1` JSON (torque 4.64 mN·m @ 1.5 A, 1.6%
+  cross-route residual on the receipt) and demonstrates the fail-closed
+  binding; `docs/em-measurement-pack.md` is the bench procedure:
+  Kt via back-EMF (drill + scope, speed from the waveform's own
+  electrical frequency — expected 0.57 V line-line peak at 1000 RPM),
+  stall-torque cross-check on a jewelry scale, Hall-probe air-gap flux
+  vs the 0.201 T claim, spin-down friction context, and an honest
+  no-prediction list (phase L and R: end turns unmodeled — binding
+  them would manufacture a Violated verdict the model already
+  declares). Bands sized by the slice's stated omissions.
 
 ## Non-goals
 

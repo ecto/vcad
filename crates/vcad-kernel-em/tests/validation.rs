@@ -398,3 +398,64 @@ fn ac_rod_flux_matches_the_bessel_solution() {
     // The flux must lag the drive and be attenuated at R/δ = 2.
     assert!(mag_w < 0.75 && got.1 < 0.0, "attenuation/lag sanity");
 }
+
+/// Rung 8 (M5) — published-benchmark composite: the transverse-field
+/// shielding factor of a permeable cylindrical shell,
+/// `H_in/H₀ = 4μb²/((μ+1)²b² − (μ−1)²a²)` (Jackson, *Classical
+/// Electrodynamics*, 3rd ed., problem 5.14). Exercises μ jumps of 100×,
+/// curved staircased interfaces, and a uniform applied field in one
+/// problem. The tolerance comes from the measured staircase convergence
+/// (`examples/convergence.rs`: 33% at h = 1 mm → 5% at h = 0.5 mm →
+/// 1.7% at h = 0.25 mm; at h = 2 mm the 2 mm shell is one cell thick
+/// and the answer is garbage — the thin-feature floor, demonstrated).
+#[test]
+fn cylindrical_shell_shielding_matches_jackson() {
+    use vcad_kernel_em::planar::{Conductor, PlanarMagnetostatics, Rect, RingMaterial};
+
+    let (a, b, mu) = (8.0_f64, 10.0_f64, 100.0_f64);
+    let exact = 4.0 * mu * b * b / ((mu + 1.0).powi(2) * b * b - (mu - 1.0).powi(2) * a * a);
+
+    let mut dev = PlanarMagnetostatics::new(0.0, 80.0, 0.0, 80.0);
+    dev.bc_x_low = Bc::Neumann;
+    dev.bc_x_high = Bc::Neumann;
+    dev.bc_y_low = Bc::Zero;
+    dev.bc_y_high = Bc::Neumann;
+    for (y0, i) in [(6.0, 100.0), (72.0, -100.0)] {
+        dev.conductors.push(Conductor {
+            region: Rect {
+                x_min_mm: 0.0,
+                x_max_mm: 80.0,
+                y_min_mm: y0,
+                y_max_mm: y0 + 2.0,
+            },
+            total_current_a: i,
+        });
+    }
+    dev.rings.push(RingMaterial {
+        cx_mm: 40.0,
+        cy_mm: 40.0,
+        r_inner_mm: a,
+        r_outer_mm: b,
+        mu_r: mu,
+    });
+    // n = 121 (h = 0.67 mm) sits on the same ~5% staircase error as
+    // n = 161 (the error wobbles, it does not descend monotonically —
+    // measured 5.2% / 7.5% / 5.1% across 121/141/161) at half the
+    // debug-suite cost; the SOR tolerance is loosened to 1e-6, ample
+    // under a 10% assert.
+    let opts = SolveOptions {
+        tol: 1e-6,
+        ..SolveOptions::default()
+    };
+    let sol = dev.solve(121, 121, &opts).unwrap();
+    let (bx_app, _) = sol.b_at(0.002, 0.040);
+    let (bx_in, _) = sol.b_at(0.040, 0.040);
+    let ratio = bx_in / bx_app;
+    let rel = (ratio - exact).abs() / exact;
+    assert!(
+        rel < 0.10,
+        "shielding ratio {ratio:.5} vs Jackson {exact:.5} (rel {rel:.2e} at h = 0.67 mm)"
+    );
+    // And the shell really shields: interior field ~10× down.
+    assert!(ratio < 0.15, "no shielding? ratio {ratio}");
+}

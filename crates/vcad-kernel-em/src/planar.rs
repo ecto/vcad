@@ -117,6 +117,32 @@ impl PlanarMaterial {
     }
 }
 
+/// An annular (ring) linear material region — curved interfaces
+/// staircase at cell resolution, so results must be bracketed by a
+/// refinement study (see `examples/convergence.rs`). Linear only.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct RingMaterial {
+    /// Center x, mm.
+    pub cx_mm: f64,
+    /// Center y, mm.
+    pub cy_mm: f64,
+    /// Inner radius, mm.
+    pub r_inner_mm: f64,
+    /// Outer radius, mm.
+    pub r_outer_mm: f64,
+    /// Relative permeability.
+    pub mu_r: f64,
+}
+
+impl RingMaterial {
+    fn contains_m(&self, x_m: f64, y_m: f64) -> bool {
+        let dx = x_m * 1e3 - self.cx_mm;
+        let dy = y_m * 1e3 - self.cy_mm;
+        let d2 = dx * dx + dy * dy;
+        d2 >= self.r_inner_mm * self.r_inner_mm && d2 <= self.r_outer_mm * self.r_outer_mm
+    }
+}
+
 /// A planar magnetostatic device.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PlanarMagnetostatics {
@@ -135,6 +161,9 @@ pub struct PlanarMagnetostatics {
     /// Material regions (later entries win; magnets' recoil μ is applied
     /// after these; background is vacuum).
     pub materials: Vec<PlanarMaterial>,
+    /// Annular material regions (applied after `materials`, before
+    /// magnet recoil; linear only, staircased).
+    pub rings: Vec<RingMaterial>,
     /// Wrap x: column `nx−1` neighbors column `0`, the unrolled-machine
     /// topology. The wrap pitch is the full `[x_min, x_max]` span; sources
     /// must not straddle the seam (split them at the seam instead), and
@@ -162,6 +191,7 @@ impl PlanarMagnetostatics {
             conductors: Vec::new(),
             magnets: Vec::new(),
             materials: Vec::new(),
+            rings: Vec::new(),
             periodic_x: false,
             bc_x_low: Bc::Zero,
             bc_x_high: Bc::Zero,
@@ -175,6 +205,11 @@ impl PlanarMagnetostatics {
         for m in &self.materials {
             if m.region.contains_m(x_m, y_m) {
                 mu = m.mu_r;
+            }
+        }
+        for r in &self.rings {
+            if r.contains_m(x_m, y_m) {
+                mu = r.mu_r;
             }
         }
         for m in &self.magnets {
