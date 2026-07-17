@@ -105,43 +105,64 @@ request needs k_eff, this is the wrong tool and the docs say so.
 8. Exact analog balance, bit-identical reproducibility, fail-closed
    config/geometry/material validation, fail-closed zero tallies.
 
-## The M0 headline (examples/fusor_shield.rs)
+## The headline (examples/fusor_shield.rs)
 
 Isotropic 2.45 MeV point source, 30 cm air chamber stand-in, HDPE shell,
 air to detector shells at 1 m and 2 m. 10⁶ histories/config, seed
-20260717:
+20260717, M1 exact-kinematics default:
 
-| shield | dose @ 1 m (µSv/h per 10⁶ n/s) | @ 2 m |
-|---|---:|---:|
-| bare | 12.108 ± 0.0% | 3.275 ± 0.1% |
-| 5 cm HDPE | 5.013 ± 0.1% | 1.345 ± 0.1% |
-| 10 cm HDPE | 1.619 ± 0.3% | 0.432 ± 0.3% |
-| 20 cm HDPE | 0.152 ± 1.0% | 0.0400 ± 1.1% |
-| 15 cm HDPE + 5 cm borated-5% | 0.149 ± 0.9% | 0.0394 ± 1.0% |
+| shield | dose @ 1 m (µSv/h per 10⁶ n/s) | @ 2 m | M0-isotropic @ 1 m |
+|---|---:|---:|---:|
+| bare | 12.110 ± 0.0% | 3.279 ± 0.0% | 12.108 |
+| 5 cm HDPE | 7.025 ± 0.1% | 1.884 ± 0.1% | 5.013 |
+| 10 cm HDPE | 3.098 ± 0.2% | 0.826 ± 0.2% | 1.619 |
+| 20 cm HDPE | 0.474 ± 0.5% | 0.125 ± 0.5% | 0.152 |
+| 15 cm HDPE + 5 cm borated-5% | 0.454 ± 0.5% | 0.120 ± 0.5% | 0.149 |
 
 Checks and findings:
 
 1. **The bare row is the analytic anchor:** 12.03 µSv/h uncollided at
    1 m for 10⁶ n/s; MC reads 12.11 (air in-scatter sits on top). The
-   1 m → 2 m ratio is 3.70 — 1/r² minus a little air scatter.
-2. **HDPE tenth-value thickness for D-D dose ≈ 10 cm** (5 cm buys 2.4×,
-   10 cm 7.5×, 20 cm 80×) — consistent with the fusor-community rule of
-   thumb and with removal-theory expectations for 2.45 MeV.
-3. **Borated ≈ plain for fast dose at equal thickness.** Boron kills the
-   *thermal* column (rung 7: > 2× thermal-flux cut), which matters for
-   the H(n,γ) capture-gamma source term and for activation — not for the
-   fast-neutron dose that dominates these detectors. The honest sales
-   pitch for the borated layer is gamma-budget and activation control,
-   and the M0 gamma caveat stands next to it.
+   1 m → 2 m ratio is 3.69 — 1/r² minus a little air scatter.
+2. **Angle–energy correlation is a 3× effect at 20 cm.** The last
+   column is the M0 isotropic-multigroup model: it *understated* the
+   1 m dose by ×1.4 at 5 cm, ×1.9 at 10 cm, ×3.1 at 20 cm — the
+   forward-peaked, low-energy-loss tail of hydrogen scattering carries
+   dose through thick shields, growing with depth exactly as it should.
+   This is why exact kinematics is the default and the model tag rides
+   in provenance on every result.
+3. **HDPE tenth-value thickness for D-D dose ≈ 14 cm** with the honest
+   physics (25× at 20 cm; the isotropic model flattered it at ~10 cm) —
+   still inside the fusor-community rule-of-thumb range, now with the
+   caveat budget visible.
+4. **Borated ≈ plain for fast dose at equal thickness.** Boron kills
+   the *thermal* column (rung 7: > 2× thermal-flux cut), which matters
+   for the H(n,γ) capture-gamma source term and for activation — not
+   for the fast-neutron dose that dominates these detectors. The honest
+   sales pitch for the borated layer is gamma-budget and activation
+   control, and the M0 gamma caveat stands next to it.
 
 ## Milestone ladder
 
 - **M0 — analog multigroup MC + validation + dose. DONE** (this
   document).
-- **M1 — energy/angle fidelity.** P1 (linearly anisotropic) lab-frame
-  scattering from the stored per-group μ̄; thermal-group treatment
-  honesty; effect quantified against M0 isotropic (deep-penetration dose
-  shift).
+- **M1 — energy/angle fidelity. DONE** (`scatter.rs`,
+  `EnergyModel::ExactKinematics`, now the default). Instead of the
+  planned P1 bias — which is not even a valid pdf for hydrogen (μ̄ = 2/3
+  drives (1+3μ̄μ)/2 negative) — M1 samples the collision nuclide from
+  its Σ_s share and takes outgoing energy AND lab angle from the same
+  isotropic-CM cosine: exact two-body elastic kinematics, the
+  distribution P1 approximates. The particle carries continuous energy
+  (groups only index σ). Hydrogen's classic results fall out and are
+  tested: μ_lab = √(E′/E) ≥ 0 (no lab backscatter), ⟨μ_lab⟩ = 2/(3A),
+  collisions-to-thermal in water ≈ the ln(E₀/E_th) ladder. Quantified
+  effect: deep-penetration dose up ×1.4/×1.9/×3.1 at 5/10/20 cm HDPE vs
+  the M0 isotropic model (headline table). The multigroup model is
+  retained as `EnergyModel::Multigroup` — it is the exact stochastic
+  mirror of the M2 diffusion companion — and the model tag rides in
+  provenance. Stated limits: isotropic-in-CM (MeV p-wave forward
+  hardening not modeled), thermal group in-group isotropic with no
+  free-gas motion.
 - **M2 — gradients.** Deterministic multigroup adjoint **diffusion**
   companion: forward + adjoint solves, importance function, d(dose)/d
   (layer thickness) via interface perturbation theory, FD-validated. MC

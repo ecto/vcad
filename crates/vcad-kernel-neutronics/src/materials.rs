@@ -230,6 +230,22 @@ pub struct Material {
     /// bound-thermal overrides). Unused by M0's isotropic transport;
     /// consumed by the M1 anisotropy rung and the M2 diffusion companion.
     pub mu_bar: [f64; N_GROUPS],
+    /// Collision-partner table for the M1 exact-kinematics mode: each
+    /// entry is a nuclide mass with its share of Σ_s per group.
+    pub scatterers: Vec<Scatterer>,
+}
+
+/// One collision partner: nuclide mass and its share of the scattering
+/// cross section per group.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Scatterer {
+    /// Nuclide mass, amu (validation fictions use a huge mass — elastic
+    /// scatter off it changes nothing, matching their in-group isotropic
+    /// semantics exactly).
+    pub mass_amu: f64,
+    /// Share of Σ_s in each group (sums to 1 over scatterers per group
+    /// wherever Σ_s > 0).
+    pub share: [f64; N_GROUPS],
 }
 
 /// Single-collision downscatter row for elastic scattering off a free
@@ -278,8 +294,15 @@ impl Material {
         let mut sigma_a = [0.0; N_GROUPS];
         let mut transfer = [[0.0; N_GROUPS]; N_GROUPS];
         let mut mu_bar = [0.0; N_GROUPS];
+        let mut scatterers: Vec<Scatterer> = parts
+            .iter()
+            .map(|p| Scatterer {
+                mass_amu: p.element.mass_amu,
+                share: [0.0; N_GROUPS],
+            })
+            .collect();
         for g in 0..N_GROUPS {
-            for p in parts {
+            for (i, p) in parts.iter().enumerate() {
                 let (s_b, mu) = if g == THERMAL_GROUP {
                     match p.bound_thermal {
                         Some(bt) => (bt.sigma_s_b, bt.mu_bar),
@@ -290,6 +313,7 @@ impl Material {
                 };
                 let s = p.atoms_per_cc * s_b * 1.0e-24;
                 sigma_s[g] += s;
+                scatterers[i].share[g] = s;
                 sigma_a[g] += p.atoms_per_cc * p.element.sigma_a_b[g] * 1.0e-24;
                 mu_bar[g] += s * mu;
                 let row = transfer_row(p.element.mass_amu, g);
@@ -301,6 +325,9 @@ impl Material {
                 mu_bar[g] /= sigma_s[g];
                 for t in transfer[g].iter_mut() {
                     *t /= sigma_s[g];
+                }
+                for sc in scatterers.iter_mut() {
+                    sc.share[g] /= sigma_s[g];
                 }
             } else {
                 transfer[g][g] = 1.0; // vacuous (never sampled)
@@ -318,6 +345,7 @@ impl Material {
             sigma_a,
             transfer,
             mu_bar,
+            scatterers,
         }
     }
 
@@ -344,6 +372,17 @@ impl Material {
         Material::from_constituents(name, density_g_cc, &cs)
     }
 
+    /// The collision-partner table shared by the validation fictions: a
+    /// single effectively infinite mass, so exact-kinematics scattering
+    /// degenerates to isotropic-in-lab with no energy change — matching
+    /// the fictions' in-group semantics in **both** energy models.
+    fn fiction_scatterers() -> Vec<Scatterer> {
+        vec![Scatterer {
+            mass_amu: 1.0e12,
+            share: [1.0; N_GROUPS],
+        }]
+    }
+
     /// Fictitious pure absorber with a group-independent Σ_a (1/cm).
     /// **Validation fiction, not a physical material** — it makes the
     /// uncollided-flux tests exact (`φ = S·e^{−Σ_t r}/4πr²`).
@@ -360,6 +399,7 @@ impl Material {
             sigma_a: [sigma_a_per_cm; N_GROUPS],
             transfer,
             mu_bar: [0.0; N_GROUPS],
+            scatterers: Material::fiction_scatterers(),
         }
     }
 
@@ -380,6 +420,7 @@ impl Material {
             sigma_a: [sigma_a_per_cm; N_GROUPS],
             transfer,
             mu_bar: [0.0; N_GROUPS],
+            scatterers: Material::fiction_scatterers(),
         }
     }
 
@@ -397,6 +438,7 @@ impl Material {
             sigma_a: [0.0; N_GROUPS],
             transfer,
             mu_bar: [0.0; N_GROUPS],
+            scatterers: Material::fiction_scatterers(),
         }
     }
 }

@@ -55,6 +55,7 @@ pub mod geometry;
 pub mod groups;
 pub mod materials;
 pub mod rng;
+pub mod scatter;
 pub mod tally;
 pub mod transport;
 

@@ -20,7 +20,7 @@
 
 use crate::dose::group_dose_factors_psv_cm2;
 use crate::geometry::{Geometry, GeometryError};
-use crate::groups::{N_GROUPS, SOURCE_GROUP, THERMAL_GROUP};
+use crate::groups::{GROUP_BOUNDS_EV, N_GROUPS, SOURCE_GROUP, THERMAL_GROUP};
 use crate::materials::LIBRARY_VERSION;
 use crate::rng::Rng;
 use crate::tally::Estimate;
@@ -40,6 +40,24 @@ pub enum Source {
     IsotropicHalfSpace,
 }
 
+/// How collision energetics and angles are sampled (M1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EnergyModel {
+    /// M0 semantics: the particle state is its group; outgoing groups
+    /// come from the material's flat-lethargy-averaged transfer row and
+    /// lab angles are isotropic. Retained for reproducibility studies
+    /// and as the exact stochastic mirror of the M2 multigroup
+    /// diffusion companion.
+    Multigroup,
+    /// M1 default: the particle carries a continuous energy (group
+    /// structure only indexes cross sections); each collision samples
+    /// the nuclide from its Σ_s share, then takes outgoing energy AND
+    /// lab angle from the same isotropic-CM cosine — exact two-body
+    /// elastic kinematics with the angle–energy correlation that
+    /// dominates deep shield penetration (see [`crate::scatter`]).
+    ExactKinematics,
+}
+
 /// A complete, reproducible run description.
 #[derive(Debug, Clone)]
 pub struct RunConfig {
@@ -49,6 +67,8 @@ pub struct RunConfig {
     pub source: Source,
     /// Birth energy group (default: the 2.45 MeV D-D source group).
     pub source_group: usize,
+    /// Collision physics (default: [`EnergyModel::ExactKinematics`]).
+    pub energy_model: EnergyModel,
     /// Histories per batch.
     pub histories_per_batch: usize,
     /// Number of independent batches (≥ 2 — error bars are mandatory).
@@ -61,13 +81,14 @@ pub struct RunConfig {
 }
 
 impl RunConfig {
-    /// A config with the standard source group, 20 batches, and a
-    /// 10⁴-collision cap.
+    /// A config with the standard source group, exact-kinematics
+    /// collisions, 20 batches, and a 10⁴-collision cap.
     pub fn new(geometry: Geometry, source: Source, histories_per_batch: usize, seed: u64) -> Self {
         RunConfig {
             geometry,
             source,
             source_group: SOURCE_GROUP,
+            energy_model: EnergyModel::ExactKinematics,
             histories_per_batch,
             batches: 20,
             seed,
@@ -136,6 +157,8 @@ pub struct RunProvenance {
     pub max_collisions: u32,
     /// Energy-group count.
     pub groups: usize,
+    /// Collision physics ("exact-kinematics" or "multigroup").
+    pub energy_model: String,
     /// Bundled library version tag.
     pub library: String,
 }
@@ -259,6 +282,22 @@ fn advance(kind: GeomKind, pos: &mut f64, mu: &mut f64, s: f64) {
     }
 }
 
+/// Sample a collision nuclide mass from the Σ_s shares in `group`.
+fn sample_scatterer(scatterers: &[crate::materials::Scatterer], group: usize, u: f64) -> f64 {
+    let mut acc = 0.0;
+    let mut last = scatterers[0].mass_amu;
+    for sc in scatterers {
+        if sc.share[group] > 0.0 {
+            last = sc.mass_amu;
+            acc += sc.share[group];
+            if u <= acc {
+                return sc.mass_amu;
+            }
+        }
+    }
+    last // float-sum guard
+}
+
 /// Sample an outgoing group from a transfer row.
 fn sample_row(row: &[f64; N_GROUPS], u: f64) -> usize {
     let mut acc = 0.0;
@@ -343,6 +382,8 @@ pub fn run(config: &RunConfig) -> Result<RunResult, ConfigError> {
                 Source::IsotropicHalfSpace => (0usize, 0.0f64, rng.uniform()),
             };
             let mut group = config.source_group;
+            // Continuous energy (exact-kinematics mode); group indexes σ.
+            let mut e_ev = crate::groups::representative_energy_ev(group);
             let mut collisions = 0u32;
             let mut was_thermal = group == THERMAL_GROUP;
 
@@ -369,7 +410,29 @@ pub fn run(config: &RunConfig) -> Result<RunResult, ConfigError> {
                         absorbed += 1;
                         break;
                     }
-                    group = sample_row(&mat.transfer[group], rng.uniform());
+                    match config.energy_model {
+                        EnergyModel::Multigroup => {
+                            group = sample_row(&mat.transfer[group], rng.uniform());
+                            e_ev = crate::groups::representative_energy_ev(group);
+                            mu = rng.uniform_mu();
+                        }
+                        EnergyModel::ExactKinematics => {
+                            if group == THERMAL_GROUP {
+                                // In-group isotropic, no energy change
+                                // (free-gas motion neglected — stated).
+                                mu = rng.uniform_mu();
+                            } else {
+                                let a = sample_scatterer(&mat.scatterers, group, rng.uniform());
+                                let mu_c = rng.uniform_mu();
+                                let (e_ratio, mu_lab) = crate::scatter::elastic_outcome(a, mu_c);
+                                e_ev = (e_ev * e_ratio).max(GROUP_BOUNDS_EV[N_GROUPS]);
+                                group = crate::groups::group_of_energy_ev(e_ev)
+                                    .expect("clamped energy stays in the structure");
+                                let phi = 2.0 * std::f64::consts::PI * rng.uniform();
+                                mu = crate::scatter::rotate_mu(mu, mu_lab, phi);
+                            }
+                        }
+                    }
                     if group == THERMAL_GROUP && !was_thermal {
                         was_thermal = true;
                         th_count += 1;
@@ -378,7 +441,6 @@ pub fn run(config: &RunConfig) -> Result<RunResult, ConfigError> {
                             th_r2 += pos * pos;
                         }
                     }
-                    mu = rng.uniform_mu();
                     collisions += 1;
                     if collisions >= config.max_collisions {
                         batch_trunc += 1;
@@ -497,6 +559,10 @@ pub fn run(config: &RunConfig) -> Result<RunResult, ConfigError> {
             batches: config.batches,
             max_collisions: config.max_collisions,
             groups: N_GROUPS,
+            energy_model: match config.energy_model {
+                EnergyModel::Multigroup => "multigroup".to_string(),
+                EnergyModel::ExactKinematics => "exact-kinematics".to_string(),
+            },
             library: LIBRARY_VERSION.to_string(),
         },
     })
