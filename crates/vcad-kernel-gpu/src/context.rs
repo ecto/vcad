@@ -134,9 +134,8 @@ impl GpuContext {
 
         let ctx = Self::create().await?;
 
-        GPU_CONTEXT
-            .set(ctx)
-            .map_err(|_| GpuError::AlreadyInitialized)?;
+        // If another thread won the race, use its context; ours is dropped.
+        let _ = GPU_CONTEXT.set(ctx);
 
         Ok(GPU_CONTEXT.get().unwrap())
     }

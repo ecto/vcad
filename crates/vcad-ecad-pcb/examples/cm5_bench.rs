@@ -25,6 +25,11 @@ fn seg_len(a: vcad_ir::Vec2, b: vcad_ir::Vec2) -> f64 {
 }
 
 fn main() {
+    // RUST_LOG=info for round/batch progress, debug for per-batch and rip-up
+    // detail, trace for every search. Timestamped to correlate with `top`.
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
+        .format_timestamp_millis()
+        .init();
     let mut args = std::env::args().skip(1);
     let path = args.next().unwrap_or_else(|| {
         eprintln!("usage: cm5_bench <board.kicad_pcb> [effort] [max_nets]");
@@ -147,22 +152,13 @@ fn main() {
                 source: None,
             });
         }
-        let copper: Vec<_> = pcb
-            .stackup
-            .layers
-            .iter()
-            .map(|l| l.layer)
-            .filter(|l| l.is_copper())
-            .collect();
-        let start_layer = *copper.first().expect("board has copper");
-        let end_layer = *copper.last().expect("board has copper");
         for v in &r.vias {
             pcb.vias.push(Via {
                 position: v.position,
                 diameter: pcb.rules.default_rules.via_diameter,
                 drill: pcb.rules.default_rules.via_drill,
-                start_layer,
-                end_layer,
+                start_layer: v.start_layer,
+                end_layer: v.end_layer,
                 net: v.net.clone(),
                 source: None,
             });

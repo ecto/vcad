@@ -11,6 +11,34 @@
 //! - [`congestion`] -- PathFinder-style negotiated-congestion history-cost field
 
 pub mod auto;
+
+/// Wall-clock timer that is a no-op on wasm32 (where `Instant::now` traps).
+/// Elapsed milliseconds, or 0.0 when timing is unavailable.
+pub(crate) struct Stopwatch {
+    #[cfg(not(target_arch = "wasm32"))]
+    start: std::time::Instant,
+}
+
+impl Stopwatch {
+    pub(crate) fn start() -> Self {
+        Self {
+            #[cfg(not(target_arch = "wasm32"))]
+            start: std::time::Instant::now(),
+        }
+    }
+
+    pub(crate) fn ms(&self) -> f64 {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.start.elapsed().as_secs_f64() * 1000.0
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            0.0
+        }
+    }
+}
+
 pub mod congestion;
 pub mod diff_pair;
 pub mod grid;

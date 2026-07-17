@@ -644,10 +644,15 @@ export interface RoutedTrace {
   net: string;
 }
 
-/** A transition via produced by the whole-board auto-router. */
+/** A via produced by the whole-board auto-router. Outer-layer span = through
+ *  via; anything else is a blind/buried (micro)via chosen by the 3D search. */
 export interface RoutedVia {
   position: Vec2;
   net: string;
+  /** Top of the via's copper span. */
+  start_layer: PcbLayer;
+  /** Bottom of the via's copper span. */
+  end_layer: PcbLayer;
 }
 
 /** Why a connection could not be routed, and where — so an agent or human can

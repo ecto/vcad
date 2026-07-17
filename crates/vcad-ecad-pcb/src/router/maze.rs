@@ -28,7 +28,7 @@ use crate::session::RouteSession;
 use crate::spatial::{point_in_polygon, CopperGeom};
 
 use super::congestion::Congestion;
-use super::RouteResult;
+use super::{RouteResult, Stopwatch};
 
 /// Largest grid dimension along either axis; pitch is coarsened to fit.
 const MAX_DIM: usize = 400;
@@ -180,8 +180,11 @@ pub struct RouteResult3d {
     pub net: String,
     /// Routed segments as `(start, end, layer)`.
     pub segments: Vec<(Vec2, Vec2, PcbLayer)>,
-    /// Via positions where the route changes layer (through vias).
-    pub vias: Vec<Vec2>,
+    /// Vias where the route changes layer: `(position, from_layer, to_layer)`
+    /// — the two copper layers the via must connect (its minimal span). A
+    /// same-layer pair never occurs; the outer layers give a through via,
+    /// anything else a blind/buried via.
+    pub vias: Vec<(Vec2, PcbLayer, PcbLayer)>,
     /// Whether routing succeeded.
     pub success: bool,
 }
@@ -214,6 +217,12 @@ impl RouteResult3d {
 /// millions of oracle probes — before failing. The budget converts "prove
 /// impossibility exhaustively" into "give up after a fair search", which is
 /// what rip-up and negotiation want anyway.
+///
+/// `pitch_scale` scales the grid pitch below the default `width + clearance`
+/// (1.0 = default; 0.5 = half pitch, with the grid-size cap doubled to
+/// match). On HDI boards the clear channel between BGA pads can be narrower
+/// than the default pitch — the coarse grid then has no node inside a
+/// perfectly routable channel. Callers retry failures at 0.5.
 #[allow(clippy::too_many_arguments)]
 pub fn route_net_maze3d(
     session: &RouteSession,
@@ -228,6 +237,8 @@ pub fn route_net_maze3d(
     via_diameter: f64,
     congestion: Option<&Congestion>,
     max_expansions: usize,
+    pitch_scale: f64,
+    window: Option<(Vec2, Vec2)>,
 ) -> RouteResult3d {
     let nl = layers.len();
     if nl == 0 {
@@ -237,7 +248,7 @@ pub fn route_net_maze3d(
     let half_w = width / 2.0;
     let via_r = via_diameter / 2.0;
 
-    let grid = Grid::new(outline, start, end, width, clearance);
+    let grid = Grid::new_scaled(outline, start, end, width, clearance, pitch_scale, window);
     let plane = grid.nx * grid.ny;
     let (sx, sy) = grid.snap(start);
     let (ex, ey) = grid.snap(end);
@@ -254,13 +265,15 @@ pub fn route_net_maze3d(
             .probe(&CopperGeom::Segment { a, b, half_w }, layer, net, clearance)
             .legal
     };
-    // A (through) via at `p` must clear other-net copper on every layer.
-    let via_ok = |p: Vec2| -> bool {
+    // A via at `p` spanning layer indices `a..=b` must clear other-net
+    // copper on every spanned layer (and only those — a microvia between
+    // adjacent layers doesn't care about copper elsewhere in the stack).
+    let via_ok = |p: Vec2, a: usize, b: usize| -> bool {
         let disc = CopperGeom::Disc {
             center: p,
             r: via_r,
         };
-        layers
+        layers[a.min(b)..=a.max(b)]
             .iter()
             .all(|&l| session.probe(&disc, l, net, clearance).legal)
     };
@@ -281,21 +294,15 @@ pub fn route_net_maze3d(
     let mut g = vec![f64::INFINITY; n];
     let mut came: Vec<usize> = vec![usize::MAX; n];
     let mut closed = vec![false; n];
-    // Memoized via legality per cell (probing all layers is the expensive test).
-    let mut via_cache: Vec<i8> = vec![-1; plane];
-    // Memoized cell passability per (cell, layer): each cell is otherwise
-    // probed once per incoming edge — up to 8× the oracle work for nothing.
-    let mut cell_cache: Vec<i8> = vec![-1; n];
-    let cell_ok = |ix: usize, iy: usize, li: usize, cache: &mut Vec<i8>| -> bool {
-        let node = li * plane + grid.index(ix, iy);
-        if cache[node] < 0 {
-            let p = grid.world(ix, iy);
-            let ok =
-                (!grid.bounded || point_in_polygon(p, outline)) && legal_step(p, p, layers[li]);
-            cache[node] = i8::from(ok);
-        }
-        cache[node] == 1
-    };
+    // Memoized via legality per (cell, span pair) — spans are (lo, hi)
+    // layer-index pairs, lo < hi.
+    let mut via_cache: Vec<i8> = vec![-1; plane * nl * nl];
+    // Occupancy raster: O(1) cell passability, and WIDE↔WIDE edges are legal
+    // without touching the oracle at all.
+    let sw_raster = Stopwatch::start();
+    let raster = Raster::build(session, &grid, outline, layers, net, half_w);
+    let raster_ms = sw_raster.ms();
+    let sw_search = Stopwatch::start();
     let mut heap = BinaryHeap::new();
 
     let goal_cell = grid.index(ex, ey);
@@ -343,11 +350,15 @@ pub fn route_net_maze3d(
                 continue;
             }
             let (nix, niy) = (nx as usize, ny as usize);
-            let nb = li * plane + grid.index(nix, niy);
-            if closed[nb]
-                || !cell_ok(nix, niy, li, &mut cell_cache)
-                || !legal_step(grid.world(ix, iy), grid.world(nix, niy), layers[li])
-            {
+            let ncell = grid.index(nix, niy);
+            let nb = li * plane + ncell;
+            if closed[nb] || raster.state(ncell, li) == CELL_BLOCKED {
+                continue;
+            }
+            // WIDE↔WIDE edges are clearance-legal by construction; anything
+            // touching a TIGHT cell still pays for an exact oracle probe.
+            let tight = raster.state(cell, li) != CELL_WIDE || raster.state(ncell, li) != CELL_WIDE;
+            if tight && !legal_step(grid.world(ix, iy), grid.world(nix, niy), layers[li]) {
                 continue;
             }
             let step = if dx == 0 || dy == 0 {
@@ -371,35 +382,58 @@ pub fn route_net_maze3d(
             }
         }
 
-        // Via transitions: same cell, any other layer, if a through via here
-        // clears every copper layer.
+        // Via transitions: same cell, any other layer. The via spans exactly
+        // the layers between the two endpoints (blind/buried supported), is
+        // probed only on that span, and costs more the deeper it goes — so
+        // the search prefers a microvia hop over a stack-piercing through
+        // via when both work.
         if nl > 1 {
-            if via_cache[cell] < 0 {
-                via_cache[cell] = i8::from(via_ok(grid.world(ix, iy)));
-            }
-            if via_cache[cell] == 1 {
-                for lj in 0..nl {
-                    if lj == li {
-                        continue;
-                    }
-                    let nb = lj * plane + cell;
-                    if closed[nb] || !cell_ok(ix, iy, lj, &mut cell_cache) {
-                        continue;
-                    }
-                    let tentative = g[node] + VIA_COST;
-                    if tentative < g[nb] {
-                        g[nb] = tentative;
-                        came[nb] = node;
-                        heap.push(State {
-                            f: tentative + heuristic(nb),
-                            node: nb,
-                        });
-                    }
+            for lj in 0..nl {
+                if lj == li {
+                    continue;
+                }
+                let nb = lj * plane + cell;
+                if closed[nb] || raster.state(cell, lj) == CELL_BLOCKED {
+                    continue;
+                }
+                let (lo, hi) = (li.min(lj), li.max(lj));
+                let key = cell * nl * nl + lo * nl + hi;
+                if via_cache[key] < 0 {
+                    via_cache[key] = i8::from(via_ok(grid.world(ix, iy), lo, hi));
+                }
+                if via_cache[key] != 1 {
+                    continue;
+                }
+                let span_frac = (hi - lo) as f64 / (nl - 1).max(1) as f64;
+                let tentative = g[node] + VIA_COST * (0.4 + 0.6 * span_frac);
+                if tentative < g[nb] {
+                    g[nb] = tentative;
+                    came[nb] = node;
+                    heap.push(State {
+                        f: tentative + heuristic(nb),
+                        node: nb,
+                    });
                 }
             }
         }
     }
 
+    let search_ms = sw_search.ms();
+    if search_ms + raster_ms > 200.0 {
+        log::debug!(
+            "maze3d slow: net={net} {}x{}x{nl} pitch={:.3} scale={pitch_scale:.2} \
+             pops={pops}/{max_expansions} raster={raster_ms:.0}ms search={search_ms:.0}ms found={}",
+            grid.nx,
+            grid.ny,
+            grid.pitch,
+            found.is_some(),
+        );
+    } else {
+        log::trace!(
+            "maze3d: net={net} pops={pops} raster={raster_ms:.0}ms search={search_ms:.0}ms found={}",
+            found.is_some(),
+        );
+    }
     let Some(goal_node) = found else {
         return RouteResult3d::fail(net);
     };
@@ -414,12 +448,36 @@ pub fn route_net_maze3d(
     nodes.reverse();
 
     let mut segments: Vec<(Vec2, Vec2, PcbLayer)> = Vec::new();
-    let mut vias: Vec<Vec2> = Vec::new();
+    let mut vias: Vec<(Vec2, PcbLayer, PcbLayer)> = Vec::new();
     let mut run: Vec<Vec2> = vec![start];
     let mut run_layer = nodes[0] / plane;
 
+    // Taut pull: greedy line-of-sight shortcutting over a run's points. A
+    // grid path staircases; every removed kink both shortens the copper and
+    // frees channel space the next net needs. Each shortcut is probed, so
+    // legality is preserved by construction.
+    let pull_taut = |pts: &[Vec2], layer: PcbLayer| -> Vec<Vec2> {
+        if pts.len() <= 2 {
+            return pts.to_vec();
+        }
+        let mut out = vec![pts[0]];
+        let mut i = 0;
+        while i + 1 < pts.len() {
+            // Furthest j with a clear legal segment i→j.
+            let mut j = i + 1;
+            for k in ((i + 2)..pts.len()).rev() {
+                if legal_step(pts[i], pts[k], layer) {
+                    j = k;
+                    break;
+                }
+            }
+            out.push(pts[j]);
+            i = j;
+        }
+        out
+    };
     let flush_run = |run: &mut Vec<Vec2>, layer: PcbLayer, segs: &mut Vec<_>| {
-        let pts = simplify(run);
+        let pts = pull_taut(&simplify(run), layer);
         segs.extend(
             pts.windows(2)
                 .filter(|w| dist(w[0], w[1]) > 1e-9)
@@ -432,11 +490,17 @@ pub fn route_net_maze3d(
         let (li, cell) = (node / plane, node % plane);
         let w = grid.world_of(cell);
         if li != run_layer {
-            // Layer change: the via sits at the last point of the finished run.
+            // Layer change: the via sits at the last point of the finished
+            // run, spanning exactly the two layers it connects.
             let at = *run.last().expect("run always starts non-empty");
             flush_run(&mut run, layers[run_layer], &mut segments);
-            if vias.last().map(|&v| dist(v, at) > 1e-9).unwrap_or(true) {
-                vias.push(at);
+            let (lo, hi) = (run_layer.min(li), run_layer.max(li));
+            if vias
+                .last()
+                .map(|&(v, _, _)| dist(v, at) > 1e-9)
+                .unwrap_or(true)
+            {
+                vias.push((at, layers[lo], layers[hi]));
             }
             run.push(at);
             run_layer = li;
@@ -453,7 +517,11 @@ pub fn route_net_maze3d(
     // Final guarantee: re-probe every emitted segment on its own layer and
     // every via on every layer (endpoint connectors are off-grid; see the
     // 2D router). Fail honestly rather than ship a short.
-    if !segments.iter().all(|(a, b, l)| legal_step(*a, *b, *l)) || !vias.iter().all(|&v| via_ok(v))
+    let span_idx = |l: PcbLayer| layers.iter().position(|&x| x == l).unwrap_or(0);
+    if !segments.iter().all(|(a, b, l)| legal_step(*a, *b, *l))
+        || !vias
+            .iter()
+            .all(|&(v, la, lb)| via_ok(v, span_idx(la), span_idx(lb)))
     {
         return RouteResult3d::fail(net);
     }
@@ -463,6 +531,109 @@ pub fn route_net_maze3d(
         segments,
         vias,
         success: true,
+    }
+}
+
+/// Per-cell occupancy state in a [`Raster`].
+const CELL_BLOCKED: u8 = 0;
+/// Free, but with little slack — edges into this cell need an exact probe.
+const CELL_TIGHT: u8 = 1;
+/// Free with ≥ `pitch·√2/2` of extra slack: any edge between two WIDE cells
+/// is clearance-legal without probing (the capsule between adjacent centers
+/// never strays farther than that from a center).
+const CELL_WIDE: u8 = 2;
+
+/// Occupancy raster for one connection: for every (cell, layer), whether
+/// other-net copper blocks a trace centre there, and whether there is enough
+/// slack that edges between adjacent free cells are legal by construction.
+///
+/// Built once per search by sweeping the session's copper (exact
+/// `distance_to` per nearby cell — the raster is *not* an approximation for
+/// cells, and deliberately conservative for edges: WIDE↔WIDE edges skip the
+/// oracle entirely, anything involving a TIGHT cell still probes). Replaces
+/// millions of per-step R-tree probes with O(1) byte tests.
+struct Raster {
+    states: Vec<u8>,
+    plane: usize,
+}
+
+impl Raster {
+    fn build(
+        session: &RouteSession,
+        grid: &Grid,
+        outline: &[Vec2],
+        layers: &[PcbLayer],
+        net: &str,
+        half_w: f64,
+    ) -> Self {
+        let plane = grid.nx * grid.ny;
+        let nl = layers.len();
+        let mut states = vec![CELL_WIDE; plane * nl];
+
+        // Cells outside the board outline are blocked on every layer.
+        if grid.bounded {
+            for iy in 0..grid.ny {
+                for ix in 0..grid.nx {
+                    if !point_in_polygon(grid.world(ix, iy), outline) {
+                        let cell = grid.index(ix, iy);
+                        for li in 0..nl {
+                            states[li * plane + cell] = CELL_BLOCKED;
+                        }
+                    }
+                }
+            }
+        }
+
+        let wide_margin = grid.pitch * std::f64::consts::FRAC_1_SQRT_2;
+        let win_lo = [grid.origin.x, grid.origin.y];
+        let win_hi = [
+            grid.origin.x + (grid.nx.saturating_sub(1)) as f64 * grid.pitch,
+            grid.origin.y + (grid.ny.saturating_sub(1)) as f64 * grid.pitch,
+        ];
+
+        for (li, &layer) in layers.iter().enumerate() {
+            let base = li * plane;
+            session.for_each_blocking(layer, net, win_lo, win_hi, |geom, emin, emax, req| {
+                // Same math as the probe: a trace centre at the cell is legal
+                // iff point-to-edge distance ≥ half_w + required clearance.
+                let reach_block = half_w + req;
+                let reach = reach_block + wide_margin;
+                let ix0 =
+                    (((emin[0] - reach - grid.origin.x) / grid.pitch).floor()).max(0.0) as usize;
+                let iy0 =
+                    (((emin[1] - reach - grid.origin.y) / grid.pitch).floor()).max(0.0) as usize;
+                let ix1 = ((((emax[0] + reach - grid.origin.x) / grid.pitch).ceil()) as usize)
+                    .min(grid.nx.saturating_sub(1));
+                let iy1 = ((((emax[1] + reach - grid.origin.y) / grid.pitch).ceil()) as usize)
+                    .min(grid.ny.saturating_sub(1));
+                for iy in iy0..=iy1 {
+                    for ix in ix0..=ix1 {
+                        let cell = grid.index(ix, iy);
+                        let s = &mut states[base + cell];
+                        if *s == CELL_BLOCKED {
+                            continue;
+                        }
+                        let probe_pt = CopperGeom::Disc {
+                            center: grid.world(ix, iy),
+                            r: 0.0,
+                        };
+                        let d = geom.distance_to(&probe_pt);
+                        if d < reach_block {
+                            *s = CELL_BLOCKED;
+                        } else if d < reach && *s == CELL_WIDE {
+                            *s = CELL_TIGHT;
+                        }
+                    }
+                }
+            });
+        }
+
+        Self { states, plane }
+    }
+
+    #[inline]
+    fn state(&self, cell: usize, li: usize) -> u8 {
+        self.states[li * self.plane + cell]
     }
 }
 
@@ -477,7 +648,36 @@ struct Grid {
 
 impl Grid {
     fn new(outline: &[Vec2], start: Vec2, end: Vec2, width: f64, clearance: f64) -> Self {
-        let (mut min, mut max) = if outline.len() >= 3 {
+        Self::new_scaled(outline, start, end, width, clearance, 1.0, None)
+    }
+
+    /// [`Grid::new`] with the pitch scaled by `pitch_scale` (and the
+    /// grid-size cap scaled inversely, so a finer grid may actually resolve
+    /// more cells rather than just re-coarsening back).
+    /// `window`, when given, clips the search area to a corridor instead of
+    /// the whole board — the board outline still bounds legality (cells
+    /// outside it stay blocked), the window only shrinks the grid.
+    fn new_scaled(
+        outline: &[Vec2],
+        start: Vec2,
+        end: Vec2,
+        width: f64,
+        clearance: f64,
+        pitch_scale: f64,
+        window: Option<(Vec2, Vec2)>,
+    ) -> Self {
+        let (mut min, mut max) = if let Some((wlo, whi)) = window {
+            // Clip to the board bbox so a generous corridor never exceeds it.
+            if outline.len() >= 3 {
+                let (blo, bhi) = bbox(outline);
+                (
+                    Vec2::new(wlo.x.max(blo.x), wlo.y.max(blo.y)),
+                    Vec2::new(whi.x.min(bhi.x), whi.y.min(bhi.y)),
+                )
+            } else {
+                (wlo, whi)
+            }
+        } else if outline.len() >= 3 {
             bbox(outline)
         } else {
             // Fall back to the start/end span with a margin.
@@ -493,11 +693,13 @@ impl Grid {
 
         let span_x = (max.x - min.x).max(1e-3);
         let span_y = (max.y - min.y).max(1e-3);
-        let mut pitch = (width + clearance).max(0.05);
-        // Coarsen so neither axis exceeds MAX_DIM cells.
+        let scale = pitch_scale.clamp(0.1, 1.0);
+        let mut pitch = ((width + clearance) * scale).max(0.02);
+        // Coarsen so neither axis exceeds the (scaled) cell cap.
+        let max_dim = (MAX_DIM as f64 / scale) as usize;
         let need = (span_x / pitch).max(span_y / pitch);
-        if need > MAX_DIM as f64 {
-            pitch = (span_x / MAX_DIM as f64).max(span_y / MAX_DIM as f64);
+        if need > max_dim as f64 {
+            pitch = (span_x / max_dim as f64).max(span_y / max_dim as f64);
         }
         // Align the origin so `start` lands exactly on a grid node (and stays
         // ≤ the board minimum). Endpoints then sit on node lines, so the
@@ -882,6 +1084,8 @@ mod tests {
             0.8,
             None,
             0,
+            1.0,
+            None,
         );
         assert!(r.success);
         assert!(r.vias.is_empty(), "no reason to leave the start layer");
@@ -912,6 +1116,8 @@ mod tests {
             0.8,
             None,
             0,
+            1.0,
+            None,
         );
         assert!(r.success, "3D search must cross under the wall");
         assert!(
@@ -945,6 +1151,44 @@ mod tests {
         );
     }
 
+    /// A wall on FCu only: the dive should be a minimal blind via
+    /// (FCu↔In1Cu), not a stack-piercing through via — the span-scaled via
+    /// cost makes the shallow hop cheaper, and the emitted spans say so.
+    #[test]
+    fn maze3d_prefers_minimal_via_spans() {
+        let pcb = board3(vec![trace(
+            "GND",
+            Vec2::new(20.0, 0.0),
+            Vec2::new(20.0, 40.0),
+        )]);
+        let session = RouteSession::from_pcb(&pcb);
+        let r = route_net_maze3d(
+            &session,
+            &pcb.outline.vertices,
+            &STACK3,
+            "SIG",
+            Vec2::new(5.0, 20.0),
+            &[PcbLayer::FCu],
+            Vec2::new(35.0, 20.0),
+            &[PcbLayer::FCu],
+            0.25,
+            0.8,
+            None,
+            0,
+            1.0,
+            None,
+        );
+        assert!(r.success);
+        assert!(!r.vias.is_empty());
+        for (_, la, lb) in &r.vias {
+            assert_eq!(
+                (*la, *lb),
+                (PcbLayer::FCu, PcbLayer::In1Cu),
+                "crossing under an FCu-only wall needs only the first hop"
+            );
+        }
+    }
+
     #[test]
     fn maze3d_respects_endpoint_layers() {
         // End pad lives on BCu only: the route must finish there, via'ing
@@ -964,6 +1208,8 @@ mod tests {
             0.8,
             None,
             0,
+            1.0,
+            None,
         );
         assert!(r.success);
         assert!(!r.vias.is_empty(), "front→back must place a via");

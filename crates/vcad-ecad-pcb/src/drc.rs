@@ -349,6 +349,7 @@ fn check_courtyard_overlap(
 // ============================================================================
 
 /// A single net-tie group with an optional spatial restriction.
+#[derive(Clone)]
 struct TieGroup {
     /// Nets joined by this tie.
     nets: Vec<String>,
@@ -363,6 +364,7 @@ struct TieGroup {
 /// short/clearance reporting when they appear together in any tie group; if a
 /// group carries a `position`+`radius`, the exemption only holds inside that
 /// region.
+#[derive(Clone)]
 pub(crate) struct NetTieGroups {
     groups: Vec<TieGroup>,
 }

@@ -75,7 +75,69 @@ pub struct ProbeResult {
     pub blockers: Vec<Blocker>,
 }
 
+/// Cell size (mm) of the change-tracking grid — coarse on purpose: it
+/// answers "did anything change near this corridor?", not "what changed".
+const DIRTY_CELL: f64 = 4.0;
+
+/// Coarse change-tracking grid over the board: every commit/remove stamps a
+/// monotonically increasing epoch onto the cells its bbox overlaps, so a
+/// caller can cheaply ask whether any copper changed inside a region since
+/// it last looked (the router's failure cache).
+#[derive(Clone)]
+struct DirtyGrid {
+    origin: [f64; 2],
+    nx: usize,
+    ny: usize,
+    epoch: Vec<u64>,
+}
+
+impl DirtyGrid {
+    fn new(lo: [f64; 2], hi: [f64; 2]) -> Self {
+        let nx = (((hi[0] - lo[0]) / DIRTY_CELL).ceil() as usize + 1).max(1);
+        let ny = (((hi[1] - lo[1]) / DIRTY_CELL).ceil() as usize + 1).max(1);
+        Self {
+            origin: lo,
+            nx,
+            ny,
+            epoch: vec![0; nx * ny],
+        }
+    }
+
+    fn cell_range(&self, lo: [f64; 2], hi: [f64; 2]) -> (usize, usize, usize, usize) {
+        let cx = |x: f64| {
+            (((x - self.origin[0]) / DIRTY_CELL).floor() as i64).clamp(0, self.nx as i64 - 1)
+                as usize
+        };
+        let cy = |y: f64| {
+            (((y - self.origin[1]) / DIRTY_CELL).floor() as i64).clamp(0, self.ny as i64 - 1)
+                as usize
+        };
+        (cx(lo[0]), cy(lo[1]), cx(hi[0]), cy(hi[1]))
+    }
+
+    fn mark(&mut self, lo: [f64; 2], hi: [f64; 2], epoch: u64) {
+        let (x0, y0, x1, y1) = self.cell_range(lo, hi);
+        for y in y0..=y1 {
+            for x in x0..=x1 {
+                self.epoch[y * self.nx + x] = epoch;
+            }
+        }
+    }
+
+    fn max_epoch(&self, lo: [f64; 2], hi: [f64; 2]) -> u64 {
+        let (x0, y0, x1, y1) = self.cell_range(lo, hi);
+        let mut m = 0;
+        for y in y0..=y1 {
+            for x in x0..=x1 {
+                m = m.max(self.epoch[y * self.nx + x]);
+            }
+        }
+        m
+    }
+}
+
 /// An incremental copper index for routing: probe, commit, rip-up.
+#[derive(Clone)]
 pub struct RouteSession {
     tree: RTree<SessionElement>,
     /// Liveness by id; a tombstoned (removed) span is `false`.
@@ -89,6 +151,13 @@ pub struct RouteSession {
     /// so a wide net's clearance is never missed when it exceeds the candidate's.
     max_clearance: f64,
     net_width: HashMap<String, f64>,
+    /// Per-span bboxes (parallel to `live`), so a remove can stamp the dirty
+    /// grid without consulting the tree.
+    bounds: Vec<[f64; 4]>,
+    /// Coarse change-tracking grid; see [`RouteSession::region_epoch`].
+    dirty: DirtyGrid,
+    /// Monotonic change counter, bumped on every commit/remove.
+    change_epoch: u64,
 }
 
 impl RouteSession {
@@ -96,6 +165,29 @@ impl RouteSession {
     pub fn from_pcb(pcb: &Pcb) -> Self {
         let elems = copper_elements(pcb);
         let live = vec![true; elems.len()];
+        let bounds: Vec<[f64; 4]> = elems
+            .iter()
+            .map(|e| [e.min[0], e.min[1], e.max[0], e.max[1]])
+            .collect();
+        // Dirty grid over the board outline ∪ existing copper, with margin.
+        let mut lo = [f64::INFINITY; 2];
+        let mut hi = [f64::NEG_INFINITY; 2];
+        for v in &pcb.outline.vertices {
+            lo[0] = lo[0].min(v.x);
+            lo[1] = lo[1].min(v.y);
+            hi[0] = hi[0].max(v.x);
+            hi[1] = hi[1].max(v.y);
+        }
+        for b in &bounds {
+            lo[0] = lo[0].min(b[0]);
+            lo[1] = lo[1].min(b[1]);
+            hi[0] = hi[0].max(b[2]);
+            hi[1] = hi[1].max(b[3]);
+        }
+        if !lo[0].is_finite() {
+            (lo, hi) = ([0.0, 0.0], [100.0, 100.0]);
+        }
+        let dirty = DirtyGrid::new([lo[0] - 5.0, lo[1] - 5.0], [hi[0] + 5.0, hi[1] + 5.0]);
         let session_elems: Vec<SessionElement> = elems
             .into_iter()
             .enumerate()
@@ -116,7 +208,23 @@ impl RouteSession {
             default_clearance,
             max_clearance,
             net_width: build_net_trace_width_map(pcb),
+            bounds,
+            dirty,
+            change_epoch: 0,
         }
+    }
+
+    /// The current change epoch: bumped on every commit and remove. Compare
+    /// with [`RouteSession::region_epoch`] to detect regional change.
+    pub fn epoch(&self) -> u64 {
+        self.change_epoch
+    }
+
+    /// The largest change epoch stamped on any copper committed or removed
+    /// inside the region `lo..hi` (mm). `0` means nothing has changed there
+    /// since the session was built.
+    pub fn region_epoch(&self, lo: [f64; 2], hi: [f64; 2]) -> u64 {
+        self.dirty.max_epoch(lo, hi)
     }
 
     /// The required clearance for `net` from the design rules.
@@ -147,6 +255,11 @@ impl RouteSession {
     pub fn commit(&mut self, elem: CopperElement) -> SpanId {
         let id = self.live.len();
         self.live.push(true);
+        let bbox = [elem.min[0], elem.min[1], elem.max[0], elem.max[1]];
+        self.bounds.push(bbox);
+        self.change_epoch += 1;
+        self.dirty
+            .mark([bbox[0], bbox[1]], [bbox[2], bbox[3]], self.change_epoch);
         self.tree.insert(SessionElement { id, elem });
         id
     }
@@ -160,6 +273,10 @@ impl RouteSession {
         }
         self.live[id] = false;
         self.dead += 1;
+        let b = self.bounds[id];
+        self.change_epoch += 1;
+        self.dirty
+            .mark([b[0], b[1]], [b[2], b[3]], self.change_epoch);
         if self.dead * 2 > self.tree.size() {
             self.compact();
         }
@@ -210,6 +327,44 @@ impl RouteSession {
     /// Mutates nothing. Same-net and net-tied copper is never a blocker — the
     /// exact rule the DRC clearance pass applies, so a span that probes legal
     /// here is legal in [`crate::check_drc`].
+    /// Visit every live copper element on `layer` that `net` must clear,
+    /// within the window `lo..hi` (mm): the element's geometry, its AABB, and
+    /// the clearance required between it and `net` (the larger of the two
+    /// nets' rules, matching [`RouteSession::probe`]).
+    ///
+    /// Net-tie exemptions are deliberately NOT applied — tied nets are
+    /// visited as blockers. This visitor exists to build conservative
+    /// occupancy rasters for the maze search: a region-scoped tie exemption
+    /// has no single per-element answer, and over-blocking is safe (the
+    /// exact probe remains the commit gate) while under-blocking never is.
+    pub fn for_each_blocking(
+        &self,
+        layer: PcbLayer,
+        net: &str,
+        lo: [f64; 2],
+        hi: [f64; 2],
+        mut f: impl FnMut(&CopperGeom, [f64; 2], [f64; 2], f64),
+    ) {
+        for se in self
+            .tree
+            .locate_in_envelope_intersecting(&AABB::from_corners(lo, hi))
+        {
+            if !self.live[se.id] {
+                continue;
+            }
+            let e = &se.elem;
+            if e.layer != layer || e.net == net {
+                continue;
+            }
+            let required = self.clearance_for(net).max(self.clearance_for(&e.net));
+            f(&e.geom, e.min, e.max, required);
+        }
+    }
+
+    /// Probe a candidate geometry against every live other-net element on
+    /// `layer`: legal iff nothing sits closer than the required clearance
+    /// (the larger of the candidate's and each blocker's rule), with
+    /// region-scoped net-tie exemptions honored.
     pub fn probe(
         &self,
         geom: &CopperGeom,
