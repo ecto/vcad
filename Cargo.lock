@@ -6877,6 +6877,7 @@ dependencies = [
  "vcad-app",
  "vcad-chat",
  "vcad-crdt",
+ "vcad-diff",
  "vcad-eval",
  "vcad-i18n",
  "vcad-ir",
@@ -6925,6 +6926,15 @@ dependencies = [
  "vcad-i18n",
  "vcad-slicer-bambu",
  "window-vibrancy",
+]
+
+[[package]]
+name = "vcad-diff"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "vcad-ir",
 ]
 
 [[package]]
@@ -7147,9 +7157,11 @@ dependencies = [
  "vcad-kernel-cost",
  "vcad-kernel-dfm",
  "vcad-kernel-em",
+ "vcad-kernel-fea",
  "vcad-kernel-fillet",
  "vcad-kernel-geom",
  "vcad-kernel-math",
+ "vcad-kernel-naming",
  "vcad-kernel-neutronics",
  "vcad-kernel-particle",
  "vcad-kernel-photonics",
@@ -7294,6 +7306,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "vcad-kernel-fea"
+version = "0.9.4"
+dependencies = [
+ "serde",
+ "serde_json",
+ "vcad-kernel-tessellate",
+ "vcad-receipt",
+]
+
+[[package]]
 name = "vcad-kernel-fillet"
 version = "0.9.4"
 dependencies = [
@@ -7332,6 +7354,16 @@ version = "0.9.4"
 dependencies = [
  "robust",
  "tang",
+]
+
+[[package]]
+name = "vcad-kernel-naming"
+version = "0.9.4"
+dependencies = [
+ "vcad-kernel-geom",
+ "vcad-kernel-math",
+ "vcad-kernel-primitives",
+ "vcad-kernel-topo",
 ]
 
 [[package]]
@@ -7748,6 +7780,15 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.114",
+]
+
+[[package]]
+name = "vcad-torture"
+version = "0.9.4"
+dependencies = [
+ "serde",
+ "serde_json",
+ "vcad-kernel",
 ]
 
 [[package]]

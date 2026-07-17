@@ -255,6 +255,7 @@ export const TOOL_METADATA: Record<string, ToolMetadata> = {
   simulate_photonics: { title: "Simulate Photonics", annotations: RO },
   analyze_antenna: { title: "Analyze Antenna", annotations: RO },
   solve_thermal: { title: "Solve Thermal", annotations: RO },
+  analyze_structure: { title: "Analyze Structure", annotations: RO },
   simulate_neutron_shield: {
     title: "Simulate Neutron Shield",
     annotations: RO,

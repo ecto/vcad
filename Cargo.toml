@@ -9,6 +9,7 @@ members = [
     "crates/vcad-kernel-topo",
     "crates/vcad-kernel-geom",
     "crates/vcad-kernel-primitives",
+    "crates/vcad-kernel-naming",
     "crates/vcad-kernel-tessellate",
     "crates/vcad-kernel-booleans",
     "crates/vcad-kernel-nurbs",
@@ -29,6 +30,7 @@ members = [
     "crates/vcad-kernel-wasm",
     "crates/vcad-kernel-drafting",
     "crates/vcad-cli",
+    "crates/vcad-diff",
     "crates/vcad-kernel-gpu",
     "crates/vcad-kernel-raytrace",
     "crates/vcad-kernel-urdf",
@@ -45,6 +47,7 @@ members = [
     "crates/vcad-kernel-topopt",
     "crates/vcad-kernel-photonics",
     "crates/vcad-kernel-thermal",
+    "crates/vcad-kernel-fea",
     "crates/vcad-kernel-cost",
     "crates/vcad-kernel-dfm",
     "crates/vcad-kernel-tolerance",
@@ -76,6 +79,7 @@ members = [
     "crates/vcad-ffi",
     "crates/vcad-tool-derive",
     "crates/vcad-i18n",
+    "crates/vcad-torture",
     "mecheval/graders",
 ]
 
@@ -92,6 +96,7 @@ default-members = [
     "crates/vcad-kernel-topo",
     "crates/vcad-kernel-geom",
     "crates/vcad-kernel-primitives",
+    "crates/vcad-kernel-naming",
     "crates/vcad-kernel-tessellate",
     "crates/vcad-kernel-booleans",
     "crates/vcad-kernel-nurbs",
@@ -112,6 +117,7 @@ default-members = [
     "crates/vcad-kernel-wasm",
     "crates/vcad-kernel-drafting",
     "crates/vcad-cli",
+    "crates/vcad-diff",
     "crates/vcad-kernel-gpu",
     "crates/vcad-kernel-raytrace",
     "crates/vcad-kernel-urdf",
@@ -128,6 +134,7 @@ default-members = [
     "crates/vcad-kernel-topopt",
     "crates/vcad-kernel-photonics",
     "crates/vcad-kernel-thermal",
+    "crates/vcad-kernel-fea",
     "crates/vcad-kernel-cost",
     "crates/vcad-kernel-dfm",
     "crates/vcad-kernel-tolerance",
@@ -158,6 +165,7 @@ default-members = [
     "crates/vcad-ffi",
     "crates/vcad-tool-derive",
     "crates/vcad-i18n",
+    "crates/vcad-torture",
     "mecheval/graders",
 ]
 
@@ -194,6 +202,7 @@ vcad-kernel-math = { path = "crates/vcad-kernel-math", version = "0.9.4" }
 vcad-kernel-topo = { path = "crates/vcad-kernel-topo", version = "0.9.4" }
 vcad-kernel-geom = { path = "crates/vcad-kernel-geom", version = "0.9.4" }
 vcad-kernel-primitives = { path = "crates/vcad-kernel-primitives", version = "0.9.4" }
+vcad-kernel-naming = { path = "crates/vcad-kernel-naming", version = "0.9.4" }
 vcad-kernel-tessellate = { path = "crates/vcad-kernel-tessellate", version = "0.9.4" }
 vcad-kernel-booleans = { path = "crates/vcad-kernel-booleans", version = "0.9.4" }
 vcad-kernel-nurbs = { path = "crates/vcad-kernel-nurbs", version = "0.9.4" }
@@ -228,6 +237,7 @@ vcad-kernel-stocksim = { path = "crates/vcad-kernel-stocksim", version = "0.9.4"
 vcad-kernel-topopt = { path = "crates/vcad-kernel-topopt", version = "0.9.4" }
 vcad-kernel-photonics = { path = "crates/vcad-kernel-photonics", version = "0.9.4" }
 vcad-kernel-thermal = { path = "crates/vcad-kernel-thermal", version = "0.9.4" }
+vcad-kernel-fea = { path = "crates/vcad-kernel-fea", version = "0.9.4" }
 vcad-kernel-text = { path = "crates/vcad-kernel-text", version = "0.9.4" }
 vcad-crdt = { path = "crates/vcad-crdt", version = "0.9.4" }
 vcad-app = { path = "crates/vcad-app", version = "0.9.4" }
@@ -270,3 +280,8 @@ panic = "unwind"
 
 [profile.dev]
 panic = "unwind"
+
+# The FEA refinement studies run PCG on ~100k-DOF systems in their tests;
+# unoptimized they take minutes, optimized seconds.
+[profile.dev.package.vcad-kernel-fea]
+opt-level = 3

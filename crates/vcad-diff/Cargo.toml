@@ -1,0 +1,11 @@
+[package]
+name = "vcad-diff"
+version = "0.1.0"
+edition = "2021"
+description = "Semantic diff and three-way merge for .vcad documents"
+license = "MIT"
+
+[dependencies]
+vcad-ir = { path = "../vcad-ir" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

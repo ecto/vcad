@@ -105,6 +105,11 @@ fn evaluate_curve(curve: &ssi::IntersectionCurve, t: f64) -> Point3 {
             if points.is_empty() {
                 return Point3::origin();
             }
+            // A degenerate one-sample curve has no segment to interpolate;
+            // `len - 2` below would underflow.
+            if points.len() == 1 {
+                return snap_point(points[0]);
+            }
             // Linear interpolation along sampled curve
             let idx = ((t * (points.len() - 1) as f64).floor() as usize).min(points.len() - 2);
             let frac = t * (points.len() - 1) as f64 - idx as f64;
@@ -121,6 +126,9 @@ fn evaluate_curve(curve: &ssi::IntersectionCurve, t: f64) -> Point3 {
             // evaluate on the first curve as a defensive fallback.
             if points.is_empty() {
                 return Point3::origin();
+            }
+            if points.len() == 1 {
+                return snap_point(points[0]);
             }
             let idx = ((t * (points.len() - 1) as f64).floor() as usize).min(points.len() - 2);
             let frac = t * (points.len() - 1) as f64 - idx as f64;

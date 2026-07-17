@@ -369,7 +369,8 @@ pub fn evaluate_node(
 
     let node = nodes.get(&node_id).ok_or(EvalError::MissingNode(node_id))?;
 
-    let result = evaluate_op(&node.op, nodes, cache)?;
+    let mut result = evaluate_op(&node.op, nodes, cache)?;
+    scope_primitive_names(node_id, &node.op, &mut result);
     cache.insert(node_id, result.clone());
     Ok(result)
 }
@@ -389,7 +390,8 @@ fn evaluate_node_timed(
     let node = nodes.get(&node_id).ok_or(EvalError::MissingNode(node_id))?;
 
     let t0 = clock.map(|c| c.now_ms());
-    let result = evaluate_op_timed(&node.op, nodes, cache, clock, timings)?;
+    let mut result = evaluate_op_timed(&node.op, nodes, cache, clock, timings)?;
+    scope_primitive_names(node_id, &node.op, &mut result);
     if let Some(t0) = t0 {
         let eval_ms = clock.unwrap().now_ms() - t0;
         timings.insert(
@@ -568,6 +570,20 @@ fn evaluate_op_timed(
             profile,
         } => {
             let c = eval_child(*child, cache)?;
+            if let vcad_ir::EdgeQuery::Named { face_a, face_b } = edges {
+                let keys = kernel_blend_keys(profile);
+                return match c {
+                    Some(s) => s
+                        .edge_blend_named(face_a, face_b, &keys)
+                        .map(Some)
+                        .map_err(|e| EvalError::NamedEdge {
+                            face_a: face_a.clone(),
+                            face_b: face_b.clone(),
+                            message: e.to_string(),
+                        }),
+                    None => Ok(None),
+                };
+            }
             let (query, keys) = kernel_blend_args(edges, profile);
             Ok(c.map(|s| s.edge_blend(&query, &keys)))
         }
@@ -1405,7 +1421,21 @@ fn kernel_blend_args(
             axis: vcad_kernel_math::Vec3::new(axis.x, axis.y, axis.z),
             tol_deg: *tol_deg,
         },
+        // Named queries carry no geometry — they resolve against the child
+        // solid's name map and never reach this translation (the EdgeBlend
+        // arm routes them through `Solid::edge_blend_named`).
+        vcad_ir::EdgeQuery::Named { .. } => {
+            unreachable!("Named edge queries are handled before kernel_blend_args")
+        }
     };
+    (q, kernel_blend_keys(profile))
+}
+
+/// Translate an IR blend profile into kernel blend keys.
+fn kernel_blend_keys(
+    profile: &vcad_ir::BlendProfile,
+) -> Vec<vcad_kernel::vcad_kernel_fillet::BlendKey> {
+    use vcad_kernel::vcad_kernel_fillet as kf;
     let keys = match profile {
         vcad_ir::BlendProfile::Constant { size, shape } => vec![kf::BlendKey {
             t: 0.0,
@@ -1425,7 +1455,30 @@ fn kernel_blend_args(
             })
             .collect(),
     };
-    (q, keys)
+    keys
+}
+
+/// After a primitive op evaluates, rewrite its face-name scope to the
+/// document node id so names stay unique across the DAG (`cube:top` →
+/// `n3:top`) and stable across rebuilds (node ids persist in the .vcad
+/// document).
+fn scope_primitive_names(node_id: NodeId, op: &CsgOp, result: &mut Option<Solid>) {
+    let is_primitive = matches!(
+        op,
+        CsgOp::Cube { .. }
+            | CsgOp::Cylinder { .. }
+            | CsgOp::Sphere { .. }
+            | CsgOp::Cone { .. }
+            | CsgOp::Torus { .. }
+            | CsgOp::Wedge { .. }
+            | CsgOp::Prism { .. }
+    );
+    if !is_primitive {
+        return;
+    }
+    if let Some(solid) = result {
+        solid.set_name_scope(&format!("n{node_id}"));
+    }
 }
 
 /// Get a short human-readable name for a CsgOp variant.
@@ -2165,6 +2218,116 @@ mod tests {
             vol > v_chamfer && vol < v_fillet,
             "loft volume {vol} not in ({v_chamfer}, {v_fillet})"
         );
+    }
+
+    /// M2 topological-naming regression: a fillet referencing the edge by
+    /// persistent face names (`n0:top` / `n0:right`) stays on the intended
+    /// edge when the parent box's dimension changes — the classic
+    /// FreeCAD-style breakage this scheme exists to prevent.
+    #[test]
+    fn named_edge_blend_survives_box_resize() {
+        let build = |sx: f64| {
+            let mut nodes: HashMap<NodeId, vcad_ir::Node> = HashMap::new();
+            nodes.insert(
+                0,
+                vcad_ir::Node {
+                    id: 0,
+                    name: None,
+                    op: CsgOp::Cube {
+                        size: vcad_ir::Vec3::new(sx, 10.0, 10.0),
+                    },
+                },
+            );
+            nodes.insert(
+                1,
+                vcad_ir::Node {
+                    id: 1,
+                    name: None,
+                    op: CsgOp::EdgeBlend {
+                        child: 0,
+                        edges: vcad_ir::EdgeQuery::Named {
+                            face_a: "n0:top".to_string(),
+                            face_b: "n0:right".to_string(),
+                        },
+                        profile: vcad_ir::BlendProfile::Constant {
+                            size: 2.0,
+                            shape: 1.0,
+                        },
+                    },
+                },
+            );
+            let mut cache = HashMap::new();
+            evaluate_node(1, &nodes, &mut cache)
+                .expect("eval ok")
+                .expect("solid produced")
+        };
+
+        for sx in [10.0, 14.0] {
+            let solid = build(sx);
+            // Filleting one edge of an sx×10×10 box with r=2 removes
+            // (4 − π)·r²/4 · 10 of material — from the intended edge.
+            let expected = sx * 10.0 * 10.0 - (1.0 - std::f64::consts::PI / 4.0) * 4.0 * 10.0;
+            let vol = solid.volume();
+            assert!(
+                (vol - expected).abs() < 0.5,
+                "volume {vol} != expected {expected} at sx={sx}"
+            );
+            // The blend landed on the x = sx / z = 10 edge: no vertex
+            // remains on that corner line, the opposite edge stays sharp.
+            let brep = solid.as_brep().expect("brep result");
+            let on_target = brep
+                .topology
+                .vertices
+                .iter()
+                .filter(|(_, v)| (v.point.x - sx).abs() < 1e-9 && (v.point.z - 10.0).abs() < 1e-9)
+                .count();
+            assert_eq!(on_target, 0, "blend must remove the named edge at sx={sx}");
+            let on_opposite = brep
+                .topology
+                .vertices
+                .iter()
+                .filter(|(_, v)| v.point.x.abs() < 1e-9 && (v.point.z - 10.0).abs() < 1e-9)
+                .count();
+            assert!(on_opposite >= 2, "opposite edge must stay sharp at sx={sx}");
+        }
+    }
+
+    /// Fail-closed at the IR level: a Named reference that cannot resolve
+    /// is an EvalError, never a silently rebound blend.
+    #[test]
+    fn named_edge_blend_fails_closed_on_lost_reference() {
+        let mut nodes: HashMap<NodeId, vcad_ir::Node> = HashMap::new();
+        nodes.insert(
+            0,
+            vcad_ir::Node {
+                id: 0,
+                name: None,
+                op: CsgOp::Cube {
+                    size: vcad_ir::Vec3::new(10.0, 10.0, 10.0),
+                },
+            },
+        );
+        nodes.insert(
+            1,
+            vcad_ir::Node {
+                id: 1,
+                name: None,
+                op: CsgOp::EdgeBlend {
+                    child: 0,
+                    edges: vcad_ir::EdgeQuery::Named {
+                        face_a: "n0:top".to_string(),
+                        face_b: "n0:no_such_face".to_string(),
+                    },
+                    profile: vcad_ir::BlendProfile::Constant {
+                        size: 2.0,
+                        shape: 1.0,
+                    },
+                },
+            },
+        );
+        let mut cache = HashMap::new();
+        let err = evaluate_node(1, &nodes, &mut cache).expect_err("must fail closed");
+        assert!(matches!(err, EvalError::NamedEdge { .. }), "got {err:?}");
     }
 
     #[test]

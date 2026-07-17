@@ -386,6 +386,21 @@ pub enum EdgeQuery {
         /// Angular tolerance in degrees.
         tol_deg: f64,
     },
+    /// The edge between two persistently named faces (topological naming).
+    ///
+    /// Face names are `scope:tag[.n]*` — the scope is `n<nodeId>` of the
+    /// generating primitive (e.g. `n1:top`, `n1:right`); primitives seed
+    /// tags from the generating operation (`top`/`bottom`/`front`/`back`/
+    /// `left`/`right` for a box, `side`+caps for a cylinder), and booleans
+    /// propagate them with deterministic split ordinals. Unlike the
+    /// geometric queries, resolution is fail-closed: an ambiguous or lost
+    /// reference is an evaluation error, never a nearest-edge guess.
+    Named {
+        /// Name of one adjacent face.
+        face_a: String,
+        /// Name of the other adjacent face.
+        face_b: String,
+    },
 }
 
 /// A blend-profile keyframe along an edge.

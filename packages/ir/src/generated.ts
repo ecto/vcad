@@ -1198,7 +1198,15 @@ axis: Vec3,
 /**
  * Angular tolerance in degrees.
  */
-tol_deg: number, };
+tol_deg: number, } | { "type": "Named", 
+/**
+ * Name of one adjacent face.
+ */
+face_a: string, 
+/**
+ * Name of the other adjacent face.
+ */
+face_b: string, };
 
 /**
  * An embroidery design for the IR.

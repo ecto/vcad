@@ -35,6 +35,7 @@
 //! reported in electron-volts.
 
 pub mod adjoint;
+pub mod confinement;
 pub mod device;
 pub mod elliptic;
 pub mod field;

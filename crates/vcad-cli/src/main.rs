@@ -144,6 +144,37 @@ enum Commands {
         output: Option<PathBuf>,
     },
 
+    /// Semantic diff between two .vcad files (feature-level, id-matched)
+    Diff {
+        /// Old .vcad file
+        a: PathBuf,
+        /// New .vcad file
+        b: PathBuf,
+        /// Emit the structured diff as JSON instead of human-readable text
+        #[arg(long)]
+        json: bool,
+        /// Exit with code 1 when the documents differ (like `git diff --exit-code`)
+        #[arg(long)]
+        exit_code: bool,
+    },
+
+    /// Three-way semantic merge of .vcad files (fail-closed on conflicts)
+    Merge {
+        /// Common-ancestor .vcad file
+        base: PathBuf,
+        /// Our side
+        ours: PathBuf,
+        /// Their side
+        theirs: PathBuf,
+        /// Output path for the merged document (default: overwrite `ours`,
+        /// matching git merge-driver conventions)
+        #[arg(short, long)]
+        output: Option<PathBuf>,
+        /// Emit the conflict report as JSON
+        #[arg(long)]
+        json: bool,
+    },
+
     /// Display information about a .vcad file
     Info {
         /// Path to the .vcad file
@@ -304,6 +335,23 @@ fn main() -> Result<()> {
         }) => {
             apply_transform(&file, &part, translate, rotate, scale, output.as_ref())?;
         }
+        Some(Commands::Diff {
+            a,
+            b,
+            json,
+            exit_code,
+        }) => {
+            run_diff(&a, &b, json, exit_code)?;
+        }
+        Some(Commands::Merge {
+            base,
+            ours,
+            theirs,
+            output,
+            json,
+        }) => {
+            run_merge(&base, &ours, &theirs, output.as_deref(), json)?;
+        }
         Some(Commands::Info { file }) => {
             show_info(&file)?;
         }
@@ -407,6 +455,56 @@ fn run_logout() -> Result<()> {
     vcad_chat::clear_token()?;
     println!("Logged out — chat will use anonymous quota.");
     Ok(())
+}
+
+fn load_doc(path: &std::path::Path) -> Result<vcad_ir::Document> {
+    let json = std::fs::read_to_string(path)
+        .map_err(|e| anyhow::anyhow!("cannot read {}: {e}", path.display()))?;
+    vcad_ir::Document::from_json(&json)
+        .map_err(|e| anyhow::anyhow!("cannot parse {}: {e}", path.display()))
+}
+
+fn run_diff(a: &std::path::Path, b: &std::path::Path, json: bool, exit_code: bool) -> Result<()> {
+    let doc_a = load_doc(a)?;
+    let doc_b = load_doc(b)?;
+    let d = vcad_diff::diff(&doc_a, &doc_b)?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&d)?);
+    } else {
+        print!("{}", vcad_diff::render_human(&d));
+    }
+    if exit_code && !d.is_empty() {
+        std::process::exit(1);
+    }
+    Ok(())
+}
+
+fn run_merge(
+    base: &std::path::Path,
+    ours: &std::path::Path,
+    theirs: &std::path::Path,
+    output: Option<&std::path::Path>,
+    json: bool,
+) -> Result<()> {
+    let doc_base = load_doc(base)?;
+    let doc_ours = load_doc(ours)?;
+    let doc_theirs = load_doc(theirs)?;
+    match vcad_diff::merge(&doc_base, &doc_ours, &doc_theirs)? {
+        vcad_diff::MergeResult::Merged(merged) => {
+            let out = output.unwrap_or(ours);
+            std::fs::write(out, merged.to_json()?)?;
+            println!("merged cleanly \u{2192} {}", out.display());
+            Ok(())
+        }
+        vcad_diff::MergeResult::Conflicts(conflicts) => {
+            if json {
+                eprintln!("{}", serde_json::to_string_pretty(&conflicts)?);
+            } else {
+                eprint!("{}", vcad_diff::render_conflicts(&conflicts));
+            }
+            std::process::exit(1);
+        }
+    }
 }
 
 fn export_file(input: &PathBuf, output: &PathBuf) -> Result<()> {

@@ -1,0 +1,9 @@
+{
+  "id": "2026-07-17-drafting-shop-ready",
+  "version": "0.9.4",
+  "date": "2026-07-17",
+  "category": "feat",
+  "title": "Shop-ready 2D drawings: sections, title blocks, PDF",
+  "summary": "Offset section views with hatching and cutting-plane callouts, detail bubbles with scale, title block/revision table/BOM entities, ANSI line weights, and deterministic PDF + DXF sheet export.",
+  "features": ["drafting", "sections", "pdf-export", "dxf-export", "bom"]
+}

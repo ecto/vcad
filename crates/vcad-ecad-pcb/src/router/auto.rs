@@ -22,6 +22,7 @@ use crate::session::{RouteSession, SpanId};
 use crate::spatial::{point_in_polygon, CopperElement, CopperGeom};
 
 use super::congestion::Congestion;
+use super::escape;
 use super::global::plan_corridors;
 use super::maze::route_net_maze3d;
 use super::push_shove::{Obstacle, PushShoveRouter};
@@ -217,6 +218,9 @@ fn conn_region(from: Vec2, to: Vec2) -> ([f64; 2], [f64; 2]) {
 /// search failed: skip re-searching until copper actually changes nearby.
 type FailCache = HashMap<ConnKey, u64>;
 
+/// An axis-aligned window (mm) used by the joint-repair grouping.
+type RepairWindow = ([f64; 2], [f64; 2]);
+
 /// The product of one routing pass: the grown session, the placed connections,
 /// and the connections still unrouted after rip-up.
 type Pass = (RouteSession, Vec<Placed>, Vec<Conn>);
@@ -406,6 +410,21 @@ pub fn route_all_with_opts(
             Some(p) => placed.push(p),
             None => still_unrouted.push((net, from, to)),
         }
+    }
+
+    // Escalating-window joint repair: the last-resort untangler for local
+    // knots that per-net rip-up and negotiation provably cannot solve (they
+    // require deciding a clique of routes together).
+    if !still_unrouted.is_empty() {
+        still_unrouted = joint_window_repair(
+            &mut session,
+            pcb,
+            width,
+            &mut placed,
+            still_unrouted,
+            &cong,
+            opts.effective_expansions(),
+        );
     }
 
     // Stitch the planed nets' pads down to their planes (issue #289 part 2).
@@ -884,10 +903,31 @@ fn route_batch(
             .collect();
         for (((net, from, to), attempts), cand) in batch.into_iter().zip(candidates) {
             match cand {
-                None => {
-                    fail_cache.insert(conn_key(&net, from, to), session.epoch());
-                    unrouted.push((net, from, to));
-                }
+                // Speculative search failed: give the connection the full
+                // sequential arsenal (including the escape stage, which only
+                // runs inside try_route) before declaring it unrouted.
+                None => match try_route(
+                    session,
+                    pcb,
+                    width,
+                    &net,
+                    from,
+                    to,
+                    placed,
+                    cong,
+                    use_push_shove,
+                    max_expansions,
+                ) {
+                    Some(p) => {
+                        committed += 1;
+                        fail_cache.remove(&conn_key(&net, from, to));
+                        placed.push(p);
+                    }
+                    None => {
+                        fail_cache.insert(conn_key(&net, from, to), session.epoch());
+                        unrouted.push((net, from, to));
+                    }
+                },
                 Some(c) => match validate_and_commit(session, pcb, c, placed) {
                     Some(p) => {
                         committed += 1;
@@ -968,7 +1008,7 @@ fn try_route(
     use_push_shove: bool,
     max_expansions: usize,
 ) -> Option<Placed> {
-    let cand = search_route(
+    if let Some(cand) = search_route(
         session,
         pcb,
         width,
@@ -980,8 +1020,119 @@ fn try_route(
         max_expansions,
         true,
         None,
-    )?;
-    validate_and_commit(session, pcb, cand, placed)
+    ) {
+        return validate_and_commit(session, pcb, cand, placed);
+    }
+    // Both direct maze attempts (coarse + fine retry) failed. If an endpoint
+    // sits inside a dense pin field (BGA / fine-pitch lattice), plan a
+    // flow-based escape out of the field and re-search from the egress point.
+    try_route_escape(
+        session,
+        pcb,
+        width,
+        net,
+        from,
+        to,
+        placed,
+        cong,
+        use_push_shove,
+        max_expansions,
+    )
+}
+
+/// Escape-assisted retry for a connection the direct maze could not place
+/// (tier-2 BGA escape stage; see [`super::escape`]).
+///
+/// When an endpoint lies inside a detected dense pin field, the min-cost
+/// max-flow escape planner assigns it an interstitial polyline from the pad
+/// to an egress point just outside the field; the maze is then re-run from
+/// the egress point(s) and the escape copper is prepended to the candidate,
+/// so [`validate_and_commit`] probes escape and route as one unit. Tried
+/// escalating: escape `from` only, then `to` only, then both. Commits
+/// nothing on failure.
+#[allow(clippy::too_many_arguments)]
+fn try_route_escape(
+    session: &mut RouteSession,
+    pcb: &Pcb,
+    width: f64,
+    net: &str,
+    from: Vec2,
+    to: Vec2,
+    placed: &[Placed],
+    cong: &Congestion,
+    use_push_shove: bool,
+    max_expansions: usize,
+) -> Option<Placed> {
+    let fields = escape::detect_pin_fields(pcb);
+    if fields.is_empty() {
+        return None;
+    }
+    let from_field = escape::field_containing(&fields, from);
+    let to_field = escape::field_containing(&fields, to);
+    if from_field.is_none() && to_field.is_none() {
+        return None;
+    }
+
+    for (esc_from, esc_to) in [(true, false), (false, true), (true, true)] {
+        let ef = if esc_from {
+            let Some(field) = from_field else { continue };
+            let Some(plan) = escape::plan_escape(session, pcb, field, net, from, width) else {
+                continue;
+            };
+            Some(plan)
+        } else {
+            None
+        };
+        let et = if esc_to {
+            let Some(field) = to_field else { continue };
+            let Some(plan) = escape::plan_escape(session, pcb, field, net, to, width) else {
+                continue;
+            };
+            Some(plan)
+        } else {
+            None
+        };
+
+        let f2 = ef.as_ref().map(|p| p.egress).unwrap_or(from);
+        let t2 = et.as_ref().map(|p| p.egress).unwrap_or(to);
+        let Some(mut cand) = search_route(
+            session,
+            pcb,
+            width,
+            net,
+            f2,
+            t2,
+            cong,
+            use_push_shove,
+            max_expansions,
+            true,
+            None,
+        ) else {
+            continue;
+        };
+        // Prepend/append the escape copper so validate_and_commit probes the
+        // whole connection (pad → egress → route → egress → pad) as one unit.
+        let mut segments: Vec<(Vec2, Vec2, PcbLayer)> = Vec::new();
+        if let Some(p) = &ef {
+            segments.extend(p.segments.iter().map(|&(a, b)| (a, b, p.layer)));
+        }
+        segments.append(&mut cand.segments);
+        if let Some(p) = &et {
+            segments.extend(p.segments.iter().map(|&(a, b)| (a, b, p.layer)));
+        }
+        cand.segments = segments;
+        cand.from = from;
+        cand.to = to;
+        if let Some(placed_conn) = validate_and_commit(session, pcb, cand, placed) {
+            log::info!(
+                "escape: {net} routed via pin-field escape (from={} to={})",
+                esc_from,
+                esc_to
+            );
+            return Some(placed_conn);
+        }
+    }
+    None
 }
 
 /// A route found by [`search_route`] but not yet committed: the copper it
@@ -1034,6 +1185,8 @@ fn search_route(
     // analysis showed the human spending ~2/3 of the board's vias on the nets
     // our pad-pair decomposition could not close.)
     let tree_goals = to_component(session, net, to);
+    // The symmetric source set: copper already connected to the FROM pad.
+    let tree_sources = to_component(session, net, from);
     let maze = |pitch_scale: f64, window: Option<(Vec2, Vec2)>| {
         route_net_maze3d(
             session,
@@ -1051,6 +1204,11 @@ fn search_route(
             pitch_scale,
             window,
             &tree_goals,
+            &tree_sources,
+            // Off-grid via candidates cost up to 16 extra probes per cache
+            // miss — reserved for the searches that need them (fine retry
+            // and repair passes), out of the greedy hot path.
+            pitch_scale < 1.0 || fine_retry,
         )
     };
     // Corridor-first: the global plan says where this connection FITS —
@@ -1074,6 +1232,21 @@ fn search_route(
             0.5,
             Some((Vec2::new(lo[0], lo[1]), Vec2::new(hi[0], hi[1]))),
         );
+    }
+    if r3.success && r3.segments.is_empty() && r3.vias.is_empty() {
+        // The two components already touch (earlier commits joined them):
+        // the connection is satisfied with zero new copper. Log it so a
+        // resume run's "routed" count can be read honestly (these repeat on
+        // every resume because the ratsnest keys completion off traces).
+        log::debug!("{net}: connection already satisfied by existing copper contact");
+        return Some(Candidate {
+            net: net.to_string(),
+            from,
+            to,
+            width: w,
+            segments: Vec::new(),
+            vias: Vec::new(),
+        });
     }
     let (segments, route_vias) = if r3.success && !r3.segments.is_empty() {
         (r3.segments, r3.vias)
@@ -1935,62 +2108,244 @@ fn ripup_pass(
             still.push((net, from, to));
         }
 
-        // Re-route every victim — speculatively parallel, like the greedy
-        // pass. A victim that can't find a NEW route gets its ORIGINAL copper
-        // restored when that copper is still legal (the stuck net may not
-        // have taken its space after all) — rip-up is then non-destructive
-        // by construction; only a victim whose exact old path was genuinely
-        // claimed becomes unrouted.
-        let mut originals: HashMap<ConnKey, Placed> = victims
-            .iter()
-            .map(|v| (conn_key(&v.net, v.from, v.to), v.clone()))
-            .collect();
-        let victim_conns: Vec<Conn> = victims.into_iter().map(|v| (v.net, v.from, v.to)).collect();
-        for (net, from, to) in route_batch(
+        // Re-route every victim; failures restore their original copper.
+        still.extend(reroute_victims_with_restore(
             session,
             pcb,
             width,
-            victim_conns,
+            victims,
             placed,
             cong,
             use_push_shove,
             max_expansions,
-            true,
             fail_cache,
             corridors,
-        ) {
-            let restored = originals
-                .remove(&conn_key(&net, from, to))
-                // A fan-out victim's dog-bone stubs can't ride a Candidate;
-                // restoring without them would report a broken route as
-                // placed. Those (rare) victims stay unrouted instead.
-                .filter(|orig| orig.stubs.is_empty())
-                .and_then(|orig| {
-                    validate_and_commit(
-                        session,
-                        pcb,
-                        Candidate {
-                            net: orig.net.clone(),
-                            from: orig.from,
-                            to: orig.to,
-                            width: orig.width,
-                            segments: orig.segments.clone(),
-                            vias: orig.via_pts.clone(),
-                        },
-                        placed,
-                    )
-                });
-            match restored {
-                Some(p) => {
-                    log::debug!("ripup: restored original route for {}", p.net);
-                    placed.push(p);
-                }
-                None => still.push((net, from, to)),
-            }
-        }
+        ));
     }
 
     still
+}
+
+/// Re-route ripped victims (speculatively parallel), restoring each failed
+/// victim's ORIGINAL copper when it is still legal — so ripping is
+/// non-destructive by construction. Returns the connections that neither
+/// re-routed nor restored. Fan-out victims (dog-bone stubs can't ride a
+/// Candidate) are never restored broken; they come back as unrouted.
+#[allow(clippy::too_many_arguments)]
+fn reroute_victims_with_restore(
+    session: &mut RouteSession,
+    pcb: &Pcb,
+    width: f64,
+    victims: Vec<Placed>,
+    placed: &mut Vec<Placed>,
+    cong: &Congestion,
+    use_push_shove: bool,
+    max_expansions: usize,
+    fail_cache: &mut FailCache,
+    corridors: &HashMap<ConnKey, (Vec2, Vec2)>,
+) -> Vec<Conn> {
+    let mut originals: HashMap<ConnKey, Placed> = victims
+        .iter()
+        .map(|v| (conn_key(&v.net, v.from, v.to), v.clone()))
+        .collect();
+    let victim_conns: Vec<Conn> = victims.into_iter().map(|v| (v.net, v.from, v.to)).collect();
+    let mut lost = Vec::new();
+    for (net, from, to) in route_batch(
+        session,
+        pcb,
+        width,
+        victim_conns,
+        placed,
+        cong,
+        use_push_shove,
+        max_expansions,
+        true,
+        fail_cache,
+        corridors,
+    ) {
+        let restored = originals
+            .remove(&conn_key(&net, from, to))
+            .filter(|orig| orig.stubs.is_empty())
+            .and_then(|orig| {
+                validate_and_commit(
+                    session,
+                    pcb,
+                    Candidate {
+                        net: orig.net.clone(),
+                        from: orig.from,
+                        to: orig.to,
+                        width: orig.width,
+                        segments: orig.segments.clone(),
+                        vias: orig.via_pts.clone(),
+                    },
+                    placed,
+                )
+            });
+        match restored {
+            Some(p) => {
+                log::debug!("restored original route for {}", p.net);
+                placed.push(p);
+            }
+            None => lost.push((net, from, to)),
+        }
+    }
+    lost
+}
+
+/// Escalating-window joint reroute — the "when negotiation stalls" rescue
+/// (TritonRoute's search-and-repair, adapted): group still-unrouted
+/// connections whose neighborhoods overlap, rip EVERY placed route
+/// intersecting the group's window, and re-route the whole clique jointly —
+/// stuck connections first, victims after, failed victims restored. If a
+/// group still has failures, escalate to a larger window and try again.
+///
+/// This is the treatment for local knots (e.g. a short crossing bus between
+/// two components) where per-net rip-up thrashes: the routes must be decided
+/// TOGETHER, and the window guarantees every entangled neighbor is in play.
+#[allow(clippy::too_many_arguments)]
+fn joint_window_repair(
+    session: &mut RouteSession,
+    pcb: &Pcb,
+    width: f64,
+    placed: &mut Vec<Placed>,
+    pending: Vec<Conn>,
+    cong: &Congestion,
+    max_expansions: usize,
+) -> Vec<Conn> {
+    const ESCALATIONS: [f64; 3] = [3.0, 6.0, 12.0];
+    /// Never let coalesced windows exceed this area (mm²): a quadrant-sized
+    /// rip is a demolition, not a repair (measured: one mega-window took the
+    /// CM5 from 0.93 to 0.69 before this cap + transactions existed).
+    const MAX_WINDOW_AREA: f64 = 400.0;
+    let mut pending = pending;
+    let mut fail_cache = FailCache::new();
+    for (round, margin) in ESCALATIONS.iter().enumerate() {
+        if pending.is_empty() {
+            break;
+        }
+        let sw = Stopwatch::start();
+        // Group pending connections into overlapping windows.
+        let win = |c: &Conn| -> RepairWindow {
+            (
+                [c.1.x.min(c.2.x) - margin, c.1.y.min(c.2.y) - margin],
+                [c.1.x.max(c.2.x) + margin, c.1.y.max(c.2.y) + margin],
+            )
+        };
+        let overlaps = |a: &RepairWindow, b: &RepairWindow| -> bool {
+            a.0[0] <= b.1[0] && b.0[0] <= a.1[0] && a.0[1] <= b.1[1] && b.0[1] <= a.1[1]
+        };
+        let mut groups: Vec<(RepairWindow, Vec<Conn>)> = Vec::new();
+        'conn: for c in pending.drain(..) {
+            let w = win(&c);
+            for (gw, gc) in groups.iter_mut() {
+                if overlaps(gw, &w) {
+                    let merged = (
+                        [gw.0[0].min(w.0[0]), gw.0[1].min(w.0[1])],
+                        [gw.1[0].max(w.1[0]), gw.1[1].max(w.1[1])],
+                    );
+                    let area = (merged.1[0] - merged.0[0]) * (merged.1[1] - merged.0[1]);
+                    if area > MAX_WINDOW_AREA {
+                        continue; // stay a separate window; transactions make overlap safe
+                    }
+                    *gw = merged;
+                    gc.push(c);
+                    continue 'conn;
+                }
+            }
+            groups.push((w, vec![c]));
+        }
+
+        let mut still = Vec::new();
+        let n_groups = groups.len();
+        for (gw, stuck) in groups {
+            // Transactional: snapshot the world; a window that ends
+            // net-negative is rolled back wholesale, so this stage can only
+            // ever improve the board.
+            let session_snapshot = session.clone();
+            let placed_snapshot = placed.clone();
+            let stuck_backup = stuck.clone();
+            let placed_before = placed.len();
+            // Rip every placed route whose copper enters the window.
+            let in_window = |p: &Placed| {
+                p.segments.iter().any(|(a, b, _)| {
+                    let lo = [a.x.min(b.x), a.y.min(b.y)];
+                    let hi = [a.x.max(b.x), a.y.max(b.y)];
+                    lo[0] <= gw.1[0] && gw.0[0] <= hi[0] && lo[1] <= gw.1[1] && gw.0[1] <= hi[1]
+                })
+            };
+            let mut victims = Vec::new();
+            let mut kept = Vec::new();
+            for p in std::mem::take(placed) {
+                if in_window(&p) {
+                    for &s in &p.spans {
+                        session.remove(s);
+                    }
+                    victims.push(p);
+                } else {
+                    kept.push(p);
+                }
+            }
+            *placed = kept;
+            let n_stuck = stuck.len();
+            let n_victims = victims.len();
+
+            // Joint re-route: stuck first (they get first pick), then victims
+            // with original-copper restore.
+            let mut lost = route_batch(
+                session,
+                pcb,
+                width,
+                stuck,
+                placed,
+                cong,
+                true,
+                max_expansions,
+                true,
+                &mut fail_cache,
+                &HashMap::new(),
+            );
+            lost.extend(reroute_victims_with_restore(
+                session,
+                pcb,
+                width,
+                victims,
+                placed,
+                cong,
+                true,
+                max_expansions,
+                &mut fail_cache,
+                &HashMap::new(),
+            ));
+            if placed.len() <= placed_before {
+                // Net-negative (or neutral): roll back the entire window.
+                *session = session_snapshot;
+                *placed = placed_snapshot;
+                log::debug!(
+                    "joint repair window ({:.0},{:.0})..({:.0},{:.0}): rolled back (stuck={n_stuck} victims={n_victims})",
+                    gw.0[0], gw.0[1], gw.1[0], gw.1[1],
+                );
+                still.extend(stuck_backup);
+            } else {
+                log::debug!(
+                    "joint repair window ({:.0},{:.0})..({:.0},{:.0}): stuck={n_stuck} victims={n_victims} gained={} lost={}",
+                    gw.0[0], gw.0[1], gw.1[0], gw.1[1],
+                    placed.len() - placed_before,
+                    lost.len(),
+                );
+                still.extend(lost);
+            }
+        }
+        log::info!(
+            "joint repair round {} (margin {margin}mm): {n_groups} windows -> {} still unrouted in {:.1}s",
+            round + 1,
+            still.len(),
+            sw.ms() / 1000.0,
+        );
+        pending = still;
+        // Fresh failure cache per escalation: the windows change shape.
+        fail_cache = FailCache::new();
+    }
+    pending
 }
 
 /// Synthesize a netlist from pad net assignments for ratsnest computation.
@@ -2135,6 +2490,110 @@ mod tests {
                 net: v.net.clone(),
                 source: None,
             });
+        }
+    }
+
+    #[test]
+    fn escape_rescues_pad_ringed_by_dense_field() {
+        // A source pad boxed in by a tight ring of other-net pads (a dense pin
+        // field), passable only through a single two-pad gap. With a small
+        // expansion budget the direct maze fails inside the field; the
+        // flow-based escape planner must get the connection out through the
+        // gap and try_route must then succeed.
+        let pitch = 0.65;
+        let pad_d = 0.3;
+        let n = 14;
+        let origin = Vec2::new(20.0, 10.0);
+        let mut pads = Vec::new();
+        // Two-pad gap in the top-RIGHT of the wall; the target sits up-LEFT
+        // of the box, so the direct maze floods the scatter labyrinth toward
+        // the sealed left wall while the flow planner walks to the top-right
+        // egress, from which the outside path to the target runs above the
+        // box and never tempts the search back inside.
+        let gaps = [(11usize, 13usize), (12, 13)];
+        let mut push = |i: usize, j: usize, net: &str, num: String| {
+            pads.push(Pad {
+                number: num,
+                pad_type: PadType::SMD,
+                shape: PadShape::Circle { diameter: pad_d },
+                position: Vec2::new(i as f64 * pitch, j as f64 * pitch),
+                rotation: 0.0,
+                drill: None,
+                net: Some(net.into()),
+                layers: vec![PcbLayer::FCu],
+            });
+        };
+        for j in 0..n {
+            for i in 0..n {
+                let perimeter = i == 0 || j == 0 || i == n - 1 || j == n - 1;
+                if !perimeter || gaps.contains(&(i, j)) {
+                    continue;
+                }
+                push(i, j, "B", format!("W{i}_{j}"));
+            }
+        }
+        // The trapped source pad at the box center.
+        push(6, 6, "S", "S".into());
+        let field_fp = Footprint {
+            reference: "U1".into(),
+            value: "ring".into(),
+            footprint_name: "RING".into(),
+            position: origin,
+            rotation: 0.0,
+            front: true,
+            pads,
+            graphics: vec![],
+            model_3d: None,
+            properties: Default::default(),
+        };
+        // Free-standing target pad left of the box, outside the field.
+        let target = fp(
+            "R1",
+            origin.x - 5.0,
+            origin.y + 14.0 * pitch + 1.5,
+            vec![pad("1", 0.0, 0.0, "S")],
+        );
+        let pcb = board(vec![field_fp, target]);
+        let from = Vec2::new(origin.x + 6.0 * pitch, origin.y + 6.0 * pitch);
+        let to = Vec2::new(origin.x - 5.0, origin.y + 14.0 * pitch + 1.5);
+
+        let mut session = RouteSession::from_pcb(&pcb);
+        let cong = Congestion::new(&pcb.outline.vertices);
+        let _ = env_logger::builder().is_test(true).try_init();
+        // Small budget: the direct maze exhausts it inside the pin field.
+        let budget = 400;
+        assert!(
+            search_route(&session, &pcb, 0.25, "S", from, to, &cong, false, budget, true, None)
+                .is_none(),
+            "direct maze must fail with a small expansion budget"
+        );
+        let placed = try_route(
+            &mut session,
+            &pcb,
+            0.25,
+            "S",
+            from,
+            to,
+            &[],
+            &cong,
+            false,
+            budget,
+        );
+        let placed = placed.expect("try_route must succeed via the pin-field escape");
+        assert!(!placed.segments.is_empty());
+        // Every committed segment must be clearance-legal against the pads
+        // (probe on a fresh session so the route's own copper doesn't mask).
+        let fresh = RouteSession::from_pcb(&pcb);
+        for (a, b, l) in &placed.segments {
+            let seg = CopperGeom::Segment {
+                a: *a,
+                b: *b,
+                half_w: placed.width / 2.0,
+            };
+            assert!(
+                fresh.probe(&seg, *l, "S", fresh.clearance_for("S")).legal,
+                "escape-assisted route emitted illegal copper: {a:?}->{b:?}"
+            );
         }
     }
 

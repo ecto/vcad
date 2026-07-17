@@ -6,11 +6,17 @@
 //! - 2D projection onto the section plane
 //! - Cross-hatch generation for solid regions
 
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use vcad_kernel_math::{Point3, Vec3};
 use vcad_kernel_tessellate::TriangleMesh;
 
-use crate::types::{BoundingBox2D, HatchPattern, Point2D, SectionCurve, SectionPlane, SectionView};
+use crate::dimension::{ArrowType, DimensionStyle};
+use crate::dimension::{RenderedArrow, RenderedDimension, RenderedText, TextAlignment};
+use crate::types::{
+    BoundingBox2D, HatchPattern, OffsetSectionPlane, Point2D, SectionCurve, SectionPlane,
+    SectionView,
+};
 
 /// Default tolerance for geometric comparisons (in mm).
 const DEFAULT_TOLERANCE: f64 = 1e-6;
@@ -673,37 +679,7 @@ pub fn section_mesh(
 
     // Step 5: Generate hatch lines if pattern provided
     let hatch_lines = if let Some(pattern) = hatch_pattern {
-        // Find closed curves to use as boundaries
-        let mut all_hatch_lines = Vec::new();
-
-        for curve in &curves {
-            if curve.is_closed && curve.points.len() >= 3 {
-                // Use this closed curve as a hatch boundary
-                // For simplicity, treat other closed curves as holes if they're inside this one
-                let holes: Vec<Vec<Point2D>> = curves
-                    .iter()
-                    .filter(|c| c.is_closed && c.points.len() >= 3)
-                    .filter(|c| {
-                        // Check if this curve's center is inside the boundary
-                        if c.points.is_empty() || std::ptr::eq(*c, curve) {
-                            return false;
-                        }
-                        let center = c.points.iter().fold(Point2D::new(0.0, 0.0), |acc, p| {
-                            Point2D::new(acc.x + p.x, acc.y + p.y)
-                        });
-                        let n = c.points.len() as f64;
-                        let center = Point2D::new(center.x / n, center.y / n);
-                        point_in_polygon(&center, &curve.points)
-                    })
-                    .map(|c| c.points.clone())
-                    .collect();
-
-                let lines = generate_hatch_lines(&curve.points, &holes, pattern);
-                all_hatch_lines.extend(lines);
-            }
-        }
-
-        all_hatch_lines
+        hatch_closed_curves(&curves, pattern)
     } else {
         Vec::new()
     };
@@ -719,6 +695,342 @@ pub fn section_mesh(
         curves,
         hatch_lines,
         bounds: final_bounds,
+    }
+}
+
+/// Hatch every closed curve in a set, treating closed curves contained in
+/// another closed curve as holes of that boundary.
+pub fn hatch_closed_curves(
+    curves: &[SectionCurve],
+    pattern: &HatchPattern,
+) -> Vec<(Point2D, Point2D)> {
+    let mut all_hatch_lines = Vec::new();
+
+    for curve in curves {
+        if curve.is_closed && curve.points.len() >= 3 {
+            // Use this closed curve as a hatch boundary; treat other closed
+            // curves whose centroid lies inside it as holes.
+            let holes: Vec<Vec<Point2D>> = curves
+                .iter()
+                .filter(|c| c.is_closed && c.points.len() >= 3)
+                .filter(|c| {
+                    if c.points.is_empty() || std::ptr::eq(*c, curve) {
+                        return false;
+                    }
+                    let center = c.points.iter().fold(Point2D::new(0.0, 0.0), |acc, p| {
+                        Point2D::new(acc.x + p.x, acc.y + p.y)
+                    });
+                    let n = c.points.len() as f64;
+                    let center = Point2D::new(center.x / n, center.y / n);
+                    point_in_polygon(&center, &curve.points)
+                })
+                .map(|c| c.points.clone())
+                .collect();
+
+            let lines = generate_hatch_lines(&curve.points, &holes, pattern);
+            all_hatch_lines.extend(lines);
+        }
+    }
+
+    all_hatch_lines
+}
+
+// ============================================================================
+// Offset (Stepped) Sections
+// ============================================================================
+
+/// Clip a closed polygon to the vertical strip `u_start <= x <= u_end`
+/// using Sutherland–Hodgman against the two half-planes.
+fn clip_polygon_to_strip(points: &[Point2D], u_start: f64, u_end: f64) -> Vec<Point2D> {
+    let clip_half = |poly: &[Point2D],
+                     inside: &dyn Fn(&Point2D) -> bool,
+                     intersect: &dyn Fn(&Point2D, &Point2D) -> Point2D|
+     -> Vec<Point2D> {
+        let mut out = Vec::new();
+        let n = poly.len();
+        for i in 0..n {
+            let cur = poly[i];
+            let prev = poly[(i + n - 1) % n];
+            let cur_in = inside(&cur);
+            let prev_in = inside(&prev);
+            if cur_in {
+                if !prev_in {
+                    out.push(intersect(&prev, &cur));
+                }
+                out.push(cur);
+            } else if prev_in {
+                out.push(intersect(&prev, &cur));
+            }
+        }
+        out
+    };
+
+    let at_x = |a: &Point2D, b: &Point2D, x: f64| -> Point2D {
+        let t = (x - a.x) / (b.x - a.x);
+        Point2D::new(x, a.y + t * (b.y - a.y))
+    };
+
+    let step1 = clip_half(points, &|p| p.x >= u_start, &|a, b| at_x(a, b, u_start));
+    if step1.is_empty() {
+        return step1;
+    }
+    clip_half(&step1, &|p| p.x <= u_end, &|a, b| at_x(a, b, u_end))
+}
+
+/// Clip an open polyline to the strip, splitting into sub-polylines.
+fn clip_polyline_to_strip(points: &[Point2D], u_start: f64, u_end: f64) -> Vec<Vec<Point2D>> {
+    let mut result = Vec::new();
+    let mut current: Vec<Point2D> = Vec::new();
+
+    let inside =
+        |p: &Point2D| p.x >= u_start - DEFAULT_TOLERANCE && p.x <= u_end + DEFAULT_TOLERANCE;
+
+    for w in points.windows(2) {
+        let (a, b) = (w[0], w[1]);
+        // Clip segment [a, b] to the strip parametrically.
+        let mut t0: f64 = 0.0;
+        let mut t1: f64 = 1.0;
+        let dx = b.x - a.x;
+        if dx.abs() < DEFAULT_TOLERANCE {
+            if !inside(&a) {
+                if !current.is_empty() {
+                    result.push(std::mem::take(&mut current));
+                }
+                continue;
+            }
+        } else {
+            let ta = (u_start - a.x) / dx;
+            let tb = (u_end - a.x) / dx;
+            let (lo, hi) = if ta < tb { (ta, tb) } else { (tb, ta) };
+            t0 = t0.max(lo);
+            t1 = t1.min(hi);
+            if t0 > t1 {
+                if !current.is_empty() {
+                    result.push(std::mem::take(&mut current));
+                }
+                continue;
+            }
+        }
+        let pa = Point2D::new(a.x + t0 * dx, a.y + t0 * (b.y - a.y));
+        let pb = Point2D::new(a.x + t1 * dx, a.y + t1 * (b.y - a.y));
+        if current.is_empty() {
+            current.push(pa);
+        } else if current.last().unwrap().distance(&pa) > DEFAULT_TOLERANCE * 100.0 {
+            result.push(std::mem::take(&mut current));
+            current.push(pa);
+        }
+        current.push(pb);
+    }
+    if !current.is_empty() {
+        result.push(current);
+    }
+    result
+}
+
+/// Generate an offset (stepped) section view.
+///
+/// Each step's parallel plane is intersected with the mesh, the resulting
+/// curves are projected into the **base** plane's frame (flattening the jogs,
+/// per drafting convention), and clipped to the step's U span. Closed regions
+/// are hatched with `hatch_pattern` if provided.
+///
+/// If `plane.steps` is empty this is equivalent to [`section_mesh`] on the
+/// base plane.
+pub fn offset_section_mesh(
+    mesh: &TriangleMesh,
+    plane: &OffsetSectionPlane,
+    hatch_pattern: Option<&HatchPattern>,
+) -> SectionView {
+    if plane.steps.is_empty() {
+        return section_mesh(mesh, &plane.base, hatch_pattern);
+    }
+
+    let normal = plane.base.normal_vec().normalize();
+    let base_origin = plane.base.origin_point();
+    let tolerance = DEFAULT_TOLERANCE * 100.0;
+
+    let mut curves: Vec<SectionCurve> = Vec::new();
+
+    for step in &plane.steps {
+        let origin = base_origin + normal * step.offset;
+        let segments = intersect_mesh_with_plane(mesh, origin, normal);
+        if segments.is_empty() {
+            continue;
+        }
+        let polylines = chain_segments(segments, tolerance);
+        // Project into the *base* frame: the offset is purely along the
+        // normal, so in-plane (U, V) coordinates are unaffected.
+        let projected = project_to_section_plane(&polylines, &plane.base);
+
+        let (lo, hi) = if step.u_start <= step.u_end {
+            (step.u_start, step.u_end)
+        } else {
+            (step.u_end, step.u_start)
+        };
+
+        for curve in projected {
+            if curve.is_closed {
+                let clipped = clip_polygon_to_strip(&curve.points, lo, hi);
+                if clipped.len() >= 3 {
+                    curves.push(SectionCurve::new(clipped, true));
+                }
+            } else {
+                for piece in clip_polyline_to_strip(&curve.points, lo, hi) {
+                    if piece.len() >= 2 {
+                        curves.push(SectionCurve::new(piece, false));
+                    }
+                }
+            }
+        }
+    }
+
+    let mut bounds = BoundingBox2D::empty();
+    for curve in &curves {
+        for p in &curve.points {
+            bounds.include_point(*p);
+        }
+    }
+
+    let hatch_lines = if let Some(pattern) = hatch_pattern {
+        hatch_closed_curves(&curves, pattern)
+    } else {
+        Vec::new()
+    };
+
+    for (p0, p1) in &hatch_lines {
+        bounds.include_point(*p0);
+        bounds.include_point(*p1);
+    }
+
+    SectionView {
+        curves,
+        hatch_lines,
+        bounds,
+    }
+}
+
+// ============================================================================
+// Cutting-Plane Callout (parent-view annotation)
+// ============================================================================
+
+/// A cutting-plane line drawn on the parent view: the section trace with
+/// viewing-direction arrows and letter labels at both ends
+/// (e.g. `A —·—·—·— A` for "SECTION A-A").
+///
+/// The polyline is expressed in the parent view's 2D coordinates. For an
+/// offset section, include the jog corners as intermediate points. Renders
+/// down to [`RenderedDimension`] primitives, so every downstream consumer
+/// (SVG, DXF, PDF) works unchanged; consumers should draw the polyline with
+/// the phantom / dash-dot line class.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SectionCutLine {
+    /// Polyline of the cutting-plane trace in parent-view coordinates.
+    pub points: Vec<Point2D>,
+    /// Letter label placed at both ends (e.g. "A").
+    pub label: String,
+    /// Viewing direction of the section arrows, radians (0 = +X).
+    pub arrow_direction: f64,
+    /// Dimension style used for arrow size and text height.
+    pub style: DimensionStyle,
+}
+
+impl SectionCutLine {
+    /// Create a straight cutting-plane line between two points.
+    pub fn straight(
+        p0: Point2D,
+        p1: Point2D,
+        label: impl Into<String>,
+        arrow_direction: f64,
+    ) -> Self {
+        Self {
+            points: vec![p0, p1],
+            label: label.into(),
+            arrow_direction,
+            style: DimensionStyle::default(),
+        }
+    }
+
+    /// Create a cutting-plane polyline (offset section trace with jogs).
+    pub fn polyline(points: Vec<Point2D>, label: impl Into<String>, arrow_direction: f64) -> Self {
+        Self {
+            points,
+            label: label.into(),
+            arrow_direction,
+            style: DimensionStyle::default(),
+        }
+    }
+
+    /// Set the dimension style.
+    pub fn with_style(mut self, style: DimensionStyle) -> Self {
+        self.style = style;
+        self
+    }
+
+    /// The name of the resulting section view, e.g. "SECTION A-A".
+    pub fn section_name(&self) -> String {
+        format!("SECTION {label}-{label}", label = self.label)
+    }
+
+    /// Render the cutting-plane line into drawing primitives.
+    ///
+    /// Returns `None` if the polyline has fewer than two points.
+    pub fn render(&self) -> Option<RenderedDimension> {
+        if self.points.len() < 2 {
+            return None;
+        }
+        let mut rd = RenderedDimension::new();
+
+        // The trace polyline itself.
+        for w in self.points.windows(2) {
+            rd.add_line(w[0], w[1]);
+        }
+
+        let arrow_size = self.style.arrow_size * 1.5;
+        let text_height = self.style.text_height * 1.4;
+        let (dir_cos, dir_sin) = (self.arrow_direction.cos(), self.arrow_direction.sin());
+
+        for (end, neighbor) in [
+            (self.points[0], self.points[1]),
+            (
+                *self.points.last().unwrap(),
+                self.points[self.points.len() - 2],
+            ),
+        ] {
+            // Extend the trace slightly beyond the geometry.
+            let out_len = (end.x - neighbor.x).hypot(end.y - neighbor.y);
+            if out_len < 1e-12 {
+                continue;
+            }
+            let ux = (end.x - neighbor.x) / out_len;
+            let uy = (end.y - neighbor.y) / out_len;
+            let ext = Point2D::new(end.x + ux * arrow_size * 1.5, end.y + uy * arrow_size * 1.5);
+            rd.add_line(end, ext);
+
+            // Viewing-direction arrow at the extended end.
+            let tip = Point2D::new(
+                ext.x + dir_cos * arrow_size * 2.0,
+                ext.y + dir_sin * arrow_size * 2.0,
+            );
+            rd.add_line(ext, tip);
+            rd.add_arrow(RenderedArrow::new(
+                tip,
+                self.arrow_direction,
+                ArrowType::ClosedFilled,
+                arrow_size,
+            ));
+
+            // Letter label just beyond the arrow, offset away from the trace.
+            let label_pos = Point2D::new(
+                ext.x + ux * text_height * 1.5,
+                ext.y + uy * text_height * 1.5,
+            );
+            rd.add_text(
+                RenderedText::new(label_pos, self.label.clone(), text_height)
+                    .with_alignment(TextAlignment::MiddleCenter),
+            );
+        }
+
+        Some(rd)
     }
 }
 
@@ -883,6 +1195,99 @@ mod tests {
 
         let right = SectionPlane::right(2.0);
         assert!((right.origin[0] - 2.0).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_offset_section_no_steps_equals_full_section() {
+        let mesh = make_cube(10.0);
+        let plane = OffsetSectionPlane::new(SectionPlane::horizontal(5.0), Vec::new());
+        let view = offset_section_mesh(&mesh, &plane, None);
+        assert_eq!(view.curves.len(), 1);
+        assert!(view.curves[0].is_closed);
+    }
+
+    #[test]
+    fn test_offset_section_two_steps_covers_cube() {
+        let mesh = make_cube(10.0);
+        // Horizontal base at z=3; second half of the U span jogs up to z=7.
+        // U axis for horizontal() is up × normal = (0,1,0) × (0,0,1) = +X.
+        let base = SectionPlane::horizontal(3.0);
+        let plane = OffsetSectionPlane::new(
+            base,
+            vec![
+                crate::types::OffsetSectionStep::new(-1.0, 5.0, 0.0),
+                crate::types::OffsetSectionStep::new(5.0, 11.0, 4.0),
+            ],
+        );
+        let view = offset_section_mesh(&mesh, &plane, Some(&HatchPattern::horizontal(1.0)));
+
+        // Both steps cut the cube: two clipped closed regions, flattened
+        // into a single 10×10 footprint.
+        assert_eq!(view.curves.len(), 2, "one region per step");
+        assert!(view.curves.iter().all(|c| c.is_closed));
+        assert!((view.bounds.width() - 10.0).abs() < 0.1);
+        assert!(!view.hatch_lines.is_empty(), "clipped regions are hatched");
+
+        // Each region spans exactly its strip (5 mm wide).
+        for curve in &view.curves {
+            let (mut lo, mut hi) = (f64::INFINITY, f64::NEG_INFINITY);
+            for p in &curve.points {
+                lo = lo.min(p.x);
+                hi = hi.max(p.x);
+            }
+            assert!((hi - lo - 5.0).abs() < 0.1, "strip width, got {}", hi - lo);
+        }
+    }
+
+    #[test]
+    fn test_offset_section_step_outside_solid_is_empty() {
+        let mesh = make_cube(10.0);
+        let plane = OffsetSectionPlane::new(
+            SectionPlane::horizontal(5.0),
+            vec![crate::types::OffsetSectionStep::new(0.0, 10.0, 20.0)],
+        );
+        let view = offset_section_mesh(&mesh, &plane, None);
+        assert!(view.curves.is_empty());
+    }
+
+    #[test]
+    fn test_section_cut_line_render() {
+        let cut = SectionCutLine::straight(
+            Point2D::new(0.0, 5.0),
+            Point2D::new(10.0, 5.0),
+            "A",
+            std::f64::consts::FRAC_PI_2,
+        );
+        assert_eq!(cut.section_name(), "SECTION A-A");
+        let rd = cut.render().expect("renders");
+        // Trace + 2 extensions + 2 arrow stems = 5 lines, 2 arrows, 2 labels.
+        assert_eq!(rd.lines.len(), 5);
+        assert_eq!(rd.arrows.len(), 2);
+        assert_eq!(rd.texts.len(), 2);
+        assert!(rd.texts.iter().all(|t| t.text == "A"));
+    }
+
+    #[test]
+    fn test_section_cut_line_polyline_jogs() {
+        let cut = SectionCutLine::polyline(
+            vec![
+                Point2D::new(0.0, 5.0),
+                Point2D::new(5.0, 5.0),
+                Point2D::new(5.0, 8.0),
+                Point2D::new(10.0, 8.0),
+            ],
+            "B",
+            std::f64::consts::FRAC_PI_2,
+        );
+        let rd = cut.render().unwrap();
+        // 3 trace segments + 2 extensions + 2 arrow stems.
+        assert_eq!(rd.lines.len(), 7);
+    }
+
+    #[test]
+    fn test_section_cut_line_degenerate() {
+        let cut = SectionCutLine::polyline(vec![Point2D::new(0.0, 0.0)], "A", 0.0);
+        assert!(cut.render().is_none());
     }
 
     #[test]

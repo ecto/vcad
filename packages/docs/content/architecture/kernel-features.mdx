@@ -34,6 +34,10 @@ The vcad kernel is a purpose-built BRep (boundary representation) modeling kerne
 
 `vcad-kernel-math` provides linear algebra, transforms, and Shewchuk's adaptive-precision predicates (`orient2d`, `orient3d`, `incircle`, `insphere`) via the `robust` crate. Geometric decisions — is this point above that plane? — are exact, not floating-point guesses, which is what keeps booleans from producing holes and inverted faces on near-degenerate input.
 
+### Persistent Topological Naming
+
+`vcad-kernel-naming` gives faces stable names derived from their generating operations (`n3:top`, `n1:side`, with deterministic split ordinals through booleans) instead of ephemeral arena keys, and names edges by their adjacent-face pair. Downstream references — `EdgeQuery::Named` on an edge blend — re-resolve after an upstream parameter change, so a fillet stays on the intended edge when the parent box is resized. Resolution is fail-closed: an ambiguous or lost reference is an explicit error (with a geometric-hint fallback matcher), never a silent rebind to the nearest edge.
+
 ## Operations
 
 ### Boolean Operations
@@ -150,7 +154,7 @@ Loft interpolates a solid through a sequence of cross-sections:
 
 - **STEP** — `vcad-kernel-step` reads and writes STEP AP214, the lingua franca of mechanical CAD. Drag a `.step` file into the app and it becomes an editable BRep.
 - **URDF** — `vcad-kernel-urdf` imports robot descriptions (links, joints, inertials) as vcad assemblies ready for simulation.
-- **Drafting** — `vcad-kernel-drafting` generates 2D drawings: orthographic projections with hidden-line removal, dimensions, GD&T annotations, and DXF export.
+- **Drafting** — `vcad-kernel-drafting` generates shop-ready 2D drawings: orthographic projections with hidden-line removal, full and offset (stepped) section views with hatching and cutting-plane callouts, detail views with scale bubbles, dimensions, GD&T annotations, title block / revision table / BOM entities, and deterministic PDF + DXF sheet export with ANSI/ISO line weights.
 
 ## Simulation and Analysis
 
@@ -193,6 +197,10 @@ Loft interpolates a solid through a sequence of cross-sections:
 ### Thermal Analysis
 
 `vcad-kernel-thermal` solves steady and transient heat conduction on a voxel grid: materials, power sources, and fixed-temperature reservoirs are painted as box and cylinder regions (or supplied per-voxel), domain faces take Dirichlet, convection-film, or adiabatic conditions, and a harmonic-mean finite-volume operator is solved matrix-free with Jacobi-preconditioned conjugate gradients (backward Euler in time). Outputs: the temperature field, T<sub>max</sub> and its location, per-source thermal resistance θ, per-reservoir heat flows — and an energy-balance residual reported on every solve (typically ~10⁻¹¹). Because the conduction operator is self-adjoint, the exact gradient of a smooth-max hot-spot objective with respect to every conductivity, film coefficient, and source power costs one extra CG solve (FD-validated: source powers to 2×10⁻⁹, conductivities to ~10⁻⁶). The ladder is analytic end to end: composite slabs exact to 2.8×10⁻¹⁴ °C at a 200:1 conductivity contrast, Robin films exact from h = 50 to 10⁹, cylinder shells converging under 5%, transient lumped-capacitance and semi-infinite erfc solutions within 0.5% and 1.5%. Emits `vcad.thermal-claims/1` (T<sub>max</sub>, θ<sub>JA</sub>, energy balance; basis `predicted`) with fail-closed Holds/Violated/Unmeasured `compare()` — and it refuses floating regions, sources painted into empty space, and non-converged solves rather than returning plausible numbers. Honesty: pure conduction — no radiation, no fluid flow; convection enters only as a supplied film coefficient, and that h is the biggest uncertainty in every prediction (natural-convection correlations carry ±20–30%). Its own M1 study measured the "isotropic board" idealization under-reading a chip's θ<sub>JA</sub> by 43% — don't adjective an error you can compute.
+
+### Structural FEA
+
+`vcad-kernel-fea` answers the everyday question — will this bracket break? — on the part's real geometry: the tessellated boundary is filled with a lattice of linear tetrahedra (Kuhn decomposition, face-conforming and watertight by construction), and a constant-strain-tet linear-elastic solve (matrix-free Jacobi-PCG, mm-N-MPa units) returns max von Mises stress and its location, max displacement, compliance, and — given a yield strength — a safety factor. The load-bearing feature is the **fail-closed mesh-convergence gate**: every analysis solves at two or more refinement levels, the inter-level change of each QoI is reported as its discretization-error estimate, and a study whose QoIs disagree beyond stated tolerances is `Unverifiable` — no safety factor, no claims, with the reason spelled out (including "your peak stress sits on a singular re-entrant corner; fillet it", which is design feedback, not solver failure). Validation is closed-form: axial bar compliance within 3% of FL/(EA), a cantilever converging monotonically from below onto the Timoshenko deflection, exact 1/E displacement scaling, exact volume recovery on lattice-aligned geometry. Converged studies emit `vcad.fea-claims/1` (stress, displacement, safety factor, plus the discretization-error conscience claims; basis `predicted` — receipts roll up Provisional until the part is load-tested); unconverged ones poison the receipt with a single `unverifiable` claim so nothing quietly passes. Honesty: small-displacement linear elasticity of one isotropic material — no plasticity, buckling, contact, or dynamic loads; the boundary is staircase-approximated at the lattice pitch (priced by the gate); constant-strain tets smear stress concentrations, so the reported peak is a lower bound that tightens with refinement. Exposed over MCP as `analyze_structure`; `predict_physics` remains the fast voxel-hex steering loop.
 
 ### Tolerance Stackup
 

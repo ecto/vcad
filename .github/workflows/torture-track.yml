@@ -1,0 +1,69 @@
+name: Kernel Torture Track
+
+# Adversarial robustness track for the BRep kernel: a deterministic corpus of
+# hostile boolean / STEP / tessellation cases graded pass / graceful-refusal /
+# bad-geometry / timeout / crash. PRs touching kernel code run the fast subset
+# and fail on any per-case regression vs the checked-in baseline
+# (crates/vcad-torture/baseline.json). Pushes to main and the nightly schedule
+# run the full corpus and publish the scoreboard to the job summary.
+#
+# Refreshing the baseline after a deliberate change:
+#   cargo run --release -p vcad-torture --features vcad-kernel/no-builtin-font \
+#     -- run --write-baseline crates/vcad-torture/baseline.json
+
+on:
+  pull_request:
+    paths:
+      - "crates/vcad-kernel*/**"
+      - "crates/vcad-torture/**"
+      - ".github/workflows/torture-track.yml"
+      - "Cargo.toml"
+      - "Cargo.lock"
+  push:
+    branches: [main]
+    paths:
+      - "crates/vcad-kernel*/**"
+      - "crates/vcad-torture/**"
+      - ".github/workflows/torture-track.yml"
+  schedule:
+    # Nightly full run, 09:17 UTC (off the top-of-hour rush).
+    - cron: "17 9 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  torture:
+    name: Torture track (${{ github.event_name == 'pull_request' && 'pr subset' || 'full' }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v6
+      - name: Clone sibling repos
+        run: |
+          git clone --depth 1 https://github.com/ecto/tang.git ../tang
+          git clone --depth 1 https://github.com/ecto/phyz.git ../phyz
+          git clone --depth 1 https://github.com/ecto/loon.git ../loon
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build runner
+        run: cargo build --release -p vcad-torture --features vcad-kernel/no-builtin-font
+      - name: Run track
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then SUBSET=pr; else SUBSET=full; fi
+          ./target/release/vcad-torture run \
+            --subset "$SUBSET" \
+            --baseline crates/vcad-torture/baseline.json \
+            --check \
+            --json torture-scorecard.json \
+            --md "$GITHUB_STEP_SUMMARY"
+      - name: Upload scorecard
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: torture-scorecard
+          path: torture-scorecard.json

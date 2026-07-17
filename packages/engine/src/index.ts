@@ -466,6 +466,13 @@ export interface KernelModule {
     paramsJson: string,
     optionsJson: string,
   ) => unknown;
+  /** Static structural FEA with convergence gating (FeaSpec/options JSON + mesh). */
+  feaAnalyzeMesh?: (
+    specJson: string,
+    optionsJson: string,
+    positions: Float32Array,
+    indices: Uint32Array,
+  ) => unknown;
   /** EM field simulation (problem-tagged spec/params/options JSON). */
   emSimulate?: (
     specJson: string,
@@ -859,6 +866,7 @@ export class Engine {
       particleOptimize: (wasmModule as Record<string, unknown>).particleOptimize as KernelModule["particleOptimize"],
       toleranceAnalyze: (wasmModule as Record<string, unknown>).toleranceAnalyze as KernelModule["toleranceAnalyze"],
       thermalSolve: (wasmModule as Record<string, unknown>).thermalSolve as KernelModule["thermalSolve"],
+      feaAnalyzeMesh: (wasmModule as Record<string, unknown>).feaAnalyzeMesh as KernelModule["feaAnalyzeMesh"],
       emSimulate: (wasmModule as Record<string, unknown>).emSimulate as KernelModule["emSimulate"],
       antennaAnalyze: (wasmModule as Record<string, unknown>).antennaAnalyze as KernelModule["antennaAnalyze"],
       photonicsSimulate: (wasmModule as Record<string, unknown>).photonicsSimulate as KernelModule["photonicsSimulate"],
@@ -1185,6 +1193,28 @@ export class Engine {
       );
     }
     return fn(specJson, paramsJson, optionsJson);
+  }
+
+  /**
+   * Static structural FEA on a closed triangle mesh: lattice tet fill at
+   * two or more refinement levels, linear-elastic solve, and fail-closed
+   * convergence gating (Unverifiable when QoIs disagree across levels).
+   * Returns the study, the `vcad.fea-claims/1` set (converged only), and
+   * unified receipt claims; see `vcad-kernel-fea`.
+   */
+  feaAnalyzeMesh(
+    specJson: string,
+    optionsJson: string,
+    positions: Float32Array,
+    indices: Uint32Array,
+  ): unknown {
+    const fn = this.kernel.feaAnalyzeMesh;
+    if (typeof fn !== "function") {
+      throw new Error(
+        "feaAnalyzeMesh is not exported by this kernel WASM build — rebuild packages/kernel-wasm",
+      );
+    }
+    return fn(specJson, optionsJson, positions, indices);
   }
 
   /**

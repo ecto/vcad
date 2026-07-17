@@ -1,0 +1,9 @@
+{
+  "id": "2026-07-17-topological-naming",
+  "version": "0.9.4",
+  "date": "2026-07-17",
+  "category": "feat",
+  "title": "Persistent topological naming for edge references",
+  "summary": "Fillets can reference edges by stable face names (EdgeQuery Named) that survive upstream parameter changes; unresolvable references fail closed instead of guessing.",
+  "features": ["kernel", "brep", "fillet", "parametric"]
+}

@@ -93,6 +93,18 @@ pub enum EvalError {
     #[error("missing node: {0}")]
     MissingNode(vcad_ir::NodeId),
 
+    /// A named edge reference (`EdgeQuery::Named`) failed to resolve —
+    /// fail-closed: the blend is not applied to a guessed edge.
+    #[error("named edge ('{face_a}' / '{face_b}') failed to resolve: {message}")]
+    NamedEdge {
+        /// Name of one adjacent face, as written in the document.
+        face_a: String,
+        /// Name of the other adjacent face.
+        face_b: String,
+        /// What went wrong (no names, ambiguous, or lost).
+        message: String,
+    },
+
     /// A node referenced by ID was not found in the document; includes the
     /// dotted path that led to the dangling reference (e.g.
     /// `nodes[47].Translate.child`).

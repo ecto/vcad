@@ -240,6 +240,8 @@ pub fn route_net_maze3d(
     pitch_scale: f64,
     window: Option<(Vec2, Vec2)>,
     tree_goals: &[(CopperGeom, [f64; 2], [f64; 2], PcbLayer)],
+    tree_sources: &[(CopperGeom, [f64; 2], [f64; 2], PcbLayer)],
+    offgrid_vias: bool,
 ) -> RouteResult3d {
     let nl = layers.len();
     if nl == 0 {
@@ -292,12 +294,76 @@ pub fn route_net_maze3d(
         (dx * dx + dy * dy).sqrt() * grid.pitch
     };
 
-    let mut g = vec![f64::INFINITY; n];
-    let mut came: Vec<usize> = vec![usize::MAX; n];
-    let mut closed = vec![false; n];
+    // Per-thread buffer arena: the search working set is ~30MB at full grid
+    // size, and allocating it per connection dominated allocator time. The
+    // guard returns the buffers on every exit path (including early fails).
+    struct ArenaGuard {
+        g: Vec<f64>,
+        came: Vec<usize>,
+        closed: Vec<bool>,
+    }
+    thread_local! {
+        static ARENA: std::cell::RefCell<(Vec<f64>, Vec<usize>, Vec<bool>)> =
+            const { std::cell::RefCell::new((Vec::new(), Vec::new(), Vec::new())) };
+    }
+    impl Drop for ArenaGuard {
+        fn drop(&mut self) {
+            ARENA.with(|a| {
+                let mut a = a.borrow_mut();
+                a.0 = std::mem::take(&mut self.g);
+                a.1 = std::mem::take(&mut self.came);
+                a.2 = std::mem::take(&mut self.closed);
+            });
+        }
+    }
+    let mut arena = ARENA.with(|a| {
+        let mut a = a.borrow_mut();
+        ArenaGuard {
+            g: std::mem::take(&mut a.0),
+            came: std::mem::take(&mut a.1),
+            closed: std::mem::take(&mut a.2),
+        }
+    });
+    arena.g.clear();
+    arena.g.resize(n, f64::INFINITY);
+    arena.came.clear();
+    arena.came.resize(n, usize::MAX);
+    arena.closed.clear();
+    arena.closed.resize(n, false);
+    let ArenaGuard { g, came, closed } = &mut arena;
     // Memoized via legality per (cell, span pair) — spans are (lo, hi)
-    // layer-index pairs, lo < hi.
+    // layer-index pairs, lo < hi — and the via POSITION chosen for the cell:
+    // the cell centre when it clears, otherwise an off-grid candidate found
+    // by ring search. Grid-quantized via sites lose exactly the positions a
+    // human uses inside a BGA field (between the balls); the candidates
+    // recover them.
     let mut via_cache: Vec<i8> = vec![-1; plane * nl * nl];
+    let mut via_pos: Vec<Vec2> = vec![Vec2::new(0.0, 0.0); plane * nl * nl];
+    // A candidate must clear its span AND connect legally to the cell centre
+    // on both endpoint layers (the search continues from the cell node).
+    let find_via_site = |center: Vec2, lo: usize, hi: usize| -> Option<Vec2> {
+        if via_ok(center, lo, hi) {
+            return Some(center);
+        }
+        if !offgrid_vias {
+            return None;
+        }
+        let r1 = grid.pitch / 3.0;
+        let r2 = grid.pitch / 2.0;
+        for r in [r1, r2] {
+            for k in 0..8 {
+                let a = std::f64::consts::TAU * k as f64 / 8.0;
+                let p = Vec2::new(center.x + r * a.cos(), center.y + r * a.sin());
+                if via_ok(p, lo, hi)
+                    && legal_step(center, p, layers[lo])
+                    && legal_step(center, p, layers[hi])
+                {
+                    return Some(p);
+                }
+            }
+        }
+        None
+    };
     // Occupancy raster: O(1) cell passability, and WIDE↔WIDE edges are legal
     // without touching the oracle at all.
     let sw_raster = Stopwatch::start();
@@ -312,35 +378,9 @@ pub fn route_net_maze3d(
     // ending there is electrically joined). Terminating on the tree needs no
     // endpoint via: the copper is already on that layer.
     let mut tree_goal = vec![false; n];
-    for (geom, emin, emax, glayer) in tree_goals {
-        let Some(li) = layers.iter().position(|l| l == glayer) else {
-            continue;
-        };
-        let ix0 = (((emin[0] - grid.origin.x) / grid.pitch).floor()).max(0.0) as usize;
-        let iy0 = (((emin[1] - grid.origin.y) / grid.pitch).floor()).max(0.0) as usize;
-        let ix1 = ((((emax[0] - grid.origin.x) / grid.pitch).ceil()) as usize)
-            .min(grid.nx.saturating_sub(1));
-        let iy1 = ((((emax[1] - grid.origin.y) / grid.pitch).ceil()) as usize)
-            .min(grid.ny.saturating_sub(1));
-        for iy in iy0..=iy1 {
-            for ix in ix0..=ix1 {
-                let probe_pt = CopperGeom::Disc {
-                    center: grid.world(ix, iy),
-                    r: 0.0,
-                };
-                // Strict overlap certificate: a trace disc (radius half_w) at
-                // this cell centre physically overlaps the tree element, so
-                // terminating here is guaranteed electrical contact. Elements
-                // smaller than a grid cell may mark no cells — that is the
-                // safe direction (degrades to the exact pad goal); loosening
-                // the test would let routes "connect" to copper they never
-                // touch.
-                if geom.distance_to(&probe_pt) < half_w {
-                    tree_goal[li * plane + grid.index(ix, iy)] = true;
-                }
-            }
-        }
-    }
+    let mut tree_source = vec![false; n];
+    mark_tree_cells(&grid, layers, plane, half_w, tree_goals, &mut tree_goal);
+    mark_tree_cells(&grid, layers, plane, half_w, tree_sources, &mut tree_source);
     let is_goal = |node: usize| {
         (node % plane == goal_cell && end_lis.contains(&(node / plane))) || tree_goal[node]
     };
@@ -353,11 +393,33 @@ pub fn route_net_maze3d(
             node,
         });
     }
+    // Multi-source: the search may depart from ANY copper of the from-pad's
+    // connected component (GAMER-style tree-to-tree routing) — every marked
+    // source cell is a zero-cost seed.
+    for (node, &is_src) in tree_source.iter().enumerate() {
+        if is_src && g[node] > 0.0 {
+            g[node] = 0.0;
+            heap.push(State {
+                f: heuristic(node),
+                node,
+            });
+        }
+    }
 
     let mut found: Option<usize> = None;
     let mut pops: usize = 0;
     while let Some(State { node, .. }) = heap.pop() {
         if is_goal(node) {
+            // A zero-cost seed that is already a goal means the components
+            // touch: success with no copper to add.
+            if g[node] == 0.0 && tree_source[node] && tree_goal[node] {
+                return RouteResult3d {
+                    net: net.to_string(),
+                    segments: Vec::new(),
+                    vias: Vec::new(),
+                    success: true,
+                };
+            }
             found = Some(node);
             break;
         }
@@ -436,13 +498,26 @@ pub fn route_net_maze3d(
                 let (lo, hi) = (li.min(lj), li.max(lj));
                 let key = cell * nl * nl + lo * nl + hi;
                 if via_cache[key] < 0 {
-                    via_cache[key] = i8::from(via_ok(grid.world(ix, iy), lo, hi));
+                    match find_via_site(grid.world(ix, iy), lo, hi) {
+                        Some(p) => {
+                            via_cache[key] = 1;
+                            via_pos[key] = p;
+                        }
+                        None => via_cache[key] = 0,
+                    }
                 }
                 if via_cache[key] != 1 {
                     continue;
                 }
                 let span_frac = (hi - lo) as f64 / (nl - 1).max(1) as f64;
-                let tentative = g[node] + VIA_COST * (0.4 + 0.6 * span_frac);
+                // Long connections amortize their vias: the reference design
+                // runs 30-50mm nets as inner-layer highways with a handful of
+                // vias, while a flat via price makes the dive look expensive
+                // relative to a short net's budget. Scale the price down as
+                // the airwire grows (floor 0.3 at >= ~20mm).
+                let haul = dist(start, end);
+                let haul_scale = (6.0 / haul.max(1.0)).clamp(0.3, 1.0);
+                let tentative = g[node] + VIA_COST * haul_scale * (0.4 + 0.6 * span_frac);
                 if tentative < g[nb] {
                     g[nb] = tentative;
                     came[nb] = node;
@@ -486,7 +561,15 @@ pub fn route_net_maze3d(
 
     let mut segments: Vec<(Vec2, Vec2, PcbLayer)> = Vec::new();
     let mut vias: Vec<(Vec2, PcbLayer, PcbLayer)> = Vec::new();
-    let mut run: Vec<Vec2> = vec![start];
+    // If the chain roots on source copper away from the start pad, the run
+    // begins there (the copper is the connection); otherwise at the pad.
+    let root_cell = nodes[0] % plane;
+    let rooted_on_tree = tree_source[nodes[0]] && root_cell != grid.index(sx, sy);
+    let mut run: Vec<Vec2> = if rooted_on_tree {
+        vec![grid.world_of(root_cell)]
+    } else {
+        vec![start]
+    };
     let mut run_layer = nodes[0] / plane;
 
     // Taut pull: greedy line-of-sight shortcutting over a run's points. A
@@ -527,11 +610,21 @@ pub fn route_net_maze3d(
         let (li, cell) = (node / plane, node % plane);
         let w = grid.world_of(cell);
         if li != run_layer {
-            // Layer change: the via sits at the last point of the finished
-            // run, spanning exactly the two layers it connects.
-            let at = *run.last().expect("run always starts non-empty");
-            flush_run(&mut run, layers[run_layer], &mut segments);
+            // Layer change: the via sits at the position the search chose for
+            // this (cell, span) — the cell centre, or an off-grid candidate
+            // between obstacles. Route the old-layer run to it and start the
+            // new-layer run from it.
             let (lo, hi) = (run_layer.min(li), run_layer.max(li));
+            let key = cell * nl * nl + lo * nl + hi;
+            let at = if via_cache[key] == 1 {
+                via_pos[key]
+            } else {
+                *run.last().expect("run always starts non-empty")
+            };
+            if run.last().map(|p| dist(*p, at) > 1e-9).unwrap_or(true) {
+                run.push(at);
+            }
+            flush_run(&mut run, layers[run_layer], &mut segments);
             if vias
                 .last()
                 .map(|&(v, _, _)| dist(v, at) > 1e-9)
@@ -672,6 +765,41 @@ impl Raster {
     #[inline]
     fn state(&self, cell: usize, li: usize) -> u8 {
         self.states[li * self.plane + cell]
+    }
+}
+
+/// Mark every (cell, layer) whose centre lies ON one of `elems` (overlap
+/// within `half_w`, the strict electrical-contact certificate) — used for
+/// both route-to-tree goals and multi-source seeds.
+fn mark_tree_cells(
+    grid: &Grid,
+    layers: &[PcbLayer],
+    plane: usize,
+    half_w: f64,
+    elems: &[(CopperGeom, [f64; 2], [f64; 2], PcbLayer)],
+    marks: &mut [bool],
+) {
+    for (geom, emin, emax, glayer) in elems {
+        let Some(li) = layers.iter().position(|l| l == glayer) else {
+            continue;
+        };
+        let ix0 = (((emin[0] - grid.origin.x) / grid.pitch).floor()).max(0.0) as usize;
+        let iy0 = (((emin[1] - grid.origin.y) / grid.pitch).floor()).max(0.0) as usize;
+        let ix1 = ((((emax[0] - grid.origin.x) / grid.pitch).ceil()) as usize)
+            .min(grid.nx.saturating_sub(1));
+        let iy1 = ((((emax[1] - grid.origin.y) / grid.pitch).ceil()) as usize)
+            .min(grid.ny.saturating_sub(1));
+        for iy in iy0..=iy1 {
+            for ix in ix0..=ix1 {
+                let probe_pt = CopperGeom::Disc {
+                    center: grid.world(ix, iy),
+                    r: 0.0,
+                };
+                if geom.distance_to(&probe_pt) < half_w {
+                    marks[li * plane + grid.index(ix, iy)] = true;
+                }
+            }
+        }
     }
 }
 
@@ -830,9 +958,43 @@ fn astar(
         (dx * dx + dy * dy).sqrt() * grid.pitch
     };
 
-    let mut g = vec![f64::INFINITY; n];
-    let mut came: Vec<usize> = vec![usize::MAX; n];
-    let mut closed = vec![false; n];
+    // Per-thread buffer arena: the search working set is ~30MB at full grid
+    // size, and allocating it per connection dominated allocator time. The
+    // guard returns the buffers on every exit path (including early fails).
+    struct ArenaGuard {
+        g: Vec<f64>,
+        came: Vec<usize>,
+        closed: Vec<bool>,
+    }
+    thread_local! {
+        static ARENA: std::cell::RefCell<(Vec<f64>, Vec<usize>, Vec<bool>)> =
+            const { std::cell::RefCell::new((Vec::new(), Vec::new(), Vec::new())) };
+    }
+    impl Drop for ArenaGuard {
+        fn drop(&mut self) {
+            ARENA.with(|a| {
+                let mut a = a.borrow_mut();
+                a.0 = std::mem::take(&mut self.g);
+                a.1 = std::mem::take(&mut self.came);
+                a.2 = std::mem::take(&mut self.closed);
+            });
+        }
+    }
+    let mut arena = ARENA.with(|a| {
+        let mut a = a.borrow_mut();
+        ArenaGuard {
+            g: std::mem::take(&mut a.0),
+            came: std::mem::take(&mut a.1),
+            closed: std::mem::take(&mut a.2),
+        }
+    });
+    arena.g.clear();
+    arena.g.resize(n, f64::INFINITY);
+    arena.came.clear();
+    arena.came.resize(n, usize::MAX);
+    arena.closed.clear();
+    arena.closed.resize(n, false);
+    let ArenaGuard { g, came, closed } = &mut arena;
     let mut heap = BinaryHeap::new();
     g[start] = 0.0;
     heap.push(State {
@@ -905,7 +1067,7 @@ const NEIGHBORS: [(i64, i64); 8] = [
     (-1, -1),
 ];
 
-fn reconstruct(came: Vec<usize>, start: usize, goal: usize) -> Vec<usize> {
+fn reconstruct(came: &[usize], start: usize, goal: usize) -> Vec<usize> {
     let mut path = vec![goal];
     let mut cur = goal;
     while cur != start {
@@ -1125,6 +1287,8 @@ mod tests {
             1.0,
             None,
             &[],
+            &[],
+            true,
         );
         assert!(r.success);
         assert!(r.vias.is_empty(), "no reason to leave the start layer");
@@ -1158,6 +1322,8 @@ mod tests {
             1.0,
             None,
             &[],
+            &[],
+            true,
         );
         assert!(r.success, "3D search must cross under the wall");
         assert!(
@@ -1218,6 +1384,8 @@ mod tests {
             1.0,
             None,
             &[],
+            &[],
+            true,
         );
         assert!(r.success);
         assert!(!r.vias.is_empty());
@@ -1252,6 +1420,8 @@ mod tests {
             1.0,
             None,
             &[],
+            &[],
+            true,
         );
         assert!(r.success);
         assert!(!r.vias.is_empty(), "front→back must place a via");

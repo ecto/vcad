@@ -199,9 +199,9 @@ mod tests {
             assert!((view.forward.norm() - 1.0).abs() < 1e-10);
 
             // All axes should be orthogonal
-            assert!(view.right.dot(&view.up).abs() < 1e-10);
-            assert!(view.right.dot(&view.forward).abs() < 1e-10);
-            assert!(view.up.dot(&view.forward).abs() < 1e-10);
+            assert!(view.right.dot(view.up).abs() < 1e-10);
+            assert!(view.right.dot(view.forward).abs() < 1e-10);
+            assert!(view.up.dot(view.forward).abs() < 1e-10);
         }
     }
 

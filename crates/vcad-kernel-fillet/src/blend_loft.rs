@@ -376,6 +376,17 @@ pub enum EdgeQuery {
         /// Angular tolerance in degrees.
         tol_deg: f64,
     },
+    /// The single edge whose endpoint pair matches `(a, b)` exactly (to the
+    /// quantization used for edge relocation). Used by callers that resolved
+    /// an edge externally — e.g. persistent topological naming — and need
+    /// the blend applied to exactly that edge, fail-closed: no fuzzy
+    /// nearest-edge behavior, no match means no blend.
+    Endpoints {
+        /// One endpoint; the blend's start section applies here.
+        a: Point3,
+        /// The other endpoint.
+        b: Point3,
+    },
 }
 
 /// One edge matched by a query. `flip` is true when the blend's start
@@ -428,6 +439,26 @@ pub fn resolve_edge_query(brep: &BRepSolid, query: &EdgeQuery) -> Vec<ResolvedEd
                 }
             }
             best.map(|(r, _)| vec![r]).unwrap_or_default()
+        }
+        EdgeQuery::Endpoints { a, b } => {
+            let (qa, qb) = (crate::topology::quantize(*a), crate::topology::quantize(*b));
+            for e in edges.iter().filter(|e| planar(e)) {
+                let qs = crate::topology::quantize(topo.vertices[e.v_start].point);
+                let qe = crate::topology::quantize(topo.vertices[e.v_end].point);
+                if qs == qa && qe == qb {
+                    return vec![ResolvedEdge {
+                        edge_id: e.edge_id,
+                        flip: false,
+                    }];
+                }
+                if qs == qb && qe == qa {
+                    return vec![ResolvedEdge {
+                        edge_id: e.edge_id,
+                        flip: true,
+                    }];
+                }
+            }
+            Vec::new()
         }
         EdgeQuery::All | EdgeQuery::Direction { .. } => {
             let dir_filter = match query {

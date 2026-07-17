@@ -1438,6 +1438,16 @@ impl Solid {
         }
         let spec: Spec = serde_json::from_str(spec_json)
             .map_err(|e| JsError::new(&format!("invalid edge blend spec: {e}")))?;
+        if let vcad_ir::EdgeQuery::Named { face_a, face_b } = &spec.edges {
+            // Fail-closed: an unresolvable named edge is an error, never a
+            // nearest-edge guess.
+            let keys = kernel_blend_keys(&spec.profile);
+            let inner = self
+                .inner
+                .edge_blend_named(face_a, face_b, &keys)
+                .map_err(|e| JsError::new(&format!("named edge ('{face_a}' / '{face_b}'): {e}")))?;
+            return Ok(Solid { inner });
+        }
         let (query, keys) = kernel_blend_args(&spec.edges, &spec.profile);
         Ok(Solid {
             inner: self.inner.edge_blend(&query, &keys),
@@ -3978,6 +3988,14 @@ fn ir_segment_to_wasm(seg: &vcad_ir::SketchSegment2D) -> WasmSketchSegment {
 }
 
 /// Recursively evaluate a node in the IR DAG.
+/// Rewrite a primitive's persistent face-name scope to the document node id
+/// ("cube:top" -> "n3:top") — same convention as the vcad-eval and vcad-app
+/// evaluators, so Named edge queries mean the same thing everywhere.
+fn scope_names(node_id: vcad_ir::NodeId, mut s: Solid) -> Solid {
+    s.inner.set_name_scope(&format!("n{node_id}"));
+    s
+}
+
 fn evaluate_node(doc: &vcad_ir::Document, node_id: vcad_ir::NodeId) -> Result<Solid, JsError> {
     let node = doc
         .nodes
@@ -3985,7 +4003,7 @@ fn evaluate_node(doc: &vcad_ir::Document, node_id: vcad_ir::NodeId) -> Result<So
         .ok_or_else(|| JsError::new(&format!("Node {} not found", node_id)))?;
 
     match &node.op {
-        vcad_ir::CsgOp::Cube { size } => Ok(Solid::cube(size.x, size.y, size.z)),
+        vcad_ir::CsgOp::Cube { size } => Ok(scope_names(node_id, Solid::cube(size.x, size.y, size.z))),
 
         vcad_ir::CsgOp::Cylinder {
             radius,
@@ -3997,7 +4015,7 @@ fn evaluate_node(doc: &vcad_ir::Document, node_id: vcad_ir::NodeId) -> Result<So
             } else {
                 Some(*segments)
             };
-            Ok(Solid::cylinder(*radius, *height, segs))
+            Ok(scope_names(node_id, Solid::cylinder(*radius, *height, segs)))
         }
 
         vcad_ir::CsgOp::Sphere { radius, segments } => {
@@ -4006,7 +4024,7 @@ fn evaluate_node(doc: &vcad_ir::Document, node_id: vcad_ir::NodeId) -> Result<So
             } else {
                 Some(*segments)
             };
-            Ok(Solid::sphere(*radius, segs))
+            Ok(scope_names(node_id, Solid::sphere(*radius, segs)))
         }
 
         vcad_ir::CsgOp::Cone {
@@ -4020,7 +4038,7 @@ fn evaluate_node(doc: &vcad_ir::Document, node_id: vcad_ir::NodeId) -> Result<So
             } else {
                 Some(*segments)
             };
-            Ok(Solid::cone(*radius_bottom, *radius_top, *height, segs))
+            Ok(scope_names(node_id, Solid::cone(*radius_bottom, *radius_top, *height, segs)))
         }
 
         vcad_ir::CsgOp::Torus {
@@ -4033,16 +4051,16 @@ fn evaluate_node(doc: &vcad_ir::Document, node_id: vcad_ir::NodeId) -> Result<So
             } else {
                 Some(*segments)
             };
-            Ok(Solid::torus(*major_radius, *minor_radius, segs))
+            Ok(scope_names(node_id, Solid::torus(*major_radius, *minor_radius, segs)))
         }
 
-        vcad_ir::CsgOp::Wedge { size } => Ok(Solid::wedge(size.x, size.y, size.z)),
+        vcad_ir::CsgOp::Wedge { size } => Ok(scope_names(node_id, Solid::wedge(size.x, size.y, size.z))),
 
         vcad_ir::CsgOp::Prism {
             sides,
             radius,
             height,
-        } => Ok(Solid::prism(*sides, *radius, *height)),
+        } => Ok(scope_names(node_id, Solid::prism(*sides, *radius, *height))),
 
         vcad_ir::CsgOp::Empty => Ok(Solid::empty()),
 
@@ -4149,6 +4167,15 @@ fn evaluate_node(doc: &vcad_ir::Document, node_id: vcad_ir::NodeId) -> Result<So
             profile,
         } => {
             let c = evaluate_node(doc, *child)?;
+            if let vcad_ir::EdgeQuery::Named { face_a, face_b } = edges {
+                // Fail-closed: an unresolvable named edge is an error,
+                // never a nearest-edge guess.
+                let keys = kernel_blend_keys(profile);
+                let inner = c.inner.edge_blend_named(face_a, face_b, &keys).map_err(|e| {
+                    JsError::new(&format!("named edge ('{face_a}' / '{face_b}'): {e}"))
+                })?;
+                return Ok(Solid { inner });
+            }
             let (query, keys) = kernel_blend_args(edges, profile);
             Ok(Solid {
                 inner: c.inner.edge_blend(&query, &keys),
@@ -7245,7 +7272,20 @@ fn kernel_blend_args(
             axis: vcad_kernel_math::Vec3::new(axis.x, axis.y, axis.z),
             tol_deg: *tol_deg,
         },
+        // Named queries resolve against the child solid's name map at the
+        // call sites and never reach this translation.
+        vcad_ir::EdgeQuery::Named { .. } => {
+            unreachable!("Named edge queries are handled before kernel_blend_args")
+        }
     };
+    (q, kernel_blend_keys(profile))
+}
+
+/// Convert an IR blend profile to kernel blend keys.
+fn kernel_blend_keys(
+    profile: &vcad_ir::BlendProfile,
+) -> Vec<vcad_kernel::vcad_kernel_fillet::BlendKey> {
+    use vcad_kernel::vcad_kernel_fillet as kf;
     let keys = match profile {
         vcad_ir::BlendProfile::Constant { size, shape } => vec![kf::BlendKey {
             t: 0.0,
@@ -7265,7 +7305,7 @@ fn kernel_blend_args(
             })
             .collect(),
     };
-    (q, keys)
+    keys
 }
 
 // ---------------------------------------------------------------------------
@@ -7848,6 +7888,112 @@ pub fn thermal_solve(
         },
         iterations: sol.iterations,
         residual_rel: sol.residual_rel,
+        claim_set,
+        receipt_claims,
+    };
+    let ser = serde_wasm_bindgen::Serializer::json_compatible();
+    serde::Serialize::serialize(&out, &ser).map_err(|e| JsError::new(&e.to_string()))
+}
+
+// ---------------------------------------------------------------------------
+// Static structural FEA (vcad-kernel-fea)
+// ---------------------------------------------------------------------------
+
+/// Options for [`fea_analyze_mesh`] (all fields optional in JSON).
+#[derive(serde::Deserialize)]
+#[serde(default)]
+struct FeaOptions {
+    levels: usize,
+    displacement_tol: f64,
+    stress_tol: f64,
+    tol: f64,
+    max_iters: usize,
+}
+
+impl Default for FeaOptions {
+    fn default() -> Self {
+        let conv = vcad_kernel::vcad_kernel_fea::convergence::ConvergenceOptions::default();
+        let solve = vcad_kernel::vcad_kernel_fea::solve::SolveOptions::default();
+        Self {
+            levels: conv.levels,
+            displacement_tol: conv.displacement_tol,
+            stress_tol: conv.stress_tol,
+            tol: solve.tol,
+            max_iters: solve.max_iters,
+        }
+    }
+}
+
+#[derive(serde::Serialize)]
+struct WasmFeaAnalysis {
+    study: vcad_kernel::vcad_kernel_fea::convergence::ConvergedAnalysis,
+    claim_set: Option<vcad_kernel::vcad_kernel_fea::receipt::ClaimSet>,
+    receipt_claims: Vec<vcad_receipt::ReceiptClaim>,
+}
+
+/// Static structural FEA of a closed evaluated mesh with fail-closed
+/// mesh-convergence gating: the interior is filled with linear tets at
+/// two (or more) lattice refinements and solved (linear elasticity, PCG);
+/// QoIs must agree across levels or the verdict is Unverifiable and no
+/// predicted claim is emitted.
+///
+/// `spec_json` is a `vcad_kernel_fea::spec::FeaSpec` (material, loads,
+/// supports, resolution), `options_json` a [`FeaOptions`].
+#[wasm_bindgen(js_name = feaAnalyzeMesh)]
+pub fn fea_analyze_mesh(
+    spec_json: &str,
+    options_json: &str,
+    positions: &[f32],
+    indices: &[u32],
+) -> Result<JsValue, JsError> {
+    use vcad_kernel::vcad_kernel_fea as fea;
+    let spec: fea::spec::FeaSpec =
+        serde_json::from_str(spec_json).map_err(|e| JsError::new(&format!("bad spec: {e}")))?;
+    let opts: FeaOptions = if options_json.trim().is_empty() {
+        Default::default()
+    } else {
+        serde_json::from_str(options_json)
+            .map_err(|e| JsError::new(&format!("bad options: {e}")))?
+    };
+    // Cost cap for the MCP tier: the finest level meshes at
+    // resolution * 2^(levels-1) along the longest axis, at most 256.
+    let finest = spec
+        .resolution
+        .saturating_mul(1usize << (opts.levels.saturating_sub(1)).min(8))
+        .min(256);
+    if finest > 160 {
+        return Err(JsError::new(&format!(
+            "finest lattice level would be {finest} cells along the longest axis (cap 160 \
+             for the MCP tier) — lower `resolution` or `levels`"
+        )));
+    }
+    let mut mesh = vcad_kernel_tessellate::TriangleMesh::new();
+    mesh.vertices = positions.to_vec();
+    mesh.indices = indices.to_vec();
+    let conv = fea::convergence::ConvergenceOptions {
+        levels: opts.levels,
+        displacement_tol: opts.displacement_tol,
+        stress_tol: opts.stress_tol,
+    };
+    let solve_opts = fea::solve::SolveOptions {
+        tol: opts.tol,
+        max_iters: opts.max_iters,
+    };
+    let study = fea::convergence::analyze_converged(&mesh, &spec, &conv, &solve_opts)
+        .map_err(|e| JsError::new(&e.to_string()))?;
+    let (claim_set, receipt_claims) = match &study.verdict {
+        fea::convergence::ConvergenceVerdict::Converged => {
+            let set = fea::receipt::predicted_claims(&study, &spec)
+                .map_err(|e| JsError::new(&e.to_string()))?;
+            let claims = fea::receipt::design_claims(&set);
+            (Some(set), claims)
+        }
+        fea::convergence::ConvergenceVerdict::Unverifiable { reasons } => {
+            (None, fea::receipt::design_claims_unverifiable(reasons))
+        }
+    };
+    let out = WasmFeaAnalysis {
+        study,
         claim_set,
         receipt_claims,
     };
