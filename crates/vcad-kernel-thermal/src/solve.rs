@@ -81,6 +81,9 @@ pub enum SolveError {
         /// Iterations performed.
         iterations: usize,
     },
+    /// A transient solve was asked for a non-positive time step or zero
+    /// steps.
+    InvalidTimeStep,
 }
 
 impl std::fmt::Display for SolveError {
@@ -104,6 +107,9 @@ impl std::fmt::Display for SolveError {
                 f,
                 "CG not converged after {iterations} iterations (relative residual {residual_rel:.3e})"
             ),
+            SolveError::InvalidTimeStep => {
+                write!(f, "transient solve requires dt > 0 and at least one step")
+            }
         }
     }
 }
@@ -227,27 +233,34 @@ enum LinkKind {
     FixedRegion(usize),
 }
 
-struct BcLink {
+pub(crate) struct BcLink {
     voxel: usize,
     g: f64,
     t_ref: f64,
     kind: LinkKind,
 }
 
-/// The assembled discrete system (internal).
-struct System {
-    n: [usize; 3],
-    solid: Vec<bool>,
-    free: Vec<bool>,
-    tfix: Vec<f64>,
+/// The assembled discrete system (crate-internal; the transient solver
+/// reuses it with a time term added to the diagonal).
+pub(crate) struct System {
+    pub(crate) n: [usize; 3],
+    pub(crate) solid: Vec<bool>,
+    pub(crate) free: Vec<bool>,
+    pub(crate) tfix: Vec<f64>,
     /// Pair conductance to the +axis neighbor, W/K (0 when absent).
-    g_pos: [Vec<f64>; 3],
-    diag: Vec<f64>,
-    b: Vec<f64>,
-    links: Vec<BcLink>,
+    pub(crate) g_pos: [Vec<f64>; 3],
+    pub(crate) diag: Vec<f64>,
+    pub(crate) b: Vec<f64>,
+    pub(crate) links: Vec<BcLink>,
     /// (name, total power, voxel ids) per source.
-    sources: Vec<(String, f64, Vec<usize>)>,
-    source_w_total: f64,
+    pub(crate) sources: Vec<(String, f64, Vec<usize>)>,
+    pub(crate) source_w_total: f64,
+    /// Volumetric heat capacity per voxel, J/(m³·K); −1 marks a painted
+    /// material that declared none (steady solves never read this).
+    pub(crate) rc: Vec<f64>,
+    /// Index into `ThermalModel::materials` that painted each voxel.
+    pub(crate) mat_id: Vec<usize>,
+    pub(crate) cell_volume_m3: f64,
 }
 
 impl System {
@@ -255,16 +268,14 @@ impl System {
         (k * self.n[1] + j) * self.n[0] + i
     }
 
-    /// y = A·x on the free subspace (x, y are full-grid vectors; non-free
-    /// entries are ignored/zeroed).
-    fn apply(&self, x: &[f64], y: &mut [f64]) {
+    /// y = diag·x − Σ G·x_neighbor on the free subspace (x, y are
+    /// full-grid vectors; non-free entries are ignored/zeroed). `diag`
+    /// is passed in so the transient solver can add its C/Δt time term
+    /// without rebuilding the links.
+    pub(crate) fn apply(&self, diag: &[f64], x: &[f64], y: &mut [f64]) {
         let [nx, ny, nz] = self.n;
         for (p, yy) in y.iter_mut().enumerate() {
-            *yy = if self.free[p] {
-                self.diag[p] * x[p]
-            } else {
-                0.0
-            };
+            *yy = if self.free[p] { diag[p] * x[p] } else { 0.0 };
         }
         for k in 0..nz {
             for j in 0..ny {
@@ -293,15 +304,25 @@ impl System {
             }
         }
     }
+
+    /// Net heat leaving the free system through every boundary link
+    /// (Dirichlet faces, convection faces, reservoir contacts) for the
+    /// free-node temperature vector `t`, W.
+    pub(crate) fn boundary_outflow_w(&self, t: &[f64]) -> f64 {
+        self.links
+            .iter()
+            .map(|l| l.g * (t[l.voxel] - l.t_ref))
+            .sum()
+    }
 }
 
-fn build(model: &ThermalModel) -> Result<System, SolveError> {
+pub(crate) fn build(model: &ThermalModel) -> Result<System, SolveError> {
     let n = model.divisions;
     if n.contains(&0) || model.size_mm.iter().any(|&s| s <= 0.0) {
         return Err(ModelError::EmptyDomain.into());
     }
     for (index, m) in model.materials.iter().enumerate() {
-        if m.conductivity_w_mk <= 0.0 {
+        if m.k_w_mk.iter().any(|&k| k <= 0.0) {
             return Err(ModelError::NonPositiveConductivity { index }.into());
         }
     }
@@ -325,21 +346,34 @@ fn build(model: &ThermalModel) -> Result<System, SolveError> {
     let area = [d_m[1] * d_m[2], d_m[0] * d_m[2], d_m[0] * d_m[1]];
     let idx = |i: usize, j: usize, k: usize| (k * ny + j) * nx + i;
 
-    // Paint materials (painter's order: later regions win).
-    let mut kfield = vec![0.0_f64; nvox];
+    // Paint materials (painter's order: later regions win). Conductivity
+    // is a per-axis diagonal tensor; heat capacity rides along for the
+    // transient solver (-1.0 marks "painted with no capacity").
+    let mut kfield = [
+        vec![0.0_f64; nvox],
+        vec![0.0_f64; nvox],
+        vec![0.0_f64; nvox],
+    ];
+    let mut rc = vec![-1.0_f64; nvox];
+    let mut mat_id = vec![usize::MAX; nvox];
     for k in 0..nz {
         for j in 0..ny {
             for i in 0..nx {
                 let c = model.voxel_center_mm(i, j, k);
-                for m in &model.materials {
+                for (mi, m) in model.materials.iter().enumerate() {
                     if m.shape.contains(c) {
-                        kfield[idx(i, j, k)] = m.conductivity_w_mk;
+                        let p = idx(i, j, k);
+                        for (axis, kf) in kfield.iter_mut().enumerate() {
+                            kf[p] = m.k_w_mk[axis];
+                        }
+                        rc[p] = m.heat_capacity_j_m3k.unwrap_or(-1.0);
+                        mat_id[p] = mi;
                     }
                 }
             }
         }
     }
-    let solid: Vec<bool> = kfield.iter().map(|&k| k > 0.0).collect();
+    let solid: Vec<bool> = kfield[0].iter().map(|&k| k > 0.0).collect();
     if !solid.iter().any(|&s| s) {
         return Err(ModelError::NoSolidVoxels.into());
     }
@@ -425,8 +459,8 @@ fn build(model: &ThermalModel) -> Result<System, SolveError> {
                     if !solid[q] {
                         continue;
                     }
-                    let g =
-                        area[axis] / (0.5 * d_m[axis] / kfield[p] + 0.5 * d_m[axis] / kfield[q]);
+                    let g = area[axis]
+                        / (0.5 * d_m[axis] / kfield[axis][p] + 0.5 * d_m[axis] / kfield[axis][q]);
                     g_pos[axis][p] = g;
                     match (free[p], free[q]) {
                         (true, true) => {
@@ -495,7 +529,7 @@ fn build(model: &ThermalModel) -> Result<System, SolveError> {
                             }
                             model.exposed
                         };
-                        let half = 0.5 * d_m[axis] / kfield[p];
+                        let half = 0.5 * d_m[axis] / kfield[axis][p];
                         match bc {
                             Boundary::Adiabatic => {}
                             Boundary::FixedTemperature { temperature_c } => {
@@ -540,6 +574,9 @@ fn build(model: &ThermalModel) -> Result<System, SolveError> {
         links,
         sources,
         source_w_total,
+        rc,
+        mat_id,
+        cell_volume_m3: d_m[0] * d_m[1] * d_m[2],
     };
 
     // Fail closed on floating components: BFS over free voxels through
@@ -605,28 +642,41 @@ fn check_grounding(
     Ok(())
 }
 
-/// Jacobi-preconditioned conjugate gradients, matrix-free.
-fn pcg(sys: &System, opts: &SolveOptions) -> Result<(Vec<f64>, usize, f64), SolveError> {
-    let nvox = sys.b.len();
-    let mut x = vec![0.0_f64; nvox];
-    let b_norm = norm(&sys.b, &sys.free);
+/// Jacobi-preconditioned conjugate gradients, matrix-free, warm-startable.
+///
+/// `diag` and `b` are passed explicitly so the transient solver can reuse
+/// the assembled links with a C/Δt time term folded into the diagonal and
+/// a per-step right-hand side; `x0` seeds the iteration (the previous time
+/// step in transient runs — steady solves start from zero).
+pub(crate) fn pcg(
+    sys: &System,
+    diag: &[f64],
+    b: &[f64],
+    x0: &[f64],
+    opts: &SolveOptions,
+) -> Result<(Vec<f64>, usize, f64), SolveError> {
+    let nvox = b.len();
+    let b_norm = norm(b, &sys.free);
     if b_norm == 0.0 {
-        return Ok((x, 0, 0.0));
+        return Ok((vec![0.0_f64; nvox], 0, 0.0));
     }
-    let mut r = sys.b.clone();
-    for (p, rr) in r.iter_mut().enumerate() {
-        if !sys.free[p] {
-            *rr = 0.0;
-        }
+    let mut x = x0.to_vec();
+    let mut r = vec![0.0_f64; nvox];
+    sys.apply(diag, &x, &mut r);
+    for p in 0..nvox {
+        r[p] = if sys.free[p] { b[p] - r[p] } else { 0.0 };
+    }
+    let mut residual_rel = norm(&r, &sys.free) / b_norm;
+    if residual_rel <= opts.tol {
+        return Ok((x, 0, residual_rel));
     }
     let mut z = vec![0.0_f64; nvox];
-    precondition(sys, &r, &mut z);
+    precondition(&sys.free, diag, &r, &mut z);
     let mut d = z.clone();
     let mut rz = dot(&r, &z, &sys.free);
     let mut ad = vec![0.0_f64; nvox];
-    let mut residual_rel = 1.0;
     for iter in 1..=opts.max_iters {
-        sys.apply(&d, &mut ad);
+        sys.apply(diag, &d, &mut ad);
         let dad = dot(&d, &ad, &sys.free);
         if dad <= 0.0 {
             // SPD violation: numerically broken-down search direction.
@@ -646,7 +696,7 @@ fn pcg(sys: &System, opts: &SolveOptions) -> Result<(Vec<f64>, usize, f64), Solv
         if residual_rel <= opts.tol {
             return Ok((x, iter, residual_rel));
         }
-        precondition(sys, &r, &mut z);
+        precondition(&sys.free, diag, &r, &mut z);
         let rz_new = dot(&r, &z, &sys.free);
         let beta = rz_new / rz;
         rz = rz_new;
@@ -662,9 +712,9 @@ fn pcg(sys: &System, opts: &SolveOptions) -> Result<(Vec<f64>, usize, f64), Solv
     })
 }
 
-fn precondition(sys: &System, r: &[f64], z: &mut [f64]) {
+fn precondition(free: &[bool], diag: &[f64], r: &[f64], z: &mut [f64]) {
     for (p, zz) in z.iter_mut().enumerate() {
-        *zz = if sys.free[p] { r[p] / sys.diag[p] } else { 0.0 };
+        *zz = if free[p] { r[p] / diag[p] } else { 0.0 };
     }
 }
 
@@ -685,7 +735,10 @@ fn norm(a: &[f64], free: &[bool]) -> f64 {
 /// Resolve the θ reference: an explicit `reference_c` wins; otherwise the
 /// convection ambients must be unique. With sources present and no
 /// resolvable reference, this is an error (fail-closed).
-fn resolve_reference(sys: &System, model: &ThermalModel) -> Result<Option<f64>, SolveError> {
+pub(crate) fn resolve_reference(
+    sys: &System,
+    model: &ThermalModel,
+) -> Result<Option<f64>, SolveError> {
     if let Some(r) = model.reference_c {
         return Ok(Some(r));
     }
@@ -711,8 +764,29 @@ fn resolve_reference(sys: &System, model: &ThermalModel) -> Result<Option<f64>, 
 pub fn solve_steady(model: &ThermalModel, opts: &SolveOptions) -> Result<Solution, SolveError> {
     let sys = build(model)?;
     let reference_c = resolve_reference(&sys, model)?;
-    let (x, iterations, residual_rel) = pcg(&sys, opts)?;
+    let x0 = vec![0.0_f64; sys.b.len()];
+    let (x, iterations, residual_rel) = pcg(&sys, &sys.diag, &sys.b, &x0, opts)?;
+    Ok(assemble_solution(
+        &sys,
+        model,
+        &x,
+        iterations,
+        residual_rel,
+        reference_c,
+    ))
+}
 
+/// Assemble the public [`Solution`] (field, T_max, per-source θ,
+/// reservoirs, energy balance) from a solved free-node vector. Shared
+/// between the steady solver and the transient solver's snapshots.
+pub(crate) fn assemble_solution(
+    sys: &System,
+    model: &ThermalModel,
+    x: &[f64],
+    iterations: usize,
+    residual_rel: f64,
+    reference_c: Option<f64>,
+) -> Solution {
     let [nx, ny, nz] = sys.n;
     let nvox = nx * ny * nz;
     let mut t_c = vec![f64::NAN; nvox];
@@ -811,12 +885,12 @@ pub fn solve_steady(model: &ThermalModel, opts: &SolveOptions) -> Result<Solutio
         residual_rel: (sys.source_w_total - net_out_w).abs() / scale,
     };
 
-    Ok(Solution {
+    Solution {
         divisions: sys.n,
         origin_mm: model.origin_mm,
         voxel_mm: model.voxel_mm(),
         t_c,
-        solid: sys.solid,
+        solid: sys.solid.clone(),
         iterations,
         residual_rel,
         t_max_c,
@@ -825,7 +899,7 @@ pub fn solve_steady(model: &ThermalModel, opts: &SolveOptions) -> Result<Solutio
         sources,
         reservoirs,
         energy,
-    })
+    }
 }
 
 #[cfg(test)]
@@ -835,13 +909,13 @@ mod tests {
 
     fn slab_model(nx: usize) -> ThermalModel {
         let mut m = ThermalModel::new([0.0, 0.0, 0.0], [20.0, 5.0, 5.0], [nx, 1, 1]);
-        m.materials.push(MaterialRegion {
-            shape: Shape::Box {
+        m.materials.push(MaterialRegion::isotropic(
+            Shape::Box {
                 min_mm: [0.0, 0.0, 0.0],
                 size_mm: [20.0, 5.0, 5.0],
             },
-            conductivity_w_mk: 50.0,
-        });
+            50.0,
+        ));
         m
     }
 
@@ -916,13 +990,13 @@ mod tests {
         // reported as floating, not silently solved.
         let mut m = ThermalModel::new([0.0, 0.0, 0.0], [30.0, 5.0, 5.0], [6, 1, 1]);
         for min_x in [0.0, 20.0] {
-            m.materials.push(MaterialRegion {
-                shape: Shape::Box {
+            m.materials.push(MaterialRegion::isotropic(
+                Shape::Box {
                     min_mm: [min_x, 0.0, 0.0],
                     size_mm: [10.0, 5.0, 5.0],
                 },
-                conductivity_w_mk: 10.0,
-            });
+                10.0,
+            ));
         }
         m.domain_faces[0] = Boundary::FixedTemperature {
             temperature_c: 50.0,

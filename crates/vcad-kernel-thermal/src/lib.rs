@@ -27,16 +27,24 @@
 //!    merit: `T_max` and where it is, per-source θ, and an **energy
 //!    balance** (power in vs boundary heat out) whose residual is reported,
 //!    never assumed.
+//! 4. [`transient::solve_transient`] — backward-Euler time stepping with
+//!    per-voxel thermal mass ρc_p·V (M1): step responses, time to
+//!    temperature, and a stored-vs-injected energy audit that is an
+//!    *identity* of the discretization, reported per run.
 //!
-//! **Scope and honesty (M0):** pure conduction. No radiation, no fluid
-//! flow — convective cooling enters only as a supplied film coefficient
-//! `h` on a boundary, and that `h` is the biggest uncertainty in any
-//! prediction this crate makes (natural convection correlations carry
-//! ±20–30% on a good day, and radiation at electronics temperatures is the
-//! same order as natural convection). Conductivity is isotropic at M0 —
-//! a real PCB is strongly anisotropic (copper planes: ~10–20 W/m·K
-//! in-plane vs ~0.3 through-plane); anisotropy is the M1 milestone. See
-//! `docs/thermal-m0.md` for the milestone ladder.
+//! Conductivity is a per-axis diagonal tensor (M1) — the case a real PCB
+//! is (copper planes: ~15–20 W/m·K in-plane vs ~0.3–0.5 through-plane).
+//! On the hot_chip benchmark the isotropic idealization under-reads θ_ja
+//! by 43%; model the split.
+//!
+//! **Scope and honesty:** pure conduction. No radiation, no fluid flow —
+//! convective cooling enters only as a supplied film coefficient `h` on a
+//! boundary, and that `h` is the biggest uncertainty in any prediction
+//! this crate makes (natural convection correlations carry ±20–30% on a
+//! good day, and radiation at electronics temperatures is the same order
+//! as natural convection). Off-diagonal conductivity tensors (rotated
+//! laminates) are out of scope. See `docs/thermal-m0.md` and
+//! `docs/thermal-m1.md` for the milestone ladder.
 //!
 //! Units: public geometry is **millimeters** (vcad convention); material
 //! and boundary coefficients are SI (W/m·K, W/m²·K, watts); temperatures
@@ -45,3 +53,4 @@
 
 pub mod model;
 pub mod solve;
+pub mod transient;

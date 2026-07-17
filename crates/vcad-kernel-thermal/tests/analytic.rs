@@ -30,20 +30,20 @@ fn composite_slab_matches_series_resistance_exactly() {
     let (l1, l2) = (0.020, 0.010); // m
     let nx = 12;
     let mut m = ThermalModel::new([0.0, 0.0, 0.0], [30.0, 10.0, 10.0], [nx, 1, 1]);
-    m.materials.push(MaterialRegion {
-        shape: Shape::Box {
+    m.materials.push(MaterialRegion::isotropic(
+        Shape::Box {
             min_mm: [0.0, 0.0, 0.0],
             size_mm: [20.0, 10.0, 10.0],
         },
-        conductivity_w_mk: k1,
-    });
-    m.materials.push(MaterialRegion {
-        shape: Shape::Box {
+        k1,
+    ));
+    m.materials.push(MaterialRegion::isotropic(
+        Shape::Box {
             min_mm: [20.0, 0.0, 0.0],
             size_mm: [10.0, 10.0, 10.0],
         },
-        conductivity_w_mk: k2,
-    });
+        k2,
+    ));
     m.domain_faces[0] = Boundary::FixedTemperature {
         temperature_c: 100.0,
     };
@@ -97,13 +97,13 @@ fn heated_slab_with_convection_matches_the_closed_form() {
     let nx = 8;
     let dx = l / nx as f64;
     let mut m = ThermalModel::new([0.0, 0.0, 0.0], [20.0, 10.0, 10.0], [nx, 1, 1]);
-    m.materials.push(MaterialRegion {
-        shape: Shape::Box {
+    m.materials.push(MaterialRegion::isotropic(
+        Shape::Box {
             min_mm: [0.0, 0.0, 0.0],
             size_mm: [20.0, 10.0, 10.0],
         },
-        conductivity_w_mk: k,
-    });
+        k,
+    ));
     m.sources.push(PowerSource {
         name: "heater".into(),
         shape: Shape::Box {
@@ -164,16 +164,16 @@ fn cylinder_shell_converges_to_the_log_profile() {
 
     let run = |nxy: usize| {
         let mut m = ThermalModel::new([-30.0, -30.0, 0.0], [60.0, 60.0, h_mm], [nxy, nxy, 1]);
-        m.materials.push(MaterialRegion {
-            shape: Shape::Tube {
+        m.materials.push(MaterialRegion::isotropic(
+            Shape::Tube {
                 axis: Axis::Z,
                 center_mm: [0.0, 0.0],
                 span_mm: [0.0, h_mm],
                 outer_radius_mm: 30.0,
                 inner_radius_mm: 0.0,
             },
-            conductivity_w_mk: k,
-        });
+            k,
+        ));
         m.fixed.push(FixedTemperature {
             shape: Shape::Tube {
                 axis: Axis::Z,
@@ -266,6 +266,54 @@ fn cylinder_shell_converges_to_the_log_profile() {
     );
 }
 
+/// Anisotropic conductivity: a block with k = [20, 5, 0.5] driven axis by
+/// axis. With Dirichlet faces on one axis and adiabatic walls elsewhere,
+/// only that axis's conductivity carries heat, and the 1D profile is exact
+/// at voxel centers — so the block must reproduce Fourier's law with k_x,
+/// k_y, and k_z *independently*. This is the PCB case (in-plane copper vs
+/// through-plane FR4) reduced to its exactly-checkable core.
+#[test]
+fn anisotropic_block_obeys_fourier_per_axis() {
+    let k = [20.0, 5.0, 0.5];
+    for axis in 0..3 {
+        let mut m = ThermalModel::new([0.0, 0.0, 0.0], [20.0, 20.0, 20.0], [5, 5, 5]);
+        m.materials.push(MaterialRegion::anisotropic(
+            Shape::Box {
+                min_mm: [0.0, 0.0, 0.0],
+                size_mm: [20.0, 20.0, 20.0],
+            },
+            k,
+        ));
+        m.domain_faces[2 * axis] = Boundary::FixedTemperature {
+            temperature_c: 50.0,
+        };
+        m.domain_faces[2 * axis + 1] = Boundary::FixedTemperature { temperature_c: 0.0 };
+        let sol = solve_steady(&m, &SolveOptions::default()).unwrap();
+
+        // Flux through the hot face = k_axis · A · ΔT / L. The field is 1D
+        // along the driven axis, so one column's half-cell conductance
+        // scaled to the full face area measures the total flow.
+        let d = 0.020 / 5.0;
+        let area = 0.020 * 0.020;
+        let first = match axis {
+            0 => sol.temperature_c(0, 2, 2),
+            1 => sol.temperature_c(2, 0, 2),
+            _ => sol.temperature_c(2, 2, 0),
+        };
+        // Exact up to CG tolerance (1e-8 relative) — the discretization
+        // itself contributes zero error for a linear profile.
+        let q_num = 2.0 * k[axis] * area / d * (50.0 - first);
+        let q_exact = k[axis] * area * 50.0 / 0.020;
+        assert!(
+            (q_num - q_exact).abs() / q_exact < 1e-6,
+            "axis {axis}: flux {q_num:.9} vs Fourier {q_exact:.9}"
+        );
+        // And the profile is the linear one: the center voxel sits at ΔT/2.
+        let mid = sol.temperature_c(2, 2, 2);
+        assert!((mid - 25.0).abs() < 1e-6, "axis {axis}: midpoint {mid}");
+    }
+}
+
 /// Chip on a plate in 3D: a 2 W source on a 60×60×2 mm k = 15 plate,
 /// convection on both large faces. Power in must equal boundary heat out
 /// to well under the 0.1% honesty bar, the field must respect the
@@ -275,13 +323,13 @@ fn cylinder_shell_converges_to_the_log_profile() {
 #[test]
 fn chip_on_plate_energy_balance_closes() {
     let mut m = ThermalModel::new([0.0, 0.0, 0.0], [60.0, 60.0, 2.0], [30, 30, 2]);
-    m.materials.push(MaterialRegion {
-        shape: Shape::Box {
+    m.materials.push(MaterialRegion::isotropic(
+        Shape::Box {
             min_mm: [0.0, 0.0, 0.0],
             size_mm: [60.0, 60.0, 2.0],
         },
-        conductivity_w_mk: 15.0,
-    });
+        15.0,
+    ));
     m.sources.push(PowerSource {
         name: "die".into(),
         shape: Shape::Box {

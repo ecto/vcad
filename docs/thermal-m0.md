@@ -138,12 +138,16 @@ Findings:
 ## Milestone ladder
 
 - **M0 — steady conduction + validation + hot_chip. DONE** (this doc).
-- **M1 — transient + anisotropy.** Implicit Euler with per-voxel ρc_p
-  (SPD system unchanged — same CG), step response validated against
-  lumped-capacitance decay (Bi ≪ 1) and the semi-infinite-solid erfc
-  solution; diagonal anisotropic conductivity (per-axis k) for real PCBs
-  (in-plane copper ~15–20 vs through-plane ~0.3 W/m·K), harmonic mean per
-  axis.
+- **M1 — transient + anisotropy. DONE** (`docs/thermal-m1.md`). Backward
+  Euler with per-voxel ρc_p (same PCG, warm-started; the discrete
+  stored-vs-injected energy identity is reported as an audit residual,
+  ~1e-10 in practice), validated against lumped-capacitance decay and the
+  semi-infinite-solid erfc solution; per-axis diagonal conductivity with
+  harmonic mean per axis, validated exactly per axis. Headline: the
+  isotropic-board idealization under-reads hot_chip by 13.4 K — θ_ja
+  15.7 → 22.5 K/W with the real in-plane/through-plane split. The M0
+  honesty box called that error "modest"; it measurably is not, and the
+  box now says so. Don't adjective an error you can compute.
 - **M2 — the adjoint.** The conduction operator is symmetric — literally
   self-adjoint — so the gradient of any scalar objective costs **one more
   CG solve with the same operator** (the exact trick the particle crate used

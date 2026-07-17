@@ -97,14 +97,52 @@ impl Shape {
     }
 }
 
-/// A material region: a shape filled with an isotropic conductor.
+/// A material region: a shape filled with a (possibly anisotropic)
+/// conductor.
+///
+/// Conductivity is a per-axis diagonal tensor `[k_x, k_y, k_z]` — the case
+/// that matters for boards, where copper planes make in-plane conduction
+/// ~30–60× stronger than through-plane (e.g. `[15, 15, 0.4]` for a
+/// multilayer FR4 board vs `[0.3; 3]` for bare FR4). Off-diagonal
+/// conductivity (rotated laminates) is out of scope.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct MaterialRegion {
     /// Region shape.
     pub shape: Shape,
-    /// Thermal conductivity, W/(m·K). Must be > 0 — model a non-conductor
-    /// by *not painting* a region there (void), not with k = 0.
-    pub conductivity_w_mk: f64,
+    /// Thermal conductivity per axis, W/(m·K). All components must be
+    /// positive — model a non-conductor by *not painting* a region there
+    /// (void), not with k = 0.
+    pub k_w_mk: [f64; 3],
+    /// Volumetric heat capacity ρ·c_p, J/(m³·K). Steady solves ignore it;
+    /// transient solves require it on every solid voxel (fail-closed).
+    pub heat_capacity_j_m3k: Option<f64>,
+}
+
+impl MaterialRegion {
+    /// An isotropic conductor with no heat capacity (steady-state only).
+    pub fn isotropic(shape: Shape, k_w_mk: f64) -> Self {
+        Self {
+            shape,
+            k_w_mk: [k_w_mk; 3],
+            heat_capacity_j_m3k: None,
+        }
+    }
+
+    /// An anisotropic conductor with no heat capacity (steady-state only).
+    pub fn anisotropic(shape: Shape, k_w_mk: [f64; 3]) -> Self {
+        Self {
+            shape,
+            k_w_mk,
+            heat_capacity_j_m3k: None,
+        }
+    }
+
+    /// Attach a volumetric heat capacity ρ·c_p (J/(m³·K)) for transient
+    /// solves.
+    pub fn with_heat_capacity(mut self, rc_j_m3k: f64) -> Self {
+        self.heat_capacity_j_m3k = Some(rc_j_m3k);
+        self
+    }
 }
 
 /// A volumetric power source: `power_w` watts distributed uniformly over
@@ -255,6 +293,12 @@ pub enum ModelError {
         /// Index of the offending region in `ThermalModel::fixed`.
         index: usize,
     },
+    /// A transient solve needs ρc_p on every solid voxel, but a material
+    /// region that owns voxels declared none (or a non-positive value).
+    MissingHeatCapacity {
+        /// Index of the offending region in `ThermalModel::materials`.
+        index: usize,
+    },
 }
 
 impl std::fmt::Display for ModelError {
@@ -268,7 +312,8 @@ impl std::fmt::Display for ModelError {
             }
             ModelError::NonPositiveConductivity { index } => write!(
                 f,
-                "material region {index} has conductivity <= 0; model insulation as void, not k = 0"
+                "material region {index} has a conductivity component <= 0; model insulation as \
+                 void, not k = 0"
             ),
             ModelError::NonPositiveFilmCoefficient => {
                 write!(f, "convection boundary requires h > 0")
@@ -283,6 +328,11 @@ impl std::fmt::Display for ModelError {
             ModelError::FixedCoversNoSolid { index } => {
                 write!(f, "fixed-temperature region {index} pins no solid voxel")
             }
+            ModelError::MissingHeatCapacity { index } => write!(
+                f,
+                "transient solve requires a positive heat capacity on every solid voxel; \
+                 material region {index} declared none"
+            ),
         }
     }
 }

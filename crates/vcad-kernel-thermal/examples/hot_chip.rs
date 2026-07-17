@@ -7,11 +7,12 @@
 //! sensitivity that matters, because h is the number nobody actually
 //! knows.
 //!
-//! Honesty box (M0):
+//! Honesty box:
 //! - k = 15 W/m·K isotropic is a copper-plane *in-plane* equivalent for a
-//!   multilayer board; through-plane FR4 is ~0.3, so this model overstates
-//!   vertical conduction. Anisotropy is M1. For this geometry the error is
-//!   modest (the plate is thin; film resistance dominates) but it is real.
+//!   multilayer board; through-plane FR4 is ~0.3–0.5. M0 guessed the
+//!   isotropic error was "modest"; the M1 anisotropy table below *measures*
+//!   it: 56.5 °C isotropic vs 69.9 °C with the real split — a 6.7 K/W θ
+//!   gap. Lesson kept: don't adjective an error you can compute.
 //! - h is supplied, not derived. 5–10 ≈ still air, 10–30 ≈ gentle airflow.
 //! - No radiation: at ~60 °C surface / 25 °C ambient an ε ≈ 0.9 board
 //!   radiates with an effective h_rad ≈ 6 W/m²K — the same order as
@@ -25,25 +26,34 @@
 
 use vcad_kernel_thermal::model::{Boundary, MaterialRegion, PowerSource, Shape, ThermalModel};
 use vcad_kernel_thermal::solve::{solve_steady, Solution, SolveOptions};
+use vcad_kernel_thermal::transient::{solve_transient, TransientOptions};
 
-fn build(h: f64) -> ThermalModel {
+fn build(h: f64, board_k: [f64; 3]) -> ThermalModel {
     let mut m = ThermalModel::new([0.0, 0.0, 0.0], [100.0, 100.0, 2.6], [100, 100, 13]);
-    // Board: copper-plane-equivalent, isotropic at M0 (see honesty box).
-    m.materials.push(MaterialRegion {
-        shape: Shape::Box {
-            min_mm: [0.0, 0.0, 0.0],
-            size_mm: [100.0, 100.0, 1.6],
-        },
-        conductivity_w_mk: 15.0,
-    });
-    // Die on top, centered.
-    m.materials.push(MaterialRegion {
-        shape: Shape::Box {
-            min_mm: [45.0, 45.0, 1.6],
-            size_mm: [10.0, 10.0, 1.0],
-        },
-        conductivity_w_mk: 120.0,
-    });
+    // Board: copper-plane-equivalent (isotropic or in-plane/through-plane
+    // split — see honesty box). FR4+copper volumetric heat capacity
+    // ~2.0e6 J/m3K for the transient run.
+    m.materials.push(
+        MaterialRegion::anisotropic(
+            Shape::Box {
+                min_mm: [0.0, 0.0, 0.0],
+                size_mm: [100.0, 100.0, 1.6],
+            },
+            board_k,
+        )
+        .with_heat_capacity(2.0e6),
+    );
+    // Die on top, centered. Silicon: rho*c ~ 1.66e6 J/m3K.
+    m.materials.push(
+        MaterialRegion::isotropic(
+            Shape::Box {
+                min_mm: [45.0, 45.0, 1.6],
+                size_mm: [10.0, 10.0, 1.0],
+            },
+            120.0,
+        )
+        .with_heat_capacity(1.66e6),
+    );
     m.sources.push(PowerSource {
         name: "die".into(),
         shape: Shape::Box {
@@ -94,7 +104,7 @@ fn main() {
     let opts = SolveOptions::default();
 
     if json {
-        let sol = solve_steady(&build(10.0), &opts).expect("solve");
+        let sol = solve_steady(&build(10.0, [15.0; 3]), &opts).expect("solve");
         let map = surface_map(&sol);
         let cells: Vec<String> = map
             .iter()
@@ -136,13 +146,70 @@ fn main() {
         "h (W/m2K)", "T_max (C)", "theta (K/W)", "balance", "CG iters", "resid"
     );
     for h in [5.0, 10.0, 15.0, 20.0, 30.0] {
-        let sol = solve_steady(&build(h), &opts).expect("solve");
+        let sol = solve_steady(&build(h, [15.0; 3]), &opts).expect("solve");
         let theta = sol.sources[0].theta_c_per_w.expect("theta");
         println!(
             "{h:>10.0} {:>10.2} {:>12.2} {:>12.2e} {:>10} {:>8.1e}",
             sol.t_max_c, theta, sol.energy.residual_rel, sol.iterations, sol.residual_rel
         );
     }
+
+    // The anisotropy question at h = 10: same board with the in-plane /
+    // through-plane split a real 4-layer stackup has, vs the isotropic
+    // idealization. Through-plane k = 0.5 puts the 1.6 mm of dielectric
+    // in series with the bottom-face path — the M0 isotropic model hides
+    // that resistance.
+    println!("\nanisotropy at h = 10 (M1): board k [in-plane, in-plane, through-plane]");
+    for (label, bk) in [
+        ("isotropic [15,15,15]", [15.0, 15.0, 15.0]),
+        ("real-ish  [15,15,0.5]", [15.0, 15.0, 0.5]),
+        ("bare FR4  [0.3,0.3,0.3]", [0.3, 0.3, 0.3]),
+    ] {
+        let sol = solve_steady(&build(10.0, bk), &opts).expect("solve");
+        let theta = sol.sources[0].theta_c_per_w.expect("theta");
+        println!(
+            "  {label:<24} T_max {:>7.2} C   theta {:>6.2} K/W",
+            sol.t_max_c, theta
+        );
+    }
+
+    // Step response (M1): power on at t = 0 from a 25 C soak, h = 10.
+    // How long until the die is within 1 K of steady?
+    let steady = solve_steady(&build(10.0, [15.0, 15.0, 0.5]), &opts).expect("steady");
+    let trans = solve_transient(
+        &build(10.0, [15.0, 15.0, 0.5]),
+        &opts,
+        &TransientOptions {
+            dt_s: 5.0,
+            steps: 240,
+            initial_c: 25.0,
+            snapshot_every: 0,
+        },
+    )
+    .expect("transient");
+    let settle = trans
+        .times_s
+        .iter()
+        .zip(&trans.t_max_c)
+        .find(|(_, &t)| t > steady.t_max_c - 1.0)
+        .map(|(&s, _)| s);
+    println!(
+        "\nstep response (anisotropic board, h = 10): T_max {:.2} -> {:.2} C over {:.0} s",
+        trans.t_max_c[0],
+        trans.t_max_c.last().unwrap(),
+        trans.times_s.last().unwrap()
+    );
+    match settle {
+        Some(s) => println!(
+            "  within 1 K of steady after ~{s:.0} s; energy audit residual {:.1e}",
+            trans.energy_audit_residual_rel
+        ),
+        None => println!(
+            "  not settled within the run ({:.1e} audit residual)",
+            trans.energy_audit_residual_rel
+        ),
+    }
+
     println!(
         "\ntheta_ja = (T_die,max - 25 C) / 2 W. h is supplied, not derived: quote every\n\
          prediction with the h it was priced at. Radiation (~6 W/m2K equivalent at these\n\

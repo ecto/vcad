@@ -18,20 +18,20 @@ fn main() {
     let (l1, l2) = (0.020, 0.010);
     let nx = 12;
     let mut m = ThermalModel::new([0.0, 0.0, 0.0], [30.0, 10.0, 10.0], [nx, 1, 1]);
-    m.materials.push(MaterialRegion {
-        shape: Shape::Box {
+    m.materials.push(MaterialRegion::isotropic(
+        Shape::Box {
             min_mm: [0.0, 0.0, 0.0],
             size_mm: [20.0, 10.0, 10.0],
         },
-        conductivity_w_mk: k1,
-    });
-    m.materials.push(MaterialRegion {
-        shape: Shape::Box {
+        k1,
+    ));
+    m.materials.push(MaterialRegion::isotropic(
+        Shape::Box {
             min_mm: [20.0, 0.0, 0.0],
             size_mm: [10.0, 10.0, 10.0],
         },
-        conductivity_w_mk: k2,
-    });
+        k2,
+    ));
     m.domain_faces[0] = Boundary::FixedTemperature {
         temperature_c: 100.0,
     };
