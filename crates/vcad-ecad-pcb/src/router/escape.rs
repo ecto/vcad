@@ -118,7 +118,10 @@ pub fn detect_pin_fields(pcb: &Pcb) -> Vec<PinField> {
             for j in 0..pads.len() {
                 if i != j {
                     let d = dist(pads[i].pos, pads[j].pos);
-                    if d < best {
+                    // Coincident pads (stacked pad/drill artifacts at one
+                    // position) are not lattice spacing — skip them or the
+                    // pitch degenerates to 0 and the interstitial grid with it.
+                    if d > 1e-6 && d < best {
                         best = d;
                     }
                 }
@@ -127,7 +130,9 @@ pub fn detect_pin_fields(pcb: &Pcb) -> Vec<PinField> {
                 pitch = best;
             }
         }
-        if !pitch.is_finite() || pitch > MAX_FIELD_PITCH {
+        // Reject non-lattices: sub-manufacturable "pitch" means the footprint
+        // isn't a pin field the flow model can grid.
+        if !pitch.is_finite() || pitch > MAX_FIELD_PITCH || pitch < 0.1 {
             continue;
         }
         let (mut min, mut max) = (pads[0].pos, pads[0].pos);
