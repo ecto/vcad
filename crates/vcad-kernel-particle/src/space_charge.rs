@@ -230,6 +230,12 @@ pub struct SelfConsistentReport {
     pub iterations: Vec<SelfConsistentIteration>,
     /// Whether the density update converged within the budget.
     pub converged: bool,
+    /// Whether the *physical observables* went stationary: relative
+    /// spread of the beam-potential ratio over the last three iterations
+    /// below 5%. Node-level density deltas floor at ensemble shot noise
+    /// even at stationarity, so this is the flag that tracks physics;
+    /// `converged` stays the stricter density criterion.
+    pub observably_converged: bool,
     /// The final (relaxed) beam charge density, node-indexed — input to
     /// two-species neutralization.
     pub final_rho: Vec<f64>,
@@ -318,10 +324,17 @@ pub fn self_consistent(
         }
     }
 
+    let observably_converged = iterations.len() >= 3 && {
+        let tail: Vec<f64> = iterations.iter().rev().take(3).map(|i| i.ratio).collect();
+        let mean = tail.iter().sum::<f64>() / tail.len() as f64;
+        let spread = tail.iter().fold(0.0_f64, |a, b| a.max((b - mean).abs()));
+        mean > 0.0 && spread / mean < 0.05
+    };
     Ok(SelfConsistentReport {
         vacuum_stats,
         iterations,
         converged,
+        observably_converged,
         final_rho: rho,
     })
 }
