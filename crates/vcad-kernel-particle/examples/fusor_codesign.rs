@@ -16,6 +16,13 @@
 //! must carry. Every claim is `basis: predicted`, so the receipt rolls up
 //! **Provisional** — the bench signs it, nothing else does.
 //!
+//! Rev-b closes the loop: rev-a's three co-design vetoes (melting
+//! cathode, unpriced coil repulsion, deterministically-violable ring gap)
+//! come back as **priced resolutions** on the same receipt — a pulsed
+//! duty-cycle operating point, an explicit mount-load requirement, and a
+//! physics-justified wider gap requirement. The receipt drove the
+//! revision; the revision is on the receipt.
+//!
 //! Run: `cargo run --release -p vcad-kernel-particle --example fusor_codesign`
 
 use std::collections::BTreeMap;
@@ -40,6 +47,12 @@ const ION_CURRENT_A: f64 = 0.010;
 const PRESSURE_MTORR: f64 = 2.0;
 const SHIELD_HDPE_MM: f64 = 100.0;
 const OPERATOR_MM: f64 = 2_000.0;
+// Rev-b operating envelope: pulsed commissioning duty (thermal resolution)
+// and the physics-justified ring-gap requirement (M0 sweep: yield is
+// gentle in ring spacing near the optimum — ±1.5 mm costs <5% yield).
+const DUTY_CYCLE: f64 = 0.02;
+const GAP_REQ_MM: (f64, f64) = (48.5, 51.5);
+const COPPER_MELT_C: f64 = 1_085.0;
 
 /// Fold a domain crate's `{name, value, unit, note}` claim into the
 /// unified receipt (basis `predicted`; the crates' own adapters will
@@ -150,9 +163,20 @@ fn main() {
             ));
         }
     }
+    // Rev-b resolution: the repulsion becomes an explicit, priced
+    // requirement instead of an unexamined assumption.
+    all.push(unified(
+        "em",
+        &em_oracle,
+        "coil_mount_load_n",
+        coil_force_n.abs(),
+        "N",
+        "axial repulsion between the opposed shield coils at full current;          the mount stack must be rated to >= 1.5x this value — a structural          member, not clips",
+    ));
     println!(
-        "em         ✓ per-coil L {:.2e} H, inter-coil force {:.1} N",
-        l_set.claims[0].value, coil_force_n
+        "em         ✓ per-coil L {:.2e} H, inter-coil force {:.1} kN (mount requirement on receipt)",
+        l_set.claims[0].value,
+        coil_force_n.abs() / 1e3
     );
 
     // ── 3. thermal: interception heating of the cathode rings ─────────
@@ -210,9 +234,28 @@ fn main() {
             "thermal", &th_oracle, &c.name, c.value, &c.unit, &c.note,
         ));
     }
+    // Rev-b resolution: pulsed operation. Conduction is linear, so the
+    // temperature rise scales exactly with average power — the duty-cycled
+    // operating point is priced from the same solve.
+    let t_duty_c = 25.0 + (th_sol.t_max_c - 25.0) * DUTY_CYCLE;
+    all.push(unified(
+        "thermal",
+        &th_oracle,
+        "t_max_c_at_duty",
+        t_duty_c,
+        "C",
+        &format!(
+            "T_max at {:.0}% duty (average-power scaling, exact under linear              conduction with fixed-T sinks); melt margin {:.1}x on the rise;              radiation still unmodeled (floor)",
+            DUTY_CYCLE * 100.0,
+            (COPPER_MELT_C - 25.0) / (t_duty_c - 25.0)
+        ),
+    ));
     println!(
-        "thermal    ✓ {:.0} W interception heat → T_max {:.0} °C (conduction-only floor)",
-        intercept_power_w, th_sol.t_max_c
+        "thermal    ✓ {:.0} W steady → T_max {:.0} °C (veto); at {:.0}% duty → {:.0} °C",
+        intercept_power_w,
+        th_sol.t_max_c,
+        DUTY_CYCLE * 100.0,
+        t_duty_c
     );
 
     // ── 4. neutronics: the operator's dose behind the shield ──────────
@@ -307,10 +350,18 @@ fn main() {
     };
     let mut contributors = side("upper", 1.0);
     contributors.extend(side("lower", 1.0));
+    // Rev-a asked for ±1.0 mm and was deterministically violable; rev-b
+    // widens to the physics-justified requirement and re-analyzes both.
+    let stack_rev_a = Stackup {
+        name: "cusp-ring-gap-rev-a".into(),
+        contributors: contributors.clone(),
+        requirement: Requirement::between("ring-gap", 49.0, 51.0),
+    };
+    let wc_rev_a = worst_case(&stack_rev_a).expect("wc rev-a");
     let stack = Stackup {
         name: "cusp-ring-gap".into(),
         contributors,
-        requirement: Requirement::between("ring-gap", 49.0, 51.0),
+        requirement: Requirement::between("ring-gap", GAP_REQ_MM.0, GAP_REQ_MM.1),
     };
     let wc = worst_case(&stack).expect("wc");
     let rs = rss(&stack).expect("rss");
@@ -333,14 +384,17 @@ fn main() {
         ));
     }
     println!(
-        "tolerance  ✓ gap requirement 49–51 mm: RSS yield {:.4}, WC margin {:.2} mm",
+        "tolerance  ✓ gap {}–{} mm: RSS yield {:.4}, WC margin {:.2} mm (rev-a ±1.0: {:.2} mm)",
+        GAP_REQ_MM.0,
+        GAP_REQ_MM.1,
         rs.yield_estimate,
-        wc.worst_margin()
+        wc.worst_margin(),
+        wc_rev_a.worst_margin()
     );
 
     // ── The receipt ───────────────────────────────────────────────────
     let mut receipt = DesignReceipt::with_claims(all);
-    receipt.document_id = Some("shielded-grid-experiment/rev-a".into());
+    receipt.document_id = Some("shielded-grid-experiment/rev-b".into());
     let domains: std::collections::BTreeSet<&str> =
         receipt.claims.iter().map(|c| c.domain.as_str()).collect();
     println!(
@@ -356,30 +410,33 @@ fn main() {
 
     // Co-design findings — the contradictions only a multi-domain receipt
     // can surface (each is invisible from inside its own domain):
-    println!("\n──── co-design findings ────");
-    if th_sol.t_max_c > 1_085.0 {
-        println!(
-            "· THERMAL VETO: T_max {:.0} °C ≫ copper melt (1085 °C) — steady-state \
-             at {:.0} mA is excluded; duty-cycle below {:.1}% or water-cool the stalk",
-            th_sol.t_max_c,
-            ION_CURRENT_A * 1e3,
-            100.0 * (1_085.0 - 25.0) / (th_sol.t_max_c - 25.0)
-        );
-    }
+    println!("\n──── co-design loop: rev-a vetoes → rev-b resolutions ────");
     println!(
-        "· MECHANICAL: opposed shield coils repel with {:.1} kN — mounts are a \
-         structural part, not clips",
+        "· thermal:    steady T_max {:.0} °C ≫ melt  →  {:.0}% duty  →  {:.0} °C \
+         ({:.1}× melt margin), on the receipt as t_max_c_at_duty",
+        th_sol.t_max_c,
+        DUTY_CYCLE * 100.0,
+        t_duty_c,
+        (COPPER_MELT_C - 25.0) / (t_duty_c - 25.0)
+    );
+    println!(
+        "· mechanical: {:.1} kN coil repulsion  →  explicit mount-load requirement \
+         claim (rate the stack ≥ 1.5×)",
         coil_force_n.abs() / 1e3
     );
-    if wc.worst_margin() < 0.0 {
-        println!(
-            "· TOLERANCE: worst-case gap margin {:.2} mm < 0 while RSS yield reads \
-             {:.4} — statistically fine, deterministically violable; tighten the \
-             feedthrough tolerance or widen the requirement",
-            wc.worst_margin(),
-            rs.yield_estimate
-        );
-    }
+    println!(
+        "· tolerance:  gap ±1.0 mm WC margin {:.2} mm  →  requirement {}–{} mm \
+         (M0: <5% yield cost)  →  WC margin {:+.2} mm",
+        wc_rev_a.worst_margin(),
+        GAP_REQ_MM.0,
+        GAP_REQ_MM.1,
+        wc.worst_margin()
+    );
+    println!(
+        "\nrev-b verdict stays {:?}: resolutions are still predictions — the bench \
+         signs the receipt.",
+        receipt.verdict()
+    );
     println!(
         "\n{}",
         serde_json::to_string_pretty(&receipt).expect("json")
