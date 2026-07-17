@@ -156,9 +156,20 @@ A 2 × 0.5 m-arm dipole (1 mm wire radius, 40 segments, ℓ/a = 1000), swept
   top, quadrature orders, grid). Fail-closed: claims are never emitted
   for a mesh outside kernel validity, and an off-resonance band says so
   in-claim instead of defaulting.
-- **M5 — the NEC-2 face-off.** Reproduce published NEC-2 validation cases
-  (the manual's dipole tables and a folded dipole / yagi case), table the
-  deltas, and write the paper-draft skeleton.
+- **M5 — the NEC-2 face-off. DONE** (`tests/nec2_benchmarks.rs`,
+  `docs/antenna-paper-draft.md`). References transcribed verbatim from
+  the NEC-2 Manual Part III sample line-printer outputs (Burke & Poggio,
+  LLNL; WDBN v0.92 pp. 83–93). Example 1 (0.5λ dipole, a = 0.001λ): NEC
+  82.70 + j46.31 vs ours 86.18 + j46.27 — **|ΔZ|/|Z| = 3.7%, reactance
+  within 0.04 Ω**. Example 2 (a = 1e−5 m, current-slope source, swept
+  200/250/300 MHz): every point within **4% of |Z|** across a reactance
+  swing from −632 Ω through resonance (26.58−j632.1 → 25.61−j608.1;
+  47.14−j272.4 → 45.57−j261.8; 80.55+j45.71 → 78.17+j45.42). Example 3
+  (vertical λ/2 over ground with **a = 0.3 m** — Δ/a = 1.85, ka = 0.19,
+  the case NEC-2 itself needed its extended-kernel EK card for): our
+  standard-kernel gates **refuse it fail-closed by name** — the correct
+  answer until the extended kernel lands (queued). Paper-draft skeleton
+  with every number reproducible from `cargo test`.
 - **M6 — measurement pack.** Design a 915 MHz (or 2.45 GHz) PCB
   monopole/IFA as a board the repo's ecad pipeline can emit, plus
   `compare()` binding NanoVNA S11 sweeps to predicted claims with
