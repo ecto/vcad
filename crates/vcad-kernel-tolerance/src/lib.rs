@@ -68,6 +68,7 @@ pub mod capability;
 pub mod dist;
 pub mod gdt;
 pub mod loops;
+pub mod measure;
 pub mod receipt;
 pub mod rng;
 pub mod sensitivity;
