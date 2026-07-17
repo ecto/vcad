@@ -133,15 +133,29 @@ A 2 × 0.5 m-arm dipole (1 mm wire radius, 40 segments, ℓ/a = 1000), swept
   short verticals wear hats). Then the gradient designs the antenna:
   **Newton on arm strain retunes a 10%-detuned dipole to X = 0 in 3–4
   steps**, landing within 0.01% of the bisection resonance.
-- **M3 — the `.vcad` seam.** Serde `AntennaSpec` with named parameters,
-  fail-closed resolution (unbound name = error), plus the PCB-trace →
-  wire-grid adapter (equivalent-radius rule a ≈ 0.335·w for flat traces)
-  documented as the ecad seam.
-- **M4 — receipt claims.** `vcad.antenna-claims/1`: `s11_db_at_band`,
-  `z_in_ohm`, `gain_dbi`, `bandwidth_mhz` with full provenance (segment
-  count, kernel validity margins, frequency grid) and spelled-out caveats
-  (no substrate at M0/M1, etc.), in the mold of
-  `vcad.particle-claims/1`.
+- **M3 — the `.vcad` seam. DONE** (`spec::AntennaSpec`, `ecad`). Serde
+  schema (`#[serde(tag = "type")]`, matching IR conventions) in which
+  every numeric field is a literal **or a named document parameter**;
+  fail-closed resolution (unbound name = error, never a default);
+  `parameter_names()` for enumeration. All named parameters are geometric
+  and price their gradients through `adjoint::z_in_gradient`. The ecad
+  seam: `strip_equivalent_radius_mm` (flat strip of width w ↔ round wire
+  of radius w/4, the conformal-mapping equivalence) +
+  `add_trace_as_wire`; board-side extraction stays on the vcad side,
+  emitting this schema. A 78 mm × 1.6 mm trace monopole resolves and
+  resonates at ℓ/λ = 0.24 in the free-space model — with the FR-4 shift
+  called out as the M1.5 gap, not hidden.
+- **M4 — receipt claims. DONE** (`receipt::predicted_claims`,
+  `vcad.antenna-claims/1`): `s11_db_at_band`, `z_in_re/im`,
+  `resonance_in_band` (+ `resonant_frequency` only when it is 1),
+  `bandwidth_10db` (0 with an explicit note when the dip never reaches
+  −10 dB — stated, never omitted), `gain_dbi`, `radiation_efficiency` —
+  every claim carrying `basis: "predicted"`, its caveats (the substrate
+  caveat verbatim on every number FR-4 would move), and provenance with
+  the **kernel validity margins** (min Δ/4a, max Δ/(λ/8), max ka at band
+  top, quadrature orders, grid). Fail-closed: claims are never emitted
+  for a mesh outside kernel validity, and an off-resonance band says so
+  in-claim instead of defaulting.
 - **M5 — the NEC-2 face-off.** Reproduce published NEC-2 validation cases
   (the manual's dipole tables and a folded dipole / yagi case), table the
   deltas, and write the paper-draft skeleton.
