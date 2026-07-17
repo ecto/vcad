@@ -393,13 +393,10 @@ fn deposit_e_adjoint(sol: &Solution, p: [f64; 3], lam_e: [f64; 3], lam_phi: &mut
     } else {
         (lam_e[0] * p[0] / r + lam_e[1] * p[1] / r, lam_e[2])
     };
-    let eps = 1e-9;
-    let u = (r / sol.dr).clamp(0.0, (sol.nr - 1) as f64 - eps);
-    let w = ((p[2] + sol.z_half) / sol.dz).clamp(0.0, (sol.nz - 1) as f64 - eps);
-    let i0 = u.floor() as usize;
-    let j0 = w.floor() as usize;
-    let fu = u - i0 as f64;
-    let fw = w - j0 as f64;
+    // Must locate the identical patch as `Solution::e_at` (the deposit is
+    // its exact transpose), so it shares the same index-space clamp.
+    let (i0, fu) = crate::poisson::cell_index(r / sol.dr, sol.nr);
+    let (j0, fw) = crate::poisson::cell_index((p[2] + sol.z_half) / sol.dz, sol.nz);
     let idx = |i: usize, j: usize| i * sol.nz + j;
     // Er = −((p10−p00)(1−fw) + (p11−p01)·fw)/dr
     lam_phi[idx(i0, j0)] += lam_er * (1.0 - fw) / sol.dr;
