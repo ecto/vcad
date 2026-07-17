@@ -240,6 +240,7 @@ pub fn route_net_maze3d(
     pitch_scale: f64,
     window: Option<(Vec2, Vec2)>,
     tree_goals: &[(CopperGeom, [f64; 2], [f64; 2], PcbLayer)],
+    tree_sources: &[(CopperGeom, [f64; 2], [f64; 2], PcbLayer)],
     offgrid_vias: bool,
 ) -> RouteResult3d {
     let nl = layers.len();
@@ -377,35 +378,9 @@ pub fn route_net_maze3d(
     // ending there is electrically joined). Terminating on the tree needs no
     // endpoint via: the copper is already on that layer.
     let mut tree_goal = vec![false; n];
-    for (geom, emin, emax, glayer) in tree_goals {
-        let Some(li) = layers.iter().position(|l| l == glayer) else {
-            continue;
-        };
-        let ix0 = (((emin[0] - grid.origin.x) / grid.pitch).floor()).max(0.0) as usize;
-        let iy0 = (((emin[1] - grid.origin.y) / grid.pitch).floor()).max(0.0) as usize;
-        let ix1 = ((((emax[0] - grid.origin.x) / grid.pitch).ceil()) as usize)
-            .min(grid.nx.saturating_sub(1));
-        let iy1 = ((((emax[1] - grid.origin.y) / grid.pitch).ceil()) as usize)
-            .min(grid.ny.saturating_sub(1));
-        for iy in iy0..=iy1 {
-            for ix in ix0..=ix1 {
-                let probe_pt = CopperGeom::Disc {
-                    center: grid.world(ix, iy),
-                    r: 0.0,
-                };
-                // Strict overlap certificate: a trace disc (radius half_w) at
-                // this cell centre physically overlaps the tree element, so
-                // terminating here is guaranteed electrical contact. Elements
-                // smaller than a grid cell may mark no cells — that is the
-                // safe direction (degrades to the exact pad goal); loosening
-                // the test would let routes "connect" to copper they never
-                // touch.
-                if geom.distance_to(&probe_pt) < half_w {
-                    tree_goal[li * plane + grid.index(ix, iy)] = true;
-                }
-            }
-        }
-    }
+    let mut tree_source = vec![false; n];
+    mark_tree_cells(&grid, layers, plane, half_w, tree_goals, &mut tree_goal);
+    mark_tree_cells(&grid, layers, plane, half_w, tree_sources, &mut tree_source);
     let is_goal = |node: usize| {
         (node % plane == goal_cell && end_lis.contains(&(node / plane))) || tree_goal[node]
     };
@@ -418,11 +393,33 @@ pub fn route_net_maze3d(
             node,
         });
     }
+    // Multi-source: the search may depart from ANY copper of the from-pad's
+    // connected component (GAMER-style tree-to-tree routing) — every marked
+    // source cell is a zero-cost seed.
+    for (node, &is_src) in tree_source.iter().enumerate() {
+        if is_src && g[node] > 0.0 {
+            g[node] = 0.0;
+            heap.push(State {
+                f: heuristic(node),
+                node,
+            });
+        }
+    }
 
     let mut found: Option<usize> = None;
     let mut pops: usize = 0;
     while let Some(State { node, .. }) = heap.pop() {
         if is_goal(node) {
+            // A zero-cost seed that is already a goal means the components
+            // touch: success with no copper to add.
+            if g[node] == 0.0 && tree_source[node] && tree_goal[node] {
+                return RouteResult3d {
+                    net: net.to_string(),
+                    segments: Vec::new(),
+                    vias: Vec::new(),
+                    success: true,
+                };
+            }
             found = Some(node);
             break;
         }
@@ -564,7 +561,15 @@ pub fn route_net_maze3d(
 
     let mut segments: Vec<(Vec2, Vec2, PcbLayer)> = Vec::new();
     let mut vias: Vec<(Vec2, PcbLayer, PcbLayer)> = Vec::new();
-    let mut run: Vec<Vec2> = vec![start];
+    // If the chain roots on source copper away from the start pad, the run
+    // begins there (the copper is the connection); otherwise at the pad.
+    let root_cell = nodes[0] % plane;
+    let rooted_on_tree = tree_source[nodes[0]] && root_cell != grid.index(sx, sy);
+    let mut run: Vec<Vec2> = if rooted_on_tree {
+        vec![grid.world_of(root_cell)]
+    } else {
+        vec![start]
+    };
     let mut run_layer = nodes[0] / plane;
 
     // Taut pull: greedy line-of-sight shortcutting over a run's points. A
@@ -760,6 +765,41 @@ impl Raster {
     #[inline]
     fn state(&self, cell: usize, li: usize) -> u8 {
         self.states[li * self.plane + cell]
+    }
+}
+
+/// Mark every (cell, layer) whose centre lies ON one of `elems` (overlap
+/// within `half_w`, the strict electrical-contact certificate) — used for
+/// both route-to-tree goals and multi-source seeds.
+fn mark_tree_cells(
+    grid: &Grid,
+    layers: &[PcbLayer],
+    plane: usize,
+    half_w: f64,
+    elems: &[(CopperGeom, [f64; 2], [f64; 2], PcbLayer)],
+    marks: &mut [bool],
+) {
+    for (geom, emin, emax, glayer) in elems {
+        let Some(li) = layers.iter().position(|l| l == glayer) else {
+            continue;
+        };
+        let ix0 = (((emin[0] - grid.origin.x) / grid.pitch).floor()).max(0.0) as usize;
+        let iy0 = (((emin[1] - grid.origin.y) / grid.pitch).floor()).max(0.0) as usize;
+        let ix1 = ((((emax[0] - grid.origin.x) / grid.pitch).ceil()) as usize)
+            .min(grid.nx.saturating_sub(1));
+        let iy1 = ((((emax[1] - grid.origin.y) / grid.pitch).ceil()) as usize)
+            .min(grid.ny.saturating_sub(1));
+        for iy in iy0..=iy1 {
+            for ix in ix0..=ix1 {
+                let probe_pt = CopperGeom::Disc {
+                    center: grid.world(ix, iy),
+                    r: 0.0,
+                };
+                if geom.distance_to(&probe_pt) < half_w {
+                    marks[li * plane + grid.index(ix, iy)] = true;
+                }
+            }
+        }
     }
 }
 
@@ -1247,6 +1287,7 @@ mod tests {
             1.0,
             None,
             &[],
+            &[],
             true,
         );
         assert!(r.success);
@@ -1280,6 +1321,7 @@ mod tests {
             0,
             1.0,
             None,
+            &[],
             &[],
             true,
         );
@@ -1342,6 +1384,7 @@ mod tests {
             1.0,
             None,
             &[],
+            &[],
             true,
         );
         assert!(r.success);
@@ -1376,6 +1419,7 @@ mod tests {
             0,
             1.0,
             None,
+            &[],
             &[],
             true,
         );

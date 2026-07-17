@@ -1052,6 +1052,8 @@ fn search_route(
     // analysis showed the human spending ~2/3 of the board's vias on the nets
     // our pad-pair decomposition could not close.)
     let tree_goals = to_component(session, net, to);
+    // The symmetric source set: copper already connected to the FROM pad.
+    let tree_sources = to_component(session, net, from);
     let maze = |pitch_scale: f64, window: Option<(Vec2, Vec2)>| {
         route_net_maze3d(
             session,
@@ -1069,6 +1071,7 @@ fn search_route(
             pitch_scale,
             window,
             &tree_goals,
+            &tree_sources,
             // Off-grid via candidates cost up to 16 extra probes per cache
             // miss — reserved for the searches that need them (fine retry
             // and repair passes), out of the greedy hot path.
@@ -1096,6 +1099,20 @@ fn search_route(
             0.5,
             Some((Vec2::new(lo[0], lo[1]), Vec2::new(hi[0], hi[1]))),
         );
+    }
+    if r3.success && r3.segments.is_empty() && r3.vias.is_empty() {
+        // The two components already touch (earlier commits joined them):
+        // the connection is satisfied with zero new copper.
+        return Some(Placed {
+            net: net.to_string(),
+            from,
+            to,
+            width: w,
+            segments: Vec::new(),
+            stubs: Vec::new(),
+            via_pts: Vec::new(),
+            spans: Vec::new(),
+        });
     }
     let (segments, route_vias) = if r3.success && !r3.segments.is_empty() {
         (r3.segments, r3.vias)
