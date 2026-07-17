@@ -373,6 +373,62 @@ pub fn compare(
     })
 }
 
+/// Domain tag for thermal claims in the unified [`vcad_receipt`] schema.
+pub const RECEIPT_DOMAIN: &str = "thermal";
+
+/// The oracle reference for this crate's steady-conduction solver.
+pub fn oracle() -> vcad_receipt::OracleRef {
+    vcad_receipt::OracleRef::new("vcad-kernel-thermal/solve", env!("CARGO_PKG_VERSION"))
+}
+
+fn quantity(value: f64, unit: &str) -> vcad_receipt::ClaimQuantity {
+    if unit == "1" {
+        vcad_receipt::ClaimQuantity::bare(value)
+    } else {
+        vcad_receipt::ClaimQuantity::new(value, unit)
+    }
+}
+
+/// Translate a predicted [`ClaimSet`] into unified-receipt claims.
+///
+/// Every claim lands with [`vcad_receipt::ClaimBasis::Predicted`] — the
+/// solver ran for real, but the claims describe hardware that has not
+/// been measured, so a receipt built from these **rolls up Provisional,
+/// never Pass** (the same contract as `predict_physics`/`predict_print`).
+/// The computed value rides in `measured` ("what the oracle computed");
+/// solver provenance rides in `details`.
+pub fn design_claims(set: &ClaimSet) -> Vec<vcad_receipt::ReceiptClaim> {
+    let oracle = oracle();
+    let provenance = format!(
+        "grid {}x{}x{}, voxel {:.3}x{:.3}x{:.3} mm, cg tol {:.1e} iters {} residual {:.3e}, {}, bc [{}]",
+        set.provenance.grid[0],
+        set.provenance.grid[1],
+        set.provenance.grid[2],
+        set.provenance.voxel_mm[0],
+        set.provenance.voxel_mm[1],
+        set.provenance.voxel_mm[2],
+        set.provenance.cg_tol,
+        set.provenance.cg_iterations,
+        set.provenance.cg_residual_rel,
+        set.provenance.anisotropy,
+        set.provenance.bc_set.join("; "),
+    );
+    set.claims
+        .iter()
+        .map(|c| {
+            vcad_receipt::ReceiptClaim::pass(
+                format!("thermal.{}", c.name),
+                RECEIPT_DOMAIN,
+                c.note.clone(),
+                oracle.clone(),
+            )
+            .with_basis(vcad_receipt::ClaimBasis::Predicted)
+            .with_measured(quantity(c.value, &c.unit))
+            .with_details(provenance.clone())
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -411,6 +467,29 @@ mod tests {
             .find(|c| c.name == name)
             .unwrap_or_else(|| panic!("missing claim {name}"))
             .value
+    }
+
+    #[test]
+    fn design_claims_ride_the_unified_receipt_as_provisional() {
+        let m = chip_model();
+        let opts = SolveOptions::default();
+        let sol = solve_steady(&m, &opts).unwrap();
+        let set = predicted_claims(&m, &sol, &opts);
+        let claims = design_claims(&set);
+        assert_eq!(claims.len(), set.claims.len());
+        for c in &claims {
+            assert!(c.id.starts_with("thermal."));
+            assert_eq!(c.domain, RECEIPT_DOMAIN);
+            assert_eq!(c.basis, Some(vcad_receipt::ClaimBasis::Predicted));
+            assert!(c.measured.is_some());
+            assert!(c.details.as_deref().unwrap_or("").contains("grid 30x30x2"));
+        }
+        let receipt = vcad_receipt::DesignReceipt::with_claims(claims);
+        assert_eq!(
+            receipt.verdict(),
+            vcad_receipt::ReceiptVerdict::Provisional,
+            "predicted thermal claims must never read as verified"
+        );
     }
 
     #[test]
