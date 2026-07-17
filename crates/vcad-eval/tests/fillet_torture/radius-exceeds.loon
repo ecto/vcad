@@ -1,0 +1,4 @@
+; Radius larger than half the feature size: geometrically infeasible.
+; Graceful refusal (or no-op) is the only acceptable outcome.
+[let body [cube 10.0 10.0 10.0]]
+#[[fillet 6.0 body] body]

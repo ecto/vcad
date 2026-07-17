@@ -24,3 +24,4 @@ thiserror.workspace = true
 
 [dev-dependencies]
 vcad-loon.workspace = true
+vcad-kernel-fillet.workspace = true

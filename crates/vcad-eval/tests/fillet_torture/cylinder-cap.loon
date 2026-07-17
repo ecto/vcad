@@ -1,0 +1,3 @@
+; Plane-cylinder cap edges: toric blends.
+[let body [cylinder 5.0 10.0]]
+#[[fillet 1.0 body] body]

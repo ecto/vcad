@@ -1,0 +1,3 @@
+; Radius close to half the feature size (4.5 on a 10mm cube).
+[let body [cube 10.0 10.0 10.0]]
+#[[fillet 4.5 body] body]

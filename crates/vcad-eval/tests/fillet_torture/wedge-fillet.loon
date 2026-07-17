@@ -1,0 +1,3 @@
+; Wedge: non-orthogonal dihedral angles, sloped face.
+[let body [wedge 10.0 10.0 10.0]]
+#[[fillet 1.0 body] body]

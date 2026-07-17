@@ -1,0 +1,4 @@
+; Fillet on boolean seams: two overlapping cubes, all seam edges planar.
+[let body [union [translate 5.0 5.0 0.0 [cube 10.0 10.0 10.0]]
+                 [cube 10.0 10.0 10.0]]]
+#[[fillet 1.0 body] body]

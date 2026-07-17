@@ -1,0 +1,3 @@
+; Parameter change: same model rebuilt with a doubled radius.
+[let body [cube 10.0 10.0 10.0]]
+#[[fillet 2.0 body] body]

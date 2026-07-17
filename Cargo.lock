@@ -7092,6 +7092,7 @@ dependencies = [
  "vcad-ir",
  "vcad-kernel",
  "vcad-kernel-diff",
+ "vcad-kernel-fillet",
  "vcad-kernel-geom",
  "vcad-kernel-math",
  "vcad-kernel-sketch",

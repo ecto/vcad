@@ -1,0 +1,9 @@
+{
+  "id": "2026-07-17-fillet-hardening",
+  "version": "0.9.4",
+  "date": "2026-07-17",
+  "category": "fix",
+  "title": "Fillet hardening: correct non-orthogonal blends, no bad output",
+  "summary": "Fillets on wedges, prisms, and chamfered solids are now watertight; infeasible radii and cracked rebuilds fail soft instead of emitting broken geometry.",
+  "features": ["fillet", "chamfer", "kernel"]
+}

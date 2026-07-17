@@ -10,7 +10,10 @@ use crate::topology::{
     compute_centroid, extract_edges, extract_faces, pair_twin_half_edges, quantize, EdgeInfo,
     FaceInfo,
 };
-use crate::trim::{build_vertex_faces, compute_trim_vertices, CornerBlend, TrimKey};
+use crate::trim::{
+    build_vertex_faces, compute_trim_vertices_with_setbacks, fillet_edge_setbacks, CornerBlend,
+    TrimKey,
+};
 
 /// Dihedral angle threshold (radians) above which two adjacent faces count
 /// as "nearly coplanar". Extruding an arc profile produces a strip of thin,
@@ -48,7 +51,24 @@ pub fn fillet_all_edges(brep: &BRepSolid, radius: f64) -> BRepSolid {
         return brep.clone();
     }
 
-    let trims = compute_trim_vertices(&faces, radius);
+    // Dihedral-correct tangent setbacks: r/tan(θ/2) per edge, capped at
+    // 8·r. An infinite entry marks a knife edge — refuse the whole solid
+    // rather than crack the shell around it.
+    let setbacks = fillet_edge_setbacks(&faces, &edges, radius, 8.0 * radius);
+    if setbacks.values().any(|s| !s.is_finite()) {
+        return brep.clone();
+    }
+
+    let trims = compute_trim_vertices_with_setbacks(&faces, radius, &setbacks);
+
+    // Feasibility: the trimmed faces must keep their original orientation
+    // and stay non-degenerate. When the radius exceeds what the local
+    // feature can host, insets cross over and faces invert — the rebuilt
+    // shell is watertight but *wrong* (it can even gain volume). Refuse
+    // cleanly instead.
+    if !trimmed_faces_are_valid(&faces, &trims) {
+        return brep.clone();
+    }
     let face_map: HashMap<FaceId, &FaceInfo> = faces.iter().map(|f| (f.face_id, f)).collect();
 
     let mut vertex_edges: HashMap<VertexId, Vec<&EdgeInfo>> = HashMap::new();
@@ -217,6 +237,38 @@ pub fn fillet_all_edges(brep: &BRepSolid, radius: f64) -> BRepSolid {
         geometry: new_geom,
         solid_id,
     }
+}
+
+/// Check that every trimmed face polygon still faces the same way as the
+/// original face and has meaningful area. Inverted or collapsed inset
+/// polygons mean the requested radius exceeds the local feature size.
+fn trimmed_faces_are_valid(faces: &[FaceInfo], trims: &HashMap<TrimKey, Point3>) -> bool {
+    for face in faces {
+        let pts: Vec<Point3> = face
+            .vertex_ids
+            .iter()
+            .filter_map(|&v| trims.get(&(v, face.face_id)).copied())
+            .collect();
+        if pts.len() < 3 {
+            return false;
+        }
+        if pts.iter().any(|p| !p.to_vec().norm().is_finite()) {
+            return false;
+        }
+        // Newell normal of the inset polygon vs the original face normal.
+        let mut n = vcad_kernel_math::Vec3::zeros();
+        for i in 0..pts.len() {
+            let a = pts[i];
+            let b = pts[(i + 1) % pts.len()];
+            n.x += (a.y - b.y) * (a.z + b.z);
+            n.y += (a.z - b.z) * (a.x + b.x);
+            n.z += (a.x - b.x) * (a.y + b.y);
+        }
+        if n.norm() < 1e-9 || n.dot(face.normal) <= 0.0 {
+            return false;
+        }
+    }
+    true
 }
 
 /// Pre-flight check that the planar fillet algorithm can produce correct

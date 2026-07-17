@@ -1,0 +1,3 @@
+; Control: plain cube, modest fillet. Must succeed.
+[let body [cube 10.0 10.0 10.0]]
+#[[fillet 1.0 body] body]

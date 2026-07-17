@@ -1,0 +1,5 @@
+; Cylindrical boss on a plate: plane-cylinder seam from a boolean.
+[let plate [cube 20.0 20.0 5.0]]
+[let boss [translate 10.0 10.0 0.0 [cylinder 3.0 15.0]]]
+[let body [union boss plate]]
+#[[fillet 1.0 body] body]
